@@ -1,0 +1,25 @@
+from __future__ import annotations
+
+from sqlalchemy.orm import DeclarativeBase
+
+
+class Base(DeclarativeBase):
+    pass
+
+
+def import_all_models() -> None:
+    """确保 Alembic 能发现所有模型。"""
+
+    from app.models import (  # noqa: F401
+        agent_run,
+        chat_message,
+        chat_session,
+        document_chunk,
+        evidence,
+        export_job,
+        ingestion_job,
+        knowledge_base,
+        source_material,
+        tool_extension,
+        tool_invocation,
+    )

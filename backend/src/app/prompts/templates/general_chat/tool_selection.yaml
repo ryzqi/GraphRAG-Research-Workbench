@@ -1,0 +1,28 @@
+version: "1.0"
+name: general_chat_tool_selection
+description: "全能代理工具选择提示词"
+
+template: |
+  根据用户问题，选择需要调用的工具并生成参数。
+
+  用户问题：{question}
+
+  可用工具：
+  {tool_desc}
+
+  如果需要调用工具，返回 JSON 数组：
+  [{{"index": 工具序号, "args": {{参数对象}}}}]
+
+  如果不需要调用任何工具，返回空数组：[]
+
+  只返回 JSON，不要其他内容。
+
+variables:
+  - name: question
+    type: string
+    required: true
+  - name: tool_desc
+    type: string
+    required: true
+
+few_shot_examples: []

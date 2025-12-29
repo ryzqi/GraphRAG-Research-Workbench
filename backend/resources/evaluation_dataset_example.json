@@ -1,0 +1,50 @@
+{
+  "$schema": "评测数据集示例",
+  "description": "用于单智能体 vs 多智能体对比评测的问题集格式说明",
+  "questions": [
+    {
+      "id": "q001",
+      "question": "什么是知识图谱？它与传统数据库有什么区别？",
+      "reference_answer": "知识图谱是一种用图结构表示实体及其关系的知识库，与传统数据库相比，它更擅长表达复杂的语义关系和进行推理。",
+      "scoring_criteria": {
+        "completeness": 0.4,
+        "accuracy": 0.4,
+        "clarity": 0.2
+      },
+      "tags": ["概念", "基础"]
+    },
+    {
+      "id": "q002",
+      "question": "请解释 RAG（检索增强生成）的工作原理及其优势。",
+      "reference_answer": "RAG 通过先检索相关文档再生成回答，结合了检索系统的准确性和生成模型的流畅性，能有效减少幻觉并提供可追溯的依据。",
+      "scoring_criteria": {
+        "completeness": 0.3,
+        "accuracy": 0.4,
+        "clarity": 0.3
+      },
+      "tags": ["技术", "LLM"]
+    },
+    {
+      "id": "q003",
+      "question": "多智能体协作相比单智能体有哪些优势和挑战？",
+      "reference_answer": "多智能体协作可以分工处理复杂任务、提供多角度分析，但也面临协调开销、一致性维护等挑战。",
+      "scoring_criteria": {
+        "completeness": 0.35,
+        "accuracy": 0.35,
+        "clarity": 0.3
+      },
+      "tags": ["架构", "对比"]
+    }
+  ],
+  "config_example": {
+    "selected_kb_ids": ["uuid-of-knowledge-base"],
+    "allow_external": false,
+    "timeout_per_question_ms": 30000,
+    "scoring_model": "auto"
+  },
+  "scoring_rules": {
+    "completeness": "回答是否涵盖问题的所有要点",
+    "accuracy": "回答内容是否准确无误",
+    "clarity": "回答是否清晰易懂"
+  }
+}

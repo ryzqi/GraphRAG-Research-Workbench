@@ -1,0 +1,90 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import timedelta
+
+import anyio
+from minio import Minio
+
+from app.core.settings import get_settings
+
+
+@dataclass(slots=True)
+class ObjectRef:
+    bucket: str
+    object_name: str
+
+
+class ObjectStorage:
+    def __init__(self) -> None:
+        settings = get_settings()
+        self._settings = settings
+        self._client = Minio(
+            settings.minio_endpoint,
+            access_key=settings.minio_access_key,
+            secret_key=settings.minio_secret_key,
+            secure=settings.minio_secure,
+        )
+
+    async def ensure_buckets(self) -> None:
+        def _ensure(bucket: str) -> None:
+            exists = self._client.bucket_exists(bucket)
+            if not exists:
+                self._client.make_bucket(bucket)
+
+        await anyio.to_thread.run_sync(_ensure, self._settings.minio_bucket_uploads)
+        await anyio.to_thread.run_sync(_ensure, self._settings.minio_bucket_exports)
+
+    async def presign_get(self, ref: ObjectRef) -> str:
+        expires = timedelta(seconds=self._settings.exports_presign_expire_seconds)
+        return await anyio.to_thread.run_sync(
+            self._client.presigned_get_object,
+            ref.bucket,
+            ref.object_name,
+            expires=expires,
+        )
+
+    async def put_text(self, ref: ObjectRef, content: str, *, content_type: str = "text/plain") -> None:
+        data = content.encode("utf-8")
+
+        def _put() -> None:
+            from io import BytesIO
+
+            self._client.put_object(
+                ref.bucket,
+                ref.object_name,
+                data=BytesIO(data),
+                length=len(data),
+                content_type=content_type,
+            )
+
+        await anyio.to_thread.run_sync(_put)
+
+    async def put_bytes(self, ref: ObjectRef, data: bytes, *, content_type: str | None = None) -> None:
+        """上传二进制数据到对象存储。"""
+
+        def _put() -> None:
+            from io import BytesIO
+
+            self._client.put_object(
+                ref.bucket,
+                ref.object_name,
+                data=BytesIO(data),
+                length=len(data),
+                content_type=content_type or "application/octet-stream",
+            )
+
+        await anyio.to_thread.run_sync(_put)
+
+    async def get_bytes(self, ref: ObjectRef) -> bytes:
+        """从对象存储获取二进制数据。"""
+
+        def _get() -> bytes:
+            response = self._client.get_object(ref.bucket, ref.object_name)
+            try:
+                return response.read()
+            finally:
+                response.close()
+                response.release_conn()
+
+        return await anyio.to_thread.run_sync(_get)

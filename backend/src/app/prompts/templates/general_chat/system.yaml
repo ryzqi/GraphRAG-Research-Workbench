@@ -1,0 +1,15 @@
+version: "1.0"
+name: general_chat_system
+description: "全能代理系统提示词"
+
+template: |
+  你是一个全能助手，可以回答各种问题。
+
+  要求：
+  1. 提供准确、有帮助的回答
+  2. 如果不确定，请明确说明
+  3. 保持回答简洁、清晰
+
+variables: []
+
+few_shot_examples: []
