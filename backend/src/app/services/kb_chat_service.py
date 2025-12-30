@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import logging
 import uuid
 from datetime import datetime, timezone
 
@@ -13,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.kb_chat_graph import KbChatGraph, KbChatState
 from app.core.checkpoint import CheckpointManager
+from app.core.settings import get_settings
 from app.integrations.embedding_client import EmbeddingClient
 from app.integrations.llm_client import ChatMessage as LLMMessage
 from app.integrations.llm_client import LLMClient
@@ -28,7 +30,11 @@ from app.schemas.chats import (
     ChatMessageRead,
     EvidenceItem,
 )
+from app.services.context_builder import ContextBuilder
+from app.services.conversation_summary_service import ConversationSummaryService
 from app.services.retrieval_service import RetrievalService
+
+logger = logging.getLogger(__name__)
 
 
 class KbChatService:
@@ -41,8 +47,11 @@ class KbChatService:
     ) -> None:
         self._db = db
         self._llm = llm
+        self._settings = get_settings()
         redis = get_redis()
         self._retrieval = RetrievalService(db, milvus, embedding, redis)
+        self._context_builder = ContextBuilder(self._settings)
+        self._summary_service = ConversationSummaryService(db, settings=self._settings)
 
     async def _load_history(
         self, session_id: uuid.UUID, limit: int
@@ -51,14 +60,17 @@ class KbChatService:
             select(ChatMessage)
             .where(ChatMessage.session_id == session_id)
             .order_by(ChatMessage.created_at.desc())
-            .limit(limit)
+            .limit(limit * 2)
         )
         result = await self._db.execute(stmt)
         messages = list(result.scalars().all())
         messages.reverse()
+        filtered = [m for m in messages if not self._summary_service.is_summary_message(m)]
+        if len(filtered) > limit:
+            filtered = filtered[-limit:]
         return [
             LLMMessage(role=msg.role.value, content=msg.content)
-            for msg in messages
+            for msg in filtered
         ]
 
     async def answer(
@@ -69,7 +81,10 @@ class KbChatService:
     ) -> ChatAnswerResponse:
         """处理用户问题并生成答案（使用 LangGraph）。"""
         started_at = datetime.now(timezone.utc)
-        history = await self._load_history(session.id, limit=6)
+        summary = await self._summary_service.load_latest_summary(session.id)
+        history = await self._load_history(
+            session.id, limit=self._settings.context_history_max_messages
+        )
 
         # 保存用户消息
         user_msg = ChatMessage(
@@ -95,7 +110,11 @@ class KbChatService:
 
         try:
             # 创建 LangGraph 图
-            graph = KbChatGraph(llm=self._llm, retrieval=self._retrieval)
+            graph = KbChatGraph(
+                llm=self._llm,
+                retrieval=self._retrieval,
+                context_builder=self._context_builder,
+            )
 
             # 使用 session_id 作为 thread_id 执行
             kb_ids = session.selected_kb_ids or []
@@ -103,6 +122,7 @@ class KbChatService:
                 question=user_content,
                 kb_ids=[uuid.UUID(str(kid)) for kid in kb_ids],
                 history=history,
+                summary=summary.content if summary else None,
             )
             result = await graph.run(
                 state,
@@ -117,6 +137,20 @@ class KbChatService:
                 content=result.answer,
             )
             self._db.add(assistant_msg)
+
+            summary_metrics: dict[str, object] = {}
+            try:
+                summary_result = await self._summary_service.maybe_update_summary(
+                    session.id
+                )
+                if summary_result:
+                    summary_metrics = {
+                        "summary_updated": True,
+                        "summary_message_id": str(summary_result.message.id),
+                        **summary_result.stats,
+                    }
+            except Exception as exc:  # pragma: no cover
+                logger.warning("摘要更新失败: %s", exc)
 
             # 保存证据
             evidence_items: list[EvidenceItem] = []
@@ -152,6 +186,8 @@ class KbChatService:
                 "latency_ms": int(
                     (run.finished_at - started_at).total_seconds() * 1000
                 ),
+                **summary_metrics,
+                **(result.metrics or {}),
             }
 
             await self._db.commit()

@@ -12,6 +12,8 @@ from app.integrations.embedding_client import EmbeddingClient
 from app.integrations.milvus_client import MilvusClient
 from app.integrations.object_storage import ObjectRef, ObjectStorage
 from app.models.document_chunk import DocumentChunk
+from app.services.chunking import TextChunker
+from app.services.contextual_embedding_service import ContextualEmbeddingService
 from app.models.ingestion_job import (
     IngestionJob,
     IngestionJobItem,
@@ -20,10 +22,7 @@ from app.models.ingestion_job import (
 )
 from app.models.source_material import SourceMaterial, SourceType
 from app.worker.celery_app import celery_app
-
-# 切分参数
-CHUNK_SIZE = 512
-CHUNK_OVERLAP = 64
+from app.utils.token_counter import count_tokens_approximately
 
 
 @celery_app.task(name="app.worker.tasks.ingestion.run_ingestion_job")
@@ -60,6 +59,12 @@ async def _run_ingestion_job(job_id: str) -> None:
             embedding_client = EmbeddingClient()
             milvus_client = MilvusClient()
             settings = get_settings()
+            chunker = TextChunker(settings=settings, embedding=embedding_client)
+            context_service = (
+                ContextualEmbeddingService(settings=settings)
+                if settings.ingestion_contextual_enabled
+                else None
+            )
             embedding_dim = settings.embedding_dim
             collection_ready = False
 
@@ -94,12 +99,30 @@ async def _run_ingestion_job(job_id: str) -> None:
                         continue
 
                     # 切分文本
-                    chunks_text = _split_text(content)
+                    chunks_text = await chunker.split(content)
                     if not chunks_text:
                         continue
 
+                    contexts = ["" for _ in chunks_text]
+                    if settings.ingestion_contextual_enabled and context_service:
+                        for idx, chunk_text in enumerate(chunks_text):
+                            context_result = await context_service.generate(
+                                full_text=content, chunk=chunk_text
+                            )
+                            if context_result.success:
+                                contexts[idx] = context_result.context
+                            else:
+                                contexts[idx] = ""
+
+                    embedding_inputs = []
+                    for chunk_text, context in zip(chunks_text, contexts):
+                        if settings.ingestion_contextual_enabled and context:
+                            embedding_inputs.append(f"{chunk_text}\n\n{context}")
+                        else:
+                            embedding_inputs.append(chunk_text)
+
                     # 批量生成 embedding
-                    embeddings = await embedding_client.embed(texts=chunks_text)
+                    embeddings = await embedding_client.embed(texts=embedding_inputs)
 
                     if embedding_dim is None and embeddings:
                         embedding_dim = len(embeddings[0])
@@ -117,7 +140,7 @@ async def _run_ingestion_job(job_id: str) -> None:
                             text=text,
                             locator={"index": idx},
                             content_hash=hashlib.sha256(text.encode()).hexdigest()[:32],
-                            token_count=len(text) // 4,  # 粗略估算
+                            token_count=count_tokens_approximately(text),
                         )
                         session.add(chunk)
                         await session.flush()
@@ -127,6 +150,8 @@ async def _run_ingestion_job(job_id: str) -> None:
                                 "chunk_id": str(chunk.id),
                                 "kb_id": str(material.kb_id),
                                 "material_id": str(material.id),
+                                "content": text,
+                                "context": contexts[idx] if contexts else "",
                                 "embedding": emb,
                             }
                         )
@@ -203,20 +228,3 @@ async def _delete_material_chunks(
 
     # 删除 Milvus 中的向量
     await milvus_client.delete_by_material(material_id)
-
-
-def _split_text(text: str) -> list[str]:
-    """简单的文本切分（按字符数）。"""
-    if not text:
-        return []
-
-    chunks = []
-    start = 0
-    while start < len(text):
-        end = start + CHUNK_SIZE
-        chunk = text[start:end]
-        if chunk.strip():
-            chunks.append(chunk.strip())
-        start = end - CHUNK_OVERLAP if end < len(text) else end
-
-    return chunks

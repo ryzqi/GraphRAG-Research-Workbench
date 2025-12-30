@@ -15,6 +15,7 @@ class Settings(BaseSettings):
         env_file=str(ENV_FILE),
         env_file_encoding="utf-8",
         extra="ignore",
+        populate_by_name=True,
     )
 
     app_name: str = "多知识库知识代理"
@@ -35,6 +36,10 @@ class Settings(BaseSettings):
     milvus_host: str = Field("localhost", alias="MILVUS_HOST")
     milvus_port: int = Field(19530, alias="MILVUS_PORT")
     milvus_collection: str = Field("kb_chunks_v1", alias="MILVUS_COLLECTION")
+    milvus_text_analyzer: str = Field("chinese", alias="MILVUS_TEXT_ANALYZER")
+    milvus_text_analyzer_filters: list[str] = Field(
+        default_factory=list, alias="MILVUS_TEXT_ANALYZER_FILTERS"
+    )
 
     llm_base_url: str = Field("https://api.openai.com/v1", alias="LLM_BASE_URL")
     llm_api_key: str = Field("REPLACE_ME", alias="LLM_API_KEY")
@@ -70,6 +75,82 @@ class Settings(BaseSettings):
     retrieval_max_top_k: int = Field(20, alias="RETRIEVAL_MAX_TOP_K")
     retrieval_cache_ttl_seconds: int = Field(300, alias="RETRIEVAL_CACHE_TTL_SECONDS")
     retrieval_cache_enabled: bool = Field(True, alias="RETRIEVAL_CACHE_ENABLED")
+    retrieval_min_score: float | None = Field(None, alias="RETRIEVAL_MIN_SCORE")
+    retrieval_query_lowercase: bool = Field(False, alias="RETRIEVAL_QUERY_LOWERCASE")
+    retrieval_hybrid_enabled: bool = Field(True, alias="RETRIEVAL_HYBRID_ENABLED")
+    retrieval_hybrid_ranker: str = Field("rrf", alias="RETRIEVAL_HYBRID_RANKER")
+    retrieval_hybrid_dense_weight: float = Field(
+        0.7, alias="RETRIEVAL_HYBRID_DENSE_WEIGHT"
+    )
+    retrieval_hybrid_sparse_weight: float = Field(
+        0.3, alias="RETRIEVAL_HYBRID_SPARSE_WEIGHT"
+    )
+    retrieval_hybrid_rrf_k: int = Field(60, alias="RETRIEVAL_HYBRID_RRF_K")
+    retrieval_query_rewrite_enabled: bool = Field(
+        True, alias="RETRIEVAL_QUERY_REWRITE_ENABLED"
+    )
+    retrieval_query_rewrite_timeout_seconds: int = Field(
+        15, alias="RETRIEVAL_QUERY_REWRITE_TIMEOUT_SECONDS"
+    )
+    retrieval_query_rewrite_max_tokens: int = Field(
+        64, alias="RETRIEVAL_QUERY_REWRITE_MAX_TOKENS"
+    )
+    retrieval_rerank_enabled: bool = Field(True, alias="RETRIEVAL_RERANK_ENABLED")
+    retrieval_rerank_base_url: str = Field(
+        "https://api.openai.com", alias="RETRIEVAL_RERANK_BASE_URL"
+    )
+    retrieval_rerank_api_key: str = Field(
+        "REPLACE_ME", alias="RETRIEVAL_RERANK_API_KEY"
+    )
+    retrieval_rerank_model: str = Field(
+        "BAAI/bge-reranker-v2-m3", alias="RETRIEVAL_RERANK_MODEL"
+    )
+    retrieval_rerank_timeout_seconds: int = Field(
+        10, alias="RETRIEVAL_RERANK_TIMEOUT_SECONDS"
+    )
+
+    # 上下文预算配置
+    context_history_max_messages: int = Field(6, alias="CONTEXT_HISTORY_MAX_MESSAGES")
+    context_history_max_tokens: int | None = Field(
+        None, alias="CONTEXT_HISTORY_MAX_TOKENS"
+    )
+    context_retrieval_max_tokens: int | None = Field(
+        None, alias="CONTEXT_RETRIEVAL_MAX_TOKENS"
+    )
+    context_tool_max_tokens: int | None = Field(None, alias="CONTEXT_TOOL_MAX_TOKENS")
+
+    # 对话摘要配置
+    summary_enabled: bool = Field(False, alias="SUMMARY_ENABLED")
+    summary_trigger_min_messages: int = Field(
+        12, alias="SUMMARY_TRIGGER_MIN_MESSAGES"
+    )
+    summary_trigger_min_tokens: int = Field(800, alias="SUMMARY_TRIGGER_MIN_TOKENS")
+    summary_max_tokens: int = Field(256, alias="SUMMARY_MAX_TOKENS")
+
+    # 导入切分配置
+    ingestion_chunk_size: int = Field(512, alias="INGESTION_CHUNK_SIZE")
+    ingestion_chunk_overlap: int = Field(64, alias="INGESTION_CHUNK_OVERLAP")
+    ingestion_chunk_strategy: str = Field(
+        "sliding_window", alias="INGESTION_CHUNK_STRATEGY"
+    )
+    ingestion_semantic_min_tokens: int = Field(
+        80, alias="INGESTION_SEMANTIC_MIN_TOKENS"
+    )
+    ingestion_semantic_max_tokens: int = Field(
+        256, alias="INGESTION_SEMANTIC_MAX_TOKENS"
+    )
+    ingestion_semantic_similarity_threshold: float = Field(
+        0.6, alias="INGESTION_SEMANTIC_SIMILARITY_THRESHOLD"
+    )
+    ingestion_contextual_enabled: bool = Field(
+        True, alias="INGESTION_CONTEXTUAL_ENABLED"
+    )
+    ingestion_contextual_timeout_seconds: int = Field(
+        15, alias="INGESTION_CONTEXTUAL_TIMEOUT_SECONDS"
+    )
+    ingestion_contextual_max_tokens: int = Field(
+        128, alias="INGESTION_CONTEXTUAL_MAX_TOKENS"
+    )
 
     # JWT 认证配置
     jwt_secret_key: str = Field("CHANGE_ME_IN_PRODUCTION", alias="JWT_SECRET_KEY")
@@ -92,6 +173,18 @@ class Settings(BaseSettings):
             parts = [p.strip() for p in v.split(",")]
             return [p for p in parts if p]
         return [str(v)]
+
+    @field_validator("milvus_text_analyzer_filters", mode="before")
+    @classmethod
+    def _parse_analyzer_filters(cls, v: object) -> list[str]:
+        if v is None:
+            return []
+        if isinstance(v, list):
+            return [str(x).strip() for x in v if str(x).strip()]
+        if isinstance(v, str):
+            parts = [p.strip() for p in v.split(",")]
+            return [p for p in parts if p]
+        return [str(v).strip()]
 
 
 @lru_cache

@@ -1,0 +1,28 @@
+version: "1.0"
+name: retrieval_query_rewrite
+description: "检索查询重写提示词"
+
+template: |
+  将用户问题改写为适合向量检索的简洁查询。
+
+  改写规则：
+  - 保留：关键实体、专有名词、时间范围、核心动作
+  - 移除：寒暄语、语气词、冗余背景、主观评价
+  - 禁止：添加原问题未提及的信息
+
+  用户问题：{question}
+
+  只输出改写后的查询，不要解释。
+
+variables:
+  - name: question
+    type: string
+    required: true
+
+few_shot_examples:
+  - input: "你好，请问一下，咱们公司2023年的销售额大概是多少啊？"
+    output: "公司2023年销售额"
+  - input: "我想了解一下关于Python异步编程的相关内容，特别是asyncio库怎么用"
+    output: "Python asyncio异步编程使用方法"
+  - input: "最近项目上遇到个问题，就是用户登录的时候老是报错，能帮我查查怎么解决吗"
+    output: "用户登录报错解决方案"

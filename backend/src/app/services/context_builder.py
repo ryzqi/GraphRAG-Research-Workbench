@@ -1,0 +1,289 @@
+"""上下文构建器：统一裁剪、预算与指标产出。"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+
+from app.core.settings import Settings, get_settings
+from app.integrations.llm_client import ChatMessage as LLMMessage
+from app.services.retrieval_service import RetrievalResult
+from app.utils.token_counter import count_tokens_approximately
+
+
+@dataclass(slots=True)
+class ContextBuildResult:
+    """上下文构建结果。"""
+
+    messages: list[LLMMessage]
+    budgets: dict[str, int | None]
+    usage: dict[str, dict[str, int]]
+    truncation: dict[str, dict[str, int | bool]]
+    retrieval_context: str | None = None
+    tool_context: str | None = None
+    included_retrieval: list[RetrievalResult] = field(default_factory=list)
+
+
+class ContextBuilder:
+    """统一上下文裁剪与指标产出。"""
+
+    def __init__(self, settings: Settings | None = None) -> None:
+        self._settings = settings or get_settings()
+
+    def build_history_messages(
+        self,
+        *,
+        history: list[LLMMessage],
+        summary_text: str | None,
+    ) -> tuple[list[LLMMessage], dict[str, dict[str, int]], dict[str, dict[str, int | bool]]]:
+        summary_usage = {"tokens": 0, "chars": 0}
+        summary_truncation = {"truncated": False, "dropped_tokens": 0}
+        summary_message: LLMMessage | None = None
+
+        if summary_text:
+            summary_content, summary_tokens, truncated = self._truncate_text(
+                summary_text, self._normalize_budget(self._settings.summary_max_tokens)
+            )
+            if truncated:
+                summary_truncation = {
+                    "truncated": True,
+                    "dropped_tokens": max(count_tokens_approximately(summary_text) - summary_tokens, 0),
+                }
+            summary_usage = {"tokens": summary_tokens, "chars": len(summary_content)}
+            summary_message = LLMMessage(role="system", content=f"对话摘要：\n{summary_content}")
+
+        history_messages, history_usage, history_truncation = self._truncate_history(
+            history,
+            max_messages=self._normalize_budget(self._settings.context_history_max_messages),
+            max_tokens=self._normalize_budget(self._settings.context_history_max_tokens),
+        )
+
+        messages = [summary_message] if summary_message else []
+        messages.extend(history_messages)
+
+        usage = {
+            "summary": summary_usage,
+            "history": history_usage,
+        }
+        truncation = {
+            "summary": summary_truncation,
+            "history": history_truncation,
+        }
+        return messages, usage, truncation
+
+    def build_retrieval_context(
+        self, results: list[RetrievalResult]
+    ) -> tuple[str, list[RetrievalResult], dict[str, int], dict[str, int | bool]]:
+        if not results:
+            return "（未找到相关内容）", [], {"tokens": 0, "chars": 0, "items": 0}, {
+                "truncated": False,
+                "dropped_items": 0,
+                "dropped_tokens": 0,
+            }
+
+        max_tokens = self._normalize_budget(self._settings.context_retrieval_max_tokens)
+        included: list[RetrievalResult] = []
+        used_tokens = 0
+        total_tokens = sum(self._chunk_tokens(r) for r in results)
+        first_override: str | None = None
+        text_truncated = False
+
+        for r in results:
+            chunk_tokens = self._chunk_tokens(r)
+            if max_tokens is not None and used_tokens + chunk_tokens > max_tokens:
+                if not included:
+                    truncated_text, truncated_tokens, truncated = self._truncate_text(
+                        r.chunk.text, max_tokens
+                    )
+                    included.append(RetrievalResult(chunk=r.chunk, score=r.score))
+                    first_override = truncated_text
+                    used_tokens = truncated_tokens
+                    text_truncated = truncated
+                break
+            included.append(r)
+            used_tokens += chunk_tokens
+
+        if not included:
+            context = "（检索结果被预算裁剪）"
+        else:
+            context_parts: list[str] = []
+            for i, r in enumerate(included, 1):
+                text = first_override if i == 1 and first_override else r.chunk.text
+                context_parts.append(f"[{i}] {text}")
+            context = "\n\n".join(context_parts)
+
+        usage = {
+            "tokens": used_tokens,
+            "chars": len(context),
+            "items": len(included),
+        }
+        truncation = {
+            "truncated": len(included) < len(results) or text_truncated,
+            "dropped_items": max(len(results) - len(included), 0),
+            "dropped_tokens": max(total_tokens - used_tokens, 0),
+        }
+        return context, included, usage, truncation
+
+    def build_tool_context(
+        self, tool_results: list[dict]
+    ) -> tuple[str, dict[str, int], dict[str, int | bool]]:
+        if not tool_results:
+            return "", {"tokens": 0, "chars": 0, "items": 0}, {
+                "truncated": False,
+                "dropped_items": 0,
+                "dropped_tokens": 0,
+            }
+
+        max_tokens = self._normalize_budget(self._settings.context_tool_max_tokens)
+        included: list[str] = []
+        used_tokens = 0
+        total_tokens = 0
+        text_truncated = False
+
+        for r in tool_results:
+            line = (
+                f"- {r['tool_name']} ({r['extension_name']}): "
+                f"{'成功' if r['success'] else '失败'} - {r['output']}"
+            )
+            line_tokens = count_tokens_approximately(line)
+            total_tokens += line_tokens
+            if max_tokens is not None and used_tokens + line_tokens > max_tokens:
+                if not included:
+                    truncated_text, truncated_tokens, truncated = self._truncate_text(
+                        line, max_tokens
+                    )
+                    included.append(truncated_text)
+                    used_tokens = truncated_tokens
+                    text_truncated = truncated
+                break
+            included.append(line)
+            used_tokens += line_tokens
+
+        context = "\n".join(included)
+        usage = {"tokens": used_tokens, "chars": len(context), "items": len(included)}
+        truncation = {
+            "truncated": len(included) < len(tool_results) or text_truncated,
+            "dropped_items": max(len(tool_results) - len(included), 0),
+            "dropped_tokens": max(total_tokens - used_tokens, 0),
+        }
+        return context, usage, truncation
+
+    def build_messages(
+        self,
+        *,
+        system_prompt: str,
+        history_messages: list[LLMMessage],
+        question: str,
+    ) -> list[LLMMessage]:
+        return [
+            LLMMessage(role="system", content=system_prompt),
+            *history_messages,
+            LLMMessage(role="user", content=question),
+        ]
+
+    def build_metrics(
+        self,
+        *,
+        history_usage: dict[str, dict[str, int]],
+        history_truncation: dict[str, dict[str, int | bool]],
+        retrieval_usage: dict[str, int] | None = None,
+        retrieval_truncation: dict[str, int | bool] | None = None,
+        tool_usage: dict[str, int] | None = None,
+        tool_truncation: dict[str, int | bool] | None = None,
+    ) -> dict[str, dict]:
+        usage: dict[str, dict[str, int]] = {
+            **history_usage,
+            "retrieval": retrieval_usage or {"tokens": 0, "chars": 0, "items": 0},
+            "tools": tool_usage or {"tokens": 0, "chars": 0, "items": 0},
+        }
+
+        total_tokens = sum(part.get("tokens", 0) for part in usage.values())
+        total_chars = sum(part.get("chars", 0) for part in usage.values())
+        usage["total"] = {"tokens": total_tokens, "chars": total_chars}
+
+        truncation: dict[str, dict[str, int | bool]] = {
+            **history_truncation,
+            "retrieval": retrieval_truncation
+            or {"truncated": False, "dropped_items": 0, "dropped_tokens": 0},
+            "tools": tool_truncation
+            or {"truncated": False, "dropped_items": 0, "dropped_tokens": 0},
+        }
+
+        budgets = {
+            "history_messages": self._normalize_budget(self._settings.context_history_max_messages),
+            "history_tokens": self._normalize_budget(self._settings.context_history_max_tokens),
+            "summary_tokens": self._normalize_budget(self._settings.summary_max_tokens),
+            "retrieval_tokens": self._normalize_budget(self._settings.context_retrieval_max_tokens),
+            "tool_tokens": self._normalize_budget(self._settings.context_tool_max_tokens),
+        }
+
+        return {
+            "budgets": budgets,
+            "usage": usage,
+            "truncation": truncation,
+        }
+
+    @staticmethod
+    def _normalize_budget(value: int | None) -> int | None:
+        if value is None:
+            return None
+        return value if value > 0 else None
+
+    @staticmethod
+    def _truncate_text(text: str, max_tokens: int | None) -> tuple[str, int, bool]:
+        if max_tokens is None:
+            return text, count_tokens_approximately(text), False
+        max_chars = max_tokens * 4
+        if len(text) <= max_chars:
+            return text, count_tokens_approximately(text), False
+        truncated_text = text[:max_chars].rstrip()
+        if truncated_text != text:
+            truncated_text = f"{truncated_text}…"
+        return truncated_text, count_tokens_approximately(truncated_text), True
+
+    def _truncate_history(
+        self,
+        history: list[LLMMessage],
+        *,
+        max_messages: int | None,
+        max_tokens: int | None,
+    ) -> tuple[list[LLMMessage], dict[str, int], dict[str, int | bool]]:
+        if not history:
+            return [], {"tokens": 0, "chars": 0, "messages": 0}, {
+                "truncated": False,
+                "dropped_messages": 0,
+                "dropped_tokens": 0,
+            }
+
+        total_tokens = sum(count_tokens_approximately(m.content) for m in history)
+
+        kept: list[LLMMessage] = []
+        used_tokens = 0
+
+        for msg in reversed(history):
+            msg_tokens = count_tokens_approximately(msg.content)
+            if max_tokens is not None and used_tokens + msg_tokens > max_tokens:
+                break
+            kept.append(msg)
+            used_tokens += msg_tokens
+            if max_messages is not None and len(kept) >= max_messages:
+                break
+
+        kept.reverse()
+        usage = {
+            "tokens": used_tokens,
+            "chars": sum(len(m.content) for m in kept),
+            "messages": len(kept),
+        }
+        truncation = {
+            "truncated": len(kept) < len(history),
+            "dropped_messages": max(len(history) - len(kept), 0),
+            "dropped_tokens": max(total_tokens - used_tokens, 0),
+        }
+        return kept, usage, truncation
+
+    @staticmethod
+    def _chunk_tokens(result: RetrievalResult) -> int:
+        token_count = result.chunk.token_count
+        if token_count is None:
+            return count_tokens_approximately(result.chunk.text)
+        return token_count

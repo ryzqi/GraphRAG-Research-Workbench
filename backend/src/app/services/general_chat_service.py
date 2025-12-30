@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import logging
 import uuid
 from datetime import datetime, timezone
 
@@ -27,6 +28,10 @@ from app.schemas.chats import (
     ChatAnswerResponse,
     ChatMessageRead,
 )
+from app.services.context_builder import ContextBuilder
+from app.services.conversation_summary_service import ConversationSummaryService
+
+logger = logging.getLogger(__name__)
 
 
 class GeneralChatService:
@@ -42,6 +47,8 @@ class GeneralChatService:
         self._llm = llm
         self._mcp = mcp
         self._settings = get_settings()
+        self._context_builder = ContextBuilder(self._settings)
+        self._summary_service = ConversationSummaryService(db, settings=self._settings)
 
     async def _load_history(
         self, session_id: uuid.UUID, limit: int
@@ -50,14 +57,17 @@ class GeneralChatService:
             select(ChatMessage)
             .where(ChatMessage.session_id == session_id)
             .order_by(ChatMessage.created_at.desc())
-            .limit(limit)
+            .limit(limit * 2)
         )
         result = await self._db.execute(stmt)
         messages = list(result.scalars().all())
         messages.reverse()
+        filtered = [m for m in messages if not self._summary_service.is_summary_message(m)]
+        if len(filtered) > limit:
+            filtered = filtered[-limit:]
         return [
             LLMMessage(role=msg.role.value, content=msg.content)
-            for msg in messages
+            for msg in filtered
         ]
 
     async def answer(
@@ -68,7 +78,10 @@ class GeneralChatService:
     ) -> ChatAnswerResponse:
         """处理用户问题并生成答案（使用 LangGraph）。"""
         started_at = datetime.now(timezone.utc)
-        history = await self._load_history(session.id, limit=6)
+        summary = await self._summary_service.load_latest_summary(session.id)
+        history = await self._load_history(
+            session.id, limit=self._settings.context_history_max_messages
+        )
 
         # 保存用户消息
         user_msg = ChatMessage(
@@ -108,6 +121,7 @@ class GeneralChatService:
                 mcp=self._mcp,
                 extensions=extensions,
                 require_confirmation=self._settings.mcp_confirmation_required,
+                context_builder=self._context_builder,
             )
 
             # 使用 session_id 作为 thread_id 执行
@@ -115,6 +129,7 @@ class GeneralChatService:
                 question=user_content,
                 allow_external=session.allow_external and self._settings.mcp_enabled,
                 history=history,
+                summary=summary.content if summary else None,
             )
             result = await graph.run(
                 state,
@@ -148,6 +163,20 @@ class GeneralChatService:
             )
             self._db.add(assistant_msg)
 
+            summary_metrics: dict[str, object] = {}
+            try:
+                summary_result = await self._summary_service.maybe_update_summary(
+                    session.id
+                )
+                if summary_result:
+                    summary_metrics = {
+                        "summary_updated": True,
+                        "summary_message_id": str(summary_result.message.id),
+                        **summary_result.stats,
+                    }
+            except Exception as exc:  # pragma: no cover
+                logger.warning("摘要更新失败: %s", exc)
+
             # 更新运行状态
             run.status = AgentRunStatus.SUCCEEDED
             run.finished_at = datetime.now(timezone.utc)
@@ -158,6 +187,8 @@ class GeneralChatService:
                 "latency_ms": int(
                     (run.finished_at - started_at).total_seconds() * 1000
                 ),
+                **summary_metrics,
+                **(result.metrics or {}),
             }
 
             await self._db.commit()

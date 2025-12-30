@@ -1,21 +1,24 @@
 version: "1.0"
 name: general_chat_tool_selection
-description: "全能代理工具选择提示词"
+description: "工具选择与参数生成提示词"
 
 template: |
-  根据用户问题，选择需要调用的工具并生成参数。
+  分析用户问题，判断是否需要调用工具。
 
   用户问题：{question}
 
   可用工具：
   {tool_desc}
 
-  如果需要调用工具，返回 JSON 数组：
-  [{{"index": 工具序号, "args": {{参数对象}}}}]
+  决策规则：
+  1. 仅当问题明确需要工具能力时才调用
+  2. 优先选择最匹配的单一工具
+  3. 多工具调用仅限于问题明确包含多个独立子任务
+  4. 参数从问题中提取，缺失必需参数时不调用该工具
 
-  如果不需要调用任何工具，返回空数组：[]
-
-  只返回 JSON，不要其他内容。
+  输出格式（仅输出 JSON，无其他内容）：
+  - 需要调用：[{{"index": 工具序号, "args": {{参数对象}}}}]
+  - 不需要调用：[]
 
 variables:
   - name: question
@@ -25,4 +28,22 @@ variables:
     type: string
     required: true
 
-few_shot_examples: []
+few_shot_examples:
+  - input: |
+      用户问题：北京今天天气怎么样？
+      可用工具：
+      0. weather_query(city: string) - 查询城市天气
+      1. web_search(query: string) - 网络搜索
+    output: '[{"index": 0, "args": {"city": "北京"}}]'
+  - input: |
+      用户问题：你好，请问你是谁？
+      可用工具：
+      0. weather_query(city: string) - 查询城市天气
+      1. web_search(query: string) - 网络搜索
+    output: '[]'
+  - input: |
+      用户问题：查一下上海天气，顺便搜索一下最近的新闻
+      可用工具：
+      0. weather_query(city: string) - 查询城市天气
+      1. web_search(query: string) - 网络搜索
+    output: '[{"index": 0, "args": {"city": "上海"}}, {"index": 1, "args": {"query": "最近新闻"}}]'

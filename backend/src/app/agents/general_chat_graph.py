@@ -19,6 +19,7 @@ from app.integrations.llm_client import LLMClient
 from app.integrations.mcp_client import MCPClient, ToolDefinition
 from app.models.tool_extension import ToolExtension
 from app.prompts import get_prompt_loader
+from app.services.context_builder import ContextBuilder
 
 
 @dataclass
@@ -28,6 +29,7 @@ class GeneralChatState:
     question: str
     allow_external: bool = False
     history: list[LLMMessage] = field(default_factory=list)
+    summary: str | None = None
 
     # 阶段输出
     tool_results: list[dict] = field(default_factory=list)
@@ -39,6 +41,7 @@ class GeneralChatState:
 
     # 元数据
     stage_summaries: dict[str, Any] = field(default_factory=dict)
+    metrics: dict[str, Any] = field(default_factory=dict)
     error: str | None = None
 
 
@@ -51,6 +54,7 @@ class GeneralChatGraph:
         mcp: MCPClient,
         extensions: list[ToolExtension],
         require_confirmation: bool = True,
+        context_builder: ContextBuilder | None = None,
     ) -> None:
         self._llm = llm
         self._mcp = mcp
@@ -58,6 +62,7 @@ class GeneralChatGraph:
         self._require_confirmation = require_confirmation
         self._prompts = get_prompt_loader()
         self._graph_builder = self._build_graph()
+        self._context_builder = context_builder
 
     def _build_graph(self) -> StateGraph:
         """构建代理图。"""
@@ -238,12 +243,42 @@ class GeneralChatGraph:
 
     async def _generate_node(self, state: GeneralChatState) -> dict:
         """生成回答。"""
-        system_prompt = self._build_system_prompt(state)
-        messages = [
-            LLMMessage(role="system", content=system_prompt),
-            *state.history,
-            LLMMessage(role="user", content=state.question),
-        ]
+        if self._context_builder is None:
+            tool_context = ""
+            if state.tool_results:
+                tool_context = "\n".join(
+                    f"- {r['tool_name']} ({r['extension_name']}): "
+                    f"{'成功' if r['success'] else '失败'} - {r['output']}"
+                    for r in state.tool_results
+                )
+            system_prompt = self._build_system_prompt(tool_context)
+            messages = [
+                LLMMessage(role="system", content=system_prompt),
+                *state.history,
+                LLMMessage(role="user", content=state.question),
+            ]
+            context_metrics = {}
+        else:
+            tool_context, tool_usage, tool_truncation = (
+                self._context_builder.build_tool_context(state.tool_results)
+            )
+            system_prompt = self._build_system_prompt(tool_context)
+            history_messages, history_usage, history_truncation = (
+                self._context_builder.build_history_messages(
+                    history=state.history, summary_text=state.summary
+                )
+            )
+            messages = self._context_builder.build_messages(
+                system_prompt=system_prompt,
+                history_messages=history_messages,
+                question=state.question,
+            )
+            context_metrics = self._context_builder.build_metrics(
+                history_usage=history_usage,
+                history_truncation=history_truncation,
+                tool_usage=tool_usage,
+                tool_truncation=tool_truncation,
+            )
 
         response = await self._llm.chat_with_metrics(messages=messages)
 
@@ -255,18 +290,17 @@ class GeneralChatGraph:
                     "completed_at": datetime.now(timezone.utc).isoformat(),
                 },
             },
+            "metrics": {
+                **state.metrics,
+                "context": context_metrics,
+            },
         }
 
-    def _build_system_prompt(self, state: GeneralChatState) -> str:
+    def _build_system_prompt(self, tool_context: str) -> str:
         """构建系统提示词。"""
         base = self._prompts.render("general_chat/system")
 
-        if state.tool_results:
-            tool_context = "\n".join(
-                f"- {r['tool_name']} ({r['extension_name']}): "
-                f"{'成功' if r['success'] else '失败'} - {r['output']}"
-                for r in state.tool_results
-            )
+        if tool_context:
             base += f"\n\n工具调用结果：\n{tool_context}"
 
         return base

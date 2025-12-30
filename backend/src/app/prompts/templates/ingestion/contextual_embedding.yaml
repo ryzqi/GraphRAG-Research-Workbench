@@ -1,0 +1,41 @@
+version: "1.0"
+name: ingestion_contextual_embedding
+description: "文档片段上下文增强提示词"
+
+template: |
+  为文档片段生成检索用的上下文描述。
+
+  要求：
+  - 说明片段在文档中的位置和主题
+  - 补充片段理解所需的背景信息
+  - 不超过 {max_tokens} tokens
+  - 禁止复制原文或引入新事实
+
+  文档上下文：
+  {content}
+
+  文档片段：
+  {chunk}
+
+  只输出上下文描述。
+
+variables:
+  - name: content
+    type: string
+    required: true
+  - name: chunk
+    type: string
+    required: true
+  - name: max_tokens
+    type: number
+    required: true
+
+few_shot_examples:
+  - input: |
+      文档上下文：《Python编程指南》第三章 函数与模块
+      文档片段：装饰器是一种修改函数行为的语法糖，使用@符号标记。
+    output: "本片段来自Python编程指南的函数与模块章节，介绍装饰器的基本概念和语法。"
+  - input: |
+      文档上下文：2023年度财务报告 - 收入分析部分
+      文档片段：第四季度营收同比增长15%，主要得益于新产品线的推出。
+    output: "本片段来自2023年度财务报告的收入分析部分，描述第四季度营收增长情况及原因。"
