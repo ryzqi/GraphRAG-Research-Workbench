@@ -13,7 +13,13 @@ from pydantic import BaseModel, Field
 
 from app.agents.memory_backend import MemoryBackendFactory
 from app.agents.mcp_tools import build_mcp_tools
+from app.agents.tools.evidence_compare import build_evidence_compare_tool
+from app.agents.tools.report_generate import build_report_generate_tool
+from app.agents.tools.research_plan import build_research_plan_tool
+from app.agents.tools.subagent_coordinate import build_subagent_coordinate_tool
+from app.agents.tools.web_search import build_web_search_tool
 from app.core.settings import get_settings
+from app.integrations.llm_client import LLMClient
 from app.integrations.mcp_client import MCPClient
 from app.models.tool_extension import ToolExtension
 from app.prompts import get_prompt_loader
@@ -136,6 +142,14 @@ class DeepResearchAgent:
             coroutine=_retrieve,
         )
 
+    def _build_llm_client(self) -> LLMClient:
+        """构建 LLM 客户端用于工具。"""
+        return LLMClient(
+            base_url=self._settings.llm_base_url,
+            api_key=self._settings.llm_api_key,
+            model=self._settings.llm_model,
+        )
+
     async def run(
         self,
         *,
@@ -143,6 +157,7 @@ class DeepResearchAgent:
         kb_ids: list[uuid.UUID],
         allow_external: bool,
         thread_id: str | None = None,
+        enable_subagents: bool = False,
     ) -> DeepResearchOutput:
         """执行深度研究流程。"""
         self._reset_run_state()
@@ -150,9 +165,21 @@ class DeepResearchAgent:
             "research/deep_agent_system", question=question
         )
 
-        tools: list[BaseTool] = [self._build_retrieval_tool(kb_ids)]
-        if allow_external and self._extensions:
-            tools.extend(await build_mcp_tools(self._mcp, self._extensions))
+        llm_client = self._build_llm_client()
+        tools: list[BaseTool] = [
+            self._build_retrieval_tool(kb_ids),
+            build_research_plan_tool(llm_client, self._prompts),
+            build_evidence_compare_tool(llm_client, self._prompts),
+            build_report_generate_tool(llm_client, self._prompts),
+        ]
+
+        if allow_external:
+            tools.append(build_web_search_tool(self._settings))
+            if self._extensions:
+                tools.extend(await build_mcp_tools(self._mcp, self._extensions))
+
+        if enable_subagents:
+            tools.append(build_subagent_coordinate_tool(model=self._model))
 
         memory_factory = MemoryBackendFactory.from_settings(self._settings)
         agent = create_deep_agent(

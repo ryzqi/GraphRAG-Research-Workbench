@@ -14,6 +14,8 @@ from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, StateGraph
 from langgraph.types import interrupt
 
+from app.agents.tools.web_search import build_web_search_tool
+from app.core.settings import Settings
 from app.integrations.llm_client import ChatMessage as LLMMessage
 from app.integrations.llm_client import LLMClient
 from app.integrations.mcp_client import MCPClient, ToolDefinition
@@ -55,6 +57,7 @@ class GeneralChatGraph:
         extensions: list[ToolExtension],
         require_confirmation: bool = True,
         context_builder: ContextBuilder | None = None,
+        settings: Settings | None = None,
     ) -> None:
         self._llm = llm
         self._mcp = mcp
@@ -63,6 +66,8 @@ class GeneralChatGraph:
         self._prompts = get_prompt_loader()
         self._graph_builder = self._build_graph()
         self._context_builder = context_builder
+        self._settings = settings
+        self._builtin_tools: list = []
 
     def _build_graph(self) -> StateGraph:
         """构建代理图。"""
@@ -120,10 +125,16 @@ class GeneralChatGraph:
 
     async def _plan_tools_node(self, state: GeneralChatState) -> dict:
         """规划工具调用。"""
-        if not state.allow_external or not self._extensions:
+        if not state.allow_external:
             return {"pending_tool_calls": []}
 
-        # 收集所有可用工具
+        # 收集内置工具
+        builtin_tools: list[tuple[str, str, str]] = []
+        if self._settings:
+            web_tool = build_web_search_tool(self._settings)
+            builtin_tools.append(("builtin", "web_search", web_tool.description))
+
+        # 收集 MCP 扩展工具
         all_tools: list[tuple[ToolExtension, ToolDefinition]] = []
         for ext in self._extensions:
             tools = await self._mcp.connect(
@@ -132,11 +143,18 @@ class GeneralChatGraph:
             for tool in tools:
                 all_tools.append((ext, tool))
 
-        if not all_tools:
+        if not all_tools and not builtin_tools:
             return {"pending_tool_calls": []}
 
+        # 合并工具描述用于 LLM 选择
+        combined_tools = []
+        for ext_id, name, desc in builtin_tools:
+            combined_tools.append((ext_id, name, desc))
+        for ext, tool in all_tools:
+            combined_tools.append((str(ext.id), tool.name, tool.description or "无描述"))
+
         # LLM 驱动工具选择
-        selected = await self._select_tools_with_llm(state.question, all_tools)
+        selected = await self._select_tools_with_llm(state.question, combined_tools, all_tools)
 
         return {
             "pending_tool_calls": selected,
@@ -152,15 +170,16 @@ class GeneralChatGraph:
     async def _select_tools_with_llm(
         self,
         question: str,
-        tools: list[tuple[ToolExtension, ToolDefinition]],
+        combined_tools: list[tuple[str, str, str]],
+        mcp_tools: list[tuple[ToolExtension, ToolDefinition]],
     ) -> list[dict]:
         """LLM 驱动工具选择和参数生成。"""
-        if not tools:
+        if not combined_tools:
             return []
 
         tool_desc = "\n".join(
-            f"{i}. {t.name}: {t.description or '无描述'}"
-            for i, (_, t) in enumerate(tools)
+            f"{i}. {name}: {desc}"
+            for i, (_, name, desc) in enumerate(combined_tools)
         )
 
         prompt = self._prompts.render(
@@ -186,14 +205,28 @@ class GeneralChatGraph:
             for sel in selections:
                 idx = sel.get("index", -1)
                 args = sel.get("args", {})
-                if 0 <= idx < len(tools):
-                    ext, tool = tools[idx]
-                    result.append({
-                        "extension_id": str(ext.id),
-                        "extension_name": ext.name,
-                        "tool_name": tool.name,
-                        "args": args,
-                    })
+                if 0 <= idx < len(combined_tools):
+                    ext_id, name, _ = combined_tools[idx]
+                    if ext_id == "builtin":
+                        result.append({
+                            "extension_id": "builtin",
+                            "extension_name": "内置工具",
+                            "tool_name": name,
+                            "args": args,
+                            "is_builtin": True,
+                        })
+                    else:
+                        # 查找对应的 MCP 扩展
+                        mcp_idx = idx - sum(1 for e, _, _ in combined_tools[:idx] if e == "builtin")
+                        if 0 <= mcp_idx < len(mcp_tools):
+                            ext, tool = mcp_tools[mcp_idx]
+                            result.append({
+                                "extension_id": str(ext.id),
+                                "extension_name": ext.name,
+                                "tool_name": tool.name,
+                                "args": args,
+                                "is_builtin": False,
+                            })
 
             return result
         except (json.JSONDecodeError, KeyError):
@@ -217,17 +250,47 @@ class GeneralChatGraph:
 
         results = []
         for tool_call in state.pending_tool_calls:
-            call_result = await self._mcp.call_tool(
-                tool_call["extension_id"],
-                tool_call["tool_name"],
-                tool_call["args"],
-            )
-            results.append({
-                "tool_name": tool_call["tool_name"],
-                "extension_name": tool_call["extension_name"],
-                "success": call_result.success,
-                "output": call_result.output if call_result.success else call_result.error,
-            })
+            is_builtin = tool_call.get("is_builtin", False)
+
+            if is_builtin and tool_call["tool_name"] == "web_search":
+                # 执行内置 Web 搜索工具
+                if self._settings:
+                    web_tool = build_web_search_tool(self._settings)
+                    try:
+                        output = await web_tool.ainvoke(tool_call["args"])
+                        results.append({
+                            "tool_name": tool_call["tool_name"],
+                            "extension_name": tool_call["extension_name"],
+                            "success": True,
+                            "output": output,
+                        })
+                    except Exception as e:
+                        results.append({
+                            "tool_name": tool_call["tool_name"],
+                            "extension_name": tool_call["extension_name"],
+                            "success": False,
+                            "output": str(e),
+                        })
+                else:
+                    results.append({
+                        "tool_name": tool_call["tool_name"],
+                        "extension_name": tool_call["extension_name"],
+                        "success": False,
+                        "output": "未配置 settings，无法执行内置工具",
+                    })
+            else:
+                # 执行 MCP 扩展工具
+                call_result = await self._mcp.call_tool(
+                    tool_call["extension_id"],
+                    tool_call["tool_name"],
+                    tool_call["args"],
+                )
+                results.append({
+                    "tool_name": tool_call["tool_name"],
+                    "extension_name": tool_call["extension_name"],
+                    "success": call_result.success,
+                    "output": call_result.output if call_result.success else call_result.error,
+                })
 
         return {
             "tool_results": results,
