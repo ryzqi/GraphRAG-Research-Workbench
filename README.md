@@ -17,6 +17,16 @@
 
 ## 本地运行（Windows）
 
+### 一键启动（推荐）
+
+- 复制 `.env.example` 为 `.env` 并按需修改后，在仓库根目录执行：
+
+```powershell
+pwsh -ExecutionPolicy Bypass -File .\scripts\start_all.ps1
+```
+
+- 可选参数：`-SkipInfra`（跳过 Podman 依赖）、`-NoDetachInfra`（前台启动依赖）、`-SkipBackend`、`-SkipWorker`、`-SkipFrontend`、`-SkipMigrate`、`-RunSeed`（导入演示数据）、`-Verbose`。
+
 ### 1) 启动基础依赖（Podman）
 
 - 复制 `.env.example` 为 `.env` 并按需修改
