@@ -1,9 +1,21 @@
 /**
  * 知识库代理页面
  */
-
 import { useCallback, useEffect, useState } from 'react';
+import {
+  Box,
+  Container,
+  IconButton,
+  Paper,
+  Stack,
+  TextField,
+  Typography,
+} from '@mui/material';
+import SendIcon from '@mui/icons-material/Send';
+import RestartAltIcon from '@mui/icons-material/RestartAlt';
 import { EvidenceList } from '../components/EvidenceList';
+import { KnowledgeBaseSelector } from '../components/KnowledgeBaseSelector';
+import { Button, ErrorAlert, PageHeader } from '../components/ui';
 import {
   type AgentMode,
   type ChatAnswerResponse,
@@ -14,6 +26,7 @@ import {
   sendMessage,
 } from '../services/chats';
 import { type KnowledgeBase, listKnowledgeBases } from '../services/knowledgeBases';
+import { getErrorMessage } from '../lib/errorHandler';
 
 interface MessageWithEvidence {
   message: ChatMessage;
@@ -33,7 +46,7 @@ export function KbChatPage() {
   useEffect(() => {
     listKnowledgeBases()
       .then((res) => setKnowledgeBases(res.items))
-      .catch((e) => setError(e.message));
+      .catch((e) => setError(getErrorMessage(e)));
   }, []);
 
   // 切换知识库选择
@@ -62,8 +75,8 @@ export function KbChatPage() {
       });
       setSession(newSession);
       setMessages([]);
-    } catch (e: any) {
-      setError(e.message);
+    } catch (e) {
+      setError(getErrorMessage(e));
     } finally {
       setLoading(false);
     }
@@ -96,8 +109,8 @@ export function KbChatPage() {
         evidence: response.evidence,
       };
       setMessages((prev) => [...prev, assistantMsg]);
-    } catch (e: any) {
-      setError(e.message);
+    } catch (e) {
+      setError(getErrorMessage(e));
     } finally {
       setLoading(false);
     }
@@ -111,228 +124,137 @@ export function KbChatPage() {
   }, []);
 
   return (
-    <div style={{ maxWidth: 900, margin: '0 auto', padding: 24 }}>
-      <h1 style={{ fontSize: 24, fontWeight: 600, marginBottom: 24 }}>
-        知识库代理
-      </h1>
+    <Container maxWidth="md" sx={{ py: 3 }}>
+      <PageHeader title="知识库代理" />
 
       {!session ? (
         // 知识库选择界面
-        <div>
-          <h2 style={{ fontSize: 16, fontWeight: 500, marginBottom: 16 }}>
+        <Stack spacing={3}>
+          <Typography variant="subtitle1" fontWeight={500}>
             选择知识库
-          </h2>
+          </Typography>
 
-          {knowledgeBases.length === 0 ? (
-            <div style={{ color: '#6b7280', padding: 16 }}>
-              暂无可用知识库，请先创建知识库并导入资料
-            </div>
-          ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 24 }}>
-              {knowledgeBases.map((kb) => (
-                <label
-                  key={kb.id}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'flex-start',
-                    gap: 12,
-                    padding: 12,
-                    border: '1px solid #e5e7eb',
-                    borderRadius: 8,
-                    cursor: 'pointer',
-                    background: selectedKbIds.includes(kb.id) ? '#eff6ff' : '#fff',
-                  }}
-                >
-                  <input
-                    type="checkbox"
-                    checked={selectedKbIds.includes(kb.id)}
-                    onChange={() => toggleKb(kb.id)}
-                    style={{ marginTop: 2 }}
-                  />
-                  <div>
-                    <div style={{ fontWeight: 500 }}>{kb.name}</div>
-                    {kb.description && (
-                      <div style={{ fontSize: 14, color: '#6b7280', marginTop: 4 }}>
-                        {kb.description}
-                      </div>
-                    )}
-                    {kb.tags && kb.tags.length > 0 && (
-                      <div style={{ display: 'flex', gap: 4, marginTop: 8 }}>
-                        {kb.tags.map((tag) => (
-                          <span
-                            key={tag}
-                            style={{
-                              fontSize: 12,
-                              padding: '2px 8px',
-                              background: '#e5e7eb',
-                              borderRadius: 4,
-                            }}
-                          >
-                            {tag}
-                          </span>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                </label>
-              ))}
-            </div>
-          )}
+          <KnowledgeBaseSelector
+            knowledgeBases={knowledgeBases}
+            selectedIds={selectedKbIds}
+            onToggle={toggleKb}
+            loading={loading}
+          />
 
-          <button
+          <Button
+            variant="contained"
             onClick={startSession}
-            disabled={selectedKbIds.length === 0 || loading}
-            style={{
-              padding: '10px 20px',
-              background: selectedKbIds.length === 0 ? '#9ca3af' : '#3b82f6',
-              color: '#fff',
-              border: 'none',
-              borderRadius: 8,
-              cursor: selectedKbIds.length === 0 ? 'not-allowed' : 'pointer',
-              fontSize: 14,
-              fontWeight: 500,
-            }}
+            disabled={selectedKbIds.length === 0}
+            loading={loading}
+            sx={{ alignSelf: 'flex-start' }}
           >
-            {loading ? '创建中...' : '开始对话'}
-          </button>
-        </div>
+            开始对话
+          </Button>
+        </Stack>
       ) : (
         // 对话界面
-        <div>
-          <div
-            style={{
+        <Stack spacing={2}>
+          <Paper
+            variant="outlined"
+            sx={{
               display: 'flex',
               justifyContent: 'space-between',
               alignItems: 'center',
-              marginBottom: 16,
-              padding: 12,
-              background: '#f3f4f6',
-              borderRadius: 8,
+              p: 1.5,
+              bgcolor: 'grey.50',
             }}
           >
-            <div style={{ fontSize: 14, color: '#6b7280' }}>
+            <Typography variant="body2" color="text.secondary">
               已选择 {session.selected_kb_ids?.length || 0} 个知识库
-            </div>
-            <button
+            </Typography>
+            <Button
+              variant="outlined"
+              size="small"
+              startIcon={<RestartAltIcon />}
               onClick={resetSession}
-              style={{
-                padding: '6px 12px',
-                background: '#fff',
-                border: '1px solid #d1d5db',
-                borderRadius: 6,
-                cursor: 'pointer',
-                fontSize: 14,
-              }}
             >
               重新选择
-            </button>
-          </div>
+            </Button>
+          </Paper>
 
           {/* 消息列表 */}
-          <div
-            style={{
+          <Paper
+            variant="outlined"
+            sx={{
               minHeight: 400,
               maxHeight: 600,
               overflowY: 'auto',
-              marginBottom: 16,
-              padding: 16,
-              border: '1px solid #e5e7eb',
-              borderRadius: 8,
+              p: 2,
             }}
           >
             {messages.length === 0 ? (
-              <div style={{ color: '#9ca3af', textAlign: 'center', padding: 40 }}>
+              <Box sx={{ color: 'text.disabled', textAlign: 'center', py: 5 }}>
                 开始提问吧
-              </div>
+              </Box>
             ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-                {messages.map((item, index) => (
-                  <div key={index}>
-                    <div
-                      style={{
+              <Stack spacing={2}>
+                {messages.map((item) => (
+                  <Box key={item.message.id}>
+                    <Box
+                      sx={{
                         display: 'flex',
-                        justifyContent:
-                          item.message.role === 'user' ? 'flex-end' : 'flex-start',
+                        justifyContent: item.message.role === 'user' ? 'flex-end' : 'flex-start',
                       }}
                     >
-                      <div
-                        style={{
+                      <Paper
+                        sx={{
                           maxWidth: '80%',
-                          padding: 12,
-                          borderRadius: 12,
-                          background:
-                            item.message.role === 'user' ? '#3b82f6' : '#f3f4f6',
-                          color: item.message.role === 'user' ? '#fff' : '#111827',
+                          p: 1.5,
+                          bgcolor: item.message.role === 'user' ? 'primary.main' : 'grey.100',
+                          color: item.message.role === 'user' ? 'primary.contrastText' : 'text.primary',
+                          borderRadius: 3,
                           whiteSpace: 'pre-wrap',
                         }}
+                        elevation={0}
                       >
                         {item.message.content}
-                      </div>
-                    </div>
+                      </Paper>
+                    </Box>
                     {item.evidence && item.evidence.length > 0 && (
-                      <div style={{ marginTop: 12, marginLeft: 16 }}>
+                      <Box sx={{ mt: 1.5, ml: 2 }}>
                         <EvidenceList evidence={item.evidence} />
-                      </div>
+                      </Box>
                     )}
-                  </div>
+                  </Box>
                 ))}
-              </div>
+              </Stack>
             )}
-          </div>
+          </Paper>
 
           {/* 输入框 */}
-          <div style={{ display: 'flex', gap: 8 }}>
-            <input
-              type="text"
+          <Stack direction="row" spacing={1}>
+            <TextField
+              fullWidth
+              size="small"
+              placeholder="输入你的问题..."
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && handleSend()}
-              placeholder="输入你的问题..."
               disabled={loading}
-              style={{
-                flex: 1,
-                padding: '10px 14px',
-                border: '1px solid #d1d5db',
-                borderRadius: 8,
-                fontSize: 14,
-                outline: 'none',
-              }}
             />
-            <button
+            <IconButton
+              color="primary"
               onClick={handleSend}
               disabled={!input.trim() || loading}
-              style={{
-                padding: '10px 20px',
-                background: !input.trim() || loading ? '#9ca3af' : '#3b82f6',
-                color: '#fff',
-                border: 'none',
-                borderRadius: 8,
-                cursor: !input.trim() || loading ? 'not-allowed' : 'pointer',
-                fontSize: 14,
-                fontWeight: 500,
+              sx={{
+                bgcolor: 'primary.main',
+                color: 'primary.contrastText',
+                '&:hover': { bgcolor: 'primary.dark' },
+                '&.Mui-disabled': { bgcolor: 'action.disabledBackground' },
               }}
             >
-              {loading ? '思考中...' : '发送'}
-            </button>
-          </div>
-        </div>
+              <SendIcon />
+            </IconButton>
+          </Stack>
+        </Stack>
       )}
 
-      {error && (
-        <div
-          style={{
-            marginTop: 16,
-            padding: 12,
-            background: '#fef2f2',
-            border: '1px solid #fecaca',
-            borderRadius: 8,
-            color: '#dc2626',
-            fontSize: 14,
-          }}
-        >
-          {error}
-        </div>
-      )}
-    </div>
+      <ErrorAlert error={error} onClose={() => setError(null)} />
+    </Container>
   );
 }

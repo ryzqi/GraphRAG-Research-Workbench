@@ -1,9 +1,20 @@
 /**
  * 深度研究页面
  */
-
 import { useCallback, useEffect, useState } from 'react';
+import {
+  Box,
+  Container,
+  Paper,
+  Stack,
+  TextField,
+  Typography,
+} from '@mui/material';
+import DownloadIcon from '@mui/icons-material/Download';
+import RefreshIcon from '@mui/icons-material/Refresh';
+import { KnowledgeBaseSelector } from '../components/KnowledgeBaseSelector';
 import { KnowledgeUpdateSubmit } from '../components/KnowledgeUpdateSubmit';
+import { Button, ErrorAlert, PageHeader, StatusBadge } from '../components/ui';
 import type { AgentRun } from '../services/chats';
 import { createExport, pollExportUntilDone } from '../services/exports';
 import { type KnowledgeBase, listKnowledgeBases } from '../services/knowledgeBases';
@@ -13,6 +24,8 @@ import {
   getResearchReport,
   getResearchRun,
 } from '../services/research';
+import { getErrorMessage } from '../lib/errorHandler';
+import { usePolling } from '../hooks/usePolling';
 import { safeOpenDownloadUrl } from '../utils/urlValidation';
 
 export function ResearchPage() {
@@ -29,29 +42,33 @@ export function ResearchPage() {
   useEffect(() => {
     listKnowledgeBases()
       .then((res) => setKnowledgeBases(res.items))
-      .catch((e) => setError(e.message));
+      .catch((e) => setError(getErrorMessage(e)));
   }, []);
 
-  // 轮询研究状态
-  useEffect(() => {
-    if (!run || run.status !== 'running') return;
-
-    const interval = setInterval(async () => {
-      try {
-        const updated = await getResearchRun(run.id);
+  // 使用 usePolling 轮询研究状态
+  usePolling(
+    async (signal) => {
+      if (!run) throw new Error('No run');
+      return getResearchRun(run.id);
+    },
+    {
+      enabled: !!run && run.status === 'running',
+      interval: 2000,
+      onSuccess: async (updated) => {
         setRun(updated);
-
         if (updated.status === 'succeeded') {
-          const rpt = await getResearchReport(run.id);
-          setReport(rpt);
+          try {
+            const rpt = await getResearchReport(updated.id);
+            setReport(rpt);
+          } catch (e) {
+            setError(getErrorMessage(e));
+          }
         }
-      } catch (e: any) {
-        setError(e.message);
-      }
-    }, 2000);
-
-    return () => clearInterval(interval);
-  }, [run]);
+      },
+      onError: (e) => setError(getErrorMessage(e)),
+      shouldContinue: (data) => data.status === 'running',
+    }
+  );
 
   const toggleKb = useCallback((kbId: string) => {
     setSelectedKbIds((prev) =>
@@ -78,8 +95,8 @@ export function ResearchPage() {
         mode: 'single_agent',
       });
       setRun(newRun);
-    } catch (e: any) {
-      setError(e.message);
+    } catch (e) {
+      setError(getErrorMessage(e));
     } finally {
       setLoading(false);
     }
@@ -102,8 +119,8 @@ export function ResearchPage() {
       } else {
         setError(completed.error_message || '导出失败');
       }
-    } catch (e: any) {
-      setError(e.message);
+    } catch (e) {
+      setError(getErrorMessage(e));
     } finally {
       setExporting(false);
     }
@@ -116,234 +133,149 @@ export function ResearchPage() {
     setError(null);
   }, []);
 
+  const getStatusLabel = (status: string) => {
+    switch (status) {
+      case 'running':
+        return '研究中...';
+      case 'succeeded':
+        return '已完成';
+      default:
+        return '失败';
+    }
+  };
+
   return (
-    <div style={{ maxWidth: 900, margin: '0 auto', padding: 24 }}>
-      <h1 style={{ fontSize: 24, fontWeight: 600, marginBottom: 24 }}>深度研究</h1>
+    <Container maxWidth="md" sx={{ py: 3 }}>
+      <PageHeader title="深度研究" />
 
       {!run ? (
-        <div>
-          <h2 style={{ fontSize: 16, fontWeight: 500, marginBottom: 16 }}>
+        <Stack spacing={3}>
+          <Typography variant="subtitle1" fontWeight={500}>
             选择知识库范围
-          </h2>
+          </Typography>
 
-          {knowledgeBases.length === 0 ? (
-            <div style={{ color: '#6b7280', padding: 16 }}>
-              暂无可用知识库
-            </div>
-          ) : (
-            <div
-              style={{
-                display: 'flex',
-                flexDirection: 'column',
-                gap: 8,
-                marginBottom: 24,
-              }}
-            >
-              {knowledgeBases.map((kb) => (
-                <label
-                  key={kb.id}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 12,
-                    padding: 12,
-                    border: '1px solid #e5e7eb',
-                    borderRadius: 8,
-                    cursor: 'pointer',
-                    background: selectedKbIds.includes(kb.id) ? '#eff6ff' : '#fff',
-                  }}
-                >
-                  <input
-                    type="checkbox"
-                    checked={selectedKbIds.includes(kb.id)}
-                    onChange={() => toggleKb(kb.id)}
-                  />
-                  <div>
-                    <div style={{ fontWeight: 500 }}>{kb.name}</div>
-                    {kb.description && (
-                      <div style={{ fontSize: 14, color: '#6b7280' }}>
-                        {kb.description}
-                      </div>
-                    )}
-                  </div>
-                </label>
-              ))}
-            </div>
-          )}
+          <KnowledgeBaseSelector
+            knowledgeBases={knowledgeBases}
+            selectedIds={selectedKbIds}
+            onToggle={toggleKb}
+            loading={loading}
+          />
 
-          <div style={{ marginBottom: 24 }}>
-            <label style={{ display: 'block', fontSize: 14, marginBottom: 8 }}>
+          <Box>
+            <Typography variant="body2" sx={{ mb: 1 }}>
               研究问题
-            </label>
-            <textarea
+            </Typography>
+            <TextField
+              fullWidth
+              multiline
+              rows={4}
+              placeholder="输入需要深度研究的问题..."
               value={question}
               onChange={(e) => setQuestion(e.target.value)}
-              placeholder="输入需要深度研究的问题..."
-              rows={4}
-              style={{
-                width: '100%',
-                padding: '10px 14px',
-                border: '1px solid #d1d5db',
-                borderRadius: 8,
-                fontSize: 14,
-                resize: 'vertical',
-              }}
             />
-          </div>
+          </Box>
 
-          <button
+          <Button
+            variant="contained"
             onClick={startResearch}
-            disabled={selectedKbIds.length === 0 || !question.trim() || loading}
-            style={{
-              padding: '10px 20px',
-              background:
-                selectedKbIds.length === 0 || !question.trim() || loading
-                  ? '#9ca3af'
-                  : '#3b82f6',
-              color: '#fff',
-              border: 'none',
-              borderRadius: 8,
-              cursor:
-                selectedKbIds.length === 0 || !question.trim() || loading
-                  ? 'not-allowed'
-                  : 'pointer',
-              fontSize: 14,
-              fontWeight: 500,
-            }}
+            disabled={selectedKbIds.length === 0 || !question.trim()}
+            loading={loading}
+            sx={{ alignSelf: 'flex-start' }}
           >
-            {loading ? '创建中...' : '开始研究'}
-          </button>
-        </div>
+            开始研究
+          </Button>
+        </Stack>
       ) : (
-        <div>
-          <div
-            style={{
+        <Stack spacing={2}>
+          <Paper
+            variant="outlined"
+            sx={{
               display: 'flex',
               justifyContent: 'space-between',
               alignItems: 'center',
-              marginBottom: 16,
-              padding: 12,
-              background: '#f3f4f6',
-              borderRadius: 8,
+              p: 1.5,
+              bgcolor: 'grey.50',
             }}
           >
-            <div>
-              <div style={{ fontWeight: 500 }}>研究问题</div>
-              <div style={{ fontSize: 14, color: '#6b7280' }}>{run.question}</div>
-            </div>
-            <button
+            <Box>
+              <Typography fontWeight={500}>研究问题</Typography>
+              <Typography variant="body2" color="text.secondary">
+                {run.question}
+              </Typography>
+            </Box>
+            <Button
+              variant="outlined"
+              size="small"
+              startIcon={<RefreshIcon />}
               onClick={reset}
-              style={{
-                padding: '6px 12px',
-                background: '#fff',
-                border: '1px solid #d1d5db',
-                borderRadius: 6,
-                cursor: 'pointer',
-                fontSize: 14,
-              }}
             >
               新研究
-            </button>
-          </div>
+            </Button>
+          </Paper>
 
           {/* 状态与阶段摘要 */}
-          <div
-            style={{
-              marginBottom: 16,
-              padding: 16,
-              border: '1px solid #e5e7eb',
-              borderRadius: 8,
-            }}
-          >
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-              <span style={{ fontWeight: 500 }}>状态：</span>
-              <span
-                style={{
-                  padding: '2px 8px',
-                  borderRadius: 4,
-                  fontSize: 13,
-                  background:
-                    run.status === 'running'
-                      ? '#fef3c7'
-                      : run.status === 'succeeded'
-                        ? '#d1fae5'
-                        : '#fee2e2',
-                  color:
-                    run.status === 'running'
-                      ? '#92400e'
-                      : run.status === 'succeeded'
-                        ? '#065f46'
-                        : '#991b1b',
-                }}
-              >
-                {run.status === 'running'
-                  ? '研究中...'
-                  : run.status === 'succeeded'
-                    ? '已完成'
-                    : '失败'}
-              </span>
-            </div>
+          <Paper variant="outlined" sx={{ p: 2 }}>
+            <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 1.5 }}>
+              <Typography fontWeight={500}>状态：</Typography>
+              <StatusBadge status={run.status as 'running' | 'succeeded' | 'failed'}>
+                {getStatusLabel(run.status)}
+              </StatusBadge>
+            </Stack>
 
             {run.stage_summaries && Object.keys(run.stage_summaries).length > 0 && (
-              <div>
-                <div style={{ fontSize: 14, fontWeight: 500, marginBottom: 8 }}>
+              <Box>
+                <Typography variant="body2" fontWeight={500} sx={{ mb: 1 }}>
                   阶段摘要
-                </div>
-                <div style={{ fontSize: 13, color: '#6b7280' }}>
+                </Typography>
+                <Box sx={{ fontSize: 13, color: 'text.secondary' }}>
                   {Object.entries(run.stage_summaries).map(([stage, summary]) => (
-                    <div key={stage} style={{ marginBottom: 4 }}>
-                      <span style={{ fontWeight: 500 }}>{stage}：</span>
+                    <Box key={stage} sx={{ mb: 0.5 }}>
+                      <Typography
+                        component="span"
+                        variant="body2"
+                        fontWeight={500}
+                      >
+                        {stage}：
+                      </Typography>
                       {typeof summary === 'object'
                         ? JSON.stringify(summary)
                         : String(summary)}
-                    </div>
+                    </Box>
                   ))}
-                </div>
-              </div>
+                </Box>
+              </Box>
             )}
-          </div>
+          </Paper>
 
           {/* 研究报告 */}
           {report && (
-            <div
-              style={{
-                marginBottom: 16,
-                padding: 16,
-                border: '1px solid #e5e7eb',
-                borderRadius: 8,
-              }}
-            >
-              <div
-                style={{
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                  marginBottom: 12,
-                }}
+            <Paper variant="outlined" sx={{ p: 2 }}>
+              <Stack
+                direction="row"
+                justifyContent="space-between"
+                alignItems="center"
+                sx={{ mb: 1.5 }}
               >
-                <h3 style={{ fontSize: 16, fontWeight: 600 }}>研究报告</h3>
-                <button
+                <Typography variant="subtitle1" fontWeight={600}>
+                  研究报告
+                </Typography>
+                <Button
+                  variant="contained"
+                  color="success"
+                  size="small"
+                  startIcon={<DownloadIcon />}
                   onClick={handleExport}
-                  disabled={exporting}
-                  style={{
-                    padding: '6px 12px',
-                    background: exporting ? '#9ca3af' : '#10b981',
-                    color: '#fff',
-                    border: 'none',
-                    borderRadius: 6,
-                    cursor: exporting ? 'not-allowed' : 'pointer',
-                    fontSize: 13,
-                  }}
+                  loading={exporting}
                 >
-                  {exporting ? '导出中...' : '导出报告'}
-                </button>
-              </div>
+                  导出报告
+                </Button>
+              </Stack>
 
-              <div
-                style={{
-                  padding: 16,
-                  background: '#fafafa',
-                  borderRadius: 8,
+              <Paper
+                elevation={0}
+                sx={{
+                  p: 2,
+                  bgcolor: 'grey.50',
                   whiteSpace: 'pre-wrap',
                   fontSize: 14,
                   lineHeight: 1.6,
@@ -352,23 +284,23 @@ export function ResearchPage() {
                 }}
               >
                 {report.content_md}
-              </div>
+              </Paper>
 
               {report.citations && report.citations.length > 0 && (
-                <div style={{ marginTop: 16 }}>
-                  <h4 style={{ fontSize: 14, fontWeight: 500, marginBottom: 8 }}>
+                <Box sx={{ mt: 2 }}>
+                  <Typography variant="body2" fontWeight={500} sx={{ mb: 1 }}>
                     引用 ({report.citations.length})
-                  </h4>
-                  <div style={{ fontSize: 13, color: '#6b7280' }}>
+                  </Typography>
+                  <Box sx={{ fontSize: 13, color: 'text.secondary' }}>
                     {report.citations.map((c, i) => (
-                      <div key={i} style={{ marginBottom: 4 }}>
+                      <Box key={i} sx={{ mb: 0.5 }}>
                         [{c.index || i + 1}] {(c.excerpt as string)?.slice(0, 100)}...
-                      </div>
+                      </Box>
                     ))}
-                  </div>
-                </div>
+                  </Box>
+                </Box>
               )}
-            </div>
+            </Paper>
           )}
 
           {/* 提交沉淀 */}
@@ -379,24 +311,10 @@ export function ResearchPage() {
               reportContent={report?.content_md}
             />
           )}
-        </div>
+        </Stack>
       )}
 
-      {error && (
-        <div
-          style={{
-            marginTop: 16,
-            padding: 12,
-            background: '#fef2f2',
-            border: '1px solid #fecaca',
-            borderRadius: 8,
-            color: '#dc2626',
-            fontSize: 14,
-          }}
-        >
-          {error}
-        </div>
-      )}
-    </div>
+      <ErrorAlert error={error} onClose={() => setError(null)} />
+    </Container>
   );
 }

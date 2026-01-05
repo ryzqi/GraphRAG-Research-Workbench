@@ -8,6 +8,23 @@ interface EvidenceListProps {
   evidence: EvidenceItem[];
 }
 
+/**
+ * 生成证据项的唯一 key
+ */
+function getEvidenceKey(item: EvidenceItem, index: number): string {
+  // 优先使用 locator 中的 chunk_id
+  if (item.locator?.chunk_id) {
+    return `chunk-${item.locator.chunk_id}`;
+  }
+  // 其次使用 kb_id + material_id 组合
+  if (item.kb_id && item.material_id) {
+    return `kb-${item.kb_id}-mat-${item.material_id}-${index}`;
+  }
+  // 最后使用 excerpt 的 hash 作为 key
+  const excerptHash = item.excerpt.slice(0, 50).replace(/\s+/g, '-');
+  return `${item.source_kind}-${excerptHash}-${index}`;
+}
+
 export function EvidenceList({ evidence }: EvidenceListProps) {
   if (evidence.length === 0) {
     return (
@@ -24,7 +41,7 @@ export function EvidenceList({ evidence }: EvidenceListProps) {
       </div>
       {evidence.map((item, index) => (
         <div
-          key={index}
+          key={getEvidenceKey(item, index)}
           style={{
             padding: 12,
             background: '#f9fafb',
