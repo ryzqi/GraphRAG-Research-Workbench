@@ -6,6 +6,15 @@
 - 快速开始（强烈建议先读）：`specs/001-multi-kb-agent-collab/quickstart.md`
 - API 契约（OpenAPI）：`specs/001-multi-kb-agent-collab/contracts/openapi.yaml`
 
+## 先决条件
+
+- **操作系统**：Windows 11
+- **Python**：3.13+
+- **Node.js**：20+
+- **uv**：Python 包管理器（用于后端依赖）
+- **Podman**：容器运行时（建议安装 Podman Desktop）
+- **podman-compose**：容器编排工具（`pip install podman-compose`）
+
 ## 本地运行（Windows）
 
 ### 1) 启动基础依赖（Podman）
@@ -16,6 +25,15 @@
 ```powershell
 .\infra\up.ps1
 ```
+
+> **注意**：若 `up.ps1` 脚本报错，可直接运行：
+> ```powershell
+> cd infra
+> podman-compose up -d
+> ```
+
+> **端口冲突**：若本地已安装 PostgreSQL 占用 5432 端口，需在 `.env` 中将 `POSTGRES_PORT` 改为 `5433`，并同步修改 `DATABASE_URL` 和 `MEMORY_STORE_URL` 中的端口。
+
 ### 2) 启动后端（FastAPI）
 
 ```bash
