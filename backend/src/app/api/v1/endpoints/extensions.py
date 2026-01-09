@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, Request, status
 
-from app.api.deps import AsyncSessionDep, CurrentUserDep
-from app.integrations.mcp_client import MCPClient
+from app.api.deps import AsyncSessionDep, CurrentUserDep, verify_admin_token
+from app.core.errors import not_found
 from app.models.tool_extension import ExtensionStatus
 from app.schemas.extensions import (
     ToolDescriptor,
@@ -17,21 +17,18 @@ from app.schemas.extensions import (
 )
 from app.services.extension_service import ExtensionService
 
-router = APIRouter()
-
-
-def _get_service(db: AsyncSessionDep) -> ExtensionService:
-    return ExtensionService(db, MCPClient())
+router = APIRouter(dependencies=[Depends(verify_admin_token)])
 
 
 @router.get("", response_model=list[ToolExtensionRead])
 async def list_extensions(
     db: AsyncSessionDep,
     _user: CurrentUserDep,
+    request: Request,
     status_filter: ExtensionStatus | None = None,
 ) -> list[ToolExtensionRead]:
     """获取扩展列表。"""
-    service = _get_service(db)
+    service = ExtensionService(db, request.app.state.mcp_client)
     return await service.list_extensions(status=status_filter)
 
 
@@ -39,10 +36,11 @@ async def list_extensions(
 async def create_extension(
     db: AsyncSessionDep,
     _user: CurrentUserDep,
+    request: Request,
     body: ToolExtensionCreate,
 ) -> ToolExtensionRead:
     """创建扩展。"""
-    service = _get_service(db)
+    service = ExtensionService(db, request.app.state.mcp_client)
     return await service.create_extension(body)
 
 
@@ -50,16 +48,14 @@ async def create_extension(
 async def get_extension(
     db: AsyncSessionDep,
     _user: CurrentUserDep,
+    request: Request,
     extension_id: uuid.UUID,
 ) -> ToolExtensionRead:
     """获取扩展详情。"""
-    service = _get_service(db)
+    service = ExtensionService(db, request.app.state.mcp_client)
     ext = await service.get_extension(extension_id)
     if not ext:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="扩展不存在",
-        )
+        raise not_found("扩展不存在", code="EXTENSION_NOT_FOUND")
     return ext
 
 
@@ -67,17 +63,15 @@ async def get_extension(
 async def update_extension(
     db: AsyncSessionDep,
     _user: CurrentUserDep,
+    request: Request,
     extension_id: uuid.UUID,
     body: ToolExtensionUpdate,
 ) -> ToolExtensionRead:
     """更新扩展。"""
-    service = _get_service(db)
+    service = ExtensionService(db, request.app.state.mcp_client)
     ext = await service.update_extension(extension_id, body)
     if not ext:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="扩展不存在",
-        )
+        raise not_found("扩展不存在", code="EXTENSION_NOT_FOUND")
     return ext
 
 
@@ -85,30 +79,26 @@ async def update_extension(
 async def delete_extension(
     db: AsyncSessionDep,
     _user: CurrentUserDep,
+    request: Request,
     extension_id: uuid.UUID,
 ) -> None:
     """删除扩展。"""
-    service = _get_service(db)
+    service = ExtensionService(db, request.app.state.mcp_client)
     deleted = await service.delete_extension(extension_id)
     if not deleted:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="扩展不存在",
-        )
+        raise not_found("扩展不存在", code="EXTENSION_NOT_FOUND")
 
 
 @router.get("/{extension_id}/tools", response_model=list[ToolDescriptor])
 async def get_extension_tools(
     db: AsyncSessionDep,
     _user: CurrentUserDep,
+    request: Request,
     extension_id: uuid.UUID,
 ) -> list[ToolDescriptor]:
     """获取扩展提供的工具列表。"""
-    service = _get_service(db)
+    service = ExtensionService(db, request.app.state.mcp_client)
     ext = await service.get_extension(extension_id)
     if not ext:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="扩展不存在",
-        )
+        raise not_found("扩展不存在", code="EXTENSION_NOT_FOUND")
     return await service.get_tools(extension_id)

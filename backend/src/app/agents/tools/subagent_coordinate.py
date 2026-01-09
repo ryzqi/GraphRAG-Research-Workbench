@@ -73,9 +73,8 @@ class SubagentCoordinator:
 
         try:
             if self.model is None:
-                output = await self._execute_mock(task)
-            else:
-                output = await self._execute_with_agent(task)
+                raise RuntimeError("未配置 DeepAgents 模型，无法执行 subagent_coordinate")
+            output = await self._execute_with_agent(task)
 
             duration_ms = int((time.time() - start_time) * 1000)
             return TaskResult(
@@ -101,22 +100,12 @@ class SubagentCoordinator:
                 duration_ms=duration_ms,
             )
 
-    async def _execute_mock(self, task: SubagentTask) -> dict:
-        """模拟执行（无 DeepAgents 时）。"""
-        await asyncio.sleep(0.1)
-        return {
-            "task_id": task.task_id,
-            "task_type": task.task_type,
-            "result": f"模拟执行结果: {task.instruction[:50]}...",
-            "note": "请配置 DeepAgents 以启用真实子代理执行",
-        }
-
     async def _execute_with_agent(self, task: SubagentTask) -> object:
         """使用 DeepAgents 执行任务。"""
         try:
             from deepagents import create_deep_agent
-        except ImportError:
-            return await self._execute_mock(task)
+        except ImportError as exc:
+            raise RuntimeError("未安装 deepagents 依赖，无法执行 subagent_coordinate") from exc
 
         agent = create_deep_agent(
             model=self.model,

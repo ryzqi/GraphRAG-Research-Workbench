@@ -130,7 +130,7 @@ class GeneralChatGraph:
 
         # 收集内置工具
         builtin_tools: list[tuple[str, str, str]] = []
-        if self._settings:
+        if self._settings and self._settings.web_search_api_key:
             web_tool = build_web_search_tool(self._settings)
             builtin_tools.append(("builtin", "web_search", web_tool.description))
 
@@ -254,7 +254,7 @@ class GeneralChatGraph:
 
             if is_builtin and tool_call["tool_name"] == "web_search":
                 # 执行内置 Web 搜索工具
-                if self._settings:
+                if self._settings and self._settings.web_search_api_key:
                     web_tool = build_web_search_tool(self._settings)
                     try:
                         output = await web_tool.ainvoke(tool_call["args"])
@@ -276,7 +276,7 @@ class GeneralChatGraph:
                         "tool_name": tool_call["tool_name"],
                         "extension_name": tool_call["extension_name"],
                         "success": False,
-                        "output": "未配置 settings，无法执行内置工具",
+                        "output": "未配置 WEB_SEARCH_API_KEY，无法执行内置工具 web_search",
                     })
             else:
                 # 执行 MCP 扩展工具

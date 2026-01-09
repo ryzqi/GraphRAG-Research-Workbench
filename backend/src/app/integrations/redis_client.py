@@ -14,4 +14,9 @@ RedisClient = Redis
 def get_redis() -> RedisClient:
     """获取带 decode_responses 的 Redis 客户端单例。"""
     settings = get_settings()
-    return Redis.from_url(settings.redis_url, decode_responses=True)
+    return Redis.from_url(
+        settings.redis_url,
+        decode_responses=True,
+        socket_timeout=1.0,
+        socket_connect_timeout=1.0,
+    )

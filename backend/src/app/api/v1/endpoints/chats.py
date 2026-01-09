@@ -4,13 +4,10 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Request, status
 
 from app.api.deps import AsyncSessionDep, CurrentUserDep
-from app.integrations.embedding_client import EmbeddingClient
-from app.integrations.llm_client import LLMClient
-from app.integrations.mcp_client import MCPClient
-from app.integrations.milvus_client import MilvusClient
+from app.core.errors import bad_request, not_found
 from app.models.chat_session import ChatSession, ChatSessionType
 from app.schemas.chats import (
     ChatAnswerResponse,
@@ -33,9 +30,9 @@ async def create_chat_session(
     """创建会话。"""
     # kb_chat 必须选择知识库
     if body.session_type == ChatSessionType.KB_CHAT and not body.selected_kb_ids:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="kb_chat 类型必须选择至少一个知识库",
+        raise bad_request(
+            code="CHAT_MISSING_KB_IDS",
+            message="kb_chat 类型必须选择至少一个知识库",
         )
 
     session = ChatSession(
@@ -59,10 +56,7 @@ async def get_chat_session(
     """获取会话详情。"""
     session = await db.get(ChatSession, session_id)
     if not session:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="会话不存在",
-        )
+        raise not_found("会话不存在", code="CHAT_SESSION_NOT_FOUND")
     return ChatSessionRead.model_validate(session)
 
 
@@ -70,34 +64,30 @@ async def get_chat_session(
 async def create_chat_message(
     db: AsyncSessionDep,
     _user: CurrentUserDep,
+    request: Request,
     session_id: uuid.UUID,
     body: ChatMessageCreate,
 ) -> ChatAnswerResponse:
     """发送消息并获得回答。"""
     session = await db.get(ChatSession, session_id)
     if not session:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="会话不存在",
-        )
+        raise not_found("会话不存在", code="CHAT_SESSION_NOT_FOUND")
 
-    llm = LLMClient()
+    llm = request.app.state.llm_client
 
     if session.session_type == ChatSessionType.KB_CHAT:
         # 知识库问答
-        milvus = MilvusClient()
-        embedding = EmbeddingClient()
-        service = KbChatService(db, llm, milvus, embedding)
+        milvus = request.app.state.milvus_client
+        embedding = request.app.state.embedding_client
+        reranker = request.app.state.rerank_client
+        service = KbChatService(db, llm, milvus, embedding, reranker=reranker)
         return await service.answer(session=session, user_content=body.content)
 
     elif session.session_type == ChatSessionType.GENERAL_CHAT:
         # 全能代理
-        mcp = MCPClient()
+        mcp = request.app.state.mcp_client
         service = GeneralChatService(db, llm, mcp)
         return await service.answer(session=session, user_content=body.content)
 
     else:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="不支持的会话类型",
-        )
+        raise bad_request(code="CHAT_UNSUPPORTED_SESSION_TYPE", message="不支持的会话类型")

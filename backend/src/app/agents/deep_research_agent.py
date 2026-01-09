@@ -174,7 +174,8 @@ class DeepResearchAgent:
         ]
 
         if allow_external:
-            tools.append(build_web_search_tool(self._settings))
+            if self._settings.web_search_api_key:
+                tools.append(build_web_search_tool(self._settings))
             if self._extensions:
                 tools.extend(await build_mcp_tools(self._mcp, self._extensions))
 

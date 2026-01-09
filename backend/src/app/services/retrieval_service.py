@@ -120,7 +120,11 @@ class RetrievalService:
         """获取查询向量（带缓存）。"""
         if self._redis and self._settings.retrieval_cache_enabled:
             cache_key = self._embedding_cache_key(query)
-            cached = await self._redis.get(cache_key)
+            try:
+                cached = await self._redis.get(cache_key)
+            except Exception as exc:  # pragma: no cover
+                logger.warning("Embedding 缓存读取失败，跳过缓存", extra={"error": str(exc)})
+                cached = None
             if cached:
                 logger.debug("Embedding 缓存命中", extra={"query": query[:50]})
                 return json.loads(cached)
@@ -136,11 +140,14 @@ class RetrievalService:
 
         # 缓存 embedding（TTL 较长，因为相同文本的 embedding 不变）
         if self._redis and self._settings.retrieval_cache_enabled:
-            await self._redis.set(
-                self._embedding_cache_key(query),
-                json.dumps(embeddings[0]),
-                ex=self._settings.retrieval_cache_ttl_seconds * 2,
-            )
+            try:
+                await self._redis.set(
+                    self._embedding_cache_key(query),
+                    json.dumps(embeddings[0]),
+                    ex=self._settings.retrieval_cache_ttl_seconds * 2,
+                )
+            except Exception as exc:  # pragma: no cover
+                logger.warning("Embedding 缓存写入失败，跳过缓存", extra={"error": str(exc)})
 
         return embeddings[0]
 
@@ -156,7 +163,11 @@ class RetrievalService:
 
         cache_key = self._rewrite_cache_key(query)
         if self._redis and self._settings.retrieval_cache_enabled:
-            cached = await self._redis.get(cache_key)
+            try:
+                cached = await self._redis.get(cache_key)
+            except Exception as exc:  # pragma: no cover
+                logger.warning("Rewrite 缓存读取失败，跳过缓存", extra={"error": str(exc)})
+                cached = None
             if cached:
                 return RewriteResult(
                     query=cached,
@@ -170,11 +181,14 @@ class RetrievalService:
         result = await rewriter.rewrite(query)
 
         if self._redis and self._settings.retrieval_cache_enabled and result.query:
-            await self._redis.set(
-                cache_key,
-                result.query,
-                ex=self._settings.retrieval_cache_ttl_seconds,
-            )
+            try:
+                await self._redis.set(
+                    cache_key,
+                    result.query,
+                    ex=self._settings.retrieval_cache_ttl_seconds,
+                )
+            except Exception as exc:  # pragma: no cover
+                logger.warning("Rewrite 缓存写入失败，跳过缓存", extra={"error": str(exc)})
 
         return result
 
@@ -254,7 +268,11 @@ class RetrievalService:
         strategy = self._strategy_fingerprint(top_k)
         cache_key = self._cache_key(effective_query, kb_ids, top_k, strategy)
         if self._redis and self._settings.retrieval_cache_enabled:
-            cached = await self._redis.get(cache_key)
+            try:
+                cached = await self._redis.get(cache_key)
+            except Exception as exc:  # pragma: no cover
+                logger.warning("检索缓存读取失败，跳过缓存", extra={"error": str(exc)})
+                cached = None
             if cached:
                 results = await self._load_from_cache(cached)
                 results, filtered_count = self._apply_min_score(results)
@@ -368,11 +386,14 @@ class RetrievalService:
             cache_data = [
                 {"chunk_id": str(r.chunk.id), "score": r.score} for r in results
             ]
-            await self._redis.set(
-                cache_key,
-                json.dumps(cache_data),
-                ex=self._settings.retrieval_cache_ttl_seconds,
-            )
+            try:
+                await self._redis.set(
+                    cache_key,
+                    json.dumps(cache_data),
+                    ex=self._settings.retrieval_cache_ttl_seconds,
+                )
+            except Exception as exc:  # pragma: no cover
+                logger.warning("检索缓存写入失败，跳过缓存", extra={"error": str(exc)})
 
         self._last_stats = RetrievalStats(
             query=query,

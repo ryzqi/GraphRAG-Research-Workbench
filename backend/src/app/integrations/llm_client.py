@@ -5,7 +5,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import random
 import time
 from dataclasses import dataclass, field
 
@@ -37,8 +39,9 @@ class LLMResponse:
 class LLMClient:
     """LLM 客户端。"""
 
-    def __init__(self) -> None:
+    def __init__(self, http_client: httpx.AsyncClient | None = None) -> None:
         settings = get_settings()
+        self._http_client = http_client
         self._base_url = settings.llm_base_url.rstrip("/")
         self._api_key = settings.llm_api_key
         self._model = settings.llm_model
@@ -69,10 +72,13 @@ class LLMClient:
         start_time = time.perf_counter()
         last_exc: Exception | None = None
 
-        async with httpx.AsyncClient(timeout=timeout_seconds) as client:
+        async def _run(client: httpx.AsyncClient) -> LLMResponse:
+            nonlocal last_exc
             for attempt in range(2):
                 try:
-                    resp = await client.post(url, json=payload, headers=headers)
+                    resp = await client.post(
+                        url, json=payload, headers=headers, timeout=timeout_seconds
+                    )
                     resp.raise_for_status()
                     data = resp.json()
 
@@ -99,5 +105,14 @@ class LLMClient:
                 except Exception as exc:  # pragma: no cover
                     last_exc = exc
                     logger.warning(f"LLM 调用失败 (attempt {attempt + 1}): {exc}")
+                    if attempt < 1:
+                        delay = 0.2 * (2**attempt)
+                        delay = delay * (1 + random.random() * 0.2)
+                        await asyncio.sleep(delay)
+            raise RuntimeError("LLM 调用失败") from last_exc
 
-        raise RuntimeError("LLM 调用失败") from last_exc
+        if self._http_client is not None:
+            return await _run(self._http_client)
+
+        async with httpx.AsyncClient(timeout=timeout_seconds) as client:
+            return await _run(client)

@@ -1,4 +1,8 @@
-system: |
+version: "1.0"
+name: tools_evidence_compare
+description: "证据对比分析工具提示词"
+
+template: |
   你是一个证据分析专家。请分析以下证据，检测是否存在冲突或不一致。
 
   ## 原始问题
@@ -19,3 +23,16 @@ system: |
   - recommendation: 建议（如需补充检索）
 
   只输出 JSON，不要其他内容。
+
+variables:
+  - name: question
+    type: string
+    required: true
+  - name: evidence_list
+    type: string
+    required: true
+  - name: comparison_mode
+    type: string
+    required: true
+
+few_shot_examples: []

@@ -3,7 +3,7 @@
  */
 
 // API 配置
-export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api/v1';
+export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
 
 // 轮询配置
 export const POLLING_INITIAL_INTERVAL = 1000;

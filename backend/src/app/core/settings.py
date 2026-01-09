@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     )
 
     app_name: str = "多知识库知识代理"
+    app_env: str = Field("dev", alias="APP_ENV")
     app_log_level: str = Field("INFO", alias="APP_LOG_LEVEL")
     app_cors_allow_origins: list[str] = Field(
         default_factory=lambda: ["http://localhost:5173"],
@@ -69,6 +70,10 @@ class Settings(BaseSettings):
     memory_store_backend: str = Field("postgres", alias="MEMORY_STORE_BACKEND")
     memory_store_url: str | None = Field(None, alias="MEMORY_STORE_URL")
     memory_store_path: str = Field("/memories/", alias="MEMORY_STORE_PATH")
+
+    # Web 搜索（可选）
+    web_search_backend: str = Field("tavily", alias="WEB_SEARCH_BACKEND")
+    web_search_api_key: str | None = Field(None, alias="WEB_SEARCH_API_KEY")
 
     # 检索配置
     retrieval_default_top_k: int = Field(5, alias="RETRIEVAL_DEFAULT_TOP_K")
@@ -157,6 +162,9 @@ class Settings(BaseSettings):
     jwt_algorithm: str = Field("HS256", alias="JWT_ALGORITHM")
     jwt_expire_minutes: int = Field(60 * 24, alias="JWT_EXPIRE_MINUTES")
 
+    # 内部管理接口保护（低成本方案：共享 token）
+    admin_token: str = Field("CHANGE_ME_IN_PRODUCTION", alias="ADMIN_TOKEN")
+
     # OpenTelemetry 配置
     otel_enabled: bool = Field(False, alias="OTEL_ENABLED")
     otel_endpoint: str | None = Field(None, alias="OTEL_EXPORTER_OTLP_ENDPOINT")
@@ -190,3 +198,37 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
+
+
+def _is_dev_env(app_env: str) -> bool:
+    return app_env.strip().lower() in {"dev", "development", "local", "test"}
+
+
+def validate_startup_settings(settings: Settings) -> None:
+    """启动期安全校验：避免危险默认配置进入非开发环境。"""
+    if _is_dev_env(settings.app_env):
+        return
+
+    problems: list[str] = []
+
+    jwt_secret = settings.jwt_secret_key.strip()
+    if not jwt_secret or jwt_secret == "CHANGE_ME_IN_PRODUCTION" or len(jwt_secret) < 32:
+        problems.append("JWT_SECRET_KEY 为空/占位/过短（建议至少 32 字符）")
+
+    llm_key = settings.llm_api_key.strip()
+    if not llm_key or llm_key == "REPLACE_ME":
+        problems.append("LLM_API_KEY 为空或为占位值（REPLACE_ME）")
+
+    embedding_key = settings.embedding_api_key.strip()
+    if not embedding_key or embedding_key == "REPLACE_ME":
+        problems.append("EMBEDDING_API_KEY 为空或为占位值（REPLACE_ME）")
+
+    admin_token = settings.admin_token.strip()
+    if not admin_token or admin_token == "CHANGE_ME_IN_PRODUCTION" or len(admin_token) < 16:
+        problems.append("ADMIN_TOKEN 为空/占位/过短（建议至少 16 字符）")
+
+    if settings.mcp_enabled and not settings.mcp_confirmation_required:
+        problems.append("启用 MCP 时必须开启人工确认（MCP_CONFIRMATION_REQUIRED=true）")
+
+    if problems:
+        raise RuntimeError(f"启动安全校验失败（APP_ENV={settings.app_env}）：{'; '.join(problems)}")

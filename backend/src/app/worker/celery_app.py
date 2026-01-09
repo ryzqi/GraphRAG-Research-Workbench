@@ -21,4 +21,6 @@ celery_app = Celery(
 celery_app.conf.update(
     task_track_started=True,
     timezone="Asia/Shanghai",
+    task_soft_time_limit=60 * 60,
+    task_time_limit=65 * 60,
 )

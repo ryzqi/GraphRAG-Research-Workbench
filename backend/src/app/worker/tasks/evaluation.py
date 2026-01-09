@@ -10,7 +10,7 @@ from app.db.session import get_sessionmaker
 from app.integrations.embedding_client import EmbeddingClient
 from app.integrations.llm_client import ChatMessage as LLMMessage
 from app.integrations.llm_client import LLMClient
-from app.integrations.milvus_client import MilvusClient
+from app.integrations.milvus_client import get_milvus_client
 from app.integrations.redis_client import get_redis
 from app.models.agent_run import AgentRun, AgentRunStatus, AgentRunType
 from app.models.chat_session import AgentMode
@@ -45,7 +45,7 @@ async def _run_evaluation(*, eval_run_id: str) -> None:
         try:
             # 初始化依赖
             llm = LLMClient()
-            milvus = MilvusClient()
+            milvus = get_milvus_client()
             embedding = EmbeddingClient()
             redis = get_redis()
             retrieval = RetrievalService(session, milvus, embedding, redis)
@@ -64,6 +64,11 @@ async def _run_evaluation(*, eval_run_id: str) -> None:
             multi_metrics: list[dict] = []
 
             for q in questions:
+                # 取消检查点（长循环内定期探测）
+                await session.refresh(eval_run)
+                if eval_run.status == EvaluationStatus.CANCELED:
+                    return
+
                 question_id = q.get("id", str(uuid.uuid4()))
                 question_text = q.get("question", "")
                 reference = q.get("reference_answer", "")

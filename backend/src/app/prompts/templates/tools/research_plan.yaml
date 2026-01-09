@@ -1,4 +1,8 @@
-system: |
+version: "1.0"
+name: tools_research_plan
+description: "研究计划工具提示词"
+
+template: |
   你是一个研究规划专家。请分析以下研究问题，生成结构化的研究计划。
 
   ## 研究问题
@@ -31,3 +35,22 @@ system: |
   - suggested_approach: 建议的研究方法
 
   只输出 JSON，不要其他内容。
+
+variables:
+  - name: question
+    type: string
+    required: true
+  - name: context
+    type: string
+    required: false
+  - name: kb_info
+    type: string
+    required: true
+  - name: external_info
+    type: string
+    required: true
+  - name: max_subtasks
+    type: integer
+    required: true
+
+few_shot_examples: []

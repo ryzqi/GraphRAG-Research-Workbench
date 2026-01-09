@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import random
 from dataclasses import dataclass
 
 import httpx
@@ -16,8 +18,13 @@ class RerankResult:
 
 
 class RerankClient:
-    def __init__(self, settings: Settings | None = None) -> None:
+    def __init__(
+        self,
+        settings: Settings | None = None,
+        http_client: httpx.AsyncClient | None = None,
+    ) -> None:
         self._settings = settings if settings is not None else get_settings()
+        self._http_client = http_client
         self._base_url = self._settings.retrieval_rerank_base_url.rstrip("/")
         self._api_key = self._settings.retrieval_rerank_api_key
         self._model = self._settings.retrieval_rerank_model
@@ -45,10 +52,28 @@ class RerankClient:
         timeout = timeout_seconds or self._settings.retrieval_rerank_timeout_seconds
         url = f"{self._base_url}/v1/rerank"
 
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            resp = await client.post(url, json=payload, headers=headers)
-            resp.raise_for_status()
-            data = resp.json()
+        async def _call(client: httpx.AsyncClient) -> dict:
+            last_exc: Exception | None = None
+            for attempt in range(2):
+                try:
+                    resp = await client.post(
+                        url, json=payload, headers=headers, timeout=timeout
+                    )
+                    resp.raise_for_status()
+                    return resp.json()
+                except Exception as exc:  # pragma: no cover
+                    last_exc = exc
+                    if attempt < 1:
+                        delay = 0.2 * (2**attempt)
+                        delay = delay * (1 + random.random() * 0.2)
+                        await asyncio.sleep(delay)
+            raise RuntimeError("Rerank 调用失败") from last_exc
+
+        if self._http_client is not None:
+            data = await _call(self._http_client)
+        else:
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                data = await _call(client)
 
         results: list[RerankResult] = []
         for item in data.get("results", []):

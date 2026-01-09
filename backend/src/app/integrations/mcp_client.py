@@ -6,6 +6,7 @@ import asyncio
 import json
 import os
 import re
+import shlex
 import subprocess
 from dataclasses import dataclass, field
 from typing import Any
@@ -82,6 +83,28 @@ class MCPClient:
         merged = dict(os.environ)
         merged.update(extra)
         return merged
+
+    def _parse_stdio_endpoint(self, endpoint: str) -> list[str]:
+        endpoint = endpoint.strip()
+        if not endpoint:
+            raise ValueError("无效的 stdio 端点")
+        if _DANGEROUS_CHARS.search(endpoint):
+            raise ValueError("端点包含危险字符")
+
+        try:
+            parts = shlex.split(endpoint)
+        except ValueError as exc:  # pragma: no cover
+            raise ValueError(f"无效的 stdio 端点: {exc}") from exc
+
+        if not parts:
+            raise ValueError("无效的 stdio 端点")
+
+        raw = os.path.basename(parts[0])
+        cmd, _ = os.path.splitext(raw)
+        if cmd.lower() not in _ALLOWED_MCP_COMMANDS:
+            raise ValueError(f"不允许的 MCP 命令: {raw}")
+
+        return parts
 
     def _parse_scope(
         self, scope: dict | None
@@ -246,17 +269,7 @@ class MCPClient:
 
     async def _connect_stdio(self, endpoint: str, env: dict[str, str]) -> list[ToolDefinition]:
         """通过 stdio 连接 MCP 服务器。"""
-        # 解析命令
-        parts = endpoint.split()
-        if not parts:
-            raise ValueError("无效的 stdio 端点")
-
-        # 安全验证：检查命令白名单和危险字符
-        cmd = parts[0].split("/")[-1].split("\\")[-1]  # 提取命令名
-        if cmd not in _ALLOWED_MCP_COMMANDS:
-            raise ValueError(f"不允许的 MCP 命令: {cmd}")
-        if _DANGEROUS_CHARS.search(endpoint):
-            raise ValueError("端点包含危险字符")
+        parts = self._parse_stdio_endpoint(endpoint)
 
         # 发送 tools/list 请求
         request = {"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}}
@@ -356,14 +369,10 @@ class MCPClient:
         env: dict[str, str],
     ) -> ToolCallResult:
         """通过 stdio 调用工具。"""
-        parts = endpoint.split()
-
-        # 安全验证：检查命令白名单和危险字符
-        cmd = parts[0].split("/")[-1].split("\\")[-1]
-        if cmd not in _ALLOWED_MCP_COMMANDS:
-            return ToolCallResult(success=False, error=f"不允许的 MCP 命令: {cmd}")
-        if _DANGEROUS_CHARS.search(endpoint):
-            return ToolCallResult(success=False, error="端点包含危险字符")
+        try:
+            parts = self._parse_stdio_endpoint(endpoint)
+        except ValueError as exc:
+            return ToolCallResult(success=False, error=str(exc))
 
         request = {
             "jsonrpc": "2.0",

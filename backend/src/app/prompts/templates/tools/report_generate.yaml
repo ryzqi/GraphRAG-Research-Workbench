@@ -1,4 +1,8 @@
-system: |
+version: "1.0"
+name: tools_report_generate
+description: "研究报告生成工具提示词"
+
+template: |
   你是一个研究报告撰写专家。请根据以下研究发现和证据，生成结构化的研究报告。
 
   ## 研究问题
@@ -39,3 +43,22 @@ system: |
   ```
 
   只输出 JSON，不要其他内容。
+
+variables:
+  - name: question
+    type: string
+    required: true
+  - name: findings
+    type: string
+    required: true
+  - name: evidence_summary
+    type: string
+    required: true
+  - name: citations
+    type: string
+    required: true
+  - name: format_instruction
+    type: string
+    required: true
+
+few_shot_examples: []

@@ -4,6 +4,7 @@ import inspect
 import logging
 import re
 from dataclasses import dataclass
+from functools import lru_cache
 
 from app.core.settings import get_settings
 
@@ -429,3 +430,24 @@ class MilvusClient:
             collection_name=self._collection,
             filter=f'material_id == "{escaped_id}"',
         )
+
+    async def delete_by_chunk_ids(self, chunk_ids: list[str]) -> None:
+        """按 chunk_id 批量删除向量记录。"""
+        delete = getattr(self._client, "delete", None)
+        if delete is None:
+            raise RuntimeError("pymilvus API 不匹配：缺少 delete")
+        if not chunk_ids:
+            return
+
+        escaped = [_escape_string(cid) for cid in chunk_ids]
+        quoted = ", ".join(f'"{cid}"' for cid in escaped)
+        await delete(
+            collection_name=self._collection,
+            filter=f"chunk_id in [{quoted}]",
+        )
+
+
+@lru_cache
+def get_milvus_client() -> MilvusClient:
+    """获取 Milvus 客户端单例（进程内复用）。"""
+    return MilvusClient()

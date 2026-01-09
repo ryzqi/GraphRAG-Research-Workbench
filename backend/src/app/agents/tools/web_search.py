@@ -51,8 +51,8 @@ class WebSearchClient:
 
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
-        self._backend = getattr(settings, "web_search_backend", "tavily")
-        self._api_key = getattr(settings, "web_search_api_key", None)
+        self._backend = settings.web_search_backend
+        self._api_key = settings.web_search_api_key
         self._cache_enabled = getattr(settings, "web_search_cache_enabled", True)
         self._cache_ttl = getattr(settings, "web_search_cache_ttl_seconds", 300)
 
@@ -69,10 +69,9 @@ class WebSearchClient:
         """执行搜索。"""
         if self._backend == "tavily":
             return await self._search_tavily(query, max_results, search_type)
-        elif self._backend == "serp":
+        if self._backend == "serp":
             return await self._search_serp(query, max_results, search_type)
-        else:
-            return await self._search_mock(query, max_results, search_type)
+        raise ValueError(f"不支持的 WEB_SEARCH_BACKEND={self._backend!r}")
 
     async def _search_tavily(
         self, query: str, max_results: int, search_type: str
@@ -80,11 +79,13 @@ class WebSearchClient:
         """Tavily 搜索后端。"""
         try:
             from tavily import AsyncTavilyClient
-        except ImportError:
-            return await self._search_mock(query, max_results, search_type)
+        except ImportError as exc:
+            raise RuntimeError(
+                "未安装 tavily 依赖，无法使用 WEB_SEARCH_BACKEND=tavily（请安装 tavily 并配置 WEB_SEARCH_API_KEY）"
+            ) from exc
 
         if not self._api_key:
-            return await self._search_mock(query, max_results, search_type)
+            raise RuntimeError("未配置 WEB_SEARCH_API_KEY，无法使用 web_search")
 
         client = AsyncTavilyClient(api_key=self._api_key)
         topic = "news" if search_type == "news" else "general"
@@ -115,11 +116,13 @@ class WebSearchClient:
         """SerpAPI 搜索后端。"""
         try:
             import httpx
-        except ImportError:
-            return await self._search_mock(query, max_results, search_type)
+        except ImportError as exc:
+            raise RuntimeError(
+                "未安装 httpx 依赖，无法使用 WEB_SEARCH_BACKEND=serp（请安装 httpx 并配置 WEB_SEARCH_API_KEY）"
+            ) from exc
 
         if not self._api_key:
-            return await self._search_mock(query, max_results, search_type)
+            raise RuntimeError("未配置 WEB_SEARCH_API_KEY，无法使用 web_search")
 
         params = {
             "q": query,
@@ -149,20 +152,6 @@ class WebSearchClient:
                 )
             )
         return results
-
-    async def _search_mock(
-        self, query: str, max_results: int, search_type: str
-    ) -> list[WebSearchResult]:
-        """模拟搜索（用于测试或无 API Key 时）。"""
-        return [
-            WebSearchResult(
-                title=f"搜索结果: {query}",
-                url=f"https://example.com/search?q={query}",
-                snippet=f"这是关于 '{query}' 的模拟搜索结果。请配置 WEB_SEARCH_API_KEY 以启用真实搜索。",
-                source="mock",
-                published_at=None,
-            )
-        ]
 
 
 def build_web_search_tool(settings: Settings) -> BaseTool:
