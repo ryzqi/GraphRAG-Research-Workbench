@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, cast
 
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, StateGraph
@@ -80,15 +80,23 @@ class GeneralChatGraph:
 
         graph.set_entry_point("plan_tools")
 
-        graph.add_conditional_edges("plan_tools", self._route_after_plan, {
-            "human_review": "human_review",
-            "execute_tools": "execute_tools",
-            "generate": "generate",
-        })
-        graph.add_conditional_edges("human_review", self._route_after_review, {
-            "execute_tools": "execute_tools",
-            "generate": "generate",
-        })
+        graph.add_conditional_edges(
+            "plan_tools",
+            self._route_after_plan,
+            {
+                "human_review": "human_review",
+                "execute_tools": "execute_tools",
+                "generate": "generate",
+            },
+        )
+        graph.add_conditional_edges(
+            "human_review",
+            self._route_after_review,
+            {
+                "execute_tools": "execute_tools",
+                "generate": "generate",
+            },
+        )
         graph.add_edge("execute_tools", "generate")
         graph.add_edge("generate", END)
 
@@ -103,11 +111,16 @@ class GeneralChatGraph:
         state: GeneralChatState,
         thread_id: str | None = None,
         checkpointer: BaseCheckpointSaver | None = None,
-    ) -> GeneralChatState:
-        """执行代理流程。"""
+    ) -> dict[str, Any]:
+        """执行代理流程。
+
+        注意：LangGraph 的 `ainvoke` 返回值在类型标注上通常是 `Any`/`dict`，并且会包含
+        `__interrupt__` 等运行期字段，因此这里统一约定返回 `dict[str, Any]` 供上层服务处理。
+        """
         compiled = self.compile(checkpointer)
         config = {"configurable": {"thread_id": thread_id}} if thread_id else None
-        return await compiled.ainvoke(state, config)
+        result = await compiled.ainvoke(state, config)
+        return cast(dict[str, Any], result)
 
     def _route_after_plan(self, state: GeneralChatState) -> str:
         """规划后路由。"""
@@ -151,10 +164,14 @@ class GeneralChatGraph:
         for ext_id, name, desc in builtin_tools:
             combined_tools.append((ext_id, name, desc))
         for ext, tool in all_tools:
-            combined_tools.append((str(ext.id), tool.name, tool.description or "无描述"))
+            combined_tools.append(
+                (str(ext.id), tool.name, tool.description or "无描述")
+            )
 
         # LLM 驱动工具选择
-        selected = await self._select_tools_with_llm(state.question, combined_tools, all_tools)
+        selected = await self._select_tools_with_llm(
+            state.question, combined_tools, all_tools
+        )
 
         return {
             "pending_tool_calls": selected,
@@ -178,8 +195,7 @@ class GeneralChatGraph:
             return []
 
         tool_desc = "\n".join(
-            f"{i}. {name}: {desc}"
-            for i, (_, name, desc) in enumerate(combined_tools)
+            f"{i}. {name}: {desc}" for i, (_, name, desc) in enumerate(combined_tools)
         )
 
         prompt = self._prompts.render(
@@ -203,43 +219,58 @@ class GeneralChatGraph:
 
             result = []
             for sel in selections:
-                idx = sel.get("index", -1)
+                if not isinstance(sel, dict):
+                    continue
+                try:
+                    idx = int(sel.get("index", -1))
+                except (TypeError, ValueError):
+                    continue
                 args = sel.get("args", {})
+                if not isinstance(args, dict):
+                    args = {}
                 if 0 <= idx < len(combined_tools):
                     ext_id, name, _ = combined_tools[idx]
                     if ext_id == "builtin":
-                        result.append({
-                            "extension_id": "builtin",
-                            "extension_name": "内置工具",
-                            "tool_name": name,
-                            "args": args,
-                            "is_builtin": True,
-                        })
+                        result.append(
+                            {
+                                "extension_id": "builtin",
+                                "extension_name": "内置工具",
+                                "tool_name": name,
+                                "args": args,
+                                "is_builtin": True,
+                            }
+                        )
                     else:
                         # 查找对应的 MCP 扩展
-                        mcp_idx = idx - sum(1 for e, _, _ in combined_tools[:idx] if e == "builtin")
+                        mcp_idx = idx - sum(
+                            1 for e, _, _ in combined_tools[:idx] if e == "builtin"
+                        )
                         if 0 <= mcp_idx < len(mcp_tools):
                             ext, tool = mcp_tools[mcp_idx]
-                            result.append({
-                                "extension_id": str(ext.id),
-                                "extension_name": ext.name,
-                                "tool_name": tool.name,
-                                "args": args,
-                                "is_builtin": False,
-                            })
+                            result.append(
+                                {
+                                    "extension_id": str(ext.id),
+                                    "extension_name": ext.name,
+                                    "tool_name": tool.name,
+                                    "args": args,
+                                    "is_builtin": False,
+                                }
+                            )
 
             return result
-        except (json.JSONDecodeError, KeyError):
+        except (json.JSONDecodeError, KeyError, TypeError, ValueError):
             return []
 
     async def _human_review_node(self, state: GeneralChatState) -> dict:
         """人工审核节点（使用 interrupt）。"""
         if state.pending_tool_calls and self._require_confirmation:
-            human_response = interrupt({
-                "type": "tool_approval",
-                "tools": state.pending_tool_calls,
-                "message": "请审核以下工具调用",
-            })
+            human_response = interrupt(
+                {
+                    "type": "tool_approval",
+                    "tools": state.pending_tool_calls,
+                    "message": "请审核以下工具调用",
+                }
+            )
             return {"human_approved": human_response.get("approved", False)}
         return {"human_approved": True}
 
@@ -258,26 +289,45 @@ class GeneralChatGraph:
                     web_tool = build_web_search_tool(self._settings)
                     try:
                         output = await web_tool.ainvoke(tool_call["args"])
-                        results.append({
-                            "tool_name": tool_call["tool_name"],
-                            "extension_name": tool_call["extension_name"],
-                            "success": True,
-                            "output": output,
-                        })
+                        results.append(
+                            {
+                                "extension_id": tool_call.get(
+                                    "extension_id", "builtin"
+                                ),
+                                "tool_name": tool_call["tool_name"],
+                                "extension_name": tool_call["extension_name"],
+                                "args": tool_call.get("args", {}),
+                                "is_builtin": True,
+                                "success": True,
+                                "output": output,
+                            }
+                        )
                     except Exception as e:
-                        results.append({
+                        results.append(
+                            {
+                                "extension_id": tool_call.get(
+                                    "extension_id", "builtin"
+                                ),
+                                "tool_name": tool_call["tool_name"],
+                                "extension_name": tool_call["extension_name"],
+                                "args": tool_call.get("args", {}),
+                                "is_builtin": True,
+                                "success": False,
+                                "output": str(e),
+                            }
+                        )
+                else:
+                    results.append(
+                        {
+                            "extension_id": tool_call.get("extension_id", "builtin"),
                             "tool_name": tool_call["tool_name"],
                             "extension_name": tool_call["extension_name"],
+                            "args": tool_call.get("args", {}),
+                            "is_builtin": True,
                             "success": False,
-                            "output": str(e),
-                        })
-                else:
-                    results.append({
-                        "tool_name": tool_call["tool_name"],
-                        "extension_name": tool_call["extension_name"],
-                        "success": False,
-                        "output": "未配置 WEB_SEARCH_API_KEY，无法执行内置工具 web_search",
-                    })
+                            "output": "未配置 WEB_SEARCH_API_KEY，无法执行内置工具 web_search",
+                        }
+                    )
             else:
                 # 执行 MCP 扩展工具
                 call_result = await self._mcp.call_tool(
@@ -285,12 +335,19 @@ class GeneralChatGraph:
                     tool_call["tool_name"],
                     tool_call["args"],
                 )
-                results.append({
-                    "tool_name": tool_call["tool_name"],
-                    "extension_name": tool_call["extension_name"],
-                    "success": call_result.success,
-                    "output": call_result.output if call_result.success else call_result.error,
-                })
+                results.append(
+                    {
+                        "extension_id": tool_call.get("extension_id"),
+                        "tool_name": tool_call["tool_name"],
+                        "extension_name": tool_call["extension_name"],
+                        "args": tool_call.get("args", {}),
+                        "is_builtin": False,
+                        "success": call_result.success,
+                        "output": call_result.output
+                        if call_result.success
+                        else call_result.error,
+                    }
+                )
 
         return {
             "tool_results": results,

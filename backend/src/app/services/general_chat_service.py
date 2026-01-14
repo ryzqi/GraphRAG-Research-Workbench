@@ -9,11 +9,13 @@ import logging
 import uuid
 from datetime import datetime, timezone
 
+from langgraph.types import Command
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.general_chat_graph import GeneralChatGraph, GeneralChatState
 from app.core.checkpoint import CheckpointManager
+from app.core.errors import AppError
 from app.core.settings import get_settings
 from app.integrations.llm_client import ChatMessage as LLMMessage
 from app.integrations.llm_client import LLMClient
@@ -26,7 +28,9 @@ from app.models.tool_invocation import InvocationStatus, ToolInvocation
 from app.schemas.chats import (
     AgentRunRead,
     ChatAnswerResponse,
+    ChatPendingToolApprovalResponse,
     ChatMessageRead,
+    PendingToolCall,
 )
 from app.services.context_builder import ContextBuilder
 from app.services.conversation_summary_service import ConversationSummaryService
@@ -75,7 +79,7 @@ class GeneralChatService:
         *,
         session: ChatSession,
         user_content: str,
-    ) -> ChatAnswerResponse:
+    ) -> ChatAnswerResponse | ChatPendingToolApprovalResponse:
         """处理用户问题并生成答案（使用 LangGraph）。"""
         started_at = datetime.now(timezone.utc)
         summary = await self._summary_service.load_latest_summary(session.id)
@@ -122,83 +126,90 @@ class GeneralChatService:
                 extensions=extensions,
                 require_confirmation=self._settings.mcp_confirmation_required,
                 context_builder=self._context_builder,
+                settings=self._settings,
             )
 
             # 使用 session_id 作为 thread_id 执行
             state = GeneralChatState(
                 question=user_content,
-                allow_external=session.allow_external and self._settings.mcp_enabled,
+                allow_external=session.allow_external,
                 history=history,
                 summary=summary.content if summary else None,
             )
+            thread_id = str(session.id)
             result = await graph.run(
                 state,
-                thread_id=str(session.id),
+                thread_id=thread_id,
                 checkpointer=CheckpointManager.get_checkpointer(),
             )
 
-            # 保存工具调用记录
-            for tool_result in result.tool_results:
-                invocation = ToolInvocation(
-                    run_id=run.id,
-                    tool_name=tool_result["tool_name"],
-                    purpose=f"回答问题: {user_content[:100]}",
-                    requires_confirmation=self._settings.mcp_confirmation_required,
-                    status=(
-                        InvocationStatus.SUCCEEDED
-                        if tool_result["success"]
-                        else InvocationStatus.FAILED
+            if not isinstance(result, dict):
+                raise RuntimeError("LangGraph 返回类型不符合预期")
+
+            interrupts = result.get("__interrupt__")
+            if isinstance(interrupts, list) and interrupts:
+                pending_tool_calls = result.get("pending_tool_calls")
+                if not isinstance(pending_tool_calls, list):
+                    pending_tool_calls = []
+
+                interrupt_id = None
+                message = None
+                first = interrupts[0]
+                interrupt_id = getattr(first, "id", None)
+                payload = getattr(first, "value", None)
+                if isinstance(payload, dict):
+                    message = payload.get("message")
+                    tools = payload.get("tools")
+                    if isinstance(tools, list):
+                        pending_tool_calls = tools
+
+                stage_summaries = result.get("stage_summaries")
+                if not isinstance(stage_summaries, dict):
+                    stage_summaries = {}
+                metrics = result.get("metrics")
+                if not isinstance(metrics, dict):
+                    metrics = {}
+
+                run.stage_summaries = {
+                    **stage_summaries,
+                    "tool_approval": {
+                        "pending": True,
+                        "tool_count": len(pending_tool_calls),
+                        "interrupt_id": interrupt_id,
+                        "requested_at": datetime.now(timezone.utc).isoformat(),
+                    },
+                }
+                run.metrics = {
+                    "extension_calls": 0,
+                    "latency_ms": int(
+                        (datetime.now(timezone.utc) - started_at).total_seconds()
+                        * 1000
                     ),
-                    output={"result": tool_result["output"]} if tool_result["success"] else None,
-                    error_message=tool_result["output"] if not tool_result["success"] else None,
-                    finished_at=datetime.now(timezone.utc),
+                    **metrics,
+                }
+
+                await self._db.commit()
+                await self._db.refresh(run)
+
+                return ChatPendingToolApprovalResponse(
+                    thread_id=thread_id,
+                    interrupt_id=interrupt_id if isinstance(interrupt_id, str) else None,
+                    message=str(message) if message is not None else None,
+                    pending_tool_calls=[
+                        PendingToolCall.model_validate(item)
+                        for item in pending_tool_calls
+                        if isinstance(item, dict)
+                    ],
+                    run=AgentRunRead.model_validate(run),
                 )
-                self._db.add(invocation)
 
-            # 保存助手消息
-            assistant_msg = ChatMessage(
-                session_id=session.id,
-                role=MessageRole.ASSISTANT,
-                content=result.answer,
-            )
-            self._db.add(assistant_msg)
-
-            summary_metrics: dict[str, object] = {}
-            try:
-                summary_result = await self._summary_service.maybe_update_summary(
-                    session.id
-                )
-                if summary_result:
-                    summary_metrics = {
-                        "summary_updated": True,
-                        "summary_message_id": str(summary_result.message.id),
-                        **summary_result.stats,
-                    }
-            except Exception as exc:  # pragma: no cover
-                logger.warning("摘要更新失败: %s", exc)
-
-            # 更新运行状态
-            run.status = AgentRunStatus.SUCCEEDED
-            run.finished_at = datetime.now(timezone.utc)
-            run.final_output = result.answer
-            run.stage_summaries = result.stage_summaries
-            run.metrics = {
-                "extension_calls": len(result.tool_results),
-                "latency_ms": int(
-                    (run.finished_at - started_at).total_seconds() * 1000
-                ),
-                **summary_metrics,
-                **(result.metrics or {}),
-            }
-
-            await self._db.commit()
-            await self._db.refresh(assistant_msg)
-            await self._db.refresh(run)
-
-            return ChatAnswerResponse(
-                assistant_message=ChatMessageRead.model_validate(assistant_msg),
-                evidence=[],
-                run=AgentRunRead.model_validate(run),
+            return await self._finalize_run(
+                session=session,
+                run=run,
+                user_content=user_content,
+                started_at=started_at,
+                result=result,
+                user_confirmed=None,
             )
 
         except Exception as e:
@@ -207,3 +218,256 @@ class GeneralChatService:
             run.error_message = str(e)
             await self._db.commit()
             raise
+
+    async def resume_after_tool_approval(
+        self,
+        *,
+        session: ChatSession,
+        run: AgentRun,
+        approved: bool,
+    ) -> ChatAnswerResponse | ChatPendingToolApprovalResponse:
+        """两阶段交互第 2 阶段：提交审批结果并恢复执行。"""
+        thread_id = str(session.id)
+        checkpoint_tuple = await CheckpointManager.get_state(thread_id)
+        if checkpoint_tuple is None:
+            raise AppError(
+                code="CHECKPOINT_NOT_FOUND",
+                message="检查点不存在，无法恢复执行",
+                status_code=404,
+            )
+
+        pending_interrupts = [
+            item for item in (checkpoint_tuple.pending_writes or []) if item[1] == "__interrupt__"
+        ]
+        if not pending_interrupts:
+            raise AppError(
+                code="NO_PENDING_APPROVAL",
+                message="当前会话没有待审批的工具调用",
+                status_code=400,
+            )
+
+        # 兜底：确保相关扩展已连接（避免服务重启导致内存连接丢失）
+        pending_tool_calls = (
+            (checkpoint_tuple.checkpoint or {})
+            .get("channel_values", {})
+            .get("pending_tool_calls", [])
+        )
+        await self._ensure_extensions_connected(pending_tool_calls)
+
+        # 为恢复执行重新构建图（状态由 checkpointer 提供）
+        extensions: list[ToolExtension] = []
+        if session.allow_external and self._settings.mcp_enabled:
+            stmt = select(ToolExtension).where(
+                ToolExtension.status == ExtensionStatus.ENABLED
+            )
+            ext_result = await self._db.execute(stmt)
+            extensions = list(ext_result.scalars().all())
+
+        graph = GeneralChatGraph(
+            llm=self._llm,
+            mcp=self._mcp,
+            extensions=extensions,
+            require_confirmation=self._settings.mcp_confirmation_required,
+            context_builder=self._context_builder,
+            settings=self._settings,
+        )
+        compiled = graph.compile(checkpointer=CheckpointManager.get_checkpointer())
+        config = CheckpointManager.make_config(thread_id)
+        result = await compiled.ainvoke(Command(resume={"approved": approved}), config)
+
+        if not isinstance(result, dict):
+            raise RuntimeError("LangGraph 返回类型不符合预期")
+
+        interrupts = result.get("__interrupt__")
+        if isinstance(interrupts, list) and interrupts:
+            pending_tool_calls = result.get("pending_tool_calls")
+            if not isinstance(pending_tool_calls, list):
+                pending_tool_calls = []
+            first = interrupts[0]
+            interrupt_id = getattr(first, "id", None)
+            payload = getattr(first, "value", None)
+            message = payload.get("message") if isinstance(payload, dict) else None
+            tools = payload.get("tools") if isinstance(payload, dict) else None
+            if isinstance(tools, list):
+                pending_tool_calls = tools
+
+            stage_summaries = result.get("stage_summaries")
+            if not isinstance(stage_summaries, dict):
+                stage_summaries = {}
+
+            run.stage_summaries = {
+                **stage_summaries,
+                "tool_approval": {
+                    "pending": True,
+                    "tool_count": len(pending_tool_calls),
+                    "interrupt_id": interrupt_id,
+                    "requested_at": datetime.now(timezone.utc).isoformat(),
+                },
+            }
+            await self._db.commit()
+            await self._db.refresh(run)
+            return ChatPendingToolApprovalResponse(
+                thread_id=thread_id,
+                interrupt_id=interrupt_id if isinstance(interrupt_id, str) else None,
+                message=str(message) if message is not None else None,
+                pending_tool_calls=[
+                    PendingToolCall.model_validate(item)
+                    for item in pending_tool_calls
+                    if isinstance(item, dict)
+                ],
+                run=AgentRunRead.model_validate(run),
+            )
+
+        started_at = run.started_at or datetime.now(timezone.utc)
+        return await self._finalize_run(
+            session=session,
+            run=run,
+            user_content=run.question,
+            started_at=started_at,
+            result=result,
+            user_confirmed=approved,
+        )
+
+    async def _ensure_extensions_connected(self, pending_tool_calls: object) -> None:
+        if (
+            not self._settings.mcp_enabled
+            or not isinstance(pending_tool_calls, list)
+            or not pending_tool_calls
+        ):
+            return
+
+        extension_ids: set[uuid.UUID] = set()
+        for item in pending_tool_calls:
+            if not isinstance(item, dict):
+                continue
+            if item.get("is_builtin"):
+                continue
+            raw = item.get("extension_id")
+            if not raw or raw == "builtin":
+                continue
+            try:
+                extension_ids.add(uuid.UUID(str(raw)))
+            except ValueError:
+                continue
+
+        if not extension_ids:
+            return
+
+        stmt = select(ToolExtension).where(ToolExtension.id.in_(extension_ids))
+        result = await self._db.execute(stmt)
+        extensions = list(result.scalars().all())
+        for ext in extensions:
+            await self._mcp.connect(
+                str(ext.id), ext.transport.value, ext.endpoint, ext.scope
+            )
+
+    async def _finalize_run(
+        self,
+        *,
+        session: ChatSession,
+        run: AgentRun,
+        user_content: str,
+        started_at: datetime,
+        result: dict,
+        user_confirmed: bool | None,
+    ) -> ChatAnswerResponse:
+        tool_results = result.get("tool_results") or []
+        if not isinstance(tool_results, list):
+            tool_results = []
+        tool_results = [r for r in tool_results if isinstance(r, dict)]
+
+        # 保存工具调用记录（仅记录 MCP 扩展；内置工具没有 extension_id 外键）
+        purpose = f"回答问题: {user_content[:100]}"
+        now = datetime.now(timezone.utc)
+        for tool_result in tool_results:
+            if tool_result.get("is_builtin"):
+                continue
+            raw_extension_id = tool_result.get("extension_id")
+            if not raw_extension_id:
+                continue
+            try:
+                extension_id = uuid.UUID(str(raw_extension_id))
+            except ValueError:
+                continue
+
+            success = bool(tool_result.get("success"))
+            output = tool_result.get("output")
+            invocation = ToolInvocation(
+                extension_id=extension_id,
+                run_id=run.id,
+                tool_name=str(tool_result.get("tool_name") or ""),
+                purpose=purpose,
+                input=tool_result.get("args") if isinstance(tool_result.get("args"), dict) else None,
+                requires_confirmation=self._settings.mcp_confirmation_required,
+                user_confirmed=user_confirmed
+                if self._settings.mcp_confirmation_required
+                else None,
+                status=InvocationStatus.SUCCEEDED if success else InvocationStatus.FAILED,
+                output={"result": output} if success else None,
+                error_message=str(output) if not success and output is not None else None,
+                finished_at=now,
+            )
+            self._db.add(invocation)
+
+        answer = str(result.get("answer") or "")
+
+        # 保存助手消息
+        assistant_msg = ChatMessage(
+            session_id=session.id,
+            role=MessageRole.ASSISTANT,
+            content=answer,
+        )
+        self._db.add(assistant_msg)
+
+        summary_metrics: dict[str, object] = {}
+        try:
+            summary_result = await self._summary_service.maybe_update_summary(session.id)
+            if summary_result:
+                summary_metrics = {
+                    "summary_updated": True,
+                    "summary_message_id": str(summary_result.message.id),
+                    **summary_result.stats,
+                }
+        except Exception as exc:  # pragma: no cover
+            logger.warning("摘要更新失败: %s", exc)
+
+        invocation_summaries: list[dict] = []
+        for tr in tool_results:
+            invocation_summaries.append(
+                {
+                    "tool_name": tr.get("tool_name"),
+                    "purpose": purpose,
+                    "status": "succeeded" if tr.get("success") else "failed",
+                    "extension_name": tr.get("extension_name"),
+                }
+            )
+
+        stage_summaries = result.get("stage_summaries") or {}
+        if not isinstance(stage_summaries, dict):
+            stage_summaries = {}
+        stage_summaries = {
+            **stage_summaries,
+            "extensions": {"invocations": invocation_summaries},
+        }
+
+        # 更新运行状态
+        run.status = AgentRunStatus.SUCCEEDED
+        run.finished_at = now
+        run.final_output = answer
+        run.stage_summaries = stage_summaries
+        run.metrics = {
+            "extension_calls": len(tool_results),
+            "latency_ms": int((now - started_at).total_seconds() * 1000),
+            **summary_metrics,
+            **(result.get("metrics") or {}),
+        }
+
+        await self._db.commit()
+        await self._db.refresh(assistant_msg)
+        await self._db.refresh(run)
+
+        return ChatAnswerResponse(
+            assistant_message=ChatMessageRead.model_validate(assistant_msg),
+            evidence=[],
+            run=AgentRunRead.model_validate(run),
+        )

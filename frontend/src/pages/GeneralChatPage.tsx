@@ -1,11 +1,13 @@
 import { useState, useCallback } from 'react';
 import {
   createChatSession,
+  resumeToolApproval,
   sendMessage,
+  type ChatMessageResponse,
   type ChatSession,
-  type ChatMessage,
   type EvidenceItem,
   type AgentRun,
+  type PendingToolCall,
 } from '../services/chats';
 import type { ToolInvocationSummary } from '../services/extensions';
 
@@ -16,6 +18,12 @@ interface Message {
   evidence?: EvidenceItem[];
   run?: AgentRun;
   invocations?: ToolInvocationSummary[];
+  pendingToolApproval?: {
+    threadId: string;
+    interruptId: string | null;
+    message: string | null;
+    toolCalls: PendingToolCall[];
+  };
 }
 
 export function GeneralChatPage() {
@@ -25,6 +33,8 @@ export function GeneralChatPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [allowExternal, setAllowExternal] = useState(false);
+
+  const hasPendingApproval = messages.some((m) => Boolean(m.pendingToolApproval));
 
   const startSession = useCallback(async () => {
     setLoading(true);
@@ -45,7 +55,7 @@ export function GeneralChatPage() {
   }, [allowExternal]);
 
   const handleSend = useCallback(async () => {
-    if (!session || !input.trim() || loading) return;
+    if (!session || !input.trim() || loading || hasPendingApproval) return;
 
     const userMessage: Message = {
       id: `user-${Date.now()}`,
@@ -58,28 +68,102 @@ export function GeneralChatPage() {
     setError(null);
 
     try {
-      const response = await sendMessage(session.id, userMessage.content);
+      const response: ChatMessageResponse = await sendMessage(session.id, userMessage.content);
 
-      // 提取扩展调用摘要
+      if (response.status === 'pending_tool_approval') {
+        const pendingMessage: Message = {
+          id: `pending-${response.run.id}`,
+          role: 'assistant',
+          content: response.message ?? '需要你确认将要执行的工具调用。',
+          run: response.run,
+          pendingToolApproval: {
+            threadId: response.thread_id,
+            interruptId: response.interrupt_id,
+            message: response.message,
+            toolCalls: response.pending_tool_calls,
+          },
+        };
+        setMessages((prev) => [...prev, pendingMessage]);
+        return;
+      }
+
       const invocations =
         (response.run.stage_summaries?.extensions as { invocations?: ToolInvocationSummary[] })
           ?.invocations ?? [];
 
-      const assistantMessage: Message = {
-        id: response.assistant_message.id,
-        role: 'assistant',
-        content: response.assistant_message.content,
-        evidence: response.evidence,
-        run: response.run,
-        invocations,
-      };
-      setMessages((prev) => [...prev, assistantMessage]);
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: response.assistant_message.id,
+          role: 'assistant',
+          content: response.assistant_message.content,
+          evidence: response.evidence,
+          run: response.run,
+          invocations,
+        },
+      ]);
     } catch (e) {
       setError(e instanceof Error ? e.message : '发送消息失败');
     } finally {
       setLoading(false);
     }
-  }, [session, input, loading]);
+  }, [session, input, loading, hasPendingApproval]);
+
+  const handleToolApproval = useCallback(
+    async (pendingMessageId: string, runId: string, approved: boolean) => {
+      if (!session || loading) return;
+      setLoading(true);
+      setError(null);
+      try {
+        const response: ChatMessageResponse = await resumeToolApproval(session.id, runId, approved);
+
+        if (response.status === 'pending_tool_approval') {
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === pendingMessageId
+                ? {
+                    ...m,
+                    content: response.message ?? '仍需要审批工具调用。',
+                    run: response.run,
+                    pendingToolApproval: {
+                      threadId: response.thread_id,
+                      interruptId: response.interrupt_id,
+                      message: response.message,
+                      toolCalls: response.pending_tool_calls,
+                    },
+                  }
+                : m
+            )
+          );
+          return;
+        }
+
+        const invocations =
+          (response.run.stage_summaries?.extensions as { invocations?: ToolInvocationSummary[] })
+            ?.invocations ?? [];
+
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === pendingMessageId
+              ? {
+                  id: response.assistant_message.id,
+                  role: 'assistant',
+                  content: response.assistant_message.content,
+                  evidence: response.evidence,
+                  run: response.run,
+                  invocations,
+                }
+              : m
+          )
+        );
+      } catch (e) {
+        setError(e instanceof Error ? e.message : '恢复执行失败');
+      } finally {
+        setLoading(false);
+      }
+    },
+    [session, loading]
+  );
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -154,6 +238,67 @@ export function GeneralChatPage() {
                   </div>
                   <div style={{ whiteSpace: 'pre-wrap' }}>{msg.content}</div>
 
+                  {msg.pendingToolApproval && (
+                    <div
+                      style={{
+                        marginTop: 12,
+                        padding: 10,
+                        background: '#fff7ed',
+                        borderRadius: 6,
+                        border: '1px solid #fed7aa',
+                        fontSize: 13,
+                      }}
+                    >
+                      <div style={{ fontWeight: 600, marginBottom: 6 }}>待审批工具：</div>
+                      {msg.pendingToolApproval.toolCalls.length === 0 ? (
+                        <div style={{ color: '#6b7280' }}>（无）</div>
+                      ) : (
+                        msg.pendingToolApproval.toolCalls.map((t, idx) => (
+                          <div key={idx} style={{ marginLeft: 8, marginBottom: 4 }}>
+                            • {t.tool_name}
+                            {t.extension_name ? ` (${t.extension_name})` : ''}
+                          </div>
+                        ))
+                      )}
+                      <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+                        <button
+                          onClick={() =>
+                            msg.run?.id &&
+                            handleToolApproval(msg.id, msg.run.id, true)
+                          }
+                          disabled={loading || !msg.run?.id}
+                          style={{
+                            padding: '6px 10px',
+                            background: '#111827',
+                            color: '#fff',
+                            border: 'none',
+                            borderRadius: 6,
+                            cursor: loading ? 'not-allowed' : 'pointer',
+                          }}
+                        >
+                          允许执行
+                        </button>
+                        <button
+                          onClick={() =>
+                            msg.run?.id &&
+                            handleToolApproval(msg.id, msg.run.id, false)
+                          }
+                          disabled={loading || !msg.run?.id}
+                          style={{
+                            padding: '6px 10px',
+                            background: '#e5e7eb',
+                            color: '#111827',
+                            border: 'none',
+                            borderRadius: 6,
+                            cursor: loading ? 'not-allowed' : 'pointer',
+                          }}
+                        >
+                          拒绝执行
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
                   {/* 扩展调用摘要 */}
                   {msg.invocations && msg.invocations.length > 0 && (
                     <div
@@ -218,7 +363,7 @@ export function GeneralChatPage() {
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
               placeholder="输入问题..."
-              disabled={loading}
+              disabled={loading || hasPendingApproval}
               style={{
                 flex: 1,
                 padding: 12,
@@ -230,14 +375,15 @@ export function GeneralChatPage() {
             />
             <button
               onClick={handleSend}
-              disabled={loading || !input.trim()}
+              disabled={loading || hasPendingApproval || !input.trim()}
               style={{
                 padding: '12px 24px',
-                background: loading || !input.trim() ? '#9ca3af' : '#111827',
+                background:
+                  loading || hasPendingApproval || !input.trim() ? '#9ca3af' : '#111827',
                 color: '#fff',
                 border: 'none',
                 borderRadius: 8,
-                cursor: loading || !input.trim() ? 'not-allowed' : 'pointer',
+                cursor: loading || hasPendingApproval || !input.trim() ? 'not-allowed' : 'pointer',
               }}
             >
               发送

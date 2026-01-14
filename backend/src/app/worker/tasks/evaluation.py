@@ -183,7 +183,7 @@ async def _run_single_agent(
             LLMMessage(role="system", content=f"根据以下内容回答问题：\n{context}"),
             LLMMessage(role="user", content=question),
         ]
-        answer = await llm.chat(messages=messages)
+        answer = (await llm.chat_with_metrics(messages=messages)).content
 
         run.status = AgentRunStatus.SUCCEEDED
         run.finished_at = datetime.now(timezone.utc)
@@ -235,14 +235,14 @@ async def _run_multi_agent(
             LLMMessage(role="system", content="你是问题分析专家，分析问题的关键点和所需信息。"),
             LLMMessage(role="user", content=f"分析问题：{question}"),
         ]
-        analysis = await llm.chat(messages=analysis_msg)
+        analysis = (await llm.chat_with_metrics(messages=analysis_msg)).content
 
         # 阶段2：检索评估
         eval_msg = [
             LLMMessage(role="system", content="你是信息评估专家，评估检索内容的相关性和可靠性。"),
             LLMMessage(role="user", content=f"问题分析：{analysis}\n\n检索内容：{context}\n\n评估相关性。"),
         ]
-        evaluation = await llm.chat(messages=eval_msg)
+        evaluation = (await llm.chat_with_metrics(messages=eval_msg)).content
 
         # 阶段3：综合回答
         synthesis_msg = [
@@ -255,7 +255,7 @@ async def _run_multi_agent(
                 content=f"问题：{question}\n分析：{analysis}\n评估：{evaluation}\n内容：{context}\n\n生成答案。",
             ),
         ]
-        answer = await llm.chat(messages=synthesis_msg)
+        answer = (await llm.chat_with_metrics(messages=synthesis_msg)).content
 
         run.status = AgentRunStatus.SUCCEEDED
         run.finished_at = datetime.now(timezone.utc)
@@ -293,7 +293,7 @@ async def _score_answer(llm: LLMClient, question: str, answer: str, reference: s
         ),
     ]
     try:
-        result = await llm.chat(messages=messages)
+        result = (await llm.chat_with_metrics(messages=messages)).content
         score = float(result.strip().split()[0])
         return min(100.0, max(0.0, score))
     except (ValueError, IndexError):

@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy import select
 
-from app.agents.research_graph import ResearchGraph
+from app.agents.deep_research_agent import DeepResearchAgent
 from app.core.checkpoint import CheckpointManager
 from app.db.session import get_sessionmaker
 from app.integrations.embedding_client import EmbeddingClient
@@ -90,7 +90,7 @@ async def _run_research(
                     extensions = ext_result.scalars().all()
 
                 # 创建研究代理
-                graph = ResearchGraph(
+                agent = DeepResearchAgent(
                     retrieval=retrieval,
                     mcp=mcp,
                     extensions=extensions,
@@ -98,7 +98,7 @@ async def _run_research(
 
                 # 使用 run_id 作为 thread_id 执行（支持取消：轮询 DB 状态并 cancel 协程）
                 graph_task = asyncio.create_task(
-                    graph.run(
+                    agent.run(
                         question=question,
                         kb_ids=[uuid.UUID(kid) for kid in kb_ids],
                         allow_external=allow_external,

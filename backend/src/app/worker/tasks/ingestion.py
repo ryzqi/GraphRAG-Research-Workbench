@@ -186,7 +186,7 @@ async def _run_ingestion_job(job_id: str) -> None:
                                     "material_id": str(material.id),
                                     "content": text,
                                     "context": contexts[idx] if contexts else "",
-                                    "embedding": emb,
+                                    "dense_vector": emb,
                                 }
                             )
 

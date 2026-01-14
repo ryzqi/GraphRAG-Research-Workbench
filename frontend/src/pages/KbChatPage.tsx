@@ -18,9 +18,9 @@ import { KnowledgeBaseSelector } from '../components/KnowledgeBaseSelector';
 import { Button, ErrorAlert, PageHeader } from '../components/ui';
 import {
   type AgentMode,
-  type ChatAnswerResponse,
   type ChatMessage,
   type ChatSession,
+  type ChatMessageResponse,
   type EvidenceItem,
   createChatSession,
   sendMessage,
@@ -103,12 +103,14 @@ export function KbChatPage() {
     setMessages((prev) => [...prev, userMsg]);
 
     try {
-      const response: ChatAnswerResponse = await sendMessage(session.id, userContent);
-      const assistantMsg: MessageWithEvidence = {
-        message: response.assistant_message,
-        evidence: response.evidence,
-      };
-      setMessages((prev) => [...prev, assistantMsg]);
+      const response: ChatMessageResponse = await sendMessage(session.id, userContent);
+      if (response.status !== 'succeeded') {
+        throw new Error('知识库对话不支持工具审批流程');
+      }
+      setMessages((prev) => [
+        ...prev,
+        { message: response.assistant_message, evidence: response.evidence },
+      ]);
     } catch (e) {
       setError(getErrorMessage(e));
     } finally {

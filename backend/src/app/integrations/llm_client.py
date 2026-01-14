@@ -39,21 +39,21 @@ class LLMResponse:
 class LLMClient:
     """LLM 客户端。"""
 
-    def __init__(self, http_client: httpx.AsyncClient | None = None) -> None:
+    def __init__(
+        self,
+        http_client: httpx.AsyncClient | None = None,
+        *,
+        base_url: str | None = None,
+        api_key: str | None = None,
+        model: str | None = None,
+    ) -> None:
         settings = get_settings()
         self._http_client = http_client
-        self._base_url = settings.llm_base_url.rstrip("/")
-        self._api_key = settings.llm_api_key
-        self._model = settings.llm_model
-
-    async def chat(
-        self, *, messages: list[ChatMessage], timeout_seconds: float = 30.0
-    ) -> str:
-        """聊天接口（兼容旧版）。"""
-        response = await self.chat_with_metrics(
-            messages=messages, timeout_seconds=timeout_seconds
-        )
-        return response.content
+        self._base_url = (
+            base_url if base_url is not None else settings.llm_base_url
+        ).rstrip("/")
+        self._api_key = api_key if api_key is not None else settings.llm_api_key
+        self._model = model if model is not None else settings.llm_model
 
     async def chat_with_metrics(
         self,

@@ -132,11 +132,19 @@ class KbChatService:
                 checkpointer=CheckpointManager.get_checkpointer(),
             )
 
+            if not isinstance(result, dict):
+                raise RuntimeError("LangGraph 返回类型不符合预期")
+
+            answer = str(result.get("answer") or "")
+            retrieval_results = result.get("retrieval_results") or []
+            if not isinstance(retrieval_results, list):
+                retrieval_results = []
+
             # 保存助手消息
             assistant_msg = ChatMessage(
                 session_id=session.id,
                 role=MessageRole.ASSISTANT,
-                content=result.answer,
+                content=answer,
             )
             self._db.add(assistant_msg)
 
@@ -156,7 +164,7 @@ class KbChatService:
 
             # 保存证据
             evidence_items: list[EvidenceItem] = []
-            for r in result.retrieval_results:
+            for r in retrieval_results:
                 ev = Evidence(
                     run_id=run.id,
                     source_kind=EvidenceSourceKind.KB,
@@ -181,15 +189,15 @@ class KbChatService:
             # 更新运行状态
             run.status = AgentRunStatus.SUCCEEDED
             run.finished_at = datetime.now(timezone.utc)
-            run.final_output = result.answer
-            run.stage_summaries = result.stage_summaries
+            run.final_output = answer
+            run.stage_summaries = result.get("stage_summaries")
             run.metrics = {
                 "evidence_count": len(evidence_items),
                 "latency_ms": int(
                     (run.finished_at - started_at).total_seconds() * 1000
                 ),
                 **summary_metrics,
-                **(result.metrics or {}),
+                **(result.get("metrics") or {}),
             }
 
             await self._db.commit()

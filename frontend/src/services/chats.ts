@@ -9,6 +9,7 @@ export type AgentMode = 'single_agent' | 'multi_agent';
 export type MessageRole = 'user' | 'assistant' | 'system';
 export type AgentRunStatus = 'running' | 'succeeded' | 'failed' | 'canceled';
 export type EvidenceSourceKind = 'kb' | 'external';
+export type ChatMessageResponseStatus = 'succeeded' | 'pending_tool_approval';
 
 export interface ChatSessionCreate {
   session_type: ChatSessionType;
@@ -60,10 +61,30 @@ export interface AgentRun {
 }
 
 export interface ChatAnswerResponse {
+  status: 'succeeded';
   assistant_message: ChatMessage;
   evidence: EvidenceItem[];
   run: AgentRun;
 }
+
+export interface PendingToolCall {
+  extension_id: string;
+  extension_name: string | null;
+  tool_name: string;
+  args: Record<string, unknown>;
+  is_builtin: boolean;
+}
+
+export interface ChatPendingToolApprovalResponse {
+  status: 'pending_tool_approval';
+  thread_id: string;
+  interrupt_id: string | null;
+  message: string | null;
+  pending_tool_calls: PendingToolCall[];
+  run: AgentRun;
+}
+
+export type ChatMessageResponse = ChatAnswerResponse | ChatPendingToolApprovalResponse;
 
 /**
  * 创建会话
@@ -88,9 +109,23 @@ export async function getChatSession(sessionId: string): Promise<ChatSession> {
 export async function sendMessage(
   sessionId: string,
   content: string
-): Promise<ChatAnswerResponse> {
-  return apiFetch<ChatAnswerResponse>(`/api/v1/chats/${sessionId}/messages`, {
+): Promise<ChatMessageResponse> {
+  return apiFetch<ChatMessageResponse>(`/api/v1/chats/${sessionId}/messages`, {
     method: 'POST',
     body: JSON.stringify({ content }),
+  });
+}
+
+/**
+ * 两阶段交互：提交工具审批并恢复执行
+ */
+export async function resumeToolApproval(
+  sessionId: string,
+  runId: string,
+  approved: boolean
+): Promise<ChatMessageResponse> {
+  return apiFetch<ChatMessageResponse>(`/api/v1/chats/${sessionId}/runs/${runId}/resume`, {
+    method: 'POST',
+    body: JSON.stringify({ approved }),
   });
 }

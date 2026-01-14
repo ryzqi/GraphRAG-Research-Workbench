@@ -113,7 +113,7 @@ def build_research_plan_tool(
                 max_subtasks=max_subtasks,
             )
 
-        response = await llm.chat(messages=[ChatMessage(role="user", content=prompt)])
+        response = (await llm.chat_with_metrics(messages=[ChatMessage(role="user", content=prompt)])).content
         result = _parse_llm_response(response)
         result["original_question"] = question
 

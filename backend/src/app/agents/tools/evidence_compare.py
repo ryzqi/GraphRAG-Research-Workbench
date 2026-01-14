@@ -127,7 +127,7 @@ def build_evidence_compare_tool(
                 comparison_mode=comparison_mode,
             )
 
-        response = await llm.chat(messages=[ChatMessage(role="user", content=prompt)])
+        response = (await llm.chat_with_metrics(messages=[ChatMessage(role="user", content=prompt)])).content
         result = _parse_llm_response(response)
 
         return json.dumps(result, ensure_ascii=False)

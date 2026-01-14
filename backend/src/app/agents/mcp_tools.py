@@ -48,10 +48,12 @@ def _build_args_schema(tool: ToolDefinition) -> type[BaseModel] | None:
     for name, prop in properties.items():
         if not isinstance(prop, dict):
             continue
+        is_required = name in required_names
         field_type = _json_type_to_py(prop.get("type"))
-        default = ... if name in required_names else None
+        annotated_type = field_type if is_required else field_type | None
+        default = ... if is_required else None
         description = prop.get("description") if isinstance(prop.get("description"), str) else None
-        fields[name] = (field_type, Field(default=default, description=description))
+        fields[name] = (annotated_type, Field(default=default, description=description))
 
     if not fields:
         return None

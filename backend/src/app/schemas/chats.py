@@ -5,6 +5,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 from enum import Enum
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -109,8 +110,37 @@ class AgentRunRead(BaseModel):
     error_message: str | None = None
 
 
-# 问答响应
+# 两阶段交互：待审批工具调用
+class PendingToolCall(BaseModel):
+    """待审批的工具调用。"""
+
+    extension_id: str
+    extension_name: str | None = None
+    tool_name: str
+    args: dict[str, Any] = Field(default_factory=dict)
+    is_builtin: bool = False
+
+
+class ToolApprovalRequest(BaseModel):
+    """工具审批请求。"""
+
+    approved: bool
+
+
+# 问答响应（完成）
 class ChatAnswerResponse(BaseModel):
+    status: Literal["succeeded"] = "succeeded"
     assistant_message: ChatMessageRead
     evidence: list[EvidenceItem]
+    run: AgentRunRead
+
+
+class ChatPendingToolApprovalResponse(BaseModel):
+    """两阶段交互的第 1 阶段：返回待审批工具清单。"""
+
+    status: Literal["pending_tool_approval"] = "pending_tool_approval"
+    thread_id: str
+    interrupt_id: str | None = None
+    message: str | None = None
+    pending_tool_calls: list[PendingToolCall]
     run: AgentRunRead

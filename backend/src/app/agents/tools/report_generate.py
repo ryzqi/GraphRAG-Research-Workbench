@@ -153,7 +153,7 @@ def build_report_generate_tool(llm: LLMClient, prompts: PromptLoader | None = No
                 format_instruction=format_instruction,
             )
 
-        response = await llm.chat(messages=[ChatMessage(role="user", content=prompt)])
+        response = (await llm.chat_with_metrics(messages=[ChatMessage(role="user", content=prompt)])).content
         result = _parse_llm_response(response, question)
 
         return json.dumps(result, ensure_ascii=False)
