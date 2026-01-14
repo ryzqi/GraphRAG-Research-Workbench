@@ -31,8 +31,8 @@ export function ExtensionsPage() {
     setLoading(true);
     setError(null);
     try {
-      const data = await listExtensions();
-      setExtensions(data);
+      const res = await listExtensions();
+      setExtensions(res.items);
     } catch (e) {
       setError(e instanceof Error ? e.message : '加载失败');
     } finally {
@@ -87,8 +87,8 @@ export function ExtensionsPage() {
     setSelectedExt(ext);
     setToolsLoading(true);
     try {
-      const data = await getExtensionTools(ext.id);
-      setTools(data);
+      const res = await getExtensionTools(ext.id);
+      setTools(res.items);
     } catch (e) {
       setTools([]);
       setError(e instanceof Error ? e.message : '获取工具列表失败');

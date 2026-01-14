@@ -3,6 +3,7 @@
  */
 
 import { apiFetch } from './http';
+import type { ListResponse } from './types';
 
 export interface KnowledgeBase {
   id: string;
@@ -14,9 +15,7 @@ export interface KnowledgeBase {
   updated_at: string;
 }
 
-export interface KnowledgeBaseListResponse {
-  items: KnowledgeBase[];
-}
+export type KnowledgeBaseListResponse = ListResponse<KnowledgeBase>;
 
 export interface KnowledgeBaseCreate {
   name: string;

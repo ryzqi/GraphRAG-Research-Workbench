@@ -8,6 +8,8 @@ from enum import Enum
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.schemas.pagination import PageMeta
+
 
 class KnowledgeBaseStatus(str, Enum):
     ACTIVE = "active"
@@ -40,3 +42,4 @@ class KnowledgeBaseRead(BaseModel):
 
 class KnowledgeBaseListResponse(BaseModel):
     items: list[KnowledgeBaseRead]
+    page: PageMeta

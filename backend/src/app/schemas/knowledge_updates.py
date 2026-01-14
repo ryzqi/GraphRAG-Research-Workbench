@@ -8,6 +8,8 @@ from enum import Enum
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.schemas.pagination import PageMeta
+
 
 class ProposalStatus(str, Enum):
     PENDING = "pending"
@@ -47,3 +49,10 @@ class ProposalRead(BaseModel):
     reviewed_by: str | None
     created_at: datetime
     reviewed_at: datetime | None
+
+
+class ProposalListResponse(BaseModel):
+    """候选沉淀列表响应。"""
+
+    items: list[ProposalRead]
+    page: PageMeta

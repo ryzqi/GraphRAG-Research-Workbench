@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.knowledge_base import KnowledgeBase, KnowledgeBaseStatus
@@ -25,6 +25,27 @@ class KnowledgeBaseService:
         )
         result = await self._db.execute(stmt)
         return list(result.scalars().all())
+
+    async def list_active_page(
+        self, *, skip: int = 0, limit: int = 100
+    ) -> tuple[list[KnowledgeBase], int]:
+        """分页列出所有活跃知识库。"""
+        count_stmt = (
+            select(func.count())
+            .select_from(KnowledgeBase)
+            .where(KnowledgeBase.status == KnowledgeBaseStatus.ACTIVE)
+        )
+        total = int((await self._db.execute(count_stmt)).scalar_one())
+
+        stmt = (
+            select(KnowledgeBase)
+            .where(KnowledgeBase.status == KnowledgeBaseStatus.ACTIVE)
+            .order_by(KnowledgeBase.created_at.desc(), KnowledgeBase.id.desc())
+            .offset(skip)
+            .limit(limit)
+        )
+        result = await self._db.execute(stmt)
+        return list(result.scalars().all()), total
 
     async def get_by_id(self, kb_id: uuid.UUID) -> KnowledgeBase | None:
         """根据 ID 获取知识库。"""

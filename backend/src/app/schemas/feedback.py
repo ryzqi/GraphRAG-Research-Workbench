@@ -8,6 +8,8 @@ from enum import Enum
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.schemas.pagination import PageMeta
+
 
 class FeedbackStatus(str, Enum):
     PENDING = "pending"
@@ -44,3 +46,10 @@ class FeedbackRead(BaseModel):
     resolution_note: str | None = None
     created_at: datetime
     updated_at: datetime | None = None
+
+
+class FeedbackListResponse(BaseModel):
+    """反馈列表响应。"""
+
+    items: list[FeedbackRead]
+    page: PageMeta

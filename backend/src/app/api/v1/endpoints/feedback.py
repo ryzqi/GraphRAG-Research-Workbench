@@ -9,7 +9,13 @@ from fastapi import APIRouter, Query
 from app.api.deps import AsyncSessionDep, CurrentUserDep
 from app.core.errors import AppError, ErrorCode
 from app.models.feedback import FeedbackStatus
-from app.schemas.feedback import FeedbackCreate, FeedbackRead, FeedbackUpdate
+from app.schemas.feedback import (
+    FeedbackCreate,
+    FeedbackListResponse,
+    FeedbackRead,
+    FeedbackUpdate,
+)
+from app.schemas.pagination import PageMeta
 from app.services.feedback_service import FeedbackService
 
 router = APIRouter()
@@ -24,16 +30,32 @@ async def create_feedback(
     return FeedbackRead.model_validate(feedback)
 
 
-@router.get("", response_model=list[FeedbackRead])
+@router.get("", response_model=FeedbackListResponse)
 async def list_feedback(
     session: AsyncSessionDep,
     _user: CurrentUserDep,
+    skip: int = Query(0, ge=0, description="跳过记录数"),
+    limit: int = Query(100, ge=1, le=100, description="返回记录数"),
     status: FeedbackStatus | None = Query(None, description="按状态过滤"),
     run_id: uuid.UUID | None = Query(None, description="按 run_id 过滤"),
-) -> list[FeedbackRead]:
+) -> FeedbackListResponse:
     """列出反馈。"""
-    items = await FeedbackService().list_all(session, status=status, run_id=run_id)
-    return [FeedbackRead.model_validate(f) for f in items]
+    items, total = await FeedbackService().list_page(
+        session,
+        status=status,
+        run_id=run_id,
+        skip=skip,
+        limit=limit,
+    )
+    return FeedbackListResponse(
+        items=[FeedbackRead.model_validate(f) for f in items],
+        page=PageMeta(
+            skip=skip,
+            limit=limit,
+            total=total,
+            has_more=(skip + len(items)) < total,
+        ),
+    )
 
 
 @router.get("/{feedback_id}", response_model=FeedbackRead)

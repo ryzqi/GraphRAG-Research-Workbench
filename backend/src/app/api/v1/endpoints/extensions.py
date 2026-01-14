@@ -4,32 +4,47 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Depends, Request, status
+from fastapi import APIRouter, Depends, Query, Request, status
 
 from app.api.deps import AsyncSessionDep, CurrentUserDep, verify_admin_token
 from app.core.errors import not_found
 from app.models.tool_extension import ExtensionStatus
 from app.schemas.extensions import (
-    ToolDescriptor,
+    ToolDescriptorListResponse,
     ToolExtensionCreate,
+    ToolExtensionListResponse,
     ToolExtensionRead,
     ToolExtensionUpdate,
 )
+from app.schemas.pagination import PageMeta
 from app.services.extension_service import ExtensionService
 
 router = APIRouter(dependencies=[Depends(verify_admin_token)])
 
 
-@router.get("", response_model=list[ToolExtensionRead])
+@router.get("", response_model=ToolExtensionListResponse)
 async def list_extensions(
     db: AsyncSessionDep,
     _user: CurrentUserDep,
     request: Request,
-    status_filter: ExtensionStatus | None = None,
-) -> list[ToolExtensionRead]:
+    skip: int = Query(0, ge=0, description="跳过记录数"),
+    limit: int = Query(100, ge=1, le=100, description="返回记录数"),
+    status_filter: ExtensionStatus | None = Query(None, description="按状态过滤"),
+) -> ToolExtensionListResponse:
     """获取扩展列表。"""
     service = ExtensionService(db, request.app.state.mcp_client)
-    return await service.list_extensions(status=status_filter)
+    items, total = await service.list_extensions_page(
+        status=status_filter, skip=skip, limit=limit
+    )
+    return ToolExtensionListResponse(
+        items=items,
+        page=PageMeta(
+            skip=skip,
+            limit=limit,
+            total=total,
+            has_more=(skip + len(items)) < total,
+        ),
+    )
 
 
 @router.post("", response_model=ToolExtensionRead, status_code=status.HTTP_201_CREATED)
@@ -89,16 +104,27 @@ async def delete_extension(
         raise not_found("扩展不存在", code="EXTENSION_NOT_FOUND")
 
 
-@router.get("/{extension_id}/tools", response_model=list[ToolDescriptor])
+@router.get("/{extension_id}/tools", response_model=ToolDescriptorListResponse)
 async def get_extension_tools(
     db: AsyncSessionDep,
     _user: CurrentUserDep,
     request: Request,
     extension_id: uuid.UUID,
-) -> list[ToolDescriptor]:
+    skip: int = Query(0, ge=0, description="跳过记录数"),
+    limit: int = Query(100, ge=1, le=100, description="返回记录数"),
+) -> ToolDescriptorListResponse:
     """获取扩展提供的工具列表。"""
     service = ExtensionService(db, request.app.state.mcp_client)
     ext = await service.get_extension(extension_id)
     if not ext:
         raise not_found("扩展不存在", code="EXTENSION_NOT_FOUND")
-    return await service.get_tools(extension_id)
+    items, total = await service.get_tools_page(extension_id, skip=skip, limit=limit)
+    return ToolDescriptorListResponse(
+        items=items,
+        page=PageMeta(
+            skip=skip,
+            limit=limit,
+            total=total,
+            has_more=(skip + len(items)) < total,
+        ),
+    )

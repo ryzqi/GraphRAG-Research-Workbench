@@ -3,6 +3,7 @@
  */
 
 import { apiFetch, buildAuthHeaders, getApiBaseUrl } from './http';
+import type { ListResponse } from './types';
 
 export type SourceType = 'upload' | 'url' | 'text';
 
@@ -17,9 +18,7 @@ export interface SourceMaterial {
   updated_at: string;
 }
 
-export interface MaterialListResponse {
-  items: SourceMaterial[];
-}
+export type MaterialListResponse = ListResponse<SourceMaterial>;
 
 export interface MaterialCreateText {
   source_type: 'text';

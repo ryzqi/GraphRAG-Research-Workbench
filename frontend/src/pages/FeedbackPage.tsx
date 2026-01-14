@@ -35,8 +35,8 @@ export function FeedbackPage() {
   const fetchData = async () => {
     setLoading(true);
     try {
-      const data = await listFeedback(filterStatus ? { status: filterStatus } : undefined);
-      setItems(data);
+      const res = await listFeedback(filterStatus ? { status: filterStatus } : undefined);
+      setItems(res.items);
     } finally {
       setLoading(false);
     }

@@ -3,6 +3,7 @@
  */
 
 import { apiFetch } from './http';
+import type { ListResponse } from './types';
 
 export type FeedbackStatus = 'pending' | 'reviewed' | 'resolved' | 'dismissed';
 
@@ -28,6 +29,8 @@ export interface Feedback {
   updated_at: string | null;
 }
 
+export type FeedbackListResponse = ListResponse<Feedback>;
+
 /**
  * 提交反馈
  */
@@ -44,12 +47,16 @@ export async function createFeedback(data: FeedbackCreate): Promise<Feedback> {
 export async function listFeedback(params?: {
   status?: FeedbackStatus;
   run_id?: string;
-}): Promise<Feedback[]> {
+  skip?: number;
+  limit?: number;
+}): Promise<FeedbackListResponse> {
   const searchParams = new URLSearchParams();
   if (params?.status) searchParams.set('status', params.status);
   if (params?.run_id) searchParams.set('run_id', params.run_id);
+  if (params?.skip !== undefined) searchParams.set('skip', String(params.skip));
+  if (params?.limit !== undefined) searchParams.set('limit', String(params.limit));
   const query = searchParams.toString();
-  return apiFetch<Feedback[]>(`/api/v1/feedback${query ? `?${query}` : ''}`);
+  return apiFetch<FeedbackListResponse>(`/api/v1/feedback${query ? `?${query}` : ''}`);
 }
 
 /**

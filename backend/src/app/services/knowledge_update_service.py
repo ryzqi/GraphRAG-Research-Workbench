@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.knowledge_update_proposal import KnowledgeUpdateProposal, ProposalStatus
@@ -48,6 +48,41 @@ class KnowledgeUpdateService:
             stmt = stmt.where(KnowledgeUpdateProposal.status == status)
         result = await session.execute(stmt)
         return list(result.scalars().all())
+
+    async def list_proposals_page(
+        self,
+        session: AsyncSession,
+        *,
+        kb_id: uuid.UUID | None = None,
+        status: ProposalStatus | None = None,
+        skip: int = 0,
+        limit: int = 100,
+    ) -> tuple[list[KnowledgeUpdateProposal], int]:
+        """分页列出候选沉淀。"""
+        conditions = []
+        if kb_id:
+            conditions.append(KnowledgeUpdateProposal.kb_id == kb_id)
+        if status:
+            conditions.append(KnowledgeUpdateProposal.status == status)
+
+        count_stmt = select(func.count()).select_from(KnowledgeUpdateProposal)
+        if conditions:
+            count_stmt = count_stmt.where(*conditions)
+        total = int((await session.execute(count_stmt)).scalar_one())
+
+        stmt = (
+            select(KnowledgeUpdateProposal)
+            .order_by(
+                KnowledgeUpdateProposal.created_at.desc(),
+                KnowledgeUpdateProposal.id.desc(),
+            )
+            .offset(skip)
+            .limit(limit)
+        )
+        if conditions:
+            stmt = stmt.where(*conditions)
+        result = await session.execute(stmt)
+        return list(result.scalars().all()), total
 
     async def get_proposal(
         self, session: AsyncSession, proposal_id: uuid.UUID

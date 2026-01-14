@@ -9,7 +9,13 @@ from fastapi import APIRouter, Query
 from app.api.deps import AsyncSessionDep, CurrentUserDep
 from app.core.errors import AppError, ErrorCode
 from app.models.knowledge_update_proposal import ProposalStatus
-from app.schemas.knowledge_updates import ProposalCreate, ProposalRead, ProposalUpdate
+from app.schemas.knowledge_updates import (
+    ProposalCreate,
+    ProposalListResponse,
+    ProposalRead,
+    ProposalUpdate,
+)
+from app.schemas.pagination import PageMeta
 from app.services.knowledge_update_service import KnowledgeUpdateService
 
 router = APIRouter()
@@ -24,18 +30,32 @@ async def create_proposal(
     return ProposalRead.model_validate(proposal)
 
 
-@router.get("", response_model=list[ProposalRead])
+@router.get("", response_model=ProposalListResponse)
 async def list_proposals(
     session: AsyncSessionDep,
     _user: CurrentUserDep,
+    skip: int = Query(0, ge=0, description="跳过记录数"),
+    limit: int = Query(100, ge=1, le=100, description="返回记录数"),
     kb_id: uuid.UUID | None = Query(None),
     status: ProposalStatus | None = Query(None),
-) -> list[ProposalRead]:
+) -> ProposalListResponse:
     """列出候选沉淀。"""
-    proposals = await KnowledgeUpdateService().list_proposals(
-        session, kb_id=kb_id, status=status
+    proposals, total = await KnowledgeUpdateService().list_proposals_page(
+        session,
+        kb_id=kb_id,
+        status=status,
+        skip=skip,
+        limit=limit,
     )
-    return [ProposalRead.model_validate(p) for p in proposals]
+    return ProposalListResponse(
+        items=[ProposalRead.model_validate(p) for p in proposals],
+        page=PageMeta(
+            skip=skip,
+            limit=limit,
+            total=total,
+            has_more=(skip + len(proposals)) < total,
+        ),
+    )
 
 
 @router.get("/{proposal_id}", response_model=ProposalRead)

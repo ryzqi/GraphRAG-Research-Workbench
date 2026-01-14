@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.feedback import Feedback, FeedbackStatus
@@ -46,6 +46,38 @@ class FeedbackService:
             stmt = stmt.where(Feedback.run_id == run_id)
         result = await session.execute(stmt)
         return list(result.scalars().all())
+
+    async def list_page(
+        self,
+        session: AsyncSession,
+        *,
+        status: FeedbackStatus | None = None,
+        run_id: uuid.UUID | None = None,
+        skip: int = 0,
+        limit: int = 100,
+    ) -> tuple[list[Feedback], int]:
+        """分页列出反馈（支持按状态/run_id 过滤）。"""
+        conditions = []
+        if status:
+            conditions.append(Feedback.status == status)
+        if run_id:
+            conditions.append(Feedback.run_id == run_id)
+
+        count_stmt = select(func.count()).select_from(Feedback)
+        if conditions:
+            count_stmt = count_stmt.where(*conditions)
+        total = int((await session.execute(count_stmt)).scalar_one())
+
+        stmt = (
+            select(Feedback)
+            .order_by(Feedback.created_at.desc(), Feedback.id.desc())
+            .offset(skip)
+            .limit(limit)
+        )
+        if conditions:
+            stmt = stmt.where(*conditions)
+        result = await session.execute(stmt)
+        return list(result.scalars().all()), total
 
     async def update(
         self, session: AsyncSession, feedback_id: uuid.UUID, req: FeedbackUpdate

@@ -3,6 +3,7 @@
  */
 
 import { apiFetch } from './http';
+import type { ListResponse } from './types';
 
 export type ExtensionTransport = 'stdio' | 'http';
 export type ExtensionStatus = 'enabled' | 'disabled';
@@ -47,12 +48,23 @@ export interface ToolInvocationSummary {
   extension_name: string | null;
 }
 
+export type ToolExtensionListResponse = ListResponse<ToolExtension>;
+export type ToolDescriptorListResponse = ListResponse<ToolDescriptor>;
+
 /**
  * 获取扩展列表
  */
-export async function listExtensions(status?: ExtensionStatus): Promise<ToolExtension[]> {
-  const params = status ? `?status_filter=${status}` : '';
-  return apiFetch<ToolExtension[]>(`/api/v1/extensions${params}`);
+export async function listExtensions(params?: {
+  status_filter?: ExtensionStatus;
+  skip?: number;
+  limit?: number;
+}): Promise<ToolExtensionListResponse> {
+  const searchParams = new URLSearchParams();
+  if (params?.status_filter) searchParams.set('status_filter', params.status_filter);
+  if (params?.skip !== undefined) searchParams.set('skip', String(params.skip));
+  if (params?.limit !== undefined) searchParams.set('limit', String(params.limit));
+  const query = searchParams.toString();
+  return apiFetch<ToolExtensionListResponse>(`/api/v1/extensions${query ? `?${query}` : ''}`);
 }
 
 /**
@@ -97,6 +109,15 @@ export async function deleteExtension(extensionId: string): Promise<void> {
 /**
  * 获取扩展工具列表
  */
-export async function getExtensionTools(extensionId: string): Promise<ToolDescriptor[]> {
-  return apiFetch<ToolDescriptor[]>(`/api/v1/extensions/${extensionId}/tools`);
+export async function getExtensionTools(
+  extensionId: string,
+  params?: { skip?: number; limit?: number }
+): Promise<ToolDescriptorListResponse> {
+  const searchParams = new URLSearchParams();
+  if (params?.skip !== undefined) searchParams.set('skip', String(params.skip));
+  if (params?.limit !== undefined) searchParams.set('limit', String(params.limit));
+  const query = searchParams.toString();
+  return apiFetch<ToolDescriptorListResponse>(
+    `/api/v1/extensions/${extensionId}/tools${query ? `?${query}` : ''}`
+  );
 }

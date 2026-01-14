@@ -7,6 +7,8 @@ from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
+from app.core.errors import build_error_response
+from app.core.logging import get_request_id
 from app.db.session import get_engine
 from app.integrations.milvus_client import MilvusClient
 from app.integrations.object_storage import ObjectStorage
@@ -79,7 +81,15 @@ async def ready() -> JSONResponse:
     postgres_ok = bool(results.get("postgres", {}).get("ok"))
 
     if not postgres_ok:
-        return JSONResponse(status_code=503, content={"status": "not_ready", "dependencies": results})
+        return JSONResponse(
+            status_code=503,
+            content=build_error_response(
+                code="NOT_READY",
+                message="服务未就绪",
+                request_id=get_request_id(),
+                details={"dependencies": results},
+            ),
+        )
 
     degraded = any(not bool(r.get("ok")) for k, r in results.items() if k != "postgres")
     status = "degraded" if degraded else "ready"

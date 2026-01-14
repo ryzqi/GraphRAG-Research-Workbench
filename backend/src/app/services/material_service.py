@@ -7,7 +7,7 @@ import uuid
 from typing import BinaryIO
 
 import anyio
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.settings import get_settings
@@ -32,6 +32,27 @@ class MaterialService:
         )
         result = await self._db.execute(stmt)
         return list(result.scalars().all())
+
+    async def list_by_kb_page(
+        self, kb_id: uuid.UUID, *, skip: int = 0, limit: int = 100
+    ) -> tuple[list[SourceMaterial], int]:
+        """分页列出知识库下的所有资料。"""
+        count_stmt = (
+            select(func.count())
+            .select_from(SourceMaterial)
+            .where(SourceMaterial.kb_id == kb_id)
+        )
+        total = int((await self._db.execute(count_stmt)).scalar_one())
+
+        stmt = (
+            select(SourceMaterial)
+            .where(SourceMaterial.kb_id == kb_id)
+            .order_by(SourceMaterial.created_at.desc(), SourceMaterial.id.desc())
+            .offset(skip)
+            .limit(limit)
+        )
+        result = await self._db.execute(stmt)
+        return list(result.scalars().all()), total
 
     async def get_by_id(self, material_id: uuid.UUID) -> SourceMaterial | None:
         """根据 ID 获取资料。"""

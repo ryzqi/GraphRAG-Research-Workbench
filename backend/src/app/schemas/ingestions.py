@@ -8,6 +8,8 @@ from enum import Enum
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.schemas.pagination import PageMeta
+
 
 class IngestionStatus(str, Enum):
     QUEUED = "queued"
@@ -49,3 +51,4 @@ class IngestionJobListResponse(BaseModel):
     """导入任务列表响应。"""
 
     items: list[IngestionJobRead]
+    page: PageMeta

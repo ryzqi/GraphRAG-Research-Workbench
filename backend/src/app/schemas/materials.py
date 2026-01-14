@@ -8,6 +8,8 @@ from enum import Enum
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.schemas.pagination import PageMeta
+
 
 class SourceType(str, Enum):
     UPLOAD = "upload"
@@ -50,3 +52,4 @@ class MaterialListResponse(BaseModel):
     """资料列表响应。"""
 
     items: list[SourceMaterialRead]
+    page: PageMeta

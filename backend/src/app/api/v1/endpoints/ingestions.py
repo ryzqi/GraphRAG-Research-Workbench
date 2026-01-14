@@ -32,7 +32,7 @@ async def create_ingestion_job(
     kb = await kb_service.get_by_id(body.kb_id)
     if not kb:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
+            status_code=status.HTTP_404_NOT_FOUND,
             detail={"code": "KB_NOT_FOUND", "message": "知识库不存在"},
         )
 
@@ -40,9 +40,15 @@ async def create_ingestion_job(
     material_service = MaterialService(db)
     materials = await material_service.get_by_ids(body.material_ids)
     if len(materials) != len(body.material_ids):
+        found_ids = {m.id for m in materials}
+        missing_ids = [str(mid) for mid in body.material_ids if mid not in found_ids]
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"code": "MATERIAL_NOT_FOUND", "message": "部分资料不存在"},
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={
+                "code": "MATERIAL_NOT_FOUND",
+                "message": "部分资料不存在",
+                "details": {"missing_ids": missing_ids},
+            },
         )
 
     for m in materials:

@@ -13,6 +13,7 @@ from app.schemas.materials import (
     MaterialListResponse,
     SourceMaterialRead,
 )
+from app.schemas.pagination import PageMeta
 from app.services.knowledge_base_service import KnowledgeBaseService
 from app.services.material_service import MaterialService
 
@@ -40,9 +41,15 @@ async def list_materials(
         )
 
     service = MaterialService(db)
-    materials = await service.list_by_kb(kb_id, skip=skip, limit=limit)
+    materials, total = await service.list_by_kb_page(kb_id, skip=skip, limit=limit)
     return MaterialListResponse(
-        items=[SourceMaterialRead.model_validate(m) for m in materials]
+        items=[SourceMaterialRead.model_validate(m) for m in materials],
+        page=PageMeta(
+            skip=skip,
+            limit=limit,
+            total=total,
+            has_more=(skip + len(materials)) < total,
+        ),
     )
 
 

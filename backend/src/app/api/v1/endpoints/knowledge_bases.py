@@ -13,6 +13,7 @@ from app.schemas.knowledge_bases import (
     KnowledgeBaseRead,
     KnowledgeBaseUpdate,
 )
+from app.schemas.pagination import PageMeta
 from app.services.knowledge_base_service import KnowledgeBaseService
 
 router = APIRouter()
@@ -27,9 +28,15 @@ async def list_knowledge_bases(
 ) -> KnowledgeBaseListResponse:
     """列出所有活跃知识库。"""
     service = KnowledgeBaseService(db)
-    kbs = await service.list_active(skip=skip, limit=limit)
+    kbs, total = await service.list_active_page(skip=skip, limit=limit)
     return KnowledgeBaseListResponse(
-        items=[KnowledgeBaseRead.model_validate(kb) for kb in kbs]
+        items=[KnowledgeBaseRead.model_validate(kb) for kb in kbs],
+        page=PageMeta(
+            skip=skip,
+            limit=limit,
+            total=total,
+            has_more=(skip + len(kbs)) < total,
+        ),
     )
 
 
@@ -44,7 +51,7 @@ async def create_knowledge_base(
     existing = await service.get_by_name(body.name)
     if existing:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
+            status_code=status.HTTP_409_CONFLICT,
             detail={"code": "KB_NAME_EXISTS", "message": "知识库名称已存在"},
         )
 
@@ -89,7 +96,7 @@ async def update_knowledge_base(
         existing = await service.get_by_name(body.name)
         if existing:
             raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
+                status_code=status.HTTP_409_CONFLICT,
                 detail={"code": "KB_NAME_EXISTS", "message": "知识库名称已存在"},
             )
 

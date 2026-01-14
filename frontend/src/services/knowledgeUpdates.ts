@@ -3,6 +3,7 @@
  */
 
 import { apiFetch } from './http';
+import type { ListResponse } from './types';
 
 export type ProposalStatus = 'pending' | 'approved' | 'rejected' | 'applied';
 
@@ -31,6 +32,8 @@ export interface Proposal {
   reviewed_at: string | null;
 }
 
+export type ProposalListResponse = ListResponse<Proposal>;
+
 /**
  * 创建候选沉淀
  */
@@ -47,12 +50,16 @@ export async function createProposal(data: ProposalCreate): Promise<Proposal> {
 export async function listProposals(params?: {
   kb_id?: string;
   status?: ProposalStatus;
-}): Promise<Proposal[]> {
+  skip?: number;
+  limit?: number;
+}): Promise<ProposalListResponse> {
   const searchParams = new URLSearchParams();
   if (params?.kb_id) searchParams.set('kb_id', params.kb_id);
   if (params?.status) searchParams.set('status', params.status);
+  if (params?.skip !== undefined) searchParams.set('skip', String(params.skip));
+  if (params?.limit !== undefined) searchParams.set('limit', String(params.limit));
   const query = searchParams.toString();
-  return apiFetch<Proposal[]>(`/api/v1/knowledge-updates${query ? `?${query}` : ''}`);
+  return apiFetch<ProposalListResponse>(`/api/v1/knowledge-updates${query ? `?${query}` : ''}`);
 }
 
 /**

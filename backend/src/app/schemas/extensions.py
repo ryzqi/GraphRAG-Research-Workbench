@@ -8,6 +8,8 @@ from enum import Enum
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.schemas.pagination import PageMeta
+
 
 class ExtensionTransport(str, Enum):
     STDIO = "stdio"
@@ -86,3 +88,17 @@ class ToolInvocationSummary(BaseModel):
     purpose: str | None = None
     status: InvocationStatus
     extension_name: str | None = None
+
+
+class ToolExtensionListResponse(BaseModel):
+    """扩展列表响应。"""
+
+    items: list[ToolExtensionRead]
+    page: PageMeta
+
+
+class ToolDescriptorListResponse(BaseModel):
+    """扩展工具列表响应。"""
+
+    items: list[ToolDescriptor]
+    page: PageMeta
