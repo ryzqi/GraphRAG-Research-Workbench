@@ -20,8 +20,9 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-mkb}
       TZ: ${TZ:-Asia/Shanghai}
     ports:
-      - "${POSTGRES_PORT:-5432}:5432"
+      - "${POSTGRES_PORT:-5433}:5432"
     volumes:
+      # 注意：PostgreSQL 在 Windows Podman 上无法使用本地目录挂载，使用命名卷
       - postgres_data:/var/lib/postgresql/data
 
   redis:
