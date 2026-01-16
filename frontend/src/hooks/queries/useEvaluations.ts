@@ -9,9 +9,11 @@ import {
 } from '../../services/evaluations';
 
 // Query Keys
+const NO_ID = '__none__';
+
 const KEYS = {
   all: ['evaluations'] as const,
-  run: (id: string) => [...KEYS.all, 'run', id] as const,
+  run: (id: string | undefined) => [...KEYS.all, 'run', id ?? NO_ID] as const,
 };
 
 /**
@@ -19,8 +21,8 @@ const KEYS = {
  */
 export function useEvaluationRun(evalRunId: string | undefined) {
   return useQuery({
-    queryKey: KEYS.run(evalRunId!),
-    queryFn: () => getEvaluationRun(evalRunId!),
+    queryKey: KEYS.run(evalRunId),
+    queryFn: () => getEvaluationRun(evalRunId as string),
     enabled: !!evalRunId,
     refetchInterval: (query) => {
       const status = query.state.data?.status;

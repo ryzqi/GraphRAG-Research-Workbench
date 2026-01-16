@@ -2,6 +2,7 @@
  * 页面标题组件
  */
 import { Box, Typography, type SxProps, type Theme } from '@mui/material';
+import { mergeSx } from '../../utils/sx';
 
 interface PageHeaderProps {
   title: string;
@@ -13,13 +14,15 @@ interface PageHeaderProps {
 export function PageHeader({ title, subtitle, action, sx }: PageHeaderProps) {
   return (
     <Box
-      sx={{
-        display: 'flex',
-        justifyContent: 'space-between',
-        alignItems: 'flex-start',
-        mb: 3,
-        ...sx,
-      }}
+      sx={mergeSx(
+        {
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'flex-start',
+          mb: 3,
+        },
+        sx
+      )}
     >
       <Box>
         <Typography variant="h4" component="h1" fontWeight={500}>

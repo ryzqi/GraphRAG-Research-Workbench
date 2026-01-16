@@ -13,11 +13,13 @@ import {
 } from '../../services/extensions';
 
 // Query Keys
+const NO_ID = '__none__';
+
 const KEYS = {
   all: ['extensions'] as const,
   list: () => [...KEYS.all, 'list'] as const,
   detail: (id: string) => [...KEYS.all, 'detail', id] as const,
-  tools: (id: string) => [...KEYS.all, 'tools', id] as const,
+  tools: (id: string | undefined) => [...KEYS.all, 'tools', id ?? NO_ID] as const,
 };
 
 /**
@@ -35,8 +37,8 @@ export function useExtensions() {
  */
 export function useExtensionTools(extensionId: string | undefined) {
   return useQuery({
-    queryKey: KEYS.tools(extensionId!),
-    queryFn: () => getExtensionTools(extensionId!).then((res) => res.items),
+    queryKey: KEYS.tools(extensionId),
+    queryFn: () => getExtensionTools(extensionId as string).then((res) => res.items),
     enabled: !!extensionId,
   });
 }

@@ -13,6 +13,24 @@ import ExtensionIcon from '@mui/icons-material/Extension';
 import AssessmentIcon from '@mui/icons-material/Assessment';
 import FeedbackIcon from '@mui/icons-material/Feedback';
 
+// 在用户“意图明确”（hover/focus）时预加载路由 chunk，减少切换页面的等待。
+// 对齐 Vercel bundle-preload。
+const routePreloaders: Record<string, () => Promise<unknown>> = {
+  '/': () => import('../pages/HomePage'),
+  '/kb-chat': () => import('../pages/KbChatPage'),
+  '/general-chat': () => import('../pages/GeneralChatPage'),
+  '/research': () => import('../pages/ResearchPage'),
+  '/knowledge-bases': () => import('../pages/KnowledgeBasesPage'),
+  '/extensions': () => import('../pages/ExtensionsPage'),
+  '/evaluations': () => import('../pages/EvaluationsPage'),
+  '/feedback': () => import('../pages/FeedbackPage'),
+};
+
+function preloadRoute(path: string) {
+  const preload = routePreloaders[path];
+  if (preload) void preload();
+}
+
 const navItems = [
   { path: '/', label: '首页', icon: HomeIcon, end: true },
   { path: '/kb-chat', label: '知识库代理', icon: ChatIcon },
@@ -60,6 +78,9 @@ export function Nav() {
                 to={path}
                 startIcon={<Icon fontSize="small" />}
                 size="small"
+                onMouseEnter={() => preloadRoute(path)}
+                onFocus={() => preloadRoute(path)}
+                onTouchStart={() => preloadRoute(path)}
                 sx={{
                   color: isActive ? 'primary.main' : 'text.secondary',
                   bgcolor: isActive ? 'primary.50' : 'transparent',

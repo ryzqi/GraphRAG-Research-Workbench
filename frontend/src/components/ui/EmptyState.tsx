@@ -3,6 +3,7 @@
  */
 import { Box, Typography, type SxProps, type Theme } from '@mui/material';
 import InboxIcon from '@mui/icons-material/Inbox';
+import { mergeSx } from '../../utils/sx';
 
 interface EmptyStateProps {
   title?: string;
@@ -21,16 +22,18 @@ export function EmptyState({
 }: EmptyStateProps) {
   return (
     <Box
-      sx={{
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        justifyContent: 'center',
-        py: 6,
-        px: 2,
-        textAlign: 'center',
-        ...sx,
-      }}
+      sx={mergeSx(
+        {
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'center',
+          py: 6,
+          px: 2,
+          textAlign: 'center',
+        },
+        sx
+      )}
     >
       <Box sx={{ color: 'text.disabled', mb: 2 }}>
         {icon || <InboxIcon sx={{ fontSize: 48 }} />}

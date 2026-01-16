@@ -11,11 +11,13 @@ import {
 } from '../../services/research';
 
 // Query Keys
+const NO_ID = '__none__';
+
 const KEYS = {
   all: ['research'] as const,
   runs: () => [...KEYS.all, 'runs'] as const,
-  run: (id: string) => [...KEYS.all, 'run', id] as const,
-  report: (runId: string) => [...KEYS.all, 'report', runId] as const,
+  run: (id: string | undefined) => [...KEYS.all, 'run', id ?? NO_ID] as const,
+  report: (runId: string | undefined) => [...KEYS.all, 'report', runId ?? NO_ID] as const,
 };
 
 /**
@@ -23,8 +25,8 @@ const KEYS = {
  */
 export function useResearchRun(runId: string | undefined) {
   return useQuery({
-    queryKey: KEYS.run(runId!),
-    queryFn: () => getResearchRun(runId!),
+    queryKey: KEYS.run(runId),
+    queryFn: () => getResearchRun(runId as string),
     enabled: !!runId,
     refetchInterval: (query) => {
       // 仅在运行中时自动轮询
@@ -39,8 +41,8 @@ export function useResearchRun(runId: string | undefined) {
  */
 export function useResearchReport(runId: string | undefined) {
   return useQuery({
-    queryKey: KEYS.report(runId!),
-    queryFn: () => getResearchReport(runId!),
+    queryKey: KEYS.report(runId),
+    queryFn: () => getResearchReport(runId as string),
     enabled: !!runId,
   });
 }

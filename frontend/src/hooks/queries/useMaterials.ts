@@ -12,9 +12,11 @@ import {
 } from '../../services/materials';
 
 // Query Keys
+const NO_ID = '__none__';
+
 const KEYS = {
   all: ['materials'] as const,
-  list: (kbId: string) => [...KEYS.all, 'list', kbId] as const,
+  list: (kbId: string | undefined) => [...KEYS.all, 'list', kbId ?? NO_ID] as const,
 };
 
 /**
@@ -22,8 +24,8 @@ const KEYS = {
  */
 export function useMaterials(kbId: string | undefined) {
   return useQuery({
-    queryKey: KEYS.list(kbId!),
-    queryFn: () => listMaterials(kbId!).then((res) => res.items),
+    queryKey: KEYS.list(kbId),
+    queryFn: () => listMaterials(kbId as string).then((res) => res.items),
     enabled: !!kbId,
   });
 }

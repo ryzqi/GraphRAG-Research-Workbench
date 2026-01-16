@@ -3,6 +3,7 @@
  * 封装 MUI Alert，提供统一的错误展示
  */
 import { Alert, type AlertProps, Collapse } from '@mui/material';
+import { mergeSx } from '../../utils/sx';
 
 interface ErrorAlertProps extends Omit<AlertProps, 'severity'> {
   /** 错误信息，为 null 时不显示 */
@@ -23,7 +24,7 @@ export function ErrorAlert({
       <Alert
         severity={severity}
         onClose={onClose}
-        sx={{ mt: 2, ...sx }}
+        sx={mergeSx({ mt: 2 }, sx)}
         {...props}
       >
         {error}

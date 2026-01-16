@@ -10,9 +10,11 @@ import {
 } from '../../services/ingestions';
 
 // Query Keys
+const NO_ID = '__none__';
+
 const KEYS = {
   all: ['ingestions'] as const,
-  job: (id: string) => [...KEYS.all, 'job', id] as const,
+  job: (id: string | undefined) => [...KEYS.all, 'job', id ?? NO_ID] as const,
 };
 
 /**
@@ -20,8 +22,8 @@ const KEYS = {
  */
 export function useIngestionJob(ingestionId: string | undefined) {
   return useQuery({
-    queryKey: KEYS.job(ingestionId!),
-    queryFn: () => getIngestionJob(ingestionId!),
+    queryKey: KEYS.job(ingestionId),
+    queryFn: () => getIngestionJob(ingestionId as string),
     enabled: !!ingestionId,
     refetchInterval: (query) => {
       const status = query.state.data?.status;

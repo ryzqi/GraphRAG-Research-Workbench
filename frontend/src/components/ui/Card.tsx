@@ -11,6 +11,7 @@ import {
   type SxProps,
   type Theme,
 } from '@mui/material';
+import { mergeSx } from '../../utils/sx';
 
 interface CardProps extends MuiCardProps {
   title?: string;
@@ -43,7 +44,12 @@ export function Card({
           subheaderTypographyProps={{ variant: 'body2' }}
         />
       )}
-      <CardContent sx={{ pt: title ? 0 : undefined, p: noPadding ? 0 : undefined, ...contentSx }}>
+      <CardContent
+        sx={mergeSx(
+          { pt: title ? 0 : undefined, p: noPadding ? 0 : undefined },
+          contentSx
+        )}
+      >
         {children}
       </CardContent>
       {footer && <CardActions sx={{ px: 2, pb: 2 }}>{footer}</CardActions>}
