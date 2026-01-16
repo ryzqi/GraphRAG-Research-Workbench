@@ -2,13 +2,10 @@
  * 反馈管理页面
  */
 
-import { useEffect, useState } from 'react';
-import {
-  Feedback,
-  FeedbackStatus,
-  listFeedback,
-  updateFeedback,
-} from '../services/feedback';
+import { useState } from 'react';
+import type { FeedbackStatus } from '../services/feedback';
+import { useFeedbackList, useUpdateFeedback } from '../hooks/queries';
+import { getErrorMessage } from '../lib/errorHandler';
 
 const STATUS_LABELS: Record<FeedbackStatus, string> = {
   pending: '待处理',
@@ -25,36 +22,58 @@ const STATUS_COLORS: Record<FeedbackStatus, string> = {
 };
 
 export function FeedbackPage() {
-  const [items, setItems] = useState<Feedback[]>([]);
-  const [loading, setLoading] = useState(true);
   const [filterStatus, setFilterStatus] = useState<FeedbackStatus | ''>('');
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editStatus, setEditStatus] = useState<FeedbackStatus>('pending');
   const [editNote, setEditNote] = useState('');
 
-  const fetchData = async () => {
-    setLoading(true);
-    try {
-      const res = await listFeedback(filterStatus ? { status: filterStatus } : undefined);
-      setItems(res.items);
-    } finally {
-      setLoading(false);
+  const feedbackQuery = useFeedbackList(filterStatus);
+  const updateMutation = useUpdateFeedback();
+
+  const items = feedbackQuery.data ?? [];
+  const loading = feedbackQuery.isPending || feedbackQuery.isFetching;
+
+  const mergedError =
+    (updateMutation.error ? getErrorMessage(updateMutation.error) : null) ??
+    (feedbackQuery.error ? getErrorMessage(feedbackQuery.error) : null);
+
+  const handleCloseError = () => {
+    if (updateMutation.error) {
+      updateMutation.reset();
+      return;
+    }
+    if (feedbackQuery.error) {
+      feedbackQuery.refetch();
     }
   };
 
-  useEffect(() => {
-    fetchData();
-  }, [filterStatus]);
-
-  const handleUpdate = async (id: string) => {
-    await updateFeedback(id, { status: editStatus, resolution_note: editNote || undefined });
-    setEditingId(null);
-    fetchData();
+  const handleUpdate = (id: string) => {
+    updateMutation.mutate(
+      { id, data: { status: editStatus, resolution_note: editNote || undefined } },
+      { onSuccess: () => setEditingId(null) }
+    );
   };
 
   return (
     <div style={{ padding: 24 }}>
       <h1 style={{ marginBottom: 16 }}>反馈管理</h1>
+
+      {mergedError && (
+        <div
+          style={{
+            padding: 12,
+            background: '#fef2f2',
+            color: '#dc2626',
+            borderRadius: 8,
+            marginBottom: 16,
+          }}
+        >
+          {mergedError}
+          <button onClick={handleCloseError} style={{ marginLeft: 8, cursor: 'pointer' }}>
+            ×
+          </button>
+        </div>
+      )}
 
       <div style={{ marginBottom: 16 }}>
         <label style={{ marginRight: 8 }}>状态筛选：</label>

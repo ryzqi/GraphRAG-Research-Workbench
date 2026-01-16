@@ -1,24 +1,22 @@
-import { useState, useEffect, useCallback } from 'react';
-import {
-  listExtensions,
-  createExtension,
-  updateExtension,
-  deleteExtension,
-  getExtensionTools,
-  type ToolExtension,
-  type ToolExtensionCreate,
-  type ExtensionStatus,
-  type ToolDescriptor,
+import { useState } from 'react';
+import type {
+  ExtensionStatus,
+  ToolExtension,
+  ToolExtensionCreate,
 } from '../services/extensions';
+import {
+  useCreateExtension,
+  useDeleteExtension,
+  useExtensionTools,
+  useExtensions,
+  useUpdateExtension,
+} from '../hooks/queries';
+import { getErrorMessage } from '../lib/errorHandler';
 
 export function ExtensionsPage() {
-  const [extensions, setExtensions] = useState<ToolExtension[]>([]);
-  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [selectedExt, setSelectedExt] = useState<ToolExtension | null>(null);
-  const [tools, setTools] = useState<ToolDescriptor[]>([]);
-  const [toolsLoading, setToolsLoading] = useState(false);
 
   // 表单状态
   const [formData, setFormData] = useState<ToolExtensionCreate>({
@@ -27,75 +25,90 @@ export function ExtensionsPage() {
     endpoint: '',
   });
 
-  const loadExtensions = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const res = await listExtensions();
-      setExtensions(res.items);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : '加载失败');
-    } finally {
-      setLoading(false);
+  const extensionsQuery = useExtensions();
+  const extensions = extensionsQuery.data ?? [];
+  const loading = extensionsQuery.isPending || extensionsQuery.isFetching;
+
+  const toolsQuery = useExtensionTools(selectedExt?.id ?? undefined);
+  const tools = toolsQuery.data ?? [];
+  const toolsLoading = toolsQuery.isPending || toolsQuery.isFetching;
+
+  const createMutation = useCreateExtension();
+  const updateMutation = useUpdateExtension();
+  const deleteMutation = useDeleteExtension();
+
+  const mergedError =
+    error ??
+    (createMutation.error ? getErrorMessage(createMutation.error) : null) ??
+    (updateMutation.error ? getErrorMessage(updateMutation.error) : null) ??
+    (deleteMutation.error ? getErrorMessage(deleteMutation.error) : null) ??
+    (extensionsQuery.error ? getErrorMessage(extensionsQuery.error) : null) ??
+    (toolsQuery.error ? getErrorMessage(toolsQuery.error) : null);
+
+  const handleCloseError = () => {
+    if (error) {
+      setError(null);
+      return;
     }
-  }, []);
+    if (createMutation.error) {
+      createMutation.reset();
+      return;
+    }
+    if (updateMutation.error) {
+      updateMutation.reset();
+      return;
+    }
+    if (deleteMutation.error) {
+      deleteMutation.reset();
+      return;
+    }
+    if (extensionsQuery.error) {
+      extensionsQuery.refetch();
+      return;
+    }
+    if (toolsQuery.error) {
+      toolsQuery.refetch();
+    }
+  };
 
-  useEffect(() => {
-    loadExtensions();
-  }, [loadExtensions]);
-
-  const handleCreate = async () => {
+  const handleCreate = () => {
     if (!formData.name || !formData.endpoint) return;
-    setLoading(true);
-    try {
-      await createExtension(formData);
-      setShowForm(false);
-      setFormData({ name: '', transport: 'http', endpoint: '' });
-      await loadExtensions();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : '创建失败');
-    } finally {
-      setLoading(false);
-    }
+
+    setError(null);
+    createMutation.mutate(formData, {
+      onSuccess: () => {
+        setShowForm(false);
+        setFormData({ name: '', transport: 'http', endpoint: '' });
+      },
+    });
   };
 
-  const handleToggleStatus = async (ext: ToolExtension) => {
+  const handleToggleStatus = (ext: ToolExtension) => {
     const newStatus: ExtensionStatus = ext.status === 'enabled' ? 'disabled' : 'enabled';
-    try {
-      await updateExtension(ext.id, { status: newStatus });
-      await loadExtensions();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : '更新失败');
-    }
+
+    setError(null);
+    updateMutation.mutate({ id: ext.id, data: { status: newStatus } });
   };
 
-  const handleDelete = async (ext: ToolExtension) => {
-    if (!confirm(`确定删除扩展 "${ext.name}"？`)) return;
-    try {
-      await deleteExtension(ext.id);
-      if (selectedExt?.id === ext.id) {
-        setSelectedExt(null);
-        setTools([]);
-      }
-      await loadExtensions();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : '删除失败');
-    }
+  const handleDelete = (ext: ToolExtension) => {
+    if (!confirm(`确定删除扩展 \"${ext.name}\"？`)) return;
+
+    setError(null);
+    deleteMutation.mutate(ext.id, {
+      onSuccess: () => {
+        if (selectedExt?.id === ext.id) {
+          setSelectedExt(null);
+        }
+      },
+    });
   };
 
-  const handleViewTools = async (ext: ToolExtension) => {
+  const handleViewTools = (ext: ToolExtension) => {
+    setError(null);
     setSelectedExt(ext);
-    setToolsLoading(true);
-    try {
-      const res = await getExtensionTools(ext.id);
-      setTools(res.items);
-    } catch (e) {
-      setTools([]);
-      setError(e instanceof Error ? e.message : '获取工具列表失败');
-    } finally {
-      setToolsLoading(false);
-    }
   };
+
+  const createDisabled = !formData.name || !formData.endpoint || createMutation.isPending;
 
   return (
     <div style={{ padding: 24, maxWidth: 1000, margin: '0 auto' }}>
@@ -119,10 +132,10 @@ export function ExtensionsPage() {
         </button>
       </div>
 
-      {error && (
+      {mergedError && (
         <div style={{ padding: 12, background: '#fef2f2', color: '#dc2626', borderRadius: 8, marginBottom: 16 }}>
-          {error}
-          <button onClick={() => setError(null)} style={{ marginLeft: 8, cursor: 'pointer' }}>×</button>
+          {mergedError}
+          <button onClick={handleCloseError} style={{ marginLeft: 8, cursor: 'pointer' }}>×</button>
         </div>
       )}
 
@@ -139,14 +152,18 @@ export function ExtensionsPage() {
             />
             <select
               value={formData.transport}
-              onChange={(e) => setFormData({ ...formData, transport: e.target.value as 'http' | 'stdio' })}
+              onChange={(e) =>
+                setFormData({ ...formData, transport: e.target.value as 'http' | 'stdio' })
+              }
               style={{ padding: 10, borderRadius: 6, border: '1px solid #d1d5db' }}
             >
               <option value="http">HTTP</option>
               <option value="stdio">STDIO</option>
             </select>
             <input
-              placeholder={formData.transport === 'http' ? 'http://localhost:3000' : 'python mcp_server.py'}
+              placeholder={
+                formData.transport === 'http' ? 'http://localhost:3000' : 'python mcp_server.py'
+              }
               value={formData.endpoint}
               onChange={(e) => setFormData({ ...formData, endpoint: e.target.value })}
               style={{ padding: 10, borderRadius: 6, border: '1px solid #d1d5db' }}
@@ -154,21 +171,27 @@ export function ExtensionsPage() {
             <div style={{ display: 'flex', gap: 8 }}>
               <button
                 onClick={handleCreate}
-                disabled={!formData.name || !formData.endpoint}
+                disabled={createDisabled}
                 style={{
                   padding: '10px 20px',
-                  background: !formData.name || !formData.endpoint ? '#9ca3af' : '#111827',
+                  background: createDisabled ? '#9ca3af' : '#111827',
                   color: '#fff',
                   border: 'none',
                   borderRadius: 6,
-                  cursor: !formData.name || !formData.endpoint ? 'not-allowed' : 'pointer',
+                  cursor: createDisabled ? 'not-allowed' : 'pointer',
                 }}
               >
-                创建
+                {createMutation.isPending ? '创建中...' : '创建'}
               </button>
               <button
                 onClick={() => setShowForm(false)}
-                style={{ padding: '10px 20px', background: '#e5e7eb', border: 'none', borderRadius: 6, cursor: 'pointer' }}
+                style={{
+                  padding: '10px 20px',
+                  background: '#e5e7eb',
+                  border: 'none',
+                  borderRadius: 6,
+                  cursor: 'pointer',
+                }}
               >
                 取消
               </button>
@@ -181,7 +204,9 @@ export function ExtensionsPage() {
       {loading && extensions.length === 0 ? (
         <div style={{ textAlign: 'center', color: '#6b7280', padding: 40 }}>加载中...</div>
       ) : extensions.length === 0 ? (
-        <div style={{ textAlign: 'center', color: '#6b7280', padding: 40 }}>暂无扩展，点击"添加扩展"开始</div>
+        <div style={{ textAlign: 'center', color: '#6b7280', padding: 40 }}>
+          暂无扩展，点击"添加扩展"开始
+        </div>
       ) : (
         <div style={{ display: 'grid', gap: 12 }}>
           {extensions.map((ext) => (
@@ -217,19 +242,38 @@ export function ExtensionsPage() {
                 </span>
                 <button
                   onClick={() => handleToggleStatus(ext)}
-                  style={{ padding: '6px 12px', background: '#e5e7eb', border: 'none', borderRadius: 6, cursor: 'pointer' }}
+                  style={{
+                    padding: '6px 12px',
+                    background: '#e5e7eb',
+                    border: 'none',
+                    borderRadius: 6,
+                    cursor: 'pointer',
+                  }}
                 >
                   {ext.status === 'enabled' ? '禁用' : '启用'}
                 </button>
                 <button
                   onClick={() => handleViewTools(ext)}
-                  style={{ padding: '6px 12px', background: '#dbeafe', border: 'none', borderRadius: 6, cursor: 'pointer' }}
+                  style={{
+                    padding: '6px 12px',
+                    background: '#dbeafe',
+                    border: 'none',
+                    borderRadius: 6,
+                    cursor: 'pointer',
+                  }}
                 >
                   查看工具
                 </button>
                 <button
                   onClick={() => handleDelete(ext)}
-                  style={{ padding: '6px 12px', background: '#fee2e2', color: '#dc2626', border: 'none', borderRadius: 6, cursor: 'pointer' }}
+                  style={{
+                    padding: '6px 12px',
+                    background: '#fee2e2',
+                    color: '#dc2626',
+                    border: 'none',
+                    borderRadius: 6,
+                    cursor: 'pointer',
+                  }}
                 >
                   删除
                 </button>
@@ -250,9 +294,21 @@ export function ExtensionsPage() {
           ) : (
             <div style={{ display: 'grid', gap: 8 }}>
               {tools.map((tool) => (
-                <div key={tool.name} style={{ padding: 12, background: '#fff', borderRadius: 6, border: '1px solid #e5e7eb' }}>
+                <div
+                  key={tool.name}
+                  style={{
+                    padding: 12,
+                    background: '#fff',
+                    borderRadius: 6,
+                    border: '1px solid #e5e7eb',
+                  }}
+                >
                   <div style={{ fontWeight: 600 }}>{tool.name}</div>
-                  {tool.description && <div style={{ fontSize: 13, color: '#6b7280', marginTop: 4 }}>{tool.description}</div>}
+                  {tool.description && (
+                    <div style={{ fontSize: 13, color: '#6b7280', marginTop: 4 }}>
+                      {tool.description}
+                    </div>
+                  )}
                 </div>
               ))}
             </div>

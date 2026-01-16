@@ -99,3 +99,5 @@ export function useArchiveKnowledgeBase() {
     },
   });
 }
+
+export { KEYS as knowledgeBaseKeys };

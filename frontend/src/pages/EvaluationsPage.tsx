@@ -1,7 +1,8 @@
 /**
  * 对比评测页面
  */
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import {
   Box,
   Container,
@@ -14,17 +15,17 @@ import {
 import DownloadIcon from '@mui/icons-material/Download';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import { KnowledgeBaseSelector } from '../components/KnowledgeBaseSelector';
-import { Button, ErrorAlert, PageHeader, StatusBadge } from '../components/ui';
+import { Button, ErrorAlert, LoadingSpinner, PageHeader, StatusBadge } from '../components/ui';
 import { createExport, pollExportUntilDone } from '../services/exports';
+import type { EvaluationRunCreateRequest } from '../services/evaluations';
 import {
-  type EvaluationRun,
-  type EvaluationRunCreateRequest,
-  createEvaluationRun,
-  getEvaluationRun,
-} from '../services/evaluations';
-import { type KnowledgeBase, listKnowledgeBases } from '../services/knowledgeBases';
+  evaluationKeys,
+  useCreateEvaluationRun,
+  useEvaluationRun,
+  useKnowledgeBases,
+} from '../hooks/queries';
+import { safeOpenDownloadUrl } from '../utils/urlValidation';
 import { getErrorMessage } from '../lib/errorHandler';
-import { usePolling } from '../hooks/usePolling';
 
 const DEFAULT_DATASET = {
   questions: [
@@ -37,34 +38,47 @@ const DEFAULT_DATASET = {
 };
 
 export function EvaluationsPage() {
-  const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBase[]>([]);
+  // React Query：自动去重/缓存知识库列表（对齐 Vercel client-swr-dedup 思路）
+  const knowledgeBasesQuery = useKnowledgeBases();
+  const knowledgeBases = knowledgeBasesQuery.data ?? [];
+
+  const queryClient = useQueryClient();
+  const createRunMutation = useCreateEvaluationRun();
+
   const [selectedKbIds, setSelectedKbIds] = useState<string[]>([]);
   const [datasetJson, setDatasetJson] = useState(JSON.stringify(DEFAULT_DATASET, null, 2));
-  const [evalRun, setEvalRun] = useState<EvaluationRun | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [evalRunId, setEvalRunId] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    listKnowledgeBases()
-      .then((res) => setKnowledgeBases(res.items))
-      .catch((e) => setError(getErrorMessage(e)));
-  }, []);
+  const evalRunQuery = useEvaluationRun(evalRunId ?? undefined);
+  const evalRun = evalRunQuery.data;
 
-  // 使用 usePolling 轮询评测状态
-  usePolling(
-    async () => {
-      if (!evalRun) throw new Error('No run');
-      return getEvaluationRun(evalRun.id);
-    },
-    {
-      enabled: !!evalRun && ['queued', 'running'].includes(evalRun.status),
-      interval: 3000,
-      onSuccess: setEvalRun,
-      onError: (e) => setError(getErrorMessage(e)),
-      shouldContinue: (data) => ['queued', 'running'].includes(data.status),
+  const loading = createRunMutation.isPending;
+
+  const mergedError =
+    error ??
+    (createRunMutation.error ? getErrorMessage(createRunMutation.error) : null) ??
+    (knowledgeBasesQuery.error ? getErrorMessage(knowledgeBasesQuery.error) : null) ??
+    (evalRunQuery.error ? getErrorMessage(evalRunQuery.error) : null);
+
+  const handleCloseError = () => {
+    if (error) {
+      setError(null);
+      return;
     }
-  );
+    if (createRunMutation.error) {
+      createRunMutation.reset();
+      return;
+    }
+    if (knowledgeBasesQuery.error) {
+      knowledgeBasesQuery.refetch();
+      return;
+    }
+    if (evalRunQuery.error) {
+      evalRunQuery.refetch();
+    }
+  };
 
   const toggleKb = useCallback((kbId: string) => {
     setSelectedKbIds((prev) =>
@@ -86,9 +100,8 @@ export function EvaluationsPage() {
       return;
     }
 
-    setLoading(true);
     setError(null);
-    setEvalRun(null);
+    setEvalRunId(null);
 
     try {
       const req: EvaluationRunCreateRequest = {
@@ -98,14 +111,16 @@ export function EvaluationsPage() {
           allow_external: false,
         },
       };
-      const run = await createEvaluationRun(req);
-      setEvalRun(run);
+
+      const run = await createRunMutation.mutateAsync(req);
+
+      // 直接回填 query cache，避免额外请求并立即启动轮询。
+      queryClient.setQueryData(evaluationKeys.run(run.id), run);
+      setEvalRunId(run.id);
     } catch (e) {
       setError(getErrorMessage(e));
-    } finally {
-      setLoading(false);
     }
-  }, [selectedKbIds, datasetJson]);
+  }, [createRunMutation, datasetJson, queryClient, selectedKbIds]);
 
   const handleExport = useCallback(async () => {
     if (!evalRun) return;
@@ -118,7 +133,9 @@ export function EvaluationsPage() {
       const completed = await pollExportUntilDone(job.id);
 
       if (completed.status === 'succeeded' && completed.download_url) {
-        window.open(completed.download_url, '_blank');
+        if (!safeOpenDownloadUrl(completed.download_url)) {
+          setError('下载链接来自不受信任的域名');
+        }
       } else {
         setError(completed.error_message || '导出失败');
       }
@@ -130,7 +147,7 @@ export function EvaluationsPage() {
   }, [evalRun]);
 
   const reset = useCallback(() => {
-    setEvalRun(null);
+    setEvalRunId(null);
     setError(null);
   }, []);
 
@@ -156,7 +173,7 @@ export function EvaluationsPage() {
         在同一问题集下运行单智能体与多智能体协作，对比评测效果
       </Typography>
 
-      {!evalRun ? (
+      {!evalRunId ? (
         <Stack spacing={3}>
           {/* 知识库选择 */}
           <Box>
@@ -167,7 +184,7 @@ export function EvaluationsPage() {
               knowledgeBases={knowledgeBases}
               selectedIds={selectedKbIds}
               onToggle={toggleKb}
-              loading={loading}
+              loading={loading || knowledgeBasesQuery.isLoading}
             />
           </Box>
 
@@ -191,13 +208,15 @@ export function EvaluationsPage() {
           <Button
             variant="contained"
             onClick={startEvaluation}
-            disabled={selectedKbIds.length === 0}
+            disabled={knowledgeBasesQuery.isLoading || selectedKbIds.length === 0}
             loading={loading}
             sx={{ alignSelf: 'flex-start' }}
           >
             开始评测
           </Button>
         </Stack>
+      ) : !evalRun ? (
+        <LoadingSpinner text="加载评测任务..." />
       ) : (
         <Stack spacing={2}>
           {/* 状态栏 */}
@@ -221,9 +240,8 @@ export function EvaluationsPage() {
                       ? 'failed'
                       : 'running'
                 }
-              >
-                {getStatusLabel(evalRun.status)}
-              </StatusBadge>
+                label={getStatusLabel(evalRun.status)}
+              />
             </Stack>
             <Stack direction="row" spacing={1}>
               {evalRun.status === 'succeeded' && (
@@ -256,7 +274,7 @@ export function EvaluationsPage() {
                 对比汇总
               </Typography>
               <Grid container spacing={2}>
-                <Grid item xs={12} md={6}>
+                <Grid size={{ xs: 12, md: 6 }}>
                   <Paper elevation={0} sx={{ p: 2, bgcolor: 'primary.50', borderRadius: 2 }}>
                     <Typography fontWeight={500} sx={{ mb: 1 }}>
                       单智能体
@@ -269,7 +287,7 @@ export function EvaluationsPage() {
                     </Typography>
                   </Paper>
                 </Grid>
-                <Grid item xs={12} md={6}>
+                <Grid size={{ xs: 12, md: 6 }}>
                   <Paper elevation={0} sx={{ p: 2, bgcolor: 'success.50', borderRadius: 2 }}>
                     <Typography fontWeight={500} sx={{ mb: 1 }}>
                       多智能体协作
@@ -303,7 +321,7 @@ export function EvaluationsPage() {
                       {i + 1}. {c.question}
                     </Typography>
                     <Grid container spacing={1.5}>
-                      <Grid item xs={12} md={6}>
+                      <Grid size={{ xs: 12, md: 6 }}>
                         <Typography
                           variant="body2"
                           color="primary.main"
@@ -315,7 +333,7 @@ export function EvaluationsPage() {
                           {c.single_agent_answer || '无回答'}
                         </Typography>
                       </Grid>
-                      <Grid item xs={12} md={6}>
+                      <Grid size={{ xs: 12, md: 6 }}>
                         <Typography
                           variant="body2"
                           color="success.main"
@@ -345,7 +363,7 @@ export function EvaluationsPage() {
         </Stack>
       )}
 
-      <ErrorAlert error={error} onClose={() => setError(null)} />
+      <ErrorAlert error={mergedError} onClose={handleCloseError} />
     </Container>
   );
 }

@@ -1,4 +1,4 @@
-"""研究 Celery 任务（DeepAgents 研究链路）。"""
+"""研究 Celery 任务（ToolNode 研究链路）。"""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy import select
 
-from app.agents.deep_research_agent import DeepResearchAgent
+from app.agents.research_graph import ResearchGraph
 from app.core.checkpoint import CheckpointManager
 from app.db.session import get_sessionmaker
 from app.integrations.embedding_client import EmbeddingClient
@@ -89,20 +89,19 @@ async def _run_research(
                     ext_result = await session.execute(stmt)
                     extensions = ext_result.scalars().all()
 
-                # 创建研究代理
-                agent = DeepResearchAgent(
-                    retrieval=retrieval,
-                    mcp=mcp,
-                    extensions=extensions,
-                )
+                graph = ResearchGraph()
 
                 # 使用 run_id 作为 thread_id 执行（支持取消：轮询 DB 状态并 cancel 协程）
                 graph_task = asyncio.create_task(
-                    agent.run(
+                    graph.run(
                         question=question,
                         kb_ids=[uuid.UUID(kid) for kid in kb_ids],
+                        retrieval=retrieval,
+                        mcp=mcp,
+                        extensions=list(extensions),
                         allow_external=allow_external,
                         thread_id=run_id,
+                        checkpointer=CheckpointManager.get_checkpointer(),
                     )
                 )
 

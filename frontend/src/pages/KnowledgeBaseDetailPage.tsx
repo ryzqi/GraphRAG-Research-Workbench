@@ -2,21 +2,18 @@
  * 知识库详情页（资料列表/上传/触发导入/状态轮询）
  */
 
-import { useState, useEffect, useCallback } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
-import { getKnowledgeBase, KnowledgeBase } from '../services/knowledgeBases';
+import { useEffect, useState } from 'react';
+import { useNavigate, useParams } from 'react-router-dom';
 import {
-  listMaterials,
-  createTextMaterial,
-  createUrlMaterial,
-  uploadMaterial,
-  SourceMaterial,
-} from '../services/materials';
-import {
-  createIngestionJob,
-  pollIngestionJob,
-  IngestionJob,
-} from '../services/ingestions';
+  useCreateIngestionJob,
+  useCreateTextMaterial,
+  useCreateUrlMaterial,
+  useIngestionJob,
+  useKnowledgeBase,
+  useMaterials,
+  useUploadMaterial,
+} from '../hooks/queries';
+import { getErrorMessage } from '../lib/errorHandler';
 import { validateFile } from '../utils/fileValidation';
 
 type AddMode = 'text' | 'url' | 'upload' | null;
@@ -25,46 +22,68 @@ export default function KnowledgeBaseDetailPage() {
   const { kbId } = useParams<{ kbId: string }>();
   const navigate = useNavigate();
 
-  const [kb, setKb] = useState<KnowledgeBase | null>(null);
-  const [materials, setMaterials] = useState<SourceMaterial[]>([]);
-  const [loading, setLoading] = useState(true);
+  const kbQuery = useKnowledgeBase(kbId ?? '');
+  const materialsQuery = useMaterials(kbId);
+
+  const kb = kbQuery.data ?? null;
+  const materials = materialsQuery.data ?? [];
+  const loading = kbQuery.isPending || materialsQuery.isPending;
+
   const [error, setError] = useState<string | null>(null);
+
+  const createTextMaterialMutation = useCreateTextMaterial();
+  const createUrlMaterialMutation = useCreateUrlMaterial();
+  const uploadMaterialMutation = useUploadMaterial();
 
   // 添加资料状态
   const [addMode, setAddMode] = useState<AddMode>(null);
-  const [addLoading, setAddLoading] = useState(false);
   const [title, setTitle] = useState('');
   const [textContent, setTextContent] = useState('');
   const [urlContent, setUrlContent] = useState('');
   const [file, setFile] = useState<File | null>(null);
   const [fileError, setFileError] = useState<string | null>(null);
 
+  const addLoading =
+    createTextMaterialMutation.isPending ||
+    createUrlMaterialMutation.isPending ||
+    uploadMaterialMutation.isPending;
+
   // 导入状态
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const [ingestionJob, setIngestionJob] = useState<IngestionJob | null>(null);
-  const [ingestionLoading, setIngestionLoading] = useState(false);
+  const [ingestionId, setIngestionId] = useState<string | null>(null);
 
-  const fetchData = useCallback(async () => {
-    if (!kbId) return;
-    try {
-      setLoading(true);
-      const [kbData, materialsData] = await Promise.all([
-        getKnowledgeBase(kbId),
-        listMaterials(kbId),
-      ]);
-      setKb(kbData);
-      setMaterials(materialsData.items);
-      setError(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : '加载失败');
-    } finally {
-      setLoading(false);
-    }
-  }, [kbId]);
+  const createIngestionMutation = useCreateIngestionJob();
+  const ingestionQuery = useIngestionJob(ingestionId ?? undefined);
+  const ingestionJob = ingestionQuery.data ?? null;
+
+  const ingestionInProgress =
+    ingestionJob?.status === 'queued' || ingestionJob?.status === 'running';
+  const ingestionLoading = createIngestionMutation.isPending || ingestionInProgress;
+
+  const mergedError =
+    error ??
+    (createTextMaterialMutation.error
+      ? getErrorMessage(createTextMaterialMutation.error)
+      : null) ??
+    (createUrlMaterialMutation.error
+      ? getErrorMessage(createUrlMaterialMutation.error)
+      : null) ??
+    (uploadMaterialMutation.error
+      ? getErrorMessage(uploadMaterialMutation.error)
+      : null) ??
+    (createIngestionMutation.error
+      ? getErrorMessage(createIngestionMutation.error)
+      : null) ??
+    (ingestionQuery.error ? getErrorMessage(ingestionQuery.error) : null) ??
+    (kbQuery.error ? getErrorMessage(kbQuery.error) : null) ??
+    (materialsQuery.error ? getErrorMessage(materialsQuery.error) : null);
 
   useEffect(() => {
-    fetchData();
-  }, [fetchData]);
+    if (!ingestionJob) return;
+    if (['succeeded', 'failed', 'canceled'].includes(ingestionJob.status)) {
+      setSelectedIds(new Set());
+    }
+  }, [ingestionJob?.status]);
 
   const resetAddForm = () => {
     setAddMode(null);
@@ -88,31 +107,43 @@ export default function KnowledgeBaseDetailPage() {
     }
   };
 
-  const handleAddMaterial = async () => {
+  const handleAddMaterial = () => {
     if (!kbId || !title.trim()) return;
-    setAddLoading(true);
-    try {
-      if (addMode === 'text' && textContent.trim()) {
-        await createTextMaterial(kbId, {
-          source_type: 'text',
-          title: title.trim(),
-          text: textContent.trim(),
-        });
-      } else if (addMode === 'url' && urlContent.trim()) {
-        await createUrlMaterial(kbId, {
-          source_type: 'url',
-          title: title.trim(),
-          url: urlContent.trim(),
-        });
-      } else if (addMode === 'upload' && file) {
-        await uploadMaterial(kbId, title.trim(), file);
-      }
-      resetAddForm();
-      fetchData();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : '添加失败');
-    } finally {
-      setAddLoading(false);
+
+    setError(null);
+
+    if (addMode === 'text' && textContent.trim()) {
+      createTextMaterialMutation.mutate(
+        {
+          kbId,
+          data: {
+            source_type: 'text',
+            title: title.trim(),
+            text: textContent.trim(),
+          },
+        },
+        { onSuccess: resetAddForm }
+      );
+      return;
+    }
+
+    if (addMode === 'url' && urlContent.trim()) {
+      createUrlMaterialMutation.mutate(
+        {
+          kbId,
+          data: {
+            source_type: 'url',
+            title: title.trim(),
+            url: urlContent.trim(),
+          },
+        },
+        { onSuccess: resetAddForm }
+      );
+      return;
+    }
+
+    if (addMode === 'upload' && file) {
+      uploadMaterialMutation.mutate({ kbId, title: title.trim(), file }, { onSuccess: resetAddForm });
     }
   };
 
@@ -136,26 +167,23 @@ export default function KnowledgeBaseDetailPage() {
     }
   };
 
-  const handleStartIngestion = async () => {
+  const handleStartIngestion = () => {
     if (!kbId || selectedIds.size === 0) return;
-    setIngestionLoading(true);
-    setIngestionJob(null);
-    try {
-      const job = await createIngestionJob({
+
+    setError(null);
+    setIngestionId(null);
+
+    createIngestionMutation.mutate(
+      {
         kb_id: kbId,
         material_ids: Array.from(selectedIds),
-      });
-      setIngestionJob(job);
-
-      // 轮询状态
-      const finalJob = await pollIngestionJob(job.id);
-      setIngestionJob(finalJob);
-      setSelectedIds(new Set());
-    } catch (err) {
-      setError(err instanceof Error ? err.message : '导入失败');
-    } finally {
-      setIngestionLoading(false);
-    }
+      },
+      {
+        onSuccess: (job) => {
+          setIngestionId(job.id);
+        },
+      }
+    );
   };
 
   if (loading) {
@@ -163,7 +191,7 @@ export default function KnowledgeBaseDetailPage() {
   }
 
   if (!kb) {
-    return <div style={styles.error}>知识库不存在</div>;
+    return <div style={styles.error}>{mergedError ?? '知识库不存在'}</div>;
   }
 
   return (
@@ -178,7 +206,7 @@ export default function KnowledgeBaseDetailPage() {
         </div>
       </div>
 
-      {error && <div style={styles.errorBox}>{error}</div>}
+      {mergedError && <div style={styles.errorBox}>{mergedError}</div>}
 
       {/* 导入状态 */}
       {ingestionJob && (

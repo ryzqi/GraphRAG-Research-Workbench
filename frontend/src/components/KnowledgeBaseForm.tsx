@@ -7,21 +7,25 @@ import { Button, ErrorAlert } from './ui';
 import { getErrorMessage } from '../lib/errorHandler';
 import type { KnowledgeBase, KnowledgeBaseCreate, KnowledgeBaseUpdate } from '../services/knowledgeBases';
 
-interface KnowledgeBaseFormProps {
-  mode: 'create' | 'edit';
-  initialData?: KnowledgeBase;
-  onSubmit: (data: KnowledgeBaseCreate | KnowledgeBaseUpdate) => Promise<void>;
-  onCancel: () => void;
-  loading?: boolean;
-}
+type KnowledgeBaseFormProps =
+  | {
+      mode: 'create';
+      onSubmit: (data: KnowledgeBaseCreate) => Promise<void>;
+      onCancel: () => void;
+      loading?: boolean;
+    }
+  | {
+      mode: 'edit';
+      initialData: KnowledgeBase;
+      onSubmit: (data: KnowledgeBaseUpdate) => Promise<void>;
+      onCancel: () => void;
+      loading?: boolean;
+    };
 
-export function KnowledgeBaseForm({
-  mode,
-  initialData,
-  onSubmit,
-  onCancel,
-  loading = false,
-}: KnowledgeBaseFormProps) {
+export function KnowledgeBaseForm(props: KnowledgeBaseFormProps) {
+  const { mode, onCancel, loading = false } = props;
+  const initialData = mode === 'edit' ? props.initialData : undefined;
+
   const [name, setName] = useState(initialData?.name ?? '');
   const [description, setDescription] = useState(initialData?.description ?? '');
   const [tagsInput, setTagsInput] = useState(initialData?.tags?.join(', ') ?? '');
@@ -41,12 +45,18 @@ export function KnowledgeBaseForm({
       .map((t) => t.trim())
       .filter(Boolean);
 
+    const payload: KnowledgeBaseCreate = {
+      name: name.trim(),
+      description: description.trim() || undefined,
+      tags: tags.length > 0 ? tags : undefined,
+    };
+
     try {
-      await onSubmit({
-        name: name.trim(),
-        description: description.trim() || undefined,
-        tags: tags.length > 0 ? tags : undefined,
-      });
+      if (props.mode === 'create') {
+        await props.onSubmit(payload);
+      } else {
+        await props.onSubmit(payload);
+      }
     } catch (err) {
       setError(getErrorMessage(err));
     }

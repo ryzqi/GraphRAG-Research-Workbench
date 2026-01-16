@@ -8,16 +8,22 @@ from __future__ import annotations
 import logging
 import uuid
 from datetime import datetime, timezone
+from typing import Any
 
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_openai import ChatOpenAI
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.kb_chat_graph import KbChatGraph, KbChatState
+from app.agents.tool_calling.registry import build_tool_registry
+from app.agents.tools.kb_retrieve import build_kb_retrieve_tool
 from app.core.checkpoint import CheckpointManager
 from app.core.settings import get_settings
 from app.integrations.embedding_client import EmbeddingClient
 from app.integrations.llm_client import ChatMessage as LLMMessage
 from app.integrations.llm_client import LLMClient
+from app.prompts import get_prompt_loader
 from app.integrations.milvus_client import MilvusClient
 from app.integrations.rerank_client import RerankClient
 from app.integrations.redis_client import get_redis
@@ -54,6 +60,7 @@ class KbChatService:
         self._retrieval = RetrievalService(db, milvus, embedding, redis, reranker=reranker)
         self._context_builder = ContextBuilder(self._settings)
         self._summary_service = ConversationSummaryService(db, settings=self._settings)
+        self._prompts = get_prompt_loader()
 
     async def _load_history(
         self, session_id: uuid.UUID, limit: int
@@ -74,6 +81,15 @@ class KbChatService:
             LLMMessage(role=msg.role.value, content=msg.content)
             for msg in filtered
         ]
+
+    @staticmethod
+    def _to_langchain_message(msg: LLMMessage) -> SystemMessage | HumanMessage | AIMessage:
+        role = (msg.role or "").lower()
+        if role == "system":
+            return SystemMessage(content=msg.content)
+        if role == "assistant":
+            return AIMessage(content=msg.content)
+        return HumanMessage(content=msg.content)
 
     async def answer(
         self,
@@ -111,21 +127,78 @@ class KbChatService:
         await self._db.flush()
 
         try:
-            # 创建 LangGraph 图
-            graph = KbChatGraph(
-                llm=self._llm,
+            kb_ids = session.selected_kb_ids or []
+            default_kb_ids = [uuid.UUID(str(kid)) for kid in kb_ids]
+
+            # kb_retrieve：通过回调收集检索结果（用于 Evidence 落库/指标）
+            retrieval_results: list = []
+            seen_chunk_ids: set[uuid.UUID] = set()
+            retrieval_usage: dict[str, int] | None = None
+            retrieval_truncation: dict[str, int | bool] | None = None
+
+            def _on_results(included: list, meta: dict[str, Any]) -> None:
+                nonlocal retrieval_usage, retrieval_truncation
+                for r in included:
+                    chunk_id = getattr(getattr(r, "chunk", None), "id", None)
+                    if chunk_id and chunk_id not in seen_chunk_ids:
+                        retrieval_results.append(r)
+                        seen_chunk_ids.add(chunk_id)
+                retrieval_usage = meta.get("usage") if isinstance(meta.get("usage"), dict) else None
+                retrieval_truncation = meta.get("truncation") if isinstance(meta.get("truncation"), dict) else None
+
+            kb_tool = build_kb_retrieve_tool(
                 retrieval=self._retrieval,
+                default_kb_ids=default_kb_ids,
                 context_builder=self._context_builder,
+                on_results=_on_results,
             )
 
-            # 使用 session_id 作为 thread_id 执行
-            kb_ids = session.selected_kb_ids or []
-            state = KbChatState(
-                question=user_content,
-                kb_ids=[uuid.UUID(str(kid)) for kid in kb_ids],
-                history=history,
-                summary=summary.content if summary else None,
+            tools, tool_meta_by_name = await build_tool_registry(
+                settings=self._settings,
+                mcp=None,
+                extensions=None,
+                extra_tools=[kb_tool],
+                include_web_search=False,
+                include_mcp=False,
             )
+
+            chat_model = ChatOpenAI(
+                model=self._settings.llm_model,
+                api_key=self._settings.llm_api_key,
+                base_url=self._settings.llm_base_url.rstrip("/"),
+            )
+
+            system_prompt = self._prompts.render("kb_chat/system")
+            history_messages, history_usage, history_truncation = (
+                self._context_builder.build_history_messages(
+                    history=history,
+                    summary_text=summary.content if summary else None,
+                )
+            )
+            context_metrics = self._context_builder.build_metrics(
+                history_usage=history_usage,
+                history_truncation=history_truncation,
+            )
+
+            messages = [
+                SystemMessage(content=system_prompt),
+                *[self._to_langchain_message(m) for m in history_messages],
+                HumanMessage(content=user_content),
+            ]
+
+            graph = KbChatGraph(
+                chat_model=chat_model,
+                tools=tools,
+                tool_meta_by_name=tool_meta_by_name,
+            )
+
+            state: KbChatState = {
+                "messages": messages,
+                "pending_tool_calls": [],
+                "stage_summaries": {},
+                "metrics": {"context": context_metrics},
+                "force_kb_retrieve": True,
+            }
             result = await graph.run(
                 state,
                 thread_id=str(session.id),
@@ -135,10 +208,48 @@ class KbChatService:
             if not isinstance(result, dict):
                 raise RuntimeError("LangGraph 返回类型不符合预期")
 
-            answer = str(result.get("answer") or "")
-            retrieval_results = result.get("retrieval_results") or []
-            if not isinstance(retrieval_results, list):
-                retrieval_results = []
+            answer = ""
+            result_messages = result.get("messages")
+            if isinstance(result_messages, list):
+                for msg in reversed(result_messages):
+                    if isinstance(msg, AIMessage):
+                        answer = str(msg.content or "")
+                        break
+
+            # 补齐结构化检索结果与指标（供 Evidence 落库/观测）
+            result["retrieval_results"] = retrieval_results
+            metrics = result.get("metrics")
+            if not isinstance(metrics, dict):
+                metrics = {}
+            context_metrics = self._context_builder.build_metrics(
+                history_usage=history_usage,
+                history_truncation=history_truncation,
+                retrieval_usage=retrieval_usage,
+                retrieval_truncation=retrieval_truncation,
+            )
+            metrics = {
+                **metrics,
+                "context": context_metrics,
+                "retrieval_usage": retrieval_usage or {"tokens": 0, "chars": 0, "items": 0},
+                "retrieval_truncation": retrieval_truncation
+                or {"truncated": False, "dropped_items": 0, "dropped_tokens": 0},
+            }
+            result["metrics"] = metrics
+
+            stage_summaries = result.get("stage_summaries")
+            if not isinstance(stage_summaries, dict):
+                stage_summaries = {}
+            retrieval_stats = self._retrieval.last_stats
+            stage_summaries = {
+                **stage_summaries,
+                "retrieval": {
+                    "count": len(retrieval_results),
+                    "filtered_count": getattr(retrieval_stats, "filtered_count", 0) if retrieval_stats else 0,
+                    "min_score": getattr(retrieval_stats, "min_score", None) if retrieval_stats else None,
+                    "completed_at": datetime.now(timezone.utc).isoformat(),
+                },
+            }
+            result["stage_summaries"] = stage_summaries
 
             # 保存助手消息
             assistant_msg = ChatMessage(

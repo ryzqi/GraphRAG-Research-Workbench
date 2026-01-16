@@ -8,6 +8,8 @@ type StatusType = 'running' | 'queued' | 'succeeded' | 'failed' | 'canceled' | '
 
 interface StatusBadgeProps {
   status: StatusType;
+  /** 可选：覆盖默认文案（默认使用内置映射） */
+  label?: string;
   size?: ChipProps['size'];
 }
 
@@ -20,12 +22,12 @@ const statusConfig: Record<StatusType, { label: string; color: ChipProps['color'
   pending: { label: '等待中', color: 'default' },
 };
 
-export function StatusBadge({ status, size = 'small' }: StatusBadgeProps) {
+export function StatusBadge({ status, label, size = 'small' }: StatusBadgeProps) {
   const config = statusConfig[status] || { label: status, color: 'default' as const };
 
   return (
     <Chip
-      label={config.label}
+      label={label ?? config.label}
       color={config.color}
       size={size}
       variant="filled"

@@ -11,6 +11,14 @@ import {
 } from '../services/chats';
 import type { ToolInvocationSummary } from '../services/extensions';
 
+function getMetricNumber(
+  metrics: Record<string, unknown> | null | undefined,
+  key: string
+): number | null {
+  const value = metrics?.[key];
+  return typeof value === 'number' ? value : null;
+}
+
 interface Message {
   id: string;
   role: 'user' | 'assistant';
@@ -331,8 +339,8 @@ export function GeneralChatPage() {
                   {/* 运行信息 */}
                   {msg.run && (
                     <div style={{ marginTop: 8, fontSize: 12, color: '#6b7280' }}>
-                      耗时: {msg.run.metrics?.latency_ms ?? '-'}ms | 扩展调用:{' '}
-                      {msg.run.metrics?.extension_calls ?? 0}
+                      耗时: {getMetricNumber(msg.run.metrics, 'latency_ms') ?? '-'}ms | 扩展调用:{' '}
+                      {getMetricNumber(msg.run.metrics, 'extension_calls') ?? 0}
                     </div>
                   )}
                 </div>

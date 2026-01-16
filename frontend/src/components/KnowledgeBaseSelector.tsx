@@ -2,6 +2,7 @@
  * 知识库选择器组件
  * 复用于 KbChatPage、ResearchPage、EvaluationsPage
  */
+import { useMemo } from 'react';
 import {
   Box,
   Checkbox,
@@ -12,7 +13,7 @@ import {
   Typography,
 } from '@mui/material';
 import type { KnowledgeBase } from '../services/knowledgeBases';
-import { EmptyState } from './ui';
+import { EmptyState, LoadingSpinner } from './ui';
 
 interface KnowledgeBaseSelectorProps {
   knowledgeBases: KnowledgeBase[];
@@ -31,6 +32,12 @@ export function KnowledgeBaseSelector({
   emptyText = '暂无可用知识库',
   emptyDescription = '请先创建知识库并导入资料',
 }: KnowledgeBaseSelectorProps) {
+  const selectedIdSet = useMemo(() => new Set(selectedIds), [selectedIds]);
+
+  if (loading && knowledgeBases.length === 0) {
+    return <LoadingSpinner text="加载知识库..." />;
+  }
+
   if (knowledgeBases.length === 0) {
     return <EmptyState title={emptyText} description={emptyDescription} />;
   }
@@ -38,7 +45,7 @@ export function KnowledgeBaseSelector({
   return (
     <Stack spacing={1}>
       {knowledgeBases.map((kb) => {
-        const isSelected = selectedIds.includes(kb.id);
+        const isSelected = selectedIdSet.has(kb.id);
         return (
           <Paper
             key={kb.id}

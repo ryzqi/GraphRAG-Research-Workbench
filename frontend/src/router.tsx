@@ -2,6 +2,9 @@ import { Suspense, lazy } from 'react';
 import { createBrowserRouter, RouterProvider } from 'react-router-dom';
 import { Layout } from './components/Layout';
 
+// 提取静态 JSX，避免每个路由重复创建 element（Vercel rendering-hoist-jsx）
+const routeFallback = <div style={{ padding: 24 }}>加载中...</div>;
+
 const HomePage = lazy(async () => ({
   default: (await import('./pages/HomePage')).HomePage,
 }));
@@ -40,7 +43,7 @@ const router = createBrowserRouter([
       {
         index: true,
         element: (
-          <Suspense fallback={<div style={{ padding: 24 }}>加载中...</div>}>
+          <Suspense fallback={routeFallback}>
             <HomePage />
           </Suspense>
         ),
@@ -48,7 +51,7 @@ const router = createBrowserRouter([
       {
         path: 'kb-chat',
         element: (
-          <Suspense fallback={<div style={{ padding: 24 }}>加载中...</div>}>
+          <Suspense fallback={routeFallback}>
             <KbChatPage />
           </Suspense>
         ),
@@ -56,7 +59,7 @@ const router = createBrowserRouter([
       {
         path: 'general-chat',
         element: (
-          <Suspense fallback={<div style={{ padding: 24 }}>加载中...</div>}>
+          <Suspense fallback={routeFallback}>
             <GeneralChatPage />
           </Suspense>
         ),
@@ -64,7 +67,7 @@ const router = createBrowserRouter([
       {
         path: 'research',
         element: (
-          <Suspense fallback={<div style={{ padding: 24 }}>加载中...</div>}>
+          <Suspense fallback={routeFallback}>
             <ResearchPage />
           </Suspense>
         ),
@@ -72,7 +75,7 @@ const router = createBrowserRouter([
       {
         path: 'knowledge-bases',
         element: (
-          <Suspense fallback={<div style={{ padding: 24 }}>加载中...</div>}>
+          <Suspense fallback={routeFallback}>
             <KnowledgeBasesPage />
           </Suspense>
         ),
@@ -80,7 +83,7 @@ const router = createBrowserRouter([
       {
         path: 'knowledge-bases/:kbId',
         element: (
-          <Suspense fallback={<div style={{ padding: 24 }}>加载中...</div>}>
+          <Suspense fallback={routeFallback}>
             <KnowledgeBaseDetailPage />
           </Suspense>
         ),
@@ -88,7 +91,7 @@ const router = createBrowserRouter([
       {
         path: 'extensions',
         element: (
-          <Suspense fallback={<div style={{ padding: 24 }}>加载中...</div>}>
+          <Suspense fallback={routeFallback}>
             <ExtensionsPage />
           </Suspense>
         ),
@@ -96,7 +99,7 @@ const router = createBrowserRouter([
       {
         path: 'evaluations',
         element: (
-          <Suspense fallback={<div style={{ padding: 24 }}>加载中...</div>}>
+          <Suspense fallback={routeFallback}>
             <EvaluationsPage />
           </Suspense>
         ),
@@ -104,7 +107,7 @@ const router = createBrowserRouter([
       {
         path: 'feedback',
         element: (
-          <Suspense fallback={<div style={{ padding: 24 }}>加载中...</div>}>
+          <Suspense fallback={routeFallback}>
             <FeedbackPage />
           </Suspense>
         ),

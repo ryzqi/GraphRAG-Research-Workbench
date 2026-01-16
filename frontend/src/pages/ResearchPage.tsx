@@ -1,7 +1,8 @@
 /**
  * 深度研究页面
  */
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import {
   Box,
   Container,
@@ -14,61 +15,68 @@ import DownloadIcon from '@mui/icons-material/Download';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import { KnowledgeBaseSelector } from '../components/KnowledgeBaseSelector';
 import { KnowledgeUpdateSubmit } from '../components/KnowledgeUpdateSubmit';
-import { Button, ErrorAlert, PageHeader, StatusBadge } from '../components/ui';
-import type { AgentRun } from '../services/chats';
+import { Button, ErrorAlert, LoadingSpinner, PageHeader, StatusBadge } from '../components/ui';
 import { createExport, pollExportUntilDone } from '../services/exports';
-import { type KnowledgeBase, listKnowledgeBases } from '../services/knowledgeBases';
 import {
-  type ResearchReport,
-  createResearchRun,
-  getResearchReport,
-  getResearchRun,
-} from '../services/research';
+  researchKeys,
+  useCreateResearchRun,
+  useKnowledgeBases,
+  useResearchReport,
+  useResearchRun,
+} from '../hooks/queries';
 import { getErrorMessage } from '../lib/errorHandler';
-import { usePolling } from '../hooks/usePolling';
 import { safeOpenDownloadUrl } from '../utils/urlValidation';
 
 export function ResearchPage() {
-  const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBase[]>([]);
+  // React Query：自动去重/缓存知识库列表（对齐 Vercel client-swr-dedup 思路）
+  const knowledgeBasesQuery = useKnowledgeBases();
+  const knowledgeBases = knowledgeBasesQuery.data ?? [];
+
+  const queryClient = useQueryClient();
+  const createRunMutation = useCreateResearchRun();
+
   const [selectedKbIds, setSelectedKbIds] = useState<string[]>([]);
   const [question, setQuestion] = useState('');
-  const [run, setRun] = useState<AgentRun | null>(null);
-  const [report, setReport] = useState<ResearchReport | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [runId, setRunId] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // 加载知识库列表
-  useEffect(() => {
-    listKnowledgeBases()
-      .then((res) => setKnowledgeBases(res.items))
-      .catch((e) => setError(getErrorMessage(e)));
-  }, []);
+  const runQuery = useResearchRun(runId ?? undefined);
+  const run = runQuery.data;
 
-  // 使用 usePolling 轮询研究状态
-  usePolling(
-    async (signal) => {
-      if (!run) throw new Error('No run');
-      return getResearchRun(run.id);
-    },
-    {
-      enabled: !!run && run.status === 'running',
-      interval: 2000,
-      onSuccess: async (updated) => {
-        setRun(updated);
-        if (updated.status === 'succeeded') {
-          try {
-            const rpt = await getResearchReport(updated.id);
-            setReport(rpt);
-          } catch (e) {
-            setError(getErrorMessage(e));
-          }
-        }
-      },
-      onError: (e) => setError(getErrorMessage(e)),
-      shouldContinue: (data) => data.status === 'running',
+  const reportQuery = useResearchReport(run?.status === 'succeeded' ? run.id : undefined);
+  const report = reportQuery.data;
+
+  const loading = createRunMutation.isPending;
+
+  const mergedError =
+    error ??
+    (createRunMutation.error ? getErrorMessage(createRunMutation.error) : null) ??
+    (knowledgeBasesQuery.error ? getErrorMessage(knowledgeBasesQuery.error) : null) ??
+    (runQuery.error ? getErrorMessage(runQuery.error) : null) ??
+    (reportQuery.error ? getErrorMessage(reportQuery.error) : null);
+
+  const handleCloseError = () => {
+    if (error) {
+      setError(null);
+      return;
     }
-  );
+    if (createRunMutation.error) {
+      createRunMutation.reset();
+      return;
+    }
+    if (knowledgeBasesQuery.error) {
+      knowledgeBasesQuery.refetch();
+      return;
+    }
+    if (runQuery.error) {
+      runQuery.refetch();
+      return;
+    }
+    if (reportQuery.error) {
+      reportQuery.refetch();
+    }
+  };
 
   const toggleKb = useCallback((kbId: string) => {
     setSelectedKbIds((prev) =>
@@ -82,25 +90,24 @@ export function ResearchPage() {
       return;
     }
 
-    setLoading(true);
     setError(null);
-    setRun(null);
-    setReport(null);
+    setRunId(null);
 
     try {
-      const newRun = await createResearchRun({
+      const newRun = await createRunMutation.mutateAsync({
         question: question.trim(),
         selected_kb_ids: selectedKbIds,
         allow_external: false,
         mode: 'single_agent',
       });
-      setRun(newRun);
+
+      // 直接回填 query cache，避免额外请求并立即启动 refetchInterval 轮询。
+      queryClient.setQueryData(researchKeys.run(newRun.id), newRun);
+      setRunId(newRun.id);
     } catch (e) {
       setError(getErrorMessage(e));
-    } finally {
-      setLoading(false);
     }
-  }, [selectedKbIds, question]);
+  }, [createRunMutation, queryClient, question, selectedKbIds]);
 
   const handleExport = useCallback(async () => {
     if (!run) return;
@@ -127,8 +134,7 @@ export function ResearchPage() {
   }, [run]);
 
   const reset = useCallback(() => {
-    setRun(null);
-    setReport(null);
+    setRunId(null);
     setQuestion('');
     setError(null);
   }, []);
@@ -148,7 +154,7 @@ export function ResearchPage() {
     <Container maxWidth="md" sx={{ py: 3 }}>
       <PageHeader title="深度研究" />
 
-      {!run ? (
+      {!runId ? (
         <Stack spacing={3}>
           <Typography variant="subtitle1" fontWeight={500}>
             选择知识库范围
@@ -158,7 +164,7 @@ export function ResearchPage() {
             knowledgeBases={knowledgeBases}
             selectedIds={selectedKbIds}
             onToggle={toggleKb}
-            loading={loading}
+            loading={loading || knowledgeBasesQuery.isLoading}
           />
 
           <Box>
@@ -178,13 +184,15 @@ export function ResearchPage() {
           <Button
             variant="contained"
             onClick={startResearch}
-            disabled={selectedKbIds.length === 0 || !question.trim()}
+            disabled={knowledgeBasesQuery.isLoading || selectedKbIds.length === 0 || !question.trim()}
             loading={loading}
             sx={{ alignSelf: 'flex-start' }}
           >
             开始研究
           </Button>
         </Stack>
+      ) : !run ? (
+        <LoadingSpinner text="加载研究任务..." />
       ) : (
         <Stack spacing={2}>
           <Paper
@@ -217,9 +225,10 @@ export function ResearchPage() {
           <Paper variant="outlined" sx={{ p: 2 }}>
             <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 1.5 }}>
               <Typography fontWeight={500}>状态：</Typography>
-              <StatusBadge status={run.status as 'running' | 'succeeded' | 'failed'}>
-                {getStatusLabel(run.status)}
-              </StatusBadge>
+              <StatusBadge
+                status={run.status as 'running' | 'succeeded' | 'failed'}
+                label={getStatusLabel(run.status)}
+              />
             </Stack>
 
             {run.stage_summaries && Object.keys(run.stage_summaries).length > 0 && (
@@ -292,11 +301,17 @@ export function ResearchPage() {
                     引用 ({report.citations.length})
                   </Typography>
                   <Box sx={{ fontSize: 13, color: 'text.secondary' }}>
-                    {report.citations.map((c, i) => (
-                      <Box key={i} sx={{ mb: 0.5 }}>
-                        [{c.index || i + 1}] {(c.excerpt as string)?.slice(0, 100)}...
-                      </Box>
-                    ))}
+                    {report.citations.map((c, i) => {
+                      const indexValue =
+                        typeof c.index === 'number' || typeof c.index === 'string' ? c.index : i + 1;
+                      const excerpt = typeof c.excerpt === 'string' ? c.excerpt : '';
+
+                      return (
+                        <Box key={i} sx={{ mb: 0.5 }}>
+                          [{indexValue}] {excerpt.slice(0, 100)}...
+                        </Box>
+                      );
+                    })}
                   </Box>
                 </Box>
               )}
@@ -314,7 +329,7 @@ export function ResearchPage() {
         </Stack>
       )}
 
-      <ErrorAlert error={error} onClose={() => setError(null)} />
+      <ErrorAlert error={mergedError} onClose={handleCloseError} />
     </Container>
   );
 }

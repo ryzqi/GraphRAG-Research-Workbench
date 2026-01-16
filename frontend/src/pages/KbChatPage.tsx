@@ -1,7 +1,7 @@
 /**
  * 知识库代理页面
  */
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useState } from 'react';
 import {
   Box,
   Container,
@@ -25,7 +25,7 @@ import {
   createChatSession,
   sendMessage,
 } from '../services/chats';
-import { type KnowledgeBase, listKnowledgeBases } from '../services/knowledgeBases';
+import { useKnowledgeBases } from '../hooks/queries';
 import { getErrorMessage } from '../lib/errorHandler';
 
 interface MessageWithEvidence {
@@ -34,7 +34,10 @@ interface MessageWithEvidence {
 }
 
 export function KbChatPage() {
-  const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBase[]>([]);
+  // React Query：自动去重/缓存知识库列表（对齐 Vercel client-swr-dedup 思路）
+  const knowledgeBasesQuery = useKnowledgeBases();
+  const knowledgeBases = knowledgeBasesQuery.data ?? [];
+
   const [selectedKbIds, setSelectedKbIds] = useState<string[]>([]);
   const [session, setSession] = useState<ChatSession | null>(null);
   const [messages, setMessages] = useState<MessageWithEvidence[]>([]);
@@ -42,12 +45,16 @@ export function KbChatPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // 加载知识库列表
-  useEffect(() => {
-    listKnowledgeBases()
-      .then((res) => setKnowledgeBases(res.items))
-      .catch((e) => setError(getErrorMessage(e)));
-  }, []);
+  const mergedError =
+    error ?? (knowledgeBasesQuery.error ? getErrorMessage(knowledgeBasesQuery.error) : null);
+
+  const handleCloseError = () => {
+    if (error) {
+      setError(null);
+      return;
+    }
+    knowledgeBasesQuery.refetch();
+  };
 
   // 切换知识库选择
   const toggleKb = useCallback((kbId: string) => {
@@ -140,13 +147,13 @@ export function KbChatPage() {
             knowledgeBases={knowledgeBases}
             selectedIds={selectedKbIds}
             onToggle={toggleKb}
-            loading={loading}
+            loading={loading || knowledgeBasesQuery.isLoading}
           />
 
           <Button
             variant="contained"
             onClick={startSession}
-            disabled={selectedKbIds.length === 0}
+            disabled={knowledgeBasesQuery.isLoading || selectedKbIds.length === 0}
             loading={loading}
             sx={{ alignSelf: 'flex-start' }}
           >
@@ -256,7 +263,7 @@ export function KbChatPage() {
         </Stack>
       )}
 
-      <ErrorAlert error={error} onClose={() => setError(null)} />
+      <ErrorAlert error={mergedError} onClose={handleCloseError} />
     </Container>
   );
 }

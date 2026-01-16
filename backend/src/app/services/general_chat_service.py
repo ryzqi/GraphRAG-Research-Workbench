@@ -8,18 +8,24 @@ from __future__ import annotations
 import logging
 import uuid
 from datetime import datetime, timezone
+from typing import Any
 
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_openai import ChatOpenAI
 from langgraph.types import Command
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.general_chat_graph import GeneralChatGraph, GeneralChatState
+from app.agents.tool_calling.registry import build_tool_registry
+from app.agents.tool_calling.utils import extract_tool_results
 from app.core.checkpoint import CheckpointManager
 from app.core.errors import AppError
 from app.core.settings import get_settings
 from app.integrations.llm_client import ChatMessage as LLMMessage
 from app.integrations.llm_client import LLMClient
 from app.integrations.mcp_client import MCPClient
+from app.prompts import get_prompt_loader
 from app.models.agent_run import AgentRun, AgentRunStatus, AgentRunType
 from app.models.chat_message import ChatMessage, MessageRole
 from app.models.chat_session import ChatSession
@@ -53,6 +59,7 @@ class GeneralChatService:
         self._settings = get_settings()
         self._context_builder = ContextBuilder(self._settings)
         self._summary_service = ConversationSummaryService(db, settings=self._settings)
+        self._prompts = get_prompt_loader()
 
     async def _load_history(
         self, session_id: uuid.UUID, limit: int
@@ -73,6 +80,15 @@ class GeneralChatService:
             LLMMessage(role=msg.role.value, content=msg.content)
             for msg in filtered
         ]
+
+    @staticmethod
+    def _to_langchain_message(msg: LLMMessage) -> SystemMessage | HumanMessage | AIMessage:
+        role = (msg.role or "").lower()
+        if role == "system":
+            return SystemMessage(content=msg.content)
+        if role == "assistant":
+            return AIMessage(content=msg.content)
+        return HumanMessage(content=msg.content)
 
     async def answer(
         self,
@@ -119,23 +135,61 @@ class GeneralChatService:
                 result = await self._db.execute(stmt)
                 extensions = list(result.scalars().all())
 
-            # 创建 LangGraph 图
-            graph = GeneralChatGraph(
-                llm=self._llm,
+            include_external = bool(session.allow_external)
+
+            # 统一工具注册（内置 + MCP）
+            tools, tool_meta_by_name = await build_tool_registry(
+                settings=self._settings,
                 mcp=self._mcp,
                 extensions=extensions,
-                require_confirmation=self._settings.mcp_confirmation_required,
-                context_builder=self._context_builder,
-                settings=self._settings,
+                extra_tools=[],
+                include_web_search=include_external,
+                include_mcp=include_external,
+            )
+
+            # 绑定工具的模型（OpenAI-compatible base_url）
+            chat_model = ChatOpenAI(
+                model=self._settings.llm_model,
+                api_key=self._settings.llm_api_key,
+                base_url=self._settings.llm_base_url.rstrip("/"),
+            )
+
+            # 构造初始 messages（系统提示词 + 摘要/历史 + 用户问题）
+            system_prompt = self._prompts.render("general_chat/system")
+            history_messages, history_usage, history_truncation = (
+                self._context_builder.build_history_messages(
+                    history=history,
+                    summary_text=summary.content if summary else None,
+                )
+            )
+            context_metrics = self._context_builder.build_metrics(
+                history_usage=history_usage,
+                history_truncation=history_truncation,
+            )
+            messages = [
+                SystemMessage(content=system_prompt),
+                *[self._to_langchain_message(m) for m in history_messages],
+                HumanMessage(content=user_content),
+            ]
+
+            # 创建 LangGraph 图
+            graph = GeneralChatGraph(
+                chat_model=chat_model,
+                tools=tools,
+                tool_meta_by_name=tool_meta_by_name,
+                require_confirmation=bool(
+                    include_external and self._settings.mcp_confirmation_required
+                ),
             )
 
             # 使用 session_id 作为 thread_id 执行
-            state = GeneralChatState(
-                question=user_content,
-                allow_external=session.allow_external,
-                history=history,
-                summary=summary.content if summary else None,
-            )
+            state: GeneralChatState = {
+                "messages": messages,
+                "pending_tool_calls": [],
+                "stage_summaries": {},
+                "metrics": {"context": context_metrics},
+                "human_approved": None,
+            }
             thread_id = str(session.id)
             result = await graph.run(
                 state,
@@ -209,6 +263,7 @@ class GeneralChatService:
                 user_content=user_content,
                 started_at=started_at,
                 result=result,
+                tool_meta_by_name=tool_meta_by_name,
                 user_confirmed=None,
             )
 
@@ -252,6 +307,8 @@ class GeneralChatService:
             .get("channel_values", {})
             .get("pending_tool_calls", [])
         )
+        if not isinstance(pending_tool_calls, list):
+            pending_tool_calls = []
         await self._ensure_extensions_connected(pending_tool_calls)
 
         # 为恢复执行重新构建图（状态由 checkpointer 提供）
@@ -263,13 +320,30 @@ class GeneralChatService:
             ext_result = await self._db.execute(stmt)
             extensions = list(ext_result.scalars().all())
 
-        graph = GeneralChatGraph(
-            llm=self._llm,
+        include_external = bool(session.allow_external)
+
+        tools, tool_meta_by_name = await build_tool_registry(
+            settings=self._settings,
             mcp=self._mcp,
             extensions=extensions,
-            require_confirmation=self._settings.mcp_confirmation_required,
-            context_builder=self._context_builder,
-            settings=self._settings,
+            extra_tools=[],
+            include_web_search=include_external,
+            include_mcp=include_external,
+        )
+
+        chat_model = ChatOpenAI(
+            model=self._settings.llm_model,
+            api_key=self._settings.llm_api_key,
+            base_url=self._settings.llm_base_url.rstrip("/"),
+        )
+
+        graph = GeneralChatGraph(
+            chat_model=chat_model,
+            tools=tools,
+            tool_meta_by_name=tool_meta_by_name,
+            require_confirmation=bool(
+                include_external and self._settings.mcp_confirmation_required
+            ),
         )
         compiled = graph.compile(checkpointer=CheckpointManager.get_checkpointer())
         config = CheckpointManager.make_config(thread_id)
@@ -325,6 +399,7 @@ class GeneralChatService:
             user_content=run.question,
             started_at=started_at,
             result=result,
+            tool_meta_by_name=tool_meta_by_name,
             user_confirmed=approved,
         )
 
@@ -369,17 +444,24 @@ class GeneralChatService:
         user_content: str,
         started_at: datetime,
         result: dict,
+        tool_meta_by_name: dict[str, Any],
         user_confirmed: bool | None,
     ) -> ChatAnswerResponse:
-        tool_results = result.get("tool_results") or []
-        if not isinstance(tool_results, list):
-            tool_results = []
-        tool_results = [r for r in tool_results if isinstance(r, dict)]
+        messages = result.get("messages") or []
+        if not isinstance(messages, list):
+            messages = []
+
+        tool_results = extract_tool_results(messages, tool_meta_by_name)
+
+        # approved=false 时：不执行任何外部工具，且不写入 MCP 工具审计记录（需求：0 或 canceled）。
+        audit_tool_results = tool_results
+        if user_confirmed is False and self._settings.mcp_confirmation_required:
+            audit_tool_results = []
 
         # 保存工具调用记录（仅记录 MCP 扩展；内置工具没有 extension_id 外键）
         purpose = f"回答问题: {user_content[:100]}"
         now = datetime.now(timezone.utc)
-        for tool_result in tool_results:
+        for tool_result in audit_tool_results:
             if tool_result.get("is_builtin"):
                 continue
             raw_extension_id = tool_result.get("extension_id")
@@ -397,7 +479,9 @@ class GeneralChatService:
                 run_id=run.id,
                 tool_name=str(tool_result.get("tool_name") or ""),
                 purpose=purpose,
-                input=tool_result.get("args") if isinstance(tool_result.get("args"), dict) else None,
+                input=tool_result.get("args")
+                if isinstance(tool_result.get("args"), dict)
+                else None,
                 requires_confirmation=self._settings.mcp_confirmation_required,
                 user_confirmed=user_confirmed
                 if self._settings.mcp_confirmation_required
@@ -409,7 +493,11 @@ class GeneralChatService:
             )
             self._db.add(invocation)
 
-        answer = str(result.get("answer") or "")
+        answer = ""
+        for msg in reversed(messages):
+            if isinstance(msg, AIMessage):
+                answer = str(msg.content or "")
+                break
 
         # 保存助手消息
         assistant_msg = ChatMessage(
@@ -432,7 +520,7 @@ class GeneralChatService:
             logger.warning("摘要更新失败: %s", exc)
 
         invocation_summaries: list[dict] = []
-        for tr in tool_results:
+        for tr in audit_tool_results:
             invocation_summaries.append(
                 {
                     "tool_name": tr.get("tool_name"),
@@ -456,7 +544,7 @@ class GeneralChatService:
         run.final_output = answer
         run.stage_summaries = stage_summaries
         run.metrics = {
-            "extension_calls": len(tool_results),
+            "extension_calls": len(audit_tool_results),
             "latency_ms": int((now - started_at).total_seconds() * 1000),
             **summary_metrics,
             **(result.get("metrics") or {}),
