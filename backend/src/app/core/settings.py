@@ -71,8 +71,7 @@ class Settings(BaseSettings):
     memory_store_url: str | None = Field(None, alias="MEMORY_STORE_URL")
     memory_store_path: str = Field("/memories/", alias="MEMORY_STORE_PATH")
 
-    # Web 搜索（可选）
-    web_search_backend: str = Field("tavily", alias="WEB_SEARCH_BACKEND")
+    # Web 搜索（Tavily，可选）
     web_search_api_key: str | None = Field(None, alias="WEB_SEARCH_API_KEY")
 
     # 检索配置
