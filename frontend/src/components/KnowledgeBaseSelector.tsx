@@ -13,7 +13,8 @@ import {
   Typography,
 } from '@mui/material';
 import type { KnowledgeBase } from '../services/knowledgeBases';
-import { EmptyState, LoadingSpinner } from './ui';
+import { EmptyState } from './ui/EmptyState';
+import { LoadingSpinner } from './ui/LoadingSpinner';
 
 interface KnowledgeBaseSelectorProps {
   knowledgeBases: KnowledgeBase[];

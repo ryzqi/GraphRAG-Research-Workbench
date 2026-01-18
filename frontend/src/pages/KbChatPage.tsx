@@ -15,7 +15,9 @@ import SendIcon from '@mui/icons-material/Send';
 import RestartAltIcon from '@mui/icons-material/RestartAlt';
 import { EvidenceList } from '../components/EvidenceList';
 import { KnowledgeBaseSelector } from '../components/KnowledgeBaseSelector';
-import { Button, ErrorAlert, PageHeader } from '../components/ui';
+import { Button } from '../components/ui/Button';
+import { ErrorAlert } from '../components/ui/ErrorAlert';
+import { PageHeader } from '../components/ui/PageHeader';
 import {
   type AgentMode,
   type ChatMessage,
@@ -218,6 +220,8 @@ export function KbChatPage() {
                           color: item.message.role === 'user' ? 'primary.contrastText' : 'text.primary',
                           borderRadius: 3,
                           whiteSpace: 'pre-wrap',
+                          contentVisibility: 'auto',
+                          containIntrinsicSize: '1px 80px',
                         }}
                         elevation={0}
                       >

@@ -239,6 +239,8 @@ export function GeneralChatPage() {
                     background: msg.role === 'user' ? '#e0e7ff' : '#fff',
                     borderRadius: 8,
                     border: '1px solid #e5e7eb',
+                    contentVisibility: 'auto',
+                    containIntrinsicSize: '1px 120px',
                   }}
                 >
                   <div style={{ fontWeight: 600, marginBottom: 4 }}>

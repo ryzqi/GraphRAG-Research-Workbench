@@ -2,7 +2,7 @@
  * 首页
  */
 import { Box, Typography, Paper, Stack, Chip } from '@mui/material';
-import { PageHeader } from '../components/ui';
+import { PageHeader } from '../components/ui/PageHeader';
 import StorageIcon from '@mui/icons-material/Storage';
 import ChatIcon from '@mui/icons-material/Chat';
 import SearchIcon from '@mui/icons-material/Search';

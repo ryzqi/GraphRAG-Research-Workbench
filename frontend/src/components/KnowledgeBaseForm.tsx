@@ -3,7 +3,8 @@
  */
 import { useState } from 'react';
 import { Box, Stack, TextField } from '@mui/material';
-import { Button, ErrorAlert } from './ui';
+import { Button } from './ui/Button';
+import { ErrorAlert } from './ui/ErrorAlert';
 import { getErrorMessage } from '../lib/errorHandler';
 import type { KnowledgeBase, KnowledgeBaseCreate, KnowledgeBaseUpdate } from '../services/knowledgeBases';
 

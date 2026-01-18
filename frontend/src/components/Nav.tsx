@@ -26,7 +26,19 @@ const routePreloaders: Record<string, () => Promise<unknown>> = {
   '/feedback': () => import('../pages/FeedbackPage'),
 };
 
+function shouldPreloadRoute() {
+  if (typeof navigator === 'undefined') return true;
+  const connection = (
+    navigator as Navigator & { connection?: { saveData?: boolean; effectiveType?: string } }
+  ).connection;
+  if (!connection) return true;
+  if (connection.saveData) return false;
+  const effectiveType = connection.effectiveType;
+  return !effectiveType || (effectiveType !== 'slow-2g' && effectiveType !== '2g');
+}
+
 function preloadRoute(path: string) {
+  if (!shouldPreloadRoute()) return;
   const preload = routePreloaders[path];
   if (preload) void preload();
 }

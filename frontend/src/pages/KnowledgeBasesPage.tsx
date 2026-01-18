@@ -20,16 +20,14 @@ import ArchiveIcon from '@mui/icons-material/Archive';
 import DeleteIcon from '@mui/icons-material/Delete';
 import VisibilityIcon from '@mui/icons-material/Visibility';
 
-import {
-  Button,
-  Card,
-  ConfirmDialog,
-  EmptyState,
-  ErrorAlert,
-  LoadingSpinner,
-  Modal,
-  PageHeader,
-} from '../components/ui';
+import { Button } from '../components/ui/Button';
+import { Card } from '../components/ui/Card';
+import { ConfirmDialog } from '../components/ui/ConfirmDialog';
+import { EmptyState } from '../components/ui/EmptyState';
+import { ErrorAlert } from '../components/ui/ErrorAlert';
+import { LoadingSpinner } from '../components/ui/LoadingSpinner';
+import { Modal } from '../components/ui/Modal';
+import { PageHeader } from '../components/ui/PageHeader';
 import { KnowledgeBaseForm } from '../components/KnowledgeBaseForm';
 import {
   useKnowledgeBases,

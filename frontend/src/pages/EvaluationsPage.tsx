@@ -15,7 +15,11 @@ import {
 import DownloadIcon from '@mui/icons-material/Download';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import { KnowledgeBaseSelector } from '../components/KnowledgeBaseSelector';
-import { Button, ErrorAlert, LoadingSpinner, PageHeader, StatusBadge } from '../components/ui';
+import { Button } from '../components/ui/Button';
+import { ErrorAlert } from '../components/ui/ErrorAlert';
+import { LoadingSpinner } from '../components/ui/LoadingSpinner';
+import { PageHeader } from '../components/ui/PageHeader';
+import { StatusBadge } from '../components/ui/StatusBadge';
 import { createExport, pollExportUntilDone } from '../services/exports';
 import type { EvaluationRunCreateRequest } from '../services/evaluations';
 import {
@@ -315,7 +319,12 @@ export function EvaluationsPage() {
                   <Paper
                     key={c.question_id}
                     variant="outlined"
-                    sx={{ p: 1.5, bgcolor: 'grey.50' }}
+                    sx={{
+                      p: 1.5,
+                      bgcolor: 'grey.50',
+                      contentVisibility: 'auto',
+                      containIntrinsicSize: '1px 160px',
+                    }}
                   >
                     <Typography fontWeight={500} sx={{ mb: 1 }}>
                       {i + 1}. {c.question}

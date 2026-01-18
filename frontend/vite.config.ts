@@ -15,8 +15,6 @@ export default defineConfig({
           'vendor-react': ['react', 'react-dom', 'react-router-dom'],
           // MUI 组件库
           'vendor-mui': ['@mui/material', '@emotion/react', '@emotion/styled'],
-          // MUI 图标（较大，单独分割）
-          'vendor-mui-icons': ['@mui/icons-material'],
           // React Query
           'vendor-query': ['@tanstack/react-query'],
         },

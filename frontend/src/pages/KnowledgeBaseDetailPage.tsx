@@ -525,6 +525,8 @@ const styles: Record<string, React.CSSProperties> = {
     padding: '12px 16px',
     background: '#f9fafb',
     borderRadius: 6,
+    contentVisibility: 'auto',
+    containIntrinsicSize: '1px 64px',
   },
   itemInfo: {
     display: 'flex',

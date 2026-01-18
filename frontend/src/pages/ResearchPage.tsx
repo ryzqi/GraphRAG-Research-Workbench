@@ -15,7 +15,11 @@ import DownloadIcon from '@mui/icons-material/Download';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import { KnowledgeBaseSelector } from '../components/KnowledgeBaseSelector';
 import { KnowledgeUpdateSubmit } from '../components/KnowledgeUpdateSubmit';
-import { Button, ErrorAlert, LoadingSpinner, PageHeader, StatusBadge } from '../components/ui';
+import { Button } from '../components/ui/Button';
+import { ErrorAlert } from '../components/ui/ErrorAlert';
+import { LoadingSpinner } from '../components/ui/LoadingSpinner';
+import { PageHeader } from '../components/ui/PageHeader';
+import { StatusBadge } from '../components/ui/StatusBadge';
 import { createExport, pollExportUntilDone } from '../services/exports';
 import {
   researchKeys,
