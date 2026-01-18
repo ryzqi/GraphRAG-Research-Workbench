@@ -60,6 +60,13 @@ class MilvusClient:
         self._client = AsyncMilvusClient(uri=uri)
         self._field_cache: set[str] | None = None
 
+    async def ready_check(self) -> None:
+        """就绪探测：调用可用的 Milvus API 验证连接。"""
+        describe = getattr(self._client, "describe_collection", None)
+        if describe is None:
+            raise RuntimeError("pymilvus API 不匹配：缺少 describe_collection")
+        await describe(collection_name=self._collection)
+
     async def _describe_fields(self) -> set[str]:
         describe = getattr(self._client, "describe_collection", None)
         if describe is None:

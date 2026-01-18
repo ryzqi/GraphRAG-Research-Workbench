@@ -19,6 +19,7 @@ from app.agents.kb_chat_graph import KbChatGraph, KbChatState
 from app.agents.tool_calling.registry import build_tool_registry
 from app.agents.tools.kb_retrieve import build_kb_retrieve_tool
 from app.core.checkpoint import CheckpointManager
+from app.core.logging import set_run_id
 from app.core.settings import get_settings
 from app.integrations.embedding_client import EmbeddingClient
 from app.integrations.llm_client import ChatMessage as LLMMessage
@@ -125,6 +126,8 @@ class KbChatService:
         )
         self._db.add(run)
         await self._db.flush()
+        await self._db.commit()
+        set_run_id(str(run.id))
 
         try:
             kb_ids = session.selected_kb_ids or []
@@ -327,3 +330,5 @@ class KbChatService:
             run.error_message = str(e)
             await self._db.commit()
             raise
+        finally:
+            set_run_id(None)

@@ -10,7 +10,7 @@ from sqlalchemy import text
 from app.core.errors import build_error_response
 from app.core.logging import get_request_id
 from app.db.session import get_engine
-from app.integrations.milvus_client import MilvusClient
+from app.integrations.milvus_client import get_milvus_client
 from app.integrations.object_storage import ObjectStorage
 from app.integrations.redis_client import get_redis
 
@@ -51,11 +51,8 @@ async def _check_redis() -> None:
 
 
 async def _check_milvus() -> None:
-    milvus = MilvusClient()
-    describe = getattr(milvus._client, "describe_collection", None)
-    if describe is None:
-        return
-    await milvus._call_with_signature(describe, collection_name=milvus._collection)
+    milvus = get_milvus_client()
+    await milvus.ready_check()
 
 
 async def _check_minio() -> None:

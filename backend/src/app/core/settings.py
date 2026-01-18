@@ -30,9 +30,33 @@ class Settings(BaseSettings):
         "postgresql+asyncpg://mkb:mkb_password@localhost:5432/mkb",
         alias="DATABASE_URL",
     )
+    db_pool_size: int = Field(5, alias="DB_POOL_SIZE")
+    db_max_overflow: int = Field(10, alias="DB_MAX_OVERFLOW")
+    db_pool_recycle_seconds: int = Field(1800, alias="DB_POOL_RECYCLE_SECONDS")
+
     redis_url: str = Field("redis://localhost:6379/0", alias="REDIS_URL")
+    redis_socket_timeout_seconds: float = Field(
+        1.0, alias="REDIS_SOCKET_TIMEOUT_SECONDS"
+    )
+    redis_socket_connect_timeout_seconds: float = Field(
+        1.0, alias="REDIS_SOCKET_CONNECT_TIMEOUT_SECONDS"
+    )
     celery_broker_url: str = Field("redis://localhost:6379/0", alias="CELERY_BROKER_URL")
     celery_result_backend: str = Field("redis://localhost:6379/1", alias="CELERY_RESULT_BACKEND")
+
+    http_timeout_connect_seconds: float = Field(
+        5.0, alias="HTTP_TIMEOUT_CONNECT_SECONDS"
+    )
+    http_timeout_read_seconds: float = Field(30.0, alias="HTTP_TIMEOUT_READ_SECONDS")
+    http_timeout_write_seconds: float = Field(30.0, alias="HTTP_TIMEOUT_WRITE_SECONDS")
+    http_timeout_pool_seconds: float = Field(5.0, alias="HTTP_TIMEOUT_POOL_SECONDS")
+    http_max_connections: int = Field(100, alias="HTTP_MAX_CONNECTIONS")
+    http_max_keepalive_connections: int = Field(
+        20, alias="HTTP_MAX_KEEPALIVE_CONNECTIONS"
+    )
+    http_keepalive_expiry_seconds: float = Field(
+        5.0, alias="HTTP_KEEPALIVE_EXPIRY_SECONDS"
+    )
 
     milvus_host: str = Field("localhost", alias="MILVUS_HOST")
     milvus_port: int = Field(19530, alias="MILVUS_PORT")
@@ -45,10 +69,12 @@ class Settings(BaseSettings):
     llm_base_url: str = Field("https://api.openai.com/v1", alias="LLM_BASE_URL")
     llm_api_key: str = Field("REPLACE_ME", alias="LLM_API_KEY")
     llm_model: str = Field("gpt-4o-mini", alias="LLM_MODEL")
+    llm_timeout_seconds: float = Field(30.0, alias="LLM_TIMEOUT_SECONDS")
 
     embedding_base_url: str = Field("https://api.openai.com/v1", alias="EMBEDDING_BASE_URL")
     embedding_api_key: str = Field("REPLACE_ME", alias="EMBEDDING_API_KEY")
     embedding_model: str = Field("text-embedding-3-small", alias="EMBEDDING_MODEL")
+    embedding_timeout_seconds: float = Field(30.0, alias="EMBEDDING_TIMEOUT_SECONDS")
     embedding_dim: int | None = Field(None, alias="EMBEDDING_DIM")
 
     minio_endpoint: str = Field("localhost:9000", alias="MINIO_ENDPOINT")
@@ -154,6 +180,12 @@ class Settings(BaseSettings):
     )
     ingestion_contextual_max_tokens: int = Field(
         128, alias="INGESTION_CONTEXTUAL_MAX_TOKENS"
+    )
+    ingestion_contextual_concurrency: int = Field(
+        3, alias="INGESTION_CONTEXTUAL_CONCURRENCY"
+    )
+    ingestion_embedding_batch_size: int = Field(
+        32, alias="INGESTION_EMBEDDING_BATCH_SIZE"
     )
 
     # JWT 认证配置

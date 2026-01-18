@@ -48,6 +48,7 @@ class LLMClient:
         model: str | None = None,
     ) -> None:
         settings = get_settings()
+        self._settings = settings
         self._http_client = http_client
         self._base_url = (
             base_url if base_url is not None else settings.llm_base_url
@@ -59,7 +60,7 @@ class LLMClient:
         self,
         *,
         messages: list[ChatMessage],
-        timeout_seconds: float = 30.0,
+        timeout_seconds: float | None = None,
     ) -> LLMResponse:
         """带指标的聊天接口。"""
         url = f"{self._base_url}/chat/completions"
@@ -68,6 +69,11 @@ class LLMClient:
             "messages": [{"role": m.role, "content": m.content} for m in messages],
         }
         headers = {"Authorization": f"Bearer {self._api_key}"}
+        timeout = (
+            self._settings.llm_timeout_seconds
+            if timeout_seconds is None
+            else timeout_seconds
+        )
 
         start_time = time.perf_counter()
         last_exc: Exception | None = None
@@ -77,7 +83,7 @@ class LLMClient:
             for attempt in range(2):
                 try:
                     resp = await client.post(
-                        url, json=payload, headers=headers, timeout=timeout_seconds
+                        url, json=payload, headers=headers, timeout=timeout
                     )
                     resp.raise_for_status()
                     data = resp.json()
@@ -114,5 +120,5 @@ class LLMClient:
         if self._http_client is not None:
             return await _run(self._http_client)
 
-        async with httpx.AsyncClient(timeout=timeout_seconds) as client:
+        async with httpx.AsyncClient(timeout=timeout) as client:
             return await _run(client)

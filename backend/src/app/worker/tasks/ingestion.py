@@ -12,6 +12,7 @@ from sqlalchemy import delete, select
 from app.core.settings import get_settings
 from app.db.session import get_sessionmaker
 from app.integrations.embedding_client import EmbeddingClient
+from app.integrations.http_client import create_http_client
 from app.integrations.milvus_client import get_milvus_client
 from app.integrations.object_storage import ObjectRef, ObjectStorage
 from app.models.document_chunk import DocumentChunk
@@ -61,181 +62,200 @@ async def _run_ingestion_job(job_id: str) -> None:
             items: list[IngestionJobItem] = list(job.items)
             stats["total_materials"] = len(items)
 
-            embedding_client = EmbeddingClient()
-            milvus_client = get_milvus_client()
             settings = get_settings()
-            chunker = TextChunker(settings=settings, embedding=embedding_client)
-            context_service = (
-                ContextualEmbeddingService(settings=settings)
-                if settings.ingestion_contextual_enabled
-                else None
-            )
-            embedding_dim = settings.embedding_dim
-            collection_ready = False
+            milvus_client = get_milvus_client()
+            http_client = create_http_client(settings)
 
-            if embedding_dim:
-                await milvus_client.ensure_collection(dim=embedding_dim)
-                collection_ready = True
+            try:
+                embedding_client = EmbeddingClient(http_client=http_client)
+                chunker = TextChunker(settings=settings, embedding=embedding_client)
+                context_service = (
+                    ContextualEmbeddingService(settings=settings)
+                    if settings.ingestion_contextual_enabled
+                    else None
+                )
+                embedding_dim = settings.embedding_dim
+                collection_ready = False
 
-            for item in items:
-                # 重新检查取消状态
-                await session.refresh(job)
-                if job.status == IngestionStatus.CANCELED:
-                    return
-                await session.commit()
-
-                material = await session.get(SourceMaterial, item.material_id)
-                if not material:
-                    stats["errors"].append(
-                        {
-                            "material_id": str(item.material_id),
-                            "action": str(item.action.value),
-                            "stage": "load_material",
-                            "error": "material_not_found",
-                        }
-                    )
-                    await session.commit()
-                    continue
-                await session.commit()
-
-                old_chunk_ids: list[str] = []
-                if item.action == IngestionJobItemAction.UPDATE:
-                    stmt = select(DocumentChunk.id).where(
-                        DocumentChunk.material_id == material.id
-                    )
-                    result = await session.execute(stmt)
-                    old_chunk_ids = [str(cid) for cid in result.scalars().all()]
-                    await session.commit()
-
-                # 获取资料内容（IO/解析放到事务外）
-                content = await _get_material_content(material)
-                if not content:
-                    stats["errors"].append(
-                        {
-                            "material_id": str(material.id),
-                            "action": str(item.action.value),
-                            "stage": "load_content",
-                            "error": "empty_content",
-                        }
-                    )
-                    continue
-
-                # 切分文本
-                chunks_text = await chunker.split(content)
-                if not chunks_text:
-                    continue
-
-                contexts = ["" for _ in chunks_text]
-                if settings.ingestion_contextual_enabled and context_service:
-                    for idx, chunk_text in enumerate(chunks_text):
-                        context_result = await context_service.generate(
-                            full_text=content, chunk=chunk_text
-                        )
-                        if context_result.success:
-                            contexts[idx] = context_result.context
-                        else:
-                            contexts[idx] = ""
-
-                embedding_inputs = []
-                for chunk_text, context in zip(chunks_text, contexts):
-                    if settings.ingestion_contextual_enabled and context:
-                        embedding_inputs.append(f"{chunk_text}\n\n{context}")
-                    else:
-                        embedding_inputs.append(chunk_text)
-
-                # 批量生成 embedding
-                embeddings = await embedding_client.embed(texts=embedding_inputs)
-
-                if embedding_dim is None and embeddings:
-                    embedding_dim = len(embeddings[0])
-                if not collection_ready and embedding_dim:
+                if embedding_dim:
                     await milvus_client.ensure_collection(dim=embedding_dim)
                     collection_ready = True
 
-                # 写入 Postgres（material 事务边界）并在 Milvus 成功后提交
-                milvus_chunk_ids: list[str] = []
-                milvus_upserted = False
-                try:
-                    async with session.begin():
-                        if item.action == IngestionJobItemAction.UPDATE:
-                            await session.execute(
-                                delete(DocumentChunk).where(
-                                    DocumentChunk.material_id == material.id
+                for item in items:
+                    # 重新检查取消状态
+                    await session.refresh(job)
+                    if job.status == IngestionStatus.CANCELED:
+                        return
+                    await session.commit()
+
+                    material = await session.get(SourceMaterial, item.material_id)
+                    if not material:
+                        stats["errors"].append(
+                            {
+                                "material_id": str(item.material_id),
+                                "action": str(item.action.value),
+                                "stage": "load_material",
+                                "error": "material_not_found",
+                            }
+                        )
+                        await session.commit()
+                        continue
+                    await session.commit()
+
+                    old_chunk_ids: list[str] = []
+                    if item.action == IngestionJobItemAction.UPDATE:
+                        stmt = select(DocumentChunk.id).where(
+                            DocumentChunk.material_id == material.id
+                        )
+                        result = await session.execute(stmt)
+                        old_chunk_ids = [str(cid) for cid in result.scalars().all()]
+                        await session.commit()
+
+                    # 获取资料内容（IO/解析放到事务外）
+                    content = await _get_material_content(material)
+                    if not content:
+                        stats["errors"].append(
+                            {
+                                "material_id": str(material.id),
+                                "action": str(item.action.value),
+                                "stage": "load_content",
+                                "error": "empty_content",
+                            }
+                        )
+                        continue
+
+                    # 切分文本
+                    chunks_text = await chunker.split(content)
+                    if not chunks_text:
+                        continue
+
+                    contexts = ["" for _ in chunks_text]
+                    if settings.ingestion_contextual_enabled and context_service:
+                        concurrency = max(settings.ingestion_contextual_concurrency, 1)
+                        semaphore = asyncio.Semaphore(concurrency)
+
+                        async def _generate_context(chunk_text: str):
+                            async with semaphore:
+                                return await context_service.generate(
+                                    full_text=content, chunk=chunk_text
                                 )
-                            )
 
-                        chunks: list[DocumentChunk] = []
-                        milvus_records: list[dict] = []
-                        for idx, (text, emb) in enumerate(
-                            zip(chunks_text, embeddings, strict=False)
-                        ):
-                            chunk = DocumentChunk(
-                                kb_id=material.kb_id,
-                                material_id=material.id,
-                                chunk_index=idx,
-                                text=text,
-                                locator={"index": idx},
-                                content_hash=hashlib.sha256(text.encode()).hexdigest()[:32],
-                                token_count=count_tokens_approximately(text),
-                            )
-                            chunks.append(chunk)
-                            milvus_records.append(
-                                {
-                                    "chunk_id": str(chunk.id),
-                                    "kb_id": str(material.kb_id),
-                                    "material_id": str(material.id),
-                                    "content": text,
-                                    "context": contexts[idx] if contexts else "",
-                                    "dense_vector": emb,
-                                }
-                            )
+                        results = await asyncio.gather(
+                            *[_generate_context(chunk_text) for chunk_text in chunks_text],
+                            return_exceptions=True,
+                        )
+                        for idx, result in enumerate(results):
+                            if isinstance(result, Exception):
+                                continue
+                            if result.success:
+                                contexts[idx] = result.context
 
-                        session.add_all(chunks)
-                        await session.flush()
-                        milvus_chunk_ids = [r["chunk_id"] for r in milvus_records]
+                    embedding_inputs = []
+                    for chunk_text, context in zip(chunks_text, contexts):
+                        if settings.ingestion_contextual_enabled and context:
+                            embedding_inputs.append(f"{chunk_text}\n\n{context}")
+                        else:
+                            embedding_inputs.append(chunk_text)
 
-                        await milvus_client.upsert_batch(records=milvus_records)
-                        milvus_upserted = True
+                    # 批量生成 embedding
+                    batch_size = max(settings.ingestion_embedding_batch_size, 1)
+                    embeddings: list[list[float]] = []
+                    for start in range(0, len(embedding_inputs), batch_size):
+                        batch = embedding_inputs[start : start + batch_size]
+                        embeddings.extend(await embedding_client.embed(texts=batch))
 
-                    stats["succeeded_materials"] += 1
-                    stats["total_chunks"] += len(milvus_chunk_ids)
+                    if embedding_dim is None and embeddings:
+                        embedding_dim = len(embeddings[0])
+                    if not collection_ready and embedding_dim:
+                        await milvus_client.ensure_collection(dim=embedding_dim)
+                        collection_ready = True
 
-                except Exception as exc:
-                    if milvus_upserted and milvus_chunk_ids:
+                    # 写入 Postgres（material 事务边界）并在 Milvus 成功后提交
+                    milvus_chunk_ids: list[str] = []
+                    milvus_upserted = False
+                    try:
+                        async with session.begin():
+                            if item.action == IngestionJobItemAction.UPDATE:
+                                await session.execute(
+                                    delete(DocumentChunk).where(
+                                        DocumentChunk.material_id == material.id
+                                    )
+                                )
+
+                            chunks: list[DocumentChunk] = []
+                            milvus_records: list[dict] = []
+                            for idx, (text, emb) in enumerate(
+                                zip(chunks_text, embeddings, strict=False)
+                            ):
+                                chunk = DocumentChunk(
+                                    kb_id=material.kb_id,
+                                    material_id=material.id,
+                                    chunk_index=idx,
+                                    text=text,
+                                    locator={"index": idx},
+                                    content_hash=hashlib.sha256(text.encode()).hexdigest()[:32],
+                                    token_count=count_tokens_approximately(text),
+                                )
+                                chunks.append(chunk)
+                                milvus_records.append(
+                                    {
+                                        "chunk_id": str(chunk.id),
+                                        "kb_id": str(material.kb_id),
+                                        "material_id": str(material.id),
+                                        "content": text,
+                                        "context": contexts[idx] if contexts else "",
+                                        "dense_vector": emb,
+                                    }
+                                )
+
+                            session.add_all(chunks)
+                            await session.flush()
+                            milvus_chunk_ids = [r["chunk_id"] for r in milvus_records]
+
+                            await milvus_client.upsert_batch(records=milvus_records)
+                            milvus_upserted = True
+
+                        stats["succeeded_materials"] += 1
+                        stats["total_chunks"] += len(milvus_chunk_ids)
+
+                    except Exception as exc:
+                        if milvus_upserted and milvus_chunk_ids:
+                            try:
+                                await milvus_client.delete_by_chunk_ids(milvus_chunk_ids)
+                            except Exception as cleanup_exc:  # pragma: no cover
+                                stats["warnings"].append(
+                                    {
+                                        "material_id": str(material.id),
+                                        "action": str(item.action.value),
+                                        "stage": "milvus_rollback_cleanup",
+                                        "error": str(cleanup_exc),
+                                    }
+                                )
+                        stats["errors"].append(
+                            {
+                                "material_id": str(material.id),
+                                "action": str(item.action.value),
+                                "stage": "ingest",
+                                "error": str(exc),
+                            }
+                        )
+                        continue
+
+                    # UPDATE：提交成功后 best-effort 清理旧向量（失败不影响正确性）
+                    if old_chunk_ids:
                         try:
-                            await milvus_client.delete_by_chunk_ids(milvus_chunk_ids)
+                            await milvus_client.delete_by_chunk_ids(old_chunk_ids)
                         except Exception as cleanup_exc:  # pragma: no cover
                             stats["warnings"].append(
                                 {
                                     "material_id": str(material.id),
                                     "action": str(item.action.value),
-                                    "stage": "milvus_rollback_cleanup",
+                                    "stage": "milvus_post_commit_cleanup",
                                     "error": str(cleanup_exc),
                                 }
                             )
-                    stats["errors"].append(
-                        {
-                            "material_id": str(material.id),
-                            "action": str(item.action.value),
-                            "stage": "ingest",
-                            "error": str(exc),
-                        }
-                    )
-                    continue
-
-                # UPDATE：提交成功后 best-effort 清理旧向量（失败不影响正确性）
-                if old_chunk_ids:
-                    try:
-                        await milvus_client.delete_by_chunk_ids(old_chunk_ids)
-                    except Exception as cleanup_exc:  # pragma: no cover
-                        stats["warnings"].append(
-                            {
-                                "material_id": str(material.id),
-                                "action": str(item.action.value),
-                                "stage": "milvus_post_commit_cleanup",
-                                "error": str(cleanup_exc),
-                            }
-                        )
+            finally:
+                await http_client.aclose()
 
             # 完成
             job.status = (

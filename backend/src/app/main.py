@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 
-import httpx
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -13,6 +12,7 @@ from app.core.logging import configure_logging
 from app.core.middleware.request_id import RequestIdMiddleware
 from app.core.settings import get_settings, validate_startup_settings
 from app.integrations.embedding_client import EmbeddingClient
+from app.integrations.http_client import create_http_client
 from app.integrations.llm_client import LLMClient
 from app.integrations.mcp_client import MCPClient
 from app.integrations.milvus_client import MilvusClient
@@ -27,7 +27,7 @@ async def lifespan(app: FastAPI):
     """应用生命周期管理。"""
     validate_startup_settings(settings)
     await CheckpointManager.initialize()
-    app.state.http_client = httpx.AsyncClient()
+    app.state.http_client = create_http_client(settings)
     app.state.llm_client = LLMClient(http_client=app.state.http_client)
     app.state.embedding_client = EmbeddingClient(http_client=app.state.http_client)
     app.state.rerank_client = RerankClient(settings=settings, http_client=app.state.http_client)

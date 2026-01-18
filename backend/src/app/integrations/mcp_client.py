@@ -60,6 +60,8 @@ class MCPConnection:
     env: dict[str, str] = field(default_factory=dict)
     prefer_jsonrpc: bool = False
     connected: bool = False
+    stdio_process: asyncio.subprocess.Process | None = None
+    stdio_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
 
 class MCPClient:
@@ -224,10 +226,11 @@ class MCPClient:
         headers, env, prefer_jsonrpc = self._parse_scope(scope)
 
         try:
+            stdio_process = None
             if transport == "http":
                 tools = await self._connect_http(endpoint, headers, prefer_jsonrpc)
             elif transport == "stdio":
-                tools = await self._connect_stdio(endpoint, env)
+                tools, stdio_process = await self._connect_stdio(endpoint, env)
             else:
                 raise ValueError(f"不支持的传输类型: {transport}")
 
@@ -239,6 +242,7 @@ class MCPClient:
                 env=env,
                 prefer_jsonrpc=prefer_jsonrpc,
                 connected=True,
+                stdio_process=stdio_process,
             )
             return tools
 
@@ -267,14 +271,11 @@ class MCPClient:
 
         return self._extract_tools(data)
 
-    async def _connect_stdio(self, endpoint: str, env: dict[str, str]) -> list[ToolDefinition]:
-        """通过 stdio 连接 MCP 服务器。"""
+    async def _spawn_stdio_process(
+        self, endpoint: str, env: dict[str, str]
+    ) -> asyncio.subprocess.Process:
         parts = self._parse_stdio_endpoint(endpoint)
-
-        # 发送 tools/list 请求
-        request = {"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}}
-
-        proc = await asyncio.create_subprocess_exec(
+        return await asyncio.create_subprocess_exec(
             *parts,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
@@ -282,17 +283,44 @@ class MCPClient:
             env=self._merge_env(env),
         )
 
-        stdout, stderr = await asyncio.wait_for(
-            proc.communicate(json.dumps(request).encode() + b"\n"),
-            timeout=self._settings.mcp_stdio_timeout_seconds,
+    async def _request_stdio(
+        self, proc: asyncio.subprocess.Process, request: dict
+    ) -> dict:
+        if proc.stdin is None or proc.stdout is None:
+            raise RuntimeError("stdio 进程不可用")
+        proc.stdin.write(json.dumps(request).encode() + b"\n")
+        await proc.stdin.drain()
+        line = await asyncio.wait_for(
+            proc.stdout.readline(), timeout=self._settings.mcp_stdio_timeout_seconds
         )
+        if not line:
+            raise RuntimeError("stdio 响应为空")
+        return json.loads(line.decode().strip())
 
-        if proc.returncode != 0:
-            raise RuntimeError(f"stdio 进程失败: {stderr.decode()}")
+    async def _close_stdio_process(self, proc: asyncio.subprocess.Process) -> None:
+        if proc.returncode is not None:
+            return
+        proc.terminate()
+        try:
+            await asyncio.wait_for(proc.wait(), timeout=1.0)
+        except asyncio.TimeoutError:
+            proc.kill()
 
-        # 解析响应
-        response = json.loads(stdout.decode().strip())
-        return self._extract_tools(response)
+    async def _connect_stdio(
+        self, endpoint: str, env: dict[str, str]
+    ) -> tuple[list[ToolDefinition], asyncio.subprocess.Process]:
+        """通过 stdio 连接 MCP 服务器。"""
+        # 发送 tools/list 请求
+        request = {"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}}
+
+        proc = await self._spawn_stdio_process(endpoint, env)
+        try:
+            response = await self._request_stdio(proc, request)
+        except Exception:
+            await self._close_stdio_process(proc)
+            raise
+
+        return self._extract_tools(response), proc
 
     async def call_tool(
         self,
@@ -315,12 +343,7 @@ class MCPClient:
                     conn.prefer_jsonrpc,
                 )
             elif conn.transport == "stdio":
-                return await self._call_stdio(
-                    conn.endpoint,
-                    tool_name,
-                    arguments,
-                    conn.env,
-                )
+                return await self._call_stdio(conn, tool_name, arguments)
             else:
                 return ToolCallResult(success=False, error="不支持的传输类型")
 
@@ -363,14 +386,51 @@ class MCPClient:
 
     async def _call_stdio(
         self,
+        conn: MCPConnection,
+        tool_name: str,
+        arguments: dict | None,
+    ) -> ToolCallResult:
+        """通过 stdio 调用工具（优先复用连接）。"""
+        request = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {"name": tool_name, "arguments": arguments or {}},
+        }
+
+        proc = conn.stdio_process
+        if proc is None or proc.returncode is not None:
+            return await self._call_stdio_once(
+                conn.endpoint, tool_name, arguments, conn.env
+            )
+
+        async with conn.stdio_lock:
+            proc = conn.stdio_process
+            if proc is None or proc.returncode is not None:
+                return await self._call_stdio_once(
+                    conn.endpoint, tool_name, arguments, conn.env
+                )
+            try:
+                response = await self._request_stdio(proc, request)
+            except Exception:
+                await self._close_stdio_process(proc)
+                conn.stdio_process = None
+                return await self._call_stdio_once(
+                    conn.endpoint, tool_name, arguments, conn.env
+                )
+
+        return self._extract_call_result(response)
+
+    async def _call_stdio_once(
+        self,
         endpoint: str,
         tool_name: str,
         arguments: dict | None,
         env: dict[str, str],
     ) -> ToolCallResult:
-        """通过 stdio 调用工具。"""
+        """通过 stdio 单次调用工具（失败时兜底）。"""
         try:
-            parts = self._parse_stdio_endpoint(endpoint)
+            proc = await self._spawn_stdio_process(endpoint, env)
         except ValueError as exc:
             return ToolCallResult(success=False, error=str(exc))
 
@@ -381,32 +441,29 @@ class MCPClient:
             "params": {"name": tool_name, "arguments": arguments or {}},
         }
 
-        proc = await asyncio.create_subprocess_exec(
-            *parts,
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            env=self._merge_env(env),
-        )
+        try:
+            response = await self._request_stdio(proc, request)
+        except Exception as exc:
+            await self._close_stdio_process(proc)
+            return ToolCallResult(success=False, error=str(exc))
 
-        stdout, stderr = await asyncio.wait_for(
-            proc.communicate(json.dumps(request).encode() + b"\n"),
-            timeout=self._settings.mcp_stdio_timeout_seconds,
-        )
-
-        if proc.returncode != 0:
-            return ToolCallResult(success=False, error=stderr.decode())
-
-        response = json.loads(stdout.decode().strip())
+        await self._close_stdio_process(proc)
         return self._extract_call_result(response)
 
     async def disconnect(self, extension_id: str) -> None:
         """断开连接。"""
-        if extension_id in self._connections:
-            del self._connections[extension_id]
+        conn = self._connections.get(extension_id)
+        if not conn:
+            return
+        if conn.transport == "stdio" and conn.stdio_process is not None:
+            await self._close_stdio_process(conn.stdio_process)
+        del self._connections[extension_id]
 
     async def close(self) -> None:
         """关闭客户端。"""
+        for conn in self._connections.values():
+            if conn.transport == "stdio" and conn.stdio_process is not None:
+                await self._close_stdio_process(conn.stdio_process)
         if self._http_client:
             await self._http_client.aclose()
             self._http_client = None

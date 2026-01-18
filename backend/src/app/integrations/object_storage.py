@@ -3,10 +3,25 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import timedelta
 
+import asyncio
 import anyio
 from minio import Minio
 
 from app.core.settings import get_settings
+
+
+_BUCKET_CACHE: set[str] = set()
+_BUCKET_LOCK: asyncio.Lock | None = None
+_BUCKET_LOCK_LOOP: asyncio.AbstractEventLoop | None = None
+
+
+def _get_bucket_lock() -> asyncio.Lock:
+    global _BUCKET_LOCK, _BUCKET_LOCK_LOOP
+    loop = asyncio.get_running_loop()
+    if _BUCKET_LOCK is None or _BUCKET_LOCK_LOOP is not loop:
+        _BUCKET_LOCK = asyncio.Lock()
+        _BUCKET_LOCK_LOOP = loop
+    return _BUCKET_LOCK
 
 
 @dataclass(slots=True)
@@ -32,8 +47,18 @@ class ObjectStorage:
             if not exists:
                 self._client.make_bucket(bucket)
 
-        await anyio.to_thread.run_sync(_ensure, self._settings.minio_bucket_uploads)
-        await anyio.to_thread.run_sync(_ensure, self._settings.minio_bucket_exports)
+        buckets = {
+            self._settings.minio_bucket_uploads,
+            self._settings.minio_bucket_exports,
+        }
+        lock = _get_bucket_lock()
+        async with lock:
+            pending = [bucket for bucket in buckets if bucket not in _BUCKET_CACHE]
+            if not pending:
+                return
+            for bucket in pending:
+                await anyio.to_thread.run_sync(_ensure, bucket)
+                _BUCKET_CACHE.add(bucket)
 
     async def presign_get(self, ref: ObjectRef) -> str:
         expires = timedelta(seconds=self._settings.exports_presign_expire_seconds)

@@ -21,6 +21,7 @@ from app.agents.tool_calling.registry import build_tool_registry
 from app.agents.tool_calling.utils import extract_tool_results
 from app.core.checkpoint import CheckpointManager
 from app.core.errors import AppError
+from app.core.logging import set_run_id
 from app.core.settings import get_settings
 from app.integrations.llm_client import ChatMessage as LLMMessage
 from app.integrations.llm_client import LLMClient
@@ -124,6 +125,8 @@ class GeneralChatService:
         )
         self._db.add(run)
         await self._db.flush()
+        await self._db.commit()
+        set_run_id(str(run.id))
 
         try:
             # 获取启用的扩展
@@ -273,6 +276,8 @@ class GeneralChatService:
             run.error_message = str(e)
             await self._db.commit()
             raise
+        finally:
+            set_run_id(None)
 
     async def resume_after_tool_approval(
         self,
@@ -282,9 +287,11 @@ class GeneralChatService:
         approved: bool,
     ) -> ChatAnswerResponse | ChatPendingToolApprovalResponse:
         """两阶段交互第 2 阶段：提交审批结果并恢复执行。"""
+        set_run_id(str(run.id))
         thread_id = str(session.id)
         checkpoint_tuple = await CheckpointManager.get_state(thread_id)
         if checkpoint_tuple is None:
+            set_run_id(None)
             raise AppError(
                 code="CHECKPOINT_NOT_FOUND",
                 message="检查点不存在，无法恢复执行",
@@ -295,6 +302,7 @@ class GeneralChatService:
             item for item in (checkpoint_tuple.pending_writes or []) if item[1] == "__interrupt__"
         ]
         if not pending_interrupts:
+            set_run_id(None)
             raise AppError(
                 code="NO_PENDING_APPROVAL",
                 message="当前会话没有待审批的工具调用",
@@ -350,6 +358,7 @@ class GeneralChatService:
         result = await compiled.ainvoke(Command(resume={"approved": approved}), config)
 
         if not isinstance(result, dict):
+            set_run_id(None)
             raise RuntimeError("LangGraph 返回类型不符合预期")
 
         interrupts = result.get("__interrupt__")
@@ -380,28 +389,34 @@ class GeneralChatService:
             }
             await self._db.commit()
             await self._db.refresh(run)
-            return ChatPendingToolApprovalResponse(
-                thread_id=thread_id,
-                interrupt_id=interrupt_id if isinstance(interrupt_id, str) else None,
-                message=str(message) if message is not None else None,
-                pending_tool_calls=[
-                    PendingToolCall.model_validate(item)
-                    for item in pending_tool_calls
-                    if isinstance(item, dict)
-                ],
-                run=AgentRunRead.model_validate(run),
-            )
+            try:
+                return ChatPendingToolApprovalResponse(
+                    thread_id=thread_id,
+                    interrupt_id=interrupt_id if isinstance(interrupt_id, str) else None,
+                    message=str(message) if message is not None else None,
+                    pending_tool_calls=[
+                        PendingToolCall.model_validate(item)
+                        for item in pending_tool_calls
+                        if isinstance(item, dict)
+                    ],
+                    run=AgentRunRead.model_validate(run),
+                )
+            finally:
+                set_run_id(None)
 
         started_at = run.started_at or datetime.now(timezone.utc)
-        return await self._finalize_run(
-            session=session,
-            run=run,
-            user_content=run.question,
-            started_at=started_at,
-            result=result,
-            tool_meta_by_name=tool_meta_by_name,
-            user_confirmed=approved,
-        )
+        try:
+            return await self._finalize_run(
+                session=session,
+                run=run,
+                user_content=run.question,
+                started_at=started_at,
+                result=result,
+                tool_meta_by_name=tool_meta_by_name,
+                user_confirmed=approved,
+            )
+        finally:
+            set_run_id(None)
 
     async def _ensure_extensions_connected(self, pending_tool_calls: object) -> None:
         if (
