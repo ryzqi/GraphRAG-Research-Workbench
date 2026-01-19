@@ -12,6 +12,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
+from app.db.enums import enum_values
 
 if TYPE_CHECKING:
     from app.models.agent_run import AgentRun
@@ -46,7 +47,7 @@ class KnowledgeUpdateProposal(Base):
     summary: Mapped[str] = mapped_column(sa.Text, nullable=False)
     payload: Mapped[dict] = mapped_column(JSONB, nullable=False)
     status: Mapped[ProposalStatus] = mapped_column(
-        sa.Enum(ProposalStatus, name="proposal_status"),
+        enum_values(ProposalStatus, name="proposal_status"),
         nullable=False,
         default=ProposalStatus.PENDING,
     )

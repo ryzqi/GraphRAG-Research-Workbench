@@ -12,6 +12,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
+from app.db.enums import enum_values
 
 if TYPE_CHECKING:
     from app.models.agent_run import AgentRun
@@ -47,7 +48,7 @@ class ToolInvocation(Base):
     input: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     output: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     status: Mapped[InvocationStatus] = mapped_column(
-        sa.Enum(InvocationStatus, name="invocation_status"), nullable=False
+        enum_values(InvocationStatus, name="invocation_status"), nullable=False
     )
     error_message: Mapped[str | None] = mapped_column(sa.Text, nullable=True)
     requires_confirmation: Mapped[bool] = mapped_column(

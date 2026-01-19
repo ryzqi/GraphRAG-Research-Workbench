@@ -12,6 +12,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
+from app.db.enums import enum_values
 
 if TYPE_CHECKING:
     from app.models.chat_session import ChatSession
@@ -36,7 +37,7 @@ class ChatMessage(Base):
         index=True,
     )
     role: Mapped[MessageRole] = mapped_column(
-        sa.Enum(MessageRole, name="message_role"), nullable=False
+        enum_values(MessageRole, name="message_role"), nullable=False
     )
     content: Mapped[str] = mapped_column(sa.Text, nullable=False)
     meta: Mapped[dict | None] = mapped_column(JSONB, nullable=True)

@@ -12,6 +12,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
+from app.db.enums import enum_values
 
 if TYPE_CHECKING:
     from app.models.agent_run import AgentRun
@@ -35,7 +36,7 @@ class Evidence(Base):
         index=True,
     )
     source_kind: Mapped[EvidenceSourceKind] = mapped_column(
-        sa.Enum(EvidenceSourceKind, name="evidence_source_kind"), nullable=False
+        enum_values(EvidenceSourceKind, name="evidence_source_kind"), nullable=False
     )
     kb_id: Mapped[uuid.UUID | None] = mapped_column(
         sa.Uuid(as_uuid=True), nullable=True

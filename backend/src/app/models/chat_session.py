@@ -12,6 +12,7 @@ from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
+from app.db.enums import enum_values
 
 if TYPE_CHECKING:
     from app.models.agent_run import AgentRun
@@ -35,7 +36,7 @@ class ChatSession(Base):
         sa.Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
     session_type: Mapped[ChatSessionType] = mapped_column(
-        sa.Enum(ChatSessionType, name="chat_session_type"), nullable=False
+        enum_values(ChatSessionType, name="chat_session_type"), nullable=False
     )
     selected_kb_ids: Mapped[list[uuid.UUID] | None] = mapped_column(
         ARRAY(sa.Uuid(as_uuid=True)), nullable=True
@@ -44,7 +45,7 @@ class ChatSession(Base):
         sa.Boolean, nullable=False, default=False
     )
     mode: Mapped[AgentMode] = mapped_column(
-        sa.Enum(AgentMode, name="agent_mode"), nullable=False
+        enum_values(AgentMode, name="agent_mode"), nullable=False
     )
     title: Mapped[str | None] = mapped_column(sa.String(256), nullable=True)
     created_at: Mapped[datetime] = mapped_column(

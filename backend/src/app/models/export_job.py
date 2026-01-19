@@ -8,6 +8,7 @@ import sqlalchemy as sa
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
+from app.db.enums import enum_values
 
 
 class ExportStatus(str, Enum):
@@ -22,7 +23,7 @@ class ExportJob(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(sa.Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
     status: Mapped[ExportStatus] = mapped_column(
-        sa.Enum(ExportStatus, name="export_status"),
+        enum_values(ExportStatus, name="export_status"),
         nullable=False,
         default=ExportStatus.QUEUED,
     )

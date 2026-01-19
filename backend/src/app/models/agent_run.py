@@ -12,6 +12,7 @@ from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
+from app.db.enums import enum_values
 from app.models.chat_session import AgentMode
 
 if TYPE_CHECKING:
@@ -42,7 +43,7 @@ class AgentRun(Base):
         sa.Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
     run_type: Mapped[AgentRunType] = mapped_column(
-        sa.Enum(AgentRunType, name="agent_run_type"), nullable=False
+        enum_values(AgentRunType, name="agent_run_type"), nullable=False
     )
     session_id: Mapped[uuid.UUID | None] = mapped_column(
         sa.Uuid(as_uuid=True),
@@ -58,10 +59,10 @@ class AgentRun(Base):
         sa.Boolean, nullable=False, default=False
     )
     mode: Mapped[AgentMode] = mapped_column(
-        sa.Enum(AgentMode, name="agent_mode", create_type=False), nullable=False
+        enum_values(AgentMode, name="agent_mode", create_type=False), nullable=False
     )
     status: Mapped[AgentRunStatus] = mapped_column(
-        sa.Enum(AgentRunStatus, name="agent_run_status"),
+        enum_values(AgentRunStatus, name="agent_run_status"),
         nullable=False,
         default=AgentRunStatus.RUNNING,
     )

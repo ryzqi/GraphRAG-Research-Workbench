@@ -12,6 +12,7 @@ from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
+from app.db.enums import enum_values
 
 if TYPE_CHECKING:
     from app.models.document_chunk import DocumentChunk
@@ -34,7 +35,7 @@ class KnowledgeBase(Base):
     description: Mapped[str | None] = mapped_column(sa.String(500), nullable=True)
     tags: Mapped[list[str] | None] = mapped_column(ARRAY(sa.Text), nullable=True)
     status: Mapped[KnowledgeBaseStatus] = mapped_column(
-        sa.Enum(KnowledgeBaseStatus, name="knowledge_base_status"),
+        enum_values(KnowledgeBaseStatus, name="knowledge_base_status"),
         nullable=False,
         default=KnowledgeBaseStatus.ACTIVE,
     )

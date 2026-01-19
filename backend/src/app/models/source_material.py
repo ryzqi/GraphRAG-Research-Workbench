@@ -12,6 +12,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
+from app.db.enums import enum_values
 
 if TYPE_CHECKING:
     from app.models.document_chunk import DocumentChunk
@@ -37,7 +38,7 @@ class SourceMaterial(Base):
         index=True,
     )
     source_type: Mapped[SourceType] = mapped_column(
-        sa.Enum(SourceType, name="source_type"), nullable=False
+        enum_values(SourceType, name="source_type"), nullable=False
     )
     title: Mapped[str] = mapped_column(sa.Text, nullable=False)
     uri: Mapped[str | None] = mapped_column(sa.Text, nullable=True)

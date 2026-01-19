@@ -11,6 +11,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
+from app.db.enums import enum_values
 
 
 class EvaluationStatus(str, Enum):
@@ -30,7 +31,7 @@ class EvaluationRun(Base):
         sa.Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
     status: Mapped[EvaluationStatus] = mapped_column(
-        sa.Enum(EvaluationStatus, name="evaluation_status"),
+        enum_values(EvaluationStatus, name="evaluation_status"),
         nullable=False,
         default=EvaluationStatus.QUEUED,
     )

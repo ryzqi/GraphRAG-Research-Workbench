@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from functools import lru_cache
 from pathlib import Path
 
@@ -22,7 +23,7 @@ class Settings(BaseSettings):
     app_env: str = Field("dev", alias="APP_ENV")
     app_log_level: str = Field("INFO", alias="APP_LOG_LEVEL")
     app_cors_allow_origins: list[str] = Field(
-        default_factory=lambda: ["http://localhost:5173"],
+        default_factory=lambda: ["http://localhost:5173", "http://127.0.0.1:5173"],
         alias="APP_CORS_ALLOW_ORIGINS",
     )
 
@@ -205,11 +206,22 @@ class Settings(BaseSettings):
     @classmethod
     def _parse_origins(cls, v: object) -> list[str]:
         if v is None:
-            return ["http://localhost:5173"]
+            return ["http://localhost:5173", "http://127.0.0.1:5173"]
         if isinstance(v, list):
             return [str(x).strip() for x in v if str(x).strip()]
         if isinstance(v, str):
-            parts = [p.strip() for p in v.split(",")]
+            raw = v.strip()
+            if not raw:
+                return []
+            if raw.startswith("[") and raw.endswith("]"):
+                try:
+                    parsed = json.loads(raw)
+                except json.JSONDecodeError:
+                    parsed = None
+                else:
+                    if isinstance(parsed, list):
+                        return [str(x).strip() for x in parsed if str(x).strip()]
+            parts = [p.strip().strip("\"").strip("'") for p in raw.split(",")]
             return [p for p in parts if p]
         return [str(v)]
 

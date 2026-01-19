@@ -12,6 +12,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
+from app.db.enums import enum_values
 
 if TYPE_CHECKING:
     from app.models.tool_invocation import ToolInvocation
@@ -35,11 +36,11 @@ class ToolExtension(Base):
     )
     name: Mapped[str] = mapped_column(sa.String(128), nullable=False, unique=True)
     transport: Mapped[ExtensionTransport] = mapped_column(
-        sa.Enum(ExtensionTransport, name="extension_transport"), nullable=False
+        enum_values(ExtensionTransport, name="extension_transport"), nullable=False
     )
     endpoint: Mapped[str] = mapped_column(sa.Text, nullable=False)
     status: Mapped[ExtensionStatus] = mapped_column(
-        sa.Enum(ExtensionStatus, name="extension_status"),
+        enum_values(ExtensionStatus, name="extension_status"),
         nullable=False,
         default=ExtensionStatus.DISABLED,
     )

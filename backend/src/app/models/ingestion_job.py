@@ -12,6 +12,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
+from app.db.enums import enum_values
 
 if TYPE_CHECKING:
     from app.models.knowledge_base import KnowledgeBase
@@ -44,7 +45,7 @@ class IngestionJob(Base):
         index=True,
     )
     status: Mapped[IngestionStatus] = mapped_column(
-        sa.Enum(IngestionStatus, name="ingestion_status"),
+        enum_values(IngestionStatus, name="ingestion_status"),
         nullable=False,
         default=IngestionStatus.QUEUED,
     )
@@ -90,7 +91,7 @@ class IngestionJobItem(Base):
         nullable=False,
     )
     action: Mapped[IngestionJobItemAction] = mapped_column(
-        sa.Enum(IngestionJobItemAction, name="ingestion_job_item_action"),
+        enum_values(IngestionJobItemAction, name="ingestion_job_item_action"),
         nullable=False,
         default=IngestionJobItemAction.CREATE,
     )
