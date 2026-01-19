@@ -18,7 +18,6 @@ def import_all_models() -> None:
         evaluation_run,
         evidence,
         export_job,
-        feedback,
         ingestion_job,
         knowledge_base,
         knowledge_update_proposal,

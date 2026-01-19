@@ -17,7 +17,6 @@ from app.models.chat_session import AgentMode
 if TYPE_CHECKING:
     from app.models.chat_session import ChatSession
     from app.models.evidence import Evidence
-    from app.models.feedback import Feedback
     from app.models.research_report import ResearchReport
     from app.models.tool_invocation import ToolInvocation
 
@@ -92,7 +91,4 @@ class AgentRun(Base):
     )
     research_report: Mapped["ResearchReport | None"] = relationship(
         "ResearchReport", back_populates="run", uselist=False, lazy="selectin"
-    )
-    feedback: Mapped[list["Feedback"]] = relationship(
-        "Feedback", back_populates="run", lazy="selectin"
     )

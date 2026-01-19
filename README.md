@@ -6,6 +6,12 @@
 - 快速开始（强烈建议先读）：`specs/001-multi-kb-agent-collab/quickstart.md`
 - API 契约（OpenAPI）：`specs/001-multi-kb-agent-collab/contracts/openapi.yaml`
 
+## 功能与导航
+
+- 根路径 `/` 默认进入全能代理。
+- 顶部导航顺序：全能代理 → 知识库问答 → 知识库管理 → 深度研究 → MCP扩展 → 对比评测。
+- 反馈功能已移除。
+
 ## 先决条件
 
 - **操作系统**：Windows 11

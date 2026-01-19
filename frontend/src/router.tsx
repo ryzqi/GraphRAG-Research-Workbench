@@ -5,10 +5,6 @@ import { Layout } from './components/Layout';
 // 提取静态 JSX，避免每个路由重复创建 element（Vercel rendering-hoist-jsx）
 const routeFallback = <div style={{ padding: 24 }}>加载中...</div>;
 
-const HomePage = lazy(async () => ({
-  default: (await import('./pages/HomePage')).HomePage,
-}));
-
 const KbChatPage = lazy(async () => ({
   default: (await import('./pages/KbChatPage')).KbChatPage,
 }));
@@ -23,10 +19,6 @@ const ResearchPage = lazy(async () => ({
 
 const EvaluationsPage = lazy(async () => ({
   default: (await import('./pages/EvaluationsPage')).EvaluationsPage,
-}));
-
-const FeedbackPage = lazy(async () => ({
-  default: (await import('./pages/FeedbackPage')).FeedbackPage,
 }));
 
 const KnowledgeBasesPage = lazy(() => import('./pages/KnowledgeBasesPage'));
@@ -44,7 +36,7 @@ const router = createBrowserRouter([
         index: true,
         element: (
           <Suspense fallback={routeFallback}>
-            <HomePage />
+            <GeneralChatPage />
           </Suspense>
         ),
       },
@@ -101,14 +93,6 @@ const router = createBrowserRouter([
         element: (
           <Suspense fallback={routeFallback}>
             <EvaluationsPage />
-          </Suspense>
-        ),
-      },
-      {
-        path: 'feedback',
-        element: (
-          <Suspense fallback={routeFallback}>
-            <FeedbackPage />
           </Suspense>
         ),
       },

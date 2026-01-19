@@ -32,12 +32,6 @@ export {
 } from './useEvaluations';
 
 export {
-  useFeedbackList,
-  useUpdateFeedback,
-  feedbackKeys,
-} from './useFeedback';
-
-export {
   useExtensions,
   useExtensionTools,
   useCreateExtension,

@@ -1,5 +1,5 @@
 /**
- * 知识库代理页面
+ * 知识库问答页面
  */
 import { useCallback, useState } from 'react';
 import {
@@ -136,7 +136,7 @@ export function KbChatPage() {
 
   return (
     <Container maxWidth="md" sx={{ py: 3 }}>
-      <PageHeader title="知识库代理" />
+      <PageHeader title="知识库问答" />
 
       {!session ? (
         // 知识库选择界面

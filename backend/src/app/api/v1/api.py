@@ -8,7 +8,6 @@ from app.api.v1.endpoints import (
     evaluations,
     exports,
     extensions,
-    feedback,
     health,
     ingestions,
     knowledge_bases,
@@ -29,5 +28,4 @@ api_router.include_router(extensions.router, prefix="/extensions", tags=["Extens
 api_router.include_router(research.router, prefix="/research", tags=["Research"])
 api_router.include_router(evaluations.router, prefix="/evaluations", tags=["Evaluations"])
 api_router.include_router(knowledge_updates.router, prefix="/knowledge-updates", tags=["KnowledgeUpdates"])
-api_router.include_router(feedback.router, prefix="/feedback", tags=["Feedback"])
 api_router.include_router(checkpoints.router, tags=["Checkpoints"])

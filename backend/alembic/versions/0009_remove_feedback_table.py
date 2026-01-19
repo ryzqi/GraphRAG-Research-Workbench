@@ -1,6 +1,6 @@
-"""创建反馈表
+"""移除反馈表
 
-Revision ID: 0008
+Revision ID: 0009
 Revises: 0007
 Create Date: 2025-01-01
 """
@@ -12,14 +12,19 @@ from sqlalchemy.dialects import postgresql
 
 from alembic import op
 
-revision: str = "0008"
+revision: str = "0009"
 down_revision: str | None = "0007"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    # 创建反馈状态枚举
+    op.drop_table("feedback")
+    op.execute("DROP TYPE IF EXISTS feedback_status")
+
+
+def downgrade() -> None:
+    # 回滚会重建结构，历史数据无法恢复。
     feedback_status = postgresql.ENUM(
         "pending", "reviewed", "resolved", "dismissed",
         name="feedback_status",
@@ -27,7 +32,6 @@ def upgrade() -> None:
     )
     feedback_status.create(op.get_bind(), checkfirst=True)
 
-    # 创建反馈表
     op.create_table(
         "feedback",
         sa.Column("id", sa.Uuid(as_uuid=True), primary_key=True),
@@ -52,8 +56,3 @@ def upgrade() -> None:
         ),
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=True),
     )
-
-
-def downgrade() -> None:
-    op.drop_table("feedback")
-    op.execute("DROP TYPE IF EXISTS feedback_status")

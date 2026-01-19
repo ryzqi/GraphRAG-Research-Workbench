@@ -15,7 +15,6 @@ from app.core.settings import get_settings
 from app.db.session import get_db_session
 from app.schemas.extensions import ToolDescriptor, ToolExtensionRead
 from app.services.extension_service import ExtensionService
-from app.services.feedback_service import FeedbackService
 from app.services.knowledge_base_service import KnowledgeBaseService
 from app.services.knowledge_update_service import KnowledgeUpdateService
 from app.services.material_service import MaterialService
@@ -39,34 +38,6 @@ def _build_client() -> tuple[TestClient, dict[str, str]]:
         "X-Admin-Token": get_settings().admin_token,
     }
     return client, headers
-
-
-def test_list_feedback_contract(monkeypatch) -> None:
-    async def _fake_list_page(self, session, *, status=None, run_id=None, skip=0, limit=100):
-        item = SimpleNamespace(
-            id=uuid.uuid4(),
-            run_id=uuid.uuid4(),
-            rating=5,
-            comment=None,
-            status="pending",
-            resolution_note=None,
-            created_at=datetime.now(timezone.utc),
-            updated_at=None,
-        )
-        items = [item]
-        return items[skip : skip + limit], len(items)
-
-    monkeypatch.setattr(FeedbackService, "list_page", _fake_list_page)
-
-    client, headers = _build_client()
-    res = client.get("/api/v1/feedback", headers=headers)
-    assert res.status_code == 200
-    body = res.json()
-    assert isinstance(body.get("items"), list)
-    assert body.get("page", {}).get("skip") == 0
-    assert body.get("page", {}).get("limit") == 100
-    assert body.get("page", {}).get("total") == 1
-    assert body.get("page", {}).get("has_more") is False
 
 
 def test_list_knowledge_updates_contract(monkeypatch) -> None:
@@ -211,14 +182,6 @@ def test_list_materials_contract(monkeypatch) -> None:
     body = res.json()
     assert isinstance(body.get("items"), list)
     assert body.get("page", {}).get("total") == 1
-
-
-def test_limit_validation_returns_error_contract() -> None:
-    client, headers = _build_client()
-    res = client.get("/api/v1/feedback?skip=0&limit=1000", headers=headers)
-    assert res.status_code == 422
-    body = res.json()
-    assert body["error"]["code"] == "VALIDATION_ERROR"
 
 
 def test_kb_name_conflict_returns_409(monkeypatch) -> None:

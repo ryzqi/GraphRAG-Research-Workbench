@@ -4,26 +4,23 @@
  */
 import { NavLink, useLocation } from 'react-router-dom';
 import { AppBar, Box, Button, Toolbar, Typography } from '@mui/material';
-import HomeIcon from '@mui/icons-material/Home';
 import ChatIcon from '@mui/icons-material/Chat';
 import SmartToyIcon from '@mui/icons-material/SmartToy';
 import SearchIcon from '@mui/icons-material/Search';
 import StorageIcon from '@mui/icons-material/Storage';
 import ExtensionIcon from '@mui/icons-material/Extension';
 import AssessmentIcon from '@mui/icons-material/Assessment';
-import FeedbackIcon from '@mui/icons-material/Feedback';
 
 // 在用户“意图明确”（hover/focus）时预加载路由 chunk，减少切换页面的等待。
 // 对齐 Vercel bundle-preload。
 const routePreloaders: Record<string, () => Promise<unknown>> = {
-  '/': () => import('../pages/HomePage'),
+  '/': () => import('../pages/GeneralChatPage'),
   '/kb-chat': () => import('../pages/KbChatPage'),
   '/general-chat': () => import('../pages/GeneralChatPage'),
-  '/research': () => import('../pages/ResearchPage'),
   '/knowledge-bases': () => import('../pages/KnowledgeBasesPage'),
+  '/research': () => import('../pages/ResearchPage'),
   '/extensions': () => import('../pages/ExtensionsPage'),
   '/evaluations': () => import('../pages/EvaluationsPage'),
-  '/feedback': () => import('../pages/FeedbackPage'),
 };
 
 function shouldPreloadRoute() {
@@ -44,14 +41,12 @@ function preloadRoute(path: string) {
 }
 
 const navItems = [
-  { path: '/', label: '首页', icon: HomeIcon, end: true },
-  { path: '/kb-chat', label: '知识库代理', icon: ChatIcon },
-  { path: '/general-chat', label: '全能代理', icon: SmartToyIcon },
-  { path: '/research', label: '深度研究', icon: SearchIcon },
+  { path: '/', label: '全能代理', icon: SmartToyIcon, end: true },
+  { path: '/kb-chat', label: '知识库问答', icon: ChatIcon },
   { path: '/knowledge-bases', label: '知识库管理', icon: StorageIcon },
-  { path: '/extensions', label: '扩展管理', icon: ExtensionIcon },
+  { path: '/research', label: '深度研究', icon: SearchIcon },
+  { path: '/extensions', label: 'MCP扩展', icon: ExtensionIcon },
   { path: '/evaluations', label: '对比评测', icon: AssessmentIcon },
-  { path: '/feedback', label: '反馈管理', icon: FeedbackIcon },
 ];
 
 export function Nav() {
