@@ -23,6 +23,10 @@ import { motion } from 'framer-motion';
 // 支持的文件类型（与后端保持一致）
 const ACCEPTED_FILE_TYPES = '.pdf,.txt,.md,.doc,.docx';
 
+// 视觉上更接近单行输入框的高度（用于“垂直居中”的观感）
+const MIN_TEXTAREA_HEIGHT = 40;
+const MAX_TEXTAREA_HEIGHT = 200;
+
 interface InputComposerProps {
   value: string;
   onChange: (value: string) => void;
@@ -54,7 +58,10 @@ export function InputComposer({
     const textarea = textareaRef.current;
     if (textarea) {
       textarea.style.height = 'auto';
-      const newHeight = Math.min(textarea.scrollHeight, 200);
+      const newHeight = Math.min(
+        Math.max(textarea.scrollHeight, MIN_TEXTAREA_HEIGHT),
+        MAX_TEXTAREA_HEIGHT
+      );
       textarea.style.height = `${newHeight}px`;
     }
   }, []);
@@ -200,9 +207,12 @@ export function InputComposer({
             fontSize: 15,
             lineHeight: 1.5,
             fontFamily: 'inherit',
-            minHeight: 24,
-            maxHeight: 200,
-            py: 0.5,
+            // 单行时通过固定最小高度 + 上下内边距实现“垂直居中”的视觉效果
+            textAlign: 'left',
+            minHeight: MIN_TEXTAREA_HEIGHT,
+            maxHeight: MAX_TEXTAREA_HEIGHT,
+            px: 1.5,
+            py: 1,
             '&::placeholder': {
               color: 'text.secondary',
               opacity: 0.7,
