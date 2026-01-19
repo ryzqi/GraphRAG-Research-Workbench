@@ -67,9 +67,9 @@ function Start-Terminal {
         [Parameter(Mandatory = $true)][string]$Command
     )
 
-    $psCommand = "$Host.UI.RawUI.WindowTitle = '$Title'; Set-Location `"$WorkingDirectory`"; $Command"
+    $psCommand = "`$Host.UI.RawUI.WindowTitle = '$Title'; Set-Location `"$WorkingDirectory`"; $Command"
     if ($Verbose) {
-        $psCommand = "$Host.UI.RawUI.WindowTitle = '$Title'; Set-Location `"$WorkingDirectory`"; Write-Host '执行:' -ForegroundColor Yellow; Write-Host $Command -ForegroundColor DarkYellow; $Command"
+        $psCommand = "`$Host.UI.RawUI.WindowTitle = '$Title'; Set-Location `"$WorkingDirectory`"; Write-Host '执行:' -ForegroundColor Yellow; Write-Host $Command -ForegroundColor DarkYellow; $Command"
     }
     Start-Process -FilePath "powershell" -ArgumentList "-NoExit", "-Command", $psCommand -WorkingDirectory $WorkingDirectory | Out-Null
 }

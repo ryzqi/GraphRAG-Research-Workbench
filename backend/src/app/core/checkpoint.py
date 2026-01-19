@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+from contextlib import AbstractAsyncContextManager
 from typing import Any
 
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
@@ -16,6 +17,7 @@ class CheckpointManager:
     """检查点管理器（单例）。"""
 
     _checkpointer: AsyncPostgresSaver | None = None
+    _checkpointer_ctx: AbstractAsyncContextManager[AsyncPostgresSaver] | None = None
     _initialized: bool = False
 
     @classmethod
@@ -28,18 +30,20 @@ class CheckpointManager:
         # 转换 asyncpg URL 为 psycopg 格式
         db_url = settings.database_url.replace("postgresql+asyncpg://", "postgresql://")
 
-        cls._checkpointer = AsyncPostgresSaver.from_conn_string(db_url)
-        await cls._checkpointer.__aenter__()
+        checkpointer_ctx = AsyncPostgresSaver.from_conn_string(db_url)
+        cls._checkpointer_ctx = checkpointer_ctx
+        cls._checkpointer = await checkpointer_ctx.__aenter__()
         await cls._checkpointer.setup()
         cls._initialized = True
 
     @classmethod
     async def shutdown(cls) -> None:
         """关闭检查点管理器（应用关闭时调用）。"""
-        if cls._checkpointer:
-            await cls._checkpointer.__aexit__(None, None, None)
-            cls._checkpointer = None
-            cls._initialized = False
+        if cls._checkpointer_ctx is not None:
+            await cls._checkpointer_ctx.__aexit__(None, None, None)
+        cls._checkpointer_ctx = None
+        cls._checkpointer = None
+        cls._initialized = False
 
     @classmethod
     def get_checkpointer(cls) -> AsyncPostgresSaver:

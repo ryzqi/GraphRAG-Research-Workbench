@@ -33,10 +33,7 @@ def upgrade() -> None:
         sa.Column("id", sa.Uuid(as_uuid=True), primary_key=True),
         sa.Column(
             "status",
-            sa.Enum(
-                "queued", "running", "succeeded", "failed", "canceled",
-                name="evaluation_status",
-            ),
+            evaluation_status,
             nullable=False,
             server_default="queued",
         ),

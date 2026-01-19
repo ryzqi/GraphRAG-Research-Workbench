@@ -1,7 +1,7 @@
 """创建扩展相关表
 
 Revision ID: 0004
-Revises: 0003
+Revises: 0003_create_ingestion_tables
 Create Date: 2025-01-01
 """
 
@@ -13,7 +13,7 @@ from sqlalchemy.dialects import postgresql
 from alembic import op
 
 revision: str = "0004"
-down_revision: str | None = "0003"
+down_revision: str | None = "0003_create_ingestion_tables"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
@@ -42,13 +42,13 @@ def upgrade() -> None:
         sa.Column("name", sa.String(128), nullable=False, unique=True),
         sa.Column(
             "transport",
-            sa.Enum("stdio", "http", name="extension_transport", create_type=False),
+            extension_transport,
             nullable=False,
         ),
         sa.Column("endpoint", sa.Text, nullable=False),
         sa.Column(
             "status",
-            sa.Enum("enabled", "disabled", name="extension_status", create_type=False),
+            extension_status,
             nullable=False,
             server_default="disabled",
         ),
@@ -85,7 +85,7 @@ def upgrade() -> None:
         sa.Column("output", postgresql.JSONB, nullable=True),
         sa.Column(
             "status",
-            sa.Enum("succeeded", "failed", "canceled", name="invocation_status", create_type=False),
+            invocation_status,
             nullable=False,
         ),
         sa.Column("error_message", sa.Text, nullable=True),

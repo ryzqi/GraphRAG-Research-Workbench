@@ -46,7 +46,7 @@ def upgrade() -> None:
         sa.Column("payload", postgresql.JSONB, nullable=False),
         sa.Column(
             "status",
-            sa.Enum("pending", "approved", "rejected", "applied", name="proposal_status", create_type=False),
+            proposal_status,
             nullable=False,
             server_default="pending",
         ),

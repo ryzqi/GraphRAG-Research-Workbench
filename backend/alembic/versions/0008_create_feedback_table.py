@@ -42,10 +42,7 @@ def upgrade() -> None:
         sa.Column("comment", sa.Text, nullable=True),
         sa.Column(
             "status",
-            sa.Enum(
-                "pending", "reviewed", "resolved", "dismissed",
-                name="feedback_status",
-            ),
+            feedback_status,
             nullable=False,
             server_default="pending",
         ),
