@@ -1,11 +1,17 @@
 /**
- * 主布局组件
+ * MD3 主布局组件
+ * 包含页面转场动画
  */
-import { Outlet } from 'react-router-dom';
+import { Outlet, useLocation } from 'react-router-dom';
 import { Box, Container } from '@mui/material';
 import { Nav } from './Nav';
+import { PageTransition } from './ui/PageTransition';
 
 export function Layout() {
+  const location = useLocation();
+  const isGeneralChat =
+    location.pathname === '/' || location.pathname.startsWith('/general-chat');
+
   return (
     <Box sx={{ minHeight: '100vh', bgcolor: 'background.default' }}>
       {/* Skip Link（可访问性） */}
@@ -22,7 +28,7 @@ export function Layout() {
             p: 2,
             bgcolor: 'primary.main',
             color: 'white',
-            borderRadius: 1,
+            borderRadius: 3,
             textDecoration: 'none',
           },
         }}
@@ -35,10 +41,13 @@ export function Layout() {
       <Container
         id="main-content"
         component="main"
-        maxWidth="lg"
-        sx={{ py: 3 }}
+        maxWidth={isGeneralChat ? false : 'lg'}
+        disableGutters={isGeneralChat}
+        sx={isGeneralChat ? { py: 0 } : { py: 3 }}
       >
-        <Outlet />
+        <PageTransition key={location.pathname}>
+          <Outlet />
+        </PageTransition>
       </Container>
     </Box>
   );

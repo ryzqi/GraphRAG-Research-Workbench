@@ -1,6 +1,6 @@
 /**
- * 卡片组件
- * 封装 MUI Card，提供统一样式
+ * MD3 卡片组件
+ * 支持 filled/outlined/elevation 三种变体
  */
 import {
   Card as MuiCard,
@@ -13,7 +13,12 @@ import {
 } from '@mui/material';
 import { mergeSx } from '../../utils/sx';
 
-interface CardProps extends MuiCardProps {
+/** Card 变体类型 */
+export type CardVariant = 'filled' | 'outlined' | 'elevation';
+
+interface CardProps extends Omit<MuiCardProps, 'variant'> {
+  /** MD3 Card 变体 */
+  variant?: CardVariant;
   title?: string;
   subheader?: string;
   action?: React.ReactNode;
@@ -21,9 +26,66 @@ interface CardProps extends MuiCardProps {
   footer?: React.ReactNode;
   contentSx?: SxProps<Theme>;
   noPadding?: boolean;
+  /** 禁用 hover 效果 */
+  disableHover?: boolean;
+}
+
+/** 根据变体获取样式 */
+function getVariantStyles(
+  variant: CardVariant,
+  disableHover: boolean
+): SxProps<Theme> {
+  const baseTransition = 'background-color 300ms cubic-bezier(0.2, 0, 0, 1), box-shadow 300ms cubic-bezier(0.2, 0, 0, 1)';
+
+  switch (variant) {
+    case 'filled':
+      return {
+        bgcolor: 'background.paper',
+        border: 'none',
+        boxShadow: 'none',
+        transition: baseTransition,
+        ...(!disableHover && {
+          '&:hover': {
+            bgcolor: 'action.hover',
+          },
+        }),
+      };
+
+    case 'outlined':
+      return {
+        bgcolor: 'transparent',
+        border: 1,
+        borderColor: 'divider',
+        boxShadow: 'none',
+        transition: baseTransition,
+        ...(!disableHover && {
+          '&:hover': {
+            borderColor: 'primary.main',
+            bgcolor: 'action.selected',
+          },
+        }),
+      };
+
+    case 'elevation':
+      return {
+        bgcolor: 'background.paper',
+        border: 'none',
+        boxShadow: 1,
+        transition: baseTransition,
+        ...(!disableHover && {
+          '&:hover': {
+            boxShadow: 3,
+          },
+        }),
+      };
+
+    default:
+      return {};
+  }
 }
 
 export function Card({
+  variant = 'filled',
   title,
   subheader,
   action,
@@ -31,10 +93,17 @@ export function Card({
   footer,
   contentSx,
   noPadding = false,
+  disableHover = false,
+  sx,
   ...props
 }: CardProps) {
+  const variantStyles = getVariantStyles(variant, disableHover);
+
   return (
-    <MuiCard {...props}>
+    <MuiCard
+      sx={mergeSx(variantStyles, sx)}
+      {...props}
+    >
       {(title || action) && (
         <CardHeader
           title={title}

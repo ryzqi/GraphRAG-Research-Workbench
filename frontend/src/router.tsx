@@ -1,6 +1,6 @@
 import { Suspense, lazy } from 'react';
 import { createBrowserRouter, RouterProvider } from 'react-router-dom';
-import { Layout } from './components/Layout';
+import { GeminiShell } from './components/shell';
 
 // 提取静态 JSX，避免每个路由重复创建 element（Vercel rendering-hoist-jsx）
 const routeFallback = <div style={{ padding: 24 }}>加载中...</div>;
@@ -30,7 +30,7 @@ const ExtensionsPage = lazy(() => import('./pages/ExtensionsPage'));
 const router = createBrowserRouter([
   {
     path: '/',
-    element: <Layout />,
+    element: <GeminiShell />,
     children: [
       {
         index: true,

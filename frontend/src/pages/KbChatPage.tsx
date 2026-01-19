@@ -1,51 +1,41 @@
 /**
- * 知识库问答页面
+ * 知识库问答页面（Gemini 风格重构）
  */
 import { useCallback, useState } from 'react';
-import {
-  Box,
-  Container,
-  IconButton,
-  Paper,
-  Stack,
-  TextField,
-  Typography,
-} from '@mui/material';
-import SendIcon from '@mui/icons-material/Send';
+import { Box, Stack, Typography } from '@mui/material';
 import RestartAltIcon from '@mui/icons-material/RestartAlt';
-import { EvidenceList } from '../components/EvidenceList';
-import { KnowledgeBaseSelector } from '../components/KnowledgeBaseSelector';
 import { Button } from '../components/ui/Button';
 import { ErrorAlert } from '../components/ui/ErrorAlert';
-import { PageHeader } from '../components/ui/PageHeader';
+import { KnowledgeBaseSelector } from '../components/KnowledgeBaseSelector';
+import {
+  WelcomeScreen,
+  MessageList,
+  InputComposer,
+  type ChatMessage,
+} from '../components/chat';
 import {
   type AgentMode,
-  type ChatMessage,
   type ChatSession,
   type ChatMessageResponse,
-  type EvidenceItem,
   createChatSession,
   sendMessage,
 } from '../services/chats';
 import { useKnowledgeBases } from '../hooks/queries';
+import { useRecentHistory } from '../hooks/useRecentHistory';
 import { getErrorMessage } from '../lib/errorHandler';
 
-interface MessageWithEvidence {
-  message: ChatMessage;
-  evidence?: EvidenceItem[];
-}
-
 export function KbChatPage() {
-  // React Query：自动去重/缓存知识库列表（对齐 Vercel client-swr-dedup 思路）
   const knowledgeBasesQuery = useKnowledgeBases();
   const knowledgeBases = knowledgeBasesQuery.data ?? [];
 
   const [selectedKbIds, setSelectedKbIds] = useState<string[]>([]);
   const [session, setSession] = useState<ChatSession | null>(null);
-  const [messages, setMessages] = useState<MessageWithEvidence[]>([]);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const { upsertSession } = useRecentHistory();
 
   const mergedError =
     error ?? (knowledgeBasesQuery.error ? getErrorMessage(knowledgeBasesQuery.error) : null);
@@ -58,14 +48,12 @@ export function KbChatPage() {
     knowledgeBasesQuery.refetch();
   };
 
-  // 切换知识库选择
   const toggleKb = useCallback((kbId: string) => {
     setSelectedKbIds((prev) =>
       prev.includes(kbId) ? prev.filter((id) => id !== kbId) : [...prev, kbId]
     );
   }, []);
 
-  // 开始新会话
   const startSession = useCallback(async () => {
     if (selectedKbIds.length === 0) {
       setError('请至少选择一个知识库');
@@ -84,14 +72,21 @@ export function KbChatPage() {
       });
       setSession(newSession);
       setMessages([]);
+
+      // 更新 Recent 历史
+      upsertSession({
+        sessionId: newSession.id,
+        title: '知识库问答',
+        type: 'kb_chat',
+        updatedAt: new Date().toISOString(),
+      });
     } catch (e) {
       setError(getErrorMessage(e));
     } finally {
       setLoading(false);
     }
-  }, [selectedKbIds]);
+  }, [selectedKbIds, upsertSession]);
 
-  // 发送消息
   const handleSend = useCallback(async () => {
     if (!session || !input.trim() || loading) return;
 
@@ -100,14 +95,10 @@ export function KbChatPage() {
     setLoading(true);
     setError(null);
 
-    // 先添加用户消息
-    const userMsg: MessageWithEvidence = {
-      message: {
-        id: crypto.randomUUID(),
-        role: 'user',
-        content: userContent,
-        created_at: new Date().toISOString(),
-      },
+    const userMsg: ChatMessage = {
+      id: crypto.randomUUID(),
+      role: 'user',
+      content: userContent,
     };
     setMessages((prev) => [...prev, userMsg]);
 
@@ -116,158 +107,157 @@ export function KbChatPage() {
       if (response.status !== 'succeeded') {
         throw new Error('知识库对话不支持工具审批流程');
       }
+
+      // 更新会话标题
+      upsertSession({
+        sessionId: session.id,
+        title: userContent.slice(0, 30) + (userContent.length > 30 ? '...' : ''),
+        type: 'kb_chat',
+        updatedAt: new Date().toISOString(),
+      });
+
       setMessages((prev) => [
         ...prev,
-        { message: response.assistant_message, evidence: response.evidence },
+        {
+          id: response.assistant_message.id,
+          role: 'assistant',
+          content: response.assistant_message.content,
+          evidence: response.evidence,
+        },
       ]);
     } catch (e) {
       setError(getErrorMessage(e));
     } finally {
       setLoading(false);
     }
-  }, [session, input, loading]);
+  }, [session, input, loading, upsertSession]);
 
-  // 重置会话
   const resetSession = useCallback(() => {
     setSession(null);
     setMessages([]);
     setError(null);
   }, []);
 
-  return (
-    <Container maxWidth="md" sx={{ py: 3 }}>
-      <PageHeader title="知识库问答" />
-
-      {!session ? (
-        // 知识库选择界面
-        <Stack spacing={3}>
-          <Typography variant="subtitle1" fontWeight={500}>
-            选择知识库
-          </Typography>
-
-          <KnowledgeBaseSelector
-            knowledgeBases={knowledgeBases}
-            selectedIds={selectedKbIds}
-            onToggle={toggleKb}
-            loading={loading || knowledgeBasesQuery.isLoading}
+  // 知识库选择界面
+  if (!session) {
+    return (
+      <Box
+        sx={{
+          display: 'flex',
+          flexDirection: 'column',
+          height: '100%',
+          minHeight: 'calc(100vh - 64px)',
+        }}
+      >
+        <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+          <WelcomeScreen
+            title="知识库问答"
+            subtitle="选择知识库，开始基于您的文档进行智能问答"
+            suggestions={[]}
           />
 
-          <Button
-            variant="contained"
-            onClick={startSession}
-            disabled={knowledgeBasesQuery.isLoading || selectedKbIds.length === 0}
-            loading={loading}
-            sx={{ alignSelf: 'flex-start' }}
-          >
-            开始对话
-          </Button>
-        </Stack>
+          <Box sx={{ maxWidth: 800, mx: 'auto', px: 3, width: '100%' }}>
+            <Stack spacing={3}>
+              <Typography variant="subtitle1" fontWeight={500}>
+                选择知识库
+              </Typography>
+
+              <KnowledgeBaseSelector
+                knowledgeBases={knowledgeBases}
+                selectedIds={selectedKbIds}
+                onToggle={toggleKb}
+                loading={loading || knowledgeBasesQuery.isLoading}
+              />
+
+              <Button
+                variant="contained"
+                onClick={startSession}
+                disabled={knowledgeBasesQuery.isLoading || selectedKbIds.length === 0}
+                loading={loading}
+                sx={{ alignSelf: 'flex-start' }}
+              >
+                开始对话
+              </Button>
+            </Stack>
+          </Box>
+        </Box>
+
+        <ErrorAlert error={mergedError} onClose={handleCloseError} />
+      </Box>
+    );
+  }
+
+  // 对话界面
+  return (
+    <Box
+      sx={{
+        display: 'flex',
+        flexDirection: 'column',
+        height: '100%',
+        minHeight: 'calc(100vh - 64px)',
+      }}
+    >
+      {/* 顶部栏 */}
+      <Box
+        sx={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          px: { xs: 2, md: 4 },
+          py: 1.5,
+          borderBottom: 1,
+          borderColor: 'divider',
+        }}
+      >
+        <Typography variant="body2" color="text.secondary">
+          已选择 {session.selected_kb_ids?.length || 0} 个知识库
+        </Typography>
+        <Button
+          variant="outlined"
+          size="small"
+          startIcon={<RestartAltIcon />}
+          onClick={resetSession}
+        >
+          重新选择
+        </Button>
+      </Box>
+
+      {/* 消息区域 */}
+      {messages.length === 0 ? (
+        <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+          <WelcomeScreen
+            title="开始提问吧"
+            subtitle="基于您选择的知识库，我会为您提供精准的回答"
+            suggestions={[]}
+          />
+        </Box>
       ) : (
-        // 对话界面
-        <Stack spacing={2}>
-          <Paper
-            variant="outlined"
-            sx={{
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-              p: 1.5,
-              bgcolor: 'grey.50',
-            }}
-          >
-            <Typography variant="body2" color="text.secondary">
-              已选择 {session.selected_kb_ids?.length || 0} 个知识库
-            </Typography>
-            <Button
-              variant="outlined"
-              size="small"
-              startIcon={<RestartAltIcon />}
-              onClick={resetSession}
-            >
-              重新选择
-            </Button>
-          </Paper>
-
-          {/* 消息列表 */}
-          <Paper
-            variant="outlined"
-            sx={{
-              minHeight: 400,
-              maxHeight: 600,
-              overflowY: 'auto',
-              p: 2,
-            }}
-          >
-            {messages.length === 0 ? (
-              <Box sx={{ color: 'text.disabled', textAlign: 'center', py: 5 }}>
-                开始提问吧
-              </Box>
-            ) : (
-              <Stack spacing={2}>
-                {messages.map((item) => (
-                  <Box key={item.message.id}>
-                    <Box
-                      sx={{
-                        display: 'flex',
-                        justifyContent: item.message.role === 'user' ? 'flex-end' : 'flex-start',
-                      }}
-                    >
-                      <Paper
-                        sx={{
-                          maxWidth: '80%',
-                          p: 1.5,
-                          bgcolor: item.message.role === 'user' ? 'primary.main' : 'grey.100',
-                          color: item.message.role === 'user' ? 'primary.contrastText' : 'text.primary',
-                          borderRadius: 3,
-                          whiteSpace: 'pre-wrap',
-                          contentVisibility: 'auto',
-                          containIntrinsicSize: '1px 80px',
-                        }}
-                        elevation={0}
-                      >
-                        {item.message.content}
-                      </Paper>
-                    </Box>
-                    {item.evidence && item.evidence.length > 0 && (
-                      <Box sx={{ mt: 1.5, ml: 2 }}>
-                        <EvidenceList evidence={item.evidence} />
-                      </Box>
-                    )}
-                  </Box>
-                ))}
-              </Stack>
-            )}
-          </Paper>
-
-          {/* 输入框 */}
-          <Stack direction="row" spacing={1}>
-            <TextField
-              fullWidth
-              size="small"
-              placeholder="输入你的问题..."
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && handleSend()}
-              disabled={loading}
-            />
-            <IconButton
-              color="primary"
-              onClick={handleSend}
-              disabled={!input.trim() || loading}
-              sx={{
-                bgcolor: 'primary.main',
-                color: 'primary.contrastText',
-                '&:hover': { bgcolor: 'primary.dark' },
-                '&.Mui-disabled': { bgcolor: 'action.disabledBackground' },
-              }}
-            >
-              <SendIcon />
-            </IconButton>
-          </Stack>
-        </Stack>
+        <MessageList messages={messages} loading={loading} />
       )}
 
+      {/* 错误提示 */}
       <ErrorAlert error={mergedError} onClose={handleCloseError} />
-    </Container>
+
+      {/* 底部输入区 */}
+      <Box
+        sx={{
+          p: { xs: 2, md: 3 },
+          bgcolor: 'background.default',
+          borderTop: messages.length > 0 ? 1 : 0,
+          borderColor: 'divider',
+        }}
+      >
+        <Box sx={{ maxWidth: 800, mx: 'auto' }}>
+          <InputComposer
+            value={input}
+            onChange={setInput}
+            onSend={handleSend}
+            disabled={loading}
+            loading={loading}
+            placeholder="输入你的问题..."
+          />
+        </Box>
+      </Box>
+    </Box>
   );
 }

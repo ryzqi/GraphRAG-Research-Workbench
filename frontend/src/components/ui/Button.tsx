@@ -1,6 +1,6 @@
 /**
- * 统一按钮组件
- * 封装 MUI Button，添加 loading 状态
+ * MD3 统一按钮组件
+ * 封装 MUI Button，添加 loading 状态和微交互
  */
 import {
   Button as MuiButton,
@@ -9,16 +9,29 @@ import {
 } from '@mui/material';
 
 interface ButtonProps extends MuiButtonProps {
+  /** 加载状态 */
   loading?: boolean;
 }
 
-export function Button({ loading, disabled, children, startIcon, ...props }: ButtonProps) {
+export function Button({
+  loading,
+  disabled,
+  children,
+  startIcon,
+  sx,
+  ...props
+}: ButtonProps) {
   return (
     <MuiButton
       disabled={disabled || loading}
       startIcon={
-        loading ? <CircularProgress size={16} color="inherit" /> : startIcon
+        loading ? <CircularProgress size={18} color="inherit" /> : startIcon
       }
+      sx={{
+        // 按压时的微交互由主题层统一处理
+        // 这里可以添加额外的自定义样式
+        ...sx,
+      }}
       {...props}
     >
       {children}
