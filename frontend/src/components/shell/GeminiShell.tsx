@@ -20,6 +20,9 @@ export function GeminiShell() {
   const [sidebarExpanded, setSidebarExpanded] = useState(true);
   const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false);
 
+  // 用于强制重置聊天页面状态（点击“新对话”时）
+  const [chatResetKey, setChatResetKey] = useState(0);
+
   // Recent 历史 hook
   const { sessions: recentSessions, removeSession } = useRecentHistory();
 
@@ -42,6 +45,9 @@ export function GeminiShell() {
   }, []);
 
   const handleNewChat = useCallback(() => {
+    // 通过更新 key 强制 remount 子路由，避免在同一路由下“新对话”无效果（状态不重置）
+    setChatResetKey((prev) => prev + 1);
+
     navigate('/');
     if (isMobile) {
       setMobileDrawerOpen(false);
@@ -142,7 +148,7 @@ export function GeminiShell() {
             width: '100%',
           }}
         >
-          <PageTransition key={location.pathname}>
+          <PageTransition key={`${location.pathname}:${chatResetKey}`}>
             <Outlet />
           </PageTransition>
         </Box>

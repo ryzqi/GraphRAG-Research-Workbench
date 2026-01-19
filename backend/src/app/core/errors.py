@@ -11,6 +11,7 @@ from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.core.logging import get_request_id
+from app.core.settings import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -71,10 +72,34 @@ def build_error_response(
         payload["request_id"] = request_id
     return payload
 
+
+def _apply_cors_headers(request: Request, response: JSONResponse) -> JSONResponse:
+    """为异常响应补齐 CORS 头，避免前端把 4xx/5xx 误判为 CORS 失败。"""
+    origin = request.headers.get("origin")
+    if not origin:
+        return response
+
+    allowed = get_settings().app_cors_allow_origins
+    if "*" in allowed or origin in allowed:
+        # 由于主应用启用了 allow_credentials=True，这里不直接返回 "*"。
+        response.headers.setdefault("Access-Control-Allow-Origin", origin)
+        response.headers.setdefault("Access-Control-Allow-Credentials", "true")
+
+        vary = response.headers.get("Vary")
+        if vary:
+            parts = [p.strip() for p in vary.split(",") if p.strip()]
+            if "Origin" not in parts:
+                response.headers["Vary"] = ", ".join([*parts, "Origin"])
+        else:
+            response.headers["Vary"] = "Origin"
+
+    return response
+
+
 def register_exception_handlers(app: FastAPI) -> None:
     @app.exception_handler(AppError)
     async def _handle_app_error(request: Request, exc: AppError):
-        return JSONResponse(
+        res = JSONResponse(
             status_code=exc.status_code,
             content=build_error_response(
                 code=exc.code,
@@ -83,10 +108,11 @@ def register_exception_handlers(app: FastAPI) -> None:
                 details=exc.details,
             ),
         )
+        return _apply_cors_headers(request, res)
 
     @app.exception_handler(RequestValidationError)
     async def _handle_validation_error(request: Request, exc: RequestValidationError):
-        return JSONResponse(
+        res = JSONResponse(
             status_code=422,
             content=build_error_response(
                 code=ErrorCode.VALIDATION_ERROR.value,
@@ -95,6 +121,7 @@ def register_exception_handlers(app: FastAPI) -> None:
                 details={"errors": exc.errors()},
             ),
         )
+        return _apply_cors_headers(request, res)
 
     @app.exception_handler(StarletteHTTPException)
     async def _handle_http_error(request: Request, exc: StarletteHTTPException):
@@ -124,7 +151,7 @@ def register_exception_handlers(app: FastAPI) -> None:
             else:
                 details = {"detail": raw_details}
 
-            return JSONResponse(
+            res = JSONResponse(
                 status_code=exc.status_code,
                 content=build_error_response(
                     code=code,
@@ -133,11 +160,12 @@ def register_exception_handlers(app: FastAPI) -> None:
                     details=details,
                 ),
             )
+            return _apply_cors_headers(request, res)
 
         if exc.status_code == 404 and isinstance(exc.detail, str):
             detail = exc.detail.strip()
             if detail and detail.lower() != "not found":
-                return JSONResponse(
+                res = JSONResponse(
                     status_code=exc.status_code,
                     content=build_error_response(
                         code=ErrorCode.NOT_FOUND.value,
@@ -145,10 +173,11 @@ def register_exception_handlers(app: FastAPI) -> None:
                         request_id=request_id,
                     ),
                 )
+                return _apply_cors_headers(request, res)
 
         code = ErrorCode.NOT_FOUND.value if exc.status_code == 404 else ErrorCode.HTTP_ERROR.value
         message = "资源不存在" if exc.status_code == 404 else (exc.detail or "请求错误")
-        return JSONResponse(
+        res = JSONResponse(
             status_code=exc.status_code,
             content=build_error_response(
                 code=code,
@@ -156,11 +185,12 @@ def register_exception_handlers(app: FastAPI) -> None:
                 request_id=request_id,
             ),
         )
+        return _apply_cors_headers(request, res)
 
     @app.exception_handler(Exception)
     async def _handle_unhandled_error(request: Request, exc: Exception):
         logger.exception("Unhandled error")
-        return JSONResponse(
+        res = JSONResponse(
             status_code=500,
             content=build_error_response(
                 code=ErrorCode.INTERNAL_ERROR.value,
@@ -168,3 +198,4 @@ def register_exception_handlers(app: FastAPI) -> None:
                 request_id=get_request_id(),
             ),
         )
+        return _apply_cors_headers(request, res)

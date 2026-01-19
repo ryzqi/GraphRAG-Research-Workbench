@@ -91,6 +91,43 @@ class GeneralChatService:
             return AIMessage(content=msg.content)
         return HumanMessage(content=msg.content)
 
+    @staticmethod
+    def _map_llm_exception(exc: Exception) -> AppError | None:
+        """将 OpenAI 兼容端点的上游异常映射为可预期的 AppError。"""
+        mod = exc.__class__.__module__ or ""
+        if not mod.startswith("openai"):
+            return None
+
+        status_code = getattr(exc, "status_code", None)
+        if status_code is None:
+            response = getattr(exc, "response", None)
+            status_code = getattr(response, "status_code", None)
+
+        if isinstance(status_code, int):
+            if status_code in {401, 403}:
+                return AppError(
+                    code="LLM_AUTH_ERROR",
+                    message="大模型服务鉴权失败，请检查 LLM_API_KEY / LLM_BASE_URL",
+                    status_code=500,
+                    details={"upstream_status_code": status_code},
+                )
+            if status_code == 429:
+                return AppError(
+                    code="LLM_RATE_LIMITED",
+                    message="大模型服务请求过于频繁，请稍后重试",
+                    status_code=503,
+                    details={"upstream_status_code": status_code},
+                )
+            if status_code >= 500:
+                return AppError(
+                    code="LLM_UPSTREAM_ERROR",
+                    message="上游大模型服务暂时不可用，请稍后重试",
+                    status_code=503,
+                    details={"upstream_status_code": status_code},
+                )
+
+        return None
+
     async def answer(
         self,
         *,
@@ -275,6 +312,18 @@ class GeneralChatService:
             run.finished_at = datetime.now(timezone.utc)
             run.error_message = str(e)
             await self._db.commit()
+
+            mapped = self._map_llm_exception(e)
+            if mapped is not None:
+                logger.warning(
+                    "LLM 调用失败",
+                    extra={
+                        "exc_type": type(e).__name__,
+                        "upstream_status_code": getattr(e, "status_code", None),
+                    },
+                )
+                raise mapped from e
+
             raise
         finally:
             set_run_id(None)

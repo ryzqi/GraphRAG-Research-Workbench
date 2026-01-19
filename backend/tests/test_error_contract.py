@@ -92,3 +92,16 @@ def test_admin_token_dependency() -> None:
     assert ok.status_code == 200
     assert ok.json() == {"ok": True}
     assert ok.headers.get("x-request-id") == "rid_test"
+
+
+def test_error_response_includes_cors_headers_when_origin_allowed() -> None:
+    app = _build_app()
+    client = TestClient(app)
+
+    origin = "http://127.0.0.1:5173"
+    res = client.get("/app-error", headers={"X-Request-ID": "rid_test", "Origin": origin})
+
+    assert res.status_code == 400
+    assert res.headers.get("access-control-allow-origin") == origin
+    assert res.headers.get("access-control-allow-credentials") == "true"
+    assert res.headers.get("vary") == "Origin"
