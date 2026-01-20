@@ -503,13 +503,13 @@ export function GeneralChatPage() {
       {/* 错误提示 */}
       <ErrorAlert error={error} onClose={() => setError(null)} />
 
-      {/* 底部输入区 */}
+      {/* 底部输入区 - Sticky 定位 */}
       <Box
         sx={{
+          position: 'sticky',
+          bottom: 0,
           p: { xs: 2, md: 3 },
-          bgcolor: 'background.default',
-          borderTop: messages.length > 0 ? 1 : 0,
-          borderColor: 'divider',
+          zIndex: 10,
         }}
       >
         <Box sx={{ maxWidth: 800, mx: 'auto' }}>
@@ -524,14 +524,6 @@ export function GeneralChatPage() {
         </Box>
       </Box>
 
-      {/* 会话信息 */}
-      {session && (
-        <Box sx={{ px: 3, py: 1, textAlign: 'center' }}>
-          <Typography variant="caption" color="text.disabled">
-            会话 ID: {session.id}
-          </Typography>
-        </Box>
-      )}
     </Box>
   );
 }

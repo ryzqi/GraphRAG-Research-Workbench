@@ -1,15 +1,41 @@
 /**
  * 消息项组件
- * 支持用户/助手消息展示，Markdown 渲染，复制按钮
+ * Gemini 风格：左对齐布局，实心圆点光标，透气设计
  */
-import { useState, useCallback } from 'react';
-import { Box, IconButton, Paper, Stack, Tooltip, Typography, Chip } from '@mui/material';
+import { useState, useCallback, useEffect, useRef } from 'react';
+import { Box, IconButton, Paper, Stack, Tooltip, Typography, Chip, keyframes } from '@mui/material';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import CheckIcon from '@mui/icons-material/Check';
 import PersonIcon from '@mui/icons-material/Person';
 import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import { motion } from 'framer-motion';
 import { MarkdownContent } from './MarkdownContent';
+import { useTypewriterStream } from './useTypewriterStream';
+
+// 实心圆点脉冲动画
+const cursorPulse = keyframes`
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.6;
+    transform: scale(0.9);
+  }
+`;
+
+// 光标淡出动画
+const cursorFadeOut = keyframes`
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+`;
+
+// 品牌渐变色（蓝紫粉）
+const BRAND_GRADIENT = 'linear-gradient(135deg, #4285F4, #9B72CB, #D96570)';
 
 interface MessageItemProps {
   role: 'user' | 'assistant';
@@ -28,7 +54,47 @@ export function MessageItem({
   showActions = true,
 }: MessageItemProps) {
   const [copied, setCopied] = useState(false);
+  const [cursorFading, setCursorFading] = useState(false);
+  const prevStreamingRef = useRef(isStreaming);
   const isUser = role === 'user';
+
+  const { text: streamedContent } = useTypewriterStream(content, !isUser && isStreaming, {
+    intervalMs: 50,
+  });
+  const displayContent = isUser ? content : streamedContent;
+  const showCursor = !isUser && (isStreaming || cursorFading) && displayContent.length > 0;
+
+  // 检测流式结束，触发淡出动画
+  useEffect(() => {
+    if (prevStreamingRef.current && !isStreaming && !isUser) {
+      setCursorFading(true);
+      const timer = setTimeout(() => setCursorFading(false), 300);
+      return () => clearTimeout(timer);
+    }
+    prevStreamingRef.current = isStreaming;
+  }, [isStreaming, isUser]);
+
+  // Gemini 风格：实心圆点脉冲光标
+  const cursorSx = showCursor
+    ? {
+        '& > :last-child::after': {
+          content: '"●"',
+          display: 'inline',
+          color: '#4285F4',
+          marginLeft: '2px',
+          fontSize: '0.6em',
+          verticalAlign: 'middle',
+          animation: cursorFading
+            ? `${cursorFadeOut} 0.3s ease-out forwards`
+            : `${cursorPulse} 1.2s ease-in-out infinite`,
+        },
+        '@media (prefers-reduced-motion: reduce)': {
+          '& > :last-child::after': {
+            animation: 'none',
+          },
+        },
+      }
+    : undefined;
 
   const handleCopy = useCallback(async () => {
     try {
@@ -51,7 +117,7 @@ export function MessageItem({
           display: 'flex',
           gap: 2,
           maxWidth: '100%',
-          flexDirection: isUser ? 'row-reverse' : 'row',
+          flexDirection: isUser ? 'row-reverse' : 'row', // 用户消息右对齐，助手消息左对齐
           alignItems: 'flex-start',
         }}
       >
@@ -65,10 +131,8 @@ export function MessageItem({
             alignItems: 'center',
             justifyContent: 'center',
             flexShrink: 0,
-            bgcolor: isUser ? 'primary.main' : 'transparent',
-            background: isUser
-              ? undefined
-              : 'linear-gradient(135deg, #4285f4 0%, #34a853 50%, #fbbc04 100%)',
+            bgcolor: isUser ? 'text.secondary' : 'transparent',
+            background: isUser ? undefined : BRAND_GRADIENT,
             color: 'white',
           }}
         >
@@ -76,71 +140,73 @@ export function MessageItem({
         </Box>
 
         {/* 消息内容 */}
-        <Box sx={{ flex: 1, minWidth: 0, maxWidth: isUser ? '70%' : '85%' }}>
-          {/* 角色标签 */}
-          <Typography
-            variant="caption"
-            color="text.secondary"
-            sx={{ mb: 0.5, display: 'block', textAlign: isUser ? 'right' : 'left' }}
-          >
-            {isUser ? '你' : '助手'}
-          </Typography>
-
-          {/* 消息气泡 */}
-          <Paper
-            elevation={0}
-            sx={{
-              p: 2,
-              borderRadius: 4,
-              bgcolor: isUser
-                ? 'primary.main'
-                : (theme) => (theme.palette.mode === 'light' ? '#f0f4f9' : '#1e1f20'),
-              color: isUser ? 'primary.contrastText' : 'text.primary',
-              position: 'relative',
-            }}
-          >
-            {isUser ? (
+        <Box
+          sx={{
+            flex: 1,
+            minWidth: 0,
+            maxWidth: '85%',
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: isUser ? 'flex-end' : 'flex-start',
+          }}
+        >
+          {/* 消息气泡 - Gemini 风格 */}
+          {isUser ? (
+            // 用户消息：灰色背景气泡
+            <Paper
+              elevation={0}
+              sx={{
+                p: 2,
+                borderRadius: '24px',
+                bgcolor: (theme) => (theme.palette.mode === 'light' ? '#F2F2F2' : '#303134'),
+                color: 'text.primary',
+                display: 'inline-block',
+              }}
+            >
               <Typography variant="body1" sx={{ whiteSpace: 'pre-wrap', lineHeight: 1.7 }}>
-                {content}
+                {displayContent}
               </Typography>
-            ) : (
-              <>
-                {think && (
-                  <Box sx={{ mb: 1 }}>
-                    {isStreaming ? (
+            </Paper>
+          ) : (
+            // 助手消息：透明背景直接显示
+            <Box sx={{ py: 1 }}>
+              {think && (
+                <Box sx={{ mb: 1 }}>
+                  {isStreaming ? (
+                    <Typography
+                      variant="body2"
+                      sx={{ opacity: 0.6, fontSize: 13, whiteSpace: 'pre-wrap' }}
+                    >
+                      {think}
+                    </Typography>
+                  ) : (
+                    <Box
+                      component="details"
+                      sx={{
+                        bgcolor: 'action.hover',
+                        borderRadius: 2,
+                        p: 1,
+                        '& summary': { cursor: 'pointer', fontSize: 13 },
+                      }}
+                    >
+                      <Box component="summary" sx={{ listStyle: 'none' }}>
+                        思考过程
+                      </Box>
                       <Typography
                         variant="body2"
-                        sx={{ opacity: 0.6, fontSize: 13, whiteSpace: 'pre-wrap' }}
+                        sx={{ mt: 1, fontSize: 13, whiteSpace: 'pre-wrap' }}
                       >
                         {think}
                       </Typography>
-                    ) : (
-                      <Box
-                        component="details"
-                        sx={{
-                          bgcolor: 'action.hover',
-                          borderRadius: 2,
-                          p: 1,
-                          '& summary': { cursor: 'pointer', fontSize: 13 },
-                        }}
-                      >
-                        <Box component="summary" sx={{ listStyle: 'none' }}>
-                          思考过程
-                        </Box>
-                        <Typography
-                          variant="body2"
-                          sx={{ mt: 1, fontSize: 13, whiteSpace: 'pre-wrap' }}
-                        >
-                          {think}
-                        </Typography>
-                      </Box>
-                    )}
-                  </Box>
-                )}
-                <MarkdownContent content={content} />
-              </>
-            )}
-          </Paper>
+                    </Box>
+                  )}
+                </Box>
+              )}
+              <Box sx={cursorSx}>
+                <MarkdownContent content={displayContent} isStreaming={isStreaming} />
+              </Box>
+            </Box>
+          )}
 
           {/* 操作按钮 */}
           {showActions && !isUser && (

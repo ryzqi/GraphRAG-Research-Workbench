@@ -131,20 +131,24 @@ export function InputComposer({
       transition={{ duration: 0.3, ease: [0.2, 0, 0, 1] }}
     >
       <Paper
-        elevation={3}
+        elevation={0}
         sx={{
           display: 'flex',
           alignItems: 'flex-end',
           gap: 1,
           p: 1.5,
-          borderRadius: 6,
-          bgcolor: 'background.paper',
-          border: 1,
-          borderColor: 'divider',
+          borderRadius: '28px',
+          // Glassmorphism 效果
+          bgcolor: (theme) =>
+            theme.palette.mode === 'light' ? 'rgba(255, 255, 255, 0.8)' : 'rgba(30, 31, 34, 0.85)',
+          backdropFilter: 'blur(20px)',
+          WebkitBackdropFilter: 'blur(20px)',
+          border: (theme) =>
+            `1px solid ${theme.palette.mode === 'light' ? 'rgba(0, 0, 0, 0.08)' : 'rgba(255, 255, 255, 0.08)'}`,
           boxShadow: (theme) =>
             theme.palette.mode === 'light'
-              ? '0 4px 24px rgba(0,0,0,0.08)'
-              : '0 4px 24px rgba(0,0,0,0.3)',
+              ? '0 8px 32px rgba(0, 0, 0, 0.08)'
+              : '0 8px 32px rgba(0, 0, 0, 0.3)',
         }}
       >
         {/* 附件按钮 */}

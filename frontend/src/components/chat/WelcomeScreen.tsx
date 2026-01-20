@@ -49,7 +49,7 @@ export function WelcomeScreen({
             width: 80,
             height: 80,
             borderRadius: '50%',
-            background: 'linear-gradient(135deg, #4285f4 0%, #34a853 50%, #fbbc04 100%)',
+            background: 'linear-gradient(135deg, #4285F4, #9B72CB, #D96570)',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',

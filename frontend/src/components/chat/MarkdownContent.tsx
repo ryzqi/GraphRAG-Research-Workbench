@@ -8,12 +8,37 @@ import { CodeBlock } from './CodeBlock';
 
 interface MarkdownContentProps {
   content: string;
+  isStreaming?: boolean;
 }
 
-export function MarkdownContent({ content }: MarkdownContentProps) {
+function splitUnclosedFence(content: string) {
+  const fence = '```';
+  const fenceCount = content.split(fence).length - 1;
+  if (fenceCount === 0 || fenceCount % 2 === 0) {
+    return { safeContent: content, pendingContent: '' };
+  }
+
+  const lastFenceIndex = content.lastIndexOf(fence);
+  return {
+    safeContent: content.slice(0, lastFenceIndex),
+    pendingContent: content.slice(lastFenceIndex),
+  };
+}
+
+export function MarkdownContent({ content, isStreaming = false }: MarkdownContentProps) {
+  const { safeContent, pendingContent } = isStreaming
+    ? splitUnclosedFence(content)
+    : { safeContent: content, pendingContent: '' };
+
+  if (!safeContent && !pendingContent) {
+    return null;
+  }
+
   return (
-    <ReactMarkdown
-      components={{
+    <>
+      {safeContent && (
+        <ReactMarkdown
+          components={{
         // 段落
         p: ({ children }) => (
           <Typography variant="body1" sx={{ mb: 1.5, lineHeight: 1.7, '&:last-child': { mb: 0 } }}>
@@ -117,6 +142,54 @@ export function MarkdownContent({ content }: MarkdownContentProps) {
             }}
           />
         ),
+        // 表格
+        table: ({ children }) => (
+          <Box sx={{ overflowX: 'auto', my: 2 }}>
+            <Box
+              component="table"
+              sx={{
+                width: '100%',
+                borderCollapse: 'collapse',
+                fontSize: '0.875rem',
+              }}
+            >
+              {children}
+            </Box>
+          </Box>
+        ),
+        thead: ({ children }) => (
+          <Box component="thead" sx={{ bgcolor: 'action.hover' }}>
+            {children}
+          </Box>
+        ),
+        tbody: ({ children }) => <tbody>{children}</tbody>,
+        tr: ({ children }) => (
+          <Box
+            component="tr"
+            sx={{ borderBottom: 1, borderColor: 'divider' }}
+          >
+            {children}
+          </Box>
+        ),
+        th: ({ children }) => (
+          <Box
+            component="th"
+            sx={{
+              p: 1.5,
+              textAlign: 'left',
+              fontWeight: 600,
+              borderBottom: 2,
+              borderColor: 'divider',
+            }}
+          >
+            {children}
+          </Box>
+        ),
+        td: ({ children }) => (
+          <Box component="td" sx={{ p: 1.5, textAlign: 'left' }}>
+            {children}
+          </Box>
+        ),
         // 强调
         strong: ({ children }) => (
           <Typography component="strong" fontWeight={600}>
@@ -129,8 +202,28 @@ export function MarkdownContent({ content }: MarkdownContentProps) {
           </Typography>
         ),
       }}
-    >
-      {content}
-    </ReactMarkdown>
+        >
+          {safeContent}
+        </ReactMarkdown>
+      )}
+      {pendingContent && (
+        <Box
+          component="pre"
+          sx={{
+            m: 0,
+            mt: 1,
+            p: 1.5,
+            borderRadius: 2,
+            bgcolor: 'action.hover',
+            fontFamily: 'monospace',
+            fontSize: '0.875em',
+            whiteSpace: 'pre-wrap',
+            wordBreak: 'break-word',
+          }}
+        >
+          {pendingContent}
+        </Box>
+      )}
+    </>
   );
 }
