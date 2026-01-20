@@ -3,6 +3,8 @@
  */
 
 import { apiFetch } from './http';
+import { openSseStream } from './sse';
+import type { SseEvent } from '../lib/sse';
 
 export type EvaluationStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'canceled';
 
@@ -28,6 +30,7 @@ export interface EvaluationRun {
   status: EvaluationStatus;
   summary: {
     total_questions?: number;
+    completed_questions?: number;
     single_agent?: {
       avg_score: number;
       avg_latency: number;
@@ -92,4 +95,14 @@ export async function cancelEvaluationRun(evalRunId: string): Promise<Evaluation
   return apiFetch<EvaluationRun>(`/api/v1/evaluations/runs/${evalRunId}/cancel`, {
     method: 'POST',
   });
+}
+
+/**
+ * 评测进度流
+ */
+export async function streamEvaluationRun(
+  evalRunId: string,
+  signal?: AbortSignal
+): Promise<AsyncIterable<SseEvent>> {
+  return openSseStream(`/api/v1/evaluations/runs/${evalRunId}/stream`, { method: 'GET' }, signal);
 }

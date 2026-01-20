@@ -1,12 +1,15 @@
 /**
  * 研究相关 React Query Hooks
  */
+import { useEffect, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { parseSseJson } from '../../lib/sse';
 import {
   createResearchRun,
   getResearchRun,
   getResearchReport,
   cancelResearchRun,
+  streamResearchRun,
   type ResearchRunCreateRequest,
 } from '../../services/research';
 
@@ -24,12 +27,51 @@ const KEYS = {
  * 获取研究状态
  */
 export function useResearchRun(runId: string | undefined) {
+  const queryClient = useQueryClient();
+  const [streamStatus, setStreamStatus] = useState<'idle' | 'active' | 'failed'>('idle');
+
+  useEffect(() => {
+    if (!runId) return;
+
+    const controller = new AbortController();
+    let active = true;
+
+    (async () => {
+      try {
+        const stream = await streamResearchRun(runId, controller.signal);
+        setStreamStatus('active');
+        for await (const event of stream) {
+          if (!active) break;
+          if (event.event === 'update' || event.event === 'final') {
+            const data = parseSseJson(event.data);
+            queryClient.setQueryData(KEYS.run(runId), data);
+            if (event.event === 'final') {
+              setStreamStatus('idle');
+              break;
+            }
+          }
+          if (event.event === 'error') {
+            throw new Error('研究进度流异常');
+          }
+        }
+      } catch (e) {
+        if (!active || controller.signal.aborted) return;
+        setStreamStatus('failed');
+      }
+    })();
+
+    return () => {
+      active = false;
+      controller.abort();
+    };
+  }, [runId, queryClient]);
+
   return useQuery({
     queryKey: KEYS.run(runId),
     queryFn: () => getResearchRun(runId as string),
     enabled: !!runId,
     refetchInterval: (query) => {
-      // 仅在运行中时自动轮询
+      if (streamStatus === 'active') return false;
       const status = query.state.data?.status;
       return status === 'running' ? 2000 : false;
     },

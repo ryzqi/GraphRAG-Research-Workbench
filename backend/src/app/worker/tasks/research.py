@@ -20,6 +20,7 @@ from app.models.evidence import Evidence, EvidenceSourceKind
 from app.models.research_report import ResearchReport
 from app.models.tool_extension import ExtensionStatus, ToolExtension
 from app.services.retrieval_service import RetrievalService
+from app.services.streaming import StreamState, apply_updates_chunk
 from app.worker.celery_app import celery_app
 
 
@@ -72,7 +73,6 @@ async def _run_research(
             await session.commit()
 
             mcp: MCPClient | None = None
-            graph_task: asyncio.Task | None = None
             try:
                 # 初始化依赖
                 milvus = get_milvus_client()
@@ -91,36 +91,63 @@ async def _run_research(
 
                 graph = ResearchGraph()
 
-                # 使用 run_id 作为 thread_id 执行（支持取消：轮询 DB 状态并 cancel 协程）
-                graph_task = asyncio.create_task(
-                    graph.run(
-                        question=question,
-                        kb_ids=[uuid.UUID(kid) for kid in kb_ids],
-                        retrieval=retrieval,
-                        mcp=mcp,
-                        extensions=list(extensions),
-                        allow_external=allow_external,
-                        thread_id=run_id,
-                        checkpointer=CheckpointManager.get_checkpointer(),
-                    )
+                compiled, state, config, retrieval_results = await graph.build_runtime(
+                    question=question,
+                    kb_ids=[uuid.UUID(kid) for kid in kb_ids],
+                    retrieval=retrieval,
+                    mcp=mcp,
+                    extensions=list(extensions),
+                    allow_external=allow_external,
+                    thread_id=run_id,
+                    checkpointer=CheckpointManager.get_checkpointer(),
                 )
 
-                result = None
+                stream_state = StreamState(
+                    messages=list(state.get("messages", []))
+                    if isinstance(state.get("messages", []), list)
+                    else [],
+                    pending_tool_calls=[],
+                    stage_summaries={},
+                    metrics={},
+                )
+                last_stage: dict | None = None
+                last_metrics: dict | None = None
+                last_values: dict | None = None
+
+                stream = compiled.astream(state, config, stream_mode=["updates", "values"])
                 while True:
-                    done, _ = await asyncio.wait({graph_task}, timeout=1.0)
-                    if done:
-                        result = await graph_task
+                    try:
+                        mode, chunk = await asyncio.wait_for(stream.__anext__(), timeout=1.0)
+                    except asyncio.TimeoutError:
+                        await session.refresh(run)
+                        if run.status == AgentRunStatus.CANCELED:
+                            return
+                        continue
+                    except StopAsyncIteration:
                         break
 
-                    await session.refresh(run)
-                    if run.status == AgentRunStatus.CANCELED:
-                        graph_task.cancel()
-                        try:
-                            await graph_task
-                        except asyncio.CancelledError:
-                            pass
-                        return
-                    await session.commit()
+                    if mode == "updates" and isinstance(chunk, dict):
+                        apply_updates_chunk(stream_state, chunk)
+                        if (
+                            stream_state.stage_summaries
+                            and stream_state.stage_summaries != last_stage
+                        ):
+                            run.stage_summaries = stream_state.stage_summaries
+                            last_stage = dict(stream_state.stage_summaries)
+                            await session.commit()
+                        if stream_state.metrics and stream_state.metrics != last_metrics:
+                            run.metrics = stream_state.metrics
+                            last_metrics = dict(stream_state.metrics)
+                            await session.commit()
+                    elif mode == "values" and isinstance(chunk, dict):
+                        last_values = chunk
+
+                result_dict = last_values or {
+                    "messages": stream_state.messages,
+                    "stage_summaries": stream_state.stage_summaries,
+                    "metrics": stream_state.metrics,
+                }
+                result = graph.build_output(result_dict, retrieval_results)
 
                 # 写入检索证据
                 evidence_records = [
@@ -154,15 +181,13 @@ async def _run_research(
                 run.metrics = {
                     "citation_count": len(result.citations),
                     "retrieval_count": len(result.retrieval_results),
+                    **(result.metrics or {}),
                 }
 
             except Exception as exc:
                 run.status = AgentRunStatus.FAILED
                 run.finished_at = datetime.now(timezone.utc)
                 run.error_message = str(exc)
-
-                if graph_task is not None:
-                    graph_task.cancel()
 
             finally:
                 if mcp is not None:

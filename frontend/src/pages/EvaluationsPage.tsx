@@ -247,6 +247,11 @@ export function EvaluationsPage() {
                 label={getStatusLabel(evalRun.status)}
               />
             </Stack>
+            {summary?.completed_questions !== undefined && summary?.total_questions !== undefined && (
+              <Typography variant="body2" color="text.secondary">
+                进度：{summary.completed_questions}/{summary.total_questions}
+              </Typography>
+            )}
             <Stack direction="row" spacing={1}>
               {evalRun.status === 'succeeded' && (
                 <Button

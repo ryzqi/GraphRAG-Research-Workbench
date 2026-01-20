@@ -13,6 +13,8 @@ export interface ChatMessage {
   id: string;
   role: 'user' | 'assistant';
   content: string;
+  think?: string;
+  isStreaming?: boolean;
   evidence?: EvidenceItem[];
   invocations?: Array<{
     tool_name: string;
@@ -67,7 +69,12 @@ export function MessageList({
       <Stack spacing={3} sx={{ maxWidth: 900, mx: 'auto' }}>
         {messages.map((msg) => (
           <Box key={msg.id}>
-            <MessageItem role={msg.role} content={msg.content} />
+            <MessageItem
+              role={msg.role}
+              content={msg.content}
+              think={msg.think}
+              isStreaming={msg.isStreaming}
+            />
 
             {/* 工具审批卡片 */}
             {msg.pendingToolApproval && onToolApprove && onToolReject && msg.runId && (

@@ -41,6 +41,12 @@ from app.schemas.chats import (
 )
 from app.services.context_builder import ContextBuilder
 from app.services.conversation_summary_service import ConversationSummaryService
+from app.services.streaming import (
+    StreamState,
+    apply_updates_chunk,
+    extract_message_text,
+    strip_think_tags,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -328,6 +334,252 @@ class GeneralChatService:
         finally:
             set_run_id(None)
 
+    async def answer_stream(
+        self,
+        *,
+        session: ChatSession,
+        user_content: str,
+        request: object | None = None,
+    ) -> Any:
+        """处理用户问题并生成答案（流式 SSE）。"""
+        started_at = datetime.now(timezone.utc)
+        summary = await self._summary_service.load_latest_summary(session.id)
+        history = await self._load_history(
+            session.id, limit=self._settings.context_history_max_messages
+        )
+
+        # 保存用户消息
+        user_msg = ChatMessage(
+            session_id=session.id,
+            role=MessageRole.USER,
+            content=user_content,
+        )
+        self._db.add(user_msg)
+
+        # 创建运行记录
+        run = AgentRun(
+            run_type=AgentRunType.GENERAL_ANSWER,
+            session_id=session.id,
+            question=user_content,
+            selected_kb_ids=None,
+            allow_external=session.allow_external,
+            mode=session.mode,
+            status=AgentRunStatus.RUNNING,
+            started_at=started_at,
+        )
+        self._db.add(run)
+        await self._db.flush()
+        await self._db.commit()
+        set_run_id(str(run.id))
+
+        try:
+            # 获取启用的扩展
+            extensions: list[ToolExtension] = []
+            if session.allow_external and self._settings.mcp_enabled:
+                stmt = select(ToolExtension).where(
+                    ToolExtension.status == ExtensionStatus.ENABLED
+                )
+                result = await self._db.execute(stmt)
+                extensions = list(result.scalars().all())
+
+            include_external = bool(session.allow_external)
+
+            # 统一工具注册（内置 + MCP）
+            tools, tool_meta_by_name = await build_tool_registry(
+                settings=self._settings,
+                mcp=self._mcp,
+                extensions=extensions,
+                extra_tools=[],
+                include_web_search=include_external,
+                include_mcp=include_external,
+            )
+
+            # 绑定工具的模型（OpenAI-compatible base_url）
+            chat_model = ChatOpenAI(
+                model=self._settings.llm_model,
+                api_key=self._settings.llm_api_key,
+                base_url=self._settings.llm_base_url.rstrip("/"),
+            )
+
+            # 构造初始 messages（系统提示词 + 摘要/历史 + 用户问题）
+            system_prompt = self._prompts.render("general_chat/system")
+            history_messages, history_usage, history_truncation = (
+                self._context_builder.build_history_messages(
+                    history=history,
+                    summary_text=summary.content if summary else None,
+                )
+            )
+            context_metrics = self._context_builder.build_metrics(
+                history_usage=history_usage,
+                history_truncation=history_truncation,
+            )
+            messages = [
+                SystemMessage(content=system_prompt),
+                *[self._to_langchain_message(m) for m in history_messages],
+                HumanMessage(content=user_content),
+            ]
+
+            # 创建 LangGraph 图
+            graph = GeneralChatGraph(
+                chat_model=chat_model,
+                tools=tools,
+                tool_meta_by_name=tool_meta_by_name,
+                require_confirmation=bool(
+                    include_external and self._settings.mcp_confirmation_required
+                ),
+            )
+
+            # 使用 session_id 作为 thread_id 执行
+            state: GeneralChatState = {
+                "messages": messages,
+                "pending_tool_calls": [],
+                "stage_summaries": {},
+                "metrics": {"context": context_metrics},
+                "human_approved": None,
+            }
+            thread_id = str(session.id)
+
+            # SSE: meta
+            yield "meta", {
+                "run_id": str(run.id),
+                "session_id": str(session.id),
+                "session_type": session.session_type.value,
+                "thread_id": thread_id,
+                "mode": session.mode.value,
+            }
+
+            stream_state = StreamState(
+                messages=list(messages),
+                pending_tool_calls=[],
+                stage_summaries={},
+                metrics={"context": context_metrics},
+            )
+
+            compiled = graph.compile(checkpointer=CheckpointManager.get_checkpointer())
+            config = CheckpointManager.make_config(thread_id)
+
+            async for mode, chunk in compiled.astream(
+                state,
+                config,
+                stream_mode=["messages", "updates"],
+            ):
+                if request is not None:
+                    is_disconnected = getattr(request, "is_disconnected", None)
+                    if callable(is_disconnected) and await is_disconnected():
+                        run.status = AgentRunStatus.CANCELED
+                        run.finished_at = datetime.now(timezone.utc)
+                        await self._db.commit()
+                        return
+
+                if mode == "messages":
+                    token, _meta = chunk
+                    text = extract_message_text(token)
+                    if text:
+                        yield "delta", {"text": text}
+                    continue
+
+                if mode == "updates" and isinstance(chunk, dict):
+                    interrupts = apply_updates_chunk(stream_state, chunk)
+                    if interrupts:
+                        pending_tool_calls = stream_state.pending_tool_calls
+                        interrupt_id = None
+                        message = None
+                        first = interrupts[0]
+                        interrupt_id = getattr(first, "id", None)
+                        payload = getattr(first, "value", None)
+                        if isinstance(payload, dict):
+                            message = payload.get("message")
+                            tools_payload = payload.get("tools")
+                            if isinstance(tools_payload, list):
+                                pending_tool_calls = tools_payload
+
+                        stage_summaries = stream_state.stage_summaries
+                        if not isinstance(stage_summaries, dict):
+                            stage_summaries = {}
+                        metrics = stream_state.metrics
+                        if not isinstance(metrics, dict):
+                            metrics = {}
+
+                        run.stage_summaries = {
+                            **stage_summaries,
+                            "tool_approval": {
+                                "pending": True,
+                                "tool_count": len(pending_tool_calls),
+                                "interrupt_id": interrupt_id,
+                                "requested_at": datetime.now(timezone.utc).isoformat(),
+                            },
+                        }
+                        run.metrics = {
+                            "extension_calls": 0,
+                            "latency_ms": int(
+                                (datetime.now(timezone.utc) - started_at).total_seconds()
+                                * 1000
+                            ),
+                            **metrics,
+                        }
+
+                        await self._db.commit()
+                        await self._db.refresh(run)
+
+                        response = ChatPendingToolApprovalResponse(
+                            thread_id=thread_id,
+                            interrupt_id=interrupt_id if isinstance(interrupt_id, str) else None,
+                            message=str(message) if message is not None else None,
+                            pending_tool_calls=[
+                                PendingToolCall.model_validate(item)
+                                for item in pending_tool_calls
+                                if isinstance(item, dict)
+                            ],
+                            run=AgentRunRead.model_validate(run),
+                        )
+                        yield "interrupt", response.model_dump(mode="json")
+                        return
+
+            result = {
+                "messages": stream_state.messages,
+                "stage_summaries": stream_state.stage_summaries,
+                "metrics": stream_state.metrics,
+            }
+            final_response = await self._finalize_run(
+                session=session,
+                run=run,
+                user_content=user_content,
+                started_at=started_at,
+                result=result,
+                tool_meta_by_name=tool_meta_by_name,
+                user_confirmed=None,
+            )
+            yield "final", final_response.model_dump(mode="json")
+
+        except Exception as e:
+            run.status = AgentRunStatus.FAILED
+            run.finished_at = datetime.now(timezone.utc)
+            run.error_message = str(e)
+            await self._db.commit()
+
+            mapped = self._map_llm_exception(e)
+            if mapped is not None:
+                logger.warning(
+                    "LLM 流式调用失败",
+                    extra={
+                        "exc_type": type(e).__name__,
+                        "upstream_status_code": getattr(e, "status_code", None),
+                    },
+                )
+                yield "error", {
+                    "code": mapped.code,
+                    "message": mapped.message,
+                    "details": mapped.details,
+                }
+                return
+
+            yield "error", {
+                "code": "CHAT_STREAM_FAILED",
+                "message": str(e),
+            }
+        finally:
+            set_run_id(None)
+
     async def resume_after_tool_approval(
         self,
         *,
@@ -467,6 +719,216 @@ class GeneralChatService:
         finally:
             set_run_id(None)
 
+    async def resume_after_tool_approval_stream(
+        self,
+        *,
+        session: ChatSession,
+        run: AgentRun,
+        approved: bool,
+        request: object | None = None,
+    ) -> Any:
+        """两阶段交互第 2 阶段：提交审批结果并恢复执行（流式 SSE）。"""
+        set_run_id(str(run.id))
+        thread_id = str(session.id)
+        checkpoint_tuple = await CheckpointManager.get_state(thread_id)
+        if checkpoint_tuple is None:
+            yield "error", {
+                "code": "CHECKPOINT_NOT_FOUND",
+                "message": "检查点不存在，无法恢复执行",
+            }
+            set_run_id(None)
+            return
+
+        pending_interrupts = [
+            item for item in (checkpoint_tuple.pending_writes or []) if item[1] == "__interrupt__"
+        ]
+        if not pending_interrupts:
+            yield "error", {
+                "code": "NO_PENDING_APPROVAL",
+                "message": "当前会话没有待审批的工具调用",
+            }
+            set_run_id(None)
+            return
+
+        pending_tool_calls = (
+            (checkpoint_tuple.checkpoint or {})
+            .get("channel_values", {})
+            .get("pending_tool_calls", [])
+        )
+        if not isinstance(pending_tool_calls, list):
+            pending_tool_calls = []
+        await self._ensure_extensions_connected(pending_tool_calls)
+
+        # 为恢复执行重新构建图（状态由 checkpointer 提供）
+        extensions: list[ToolExtension] = []
+        if session.allow_external and self._settings.mcp_enabled:
+            stmt = select(ToolExtension).where(
+                ToolExtension.status == ExtensionStatus.ENABLED
+            )
+            ext_result = await self._db.execute(stmt)
+            extensions = list(ext_result.scalars().all())
+
+        include_external = bool(session.allow_external)
+
+        tools, tool_meta_by_name = await build_tool_registry(
+            settings=self._settings,
+            mcp=self._mcp,
+            extensions=extensions,
+            extra_tools=[],
+            include_web_search=include_external,
+            include_mcp=include_external,
+        )
+
+        chat_model = ChatOpenAI(
+            model=self._settings.llm_model,
+            api_key=self._settings.llm_api_key,
+            base_url=self._settings.llm_base_url.rstrip("/"),
+        )
+
+        graph = GeneralChatGraph(
+            chat_model=chat_model,
+            tools=tools,
+            tool_meta_by_name=tool_meta_by_name,
+            require_confirmation=bool(
+                include_external and self._settings.mcp_confirmation_required
+            ),
+        )
+        compiled = graph.compile(checkpointer=CheckpointManager.get_checkpointer())
+        config = CheckpointManager.make_config(thread_id)
+
+        checkpoint_values = (checkpoint_tuple.checkpoint or {}).get("channel_values", {})
+        existing_messages = checkpoint_values.get("messages", [])
+        stream_state = StreamState(
+            messages=list(existing_messages)
+            if isinstance(existing_messages, list)
+            else [],
+            pending_tool_calls=pending_tool_calls,
+            stage_summaries=checkpoint_values.get("stage_summaries", {})
+            if isinstance(checkpoint_values.get("stage_summaries", {}), dict)
+            else {},
+            metrics=checkpoint_values.get("metrics", {})
+            if isinstance(checkpoint_values.get("metrics", {}), dict)
+            else {},
+        )
+
+        yield "meta", {
+            "run_id": str(run.id),
+            "session_id": str(session.id),
+            "session_type": session.session_type.value,
+            "thread_id": thread_id,
+            "mode": session.mode.value,
+            "resumed": True,
+        }
+
+        try:
+            async for mode, chunk in compiled.astream(
+                Command(resume={"approved": approved}),
+                config,
+                stream_mode=["messages", "updates"],
+            ):
+                if request is not None:
+                    is_disconnected = getattr(request, "is_disconnected", None)
+                    if callable(is_disconnected) and await is_disconnected():
+                        run.status = AgentRunStatus.CANCELED
+                        run.finished_at = datetime.now(timezone.utc)
+                        await self._db.commit()
+                        return
+
+                if mode == "messages":
+                    token, _meta = chunk
+                    text = extract_message_text(token)
+                    if text:
+                        yield "delta", {"text": text}
+                    continue
+
+                if mode == "updates" and isinstance(chunk, dict):
+                    interrupts = apply_updates_chunk(stream_state, chunk)
+                    if interrupts:
+                        pending_tool_calls = stream_state.pending_tool_calls
+                        first = interrupts[0]
+                        interrupt_id = getattr(first, "id", None)
+                        payload = getattr(first, "value", None)
+                        message = payload.get("message") if isinstance(payload, dict) else None
+                        tools_payload = payload.get("tools") if isinstance(payload, dict) else None
+                        if isinstance(tools_payload, list):
+                            pending_tool_calls = tools_payload
+
+                        stage_summaries = stream_state.stage_summaries
+                        if not isinstance(stage_summaries, dict):
+                            stage_summaries = {}
+
+                        run.stage_summaries = {
+                            **stage_summaries,
+                            "tool_approval": {
+                                "pending": True,
+                                "tool_count": len(pending_tool_calls),
+                                "interrupt_id": interrupt_id,
+                                "requested_at": datetime.now(timezone.utc).isoformat(),
+                            },
+                        }
+                        await self._db.commit()
+                        await self._db.refresh(run)
+
+                        response = ChatPendingToolApprovalResponse(
+                            thread_id=thread_id,
+                            interrupt_id=interrupt_id if isinstance(interrupt_id, str) else None,
+                            message=str(message) if message is not None else None,
+                            pending_tool_calls=[
+                                PendingToolCall.model_validate(item)
+                                for item in pending_tool_calls
+                                if isinstance(item, dict)
+                            ],
+                            run=AgentRunRead.model_validate(run),
+                        )
+                        yield "interrupt", response.model_dump(mode="json")
+                        return
+
+            started_at = run.started_at or datetime.now(timezone.utc)
+            result = {
+                "messages": stream_state.messages,
+                "stage_summaries": stream_state.stage_summaries,
+                "metrics": stream_state.metrics,
+            }
+            final_response = await self._finalize_run(
+                session=session,
+                run=run,
+                user_content=run.question,
+                started_at=started_at,
+                result=result,
+                tool_meta_by_name=tool_meta_by_name,
+                user_confirmed=approved,
+            )
+            yield "final", final_response.model_dump(mode="json")
+
+        except Exception as e:
+            run.status = AgentRunStatus.FAILED
+            run.finished_at = datetime.now(timezone.utc)
+            run.error_message = str(e)
+            await self._db.commit()
+
+            mapped = self._map_llm_exception(e)
+            if mapped is not None:
+                logger.warning(
+                    "LLM 流式恢复失败",
+                    extra={
+                        "exc_type": type(e).__name__,
+                        "upstream_status_code": getattr(e, "status_code", None),
+                    },
+                )
+                yield "error", {
+                    "code": mapped.code,
+                    "message": mapped.message,
+                    "details": mapped.details,
+                }
+                return
+
+            yield "error", {
+                "code": "CHAT_STREAM_FAILED",
+                "message": str(e),
+            }
+        finally:
+            set_run_id(None)
+
     async def _ensure_extensions_connected(self, pending_tool_calls: object) -> None:
         if (
             not self._settings.mcp_enabled
@@ -562,6 +1024,7 @@ class GeneralChatService:
             if isinstance(msg, AIMessage):
                 answer = str(msg.content or "")
                 break
+        answer = strip_think_tags(answer)
 
         # 保存助手消息
         assistant_msg = ChatMessage(

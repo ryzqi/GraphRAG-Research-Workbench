@@ -74,7 +74,7 @@ class ResearchGraph:
             )
         return citations
 
-    async def run(
+    async def build_runtime(
         self,
         *,
         question: str,
@@ -85,8 +85,8 @@ class ResearchGraph:
         allow_external: bool,
         thread_id: str | None = None,
         checkpointer: BaseCheckpointSaver | None = None,
-    ) -> ResearchOutput:
-        """执行研究图。"""
+    ) -> tuple[Any, ResearchState, dict[str, Any] | None, list[RetrievalResult]]:
+        """构建研究图执行上下文（供流式/非流式复用）。"""
         retrieval_results: list[RetrievalResult] = []
         seen_chunk_ids: set[uuid.UUID] = set()
 
@@ -149,9 +149,12 @@ class ResearchGraph:
 
         compiled = graph.compile(checkpointer=checkpointer)
         config = {"configurable": {"thread_id": thread_id}} if thread_id else None
-        result = await compiled.ainvoke(state, config)
-        result_dict = cast(dict[str, Any], result)
+        return compiled, state, config, retrieval_results
 
+    def build_output(
+        self, result_dict: dict[str, Any], retrieval_results: list[RetrievalResult]
+    ) -> ResearchOutput:
+        """基于运行结果构建研究输出。"""
         report_md = ""
         messages = result_dict.get("messages")
         if isinstance(messages, list):
@@ -188,3 +191,30 @@ class ResearchGraph:
             stage_summaries=stage_summaries,
             metrics=metrics,
         )
+
+    async def run(
+        self,
+        *,
+        question: str,
+        kb_ids: list[uuid.UUID],
+        retrieval: RetrievalService,
+        mcp: MCPClient,
+        extensions: list[ToolExtension],
+        allow_external: bool,
+        thread_id: str | None = None,
+        checkpointer: BaseCheckpointSaver | None = None,
+    ) -> ResearchOutput:
+        """执行研究图。"""
+        compiled, state, config, retrieval_results = await self.build_runtime(
+            question=question,
+            kb_ids=kb_ids,
+            retrieval=retrieval,
+            mcp=mcp,
+            extensions=extensions,
+            allow_external=allow_external,
+            thread_id=thread_id,
+            checkpointer=checkpointer,
+        )
+        result = await compiled.ainvoke(state, config)
+        result_dict = cast(dict[str, Any], result)
+        return self.build_output(result_dict, retrieval_results)

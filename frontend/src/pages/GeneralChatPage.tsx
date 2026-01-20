@@ -7,11 +7,15 @@ import {
   createChatSession,
   resumeToolApproval,
   sendMessage,
+  streamChatMessage,
+  streamResumeToolApproval,
   type ChatMessageResponse,
   type ChatSession,
 } from '../services/chats';
 import type { ToolInvocationSummary } from '../services/extensions';
 import { ErrorAlert } from '../components/ui/ErrorAlert';
+import { parseSseJson } from '../lib/sse';
+import { createThinkParser } from '../lib/thinkParser';
 import {
   WelcomeScreen,
   MessageList,
@@ -39,6 +43,13 @@ export function GeneralChatPage() {
 
   const hasPendingApproval = messages.some((m) => Boolean(m.pendingToolApproval));
   const isInputDisabled = loading || hasPendingApproval;
+
+  const updateMessage = useCallback(
+    (id: string, updater: (msg: ChatMessage) => ChatMessage) => {
+      setMessages((prev) => prev.map((msg) => (msg.id === id ? updater(msg) : msg)));
+    },
+    []
+  );
 
   const createSession = useCallback(async () => {
     const newSession = await createChatSession({
@@ -74,27 +85,46 @@ export function GeneralChatPage() {
       role: 'user',
       content,
     };
-    setMessages((prev) => [...prev, userMessage]);
+    const assistantId = `assistant-${Date.now()}`;
+    const thinkParser = createThinkParser();
+
+    setMessages((prev) => [
+      ...prev,
+      userMessage,
+      {
+        id: assistantId,
+        role: 'assistant',
+        content: '',
+        think: '',
+        isStreaming: true,
+      },
+    ]);
     setInput('');
     setLoading(true);
     setError(null);
 
+    let activeSession: ChatSession;
     try {
-      const activeSession = session ?? (await createSession());
+      activeSession = session ?? (await createSession());
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '创建会话失败');
+      setLoading(false);
+      return;
+    }
+
+    // 更新会话标题
+    upsertSession({
+      sessionId: activeSession.id,
+      title: content.slice(0, 30) + (content.length > 30 ? '...' : ''),
+      type: 'general_chat',
+      updatedAt: new Date().toISOString(),
+    });
+
+    const fallbackToJson = async () => {
       const response: ChatMessageResponse = await sendMessage(activeSession.id, content);
-
-      // 更新会话标题
-      upsertSession({
-        sessionId: activeSession.id,
-        title: content.slice(0, 30) + (content.length > 30 ? '...' : ''),
-        type: 'general_chat',
-        updatedAt: new Date().toISOString(),
-      });
-
       if (response.status === 'pending_tool_approval') {
-        const pendingMessage: ChatMessage = {
-          id: `pending-${response.run.id}`,
-          role: 'assistant',
+        updateMessage(assistantId, (msg) => ({
+          ...msg,
           content: response.message ?? '需要你确认将要执行的工具调用。',
           runId: response.run.id,
           pendingToolApproval: {
@@ -104,8 +134,9 @@ export function GeneralChatPage() {
               extension_name: call.extension_name ?? undefined,
             })),
           },
-        };
-        setMessages((prev) => [...prev, pendingMessage]);
+          think: '',
+          isStreaming: false,
+        }));
         return;
       }
 
@@ -113,11 +144,173 @@ export function GeneralChatPage() {
         (response.run.stage_summaries?.extensions as { invocations?: ToolInvocationSummary[] })
           ?.invocations ?? [];
 
-      setMessages((prev) => [
-        ...prev,
-        {
+      updateMessage(assistantId, () => ({
+        id: response.assistant_message.id,
+        role: 'assistant',
+        content: response.assistant_message.content,
+        evidence: response.evidence,
+        runId: response.run.id,
+        invocations: invocations.map((inv) => ({
+          tool_name: inv.tool_name,
+          extension_name: inv.extension_name ?? undefined,
+          status: inv.status === 'succeeded' ? 'succeeded' : 'failed',
+        })),
+        isStreaming: false,
+      }));
+    };
+
+    let hadStreamEvent = false;
+
+    try {
+      const stream = await streamChatMessage(activeSession.id, content);
+      for await (const event of stream) {
+        hadStreamEvent = true;
+        if (event.event === 'meta') {
+          const meta = parseSseJson<{ run_id?: string }>(event.data);
+          if (meta.run_id) {
+            updateMessage(assistantId, (msg) => ({ ...msg, runId: meta.run_id }));
+          }
+        }
+
+        if (event.event === 'delta') {
+          const data = parseSseJson<{ text: string }>(event.data);
+          const { answerDelta, thinkDelta } = thinkParser.feed(data.text || '');
+          if (answerDelta || thinkDelta) {
+            updateMessage(assistantId, (msg) => ({
+              ...msg,
+              content: msg.content + answerDelta,
+              think: (msg.think ?? '') + thinkDelta,
+              isStreaming: true,
+            }));
+          }
+        }
+
+        if (event.event === 'interrupt') {
+          const data = parseSseJson<ChatMessageResponse>(event.data);
+          if (data.status === 'pending_tool_approval') {
+            updateMessage(assistantId, (msg) => ({
+              ...msg,
+              content: data.message ?? '需要你确认将要执行的工具调用。',
+              runId: data.run.id,
+              pendingToolApproval: {
+                message: data.message,
+                toolCalls: data.pending_tool_calls.map((call) => ({
+                  tool_name: call.tool_name,
+                  extension_name: call.extension_name ?? undefined,
+                })),
+              },
+              think: '',
+              isStreaming: false,
+            }));
+            setLoading(false);
+            return;
+          }
+        }
+
+        if (event.event === 'final') {
+          const data = parseSseJson<ChatMessageResponse>(event.data);
+          if (data.status === 'succeeded') {
+            const invocations =
+              (data.run.stage_summaries?.extensions as { invocations?: ToolInvocationSummary[] })
+                ?.invocations ?? [];
+            updateMessage(assistantId, (msg) => ({
+              ...msg,
+              id: data.assistant_message.id,
+              content: data.assistant_message.content,
+              evidence: data.evidence,
+              runId: data.run.id,
+              invocations: invocations.map((inv) => ({
+                tool_name: inv.tool_name,
+                extension_name: inv.extension_name ?? undefined,
+                status: inv.status === 'succeeded' ? 'succeeded' : 'failed',
+              })),
+              isStreaming: false,
+            }));
+          }
+          setLoading(false);
+          return;
+        }
+
+        if (event.event === 'error') {
+          const err = parseSseJson<{ message?: string }>(event.data);
+          throw new Error(err?.message ?? '流式响应失败');
+        }
+      }
+
+      const flushed = thinkParser.flush();
+      if (flushed.answerDelta || flushed.thinkDelta) {
+        updateMessage(assistantId, (msg) => ({
+          ...msg,
+          content: msg.content + flushed.answerDelta,
+          think: (msg.think ?? '') + flushed.thinkDelta,
+        }));
+      }
+    } catch (e) {
+      if (hadStreamEvent) {
+        setError(e instanceof Error ? e.message : '发送消息失败');
+        setLoading(false);
+        return;
+      }
+      try {
+        await fallbackToJson();
+      } catch (fallbackError) {
+        setError(fallbackError instanceof Error ? fallbackError.message : '发送消息失败');
+      }
+    } finally {
+      setLoading(false);
+    }
+  }, [
+    input,
+    loading,
+    hasPendingApproval,
+    session,
+    createSession,
+    upsertSession,
+    updateMessage,
+  ]);
+
+  const handleToolApproval = useCallback(
+    async (pendingMessageId: string, runId: string, approved: boolean) => {
+      if (!session || loading) return;
+      setLoading(true);
+      setError(null);
+
+      const thinkParser = createThinkParser();
+      updateMessage(pendingMessageId, (msg) => ({
+        ...msg,
+        content: '',
+        think: '',
+        pendingToolApproval: undefined,
+        isStreaming: true,
+      }));
+
+      const fallbackToJson = async () => {
+        const response: ChatMessageResponse = await resumeToolApproval(session.id, runId, approved);
+        if (response.status === 'pending_tool_approval') {
+          updateMessage(pendingMessageId, (msg) => ({
+            ...msg,
+            content: response.message ?? '仍需要审批工具调用。',
+            runId: response.run.id,
+            pendingToolApproval: {
+              message: response.message,
+              toolCalls: response.pending_tool_calls.map((call) => ({
+                tool_name: call.tool_name,
+                extension_name: call.extension_name ?? undefined,
+              })),
+            },
+            think: '',
+            isStreaming: false,
+          }));
+          return;
+        }
+
+        const invocations =
+          (response.run.stage_summaries?.extensions as { invocations?: ToolInvocationSummary[] })
+            ?.invocations ?? [];
+
+        updateMessage(pendingMessageId, () => ({
           id: response.assistant_message.id,
-          role: 'assistant',
+          role: 'assistant' as const,
           content: response.assistant_message.content,
           evidence: response.evidence,
           runId: response.run.id,
@@ -126,74 +319,112 @@ export function GeneralChatPage() {
             extension_name: inv.extension_name ?? undefined,
             status: inv.status === 'succeeded' ? 'succeeded' : 'failed',
           })),
-        },
-      ]);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : '发送消息失败');
-    } finally {
-      setLoading(false);
-    }
-  }, [input, loading, hasPendingApproval, session, createSession, upsertSession]);
+          isStreaming: false,
+        }));
+      };
 
-  const handleToolApproval = useCallback(
-    async (pendingMessageId: string, runId: string, approved: boolean) => {
-      if (!session || loading) return;
-      setLoading(true);
-      setError(null);
+      let hadStreamEvent = false;
+
       try {
-        const response: ChatMessageResponse = await resumeToolApproval(session.id, runId, approved);
+        const stream = await streamResumeToolApproval(session.id, runId, approved);
+        for await (const event of stream) {
+          hadStreamEvent = true;
+          if (event.event === 'meta') {
+            const meta = parseSseJson<{ run_id?: string }>(event.data);
+            if (meta.run_id) {
+              updateMessage(pendingMessageId, (msg) => ({ ...msg, runId: meta.run_id }));
+            }
+          }
 
-        if (response.status === 'pending_tool_approval') {
-          setMessages((prev) =>
-            prev.map((m) =>
-              m.id === pendingMessageId
-                ? {
-                    ...m,
-                    content: response.message ?? '仍需要审批工具调用。',
-                    runId: response.run.id,
-                    pendingToolApproval: {
-                      message: response.message,
-                      toolCalls: response.pending_tool_calls.map((call) => ({
-                        tool_name: call.tool_name,
-                        extension_name: call.extension_name ?? undefined,
-                      })),
-                    },
-                  }
-                : m
-            )
-          );
-          return;
+          if (event.event === 'delta') {
+            const data = parseSseJson<{ text: string }>(event.data);
+            const { answerDelta, thinkDelta } = thinkParser.feed(data.text || '');
+            if (answerDelta || thinkDelta) {
+              updateMessage(pendingMessageId, (msg) => ({
+                ...msg,
+                content: msg.content + answerDelta,
+                think: (msg.think ?? '') + thinkDelta,
+                isStreaming: true,
+              }));
+            }
+          }
+
+          if (event.event === 'interrupt') {
+            const data = parseSseJson<ChatMessageResponse>(event.data);
+            if (data.status === 'pending_tool_approval') {
+              updateMessage(pendingMessageId, (msg) => ({
+                ...msg,
+                content: data.message ?? '仍需要审批工具调用。',
+                runId: data.run.id,
+                pendingToolApproval: {
+                  message: data.message,
+                  toolCalls: data.pending_tool_calls.map((call) => ({
+                    tool_name: call.tool_name,
+                    extension_name: call.extension_name ?? undefined,
+                  })),
+                },
+                think: '',
+                isStreaming: false,
+              }));
+              setLoading(false);
+              return;
+            }
+          }
+
+          if (event.event === 'final') {
+            const data = parseSseJson<ChatMessageResponse>(event.data);
+            if (data.status === 'succeeded') {
+              const invocations =
+                (data.run.stage_summaries?.extensions as { invocations?: ToolInvocationSummary[] })
+                  ?.invocations ?? [];
+              updateMessage(pendingMessageId, (msg) => ({
+                ...msg,
+                id: data.assistant_message.id,
+                content: data.assistant_message.content,
+                evidence: data.evidence,
+                runId: data.run.id,
+                invocations: invocations.map((inv) => ({
+                  tool_name: inv.tool_name,
+                  extension_name: inv.extension_name ?? undefined,
+                  status: inv.status === 'succeeded' ? 'succeeded' : 'failed',
+                })),
+                isStreaming: false,
+              }));
+            }
+            setLoading(false);
+            return;
+          }
+
+          if (event.event === 'error') {
+            const err = parseSseJson<{ message?: string }>(event.data);
+            throw new Error(err?.message ?? '恢复执行失败');
+          }
         }
 
-        const invocations =
-          (response.run.stage_summaries?.extensions as { invocations?: ToolInvocationSummary[] })
-            ?.invocations ?? [];
-
-        setMessages((prev) =>
-          prev.map((m) =>
-            m.id === pendingMessageId
-              ? {
-                  id: response.assistant_message.id,
-                  role: 'assistant' as const,
-                  content: response.assistant_message.content,
-                  evidence: response.evidence,
-                  runId: response.run.id,
-                  invocations: invocations.map((inv) => ({
-                    tool_name: inv.tool_name,
-                    extension_name: inv.extension_name ?? undefined,
-                    status: inv.status === 'succeeded' ? 'succeeded' : 'failed',
-                  })),
-                }
-              : m
-          )
-        );
+        const flushed = thinkParser.flush();
+        if (flushed.answerDelta || flushed.thinkDelta) {
+          updateMessage(pendingMessageId, (msg) => ({
+            ...msg,
+            content: msg.content + flushed.answerDelta,
+            think: (msg.think ?? '') + flushed.thinkDelta,
+          }));
+        }
       } catch (e) {
-        setError(e instanceof Error ? e.message : '恢复执行失败');
+        if (hadStreamEvent) {
+          setError(e instanceof Error ? e.message : '恢复执行失败');
+          setLoading(false);
+          return;
+        }
+        try {
+          await fallbackToJson();
+        } catch (fallbackError) {
+          setError(fallbackError instanceof Error ? fallbackError.message : '恢复执行失败');
+        }
       } finally {
         setLoading(false);
       }
     },
-    [session, loading]
+    [session, loading, updateMessage]
   );
 
   const handleSuggestionClick = (value: string) => {

@@ -19,10 +19,13 @@ import {
   type ChatMessageResponse,
   createChatSession,
   sendMessage,
+  streamChatMessage,
 } from '../services/chats';
 import { useKnowledgeBases } from '../hooks/queries';
 import { useRecentHistory } from '../hooks/useRecentHistory';
 import { getErrorMessage } from '../lib/errorHandler';
+import { parseSseJson } from '../lib/sse';
+import { createThinkParser } from '../lib/thinkParser';
 
 export function KbChatPage() {
   const knowledgeBasesQuery = useKnowledgeBases();
@@ -39,6 +42,13 @@ export function KbChatPage() {
 
   const mergedError =
     error ?? (knowledgeBasesQuery.error ? getErrorMessage(knowledgeBasesQuery.error) : null);
+
+  const updateMessage = useCallback(
+    (id: string, updater: (msg: ChatMessage) => ChatMessage) => {
+      setMessages((prev) => prev.map((msg) => (msg.id === id ? updater(msg) : msg)));
+    },
+    []
+  );
 
   const handleCloseError = () => {
     if (error) {
@@ -91,6 +101,8 @@ export function KbChatPage() {
     if (!session || !input.trim() || loading) return;
 
     const userContent = input.trim();
+    const assistantId = `assistant-${Date.now()}`;
+    const thinkParser = createThinkParser();
     setInput('');
     setLoading(true);
     setError(null);
@@ -100,37 +112,105 @@ export function KbChatPage() {
       role: 'user',
       content: userContent,
     };
-    setMessages((prev) => [...prev, userMsg]);
+    setMessages((prev) => [
+      ...prev,
+      userMsg,
+      { id: assistantId, role: 'assistant', content: '', think: '', isStreaming: true },
+    ]);
 
-    try {
+    // 更新会话标题
+    upsertSession({
+      sessionId: session.id,
+      title: userContent.slice(0, 30) + (userContent.length > 30 ? '...' : ''),
+      type: 'kb_chat',
+      updatedAt: new Date().toISOString(),
+    });
+
+    const fallbackToJson = async () => {
       const response: ChatMessageResponse = await sendMessage(session.id, userContent);
       if (response.status !== 'succeeded') {
         throw new Error('知识库对话不支持工具审批流程');
       }
+      updateMessage(assistantId, () => ({
+        id: response.assistant_message.id,
+        role: 'assistant',
+        content: response.assistant_message.content,
+        evidence: response.evidence,
+        isStreaming: false,
+      }));
+    };
 
-      // 更新会话标题
-      upsertSession({
-        sessionId: session.id,
-        title: userContent.slice(0, 30) + (userContent.length > 30 ? '...' : ''),
-        type: 'kb_chat',
-        updatedAt: new Date().toISOString(),
-      });
+    let hadStreamEvent = false;
 
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: response.assistant_message.id,
-          role: 'assistant',
-          content: response.assistant_message.content,
-          evidence: response.evidence,
-        },
-      ]);
+    try {
+      const stream = await streamChatMessage(session.id, userContent);
+      for await (const event of stream) {
+        hadStreamEvent = true;
+        if (event.event === 'meta') {
+          const meta = parseSseJson<{ run_id?: string }>(event.data);
+          if (meta.run_id) {
+            updateMessage(assistantId, (msg) => ({ ...msg, runId: meta.run_id }));
+          }
+        }
+
+        if (event.event === 'delta') {
+          const data = parseSseJson<{ text: string }>(event.data);
+          const { answerDelta, thinkDelta } = thinkParser.feed(data.text || '');
+          if (answerDelta || thinkDelta) {
+            updateMessage(assistantId, (msg) => ({
+              ...msg,
+              content: msg.content + answerDelta,
+              think: (msg.think ?? '') + thinkDelta,
+              isStreaming: true,
+            }));
+          }
+        }
+
+        if (event.event === 'final') {
+          const data = parseSseJson<ChatMessageResponse>(event.data);
+          if (data.status === 'succeeded') {
+            updateMessage(assistantId, (msg) => ({
+              ...msg,
+              id: data.assistant_message.id,
+              content: data.assistant_message.content,
+              evidence: data.evidence,
+              runId: data.run.id,
+              isStreaming: false,
+            }));
+          }
+          setLoading(false);
+          return;
+        }
+
+        if (event.event === 'error') {
+          const err = parseSseJson<{ message?: string }>(event.data);
+          throw new Error(err?.message ?? '流式响应失败');
+        }
+      }
+
+      const flushed = thinkParser.flush();
+      if (flushed.answerDelta || flushed.thinkDelta) {
+        updateMessage(assistantId, (msg) => ({
+          ...msg,
+          content: msg.content + flushed.answerDelta,
+          think: (msg.think ?? '') + flushed.thinkDelta,
+        }));
+      }
     } catch (e) {
-      setError(getErrorMessage(e));
+      if (hadStreamEvent) {
+        setError(getErrorMessage(e));
+        setLoading(false);
+        return;
+      }
+      try {
+        await fallbackToJson();
+      } catch (fallbackError) {
+        setError(getErrorMessage(fallbackError));
+      }
     } finally {
       setLoading(false);
     }
-  }, [session, input, loading, upsertSession]);
+  }, [session, input, loading, upsertSession, updateMessage]);
 
   const resetSession = useCallback(() => {
     setSession(null);

@@ -14,11 +14,19 @@ import { MarkdownContent } from './MarkdownContent';
 interface MessageItemProps {
   role: 'user' | 'assistant';
   content: string;
+  think?: string;
+  isStreaming?: boolean;
   timestamp?: string;
   showActions?: boolean;
 }
 
-export function MessageItem({ role, content, showActions = true }: MessageItemProps) {
+export function MessageItem({
+  role,
+  content,
+  think,
+  isStreaming = false,
+  showActions = true,
+}: MessageItemProps) {
   const [copied, setCopied] = useState(false);
   const isUser = role === 'user';
 
@@ -96,7 +104,41 @@ export function MessageItem({ role, content, showActions = true }: MessageItemPr
                 {content}
               </Typography>
             ) : (
-              <MarkdownContent content={content} />
+              <>
+                {think && (
+                  <Box sx={{ mb: 1 }}>
+                    {isStreaming ? (
+                      <Typography
+                        variant="body2"
+                        sx={{ opacity: 0.6, fontSize: 13, whiteSpace: 'pre-wrap' }}
+                      >
+                        {think}
+                      </Typography>
+                    ) : (
+                      <Box
+                        component="details"
+                        sx={{
+                          bgcolor: 'action.hover',
+                          borderRadius: 2,
+                          p: 1,
+                          '& summary': { cursor: 'pointer', fontSize: 13 },
+                        }}
+                      >
+                        <Box component="summary" sx={{ listStyle: 'none' }}>
+                          思考过程
+                        </Box>
+                        <Typography
+                          variant="body2"
+                          sx={{ mt: 1, fontSize: 13, whiteSpace: 'pre-wrap' }}
+                        >
+                          {think}
+                        </Typography>
+                      </Box>
+                    )}
+                  </Box>
+                )}
+                <MarkdownContent content={content} />
+              </>
             )}
           </Paper>
 

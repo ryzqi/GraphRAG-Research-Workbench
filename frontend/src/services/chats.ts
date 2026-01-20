@@ -3,6 +3,8 @@
  */
 
 import { apiFetch } from './http';
+import { openSseStream } from './sse';
+import type { SseEvent } from '../lib/sse';
 
 export type ChatSessionType = 'kb_chat' | 'general_chat';
 export type AgentMode = 'single_agent' | 'multi_agent';
@@ -128,4 +130,41 @@ export async function resumeToolApproval(
     method: 'POST',
     body: JSON.stringify({ approved }),
   });
+}
+
+/**
+ * 发送消息并获取流式回答
+ */
+export async function streamChatMessage(
+  sessionId: string,
+  content: string,
+  signal?: AbortSignal
+): Promise<AsyncIterable<SseEvent>> {
+  return openSseStream(
+    `/api/v1/chats/${sessionId}/messages/stream`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ content }),
+    },
+    signal
+  );
+}
+
+/**
+ * 两阶段交互：提交工具审批并恢复执行（流式）
+ */
+export async function streamResumeToolApproval(
+  sessionId: string,
+  runId: string,
+  approved: boolean,
+  signal?: AbortSignal
+): Promise<AsyncIterable<SseEvent>> {
+  return openSseStream(
+    `/api/v1/chats/${sessionId}/runs/${runId}/resume/stream`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ approved }),
+    },
+    signal
+  );
 }

@@ -5,12 +5,17 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
+from fastapi.responses import StreamingResponse
+
+from app.api.sse import SSE_HEADERS, encode_sse
+from app.services.streaming import stream_snapshots
 
 from app.api.deps import AsyncSessionDep, CurrentUserDep
 from app.core.errors import AppError, ErrorCode
 from app.schemas.evaluations import EvaluationRunCreateRequest, EvaluationRunRead
 from app.services.evaluation_service import EvaluationService
+from app.models.evaluation_run import EvaluationStatus
 
 router = APIRouter()
 
@@ -37,6 +42,47 @@ async def get_evaluation_run(
             status_code=404,
         )
     return EvaluationRunRead.model_validate(run)
+
+
+@router.get("/runs/{eval_run_id}/stream")
+async def stream_evaluation_run(
+    eval_run_id: uuid.UUID,
+    session: AsyncSessionDep,
+    request: Request,
+    _user: CurrentUserDep,
+):
+    """流式推送评测进度。"""
+
+    async def _fetch():
+        return await EvaluationService().get_run(session, eval_run_id)
+
+    def _serialize(run: object) -> dict:
+        return EvaluationRunRead.model_validate(run).model_dump(mode="json")
+
+    def _is_terminal(run: object) -> bool:
+        status = getattr(run, "status", None)
+        return status in {
+            EvaluationStatus.SUCCEEDED,
+            EvaluationStatus.FAILED,
+            EvaluationStatus.CANCELED,
+        }
+
+    async def _events():
+        yield "meta", {"eval_run_id": str(eval_run_id), "type": "evaluation"}
+        async for event, data in stream_snapshots(
+            _fetch,
+            _serialize,
+            _is_terminal,
+            poll_interval=1.0,
+            request=request,
+        ):
+            yield event, data
+
+    return StreamingResponse(
+        encode_sse(_events()),
+        media_type="text/event-stream",
+        headers=SSE_HEADERS,
+    )
 
 
 @router.get("/runs/{eval_run_id}/results")

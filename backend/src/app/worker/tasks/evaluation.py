@@ -59,6 +59,12 @@ async def _run_evaluation(*, eval_run_id: str) -> None:
             dataset = eval_run.dataset
             questions = dataset.get("questions", [])
 
+            eval_run.summary = {
+                "total_questions": len(questions),
+                "completed_questions": 0,
+            }
+            await session.commit()
+
             case_results: list[dict] = []
             single_metrics: list[dict] = []
             multi_metrics: list[dict] = []
@@ -122,9 +128,26 @@ async def _run_evaluation(*, eval_run_id: str) -> None:
                     "latency_ms": multi_result["latency_ms"],
                 })
 
+                completed = len(case_results)
+                eval_run.summary = {
+                    "total_questions": len(questions),
+                    "completed_questions": completed,
+                    "single_agent": {
+                        "avg_score": _avg([m["score"] for m in single_metrics]),
+                        "avg_latency": _avg([m["latency_ms"] for m in single_metrics]),
+                    },
+                    "multi_agent": {
+                        "avg_score": _avg([m["score"] for m in multi_metrics]),
+                        "avg_latency": _avg([m["latency_ms"] for m in multi_metrics]),
+                    },
+                    "case_results": case_results,
+                }
+                await session.commit()
+
             # 计算汇总指标
             summary = {
                 "total_questions": len(questions),
+                "completed_questions": len(questions),
                 "single_agent": {
                     "avg_score": _avg([m["score"] for m in single_metrics]),
                     "avg_latency": _avg([m["latency_ms"] for m in single_metrics]),

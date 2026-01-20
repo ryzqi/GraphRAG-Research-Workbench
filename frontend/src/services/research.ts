@@ -3,7 +3,9 @@
  */
 
 import { apiFetch } from './http';
+import { openSseStream } from './sse';
 import type { AgentMode, AgentRun } from './chats';
+import type { SseEvent } from '../lib/sse';
 
 export interface ResearchRunCreateRequest {
   question: string;
@@ -51,4 +53,14 @@ export async function cancelResearchRun(runId: string): Promise<AgentRun> {
  */
 export async function getResearchReport(runId: string): Promise<ResearchReport> {
   return apiFetch<ResearchReport>(`/api/v1/research/runs/${runId}/report`);
+}
+
+/**
+ * 研究进度流
+ */
+export async function streamResearchRun(
+  runId: string,
+  signal?: AbortSignal
+): Promise<AsyncIterable<SseEvent>> {
+  return openSseStream(`/api/v1/research/runs/${runId}/stream`, { method: 'GET' }, signal);
 }

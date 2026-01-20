@@ -64,8 +64,15 @@ class FakeRetrievalService:
         return None
 
 
+class FakeCompiledGraph:
+    async def astream(self, *_args, **_kwargs):
+        if False:
+            yield "updates", {}
+        return
+
+
 class FakeResearchGraph:
-    async def run(self, **_kwargs) -> ResearchOutput:
+    async def build_runtime(self, **_kwargs):
         kb_id = uuid.uuid4()
         material_id = uuid.uuid4()
         chunks = [
@@ -90,10 +97,14 @@ class FakeResearchGraph:
             RetrievalResult(chunk=chunks[0], score=0.1),
             RetrievalResult(chunk=chunks[1], score=0.2),
         ]
+        state = {"messages": []}
+        return FakeCompiledGraph(), state, None, results
+
+    def build_output(self, _result_dict, retrieval_results):
         return ResearchOutput(
             report_md="报告内容",
             citations=[{"index": 1}, {"index": 2}],
-            retrieval_results=results,
+            retrieval_results=retrieval_results,
             stage_summaries={"draft": {"ok": True}},
             metrics={"m": 1},
         )
