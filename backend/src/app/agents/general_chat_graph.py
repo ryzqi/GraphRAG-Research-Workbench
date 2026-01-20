@@ -1,4 +1,4 @@
-"""全能代理 LangGraph 实现（ToolNode + OpenAI 风格工具调用）。
+"""普通代理 LangGraph 实现（ToolNode + OpenAI 风格工具调用）。
 
 - 使用 ToolCallingGraphBuilder 构建标准循环：model -> (human_review?) -> tools -> model
 - human_review 通过 interrupt 实现两阶段审批（由上层 service 负责返回/恢复）
@@ -21,7 +21,7 @@ from app.agents.tool_calling.registry import ToolMeta
 
 
 class GeneralChatState(TypedDict):
-    """全能代理状态（以 messages 为核心）。"""
+    """普通代理状态（以 messages 为核心）。"""
 
     messages: Annotated[list[BaseMessage], add_messages]
     pending_tool_calls: list[dict]
@@ -32,7 +32,7 @@ class GeneralChatState(TypedDict):
 
 
 class GeneralChatGraph:
-    """全能代理 LangGraph 图（支持 Human-in-the-loop）。"""
+    """普通代理 LangGraph 图（支持 Human-in-the-loop）。"""
 
     def __init__(
         self,

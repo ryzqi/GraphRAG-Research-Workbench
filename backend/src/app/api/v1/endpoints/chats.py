@@ -94,7 +94,7 @@ async def create_chat_message(
         return await service.answer(session=session, user_content=body.content)
 
     elif session.session_type == ChatSessionType.GENERAL_CHAT:
-        # 全能代理
+        # 普通代理
         mcp = request.app.state.mcp_client
         service = GeneralChatService(db, llm, mcp)
         result = await service.answer(session=session, user_content=body.content)
@@ -167,7 +167,7 @@ async def resume_general_chat(
     if not session:
         raise not_found("会话不存在", code="CHAT_SESSION_NOT_FOUND")
     if session.session_type != ChatSessionType.GENERAL_CHAT:
-        raise bad_request(code="CHAT_NOT_GENERAL_CHAT", message="仅全能代理支持恢复执行")
+        raise bad_request(code="CHAT_NOT_GENERAL_CHAT", message="仅普通代理支持恢复执行")
 
     run = await db.get(AgentRun, run_id)
     if not run or run.session_id != session.id:
@@ -202,7 +202,7 @@ async def resume_general_chat_stream(
     if not session:
         raise not_found("会话不存在", code="CHAT_SESSION_NOT_FOUND")
     if session.session_type != ChatSessionType.GENERAL_CHAT:
-        raise bad_request(code="CHAT_NOT_GENERAL_CHAT", message="仅全能代理支持恢复执行")
+        raise bad_request(code="CHAT_NOT_GENERAL_CHAT", message="仅普通代理支持恢复执行")
 
     run = await db.get(AgentRun, run_id)
     if not run or run.session_id != session.id:

@@ -1,5 +1,5 @@
 /**
- * 全能代理聊天页面（Gemini 风格重构）
+ * 普通代理聊天页面（Gemini 风格重构）
  */
 import { useCallback, useState } from 'react';
 import { Box, Chip, FormControlLabel, Stack, Switch, Typography } from '@mui/material';

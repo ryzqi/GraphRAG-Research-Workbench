@@ -28,7 +28,6 @@ import StorageIcon from '@mui/icons-material/Storage';
 import SearchIcon from '@mui/icons-material/Search';
 import ExtensionIcon from '@mui/icons-material/Extension';
 import AssessmentIcon from '@mui/icons-material/Assessment';
-import SettingsIcon from '@mui/icons-material/Settings';
 import Brightness4Icon from '@mui/icons-material/Brightness4';
 import Brightness7Icon from '@mui/icons-material/Brightness7';
 import HistoryIcon from '@mui/icons-material/History';
@@ -65,7 +64,7 @@ function preloadRoute(path: string) {
 }
 
 const navItems = [
-  { path: '/', label: '全能代理', icon: SmartToyIcon, end: true },
+  { path: '/', label: '普通代理', icon: SmartToyIcon, end: true },
   { path: '/kb-chat', label: '知识库问答', icon: ChatIcon },
   { path: '/knowledge-bases', label: '知识库管理', icon: StorageIcon },
   { path: '/research', label: '深度研究', icon: SearchIcon },
@@ -328,22 +327,6 @@ export function Sidebar({
       {/* 底部操作区 */}
       <Box sx={{ p: 1.5, borderTop: 1, borderColor: 'divider' }}>
         <List dense disablePadding>
-          <ListItem disablePadding sx={{ mb: 0.5 }}>
-            <Tooltip title={expanded ? '' : '设置'} placement="right">
-              <ListItemButton
-                sx={{
-                  borderRadius: 6,
-                  justifyContent: expanded ? 'flex-start' : 'center',
-                  px: expanded ? 2 : 1.5,
-                }}
-              >
-                <ListItemIcon sx={{ minWidth: 0, mr: expanded ? 2 : 0, justifyContent: 'center' }}>
-                  <SettingsIcon />
-                </ListItemIcon>
-                {expanded && <ListItemText primary="设置" primaryTypographyProps={{ fontSize: 14 }} />}
-              </ListItemButton>
-            </Tooltip>
-          </ListItem>
           <ListItem disablePadding>
             <Tooltip
               title={expanded ? '' : resolvedMode === 'light' ? '深色模式' : '浅色模式'}

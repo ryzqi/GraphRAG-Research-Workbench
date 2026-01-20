@@ -115,7 +115,7 @@ export function ExtensionsPage() {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
         <div>
           <h1 style={{ marginBottom: 8 }}>MCP扩展</h1>
-          <p style={{ color: '#6b7280' }}>管理 MCP 扩展，增强全能代理能力</p>
+          <p style={{ color: '#6b7280' }}>管理 MCP 扩展，增强普通代理能力</p>
         </div>
         <button
           onClick={() => setShowForm(true)}

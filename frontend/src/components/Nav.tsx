@@ -53,7 +53,7 @@ function preloadRoute(path: string) {
 }
 
 const navItems = [
-  { path: '/', label: '全能代理', icon: SmartToyIcon, end: true },
+  { path: '/', label: '普通代理', icon: SmartToyIcon, end: true },
   { path: '/kb-chat', label: '知识库问答', icon: ChatIcon },
   { path: '/knowledge-bases', label: '知识库管理', icon: StorageIcon },
   { path: '/research', label: '深度研究', icon: SearchIcon },

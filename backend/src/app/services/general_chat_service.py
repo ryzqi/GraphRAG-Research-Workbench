@@ -1,4 +1,4 @@
-"""全能代理服务。
+"""普通代理服务。
 
 使用 LangGraph 图实现，支持检查点持久化和 Human-in-the-loop。
 """
@@ -52,7 +52,7 @@ logger = logging.getLogger(__name__)
 
 
 class GeneralChatService:
-    """全能代理服务，支持 MCP 扩展调用和检查点持久化。"""
+    """普通代理服务，支持 MCP 扩展调用和检查点持久化。"""
 
     def __init__(
         self,
