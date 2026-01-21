@@ -67,6 +67,8 @@ export function MessageItem({
   });
   const displayContent = isUser ? content : streamedContent;
   const showCursor = !isUser && (isStreaming || cursorFading) && displayContent.length > 0;
+  const hasAnswerContent = !isUser && content.trim().length > 0;
+  const isThinking = !isUser && isStreaming && !hasAnswerContent;
 
   // 检测流式结束，触发淡出动画
   useEffect(() => {
@@ -178,6 +180,7 @@ export function MessageItem({
                 <ThinkingContainer
                   content={think}
                   isStreaming={isStreaming}
+                  isThinking={isThinking}
                   startTime={thinkStartTime}
                 />
               )}

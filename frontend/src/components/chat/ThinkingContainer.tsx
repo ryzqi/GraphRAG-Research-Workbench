@@ -59,6 +59,8 @@ interface ThinkingContainerProps {
   content: string;
   /** 是否正在流式输出 */
   isStreaming: boolean;
+  /** 是否处于思考阶段（用于控制星光图标显示） */
+  isThinking?: boolean;
   /** 初始展开状态 */
   defaultExpanded?: boolean;
   /** 思考开始时间戳 */
@@ -68,6 +70,7 @@ interface ThinkingContainerProps {
 export function ThinkingContainer({
   content,
   isStreaming,
+  isThinking,
   defaultExpanded = false,
   startTime,
 }: ThinkingContainerProps) {
@@ -75,7 +78,7 @@ export function ThinkingContainer({
   const [thinkDuration, setThinkDuration] = useState(0);
   const [isTransitioning, setIsTransitioning] = useState(false);
   const prevStreamingRef = useRef(isStreaming);
-  const showThinkingIcon = isStreaming;
+  const showThinkingIcon = isThinking ?? isStreaming;
   const contentIndent = showThinkingIcon ? 4.5 : 0;
 
   // 计算思考时长
