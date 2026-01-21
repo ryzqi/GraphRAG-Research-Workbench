@@ -15,7 +15,7 @@ class ExportService:
         self._celery = celery or celery_app
 
     async def create_export(self, session: AsyncSession, req: ExportCreateRequest) -> ExportJob:
-        job = ExportJob(status=ExportStatus.QUEUED)
+        job = ExportJob(status=ExportStatus.QUEUED, run_id=req.run_id)
         session.add(job)
         await session.commit()
         await session.refresh(job)

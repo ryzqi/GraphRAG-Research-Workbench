@@ -5,9 +5,8 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter
 
-from app.api.deps import CurrentUserDep, verify_admin_token
 from app.core.checkpoint import CheckpointManager
 from app.core.errors import not_found
 from app.schemas.checkpoints import (
@@ -22,7 +21,7 @@ router = APIRouter(prefix="/checkpoints", tags=["checkpoints"])
 
 
 @router.get("/{thread_id}", response_model=CheckpointStateResponse)
-async def get_checkpoint(thread_id: str, _user: CurrentUserDep) -> CheckpointStateResponse:
+async def get_checkpoint(thread_id: str) -> CheckpointStateResponse:
     """获取检查点状态。"""
     checkpoint_tuple = await CheckpointManager.get_state(thread_id)
 
@@ -40,7 +39,6 @@ async def get_checkpoint(thread_id: str, _user: CurrentUserDep) -> CheckpointSta
 @router.get("/{thread_id}/history", response_model=CheckpointHistoryResponse)
 async def list_checkpoint_history(
     thread_id: str,
-    _user: CurrentUserDep,
     limit: int = 10,
 ) -> CheckpointHistoryResponse:
     """列出检查点历史。"""
@@ -62,11 +60,9 @@ async def list_checkpoint_history(
 @router.post(
     "/{thread_id}/resume",
     response_model=ResumeResponse,
-    dependencies=[Depends(verify_admin_token)],
 )
 async def resume_execution(
     thread_id: str,
-    _user: CurrentUserDep,
     request: ResumeRequest,
 ) -> ResumeResponse:
     """从检查点恢复执行（Human-in-the-loop）。
@@ -87,8 +83,8 @@ async def resume_execution(
     )
 
 
-@router.delete("/{thread_id}", dependencies=[Depends(verify_admin_token)])
-async def delete_checkpoint(thread_id: str, _user: CurrentUserDep) -> dict:
+@router.delete("/{thread_id}")
+async def delete_checkpoint(thread_id: str) -> dict:
     """删除检查点。"""
     await CheckpointManager.delete_thread(thread_id)
     return {"status": "deleted", "thread_id": thread_id}

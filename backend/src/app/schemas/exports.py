@@ -29,6 +29,7 @@ class ExportJob(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
+    run_id: uuid.UUID | None = None
     status: ExportStatus
     download_url: str | None = None
     error_message: str | None = None

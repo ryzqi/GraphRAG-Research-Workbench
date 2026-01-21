@@ -237,14 +237,6 @@ class Settings(BaseSettings):
         32, alias="INGESTION_EMBEDDING_BATCH_SIZE"
     )
 
-    # JWT 认证配置
-    jwt_secret_key: str = Field("CHANGE_ME_IN_PRODUCTION", alias="JWT_SECRET_KEY")
-    jwt_algorithm: str = Field("HS256", alias="JWT_ALGORITHM")
-    jwt_expire_minutes: int = Field(60 * 24, alias="JWT_EXPIRE_MINUTES")
-
-    # 内部管理接口保护（低成本方案：共享 token）
-    admin_token: str = Field("CHANGE_ME_IN_PRODUCTION", alias="ADMIN_TOKEN")
-
     # OpenTelemetry 配置
     otel_enabled: bool = Field(False, alias="OTEL_ENABLED")
     otel_endpoint: str | None = Field(None, alias="OTEL_EXPORTER_OTLP_ENDPOINT")
@@ -302,10 +294,6 @@ def validate_startup_settings(settings: Settings) -> None:
 
     problems: list[str] = []
 
-    jwt_secret = settings.jwt_secret_key.strip()
-    if not jwt_secret or jwt_secret == "CHANGE_ME_IN_PRODUCTION" or len(jwt_secret) < 32:
-        problems.append("JWT_SECRET_KEY 为空/占位/过短（建议至少 32 字符）")
-
     llm_key = settings.llm_api_key.strip()
     if not llm_key or llm_key == "REPLACE_ME":
         problems.append("LLM_API_KEY 为空或为占位值（REPLACE_ME）")
@@ -313,10 +301,6 @@ def validate_startup_settings(settings: Settings) -> None:
     embedding_key = settings.embedding_api_key.strip()
     if not embedding_key or embedding_key == "REPLACE_ME":
         problems.append("EMBEDDING_API_KEY 为空或为占位值（REPLACE_ME）")
-
-    admin_token = settings.admin_token.strip()
-    if not admin_token or admin_token == "CHANGE_ME_IN_PRODUCTION" or len(admin_token) < 16:
-        problems.append("ADMIN_TOKEN 为空/占位/过短（建议至少 16 字符）")
 
     if settings.mcp_enabled and not settings.mcp_confirmation_required:
         problems.append("启用 MCP 时必须开启人工确认（MCP_CONFIRMATION_REQUIRED=true）")

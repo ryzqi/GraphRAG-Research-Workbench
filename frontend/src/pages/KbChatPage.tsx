@@ -1,7 +1,7 @@
 /**
  * 知识库问答页面（Gemini 风格重构）
  */
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Box, Stack, Typography } from '@mui/material';
 import RestartAltIcon from '@mui/icons-material/RestartAlt';
@@ -35,9 +35,24 @@ import {
   parseDelta,
 } from '../lib/deltaParser';
 
+function isReloadNavigation(): boolean {
+  if (typeof performance === 'undefined') return false;
+  const entries = performance.getEntriesByType('navigation');
+  if (entries.length > 0) {
+    const nav = entries[0] as PerformanceNavigationTiming;
+    return nav.type === 'reload';
+  }
+  const legacy = (performance as Performance & { navigation?: { type?: number } }).navigation;
+  return legacy?.type === 1;
+}
+
 export function KbChatPage() {
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const sessionId = searchParams.get('sessionId');
+  const initialSessionIdRef = useRef(sessionId);
+  const bootstrapPromiseRef = useRef<Promise<{ session: ChatSession; kbIds: string[] }> | null>(
+    null
+  );
   const knowledgeBasesQuery = useKnowledgeBases();
   const knowledgeBases = knowledgeBasesQuery.data ?? [];
 
@@ -48,6 +63,7 @@ export function KbChatPage() {
   const [loading, setLoading] = useState(false);
   const [loadingSession, setLoadingSession] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [skipSessionLoad, setSkipSessionLoad] = useState(() => isReloadNavigation());
 
   const { upsertSession } = useRecentHistory();
 
@@ -55,7 +71,7 @@ export function KbChatPage() {
     error ?? (knowledgeBasesQuery.error ? getErrorMessage(knowledgeBasesQuery.error) : null);
 
   useEffect(() => {
-    if (!sessionId) {
+    if (!sessionId || skipSessionLoad) {
       return;
     }
     let active = true;
@@ -90,7 +106,63 @@ export function KbChatPage() {
     return () => {
       active = false;
     };
-  }, [sessionId]);
+  }, [sessionId, skipSessionLoad]);
+
+  useEffect(() => {
+    if (!skipSessionLoad) {
+      return;
+    }
+    if (!initialSessionIdRef.current) {
+      setSkipSessionLoad(false);
+      return;
+    }
+    let active = true;
+    let cancelled = false;
+    const bootstrapSession = async () => {
+      setLoadingSession(true);
+      setError(null);
+      try {
+        if (!bootstrapPromiseRef.current) {
+          bootstrapPromiseRef.current = (async () => {
+            const sourceSession = await getChatSession(initialSessionIdRef.current as string);
+            const kbIds = sourceSession.selected_kb_ids ?? [];
+            if (kbIds.length === 0) {
+              throw new Error('请至少选择一个知识库');
+            }
+            const newSession = await createChatSession({
+              session_type: 'kb_chat',
+              selected_kb_ids: kbIds,
+              allow_external: false,
+              mode: 'single_agent' as AgentMode,
+            });
+            return { session: newSession, kbIds };
+          })();
+        }
+        const result = await bootstrapPromiseRef.current;
+        if (!active || cancelled) return;
+        setSelectedKbIds(result.kbIds);
+        setSession(result.session);
+        setMessages([]);
+        const nextParams = new URLSearchParams(window.location.search);
+        nextParams.set('sessionId', result.session.id);
+        setSearchParams(nextParams, { replace: true });
+      } catch (e) {
+        if (!active || cancelled) return;
+        setError(getErrorMessage(e));
+        bootstrapPromiseRef.current = null;
+      } finally {
+        if (active && !cancelled) {
+          setLoadingSession(false);
+          setSkipSessionLoad(false);
+        }
+      }
+    };
+    void bootstrapSession();
+    return () => {
+      active = false;
+      cancelled = true;
+    };
+  }, [setSearchParams, skipSessionLoad]);
 
   useEffect(() => {
     if (sessionId) return;
@@ -139,19 +211,12 @@ export function KbChatPage() {
       setSession(newSession);
       setMessages([]);
 
-      // 更新 Recent 历史
-      upsertSession({
-        sessionId: newSession.id,
-        title: '知识库问答',
-        type: 'kb_chat',
-        updatedAt: new Date().toISOString(),
-      });
     } catch (e) {
       setError(getErrorMessage(e));
     } finally {
       setLoading(false);
     }
-  }, [selectedKbIds, upsertSession]);
+  }, [selectedKbIds]);
 
   const handleSend = useCallback(async () => {
     if (!session || !input.trim() || loading || loadingSession) return;
@@ -174,19 +239,24 @@ export function KbChatPage() {
       { id: assistantId, role: 'assistant', content: '', think: '', toolSteps: [], isStreaming: true, thinkStartTime: Date.now() },
     ]);
 
-    // 更新会话标题
-    upsertSession({
-      sessionId: session.id,
-      title: userContent.slice(0, 30),
-      type: 'kb_chat',
-      updatedAt: new Date().toISOString(),
-    });
+    let recentTouched = false;
+    const touchRecent = () => {
+      if (recentTouched) return;
+      recentTouched = true;
+      upsertSession({
+        sessionId: session.id,
+        title: userContent.slice(0, 30),
+        type: 'kb_chat',
+        updatedAt: new Date().toISOString(),
+      });
+    };
 
     const fallbackToJson = async () => {
       const response: ChatMessageResponse = await sendMessage(session.id, userContent);
       if (response.status !== 'succeeded') {
         throw new Error('知识库对话不支持工具审批流程');
       }
+      touchRecent();
       updateMessage(assistantId, () => ({
         id: response.assistant_message.id,
         role: 'assistant',
@@ -200,6 +270,7 @@ export function KbChatPage() {
 
     try {
       const stream = await streamChatMessage(session.id, userContent);
+      touchRecent();
       for await (const event of stream) {
         hadStreamEvent = true;
         if (event.event === 'meta') {

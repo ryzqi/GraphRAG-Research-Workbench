@@ -2,7 +2,7 @@
  * 资料 API 封装
  */
 
-import { apiFetch, buildAuthHeaders, getApiBaseUrl } from './http';
+import { apiFetch, getApiBaseUrl } from './http';
 import type { ListResponse } from './types';
 
 export type SourceType = 'upload' | 'url' | 'text';
@@ -78,7 +78,7 @@ export async function uploadMaterial(
   formData.append('file', file);
 
   const requestId = globalThis.crypto?.randomUUID?.() ?? `req_${Date.now()}`;
-  const headers = new Headers(buildAuthHeaders());
+  const headers = new Headers();
   headers.set('X-Request-Id', requestId);
 
   const res = await fetch(`${getApiBaseUrl()}/api/v1/knowledge-bases/${kbId}/materials/upload`, {

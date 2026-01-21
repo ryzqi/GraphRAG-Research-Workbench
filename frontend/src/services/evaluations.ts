@@ -14,6 +14,7 @@ export interface EvaluationRunCreateRequest {
       id: string;
       question: string;
       reference_answer?: string;
+      run_id?: string;
       scoring_criteria?: Record<string, number>;
       tags?: string[];
     }>;

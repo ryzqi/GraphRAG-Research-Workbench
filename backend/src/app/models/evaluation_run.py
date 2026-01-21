@@ -7,7 +7,7 @@ from datetime import datetime
 from enum import Enum
 
 import sqlalchemy as sa
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -37,6 +37,9 @@ class EvaluationRun(Base):
     )
     dataset: Mapped[dict] = mapped_column(JSONB, nullable=False)
     config: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    related_session_ids: Mapped[list[uuid.UUID] | None] = mapped_column(
+        ARRAY(sa.Uuid(as_uuid=True)), nullable=True
+    )
     summary: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     error_message: Mapped[str | None] = mapped_column(sa.Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(

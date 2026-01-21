@@ -10,13 +10,15 @@ from sqlalchemy import and_, delete, func, select
 
 from app.api.sse import SSE_HEADERS, encode_sse
 
-from app.api.deps import AsyncSessionDep, CurrentUserDep
+from app.api.deps import AsyncSessionDep
 from app.core.checkpoint import CheckpointManager
 from app.core.errors import AppError, bad_request, not_found
 from app.core.settings import get_settings
 from app.models.agent_run import AgentRun, AgentRunStatus, AgentRunType
 from app.models.chat_message import ChatMessage, MessageRole
 from app.models.chat_session import ChatSession, ChatSessionType
+from app.models.evaluation_run import EvaluationRun
+from app.models.export_job import ExportJob
 from app.schemas.chats import (
     ChatAnswerResponse,
     ChatPendingToolApprovalResponse,
@@ -37,7 +39,6 @@ router = APIRouter()
 @router.post("", response_model=ChatSessionRead, status_code=status.HTTP_201_CREATED)
 async def create_chat_session(
     db: AsyncSessionDep,
-    _user: CurrentUserDep,
     body: ChatSessionCreate,
 ) -> ChatSessionRead:
     """创建会话。"""
@@ -63,7 +64,6 @@ async def create_chat_session(
 @router.get("/recent", response_model=ChatRecentListResponse)
 async def list_recent_chats(
     db: AsyncSessionDep,
-    _user: CurrentUserDep,
     limit: int = Query(20, ge=1, le=100),
 ) -> ChatRecentListResponse:
     """获取最近对话列表。"""
@@ -137,7 +137,6 @@ async def list_recent_chats(
 @router.get("/{session_id}", response_model=ChatSessionRead)
 async def get_chat_session(
     db: AsyncSessionDep,
-    _user: CurrentUserDep,
     session_id: uuid.UUID,
 ) -> ChatSessionRead:
     """获取会话详情。"""
@@ -150,7 +149,6 @@ async def get_chat_session(
 @router.delete("/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_chat_session(
     db: AsyncSessionDep,
-    _user: CurrentUserDep,
     session_id: uuid.UUID,
 ) -> None:
     """删除会话。"""
@@ -167,6 +165,26 @@ async def delete_chat_session(
             details={"reason": str(exc)},
         )
 
+    run_ids_result = await db.execute(
+        select(AgentRun.id).where(AgentRun.session_id == session_id)
+    )
+    run_ids = [row[0] for row in run_ids_result.all()]
+
+    eval_ids: list[uuid.UUID] = []
+    eval_ids_result = await db.execute(
+        select(EvaluationRun.id).where(
+            EvaluationRun.related_session_ids.any(session_id)
+        )
+    )
+    eval_ids = [row[0] for row in eval_ids_result.all()]
+
+    export_run_ids = list({*run_ids, *eval_ids})
+    if export_run_ids:
+        await db.execute(delete(ExportJob).where(ExportJob.run_id.in_(export_run_ids)))
+
+    if eval_ids:
+        await db.execute(delete(EvaluationRun).where(EvaluationRun.id.in_(eval_ids)))
+
     await db.execute(delete(AgentRun).where(AgentRun.session_id == session_id))
     await db.delete(session)
     await db.commit()
@@ -176,7 +194,6 @@ async def delete_chat_session(
 @router.get("/{session_id}/messages", response_model=list[ChatMessageRead])
 async def get_chat_messages(
     db: AsyncSessionDep,
-    _user: CurrentUserDep,
     session_id: uuid.UUID,
 ) -> list[ChatMessageRead]:
     """获取会话消息（仅返回 HumanMessage/AIMessage）。"""
@@ -205,7 +222,6 @@ async def get_chat_messages(
 )
 async def create_chat_message(
     db: AsyncSessionDep,
-    _user: CurrentUserDep,
     request: Request,
     response: Response,
     session_id: uuid.UUID,
@@ -241,7 +257,6 @@ async def create_chat_message(
 @router.post("/{session_id}/messages/stream")
 async def create_chat_message_stream(
     db: AsyncSessionDep,
-    _user: CurrentUserDep,
     request: Request,
     session_id: uuid.UUID,
     body: ChatMessageCreate,
@@ -286,7 +301,6 @@ async def create_chat_message_stream(
 )
 async def resume_general_chat(
     db: AsyncSessionDep,
-    _user: CurrentUserDep,
     request: Request,
     response: Response,
     session_id: uuid.UUID,
@@ -321,7 +335,6 @@ async def resume_general_chat(
 @router.post("/{session_id}/runs/{run_id}/resume/stream")
 async def resume_general_chat_stream(
     db: AsyncSessionDep,
-    _user: CurrentUserDep,
     request: Request,
     session_id: uuid.UUID,
     run_id: uuid.UUID,

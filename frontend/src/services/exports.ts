@@ -14,6 +14,7 @@ export interface ExportCreateRequest {
 
 export interface ExportJob {
   id: string;
+  run_id?: string;
   status: ExportStatus;
   download_url: string | null;
   error_message: string | null;

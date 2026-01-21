@@ -1,5 +1,5 @@
 import { parseSseStream, type SseEvent } from '../lib/sse';
-import { buildAuthHeaders, getApiBaseUrl, HttpError } from './http';
+import { getApiBaseUrl, HttpError } from './http';
 
 export async function openSseStream(
   path: string,
@@ -10,11 +10,6 @@ export async function openSseStream(
   headers.set('Accept', 'text/event-stream');
   if (init.body && !headers.has('Content-Type')) {
     headers.set('Content-Type', 'application/json');
-  }
-
-  const authHeaders = buildAuthHeaders();
-  for (const [key, value] of Object.entries(authHeaders)) {
-    headers.set(key, value);
   }
 
   const res = await fetch(`${getApiBaseUrl()}${path}`, {

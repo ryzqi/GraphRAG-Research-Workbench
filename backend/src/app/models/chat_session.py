@@ -60,7 +60,12 @@ class ChatSession(Base):
 
     # 关系
     messages: Mapped[list["ChatMessage"]] = relationship(
-        "ChatMessage", back_populates="session", lazy="selectin", order_by="ChatMessage.created_at"
+        "ChatMessage",
+        back_populates="session",
+        lazy="selectin",
+        order_by="ChatMessage.created_at",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
     )
     runs: Mapped[list["AgentRun"]] = relationship(
         "AgentRun", back_populates="session", lazy="selectin"

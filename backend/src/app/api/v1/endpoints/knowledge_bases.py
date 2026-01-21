@@ -6,7 +6,7 @@ import uuid
 
 from fastapi import APIRouter, HTTPException, Query, status
 
-from app.api.deps import AsyncSessionDep, CurrentUserDep
+from app.api.deps import AsyncSessionDep
 from app.schemas.knowledge_bases import (
     KnowledgeBaseCreate,
     KnowledgeBaseListResponse,
@@ -22,7 +22,6 @@ router = APIRouter()
 @router.get("", response_model=KnowledgeBaseListResponse)
 async def list_knowledge_bases(
     db: AsyncSessionDep,
-    _user: CurrentUserDep,
     skip: int = Query(0, ge=0, description="跳过记录数"),
     limit: int = Query(100, ge=1, le=100, description="返回记录数"),
 ) -> KnowledgeBaseListResponse:
@@ -42,7 +41,7 @@ async def list_knowledge_bases(
 
 @router.post("", response_model=KnowledgeBaseRead, status_code=status.HTTP_201_CREATED)
 async def create_knowledge_base(
-    db: AsyncSessionDep, _user: CurrentUserDep, body: KnowledgeBaseCreate
+    db: AsyncSessionDep, body: KnowledgeBaseCreate
 ) -> KnowledgeBaseRead:
     """创建知识库。"""
     service = KnowledgeBaseService(db)
@@ -65,7 +64,7 @@ async def create_knowledge_base(
 
 @router.get("/{kb_id}", response_model=KnowledgeBaseRead)
 async def get_knowledge_base(
-    db: AsyncSessionDep, _user: CurrentUserDep, kb_id: uuid.UUID
+    db: AsyncSessionDep, kb_id: uuid.UUID
 ) -> KnowledgeBaseRead:
     """获取知识库详情。"""
     service = KnowledgeBaseService(db)
@@ -80,7 +79,7 @@ async def get_knowledge_base(
 
 @router.patch("/{kb_id}", response_model=KnowledgeBaseRead)
 async def update_knowledge_base(
-    db: AsyncSessionDep, _user: CurrentUserDep, kb_id: uuid.UUID, body: KnowledgeBaseUpdate
+    db: AsyncSessionDep, kb_id: uuid.UUID, body: KnowledgeBaseUpdate
 ) -> KnowledgeBaseRead:
     """更新知识库。"""
     service = KnowledgeBaseService(db)
@@ -112,7 +111,6 @@ async def update_knowledge_base(
 @router.delete("/{kb_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_knowledge_base(
     db: AsyncSessionDep,
-    _user: CurrentUserDep,
     kb_id: uuid.UUID,
     confirm: bool = Query(..., description="二次确认（true 才执行）"),
 ) -> None:
@@ -136,7 +134,7 @@ async def delete_knowledge_base(
 
 @router.post("/{kb_id}/archive", response_model=KnowledgeBaseRead)
 async def archive_knowledge_base(
-    db: AsyncSessionDep, _user: CurrentUserDep, kb_id: uuid.UUID
+    db: AsyncSessionDep, kb_id: uuid.UUID
 ) -> KnowledgeBaseRead:
     """归档知识库。"""
     service = KnowledgeBaseService(db)

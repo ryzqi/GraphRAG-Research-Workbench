@@ -6,7 +6,7 @@ import uuid
 
 from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile, status
 
-from app.api.deps import AsyncSessionDep, CurrentUserDep
+from app.api.deps import AsyncSessionDep
 from app.schemas.materials import (
     MaterialCreateText,
     MaterialCreateUrl,
@@ -26,7 +26,6 @@ router = APIRouter()
 )
 async def list_materials(
     db: AsyncSessionDep,
-    _user: CurrentUserDep,
     kb_id: uuid.UUID,
     skip: int = Query(0, ge=0, description="跳过记录数"),
     limit: int = Query(100, ge=1, le=100, description="返回记录数"),
@@ -60,7 +59,6 @@ async def list_materials(
 )
 async def create_material(
     db: AsyncSessionDep,
-    _user: CurrentUserDep,
     kb_id: uuid.UUID,
     body: MaterialCreateText | MaterialCreateUrl,
 ) -> SourceMaterialRead:
@@ -94,7 +92,6 @@ async def create_material(
 )
 async def upload_material(
     db: AsyncSessionDep,
-    _user: CurrentUserDep,
     kb_id: uuid.UUID,
     title: str = Form(...),
     file: UploadFile = File(...),

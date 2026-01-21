@@ -11,7 +11,6 @@ from app.api.v1.api import api_router
 from app.api.v1.endpoints import health as health_endpoints
 from app.core.errors import register_exception_handlers
 from app.core.middleware.request_id import RequestIdMiddleware
-from app.core.settings import get_settings
 from app.db.session import get_db_session
 from app.schemas.extensions import ToolDescriptor, ToolExtensionRead
 from app.services.extension_service import ExtensionService
@@ -34,7 +33,6 @@ def _build_client() -> tuple[TestClient, dict[str, str]]:
     client = TestClient(app)
     headers = {
         "X-Request-ID": "rid_test",
-        "X-Admin-Token": get_settings().admin_token,
     }
     return client, headers
 

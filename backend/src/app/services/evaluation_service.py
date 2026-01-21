@@ -9,6 +9,7 @@ from celery import Celery
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.agent_run import AgentRun
 from app.models.evaluation_run import EvaluationRun, EvaluationStatus
 from app.schemas.evaluations import EvaluationRunCreateRequest
 from app.worker.celery_app import celery_app
@@ -24,10 +25,35 @@ class EvaluationService:
         self, session: AsyncSession, req: EvaluationRunCreateRequest
     ) -> EvaluationRun:
         """创建评测任务并入队。"""
+        run_ids: set[uuid.UUID] = set()
+        dataset = req.dataset
+        questions = dataset.get("questions", []) if isinstance(dataset, dict) else []
+        if isinstance(questions, list):
+            for question in questions:
+                if not isinstance(question, dict):
+                    continue
+                raw_run_id = question.get("run_id") or question.get("runId")
+                if not raw_run_id:
+                    continue
+                try:
+                    run_ids.add(uuid.UUID(str(raw_run_id)))
+                except (TypeError, ValueError):
+                    continue
+
+        related_session_ids: list[uuid.UUID] = []
+        if run_ids:
+            stmt = select(AgentRun.session_id).where(
+                AgentRun.id.in_(run_ids),
+                AgentRun.session_id.is_not(None),
+            )
+            result = await session.execute(stmt)
+            related_session_ids = list({row[0] for row in result.all() if row[0]})
+
         run = EvaluationRun(
             status=EvaluationStatus.QUEUED,
             dataset=req.dataset,
             config=req.config,
+            related_session_ids=related_session_ids or None,
         )
         session.add(run)
         await session.commit()

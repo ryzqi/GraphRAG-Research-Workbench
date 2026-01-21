@@ -1,12 +1,10 @@
 from __future__ import annotations
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
-from app.api.deps import verify_admin_token
 from app.core.errors import AppError, register_exception_handlers
 from app.core.middleware.request_id import RequestIdMiddleware
-from app.core.settings import get_settings
 
 
 def _build_app() -> FastAPI:
@@ -28,10 +26,6 @@ def _build_app() -> FastAPI:
             status_code=400,
             detail={"code": "BAD_REQUEST", "message": "bad", "details": {"foo": "bar"}},
         )
-
-    @app.get("/admin", dependencies=[Depends(verify_admin_token)])
-    async def _admin() -> dict[str, bool]:
-        return {"ok": True}
 
     return app
 
@@ -74,24 +68,6 @@ def test_error_contract_http_dict() -> None:
     _assert_error_contract(res)
     assert res.json()["error"]["code"] == "BAD_REQUEST"
     assert res.json()["error"]["details"]["foo"] == "bar"
-
-
-def test_admin_token_dependency() -> None:
-    app = _build_app()
-    client = TestClient(app)
-
-    missing = client.get("/admin", headers={"X-Request-ID": "rid_test"})
-    assert missing.status_code == 401
-    _assert_error_contract(missing)
-    assert missing.json()["error"]["code"] == "MISSING_ADMIN_TOKEN"
-
-    ok = client.get(
-        "/admin",
-        headers={"X-Request-ID": "rid_test", "X-Admin-Token": get_settings().admin_token},
-    )
-    assert ok.status_code == 200
-    assert ok.json() == {"ok": True}
-    assert ok.headers.get("x-request-id") == "rid_test"
 
 
 def test_error_response_includes_cors_headers_when_origin_allowed() -> None:

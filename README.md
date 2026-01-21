@@ -53,10 +53,10 @@ pwsh -ExecutionPolicy Bypass -File .\scripts\start_all.ps1
 
 ### 2) 启动后端（FastAPI）
 
-```bash
+```powershell
 cd backend
 uv sync
-uv run uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+uv run uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
 - 文档：`http://localhost:8000/docs`
@@ -64,14 +64,14 @@ uv run uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 
 ### 3) 启动 Worker（Celery）
 
-```bash
+```powershell
 cd backend
 uv run celery -A app.worker.celery_app worker --loglevel=INFO --pool=solo
 ```
 
 ### 4) 启动前端（React + Vite）
 
-```bash
+```powershell
 cd frontend
 npm install
 npm run dev

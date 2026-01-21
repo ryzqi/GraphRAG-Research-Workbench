@@ -116,7 +116,7 @@ if ($needBackend) {
 }
 
 if (-not $SkipBackend) {
-    Start-Terminal -Title "backend-api" -WorkingDirectory $backendDir -Command "uv run uvicorn app.main:app --reload --host 0.0.0.0 --port 8000"
+    Start-Terminal -Title "backend-api" -WorkingDirectory $backendDir -Command "uv run uvicorn app.main:app --reload --host 127.0.0.1 --port 8000"
 }
 
 if (-not $SkipWorker) {

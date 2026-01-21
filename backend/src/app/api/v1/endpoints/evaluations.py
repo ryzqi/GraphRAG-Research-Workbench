@@ -11,7 +11,7 @@ from fastapi.responses import StreamingResponse
 from app.api.sse import SSE_HEADERS, encode_sse
 from app.services.streaming import stream_snapshots
 
-from app.api.deps import AsyncSessionDep, CurrentUserDep
+from app.api.deps import AsyncSessionDep
 from app.core.errors import AppError, ErrorCode
 from app.schemas.evaluations import EvaluationRunCreateRequest, EvaluationRunRead
 from app.services.evaluation_service import EvaluationService
@@ -22,7 +22,7 @@ router = APIRouter()
 
 @router.post("/runs", response_model=EvaluationRunRead, status_code=202)
 async def create_evaluation_run(
-    req: EvaluationRunCreateRequest, session: AsyncSessionDep, _user: CurrentUserDep
+    req: EvaluationRunCreateRequest, session: AsyncSessionDep
 ) -> EvaluationRunRead:
     """发起对比评测（异步）。"""
     run = await EvaluationService().create_run(session, req)
@@ -31,7 +31,7 @@ async def create_evaluation_run(
 
 @router.get("/runs/{eval_run_id}", response_model=EvaluationRunRead)
 async def get_evaluation_run(
-    eval_run_id: uuid.UUID, session: AsyncSessionDep, _user: CurrentUserDep
+    eval_run_id: uuid.UUID, session: AsyncSessionDep
 ) -> EvaluationRunRead:
     """查询评测状态。"""
     run = await EvaluationService().get_run(session, eval_run_id)
@@ -49,7 +49,6 @@ async def stream_evaluation_run(
     eval_run_id: uuid.UUID,
     session: AsyncSessionDep,
     request: Request,
-    _user: CurrentUserDep,
 ):
     """流式推送评测进度。"""
 
@@ -87,7 +86,7 @@ async def stream_evaluation_run(
 
 @router.get("/runs/{eval_run_id}/results")
 async def get_evaluation_results(
-    eval_run_id: uuid.UUID, session: AsyncSessionDep, _user: CurrentUserDep
+    eval_run_id: uuid.UUID, session: AsyncSessionDep
 ) -> dict[str, Any]:
     """获取评测结果（对比汇总 + 题目级明细）。"""
     results = await EvaluationService().get_results(session, eval_run_id)
@@ -102,7 +101,7 @@ async def get_evaluation_results(
 
 @router.post("/runs/{eval_run_id}/cancel", response_model=EvaluationRunRead)
 async def cancel_evaluation_run(
-    eval_run_id: uuid.UUID, session: AsyncSessionDep, _user: CurrentUserDep
+    eval_run_id: uuid.UUID, session: AsyncSessionDep
 ) -> EvaluationRunRead:
     """取消评测任务。"""
     run = await EvaluationService().cancel_run(session, eval_run_id)

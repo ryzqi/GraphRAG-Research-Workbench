@@ -6,7 +6,7 @@ import uuid
 
 from fastapi import APIRouter, HTTPException, status
 
-from app.api.deps import AsyncSessionDep, CurrentUserDep
+from app.api.deps import AsyncSessionDep
 from app.schemas.ingestions import (
     IngestionJobCreateRequest,
     IngestionJobRead,
@@ -24,7 +24,7 @@ router = APIRouter()
     status_code=status.HTTP_202_ACCEPTED,
 )
 async def create_ingestion_job(
-    db: AsyncSessionDep, _user: CurrentUserDep, body: IngestionJobCreateRequest
+    db: AsyncSessionDep, body: IngestionJobCreateRequest
 ) -> IngestionJobRead:
     """创建导入任务（异步）。"""
     # 验证知识库存在
@@ -73,7 +73,7 @@ async def create_ingestion_job(
 
 @router.get("/{ingestion_id}", response_model=IngestionJobRead)
 async def get_ingestion_job(
-    db: AsyncSessionDep, _user: CurrentUserDep, ingestion_id: uuid.UUID
+    db: AsyncSessionDep, ingestion_id: uuid.UUID
 ) -> IngestionJobRead:
     """获取导入任务状态。"""
     service = IngestionService(db)
@@ -89,7 +89,7 @@ async def get_ingestion_job(
 
 @router.post("/{ingestion_id}/cancel", response_model=IngestionJobRead)
 async def cancel_ingestion_job(
-    db: AsyncSessionDep, _user: CurrentUserDep, ingestion_id: uuid.UUID
+    db: AsyncSessionDep, ingestion_id: uuid.UUID
 ) -> IngestionJobRead:
     """取消导入任务。"""
     service = IngestionService(db)

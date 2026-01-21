@@ -1,8 +1,9 @@
 /**
  * Recent 历史管理 Hook
- * 从服务端读取最近对话列表
+ * 基于 React Query 共享 Recent 列表
  */
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { deleteChatSession, getRecentChats } from '../services/chats';
 
 export interface RecentSession {
@@ -13,65 +14,89 @@ export interface RecentSession {
 }
 
 const MAX_RECENT = 20;
+const RECENT_QUERY_KEY = ['chats', 'recent', MAX_RECENT] as const;
+
+type RecentHistoryData = {
+  sessions: RecentSession[];
+  webSearchAvailable: boolean;
+};
 
 export function useRecentHistory() {
-  const [sessions, setSessions] = useState<RecentSession[]>([]);
-  const [webSearchAvailable, setWebSearchAvailable] = useState(false);
-
-  const refresh = useCallback(async () => {
-    try {
+  const queryClient = useQueryClient();
+  const recentQuery = useQuery<RecentHistoryData>({
+    queryKey: RECENT_QUERY_KEY,
+    queryFn: async () => {
       const data = await getRecentChats(MAX_RECENT);
-      const mapped = data.items.map((item) => ({
-        sessionId: item.id,
-        title: item.title ?? '',
-        type: item.session_type,
-        updatedAt: item.updated_at,
-      }));
-      setSessions(mapped.slice(0, MAX_RECENT));
-      setWebSearchAvailable(Boolean(data.web_search_available));
-    } catch {
-      // 保持静默失败，避免影响主流程
-    }
-  }, []);
-
-  useEffect(() => {
-    void refresh();
-  }, [refresh]);
+      return {
+        sessions: data.items.map((item) => ({
+          sessionId: item.id,
+          title: item.title ?? '',
+          type: item.session_type,
+          updatedAt: item.updated_at,
+        })),
+        webSearchAvailable: Boolean(data.web_search_available),
+      };
+    },
+  });
 
   // 添加或更新会话（本地更新 + 后台刷新）
   const upsertSession = useCallback(
     (session: RecentSession) => {
-      setSessions((prev) => {
-        const filtered = prev.filter((s) => s.sessionId !== session.sessionId);
-        return [{ ...session, updatedAt: new Date().toISOString() }, ...filtered].slice(
-          0,
-          MAX_RECENT
-        );
+      queryClient.setQueryData<RecentHistoryData>(RECENT_QUERY_KEY, (prev) => {
+        const updated = { ...session, updatedAt: new Date().toISOString() };
+        if (!prev) {
+          return { sessions: [updated], webSearchAvailable: false };
+        }
+        const filtered = prev.sessions.filter((s) => s.sessionId !== session.sessionId);
+        return {
+          ...prev,
+          sessions: [updated, ...filtered].slice(0, MAX_RECENT),
+        };
       });
-      void refresh();
+      void queryClient.invalidateQueries({ queryKey: RECENT_QUERY_KEY });
     },
-    [refresh]
+    [queryClient]
   );
 
   // 删除会话（仅本地）
-  const removeSession = useCallback((sessionId: string) => {
-    setSessions((prev) => prev.filter((s) => s.sessionId !== sessionId));
-    void deleteChatSession(sessionId)
-      .then(() => refresh())
-      .catch(() => refresh());
-  }, [refresh]);
+  const removeSession = useCallback(
+    (sessionId: string) => {
+      queryClient.setQueryData<RecentHistoryData>(RECENT_QUERY_KEY, (prev) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          sessions: prev.sessions.filter((s) => s.sessionId !== sessionId),
+        };
+      });
+      void deleteChatSession(sessionId)
+        .catch(() => null)
+        .finally(() => {
+          void queryClient.invalidateQueries({ queryKey: RECENT_QUERY_KEY });
+        });
+    },
+    [queryClient]
+  );
 
   // 清空历史（仅本地）
   const clearHistory = useCallback(() => {
-    setSessions([]);
-  }, []);
+    queryClient.setQueryData<RecentHistoryData>(RECENT_QUERY_KEY, (prev) => {
+      if (!prev) {
+        return { sessions: [], webSearchAvailable: false };
+      }
+      return { ...prev, sessions: [] };
+    });
+  }, [queryClient]);
+
+  const refresh = useCallback(() => {
+    return queryClient.invalidateQueries({ queryKey: RECENT_QUERY_KEY });
+  }, [queryClient]);
 
   return {
-    sessions,
+    sessions: recentQuery.data?.sessions ?? [],
     upsertSession,
     removeSession,
     clearHistory,
-    webSearchAvailable,
+    webSearchAvailable: recentQuery.data?.webSearchAvailable ?? false,
     refresh,
   };
 }
