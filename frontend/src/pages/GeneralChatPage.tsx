@@ -18,7 +18,13 @@ import {
 import type { ToolInvocationSummary } from '../services/extensions';
 import { ErrorAlert } from '../components/ui/ErrorAlert';
 import { parseSseJson } from '../lib/sse';
-import { createThinkParser } from '../lib/thinkParser';
+import {
+  applyDelta,
+  completeMessageState,
+  createMessageState,
+  parseDelta,
+  type MessageState,
+} from '../lib/deltaParser';
 import {
   WelcomeScreen,
   MessageList,
@@ -137,7 +143,7 @@ export function GeneralChatPage() {
       content,
     };
     const assistantId = `assistant-${Date.now()}`;
-    const thinkParser = createThinkParser();
+    let msgState = createMessageState();
 
     setMessages((prev) => [
       ...prev,
@@ -147,7 +153,9 @@ export function GeneralChatPage() {
         role: 'assistant',
         content: '',
         think: '',
+        toolSteps: [],
         isStreaming: true,
+        thinkStartTime: Date.now(),
       },
     ]);
     setInput('');
@@ -224,13 +232,15 @@ export function GeneralChatPage() {
         }
 
         if (event.event === 'delta') {
-          const data = parseSseJson<{ text: string }>(event.data);
-          const { answerDelta, thinkDelta } = thinkParser.feed(data.text || '');
-          if (answerDelta || thinkDelta) {
+          const data = parseSseJson<Record<string, unknown>>(event.data);
+          const delta = parseDelta(data);
+          if (delta) {
+            msgState = applyDelta(msgState, delta);
             updateMessage(assistantId, (msg) => ({
               ...msg,
-              content: msg.content + answerDelta,
-              think: (msg.think ?? '') + thinkDelta,
+              content: msgState.final_content,
+              think: msgState.thought_log,
+              toolSteps: msgState.tool_steps,
               isStreaming: true,
             }));
           }
@@ -288,14 +298,15 @@ export function GeneralChatPage() {
         }
       }
 
-      const flushed = thinkParser.flush();
-      if (flushed.answerDelta || flushed.thinkDelta) {
-        updateMessage(assistantId, (msg) => ({
-          ...msg,
-          content: msg.content + flushed.answerDelta,
-          think: (msg.think ?? '') + flushed.thinkDelta,
-        }));
-      }
+      // 流式结束，完成消息状态
+      msgState = completeMessageState(msgState);
+      updateMessage(assistantId, (msg) => ({
+        ...msg,
+        content: msgState.final_content,
+        think: msgState.thought_log,
+        toolSteps: msgState.tool_steps,
+        isStreaming: false,
+      }));
     } catch (e) {
       if (hadStreamEvent) {
         setError(e instanceof Error ? e.message : '发送消息失败');
@@ -327,13 +338,15 @@ export function GeneralChatPage() {
       setLoading(true);
       setError(null);
 
-      const thinkParser = createThinkParser();
+      let msgState = createMessageState();
       updateMessage(pendingMessageId, (msg) => ({
         ...msg,
         content: '',
         think: '',
+        toolSteps: [],
         pendingToolApproval: undefined,
         isStreaming: true,
+        thinkStartTime: Date.now(),
       }));
 
       const fallbackToJson = async () => {
@@ -389,13 +402,15 @@ export function GeneralChatPage() {
           }
 
           if (event.event === 'delta') {
-            const data = parseSseJson<{ text: string }>(event.data);
-            const { answerDelta, thinkDelta } = thinkParser.feed(data.text || '');
-            if (answerDelta || thinkDelta) {
+            const data = parseSseJson<Record<string, unknown>>(event.data);
+            const delta = parseDelta(data);
+            if (delta) {
+              msgState = applyDelta(msgState, delta);
               updateMessage(pendingMessageId, (msg) => ({
                 ...msg,
-                content: msg.content + answerDelta,
-                think: (msg.think ?? '') + thinkDelta,
+                content: msgState.final_content,
+                think: msgState.thought_log,
+                toolSteps: msgState.tool_steps,
                 isStreaming: true,
               }));
             }
@@ -453,14 +468,15 @@ export function GeneralChatPage() {
           }
         }
 
-        const flushed = thinkParser.flush();
-        if (flushed.answerDelta || flushed.thinkDelta) {
-          updateMessage(pendingMessageId, (msg) => ({
-            ...msg,
-            content: msg.content + flushed.answerDelta,
-            think: (msg.think ?? '') + flushed.thinkDelta,
-          }));
-        }
+        // 流式结束，完成消息状态
+        msgState = completeMessageState(msgState);
+        updateMessage(pendingMessageId, (msg) => ({
+          ...msg,
+          content: msgState.final_content,
+          think: msgState.thought_log,
+          toolSteps: msgState.tool_steps,
+          isStreaming: false,
+        }));
       } catch (e) {
         if (hadStreamEvent) {
           setError(e instanceof Error ? e.message : '恢复执行失败');

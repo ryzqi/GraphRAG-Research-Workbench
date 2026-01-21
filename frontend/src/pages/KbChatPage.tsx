@@ -28,7 +28,12 @@ import { useKnowledgeBases } from '../hooks/queries';
 import { useRecentHistory } from '../hooks/useRecentHistory';
 import { getErrorMessage } from '../lib/errorHandler';
 import { parseSseJson } from '../lib/sse';
-import { createThinkParser } from '../lib/thinkParser';
+import {
+  applyDelta,
+  completeMessageState,
+  createMessageState,
+  parseDelta,
+} from '../lib/deltaParser';
 
 export function KbChatPage() {
   const [searchParams] = useSearchParams();
@@ -153,7 +158,7 @@ export function KbChatPage() {
 
     const userContent = input.trim();
     const assistantId = `assistant-${Date.now()}`;
-    const thinkParser = createThinkParser();
+    let msgState = createMessageState();
     setInput('');
     setLoading(true);
     setError(null);
@@ -166,7 +171,7 @@ export function KbChatPage() {
     setMessages((prev) => [
       ...prev,
       userMsg,
-      { id: assistantId, role: 'assistant', content: '', think: '', isStreaming: true },
+      { id: assistantId, role: 'assistant', content: '', think: '', toolSteps: [], isStreaming: true, thinkStartTime: Date.now() },
     ]);
 
     // 更新会话标题
@@ -205,13 +210,15 @@ export function KbChatPage() {
         }
 
         if (event.event === 'delta') {
-          const data = parseSseJson<{ text: string }>(event.data);
-          const { answerDelta, thinkDelta } = thinkParser.feed(data.text || '');
-          if (answerDelta || thinkDelta) {
+          const data = parseSseJson<Record<string, unknown>>(event.data);
+          const delta = parseDelta(data);
+          if (delta) {
+            msgState = applyDelta(msgState, delta);
             updateMessage(assistantId, (msg) => ({
               ...msg,
-              content: msg.content + answerDelta,
-              think: (msg.think ?? '') + thinkDelta,
+              content: msgState.final_content,
+              think: msgState.thought_log,
+              toolSteps: msgState.tool_steps,
               isStreaming: true,
             }));
           }
@@ -239,14 +246,15 @@ export function KbChatPage() {
         }
       }
 
-      const flushed = thinkParser.flush();
-      if (flushed.answerDelta || flushed.thinkDelta) {
-        updateMessage(assistantId, (msg) => ({
-          ...msg,
-          content: msg.content + flushed.answerDelta,
-          think: (msg.think ?? '') + flushed.thinkDelta,
-        }));
-      }
+      // 流式结束，完成消息状态
+      msgState = completeMessageState(msgState);
+      updateMessage(assistantId, (msg) => ({
+        ...msg,
+        content: msgState.final_content,
+        think: msgState.thought_log,
+        toolSteps: msgState.tool_steps,
+        isStreaming: false,
+      }));
     } catch (e) {
       if (hadStreamEvent) {
         setError(getErrorMessage(e));

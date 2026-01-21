@@ -10,14 +10,19 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-from langchain.agents import create_agent
-from langchain.agents.middleware import HumanInTheLoopMiddleware, SummarizationMiddleware
 from langchain.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 from langgraph.types import Command
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.agents.general_chat_agent import (
+    SUMMARY_KEEP,
+    SUMMARY_TRIGGER,
+    build_general_chat_agent,
+    build_hitl_decisions,
+    build_pending_tool_calls,
+)
 from app.agents.tool_calling.registry import build_tool_registry
 from app.agents.tool_calling.utils import extract_tool_results
 from app.core.checkpoint import CheckpointManager
@@ -42,29 +47,17 @@ from app.schemas.chats import (
 )
 from app.services.context_builder import ContextBuilder
 from app.services.streaming import (
+    LegacyThinkParser,
     StreamState,
     apply_updates_chunk,
-    extract_message_text,
-    strip_think_tags,
+    extract_answer_text,
+    extract_stream_delta,
 )
 from app.utils.token_counter import count_tokens_approximately
 
 logger = logging.getLogger(__name__)
 
-SUMMARY_TRIGGER_FRACTION = 0.7
-SUMMARY_KEEP = ("messages", 20)
 SUMMARY_META_FLAG = "summary"
-HITL_REJECT_MESSAGE = "用户拒绝执行外部工具调用。"
-
-
-def _build_interrupt_on(tool_meta_by_name: dict[str, Any]) -> dict[str, object]:
-    interrupt_on: dict[str, object] = {}
-    for name, meta in tool_meta_by_name.items():
-        is_external = bool(getattr(meta, "is_external", False))
-        interrupt_on[name] = (
-            {"allowed_decisions": ["approve", "reject"]} if is_external else False
-        )
-    return interrupt_on
 
 
 def _extract_interrupt_message(payload: object) -> str | None:
@@ -98,54 +91,6 @@ def _extract_action_requests(interrupts: list[object]) -> list[dict[str, Any]]:
     return action_requests
 
 
-def _build_pending_tool_calls(
-    action_requests: list[dict[str, Any]],
-    tool_meta_by_name: dict[str, Any],
-) -> list[dict[str, Any]]:
-    pending: list[dict[str, Any]] = []
-    for item in action_requests:
-        name = item.get("name")
-        if not isinstance(name, str) or not name:
-            continue
-        args = item.get("arguments")
-        if not isinstance(args, dict):
-            args = item.get("args")
-        if not isinstance(args, dict):
-            args = {}
-
-        meta = tool_meta_by_name.get(name)
-        if meta is None:
-            pending.append(
-                {
-                    "extension_id": "unknown",
-                    "extension_name": None,
-                    "tool_name": name,
-                    "args": args,
-                    "is_builtin": False,
-                }
-            )
-            continue
-
-        pending.append(
-            {
-                "extension_id": meta.extension_id,
-                "extension_name": meta.extension_name,
-                "tool_name": meta.raw_tool_name,
-                "args": args,
-                "is_builtin": meta.is_builtin,
-            }
-        )
-    return pending
-
-
-def _build_hitl_decisions(action_count: int, approved: bool) -> list[dict[str, Any]]:
-    if action_count <= 0:
-        return []
-    if approved:
-        return [{"type": "approve"} for _ in range(action_count)]
-    return [
-        {"type": "reject", "message": HITL_REJECT_MESSAGE} for _ in range(action_count)
-    ]
 
 
 def _extract_pending_interrupts(pending_writes: object) -> list[object]:
@@ -218,7 +163,7 @@ class GeneralChatService:
 
     def _build_summary_trigger(self):
         if self._settings.llm_max_input_tokens:
-            return ("fraction", SUMMARY_TRIGGER_FRACTION)
+            return SUMMARY_TRIGGER
         triggers: list[tuple[str, int]] = []
         min_messages = self._settings.summary_trigger_min_messages
         min_tokens = self._settings.summary_trigger_min_tokens
@@ -274,35 +219,6 @@ class GeneralChatService:
         messages = [GeneralChatService._to_langchain_message(m) for m in history]
         messages.append(HumanMessage(content=user_content))
         return messages
-
-    def _build_general_agent(
-        self,
-        *,
-        chat_model: ChatOpenAI,
-        tools: list[Any],
-        tool_meta_by_name: dict[str, Any],
-        require_confirmation: bool,
-        system_prompt: str,
-    ):
-        middlewares = [
-            SummarizationMiddleware(
-                model=chat_model,
-                trigger=self._build_summary_trigger(),
-                keep=SUMMARY_KEEP,
-            )
-        ]
-        if require_confirmation:
-            middlewares.append(
-                HumanInTheLoopMiddleware(interrupt_on=_build_interrupt_on(tool_meta_by_name))
-            )
-
-        return create_agent(
-            model=chat_model,
-            tools=tools,
-            system_prompt=system_prompt,
-            checkpointer=CheckpointManager.get_checkpointer(),
-            middleware=middlewares,
-        )
 
     @staticmethod
     def _message_text_for_metrics(message: object) -> str:
@@ -422,7 +338,7 @@ class GeneralChatService:
             messages = self._build_agent_messages(history, user_content)
 
             # 创建普通代理（create_agent + middleware）
-            agent = self._build_general_agent(
+            agent = build_general_chat_agent(
                 chat_model=chat_model,
                 tools=tools,
                 tool_meta_by_name=tool_meta_by_name,
@@ -430,6 +346,7 @@ class GeneralChatService:
                     include_mcp and self._settings.mcp_confirmation_required
                 ),
                 system_prompt=system_prompt,
+                summary_trigger=self._build_summary_trigger(),
             )
 
             # 使用 thread_id 执行
@@ -442,7 +359,7 @@ class GeneralChatService:
             interrupts = result.get("__interrupt__")
             if isinstance(interrupts, list) and interrupts:
                 action_requests = _extract_action_requests(interrupts)
-                pending_tool_calls = _build_pending_tool_calls(
+                pending_tool_calls = build_pending_tool_calls(
                     action_requests, tool_meta_by_name
                 )
                 first = interrupts[0]
@@ -597,7 +514,7 @@ class GeneralChatService:
             messages = self._build_agent_messages(history, user_content)
 
             # 创建普通代理（create_agent + middleware）
-            agent = self._build_general_agent(
+            agent = build_general_chat_agent(
                 chat_model=chat_model,
                 tools=tools,
                 tool_meta_by_name=tool_meta_by_name,
@@ -605,6 +522,7 @@ class GeneralChatService:
                     include_mcp and self._settings.mcp_confirmation_required
                 ),
                 system_prompt=system_prompt,
+                summary_trigger=self._build_summary_trigger(),
             )
 
             # 使用 thread_id 执行
@@ -634,6 +552,7 @@ class GeneralChatService:
                 stage_summaries={},
                 metrics={},
             )
+            legacy_think_parser = LegacyThinkParser()
 
             async for mode, chunk in agent.astream(
                 {"messages": messages},
@@ -650,16 +569,20 @@ class GeneralChatService:
 
                 if mode == "messages":
                     token, _meta = chunk
-                    text = extract_message_text(token)
-                    if text:
-                        yield "delta", {"text": text}
+                    deltas = extract_stream_delta(
+                        token,
+                        _meta if isinstance(_meta, dict) else None,
+                        legacy_think_parser=legacy_think_parser,
+                    )
+                    for delta in deltas:
+                        yield "delta", delta.to_dict()
                     continue
 
                 if mode == "updates" and isinstance(chunk, dict):
                     interrupts = apply_updates_chunk(stream_state, chunk)
                     if interrupts:
                         action_requests = _extract_action_requests(interrupts)
-                        pending_tool_calls = _build_pending_tool_calls(
+                        pending_tool_calls = build_pending_tool_calls(
                             action_requests, tool_meta_by_name
                         )
                         first = interrupts[0]
@@ -704,6 +627,9 @@ class GeneralChatService:
                         )
                         yield "interrupt", response.model_dump(mode="json")
                         return
+
+            for delta in legacy_think_parser.flush():
+                yield "delta", delta.to_dict()
 
             result = {
                 "messages": stream_state.messages,
@@ -800,19 +726,7 @@ class GeneralChatService:
         )
 
         action_requests = _extract_action_requests(pending_interrupts)
-        pending_tool_calls = _build_pending_tool_calls(
-            action_requests, tool_meta_by_name
-        )
-        await self._ensure_extensions_connected(pending_tool_calls)
-
-        action_requests = _extract_action_requests(pending_interrupts)
-        pending_tool_calls = _build_pending_tool_calls(
-            action_requests, tool_meta_by_name
-        )
-        await self._ensure_extensions_connected(pending_tool_calls)
-
-        action_requests = _extract_action_requests(pending_interrupts)
-        pending_tool_calls = _build_pending_tool_calls(
+        pending_tool_calls = build_pending_tool_calls(
             action_requests, tool_meta_by_name
         )
         await self._ensure_extensions_connected(pending_tool_calls)
@@ -825,7 +739,7 @@ class GeneralChatService:
         )
 
         system_prompt = self._prompts.render("general_chat/system")
-        agent = self._build_general_agent(
+        agent = build_general_chat_agent(
             chat_model=chat_model,
             tools=tools,
             tool_meta_by_name=tool_meta_by_name,
@@ -833,9 +747,10 @@ class GeneralChatService:
                 include_mcp and self._settings.mcp_confirmation_required
             ),
             system_prompt=system_prompt,
+            summary_trigger=self._build_summary_trigger(),
         )
         config = CheckpointManager.make_config(thread_id)
-        decisions = _build_hitl_decisions(len(action_requests), approved)
+        decisions = build_hitl_decisions(len(action_requests), approved)
         result = await agent.ainvoke(Command(resume={"decisions": decisions}), config)
 
         if not isinstance(result, dict):
@@ -845,7 +760,7 @@ class GeneralChatService:
         interrupts = result.get("__interrupt__")
         if isinstance(interrupts, list) and interrupts:
             action_requests = _extract_action_requests(interrupts)
-            pending_tool_calls = _build_pending_tool_calls(
+            pending_tool_calls = build_pending_tool_calls(
                 action_requests, tool_meta_by_name
             )
             first = interrupts[0]
@@ -958,6 +873,12 @@ class GeneralChatService:
             include_mcp=include_mcp,
         )
 
+        action_requests = _extract_action_requests(pending_interrupts)
+        pending_tool_calls = build_pending_tool_calls(
+            action_requests, tool_meta_by_name
+        )
+        await self._ensure_extensions_connected(pending_tool_calls)
+
         chat_model = ChatOpenAI(
             model=self._settings.llm_model,
             api_key=self._settings.llm_api_key,
@@ -966,7 +887,7 @@ class GeneralChatService:
         )
 
         system_prompt = self._prompts.render("general_chat/system")
-        agent = self._build_general_agent(
+        agent = build_general_chat_agent(
             chat_model=chat_model,
             tools=tools,
             tool_meta_by_name=tool_meta_by_name,
@@ -974,9 +895,10 @@ class GeneralChatService:
                 include_mcp and self._settings.mcp_confirmation_required
             ),
             system_prompt=system_prompt,
+            summary_trigger=self._build_summary_trigger(),
         )
         config = CheckpointManager.make_config(thread_id)
-        decisions = _build_hitl_decisions(len(action_requests), approved)
+        decisions = build_hitl_decisions(len(action_requests), approved)
 
         checkpoint_values = (checkpoint_tuple.checkpoint or {}).get("channel_values", {})
         existing_messages = checkpoint_values.get("messages", [])
@@ -999,6 +921,7 @@ class GeneralChatService:
         }
 
         try:
+            legacy_think_parser = LegacyThinkParser()
             async for mode, chunk in agent.astream(
                 Command(resume={"decisions": decisions}),
                 config,
@@ -1014,16 +937,20 @@ class GeneralChatService:
 
                 if mode == "messages":
                     token, _meta = chunk
-                    text = extract_message_text(token)
-                    if text:
-                        yield "delta", {"text": text}
+                    deltas = extract_stream_delta(
+                        token,
+                        _meta if isinstance(_meta, dict) else None,
+                        legacy_think_parser=legacy_think_parser,
+                    )
+                    for delta in deltas:
+                        yield "delta", delta.to_dict()
                     continue
 
                 if mode == "updates" and isinstance(chunk, dict):
                     interrupts = apply_updates_chunk(stream_state, chunk)
                     if interrupts:
                         action_requests = _extract_action_requests(interrupts)
-                        pending_tool_calls = _build_pending_tool_calls(
+                        pending_tool_calls = build_pending_tool_calls(
                             action_requests, tool_meta_by_name
                         )
                         first = interrupts[0]
@@ -1068,6 +995,9 @@ class GeneralChatService:
                         )
                         yield "interrupt", response.model_dump(mode="json")
                         return
+
+            for delta in legacy_think_parser.flush():
+                yield "delta", delta.to_dict()
 
             started_at = run.started_at or datetime.now(timezone.utc)
             result = {
@@ -1179,9 +1109,9 @@ class GeneralChatService:
         answer = ""
         for msg in reversed(messages):
             if isinstance(msg, AIMessage):
-                answer = str(msg.content or "")
+                # 提取纯文本回答（剥离思考段）
+                answer = extract_answer_text(msg.content)
                 break
-        answer = strip_think_tags(answer)
 
         # 保存助手消息
         assistant_msg = ChatMessage(

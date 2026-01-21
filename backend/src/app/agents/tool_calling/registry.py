@@ -12,7 +12,12 @@ from typing import Sequence
 
 from langchain.tools import BaseTool, tool as lc_tool
 
-from app.agents.tools.web_search import build_web_search_tool
+from app.agents.tools.web_search import (
+    build_web_crawl_tool,
+    build_web_extract_tool,
+    build_web_research_tool,
+    build_web_search_tool,
+)
 from app.core.settings import Settings
 from app.integrations.mcp_adapters import load_mcp_tools
 from app.models.tool_extension import ToolExtension
@@ -50,6 +55,9 @@ async def build_tool_registry(
     extensions: Sequence[ToolExtension] | None = None,
     extra_tools: Sequence[BaseTool] | None = None,
     include_web_search: bool = True,
+    include_web_extract: bool = False,
+    include_web_crawl: bool = False,
+    include_web_research: bool = False,
     include_mcp: bool = True,
     tool_output_max_chars: int = DEFAULT_TOOL_OUTPUT_MAX_CHARS,
 ) -> tuple[list[BaseTool], dict[str, ToolMeta]]:
@@ -78,31 +86,39 @@ async def build_tool_registry(
             ),
         )
 
-    # Web 搜索（外部工具）
-    if include_web_search and settings.web_search_api_key:
-        base_tool = build_web_search_tool(settings)
-
-        async def _call_web_search(**kwargs: object) -> str:
+    def _wrap_external_tool(base_tool: BaseTool) -> None:
+        async def _call_external(**kwargs: object) -> str:
             output = await base_tool.ainvoke(kwargs)
             text, _ = truncate_tool_output(str(output), tool_output_max_chars)
             return text
 
-        web_tool = lc_tool(
+        tool = lc_tool(
             base_tool.name,
             description=base_tool.description,
             args_schema=getattr(base_tool, "args_schema", None),
-        )(_call_web_search)
+        )(_call_external)
         _add_tool(
-            web_tool,
+            tool,
             ToolMeta(
-                tool_name=web_tool.name,
-                raw_tool_name=web_tool.name,
+                tool_name=tool.name,
+                raw_tool_name=tool.name,
                 extension_id="builtin",
                 extension_name="内置工具",
                 is_builtin=True,
                 is_external=True,
             ),
         )
+
+    # Tavily 外部工具
+    if settings.web_search_api_key:
+        if include_web_search:
+            _wrap_external_tool(build_web_search_tool(settings))
+        if include_web_extract:
+            _wrap_external_tool(build_web_extract_tool(settings))
+        if include_web_crawl:
+            _wrap_external_tool(build_web_crawl_tool(settings))
+        if include_web_research:
+            _wrap_external_tool(build_web_research_tool(settings))
 
     # MCP 扩展工具（外部工具，需命名空间）
     if include_mcp and settings.mcp_enabled and extensions:

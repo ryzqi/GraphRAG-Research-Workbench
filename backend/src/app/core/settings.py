@@ -103,6 +103,51 @@ class Settings(BaseSettings):
 
     # Web 搜索（Tavily，可选）
     web_search_api_key: str | None = Field(None, alias="WEB_SEARCH_API_KEY")
+    web_search_cache_enabled: bool = Field(True, alias="WEB_SEARCH_CACHE_ENABLED")
+    web_search_cache_ttl_seconds: int = Field(300, alias="WEB_SEARCH_CACHE_TTL_SECONDS")
+    web_search_timeout_seconds: float = Field(60.0, alias="WEB_SEARCH_TIMEOUT_SECONDS")
+    web_search_retry_max: int = Field(2, alias="WEB_SEARCH_RETRY_MAX")
+    web_search_retry_backoff_seconds: float = Field(
+        1.5, alias="WEB_SEARCH_RETRY_BACKOFF_SECONDS"
+    )
+    web_search_rate_limit_per_minute: int = Field(
+        0, alias="WEB_SEARCH_RATE_LIMIT_PER_MINUTE"
+    )
+    web_search_max_concurrency: int = Field(5, alias="WEB_SEARCH_MAX_CONCURRENCY")
+    web_search_default_search_depth: str = Field(
+        "basic", alias="WEB_SEARCH_DEFAULT_SEARCH_DEPTH"
+    )
+    web_search_default_time_range: str = Field(
+        "month", alias="WEB_SEARCH_DEFAULT_TIME_RANGE"
+    )
+    web_search_default_max_results: int = Field(
+        5, alias="WEB_SEARCH_DEFAULT_MAX_RESULTS"
+    )
+    web_search_auto_parameters: bool = Field(True, alias="WEB_SEARCH_AUTO_PARAMETERS")
+    web_search_include_usage: bool = Field(False, alias="WEB_SEARCH_INCLUDE_USAGE")
+    web_extract_default_depth: str = Field("basic", alias="WEB_EXTRACT_DEFAULT_DEPTH")
+    web_crawl_default_depth: str = Field("basic", alias="WEB_CRAWL_DEFAULT_DEPTH")
+    web_crawl_default_limit: int = Field(10, alias="WEB_CRAWL_DEFAULT_LIMIT")
+    web_crawl_default_max_depth: int = Field(3, alias="WEB_CRAWL_DEFAULT_MAX_DEPTH")
+    web_crawl_default_max_breadth: int = Field(
+        20, alias="WEB_CRAWL_DEFAULT_MAX_BREADTH"
+    )
+    web_research_output_format: str = Field(
+        "report", alias="WEB_RESEARCH_OUTPUT_FORMAT"
+    )
+    web_research_citation_format: str = Field(
+        "markdown", alias="WEB_RESEARCH_CITATION_FORMAT"
+    )
+    web_research_output_schema: str | None = Field(
+        None, alias="WEB_RESEARCH_OUTPUT_SCHEMA"
+    )
+    web_research_model: str | None = Field(None, alias="WEB_RESEARCH_MODEL")
+    web_research_poll_interval_seconds: float = Field(
+        2.0, alias="WEB_RESEARCH_POLL_INTERVAL_SECONDS"
+    )
+    web_research_timeout_seconds: float = Field(
+        180.0, alias="WEB_RESEARCH_TIMEOUT_SECONDS"
+    )
 
     # 检索配置
     retrieval_default_top_k: int = Field(5, alias="RETRIEVAL_DEFAULT_TOP_K")

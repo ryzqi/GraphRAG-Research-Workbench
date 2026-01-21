@@ -15,7 +15,16 @@ export interface ChatMessage {
   content: string;
   think?: string;
   isStreaming?: boolean;
+  /** 思考开始时间戳 */
+  thinkStartTime?: number;
   evidence?: EvidenceItem[];
+  toolSteps?: Array<{
+    tool_call_id?: string;
+    tool_name: string;
+    tool_args?: Record<string, unknown>;
+    tool_output?: string;
+    status: 'pending' | 'completed' | 'failed';
+  }>;
   invocations?: Array<{
     tool_name: string;
     extension_name?: string;
@@ -113,6 +122,7 @@ export function MessageList({
               content={msg.content}
               think={msg.think}
               isStreaming={msg.isStreaming}
+              thinkStartTime={msg.thinkStartTime}
             />
 
             {/* 工具审批卡片 */}

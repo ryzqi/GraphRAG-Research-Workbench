@@ -1,8 +1,9 @@
 /**
  * Markdown 消息渲染组件
- * 支持 Markdown 格式化和代码块高亮
+ * 支持 Markdown 格式化、代码块高亮和 GFM 表格
  */
 import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { Typography, Link, Box } from '@mui/material';
 import { CodeBlock } from './CodeBlock';
 
@@ -38,6 +39,7 @@ export function MarkdownContent({ content, isStreaming = false }: MarkdownConten
     <>
       {safeContent && (
         <ReactMarkdown
+          remarkPlugins={[remarkGfm]}
           components={{
         // 段落
         p: ({ children }) => (

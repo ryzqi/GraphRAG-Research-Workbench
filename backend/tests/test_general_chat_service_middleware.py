@@ -4,14 +4,14 @@ from langchain.messages import AIMessage, HumanMessage
 
 from app.agents.tool_calling.registry import ToolMeta
 from app.integrations.llm_client import ChatMessage as LLMMessage
-from app.services.general_chat_service import (
+from app.agents.general_chat_agent import (
     SUMMARY_KEEP,
     SUMMARY_TRIGGER,
-    GeneralChatService,
-    _build_hitl_decisions,
-    _build_interrupt_on,
-    _build_pending_tool_calls,
+    build_hitl_decisions,
+    build_interrupt_on,
+    build_pending_tool_calls,
 )
+from app.services.general_chat_service import GeneralChatService
 
 
 def _tool_meta(name: str, *, external: bool) -> ToolMeta:
@@ -36,7 +36,7 @@ def test_interrupt_on_external_tools_only() -> None:
         "external_tool": _tool_meta("external_tool", external=True),
     }
 
-    interrupt_on = _build_interrupt_on(tool_meta_by_name)
+    interrupt_on = build_interrupt_on(tool_meta_by_name)
 
     assert interrupt_on["internal_tool"] is False
     assert interrupt_on["external_tool"]["allowed_decisions"] == ["approve", "reject"]
@@ -51,7 +51,7 @@ def test_pending_tool_calls_mapping() -> None:
         {"name": "unknown_tool", "arguments": {"foo": "bar"}},
     ]
 
-    pending = _build_pending_tool_calls(action_requests, tool_meta_by_name)
+    pending = build_pending_tool_calls(action_requests, tool_meta_by_name)
 
     assert pending[0]["tool_name"] == "raw_external_tool"
     assert pending[0]["extension_id"] == "ext-1"
@@ -61,13 +61,13 @@ def test_pending_tool_calls_mapping() -> None:
 
 
 def test_hitl_decisions() -> None:
-    assert _build_hitl_decisions(0, True) == []
-    assert _build_hitl_decisions(2, True) == [
+    assert build_hitl_decisions(0, True) == []
+    assert build_hitl_decisions(2, True) == [
         {"type": "approve"},
         {"type": "approve"},
     ]
 
-    rejected = _build_hitl_decisions(2, False)
+    rejected = build_hitl_decisions(2, False)
     assert rejected[0]["type"] == "reject"
     assert rejected[1]["type"] == "reject"
 

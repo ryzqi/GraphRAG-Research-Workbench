@@ -16,7 +16,12 @@ from app.agents.tools.evidence_compare import build_evidence_compare_tool
 from app.agents.tools.report_generate import build_report_generate_tool
 from app.agents.tools.research_plan import build_research_plan_tool
 from app.agents.tools.subagent_coordinate import build_subagent_coordinate_tool
-from app.agents.tools.web_search import build_web_search_tool
+from app.agents.tools.web_search import (
+    build_web_crawl_tool,
+    build_web_extract_tool,
+    build_web_research_tool,
+    build_web_search_tool,
+)
 from app.core.settings import get_settings
 from app.integrations.langchain_profiles import build_chat_model_profile
 from app.integrations.llm_client import LLMClient
@@ -174,6 +179,9 @@ class DeepResearchAgent:
         if allow_external:
             if self._settings.web_search_api_key:
                 tools.append(build_web_search_tool(self._settings))
+                tools.append(build_web_extract_tool(self._settings))
+                tools.append(build_web_crawl_tool(self._settings))
+                tools.append(build_web_research_tool(self._settings))
             if self._extensions:
                 mcp_entries = await load_mcp_tools(
                     settings=self._settings, extensions=self._extensions

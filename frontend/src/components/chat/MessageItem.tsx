@@ -11,6 +11,7 @@ import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import { motion } from 'framer-motion';
 import { MarkdownContent } from './MarkdownContent';
 import { useTypewriterStream } from './useTypewriterStream';
+import { ThinkingContainer } from './ThinkingContainer';
 
 // 实心圆点脉冲动画
 const cursorPulse = keyframes`
@@ -44,6 +45,8 @@ interface MessageItemProps {
   isStreaming?: boolean;
   timestamp?: string;
   showActions?: boolean;
+  /** 思考开始时间戳 */
+  thinkStartTime?: number;
 }
 
 export function MessageItem({
@@ -52,6 +55,7 @@ export function MessageItem({
   think,
   isStreaming = false,
   showActions = true,
+  thinkStartTime,
 }: MessageItemProps) {
   const [copied, setCopied] = useState(false);
   const [cursorFading, setCursorFading] = useState(false);
@@ -171,36 +175,11 @@ export function MessageItem({
             // 助手消息：透明背景直接显示
             <Box sx={{ py: 1 }}>
               {think && (
-                <Box sx={{ mb: 1 }}>
-                  {isStreaming ? (
-                    <Typography
-                      variant="body2"
-                      sx={{ opacity: 0.6, fontSize: 13, whiteSpace: 'pre-wrap' }}
-                    >
-                      {think}
-                    </Typography>
-                  ) : (
-                    <Box
-                      component="details"
-                      sx={{
-                        bgcolor: 'action.hover',
-                        borderRadius: 2,
-                        p: 1,
-                        '& summary': { cursor: 'pointer', fontSize: 13 },
-                      }}
-                    >
-                      <Box component="summary" sx={{ listStyle: 'none' }}>
-                        思考过程
-                      </Box>
-                      <Typography
-                        variant="body2"
-                        sx={{ mt: 1, fontSize: 13, whiteSpace: 'pre-wrap' }}
-                      >
-                        {think}
-                      </Typography>
-                    </Box>
-                  )}
-                </Box>
+                <ThinkingContainer
+                  content={think}
+                  isStreaming={isStreaming}
+                  startTime={thinkStartTime}
+                />
               )}
               <Box sx={cursorSx}>
                 <MarkdownContent content={displayContent} isStreaming={isStreaming} />

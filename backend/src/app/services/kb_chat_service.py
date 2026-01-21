@@ -43,10 +43,11 @@ from app.services.context_builder import ContextBuilder
 from app.services.conversation_summary_service import ConversationSummaryService
 from app.services.retrieval_service import RetrievalService
 from app.services.streaming import (
+    LegacyThinkParser,
     StreamState,
     apply_updates_chunk,
-    extract_message_text,
-    strip_think_tags,
+    extract_answer_text,
+    extract_stream_delta,
 )
 
 logger = logging.getLogger(__name__)
@@ -404,6 +405,7 @@ class KbChatService:
                 stage_summaries={},
                 metrics={"context": context_metrics},
             )
+            legacy_think_parser = LegacyThinkParser()
 
             compiled = graph.compile(checkpointer=CheckpointManager.get_checkpointer())
             config = CheckpointManager.make_config(thread_id)
@@ -422,17 +424,23 @@ class KbChatService:
 
                 if mode == "messages":
                     token, _meta = chunk
-                    text = extract_message_text(token)
-                    if text:
-                        yield "delta", {"text": text}
+                    deltas = extract_stream_delta(
+                        token,
+                        _meta if isinstance(_meta, dict) else None,
+                        legacy_think_parser=legacy_think_parser,
+                    )
+                    for delta in deltas:
+                        yield "delta", delta.to_dict()
                     continue
 
                 if mode == "updates" and isinstance(chunk, dict):
                     apply_updates_chunk(stream_state, chunk)
+            for delta in legacy_think_parser.flush():
+                yield "delta", delta.to_dict()
             answer = ""
             for msg in reversed(stream_state.messages):
                 if isinstance(msg, AIMessage):
-                    answer = str(msg.content or "")
+                    answer = extract_answer_text(msg.content)
                     break
 
             metrics = stream_state.metrics
@@ -499,7 +507,7 @@ class KbChatService:
         stage_summaries: dict[str, Any],
         metrics: dict[str, Any],
     ) -> ChatAnswerResponse:
-        answer = strip_think_tags(answer)
+        # answer 已经剥离思考段（<think>/thinking/reasoning_content）
 
         # 保存助手消息
         assistant_msg = ChatMessage(

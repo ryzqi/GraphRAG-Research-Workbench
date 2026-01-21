@@ -1,6 +1,15 @@
 """LangChain/LangGraph 工具集。"""
 
-from app.agents.tools.web_search import WebSearchArgs, build_web_search_tool
+from app.agents.tools.web_search import (
+    WebCrawlArgs,
+    WebExtractArgs,
+    WebResearchArgs,
+    WebSearchArgs,
+    build_web_crawl_tool,
+    build_web_extract_tool,
+    build_web_research_tool,
+    build_web_search_tool,
+)
 from app.agents.tools.kb_retrieve import KbRetrieveArgs, build_kb_retrieve_tool
 from app.agents.tools.evidence_compare import EvidenceCompareArgs, build_evidence_compare_tool
 from app.agents.tools.research_plan import ResearchPlanArgs, build_research_plan_tool
@@ -10,6 +19,12 @@ from app.agents.tools.subagent_coordinate import SubagentCoordinateArgs, build_s
 __all__ = [
     "WebSearchArgs",
     "build_web_search_tool",
+    "WebExtractArgs",
+    "build_web_extract_tool",
+    "WebCrawlArgs",
+    "build_web_crawl_tool",
+    "WebResearchArgs",
+    "build_web_research_tool",
     "KbRetrieveArgs",
     "build_kb_retrieve_tool",
     "EvidenceCompareArgs",
