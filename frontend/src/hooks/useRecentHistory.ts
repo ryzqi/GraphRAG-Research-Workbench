@@ -1,8 +1,9 @@
 /**
  * Recent 历史管理 Hook
- * 使用 localStorage 实现本地持久化（最佳努力）
+ * 从服务端读取最近对话列表
  */
 import { useCallback, useEffect, useState } from 'react';
+import { deleteChatSession, getRecentChats } from '../services/chats';
 
 export interface RecentSession {
   sessionId: string;
@@ -11,54 +12,58 @@ export interface RecentSession {
   updatedAt: string;
 }
 
-const STORAGE_KEY = 'gemini-recent-sessions';
 const MAX_RECENT = 20;
 
-function loadFromStorage(): RecentSession[] {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    return parsed.slice(0, MAX_RECENT);
-  } catch {
-    return [];
-  }
-}
-
-function saveToStorage(sessions: RecentSession[]): void {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(sessions.slice(0, MAX_RECENT)));
-  } catch {
-    // 静默失败
-  }
-}
-
 export function useRecentHistory() {
-  const [sessions, setSessions] = useState<RecentSession[]>(() => loadFromStorage());
+  const [sessions, setSessions] = useState<RecentSession[]>([]);
+  const [webSearchAvailable, setWebSearchAvailable] = useState(false);
 
-  // 同步到 localStorage
-  useEffect(() => {
-    saveToStorage(sessions);
-  }, [sessions]);
-
-  // 添加或更新会话
-  const upsertSession = useCallback((session: RecentSession) => {
-    setSessions((prev) => {
-      const filtered = prev.filter((s) => s.sessionId !== session.sessionId);
-      return [{ ...session, updatedAt: new Date().toISOString() }, ...filtered].slice(0, MAX_RECENT);
-    });
+  const refresh = useCallback(async () => {
+    try {
+      const data = await getRecentChats(MAX_RECENT);
+      const mapped = data.items.map((item) => ({
+        sessionId: item.id,
+        title: item.title ?? '',
+        type: item.session_type,
+        updatedAt: item.updated_at,
+      }));
+      setSessions(mapped.slice(0, MAX_RECENT));
+      setWebSearchAvailable(Boolean(data.web_search_available));
+    } catch {
+      // 保持静默失败，避免影响主流程
+    }
   }, []);
 
-  // 删除会话
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+
+  // 添加或更新会话（本地更新 + 后台刷新）
+  const upsertSession = useCallback(
+    (session: RecentSession) => {
+      setSessions((prev) => {
+        const filtered = prev.filter((s) => s.sessionId !== session.sessionId);
+        return [{ ...session, updatedAt: new Date().toISOString() }, ...filtered].slice(
+          0,
+          MAX_RECENT
+        );
+      });
+      void refresh();
+    },
+    [refresh]
+  );
+
+  // 删除会话（仅本地）
   const removeSession = useCallback((sessionId: string) => {
     setSessions((prev) => prev.filter((s) => s.sessionId !== sessionId));
-  }, []);
+    void deleteChatSession(sessionId)
+      .then(() => refresh())
+      .catch(() => refresh());
+  }, [refresh]);
 
-  // 清空历史
+  // 清空历史（仅本地）
   const clearHistory = useCallback(() => {
     setSessions([]);
-    localStorage.removeItem(STORAGE_KEY);
   }, []);
 
   return {
@@ -66,5 +71,7 @@ export function useRecentHistory() {
     upsertSession,
     removeSession,
     clearHistory,
+    webSearchAvailable,
+    refresh,
   };
 }

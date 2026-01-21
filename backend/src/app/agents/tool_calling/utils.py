@@ -10,7 +10,7 @@ import json
 import re
 from typing import TYPE_CHECKING, Any, Sequence
 
-from langchain_core.messages import AIMessage, BaseMessage, ToolMessage
+from langchain.messages import AIMessage, AnyMessage, ToolMessage
 
 if TYPE_CHECKING:
     from .registry import ToolMeta
@@ -85,7 +85,7 @@ def _stringify(obj: Any) -> str:
         return str(obj)
 
 
-def _get_last_ai_message(messages: Sequence[BaseMessage]) -> AIMessage | None:
+def _get_last_ai_message(messages: Sequence[AnyMessage]) -> AIMessage | None:
     for msg in reversed(messages):
         if isinstance(msg, AIMessage):
             return msg
@@ -94,7 +94,7 @@ def _get_last_ai_message(messages: Sequence[BaseMessage]) -> AIMessage | None:
 
 
 def extract_pending_tool_calls(
-    messages: Sequence[BaseMessage],
+    messages: Sequence[AnyMessage],
     tool_meta_by_name: dict[str, ToolMeta],
     *,
     external_only: bool = True,
@@ -132,7 +132,7 @@ def extract_pending_tool_calls(
 
 
 def extract_tool_results(
-    messages: Sequence[BaseMessage],
+    messages: Sequence[AnyMessage],
     tool_meta_by_name: dict[str, ToolMeta],
 ) -> list[dict]:
     """从 messages 中提取工具执行结果，供服务层审计/落库。"""

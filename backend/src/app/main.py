@@ -14,7 +14,6 @@ from app.core.settings import get_settings, validate_startup_settings
 from app.integrations.embedding_client import EmbeddingClient
 from app.integrations.http_client import create_http_client
 from app.integrations.llm_client import LLMClient
-from app.integrations.mcp_client import MCPClient
 from app.integrations.milvus_client import MilvusClient
 from app.integrations.rerank_client import RerankClient
 
@@ -32,9 +31,7 @@ async def lifespan(app: FastAPI):
     app.state.embedding_client = EmbeddingClient(http_client=app.state.http_client)
     app.state.rerank_client = RerankClient(settings=settings, http_client=app.state.http_client)
     app.state.milvus_client = MilvusClient()
-    app.state.mcp_client = MCPClient()
     yield
-    await app.state.mcp_client.close()
     await app.state.http_client.aclose()
     await CheckpointManager.shutdown()
 

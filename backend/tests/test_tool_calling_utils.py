@@ -1,4 +1,4 @@
-from langchain_core.messages import AIMessage, ToolMessage
+from langchain.messages import AIMessage, ToolMessage
 
 from app.agents.tool_calling.registry import ToolMeta
 from app.agents.tool_calling.utils import (

@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime, timezone
 
 import pytest
-from langchain_core.messages import AIMessage
+from langchain.messages import AIMessage
 from langgraph.checkpoint.memory import MemorySaver
 
 import app.services.kb_chat_service as kb_chat_service_mod

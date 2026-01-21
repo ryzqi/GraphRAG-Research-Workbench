@@ -7,20 +7,20 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
 from deepagents import create_deep_agent
-from langchain_core.tools import BaseTool, StructuredTool
+from langchain.tools import BaseTool, tool as lc_tool
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
 
 from app.agents.memory_backend import MemoryBackendFactory
-from app.agents.mcp_tools import build_mcp_tools
 from app.agents.tools.evidence_compare import build_evidence_compare_tool
 from app.agents.tools.report_generate import build_report_generate_tool
 from app.agents.tools.research_plan import build_research_plan_tool
 from app.agents.tools.subagent_coordinate import build_subagent_coordinate_tool
 from app.agents.tools.web_search import build_web_search_tool
 from app.core.settings import get_settings
+from app.integrations.langchain_profiles import build_chat_model_profile
 from app.integrations.llm_client import LLMClient
-from app.integrations.mcp_client import MCPClient
+from app.integrations.mcp_adapters import load_mcp_tools
 from app.models.tool_extension import ToolExtension
 from app.prompts import get_prompt_loader
 from app.services.retrieval_service import RetrievalResult, RetrievalService
@@ -50,18 +50,17 @@ class DeepResearchAgent:
     def __init__(
         self,
         retrieval: RetrievalService,
-        mcp: MCPClient,
         extensions: list[ToolExtension],
     ) -> None:
         self._settings = get_settings()
         self._retrieval = retrieval
-        self._mcp = mcp
         self._extensions = extensions
         self._prompts = get_prompt_loader()
         self._model = ChatOpenAI(
             model=self._settings.llm_model,
             api_key=self._settings.llm_api_key,
             base_url=self._settings.llm_base_url.rstrip("/"),
+            profile=build_chat_model_profile(self._settings),
         )
         self._retrieval_results: list[RetrievalResult] = []
         self._stage_summaries: dict[str, object] = {}
@@ -135,12 +134,11 @@ class DeepResearchAgent:
             }
             return self._format_results(results)
 
-        return StructuredTool.from_function(
+        return lc_tool(
             name="kb_retrieve",
             description="从知识库检索资料，返回带编号的引用片段。",
             args_schema=RetrievalArgs,
-            coroutine=_retrieve,
-        )
+        )(_retrieve)
 
     def _build_llm_client(self) -> LLMClient:
         """构建 LLM 客户端用于工具。"""
@@ -177,7 +175,10 @@ class DeepResearchAgent:
             if self._settings.web_search_api_key:
                 tools.append(build_web_search_tool(self._settings))
             if self._extensions:
-                tools.extend(await build_mcp_tools(self._mcp, self._extensions))
+                mcp_entries = await load_mcp_tools(
+                    settings=self._settings, extensions=self._extensions
+                )
+                tools.extend([entry.tool for entry in mcp_entries])
 
         if enable_subagents:
             tools.append(build_subagent_coordinate_tool(model=self._model))

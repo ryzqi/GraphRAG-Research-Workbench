@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Literal
 
-from langchain_core.tools import BaseTool, StructuredTool
+from langchain.tools import BaseTool, tool as lc_tool
 from pydantic import BaseModel, Field
 
 
@@ -252,9 +252,8 @@ def build_subagent_coordinate_tool(
 
         return json.dumps(output, ensure_ascii=False)
 
-    return StructuredTool.from_function(
+    return lc_tool(
         name="subagent_coordinate",
         description="协调多个子代理执行任务，支持并行/串行/依赖执行模式和结果聚合。",
         args_schema=SubagentCoordinateArgs,
-        coroutine=_coordinate,
-    )
+    )(_coordinate)

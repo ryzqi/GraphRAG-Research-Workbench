@@ -30,6 +30,18 @@ export interface ChatSession {
   updated_at: string;
 }
 
+export interface RecentChatSession {
+  id: string;
+  session_type: ChatSessionType;
+  title: string | null;
+  updated_at: string;
+}
+
+export interface RecentChatListResponse {
+  items: RecentChatSession[];
+  web_search_available: boolean;
+}
+
 export interface ChatMessage {
   id: string;
   role: MessageRole;
@@ -103,6 +115,29 @@ export async function createChatSession(data: ChatSessionCreate): Promise<ChatSe
  */
 export async function getChatSession(sessionId: string): Promise<ChatSession> {
   return apiFetch<ChatSession>(`/api/v1/chats/${sessionId}`);
+}
+
+/**
+ * 删除会话
+ */
+export async function deleteChatSession(sessionId: string): Promise<void> {
+  return apiFetch<void>(`/api/v1/chats/${sessionId}`, {
+    method: 'DELETE',
+  });
+}
+
+/**
+ * 获取最近对话
+ */
+export async function getRecentChats(limit = 20): Promise<RecentChatListResponse> {
+  return apiFetch<RecentChatListResponse>(`/api/v1/chats/recent?limit=${limit}`);
+}
+
+/**
+ * 获取会话消息
+ */
+export async function getChatMessages(sessionId: string): Promise<ChatMessage[]> {
+  return apiFetch<ChatMessage[]>(`/api/v1/chats/${sessionId}/messages`);
 }
 
 /**

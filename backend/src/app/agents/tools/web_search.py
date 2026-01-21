@@ -7,16 +7,31 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 from dataclasses import dataclass
 from typing import Literal, TYPE_CHECKING
 
-from langchain_core.tools import BaseTool, StructuredTool
+import httpx
+from langchain.tools import BaseTool, tool as lc_tool
 from pydantic import BaseModel, Field
 
 from app.core.settings import Settings
 
 if TYPE_CHECKING:
     from tavily import AsyncTavilyClient
+
+try:
+    from tavily import (
+        BadRequestError,
+        ForbiddenError,
+        InvalidAPIKeyError,
+        TimeoutError as TavilyTimeoutError,
+        UsageLimitExceededError,
+    )
+except Exception:  # pragma: no cover - 依赖缺失时不阻断导入
+    BadRequestError = ForbiddenError = InvalidAPIKeyError = TavilyTimeoutError = UsageLimitExceededError = ()  # type: ignore
+
+logger = logging.getLogger(__name__)
 
 
 class WebSearchArgs(BaseModel):
@@ -47,6 +62,64 @@ class WebSearchResult:
             "source": self.source,
             "published_at": self.published_at,
         }
+
+
+def _extract_status_code(exc: Exception) -> int | None:
+    status_code = getattr(exc, "status_code", None)
+    if isinstance(status_code, int):
+        return status_code
+    response = getattr(exc, "response", None)
+    status_code = getattr(response, "status_code", None)
+    if isinstance(status_code, int):
+        return status_code
+    return None
+
+
+def _format_web_search_error(exc: Exception) -> dict:
+    status_code = _extract_status_code(exc)
+    code = "WEB_SEARCH_UPSTREAM_ERROR"
+    message = "Web 搜索暂时不可用，请稍后重试"
+    retryable = False
+
+    if isinstance(exc, UsageLimitExceededError):
+        code = "WEB_SEARCH_RATE_LIMITED"
+        message = "Web 搜索额度不足或请求过于频繁"
+        retryable = True
+    elif isinstance(exc, InvalidAPIKeyError):
+        code = "WEB_SEARCH_AUTH_ERROR"
+        message = "WEB_SEARCH_API_KEY 无效或已过期"
+    elif isinstance(exc, ForbiddenError):
+        code = "WEB_SEARCH_FORBIDDEN"
+        message = "Web 搜索被拒绝访问"
+    elif isinstance(exc, BadRequestError):
+        code = "WEB_SEARCH_BAD_REQUEST"
+        message = "Web 搜索请求参数错误"
+    elif isinstance(exc, TavilyTimeoutError) or isinstance(exc, httpx.TimeoutException):
+        code = "WEB_SEARCH_TIMEOUT"
+        message = "Web 搜索超时，请稍后重试"
+        retryable = True
+    elif status_code == 402:
+        code = "WEB_SEARCH_PAYMENT_REQUIRED"
+        message = "Tavily 返回 402 Payment Required，可能是余额不足或套餐到期"
+    elif status_code == 429:
+        code = "WEB_SEARCH_RATE_LIMITED"
+        message = "Web 搜索请求过于频繁，请稍后重试"
+        retryable = True
+    elif status_code in {401, 403}:
+        code = "WEB_SEARCH_AUTH_ERROR"
+        message = "Web 搜索鉴权失败，请检查 WEB_SEARCH_API_KEY"
+
+    detail = str(exc).strip()
+    error = {
+        "code": code,
+        "message": message,
+        "retryable": retryable,
+    }
+    if status_code is not None:
+        error["status_code"] = status_code
+    if detail:
+        error["detail"] = detail[:300]
+    return error
 
 
 class WebSearchClient:
@@ -130,7 +203,27 @@ def build_web_search_tool(settings: Settings) -> BaseTool:
         max_results: int = 5,
         search_type: str = "general",
     ) -> str:
-        results = await client.search(query, max_results, search_type)
+        try:
+            results = await client.search(query, max_results, search_type)
+        except Exception as exc:
+            error = _format_web_search_error(exc)
+            logger.warning(
+                "Web 搜索失败",
+                extra={
+                    "error_code": error.get("code"),
+                    "status_code": error.get("status_code"),
+                    "search_type": search_type,
+                },
+                exc_info=exc,
+            )
+            output = {
+                "query": query,
+                "search_type": search_type,
+                "total_found": 0,
+                "results": [],
+                "error": error,
+            }
+            return json.dumps(output, ensure_ascii=False)
         output = {
             "query": query,
             "search_type": search_type,
@@ -139,9 +232,8 @@ def build_web_search_tool(settings: Settings) -> BaseTool:
         }
         return json.dumps(output, ensure_ascii=False)
 
-    return StructuredTool.from_function(
-        name="web_search",
+    return lc_tool(
+        "web_search",
         description="从互联网搜索最新信息，返回相关网页摘要。",
         args_schema=WebSearchArgs,
-        coroutine=_search,
-    )
+    )(_search)

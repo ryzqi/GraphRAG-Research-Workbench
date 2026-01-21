@@ -1,6 +1,6 @@
 """普通代理服务。
 
-使用 LangGraph 图实现，支持检查点持久化和 Human-in-the-loop。
+使用 LangChain create_agent + LangGraph checkpointer，实现中间件与 Human-in-the-loop。
 """
 
 from __future__ import annotations
@@ -10,22 +10,23 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain.agents import create_agent
+from langchain.agents.middleware import HumanInTheLoopMiddleware, SummarizationMiddleware
+from langchain.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 from langgraph.types import Command
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.agents.general_chat_graph import GeneralChatGraph, GeneralChatState
 from app.agents.tool_calling.registry import build_tool_registry
 from app.agents.tool_calling.utils import extract_tool_results
 from app.core.checkpoint import CheckpointManager
 from app.core.errors import AppError
 from app.core.logging import set_run_id
 from app.core.settings import get_settings
+from app.integrations.langchain_profiles import build_chat_model_profile
 from app.integrations.llm_client import ChatMessage as LLMMessage
 from app.integrations.llm_client import LLMClient
-from app.integrations.mcp_client import MCPClient
 from app.prompts import get_prompt_loader
 from app.models.agent_run import AgentRun, AgentRunStatus, AgentRunType
 from app.models.chat_message import ChatMessage, MessageRole
@@ -40,15 +41,131 @@ from app.schemas.chats import (
     PendingToolCall,
 )
 from app.services.context_builder import ContextBuilder
-from app.services.conversation_summary_service import ConversationSummaryService
 from app.services.streaming import (
     StreamState,
     apply_updates_chunk,
     extract_message_text,
     strip_think_tags,
 )
+from app.utils.token_counter import count_tokens_approximately
 
 logger = logging.getLogger(__name__)
+
+SUMMARY_TRIGGER_FRACTION = 0.7
+SUMMARY_KEEP = ("messages", 20)
+SUMMARY_META_FLAG = "summary"
+HITL_REJECT_MESSAGE = "用户拒绝执行外部工具调用。"
+
+
+def _build_interrupt_on(tool_meta_by_name: dict[str, Any]) -> dict[str, object]:
+    interrupt_on: dict[str, object] = {}
+    for name, meta in tool_meta_by_name.items():
+        is_external = bool(getattr(meta, "is_external", False))
+        interrupt_on[name] = (
+            {"allowed_decisions": ["approve", "reject"]} if is_external else False
+        )
+    return interrupt_on
+
+
+def _extract_interrupt_message(payload: object) -> str | None:
+    if not isinstance(payload, dict):
+        return None
+    message = payload.get("message")
+    if isinstance(message, str) and message.strip():
+        return message
+    action_requests = payload.get("action_requests")
+    if isinstance(action_requests, list):
+        for item in action_requests:
+            if not isinstance(item, dict):
+                continue
+            desc = item.get("description")
+            if isinstance(desc, str) and desc.strip():
+                return desc
+    return None
+
+
+def _extract_action_requests(interrupts: list[object]) -> list[dict[str, Any]]:
+    action_requests: list[dict[str, Any]] = []
+    for interrupt in interrupts:
+        payload = interrupt if isinstance(interrupt, dict) else getattr(interrupt, "value", None)
+        if not isinstance(payload, dict):
+            continue
+        items = payload.get("action_requests")
+        if isinstance(items, list):
+            for item in items:
+                if isinstance(item, dict):
+                    action_requests.append(item)
+    return action_requests
+
+
+def _build_pending_tool_calls(
+    action_requests: list[dict[str, Any]],
+    tool_meta_by_name: dict[str, Any],
+) -> list[dict[str, Any]]:
+    pending: list[dict[str, Any]] = []
+    for item in action_requests:
+        name = item.get("name")
+        if not isinstance(name, str) or not name:
+            continue
+        args = item.get("arguments")
+        if not isinstance(args, dict):
+            args = item.get("args")
+        if not isinstance(args, dict):
+            args = {}
+
+        meta = tool_meta_by_name.get(name)
+        if meta is None:
+            pending.append(
+                {
+                    "extension_id": "unknown",
+                    "extension_name": None,
+                    "tool_name": name,
+                    "args": args,
+                    "is_builtin": False,
+                }
+            )
+            continue
+
+        pending.append(
+            {
+                "extension_id": meta.extension_id,
+                "extension_name": meta.extension_name,
+                "tool_name": meta.raw_tool_name,
+                "args": args,
+                "is_builtin": meta.is_builtin,
+            }
+        )
+    return pending
+
+
+def _build_hitl_decisions(action_count: int, approved: bool) -> list[dict[str, Any]]:
+    if action_count <= 0:
+        return []
+    if approved:
+        return [{"type": "approve"} for _ in range(action_count)]
+    return [
+        {"type": "reject", "message": HITL_REJECT_MESSAGE} for _ in range(action_count)
+    ]
+
+
+def _extract_pending_interrupts(pending_writes: object) -> list[object]:
+    if not isinstance(pending_writes, list):
+        return []
+    interrupts: list[object] = []
+    for item in pending_writes:
+        channel = None
+        value = None
+        if isinstance(item, tuple):
+            if len(item) > 1:
+                channel = item[1]
+            if len(item) > 2:
+                value = item[2]
+        else:
+            channel = getattr(item, "channel", None)
+            value = getattr(item, "value", None)
+        if channel == "__interrupt__" and value is not None:
+            interrupts.append(value)
+    return interrupts
 
 
 class GeneralChatService:
@@ -58,30 +175,28 @@ class GeneralChatService:
         self,
         db: AsyncSession,
         llm: LLMClient,
-        mcp: MCPClient,
     ) -> None:
         self._db = db
         self._llm = llm
-        self._mcp = mcp
         self._settings = get_settings()
         self._context_builder = ContextBuilder(self._settings)
-        self._summary_service = ConversationSummaryService(db, settings=self._settings)
         self._prompts = get_prompt_loader()
 
     async def _load_history(
-        self, session_id: uuid.UUID, limit: int
+        self, session_id: uuid.UUID, limit: int | None
     ) -> list[LLMMessage]:
         stmt = (
             select(ChatMessage)
             .where(ChatMessage.session_id == session_id)
             .order_by(ChatMessage.created_at.desc())
-            .limit(limit * 2)
         )
+        if limit is not None:
+            stmt = stmt.limit(limit * 2)
         result = await self._db.execute(stmt)
         messages = list(result.scalars().all())
         messages.reverse()
-        filtered = [m for m in messages if not self._summary_service.is_summary_message(m)]
-        if len(filtered) > limit:
+        filtered = [m for m in messages if not self._is_summary_message(m)]
+        if limit is not None and len(filtered) > limit:
             filtered = filtered[-limit:]
         return [
             LLMMessage(role=msg.role.value, content=msg.content)
@@ -96,6 +211,24 @@ class GeneralChatService:
         if role == "assistant":
             return AIMessage(content=msg.content)
         return HumanMessage(content=msg.content)
+
+    @staticmethod
+    def _is_summary_message(msg: ChatMessage) -> bool:
+        return bool((msg.meta or {}).get(SUMMARY_META_FLAG))
+
+    def _build_summary_trigger(self):
+        if self._settings.llm_max_input_tokens:
+            return ("fraction", SUMMARY_TRIGGER_FRACTION)
+        triggers: list[tuple[str, int]] = []
+        min_messages = self._settings.summary_trigger_min_messages
+        min_tokens = self._settings.summary_trigger_min_tokens
+        if min_messages > 0:
+            triggers.append(("messages", min_messages))
+        if min_tokens > 0:
+            triggers.append(("tokens", min_tokens))
+        if not triggers:
+            return ("messages", SUMMARY_KEEP[1])
+        return triggers[0] if len(triggers) == 1 else triggers
 
     @staticmethod
     def _map_llm_exception(exc: Exception) -> AppError | None:
@@ -134,18 +267,102 @@ class GeneralChatService:
 
         return None
 
+    @staticmethod
+    def _build_agent_messages(
+        history: list[LLMMessage], user_content: str
+    ) -> list[SystemMessage | HumanMessage | AIMessage]:
+        messages = [GeneralChatService._to_langchain_message(m) for m in history]
+        messages.append(HumanMessage(content=user_content))
+        return messages
+
+    def _build_general_agent(
+        self,
+        *,
+        chat_model: ChatOpenAI,
+        tools: list[Any],
+        tool_meta_by_name: dict[str, Any],
+        require_confirmation: bool,
+        system_prompt: str,
+    ):
+        middlewares = [
+            SummarizationMiddleware(
+                model=chat_model,
+                trigger=self._build_summary_trigger(),
+                keep=SUMMARY_KEEP,
+            )
+        ]
+        if require_confirmation:
+            middlewares.append(
+                HumanInTheLoopMiddleware(interrupt_on=_build_interrupt_on(tool_meta_by_name))
+            )
+
+        return create_agent(
+            model=chat_model,
+            tools=tools,
+            system_prompt=system_prompt,
+            checkpointer=CheckpointManager.get_checkpointer(),
+            middleware=middlewares,
+        )
+
+    @staticmethod
+    def _message_text_for_metrics(message: object) -> str:
+        content = getattr(message, "content", None)
+        if content is None and isinstance(message, dict):
+            content = message.get("content")
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            parts: list[str] = []
+            for item in content:
+                if isinstance(item, dict) and item.get("type") == "text":
+                    text = item.get("text")
+                    if isinstance(text, str):
+                        parts.append(text)
+            return "".join(parts)
+        if content is None:
+            return ""
+        return str(content)
+
+    def _build_context_metrics(self, messages: list[object]) -> dict[str, dict]:
+        total_tokens = 0
+        total_chars = 0
+        for msg in messages:
+            text = self._message_text_for_metrics(msg)
+            total_tokens += count_tokens_approximately(text)
+            total_chars += len(text)
+
+        history_usage = {
+            "tokens": total_tokens,
+            "chars": total_chars,
+            "messages": len(messages),
+        }
+        history_truncation = {
+            "truncated": False,
+            "dropped_messages": 0,
+            "dropped_tokens": 0,
+        }
+        return self._context_builder.build_metrics(
+            history_usage={"history": history_usage},
+            history_truncation={"history": history_truncation},
+        )
+
     async def answer(
         self,
         *,
         session: ChatSession,
         user_content: str,
     ) -> ChatAnswerResponse | ChatPendingToolApprovalResponse:
-        """处理用户问题并生成答案（使用 LangGraph）。"""
+        """处理用户问题并生成答案（使用 create_agent）。"""
         started_at = datetime.now(timezone.utc)
-        summary = await self._summary_service.load_latest_summary(session.id)
-        history = await self._load_history(
-            session.id, limit=self._settings.context_history_max_messages
-        )
+        thread_id = str(session.id)
+        checkpoint_tuple = await CheckpointManager.get_state(thread_id)
+        history: list[LLMMessage] = []
+        existing_messages = None
+        if checkpoint_tuple is not None:
+            checkpoint_values = (checkpoint_tuple.checkpoint or {}).get("channel_values", {})
+            existing_messages = checkpoint_values.get("messages")
+        if checkpoint_tuple is None or not isinstance(existing_messages, list) or not existing_messages:
+            history = await self._load_history(session.id, limit=None)
 
         # 保存用户消息
         user_msg = ChatMessage(
@@ -173,24 +390,23 @@ class GeneralChatService:
 
         try:
             # 获取启用的扩展
+            include_mcp = bool(session.allow_external and self._settings.mcp_enabled)
+            include_web_search = bool(self._settings.web_search_api_key)
             extensions: list[ToolExtension] = []
-            if session.allow_external and self._settings.mcp_enabled:
+            if include_mcp:
                 stmt = select(ToolExtension).where(
                     ToolExtension.status == ExtensionStatus.ENABLED
                 )
                 result = await self._db.execute(stmt)
                 extensions = list(result.scalars().all())
 
-            include_external = bool(session.allow_external)
-
             # 统一工具注册（内置 + MCP）
             tools, tool_meta_by_name = await build_tool_registry(
                 settings=self._settings,
-                mcp=self._mcp,
                 extensions=extensions,
                 extra_tools=[],
-                include_web_search=include_external,
-                include_mcp=include_external,
+                include_web_search=include_web_search,
+                include_mcp=include_mcp,
             )
 
             # 绑定工具的模型（OpenAI-compatible base_url）
@@ -198,80 +414,46 @@ class GeneralChatService:
                 model=self._settings.llm_model,
                 api_key=self._settings.llm_api_key,
                 base_url=self._settings.llm_base_url.rstrip("/"),
+                profile=build_chat_model_profile(self._settings),
             )
 
-            # 构造初始 messages（系统提示词 + 摘要/历史 + 用户问题）
+            # 构造初始 messages（历史 + 用户问题）
             system_prompt = self._prompts.render("general_chat/system")
-            history_messages, history_usage, history_truncation = (
-                self._context_builder.build_history_messages(
-                    history=history,
-                    summary_text=summary.content if summary else None,
-                )
-            )
-            context_metrics = self._context_builder.build_metrics(
-                history_usage=history_usage,
-                history_truncation=history_truncation,
-            )
-            messages = [
-                SystemMessage(content=system_prompt),
-                *[self._to_langchain_message(m) for m in history_messages],
-                HumanMessage(content=user_content),
-            ]
+            messages = self._build_agent_messages(history, user_content)
 
-            # 创建 LangGraph 图
-            graph = GeneralChatGraph(
+            # 创建普通代理（create_agent + middleware）
+            agent = self._build_general_agent(
                 chat_model=chat_model,
                 tools=tools,
                 tool_meta_by_name=tool_meta_by_name,
                 require_confirmation=bool(
-                    include_external and self._settings.mcp_confirmation_required
+                    include_mcp and self._settings.mcp_confirmation_required
                 ),
+                system_prompt=system_prompt,
             )
 
-            # 使用 session_id 作为 thread_id 执行
-            state: GeneralChatState = {
-                "messages": messages,
-                "pending_tool_calls": [],
-                "stage_summaries": {},
-                "metrics": {"context": context_metrics},
-                "human_approved": None,
-            }
-            thread_id = str(session.id)
-            result = await graph.run(
-                state,
-                thread_id=thread_id,
-                checkpointer=CheckpointManager.get_checkpointer(),
-            )
+            # 使用 thread_id 执行
+            config = CheckpointManager.make_config(thread_id)
+            result = await agent.ainvoke({"messages": messages}, config)
 
             if not isinstance(result, dict):
                 raise RuntimeError("LangGraph 返回类型不符合预期")
 
             interrupts = result.get("__interrupt__")
             if isinstance(interrupts, list) and interrupts:
-                pending_tool_calls = result.get("pending_tool_calls")
-                if not isinstance(pending_tool_calls, list):
-                    pending_tool_calls = []
-
-                interrupt_id = None
-                message = None
+                action_requests = _extract_action_requests(interrupts)
+                pending_tool_calls = _build_pending_tool_calls(
+                    action_requests, tool_meta_by_name
+                )
                 first = interrupts[0]
                 interrupt_id = getattr(first, "id", None)
                 payload = getattr(first, "value", None)
-                if isinstance(payload, dict):
-                    message = payload.get("message")
-                    tools = payload.get("tools")
-                    if isinstance(tools, list):
-                        pending_tool_calls = tools
-
-                stage_summaries = result.get("stage_summaries")
-                if not isinstance(stage_summaries, dict):
-                    stage_summaries = {}
-                metrics = result.get("metrics")
-                if not isinstance(metrics, dict):
-                    metrics = {}
+                message = _extract_interrupt_message(payload)
+                context_metrics = self._build_context_metrics(
+                    result.get("messages") if isinstance(result.get("messages"), list) else []
+                )
 
                 run.stage_summaries = {
-                    **stage_summaries,
                     "tool_approval": {
                         "pending": True,
                         "tool_count": len(pending_tool_calls),
@@ -279,12 +461,16 @@ class GeneralChatService:
                         "requested_at": datetime.now(timezone.utc).isoformat(),
                     },
                 }
+                metrics = result.get("metrics")
+                if not isinstance(metrics, dict):
+                    metrics = {}
                 run.metrics = {
                     "extension_calls": 0,
                     "latency_ms": int(
                         (datetime.now(timezone.utc) - started_at).total_seconds()
                         * 1000
                     ),
+                    "context": context_metrics,
                     **metrics,
                 }
 
@@ -343,10 +529,15 @@ class GeneralChatService:
     ) -> Any:
         """处理用户问题并生成答案（流式 SSE）。"""
         started_at = datetime.now(timezone.utc)
-        summary = await self._summary_service.load_latest_summary(session.id)
-        history = await self._load_history(
-            session.id, limit=self._settings.context_history_max_messages
-        )
+        thread_id = str(session.id)
+        checkpoint_tuple = await CheckpointManager.get_state(thread_id)
+        history: list[LLMMessage] = []
+        existing_messages = None
+        if checkpoint_tuple is not None:
+            checkpoint_values = (checkpoint_tuple.checkpoint or {}).get("channel_values", {})
+            existing_messages = checkpoint_values.get("messages")
+        if checkpoint_tuple is None or not isinstance(existing_messages, list) or not existing_messages:
+            history = await self._load_history(session.id, limit=None)
 
         # 保存用户消息
         user_msg = ChatMessage(
@@ -374,24 +565,23 @@ class GeneralChatService:
 
         try:
             # 获取启用的扩展
+            include_mcp = bool(session.allow_external and self._settings.mcp_enabled)
+            include_web_search = bool(self._settings.web_search_api_key)
             extensions: list[ToolExtension] = []
-            if session.allow_external and self._settings.mcp_enabled:
+            if include_mcp:
                 stmt = select(ToolExtension).where(
                     ToolExtension.status == ExtensionStatus.ENABLED
                 )
                 result = await self._db.execute(stmt)
                 extensions = list(result.scalars().all())
 
-            include_external = bool(session.allow_external)
-
             # 统一工具注册（内置 + MCP）
             tools, tool_meta_by_name = await build_tool_registry(
                 settings=self._settings,
-                mcp=self._mcp,
                 extensions=extensions,
                 extra_tools=[],
-                include_web_search=include_external,
-                include_mcp=include_external,
+                include_web_search=include_web_search,
+                include_mcp=include_mcp,
             )
 
             # 绑定工具的模型（OpenAI-compatible base_url）
@@ -399,45 +589,26 @@ class GeneralChatService:
                 model=self._settings.llm_model,
                 api_key=self._settings.llm_api_key,
                 base_url=self._settings.llm_base_url.rstrip("/"),
+                profile=build_chat_model_profile(self._settings),
             )
 
-            # 构造初始 messages（系统提示词 + 摘要/历史 + 用户问题）
+            # 构造初始 messages（历史 + 用户问题）
             system_prompt = self._prompts.render("general_chat/system")
-            history_messages, history_usage, history_truncation = (
-                self._context_builder.build_history_messages(
-                    history=history,
-                    summary_text=summary.content if summary else None,
-                )
-            )
-            context_metrics = self._context_builder.build_metrics(
-                history_usage=history_usage,
-                history_truncation=history_truncation,
-            )
-            messages = [
-                SystemMessage(content=system_prompt),
-                *[self._to_langchain_message(m) for m in history_messages],
-                HumanMessage(content=user_content),
-            ]
+            messages = self._build_agent_messages(history, user_content)
 
-            # 创建 LangGraph 图
-            graph = GeneralChatGraph(
+            # 创建普通代理（create_agent + middleware）
+            agent = self._build_general_agent(
                 chat_model=chat_model,
                 tools=tools,
                 tool_meta_by_name=tool_meta_by_name,
                 require_confirmation=bool(
-                    include_external and self._settings.mcp_confirmation_required
+                    include_mcp and self._settings.mcp_confirmation_required
                 ),
+                system_prompt=system_prompt,
             )
 
-            # 使用 session_id 作为 thread_id 执行
-            state: GeneralChatState = {
-                "messages": messages,
-                "pending_tool_calls": [],
-                "stage_summaries": {},
-                "metrics": {"context": context_metrics},
-                "human_approved": None,
-            }
-            thread_id = str(session.id)
+            # 使用 thread_id 执行
+            config = CheckpointManager.make_config(thread_id)
 
             # SSE: meta
             yield "meta", {
@@ -448,18 +619,24 @@ class GeneralChatService:
                 "mode": session.mode.value,
             }
 
+            existing_messages = []
+            if checkpoint_tuple is not None:
+                checkpoint_values = (checkpoint_tuple.checkpoint or {}).get(
+                    "channel_values", {}
+                )
+                stored_messages = checkpoint_values.get("messages")
+                if isinstance(stored_messages, list):
+                    existing_messages = list(stored_messages)
+
             stream_state = StreamState(
-                messages=list(messages),
+                messages=[*existing_messages, *list(messages)],
                 pending_tool_calls=[],
                 stage_summaries={},
-                metrics={"context": context_metrics},
+                metrics={},
             )
 
-            compiled = graph.compile(checkpointer=CheckpointManager.get_checkpointer())
-            config = CheckpointManager.make_config(thread_id)
-
-            async for mode, chunk in compiled.astream(
-                state,
+            async for mode, chunk in agent.astream(
+                {"messages": messages},
                 config,
                 stream_mode=["messages", "updates"],
             ):
@@ -481,27 +658,19 @@ class GeneralChatService:
                 if mode == "updates" and isinstance(chunk, dict):
                     interrupts = apply_updates_chunk(stream_state, chunk)
                     if interrupts:
-                        pending_tool_calls = stream_state.pending_tool_calls
-                        interrupt_id = None
-                        message = None
+                        action_requests = _extract_action_requests(interrupts)
+                        pending_tool_calls = _build_pending_tool_calls(
+                            action_requests, tool_meta_by_name
+                        )
                         first = interrupts[0]
                         interrupt_id = getattr(first, "id", None)
                         payload = getattr(first, "value", None)
-                        if isinstance(payload, dict):
-                            message = payload.get("message")
-                            tools_payload = payload.get("tools")
-                            if isinstance(tools_payload, list):
-                                pending_tool_calls = tools_payload
-
-                        stage_summaries = stream_state.stage_summaries
-                        if not isinstance(stage_summaries, dict):
-                            stage_summaries = {}
-                        metrics = stream_state.metrics
-                        if not isinstance(metrics, dict):
-                            metrics = {}
+                        message = _extract_interrupt_message(payload)
+                        context_metrics = self._build_context_metrics(
+                            stream_state.messages
+                        )
 
                         run.stage_summaries = {
-                            **stage_summaries,
                             "tool_approval": {
                                 "pending": True,
                                 "tool_count": len(pending_tool_calls),
@@ -515,7 +684,8 @@ class GeneralChatService:
                                 (datetime.now(timezone.utc) - started_at).total_seconds()
                                 * 1000
                             ),
-                            **metrics,
+                            "context": context_metrics,
+                            **(stream_state.metrics if isinstance(stream_state.metrics, dict) else {}),
                         }
 
                         await self._db.commit()
@@ -599,9 +769,9 @@ class GeneralChatService:
                 status_code=404,
             )
 
-        pending_interrupts = [
-            item for item in (checkpoint_tuple.pending_writes or []) if item[1] == "__interrupt__"
-        ]
+        pending_interrupts = _extract_pending_interrupts(
+            checkpoint_tuple.pending_writes
+        )
         if not pending_interrupts:
             set_run_id(None)
             raise AppError(
@@ -610,53 +780,63 @@ class GeneralChatService:
                 status_code=400,
             )
 
-        # 兜底：确保相关扩展已连接（避免服务重启导致内存连接丢失）
-        pending_tool_calls = (
-            (checkpoint_tuple.checkpoint or {})
-            .get("channel_values", {})
-            .get("pending_tool_calls", [])
-        )
-        if not isinstance(pending_tool_calls, list):
-            pending_tool_calls = []
-        await self._ensure_extensions_connected(pending_tool_calls)
-
-        # 为恢复执行重新构建图（状态由 checkpointer 提供）
+        # 为恢复执行重新构建 agent（状态由 checkpointer 提供）
+        include_mcp = bool(session.allow_external and self._settings.mcp_enabled)
+        include_web_search = bool(self._settings.web_search_api_key)
         extensions: list[ToolExtension] = []
-        if session.allow_external and self._settings.mcp_enabled:
+        if include_mcp:
             stmt = select(ToolExtension).where(
                 ToolExtension.status == ExtensionStatus.ENABLED
             )
             ext_result = await self._db.execute(stmt)
             extensions = list(ext_result.scalars().all())
 
-        include_external = bool(session.allow_external)
-
         tools, tool_meta_by_name = await build_tool_registry(
             settings=self._settings,
-            mcp=self._mcp,
             extensions=extensions,
             extra_tools=[],
-            include_web_search=include_external,
-            include_mcp=include_external,
+            include_web_search=include_web_search,
+            include_mcp=include_mcp,
         )
+
+        action_requests = _extract_action_requests(pending_interrupts)
+        pending_tool_calls = _build_pending_tool_calls(
+            action_requests, tool_meta_by_name
+        )
+        await self._ensure_extensions_connected(pending_tool_calls)
+
+        action_requests = _extract_action_requests(pending_interrupts)
+        pending_tool_calls = _build_pending_tool_calls(
+            action_requests, tool_meta_by_name
+        )
+        await self._ensure_extensions_connected(pending_tool_calls)
+
+        action_requests = _extract_action_requests(pending_interrupts)
+        pending_tool_calls = _build_pending_tool_calls(
+            action_requests, tool_meta_by_name
+        )
+        await self._ensure_extensions_connected(pending_tool_calls)
 
         chat_model = ChatOpenAI(
             model=self._settings.llm_model,
             api_key=self._settings.llm_api_key,
             base_url=self._settings.llm_base_url.rstrip("/"),
+            profile=build_chat_model_profile(self._settings),
         )
 
-        graph = GeneralChatGraph(
+        system_prompt = self._prompts.render("general_chat/system")
+        agent = self._build_general_agent(
             chat_model=chat_model,
             tools=tools,
             tool_meta_by_name=tool_meta_by_name,
             require_confirmation=bool(
-                include_external and self._settings.mcp_confirmation_required
+                include_mcp and self._settings.mcp_confirmation_required
             ),
+            system_prompt=system_prompt,
         )
-        compiled = graph.compile(checkpointer=CheckpointManager.get_checkpointer())
         config = CheckpointManager.make_config(thread_id)
-        result = await compiled.ainvoke(Command(resume={"approved": approved}), config)
+        decisions = _build_hitl_decisions(len(action_requests), approved)
+        result = await agent.ainvoke(Command(resume={"decisions": decisions}), config)
 
         if not isinstance(result, dict):
             set_run_id(None)
@@ -664,29 +844,38 @@ class GeneralChatService:
 
         interrupts = result.get("__interrupt__")
         if isinstance(interrupts, list) and interrupts:
-            pending_tool_calls = result.get("pending_tool_calls")
-            if not isinstance(pending_tool_calls, list):
-                pending_tool_calls = []
+            action_requests = _extract_action_requests(interrupts)
+            pending_tool_calls = _build_pending_tool_calls(
+                action_requests, tool_meta_by_name
+            )
             first = interrupts[0]
             interrupt_id = getattr(first, "id", None)
             payload = getattr(first, "value", None)
-            message = payload.get("message") if isinstance(payload, dict) else None
-            tools = payload.get("tools") if isinstance(payload, dict) else None
-            if isinstance(tools, list):
-                pending_tool_calls = tools
-
-            stage_summaries = result.get("stage_summaries")
-            if not isinstance(stage_summaries, dict):
-                stage_summaries = {}
+            message = _extract_interrupt_message(payload)
+            context_metrics = self._build_context_metrics(
+                result.get("messages") if isinstance(result.get("messages"), list) else []
+            )
 
             run.stage_summaries = {
-                **stage_summaries,
                 "tool_approval": {
                     "pending": True,
                     "tool_count": len(pending_tool_calls),
                     "interrupt_id": interrupt_id,
                     "requested_at": datetime.now(timezone.utc).isoformat(),
                 },
+            }
+            metrics = result.get("metrics")
+            if not isinstance(metrics, dict):
+                metrics = {}
+            run.metrics = {
+                **(run.metrics if isinstance(run.metrics, dict) else {}),
+                "extension_calls": 0,
+                "latency_ms": int(
+                    (datetime.now(timezone.utc) - (run.started_at or datetime.now(timezone.utc))).total_seconds()
+                    * 1000
+                ),
+                "context": context_metrics,
+                **metrics,
             }
             await self._db.commit()
             await self._db.refresh(run)
@@ -739,9 +928,9 @@ class GeneralChatService:
             set_run_id(None)
             return
 
-        pending_interrupts = [
-            item for item in (checkpoint_tuple.pending_writes or []) if item[1] == "__interrupt__"
-        ]
+        pending_interrupts = _extract_pending_interrupts(
+            checkpoint_tuple.pending_writes
+        )
         if not pending_interrupts:
             yield "error", {
                 "code": "NO_PENDING_APPROVAL",
@@ -750,51 +939,44 @@ class GeneralChatService:
             set_run_id(None)
             return
 
-        pending_tool_calls = (
-            (checkpoint_tuple.checkpoint or {})
-            .get("channel_values", {})
-            .get("pending_tool_calls", [])
-        )
-        if not isinstance(pending_tool_calls, list):
-            pending_tool_calls = []
-        await self._ensure_extensions_connected(pending_tool_calls)
-
-        # 为恢复执行重新构建图（状态由 checkpointer 提供）
+        # 为恢复执行重新构建 agent（状态由 checkpointer 提供）
+        include_mcp = bool(session.allow_external and self._settings.mcp_enabled)
+        include_web_search = bool(self._settings.web_search_api_key)
         extensions: list[ToolExtension] = []
-        if session.allow_external and self._settings.mcp_enabled:
+        if include_mcp:
             stmt = select(ToolExtension).where(
                 ToolExtension.status == ExtensionStatus.ENABLED
             )
             ext_result = await self._db.execute(stmt)
             extensions = list(ext_result.scalars().all())
 
-        include_external = bool(session.allow_external)
-
         tools, tool_meta_by_name = await build_tool_registry(
             settings=self._settings,
-            mcp=self._mcp,
             extensions=extensions,
             extra_tools=[],
-            include_web_search=include_external,
-            include_mcp=include_external,
+            include_web_search=include_web_search,
+            include_mcp=include_mcp,
         )
 
         chat_model = ChatOpenAI(
             model=self._settings.llm_model,
             api_key=self._settings.llm_api_key,
             base_url=self._settings.llm_base_url.rstrip("/"),
+            profile=build_chat_model_profile(self._settings),
         )
 
-        graph = GeneralChatGraph(
+        system_prompt = self._prompts.render("general_chat/system")
+        agent = self._build_general_agent(
             chat_model=chat_model,
             tools=tools,
             tool_meta_by_name=tool_meta_by_name,
             require_confirmation=bool(
-                include_external and self._settings.mcp_confirmation_required
+                include_mcp and self._settings.mcp_confirmation_required
             ),
+            system_prompt=system_prompt,
         )
-        compiled = graph.compile(checkpointer=CheckpointManager.get_checkpointer())
         config = CheckpointManager.make_config(thread_id)
+        decisions = _build_hitl_decisions(len(action_requests), approved)
 
         checkpoint_values = (checkpoint_tuple.checkpoint or {}).get("channel_values", {})
         existing_messages = checkpoint_values.get("messages", [])
@@ -802,13 +984,9 @@ class GeneralChatService:
             messages=list(existing_messages)
             if isinstance(existing_messages, list)
             else [],
-            pending_tool_calls=pending_tool_calls,
-            stage_summaries=checkpoint_values.get("stage_summaries", {})
-            if isinstance(checkpoint_values.get("stage_summaries", {}), dict)
-            else {},
-            metrics=checkpoint_values.get("metrics", {})
-            if isinstance(checkpoint_values.get("metrics", {}), dict)
-            else {},
+            pending_tool_calls=[],
+            stage_summaries={},
+            metrics={},
         )
 
         yield "meta", {
@@ -821,8 +999,8 @@ class GeneralChatService:
         }
 
         try:
-            async for mode, chunk in compiled.astream(
-                Command(resume={"approved": approved}),
+            async for mode, chunk in agent.astream(
+                Command(resume={"decisions": decisions}),
                 config,
                 stream_mode=["messages", "updates"],
             ):
@@ -844,27 +1022,35 @@ class GeneralChatService:
                 if mode == "updates" and isinstance(chunk, dict):
                     interrupts = apply_updates_chunk(stream_state, chunk)
                     if interrupts:
-                        pending_tool_calls = stream_state.pending_tool_calls
+                        action_requests = _extract_action_requests(interrupts)
+                        pending_tool_calls = _build_pending_tool_calls(
+                            action_requests, tool_meta_by_name
+                        )
                         first = interrupts[0]
                         interrupt_id = getattr(first, "id", None)
                         payload = getattr(first, "value", None)
-                        message = payload.get("message") if isinstance(payload, dict) else None
-                        tools_payload = payload.get("tools") if isinstance(payload, dict) else None
-                        if isinstance(tools_payload, list):
-                            pending_tool_calls = tools_payload
-
-                        stage_summaries = stream_state.stage_summaries
-                        if not isinstance(stage_summaries, dict):
-                            stage_summaries = {}
+                        message = _extract_interrupt_message(payload)
+                        context_metrics = self._build_context_metrics(
+                            stream_state.messages
+                        )
 
                         run.stage_summaries = {
-                            **stage_summaries,
                             "tool_approval": {
                                 "pending": True,
                                 "tool_count": len(pending_tool_calls),
                                 "interrupt_id": interrupt_id,
                                 "requested_at": datetime.now(timezone.utc).isoformat(),
                             },
+                        }
+                        run.metrics = {
+                            **(run.metrics if isinstance(run.metrics, dict) else {}),
+                            "extension_calls": 0,
+                            "latency_ms": int(
+                                (datetime.now(timezone.utc) - (run.started_at or datetime.now(timezone.utc))).total_seconds()
+                                * 1000
+                            ),
+                            "context": context_metrics,
+                            **(stream_state.metrics if isinstance(stream_state.metrics, dict) else {}),
                         }
                         await self._db.commit()
                         await self._db.refresh(run)
@@ -930,37 +1116,8 @@ class GeneralChatService:
             set_run_id(None)
 
     async def _ensure_extensions_connected(self, pending_tool_calls: object) -> None:
-        if (
-            not self._settings.mcp_enabled
-            or not isinstance(pending_tool_calls, list)
-            or not pending_tool_calls
-        ):
-            return
-
-        extension_ids: set[uuid.UUID] = set()
-        for item in pending_tool_calls:
-            if not isinstance(item, dict):
-                continue
-            if item.get("is_builtin"):
-                continue
-            raw = item.get("extension_id")
-            if not raw or raw == "builtin":
-                continue
-            try:
-                extension_ids.add(uuid.UUID(str(raw)))
-            except ValueError:
-                continue
-
-        if not extension_ids:
-            return
-
-        stmt = select(ToolExtension).where(ToolExtension.id.in_(extension_ids))
-        result = await self._db.execute(stmt)
-        extensions = list(result.scalars().all())
-        for ext in extensions:
-            await self._mcp.connect(
-                str(ext.id), ext.transport.value, ext.endpoint, ext.scope
-            )
+        # MultiServerMCPClient 默认无状态，无需显式预连接。
+        return
 
     async def _finalize_run(
         self,
@@ -1034,18 +1191,6 @@ class GeneralChatService:
         )
         self._db.add(assistant_msg)
 
-        summary_metrics: dict[str, object] = {}
-        try:
-            summary_result = await self._summary_service.maybe_update_summary(session.id)
-            if summary_result:
-                summary_metrics = {
-                    "summary_updated": True,
-                    "summary_message_id": str(summary_result.message.id),
-                    **summary_result.stats,
-                }
-        except Exception as exc:  # pragma: no cover
-            logger.warning("摘要更新失败: %s", exc)
-
         invocation_summaries: list[dict] = []
         for tr in audit_tool_results:
             invocation_summaries.append(
@@ -1070,11 +1215,15 @@ class GeneralChatService:
         run.finished_at = now
         run.final_output = answer
         run.stage_summaries = stage_summaries
+        context_metrics = self._build_context_metrics(messages)
+        metrics = result.get("metrics")
+        if not isinstance(metrics, dict):
+            metrics = {}
         run.metrics = {
             "extension_calls": len(audit_tool_results),
             "latency_ms": int((now - started_at).total_seconds() * 1000),
-            **summary_metrics,
-            **(result.get("metrics") or {}),
+            "context": context_metrics,
+            **metrics,
         }
 
         await self._db.commit()

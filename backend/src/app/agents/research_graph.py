@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Annotated, TypedDict, cast
 
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
+from langchain.messages import AIMessage, AnyMessage, HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph.message import add_messages
@@ -25,8 +25,8 @@ from app.agents.tools.kb_retrieve import build_kb_retrieve_tool
 from app.agents.tools.report_generate import build_report_generate_tool
 from app.agents.tools.research_plan import build_research_plan_tool
 from app.core.settings import get_settings
+from app.integrations.langchain_profiles import build_chat_model_profile
 from app.integrations.llm_client import LLMClient
-from app.integrations.mcp_client import MCPClient
 from app.models.tool_extension import ToolExtension
 from app.prompts import get_prompt_loader
 from app.services.context_builder import ContextBuilder
@@ -34,7 +34,7 @@ from app.services.retrieval_service import RetrievalResult, RetrievalService
 
 
 class ResearchState(TypedDict):
-    messages: Annotated[list[BaseMessage], add_messages]
+    messages: Annotated[list[AnyMessage], add_messages]
     pending_tool_calls: list[dict]
     stage_summaries: dict[str, Any]
     metrics: dict[str, Any]
@@ -80,7 +80,6 @@ class ResearchGraph:
         question: str,
         kb_ids: list[uuid.UUID],
         retrieval: RetrievalService,
-        mcp: MCPClient,
         extensions: list[ToolExtension],
         allow_external: bool,
         thread_id: str | None = None,
@@ -117,7 +116,6 @@ class ResearchGraph:
 
         tools, tool_meta_by_name = await build_tool_registry(
             settings=self._settings,
-            mcp=mcp,
             extensions=extensions,
             extra_tools=internal_tools,
             include_web_search=allow_external,
@@ -128,6 +126,7 @@ class ResearchGraph:
             model=self._settings.llm_model,
             api_key=self._settings.llm_api_key,
             base_url=self._settings.llm_base_url.rstrip("/"),
+            profile=build_chat_model_profile(self._settings),
         )
 
         system_prompt = self._prompts.render("research/deep_agent_system", question=question)
@@ -198,7 +197,6 @@ class ResearchGraph:
         question: str,
         kb_ids: list[uuid.UUID],
         retrieval: RetrievalService,
-        mcp: MCPClient,
         extensions: list[ToolExtension],
         allow_external: bool,
         thread_id: str | None = None,
@@ -209,7 +207,6 @@ class ResearchGraph:
             question=question,
             kb_ids=kb_ids,
             retrieval=retrieval,
-            mcp=mcp,
             extensions=extensions,
             allow_external=allow_external,
             thread_id=thread_id,

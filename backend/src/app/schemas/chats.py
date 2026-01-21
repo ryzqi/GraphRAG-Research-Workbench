@@ -65,6 +65,21 @@ class ChatSessionRead(BaseModel):
     updated_at: datetime
 
 
+# 最近对话列表
+class ChatSessionRecentRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    session_type: ChatSessionType
+    title: str | None = None
+    updated_at: datetime
+
+
+class ChatRecentListResponse(BaseModel):
+    items: list[ChatSessionRecentRead]
+    web_search_available: bool
+
+
 # 消息相关
 class ChatMessageCreate(BaseModel):
     content: str = Field(..., min_length=1)

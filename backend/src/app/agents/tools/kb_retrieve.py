@@ -11,7 +11,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Callable
 
-from langchain_core.tools import BaseTool, StructuredTool
+from langchain.tools import BaseTool, tool as lc_tool
 from pydantic import BaseModel, Field
 
 from app.agents.tool_calling.utils import DEFAULT_TOOL_OUTPUT_MAX_CHARS, truncate_tool_output
@@ -86,9 +86,8 @@ def build_kb_retrieve_tool(
 
         return context
 
-    return StructuredTool.from_function(
-        name="kb_retrieve",
+    return lc_tool(
+        "kb_retrieve",
         description="从知识库检索资料，返回带编号的引用片段。",
         args_schema=KbRetrieveArgs,
-        coroutine=_retrieve,
-    )
+    )(_retrieve)

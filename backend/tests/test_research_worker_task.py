@@ -54,11 +54,6 @@ class FakeSessionMaker:
         return FakeSessionContext(self._session)
 
 
-class FakeMCPClient:
-    async def close(self) -> None:
-        return None
-
-
 class FakeRetrievalService:
     def __init__(self, _session, _milvus, _embedding, _redis):
         return None
@@ -138,7 +133,6 @@ async def test_research_worker_writes_report_and_evidence(monkeypatch: pytest.Mo
     monkeypatch.setattr(research_mod, "EmbeddingClient", lambda: object())
     monkeypatch.setattr(research_mod, "get_redis", lambda: object())
     monkeypatch.setattr(research_mod, "RetrievalService", FakeRetrievalService)
-    monkeypatch.setattr(research_mod, "MCPClient", FakeMCPClient)
     monkeypatch.setattr(research_mod, "ResearchGraph", FakeResearchGraph)
 
     await research_mod._run_research(

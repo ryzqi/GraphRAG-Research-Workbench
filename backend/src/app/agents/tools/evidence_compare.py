@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 from typing import Literal
 
-from langchain_core.tools import BaseTool, StructuredTool
+from langchain.tools import BaseTool, tool as lc_tool
 from pydantic import BaseModel, Field
 
 from app.integrations.llm_client import ChatMessage, LLMClient
@@ -132,9 +132,8 @@ def build_evidence_compare_tool(
 
         return json.dumps(result, ensure_ascii=False)
 
-    return StructuredTool.from_function(
+    return lc_tool(
         name="evidence_compare",
         description="对比分析多来源证据，检测冲突和不一致，评估证据充分程度。",
         args_schema=EvidenceCompareArgs,
-        coroutine=_compare,
-    )
+    )(_compare)

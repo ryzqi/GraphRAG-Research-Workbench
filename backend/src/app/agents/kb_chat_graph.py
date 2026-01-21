@@ -7,8 +7,8 @@ from __future__ import annotations
 
 from typing import Annotated, Any, TypedDict, cast
 
-from langchain_core.messages import BaseMessage
-from langchain_core.tools import BaseTool
+from langchain.messages import AnyMessage
+from langchain.tools import BaseTool
 from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph.message import add_messages
@@ -20,7 +20,7 @@ from app.agents.tool_calling.registry import ToolMeta
 class KbChatState(TypedDict):
     """知识库问答状态（以 messages 为核心）。"""
 
-    messages: Annotated[list[BaseMessage], add_messages]
+    messages: Annotated[list[AnyMessage], add_messages]
     pending_tool_calls: list[dict]
     stage_summaries: dict[str, Any]
     metrics: dict[str, Any]

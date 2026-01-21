@@ -7,7 +7,8 @@ import uuid
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.integrations.mcp_client import MCPClient, ToolDefinition
+from app.core.settings import get_settings
+from app.integrations.mcp_adapters import load_mcp_tools, tool_input_schema
 from app.models.tool_extension import ExtensionStatus, ToolExtension
 from app.schemas.extensions import (
     ToolDescriptor,
@@ -18,9 +19,9 @@ from app.schemas.extensions import (
 
 
 class ExtensionService:
-    def __init__(self, db: AsyncSession, mcp: MCPClient) -> None:
+    def __init__(self, db: AsyncSession) -> None:
         self._db = db
-        self._mcp = mcp
+        self._settings = get_settings()
 
     async def list_extensions(
         self, *, status: ExtensionStatus | None = None
@@ -99,8 +100,6 @@ class ExtensionService:
         ext = await self._db.get(ToolExtension, extension_id)
         if not ext:
             return False
-
-        await self._mcp.disconnect(str(extension_id))
         await self._db.delete(ext)
         await self._db.commit()
         return True
@@ -111,14 +110,12 @@ class ExtensionService:
         if not ext or ext.status != ExtensionStatus.ENABLED:
             return []
 
-        tools = await self._mcp.connect(
-            str(extension_id), ext.transport.value, ext.endpoint, ext.scope
-        )
+        tools = await load_mcp_tools(settings=self._settings, extensions=[ext])
         return [
             ToolDescriptor(
-                name=t.name,
-                description=t.description,
-                input_schema=t.input_schema,
+                name=t.raw_tool_name,
+                description=getattr(t.tool, "description", None),
+                input_schema=tool_input_schema(t.tool),
             )
             for t in tools
         ]
@@ -136,7 +133,7 @@ class ExtensionService:
         total = len(tools_sorted)
         return tools_sorted[skip : skip + limit], total
 
-    async def get_all_enabled_tools(self) -> dict[uuid.UUID, list[ToolDefinition]]:
+    async def get_all_enabled_tools(self) -> dict[uuid.UUID, list[ToolDescriptor]]:
         """获取所有启用扩展的工具。"""
         stmt = select(ToolExtension).where(
             ToolExtension.status == ExtensionStatus.ENABLED
@@ -144,12 +141,17 @@ class ExtensionService:
         result = await self._db.execute(stmt)
         extensions = result.scalars().all()
 
-        tools_map: dict[uuid.UUID, list[ToolDefinition]] = {}
-        for ext in extensions:
-            tools = await self._mcp.connect(
-                str(ext.id), ext.transport.value, ext.endpoint, ext.scope
+        tools_map: dict[uuid.UUID, list[ToolDescriptor]] = {}
+        if not extensions:
+            return tools_map
+
+        entries = await load_mcp_tools(settings=self._settings, extensions=extensions)
+        for entry in entries:
+            tool = ToolDescriptor(
+                name=entry.raw_tool_name,
+                description=getattr(entry.tool, "description", None),
+                input_schema=tool_input_schema(entry.tool),
             )
-            if tools:
-                tools_map[ext.id] = tools
+            tools_map.setdefault(entry.extension.id, []).append(tool)
 
         return tools_map

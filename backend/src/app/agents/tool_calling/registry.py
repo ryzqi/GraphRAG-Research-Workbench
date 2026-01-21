@@ -7,16 +7,14 @@
 from __future__ import annotations
 
 import json
-import re
 from dataclasses import dataclass
 from typing import Sequence
 
-from langchain_core.tools import BaseTool, StructuredTool
-from pydantic import BaseModel, Field, create_model
+from langchain.tools import BaseTool, tool as lc_tool
 
 from app.agents.tools.web_search import build_web_search_tool
 from app.core.settings import Settings
-from app.integrations.mcp_client import MCPClient, ToolDefinition
+from app.integrations.mcp_adapters import load_mcp_tools
 from app.models.tool_extension import ToolExtension
 
 from .utils import DEFAULT_TOOL_OUTPUT_MAX_CHARS, make_mcp_tool_name, truncate_tool_output
@@ -34,54 +32,6 @@ class ToolMeta:
     is_external: bool
 
 
-def _normalize_model_name(name: str) -> str:
-    cleaned = re.sub(r"[^a-zA-Z0-9_]", "_", name)
-    return f"McpTool_{cleaned}" if cleaned else "McpTool"
-
-
-def _json_type_to_py(schema_type: object) -> type:
-    if schema_type == "string":
-        return str
-    if schema_type == "integer":
-        return int
-    if schema_type == "number":
-        return float
-    if schema_type == "boolean":
-        return bool
-    if schema_type == "array":
-        return list[object]
-    if schema_type == "object":
-        return dict[str, object]
-    return object
-
-
-
-def _build_args_schema(tool: ToolDefinition) -> type[BaseModel] | None:
-    schema = tool.input_schema or {}
-    properties = schema.get("properties")
-    if not isinstance(properties, dict):
-        return None
-
-    required = schema.get("required")
-    required_names = set(required) if isinstance(required, list) else set()
-
-    fields: dict[str, tuple[type, Field]] = {}
-    for name, prop in properties.items():
-        if not isinstance(prop, dict):
-            continue
-        is_required = name in required_names
-        field_type = _json_type_to_py(prop.get("type"))
-        annotated_type = field_type if is_required else field_type | None
-        default = ... if is_required else None
-        description = prop.get("description") if isinstance(prop.get("description"), str) else None
-        fields[name] = (annotated_type, Field(default=default, description=description))
-
-    if not fields:
-        return None
-
-    return create_model(_normalize_model_name(tool.name), **fields)
-
-
 def _stringify_output(output: object) -> str:
     if output is None:
         return ""
@@ -97,7 +47,6 @@ def _stringify_output(output: object) -> str:
 async def build_tool_registry(
     *,
     settings: Settings,
-    mcp: MCPClient | None = None,
     extensions: Sequence[ToolExtension] | None = None,
     extra_tools: Sequence[BaseTool] | None = None,
     include_web_search: bool = True,
@@ -138,12 +87,11 @@ async def build_tool_registry(
             text, _ = truncate_tool_output(str(output), tool_output_max_chars)
             return text
 
-        web_tool = StructuredTool.from_function(
-            name=base_tool.name,
+        web_tool = lc_tool(
+            base_tool.name,
             description=base_tool.description,
             args_schema=getattr(base_tool, "args_schema", None),
-            coroutine=_call_web_search,
-        )
+        )(_call_web_search)
         _add_tool(
             web_tool,
             ToolMeta(
@@ -157,46 +105,44 @@ async def build_tool_registry(
         )
 
     # MCP 扩展工具（外部工具，需命名空间）
-    if include_mcp and mcp is not None and settings.mcp_enabled and extensions:
-        for ext in extensions:
-            tool_defs = await mcp.connect(
-                str(ext.id), ext.transport.value, ext.endpoint, ext.scope
+    if include_mcp and settings.mcp_enabled and extensions:
+        mcp_entries = await load_mcp_tools(settings=settings, extensions=extensions)
+        for entry in mcp_entries:
+            ext = entry.extension
+            raw_tool_name = entry.raw_tool_name
+            base_tool = entry.tool
+            tool_name = make_mcp_tool_name(str(ext.id), raw_tool_name)
+            description = getattr(base_tool, "description", None) or "MCP 工具"
+            args_schema = getattr(base_tool, "args_schema", None)
+
+            async def _call_mcp_tool(
+                _tool: BaseTool = base_tool,
+                **kwargs: object,
+            ) -> str:
+                try:
+                    output = await _tool.ainvoke(kwargs)
+                except Exception as exc:
+                    err, _ = truncate_tool_output(str(exc), tool_output_max_chars)
+                    raise RuntimeError(err) from exc
+                text = _stringify_output(output)
+                text, _ = truncate_tool_output(text, tool_output_max_chars)
+                return text
+
+            tool = lc_tool(
+                tool_name,
+                description=description,
+                args_schema=args_schema,
+            )(_call_mcp_tool)
+            _add_tool(
+                tool,
+                ToolMeta(
+                    tool_name=tool_name,
+                    raw_tool_name=raw_tool_name,
+                    extension_id=str(ext.id),
+                    extension_name=ext.name,
+                    is_builtin=False,
+                    is_external=True,
+                ),
             )
-            for tool_def in tool_defs:
-                tool_name = make_mcp_tool_name(str(ext.id), tool_def.name)
-                args_schema = _build_args_schema(tool_def)
-                description = tool_def.description or "MCP 工具"
-
-                async def _call_mcp_tool(
-                    _extension_id: str = str(ext.id),
-                    _raw_tool_name: str = tool_def.name,
-                    **kwargs: object,
-                ) -> str:
-                    result = await mcp.call_tool(_extension_id, _raw_tool_name, kwargs)
-                    if result.success:
-                        text = _stringify_output(result.output)
-                        text, _ = truncate_tool_output(text, tool_output_max_chars)
-                        return text
-                    err = result.error or "MCP 工具调用失败"
-                    err, _ = truncate_tool_output(str(err), tool_output_max_chars)
-                    raise RuntimeError(err)
-
-                tool = StructuredTool.from_function(
-                    name=tool_name,
-                    description=description,
-                    args_schema=args_schema,
-                    coroutine=_call_mcp_tool,
-                )
-                _add_tool(
-                    tool,
-                    ToolMeta(
-                        tool_name=tool_name,
-                        raw_tool_name=tool_def.name,
-                        extension_id=str(ext.id),
-                        extension_name=ext.name,
-                        is_builtin=False,
-                        is_external=True,
-                    ),
-                )
 
     return tools, meta_by_name

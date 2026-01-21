@@ -1,10 +1,13 @@
 /**
  * 普通代理聊天页面（Gemini 风格重构）
  */
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { Box, Chip, FormControlLabel, Stack, Switch, Typography } from '@mui/material';
 import {
   createChatSession,
+  getChatMessages,
+  getChatSession,
   resumeToolApproval,
   sendMessage,
   streamChatMessage,
@@ -32,17 +35,65 @@ const quickPrompts = [
 ];
 
 export function GeneralChatPage() {
+  const [searchParams] = useSearchParams();
+  const sessionId = searchParams.get('sessionId');
   const [session, setSession] = useState<ChatSession | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
+  const [loadingSession, setLoadingSession] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [allowExternal, setAllowExternal] = useState(false);
 
-  const { upsertSession } = useRecentHistory();
+  const { upsertSession, webSearchAvailable } = useRecentHistory();
 
   const hasPendingApproval = messages.some((m) => Boolean(m.pendingToolApproval));
-  const isInputDisabled = loading || hasPendingApproval;
+  const isInputDisabled = loading || loadingSession || hasPendingApproval;
+
+  useEffect(() => {
+    if (!sessionId) {
+      return;
+    }
+    let active = true;
+    const loadSession = async () => {
+      setLoadingSession(true);
+      setError(null);
+      try {
+        const [loadedSession, history] = await Promise.all([
+          getChatSession(sessionId),
+          getChatMessages(sessionId),
+        ]);
+        if (!active) return;
+        setSession(loadedSession);
+        setAllowExternal(loadedSession.allow_external);
+        setMessages(
+          history.map((msg) => ({
+            id: msg.id,
+            role: msg.role === 'assistant' ? 'assistant' : 'user',
+            content: msg.content,
+          }))
+        );
+      } catch (e) {
+        if (!active) return;
+        setError(e instanceof Error ? e.message : '加载会话失败');
+      } finally {
+        if (active) {
+          setLoadingSession(false);
+        }
+      }
+    };
+    void loadSession();
+    return () => {
+      active = false;
+    };
+  }, [sessionId]);
+
+  useEffect(() => {
+    if (sessionId) return;
+    setSession(null);
+    setMessages([]);
+    setError(null);
+  }, [sessionId]);
 
   const updateMessage = useCallback(
     (id: string, updater: (msg: ChatMessage) => ChatMessage) => {
@@ -78,7 +129,7 @@ export function GeneralChatPage() {
 
   const handleSend = useCallback(async () => {
     const content = input.trim();
-    if (!content || loading || hasPendingApproval) return;
+    if (!content || loading || loadingSession || hasPendingApproval) return;
 
     const userMessage: ChatMessage = {
       id: `user-${Date.now()}`,
@@ -115,7 +166,7 @@ export function GeneralChatPage() {
     // 更新会话标题
     upsertSession({
       sessionId: activeSession.id,
-      title: content.slice(0, 30) + (content.length > 30 ? '...' : ''),
+      title: content.slice(0, 30),
       type: 'general_chat',
       updatedAt: new Date().toISOString(),
     });
@@ -262,6 +313,7 @@ export function GeneralChatPage() {
   }, [
     input,
     loading,
+    loadingSession,
     hasPendingApproval,
     session,
     createSession,
@@ -438,6 +490,7 @@ export function GeneralChatPage() {
     : allowExternal
       ? 'MCP 将启用'
       : 'MCP 已关闭';
+  const webSearchBadgeLabel = webSearchAvailable ? '联网可用' : '联网不可用';
 
   return (
     <Box
@@ -475,6 +528,12 @@ export function GeneralChatPage() {
               MCP 扩展
             </Typography>
           }
+        />
+        <Chip
+          label={webSearchBadgeLabel}
+          size="small"
+          variant="outlined"
+          color={webSearchAvailable ? 'success' : 'default'}
         />
         <Chip label={sessionBadgeLabel} size="small" variant="outlined" />
       </Box>

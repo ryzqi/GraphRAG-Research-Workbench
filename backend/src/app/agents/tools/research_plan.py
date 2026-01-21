@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import json
 
-from langchain_core.tools import BaseTool, StructuredTool
+from langchain.tools import BaseTool, tool as lc_tool
 from pydantic import BaseModel, Field
 
 from app.integrations.llm_client import ChatMessage, LLMClient
@@ -119,9 +119,8 @@ def build_research_plan_tool(
 
         return json.dumps(result, ensure_ascii=False)
 
-    return StructuredTool.from_function(
+    return lc_tool(
         name="research_plan",
         description="分析研究问题，生成结构化的研究计划和子任务拆解。",
         args_schema=ResearchPlanArgs,
-        coroutine=_plan,
-    )
+    )(_plan)

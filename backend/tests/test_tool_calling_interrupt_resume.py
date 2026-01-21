@@ -3,8 +3,8 @@ from __future__ import annotations
 from typing import Annotated, Any, TypedDict
 
 import pytest
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
-from langchain_core.tools import StructuredTool
+from langchain.messages import AIMessage, AnyMessage, HumanMessage, SystemMessage, ToolMessage
+from langchain.tools import BaseTool, tool as lc_tool
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph.message import add_messages
 from langgraph.types import Command
@@ -17,7 +17,7 @@ class FakeBoundModel:
     def __init__(self, responses: list[AIMessage]) -> None:
         self._responses = list(responses)
 
-    async def ainvoke(self, _messages: list[BaseMessage]) -> AIMessage:
+    async def ainvoke(self, _messages: list[AnyMessage]) -> AIMessage:
         return self._responses.pop(0)
 
 
@@ -35,7 +35,7 @@ class FakeChatModel:
 
 
 class GraphState(TypedDict):
-    messages: Annotated[list[BaseMessage], add_messages]
+    messages: Annotated[list[AnyMessage], add_messages]
     pending_tool_calls: list[dict]
     stage_summaries: dict[str, Any]
     metrics: dict[str, Any]
@@ -55,15 +55,14 @@ def _tool_meta() -> dict[str, ToolMeta]:
     }
 
 
-def _web_search_tool() -> StructuredTool:
+def _web_search_tool() -> BaseTool:
     async def _web_search(q: str) -> str:
         return f"search:{q}"
 
-    return StructuredTool.from_function(
-        name="web_search",
+    return lc_tool(
+        "web_search",
         description="demo",
-        coroutine=_web_search,
-    )
+    )(_web_search)
 
 
 @pytest.mark.asyncio

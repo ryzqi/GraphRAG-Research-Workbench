@@ -4,20 +4,27 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Request, Response, status
+from fastapi import APIRouter, Query, Request, Response, status
 from fastapi.responses import StreamingResponse
+from sqlalchemy import and_, delete, func, select
 
 from app.api.sse import SSE_HEADERS, encode_sse
 
 from app.api.deps import AsyncSessionDep, CurrentUserDep
-from app.core.errors import bad_request, not_found
+from app.core.checkpoint import CheckpointManager
+from app.core.errors import AppError, bad_request, not_found
+from app.core.settings import get_settings
 from app.models.agent_run import AgentRun, AgentRunStatus, AgentRunType
+from app.models.chat_message import ChatMessage, MessageRole
 from app.models.chat_session import ChatSession, ChatSessionType
 from app.schemas.chats import (
     ChatAnswerResponse,
     ChatPendingToolApprovalResponse,
     ChatMessageCreate,
+    ChatMessageRead,
+    ChatRecentListResponse,
     ChatSessionCreate,
+    ChatSessionRecentRead,
     ChatSessionRead,
     ToolApprovalRequest,
 )
@@ -53,6 +60,80 @@ async def create_chat_session(
     return ChatSessionRead.model_validate(session)
 
 
+@router.get("/recent", response_model=ChatRecentListResponse)
+async def list_recent_chats(
+    db: AsyncSessionDep,
+    _user: CurrentUserDep,
+    limit: int = Query(20, ge=1, le=100),
+) -> ChatRecentListResponse:
+    """获取最近对话列表。"""
+    settings = get_settings()
+    web_search_available = bool(settings.web_search_api_key)
+
+    latest_message_subq = (
+        select(
+            ChatMessage.session_id.label("session_id"),
+            func.max(ChatMessage.created_at).label("last_message_at"),
+        )
+        .where(ChatMessage.role.in_([MessageRole.USER, MessageRole.ASSISTANT]))
+        .group_by(ChatMessage.session_id)
+        .subquery()
+    )
+
+    latest_user_message_subq = (
+        select(
+            ChatMessage.session_id.label("session_id"),
+            ChatMessage.content.label("content"),
+            func.row_number()
+            .over(
+                partition_by=ChatMessage.session_id,
+                order_by=ChatMessage.created_at.desc(),
+            )
+            .label("rn"),
+        )
+        .where(ChatMessage.role == MessageRole.USER)
+        .subquery()
+    )
+
+    stmt = (
+        select(
+            ChatSession,
+            latest_message_subq.c.last_message_at,
+            latest_user_message_subq.c.content,
+        )
+        .join(latest_message_subq, latest_message_subq.c.session_id == ChatSession.id)
+        .outerjoin(
+            latest_user_message_subq,
+            and_(
+                latest_user_message_subq.c.session_id == ChatSession.id,
+                latest_user_message_subq.c.rn == 1,
+            ),
+        )
+        .order_by(latest_message_subq.c.last_message_at.desc())
+        .limit(limit)
+    )
+
+    result = await db.execute(stmt)
+    items: list[ChatSessionRecentRead] = []
+    for session, last_message_at, last_user_content in result.all():
+        title = session.title or (
+            (last_user_content[:30] if last_user_content else None)
+        )
+        items.append(
+            ChatSessionRecentRead(
+                id=session.id,
+                session_type=session.session_type,
+                title=title,
+                updated_at=last_message_at or session.updated_at,
+            )
+        )
+
+    return ChatRecentListResponse(
+        items=items,
+        web_search_available=web_search_available,
+    )
+
+
 @router.get("/{session_id}", response_model=ChatSessionRead)
 async def get_chat_session(
     db: AsyncSessionDep,
@@ -64,6 +145,58 @@ async def get_chat_session(
     if not session:
         raise not_found("会话不存在", code="CHAT_SESSION_NOT_FOUND")
     return ChatSessionRead.model_validate(session)
+
+
+@router.delete("/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_chat_session(
+    db: AsyncSessionDep,
+    _user: CurrentUserDep,
+    session_id: uuid.UUID,
+) -> None:
+    """删除会话。"""
+    session = await db.get(ChatSession, session_id)
+    if not session:
+        raise not_found("会话不存在", code="CHAT_SESSION_NOT_FOUND")
+    try:
+        await CheckpointManager.delete_thread(str(session_id))
+    except Exception as exc:
+        raise AppError(
+            code="CHAT_CHECKPOINT_DELETE_FAILED",
+            message="删除会话检查点失败",
+            status_code=500,
+            details={"reason": str(exc)},
+        )
+
+    await db.execute(delete(AgentRun).where(AgentRun.session_id == session_id))
+    await db.delete(session)
+    await db.commit()
+    return None
+
+
+@router.get("/{session_id}/messages", response_model=list[ChatMessageRead])
+async def get_chat_messages(
+    db: AsyncSessionDep,
+    _user: CurrentUserDep,
+    session_id: uuid.UUID,
+) -> list[ChatMessageRead]:
+    """获取会话消息（仅返回 HumanMessage/AIMessage）。"""
+    session = await db.get(ChatSession, session_id)
+    if not session:
+        raise not_found("会话不存在", code="CHAT_SESSION_NOT_FOUND")
+
+    stmt = (
+        select(ChatMessage)
+        .where(ChatMessage.session_id == session_id)
+        .where(ChatMessage.role.in_([MessageRole.USER, MessageRole.ASSISTANT]))
+        .order_by(ChatMessage.created_at.asc())
+    )
+    result = await db.execute(stmt)
+    messages = [
+        ChatMessageRead.model_validate(msg)
+        for msg in result.scalars().all()
+        if not (msg.meta or {}).get("summary")
+    ]
+    return messages
 
 
 @router.post(
@@ -95,8 +228,7 @@ async def create_chat_message(
 
     elif session.session_type == ChatSessionType.GENERAL_CHAT:
         # 普通代理
-        mcp = request.app.state.mcp_client
-        service = GeneralChatService(db, llm, mcp)
+        service = GeneralChatService(db, llm)
         result = await service.answer(session=session, user_content=body.content)
         if getattr(result, "status", None) == "pending_tool_approval":
             response.status_code = status.HTTP_202_ACCEPTED
@@ -132,8 +264,7 @@ async def create_chat_message_stream(
             request=request,
         )
     elif session.session_type == ChatSessionType.GENERAL_CHAT:
-        mcp = request.app.state.mcp_client
-        service = GeneralChatService(db, llm, mcp)
+        service = GeneralChatService(db, llm)
         events = service.answer_stream(
             session=session,
             user_content=body.content,
@@ -178,8 +309,7 @@ async def resume_general_chat(
         raise bad_request(code="CHAT_RUN_NOT_RUNNING", message="运行记录已完成或已失败")
 
     llm = request.app.state.llm_client
-    mcp = request.app.state.mcp_client
-    service = GeneralChatService(db, llm, mcp)
+    service = GeneralChatService(db, llm)
     result = await service.resume_after_tool_approval(
         session=session, run=run, approved=body.approved
     )
@@ -213,8 +343,7 @@ async def resume_general_chat_stream(
         raise bad_request(code="CHAT_RUN_NOT_RUNNING", message="运行记录已完成或已失败")
 
     llm = request.app.state.llm_client
-    mcp = request.app.state.mcp_client
-    service = GeneralChatService(db, llm, mcp)
+    service = GeneralChatService(db, llm)
     events = service.resume_after_tool_approval_stream(
         session=session,
         run=run,

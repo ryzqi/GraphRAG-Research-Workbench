@@ -1,7 +1,8 @@
 /**
  * 知识库问答页面（Gemini 风格重构）
  */
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { Box, Stack, Typography } from '@mui/material';
 import RestartAltIcon from '@mui/icons-material/RestartAlt';
 import { Button } from '../components/ui/Button';
@@ -18,6 +19,8 @@ import {
   type ChatSession,
   type ChatMessageResponse,
   createChatSession,
+  getChatMessages,
+  getChatSession,
   sendMessage,
   streamChatMessage,
 } from '../services/chats';
@@ -28,6 +31,8 @@ import { parseSseJson } from '../lib/sse';
 import { createThinkParser } from '../lib/thinkParser';
 
 export function KbChatPage() {
+  const [searchParams] = useSearchParams();
+  const sessionId = searchParams.get('sessionId');
   const knowledgeBasesQuery = useKnowledgeBases();
   const knowledgeBases = knowledgeBasesQuery.data ?? [];
 
@@ -36,12 +41,58 @@ export function KbChatPage() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
+  const [loadingSession, setLoadingSession] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const { upsertSession } = useRecentHistory();
 
   const mergedError =
     error ?? (knowledgeBasesQuery.error ? getErrorMessage(knowledgeBasesQuery.error) : null);
+
+  useEffect(() => {
+    if (!sessionId) {
+      return;
+    }
+    let active = true;
+    const loadSession = async () => {
+      setLoadingSession(true);
+      setError(null);
+      try {
+        const [loadedSession, history] = await Promise.all([
+          getChatSession(sessionId),
+          getChatMessages(sessionId),
+        ]);
+        if (!active) return;
+        setSession(loadedSession);
+        setSelectedKbIds(loadedSession.selected_kb_ids ?? []);
+        setMessages(
+          history.map((msg) => ({
+            id: msg.id,
+            role: msg.role === 'assistant' ? 'assistant' : 'user',
+            content: msg.content,
+          }))
+        );
+      } catch (e) {
+        if (!active) return;
+        setError(getErrorMessage(e));
+      } finally {
+        if (active) {
+          setLoadingSession(false);
+        }
+      }
+    };
+    void loadSession();
+    return () => {
+      active = false;
+    };
+  }, [sessionId]);
+
+  useEffect(() => {
+    if (sessionId) return;
+    setSession(null);
+    setMessages([]);
+    setError(null);
+  }, [sessionId]);
 
   const updateMessage = useCallback(
     (id: string, updater: (msg: ChatMessage) => ChatMessage) => {
@@ -98,7 +149,7 @@ export function KbChatPage() {
   }, [selectedKbIds, upsertSession]);
 
   const handleSend = useCallback(async () => {
-    if (!session || !input.trim() || loading) return;
+    if (!session || !input.trim() || loading || loadingSession) return;
 
     const userContent = input.trim();
     const assistantId = `assistant-${Date.now()}`;
@@ -121,7 +172,7 @@ export function KbChatPage() {
     // 更新会话标题
     upsertSession({
       sessionId: session.id,
-      title: userContent.slice(0, 30) + (userContent.length > 30 ? '...' : ''),
+      title: userContent.slice(0, 30),
       type: 'kb_chat',
       updatedAt: new Date().toISOString(),
     });
@@ -210,7 +261,7 @@ export function KbChatPage() {
     } finally {
       setLoading(false);
     }
-  }, [session, input, loading, upsertSession, updateMessage]);
+  }, [session, input, loading, loadingSession, upsertSession, updateMessage]);
 
   const resetSession = useCallback(() => {
     setSession(null);
@@ -246,14 +297,14 @@ export function KbChatPage() {
                 knowledgeBases={knowledgeBases}
                 selectedIds={selectedKbIds}
                 onToggle={toggleKb}
-                loading={loading || knowledgeBasesQuery.isLoading}
+                loading={loading || loadingSession || knowledgeBasesQuery.isLoading}
               />
 
               <Button
                 variant="contained"
                 onClick={startSession}
-                disabled={knowledgeBasesQuery.isLoading || selectedKbIds.length === 0}
-                loading={loading}
+                disabled={loadingSession || knowledgeBasesQuery.isLoading || selectedKbIds.length === 0}
+                loading={loading || loadingSession}
                 sx={{ alignSelf: 'flex-start' }}
               >
                 开始对话
@@ -312,7 +363,7 @@ export function KbChatPage() {
           />
         </Box>
       ) : (
-        <MessageList messages={messages} loading={loading} />
+        <MessageList messages={messages} loading={loading || loadingSession} />
       )}
 
       {/* 错误提示 */}
@@ -332,8 +383,8 @@ export function KbChatPage() {
             value={input}
             onChange={setInput}
             onSend={handleSend}
-            disabled={loading}
-            loading={loading}
+            disabled={loading || loadingSession}
+            loading={loading || loadingSession}
             placeholder="输入你的问题..."
           />
         </Box>

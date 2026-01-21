@@ -25,7 +25,6 @@ def _build_client() -> tuple[TestClient, dict[str, str]]:
     app.add_middleware(RequestIdMiddleware)
     register_exception_handlers(app)
     app.include_router(api_router, prefix="/api/v1")
-    app.state.mcp_client = SimpleNamespace()
 
     async def _override_db_session():
         yield SimpleNamespace()
@@ -234,4 +233,3 @@ def test_ready_503_uses_error_contract(monkeypatch) -> None:
     body = res.json()
     assert body["error"]["code"] == "NOT_READY"
     assert "dependencies" in (body["error"].get("details") or {})
-

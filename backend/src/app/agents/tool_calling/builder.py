@@ -12,8 +12,8 @@ import time
 from datetime import datetime, timezone
 from typing import Any, Sequence
 
-from langchain_core.messages import AIMessage, SystemMessage, ToolMessage
-from langchain_core.tools import BaseTool
+from langchain.messages import AIMessage, SystemMessage, ToolMessage
+from langchain.tools import BaseTool
 from langchain_openai import ChatOpenAI
 from langgraph.graph import END, StateGraph
 from langgraph.prebuilt import ToolNode

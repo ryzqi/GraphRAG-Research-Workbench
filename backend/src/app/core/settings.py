@@ -71,6 +71,9 @@ class Settings(BaseSettings):
     llm_api_key: str = Field("REPLACE_ME", alias="LLM_API_KEY")
     llm_model: str = Field("gpt-4o-mini", alias="LLM_MODEL")
     llm_timeout_seconds: float = Field(30.0, alias="LLM_TIMEOUT_SECONDS")
+    llm_max_input_tokens: int | None = Field(
+        None, alias="LLM_MAX_INPUT_TOKENS"
+    )
 
     embedding_base_url: str = Field("https://api.openai.com/v1", alias="EMBEDDING_BASE_URL")
     embedding_api_key: str = Field("REPLACE_ME", alias="EMBEDDING_API_KEY")

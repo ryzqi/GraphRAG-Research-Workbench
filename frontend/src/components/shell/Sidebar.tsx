@@ -299,7 +299,9 @@ export function Sidebar({
               >
                 <ListItemButton
                   component={NavLink}
-                  to={session.type === 'kb_chat' ? '/kb-chat' : '/'}
+                  to={`${
+                    session.type === 'kb_chat' ? '/kb-chat' : '/'
+                  }?sessionId=${session.sessionId}`}
                   sx={{
                     borderRadius: 6,
                     py: 1,

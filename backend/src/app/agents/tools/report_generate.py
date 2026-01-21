@@ -9,7 +9,7 @@ import json
 from datetime import datetime, timezone
 from typing import Literal
 
-from langchain_core.tools import BaseTool, StructuredTool
+from langchain.tools import BaseTool, tool as lc_tool
 from pydantic import BaseModel, Field
 
 from app.integrations.llm_client import ChatMessage, LLMClient
@@ -158,9 +158,8 @@ def build_report_generate_tool(llm: LLMClient, prompts: PromptLoader | None = No
 
         return json.dumps(result, ensure_ascii=False)
 
-    return StructuredTool.from_function(
+    return lc_tool(
         name="report_generate",
         description="根据研究发现和证据生成结构化研究报告。",
         args_schema=ReportGenerateArgs,
-        coroutine=_generate,
-    )
+    )(_generate)

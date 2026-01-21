@@ -10,7 +10,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -21,6 +21,7 @@ from app.agents.tools.kb_retrieve import build_kb_retrieve_tool
 from app.core.checkpoint import CheckpointManager
 from app.core.logging import set_run_id
 from app.core.settings import get_settings
+from app.integrations.langchain_profiles import build_chat_model_profile
 from app.integrations.embedding_client import EmbeddingClient
 from app.integrations.llm_client import ChatMessage as LLMMessage
 from app.integrations.llm_client import LLMClient
@@ -164,7 +165,6 @@ class KbChatService:
 
             tools, tool_meta_by_name = await build_tool_registry(
                 settings=self._settings,
-                mcp=None,
                 extensions=None,
                 extra_tools=[kb_tool],
                 include_web_search=False,
@@ -175,6 +175,7 @@ class KbChatService:
                 model=self._settings.llm_model,
                 api_key=self._settings.llm_api_key,
                 base_url=self._settings.llm_base_url.rstrip("/"),
+                profile=build_chat_model_profile(self._settings),
             )
 
             system_prompt = self._prompts.render("kb_chat/system")
@@ -345,7 +346,6 @@ class KbChatService:
 
             tools, tool_meta_by_name = await build_tool_registry(
                 settings=self._settings,
-                mcp=None,
                 extensions=None,
                 extra_tools=[kb_tool],
                 include_web_search=False,
@@ -356,6 +356,7 @@ class KbChatService:
                 model=self._settings.llm_model,
                 api_key=self._settings.llm_api_key,
                 base_url=self._settings.llm_base_url.rstrip("/"),
+                profile=build_chat_model_profile(self._settings),
             )
 
             system_prompt = self._prompts.render("kb_chat/system")
@@ -513,7 +514,6 @@ class KbChatService:
             if summary_result:
                 summary_metrics = {
                     "summary_updated": True,
-                    "summary_message_id": str(summary_result.message.id),
                     **summary_result.stats,
                 }
         except Exception as exc:  # pragma: no cover

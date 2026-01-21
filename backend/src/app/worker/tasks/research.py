@@ -12,7 +12,6 @@ from app.agents.research_graph import ResearchGraph
 from app.core.checkpoint import CheckpointManager
 from app.db.session import get_sessionmaker
 from app.integrations.embedding_client import EmbeddingClient
-from app.integrations.mcp_client import MCPClient
 from app.integrations.milvus_client import get_milvus_client
 from app.integrations.redis_client import get_redis
 from app.models.agent_run import AgentRun, AgentRunStatus
@@ -72,14 +71,12 @@ async def _run_research(
             run.started_at = datetime.now(timezone.utc)
             await session.commit()
 
-            mcp: MCPClient | None = None
             try:
                 # 初始化依赖
                 milvus = get_milvus_client()
                 embedding = EmbeddingClient()
                 redis = get_redis()
                 retrieval = RetrievalService(session, milvus, embedding, redis)
-                mcp = MCPClient()
 
                 extensions: list[ToolExtension] = []
                 if allow_external:
@@ -95,7 +92,6 @@ async def _run_research(
                     question=question,
                     kb_ids=[uuid.UUID(kid) for kid in kb_ids],
                     retrieval=retrieval,
-                    mcp=mcp,
                     extensions=list(extensions),
                     allow_external=allow_external,
                     thread_id=run_id,
@@ -188,10 +184,6 @@ async def _run_research(
                 run.status = AgentRunStatus.FAILED
                 run.finished_at = datetime.now(timezone.utc)
                 run.error_message = str(exc)
-
-            finally:
-                if mcp is not None:
-                    await mcp.close()
 
             await session.commit()
 

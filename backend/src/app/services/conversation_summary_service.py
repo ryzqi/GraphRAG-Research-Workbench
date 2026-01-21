@@ -12,6 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.settings import Settings, get_settings
+from app.integrations.langchain_profiles import build_chat_model_profile
 from app.integrations.llm_client import ChatMessage as LLMMessage
 from app.models.chat_message import ChatMessage, MessageRole
 from app.utils.token_counter import count_tokens_approximately
@@ -19,12 +20,12 @@ from app.utils.token_counter import count_tokens_approximately
 
 @dataclass(slots=True)
 class SummaryUpdateResult:
-    message: ChatMessage
+    summary_text: str
     stats: dict[str, int]
 
 
 class ConversationSummaryService:
-    """滚动摘要：持久化到 ChatMessage.meta。"""
+    """滚动摘要：生成后仅用于运行时，不再持久化到消息表。"""
 
     _META_FLAG = "summary"
     _META_VERSION = 1
@@ -43,17 +44,7 @@ class ConversationSummaryService:
         self._token_counter = token_counter or count_tokens_approximately
 
     async def load_latest_summary(self, session_id) -> ChatMessage | None:
-        stmt = (
-            select(ChatMessage)
-            .where(ChatMessage.session_id == session_id)
-            .where(ChatMessage.role == MessageRole.SYSTEM)
-            .order_by(ChatMessage.created_at.desc())
-            .limit(20)
-        )
-        result = await self._db.execute(stmt)
-        for msg in result.scalars().all():
-            if self.is_summary_message(msg):
-                return msg
+        # 不再从数据库读取摘要消息（仅持久化当前会话状态）
         return None
 
     async def maybe_update_summary(
@@ -77,23 +68,8 @@ class ConversationSummaryService:
         if not summary_text:
             return None
 
-        summary_msg = ChatMessage(
-            session_id=session_id,
-            role=MessageRole.SYSTEM,
-            content=summary_text,
-            meta={
-                self._META_FLAG: True,
-                "version": self._META_VERSION,
-                "strategy": "langmem",
-                "message_count": len(messages),
-                "token_count": total_tokens,
-            },
-        )
-        self._db.add(summary_msg)
-        await self._db.flush()
-
         return SummaryUpdateResult(
-            message=summary_msg,
+            summary_text=summary_text,
             stats={"message_count": len(messages), "token_count": total_tokens},
         )
 
@@ -138,7 +114,7 @@ class ConversationSummaryService:
     async def _summarize_with_langmem(
         self, messages: list[LLMMessage], previous_summary: str | None
     ) -> str | None:
-        from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+        from langchain.messages import AIMessage, HumanMessage, SystemMessage
         from langchain_openai import ChatOpenAI
         from langmem.short_term import RunningSummary, summarize_messages
 
@@ -146,6 +122,7 @@ class ConversationSummaryService:
             model=self._settings.llm_model,
             base_url=self._settings.llm_base_url,
             api_key=self._settings.llm_api_key,
+            profile=build_chat_model_profile(self._settings),
         )
         summary_model = model.bind(max_tokens=self._settings.summary_max_tokens)
         token_counter = getattr(model, "get_num_tokens_from_messages", None)
