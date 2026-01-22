@@ -253,7 +253,7 @@ def build_subagent_coordinate_tool(
         return json.dumps(output, ensure_ascii=False)
 
     return lc_tool(
-        name="subagent_coordinate",
+        "subagent_coordinate",
         description="协调多个子代理执行任务，支持并行/串行/依赖执行模式和结果聚合。",
         args_schema=SubagentCoordinateArgs,
     )(_coordinate)

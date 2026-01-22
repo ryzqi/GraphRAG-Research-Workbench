@@ -25,6 +25,7 @@ from app.agents.general_chat_agent import (
 )
 from app.agents.tool_calling.registry import build_tool_registry
 from app.agents.tool_calling.utils import extract_tool_results
+from app.agents.tools.system_time import build_system_time_tool
 from app.core.checkpoint import CheckpointManager
 from app.core.errors import AppError
 from app.core.logging import set_run_id
@@ -320,7 +321,7 @@ class GeneralChatService:
             tools, tool_meta_by_name = await build_tool_registry(
                 settings=self._settings,
                 extensions=extensions,
-                extra_tools=[],
+                extra_tools=[build_system_time_tool()],
                 include_web_search=include_web_search,
                 include_mcp=include_mcp,
             )
@@ -496,7 +497,7 @@ class GeneralChatService:
             tools, tool_meta_by_name = await build_tool_registry(
                 settings=self._settings,
                 extensions=extensions,
-                extra_tools=[],
+                extra_tools=[build_system_time_tool()],
                 include_web_search=include_web_search,
                 include_mcp=include_mcp,
             )
@@ -720,7 +721,7 @@ class GeneralChatService:
         tools, tool_meta_by_name = await build_tool_registry(
             settings=self._settings,
             extensions=extensions,
-            extra_tools=[],
+            extra_tools=[build_system_time_tool()],
             include_web_search=include_web_search,
             include_mcp=include_mcp,
         )
@@ -868,7 +869,7 @@ class GeneralChatService:
         tools, tool_meta_by_name = await build_tool_registry(
             settings=self._settings,
             extensions=extensions,
-            extra_tools=[],
+            extra_tools=[build_system_time_tool()],
             include_web_search=include_web_search,
             include_mcp=include_mcp,
         )

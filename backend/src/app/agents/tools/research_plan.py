@@ -120,7 +120,7 @@ def build_research_plan_tool(
         return json.dumps(result, ensure_ascii=False)
 
     return lc_tool(
-        name="research_plan",
+        "research_plan",
         description="分析研究问题，生成结构化的研究计划和子任务拆解。",
         args_schema=ResearchPlanArgs,
     )(_plan)

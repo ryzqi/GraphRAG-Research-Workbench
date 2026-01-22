@@ -133,7 +133,7 @@ def build_evidence_compare_tool(
         return json.dumps(result, ensure_ascii=False)
 
     return lc_tool(
-        name="evidence_compare",
+        "evidence_compare",
         description="对比分析多来源证据，检测冲突和不一致，评估证据充分程度。",
         args_schema=EvidenceCompareArgs,
     )(_compare)

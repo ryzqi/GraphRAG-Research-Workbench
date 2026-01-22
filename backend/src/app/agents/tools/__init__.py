@@ -15,6 +15,7 @@ from app.agents.tools.evidence_compare import EvidenceCompareArgs, build_evidenc
 from app.agents.tools.research_plan import ResearchPlanArgs, build_research_plan_tool
 from app.agents.tools.report_generate import ReportGenerateArgs, build_report_generate_tool
 from app.agents.tools.subagent_coordinate import SubagentCoordinateArgs, build_subagent_coordinate_tool
+from app.agents.tools.system_time import SystemTimeArgs, build_system_time_tool
 
 __all__ = [
     "WebSearchArgs",
@@ -35,4 +36,6 @@ __all__ = [
     "build_report_generate_tool",
     "SubagentCoordinateArgs",
     "build_subagent_coordinate_tool",
+    "SystemTimeArgs",
+    "build_system_time_tool",
 ]

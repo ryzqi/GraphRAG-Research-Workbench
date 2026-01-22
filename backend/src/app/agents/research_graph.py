@@ -24,6 +24,7 @@ from app.agents.tools.evidence_compare import build_evidence_compare_tool
 from app.agents.tools.kb_retrieve import build_kb_retrieve_tool
 from app.agents.tools.report_generate import build_report_generate_tool
 from app.agents.tools.research_plan import build_research_plan_tool
+from app.agents.tools.system_time import build_system_time_tool
 from app.core.settings import get_settings
 from app.integrations.langchain_profiles import build_chat_model_profile
 from app.integrations.llm_client import LLMClient
@@ -109,6 +110,7 @@ class ResearchGraph:
         )
         internal_tools = [
             kb_tool,
+            build_system_time_tool(),
             build_research_plan_tool(llm_client, self._prompts),
             build_evidence_compare_tool(llm_client, self._prompts),
             build_report_generate_tool(llm_client, self._prompts),

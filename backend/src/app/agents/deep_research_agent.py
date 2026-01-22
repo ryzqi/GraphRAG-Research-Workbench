@@ -16,6 +16,7 @@ from app.agents.tools.evidence_compare import build_evidence_compare_tool
 from app.agents.tools.report_generate import build_report_generate_tool
 from app.agents.tools.research_plan import build_research_plan_tool
 from app.agents.tools.subagent_coordinate import build_subagent_coordinate_tool
+from app.agents.tools.system_time import build_system_time_tool
 from app.agents.tools.web_search import (
     build_web_crawl_tool,
     build_web_extract_tool,
@@ -140,7 +141,7 @@ class DeepResearchAgent:
             return self._format_results(results)
 
         return lc_tool(
-            name="kb_retrieve",
+            "kb_retrieve",
             description="从知识库检索资料，返回带编号的引用片段。",
             args_schema=RetrievalArgs,
         )(_retrieve)
@@ -171,6 +172,7 @@ class DeepResearchAgent:
         llm_client = self._build_llm_client()
         tools: list[BaseTool] = [
             self._build_retrieval_tool(kb_ids),
+            build_system_time_tool(),
             build_research_plan_tool(llm_client, self._prompts),
             build_evidence_compare_tool(llm_client, self._prompts),
             build_report_generate_tool(llm_client, self._prompts),

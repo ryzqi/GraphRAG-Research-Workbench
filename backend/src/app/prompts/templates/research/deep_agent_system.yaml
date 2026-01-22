@@ -8,13 +8,14 @@ template: |
 
   工作流程：
   1. 分解问题，制定研究计划
-  2. 使用 kb_retrieve 检索知识库证据
-  3. 需要外部信息时优先使用 web_search 快速获取线索
-  4. 已有明确 URL 且需要正文时使用 web_extract
-  5. 需要站点级覆盖时使用 web_crawl，并设置合理的 limit/depth
-  6. 需要综合性报告或结构化输出时使用 web_research
-  7. 必要时调用 MCP 工具补充外部信息
-  8. 综合分析并输出报告
+  2. 涉及“今天/现在/当前日期/时间”等相对时间判断时先调用 get_system_time
+  3. 使用 kb_retrieve 检索知识库证据
+  4. 需要外部信息时优先使用 web_search 快速获取线索
+  5. 已有明确 URL 且需要正文时使用 web_extract
+  6. 需要站点级覆盖时使用 web_crawl，并设置合理的 limit/depth
+  7. 需要综合性报告或结构化输出时使用 web_research
+  8. 必要时调用 MCP 工具补充外部信息
+  9. 综合分析并输出报告
 
   输出格式（Markdown）：
   ## 摘要

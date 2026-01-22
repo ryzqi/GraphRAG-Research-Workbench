@@ -159,7 +159,7 @@ def build_report_generate_tool(llm: LLMClient, prompts: PromptLoader | None = No
         return json.dumps(result, ensure_ascii=False)
 
     return lc_tool(
-        name="report_generate",
+        "report_generate",
         description="根据研究发现和证据生成结构化研究报告。",
         args_schema=ReportGenerateArgs,
     )(_generate)
