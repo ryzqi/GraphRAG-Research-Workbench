@@ -24,5 +24,4 @@ def import_all_models() -> None:
         research_report,
         source_material,
         tool_extension,
-        tool_invocation,
     )

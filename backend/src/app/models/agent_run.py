@@ -19,7 +19,6 @@ if TYPE_CHECKING:
     from app.models.chat_session import ChatSession
     from app.models.evidence import Evidence
     from app.models.research_report import ResearchReport
-    from app.models.tool_invocation import ToolInvocation
 
 
 class AgentRunStatus(str, Enum):
@@ -86,9 +85,6 @@ class AgentRun(Base):
     )
     evidence: Mapped[list["Evidence"]] = relationship(
         "Evidence", back_populates="run", lazy="selectin"
-    )
-    tool_invocations: Mapped[list["ToolInvocation"]] = relationship(
-        "ToolInvocation", back_populates="run", lazy="selectin"
     )
     research_report: Mapped["ResearchReport | None"] = relationship(
         "ResearchReport", back_populates="run", uselist=False, lazy="selectin"

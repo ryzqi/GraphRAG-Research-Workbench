@@ -15,7 +15,6 @@ import {
   type ChatMessageResponse,
   type ChatSession,
 } from '../services/chats';
-import type { ToolInvocationSummary } from '../services/extensions';
 import { ErrorAlert } from '../components/ui/ErrorAlert';
 import { parseSseJson } from '../lib/sse';
 import {
@@ -251,21 +250,12 @@ export function GeneralChatPage() {
         return;
       }
 
-      const invocations =
-        (response.run.stage_summaries?.extensions as { invocations?: ToolInvocationSummary[] })
-          ?.invocations ?? [];
-
       updateMessage(assistantId, () => ({
         id: response.assistant_message.id,
         role: 'assistant',
         content: response.assistant_message.content,
         evidence: response.evidence,
         runId: response.run.id,
-        invocations: invocations.map((inv) => ({
-          tool_name: inv.tool_name,
-          extension_name: inv.extension_name ?? undefined,
-          status: inv.status === 'succeeded' ? 'succeeded' : 'failed',
-        })),
         isStreaming: false,
       }));
     };
@@ -324,20 +314,12 @@ export function GeneralChatPage() {
         if (event.event === 'final') {
           const data = parseSseJson<ChatMessageResponse>(event.data);
           if (data.status === 'succeeded') {
-            const invocations =
-              (data.run.stage_summaries?.extensions as { invocations?: ToolInvocationSummary[] })
-                ?.invocations ?? [];
             updateMessage(assistantId, (msg) => ({
               ...msg,
               id: data.assistant_message.id,
               content: data.assistant_message.content,
               evidence: data.evidence,
               runId: data.run.id,
-              invocations: invocations.map((inv) => ({
-                tool_name: inv.tool_name,
-                extension_name: inv.extension_name ?? undefined,
-                status: inv.status === 'succeeded' ? 'succeeded' : 'failed',
-              })),
               isStreaming: false,
             }));
           }
@@ -422,21 +404,12 @@ export function GeneralChatPage() {
           return;
         }
 
-        const invocations =
-          (response.run.stage_summaries?.extensions as { invocations?: ToolInvocationSummary[] })
-            ?.invocations ?? [];
-
         updateMessage(pendingMessageId, () => ({
           id: response.assistant_message.id,
           role: 'assistant' as const,
           content: response.assistant_message.content,
           evidence: response.evidence,
           runId: response.run.id,
-          invocations: invocations.map((inv) => ({
-            tool_name: inv.tool_name,
-            extension_name: inv.extension_name ?? undefined,
-            status: inv.status === 'succeeded' ? 'succeeded' : 'failed',
-          })),
           isStreaming: false,
         }));
       };
@@ -494,20 +467,12 @@ export function GeneralChatPage() {
           if (event.event === 'final') {
             const data = parseSseJson<ChatMessageResponse>(event.data);
             if (data.status === 'succeeded') {
-              const invocations =
-                (data.run.stage_summaries?.extensions as { invocations?: ToolInvocationSummary[] })
-                  ?.invocations ?? [];
               updateMessage(pendingMessageId, (msg) => ({
                 ...msg,
                 id: data.assistant_message.id,
                 content: data.assistant_message.content,
                 evidence: data.evidence,
                 runId: data.run.id,
-                invocations: invocations.map((inv) => ({
-                  tool_name: inv.tool_name,
-                  extension_name: inv.extension_name ?? undefined,
-                  status: inv.status === 'succeeded' ? 'succeeded' : 'failed',
-                })),
                 isStreaming: false,
               }));
             }

@@ -5,18 +5,13 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 from enum import Enum
-from typing import TYPE_CHECKING
 
 import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
 from app.db.enums import enum_values
-
-if TYPE_CHECKING:
-    from app.models.tool_invocation import ToolInvocation
-
 
 class ExtensionTransport(str, Enum):
     STDIO = "stdio"
@@ -53,9 +48,4 @@ class ToolExtension(Base):
         nullable=False,
         server_default=sa.func.now(),
         onupdate=sa.func.now(),
-    )
-
-    # 关系
-    invocations: Mapped[list["ToolInvocation"]] = relationship(
-        "ToolInvocation", back_populates="extension", lazy="selectin"
     )

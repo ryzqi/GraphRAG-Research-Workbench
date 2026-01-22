@@ -21,12 +21,6 @@ class ExtensionStatus(str, Enum):
     DISABLED = "disabled"
 
 
-class InvocationStatus(str, Enum):
-    SUCCEEDED = "succeeded"
-    FAILED = "failed"
-    CANCELED = "canceled"
-
-
 # 扩展管理
 class ToolExtensionCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=128)
@@ -61,33 +55,6 @@ class ToolDescriptor(BaseModel):
     name: str
     description: str | None = None
     input_schema: dict | None = None
-
-
-# 调用记录
-class ToolInvocationRead(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: uuid.UUID
-    extension_id: uuid.UUID
-    run_id: uuid.UUID
-    tool_name: str
-    purpose: str | None = None
-    input: dict | None = None
-    output: dict | None = None
-    status: InvocationStatus
-    error_message: str | None = None
-    requires_confirmation: bool
-    user_confirmed: bool | None = None
-    started_at: datetime
-    finished_at: datetime | None = None
-
-
-# 调用摘要（用于响应展示）
-class ToolInvocationSummary(BaseModel):
-    tool_name: str
-    purpose: str | None = None
-    status: InvocationStatus
-    extension_name: str | None = None
 
 
 class ToolExtensionListResponse(BaseModel):

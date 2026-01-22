@@ -4,7 +4,7 @@
  */
 import { useRef, useEffect, useCallback, useMemo, useState } from 'react';
 import { Box, Stack } from '@mui/material';
-import { MessageItem, ToolApprovalCard, ExtensionSummary } from './MessageItem';
+import { MessageItem, ToolApprovalCard } from './MessageItem';
 import { SparkleLoading } from './SparkleLoading';
 import type { EvidenceItem } from '../../services/chats';
 import { EvidenceList } from '../EvidenceList';
@@ -24,11 +24,6 @@ export interface ChatMessage {
     tool_args?: Record<string, unknown>;
     tool_output?: string;
     status: 'pending' | 'completed' | 'failed';
-  }>;
-  invocations?: Array<{
-    tool_name: string;
-    extension_name?: string;
-    status: 'succeeded' | 'failed';
   }>;
   pendingToolApproval?: {
     message?: string | null;
@@ -135,13 +130,6 @@ export function MessageList({
                   onApprove={() => onToolApprove(msg.id, msg.runId!)}
                   onReject={() => onToolReject(msg.id, msg.runId!)}
                 />
-              </Box>
-            )}
-
-            {/* 扩展调用摘要 */}
-            {msg.invocations && msg.invocations.length > 0 && (
-              <Box sx={{ mt: 2, ml: 7 }}>
-                <ExtensionSummary invocations={msg.invocations} />
               </Box>
             )}
 

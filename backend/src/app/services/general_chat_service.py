@@ -24,7 +24,6 @@ from app.agents.general_chat_agent import (
     build_pending_tool_calls,
 )
 from app.agents.tool_calling.registry import build_tool_registry
-from app.agents.tool_calling.utils import extract_tool_results
 from app.agents.tools.system_time import build_system_time_tool
 from app.core.checkpoint import CheckpointManager
 from app.core.errors import AppError
@@ -38,7 +37,6 @@ from app.models.agent_run import AgentRun, AgentRunStatus, AgentRunType
 from app.models.chat_message import ChatMessage, MessageRole
 from app.models.chat_session import ChatSession
 from app.models.tool_extension import ExtensionStatus, ToolExtension
-from app.models.tool_invocation import InvocationStatus, ToolInvocation
 from app.schemas.chats import (
     AgentRunRead,
     ChatAnswerResponse,
@@ -383,7 +381,6 @@ class GeneralChatService:
                 if not isinstance(metrics, dict):
                     metrics = {}
                 run.metrics = {
-                    "extension_calls": 0,
                     "latency_ms": int(
                         (datetime.now(timezone.utc) - started_at).total_seconds()
                         * 1000
@@ -410,11 +407,8 @@ class GeneralChatService:
             return await self._finalize_run(
                 session=session,
                 run=run,
-                user_content=user_content,
                 started_at=started_at,
                 result=result,
-                tool_meta_by_name=tool_meta_by_name,
-                user_confirmed=None,
             )
 
         except Exception as e:
@@ -603,7 +597,6 @@ class GeneralChatService:
                             },
                         }
                         run.metrics = {
-                            "extension_calls": 0,
                             "latency_ms": int(
                                 (datetime.now(timezone.utc) - started_at).total_seconds()
                                 * 1000
@@ -640,11 +633,8 @@ class GeneralChatService:
             final_response = await self._finalize_run(
                 session=session,
                 run=run,
-                user_content=user_content,
                 started_at=started_at,
                 result=result,
-                tool_meta_by_name=tool_meta_by_name,
-                user_confirmed=None,
             )
             yield "final", final_response.model_dump(mode="json")
 
@@ -785,7 +775,6 @@ class GeneralChatService:
                 metrics = {}
             run.metrics = {
                 **(run.metrics if isinstance(run.metrics, dict) else {}),
-                "extension_calls": 0,
                 "latency_ms": int(
                     (datetime.now(timezone.utc) - (run.started_at or datetime.now(timezone.utc))).total_seconds()
                     * 1000
@@ -815,11 +804,8 @@ class GeneralChatService:
             return await self._finalize_run(
                 session=session,
                 run=run,
-                user_content=run.question,
                 started_at=started_at,
                 result=result,
-                tool_meta_by_name=tool_meta_by_name,
-                user_confirmed=approved,
             )
         finally:
             set_run_id(None)
@@ -972,7 +958,6 @@ class GeneralChatService:
                         }
                         run.metrics = {
                             **(run.metrics if isinstance(run.metrics, dict) else {}),
-                            "extension_calls": 0,
                             "latency_ms": int(
                                 (datetime.now(timezone.utc) - (run.started_at or datetime.now(timezone.utc))).total_seconds()
                                 * 1000
@@ -1009,11 +994,8 @@ class GeneralChatService:
             final_response = await self._finalize_run(
                 session=session,
                 run=run,
-                user_content=run.question,
                 started_at=started_at,
                 result=result,
-                tool_meta_by_name=tool_meta_by_name,
-                user_confirmed=approved,
             )
             yield "final", final_response.model_dump(mode="json")
 
@@ -1055,58 +1037,14 @@ class GeneralChatService:
         *,
         session: ChatSession,
         run: AgentRun,
-        user_content: str,
         started_at: datetime,
         result: dict,
-        tool_meta_by_name: dict[str, Any],
-        user_confirmed: bool | None,
     ) -> ChatAnswerResponse:
         messages = result.get("messages") or []
         if not isinstance(messages, list):
             messages = []
 
-        tool_results = extract_tool_results(messages, tool_meta_by_name)
-
-        # approved=false 时：不执行任何外部工具，且不写入 MCP 工具审计记录（需求：0 或 canceled）。
-        audit_tool_results = tool_results
-        if user_confirmed is False and self._settings.mcp_confirmation_required:
-            audit_tool_results = []
-
-        # 保存工具调用记录（仅记录 MCP 扩展；内置工具没有 extension_id 外键）
-        purpose = f"回答问题: {user_content[:100]}"
         now = datetime.now(timezone.utc)
-        for tool_result in audit_tool_results:
-            if tool_result.get("is_builtin"):
-                continue
-            raw_extension_id = tool_result.get("extension_id")
-            if not raw_extension_id:
-                continue
-            try:
-                extension_id = uuid.UUID(str(raw_extension_id))
-            except ValueError:
-                continue
-
-            success = bool(tool_result.get("success"))
-            output = tool_result.get("output")
-            invocation = ToolInvocation(
-                extension_id=extension_id,
-                run_id=run.id,
-                tool_name=str(tool_result.get("tool_name") or ""),
-                purpose=purpose,
-                input=tool_result.get("args")
-                if isinstance(tool_result.get("args"), dict)
-                else None,
-                requires_confirmation=self._settings.mcp_confirmation_required,
-                user_confirmed=user_confirmed
-                if self._settings.mcp_confirmation_required
-                else None,
-                status=InvocationStatus.SUCCEEDED if success else InvocationStatus.FAILED,
-                output={"result": output} if success else None,
-                error_message=str(output) if not success and output is not None else None,
-                finished_at=now,
-            )
-            self._db.add(invocation)
-
         answer = ""
         for msg in reversed(messages):
             if isinstance(msg, AIMessage):
@@ -1122,24 +1060,9 @@ class GeneralChatService:
         )
         self._db.add(assistant_msg)
 
-        invocation_summaries: list[dict] = []
-        for tr in audit_tool_results:
-            invocation_summaries.append(
-                {
-                    "tool_name": tr.get("tool_name"),
-                    "purpose": purpose,
-                    "status": "succeeded" if tr.get("success") else "failed",
-                    "extension_name": tr.get("extension_name"),
-                }
-            )
-
         stage_summaries = result.get("stage_summaries") or {}
         if not isinstance(stage_summaries, dict):
             stage_summaries = {}
-        stage_summaries = {
-            **stage_summaries,
-            "extensions": {"invocations": invocation_summaries},
-        }
 
         # 更新运行状态
         run.status = AgentRunStatus.SUCCEEDED
@@ -1151,7 +1074,6 @@ class GeneralChatService:
         if not isinstance(metrics, dict):
             metrics = {}
         run.metrics = {
-            "extension_calls": len(audit_tool_results),
             "latency_ms": int((now - started_at).total_seconds() * 1000),
             "context": context_metrics,
             **metrics,

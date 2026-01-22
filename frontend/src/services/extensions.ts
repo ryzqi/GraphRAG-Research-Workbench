@@ -7,7 +7,6 @@ import type { ListResponse } from './types';
 
 export type ExtensionTransport = 'stdio' | 'http';
 export type ExtensionStatus = 'enabled' | 'disabled';
-export type InvocationStatus = 'succeeded' | 'failed' | 'canceled';
 
 export interface ToolExtension {
   id: string;
@@ -39,13 +38,6 @@ export interface ToolDescriptor {
   name: string;
   description: string | null;
   input_schema: Record<string, unknown> | null;
-}
-
-export interface ToolInvocationSummary {
-  tool_name: string;
-  purpose: string | null;
-  status: InvocationStatus;
-  extension_name: string | null;
 }
 
 export type ToolExtensionListResponse = ListResponse<ToolExtension>;
