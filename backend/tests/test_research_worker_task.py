@@ -8,10 +8,9 @@ import app.worker.tasks.research as research_mod
 from app.agents.research_graph import ResearchOutput
 from app.models.agent_run import AgentRun, AgentRunStatus, AgentRunType
 from app.models.chat_session import AgentMode
-from app.models.document_chunk import DocumentChunk
 from app.models.evidence import Evidence
 from app.models.research_report import ResearchReport
-from app.services.retrieval_service import RetrievalResult
+from app.services.retrieval_service import RetrievedChunk, RetrievalResult
 
 
 class FakeSession:
@@ -71,21 +70,29 @@ class FakeResearchGraph:
         kb_id = uuid.uuid4()
         material_id = uuid.uuid4()
         chunks = [
-            DocumentChunk(
+            RetrievedChunk(
                 id=uuid.uuid4(),
                 kb_id=kb_id,
                 material_id=material_id,
-                chunk_index=0,
-                text="证据1",
+                content="证据1",
+                context=None,
                 locator={"page": 1},
+                metadata=None,
+                chunk_role="default",
+                parent_chunk_id=None,
+                child_seq=None,
             ),
-            DocumentChunk(
+            RetrievedChunk(
                 id=uuid.uuid4(),
                 kb_id=kb_id,
                 material_id=material_id,
-                chunk_index=1,
-                text="证据2",
+                content="证据2",
+                context=None,
                 locator={"page": 2},
+                metadata=None,
+                chunk_role="default",
+                parent_chunk_id=None,
+                child_seq=None,
             ),
         ]
         results = [

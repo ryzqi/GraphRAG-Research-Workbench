@@ -3,8 +3,7 @@ import uuid
 import pytest
 
 from app.agents.tools.kb_retrieve import build_kb_retrieve_tool
-from app.models.document_chunk import DocumentChunk
-from app.services.retrieval_service import RetrievalResult
+from app.services.retrieval_service import RetrievedChunk, RetrievalResult
 
 
 class FakeRetrievalService:
@@ -24,21 +23,29 @@ async def test_kb_retrieve_formats_numbered_context_and_calls_callback() -> None
     kb_id = uuid.uuid4()
     material_id = uuid.uuid4()
     chunks = [
-        DocumentChunk(
+        RetrievedChunk(
             id=uuid.uuid4(),
             kb_id=kb_id,
             material_id=material_id,
-            chunk_index=0,
-            text="第一段",
+            content="第一段",
+            context=None,
             locator={"page": 1},
+            metadata=None,
+            chunk_role="default",
+            parent_chunk_id=None,
+            child_seq=None,
         ),
-        DocumentChunk(
+        RetrievedChunk(
             id=uuid.uuid4(),
             kb_id=kb_id,
             material_id=material_id,
-            chunk_index=1,
-            text="第二段",
+            content="第二段",
+            context=None,
             locator={"page": 2},
+            metadata=None,
+            chunk_role="default",
+            parent_chunk_id=None,
+            child_seq=None,
         ),
     ]
     results = [
@@ -50,7 +57,7 @@ async def test_kb_retrieve_formats_numbered_context_and_calls_callback() -> None
     captured: dict = {}
 
     def on_results(included: list[RetrievalResult], meta: dict) -> None:
-        captured["texts"] = [r.chunk.text for r in included]
+        captured["texts"] = [r.chunk.content for r in included]
         captured["meta"] = meta
 
     tool = build_kb_retrieve_tool(
@@ -88,13 +95,17 @@ class FakeContextBuilder:
 async def test_kb_retrieve_appends_truncation_mark_from_context_builder() -> None:
     kb_id = uuid.uuid4()
     material_id = uuid.uuid4()
-    chunk = DocumentChunk(
+    chunk = RetrievedChunk(
         id=uuid.uuid4(),
         kb_id=kb_id,
         material_id=material_id,
-        chunk_index=0,
-        text="内容",
+        content="内容",
+        context=None,
         locator=None,
+        metadata=None,
+        chunk_role="default",
+        parent_chunk_id=None,
+        child_seq=None,
     )
     results = [RetrievalResult(chunk=chunk, score=0.1)]
     retrieval = FakeRetrievalService(results)

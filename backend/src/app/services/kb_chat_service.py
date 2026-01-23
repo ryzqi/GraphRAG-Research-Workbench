@@ -537,7 +537,7 @@ class KbChatService:
                 material_id=r.chunk.material_id,
                 chunk_id=r.chunk.id,
                 locator=r.chunk.locator,
-                excerpt=r.chunk.text[:500],
+                excerpt=r.chunk.content[:500],
             )
             self._db.add(ev)
             evidence_items.append(
@@ -547,7 +547,7 @@ class KbChatService:
                     material_id=r.chunk.material_id,
                     chunk_id=r.chunk.id,
                     locator=r.chunk.locator,
-                    excerpt=r.chunk.text[:500],
+                    excerpt=r.chunk.content[:500],
                 )
             )
         # 更新运行状态

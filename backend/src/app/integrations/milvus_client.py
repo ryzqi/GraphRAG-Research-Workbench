@@ -41,6 +41,15 @@ def _escape_string(value: str) -> str:
 class MilvusSearchHit:
     chunk_id: str
     score: float
+    kb_id: str | None = None
+    material_id: str | None = None
+    chunk_role: str | None = None
+    parent_chunk_id: str | None = None
+    child_seq: int | None = None
+    content: str | None = None
+    context: str | None = None
+    locator: dict | None = None
+    metadata: dict | None = None
 
 
 class MilvusClient:
@@ -99,8 +108,13 @@ class MilvusClient:
             "chunk_id",
             "kb_id",
             "material_id",
+            "chunk_role",
+            "parent_chunk_id",
+            "child_seq",
             "content",
             "context",
+            "locator",
+            "metadata",
             self._DEFAULT_VECTOR_FIELD,
             self._SPARSE_FIELD,
         }
@@ -148,6 +162,11 @@ class MilvusClient:
             ),
             FieldSchema(name="kb_id", dtype=DataType.VARCHAR, max_length=64),
             FieldSchema(name="material_id", dtype=DataType.VARCHAR, max_length=64),
+            FieldSchema(name="chunk_role", dtype=DataType.VARCHAR, max_length=16),
+            FieldSchema(
+                name="parent_chunk_id", dtype=DataType.VARCHAR, max_length=64
+            ),
+            FieldSchema(name="child_seq", dtype=DataType.INT32),
             FieldSchema(
                 name="content",
                 dtype=DataType.VARCHAR,
@@ -155,6 +174,8 @@ class MilvusClient:
                 analyzer_params=analyzer_params,
             ),
             FieldSchema(name="context", dtype=DataType.VARCHAR, max_length=2048),
+            FieldSchema(name="locator", dtype=DataType.JSON),
+            FieldSchema(name="metadata", dtype=DataType.JSON),
             FieldSchema(
                 name=self._DEFAULT_VECTOR_FIELD,
                 dtype=DataType.FLOAT_VECTOR,
@@ -227,8 +248,13 @@ class MilvusClient:
             "chunk_id",
             "kb_id",
             "material_id",
+            "chunk_role",
+            "parent_chunk_id",
+            "child_seq",
             "content",
             "context",
+            "locator",
+            "metadata",
             self._DEFAULT_VECTOR_FIELD,
             self._SPARSE_FIELD,
         }
@@ -242,11 +268,43 @@ class MilvusClient:
             entity = getattr(hit, "entity", None) or {}
             if isinstance(entity, dict):
                 chunk_id = entity.get("chunk_id")
+                kb_id = entity.get("kb_id")
+                material_id = entity.get("material_id")
+                chunk_role = entity.get("chunk_role")
+                parent_chunk_id = entity.get("parent_chunk_id")
+                child_seq = entity.get("child_seq")
+                content = entity.get("content")
+                context = entity.get("context")
+                locator = entity.get("locator")
+                metadata = entity.get("metadata")
             else:
                 chunk_id = getattr(entity, "chunk_id", None)
+                kb_id = getattr(entity, "kb_id", None)
+                material_id = getattr(entity, "material_id", None)
+                chunk_role = getattr(entity, "chunk_role", None)
+                parent_chunk_id = getattr(entity, "parent_chunk_id", None)
+                child_seq = getattr(entity, "child_seq", None)
+                content = getattr(entity, "content", None)
+                context = getattr(entity, "context", None)
+                locator = getattr(entity, "locator", None)
+                metadata = getattr(entity, "metadata", None)
             score = float(getattr(hit, "distance", getattr(hit, "score", 0.0)))
             if chunk_id is not None:
-                hits.append(MilvusSearchHit(chunk_id=str(chunk_id), score=score))
+                hits.append(
+                    MilvusSearchHit(
+                        chunk_id=str(chunk_id),
+                        score=score,
+                        kb_id=str(kb_id) if kb_id is not None else None,
+                        material_id=str(material_id) if material_id is not None else None,
+                        chunk_role=str(chunk_role) if chunk_role is not None else None,
+                        parent_chunk_id=str(parent_chunk_id) if parent_chunk_id is not None else None,
+                        child_seq=int(child_seq) if child_seq is not None else None,
+                        content=str(content) if content is not None else None,
+                        context=str(context) if context is not None else None,
+                        locator=locator if isinstance(locator, dict) else locator,
+                        metadata=metadata if isinstance(metadata, dict) else metadata,
+                    )
+                )
         return hits
 
     async def search(
@@ -267,7 +325,18 @@ class MilvusClient:
             data=[embedding],
             anns_field=self._DEFAULT_VECTOR_FIELD,
             limit=top_k,
-            output_fields=["chunk_id"],
+            output_fields=[
+                "chunk_id",
+                "kb_id",
+                "material_id",
+                "chunk_role",
+                "parent_chunk_id",
+                "child_seq",
+                "content",
+                "context",
+                "locator",
+                "metadata",
+            ],
             filter=expr,
             search_params={"metric_type": "COSINE", "params": {}},
         )
@@ -323,7 +392,18 @@ class MilvusClient:
             reqs=[dense_req, sparse_req],
             ranker=ranker_impl,
             limit=top_k,
-            output_fields=["chunk_id"],
+            output_fields=[
+                "chunk_id",
+                "kb_id",
+                "material_id",
+                "chunk_role",
+                "parent_chunk_id",
+                "child_seq",
+                "content",
+                "context",
+                "locator",
+                "metadata",
+            ],
         )
         return self._parse_hits(res)
 
@@ -343,6 +423,16 @@ class MilvusClient:
             normalized["content"] = ""
         if "context" not in normalized:
             normalized["context"] = ""
+        if "chunk_role" not in normalized:
+            normalized["chunk_role"] = "default"
+        if "parent_chunk_id" not in normalized:
+            normalized["parent_chunk_id"] = ""
+        if "child_seq" not in normalized:
+            normalized["child_seq"] = 0
+        if "locator" not in normalized:
+            normalized["locator"] = {}
+        if "metadata" not in normalized:
+            normalized["metadata"] = {}
         return normalized
 
     async def upsert(
@@ -354,6 +444,11 @@ class MilvusClient:
         dense_vector: list[float],
         content: str | None = None,
         context: str | None = None,
+        chunk_role: str = "default",
+        parent_chunk_id: str | None = None,
+        child_seq: int | None = None,
+        locator: dict | None = None,
+        metadata: dict | None = None,
     ) -> None:
         """插入或更新单条向量记录。"""
 
@@ -371,6 +466,11 @@ class MilvusClient:
             self._DEFAULT_VECTOR_FIELD: dense_vector,
             "content": content or "",
             "context": context or "",
+            "chunk_role": chunk_role,
+            "parent_chunk_id": parent_chunk_id or "",
+            "child_seq": child_seq or 0,
+            "locator": locator or {},
+            "metadata": metadata or {},
         }
         await upsert(collection_name=self._collection, data=[record])
 
@@ -393,14 +493,25 @@ class MilvusClient:
     async def delete_by_material(self, material_id: str) -> None:
         """删除指定资料的所有向量记录。"""
 
+        await self.delete_by_expr(
+            f"material_id == \"{_escape_string(material_id)}\""
+        )
+
+    async def delete_by_kb_id(self, kb_id: str) -> None:
+        """删除指定知识库的所有向量记录。"""
+
+        await self.delete_by_expr(f"kb_id == \"{_escape_string(kb_id)}\"")
+
+    async def delete_by_expr(self, expr: str) -> None:
+        """按表达式删除向量记录。"""
+
         delete = getattr(self._client, "delete", None)
         if delete is None:
             raise RuntimeError("pymilvus API 不匹配：缺少 delete")
 
-        escaped_id = _escape_string(material_id)
         await delete(
             collection_name=self._collection,
-            filter=f"material_id == \"{escaped_id}\"",
+            filter=expr,
         )
 
     async def delete_by_chunk_ids(self, chunk_ids: list[str]) -> None:
@@ -419,10 +530,49 @@ class MilvusClient:
             filter=f"chunk_id in [{quoted}]",
         )
 
+    async def query_by_chunk_ids(
+        self,
+        *,
+        chunk_ids: list[str],
+        output_fields: list[str] | None = None,
+    ) -> list[dict]:
+        """按 chunk_id 批量查询向量记录。"""
+
+        query = getattr(self._client, "query", None)
+        if query is None:
+            raise RuntimeError("pymilvus API 不匹配：缺少 query")
+        if not chunk_ids:
+            return []
+
+        await self._load_field_cache()
+        self._assert_schema_compatible()
+
+        escaped = [_escape_string(cid) for cid in chunk_ids]
+        quoted = ", ".join(f"\"{cid}\"" for cid in escaped)
+        fields = output_fields or [
+            "chunk_id",
+            "kb_id",
+            "material_id",
+            "chunk_role",
+            "parent_chunk_id",
+            "child_seq",
+            "content",
+            "context",
+            "locator",
+            "metadata",
+        ]
+        res = await query(
+            collection_name=self._collection,
+            filter=f"chunk_id in [{quoted}]",
+            output_fields=fields,
+        )
+        if isinstance(res, list):
+            return res
+        return []
+
 
 @lru_cache
 def get_milvus_client() -> MilvusClient:
     """获取 Milvus 客户端单例（进程内复用）。"""
 
     return MilvusClient()
-

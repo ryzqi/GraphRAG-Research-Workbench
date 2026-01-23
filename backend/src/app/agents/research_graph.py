@@ -69,7 +69,7 @@ class ResearchGraph:
                     "kb_id": str(r.chunk.kb_id),
                     "material_id": str(r.chunk.material_id),
                     "chunk_id": str(r.chunk.id),
-                    "excerpt": r.chunk.text[:200],
+                    "excerpt": r.chunk.content[:200],
                     "locator": r.chunk.locator,
                 }
             )

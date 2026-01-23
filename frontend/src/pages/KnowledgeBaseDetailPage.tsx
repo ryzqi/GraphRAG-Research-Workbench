@@ -12,9 +12,17 @@ import {
   useKnowledgeBase,
   useMaterials,
   useUploadMaterial,
+  useUpdateKnowledgeBaseIndexConfig,
+  useIndexRebuildJob,
 } from '../hooks/queries';
 import { getErrorMessage } from '../lib/errorHandler';
 import { validateFile } from '../utils/fileValidation';
+import { createDefaultIndexConfig, type IndexConfig } from '../services/knowledgeBases';
+import { IndexConfigForm } from '../components/IndexConfigForm';
+import { validateIndexConfig } from '../lib/indexConfig';
+import { Modal } from '../components/ui/Modal';
+import { Button } from '../components/ui/Button';
+import { ConfirmDialog } from '../components/ui/ConfirmDialog';
 
 type AddMode = 'text' | 'url' | 'upload' | null;
 
@@ -30,10 +38,16 @@ export default function KnowledgeBaseDetailPage() {
   const loading = kbQuery.isPending || materialsQuery.isPending;
 
   const [error, setError] = useState<string | null>(null);
+  const [indexConfigOpen, setIndexConfigOpen] = useState(false);
+  const [indexConfigDraft, setIndexConfigDraft] = useState<IndexConfig | null>(null);
+  const [indexConfigError, setIndexConfigError] = useState<string | null>(null);
+  const [confirmRebuildOpen, setConfirmRebuildOpen] = useState(false);
+  const [rebuildJobId, setRebuildJobId] = useState<string | null>(null);
 
   const createTextMaterialMutation = useCreateTextMaterial();
   const createUrlMaterialMutation = useCreateUrlMaterial();
   const uploadMaterialMutation = useUploadMaterial();
+  const updateIndexConfigMutation = useUpdateKnowledgeBaseIndexConfig();
 
   // 添加资料状态
   const [addMode, setAddMode] = useState<AddMode>(null);
@@ -55,6 +69,8 @@ export default function KnowledgeBaseDetailPage() {
   const createIngestionMutation = useCreateIngestionJob();
   const ingestionQuery = useIngestionJob(ingestionId ?? undefined);
   const ingestionJob = ingestionQuery.data ?? null;
+  const rebuildJobQuery = useIndexRebuildJob(rebuildJobId ?? undefined);
+  const rebuildJob = rebuildJobQuery.data ?? null;
 
   const ingestionInProgress =
     ingestionJob?.status === 'queued' || ingestionJob?.status === 'running';
@@ -62,6 +78,11 @@ export default function KnowledgeBaseDetailPage() {
 
   const mergedError =
     error ??
+    (indexConfigError ?? null) ??
+    (updateIndexConfigMutation.error
+      ? getErrorMessage(updateIndexConfigMutation.error)
+      : null) ??
+    (rebuildJobQuery.error ? getErrorMessage(rebuildJobQuery.error) : null) ??
     (createTextMaterialMutation.error
       ? getErrorMessage(createTextMaterialMutation.error)
       : null) ??
@@ -194,6 +215,48 @@ export default function KnowledgeBaseDetailPage() {
     return <div style={styles.error}>{mergedError ?? '知识库不存在'}</div>;
   }
 
+  const openIndexConfigModal = () => {
+    setIndexConfigError(null);
+    setIndexConfigDraft(kb.index_config ?? createDefaultIndexConfig());
+    setIndexConfigOpen(true);
+  };
+
+  const closeIndexConfigModal = () => {
+    setIndexConfigOpen(false);
+    setIndexConfigError(null);
+    setConfirmRebuildOpen(false);
+  };
+
+  const handleSaveIndexConfig = async () => {
+    if (!kbId || !indexConfigDraft) return;
+    const validationErrors = validateIndexConfig(indexConfigDraft);
+    if (validationErrors.length > 0) {
+      setIndexConfigError(`索引配置校验失败：${validationErrors.join('；')}`);
+      return;
+    }
+    setConfirmRebuildOpen(true);
+  };
+
+  const confirmRebuild = async () => {
+    if (!kbId || !indexConfigDraft) return;
+    try {
+      const res = await updateIndexConfigMutation.mutateAsync({
+        id: kbId,
+        index_config: indexConfigDraft,
+      });
+      if (res.rebuild_job) {
+        setRebuildJobId(res.rebuild_job.id);
+      }
+      closeIndexConfigModal();
+    } catch (err) {
+      setIndexConfigError(getErrorMessage(err));
+    }
+  };
+
+  const handleIndexConfigChange = (next: IndexConfig) => {
+    setIndexConfigDraft(next);
+  };
+
   return (
     <div style={styles.container}>
       <div style={styles.header}>
@@ -203,6 +266,11 @@ export default function KnowledgeBaseDetailPage() {
         <div>
           <h1 style={styles.title}>{kb.name}</h1>
           {kb.description && <p style={styles.desc}>{kb.description}</p>}
+        </div>
+        <div>
+          <Button variant="outlined" onClick={openIndexConfigModal}>
+            编辑索引配置
+          </Button>
         </div>
       </div>
 
@@ -222,6 +290,21 @@ export default function KnowledgeBaseDetailPage() {
             <span style={styles.statsText}>
               {JSON.stringify(ingestionJob.stats)}
             </span>
+          )}
+        </div>
+      )}
+
+      {rebuildJob && (
+        <div style={styles.ingestionStatus}>
+          <strong>索引重建任务：</strong>
+          <span style={styles.statusBadge} data-status={rebuildJob.status}>
+            {rebuildJob.status}
+          </span>
+          {rebuildJob.error_message && (
+            <span style={styles.errorText}>{rebuildJob.error_message}</span>
+          )}
+          {rebuildJob.stats && (
+            <span style={styles.statsText}>{JSON.stringify(rebuildJob.stats)}</span>
           )}
         </div>
       )}
@@ -339,6 +422,49 @@ export default function KnowledgeBaseDetailPage() {
           </>
         )}
       </div>
+
+      {indexConfigDraft && (
+        <Modal
+          open={indexConfigOpen}
+          onClose={closeIndexConfigModal}
+          title="编辑索引配置"
+          maxWidth="md"
+        >
+          <IndexConfigForm
+            value={indexConfigDraft}
+            onChange={handleIndexConfigChange}
+            disabled={updateIndexConfigMutation.isPending}
+          />
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 12, marginTop: 16 }}>
+            <Button
+              variant="outlined"
+              onClick={closeIndexConfigModal}
+              disabled={updateIndexConfigMutation.isPending}
+            >
+              取消
+            </Button>
+            <Button
+              variant="contained"
+              onClick={handleSaveIndexConfig}
+              loading={updateIndexConfigMutation.isPending}
+            >
+              保存配置
+            </Button>
+          </div>
+        </Modal>
+      )}
+
+      <ConfirmDialog
+        open={confirmRebuildOpen}
+        title="确认重建索引"
+        message="保存后将删除该知识库的旧索引并重新构建，期间检索结果可能不完整。是否继续？"
+        confirmText="确认重建"
+        cancelText="取消"
+        variant="destructive"
+        loading={updateIndexConfigMutation.isPending}
+        onConfirm={confirmRebuild}
+        onCancel={() => setConfirmRebuildOpen(false)}
+      />
     </div>
   );
 }
@@ -351,6 +477,11 @@ const styles: Record<string, React.CSSProperties> = {
   },
   header: {
     marginBottom: 24,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    flexWrap: 'wrap',
+    gap: 12,
   },
   backBtn: {
     padding: '6px 12px',
@@ -359,7 +490,6 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: 6,
     background: '#fff',
     cursor: 'pointer',
-    marginBottom: 12,
   },
   title: {
     margin: 0,

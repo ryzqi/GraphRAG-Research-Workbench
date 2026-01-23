@@ -5,7 +5,7 @@ import pytest
 
 from app.core.settings import Settings
 from app.services.query_rewrite_service import RewriteResult
-from app.services.retrieval_service import RetrievalResult, RetrievalService
+from app.services.retrieval_service import RetrievedChunk, RetrievalResult, RetrievalService
 
 
 class DummyMilvus:
@@ -56,7 +56,18 @@ def test_normalize_query_lowercase() -> None:
 
 def test_apply_min_score_filters() -> None:
     service = _build_service(Settings(retrieval_min_score=0.5))
-    chunk = SimpleNamespace(text="a", token_count=1)
+    chunk = RetrievedChunk(
+        id=uuid.uuid4(),
+        kb_id=uuid.uuid4(),
+        material_id=uuid.uuid4(),
+        content="a",
+        context=None,
+        locator=None,
+        metadata=None,
+        chunk_role=None,
+        parent_chunk_id=None,
+        child_seq=None,
+    )
     results = [
         RetrievalResult(chunk=chunk, score=0.4),
         RetrievalResult(chunk=chunk, score=0.6),
@@ -88,25 +99,6 @@ def test_cache_key_includes_strategy_fingerprint() -> None:
     assert key_a != key_b
 
 
-class DummyResult:
-    def __init__(self, chunks: list[object]) -> None:
-        self._chunks = chunks
-
-    def scalars(self):
-        return self
-
-    def all(self):
-        return self._chunks
-
-
-class DummySession:
-    def __init__(self, chunks: list[object]) -> None:
-        self._chunks = chunks
-
-    async def execute(self, stmt):
-        return DummyResult(self._chunks)
-
-
 class DummyRewriteService:
     async def rewrite(self, query: str) -> RewriteResult:
         return RewriteResult(
@@ -128,26 +120,31 @@ class DummyRerankClient:
 @pytest.mark.asyncio
 async def test_retrieve_uses_hybrid_when_enabled() -> None:
     chunk_id = uuid.uuid4()
-    chunk = SimpleNamespace(
-        id=chunk_id,
-        kb_id=uuid.uuid4(),
-        material_id=uuid.uuid4(),
-        text="chunk",
+    kb_id = uuid.uuid4()
+    material_id = uuid.uuid4()
+    hit = SimpleNamespace(
+        chunk_id=str(chunk_id),
+        kb_id=str(kb_id),
+        material_id=str(material_id),
+        chunk_role="default",
+        parent_chunk_id="",
+        child_seq=0,
+        content="chunk",
+        context="",
         locator={},
-        token_count=1,
+        metadata={},
+        score=0.9,
     )
-    hit = SimpleNamespace(chunk_id=str(chunk_id), score=0.9)
 
-    session = DummySession([chunk])
     milvus = DummyMilvus([hit])
-    service = RetrievalService(session, milvus, DummyEmbedding(), redis=None)
+    service = RetrievalService(None, milvus, DummyEmbedding(), redis=None)
     service._settings = Settings(
         retrieval_hybrid_enabled=True,
         retrieval_query_rewrite_enabled=False,
         retrieval_rerank_enabled=False,
     )
 
-    results = await service.retrieve(query="test", kb_ids=[chunk.kb_id], top_k=1)
+    results = await service.retrieve(query="test", kb_ids=[kb_id], top_k=1)
 
     assert milvus.last_method == "hybrid"
     assert len(results) == 1
@@ -157,31 +154,41 @@ async def test_retrieve_uses_hybrid_when_enabled() -> None:
 async def test_retrieve_applies_rerank_order() -> None:
     chunk_id1 = uuid.uuid4()
     chunk_id2 = uuid.uuid4()
-    chunk1 = SimpleNamespace(
-        id=chunk_id1,
-        kb_id=uuid.uuid4(),
-        material_id=uuid.uuid4(),
-        text="chunk1",
-        locator={},
-        token_count=1,
-    )
-    chunk2 = SimpleNamespace(
-        id=chunk_id2,
-        kb_id=chunk1.kb_id,
-        material_id=uuid.uuid4(),
-        text="chunk2",
-        locator={},
-        token_count=1,
-    )
+    kb_id = uuid.uuid4()
+    material_id1 = uuid.uuid4()
+    material_id2 = uuid.uuid4()
     hits = [
-        SimpleNamespace(chunk_id=str(chunk_id1), score=0.9),
-        SimpleNamespace(chunk_id=str(chunk_id2), score=0.8),
+        SimpleNamespace(
+            chunk_id=str(chunk_id1),
+            kb_id=str(kb_id),
+            material_id=str(material_id1),
+            chunk_role="default",
+            parent_chunk_id="",
+            child_seq=0,
+            content="chunk1",
+            context="",
+            locator={},
+            metadata={},
+            score=0.9,
+        ),
+        SimpleNamespace(
+            chunk_id=str(chunk_id2),
+            kb_id=str(kb_id),
+            material_id=str(material_id2),
+            chunk_role="default",
+            parent_chunk_id="",
+            child_seq=0,
+            content="chunk2",
+            context="",
+            locator={},
+            metadata={},
+            score=0.8,
+        ),
     ]
 
-    session = DummySession([chunk1, chunk2])
     milvus = DummyMilvus(hits)
     service = RetrievalService(
-        session,
+        None,
         milvus,
         DummyEmbedding(),
         redis=None,
@@ -193,7 +200,7 @@ async def test_retrieve_applies_rerank_order() -> None:
         retrieval_hybrid_enabled=False,
     )
 
-    results = await service.retrieve(query="test", kb_ids=[chunk1.kb_id], top_k=2)
+    results = await service.retrieve(query="test", kb_ids=[kb_id], top_k=2)
 
     assert [r.chunk.id for r in results[:2]] == [chunk_id2, chunk_id1]
 
@@ -201,20 +208,25 @@ async def test_retrieve_applies_rerank_order() -> None:
 @pytest.mark.asyncio
 async def test_retrieve_uses_rewrite_result() -> None:
     chunk_id = uuid.uuid4()
-    chunk = SimpleNamespace(
-        id=chunk_id,
-        kb_id=uuid.uuid4(),
-        material_id=uuid.uuid4(),
-        text="chunk",
+    kb_id = uuid.uuid4()
+    material_id = uuid.uuid4()
+    hit = SimpleNamespace(
+        chunk_id=str(chunk_id),
+        kb_id=str(kb_id),
+        material_id=str(material_id),
+        chunk_role="default",
+        parent_chunk_id="",
+        child_seq=0,
+        content="chunk",
+        context="",
         locator={},
-        token_count=1,
+        metadata={},
+        score=0.9,
     )
-    hit = SimpleNamespace(chunk_id=str(chunk_id), score=0.9)
 
-    session = DummySession([chunk])
     milvus = DummyMilvus([hit])
     service = RetrievalService(
-        session,
+        None,
         milvus,
         DummyEmbedding(),
         redis=None,
@@ -226,7 +238,7 @@ async def test_retrieve_uses_rewrite_result() -> None:
         retrieval_hybrid_enabled=False,
     )
 
-    await service.retrieve(query="test", kb_ids=[chunk.kb_id], top_k=1)
+    await service.retrieve(query="test", kb_ids=[kb_id], top_k=1)
 
     assert service.last_stats is not None
     assert service.last_stats.effective_query == "rewritten"

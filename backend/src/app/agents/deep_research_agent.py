@@ -79,7 +79,7 @@ class DeepResearchAgent:
         if not results:
             return "未检索到相关内容。"
         return "\n\n".join(
-            f"[{i}] {r.chunk.text}" for i, r in enumerate(results, 1)
+            f"[{i}] {r.context_text or r.chunk.content}" for i, r in enumerate(results, 1)
         )
 
     def _build_citations(self) -> list[dict]:
@@ -91,7 +91,7 @@ class DeepResearchAgent:
                     "kb_id": str(r.chunk.kb_id),
                     "material_id": str(r.chunk.material_id),
                     "chunk_id": str(r.chunk.id),
-                    "excerpt": r.chunk.text[:200],
+                    "excerpt": r.chunk.content[:200],
                     "locator": r.chunk.locator,
                 }
             )

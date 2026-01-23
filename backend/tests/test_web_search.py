@@ -243,8 +243,9 @@ async def test_web_search_requires_api_key(monkeypatch: pytest.MonkeyPatch) -> N
     settings = Settings(web_search_api_key="")
     client = WebSearchClient(settings)
 
-    with pytest.raises(RuntimeError, match="WEB_SEARCH_API_KEY"):
-        await client.search(WebSearchArgs(query="q"))
+    output = await client.search(WebSearchArgs(query="q"))
+    assert output["results"] == []
+    assert output["error"]["code"] == "WEB_SEARCH_AUTH_ERROR"
 
 
 @pytest.mark.asyncio

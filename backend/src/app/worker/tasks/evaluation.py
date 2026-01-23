@@ -199,7 +199,7 @@ async def _run_single_agent(
     try:
         # 检索
         results = await retrieval.retrieve(query=question, kb_ids=kb_ids, top_k=5)
-        context = "\n\n".join([f"[{i+1}] {r.chunk.text}" for i, r in enumerate(results)])
+        context = "\n\n".join([f"[{i+1}] {r.context_text or r.chunk.content}" for i, r in enumerate(results)])
 
         # 生成答案
         messages = [
@@ -251,7 +251,7 @@ async def _run_multi_agent(
     try:
         # 检索
         results = await retrieval.retrieve(query=question, kb_ids=kb_ids, top_k=8)
-        context = "\n\n".join([f"[{i+1}] {r.chunk.text}" for i, r in enumerate(results)])
+        context = "\n\n".join([f"[{i+1}] {r.context_text or r.chunk.content}" for i, r in enumerate(results)])
 
         # 阶段1：分析问题
         analysis_msg = [

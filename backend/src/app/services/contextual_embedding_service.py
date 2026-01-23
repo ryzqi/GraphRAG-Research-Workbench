@@ -29,29 +29,52 @@ class ContextualEmbeddingService:
         self._settings = settings if settings is not None else get_settings()
         self._prompts = get_prompt_loader()
 
-    async def generate(self, *, full_text: str, chunk: str) -> ContextResult:
-        if not self._settings.ingestion_contextual_enabled:
+    async def generate(
+        self,
+        *,
+        full_text: str,
+        chunk: str,
+        enabled: bool | None = None,
+        timeout_seconds: int | None = None,
+        max_tokens: int | None = None,
+    ) -> ContextResult:
+        enabled_flag = (
+            self._settings.ingestion_contextual_enabled
+            if enabled is None
+            else enabled
+        )
+        if not enabled_flag:
             return ContextResult(context="", success=False, reason="disabled")
         if not chunk.strip():
             return ContextResult(context="", success=False, reason="empty_chunk")
 
         source = self._extract_source(full_text, chunk)
+        max_tokens_value = (
+            self._settings.ingestion_contextual_max_tokens
+            if max_tokens is None
+            else max_tokens
+        )
         prompt = self._prompts.render(
             "ingestion/contextual_embedding",
             content=source,
             chunk=chunk,
-            max_tokens=self._settings.ingestion_contextual_max_tokens,
+            max_tokens=max_tokens_value,
         )
 
         start_time = time.perf_counter()
-        timeout_seconds = self._settings.ingestion_contextual_timeout_seconds
+        timeout_value = (
+            self._settings.ingestion_contextual_timeout_seconds
+            if timeout_seconds is None
+            else timeout_seconds
+        )
         try:
             result_text = await asyncio.wait_for(
-                self._call_llm(prompt), timeout=timeout_seconds
+                self._call_llm(prompt, max_tokens=max_tokens_value),
+                timeout=timeout_value,
             )
         except asyncio.TimeoutError:
             latency_ms = int((time.perf_counter() - start_time) * 1000)
-            logger.warning("Context 生成超时", extra={"timeout": timeout_seconds})
+            logger.warning("Context 生成超时", extra={"timeout": timeout_value})
             return ContextResult(
                 context="",
                 success=False,
@@ -96,7 +119,7 @@ class ContextualEmbeddingService:
         end = min(len(full_text), idx + len(chunk) + half)
         return full_text[start:end]
 
-    async def _call_llm(self, prompt: str) -> str:
+    async def _call_llm(self, prompt: str, *, max_tokens: int) -> str:
         from langchain.messages import HumanMessage
         from langchain_openai import ChatOpenAI
 
@@ -106,7 +129,7 @@ class ContextualEmbeddingService:
             base_url=self._settings.llm_base_url.rstrip("/"),
             profile=build_chat_model_profile(self._settings),
         )
-        model = model.bind(max_tokens=self._settings.ingestion_contextual_max_tokens)
+        model = model.bind(max_tokens=max_tokens)
 
         def _run() -> object:
             return model.invoke([HumanMessage(content=prompt)])

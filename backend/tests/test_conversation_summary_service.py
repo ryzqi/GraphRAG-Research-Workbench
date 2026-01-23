@@ -72,5 +72,5 @@ async def test_summary_enabled_persists_summary() -> None:
     result = await service.maybe_update_summary(uuid.uuid4())
 
     assert result is not None
-    assert service._fake_db.added
-    assert result.message.meta.get("summary") is True
+    assert result.summary_text == "summary text"
+    assert result.stats["message_count"] == 2

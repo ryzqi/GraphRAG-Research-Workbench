@@ -9,9 +9,13 @@ import {
   updateKnowledgeBase,
   deleteKnowledgeBase,
   archiveKnowledgeBase,
+  updateKnowledgeBaseIndexConfig,
   type KnowledgeBaseCreate,
   type KnowledgeBaseUpdate,
+  type IndexConfig,
+  type KnowledgeBaseIndexConfigUpdateResponse,
 } from '../../services/knowledgeBases';
+import { indexRebuildKeys } from './useIndexRebuilds';
 
 // Query Keys
 const KEYS = {
@@ -67,6 +71,25 @@ export function useUpdateKnowledgeBase() {
     onSuccess: (_, { id }) => {
       queryClient.invalidateQueries({ queryKey: KEYS.list() });
       queryClient.invalidateQueries({ queryKey: KEYS.detail(id) });
+    },
+  });
+}
+
+/**
+ * 更新知识库索引配置（触发重建）
+ */
+export function useUpdateKnowledgeBaseIndexConfig() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ id, index_config }: { id: string; index_config: IndexConfig }) =>
+      updateKnowledgeBaseIndexConfig(id, index_config),
+    onSuccess: (res: KnowledgeBaseIndexConfigUpdateResponse, { id }) => {
+      queryClient.invalidateQueries({ queryKey: KEYS.list() });
+      queryClient.setQueryData(KEYS.detail(id), res.knowledge_base);
+      if (res.rebuild_job) {
+        queryClient.setQueryData(indexRebuildKeys.job(res.rebuild_job.id), res.rebuild_job);
+      }
     },
   });
 }

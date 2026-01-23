@@ -237,6 +237,16 @@ class Settings(BaseSettings):
         32, alias="INGESTION_EMBEDDING_BATCH_SIZE"
     )
 
+    # 导入：URL 抓取/正文抽取配置（最小安全基线）
+    ingestion_url_max_redirects: int = Field(5, alias="INGESTION_URL_MAX_REDIRECTS")
+    ingestion_url_max_bytes: int = Field(5 * 1024 * 1024, alias="INGESTION_URL_MAX_BYTES")
+    ingestion_url_user_agent: str = Field(
+        "multi-kb-agent/ingestion", alias="INGESTION_URL_USER_AGENT"
+    )
+
+    # PDF 解析（MinerU）
+    mineru_model_source: str | None = Field(None, alias="MINERU_MODEL_SOURCE")
+
     # OpenTelemetry 配置
     otel_enabled: bool = Field(False, alias="OTEL_ENABLED")
     otel_endpoint: str | None = Field(None, alias="OTEL_EXPORTER_OTLP_ENDPOINT")

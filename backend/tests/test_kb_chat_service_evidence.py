@@ -9,10 +9,9 @@ from langgraph.checkpoint.memory import MemorySaver
 
 import app.services.kb_chat_service as kb_chat_service_mod
 from app.models.chat_session import AgentMode, ChatSession, ChatSessionType
-from app.models.document_chunk import DocumentChunk
 from app.models.evidence import Evidence
 from app.services.context_builder import ContextBuilder
-from app.services.retrieval_service import RetrievalResult
+from app.services.retrieval_service import RetrievedChunk, RetrievalResult
 
 
 class FakeAsyncSession:
@@ -108,21 +107,29 @@ async def test_kb_chat_service_persists_evidence(monkeypatch: pytest.MonkeyPatch
     material_id = uuid.uuid4()
 
     chunks = [
-        DocumentChunk(
+        RetrievedChunk(
             id=uuid.uuid4(),
             kb_id=kb_id,
             material_id=material_id,
-            chunk_index=0,
-            text="第一段",
+            content="第一段",
+            context=None,
             locator={"page": 1},
+            metadata=None,
+            chunk_role="default",
+            parent_chunk_id=None,
+            child_seq=None,
         ),
-        DocumentChunk(
+        RetrievedChunk(
             id=uuid.uuid4(),
             kb_id=kb_id,
             material_id=material_id,
-            chunk_index=1,
-            text="第二段",
+            content="第二段",
+            context=None,
             locator={"page": 2},
+            metadata=None,
+            chunk_role="default",
+            parent_chunk_id=None,
+            child_seq=None,
         ),
     ]
     retrieval_results = [

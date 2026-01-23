@@ -4,17 +4,21 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, HTTPException, Query, Response, status
+from fastapi.exceptions import RequestValidationError
 
 from app.api.deps import AsyncSessionDep
 from app.schemas.knowledge_bases import (
     KnowledgeBaseCreate,
+    KnowledgeBaseIndexConfigUpdateRequest,
+    KnowledgeBaseIndexConfigUpdateResponse,
     KnowledgeBaseListResponse,
     KnowledgeBaseRead,
     KnowledgeBaseUpdate,
 )
 from app.schemas.pagination import PageMeta
 from app.services.knowledge_base_service import KnowledgeBaseService
+from app.services.index_rebuild_service import IndexRebuildService
 
 router = APIRouter()
 
@@ -58,6 +62,7 @@ async def create_knowledge_base(
         name=body.name,
         description=body.description,
         tags=body.tags,
+        index_config=body.index_config.model_dump(mode="json"),
     )
     return KnowledgeBaseRead.model_validate(kb)
 
@@ -83,6 +88,25 @@ async def update_knowledge_base(
 ) -> KnowledgeBaseRead:
     """更新知识库。"""
     service = KnowledgeBaseService(db)
+    extra = getattr(body, "model_extra", None) or {}
+    if "index_config" in extra:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "code": "INDEX_CONFIG_NOT_ALLOWED",
+                "message": "index_config 不允许通过该接口更新，请使用 PUT /api/v1/knowledge-bases/{kb_id}/index-config",
+            },
+        )
+    if extra:
+        errors = [
+            {
+                "loc": ["body", key],
+                "msg": "Extra inputs are not permitted",
+                "type": "extra_forbidden",
+            }
+            for key in extra.keys()
+        ]
+        raise RequestValidationError(errors)
     kb = await service.get_by_id(kb_id)
     if not kb:
         raise HTTPException(
@@ -106,6 +130,42 @@ async def update_knowledge_base(
         tags=body.tags,
     )
     return KnowledgeBaseRead.model_validate(kb)
+
+
+@router.put(
+    "/{kb_id}/index-config",
+    response_model=KnowledgeBaseIndexConfigUpdateResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def update_index_config(
+    db: AsyncSessionDep,
+    kb_id: uuid.UUID,
+    body: KnowledgeBaseIndexConfigUpdateRequest,
+    response: Response,
+) -> KnowledgeBaseIndexConfigUpdateResponse:
+    """Replace index_config and trigger rebuild."""
+    kb_service = KnowledgeBaseService(db)
+    kb = await kb_service.get_by_id(kb_id)
+    if not kb:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": "KB_NOT_FOUND", "message": "知识库不存在"},
+        )
+
+    new_config = body.index_config.model_dump(mode="json")
+    if kb.index_config == new_config:
+        response.status_code = status.HTTP_200_OK
+        return KnowledgeBaseIndexConfigUpdateResponse(
+            knowledge_base=KnowledgeBaseRead.model_validate(kb),
+            rebuild_job=None,
+        )
+
+    rebuild_service = IndexRebuildService(db)
+    job = await rebuild_service.create_job(kb=kb, index_config=new_config)
+    return KnowledgeBaseIndexConfigUpdateResponse(
+        knowledge_base=KnowledgeBaseRead.model_validate(kb),
+        rebuild_job=job,
+    )
 
 
 @router.delete("/{kb_id}", status_code=status.HTTP_204_NO_CONTENT)

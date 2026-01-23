@@ -154,7 +154,7 @@ async def _run_research(
                         material_id=r.chunk.material_id,
                         chunk_id=r.chunk.id,
                         locator=r.chunk.locator,
-                        excerpt=r.chunk.text[:500],
+                        excerpt=r.chunk.content[:500],
                     )
                     for r in result.retrieval_results
                 ]

@@ -10,6 +10,7 @@ from app.api.v1.endpoints import (
     extensions,
     health,
     ingestions,
+    index_rebuilds,
     knowledge_bases,
     knowledge_updates,
     materials,
@@ -23,6 +24,7 @@ api_router.include_router(exports.router, prefix="/exports", tags=["Exports"])
 api_router.include_router(knowledge_bases.router, prefix="/knowledge-bases", tags=["KnowledgeBases"])
 api_router.include_router(chats.router, prefix="/chats", tags=["Chats"])
 api_router.include_router(ingestions.router, prefix="/ingestions", tags=["Ingestions"])
+api_router.include_router(index_rebuilds.router, prefix="/index-rebuilds", tags=["IndexRebuilds"])
 api_router.include_router(materials.router, tags=["Materials"])
 api_router.include_router(extensions.router, prefix="/extensions", tags=["Extensions"])
 api_router.include_router(research.router, prefix="/research", tags=["Research"])

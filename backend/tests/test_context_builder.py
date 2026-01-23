@@ -1,9 +1,9 @@
-from types import SimpleNamespace
+import uuid
 
 from app.core.settings import Settings
 from app.integrations.llm_client import ChatMessage as LLMMessage
 from app.services.context_builder import ContextBuilder
-from app.services.retrieval_service import RetrievalResult
+from app.services.retrieval_service import RetrievedChunk, RetrievalResult
 
 
 def test_history_budget_and_summary_truncation() -> None:
@@ -29,7 +29,18 @@ def test_history_budget_and_summary_truncation() -> None:
 def test_retrieval_context_budget_truncates_text() -> None:
     settings = Settings(context_retrieval_max_tokens=2)
     builder = ContextBuilder(settings)
-    chunk = SimpleNamespace(text="abcdefghij", token_count=None)
+    chunk = RetrievedChunk(
+        id=uuid.uuid4(),
+        kb_id=uuid.uuid4(),
+        material_id=uuid.uuid4(),
+        content="abcdefghij",
+        context=None,
+        locator=None,
+        metadata=None,
+        chunk_role=None,
+        parent_chunk_id=None,
+        child_seq=None,
+    )
     results = [RetrievalResult(chunk=chunk, score=0.9)]
 
     context, included, usage, truncation = builder.build_retrieval_context(results)

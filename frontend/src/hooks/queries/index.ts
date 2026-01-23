@@ -8,6 +8,7 @@ export {
   useUpdateKnowledgeBase,
   useDeleteKnowledgeBase,
   useArchiveKnowledgeBase,
+  useUpdateKnowledgeBaseIndexConfig,
   knowledgeBaseKeys,
 } from './useKnowledgeBases';
 
@@ -54,3 +55,8 @@ export {
   useCancelIngestionJob,
   ingestionKeys,
 } from './useIngestions';
+
+export {
+  useIndexRebuildJob,
+  indexRebuildKeys,
+} from './useIndexRebuilds';

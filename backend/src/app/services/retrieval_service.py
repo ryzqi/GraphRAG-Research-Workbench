@@ -1,4 +1,4 @@
-"""检索服务：Milvus 召回 + Postgres 拉取 + 可配置缓存。"""
+"""检索服务：Milvus 召回（Milvus-only）+ 可配置缓存。"""
 
 from __future__ import annotations
 
@@ -17,17 +17,33 @@ from app.integrations.embedding_client import EmbeddingClient
 from app.integrations.milvus_client import MilvusClient
 from app.integrations.rerank_client import RerankClient
 from app.integrations.redis_client import RedisClient
-from app.models.document_chunk import DocumentChunk
+from app.models.knowledge_base import KnowledgeBase
 from app.schemas.chats import EvidenceItem, EvidenceSourceKind
+from app.schemas.knowledge_bases import IndexConfig
 from app.services.query_rewrite_service import QueryRewriteService, RewriteResult
 
 logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
+class RetrievedChunk:
+    id: uuid.UUID
+    kb_id: uuid.UUID
+    material_id: uuid.UUID
+    content: str
+    context: str | None
+    locator: dict | None
+    metadata: dict | None
+    chunk_role: str | None
+    parent_chunk_id: str | None
+    child_seq: int | None
+
+
+@dataclass(slots=True)
 class RetrievalResult:
-    chunk: DocumentChunk
+    chunk: RetrievedChunk
     score: float
+    context_text: str | None = None
 
 
 @dataclass(slots=True)
@@ -93,9 +109,11 @@ class RetrievalService:
         """生成 query rewrite 缓存键。"""
         return f"rewrite:{hashlib.md5(query.encode()).hexdigest()}"
 
-    def _strategy_fingerprint(self, top_k: int) -> dict:
+    def _strategy_fingerprint(
+        self, top_k: int, kb_fingerprint: dict[str, dict] | None = None
+    ) -> dict:
         """生成策略指纹，避免配置变更误命中缓存。"""
-        return {
+        fingerprint = {
             "top_k": top_k,
             "min_score": self._settings.retrieval_min_score,
             "hybrid_enabled": self._settings.retrieval_hybrid_enabled,
@@ -108,6 +126,9 @@ class RetrievalService:
             "rerank_model": self._settings.retrieval_rerank_model,
             "embedding_model": self._settings.embedding_model,
         }
+        if kb_fingerprint:
+            fingerprint["kb_retrieval"] = kb_fingerprint
+        return fingerprint
 
     def _normalize_query(self, query: str) -> str:
         """规范化 query，用于缓存一致性。"""
@@ -209,7 +230,7 @@ class RetrievalService:
         try:
             rerank_results = await reranker.rerank(
                 query=query,
-                documents=[r.chunk.text for r in results],
+                documents=[r.chunk.content for r in results],
                 top_n=min(top_k, len(results)),
                 timeout_seconds=self._settings.retrieval_rerank_timeout_seconds,
             )
@@ -236,6 +257,176 @@ class RetrievalService:
 
         return ordered, True, None, latency_ms
 
+    async def _load_kb_index_configs(
+        self, kb_ids: list[uuid.UUID]
+    ) -> dict[uuid.UUID, IndexConfig]:
+        if not kb_ids or self._db is None:
+            return {}
+        stmt = select(KnowledgeBase.id, KnowledgeBase.index_config).where(
+            KnowledgeBase.id.in_(kb_ids)
+        )
+        result = await self._db.execute(stmt)
+        configs: dict[uuid.UUID, IndexConfig] = {}
+        for kb_id, raw in result.all():
+            try:
+                configs[kb_id] = IndexConfig.model_validate(raw or {})
+            except Exception as exc:  # pragma: no cover
+                logger.warning(
+                    "IndexConfig 解析失败，回退默认",
+                    extra={"kb_id": str(kb_id), "error": str(exc)},
+                )
+        return configs
+
+    @staticmethod
+    def _build_kb_fingerprint(configs: dict[uuid.UUID, IndexConfig]) -> dict[str, dict]:
+        if not configs:
+            return {}
+        fingerprint: dict[str, dict] = {}
+        for kb_id, cfg in configs.items():
+            fingerprint[str(kb_id)] = {
+                "parent_child": cfg.retrieval.parent_child.model_dump(mode="json"),
+            }
+        return dict(sorted(fingerprint.items(), key=lambda item: item[0]))
+
+    @staticmethod
+    def _build_chunk_from_hit(hit) -> RetrievedChunk | None:
+        chunk_id = getattr(hit, "chunk_id", None)
+        kb_id = getattr(hit, "kb_id", None)
+        material_id = getattr(hit, "material_id", None)
+        if not chunk_id or not kb_id or not material_id:
+            return None
+        try:
+            return RetrievedChunk(
+                id=uuid.UUID(str(chunk_id)),
+                kb_id=uuid.UUID(str(kb_id)),
+                material_id=uuid.UUID(str(material_id)),
+                content=getattr(hit, "content", "") or "",
+                context=getattr(hit, "context", None),
+                locator=getattr(hit, "locator", None),
+                metadata=getattr(hit, "metadata", None),
+                chunk_role=getattr(hit, "chunk_role", None),
+                parent_chunk_id=getattr(hit, "parent_chunk_id", None),
+                child_seq=getattr(hit, "child_seq", None),
+            )
+        except Exception:
+            return None
+
+    @staticmethod
+    def _build_chunk_from_record(record: dict) -> RetrievedChunk | None:
+        chunk_id = record.get("chunk_id")
+        kb_id = record.get("kb_id")
+        material_id = record.get("material_id")
+        if not chunk_id or not kb_id or not material_id:
+            return None
+        try:
+            return RetrievedChunk(
+                id=uuid.UUID(str(chunk_id)),
+                kb_id=uuid.UUID(str(kb_id)),
+                material_id=uuid.UUID(str(material_id)),
+                content=record.get("content") or "",
+                context=record.get("context"),
+                locator=record.get("locator"),
+                metadata=record.get("metadata"),
+                chunk_role=record.get("chunk_role"),
+                parent_chunk_id=record.get("parent_chunk_id"),
+                child_seq=record.get("child_seq"),
+            )
+        except Exception:
+            return None
+
+    async def _apply_parent_child_strategy(
+        self,
+        results: list[RetrievalResult],
+        kb_configs: dict[uuid.UUID, IndexConfig],
+    ) -> list[RetrievalResult]:
+        if not results or not kb_configs:
+            for r in results:
+                r.context_text = r.chunk.content
+            return results
+
+        parent_ids: set[str] = set()
+        selected_child_ids: set[uuid.UUID] = set()
+        parent_child_kb_ids: set[uuid.UUID] = set()
+
+        for kb_id, cfg in kb_configs.items():
+            kb_results = [r for r in results if r.chunk.kb_id == kb_id]
+            if not kb_results:
+                continue
+
+            if not cfg.retrieval.parent_child.enabled:
+                for r in kb_results:
+                    r.context_text = r.chunk.content
+                continue
+
+            child_results = [
+                r
+                for r in kb_results
+                if (r.chunk.chunk_role == "child" and r.chunk.parent_chunk_id)
+            ]
+            if not child_results:
+                for r in kb_results:
+                    r.context_text = r.chunk.content
+                continue
+
+            parent_child_kb_ids.add(kb_id)
+            parent_scores: dict[str, float] = {}
+            for r in child_results:
+                parent_id = r.chunk.parent_chunk_id
+                if not parent_id:
+                    continue
+                parent_scores[parent_id] = max(parent_scores.get(parent_id, -1e9), r.score)
+
+            max_parents = cfg.retrieval.parent_child.max_parents
+            sorted_parents = sorted(
+                parent_scores.items(), key=lambda item: item[1], reverse=True
+            )[:max_parents]
+            allowed_parents = {pid for pid, _ in sorted_parents}
+
+            max_children = cfg.retrieval.parent_child.max_children_per_parent
+            kept_children: dict[str, int] = {pid: 0 for pid in allowed_parents}
+            for r in child_results:
+                parent_id = r.chunk.parent_chunk_id
+                if not parent_id or parent_id not in allowed_parents:
+                    continue
+                if kept_children[parent_id] >= max_children:
+                    continue
+                kept_children[parent_id] += 1
+                selected_child_ids.add(r.chunk.id)
+
+            parent_ids.update(allowed_parents)
+
+        if not selected_child_ids:
+            for r in results:
+                if not r.context_text:
+                    r.context_text = r.chunk.content
+            return results
+
+        parent_map: dict[str, RetrievedChunk] = {}
+        if parent_ids:
+            parent_records = await self._milvus.query_by_chunk_ids(
+                chunk_ids=list(parent_ids)
+            )
+            for record in parent_records:
+                chunk = self._build_chunk_from_record(record)
+                if chunk:
+                    parent_map[str(chunk.id)] = chunk
+
+        for r in results:
+            if r.chunk.id in selected_child_ids:
+                parent = parent_map.get(r.chunk.parent_chunk_id or "")
+                r.context_text = (parent.content if parent else r.chunk.content)
+            elif r.context_text is None:
+                r.context_text = r.chunk.content
+
+        ordered: list[RetrievalResult] = []
+        for r in results:
+            if r.chunk.kb_id in parent_child_kb_ids:
+                if r.chunk.id in selected_child_ids:
+                    ordered.append(r)
+            else:
+                ordered.append(r)
+        return ordered
+
     async def retrieve(
         self,
         *,
@@ -254,6 +445,9 @@ class RetrievalService:
             top_k = self._settings.retrieval_default_top_k
         top_k = min(top_k, self._settings.retrieval_max_top_k)
 
+        kb_configs = await self._load_kb_index_configs(kb_ids)
+        kb_fingerprint = self._build_kb_fingerprint(kb_configs)
+
         rewrite_result = await self._maybe_rewrite_query(normalized_query)
         effective_query = rewrite_result.query or normalized_query
         if not effective_query.strip():
@@ -265,7 +459,7 @@ class RetrievalService:
                 latency_ms=rewrite_result.latency_ms,
             )
 
-        strategy = self._strategy_fingerprint(top_k)
+        strategy = self._strategy_fingerprint(top_k, kb_fingerprint)
         cache_key = self._cache_key(effective_query, kb_ids, top_k, strategy)
         if self._redis and self._settings.retrieval_cache_enabled:
             try:
@@ -275,6 +469,7 @@ class RetrievalService:
                 cached = None
             if cached:
                 results = await self._load_from_cache(cached)
+                results = await self._apply_parent_child_strategy(results, kb_configs)
                 results, filtered_count = self._apply_min_score(results)
                 self._last_stats = RetrievalStats(
                     query=query,
@@ -357,20 +552,15 @@ class RetrievalService:
             )
             return []
 
-        # 从 Postgres 拉取 chunk 详情
-        chunk_ids = [uuid.UUID(h.chunk_id) for h in hits]
-        stmt = select(DocumentChunk).where(DocumentChunk.id.in_(chunk_ids))
-        result = await self._db.execute(stmt)
-        chunks_map = {c.id: c for c in result.scalars().all()}
-
         # 组装结果（保持召回顺序）
         results: list[RetrievalResult] = []
         for hit in hits:
-            chunk = chunks_map.get(uuid.UUID(hit.chunk_id))
+            chunk = self._build_chunk_from_hit(hit)
             if chunk:
                 results.append(RetrievalResult(chunk=chunk, score=hit.score))
 
         total_hits = len(results)
+        results = await self._apply_parent_child_strategy(results, kb_configs)
         results, filtered_count = self._apply_min_score(results)
 
         rerank_applied = False
@@ -426,18 +616,26 @@ class RetrievalService:
     async def _load_from_cache(self, cached: str) -> list[RetrievalResult]:
         """从缓存加载结果。"""
         data = json.loads(cached)
-        chunk_ids = [uuid.UUID(item["chunk_id"]) for item in data]
-        scores = {item["chunk_id"]: item["score"] for item in data}
+        chunk_ids = [str(item["chunk_id"]) for item in data]
+        scores = {str(item["chunk_id"]): item["score"] for item in data}
 
-        stmt = select(DocumentChunk).where(DocumentChunk.id.in_(chunk_ids))
-        result = await self._db.execute(stmt)
-        chunks_map = {str(c.id): c for c in result.scalars().all()}
+        records = await self._milvus.query_by_chunk_ids(chunk_ids=chunk_ids)
+        chunks_map: dict[str, RetrievedChunk] = {}
+        for record in records:
+            chunk = self._build_chunk_from_record(record)
+            if chunk:
+                chunks_map[str(chunk.id)] = chunk
 
         results: list[RetrievalResult] = []
         for item in data:
-            chunk = chunks_map.get(item["chunk_id"])
+            chunk = chunks_map.get(str(item["chunk_id"]))
             if chunk:
-                results.append(RetrievalResult(chunk=chunk, score=scores[item["chunk_id"]]))
+                results.append(
+                    RetrievalResult(
+                        chunk=chunk,
+                        score=scores[str(item["chunk_id"])],
+                    )
+                )
         return results
 
     def _apply_min_score(
@@ -460,7 +658,7 @@ class RetrievalService:
                     material_id=r.chunk.material_id,
                     chunk_id=r.chunk.id,
                     locator=r.chunk.locator,
-                    excerpt=r.chunk.text[:500],
+                    excerpt=r.chunk.content[:500],
                 )
             )
         return items

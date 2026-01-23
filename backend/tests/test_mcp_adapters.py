@@ -11,15 +11,16 @@ from app.models.tool_extension import ExtensionStatus, ExtensionTransport, ToolE
 
 
 def _build_extension(**kwargs) -> ToolExtension:
-    return ToolExtension(
-        id=uuid.uuid4(),
-        name="demo_ext",
-        transport=ExtensionTransport.HTTP,
-        endpoint="http://localhost:8000/mcp",
-        status=ExtensionStatus.ENABLED,
-        scope=None,
-        **kwargs,
-    )
+    base = {
+        "id": uuid.uuid4(),
+        "name": "demo_ext",
+        "transport": ExtensionTransport.HTTP,
+        "endpoint": "http://localhost:8000/mcp",
+        "status": ExtensionStatus.ENABLED,
+        "scope": None,
+    }
+    base.update(kwargs)
+    return ToolExtension(**base)
 
 
 def test_build_mcp_server_params_stdio_parses_command_and_env() -> None:

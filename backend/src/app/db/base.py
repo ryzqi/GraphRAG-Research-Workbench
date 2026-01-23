@@ -19,6 +19,7 @@ def import_all_models() -> None:
         evidence,
         export_job,
         ingestion_job,
+        index_rebuild_job,
         knowledge_base,
         knowledge_update_proposal,
         research_report,

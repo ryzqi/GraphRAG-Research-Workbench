@@ -6,14 +6,13 @@
 export const MAX_FILE_SIZE = 100 * 1024 * 1024;
 
 // 允许的文件扩展名
-export const ALLOWED_EXTENSIONS = new Set(['.pdf', '.txt', '.md', '.doc', '.docx']);
+export const ALLOWED_EXTENSIONS = new Set(['.pdf', '.txt', '.md', '.docx']);
 
 // 允许的 MIME 类型
 export const ALLOWED_MIME_TYPES = new Set([
   'application/pdf',
   'text/plain',
   'text/markdown',
-  'application/msword',
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
 ]);
 

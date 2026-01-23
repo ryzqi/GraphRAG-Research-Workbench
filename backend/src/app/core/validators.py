@@ -12,12 +12,11 @@ ALLOWED_MIME_TYPES = frozenset({
     "application/pdf",
     "text/plain",
     "text/markdown",
-    "application/msword",
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
 })
 
 # 允许的文件扩展名
-ALLOWED_EXTENSIONS = frozenset({".pdf", ".txt", ".md", ".doc", ".docx"})
+ALLOWED_EXTENSIONS = frozenset({".pdf", ".txt", ".md", ".docx"})
 
 
 def validate_file_upload(

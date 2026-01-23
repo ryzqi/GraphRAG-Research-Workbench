@@ -70,12 +70,14 @@ class KnowledgeBaseService:
         name: str,
         description: str | None = None,
         tags: list[str] | None = None,
+        index_config: dict | None = None,
     ) -> KnowledgeBase:
         """创建知识库。"""
         kb = KnowledgeBase(
             name=name,
             description=description,
             tags=tags,
+            index_config=index_config or {},
             status=KnowledgeBaseStatus.ACTIVE,
         )
         self._db.add(kb)

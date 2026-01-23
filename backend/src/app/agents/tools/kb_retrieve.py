@@ -56,7 +56,7 @@ def build_kb_retrieve_tool(
 
         if context_builder is None:
             included = results
-            parts = [f"[{i}] {r.chunk.text}" for i, r in enumerate(included, 1)]
+            parts = [f"[{i}] {r.context_text or r.chunk.content}" for i, r in enumerate(included, 1)]
             context = "\n\n".join(parts) if parts else "（未找到相关内容）"
             usage = {"tokens": 0, "chars": len(context), "items": len(included)}
             truncation: dict[str, int | bool] = {

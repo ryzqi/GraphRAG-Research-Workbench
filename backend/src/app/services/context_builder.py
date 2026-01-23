@@ -92,9 +92,15 @@ class ContextBuilder:
             if max_tokens is not None and used_tokens + chunk_tokens > max_tokens:
                 if not included:
                     truncated_text, truncated_tokens, truncated = self._truncate_text(
-                        r.chunk.text, max_tokens
+                        self._result_text(r), max_tokens
                     )
-                    included.append(RetrievalResult(chunk=r.chunk, score=r.score))
+                    included.append(
+                        RetrievalResult(
+                            chunk=r.chunk,
+                            score=r.score,
+                            context_text=r.context_text,
+                        )
+                    )
                     first_override = truncated_text
                     used_tokens = truncated_tokens
                     text_truncated = truncated
@@ -107,7 +113,7 @@ class ContextBuilder:
         else:
             context_parts: list[str] = []
             for i, r in enumerate(included, 1):
-                text = first_override if i == 1 and first_override else r.chunk.text
+                text = first_override if i == 1 and first_override else self._result_text(r)
                 context_parts.append(f"[{i}] {text}")
             context = "\n\n".join(context_parts)
 
@@ -283,7 +289,11 @@ class ContextBuilder:
 
     @staticmethod
     def _chunk_tokens(result: RetrievalResult) -> int:
-        token_count = result.chunk.token_count
-        if token_count is None:
-            return count_tokens_approximately(result.chunk.text)
-        return token_count
+        text = ContextBuilder._result_text(result)
+        return count_tokens_approximately(text)
+
+    @staticmethod
+    def _result_text(result: RetrievalResult) -> str:
+        if result.context_text:
+            return result.context_text
+        return result.chunk.content
