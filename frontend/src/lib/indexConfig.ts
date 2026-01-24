@@ -102,6 +102,9 @@ export function validateIndexConfig(config: IndexConfig): string[] {
     { value: contextual.concurrency, min: 1, max: 10, label: 'Contextual 并发' },
     errors
   );
+  if (chunking.general_strategy === 'parent_child' && contextual.enabled) {
+    errors.push('父子分块不支持启用 Contextual');
+  }
 
   checkRange(
     { value: retrieval.parent_child.max_parents, min: 1, max: 20, label: '父子检索 max_parents' },

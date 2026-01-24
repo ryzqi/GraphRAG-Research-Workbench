@@ -1,6 +1,7 @@
 /**
  * 索引配置表单（分块策略/Contextual/父子检索）
  */
+import { useEffect } from 'react';
 import {
   Accordion,
   AccordionDetails,
@@ -17,7 +18,11 @@ import {
   Typography,
 } from '@mui/material';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
-import type { IndexConfig, ChunkingStrategy } from '../services/knowledgeBases';
+import {
+  createDefaultIndexConfig,
+  type ChunkingStrategy,
+  type IndexConfig,
+} from '../services/knowledgeBases';
 
 interface IndexConfigFormProps {
   value: IndexConfig;
@@ -31,6 +36,9 @@ function numberValue(value: string) {
 }
 
 export function IndexConfigForm({ value, onChange, disabled = false }: IndexConfigFormProps) {
+  const defaultContextualEnabled = createDefaultIndexConfig().contextual.enabled;
+  const isParentChild = value.chunking.general_strategy === 'parent_child';
+
   const updateChunking = (next: Partial<IndexConfig['chunking']>) => {
     onChange({ ...value, chunking: { ...value.chunking, ...next } });
   };
@@ -40,6 +48,27 @@ export function IndexConfigForm({ value, onChange, disabled = false }: IndexConf
   const updateRetrieval = (next: Partial<IndexConfig['retrieval']>) => {
     onChange({ ...value, retrieval: { ...value.retrieval, ...next } });
   };
+  const handleStrategyChange = (nextStrategy: ChunkingStrategy) => {
+    const wasParentChild = value.chunking.general_strategy === 'parent_child';
+    const nextConfig: IndexConfig = {
+      ...value,
+      chunking: { ...value.chunking, general_strategy: nextStrategy },
+    };
+
+    if (nextStrategy === 'parent_child') {
+      nextConfig.contextual = { ...value.contextual, enabled: false };
+    } else if (wasParentChild) {
+      nextConfig.contextual = { ...value.contextual, enabled: defaultContextualEnabled };
+    }
+
+    onChange(nextConfig);
+  };
+
+  useEffect(() => {
+    if (!isParentChild) return;
+    if (!value.contextual.enabled) return;
+    onChange({ ...value, contextual: { ...value.contextual, enabled: false } });
+  }, [isParentChild, onChange, value]);
 
   const slidingOverlapError =
     value.chunking.sliding_window.chunk_overlap >= value.chunking.sliding_window.chunk_size;
@@ -68,7 +97,7 @@ export function IndexConfigForm({ value, onChange, disabled = false }: IndexConf
                 row
                 value={value.chunking.general_strategy}
                 onChange={(e) =>
-                  updateChunking({ general_strategy: e.target.value as ChunkingStrategy })
+                  handleStrategyChange(e.target.value as ChunkingStrategy)
                 }
               >
                 <FormControlLabel value="sliding_window" control={<Radio />} label="滑动窗口" disabled={disabled} />
@@ -382,74 +411,76 @@ export function IndexConfigForm({ value, onChange, disabled = false }: IndexConf
         </AccordionDetails>
       </Accordion>
 
-      <Accordion>
-        <AccordionSummary expandIcon={<ExpandMoreIcon />}>
-          <Typography fontWeight={600}>Contextual Retrieval</Typography>
-        </AccordionSummary>
-        <AccordionDetails>
-          <Stack spacing={2}>
-            <FormControlLabel
-              control={
-                <Switch
-                  checked={value.contextual.enabled}
+      {!isParentChild && (
+        <Accordion>
+          <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+            <Typography fontWeight={600}>Contextual Retrieval</Typography>
+          </AccordionSummary>
+          <AccordionDetails>
+            <Stack spacing={2}>
+              <FormControlLabel
+                control={
+                  <Switch
+                    checked={value.contextual.enabled}
+                    onChange={(e) =>
+                      updateContextual({
+                        enabled: e.target.checked,
+                      })
+                    }
+                    disabled={disabled}
+                  />
+                }
+                label="启用 Contextual"
+              />
+              <Stack spacing={2} direction={{ xs: 'column', sm: 'row' }}>
+                <TextField
+                  label="timeout_seconds"
+                  type="number"
+                  value={value.contextual.timeout_seconds}
                   onChange={(e) =>
                     updateContextual({
-                      enabled: e.target.checked,
+                      timeout_seconds: numberValue(e.target.value),
                     })
                   }
+                  inputProps={{ min: 1, max: 60 }}
                   disabled={disabled}
+                  helperText="超时秒数，过短可能失败"
+                  fullWidth
                 />
-              }
-              label="启用 Contextual"
-            />
-            <Stack spacing={2} direction={{ xs: 'column', sm: 'row' }}>
-              <TextField
-                label="timeout_seconds"
-                type="number"
-                value={value.contextual.timeout_seconds}
-                onChange={(e) =>
-                  updateContextual({
-                    timeout_seconds: numberValue(e.target.value),
-                  })
-                }
-                inputProps={{ min: 1, max: 60 }}
-                disabled={disabled}
-                helperText="超时秒数，过短可能失败"
-                fullWidth
-              />
-              <TextField
-                label="max_tokens"
-                type="number"
-                value={value.contextual.max_tokens}
-                onChange={(e) =>
-                  updateContextual({
-                    max_tokens: numberValue(e.target.value),
-                  })
-                }
-                error={contextualTokensError}
-                helperText={contextualTokensError ? '启用时必须 ≥ 1' : 'token 数，生成上下文长度'}
-                inputProps={{ min: 0, max: 512 }}
-                disabled={disabled}
-                fullWidth
-              />
-              <TextField
-                label="concurrency"
-                type="number"
-                value={value.contextual.concurrency}
-                onChange={(e) =>
-                  updateContextual({
-                    concurrency: numberValue(e.target.value),
-                  })
-                }
-                inputProps={{ min: 1, max: 10 }}
-                disabled={disabled}
-                helperText="并发数，影响吞吐与成本"
-                fullWidth
-              />
+                <TextField
+                  label="max_tokens"
+                  type="number"
+                  value={value.contextual.max_tokens}
+                  onChange={(e) =>
+                    updateContextual({
+                      max_tokens: numberValue(e.target.value),
+                    })
+                  }
+                  error={contextualTokensError}
+                  helperText={contextualTokensError ? '启用时必须 ≥ 1' : 'token 数，生成上下文长度'}
+                  inputProps={{ min: 0, max: 512 }}
+                  disabled={disabled}
+                  fullWidth
+                />
+                <TextField
+                  label="concurrency"
+                  type="number"
+                  value={value.contextual.concurrency}
+                  onChange={(e) =>
+                    updateContextual({
+                      concurrency: numberValue(e.target.value),
+                    })
+                  }
+                  inputProps={{ min: 1, max: 10 }}
+                  disabled={disabled}
+                  helperText="并发数，影响吞吐与成本"
+                  fullWidth
+                />
+              </Stack>
             </Stack>
-          </Stack>
-        </AccordionDetails>
-      </Accordion>
+          </AccordionDetails>
+        </Accordion>
+      )}
 
       <Accordion>
         <AccordionSummary expandIcon={<ExpandMoreIcon />}>

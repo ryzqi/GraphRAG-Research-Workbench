@@ -33,6 +33,22 @@ def _build_client() -> tuple[TestClient, dict[str, str]]:
     return client, headers
 
 
+def test_index_config_parent_child_normalizes_contextual() -> None:
+    config = IndexConfig.model_validate(
+        {
+            "chunking": {"general_strategy": "parent_child"},
+            "contextual": {
+                "enabled": True,
+                "timeout_seconds": 15,
+                "max_tokens": 128,
+                "concurrency": 3,
+            },
+        }
+    )
+
+    assert config.contextual.enabled is False
+
+
 def test_patch_kb_rejects_index_config(monkeypatch) -> None:
     client, headers = _build_client()
     kb_id = str(uuid.uuid4())
@@ -42,6 +58,53 @@ def test_patch_kb_rejects_index_config(monkeypatch) -> None:
 
     assert res.status_code == 422
     assert res.json()["error"]["code"] == "INDEX_CONFIG_NOT_ALLOWED"
+
+
+def test_create_kb_normalizes_parent_child_contextual(monkeypatch) -> None:
+    now = datetime.now(timezone.utc)
+    kb_id = uuid.uuid4()
+    payload = IndexConfig.model_validate(
+        {
+            "chunking": {"general_strategy": "parent_child"},
+            "contextual": {
+                "enabled": True,
+                "timeout_seconds": 15,
+                "max_tokens": 128,
+                "concurrency": 3,
+            },
+        }
+    ).model_dump(mode="json")
+
+    async def _fake_get_by_name(self, _name: str):
+        return None
+
+    async def _fake_create(self, *, name, description=None, tags=None, index_config=None):
+        assert index_config is not None
+        assert index_config["contextual"]["enabled"] is False
+        return SimpleNamespace(
+            id=kb_id,
+            name=name,
+            description=description,
+            tags=tags,
+            status="active",
+            index_config=index_config,
+            created_at=now,
+            updated_at=now,
+        )
+
+    monkeypatch.setattr(KnowledgeBaseService, "get_by_name", _fake_get_by_name)
+    monkeypatch.setattr(KnowledgeBaseService, "create", _fake_create)
+
+    client, headers = _build_client()
+    res = client.post(
+        "/api/v1/knowledge-bases",
+        headers=headers,
+        json={"name": "kb", "index_config": payload},
+    )
+
+    assert res.status_code == 201
+    body = res.json()
+    assert body["index_config"]["contextual"]["enabled"] is False
 
 
 def test_put_index_config_returns_rebuild_job(monkeypatch) -> None:

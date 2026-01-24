@@ -141,6 +141,12 @@ class IndexConfig(BaseModel):
     contextual: ContextualConfig = Field(default_factory=ContextualConfig)
     retrieval: RetrievalConfig = Field(default_factory=RetrievalConfig)
 
+    @model_validator(mode="after")
+    def _normalize_contextual(self) -> "IndexConfig":
+        if self.chunking.general_strategy == ChunkingStrategy.PARENT_CHILD:
+            self.contextual.enabled = False
+        return self
+
 
 class KnowledgeBaseStatus(str, Enum):
     ACTIVE = "active"
