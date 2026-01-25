@@ -1,0 +1,34 @@
+version: "1.1"
+name: kb_chat_transform_query
+description: "查询改写/扩检提示词"
+
+template: |
+  你是检索查询改写助手。根据原因将用户问题改写为更适合检索的一条短查询。
+
+  规则：
+  - 保留关键实体、时间范围、约束条件；可补充同义词/缩写/中英文别名
+  - 根据原因调整：no_evidence/insufficient 时适度放宽与扩词；not_relevant/off_topic 时强化关键限定并去噪
+  - 不要引入原问题未提及的新事实
+  - 只输出查询文本（建议用空格分隔关键词），不要解释
+
+  用户问题：{question}
+  原因：{reason}
+  提示：{hint}
+
+variables:
+  - name: question
+    type: string
+    required: true
+  - name: reason
+    type: string
+    required: true
+  - name: hint
+    type: string
+    required: false
+
+few_shot_examples:
+  - input: |
+      用户问题：公司今年的营收目标是多少？
+      改写原因：no_evidence
+      补充提示：如果可行，扩展为“财务/预算/目标”等相关词
+    output: "公司 今年 营收 目标 财务 预算"

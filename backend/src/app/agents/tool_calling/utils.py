@@ -33,7 +33,10 @@ def _sanitize_tool_token(token: str) -> str:
 def make_mcp_tool_name(extension_id: str, tool_name: str) -> str:
     """生成 MCP 工具的命名空间名称。
 
-    规则：`mcp__{extension_id}__{tool_name}`，并做最小化字符清洗以满足工具名约束。
+    规则（概念）：`mcp::<extension_id>::<tool_name>`。
+
+    实现：为兼容 OpenAI/LangChain 的 tool name 约束，使用安全编码：`mcp__{extension_id}__{tool_name}`，
+    并对 token 做最小化字符清洗。
     """
     ext = _sanitize_tool_token(extension_id)
     raw = _sanitize_tool_token(tool_name)

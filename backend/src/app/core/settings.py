@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -197,6 +198,45 @@ class Settings(BaseSettings):
         None, alias="CONTEXT_RETRIEVAL_MAX_TOKENS"
     )
     context_tool_max_tokens: int | None = Field(None, alias="CONTEXT_TOOL_MAX_TOKENS")
+
+    # KB Chat（灰度开关 + 预算 + 查询增强 + 可观测）
+    kb_chat_flow_version: Literal["legacy", "agentic"] = Field(
+        "legacy", alias="KB_CHAT_FLOW_VERSION"
+    )
+    kb_chat_total_timeout_seconds: float = Field(
+        45.0, alias="KB_CHAT_TOTAL_TIMEOUT_SECONDS"
+    )
+    kb_chat_max_total_rounds: int = Field(3, alias="KB_CHAT_MAX_TOTAL_ROUNDS")
+    kb_chat_max_retrieval_retries: int = Field(
+        2, alias="KB_CHAT_MAX_RETRIEVAL_RETRIES"
+    )
+    kb_chat_max_generation_retries: int = Field(
+        1, alias="KB_CHAT_MAX_GENERATION_RETRIES"
+    )
+    kb_chat_force_retrieve: bool = Field(True, alias="KB_CHAT_FORCE_RETRIEVE")
+
+    kb_chat_ambiguity_check_enabled: bool = Field(
+        True, alias="KB_CHAT_AMBIGUITY_CHECK_ENABLED"
+    )
+    kb_chat_decomposition_enabled: bool = Field(
+        False, alias="KB_CHAT_DECOMPOSITION_ENABLED"
+    )
+    kb_chat_decomposition_max_sub_questions: int = Field(
+        4, alias="KB_CHAT_DECOMPOSITION_MAX_SUB_QUESTIONS"
+    )
+    kb_chat_multi_query_enabled: bool = Field(
+        False, alias="KB_CHAT_MULTI_QUERY_ENABLED"
+    )
+    kb_chat_multi_query_max_variants: int = Field(
+        4, alias="KB_CHAT_MULTI_QUERY_MAX_VARIANTS"
+    )
+    kb_chat_hyde_enabled: bool = Field(False, alias="KB_CHAT_HYDE_ENABLED")
+    kb_chat_hyde_max_queries: int = Field(1, alias="KB_CHAT_HYDE_MAX_QUERIES")
+
+    kb_chat_trace_enabled: bool = Field(True, alias="KB_CHAT_TRACE_ENABLED")
+    kb_chat_debug_include_queries: bool = Field(
+        False, alias="KB_CHAT_DEBUG_INCLUDE_QUERIES"
+    )
 
     # 对话摘要配置
     summary_enabled: bool = Field(False, alias="SUMMARY_ENABLED")

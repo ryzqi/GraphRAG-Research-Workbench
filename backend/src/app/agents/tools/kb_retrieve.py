@@ -73,6 +73,43 @@ def build_kb_retrieve_tool(
         context, char_truncated = truncate_tool_output(context, tool_output_max_chars)
 
         if on_results is not None:
+            # Build a unified, JSON-friendly evidence draft (chunk-level) for auditing/persistence.
+            draft_by_chunk_id: dict[str, dict[str, Any]] = {}
+            layer = getattr(retrieval, "last_layer_draft", None)
+            layer_items = getattr(layer, "evidence_items", None) if layer is not None else None
+            if isinstance(layer_items, list):
+                for it in layer_items:
+                    if isinstance(it, dict):
+                        cid = it.get("chunk_id")
+                        if isinstance(cid, str) and cid:
+                            draft_by_chunk_id[cid] = it
+
+            evidence_items: list[dict[str, Any]] = []
+            for r in included:
+                chunk_id = getattr(getattr(r, "chunk", None), "id", None)
+                if chunk_id is None:
+                    continue
+                cid = str(chunk_id)
+                item = draft_by_chunk_id.get(cid)
+                if item is None:
+                    chunk = getattr(r, "chunk", None)
+                    kb_id = getattr(chunk, "kb_id", None)
+                    material_id = getattr(chunk, "material_id", None)
+                    evidence_items.append(
+                        {
+                            "source_kind": "kb",
+                            "kb_id": str(kb_id) if kb_id else "",
+                            "material_id": str(material_id) if material_id else "",
+                            "chunk_id": cid,
+                            "locator": getattr(chunk, "locator", None),
+                            "excerpt": (getattr(chunk, "content", "") or "")[:500],
+                            "score": float(getattr(r, "score", 0.0) or 0.0),
+                            "hits": [],
+                        }
+                    )
+                else:
+                    evidence_items.append(item)
+
             on_results(
                 included,
                 {
@@ -80,6 +117,7 @@ def build_kb_retrieve_tool(
                     "usage": usage,
                     "truncation": truncation,
                     "char_truncated": char_truncated,
+                    "evidence_items": evidence_items,
                     "completed_at": datetime.now(timezone.utc).isoformat(),
                 },
             )

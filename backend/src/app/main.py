@@ -9,6 +9,7 @@ from app.api.v1.api import api_router
 from app.core.checkpoint import CheckpointManager
 from app.core.errors import register_exception_handlers
 from app.core.logging import configure_logging
+from app.core.memory_store import StoreManager
 from app.core.middleware.request_id import RequestIdMiddleware
 from app.core.settings import get_settings, validate_startup_settings
 from app.integrations.embedding_client import EmbeddingClient
@@ -26,6 +27,7 @@ async def lifespan(app: FastAPI):
     """应用生命周期管理。"""
     validate_startup_settings(settings)
     await CheckpointManager.initialize()
+    await StoreManager.initialize()
     app.state.http_client = create_http_client(settings)
     app.state.llm_client = LLMClient(http_client=app.state.http_client)
     app.state.embedding_client = EmbeddingClient(http_client=app.state.http_client)
@@ -33,6 +35,7 @@ async def lifespan(app: FastAPI):
     app.state.milvus_client = MilvusClient()
     yield
     await app.state.http_client.aclose()
+    await StoreManager.shutdown()
     await CheckpointManager.shutdown()
 
 

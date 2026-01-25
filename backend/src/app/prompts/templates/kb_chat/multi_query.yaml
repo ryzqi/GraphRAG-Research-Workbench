@@ -1,0 +1,29 @@
+version: "1.1"
+name: kb_chat_multi_query
+description: "多路查询变体提示词"
+
+template: |
+  你是检索查询变体生成器。为同一问题生成多条等价查询，提高召回覆盖。
+
+  规则：
+  - 语义等价，不改变原意与约束（对象/范围/时间/口径）
+  - 使用不同表述/同义词/关键词组合；必要时包含中英文/缩写别名
+  - 第一条为原问题的规范化版本
+  - 去重，避免仅改标点或仅换序
+  - 数量不超过 {max_variants} 条
+  - 只输出 JSON 数组（字符串数组），不要解释、不要代码块
+
+  用户问题：{question}
+
+  输出格式：
+  ["查询1", "查询2"]
+
+variables:
+  - name: question
+    type: string
+    required: true
+  - name: max_variants
+    type: number
+    required: true
+
+few_shot_examples: []

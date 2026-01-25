@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from dataclasses import dataclass
 from typing import Sequence
@@ -46,6 +47,33 @@ def _stringify_output(output: object) -> str:
         return json.dumps(output, ensure_ascii=False)
     except TypeError:
         return str(output)
+
+def _sanitize_mcp_content(content: object) -> object:
+    """Make MCP tool outputs safe/serializable for ToolMessage content.
+
+    - Drops heavy base64 blobs from image/file blocks.
+    - Converts pydantic objects to dict when possible.
+    """
+    if hasattr(content, "model_dump"):
+        try:
+            return content.model_dump()
+        except Exception:
+            return str(content)
+    if not isinstance(content, list):
+        return content
+    sanitized: list[object] = []
+    for item in content:
+        if isinstance(item, dict):
+            block = dict(item)
+            if block.get("type") in {"image", "file"}:
+                if "base64" in block:
+                    block["base64"] = "***OMITTED***"
+                if "data" in block:
+                    block["data"] = "***OMITTED***"
+            sanitized.append(block)
+        else:
+            sanitized.append(item)
+    return sanitized
 
 
 
@@ -137,11 +165,31 @@ async def build_tool_registry(
             ) -> str:
                 try:
                     output = await _tool.ainvoke(kwargs)
+                except asyncio.CancelledError:
+                    raise
                 except Exception as exc:
                     err, _ = truncate_tool_output(str(exc), tool_output_max_chars)
-                    raise RuntimeError(err) from exc
-                text = _stringify_output(output)
-                text, _ = truncate_tool_output(text, tool_output_max_chars)
+                    payload = {"ok": False, "error": err}
+                    text, _ = truncate_tool_output(
+                        _stringify_output(payload), tool_output_max_chars
+                    )
+                    return text
+
+                content: object = output
+                artifact: object | None = None
+                if isinstance(output, tuple) and len(output) == 2:
+                    content, artifact = output
+
+                payload: dict[str, object] = {
+                    "ok": True,
+                    "content": _sanitize_mcp_content(content),
+                }
+                if artifact is not None:
+                    payload["artifact"] = artifact
+
+                text, _ = truncate_tool_output(
+                    _stringify_output(payload), tool_output_max_chars
+                )
                 return text
 
             tool = lc_tool(

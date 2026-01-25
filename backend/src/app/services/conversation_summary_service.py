@@ -1,4 +1,9 @@
-"""对话摘要服务（滚动摘要，LangMem 优先）。"""
+"""对话摘要服务（滚动摘要，LangMem 优先）。
+
+Summary is stored as a SYSTEM ChatMessage with a meta flag so it can be:
+- Loaded into runtime context (as a SystemMessage prefix) on later turns
+- Filtered out from normal history rendering
+"""
 
 from __future__ import annotations
 
@@ -8,7 +13,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Callable, Any
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.settings import Settings, get_settings
@@ -25,7 +30,7 @@ class SummaryUpdateResult:
 
 
 class ConversationSummaryService:
-    """滚动摘要：生成后仅用于运行时，不再持久化到消息表。"""
+    """滚动摘要：作为 SYSTEM 消息持久化（meta 标记），用于后续 turn 的上下文压缩。"""
 
     _META_FLAG = "summary"
     _META_VERSION = 1
@@ -44,8 +49,19 @@ class ConversationSummaryService:
         self._token_counter = token_counter or count_tokens_approximately
 
     async def load_latest_summary(self, session_id) -> ChatMessage | None:
-        # 不再从数据库读取摘要消息（仅持久化当前会话状态）
-        return None
+        if not self._settings.summary_enabled:
+            return None
+
+        stmt = (
+            select(ChatMessage)
+            .where(ChatMessage.session_id == session_id)
+            .where(ChatMessage.role == MessageRole.SYSTEM)
+            .where(ChatMessage.meta.contains({self._META_FLAG: True}))
+            .order_by(ChatMessage.created_at.desc())
+            .limit(1)
+        )
+        result = await self._db.execute(stmt)
+        return result.scalars().first()
 
     async def maybe_update_summary(
         self, session_id
@@ -68,6 +84,8 @@ class ConversationSummaryService:
         if not summary_text:
             return None
 
+        await self._persist_summary(session_id, summary_text)
+
         return SummaryUpdateResult(
             summary_text=summary_text,
             stats={"message_count": len(messages), "token_count": total_tokens},
@@ -75,6 +93,25 @@ class ConversationSummaryService:
 
     def is_summary_message(self, msg: ChatMessage) -> bool:
         return bool((msg.meta or {}).get(self._META_FLAG))
+
+    async def _persist_summary(self, session_id, summary_text: str) -> None:
+        """Persist the latest summary and keep history clean (delete older summaries)."""
+        await self._db.execute(
+            delete(ChatMessage).where(
+                ChatMessage.session_id == session_id,
+                ChatMessage.role == MessageRole.SYSTEM,
+                ChatMessage.meta.contains({self._META_FLAG: True}),
+            )
+        )
+
+        self._db.add(
+            ChatMessage(
+                session_id=session_id,
+                role=MessageRole.SYSTEM,
+                content=summary_text,
+                meta={self._META_FLAG: True, "version": self._META_VERSION},
+            )
+        )
 
     async def _load_messages_since(
         self, session_id, since: datetime | None

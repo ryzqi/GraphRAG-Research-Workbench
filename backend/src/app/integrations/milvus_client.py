@@ -204,11 +204,25 @@ class MilvusClient:
             functions=functions,
         )
 
-    def _build_filter_expr(self, kb_ids: list[str]) -> str | None:
-        if not kb_ids:
-            return None
-        escaped_ids = [f"\"{_escape_string(kid)}\"" for kid in kb_ids]
-        return f"kb_id in [{', '.join(escaped_ids)}]"
+    def _build_filter_expr(self, kb_ids: list[str], extra_expr: str | None = None) -> str | None:
+        """Build a safe filter expression for Milvus.
+
+        - Always enforces kb_id scope when provided.
+        - Allows an optional extra expression hook (e.g. subject/tenant filters) which
+          MUST be pre-sanitized by callers.
+        """
+
+        expr = None
+        if kb_ids:
+            escaped_ids = [f"\"{_escape_string(kid)}\"" for kid in kb_ids]
+            expr = f"kb_id in [{', '.join(escaped_ids)}]"
+
+        extra = (extra_expr or "").strip()
+        if not extra:
+            return expr
+        if not expr:
+            return extra
+        return f"({expr}) and ({extra})"
 
     async def ensure_collection(self, *, dim: int) -> None:
         """确保 collection 存在并对齐最新 schema。"""
@@ -308,7 +322,12 @@ class MilvusClient:
         return hits
 
     async def search(
-        self, *, embedding: list[float], kb_ids: list[str], top_k: int = 5
+        self,
+        *,
+        embedding: list[float],
+        kb_ids: list[str],
+        top_k: int = 5,
+        extra_filter_expr: str | None = None,
     ) -> list[MilvusSearchHit]:
         """在指定 kb_ids 范围内检索相似 chunk_id（dense）。"""
 
@@ -319,7 +338,7 @@ class MilvusClient:
         await self._load_field_cache()
         self._assert_schema_compatible()
 
-        expr = self._build_filter_expr(kb_ids)
+        expr = self._build_filter_expr(kb_ids, extra_filter_expr)
         res = await search(
             collection_name=self._collection,
             data=[embedding],
@@ -342,6 +361,46 @@ class MilvusClient:
         )
         return self._parse_hits(res)
 
+    async def bm25_search(
+        self,
+        *,
+        query: str,
+        kb_ids: list[str],
+        top_k: int = 5,
+        extra_filter_expr: str | None = None,
+    ) -> list[MilvusSearchHit]:
+        """BM25 keyword retrieval (sparse) within kb_ids scope."""
+
+        search = getattr(self._client, "search", None)
+        if search is None:
+            raise RuntimeError("pymilvus API 不匹配：缺少 search")
+
+        await self._load_field_cache()
+        self._assert_schema_compatible()
+
+        expr = self._build_filter_expr(kb_ids, extra_filter_expr)
+        res = await search(
+            collection_name=self._collection,
+            data=[query],
+            anns_field=self._SPARSE_FIELD,
+            limit=top_k,
+            output_fields=[
+                "chunk_id",
+                "kb_id",
+                "material_id",
+                "chunk_role",
+                "parent_chunk_id",
+                "child_seq",
+                "content",
+                "context",
+                "locator",
+                "metadata",
+            ],
+            filter=expr,
+            search_params={"metric_type": "BM25"},
+        )
+        return self._parse_hits(res)
+
     async def hybrid_search(
         self,
         *,
@@ -353,6 +412,7 @@ class MilvusClient:
         dense_weight: float = 0.7,
         sparse_weight: float = 0.3,
         rrf_k: int = 60,
+        extra_filter_expr: str | None = None,
     ) -> list[MilvusSearchHit]:
         """混合检索：dense + BM25。"""
 
@@ -363,7 +423,7 @@ class MilvusClient:
         await self._load_field_cache()
         self._assert_schema_compatible()
 
-        expr = self._build_filter_expr(kb_ids)
+        expr = self._build_filter_expr(kb_ids, extra_filter_expr)
         dense_req = AnnSearchRequest(
             data=[embedding],
             anns_field=self._DEFAULT_VECTOR_FIELD,

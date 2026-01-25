@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
 import time
 import uuid
 from dataclasses import dataclass
+from typing import cast
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,10 +19,16 @@ from app.integrations.embedding_client import EmbeddingClient
 from app.integrations.milvus_client import MilvusClient
 from app.integrations.rerank_client import RerankClient
 from app.integrations.redis_client import RedisClient
+from app.models.document_chunk import DocumentChunk
 from app.models.knowledge_base import KnowledgeBase
 from app.schemas.chats import EvidenceItem, EvidenceSourceKind
 from app.schemas.knowledge_bases import IndexConfig
-from app.services.query_rewrite_service import QueryRewriteService, RewriteResult
+from app.schemas.query_enhancement import QueryHitSource, QueryItem
+from app.services.query_rewrite_service import (
+    QueryRewriteService,
+    RewriteResult,
+    build_query_items,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +77,23 @@ class RetrievalStats:
     rerank_latency_ms: int | None = None
 
 
+@dataclass(slots=True)
+class RetrievalLayerDraft:
+    """Unified retrieval layer output (for agentic state + legacy tool compatibility).
+
+    - retrieval_candidates: RRF-fused (global) candidates after caps, before rerank
+    - reranked_candidates: rerank output capped to Top-N (or RRF Top-N fallback)
+    - evidence_items: evidence draft for Top-N (chunk-level, with provenance)
+    - results: final RetrievalResult list for legacy callers (Top-N)
+    """
+
+    retrieval_candidates: list[dict]
+    reranked_candidates: list[dict]
+    evidence_items: list[dict]
+    results: list["RetrievalResult"]
+    stats: dict[str, object]
+
+
 class RetrievalService:
     def __init__(
         self,
@@ -87,10 +112,51 @@ class RetrievalService:
         self._reranker = reranker
         self._settings = get_settings()
         self._last_stats: RetrievalStats | None = None
+        self._last_layer_draft: RetrievalLayerDraft | None = None
 
     @property
     def last_stats(self) -> RetrievalStats | None:
         return self._last_stats
+
+    @property
+    def last_layer_draft(self) -> RetrievalLayerDraft | None:
+        """Last unified retrieval layer draft for the most recent retrieval call."""
+        return self._last_layer_draft
+
+    async def _hydrate_chunks_from_postgres(self, chunks: list[RetrievedChunk]) -> None:
+        """Backfill chunk fields when Milvus hits lack output_fields.
+
+        Prefer Milvus output_fields; only query Postgres when fields are missing.
+        """
+
+        if not chunks or self._db is None:
+            return
+
+        missing: set[uuid.UUID] = set()
+        for c in chunks:
+            missing_content = not c.content
+            missing_locator = c.locator is None or c.locator == {}
+            if missing_content or missing_locator:
+                missing.add(c.id)
+        if not missing:
+            return
+
+        stmt = select(DocumentChunk.id, DocumentChunk.text, DocumentChunk.locator).where(
+            DocumentChunk.id.in_(list(missing))
+        )
+        result = await self._db.execute(stmt)
+        by_id: dict[uuid.UUID, tuple[str, dict | None]] = {
+            row.id: (row.text, row.locator) for row in result.all()
+        }
+        for c in chunks:
+            got = by_id.get(c.id)
+            if not got:
+                continue
+            text, locator = got
+            if not c.content:
+                c.content = text or ""
+            if (c.locator is None or c.locator == {}) and locator:
+                c.locator = locator
 
     def _cache_key(
         self, query: str, kb_ids: list[uuid.UUID], top_k: int, strategy: dict
@@ -212,6 +278,378 @@ class RetrievalService:
                 logger.warning("Rewrite 缓存写入失败，跳过缓存", extra={"error": str(exc)})
 
         return result
+
+    @staticmethod
+    def _candidate_key(chunk: RetrievedChunk) -> tuple[str, str, str]:
+        # Keep a stable, explicit key for global dedupe across KBs/materials.
+        return (str(chunk.kb_id), str(chunk.material_id), str(chunk.id))
+
+    @staticmethod
+    def _query_hit_source(item: QueryItem) -> QueryHitSource:
+        src: QueryHitSource = {
+            "kind": item.get("kind", "other"),  # type: ignore[typeddict-item]
+            "query": item.get("query", ""),  # type: ignore[typeddict-item]
+        }
+        if "index" in item:
+            src["index"] = int(item["index"])  # type: ignore[typeddict-item]
+        if "note" in item and item.get("note"):
+            src["note"] = str(item["note"])  # type: ignore[typeddict-item]
+        return src
+
+    @staticmethod
+    def _add_hit_source(hits: list[QueryHitSource], src: QueryHitSource) -> None:
+        key = (src.get("kind"), src.get("query"), src.get("index"), src.get("note"))
+        for existing in hits:
+            ek = (
+                existing.get("kind"),
+                existing.get("query"),
+                existing.get("index"),
+                existing.get("note"),
+            )
+            if ek == key:
+                return
+        hits.append(src)
+
+    @staticmethod
+    def _rrf_rank(
+        ranked_lists: list[list[tuple[str, str, str]]],
+        *,
+        k: int,
+    ) -> tuple[list[tuple[str, str, str]], dict[tuple[str, str, str], float]]:
+        """Reciprocal Rank Fusion (RRF).
+
+        Returns (ordered_keys, score_by_key).
+        """
+
+        scores: dict[tuple[str, str, str], float] = {}
+        best_rank: dict[tuple[str, str, str], int] = {}
+        for lst in ranked_lists:
+            for rank, key in enumerate(lst, start=1):
+                scores[key] = scores.get(key, 0.0) + 1.0 / float(k + rank)
+                best_rank[key] = min(best_rank.get(key, rank), rank)
+
+        ordered = sorted(
+            scores.keys(),
+            key=lambda key: (-scores[key], best_rank.get(key, 10**9), key),
+        )
+        return ordered, scores
+
+    async def retrieve_layer(
+        self,
+        *,
+        query_items: list[QueryItem],
+        kb_ids: list[uuid.UUID],
+        top_n: int,
+        per_query_top_k: int | None = None,
+        global_candidates_limit: int | None = None,
+        rerank_input_limit: int | None = None,
+        extra_filter_expr: str | None = None,
+    ) -> RetrievalLayerDraft:
+        """Unified RetrievalLayer: dense + BM25 + global RRF + optional rerank + Top-N.
+
+        NOTE: Any retry/transform query loop should come back to THIS method to ensure
+        the retrieval chain stays consistent (dense+BM25+RRF+optional rerank).
+        """
+
+        if not kb_ids or not query_items or top_n <= 0:
+            draft = RetrievalLayerDraft(
+                retrieval_candidates=[],
+                reranked_candidates=[],
+                evidence_items=[],
+                results=[],
+                stats={
+                    "dense_hits": 0,
+                    "bm25_hits": 0,
+                    "rrf_candidates": 0,
+                    "rerank_applied": False,
+                },
+            )
+            self._last_layer_draft = draft
+            return draft
+
+        # Enforce reasonable caps (production guardrails).
+        top_n = min(int(top_n), int(self._settings.retrieval_max_top_k))
+        per_query_top_k = (
+            int(per_query_top_k) if per_query_top_k is not None else int(top_n)
+        )
+        per_query_top_k = max(1, min(per_query_top_k, int(self._settings.retrieval_max_top_k)))
+
+        query_count = max(1, len(query_items))
+        if global_candidates_limit is None:
+            # Worst-case: dense+BM25 per query -> 2*per_query_top_k per query.
+            global_candidates_limit = min(
+                int(self._settings.retrieval_max_top_k),
+                per_query_top_k * 2 * query_count,
+            )
+        global_candidates_limit = max(int(global_candidates_limit), top_n)
+        global_candidates_limit = min(
+            global_candidates_limit, int(self._settings.retrieval_max_top_k)
+        )
+
+        if rerank_input_limit is None:
+            rerank_input_limit = global_candidates_limit
+        rerank_input_limit = max(int(rerank_input_limit), top_n)
+        rerank_input_limit = min(rerank_input_limit, global_candidates_limit)
+
+        kb_id_strs = [str(kid) for kid in kb_ids]
+        rrf_k = int(self._settings.retrieval_hybrid_rrf_k)
+
+        chunk_by_key: dict[tuple[str, str, str], RetrievedChunk] = {}
+        hits_by_key: dict[tuple[str, str, str], list[QueryHitSource]] = {}
+        per_query_ranked: list[list[tuple[str, str, str]]] = []
+
+        dense_hits_total = 0
+        bm25_hits_total = 0
+
+        # Use the "main" query as rerank query, fallback to the first available.
+        main_query = ""
+        for item in query_items:
+            if item.get("kind") == "main" and (item.get("query") or "").strip():
+                main_query = str(item.get("query") or "")
+                break
+        if not main_query:
+            main_query = str(query_items[0].get("query") or "")
+
+        for item in query_items:
+            q = (item.get("query") or "").strip()
+            if not q:
+                continue
+
+            use_dense = bool(item.get("use_dense", True))
+            use_bm25 = bool(item.get("use_bm25", True)) and bool(
+                self._settings.retrieval_hybrid_enabled
+            )
+
+            embedding: list[float] | None = None
+            if use_dense:
+                try:
+                    embedding = await self._get_query_embedding(q)
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:  # pragma: no cover
+                    logger.warning("Embedding 生成失败，跳过 dense", extra={"error": str(exc)})
+                    embedding = None
+                    use_dense = False
+
+            async def _safe_dense():
+                if not use_dense or embedding is None:
+                    return []
+                try:
+                    return await self._milvus.search(
+                        embedding=embedding,
+                        kb_ids=kb_id_strs,
+                        top_k=per_query_top_k,
+                        extra_filter_expr=extra_filter_expr,
+                    )
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    logger.warning("Dense 检索失败，降级为空", extra={"error": str(exc)})
+                    return []
+
+            async def _safe_bm25():
+                if not use_bm25:
+                    return []
+                try:
+                    return await self._milvus.bm25_search(
+                        query=q,
+                        kb_ids=kb_id_strs,
+                        top_k=per_query_top_k,
+                        extra_filter_expr=extra_filter_expr,
+                    )
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    logger.warning("BM25 检索失败，降级为空", extra={"error": str(exc)})
+                    return []
+
+            dense_hits = []
+            bm25_hits = []
+            if use_dense and use_bm25:
+                async with asyncio.TaskGroup() as tg:
+                    dense_task = tg.create_task(_safe_dense())
+                    bm25_task = tg.create_task(_safe_bm25())
+                dense_hits = dense_task.result()
+                bm25_hits = bm25_task.result()
+            elif use_dense:
+                dense_hits = await _safe_dense()
+            elif use_bm25:
+                bm25_hits = await _safe_bm25()
+
+            dense_hits_total += len(dense_hits)
+            bm25_hits_total += len(bm25_hits)
+
+            src = self._query_hit_source(item)
+            dense_keys: list[tuple[str, str, str]] = []
+            bm25_keys: list[tuple[str, str, str]] = []
+
+            for hit in dense_hits:
+                chunk = self._build_chunk_from_hit(hit)
+                if not chunk:
+                    continue
+                key = self._candidate_key(chunk)
+                chunk_by_key.setdefault(key, chunk)
+                hits_by_key.setdefault(key, [])
+                self._add_hit_source(hits_by_key[key], src)
+                dense_keys.append(key)
+
+            for hit in bm25_hits:
+                chunk = self._build_chunk_from_hit(hit)
+                if not chunk:
+                    continue
+                key = self._candidate_key(chunk)
+                chunk_by_key.setdefault(key, chunk)
+                hits_by_key.setdefault(key, [])
+                self._add_hit_source(hits_by_key[key], src)
+                bm25_keys.append(key)
+
+            # Defensive dedupe: ranked lists must not contain duplicates for RRF.
+            if dense_keys:
+                dense_keys = list(dict.fromkeys(dense_keys))
+            if bm25_keys:
+                bm25_keys = list(dict.fromkeys(bm25_keys))
+
+            ranked_lists: list[list[tuple[str, str, str]]] = []
+            if dense_keys:
+                ranked_lists.append(dense_keys)
+            if bm25_keys:
+                ranked_lists.append(bm25_keys)
+
+            if not ranked_lists:
+                continue
+
+            # Per-query fusion (dense + BM25) -> per-query ranked list.
+            per_keys, _ = self._rrf_rank(ranked_lists, k=rrf_k)
+            per_query_ranked.append(per_keys)
+
+        if not per_query_ranked:
+            draft = RetrievalLayerDraft(
+                retrieval_candidates=[],
+                reranked_candidates=[],
+                evidence_items=[],
+                results=[],
+                stats={
+                    "dense_hits": dense_hits_total,
+                    "bm25_hits": bm25_hits_total,
+                    "rrf_candidates": 0,
+                    "rerank_applied": False,
+                },
+            )
+            self._last_layer_draft = draft
+            return draft
+
+        global_keys, global_scores = self._rrf_rank(per_query_ranked, k=rrf_k)
+        global_keys = global_keys[:global_candidates_limit]
+
+        # Build RetrievalResult list in global RRF order.
+        rrf_results: list[RetrievalResult] = []
+        for key in global_keys:
+            chunk = chunk_by_key.get(key)
+            if chunk is None:
+                continue
+            rrf_results.append(RetrievalResult(chunk=chunk, score=global_scores.get(key, 0.0)))
+
+        # Prefer Milvus output_fields; backfill from Postgres only when necessary.
+        await self._hydrate_chunks_from_postgres([r.chunk for r in rrf_results])
+
+        kb_configs = await self._load_kb_index_configs(kb_ids)
+        rrf_results = await self._apply_parent_child_strategy(rrf_results, kb_configs)
+        pre_min_score_count = len(rrf_results)
+        rrf_results, filtered_count = self._apply_min_score(rrf_results)
+
+        # Rerank: RRF -> rerank -> Top-N. Inputs are additionally capped.
+        rerank_applied = False
+        rerank_reason: str | None = "disabled"
+        rerank_latency_ms: int | None = None
+        final_results: list[RetrievalResult] = []
+
+        candidates_for_rerank = rrf_results[:rerank_input_limit]
+        if candidates_for_rerank and self._settings.retrieval_rerank_enabled:
+            ordered, applied, reason, latency_ms = await self._maybe_rerank(
+                main_query, candidates_for_rerank, top_n
+            )
+            rerank_applied = applied
+            rerank_reason = reason
+            rerank_latency_ms = latency_ms
+            final_results = (ordered if applied else candidates_for_rerank)[:top_n]
+        else:
+            final_results = candidates_for_rerank[:top_n]
+
+        # Build JSON-friendly drafts for agentic state / auditing.
+        retrieval_candidates: list[dict] = []
+        for r in rrf_results:
+            key = self._candidate_key(r.chunk)
+            retrieval_candidates.append(
+                {
+                    "kb_id": str(r.chunk.kb_id),
+                    "material_id": str(r.chunk.material_id),
+                    "chunk_id": str(r.chunk.id),
+                    "score": float(r.score),
+                    "stage": "rrf",
+                    "excerpt": (r.chunk.content or "")[:500],
+                    "locator": r.chunk.locator,
+                    "metadata": r.chunk.metadata,
+                    "chunk_role": r.chunk.chunk_role,
+                    "parent_chunk_id": r.chunk.parent_chunk_id,
+                    "hits": hits_by_key.get(key, []),
+                }
+            )
+
+        reranked_candidates: list[dict] = []
+        for r in final_results:
+            key = self._candidate_key(r.chunk)
+            reranked_candidates.append(
+                {
+                    "kb_id": str(r.chunk.kb_id),
+                    "material_id": str(r.chunk.material_id),
+                    "chunk_id": str(r.chunk.id),
+                    "score": float(r.score),
+                    "stage": "rerank" if rerank_applied else "rrf",
+                    "excerpt": (r.chunk.content or "")[:500],
+                    "locator": r.chunk.locator,
+                    "metadata": r.chunk.metadata,
+                    "chunk_role": r.chunk.chunk_role,
+                    "parent_chunk_id": r.chunk.parent_chunk_id,
+                    "hits": hits_by_key.get(key, []),
+                }
+            )
+
+        evidence_items: list[dict] = []
+        for r in final_results:
+            key = self._candidate_key(r.chunk)
+            evidence_items.append(
+                {
+                    "source_kind": "kb",
+                    "kb_id": str(r.chunk.kb_id),
+                    "material_id": str(r.chunk.material_id),
+                    "chunk_id": str(r.chunk.id),
+                    "locator": r.chunk.locator,
+                    "excerpt": (r.chunk.content or "")[:500],
+                    "score": float(r.score),
+                    "hits": hits_by_key.get(key, []),
+                }
+            )
+
+        draft = RetrievalLayerDraft(
+            retrieval_candidates=retrieval_candidates,
+            reranked_candidates=reranked_candidates,
+            evidence_items=evidence_items,
+            results=final_results,
+            stats={
+                "dense_hits": dense_hits_total,
+                "bm25_hits": bm25_hits_total,
+                "pre_min_score_candidates": pre_min_score_count,
+                "filtered_count": filtered_count,
+                "rrf_candidates": len(rrf_results),
+                "global_candidates_limit": global_candidates_limit,
+                "rerank_input_limit": rerank_input_limit,
+                "rerank_applied": rerank_applied,
+                "rerank_reason": rerank_reason,
+                "rerank_latency_ms": rerank_latency_ms,
+            },
+        )
+        self._last_layer_draft = draft
+        return draft
 
     async def _maybe_rerank(
         self, query: str, results: list[RetrievalResult], top_k: int
@@ -410,6 +848,7 @@ class RetrievalService:
                 chunk = self._build_chunk_from_record(record)
                 if chunk:
                     parent_map[str(chunk.id)] = chunk
+            await self._hydrate_chunks_from_postgres(list(parent_map.values()))
 
         for r in results:
             if r.chunk.id in selected_child_ids:
@@ -436,6 +875,18 @@ class RetrievalService:
     ) -> list[RetrievalResult]:
         """检索相关 chunk。"""
         if not kb_ids:
+            self._last_layer_draft = RetrievalLayerDraft(
+                retrieval_candidates=[],
+                reranked_candidates=[],
+                evidence_items=[],
+                results=[],
+                stats={
+                    "dense_hits": 0,
+                    "bm25_hits": 0,
+                    "rrf_candidates": 0,
+                    "rerank_applied": False,
+                },
+            )
             return []
 
         normalized_query = self._normalize_query(query)
@@ -469,8 +920,36 @@ class RetrievalService:
                 cached = None
             if cached:
                 results = await self._load_from_cache(cached)
+                await self._hydrate_chunks_from_postgres([r.chunk for r in results])
                 results = await self._apply_parent_child_strategy(results, kb_configs)
                 results, filtered_count = self._apply_min_score(results)
+
+                # Cache path has no per-query provenance. Still expose evidence draft.
+                evidence_items: list[dict] = []
+                for r in results:
+                    evidence_items.append(
+                        {
+                            "source_kind": "kb",
+                            "kb_id": str(r.chunk.kb_id),
+                            "material_id": str(r.chunk.material_id),
+                            "chunk_id": str(r.chunk.id),
+                            "locator": r.chunk.locator,
+                            "excerpt": (r.chunk.content or "")[:500],
+                            "score": float(r.score),
+                            "hits": [],
+                        }
+                    )
+                self._last_layer_draft = RetrievalLayerDraft(
+                    retrieval_candidates=[],
+                    reranked_candidates=[],
+                    evidence_items=evidence_items,
+                    results=results,
+                    stats={
+                        "cache_hit": True,
+                        "filtered_count": filtered_count,
+                    },
+                )
+
                 self._last_stats = RetrievalStats(
                     query=query,
                     normalized_query=normalized_query,
@@ -495,39 +974,26 @@ class RetrievalService:
                 )
                 return results
 
-        # 获取查询向量（带缓存）
-        query_embedding = await self._get_query_embedding(effective_query)
+        # Unified retrieval layer: dense + BM25 + RRF (+ optional rerank) + Top-N.
+        query_items = build_query_items(main_query=effective_query)
+        layer = await self.retrieve_layer(
+            query_items=query_items,
+            kb_ids=kb_ids,
+            top_n=top_k,
+            per_query_top_k=top_k,
+            # Keep defaults conservative: global cap and rerank cap follow Settings max_top_k.
+            global_candidates_limit=self._settings.retrieval_max_top_k,
+            rerank_input_limit=self._settings.retrieval_max_top_k,
+        )
+        results = layer.results
+        total_hits = int(
+            layer.stats.get("pre_min_score_candidates")
+            or layer.stats.get("rrf_candidates")
+            or 0
+        )
+        filtered_count = int(layer.stats.get("filtered_count") or 0)
 
-        # Milvus 召回
-        kb_id_strs = [str(kid) for kid in kb_ids]
-        hits = []
-        if self._settings.retrieval_hybrid_enabled:
-            try:
-                hits = await self._milvus.hybrid_search(
-                    embedding=query_embedding,
-                    query=effective_query,
-                    kb_ids=kb_id_strs,
-                    top_k=top_k,
-                    ranker=self._settings.retrieval_hybrid_ranker,
-                    dense_weight=self._settings.retrieval_hybrid_dense_weight,
-                    sparse_weight=self._settings.retrieval_hybrid_sparse_weight,
-                    rrf_k=self._settings.retrieval_hybrid_rrf_k,
-                )
-            except Exception as exc:
-                logger.warning("Hybrid 检索失败，回退 dense", extra={"error": str(exc)})
-                hits = await self._milvus.search(
-                    embedding=query_embedding,
-                    kb_ids=kb_id_strs,
-                    top_k=top_k,
-                )
-        else:
-            hits = await self._milvus.search(
-                embedding=query_embedding,
-                kb_ids=kb_id_strs,
-                top_k=top_k,
-            )
-
-        if not hits:
+        if not results:
             self._last_stats = RetrievalStats(
                 query=query,
                 normalized_query=normalized_query,
@@ -551,25 +1017,6 @@ class RetrievalService:
                 rerank_enabled=self._settings.retrieval_rerank_enabled,
             )
             return []
-
-        # 组装结果（保持召回顺序）
-        results: list[RetrievalResult] = []
-        for hit in hits:
-            chunk = self._build_chunk_from_hit(hit)
-            if chunk:
-                results.append(RetrievalResult(chunk=chunk, score=hit.score))
-
-        total_hits = len(results)
-        results = await self._apply_parent_child_strategy(results, kb_configs)
-        results, filtered_count = self._apply_min_score(results)
-
-        rerank_applied = False
-        rerank_reason = "disabled"
-        rerank_latency_ms = None
-        if results:
-            results, rerank_applied, rerank_reason, rerank_latency_ms = (
-                await self._maybe_rerank(effective_query, results, top_k)
-            )
 
         # 写入缓存
         if self._redis and self._settings.retrieval_cache_enabled and results:
@@ -606,9 +1053,9 @@ class RetrievalService:
                 else None
             ),
             rerank_enabled=self._settings.retrieval_rerank_enabled,
-            rerank_applied=rerank_applied,
-            rerank_reason=rerank_reason,
-            rerank_latency_ms=rerank_latency_ms,
+            rerank_applied=bool(layer.stats.get("rerank_applied")),
+            rerank_reason=cast(str | None, layer.stats.get("rerank_reason")),
+            rerank_latency_ms=cast(int | None, layer.stats.get("rerank_latency_ms")),
         )
 
         return results
