@@ -1,3 +1,11 @@
+# Multi-KB Agent System
+
+This repository contains a graduation project codebase for a multi-knowledge-base agent system.
+The primary docs are written in Chinese; the Chinese README starts below. This short English
+preface exists mainly to keep the file ASCII-friendly for tooling and patching on Windows.
+
+---
+
 # 多知识库 + 多智能体协作知识代理系统
 
 本仓库为毕业设计代码与演示脚手架，目标是实现：多知识库隔离与联合检索、可追溯证据清单、多智能体协作/深度研究、对比评测与导出复现。
@@ -78,6 +86,7 @@ npm run dev
 ```
 
 ## Web 搜索（Tavily）配置
+
 - 必填：`WEB_SEARCH_API_KEY`
 - 常用参数：`WEB_SEARCH_DEFAULT_SEARCH_DEPTH`、`WEB_SEARCH_DEFAULT_TIME_RANGE`、`WEB_SEARCH_DEFAULT_MAX_RESULTS`
 - 策略开关：`WEB_SEARCH_AUTO_PARAMETERS`、`WEB_SEARCH_INCLUDE_USAGE`
@@ -85,9 +94,10 @@ npm run dev
 - 深度工具默认值：`WEB_EXTRACT_DEFAULT_DEPTH`、`WEB_CRAWL_DEFAULT_*`
 - 研究输出：`WEB_RESEARCH_OUTPUT_FORMAT`、`WEB_RESEARCH_CITATION_FORMAT`、`WEB_RESEARCH_TIMEOUT_SECONDS`
 
-## KB Chat 编排灰度开关（KB_CHAT_*）
+## KB Chat 编排配置（KB_CHAT_*）
 
-- 灰度开关：`KB_CHAT_FLOW_VERSION=legacy|agentic`（默认 `legacy`；当 agentic 图未就绪/初始化失败时会自动回退到 legacy）
+> 重要约束：KB Chat 仅支持内部工具（例如 `kb_retrieve`），不加载/不调用任何 MCP 外接工具（即使 `session.allow_external=true`）；同时 KB Chat 不支持“两阶段工具审批”（不会返回 `pending_tool_approval`），也不考虑终端/人工确认（Human-in-the-loop）。如需 MCP 工具/人工确认流程，请使用普通代理（General Chat）或 MCP 扩展页面。
+
 - 预算（默认保守）：
   - `KB_CHAT_TOTAL_TIMEOUT_SECONDS=45`
   - `KB_CHAT_MAX_TOTAL_ROUNDS=3`
@@ -98,17 +108,13 @@ npm run dev
   - `KB_CHAT_AMBIGUITY_CHECK_ENABLED=true`
   - `KB_CHAT_DECOMPOSITION_ENABLED=false`、`KB_CHAT_DECOMPOSITION_MAX_SUB_QUESTIONS=4`
   - `KB_CHAT_MULTI_QUERY_ENABLED=false`、`KB_CHAT_MULTI_QUERY_MAX_VARIANTS=4`
-  - `KB_CHAT_HYDE_ENABLED=false`、`KB_CHAT_HYDE_MAX_QUERIES=1`
-- 观测/调试：
+  - `KB_CHAT_HYDE_ENABLED=false`
+- 观测：
   - `KB_CHAT_TRACE_ENABLED=true`
-  - `KB_CHAT_DEBUG_INCLUDE_QUERIES=false`（默认不记录 query 原文，避免落敏感信息）
 
 示例（放入 `.env`，非密钥项）：
 
 ```env
-# KB Chat flow（灰度）
-KB_CHAT_FLOW_VERSION=legacy
-
 # KB Chat budgets
 KB_CHAT_TOTAL_TIMEOUT_SECONDS=45
 KB_CHAT_MAX_TOTAL_ROUNDS=3
@@ -123,9 +129,7 @@ KB_CHAT_DECOMPOSITION_MAX_SUB_QUESTIONS=4
 KB_CHAT_MULTI_QUERY_ENABLED=false
 KB_CHAT_MULTI_QUERY_MAX_VARIANTS=4
 KB_CHAT_HYDE_ENABLED=false
-KB_CHAT_HYDE_MAX_QUERIES=1
 
 # KB Chat observability
 KB_CHAT_TRACE_ENABLED=true
-KB_CHAT_DEBUG_INCLUDE_QUERIES=false
 ```

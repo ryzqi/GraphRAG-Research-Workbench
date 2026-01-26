@@ -48,7 +48,7 @@ def budget_exceeded(state: dict, settings: Settings) -> tuple[bool, str]:
     deadline_ts = budget.get("deadline_ts") if isinstance(budget, dict) else None
 
     if isinstance(deadline_ts, (int, float)) and time.time() > float(deadline_ts):
-        return True, "timeout"
+        return True, "budget_exhausted"
 
     loop_counts = state.get("loop_counts")
     if isinstance(loop_counts, dict):
@@ -67,3 +67,31 @@ def budget_exceeded(state: dict, settings: Settings) -> tuple[bool, str]:
 
     return False, ""
 
+
+def remaining_budget_seconds(
+    state: dict, settings: Settings, *, now_ts: float | None = None
+) -> float:
+    """Return remaining budget seconds based on deadline_ts (>= 0)."""
+    metrics = state.get("metrics")
+    budget = metrics.get("budget") if isinstance(metrics, dict) else None
+    deadline_ts = budget.get("deadline_ts") if isinstance(budget, dict) else None
+    if not isinstance(deadline_ts, (int, float)):
+        total = float(settings.kb_chat_total_timeout_seconds)
+        return max(total, 0.0)
+    now_value = time.time() if now_ts is None else float(now_ts)
+    return max(0.0, float(deadline_ts) - now_value)
+
+
+def budget_exhausted(state: dict, settings: Settings) -> bool:
+    """Return True if remaining budget is depleted."""
+    return remaining_budget_seconds(state, settings) <= 0.0
+
+
+def effective_timeout_seconds(
+    component_timeout_seconds: float | None, remaining_seconds: float
+) -> float:
+    """Clamp component timeout by remaining budget (>= 0)."""
+    remaining = max(float(remaining_seconds), 0.0)
+    if component_timeout_seconds is None:
+        return remaining
+    return max(0.0, min(float(component_timeout_seconds), remaining))

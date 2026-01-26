@@ -30,6 +30,10 @@ class AppError(Exception):
     status_code: int = 400
     details: dict[str, Any] | None = None
 
+    def __post_init__(self) -> None:
+        # Ensure `str(AppError)` is meaningful (dataclass doesn't call Exception.__init__).
+        Exception.__init__(self, f"{self.code}: {self.message}")
+
 
 def not_found(
     message: str = "资源不存在",
@@ -130,13 +134,19 @@ def register_exception_handlers(app: FastAPI) -> None:
         if isinstance(exc.detail, dict):
             raw_code = exc.detail.get("code")
             raw_message = exc.detail.get("message")
-            code = str(raw_code) if raw_code else (
-                ErrorCode.NOT_FOUND.value
-                if exc.status_code == 404
-                else ErrorCode.HTTP_ERROR.value
+            code = (
+                str(raw_code)
+                if raw_code
+                else (
+                    ErrorCode.NOT_FOUND.value
+                    if exc.status_code == 404
+                    else ErrorCode.HTTP_ERROR.value
+                )
             )
-            message = str(raw_message) if raw_message else (
-                "资源不存在" if exc.status_code == 404 else "请求错误"
+            message = (
+                str(raw_message)
+                if raw_message
+                else ("资源不存在" if exc.status_code == 404 else "请求错误")
             )
 
             raw_details: Any = exc.detail.get("details")
@@ -175,7 +185,11 @@ def register_exception_handlers(app: FastAPI) -> None:
                 )
                 return _apply_cors_headers(request, res)
 
-        code = ErrorCode.NOT_FOUND.value if exc.status_code == 404 else ErrorCode.HTTP_ERROR.value
+        code = (
+            ErrorCode.NOT_FOUND.value
+            if exc.status_code == 404
+            else ErrorCode.HTTP_ERROR.value
+        )
         message = "资源不存在" if exc.status_code == 404 else (exc.detail or "请求错误")
         res = JSONResponse(
             status_code=exc.status_code,

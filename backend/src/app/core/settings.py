@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 from functools import lru_cache
 from pathlib import Path
-from typing import Literal
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -43,8 +42,12 @@ class Settings(BaseSettings):
     redis_socket_connect_timeout_seconds: float = Field(
         1.0, alias="REDIS_SOCKET_CONNECT_TIMEOUT_SECONDS"
     )
-    celery_broker_url: str = Field("redis://localhost:6379/0", alias="CELERY_BROKER_URL")
-    celery_result_backend: str = Field("redis://localhost:6379/1", alias="CELERY_RESULT_BACKEND")
+    celery_broker_url: str = Field(
+        "redis://localhost:6379/0", alias="CELERY_BROKER_URL"
+    )
+    celery_result_backend: str = Field(
+        "redis://localhost:6379/1", alias="CELERY_RESULT_BACKEND"
+    )
 
     http_timeout_connect_seconds: float = Field(
         5.0, alias="HTTP_TIMEOUT_CONNECT_SECONDS"
@@ -72,11 +75,11 @@ class Settings(BaseSettings):
     llm_api_key: str = Field("REPLACE_ME", alias="LLM_API_KEY")
     llm_model: str = Field("gpt-4o-mini", alias="LLM_MODEL")
     llm_timeout_seconds: float = Field(30.0, alias="LLM_TIMEOUT_SECONDS")
-    llm_max_input_tokens: int | None = Field(
-        None, alias="LLM_MAX_INPUT_TOKENS"
-    )
+    llm_max_input_tokens: int | None = Field(None, alias="LLM_MAX_INPUT_TOKENS")
 
-    embedding_base_url: str = Field("https://api.openai.com/v1", alias="EMBEDDING_BASE_URL")
+    embedding_base_url: str = Field(
+        "https://api.openai.com/v1", alias="EMBEDDING_BASE_URL"
+    )
     embedding_api_key: str = Field("REPLACE_ME", alias="EMBEDDING_API_KEY")
     embedding_model: str = Field("text-embedding-3-small", alias="EMBEDDING_MODEL")
     embedding_timeout_seconds: float = Field(30.0, alias="EMBEDDING_TIMEOUT_SECONDS")
@@ -88,7 +91,9 @@ class Settings(BaseSettings):
     minio_secure: bool = Field(False, alias="MINIO_SECURE")
     minio_bucket_uploads: str = Field("mkb-uploads", alias="MINIO_BUCKET_UPLOADS")
     minio_bucket_exports: str = Field("mkb-exports", alias="MINIO_BUCKET_EXPORTS")
-    exports_presign_expire_seconds: int = Field(3600, alias="EXPORTS_PRESIGN_EXPIRE_SECONDS")
+    exports_presign_expire_seconds: int = Field(
+        3600, alias="EXPORTS_PRESIGN_EXPIRE_SECONDS"
+    )
 
     mcp_enabled: bool = Field(False, alias="MCP_ENABLED")
     mcp_confirmation_required: bool = Field(True, alias="MCP_CONFIRMATION_REQUIRED")
@@ -200,20 +205,19 @@ class Settings(BaseSettings):
     context_tool_max_tokens: int | None = Field(None, alias="CONTEXT_TOOL_MAX_TOKENS")
 
     # KB Chat（灰度开关 + 预算 + 查询增强 + 可观测）
-    kb_chat_flow_version: Literal["legacy", "agentic"] = Field(
-        "legacy", alias="KB_CHAT_FLOW_VERSION"
-    )
     kb_chat_total_timeout_seconds: float = Field(
         45.0, alias="KB_CHAT_TOTAL_TIMEOUT_SECONDS"
     )
     kb_chat_max_total_rounds: int = Field(3, alias="KB_CHAT_MAX_TOTAL_ROUNDS")
-    kb_chat_max_retrieval_retries: int = Field(
-        2, alias="KB_CHAT_MAX_RETRIEVAL_RETRIES"
-    )
+    kb_chat_max_retrieval_retries: int = Field(2, alias="KB_CHAT_MAX_RETRIEVAL_RETRIES")
     kb_chat_max_generation_retries: int = Field(
         1, alias="KB_CHAT_MAX_GENERATION_RETRIES"
     )
     kb_chat_force_retrieve: bool = Field(True, alias="KB_CHAT_FORCE_RETRIEVE")
+    kb_chat_grader_fail_policy: str = Field(
+        "closed", alias="KB_CHAT_GRADER_FAIL_POLICY"
+    )
+    kb_chat_json_safe_policy: str = Field("stringify", alias="KB_CHAT_JSON_SAFE_POLICY")
 
     kb_chat_ambiguity_check_enabled: bool = Field(
         True, alias="KB_CHAT_AMBIGUITY_CHECK_ENABLED"
@@ -231,18 +235,12 @@ class Settings(BaseSettings):
         4, alias="KB_CHAT_MULTI_QUERY_MAX_VARIANTS"
     )
     kb_chat_hyde_enabled: bool = Field(False, alias="KB_CHAT_HYDE_ENABLED")
-    kb_chat_hyde_max_queries: int = Field(1, alias="KB_CHAT_HYDE_MAX_QUERIES")
 
     kb_chat_trace_enabled: bool = Field(True, alias="KB_CHAT_TRACE_ENABLED")
-    kb_chat_debug_include_queries: bool = Field(
-        False, alias="KB_CHAT_DEBUG_INCLUDE_QUERIES"
-    )
 
     # 对话摘要配置
     summary_enabled: bool = Field(False, alias="SUMMARY_ENABLED")
-    summary_trigger_min_messages: int = Field(
-        12, alias="SUMMARY_TRIGGER_MIN_MESSAGES"
-    )
+    summary_trigger_min_messages: int = Field(12, alias="SUMMARY_TRIGGER_MIN_MESSAGES")
     summary_trigger_min_tokens: int = Field(800, alias="SUMMARY_TRIGGER_MIN_TOKENS")
     summary_max_tokens: int = Field(256, alias="SUMMARY_MAX_TOKENS")
 
@@ -279,7 +277,9 @@ class Settings(BaseSettings):
 
     # 导入：URL 抓取/正文抽取配置（最小安全基线）
     ingestion_url_max_redirects: int = Field(5, alias="INGESTION_URL_MAX_REDIRECTS")
-    ingestion_url_max_bytes: int = Field(5 * 1024 * 1024, alias="INGESTION_URL_MAX_BYTES")
+    ingestion_url_max_bytes: int = Field(
+        5 * 1024 * 1024, alias="INGESTION_URL_MAX_BYTES"
+    )
     ingestion_url_user_agent: str = Field(
         "multi-kb-agent/ingestion", alias="INGESTION_URL_USER_AGENT"
     )
@@ -311,7 +311,7 @@ class Settings(BaseSettings):
                 else:
                     if isinstance(parsed, list):
                         return [str(x).strip() for x in parsed if str(x).strip()]
-            parts = [p.strip().strip("\"").strip("'") for p in raw.split(",")]
+            parts = [p.strip().strip('"').strip("'") for p in raw.split(",")]
             return [p for p in parts if p]
         return [str(v)]
 
@@ -326,6 +326,26 @@ class Settings(BaseSettings):
             parts = [p.strip() for p in v.split(",")]
             return [p for p in parts if p]
         return [str(v).strip()]
+
+    @field_validator("kb_chat_grader_fail_policy", mode="before")
+    @classmethod
+    def _normalize_kb_chat_grader_fail_policy(cls, v: object) -> str:
+        raw = "closed" if v is None else str(v)
+        normalized = raw.strip().lower()
+        if normalized not in {"open", "closed"}:
+            raise ValueError("KB_CHAT_GRADER_FAIL_POLICY must be 'open' or 'closed'")
+        return normalized
+
+    @field_validator("kb_chat_json_safe_policy", mode="before")
+    @classmethod
+    def _normalize_kb_chat_json_safe_policy(cls, v: object) -> str:
+        raw = "stringify" if v is None else str(v)
+        normalized = raw.strip().lower().replace("-", "_")
+        if normalized not in {"fail_fast", "stringify"}:
+            raise ValueError(
+                "KB_CHAT_JSON_SAFE_POLICY must be 'fail_fast' or 'stringify'"
+            )
+        return normalized
 
 
 @lru_cache
@@ -356,4 +376,6 @@ def validate_startup_settings(settings: Settings) -> None:
         problems.append("启用 MCP 时必须开启人工确认（MCP_CONFIRMATION_REQUIRED=true）")
 
     if problems:
-        raise RuntimeError(f"启动安全校验失败（APP_ENV={settings.app_env}）：{'; '.join(problems)}")
+        raise RuntimeError(
+            f"启动安全校验失败（APP_ENV={settings.app_env}）：{'; '.join(problems)}"
+        )

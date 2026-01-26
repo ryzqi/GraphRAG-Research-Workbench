@@ -13,14 +13,20 @@ from typing import Any
 from langchain.messages import AIMessage, HumanMessage, SystemMessage
 from langgraph.runtime import Runtime
 
-from app.core.settings import Settings
 from app.agents.kb_chat_memory import (
     aget_kb_chat_memory,
     render_kb_chat_memory_snippet,
 )
+from app.core.settings import Settings
 from app.services.query_rewrite_service import QueryRewriteService, build_query_items
 
-from .budget import ensure_budget_initialized, now_iso
+from .budget import (
+    effective_timeout_seconds,
+    ensure_budget_initialized,
+    now_iso,
+    remaining_budget_seconds,
+)
+from .json_safety import ensure_json_safe
 
 
 def _get_last_human(messages: list[Any]) -> HumanMessage | None:
@@ -43,6 +49,20 @@ def _extract_user_input(state: dict) -> str:
             if isinstance(content, str):
                 return content
     return ""
+
+
+def _merge_stage_summary(
+    state: dict, key: str, summary: dict[str, Any], *, settings: Settings
+) -> dict[str, Any]:
+    stage_summaries = state.get("stage_summaries")
+    if not isinstance(stage_summaries, dict):
+        stage_summaries = {}
+    safe_summary = ensure_json_safe(
+        summary, settings=settings, label=f"stage_summaries.{key}"
+    )
+    merged = {**stage_summaries, key: safe_summary}
+    merged = ensure_json_safe(merged, settings=settings, label="stage_summaries")
+    return merged
 
 
 def _latest_summary_message(messages: list[Any]) -> str:
@@ -104,7 +124,11 @@ async def merge_context(
 
     memory_snippet = ""
     if settings.memory_enabled and runtime.store is not None:
-        keys = state.get("memory_keys") if isinstance(state.get("memory_keys"), dict) else {}
+        keys = (
+            state.get("memory_keys")
+            if isinstance(state.get("memory_keys"), dict)
+            else {}
+        )
         user_id = str(keys.get("user_id") or "local")
         thread_id = str(keys.get("thread_id") or "unknown_thread")
         kb_ids_raw = keys.get("kb_ids") if isinstance(keys.get("kb_ids"), list) else []
@@ -126,17 +150,16 @@ async def merge_context(
     if prefixes:
         merged = "\n\n".join([*prefixes, f"用户问题：{merged}"])
 
-    stage_summaries = state.get("stage_summaries")
-    if not isinstance(stage_summaries, dict):
-        stage_summaries = {}
-    stage_summaries = {
-        **stage_summaries,
-        "merge_context": {
+    stage_summaries = _merge_stage_summary(
+        state,
+        "merge_context",
+        {
             "latency_ms": int((time.perf_counter() - start) * 1000),
             "memory_included": bool(memory_snippet),
             "completed_at": now_iso(),
         },
-    }
+        settings=settings,
+    )
 
     return {
         **updates,
@@ -155,28 +178,35 @@ async def coref_rewrite(state: dict, settings: Settings) -> dict[str, Any]:
 
     rewritten = query
     reason: str | None = None
-    try:
-        svc = QueryRewriteService(settings=settings)
-        result = await svc.coref_rewrite(query)
-        rewritten = result.query
-        reason = result.reason
-    except Exception:  # pragma: no cover
-        # Absolute fallback: keep original query.
+    remaining = remaining_budget_seconds(state, settings)
+    timeout_value = effective_timeout_seconds(
+        settings.retrieval_query_rewrite_timeout_seconds, remaining
+    )
+    if remaining <= 0 or timeout_value <= 0:
         rewritten = query
-        reason = "error"
+        reason = "budget_exhausted"
+    else:
+        try:
+            svc = QueryRewriteService(settings=settings)
+            result = await svc.coref_rewrite(query, timeout_seconds=timeout_value)
+            rewritten = result.query
+            reason = result.reason
+        except Exception:  # pragma: no cover
+            # Absolute fallback: keep original query.
+            rewritten = query
+            reason = "error"
 
-    stage_summaries = state.get("stage_summaries")
-    if not isinstance(stage_summaries, dict):
-        stage_summaries = {}
-    stage_summaries = {
-        **stage_summaries,
-        "coref_rewrite": {
+    stage_summaries = _merge_stage_summary(
+        state,
+        "coref_rewrite",
+        {
             "rewritten": rewritten != query,
             "reason": reason,
             "latency_ms": int((time.perf_counter() - start) * 1000),
             "completed_at": now_iso(),
         },
-    }
+        settings=settings,
+    )
 
     return {"coref_query": rewritten, "stage_summaries": stage_summaries}
 
@@ -194,27 +224,38 @@ async def ambiguity_check(state: dict, settings: Settings) -> dict[str, Any]:
 
     ambiguous = False
     reverse_question = ""
-    if settings.kb_chat_ambiguity_check_enabled:
+    reason: str | None = None
+    remaining = remaining_budget_seconds(state, settings)
+    if settings.kb_chat_ambiguity_check_enabled and remaining > 0:
+        timeout_value = effective_timeout_seconds(
+            settings.retrieval_query_rewrite_timeout_seconds, remaining
+        )
+        if timeout_value <= 0:
+            timeout_value = None
         try:
             svc = QueryRewriteService(settings=settings)
-            result = await svc.ambiguity_check(query)
+            result = await svc.ambiguity_check(query, timeout_seconds=timeout_value)
             ambiguous = result.ambiguous
             reverse_question = result.reverse_question or ""
+            reason = result.reason
         except Exception:  # pragma: no cover
             ambiguous = False
             reverse_question = ""
+            reason = "error"
+    elif remaining <= 0:
+        reason = "budget_exhausted"
 
-    stage_summaries = state.get("stage_summaries")
-    if not isinstance(stage_summaries, dict):
-        stage_summaries = {}
-    stage_summaries = {
-        **stage_summaries,
-        "ambiguity_check": {
+    stage_summaries = _merge_stage_summary(
+        state,
+        "ambiguity_check",
+        {
             "ambiguous": ambiguous,
+            "reason": reason,
             "latency_ms": int((time.perf_counter() - start) * 1000),
             "completed_at": now_iso(),
         },
-    }
+        settings=settings,
+    )
 
     if not ambiguous:
         return {
@@ -250,17 +291,16 @@ async def normalize_rewrite(state: dict, settings: Settings) -> dict[str, Any]:
         rewritten = query
         rewritten_flag = False
 
-    stage_summaries = state.get("stage_summaries")
-    if not isinstance(stage_summaries, dict):
-        stage_summaries = {}
-    stage_summaries = {
-        **stage_summaries,
-        "normalize_rewrite": {
+    stage_summaries = _merge_stage_summary(
+        state,
+        "normalize_rewrite",
+        {
             "rewritten": rewritten_flag,
             "latency_ms": int((time.perf_counter() - start) * 1000),
             "completed_at": now_iso(),
         },
-    }
+        settings=settings,
+    )
     return {"normalized_query": rewritten, "stage_summaries": stage_summaries}
 
 
@@ -279,24 +319,27 @@ async def decomposition(state: dict, settings: Settings) -> dict[str, Any]:
         query = _extract_user_input(state)
 
     sub_queries: list[str] = []
+    reason: str | None = None
     try:
         svc = QueryRewriteService(settings=settings)
         result = await svc.decompose(query, enabled=True)
         sub_queries = result.queries
+        reason = result.reason
     except Exception:  # pragma: no cover
         sub_queries = []
+        reason = "error"
 
-    stage_summaries = state.get("stage_summaries")
-    if not isinstance(stage_summaries, dict):
-        stage_summaries = {}
-    stage_summaries = {
-        **stage_summaries,
-        "decomposition": {
+    stage_summaries = _merge_stage_summary(
+        state,
+        "decomposition",
+        {
             "count": len(sub_queries),
+            "reason": reason,
             "completed_at": now_iso(),
             "latency_ms": int((time.perf_counter() - start) * 1000),
         },
-    }
+        settings=settings,
+    )
 
     return {"sub_queries": sub_queries, "stage_summaries": stage_summaries}
 
@@ -315,24 +358,27 @@ async def generate_variants(state: dict, settings: Settings) -> dict[str, Any]:
     if not isinstance(query, str) or not query.strip():
         query = _extract_user_input(state)
     deduped: list[str] = []
+    reason: str | None = None
     try:
         svc = QueryRewriteService(settings=settings)
         result = await svc.generate_variants(query, enabled=True)
         deduped = result.queries
+        reason = result.reason
     except Exception:  # pragma: no cover
         deduped = [query.strip()] if query.strip() else []
+        reason = "error"
 
-    stage_summaries = state.get("stage_summaries")
-    if not isinstance(stage_summaries, dict):
-        stage_summaries = {}
-    stage_summaries = {
-        **stage_summaries,
-        "generate_variants": {
+    stage_summaries = _merge_stage_summary(
+        state,
+        "generate_variants",
+        {
             "count": len(deduped),
+            "reason": reason,
             "completed_at": now_iso(),
             "latency_ms": int((time.perf_counter() - start) * 1000),
         },
-    }
+        settings=settings,
+    )
     return {"multi_queries": deduped, "stage_summaries": stage_summaries}
 
 
@@ -344,22 +390,25 @@ async def entity_expand(state: dict, settings: Settings) -> dict[str, Any]:
         queries = []
 
     expanded = queries
+    reason: str | None = None
     try:
         svc = QueryRewriteService(settings=settings)
         result = await svc.entity_expand([q for q in queries if isinstance(q, str)])
         expanded = result.queries
+        reason = result.reason
     except Exception:  # pragma: no cover
         expanded = queries
-    stage_summaries = state.get("stage_summaries")
-    if not isinstance(stage_summaries, dict):
-        stage_summaries = {}
-    stage_summaries = {
-        **stage_summaries,
-        "entity_expand": {
+        reason = "error"
+    stage_summaries = _merge_stage_summary(
+        state,
+        "entity_expand",
+        {
+            "reason": reason,
             "completed_at": now_iso(),
             "latency_ms": int((time.perf_counter() - start) * 1000),
         },
-    }
+        settings=settings,
+    )
     return {"multi_queries": expanded, "stage_summaries": stage_summaries}
 
 
@@ -376,24 +425,27 @@ async def hyde(state: dict, settings: Settings) -> dict[str, Any]:
     if not isinstance(query, str) or not query.strip():
         query = _extract_user_input(state)
     hyde_doc = ""
+    reason: str | None = None
     try:
         svc = QueryRewriteService(settings=settings)
         result = await svc.hyde(query, enabled=True)
         hyde_doc = result.text
+        reason = result.reason
     except Exception:  # pragma: no cover
         hyde_doc = ""
+        reason = "error"
 
-    stage_summaries = state.get("stage_summaries")
-    if not isinstance(stage_summaries, dict):
-        stage_summaries = {}
-    stage_summaries = {
-        **stage_summaries,
-        "hyde": {
+    stage_summaries = _merge_stage_summary(
+        state,
+        "hyde",
+        {
             "enabled": True,
+            "reason": reason,
             "completed_at": now_iso(),
             "latency_ms": int((time.perf_counter() - start) * 1000),
         },
-    }
+        settings=settings,
+    )
     return {"hyde_doc": hyde_doc, "stage_summaries": stage_summaries}
 
 
@@ -429,16 +481,15 @@ async def prepare_messages(state: dict, settings: Settings) -> dict[str, Any]:
         hyde_doc=hyde_doc.strip() or None,
     )
 
-    stage_summaries = state.get("stage_summaries")
-    if not isinstance(stage_summaries, dict):
-        stage_summaries = {}
-    stage_summaries = {
-        **stage_summaries,
-        "prepare_messages": {
+    stage_summaries = _merge_stage_summary(
+        state,
+        "prepare_messages",
+        {
             "query_items_count": len(query_items),
             "completed_at": now_iso(),
             "latency_ms": int((time.perf_counter() - start) * 1000),
         },
-    }
+        settings=settings,
+    )
 
     return {"query_items": query_items, "stage_summaries": stage_summaries}

@@ -17,8 +17,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.settings import get_settings
 from app.integrations.embedding_client import EmbeddingClient
 from app.integrations.milvus_client import MilvusClient
-from app.integrations.rerank_client import RerankClient
 from app.integrations.redis_client import RedisClient
+from app.integrations.rerank_client import RerankClient
 from app.models.document_chunk import DocumentChunk
 from app.models.knowledge_base import KnowledgeBase
 from app.schemas.chats import EvidenceItem, EvidenceSourceKind
@@ -75,6 +75,7 @@ class RetrievalStats:
     rerank_applied: bool = False
     rerank_reason: str | None = None
     rerank_latency_ms: int | None = None
+    reason: str | None = None
 
 
 @dataclass(slots=True)
@@ -123,6 +124,57 @@ class RetrievalService:
         """Last unified retrieval layer draft for the most recent retrieval call."""
         return self._last_layer_draft
 
+    @staticmethod
+    def _make_deadline(timeout_seconds: float | None) -> float | None:
+        if timeout_seconds is None:
+            return None
+        return time.monotonic() + max(float(timeout_seconds), 0.0)
+
+    @staticmethod
+    def _remaining_seconds(deadline: float | None) -> float | None:
+        if deadline is None:
+            return None
+        return max(0.0, deadline - time.monotonic())
+
+    @staticmethod
+    def _effective_timeout(
+        *,
+        deadline: float | None,
+        per_call_timeout: float | None,
+    ) -> float | None:
+        remaining = RetrievalService._remaining_seconds(deadline)
+        if remaining is None:
+            return per_call_timeout
+        if per_call_timeout is None:
+            return remaining
+        return max(0.0, min(float(per_call_timeout), remaining))
+
+    @staticmethod
+    async def _run_with_timeout(coro, timeout_seconds: float | None):
+        if timeout_seconds is None:
+            return await coro
+        if timeout_seconds <= 0:
+            raise asyncio.TimeoutError()
+        return await asyncio.wait_for(coro, timeout=timeout_seconds)
+
+    @staticmethod
+    def _empty_layer_draft(reason: str | None = None) -> RetrievalLayerDraft:
+        stats: dict[str, object] = {
+            "dense_hits": 0,
+            "bm25_hits": 0,
+            "rrf_candidates": 0,
+            "rerank_applied": False,
+        }
+        if reason:
+            stats["reason"] = reason
+        return RetrievalLayerDraft(
+            retrieval_candidates=[],
+            reranked_candidates=[],
+            evidence_items=[],
+            results=[],
+            stats=stats,
+        )
+
     async def _hydrate_chunks_from_postgres(self, chunks: list[RetrievedChunk]) -> None:
         """Backfill chunk fields when Milvus hits lack output_fields.
 
@@ -141,9 +193,9 @@ class RetrievalService:
         if not missing:
             return
 
-        stmt = select(DocumentChunk.id, DocumentChunk.text, DocumentChunk.locator).where(
-            DocumentChunk.id.in_(list(missing))
-        )
+        stmt = select(
+            DocumentChunk.id, DocumentChunk.text, DocumentChunk.locator
+        ).where(DocumentChunk.id.in_(list(missing)))
         result = await self._db.execute(stmt)
         by_id: dict[uuid.UUID, tuple[str, dict | None]] = {
             row.id: (row.text, row.locator) for row in result.all()
@@ -203,21 +255,33 @@ class RetrievalService:
             normalized = normalized.lower()
         return normalized
 
-    async def _get_query_embedding(self, query: str) -> list[float]:
+    async def _get_query_embedding(
+        self, query: str, *, timeout_seconds: float | None = None
+    ) -> list[float]:
         """获取查询向量（带缓存）。"""
         if self._redis and self._settings.retrieval_cache_enabled:
             cache_key = self._embedding_cache_key(query)
             try:
                 cached = await self._redis.get(cache_key)
             except Exception as exc:  # pragma: no cover
-                logger.warning("Embedding 缓存读取失败，跳过缓存", extra={"error": str(exc)})
+                logger.warning(
+                    "Embedding 缓存读取失败，跳过缓存", extra={"error": str(exc)}
+                )
                 cached = None
             if cached:
                 logger.debug("Embedding 缓存命中", extra={"query": query[:50]})
                 return json.loads(cached)
 
+        timeout_value = float(self._settings.embedding_timeout_seconds)
+        if timeout_seconds is not None:
+            timeout_value = min(timeout_value, float(timeout_seconds))
+        if timeout_value <= 0:
+            raise asyncio.TimeoutError()
+
         start_time = time.perf_counter()
-        embeddings = await self._embedding.embed(texts=[query])
+        embeddings = await self._run_with_timeout(
+            self._embedding.embed(texts=[query]), timeout_value
+        )
         latency_ms = int((time.perf_counter() - start_time) * 1000)
 
         logger.info(
@@ -234,11 +298,15 @@ class RetrievalService:
                     ex=self._settings.retrieval_cache_ttl_seconds * 2,
                 )
             except Exception as exc:  # pragma: no cover
-                logger.warning("Embedding 缓存写入失败，跳过缓存", extra={"error": str(exc)})
+                logger.warning(
+                    "Embedding 缓存写入失败，跳过缓存", extra={"error": str(exc)}
+                )
 
         return embeddings[0]
 
-    async def _maybe_rewrite_query(self, query: str) -> RewriteResult:
+    async def _maybe_rewrite_query(
+        self, query: str, *, timeout_seconds: float | None = None
+    ) -> RewriteResult:
         """可选查询重写，失败回退原 query。"""
         if not self._settings.retrieval_query_rewrite_enabled:
             return RewriteResult(
@@ -247,13 +315,22 @@ class RetrievalService:
                 reason="disabled",
                 latency_ms=0,
             )
+        if timeout_seconds is not None and float(timeout_seconds) <= 0:
+            return RewriteResult(
+                query=query,
+                rewritten=False,
+                reason="budget_exhausted",
+                latency_ms=0,
+            )
 
         cache_key = self._rewrite_cache_key(query)
         if self._redis and self._settings.retrieval_cache_enabled:
             try:
                 cached = await self._redis.get(cache_key)
             except Exception as exc:  # pragma: no cover
-                logger.warning("Rewrite 缓存读取失败，跳过缓存", extra={"error": str(exc)})
+                logger.warning(
+                    "Rewrite �����ȡʧ�ܣ���������", extra={"error": str(exc)}
+                )
                 cached = None
             if cached:
                 return RewriteResult(
@@ -265,7 +342,7 @@ class RetrievalService:
 
         rewriter = self._query_rewriter or QueryRewriteService(self._settings)
         self._query_rewriter = rewriter
-        result = await rewriter.rewrite(query)
+        result = await rewriter.rewrite(query, timeout_seconds=timeout_seconds)
 
         if self._redis and self._settings.retrieval_cache_enabled and result.query:
             try:
@@ -275,7 +352,9 @@ class RetrievalService:
                     ex=self._settings.retrieval_cache_ttl_seconds,
                 )
             except Exception as exc:  # pragma: no cover
-                logger.warning("Rewrite 缓存写入失败，跳过缓存", extra={"error": str(exc)})
+                logger.warning(
+                    "Rewrite 缓存写入失败，跳过缓存", extra={"error": str(exc)}
+                )
 
         return result
 
@@ -344,6 +423,7 @@ class RetrievalService:
         global_candidates_limit: int | None = None,
         rerank_input_limit: int | None = None,
         extra_filter_expr: str | None = None,
+        timeout_seconds: float | None = None,
     ) -> RetrievalLayerDraft:
         """Unified RetrievalLayer: dense + BM25 + global RRF + optional rerank + Top-N.
 
@@ -351,19 +431,19 @@ class RetrievalService:
         the retrieval chain stays consistent (dense+BM25+RRF+optional rerank).
         """
 
+        deadline = self._make_deadline(timeout_seconds)
+        if deadline is not None and float(timeout_seconds) <= 0:
+            draft = self._empty_layer_draft(reason="timeout")
+            self._last_layer_draft = draft
+            return draft
+
         if not kb_ids or not query_items or top_n <= 0:
-            draft = RetrievalLayerDraft(
-                retrieval_candidates=[],
-                reranked_candidates=[],
-                evidence_items=[],
-                results=[],
-                stats={
-                    "dense_hits": 0,
-                    "bm25_hits": 0,
-                    "rrf_candidates": 0,
-                    "rerank_applied": False,
-                },
-            )
+            draft = self._empty_layer_draft()
+            self._last_layer_draft = draft
+            return draft
+
+        def _timeout_draft() -> RetrievalLayerDraft:
+            draft = self._empty_layer_draft(reason="timeout")
             self._last_layer_draft = draft
             return draft
 
@@ -372,7 +452,9 @@ class RetrievalService:
         per_query_top_k = (
             int(per_query_top_k) if per_query_top_k is not None else int(top_n)
         )
-        per_query_top_k = max(1, min(per_query_top_k, int(self._settings.retrieval_max_top_k)))
+        per_query_top_k = max(
+            1, min(per_query_top_k, int(self._settings.retrieval_max_top_k))
+        )
 
         query_count = max(1, len(query_items))
         if global_candidates_limit is None:
@@ -414,6 +496,10 @@ class RetrievalService:
             q = (item.get("query") or "").strip()
             if not q:
                 continue
+            if deadline is not None:
+                remaining = self._remaining_seconds(deadline)
+                if remaining is not None and remaining <= 0:
+                    return _timeout_draft()
 
             use_dense = bool(item.get("use_dense", True))
             use_bm25 = bool(item.get("use_bm25", True)) and bool(
@@ -423,11 +509,24 @@ class RetrievalService:
             embedding: list[float] | None = None
             if use_dense:
                 try:
-                    embedding = await self._get_query_embedding(q)
+                    remaining = self._remaining_seconds(deadline)
+                    if remaining is not None and remaining <= 0:
+                        return _timeout_draft()
+                    embedding = await self._get_query_embedding(
+                        q, timeout_seconds=remaining
+                    )
+                except asyncio.TimeoutError:
+                    if deadline is not None:
+                        return _timeout_draft()
+                    logger.warning("Embedding 超时，跳过 dense", extra={"query": q[:50]})
+                    embedding = None
+                    use_dense = False
                 except asyncio.CancelledError:
                     raise
                 except Exception as exc:  # pragma: no cover
-                    logger.warning("Embedding 生成失败，跳过 dense", extra={"error": str(exc)})
+                    logger.warning(
+                        "Embedding 生成失败，跳过 dense", extra={"error": str(exc)}
+                    )
                     embedding = None
                     use_dense = False
 
@@ -435,46 +534,83 @@ class RetrievalService:
                 if not use_dense or embedding is None:
                     return []
                 try:
-                    return await self._milvus.search(
-                        embedding=embedding,
-                        kb_ids=kb_id_strs,
-                        top_k=per_query_top_k,
-                        extra_filter_expr=extra_filter_expr,
+                    timeout_value = self._effective_timeout(
+                        deadline=deadline, per_call_timeout=None
                     )
+                    return await self._run_with_timeout(
+                        self._milvus.search(
+                            embedding=embedding,
+                            kb_ids=kb_id_strs,
+                            top_k=per_query_top_k,
+                            extra_filter_expr=extra_filter_expr,
+                        ),
+                        timeout_value,
+                    )
+                except asyncio.TimeoutError:
+                    if deadline is not None:
+                        raise
+                    logger.warning("Dense 检索超时，降级为空", extra={"query": q[:50]})
+                    return []
                 except asyncio.CancelledError:
                     raise
                 except Exception as exc:
-                    logger.warning("Dense 检索失败，降级为空", extra={"error": str(exc)})
+                    logger.warning(
+                        "Dense ����ʧ�ܣ�����Ϊ��", extra={"error": str(exc)}
+                    )
                     return []
 
             async def _safe_bm25():
                 if not use_bm25:
                     return []
                 try:
-                    return await self._milvus.bm25_search(
-                        query=q,
-                        kb_ids=kb_id_strs,
-                        top_k=per_query_top_k,
-                        extra_filter_expr=extra_filter_expr,
+                    timeout_value = self._effective_timeout(
+                        deadline=deadline, per_call_timeout=None
                     )
+                    return await self._run_with_timeout(
+                        self._milvus.bm25_search(
+                            query=q,
+                            kb_ids=kb_id_strs,
+                            top_k=per_query_top_k,
+                            extra_filter_expr=extra_filter_expr,
+                        ),
+                        timeout_value,
+                    )
+                except asyncio.TimeoutError:
+                    if deadline is not None:
+                        raise
+                    logger.warning("BM25 检索超时，降级为空", extra={"query": q[:50]})
+                    return []
                 except asyncio.CancelledError:
                     raise
                 except Exception as exc:
-                    logger.warning("BM25 检索失败，降级为空", extra={"error": str(exc)})
+                    logger.warning("BM25 ����ʧ�ܣ�����Ϊ��", extra={"error": str(exc)})
                     return []
 
             dense_hits = []
             bm25_hits = []
             if use_dense and use_bm25:
-                async with asyncio.TaskGroup() as tg:
-                    dense_task = tg.create_task(_safe_dense())
-                    bm25_task = tg.create_task(_safe_bm25())
-                dense_hits = dense_task.result()
-                bm25_hits = bm25_task.result()
+                if deadline is None:
+                    async with asyncio.TaskGroup() as tg:
+                        dense_task = tg.create_task(_safe_dense())
+                        bm25_task = tg.create_task(_safe_bm25())
+                    dense_hits = dense_task.result()
+                    bm25_hits = bm25_task.result()
+                else:
+                    try:
+                        dense_hits = await _safe_dense()
+                        bm25_hits = await _safe_bm25()
+                    except asyncio.TimeoutError:
+                        return _timeout_draft()
             elif use_dense:
-                dense_hits = await _safe_dense()
+                try:
+                    dense_hits = await _safe_dense()
+                except asyncio.TimeoutError:
+                    return _timeout_draft()
             elif use_bm25:
-                bm25_hits = await _safe_bm25()
+                try:
+                    bm25_hits = await _safe_bm25()
+                except asyncio.TimeoutError:
+                    return _timeout_draft()
 
             dense_hits_total += len(dense_hits)
             bm25_hits_total += len(bm25_hits)
@@ -547,13 +683,40 @@ class RetrievalService:
             chunk = chunk_by_key.get(key)
             if chunk is None:
                 continue
-            rrf_results.append(RetrievalResult(chunk=chunk, score=global_scores.get(key, 0.0)))
+            rrf_results.append(
+                RetrievalResult(chunk=chunk, score=global_scores.get(key, 0.0))
+            )
 
         # Prefer Milvus output_fields; backfill from Postgres only when necessary.
-        await self._hydrate_chunks_from_postgres([r.chunk for r in rrf_results])
+        try:
+            timeout_value = self._effective_timeout(
+                deadline=deadline, per_call_timeout=None
+            )
+            await self._run_with_timeout(
+                self._hydrate_chunks_from_postgres([r.chunk for r in rrf_results]),
+                timeout_value,
+            )
+        except asyncio.TimeoutError:
+            return _timeout_draft()
 
-        kb_configs = await self._load_kb_index_configs(kb_ids)
-        rrf_results = await self._apply_parent_child_strategy(rrf_results, kb_configs)
+        try:
+            timeout_value = self._effective_timeout(
+                deadline=deadline, per_call_timeout=None
+            )
+            kb_configs = await self._run_with_timeout(
+                self._load_kb_index_configs(kb_ids), timeout_value
+            )
+        except asyncio.TimeoutError:
+            return _timeout_draft()
+        try:
+            timeout_value = self._effective_timeout(
+                deadline=deadline, per_call_timeout=None
+            )
+            rrf_results = await self._apply_parent_child_strategy(
+                rrf_results, kb_configs, timeout_seconds=timeout_value
+            )
+        except asyncio.TimeoutError:
+            return _timeout_draft()
         pre_min_score_count = len(rrf_results)
         rrf_results, filtered_count = self._apply_min_score(rrf_results)
 
@@ -565,9 +728,19 @@ class RetrievalService:
 
         candidates_for_rerank = rrf_results[:rerank_input_limit]
         if candidates_for_rerank and self._settings.retrieval_rerank_enabled:
-            ordered, applied, reason, latency_ms = await self._maybe_rerank(
-                main_query, candidates_for_rerank, top_n
-            )
+            try:
+                rerank_timeout = self._effective_timeout(
+                    deadline=deadline, per_call_timeout=timeout_seconds
+                )
+                ordered, applied, reason, latency_ms = await self._maybe_rerank(
+                    main_query,
+                    candidates_for_rerank,
+                    top_n,
+                    timeout_seconds=rerank_timeout,
+                    hard_timeout=deadline is not None,
+                )
+            except asyncio.TimeoutError:
+                return _timeout_draft()
             rerank_applied = applied
             rerank_reason = reason
             rerank_latency_ms = latency_ms
@@ -652,7 +825,13 @@ class RetrievalService:
         return draft
 
     async def _maybe_rerank(
-        self, query: str, results: list[RetrievalResult], top_k: int
+        self,
+        query: str,
+        results: list[RetrievalResult],
+        top_k: int,
+        *,
+        timeout_seconds: float | None = None,
+        hard_timeout: bool = False,
     ) -> tuple[list[RetrievalResult], bool, str | None, int | None]:
         """可选 rerank，失败回退原排序。"""
         if not self._settings.retrieval_rerank_enabled:
@@ -664,18 +843,33 @@ class RetrievalService:
         reranker = self._reranker or RerankClient(self._settings)
         self._reranker = reranker
 
+        timeout_value = float(self._settings.retrieval_rerank_timeout_seconds)
+        if timeout_seconds is not None:
+            timeout_value = min(timeout_value, float(timeout_seconds))
+        if timeout_value <= 0:
+            return results, False, "budget_exhausted", None
+
         start_time = time.perf_counter()
         try:
-            rerank_results = await reranker.rerank(
-                query=query,
-                documents=[r.chunk.content for r in results],
-                top_n=min(top_k, len(results)),
-                timeout_seconds=self._settings.retrieval_rerank_timeout_seconds,
+            rerank_results = await self._run_with_timeout(
+                reranker.rerank(
+                    query=query,
+                    documents=[r.chunk.content for r in results],
+                    top_n=min(top_k, len(results)),
+                    timeout_seconds=timeout_value,
+                ),
+                timeout_value,
             )
+        except asyncio.TimeoutError:
+            if hard_timeout:
+                raise
+            logger.warning("Rerank 超时，降级为原顺序", extra={"timeout": timeout_value})
+            return results, False, "timeout", None
+        except asyncio.CancelledError:
+            raise
         except Exception as exc:
-            logger.warning("Rerank 调用失败，回退原排序", extra={"error": str(exc)})
+            logger.warning("Rerank ����ʧ�ܣ�����ԭ����", extra={"error": str(exc)})
             return results, False, "error", None
-
         latency_ms = int((time.perf_counter() - start_time) * 1000)
         if not rerank_results:
             return results, False, "empty_results", latency_ms
@@ -776,11 +970,15 @@ class RetrievalService:
         self,
         results: list[RetrievalResult],
         kb_configs: dict[uuid.UUID, IndexConfig],
+        *,
+        timeout_seconds: float | None = None,
     ) -> list[RetrievalResult]:
         if not results or not kb_configs:
             for r in results:
                 r.context_text = r.chunk.content
             return results
+        if timeout_seconds is not None and float(timeout_seconds) <= 0:
+            raise asyncio.TimeoutError()
 
         parent_ids: set[str] = set()
         selected_child_ids: set[uuid.UUID] = set()
@@ -812,7 +1010,9 @@ class RetrievalService:
                 parent_id = r.chunk.parent_chunk_id
                 if not parent_id:
                     continue
-                parent_scores[parent_id] = max(parent_scores.get(parent_id, -1e9), r.score)
+                parent_scores[parent_id] = max(
+                    parent_scores.get(parent_id, -1e9), r.score
+                )
 
             max_parents = cfg.retrieval.parent_child.max_parents
             sorted_parents = sorted(
@@ -841,19 +1041,23 @@ class RetrievalService:
 
         parent_map: dict[str, RetrievedChunk] = {}
         if parent_ids:
-            parent_records = await self._milvus.query_by_chunk_ids(
-                chunk_ids=list(parent_ids)
+            parent_records = await self._run_with_timeout(
+                self._milvus.query_by_chunk_ids(chunk_ids=list(parent_ids)),
+                timeout_seconds,
             )
             for record in parent_records:
                 chunk = self._build_chunk_from_record(record)
                 if chunk:
                     parent_map[str(chunk.id)] = chunk
-            await self._hydrate_chunks_from_postgres(list(parent_map.values()))
+            await self._run_with_timeout(
+                self._hydrate_chunks_from_postgres(list(parent_map.values())),
+                timeout_seconds,
+            )
 
         for r in results:
             if r.chunk.id in selected_child_ids:
                 parent = parent_map.get(r.chunk.parent_chunk_id or "")
-                r.context_text = (parent.content if parent else r.chunk.content)
+                r.context_text = parent.content if parent else r.chunk.content
             elif r.context_text is None:
                 r.context_text = r.chunk.content
 
@@ -872,20 +1076,42 @@ class RetrievalService:
         query: str,
         kb_ids: list[uuid.UUID],
         top_k: int | None = None,
+        timeout_seconds: float | None = None,
     ) -> list[RetrievalResult]:
         """检索相关 chunk。"""
+        deadline = self._make_deadline(timeout_seconds)
         if not kb_ids:
-            self._last_layer_draft = RetrievalLayerDraft(
-                retrieval_candidates=[],
-                reranked_candidates=[],
-                evidence_items=[],
-                results=[],
-                stats={
-                    "dense_hits": 0,
-                    "bm25_hits": 0,
-                    "rrf_candidates": 0,
-                    "rerank_applied": False,
-                },
+            self._last_layer_draft = self._empty_layer_draft()
+            return []
+
+        if deadline is not None and float(timeout_seconds) <= 0:
+            normalized_query = self._normalize_query(query)
+            if top_k is None:
+                top_k = self._settings.retrieval_default_top_k
+            top_k = min(top_k, self._settings.retrieval_max_top_k)
+            self._last_layer_draft = self._empty_layer_draft(reason="timeout")
+            self._last_stats = RetrievalStats(
+                query=query,
+                normalized_query=normalized_query,
+                effective_query=normalized_query,
+                top_k=top_k,
+                min_score=self._settings.retrieval_min_score,
+                total_hits=0,
+                filtered_count=0,
+                returned_count=0,
+                cache_hit=False,
+                rewrite_enabled=self._settings.retrieval_query_rewrite_enabled,
+                rewrite_applied=False,
+                rewrite_reason="timeout",
+                rewrite_latency_ms=None,
+                hybrid_enabled=self._settings.retrieval_hybrid_enabled,
+                hybrid_ranker=(
+                    self._settings.retrieval_hybrid_ranker
+                    if self._settings.retrieval_hybrid_enabled
+                    else None
+                ),
+                rerank_enabled=self._settings.retrieval_rerank_enabled,
+                reason="timeout",
             )
             return []
 
@@ -896,10 +1122,50 @@ class RetrievalService:
             top_k = self._settings.retrieval_default_top_k
         top_k = min(top_k, self._settings.retrieval_max_top_k)
 
-        kb_configs = await self._load_kb_index_configs(kb_ids)
+        def _timeout_return() -> list[RetrievalResult]:
+            self._last_layer_draft = self._empty_layer_draft(reason="timeout")
+            self._last_stats = RetrievalStats(
+                query=query,
+                normalized_query=normalized_query,
+                effective_query=normalized_query,
+                top_k=top_k,
+                min_score=self._settings.retrieval_min_score,
+                total_hits=0,
+                filtered_count=0,
+                returned_count=0,
+                cache_hit=False,
+                rewrite_enabled=self._settings.retrieval_query_rewrite_enabled,
+                rewrite_applied=False,
+                rewrite_reason="timeout",
+                rewrite_latency_ms=None,
+                hybrid_enabled=self._settings.retrieval_hybrid_enabled,
+                hybrid_ranker=(
+                    self._settings.retrieval_hybrid_ranker
+                    if self._settings.retrieval_hybrid_enabled
+                    else None
+                ),
+                rerank_enabled=self._settings.retrieval_rerank_enabled,
+                reason="timeout",
+            )
+            return []
+
+        try:
+            timeout_value = self._effective_timeout(
+                deadline=deadline, per_call_timeout=None
+            )
+            kb_configs = await self._run_with_timeout(
+                self._load_kb_index_configs(kb_ids), timeout_value
+            )
+        except asyncio.TimeoutError:
+            return _timeout_return()
         kb_fingerprint = self._build_kb_fingerprint(kb_configs)
 
-        rewrite_result = await self._maybe_rewrite_query(normalized_query)
+        remaining = self._remaining_seconds(deadline)
+        if remaining is not None and remaining <= 0:
+            return _timeout_return()
+        rewrite_result = await self._maybe_rewrite_query(
+            normalized_query, timeout_seconds=remaining
+        )
         effective_query = rewrite_result.query or normalized_query
         if not effective_query.strip():
             effective_query = normalized_query
@@ -913,15 +1179,57 @@ class RetrievalService:
         strategy = self._strategy_fingerprint(top_k, kb_fingerprint)
         cache_key = self._cache_key(effective_query, kb_ids, top_k, strategy)
         if self._redis and self._settings.retrieval_cache_enabled:
+            timeout_value = self._effective_timeout(
+                deadline=deadline, per_call_timeout=None
+            )
+            if timeout_value is not None and timeout_value <= 0:
+                return _timeout_return()
             try:
-                cached = await self._redis.get(cache_key)
+                cached = await self._run_with_timeout(
+                    self._redis.get(cache_key), timeout_value
+                )
+            except asyncio.TimeoutError:
+                return _timeout_return()
             except Exception as exc:  # pragma: no cover
                 logger.warning("检索缓存读取失败，跳过缓存", extra={"error": str(exc)})
                 cached = None
             if cached:
-                results = await self._load_from_cache(cached)
-                await self._hydrate_chunks_from_postgres([r.chunk for r in results])
-                results = await self._apply_parent_child_strategy(results, kb_configs)
+                timeout_value = self._effective_timeout(
+                    deadline=deadline, per_call_timeout=None
+                )
+                if timeout_value is not None and timeout_value <= 0:
+                    return _timeout_return()
+                try:
+                    results = await self._run_with_timeout(
+                        self._load_from_cache(cached), timeout_value
+                    )
+                except asyncio.TimeoutError:
+                    return _timeout_return()
+                try:
+                    timeout_value = self._effective_timeout(
+                        deadline=deadline, per_call_timeout=None
+                    )
+                    if timeout_value is not None and timeout_value <= 0:
+                        return _timeout_return()
+                    await self._run_with_timeout(
+                        self._hydrate_chunks_from_postgres(
+                            [r.chunk for r in results]
+                        ),
+                        timeout_value,
+                    )
+                except asyncio.TimeoutError:
+                    return _timeout_return()
+                try:
+                    timeout_value = self._effective_timeout(
+                        deadline=deadline, per_call_timeout=None
+                    )
+                    if timeout_value is not None and timeout_value <= 0:
+                        return _timeout_return()
+                    results = await self._apply_parent_child_strategy(
+                        results, kb_configs, timeout_seconds=timeout_value
+                    )
+                except asyncio.TimeoutError:
+                    return _timeout_return()
                 results, filtered_count = self._apply_min_score(results)
 
                 # Cache path has no per-query provenance. Still expose evidence draft.
@@ -976,6 +1284,9 @@ class RetrievalService:
 
         # Unified retrieval layer: dense + BM25 + RRF (+ optional rerank) + Top-N.
         query_items = build_query_items(main_query=effective_query)
+        remaining = self._remaining_seconds(deadline)
+        if remaining is not None and remaining <= 0:
+            return _timeout_return()
         layer = await self.retrieve_layer(
             query_items=query_items,
             kb_ids=kb_ids,
@@ -984,6 +1295,7 @@ class RetrievalService:
             # Keep defaults conservative: global cap and rerank cap follow Settings max_top_k.
             global_candidates_limit=self._settings.retrieval_max_top_k,
             rerank_input_limit=self._settings.retrieval_max_top_k,
+            timeout_seconds=remaining,
         )
         results = layer.results
         total_hits = int(
@@ -1015,6 +1327,7 @@ class RetrievalService:
                     else None
                 ),
                 rerank_enabled=self._settings.retrieval_rerank_enabled,
+                reason=cast(str | None, layer.stats.get("reason")),
             )
             return []
 
@@ -1056,6 +1369,7 @@ class RetrievalService:
             rerank_applied=bool(layer.stats.get("rerank_applied")),
             rerank_reason=cast(str | None, layer.stats.get("rerank_reason")),
             rerank_latency_ms=cast(int | None, layer.stats.get("rerank_latency_ms")),
+            reason=cast(str | None, layer.stats.get("reason")),
         )
 
         return results

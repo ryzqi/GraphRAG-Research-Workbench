@@ -236,19 +236,28 @@ class QueryRewriteService:
     ) -> RewriteResult:
         """Coreference rewrite (currently reuses generic retrieval rewrite)."""
         if not enabled:
-            return RewriteResult(query=query, rewritten=False, reason="disabled", latency_ms=0)
+            return RewriteResult(
+                query=query, rewritten=False, reason="disabled", latency_ms=0
+            )
         return await self.rewrite(query, timeout_seconds=timeout_seconds)
 
     async def normalize_rewrite(self, query: str) -> RewriteResult:
         """Normalize query (fast, non-LLM by default)."""
         start = time.perf_counter()
         if not query.strip():
-            return RewriteResult(query=query, rewritten=False, reason="empty", latency_ms=0)
+            return RewriteResult(
+                query=query, rewritten=False, reason="empty", latency_ms=0
+            )
 
         normalized = _normalize_whitespace(query)
         latency_ms = int((time.perf_counter() - start) * 1000)
         if not normalized:
-            return RewriteResult(query=query, rewritten=False, reason="empty_output", latency_ms=latency_ms)
+            return RewriteResult(
+                query=query,
+                rewritten=False,
+                reason="empty_output",
+                latency_ms=latency_ms,
+            )
 
         return RewriteResult(
             query=normalized,
@@ -278,11 +287,15 @@ class QueryRewriteService:
         reverse_question: str | None = None
         reason: str | None = "heuristic"
         if ambiguous:
-            rq = await self.generate_reverse_question(query, timeout_seconds=timeout_seconds)
+            rq = await self.generate_reverse_question(
+                query, timeout_seconds=timeout_seconds
+            )
             reverse_question = rq.text or None
             reason = rq.reason or reason
             if not reverse_question:
-                reverse_question = "为了更准确地回答，你指的是哪个对象/范围？请补充具体指代或上下文。"
+                reverse_question = (
+                    "为了更准确地回答，你指的是哪个对象/范围？请补充具体指代或上下文。"
+                )
                 reason = "fallback_default_reverse_question"
 
         latency_ms = int((time.perf_counter() - start) * 1000)
@@ -368,18 +381,24 @@ class QueryRewriteService:
             else bool(enabled)
         )
         if not enabled_flag:
-            return QueryListResult(queries=[], success=False, reason="disabled", latency_ms=0)
+            return QueryListResult(
+                queries=[], success=False, reason="disabled", latency_ms=0
+            )
 
         q = _normalize_whitespace(query)
         if not q:
-            return QueryListResult(queries=[], success=False, reason="empty", latency_ms=0)
+            return QueryListResult(
+                queries=[], success=False, reason="empty", latency_ms=0
+            )
 
         # Split by obvious separators; keep it conservative.
         parts = [p.strip() for p in re.split(r"[；;\\n]+", q) if p.strip()]
         if not parts:
             parts = [q]
 
-        max_n = int(max_sub_questions or self._settings.kb_chat_decomposition_max_sub_questions)
+        max_n = int(
+            max_sub_questions or self._settings.kb_chat_decomposition_max_sub_questions
+        )
         sub_queries = parts[: max(max_n, 1)]
         latency_ms = int((time.perf_counter() - start) * 1000)
         return QueryListResult(
@@ -404,11 +423,15 @@ class QueryRewriteService:
             else bool(enabled)
         )
         if not enabled_flag:
-            return QueryListResult(queries=[], success=False, reason="disabled", latency_ms=0)
+            return QueryListResult(
+                queries=[], success=False, reason="disabled", latency_ms=0
+            )
 
         q = _normalize_whitespace(query)
         if not q:
-            return QueryListResult(queries=[], success=False, reason="empty", latency_ms=0)
+            return QueryListResult(
+                queries=[], success=False, reason="empty", latency_ms=0
+            )
 
         variants: list[str] = [q]
         if "是什么" not in q:
@@ -445,7 +468,6 @@ class QueryRewriteService:
         query: str,
         *,
         enabled: bool | None = None,
-        max_queries: int | None = None,
     ) -> TextResult:
         """HyDE generator (placeholder; creates a short synthetic snippet)."""
         start = time.perf_counter()
@@ -462,7 +484,6 @@ class QueryRewriteService:
             return TextResult(text="", success=False, reason="empty", latency_ms=0)
 
         # Default to a single HyDE doc for main query; keep short.
-        del max_queries  # reserved for future fanout
         hyde_doc = f"（HyDE）假设性说明：{q}"
         latency_ms = int((time.perf_counter() - start) * 1000)
         return TextResult(
@@ -513,10 +534,17 @@ class QueryRewriteService:
         try:
             prompt = self._prompts.render(prompt_key, **kwargs)
         except KeyError:
-            return TextResult(text="", success=False, reason="prompt_missing", latency_ms=0)
+            return TextResult(
+                text="", success=False, reason="prompt_missing", latency_ms=0
+            )
         except Exception as exc:  # pragma: no cover
-            logger.warning("Prompt render 失败", extra={"prompt_key": prompt_key, "error": str(exc)})
-            return TextResult(text="", success=False, reason="prompt_error", latency_ms=0)
+            logger.warning(
+                "Prompt render 失败",
+                extra={"prompt_key": prompt_key, "error": str(exc)},
+            )
+            return TextResult(
+                text="", success=False, reason="prompt_error", latency_ms=0
+            )
 
         start_time = time.perf_counter()
         timeout_value = (
@@ -534,7 +562,9 @@ class QueryRewriteService:
                 "Prompt LLM 超时",
                 extra={"prompt_key": prompt_key, "timeout": timeout_value},
             )
-            return TextResult(text="", success=False, reason="timeout", latency_ms=latency_ms)
+            return TextResult(
+                text="", success=False, reason="timeout", latency_ms=latency_ms
+            )
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -543,7 +573,9 @@ class QueryRewriteService:
                 "Prompt LLM 调用失败",
                 extra={"prompt_key": prompt_key, "error": str(exc)},
             )
-            return TextResult(text="", success=False, reason="error", latency_ms=latency_ms)
+            return TextResult(
+                text="", success=False, reason="error", latency_ms=latency_ms
+            )
 
         latency_ms = int((time.perf_counter() - start_time) * 1000)
         text = (text or "").strip()
