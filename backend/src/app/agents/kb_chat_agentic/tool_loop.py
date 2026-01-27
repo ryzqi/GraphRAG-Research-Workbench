@@ -41,6 +41,9 @@ def force_exit_node(state: dict, settings: Settings) -> dict[str, Any]:
             if not isinstance(final_answer, str) or not final_answer.strip():
                 if isinstance(draft_answer, str) and draft_answer.strip():
                     final_answer = draft_answer
+        else:
+            # Answer didn't pass guardrails; discard any prefilled final answer.
+            final_answer = None
         if not isinstance(final_answer, str) or not final_answer.strip():
             final_answer = "根据现有资料无法回答该问题（已停止重试）。"
 
