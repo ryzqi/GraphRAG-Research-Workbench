@@ -8,8 +8,7 @@ from typing import Callable
 from deepagents.backends import CompositeBackend, StateBackend, StoreBackend
 from langgraph.store.base import BaseStore
 from langgraph.store.memory import InMemoryStore
-from langgraph.store.postgres import PostgresStore
-
+from app.core.deepagents_store import DeepAgentsStoreManager
 from app.core.settings import Settings, get_settings
 
 
@@ -24,17 +23,12 @@ def _normalize_path(path: str) -> str:
     return normalized
 
 
-def _resolve_store_url(settings: Settings) -> str:
-    url = settings.memory_store_url or settings.database_url
-    return url.replace("postgresql+asyncpg://", "postgresql://")
-
-
 def build_store(settings: Settings) -> BaseStore:
     backend = settings.memory_store_backend.strip().lower()
     if not settings.memory_enabled or backend == "memory":
         return InMemoryStore()
     if backend == "postgres":
-        return PostgresStore(connection_string=_resolve_store_url(settings))
+        return DeepAgentsStoreManager.get_store()
     raise ValueError(f"不支持的记忆后端类型: {settings.memory_store_backend}")
 
 

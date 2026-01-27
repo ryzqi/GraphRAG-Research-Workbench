@@ -11,6 +11,7 @@ from langchain.tools import BaseTool, tool as lc_tool
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
 
+from app.agents.deepagents_io import build_user_messages, extract_last_message_text
 from app.agents.memory_backend import MemoryBackendFactory
 from app.agents.tools.evidence_compare import build_evidence_compare_tool
 from app.agents.tools.report_generate import build_report_generate_tool
@@ -98,14 +99,7 @@ class DeepResearchAgent:
         return citations
 
     def _extract_report(self, result: object) -> str:
-        if isinstance(result, str):
-            return result
-        if isinstance(result, dict):
-            if "output" in result:
-                return str(result["output"])
-            if "content" in result:
-                return str(result["content"])
-        return str(result)
+        return extract_last_message_text(result)
 
     def _build_retrieval_tool(
         self, default_kb_ids: list[uuid.UUID]
@@ -202,13 +196,8 @@ class DeepResearchAgent:
             backend=memory_factory.build_backend(),
         )
 
-        if thread_id:
-            result = await agent.ainvoke(
-                {"input": question},
-                config={"configurable": {"thread_id": thread_id}},
-            )
-        else:
-            result = await agent.ainvoke({"input": question})
+        config = {"configurable": {"thread_id": thread_id}} if thread_id else None
+        result = await agent.ainvoke(build_user_messages(question), config=config)
         report_md = self._extract_report(result)
         citations = self._build_citations()
 

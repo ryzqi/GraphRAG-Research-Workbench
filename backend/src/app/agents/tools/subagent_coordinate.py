@@ -15,6 +15,7 @@ from typing import Literal
 from langchain.tools import BaseTool, tool as lc_tool
 from pydantic import BaseModel, Field
 
+from app.agents.deepagents_io import build_user_messages, extract_last_message_text
 
 class SubagentTask(BaseModel):
     """子代理任务。"""
@@ -114,13 +115,11 @@ class SubagentCoordinator:
         )
 
         result = await asyncio.wait_for(
-            agent.ainvoke({"input": task.instruction}),
+            agent.ainvoke(build_user_messages(task.instruction)),
             timeout=task.timeout_seconds,
         )
 
-        if isinstance(result, dict) and "output" in result:
-            return result["output"]
-        return result
+        return extract_last_message_text(result)
 
     async def execute_parallel(self, tasks: list[SubagentTask]) -> list[TaskResult]:
         """并行执行所有任务。"""
