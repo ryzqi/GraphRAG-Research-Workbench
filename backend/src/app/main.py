@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+import logging
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -13,14 +14,17 @@ from app.core.logging import configure_logging
 from app.core.memory_store import StoreManager
 from app.core.middleware.request_id import RequestIdMiddleware
 from app.core.settings import get_settings, validate_startup_settings
+from app.db.session import get_engine, get_sessionmaker
 from app.integrations.embedding_client import EmbeddingClient
-from app.integrations.http_client import create_http_client
+from app.integrations.http_client import close_http_client, create_http_client
 from app.integrations.llm_client import LLMClient
-from app.integrations.milvus_client import MilvusClient
+from app.integrations.milvus_client import create_milvus_client
+from app.integrations.redis_client import close_redis_client, create_redis_client
 from app.integrations.rerank_client import RerankClient
 
 settings = get_settings()
 configure_logging(settings.app_log_level)
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
@@ -34,9 +38,31 @@ async def lifespan(app: FastAPI):
     app.state.llm_client = LLMClient(http_client=app.state.http_client)
     app.state.embedding_client = EmbeddingClient(http_client=app.state.http_client)
     app.state.rerank_client = RerankClient(settings=settings, http_client=app.state.http_client)
-    app.state.milvus_client = MilvusClient()
+    app.state.milvus_client = create_milvus_client()
+    app.state.redis = create_redis_client(settings)
+    app.state.engine = get_engine()
     yield
-    await app.state.http_client.aclose()
+    try:
+        await close_http_client(app.state.http_client)
+    except Exception as exc:  # pragma: no cover - best effort
+        logger.warning("HTTP client 关闭失败", extra={"error": str(exc)})
+    try:
+        await app.state.milvus_client.aclose()
+    except Exception as exc:  # pragma: no cover - best effort
+        logger.warning("Milvus client 关闭失败", extra={"error": str(exc)})
+    try:
+        await close_redis_client(app.state.redis)
+    except Exception as exc:  # pragma: no cover - best effort
+        logger.warning("Redis client 关闭失败", extra={"error": str(exc)})
+    try:
+        await app.state.engine.dispose()
+    except Exception as exc:  # pragma: no cover - best effort
+        logger.warning("AsyncEngine dispose 失败", extra={"error": str(exc)})
+    try:
+        get_engine.cache_clear()
+        get_sessionmaker.cache_clear()
+    except Exception as exc:  # pragma: no cover - best effort
+        logger.warning("清理 DB 缓存失败", extra={"error": str(exc)})
     DeepAgentsStoreManager.shutdown()
     await StoreManager.shutdown()
     await CheckpointManager.shutdown()

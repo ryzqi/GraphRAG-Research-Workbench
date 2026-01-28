@@ -3,16 +3,16 @@ from __future__ import annotations
 import asyncio
 import time
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncEngine
 
 from app.core.errors import build_error_response
 from app.core.logging import get_request_id
-from app.db.session import get_engine
-from app.integrations.milvus_client import get_milvus_client
+from app.integrations.milvus_client import MilvusClient
 from app.integrations.object_storage import ObjectStorage
-from app.integrations.redis_client import get_redis
+from app.integrations.redis_client import RedisClient
 
 router = APIRouter()
 
@@ -39,19 +39,16 @@ async def _timed(name: str, coro, timeout_seconds: float) -> dict[str, object]:
     }
 
 
-async def _check_postgres() -> None:
-    engine = get_engine()
+async def _check_postgres(engine: AsyncEngine) -> None:
     async with engine.connect() as conn:
         await conn.execute(text("SELECT 1"))
 
 
-async def _check_redis() -> None:
-    redis = get_redis()
+async def _check_redis(redis: RedisClient) -> None:
     await redis.ping()
 
 
-async def _check_milvus() -> None:
-    milvus = get_milvus_client()
+async def _check_milvus(milvus: MilvusClient) -> None:
     await milvus.ready_check()
 
 
@@ -65,12 +62,17 @@ async def _check_minio() -> None:
 
 
 @router.get("/ready")
-async def ready() -> JSONResponse:
+async def ready(request: Request) -> JSONResponse:
     """Readiness：短超时探测关键依赖，可降级返回。"""
+    engine = request.app.state.engine
+    redis = request.app.state.redis
+    milvus = request.app.state.milvus_client
     tasks = {
-        "postgres": asyncio.create_task(_timed("postgres", _check_postgres(), 1.0)),
-        "redis": asyncio.create_task(_timed("redis", _check_redis(), 0.8)),
-        "milvus": asyncio.create_task(_timed("milvus", _check_milvus(), 0.8)),
+        "postgres": asyncio.create_task(
+            _timed("postgres", _check_postgres(engine), 1.0)
+        ),
+        "redis": asyncio.create_task(_timed("redis", _check_redis(redis), 0.8)),
+        "milvus": asyncio.create_task(_timed("milvus", _check_milvus(milvus), 0.8)),
         "minio": asyncio.create_task(_timed("minio", _check_minio(), 0.8)),
     }
 

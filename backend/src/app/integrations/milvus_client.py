@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import re
+import inspect
+import logging
 from dataclasses import dataclass
-from functools import lru_cache
 
 from app.core.settings import get_settings
 
@@ -31,10 +32,23 @@ except Exception:  # pragma: no cover
     WeightedRanker = None  # type: ignore
     IndexParams = None  # type: ignore
 
+logger = logging.getLogger(__name__)
+
 def _escape_string(value: str) -> str:
     """转义字符串中的特殊字符，防止注入攻击。"""
 
     return re.sub(r'(["\\\'])', r"\\\1", value)
+
+
+def _build_weighted_ranker(
+    weights: list[float],
+    reqs: list[AnnSearchRequest],
+):
+    if WeightedRanker is None:
+        raise RuntimeError("pymilvus 缺少 WeightedRanker")
+    if len(weights) != len(reqs):
+        raise ValueError(f"权重数量({len(weights)})与 reqs 数量({len(reqs)})不一致")
+    return WeightedRanker(*weights)
 
 
 @dataclass(slots=True)
@@ -68,6 +82,19 @@ class MilvusClient:
         uri = f"http://{settings.milvus_host}:{settings.milvus_port}"
         self._client = AsyncMilvusClient(uri=uri)
         self._field_cache: set[str] | None = None
+
+    async def aclose(self) -> None:
+        """关闭 Milvus 异步客户端。"""
+        close = getattr(self._client, "close", None)
+        if close is None:
+            logger.warning("pymilvus API 不匹配：缺少 close")
+            return
+        try:
+            result = close()
+            if inspect.isawaitable(result):
+                await result
+        except Exception as exc:  # pragma: no cover - best effort
+            logger.warning("Milvus client close 失败", extra={"error": str(exc)})
 
     async def ready_check(self) -> None:
         """就绪探测：调用可用的 Milvus API 验证连接。"""
@@ -439,9 +466,11 @@ class MilvusClient:
             expr=expr,
         )
 
+        reqs = [dense_req, sparse_req]
         ranker_key = ranker.lower()
-        if ranker_key == "weighted" and WeightedRanker is not None:
-            ranker_impl = WeightedRanker([dense_weight, sparse_weight])
+        if ranker_key == "weighted":
+            weights = [dense_weight, sparse_weight]
+            ranker_impl = _build_weighted_ranker(weights, reqs)
         elif RRFRanker is not None:
             ranker_impl = RRFRanker(k=rrf_k)
         else:
@@ -449,7 +478,7 @@ class MilvusClient:
 
         res = await hybrid_search(
             collection_name=self._collection,
-            reqs=[dense_req, sparse_req],
+            reqs=reqs,
             ranker=ranker_impl,
             limit=top_k,
             output_fields=[
@@ -631,8 +660,6 @@ class MilvusClient:
         return []
 
 
-@lru_cache
-def get_milvus_client() -> MilvusClient:
-    """获取 Milvus 客户端单例（进程内复用）。"""
-
+def create_milvus_client() -> MilvusClient:
+    """创建 Milvus 客户端实例。"""
     return MilvusClient()

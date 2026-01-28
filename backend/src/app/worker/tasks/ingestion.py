@@ -7,10 +7,7 @@ import uuid
 from datetime import datetime, timezone
 
 from app.core.settings import get_settings
-from app.db.session import get_sessionmaker
 from app.integrations.embedding_client import EmbeddingClient
-from app.integrations.http_client import create_http_client
-from app.integrations.milvus_client import get_milvus_client
 from app.integrations.object_storage import ObjectStorage
 from app.models.knowledge_base import KnowledgeBase
 from app.schemas.knowledge_bases import IndexConfig
@@ -25,6 +22,7 @@ from app.models.ingestion_job import (
 )
 from app.models.source_material import SourceMaterial
 from app.worker.celery_app import celery_app
+from app.worker.task_resources import managed_task_resources
 
 
 @celery_app.task(name="app.worker.tasks.ingestion.run_ingestion_job")
@@ -35,36 +33,43 @@ def run_ingestion_job(job_id: str) -> None:
 
 async def _run_ingestion_job(job_id: str) -> None:
     """异步执行导入任务。"""
-    sessionmaker = get_sessionmaker()
+    settings = get_settings()
     job_uuid = uuid.UUID(job_id)
 
-    async with sessionmaker() as session:
-        job = await session.get(IngestionJob, job_uuid)
-        if not job:
+    async with managed_task_resources(
+        settings=settings,
+        with_engine=True,
+        with_http=True,
+        with_milvus=True,
+    ) as resources:
+        sessionmaker = resources.sessionmaker
+        if sessionmaker is None:  # pragma: no cover - defensive
             return
+        async with sessionmaker() as session:
+            job = await session.get(IngestionJob, job_uuid)
+            if not job:
+                return
 
-        # 检查是否已取消
-        if job.status == IngestionStatus.CANCELED:
-            return
+            # 检查是否已取消
+            if job.status == IngestionStatus.CANCELED:
+                return
 
-        # 更新为运行中
-        job.status = IngestionStatus.RUNNING
-        if job.started_at is None:
-            job.started_at = datetime.now(timezone.utc)
-        await session.commit()
+            # 更新为运行中
+            job.status = IngestionStatus.RUNNING
+            if job.started_at is None:
+                job.started_at = datetime.now(timezone.utc)
+            await session.commit()
 
-        stats = {"total_materials": 0, "succeeded_materials": 0, "total_chunks": 0, "errors": [], "warnings": []}
-
-        try:
-            # 加载任务条目
-            items: list[IngestionJobItem] = list(job.items)
-            stats["total_materials"] = len(items)
-
-            settings = get_settings()
-            milvus_client = get_milvus_client()
-            http_client = create_http_client(settings)
+            stats = {"total_materials": 0, "succeeded_materials": 0, "total_chunks": 0, "errors": [], "warnings": []}
 
             try:
+                # 加载任务条目
+                items: list[IngestionJobItem] = list(job.items)
+                stats["total_materials"] = len(items)
+
+                milvus_client = resources.milvus
+                http_client = resources.http_client
+
                 embedding_client = EmbeddingClient(http_client=http_client)
                 chunker = ChunkingEngine(settings=settings, embedding=embedding_client)
                 context_service = ContextualEmbeddingService(settings=settings)
@@ -270,22 +275,19 @@ async def _run_ingestion_job(job_id: str) -> None:
                         )
                         continue
 
-            finally:
-                await http_client.aclose()
+                # 完成
+                job.status = (
+                    IngestionStatus.FAILED if stats["errors"] else IngestionStatus.SUCCEEDED
+                )
+                if stats["errors"]:
+                    job.error_message = "部分资料导入失败"
+                job.stats = stats
+                job.finished_at = datetime.now(timezone.utc)
 
-            # 完成
-            job.status = (
-                IngestionStatus.FAILED if stats["errors"] else IngestionStatus.SUCCEEDED
-            )
-            if stats["errors"]:
-                job.error_message = "部分资料导入失败"
-            job.stats = stats
-            job.finished_at = datetime.now(timezone.utc)
+            except Exception as e:
+                job.status = IngestionStatus.FAILED
+                job.error_message = str(e)
+                job.stats = stats
+                job.finished_at = datetime.now(timezone.utc)
 
-        except Exception as e:
-            job.status = IngestionStatus.FAILED
-            job.error_message = str(e)
-            job.stats = stats
-            job.finished_at = datetime.now(timezone.utc)
-
-        await session.commit()
+            await session.commit()

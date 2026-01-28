@@ -239,12 +239,20 @@ async def create_chat_message(
         milvus = request.app.state.milvus_client
         embedding = request.app.state.embedding_client
         reranker = request.app.state.rerank_client
-        service = KbChatService(db, llm, milvus, embedding, reranker=reranker)
+        redis = request.app.state.redis
+        service = KbChatService(
+            db, llm, milvus, embedding, reranker=reranker, redis=redis
+        )
         return await service.answer(session=session, user_content=body.content)
 
     elif session.session_type == ChatSessionType.GENERAL_CHAT:
         # 普通代理
-        service = GeneralChatService(db, llm)
+        service = GeneralChatService(
+            db,
+            llm,
+            redis=request.app.state.redis,
+            http_client=request.app.state.http_client,
+        )
         result = await service.answer(session=session, user_content=body.content)
         if getattr(result, "status", None) == "pending_tool_approval":
             response.status_code = status.HTTP_202_ACCEPTED
@@ -272,14 +280,22 @@ async def create_chat_message_stream(
         milvus = request.app.state.milvus_client
         embedding = request.app.state.embedding_client
         reranker = request.app.state.rerank_client
-        service = KbChatService(db, llm, milvus, embedding, reranker=reranker)
+        redis = request.app.state.redis
+        service = KbChatService(
+            db, llm, milvus, embedding, reranker=reranker, redis=redis
+        )
         events = service.answer_stream(
             session=session,
             user_content=body.content,
             request=request,
         )
     elif session.session_type == ChatSessionType.GENERAL_CHAT:
-        service = GeneralChatService(db, llm)
+        service = GeneralChatService(
+            db,
+            llm,
+            redis=request.app.state.redis,
+            http_client=request.app.state.http_client,
+        )
         events = service.answer_stream(
             session=session,
             user_content=body.content,
@@ -323,7 +339,12 @@ async def resume_general_chat(
         raise bad_request(code="CHAT_RUN_NOT_RUNNING", message="运行记录已完成或已失败")
 
     llm = request.app.state.llm_client
-    service = GeneralChatService(db, llm)
+    service = GeneralChatService(
+        db,
+        llm,
+        redis=request.app.state.redis,
+        http_client=request.app.state.http_client,
+    )
     result = await service.resume_after_tool_approval(
         session=session, run=run, approved=body.approved
     )
@@ -356,7 +377,12 @@ async def resume_general_chat_stream(
         raise bad_request(code="CHAT_RUN_NOT_RUNNING", message="运行记录已完成或已失败")
 
     llm = request.app.state.llm_client
-    service = GeneralChatService(db, llm)
+    service = GeneralChatService(
+        db,
+        llm,
+        redis=request.app.state.redis,
+        http_client=request.app.state.http_client,
+    )
     events = service.resume_after_tool_approval_stream(
         session=session,
         run=run,

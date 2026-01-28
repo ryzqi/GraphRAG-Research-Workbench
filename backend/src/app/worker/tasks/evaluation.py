@@ -6,17 +6,16 @@ import asyncio
 import uuid
 from datetime import datetime, timezone
 
-from app.db.session import get_sessionmaker
+from app.core.settings import get_settings
 from app.integrations.embedding_client import EmbeddingClient
 from app.integrations.llm_client import ChatMessage as LLMMessage
 from app.integrations.llm_client import LLMClient
-from app.integrations.milvus_client import get_milvus_client
-from app.integrations.redis_client import get_redis
 from app.models.agent_run import AgentRun, AgentRunStatus, AgentRunType
 from app.models.chat_session import AgentMode
 from app.models.evaluation_run import EvaluationRun, EvaluationStatus
 from app.services.retrieval_service import RetrievalService
 from app.worker.celery_app import celery_app
+from app.worker.task_resources import managed_task_resources
 
 
 @celery_app.task(name="app.worker.tasks.evaluation.run_evaluation")
@@ -27,111 +26,137 @@ def run_evaluation(eval_run_id: str) -> None:
 
 async def _run_evaluation(*, eval_run_id: str) -> None:
     """异步执行评测任务。"""
-    sessionmaker = get_sessionmaker()
+    settings = get_settings()
     run_uuid = uuid.UUID(eval_run_id)
-
-    async with sessionmaker() as session:
-        eval_run = await session.get(EvaluationRun, run_uuid)
-        if eval_run is None:
+    async with managed_task_resources(
+        settings=settings,
+        with_engine=True,
+        with_http=True,
+        with_redis=True,
+        with_milvus=True,
+    ) as resources:
+        sessionmaker = resources.sessionmaker
+        if sessionmaker is None:  # pragma: no cover - defensive
             return
+        async with sessionmaker() as session:
+            eval_run = await session.get(EvaluationRun, run_uuid)
+            if eval_run is None:
+                return
 
-        if eval_run.status == EvaluationStatus.CANCELED:
-            return
+            if eval_run.status == EvaluationStatus.CANCELED:
+                return
 
-        eval_run.status = EvaluationStatus.RUNNING
-        eval_run.started_at = datetime.now(timezone.utc)
-        await session.commit()
-
-        try:
-            # 初始化依赖
-            llm = LLMClient()
-            milvus = get_milvus_client()
-            embedding = EmbeddingClient()
-            redis = get_redis()
-            retrieval = RetrievalService(session, milvus, embedding, redis)
-
-            # 解析配置
-            config = eval_run.config
-            kb_ids = [uuid.UUID(kid) for kid in config.get("selected_kb_ids", [])]
-            allow_external = config.get("allow_external", False)
-
-            # 解析问题集
-            dataset = eval_run.dataset
-            questions = dataset.get("questions", [])
-
-            eval_run.summary = {
-                "total_questions": len(questions),
-                "completed_questions": 0,
-            }
+            eval_run.status = EvaluationStatus.RUNNING
+            eval_run.started_at = datetime.now(timezone.utc)
             await session.commit()
 
-            case_results: list[dict] = []
-            single_metrics: list[dict] = []
-            multi_metrics: list[dict] = []
+            try:
+                # 初始化依赖（每任务创建）
+                http_client = resources.http_client
+                llm = LLMClient(http_client=http_client)
+                milvus = resources.milvus
+                embedding = EmbeddingClient(http_client=http_client)
+                redis = resources.redis
+                retrieval = RetrievalService(session, milvus, embedding, redis)
 
-            for q in questions:
-                # 取消检查点（长循环内定期探测）
-                await session.refresh(eval_run)
-                if eval_run.status == EvaluationStatus.CANCELED:
-                    return
+                # 解析配置
+                config = eval_run.config
+                kb_ids = [uuid.UUID(kid) for kid in config.get("selected_kb_ids", [])]
+                allow_external = config.get("allow_external", False)
 
-                question_id = q.get("id", str(uuid.uuid4()))
-                question_text = q.get("question", "")
-                reference = q.get("reference_answer", "")
+                # 解析问题集
+                dataset = eval_run.dataset
+                questions = dataset.get("questions", [])
 
-                # 单智能体运行
-                single_result = await _run_single_agent(
-                    session=session,
-                    llm=llm,
-                    retrieval=retrieval,
-                    question=question_text,
-                    kb_ids=kb_ids,
-                    allow_external=allow_external,
-                )
-
-                # 多智能体运行
-                multi_result = await _run_multi_agent(
-                    session=session,
-                    llm=llm,
-                    retrieval=retrieval,
-                    question=question_text,
-                    kb_ids=kb_ids,
-                    allow_external=allow_external,
-                )
-
-                # 评分
-                single_score = await _score_answer(
-                    llm, question_text, single_result["answer"], reference
-                )
-                multi_score = await _score_answer(
-                    llm, question_text, multi_result["answer"], reference
-                )
-
-                case_results.append({
-                    "question_id": question_id,
-                    "question": question_text,
-                    "single_agent_run_id": str(single_result["run_id"]),
-                    "multi_agent_run_id": str(multi_result["run_id"]),
-                    "single_agent_answer": single_result["answer"][:500],
-                    "multi_agent_answer": multi_result["answer"][:500],
-                    "single_score": single_score,
-                    "multi_score": multi_score,
-                    "reference_answer": reference[:200],
-                })
-
-                single_metrics.append({
-                    "score": single_score,
-                    "latency_ms": single_result["latency_ms"],
-                })
-                multi_metrics.append({
-                    "score": multi_score,
-                    "latency_ms": multi_result["latency_ms"],
-                })
-
-                completed = len(case_results)
                 eval_run.summary = {
                     "total_questions": len(questions),
-                    "completed_questions": completed,
+                    "completed_questions": 0,
+                }
+                await session.commit()
+
+                case_results: list[dict] = []
+                single_metrics: list[dict] = []
+                multi_metrics: list[dict] = []
+
+                for q in questions:
+                    # 取消检查点（长循环内定期探测）
+                    await session.refresh(eval_run)
+                    if eval_run.status == EvaluationStatus.CANCELED:
+                        return
+
+                    question_id = q.get("id", str(uuid.uuid4()))
+                    question_text = q.get("question", "")
+                    reference = q.get("reference_answer", "")
+
+                    # 单智能体运行
+                    single_result = await _run_single_agent(
+                        session=session,
+                        llm=llm,
+                        retrieval=retrieval,
+                        question=question_text,
+                        kb_ids=kb_ids,
+                        allow_external=allow_external,
+                    )
+
+                    # 多智能体运行
+                    multi_result = await _run_multi_agent(
+                        session=session,
+                        llm=llm,
+                        retrieval=retrieval,
+                        question=question_text,
+                        kb_ids=kb_ids,
+                        allow_external=allow_external,
+                    )
+
+                    # 评分
+                    single_score = await _score_answer(
+                        llm, question_text, single_result["answer"], reference
+                    )
+                    multi_score = await _score_answer(
+                        llm, question_text, multi_result["answer"], reference
+                    )
+
+                    case_results.append({
+                        "question_id": question_id,
+                        "question": question_text,
+                        "single_agent_run_id": str(single_result["run_id"]),
+                        "multi_agent_run_id": str(multi_result["run_id"]),
+                        "single_agent_answer": single_result["answer"][:500],
+                        "multi_agent_answer": multi_result["answer"][:500],
+                        "single_score": single_score,
+                        "multi_score": multi_score,
+                        "reference_answer": reference[:200],
+                    })
+
+                    single_metrics.append({
+                        "score": single_score,
+                        "latency_ms": single_result["latency_ms"],
+                    })
+                    multi_metrics.append({
+                        "score": multi_score,
+                        "latency_ms": multi_result["latency_ms"],
+                    })
+
+                    completed = len(case_results)
+                    eval_run.summary = {
+                        "total_questions": len(questions),
+                        "completed_questions": completed,
+                        "single_agent": {
+                            "avg_score": _avg([m["score"] for m in single_metrics]),
+                            "avg_latency": _avg([m["latency_ms"] for m in single_metrics]),
+                        },
+                        "multi_agent": {
+                            "avg_score": _avg([m["score"] for m in multi_metrics]),
+                            "avg_latency": _avg([m["latency_ms"] for m in multi_metrics]),
+                        },
+                        "case_results": case_results,
+                    }
+                    await session.commit()
+
+                # 计算汇总指标
+                summary = {
+                    "total_questions": len(questions),
+                    "completed_questions": len(questions),
                     "single_agent": {
                         "avg_score": _avg([m["score"] for m in single_metrics]),
                         "avg_latency": _avg([m["latency_ms"] for m in single_metrics]),
@@ -142,33 +167,17 @@ async def _run_evaluation(*, eval_run_id: str) -> None:
                     },
                     "case_results": case_results,
                 }
-                await session.commit()
 
-            # 计算汇总指标
-            summary = {
-                "total_questions": len(questions),
-                "completed_questions": len(questions),
-                "single_agent": {
-                    "avg_score": _avg([m["score"] for m in single_metrics]),
-                    "avg_latency": _avg([m["latency_ms"] for m in single_metrics]),
-                },
-                "multi_agent": {
-                    "avg_score": _avg([m["score"] for m in multi_metrics]),
-                    "avg_latency": _avg([m["latency_ms"] for m in multi_metrics]),
-                },
-                "case_results": case_results,
-            }
+                eval_run.status = EvaluationStatus.SUCCEEDED
+                eval_run.finished_at = datetime.now(timezone.utc)
+                eval_run.summary = summary
 
-            eval_run.status = EvaluationStatus.SUCCEEDED
-            eval_run.finished_at = datetime.now(timezone.utc)
-            eval_run.summary = summary
+            except Exception as exc:
+                eval_run.status = EvaluationStatus.FAILED
+                eval_run.finished_at = datetime.now(timezone.utc)
+                eval_run.error_message = str(exc)
 
-        except Exception as exc:
-            eval_run.status = EvaluationStatus.FAILED
-            eval_run.finished_at = datetime.now(timezone.utc)
-            eval_run.error_message = str(exc)
-
-        await session.commit()
+            await session.commit()
 
 
 async def _run_single_agent(

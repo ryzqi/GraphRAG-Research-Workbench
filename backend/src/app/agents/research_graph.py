@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Annotated, TypedDict, cast
 
+import httpx
 from langchain.messages import AIMessage, AnyMessage, HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.base import BaseCheckpointSaver
@@ -28,6 +29,7 @@ from app.agents.tools.system_time import build_system_time_tool
 from app.core.settings import get_settings
 from app.integrations.langchain_profiles import build_chat_model_profile
 from app.integrations.llm_client import LLMClient
+from app.integrations.redis_client import RedisClient
 from app.models.tool_extension import ToolExtension
 from app.prompts import get_prompt_loader
 from app.services.context_builder import ContextBuilder
@@ -85,6 +87,8 @@ class ResearchGraph:
         allow_external: bool,
         thread_id: str | None = None,
         checkpointer: BaseCheckpointSaver | None = None,
+        redis: RedisClient | None = None,
+        http_client: httpx.AsyncClient | None = None,
     ) -> tuple[Any, ResearchState, dict[str, Any] | None, list[RetrievalResult]]:
         """构建研究图执行上下文（供流式/非流式复用）。"""
         retrieval_results: list[RetrievalResult] = []
@@ -122,6 +126,8 @@ class ResearchGraph:
             extra_tools=internal_tools,
             include_web_search=allow_external,
             include_mcp=allow_external,
+            redis=redis,
+            http_client=http_client,
         )
 
         chat_model = ChatOpenAI(

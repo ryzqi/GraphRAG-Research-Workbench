@@ -11,6 +11,7 @@ import json
 from dataclasses import dataclass
 from typing import Sequence
 
+import httpx
 from langchain.tools import BaseTool, tool as lc_tool
 
 from app.agents.tools.web_search import (
@@ -21,6 +22,7 @@ from app.agents.tools.web_search import (
 )
 from app.core.settings import Settings
 from app.integrations.mcp_adapters import load_mcp_tools
+from app.integrations.redis_client import RedisClient
 from app.models.tool_extension import ToolExtension
 
 from .utils import DEFAULT_TOOL_OUTPUT_MAX_CHARS, make_mcp_tool_name, truncate_tool_output
@@ -88,6 +90,8 @@ async def build_tool_registry(
     include_web_research: bool = False,
     include_mcp: bool = True,
     tool_output_max_chars: int = DEFAULT_TOOL_OUTPUT_MAX_CHARS,
+    redis: RedisClient | None = None,
+    http_client: httpx.AsyncClient | None = None,
 ) -> tuple[list[BaseTool], dict[str, ToolMeta]]:
     """构建工具列表与 tool_name -> ToolMeta 映射。"""
 
@@ -140,13 +144,29 @@ async def build_tool_registry(
     # Tavily 外部工具
     if settings.web_search_api_key:
         if include_web_search:
-            _wrap_external_tool(build_web_search_tool(settings))
+            _wrap_external_tool(
+                build_web_search_tool(
+                    settings, redis=redis, http_client=http_client
+                )
+            )
         if include_web_extract:
-            _wrap_external_tool(build_web_extract_tool(settings))
+            _wrap_external_tool(
+                build_web_extract_tool(
+                    settings, redis=redis, http_client=http_client
+                )
+            )
         if include_web_crawl:
-            _wrap_external_tool(build_web_crawl_tool(settings))
+            _wrap_external_tool(
+                build_web_crawl_tool(
+                    settings, redis=redis, http_client=http_client
+                )
+            )
         if include_web_research:
-            _wrap_external_tool(build_web_research_tool(settings))
+            _wrap_external_tool(
+                build_web_research_tool(
+                    settings, redis=redis, http_client=http_client
+                )
+            )
 
     # MCP 扩展工具（外部工具，需命名空间）
     if include_mcp and settings.mcp_enabled and extensions:

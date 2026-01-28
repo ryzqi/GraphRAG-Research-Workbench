@@ -19,8 +19,8 @@ from langchain.tools import BaseTool, tool as lc_tool
 from pydantic import BaseModel, Field
 
 from app.core.settings import Settings
-from app.integrations.http_client import get_shared_http_client
-from app.integrations.redis_client import RedisClient, get_redis
+from app.integrations.http_client import create_http_client
+from app.integrations.redis_client import RedisClient
 
 if TYPE_CHECKING:
     from tavily import AsyncTavilyClient
@@ -402,7 +402,12 @@ def _build_output(
 class TavilyGateway:
     """统一 Tavily 请求策略。"""
 
-    def __init__(self, settings: Settings, redis: RedisClient | None = None) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        redis: RedisClient | None = None,
+        http_client: httpx.AsyncClient | None = None,
+    ) -> None:
         self._settings = settings
         self._api_key = settings.web_search_api_key
         self._cache_enabled = settings.web_search_cache_enabled
@@ -416,6 +421,7 @@ class TavilyGateway:
             else None
         )
         self._redis = redis
+        self._http_client = http_client
         self._client: AsyncTavilyClient | None = None
 
     def _get_client(self) -> "AsyncTavilyClient":
@@ -441,12 +447,6 @@ class TavilyGateway:
     def _get_redis(self) -> RedisClient | None:
         if not self._cache_enabled:
             return None
-        if self._redis is None:
-            try:
-                self._redis = get_redis()
-            except Exception as exc:  # pragma: no cover
-                logger.warning("Web 搜索缓存初始化失败，跳过缓存", extra={"error": str(exc)})
-                self._redis = None
         return self._redis
 
     async def _read_cache(self, cache_key: str) -> dict[str, Any] | None:
@@ -547,13 +547,26 @@ class TavilyGateway:
     ) -> dict[str, Any]:
         if not self._api_key:
             raise RuntimeError("未配置 WEB_SEARCH_API_KEY，无法使用 Tavily Web 工具")
-        client = get_shared_http_client()
         url = f"{TAVILY_BASE_URL}{path}"
         headers = {
             "Authorization": f"Bearer {self._api_key}",
             "Content-Type": "application/json",
         }
-        response = await client.request(
+        if self._http_client is None:
+            client = create_http_client(self._settings)
+            try:
+                response = await client.request(
+                    method,
+                    url,
+                    json=json_payload,
+                    headers=headers,
+                    timeout=timeout_seconds,
+                )
+                response.raise_for_status()
+                return response.json()
+            finally:
+                await client.aclose()
+        response = await self._http_client.request(
             method,
             url,
             json=json_payload,
@@ -971,9 +984,14 @@ class WebSearchClient(TavilyGateway):
     """兼容旧接口的别名。"""
 
 
-def build_web_search_tool(settings: Settings) -> BaseTool:
+def build_web_search_tool(
+    settings: Settings,
+    *,
+    redis: RedisClient | None = None,
+    http_client: httpx.AsyncClient | None = None,
+) -> BaseTool:
     """构建 Web 搜索工具。"""
-    client = WebSearchClient(settings)
+    client = WebSearchClient(settings, redis=redis, http_client=http_client)
 
     async def _search(**kwargs: object) -> str:
         try:
@@ -1002,9 +1020,14 @@ def build_web_search_tool(settings: Settings) -> BaseTool:
     )(_search)
 
 
-def build_web_extract_tool(settings: Settings) -> BaseTool:
+def build_web_extract_tool(
+    settings: Settings,
+    *,
+    redis: RedisClient | None = None,
+    http_client: httpx.AsyncClient | None = None,
+) -> BaseTool:
     """构建 Web 抽取工具。"""
-    client = WebSearchClient(settings)
+    client = WebSearchClient(settings, redis=redis, http_client=http_client)
 
     async def _extract(**kwargs: object) -> str:
         try:
@@ -1031,9 +1054,14 @@ def build_web_extract_tool(settings: Settings) -> BaseTool:
     )(_extract)
 
 
-def build_web_crawl_tool(settings: Settings) -> BaseTool:
+def build_web_crawl_tool(
+    settings: Settings,
+    *,
+    redis: RedisClient | None = None,
+    http_client: httpx.AsyncClient | None = None,
+) -> BaseTool:
     """构建 Web 爬取工具。"""
-    client = WebSearchClient(settings)
+    client = WebSearchClient(settings, redis=redis, http_client=http_client)
 
     async def _crawl(**kwargs: object) -> str:
         try:
@@ -1060,9 +1088,14 @@ def build_web_crawl_tool(settings: Settings) -> BaseTool:
     )(_crawl)
 
 
-def build_web_research_tool(settings: Settings) -> BaseTool:
+def build_web_research_tool(
+    settings: Settings,
+    *,
+    redis: RedisClient | None = None,
+    http_client: httpx.AsyncClient | None = None,
+) -> BaseTool:
     """构建 Web 研究工具。"""
-    client = WebSearchClient(settings)
+    client = WebSearchClient(settings, redis=redis, http_client=http_client)
 
     async def _research(**kwargs: object) -> str:
         try:

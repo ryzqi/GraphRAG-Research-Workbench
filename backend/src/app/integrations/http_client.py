@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from functools import lru_cache
-
 import httpx
 
 from app.core.settings import Settings, get_settings
@@ -29,13 +27,11 @@ def create_http_client(settings: Settings | None = None) -> httpx.AsyncClient:
     return httpx.AsyncClient(timeout=_build_timeout(cfg), limits=_build_limits(cfg))
 
 
-@lru_cache
-def get_shared_http_client() -> httpx.AsyncClient:
-    settings = get_settings()
-    return create_http_client(settings)
-
-
-async def close_shared_http_client() -> None:
-    client = get_shared_http_client()
-    await client.aclose()
-    get_shared_http_client.cache_clear()
+async def close_http_client(client: httpx.AsyncClient | None) -> None:
+    """关闭 httpx 客户端（尽力而为）。"""
+    if client is None:
+        return
+    try:
+        await client.aclose()
+    except Exception:  # pragma: no cover - best effort
+        return

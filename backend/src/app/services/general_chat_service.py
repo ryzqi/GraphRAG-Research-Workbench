@@ -10,6 +10,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
+import httpx
 from langchain.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 from langgraph.types import Command
@@ -32,6 +33,7 @@ from app.core.settings import get_settings
 from app.integrations.langchain_profiles import build_chat_model_profile
 from app.integrations.llm_client import ChatMessage as LLMMessage
 from app.integrations.llm_client import LLMClient
+from app.integrations.redis_client import RedisClient
 from app.prompts import get_prompt_loader
 from app.models.agent_run import AgentRun, AgentRunStatus, AgentRunType
 from app.models.chat_message import ChatMessage, MessageRole
@@ -119,12 +121,17 @@ class GeneralChatService:
         self,
         db: AsyncSession,
         llm: LLMClient,
+        *,
+        redis: RedisClient | None = None,
+        http_client: httpx.AsyncClient | None = None,
     ) -> None:
         self._db = db
         self._llm = llm
         self._settings = get_settings()
         self._context_builder = ContextBuilder(self._settings)
         self._prompts = get_prompt_loader()
+        self._redis = redis
+        self._http_client = http_client
 
     async def _load_history(
         self, session_id: uuid.UUID, limit: int | None
@@ -322,6 +329,8 @@ class GeneralChatService:
                 extra_tools=[build_system_time_tool()],
                 include_web_search=include_web_search,
                 include_mcp=include_mcp,
+                redis=self._redis,
+                http_client=self._http_client,
             )
 
             # 绑定工具的模型（OpenAI-compatible base_url）
@@ -494,6 +503,8 @@ class GeneralChatService:
                 extra_tools=[build_system_time_tool()],
                 include_web_search=include_web_search,
                 include_mcp=include_mcp,
+                redis=self._redis,
+                http_client=self._http_client,
             )
 
             # 绑定工具的模型（OpenAI-compatible base_url）
@@ -714,6 +725,8 @@ class GeneralChatService:
             extra_tools=[build_system_time_tool()],
             include_web_search=include_web_search,
             include_mcp=include_mcp,
+            redis=self._redis,
+            http_client=self._http_client,
         )
 
         action_requests = _extract_action_requests(pending_interrupts)
@@ -858,6 +871,8 @@ class GeneralChatService:
             extra_tools=[build_system_time_tool()],
             include_web_search=include_web_search,
             include_mcp=include_mcp,
+            redis=self._redis,
+            http_client=self._http_client,
         )
 
         action_requests = _extract_action_requests(pending_interrupts)

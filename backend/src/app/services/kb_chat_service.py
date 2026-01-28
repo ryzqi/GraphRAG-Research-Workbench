@@ -34,7 +34,7 @@ from app.integrations.langchain_profiles import build_chat_model_profile
 from app.integrations.llm_client import ChatMessage as LLMMessage
 from app.integrations.llm_client import LLMClient
 from app.integrations.milvus_client import MilvusClient
-from app.integrations.redis_client import get_redis
+from app.integrations.redis_client import RedisClient
 from app.integrations.rerank_client import RerankClient
 from app.models.agent_run import AgentRun, AgentRunStatus, AgentRunType
 from app.models.chat_message import ChatMessage, MessageRole
@@ -83,11 +83,11 @@ class KbChatService:
         milvus: MilvusClient,
         embedding: EmbeddingClient,
         reranker: RerankClient | None = None,
+        redis: RedisClient | None = None,
     ) -> None:
         self._db = db
         self._llm = llm
         self._settings = get_settings()
-        redis = get_redis()
         self._retrieval = RetrievalService(
             db, milvus, embedding, redis, reranker=reranker
         )

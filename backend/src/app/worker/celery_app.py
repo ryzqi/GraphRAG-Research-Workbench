@@ -20,6 +20,12 @@ celery_app = Celery(
 )
 
 celery_app.conf.update(
+    broker_connection_retry_on_startup=True,
+    accept_content=["json"],
+    task_serializer="json",
+    result_serializer="json",
+    result_accept_content=["json"],
+    task_ignore_result=True,
     task_track_started=True,
     timezone="Asia/Shanghai",
     task_soft_time_limit=60 * 60,

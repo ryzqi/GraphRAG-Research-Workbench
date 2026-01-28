@@ -6,6 +6,8 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
+import httpx
+
 from deepagents import create_deep_agent
 from langchain.tools import BaseTool, tool as lc_tool
 from langchain_openai import ChatOpenAI
@@ -28,6 +30,7 @@ from app.core.settings import get_settings
 from app.integrations.langchain_profiles import build_chat_model_profile
 from app.integrations.llm_client import LLMClient
 from app.integrations.mcp_adapters import load_mcp_tools
+from app.integrations.redis_client import RedisClient
 from app.models.tool_extension import ToolExtension
 from app.prompts import get_prompt_loader
 from app.services.retrieval_service import RetrievalResult, RetrievalService
@@ -58,6 +61,9 @@ class DeepResearchAgent:
         self,
         retrieval: RetrievalService,
         extensions: list[ToolExtension],
+        *,
+        redis: RedisClient | None = None,
+        http_client: httpx.AsyncClient | None = None,
     ) -> None:
         self._settings = get_settings()
         self._retrieval = retrieval
@@ -71,6 +77,8 @@ class DeepResearchAgent:
         )
         self._retrieval_results: list[RetrievalResult] = []
         self._stage_summaries: dict[str, object] = {}
+        self._redis = redis
+        self._http_client = http_client
 
     def _reset_run_state(self) -> None:
         self._retrieval_results = []
@@ -174,10 +182,34 @@ class DeepResearchAgent:
 
         if allow_external:
             if self._settings.web_search_api_key:
-                tools.append(build_web_search_tool(self._settings))
-                tools.append(build_web_extract_tool(self._settings))
-                tools.append(build_web_crawl_tool(self._settings))
-                tools.append(build_web_research_tool(self._settings))
+                tools.append(
+                    build_web_search_tool(
+                        self._settings,
+                        redis=self._redis,
+                        http_client=self._http_client,
+                    )
+                )
+                tools.append(
+                    build_web_extract_tool(
+                        self._settings,
+                        redis=self._redis,
+                        http_client=self._http_client,
+                    )
+                )
+                tools.append(
+                    build_web_crawl_tool(
+                        self._settings,
+                        redis=self._redis,
+                        http_client=self._http_client,
+                    )
+                )
+                tools.append(
+                    build_web_research_tool(
+                        self._settings,
+                        redis=self._redis,
+                        http_client=self._http_client,
+                    )
+                )
             if self._extensions:
                 mcp_entries = await load_mcp_tools(
                     settings=self._settings, extensions=self._extensions
