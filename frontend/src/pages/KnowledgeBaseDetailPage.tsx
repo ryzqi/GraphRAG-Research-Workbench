@@ -36,6 +36,7 @@ export default function KnowledgeBaseDetailPage() {
   const kb = kbQuery.data ?? null;
   const materials = materialsQuery.data ?? [];
   const loading = kbQuery.isPending || materialsQuery.isPending;
+  const markdownOnly = kb?.index_config?.chunking.general_strategy === 'markdown_heading';
 
   const [error, setError] = useState<string | null>(null);
   const [indexConfigOpen, setIndexConfigOpen] = useState(false);
@@ -123,6 +124,11 @@ export default function KnowledgeBaseDetailPage() {
       const result = validateFile(selectedFile);
       if (!result.valid) {
         setFileError(result.error ?? '文件验证失败');
+        setFile(null);
+        return;
+      }
+      if (markdownOnly && !selectedFile.name.toLowerCase().endsWith('.md')) {
+        setFileError('当前知识库仅支持上传 .md 文件');
         setFile(null);
       }
     }
@@ -358,10 +364,13 @@ export default function KnowledgeBaseDetailPage() {
               <>
                 <input
                   type="file"
-                  accept={ACCEPTED_FILE_TYPES}
+                  accept={markdownOnly ? '.md' : ACCEPTED_FILE_TYPES}
                   onChange={handleFileChange}
                   style={styles.input}
                 />
+                {markdownOnly && !fileError && (
+                  <span style={styles.fileHint}>仅支持 .md 文件</span>
+                )}
                 {fileError && <span style={styles.fileError}>{fileError}</span>}
               </>
             )}
@@ -673,6 +682,10 @@ const styles: Record<string, React.CSSProperties> = {
   },
   fileError: {
     color: '#dc2626',
+    fontSize: 13,
+  },
+  fileHint: {
+    color: '#6b7280',
     fontSize: 13,
   },
 };

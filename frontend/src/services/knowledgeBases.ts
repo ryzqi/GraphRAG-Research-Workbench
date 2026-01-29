@@ -6,12 +6,16 @@ import { apiFetch } from './http';
 import type { IndexRebuildJob } from './indexRebuilds';
 import type { ListResponse } from './types';
 
-export type ChunkingStrategy = 'sliding_window' | 'max_min_semantic' | 'parent_child';
+export type ChunkingStrategy =
+  | 'sliding_window'
+  | 'max_min_semantic'
+  | 'parent_child'
+  | 'markdown_heading';
 
 export interface MarkdownHeadingConfig {
-  enabled: boolean;
   max_heading_level: number;
-  max_section_chars: number;
+  chunk_size: number;
+  chunk_overlap: number;
 }
 
 export interface SlidingWindowConfig {
@@ -89,7 +93,7 @@ export interface KnowledgeBaseCreate {
   name: string;
   description?: string;
   tags?: string[];
-  index_config: IndexConfig;
+  index_config?: IndexConfig;
 }
 
 export interface KnowledgeBaseUpdate {
@@ -107,9 +111,9 @@ export function createDefaultIndexConfig(): IndexConfig {
   return {
     chunking: {
       markdown_heading: {
-        enabled: true,
         max_heading_level: 3,
-        max_section_chars: 4000,
+        chunk_size: 4000,
+        chunk_overlap: 200,
       },
       general_strategy: 'sliding_window',
       sliding_window: {

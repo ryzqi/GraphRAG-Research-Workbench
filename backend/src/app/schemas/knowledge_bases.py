@@ -16,14 +16,35 @@ class ChunkingStrategy(str, Enum):
     SLIDING_WINDOW = "sliding_window"
     MAX_MIN_SEMANTIC = "max_min_semantic"
     PARENT_CHILD = "parent_child"
+    MARKDOWN_HEADING = "markdown_heading"
 
 
 class MarkdownHeadingConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    enabled: bool = True
     max_heading_level: int = Field(3, ge=1, le=6)
-    max_section_chars: int = Field(4000, ge=200, le=20000)
+    chunk_size: int = Field(4000, ge=200, le=20000)
+    chunk_overlap: int = Field(200, ge=0, le=5000)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _compat_legacy_fields(cls, data: object) -> object:
+        """Compatibility for old index_config JSON (e.g. markdown_heading.enabled/max_section_chars)."""
+        if not isinstance(data, dict):
+            return data
+        payload = dict(data)
+        # Legacy toggle; markdown_heading is now a mutual-exclusive main strategy.
+        payload.pop("enabled", None)
+        # Legacy field name (previously used as "max chars per section").
+        if "chunk_size" not in payload and "max_section_chars" in payload:
+            payload["chunk_size"] = payload.pop("max_section_chars")
+        return payload
+
+    @model_validator(mode="after")
+    def _validate_overlap(self) -> "MarkdownHeadingConfig":
+        if self.chunk_overlap >= self.chunk_size:
+            raise ValueError("chunk_overlap must be less than chunk_size")
+        return self
 
 
 class SlidingWindowConfig(BaseModel):
@@ -141,12 +162,6 @@ class IndexConfig(BaseModel):
     contextual: ContextualConfig = Field(default_factory=ContextualConfig)
     retrieval: RetrievalConfig = Field(default_factory=RetrievalConfig)
 
-    @model_validator(mode="after")
-    def _normalize_contextual(self) -> "IndexConfig":
-        if self.chunking.general_strategy == ChunkingStrategy.PARENT_CHILD:
-            self.contextual.enabled = False
-        return self
-
 
 class KnowledgeBaseStatus(str, Enum):
     ACTIVE = "active"
@@ -159,7 +174,7 @@ class KnowledgeBaseCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=64)
     description: str | None = Field(None, max_length=500)
     tags: list[str] | None = None
-    index_config: IndexConfig
+    index_config: IndexConfig | None = None
 
 
 class KnowledgeBaseUpdate(BaseModel):

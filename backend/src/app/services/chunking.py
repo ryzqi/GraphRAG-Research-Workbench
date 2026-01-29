@@ -14,9 +14,13 @@ from app.services.parsing.types import ParsedChunk, ParsedDocument
 from app.utils.token_counter import count_tokens_approximately
 
 try:  # pragma: no cover
-    from langchain_text_splitters import MarkdownHeaderTextSplitter
+    from langchain_text_splitters import (
+        MarkdownHeaderTextSplitter,
+        RecursiveCharacterTextSplitter,
+    )
 except Exception:  # pragma: no cover
     MarkdownHeaderTextSplitter = None  # type: ignore
+    RecursiveCharacterTextSplitter = None  # type: ignore
 
 logger = logging.getLogger(__name__)
 
@@ -71,14 +75,9 @@ class ChunkingEngine:
     async def _split_general(
         self, document: ParsedDocument, index_config: IndexConfig
     ) -> list[ChunkItem]:
-        if _is_markdown(document) and index_config.chunking.markdown_heading.enabled:
-            md_chunks, used_headings = await self._split_markdown_heading(
-                document, index_config
-            )
-            if used_headings:
-                return md_chunks
-
         strategy = index_config.chunking.general_strategy
+        if strategy == ChunkingStrategy.MARKDOWN_HEADING:
+            return await self._split_markdown_heading(document, index_config)
         if strategy == ChunkingStrategy.PARENT_CHILD:
             return await self._split_parent_child(document, index_config)
         if strategy == ChunkingStrategy.MAX_MIN_SEMANTIC:
@@ -157,14 +156,22 @@ class ChunkingEngine:
 
     async def _split_markdown_heading(
         self, document: ParsedDocument, index_config: IndexConfig
-    ) -> tuple[list[ChunkItem], bool]:
+    ) -> list[ChunkItem]:
         if not document.text:
-            return [], False
+            return []
         if MarkdownHeaderTextSplitter is None:
             logger.warning(
                 "MarkdownHeaderTextSplitter not available, fallback to general strategy"
             )
-            return [], False
+            return _wrap_chunks(
+                _split_sliding_window(
+                    document.text or "",
+                    index_config.chunking.markdown_heading.chunk_size,
+                    index_config.chunking.markdown_heading.chunk_overlap,
+                ),
+                document,
+                chunking_strategy="markdown_heading",
+            )
 
         max_level = index_config.chunking.markdown_heading.max_heading_level
         headers = [("#" * level, f"h{level}") for level in range(1, max_level + 1)]
@@ -172,14 +179,15 @@ class ChunkingEngine:
         docs = splitter.split_text(document.text)
 
         if not docs:
-            return [], False
+            return []
 
-        has_headings = any(getattr(doc, "metadata", {}) for doc in docs)
-        if not has_headings:
-            return [], False
-
-        max_section_chars = index_config.chunking.markdown_heading.max_section_chars
-        overlap = index_config.chunking.sliding_window.chunk_overlap
+        chunk_size = index_config.chunking.markdown_heading.chunk_size
+        overlap = index_config.chunking.markdown_heading.chunk_overlap
+        recursive_splitter = (
+            RecursiveCharacterTextSplitter(chunk_size=chunk_size, chunk_overlap=overlap)
+            if RecursiveCharacterTextSplitter is not None
+            else None
+        )
         items: list[ChunkItem] = []
 
         for doc in docs:
@@ -191,8 +199,14 @@ class ChunkingEngine:
             base_meta = {"chunking_strategy": "markdown_heading"}
             if heading_path:
                 base_meta["heading_path"] = heading_path
-            if len(section) > max_section_chars:
-                sub_chunks = _split_sliding_window(section, max_section_chars, overlap)
+
+            # Stage 2: split *within* each section only (no cross-section boundaries).
+            if len(section) > chunk_size:
+                if recursive_splitter is not None:
+                    sub_chunks = [c.strip() for c in recursive_splitter.split_text(section)]
+                    sub_chunks = [c for c in sub_chunks if c]
+                else:
+                    sub_chunks = _split_sliding_window(section, chunk_size, overlap)
             else:
                 sub_chunks = [section]
             for chunk in sub_chunks:
@@ -205,47 +219,21 @@ class ChunkingEngine:
                     )
                 )
 
-        return items, True
+        return items
 
     async def _split_parent_child(
         self, document: ParsedDocument, index_config: IndexConfig
     ) -> list[ChunkItem]:
-        if _is_markdown(document) and index_config.chunking.markdown_heading.enabled:
-            md_chunks, used_headings = await self._split_markdown_heading(
-                document, index_config
-            )
-            if used_headings:
-                parent_chunks = [
-                    ChunkItem(
-                        content=chunk.content,
-                        locator=chunk.locator,
-                        metadata=chunk.metadata,
-                        chunk_role="parent",
-                    )
-                    for chunk in md_chunks
-                ]
-            else:
-                parent_chunks = _wrap_chunks(
-                    _split_sliding_window(
-                        document.text or "",
-                        index_config.chunking.parent_child.parent.chunk_size,
-                        index_config.chunking.parent_child.parent.chunk_overlap,
-                    ),
-                    document,
-                    chunking_strategy="parent_window",
-                    chunk_role="parent",
-                )
-        else:
-            parent_chunks = _wrap_chunks(
-                _split_sliding_window(
-                    document.text or "",
-                    index_config.chunking.parent_child.parent.chunk_size,
-                    index_config.chunking.parent_child.parent.chunk_overlap,
-                ),
-                document,
-                chunking_strategy="parent_window",
-                chunk_role="parent",
-            )
+        parent_chunks = _wrap_chunks(
+            _split_sliding_window(
+                document.text or "",
+                index_config.chunking.parent_child.parent.chunk_size,
+                index_config.chunking.parent_child.parent.chunk_overlap,
+            ),
+            document,
+            chunking_strategy="parent_window",
+            chunk_role="parent",
+        )
 
         items: list[ChunkItem] = []
         items.extend(parent_chunks)

@@ -35,15 +35,25 @@ import { LoadingSpinner } from '../components/ui/LoadingSpinner';
 import { Modal } from '../components/ui/Modal';
 import { PageHeader } from '../components/ui/PageHeader';
 import { KnowledgeBaseForm } from '../components/KnowledgeBaseForm';
+import { IndexConfigForm } from '../components/IndexConfigForm';
 import {
   useKnowledgeBases,
   useCreateKnowledgeBase,
   useUpdateKnowledgeBase,
+  useUpdateKnowledgeBaseIndexConfig,
   useDeleteKnowledgeBase,
   useArchiveKnowledgeBase,
 } from '../hooks/queries';
 import { getErrorMessage } from '../lib/errorHandler';
-import type { KnowledgeBase, KnowledgeBaseCreate, KnowledgeBaseUpdate } from '../services/knowledgeBases';
+import { validateIndexConfig } from '../lib/indexConfig';
+import {
+  createDefaultIndexConfig,
+  type ChunkingStrategy,
+  type IndexConfig,
+  type KnowledgeBase,
+  type KnowledgeBaseCreate,
+  type KnowledgeBaseUpdate,
+} from '../services/knowledgeBases';
 import { StaggerGrid } from '../components/ui/StaggerList';
 
 type ModalType = 'create' | 'edit' | 'delete' | 'archive' | null;
@@ -55,13 +65,25 @@ export default function KnowledgeBasesPage() {
   const [selectedKb, setSelectedKb] = useState<KnowledgeBase | null>(null);
   const [menuAnchor, setMenuAnchor] = useState<{ el: HTMLElement; kb: KnowledgeBase } | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [actionInfo, setActionInfo] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
+  const [postCreateIndexConfigOpen, setPostCreateIndexConfigOpen] = useState(false);
+  const [postCreateKb, setPostCreateKb] = useState<KnowledgeBase | null>(null);
+  const [postCreateMainStrategy, setPostCreateMainStrategy] =
+    useState<ChunkingStrategy | null>(null);
+  const [postCreateIndexConfig, setPostCreateIndexConfig] = useState<IndexConfig>(
+    createDefaultIndexConfig()
+  );
+  const [postCreateIndexConfigError, setPostCreateIndexConfigError] = useState<string | null>(
+    null
+  );
 
   // React Query hooks
   const { data: kbs = [], isLoading, error, refetch } = useKnowledgeBases();
   const createMutation = useCreateKnowledgeBase();
   const updateMutation = useUpdateKnowledgeBase();
+  const updateIndexConfigMutation = useUpdateKnowledgeBaseIndexConfig();
   const deleteMutation = useDeleteKnowledgeBase();
   const archiveMutation = useArchiveKnowledgeBase();
 
@@ -76,11 +98,18 @@ export default function KnowledgeBasesPage() {
     setModalType(null);
     setSelectedKb(null);
     setActionError(null);
+    setActionInfo(null);
   }, []);
 
   const handleCreate = useCallback(async (data: KnowledgeBaseCreate) => {
-    await createMutation.mutateAsync(data);
+    const kb = await createMutation.mutateAsync(data);
     closeModal();
+    // Post-create: let user configure index config explicitly.
+    setPostCreateKb(kb);
+    setPostCreateIndexConfig(kb.index_config ?? createDefaultIndexConfig());
+    setPostCreateMainStrategy(null);
+    setPostCreateIndexConfigError(null);
+    setPostCreateIndexConfigOpen(true);
   }, [createMutation, closeModal]);
 
   const handleUpdate = useCallback(async (data: KnowledgeBaseUpdate) => {
@@ -108,6 +137,51 @@ export default function KnowledgeBasesPage() {
       setActionError(getErrorMessage(err));
     }
   }, [selectedKb, archiveMutation, closeModal]);
+
+  const closePostCreateIndexConfig = useCallback(() => {
+    setPostCreateIndexConfigOpen(false);
+    setPostCreateKb(null);
+    setPostCreateMainStrategy(null);
+    setPostCreateIndexConfig(createDefaultIndexConfig());
+    setPostCreateIndexConfigError(null);
+  }, []);
+
+  const handleSavePostCreateIndexConfig = useCallback(async () => {
+    if (!postCreateKb) return;
+    setPostCreateIndexConfigError(null);
+
+    if (!postCreateMainStrategy) {
+      setPostCreateIndexConfigError('请先选择分块策略');
+      return;
+    }
+
+    const validationErrors = validateIndexConfig(postCreateIndexConfig);
+    if (validationErrors.length > 0) {
+      setPostCreateIndexConfigError(`索引配置校验失败：${validationErrors.join('；')}`);
+      return;
+    }
+
+    try {
+      const res = await updateIndexConfigMutation.mutateAsync({
+        id: postCreateKb.id,
+        index_config: postCreateIndexConfig,
+      });
+      setActionInfo(
+        res.rebuild_job
+          ? `索引配置已保存，已创建索引重建任务：${res.rebuild_job.id}`
+          : '索引配置已保存'
+      );
+      closePostCreateIndexConfig();
+    } catch (err) {
+      setPostCreateIndexConfigError(getErrorMessage(err));
+    }
+  }, [
+    postCreateKb,
+    postCreateMainStrategy,
+    postCreateIndexConfig,
+    updateIndexConfigMutation,
+    closePostCreateIndexConfig,
+  ]);
 
   const handleMenuOpen = useCallback((event: React.MouseEvent<HTMLElement>, kb: KnowledgeBase) => {
     event.stopPropagation();
@@ -208,6 +282,12 @@ export default function KnowledgeBasesPage() {
       <ErrorAlert
         error={error instanceof Error ? error.message : error ? '加载失败' : null}
         onClose={() => refetch()}
+        sx={{ mb: 2 }}
+      />
+      <ErrorAlert
+        error={actionInfo}
+        severity="info"
+        onClose={() => setActionInfo(null)}
         sx={{ mb: 2 }}
       />
 
@@ -349,6 +429,45 @@ export default function KnowledgeBasesPage() {
           onCancel={closeModal}
           loading={actionLoading}
         />
+      </Modal>
+
+      <Modal
+        open={postCreateIndexConfigOpen && postCreateKb !== null}
+        onClose={closePostCreateIndexConfig}
+        title="配置索引"
+        maxWidth="md"
+      >
+        <ErrorAlert
+          error={postCreateIndexConfigError}
+          onClose={() => setPostCreateIndexConfigError(null)}
+          sx={{ mb: 2 }}
+        />
+
+        <IndexConfigForm
+          value={postCreateIndexConfig}
+          onChange={setPostCreateIndexConfig}
+          mainStrategy={postCreateMainStrategy}
+          onMainStrategyChange={setPostCreateMainStrategy}
+          disabled={updateIndexConfigMutation.isPending}
+        />
+
+        <Stack direction="row" spacing={1.5} justifyContent="flex-end" sx={{ mt: 3 }}>
+          <Button
+            variant="outlined"
+            onClick={closePostCreateIndexConfig}
+            disabled={updateIndexConfigMutation.isPending}
+          >
+            稍后配置
+          </Button>
+          <Button
+            variant="contained"
+            onClick={handleSavePostCreateIndexConfig}
+            loading={updateIndexConfigMutation.isPending}
+            disabled={!postCreateMainStrategy}
+          >
+            保存
+          </Button>
+        </Stack>
       </Modal>
 
       <Modal

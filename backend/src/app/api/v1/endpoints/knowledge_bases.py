@@ -9,6 +9,8 @@ from fastapi.exceptions import RequestValidationError
 
 from app.api.deps import AsyncSessionDep
 from app.schemas.knowledge_bases import (
+    ChunkingStrategy,
+    IndexConfig,
     KnowledgeBaseCreate,
     KnowledgeBaseIndexConfigUpdateRequest,
     KnowledgeBaseIndexConfigUpdateResponse,
@@ -17,8 +19,10 @@ from app.schemas.knowledge_bases import (
     KnowledgeBaseUpdate,
 )
 from app.schemas.pagination import PageMeta
+from app.models.source_material import SourceType
 from app.services.knowledge_base_service import KnowledgeBaseService
 from app.services.index_rebuild_service import IndexRebuildService
+from app.services.material_service import MaterialService
 
 router = APIRouter()
 
@@ -58,11 +62,16 @@ async def create_knowledge_base(
             detail={"code": "KB_NAME_EXISTS", "message": "知识库名称已存在"},
         )
 
+    index_config = (
+        body.index_config.model_dump(mode="json")
+        if body.index_config is not None
+        else IndexConfig().model_dump(mode="json")
+    )
     kb = await service.create(
         name=body.name,
         description=body.description,
         tags=body.tags,
-        index_config=body.index_config.model_dump(mode="json"),
+        index_config=index_config,
     )
     return KnowledgeBaseRead.model_validate(kb)
 
@@ -159,6 +168,32 @@ async def update_index_config(
             knowledge_base=KnowledgeBaseRead.model_validate(kb),
             rebuild_job=None,
         )
+
+    if body.index_config.chunking.general_strategy == ChunkingStrategy.MARKDOWN_HEADING:
+        # Pre-check: markdown_heading only supports Markdown uploads; block switching if existing
+        # uploaded materials include non-.md files.
+        material_service = MaterialService(db)
+        skip = 0
+        limit = 200
+        while True:
+            materials = await material_service.list_by_kb(kb_id, skip=skip, limit=limit)
+            if not materials:
+                break
+            for material in materials:
+                if material.source_type != SourceType.UPLOAD:
+                    continue
+                filename = (material.uri or "").rsplit("/", 1)[-1]
+                if not filename.lower().endswith(".md"):
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail={
+                            "code": "KB_MARKDOWN_ONLY_CONFLICT",
+                            "message": "切换为 markdown_heading 前请先清理/迁移非 .md 上传资料",
+                        },
+                    )
+            if len(materials) < limit:
+                break
+            skip += limit
 
     rebuild_service = IndexRebuildService(db)
     job = await rebuild_service.create_job(kb=kb, index_config=new_config)

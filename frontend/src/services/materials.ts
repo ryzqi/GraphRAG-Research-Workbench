@@ -89,7 +89,12 @@ export async function uploadMaterial(
 
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    throw new Error(body?.error?.message ?? `上传失败（${res.status}）`);
+    const code = body?.error?.code;
+    const message = body?.error?.message ?? `上传失败（${res.status}）`;
+    if (code === 'KB_MARKDOWN_ONLY') {
+      throw new Error(`${message}（请上传 .md 文件，或在索引配置中切换分块策略）`);
+    }
+    throw new Error(message);
   }
 
   return res.json();

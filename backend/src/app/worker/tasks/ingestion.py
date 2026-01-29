@@ -25,6 +25,13 @@ from app.worker.celery_app import celery_app
 from app.worker.task_resources import managed_task_resources
 
 
+def _build_embedding_input_text(*, chunk_text: str, heading_path: str | None) -> str:
+    """Build the text used for embedding (before optional contextual injection)."""
+    if heading_path and heading_path.strip():
+        return f"{heading_path.strip()} : {chunk_text}"
+    return chunk_text
+
+
 @celery_app.task(name="app.worker.tasks.ingestion.run_ingestion_job")
 def run_ingestion_job(job_id: str) -> None:
     """Celery 入口：执行导入任务。"""
@@ -190,6 +197,17 @@ async def _run_ingestion_job(job_id: str) -> None:
                             parent_text = parent_content_by_ref.get(item.parent_ref)
                             if parent_text:
                                 base_text = f"{parent_text}\n\n{item.content}"
+
+                        heading_path = None
+                        if item.metadata:
+                            raw_heading_path = item.metadata.get("heading_path")
+                            if isinstance(raw_heading_path, str):
+                                heading_path = raw_heading_path
+                        base_text = _build_embedding_input_text(
+                            chunk_text=base_text,
+                            heading_path=heading_path,
+                        )
+
                         if index_config.contextual.enabled and context:
                             embedding_inputs.append(f"{base_text}\n\n{context}")
                         else:

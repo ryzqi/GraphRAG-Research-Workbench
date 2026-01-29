@@ -7,6 +7,7 @@ import uuid
 from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile, status
 
 from app.api.deps import AsyncSessionDep
+from app.schemas.knowledge_bases import ChunkingStrategy, IndexConfig
 from app.schemas.materials import (
     MaterialCreateText,
     MaterialCreateUrl,
@@ -104,6 +105,18 @@ async def upload_material(
             status_code=status.HTTP_404_NOT_FOUND,
             detail={"code": "KB_NOT_FOUND", "message": "知识库不存在"},
         )
+
+    index_config = IndexConfig.model_validate(kb.index_config or {})
+    if index_config.chunking.general_strategy == ChunkingStrategy.MARKDOWN_HEADING:
+        filename = (file.filename or "").strip()
+        if not filename.lower().endswith(".md"):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={
+                    "code": "KB_MARKDOWN_ONLY",
+                    "message": "当前知识库仅支持上传 .md 文件",
+                },
+            )
 
     service = MaterialService(db)
     material = await service.upload_file(
