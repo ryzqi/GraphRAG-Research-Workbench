@@ -39,6 +39,7 @@ const cursorFadeOut = keyframes`
 
 // 品牌渐变色（蓝紫粉）
 const BRAND_GRADIENT = 'linear-gradient(135deg, #4285F4, #9B72CB, #D96570)';
+const AVATAR_SIZE = 36;
 
 interface MessageItemProps {
   role: 'user' | 'assistant';
@@ -132,24 +133,48 @@ export function MessageItem({
         {/* 头像 */}
         <Box
           sx={{
-            width: 36,
-            height: 36,
+            width: AVATAR_SIZE,
+            height: AVATAR_SIZE,
             borderRadius: '50%',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
             flexShrink: 0,
+            position: 'relative',
+            overflow: 'hidden',
             bgcolor: isUser
               ? (theme) =>
-                  alpha(theme.palette.text.primary, theme.palette.mode === 'light' ? 0.08 : 0.18)
+                  alpha(theme.palette.primary.main, theme.palette.mode === 'light' ? 0.12 : 0.22)
               : 'transparent',
-            border: isUser ? 1 : 0,
-            borderColor: isUser ? 'divider' : undefined,
+            border: 1,
+            borderColor: isUser
+              ? (theme) =>
+                  alpha(theme.palette.primary.main, theme.palette.mode === 'light' ? 0.18 : 0.28)
+              : (theme) => alpha(theme.palette.common.white, theme.palette.mode === 'light' ? 0.38 : 0.20),
             background: isUser ? undefined : BRAND_GRADIENT,
-            color: isUser ? 'text.primary' : 'white',
+            boxShadow: (theme) =>
+              theme.palette.mode === 'light'
+                ? '0 1px 0 rgba(0,0,0,0.02), 0 8px 22px rgba(60,64,67,0.18)'
+                : '0 14px 34px rgba(0,0,0,0.55)',
+            '&::after': isUser
+              ? undefined
+              : {
+                  content: '""',
+                  position: 'absolute',
+                  inset: 0,
+                  borderRadius: '50%',
+                  border: '1px solid',
+                  borderColor: (theme) =>
+                    alpha(theme.palette.common.white, theme.palette.mode === 'light' ? 0.42 : 0.22),
+                  pointerEvents: 'none',
+                },
           }}
         >
-          {isUser ? <PersonIcon fontSize="small" /> : <AutoAwesomeIcon fontSize="small" />}
+          {isUser ? (
+            <PersonIcon sx={{ fontSize: 18, color: 'primary.main' }} />
+          ) : (
+            <AutoAwesomeIcon sx={{ fontSize: 18, color: '#ffffff' }} />
+          )}
         </Box>
 
         {/* 消息内容 */}
@@ -165,23 +190,45 @@ export function MessageItem({
         >
           {/* 消息气泡 - Gemini 风格 */}
           {isUser ? (
-            // 用户消息：灰色背景气泡
+            // 用户消息：Google-ish Tonal bubble
             <Paper
               elevation={0}
-              sx={{
-                p: 2,
-                borderRadius: '24px',
-                bgcolor: (theme) =>
-                  theme.palette.mode === 'light'
-                    ? alpha(theme.palette.text.primary, 0.06)
-                    : alpha(theme.palette.common.white, 0.10),
-                border: 1,
-                borderColor: 'divider',
-                color: 'text.primary',
-                display: 'inline-block',
+              sx={(theme) => {
+                const isLight = theme.palette.mode === 'light';
+                const baseBg = alpha(theme.palette.primary.main, isLight ? 0.1 : 0.18);
+                const hoverBg = alpha(theme.palette.primary.main, isLight ? 0.12 : 0.22);
+                const borderColor = alpha(theme.palette.primary.main, isLight ? 0.18 : 0.28);
+
+                return {
+                  px: 2,
+                  py: 1.5,
+                  borderRadius: 20,
+                  borderTopRightRadius: 12,
+                  borderBottomRightRadius: 12,
+                  bgcolor: baseBg,
+                  border: 1,
+                  borderColor,
+                  color: 'text.primary',
+                  boxShadow: isLight
+                    ? '0 1px 0 rgba(0,0,0,0.02), 0 10px 28px rgba(60,64,67,0.16)'
+                    : '0 16px 38px rgba(0,0,0,0.55)',
+                  transition: theme.transitions.create(['background-color', 'box-shadow'], {
+                    duration: theme.transitions.duration.shorter,
+                  }),
+                  '&:hover': {
+                    bgcolor: hoverBg,
+                    boxShadow: isLight
+                      ? '0 1px 0 rgba(0,0,0,0.02), 0 14px 36px rgba(60,64,67,0.20)'
+                      : '0 18px 44px rgba(0,0,0,0.62)',
+                  },
+                  display: 'inline-block',
+                };
               }}
             >
-              <Typography variant="body1" sx={{ whiteSpace: 'pre-wrap', lineHeight: 1.7 }}>
+              <Typography
+                variant="body1"
+                sx={{ whiteSpace: 'pre-wrap', lineHeight: 1.65, overflowWrap: 'anywhere' }}
+              >
                 {displayContent}
               </Typography>
             </Paper>
