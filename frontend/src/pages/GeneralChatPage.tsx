@@ -15,6 +15,7 @@ import {
   type ChatMessageResponse,
   type ChatSession,
 } from '../services/chats';
+import { HttpError } from '../services/http';
 import { ErrorAlert } from '../components/ui/ErrorAlert';
 import { parseSseJson } from '../lib/sse';
 import {
@@ -77,10 +78,9 @@ export function GeneralChatPage() {
       setLoadingSession(true);
       setError(null);
       try {
-        const [loadedSession, history] = await Promise.all([
-          getChatSession(sessionId),
-          getChatMessages(sessionId),
-        ]);
+        // Load session first so that when it doesn't exist we avoid triggering an extra 404 on /messages.
+        const loadedSession = await getChatSession(sessionId);
+        const history = await getChatMessages(sessionId);
         if (!active) return;
         setSession(loadedSession);
         setAllowExternal(loadedSession.allow_external);
@@ -93,6 +93,19 @@ export function GeneralChatPage() {
         );
       } catch (e) {
         if (!active) return;
+        // Stale/deleted sessionId in URL is possible (e.g., backend reset or old bookmark). Recover by
+        // clearing the param and letting the bootstrap flow create a fresh session.
+        if (e instanceof HttpError && e.status === 404) {
+          bootstrapPromiseRef.current = null;
+          setSession(null);
+          setMessages([]);
+          setError(null);
+          const nextParams = new URLSearchParams(window.location.search);
+          nextParams.delete('sessionId');
+          setSearchParams(nextParams, { replace: true });
+          setSkipSessionLoad(true);
+          return;
+        }
         setError(e instanceof Error ? e.message : '加载会话失败');
       } finally {
         if (active) {

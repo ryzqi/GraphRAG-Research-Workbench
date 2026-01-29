@@ -24,6 +24,7 @@ import {
   sendMessage,
   streamChatMessage,
 } from '../services/chats';
+import { HttpError } from '../services/http';
 import { useKnowledgeBases } from '../hooks/queries';
 import { useRecentHistory } from '../hooks/useRecentHistory';
 import { getErrorMessage } from '../lib/errorHandler';
@@ -79,10 +80,9 @@ export function KbChatPage() {
       setLoadingSession(true);
       setError(null);
       try {
-        const [loadedSession, history] = await Promise.all([
-          getChatSession(sessionId),
-          getChatMessages(sessionId),
-        ]);
+        // Load session first so that when it doesn't exist we avoid triggering an extra 404 on /messages.
+        const loadedSession = await getChatSession(sessionId);
+        const history = await getChatMessages(sessionId);
         if (!active) return;
         setSession(loadedSession);
         setSelectedKbIds(loadedSession.selected_kb_ids ?? []);
@@ -95,6 +95,17 @@ export function KbChatPage() {
         );
       } catch (e) {
         if (!active) return;
+        // If the sessionId is stale/deleted, clear it so the user can start a new KB chat.
+        // (KB chat needs selected KBs, so we cannot auto-create like general chat.)
+        if (e instanceof HttpError && e.status === 404) {
+          setSession(null);
+          setMessages([]);
+          setSelectedKbIds([]);
+          const nextParams = new URLSearchParams(window.location.search);
+          nextParams.delete('sessionId');
+          setSearchParams(nextParams, { replace: true });
+          return;
+        }
         setError(getErrorMessage(e));
       } finally {
         if (active) {
