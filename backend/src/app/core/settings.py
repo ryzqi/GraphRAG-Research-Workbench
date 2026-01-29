@@ -1,14 +1,71 @@
 from __future__ import annotations
 
 import json
+import sys
 from functools import lru_cache
 from pathlib import Path
+from urllib.parse import quote, urlsplit, urlunsplit
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 ROOT_DIR = Path(__file__).resolve().parents[4]
 ENV_FILE = ROOT_DIR / ".env"
+
+_IPV4_LOOPBACK = "127.0.0.1"
+
+
+def _prefer_ipv4_loopback_url(value: str) -> str:
+    """Prefer IPv4 loopback when a URL uses 'localhost' on Windows.
+
+    On Windows, some clients may try IPv6 (::1) first for 'localhost'. For services that
+    only listen on IPv4 (common with Podman port forwarding), this can lead to long
+    connection delays or timeouts. Rewriting to 127.0.0.1 avoids the issue.
+    """
+
+    if not value:
+        return value
+    if not sys.platform.startswith("win"):
+        return value
+
+    try:
+        parts = urlsplit(value)
+    except Exception:
+        return value
+
+    if parts.hostname != "localhost":
+        return value
+
+    userinfo = ""
+    if parts.username is not None:
+        userinfo = quote(parts.username, safe="")
+        if parts.password is not None:
+            userinfo += ":" + quote(parts.password, safe="")
+        userinfo += "@"
+
+    port = f":{parts.port}" if parts.port else ""
+    netloc = f"{userinfo}{_IPV4_LOOPBACK}{port}"
+    return urlunsplit((parts.scheme, netloc, parts.path, parts.query, parts.fragment))
+
+
+def _prefer_ipv4_loopback_hostport(value: str) -> str:
+    """Prefer IPv4 loopback when a host[:port] string uses 'localhost' on Windows."""
+
+    if not value:
+        return value
+    if not sys.platform.startswith("win"):
+        return value
+
+    raw = value.strip()
+    if not raw:
+        return value
+
+    # minio uses host[:port] (not a URL), so we do a simple prefix replace.
+    if raw == "localhost":
+        return _IPV4_LOOPBACK
+    if raw.startswith("localhost:"):
+        return _IPV4_LOOPBACK + raw[len("localhost") :]
+    return value
 
 
 class Settings(BaseSettings):
@@ -291,6 +348,36 @@ class Settings(BaseSettings):
     otel_enabled: bool = Field(False, alias="OTEL_ENABLED")
     otel_endpoint: str | None = Field(None, alias="OTEL_EXPORTER_OTLP_ENDPOINT")
     otel_service_name: str = Field("multi-kb-agent", alias="OTEL_SERVICE_NAME")
+
+    @field_validator(
+        "database_url",
+        "redis_url",
+        "celery_broker_url",
+        "celery_result_backend",
+        mode="before",
+    )
+    @classmethod
+    def _normalize_localhost_urls(cls, v: object) -> object:
+        if v is None:
+            return v
+        return _prefer_ipv4_loopback_url(str(v))
+
+    @field_validator("minio_endpoint", mode="before")
+    @classmethod
+    def _normalize_minio_endpoint(cls, v: object) -> object:
+        if v is None:
+            return v
+        return _prefer_ipv4_loopback_hostport(str(v))
+
+    @field_validator("milvus_host", mode="before")
+    @classmethod
+    def _normalize_milvus_host(cls, v: object) -> object:
+        if v is None:
+            return v
+        raw = str(v)
+        if sys.platform.startswith("win") and raw.strip() == "localhost":
+            return _IPV4_LOOPBACK
+        return raw
 
     @field_validator("app_cors_allow_origins", mode="before")
     @classmethod

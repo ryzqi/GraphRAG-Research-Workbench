@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import time
 
+import anyio
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
@@ -58,7 +59,8 @@ async def _check_minio() -> None:
     def _check() -> None:
         storage._client.bucket_exists(storage._settings.minio_bucket_uploads)
 
-    await asyncio.to_thread(_check)
+    # Run in a worker thread. abandon_on_cancel avoids readiness hanging when the SDK blocks.
+    await anyio.to_thread.run_sync(_check, abandon_on_cancel=True)
 
 
 @router.get("/ready")

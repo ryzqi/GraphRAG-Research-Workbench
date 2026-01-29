@@ -202,8 +202,7 @@ def register_exception_handlers(app: FastAPI) -> None:
         )
         return _apply_cors_headers(request, res)
 
-    @app.exception_handler((OperationalError, SATimeoutError))
-    async def _handle_db_unavailable(request: Request, exc: Exception):
+    async def _db_unavailable_response(request: Request, exc: Exception) -> JSONResponse:
         # DB 故障在开发环境中很常见（未启动 infra / 端口冲突 / 未迁移）。
         # 统一转换为 503，避免前端看到“500 内部错误”而难以定位。
         logger.warning("Database error", extra={"error": str(exc)})
@@ -223,6 +222,14 @@ def register_exception_handlers(app: FastAPI) -> None:
             ),
         )
         return _apply_cors_headers(request, res)
+
+    @app.exception_handler(OperationalError)
+    async def _handle_db_operational_error(request: Request, exc: OperationalError):
+        return await _db_unavailable_response(request, exc)
+
+    @app.exception_handler(SATimeoutError)
+    async def _handle_db_timeout_error(request: Request, exc: SATimeoutError):
+        return await _db_unavailable_response(request, exc)
 
     @app.exception_handler(DBAPIError)
     async def _handle_dbapi_error(request: Request, exc: DBAPIError):

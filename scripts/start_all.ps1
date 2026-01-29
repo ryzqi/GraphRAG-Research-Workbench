@@ -86,6 +86,61 @@ function Normalize-ApiBaseUrl {
     return $value.TrimEnd("/")
 }
 
+function Get-HttpStatusCodeNoProxy {
+    param(
+        [Parameter(Mandatory = $true)][string]$Url,
+        [int]$TimeoutSec = 2
+    )
+
+    $useNoProxy = $false
+    try {
+        $uri = [Uri]$Url
+        $urlHost = $uri.Host.ToString().ToLowerInvariant()
+        $useNoProxy = ($urlHost -eq "localhost") -or ($urlHost -eq "127.0.0.1") -or ($urlHost -eq "::1")
+    }
+    catch {
+        $useNoProxy = $false
+    }
+
+    # Prefer curl.exe to avoid PowerShell/system proxy quirks and to get status codes for 4xx/5xx.
+    if (Get-Command "curl.exe" -ErrorAction SilentlyContinue) {
+        $curlArgs = @(
+            "--silent"
+            "--connect-timeout", "1"
+            "--max-time", $TimeoutSec
+            "--output", "NUL"
+            "--write-out", "%{http_code}"
+            $Url
+        )
+        if ($useNoProxy) {
+            $curlArgs = @("--noproxy", "*") + $curlArgs
+        }
+
+        $code = & curl.exe @curlArgs
+        if ($LASTEXITCODE -ne 0) { return -1 }
+        if ($code -match '^\d+$') { return [int]$code }
+        return -1
+    }
+
+    try {
+        if ($useNoProxy) {
+            $resp = Invoke-WebRequest -Uri $Url -UseBasicParsing -TimeoutSec $TimeoutSec -Proxy $null
+        }
+        else {
+            $resp = Invoke-WebRequest -Uri $Url -UseBasicParsing -TimeoutSec $TimeoutSec
+        }
+        return [int]$resp.StatusCode
+    }
+    catch {
+        # If the server replied with a non-2xx, Invoke-WebRequest throws but carries the response.
+        $resp = $_.Exception.Response
+        if ($resp -and $resp.StatusCode) {
+            try { return [int]$resp.StatusCode } catch { }
+        }
+        return -1
+    }
+}
+
 function Wait-BackendReady {
     param(
         [int]$TimeoutSeconds = 30,
@@ -97,15 +152,17 @@ function Wait-BackendReady {
     $healthUrl = "$baseUrl/api/v1/ready"
     $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
 
+    $lastProbe = $null
     while ((Get-Date) -lt $deadline) {
-        try {
-            $resp = Invoke-WebRequest -Uri $healthUrl -UseBasicParsing -TimeoutSec 2
-            if ($resp.StatusCode -ge 200 -and $resp.StatusCode -lt 300) {
-                return $true
+        $code = Get-HttpStatusCodeNoProxy -Url $healthUrl -TimeoutSec 2
+        if ($code -ge 200 -and $code -lt 300) { return $true }
+
+        if ($Verbose) {
+            $probe = if ($code -ge 0) { "HTTP $code" } else { "no response" }
+            if ($probe -ne $lastProbe) {
+                Write-Host "ready probe: $probe ($healthUrl)" -ForegroundColor DarkGray
+                $lastProbe = $probe
             }
-        }
-        catch {
-            # ignore and retry
         }
 
         Start-Sleep -Milliseconds $PollIntervalMs
