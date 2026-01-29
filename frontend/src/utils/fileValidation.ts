@@ -8,6 +8,14 @@ export const MAX_FILE_SIZE = 100 * 1024 * 1024;
 // 允许的文件扩展名
 export const ALLOWED_EXTENSIONS = new Set(['.pdf', '.txt', '.md', '.docx']);
 
+// 与 <input accept> 保持一致的字符串表示（中心化，避免多处维护）。
+export const ACCEPTED_FILE_TYPES = Array.from(ALLOWED_EXTENSIONS).join(',');
+
+// UI 展示用（例如：PDF, TXT, MD, DOCX）
+export const SUPPORTED_FILE_TYPES_LABEL = Array.from(ALLOWED_EXTENSIONS)
+  .map((ext) => ext.replace('.', '').toUpperCase())
+  .join(', ');
+
 // 允许的 MIME 类型
 export const ALLOWED_MIME_TYPES = new Set([
   'application/pdf',

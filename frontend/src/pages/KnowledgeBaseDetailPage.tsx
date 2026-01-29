@@ -16,7 +16,7 @@ import {
   useIndexRebuildJob,
 } from '../hooks/queries';
 import { getErrorMessage } from '../lib/errorHandler';
-import { validateFile } from '../utils/fileValidation';
+import { ACCEPTED_FILE_TYPES, validateFile } from '../utils/fileValidation';
 import { createDefaultIndexConfig, type IndexConfig } from '../services/knowledgeBases';
 import { IndexConfigForm } from '../components/IndexConfigForm';
 import { validateIndexConfig } from '../lib/indexConfig';
@@ -358,7 +358,7 @@ export default function KnowledgeBaseDetailPage() {
               <>
                 <input
                   type="file"
-                  accept=".pdf,.txt,.md,.doc,.docx"
+                  accept={ACCEPTED_FILE_TYPES}
                   onChange={handleFileChange}
                   style={styles.input}
                 />

@@ -19,9 +19,7 @@ import SendIcon from '@mui/icons-material/Send';
 import AttachFileIcon from '@mui/icons-material/AttachFile';
 import UploadFileIcon from '@mui/icons-material/UploadFile';
 import { motion } from 'framer-motion';
-
-// 支持的文件类型（与后端保持一致）
-const ACCEPTED_FILE_TYPES = '.pdf,.txt,.md,.doc,.docx';
+import { ACCEPTED_FILE_TYPES, SUPPORTED_FILE_TYPES_LABEL } from '../../utils/fileValidation';
 
 // 视觉上更接近单行输入框的高度（用于“垂直居中”的观感）
 const MIN_TEXTAREA_HEIGHT = 40;
@@ -176,7 +174,7 @@ export function InputComposer({
                 </ListItemIcon>
                 <ListItemText
                   primary="上传文件"
-                  secondary="支持 PDF, TXT, MD, DOC, DOCX"
+                  secondary={`支持 ${SUPPORTED_FILE_TYPES_LABEL}`}
                   secondaryTypographyProps={{ variant: 'caption' }}
                 />
               </MenuItem>

@@ -11,7 +11,7 @@ from app.worker import task_resources
 
 class _DummyEvalRun:
     def __init__(self) -> None:
-        self.status = EvaluationStatus.PENDING
+        self.status = EvaluationStatus.QUEUED
         self.started_at = None
         self.finished_at = None
         self.summary = None

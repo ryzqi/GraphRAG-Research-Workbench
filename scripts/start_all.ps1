@@ -74,6 +74,46 @@ function Start-Terminal {
     Start-Process -FilePath "powershell" -ArgumentList "-NoExit", "-Command", $psCommand -WorkingDirectory $WorkingDirectory | Out-Null
 }
 
+function Normalize-ApiBaseUrl {
+    param([string]$Raw)
+
+    if (-not $Raw) { return "http://127.0.0.1:8000" }
+
+    $value = $Raw.Trim().TrimEnd("/")
+    if ($value.EndsWith("/api/v1")) {
+        $value = $value.Substring(0, $value.Length - "/api/v1".Length)
+    }
+    return $value.TrimEnd("/")
+}
+
+function Wait-BackendReady {
+    param(
+        [int]$TimeoutSeconds = 30,
+        [int]$PollIntervalMs = 500
+    )
+
+    $baseUrl = Normalize-ApiBaseUrl -Raw $env:VITE_API_BASE_URL
+    # /ready 会检查 Postgres 等关键依赖是否可用；比 /health 更能反映“前端可用”的状态。
+    $healthUrl = "$baseUrl/api/v1/ready"
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+
+    while ((Get-Date) -lt $deadline) {
+        try {
+            $resp = Invoke-WebRequest -Uri $healthUrl -UseBasicParsing -TimeoutSec 2
+            if ($resp.StatusCode -ge 200 -and $resp.StatusCode -lt 300) {
+                return $true
+            }
+        }
+        catch {
+            # ignore and retry
+        }
+
+        Start-Sleep -Milliseconds $PollIntervalMs
+    }
+
+    return $false
+}
+
 Write-Host "加载环境变量 (.env) ..." -ForegroundColor Cyan
 Import-DotEnv -Path $envFile
 $env:PYTHONUNBUFFERED = "1"
@@ -135,6 +175,17 @@ if ($RunSeed) {
 }
 
 if (-not $SkipFrontend) {
+    if ($SkipBackend) {
+        Write-Host "提示：已跳过后端（-SkipBackend），前端将无法通过 /api 访问后端接口。" -ForegroundColor Yellow
+    }
+    else {
+        Write-Host "等待后端依赖就绪（/api/v1/ready）..." -ForegroundColor Cyan
+        $ok = Wait-BackendReady -TimeoutSeconds 30
+        if (-not $ok) {
+            Write-Host "警告：后端 API 未在 30 秒内就绪，前端可能出现 Vite 代理连接错误（ECONNREFUSED）。" -ForegroundColor Yellow
+        }
+    }
+
     Ensure-Command -Name "npm" -InstallHint "请安装 Node.js 20+ (包含 npm)"
     Push-Location $frontendDir
     try {

@@ -8,6 +8,7 @@ from typing import Any
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from sqlalchemy.exc import DBAPIError, OperationalError, TimeoutError as SATimeoutError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.core.logging import get_request_id
@@ -197,6 +198,64 @@ def register_exception_handlers(app: FastAPI) -> None:
                 code=code,
                 message=str(message),
                 request_id=request_id,
+            ),
+        )
+        return _apply_cors_headers(request, res)
+
+    @app.exception_handler((OperationalError, SATimeoutError))
+    async def _handle_db_unavailable(request: Request, exc: Exception):
+        # DB 故障在开发环境中很常见（未启动 infra / 端口冲突 / 未迁移）。
+        # 统一转换为 503，避免前端看到“500 内部错误”而难以定位。
+        logger.warning("Database error", extra={"error": str(exc)})
+
+        details = None
+        if get_settings().app_env == "dev":
+            # 仅在 dev 输出错误原因，避免生产环境泄露内部信息。
+            details = {"reason": str(getattr(exc, "orig", exc))}
+
+        res = JSONResponse(
+            status_code=503,
+            content=build_error_response(
+                code="DATABASE_UNAVAILABLE",
+                message="数据库不可用：请确认 Postgres 已启动，并执行数据库迁移（alembic upgrade head）",
+                request_id=get_request_id(),
+                details=details,
+            ),
+        )
+        return _apply_cors_headers(request, res)
+
+    @app.exception_handler(DBAPIError)
+    async def _handle_dbapi_error(request: Request, exc: DBAPIError):
+        reason = str(getattr(exc, "orig", exc))
+
+        # 开发环境常见：库/表/枚举未迁移（比如直接启动后端但跳过 alembic upgrade）。
+        is_schema_missing = "does not exist" in reason or "UndefinedTableError" in reason
+        if is_schema_missing:
+            status_code = 503
+            code = "DATABASE_SCHEMA_NOT_READY"
+            message = "数据库未初始化/未迁移：请执行数据库迁移（alembic upgrade head）"
+        elif getattr(exc, "connection_invalidated", False):
+            status_code = 503
+            code = "DATABASE_UNAVAILABLE"
+            message = "数据库连接已失效：请确认 Postgres 已启动"
+        else:
+            status_code = 500
+            code = "DATABASE_ERROR"
+            message = "数据库执行错误"
+
+        logger.warning("Database DBAPIError", extra={"error": reason, "status_code": status_code})
+
+        details = None
+        if get_settings().app_env == "dev":
+            details = {"reason": reason}
+
+        res = JSONResponse(
+            status_code=status_code,
+            content=build_error_response(
+                code=code,
+                message=message,
+                request_id=get_request_id(),
+                details=details,
             ),
         )
         return _apply_cors_headers(request, res)
