@@ -92,25 +92,27 @@ const neutralPalette = {
 // ============================================================================
 
 const surfaceContainersLight = {
-  surface: neutralPalette[98],              // #faf9fc - 主表面
-  surfaceDim: neutralPalette[87],           // #d9d9dc
-  surfaceBright: neutralPalette[98],        // #faf9fc
-  surfaceContainerLowest: neutralPalette[100], // #ffffff
-  surfaceContainerLow: neutralPalette[96],  // #f5f5f8
-  surfaceContainer: neutralPalette[94],     // #eeeff3
-  surfaceContainerHigh: neutralPalette[92], // #e9e8ec
-  surfaceContainerHighest: neutralPalette[90], // #e3e2e6
+  // Google Workspace / Gemini-ish light surfaces (cool tinted neutrals).
+  surface: '#f0f4f9',
+  surfaceDim: '#dde3ea',
+  surfaceBright: '#f8fafd',
+  surfaceContainerLowest: '#ffffff',
+  surfaceContainerLow: '#f8fafd',
+  surfaceContainer: '#eef3f8',
+  surfaceContainerHigh: '#e7edf5',
+  surfaceContainerHighest: '#dde3ea',
 };
 
 const surfaceContainersDark = {
-  surface: neutralPalette[6],               // #121316
-  surfaceDim: neutralPalette[6],            // #121316
-  surfaceBright: neutralPalette[24],        // #39393c
-  surfaceContainerLowest: neutralPalette[4], // #0d0e11
-  surfaceContainerLow: neutralPalette[10],  // #1b1b1f
-  surfaceContainer: neutralPalette[12],     // #1f1f23
-  surfaceContainerHigh: neutralPalette[17], // #292a2d
-  surfaceContainerHighest: neutralPalette[22], // #353538
+  // Google Workspace / Gemini-ish dark surfaces (neutral, not pure black).
+  surface: '#1e1f20',
+  surfaceDim: '#17181a',
+  surfaceBright: '#2b2c2d',
+  surfaceContainerLowest: '#151617',
+  surfaceContainerLow: '#232425',
+  surfaceContainer: '#2b2c2d',
+  surfaceContainerHigh: '#333437',
+  surfaceContainerHighest: '#3c3d40',
 };
 
 // ============================================================================
@@ -214,7 +216,9 @@ function createMd3ThemeOptions(mode: 'light' | 'dark'): ThemeOptions {
     typography: {
       fontFamily: [
         '"Google Sans"',
+        '"Roboto Flex"',
         'Roboto',
+        '"Noto Sans SC"',
         '-apple-system',
         'BlinkMacSystemFont',
         '"Segoe UI"',
@@ -266,6 +270,23 @@ function createMd3ThemeOptions(mode: 'light' | 'dark'): ThemeOptions {
     },
     shape: {
       borderRadius: 12, // MD3 默认圆角增大
+    },
+    transitions: {
+      easing: {
+        easeInOut: md3Motion.easing.standard,
+        easeOut: md3Motion.easing.standardDecelerate,
+        easeIn: md3Motion.easing.standardAccelerate,
+        sharp: md3Motion.easing.emphasizedAccelerate,
+      },
+      duration: {
+        shortest: md3Motion.duration.short2,
+        shorter: md3Motion.duration.short3,
+        short: md3Motion.duration.short4,
+        standard: md3Motion.duration.medium2,
+        complex: md3Motion.duration.medium4,
+        enteringScreen: md3Motion.duration.medium2,
+        leavingScreen: md3Motion.duration.medium1,
+      },
     },
     shadows: [
       'none',

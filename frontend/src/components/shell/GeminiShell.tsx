@@ -4,7 +4,8 @@
  */
 import { useState, useCallback } from 'react';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
-import { Box, IconButton, useMediaQuery, useTheme } from '@mui/material';
+import { Box, IconButton, Typography, useMediaQuery, useTheme } from '@mui/material';
+import { alpha } from '@mui/material/styles';
 import MenuIcon from '@mui/icons-material/Menu';
 import { Sidebar, SIDEBAR_WIDTH_EXPANDED, SIDEBAR_WIDTH_COLLAPSED } from './Sidebar';
 import { useRecentHistory } from '../../hooks/useRecentHistory';
@@ -105,6 +106,16 @@ export function GeminiShell() {
           flexDirection: 'column',
           minWidth: 0,
           position: 'relative',
+          // 聊天页的“Gemini/Google”氛围光晕（轻量渐变，不影响可读性）。
+          backgroundImage: isChatPage
+            ? (t) =>
+                t.palette.mode === 'light'
+                  ? `radial-gradient(1200px 520px at 15% -10%, ${alpha(t.palette.primary.main, 0.14)} 0%, rgba(0,0,0,0) 65%),
+                     radial-gradient(1000px 420px at 90% 0%, ${alpha(t.palette.success.main, 0.12)} 0%, rgba(0,0,0,0) 60%)`
+                  : `radial-gradient(1200px 520px at 15% -10%, ${alpha(t.palette.primary.main, 0.10)} 0%, rgba(0,0,0,0) 65%),
+                     radial-gradient(1000px 420px at 90% 0%, ${alpha(t.palette.success.main, 0.08)} 0%, rgba(0,0,0,0) 60%)`
+            : undefined,
+          backgroundRepeat: 'no-repeat',
           // 聊天页面全宽，其他页面限制最大宽度
           maxWidth: isChatPage
             ? '100%'
@@ -123,15 +134,20 @@ export function GeminiShell() {
               p: 1.5,
               borderBottom: 1,
               borderColor: 'divider',
-              bgcolor: 'background.paper',
+              bgcolor: alpha(theme.palette.background.paper, 0.85),
+              backdropFilter: 'blur(16px)',
+              WebkitBackdropFilter: 'blur(16px)',
               position: 'sticky',
               top: 0,
               zIndex: theme.zIndex.appBar,
             }}
           >
-            <IconButton onClick={handleMobileDrawerOpen} edge="start">
+            <IconButton onClick={handleMobileDrawerOpen} edge="start" aria-label="打开导航菜单">
               <MenuIcon />
             </IconButton>
+            <Typography variant="subtitle1" fontWeight={600} sx={{ ml: 0.5 }}>
+              知识代理
+            </Typography>
           </Box>
         )}
 

@@ -18,6 +18,7 @@ import {
   useMediaQuery,
   useTheme,
 } from '@mui/material';
+import { alpha } from '@mui/material/styles';
 import { motion, AnimatePresence } from 'framer-motion';
 import MenuIcon from '@mui/icons-material/Menu';
 import MenuOpenIcon from '@mui/icons-material/MenuOpen';
@@ -106,7 +107,7 @@ export function Sidebar({
         height: '100%',
         display: 'flex',
         flexDirection: 'column',
-        bgcolor: theme.palette.mode === 'light' ? '#f0f4f9' : '#1e1f20',
+        bgcolor: 'background.default',
         borderRight: 1,
         borderColor: 'divider',
       }}
@@ -165,9 +166,12 @@ export function Sidebar({
             onClick={onNewChat}
             sx={{
               borderRadius: 6,
-              bgcolor: theme.palette.mode === 'light' ? '#dde3ea' : '#37393b',
+              bgcolor: 'background.paper',
+              border: 1,
+              borderColor: 'divider',
               '&:hover': {
-                bgcolor: theme.palette.mode === 'light' ? '#c2e7ff' : '#4d5156',
+                bgcolor: alpha(theme.palette.primary.main, 0.08),
+                borderColor: alpha(theme.palette.primary.main, 0.35),
               },
               justifyContent: expanded ? 'flex-start' : 'center',
               px: expanded ? 2 : 1.5,
@@ -211,18 +215,12 @@ export function Sidebar({
                     justifyContent: expanded ? 'flex-start' : 'center',
                     px: expanded ? 2 : 1.5,
                     bgcolor: isActive
-                      ? theme.palette.mode === 'light'
-                        ? '#c2e7ff'
-                        : '#004a77'
+                      ? alpha(theme.palette.primary.main, theme.palette.mode === 'light' ? 0.12 : 0.16)
                       : 'transparent',
                     '&:hover': {
                       bgcolor: isActive
-                        ? theme.palette.mode === 'light'
-                          ? '#a8d4ff'
-                          : '#005a8f'
-                        : theme.palette.mode === 'light'
-                          ? '#e3e8ed'
-                          : '#37393b',
+                        ? alpha(theme.palette.primary.main, theme.palette.mode === 'light' ? 0.16 : 0.2)
+                        : 'action.hover',
                     },
                   }}
                 >
@@ -307,7 +305,7 @@ export function Sidebar({
                     py: 1,
                     px: 2,
                     '&:hover': {
-                      bgcolor: theme.palette.mode === 'light' ? '#e3e8ed' : '#37393b',
+                      bgcolor: 'action.hover',
                     },
                   }}
                 >

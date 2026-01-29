@@ -1,15 +1,19 @@
 :root {
-  color-scheme: light;
-  font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "PingFang SC",
-    "Microsoft YaHei", sans-serif;
-  line-height: 1.5;
-  font-weight: 400;
+  /* Let the browser render built-in controls correctly in both themes. */
+  color-scheme: light dark;
+  text-rendering: geometricPrecision;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+html,
+body,
+#root {
+  height: 100%;
 }
 
 body {
   margin: 0;
-  background: #f6f7fb;
-  color: #1f2937;
 }
 
 a {

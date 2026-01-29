@@ -557,6 +557,15 @@ export function GeneralChatPage() {
           gap: 2,
           px: { xs: 2, md: 4 },
           py: 1.5,
+          position: 'sticky',
+          top: 0,
+          zIndex: 5,
+          bgcolor: (theme) =>
+            theme.palette.mode === 'light'
+              ? 'rgba(240, 244, 249, 0.72)'
+              : 'rgba(30, 31, 32, 0.72)',
+          backdropFilter: 'blur(18px)',
+          WebkitBackdropFilter: 'blur(18px)',
           borderBottom: 1,
           borderColor: 'divider',
         }}
@@ -616,6 +625,9 @@ export function GeneralChatPage() {
           bottom: 0,
           p: { xs: 2, md: 3 },
           zIndex: 10,
+          // Bottom fade to keep the input area readable over long conversations.
+          background: (theme) =>
+            `linear-gradient(to top, ${theme.palette.background.default} 0%, rgba(0,0,0,0) 110%)`,
         }}
       >
         <Box sx={{ maxWidth: 800, mx: 'auto' }}>

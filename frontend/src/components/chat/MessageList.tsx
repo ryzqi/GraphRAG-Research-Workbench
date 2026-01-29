@@ -3,7 +3,10 @@
  * 管理消息滚动和布局
  */
 import { useRef, useEffect, useCallback, useMemo, useState } from 'react';
-import { Box, Stack } from '@mui/material';
+import { Box, IconButton, Paper, Stack, Tooltip } from '@mui/material';
+import { alpha } from '@mui/material/styles';
+import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
+import { AnimatePresence, motion } from 'framer-motion';
 import { MessageItem, ToolApprovalCard } from './MessageItem';
 import { SparkleLoading } from './SparkleLoading';
 import type { EvidenceItem } from '../../services/chats';
@@ -72,6 +75,10 @@ export function MessageList({
     setIsAtBottom(atBottom);
   }, []);
 
+  const scrollToBottom = useCallback(() => {
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+  }, []);
+
   // 初始化和消息变更时重新计算
   useEffect(() => {
     updateIsAtBottom();
@@ -97,6 +104,7 @@ export function MessageList({
         overflowY: 'auto',
         px: { xs: 2, sm: 3, md: 4 },
         py: 3,
+        position: 'relative',
       }}
     >
       <Stack spacing={3} sx={{ maxWidth: 900, mx: 'auto' }}>
@@ -152,6 +160,52 @@ export function MessageList({
 
         <div ref={bottomRef} />
       </Stack>
+
+      {/* “回到底部”按钮：仅当用户离开底部时出现 */}
+      <Box
+        sx={{
+          position: 'sticky',
+          bottom: 16,
+          mt: 2,
+          display: 'flex',
+          justifyContent: 'center',
+          pointerEvents: 'none',
+        }}
+      >
+        <AnimatePresence>
+          {!isAtBottom && (
+            <motion.div
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 8 }}
+              transition={{ duration: 0.18, ease: [0.2, 0, 0, 1] }}
+              style={{ pointerEvents: 'auto' }}
+            >
+              <Tooltip title="回到底部" placement="top">
+                <Paper
+                  elevation={0}
+                  sx={{
+                    borderRadius: 999,
+                    border: 1,
+                    borderColor: 'divider',
+                    bgcolor: (theme) => alpha(theme.palette.background.paper, 0.88),
+                    backdropFilter: 'blur(14px)',
+                    WebkitBackdropFilter: 'blur(14px)',
+                    boxShadow: (theme) =>
+                      theme.palette.mode === 'light'
+                        ? '0 10px 30px rgba(0,0,0,0.10)'
+                        : '0 14px 40px rgba(0,0,0,0.40)',
+                  }}
+                >
+                  <IconButton onClick={scrollToBottom} aria-label="回到底部">
+                    <KeyboardArrowDownIcon />
+                  </IconButton>
+                </Paper>
+              </Tooltip>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </Box>
     </Box>
   );
 }

@@ -2,7 +2,7 @@
  * 知识库管理页
  * 列表 + 新建/编辑/归档/删除
  */
-import { useState, useCallback } from 'react';
+import { useMemo, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Box,
@@ -10,8 +10,13 @@ import {
   IconButton,
   Menu,
   MenuItem,
+  Paper,
   Stack,
+  TextField,
+  ToggleButton,
+  ToggleButtonGroup,
   Typography,
+  InputAdornment,
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import MoreVertIcon from '@mui/icons-material/MoreVert';
@@ -19,6 +24,7 @@ import EditIcon from '@mui/icons-material/Edit';
 import ArchiveIcon from '@mui/icons-material/Archive';
 import DeleteIcon from '@mui/icons-material/Delete';
 import VisibilityIcon from '@mui/icons-material/Visibility';
+import SearchIcon from '@mui/icons-material/Search';
 
 import { Button } from '../components/ui/Button';
 import { Card } from '../components/ui/Card';
@@ -38,8 +44,10 @@ import {
 } from '../hooks/queries';
 import { getErrorMessage } from '../lib/errorHandler';
 import type { KnowledgeBase, KnowledgeBaseCreate, KnowledgeBaseUpdate } from '../services/knowledgeBases';
+import { StaggerGrid } from '../components/ui/StaggerList';
 
 type ModalType = 'create' | 'edit' | 'delete' | 'archive' | null;
+type StatusFilter = 'all' | 'active' | 'archived';
 
 export default function KnowledgeBasesPage() {
   const navigate = useNavigate();
@@ -47,6 +55,8 @@ export default function KnowledgeBasesPage() {
   const [selectedKb, setSelectedKb] = useState<KnowledgeBase | null>(null);
   const [menuAnchor, setMenuAnchor] = useState<{ el: HTMLElement; kb: KnowledgeBase } | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [query, setQuery] = useState('');
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
 
   // React Query hooks
   const { data: kbs = [], isLoading, error, refetch } = useKnowledgeBases();
@@ -110,6 +120,22 @@ export default function KnowledgeBasesPage() {
 
   const actionLoading = createMutation.isPending || updateMutation.isPending || deleteMutation.isPending || archiveMutation.isPending;
 
+  const filteredKbs = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return kbs.filter((kb) => {
+      if (statusFilter !== 'all' && kb.status !== statusFilter) return false;
+      if (!q) return true;
+      const haystack = [
+        kb.name,
+        kb.description ?? '',
+        ...(kb.tags ?? []),
+      ]
+        .join(' ')
+        .toLowerCase();
+      return haystack.includes(q);
+    });
+  }, [kbs, query, statusFilter]);
+
   return (
     <Box>
       <PageHeader
@@ -125,6 +151,59 @@ export default function KnowledgeBasesPage() {
           </Button>
         }
       />
+
+      <Paper
+        elevation={0}
+        sx={{
+          p: 2,
+          mb: 2,
+          borderRadius: 3,
+          border: 1,
+          borderColor: 'divider',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 1.5,
+          flexWrap: 'wrap',
+        }}
+      >
+        <TextField
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="搜索知识库（名称/描述/标签）"
+          size="small"
+          sx={{ minWidth: { xs: '100%', sm: 360 }, flex: 1 }}
+          InputProps={{
+            startAdornment: (
+              <InputAdornment position="start">
+                <SearchIcon fontSize="small" />
+              </InputAdornment>
+            ),
+          }}
+        />
+
+        <ToggleButtonGroup
+          value={statusFilter}
+          exclusive
+          onChange={(_, next) => next && setStatusFilter(next)}
+          size="small"
+          aria-label="按状态筛选"
+          sx={{
+            '& .MuiToggleButton-root': {
+              textTransform: 'none',
+              borderRadius: 999,
+              px: 2,
+            },
+          }}
+        >
+          <ToggleButton value="all">全部</ToggleButton>
+          <ToggleButton value="active">活跃</ToggleButton>
+          <ToggleButton value="archived">已归档</ToggleButton>
+        </ToggleButtonGroup>
+
+        <Typography variant="caption" color="text.secondary" sx={{ ml: 'auto' }}>
+          {filteredKbs.length} / {kbs.length}
+        </Typography>
+      </Paper>
 
       <ErrorAlert
         error={error instanceof Error ? error.message : error ? '加载失败' : null}
@@ -148,31 +227,59 @@ export default function KnowledgeBasesPage() {
             </Button>
           }
         />
+      ) : filteredKbs.length === 0 ? (
+        <EmptyState
+          title="未找到匹配的知识库"
+          description="尝试更换关键词或切换筛选条件。"
+          action={
+            <Button variant="outlined" onClick={() => { setQuery(''); setStatusFilter('all'); }}>
+              清空筛选
+            </Button>
+          }
+        />
       ) : (
-        <Box
-          sx={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))',
-            gap: 2,
-          }}
-        >
-          {kbs.map((kb) => (
+        <StaggerGrid spacing={2} columns={{ xs: 1, sm: 2, md: 2, lg: 3 }}>
+          {filteredKbs.map((kb) => (
             <Card
               key={kb.id}
               sx={{
                 cursor: 'pointer',
-                transition: 'box-shadow 0.2s',
-                '&:hover': {
-                  boxShadow: 3,
-                },
+                border: 1,
+                borderColor: 'divider',
+                overflow: 'hidden',
               }}
               onClick={() => navigate(`/knowledge-bases/${kb.id}`)}
             >
               <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 1 }}>
-                <Typography variant="h6" fontWeight={500}>
-                  {kb.name}
-                </Typography>
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                <Stack direction="row" spacing={1.25} sx={{ minWidth: 0 }} alignItems="center">
+                  <Box
+                    sx={{
+                      width: 40,
+                      height: 40,
+                      borderRadius: '50%',
+                      display: 'grid',
+                      placeItems: 'center',
+                      bgcolor: 'action.selected',
+                      color: 'primary.main',
+                      fontWeight: 800,
+                      flexShrink: 0,
+                    }}
+                  >
+                    {(kb.name || 'K').trim().slice(0, 1).toUpperCase()}
+                  </Box>
+                  <Box sx={{ minWidth: 0 }}>
+                    <Typography variant="h6" fontWeight={600} noWrap>
+                      {kb.name}
+                    </Typography>
+                    {kb.description && (
+                      <Typography variant="body2" color="text.secondary" noWrap>
+                        {kb.description}
+                      </Typography>
+                    )}
+                  </Box>
+                </Stack>
+
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexShrink: 0 }}>
                   <Chip
                     label={kb.status === 'active' ? '活跃' : '已归档'}
                     size="small"
@@ -182,18 +289,12 @@ export default function KnowledgeBasesPage() {
                   <IconButton
                     size="small"
                     onClick={(e) => handleMenuOpen(e, kb)}
-                    aria-label="更多操作"
+                    aria-label={`更多操作：${kb.name}`}
                   >
                     <MoreVertIcon fontSize="small" />
                   </IconButton>
                 </Box>
               </Box>
-
-              {kb.description && (
-                <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
-                  {kb.description}
-                </Typography>
-              )}
 
               {kb.tags && kb.tags.length > 0 && (
                 <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap>
@@ -204,7 +305,7 @@ export default function KnowledgeBasesPage() {
               )}
             </Card>
           ))}
-        </Box>
+        </StaggerGrid>
       )}
 
       {/* 操作菜单 */}

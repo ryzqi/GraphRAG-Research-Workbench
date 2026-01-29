@@ -426,6 +426,15 @@ export function KbChatPage() {
           justifyContent: 'space-between',
           px: { xs: 2, md: 4 },
           py: 1.5,
+          position: 'sticky',
+          top: 0,
+          zIndex: 5,
+          bgcolor: (theme) =>
+            theme.palette.mode === 'light'
+              ? 'rgba(240, 244, 249, 0.72)'
+              : 'rgba(30, 31, 32, 0.72)',
+          backdropFilter: 'blur(18px)',
+          WebkitBackdropFilter: 'blur(18px)',
           borderBottom: 1,
           borderColor: 'divider',
         }}
@@ -462,10 +471,14 @@ export function KbChatPage() {
       {/* 底部输入区 */}
       <Box
         sx={{
+          position: 'sticky',
+          bottom: 0,
           p: { xs: 2, md: 3 },
-          bgcolor: 'background.default',
+          background: (theme) =>
+            `linear-gradient(to top, ${theme.palette.background.default} 0%, rgba(0,0,0,0) 110%)`,
           borderTop: messages.length > 0 ? 1 : 0,
           borderColor: 'divider',
+          zIndex: 10,
         }}
       >
         <Box sx={{ maxWidth: 800, mx: 'auto' }}>

@@ -236,7 +236,8 @@ export function InputComposer({
                 bgcolor: canSend ? 'primary.main' : 'action.disabledBackground',
                 color: canSend ? 'primary.contrastText' : 'text.disabled',
                 '&:hover': {
-                  bgcolor: canSend ? 'primary.dark' : 'action.disabledBackground',
+                  bgcolor: canSend ? 'primary.main' : 'action.disabledBackground',
+                  filter: canSend ? 'brightness(0.95)' : 'none',
                 },
                 '&.Mui-disabled': {
                   bgcolor: 'action.disabledBackground',

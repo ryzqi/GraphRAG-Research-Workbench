@@ -4,6 +4,7 @@
  */
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { Box, IconButton, Paper, Stack, Tooltip, Typography, Chip, keyframes } from '@mui/material';
+import { alpha } from '@mui/material/styles';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import CheckIcon from '@mui/icons-material/Check';
 import PersonIcon from '@mui/icons-material/Person';
@@ -12,6 +13,7 @@ import { motion } from 'framer-motion';
 import { MarkdownContent } from './MarkdownContent';
 import { useTypewriterStream } from './useTypewriterStream';
 import { ThinkingContainer } from './ThinkingContainer';
+import { Button } from '../ui/Button';
 
 // 实心圆点脉冲动画
 const cursorPulse = keyframes`
@@ -137,9 +139,14 @@ export function MessageItem({
             alignItems: 'center',
             justifyContent: 'center',
             flexShrink: 0,
-            bgcolor: isUser ? 'text.secondary' : 'transparent',
+            bgcolor: isUser
+              ? (theme) =>
+                  alpha(theme.palette.text.primary, theme.palette.mode === 'light' ? 0.08 : 0.18)
+              : 'transparent',
+            border: isUser ? 1 : 0,
+            borderColor: isUser ? 'divider' : undefined,
             background: isUser ? undefined : BRAND_GRADIENT,
-            color: 'white',
+            color: isUser ? 'text.primary' : 'white',
           }}
         >
           {isUser ? <PersonIcon fontSize="small" /> : <AutoAwesomeIcon fontSize="small" />}
@@ -164,7 +171,12 @@ export function MessageItem({
               sx={{
                 p: 2,
                 borderRadius: '24px',
-                bgcolor: (theme) => (theme.palette.mode === 'light' ? '#F2F2F2' : '#303134'),
+                bgcolor: (theme) =>
+                  theme.palette.mode === 'light'
+                    ? alpha(theme.palette.text.primary, 0.06)
+                    : alpha(theme.palette.common.white, 0.10),
+                border: 1,
+                borderColor: 'divider',
                 color: 'text.primary',
                 display: 'inline-block',
               }}
@@ -194,7 +206,12 @@ export function MessageItem({
           {showActions && !isUser && (
             <Stack direction="row" spacing={0.5} sx={{ mt: 1, ml: 1 }}>
               <Tooltip title={copied ? '已复制' : '复制'}>
-                <IconButton size="small" onClick={handleCopy} sx={{ color: 'text.secondary' }}>
+                <IconButton
+                  size="small"
+                  onClick={handleCopy}
+                  aria-label={copied ? '已复制' : '复制回复'}
+                  sx={{ color: 'text.secondary' }}
+                >
                   {copied ? <CheckIcon fontSize="small" /> : <ContentCopyIcon fontSize="small" />}
                 </IconButton>
               </Tooltip>
@@ -258,45 +275,12 @@ export function ToolApprovalCard({
           </Stack>
         )}
         <Stack direction="row" spacing={1}>
-          <Box
-            component="button"
-            onClick={onApprove}
-            disabled={loading}
-            sx={{
-              px: 2,
-              py: 1,
-              borderRadius: 2,
-              border: 'none',
-              bgcolor: 'success.main',
-              color: 'white',
-              fontWeight: 500,
-              cursor: loading ? 'not-allowed' : 'pointer',
-              opacity: loading ? 0.6 : 1,
-              '&:hover': { bgcolor: 'success.dark' },
-            }}
-          >
+          <Button variant="contained" color="success" onClick={onApprove} loading={loading}>
             允许执行
-          </Box>
-          <Box
-            component="button"
-            onClick={onReject}
-            disabled={loading}
-            sx={{
-              px: 2,
-              py: 1,
-              borderRadius: 2,
-              border: 1,
-              borderColor: 'error.main',
-              bgcolor: 'transparent',
-              color: 'error.main',
-              fontWeight: 500,
-              cursor: loading ? 'not-allowed' : 'pointer',
-              opacity: loading ? 0.6 : 1,
-              '&:hover': { bgcolor: 'error.50' },
-            }}
-          >
+          </Button>
+          <Button variant="outlined" color="error" onClick={onReject} disabled={loading}>
             拒绝执行
-          </Box>
+          </Button>
         </Stack>
       </Stack>
     </Paper>
