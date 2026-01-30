@@ -164,6 +164,9 @@ def build_kb_retrieve_tool(
                 if chunk_id is None:
                     continue
                 cid = str(chunk_id)
+                # Evidence excerpts should match what the model saw in the retrieval context
+                # (context_text may be parent content under parent/child strategy).
+                excerpt_text = str(r.context_text or r.chunk.content or "")[:500]
                 item = draft_by_chunk_id.get(cid)
                 if item is None:
                     chunk = getattr(r, "chunk", None)
@@ -176,13 +179,15 @@ def build_kb_retrieve_tool(
                             "material_id": str(material_id) if material_id else "",
                             "chunk_id": cid,
                             "locator": getattr(chunk, "locator", None),
-                            "excerpt": (getattr(chunk, "content", "") or "")[:500],
+                            "excerpt": excerpt_text,
                             "score": float(getattr(r, "score", 0.0) or 0.0),
                             "hits": [],
                         }
                     )
                 else:
-                    evidence_items.append(item)
+                    merged = dict(item)
+                    merged["excerpt"] = excerpt_text
+                    evidence_items.append(merged)
 
             on_results(
                 included,

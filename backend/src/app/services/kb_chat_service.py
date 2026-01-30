@@ -304,6 +304,12 @@ class KbChatService:
 
             items = meta.get("evidence_items")
             if isinstance(items, list):
+                # IMPORTANT: Evidence numbering in the answer ("[1]..[n]") is tied to the
+                # *latest* retrieval context constructed by kb_retrieve, which always starts
+                # numbering from 1 for that call. If we accumulate evidence across multiple
+                # retrieval retries, the UI evidence list order can drift and citations break.
+                evidence_draft_items.clear()
+                seen_evidence_chunk_ids.clear()
                 for it in items:
                     if not isinstance(it, dict):
                         continue

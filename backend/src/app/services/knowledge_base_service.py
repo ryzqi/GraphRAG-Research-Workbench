@@ -14,6 +14,33 @@ class KnowledgeBaseService:
     def __init__(self, db: AsyncSession) -> None:
         self._db = db
 
+    async def list_page(
+        self,
+        *,
+        skip: int = 0,
+        limit: int = 100,
+        status: KnowledgeBaseStatus | None = None,
+    ) -> tuple[list[KnowledgeBase], int]:
+        """分页列出知识库。
+
+        - status=None 表示不过滤（返回 active + archived）。
+        """
+        count_stmt = select(func.count()).select_from(KnowledgeBase)
+        stmt = select(KnowledgeBase)
+        if status is not None:
+            count_stmt = count_stmt.where(KnowledgeBase.status == status)
+            stmt = stmt.where(KnowledgeBase.status == status)
+
+        total = int((await self._db.execute(count_stmt)).scalar_one())
+
+        stmt = (
+            stmt.order_by(KnowledgeBase.created_at.desc(), KnowledgeBase.id.desc())
+            .offset(skip)
+            .limit(limit)
+        )
+        result = await self._db.execute(stmt)
+        return list(result.scalars().all()), total
+
     async def list_active(self, skip: int = 0, limit: int = 100) -> list[KnowledgeBase]:
         """列出所有活跃知识库。"""
         stmt = (
@@ -30,22 +57,9 @@ class KnowledgeBaseService:
         self, *, skip: int = 0, limit: int = 100
     ) -> tuple[list[KnowledgeBase], int]:
         """分页列出所有活跃知识库。"""
-        count_stmt = (
-            select(func.count())
-            .select_from(KnowledgeBase)
-            .where(KnowledgeBase.status == KnowledgeBaseStatus.ACTIVE)
+        return await self.list_page(
+            skip=skip, limit=limit, status=KnowledgeBaseStatus.ACTIVE
         )
-        total = int((await self._db.execute(count_stmt)).scalar_one())
-
-        stmt = (
-            select(KnowledgeBase)
-            .where(KnowledgeBase.status == KnowledgeBaseStatus.ACTIVE)
-            .order_by(KnowledgeBase.created_at.desc(), KnowledgeBase.id.desc())
-            .offset(skip)
-            .limit(limit)
-        )
-        result = await self._db.execute(stmt)
-        return list(result.scalars().all()), total
 
     async def get_by_id(self, kb_id: uuid.UUID) -> KnowledgeBase | None:
         """根据 ID 获取知识库。"""

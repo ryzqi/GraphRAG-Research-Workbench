@@ -20,6 +20,7 @@ from app.services.contextual_embedding_service import ContextualEmbeddingService
 from app.services.parsing import ParseError, parse_material
 from app.worker.celery_app import celery_app
 from app.worker.task_resources import managed_task_resources
+from app.worker.tasks.embedding_inputs import build_embedding_inputs
 
 
 @celery_app.task(name="app.worker.tasks.index_rebuild.run_index_rebuild_job")
@@ -162,24 +163,11 @@ async def _run_index_rebuild_job(job_id: str) -> None:
                             if result.success:
                                 contexts[idx] = result.context
 
-                    parent_content_by_ref: dict[int, str] = {}
-                    parent_idx = 0
-                    for item in chunk_items:
-                        if item.chunk_role == "parent":
-                            parent_content_by_ref[parent_idx] = item.content
-                            parent_idx += 1
-
-                    embedding_inputs: list[str] = []
-                    for item, context in zip(chunk_items, contexts):
-                        base_text = item.content
-                        if item.chunk_role == "child" and item.parent_ref is not None:
-                            parent_text = parent_content_by_ref.get(item.parent_ref)
-                            if parent_text:
-                                base_text = f"{parent_text}\n\n{item.content}"
-                        if index_config.contextual.enabled and context:
-                            embedding_inputs.append(f"{base_text}\n\n{context}")
-                        else:
-                            embedding_inputs.append(base_text)
+                    embedding_inputs = build_embedding_inputs(
+                        chunk_items=chunk_items,
+                        contexts=contexts,
+                        contextual_enabled=index_config.contextual.enabled,
+                    )
 
                     batch_size = max(settings.ingestion_embedding_batch_size, 1)
                     embeddings: list[list[float]] = []

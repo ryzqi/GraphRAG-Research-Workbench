@@ -88,6 +88,7 @@ export interface KnowledgeBase {
 }
 
 export type KnowledgeBaseListResponse = ListResponse<KnowledgeBase>;
+export type KnowledgeBaseStatusFilter = 'active' | 'archived' | 'all';
 
 export interface KnowledgeBaseCreate {
   name: string;
@@ -154,10 +155,21 @@ export function createDefaultIndexConfig(): IndexConfig {
 }
 
 /**
- * 获取所有活跃知识库列表
+ * 获取知识库列表
  */
-export async function listKnowledgeBases(): Promise<KnowledgeBaseListResponse> {
-  return apiFetch<KnowledgeBaseListResponse>('/api/v1/knowledge-bases');
+export async function listKnowledgeBases(params?: {
+  status?: KnowledgeBaseStatusFilter;
+  skip?: number;
+  limit?: number;
+}): Promise<KnowledgeBaseListResponse> {
+  const searchParams = new URLSearchParams();
+  if (params?.status) searchParams.set('status', params.status);
+  if (params?.skip !== undefined) searchParams.set('skip', String(params.skip));
+  if (params?.limit !== undefined) searchParams.set('limit', String(params.limit));
+  const query = searchParams.toString();
+  return apiFetch<KnowledgeBaseListResponse>(
+    `/api/v1/knowledge-bases${query ? `?${query}` : ''}`
+  );
 }
 
 /**

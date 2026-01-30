@@ -168,6 +168,12 @@ class KnowledgeBaseStatus(str, Enum):
     ARCHIVED = "archived"
 
 
+class KnowledgeBaseStatusFilter(str, Enum):
+    ACTIVE = "active"
+    ARCHIVED = "archived"
+    ALL = "all"
+
+
 class KnowledgeBaseCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

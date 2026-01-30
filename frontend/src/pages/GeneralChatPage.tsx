@@ -1,7 +1,7 @@
 /**
  * 普通代理聊天页面（Gemini 风格重构）
  */
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Box, Chip, FormControlLabel, Stack, Switch, Typography } from '@mui/material';
 import {
@@ -40,17 +40,6 @@ const quickPrompts = [
   { label: '风险与下一步', value: '请列出潜在风险与下一步建议：' },
 ];
 
-function isReloadNavigation(): boolean {
-  if (typeof performance === 'undefined') return false;
-  const entries = performance.getEntriesByType('navigation');
-  if (entries.length > 0) {
-    const nav = entries[0] as PerformanceNavigationTiming;
-    return nav.type === 'reload';
-  }
-  const legacy = (performance as Performance & { navigation?: { type?: number } }).navigation;
-  return legacy?.type === 1;
-}
-
 export function GeneralChatPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const sessionId = searchParams.get('sessionId');
@@ -61,8 +50,6 @@ export function GeneralChatPage() {
   const [loadingSession, setLoadingSession] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [allowExternal, setAllowExternal] = useState(false);
-  const [skipSessionLoad, setSkipSessionLoad] = useState(() => isReloadNavigation());
-  const bootstrapPromiseRef = useRef<Promise<ChatSession> | null>(null);
 
   const { upsertSession, webSearchAvailable } = useRecentHistory();
 
@@ -70,7 +57,7 @@ export function GeneralChatPage() {
   const isInputDisabled = loading || loadingSession || hasPendingApproval;
 
   useEffect(() => {
-    if (!sessionId || skipSessionLoad) {
+    if (!sessionId) {
       return;
     }
     let active = true;
@@ -94,16 +81,14 @@ export function GeneralChatPage() {
       } catch (e) {
         if (!active) return;
         // Stale/deleted sessionId in URL is possible (e.g., backend reset or old bookmark). Recover by
-        // clearing the param and letting the bootstrap flow create a fresh session.
+        // clearing the param so the user can start a new chat.
         if (e instanceof HttpError && e.status === 404) {
-          bootstrapPromiseRef.current = null;
           setSession(null);
           setMessages([]);
           setError(null);
           const nextParams = new URLSearchParams(window.location.search);
           nextParams.delete('sessionId');
           setSearchParams(nextParams, { replace: true });
-          setSkipSessionLoad(true);
           return;
         }
         setError(e instanceof Error ? e.message : '加载会话失败');
@@ -117,49 +102,7 @@ export function GeneralChatPage() {
     return () => {
       active = false;
     };
-  }, [sessionId, skipSessionLoad]);
-
-  useEffect(() => {
-    if (!skipSessionLoad) {
-      return;
-    }
-    let cancelled = false;
-    let active = true;
-    const bootstrapSession = async () => {
-      setLoadingSession(true);
-      setError(null);
-      try {
-        if (!bootstrapPromiseRef.current) {
-          bootstrapPromiseRef.current = createChatSession({
-            session_type: 'general_chat',
-            allow_external: allowExternal,
-            mode: 'single_agent',
-          });
-        }
-        const newSession = await bootstrapPromiseRef.current;
-        if (!active || cancelled) return;
-        setSession(newSession);
-        setAllowExternal(newSession.allow_external);
-        const nextParams = new URLSearchParams(window.location.search);
-        nextParams.set('sessionId', newSession.id);
-        setSearchParams(nextParams, { replace: true });
-      } catch (e) {
-        if (!active || cancelled) return;
-        setError(e instanceof Error ? e.message : '创建会话失败');
-        bootstrapPromiseRef.current = null;
-      } finally {
-        if (active && !cancelled) {
-          setLoadingSession(false);
-          setSkipSessionLoad(false);
-        }
-      }
-    };
-    void bootstrapSession();
-    return () => {
-      active = false;
-      cancelled = true;
-    };
-  }, [allowExternal, setSearchParams, skipSessionLoad]);
+  }, [sessionId, setSearchParams]);
 
   useEffect(() => {
     if (sessionId) return;

@@ -14,6 +14,7 @@ import {
   type KnowledgeBaseUpdate,
   type IndexConfig,
   type KnowledgeBaseIndexConfigUpdateResponse,
+  type KnowledgeBaseStatusFilter,
 } from '../../services/knowledgeBases';
 import { indexRebuildKeys } from './useIndexRebuilds';
 
@@ -27,10 +28,11 @@ const KEYS = {
 /**
  * 获取知识库列表
  */
-export function useKnowledgeBases() {
+export function useKnowledgeBases(params?: { status?: KnowledgeBaseStatusFilter }) {
+  const status = params?.status ?? 'active';
   return useQuery({
-    queryKey: KEYS.list(),
-    queryFn: () => listKnowledgeBases().then((res) => res.items),
+    queryKey: [...KEYS.list(), status],
+    queryFn: () => listKnowledgeBases({ status }).then((res) => res.items),
   });
 }
 

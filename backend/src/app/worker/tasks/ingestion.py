@@ -23,13 +23,7 @@ from app.models.ingestion_job import (
 from app.models.source_material import SourceMaterial
 from app.worker.celery_app import celery_app
 from app.worker.task_resources import managed_task_resources
-
-
-def _build_embedding_input_text(*, chunk_text: str, heading_path: str | None) -> str:
-    """Build the text used for embedding (before optional contextual injection)."""
-    if heading_path and heading_path.strip():
-        return f"{heading_path.strip()} : {chunk_text}"
-    return chunk_text
+from app.worker.tasks.embedding_inputs import build_embedding_inputs
 
 
 @celery_app.task(name="app.worker.tasks.ingestion.run_ingestion_job")
@@ -183,35 +177,11 @@ async def _run_ingestion_job(job_id: str) -> None:
                             if result.success:
                                 contexts[idx] = result.context
 
-                    parent_content_by_ref: dict[int, str] = {}
-                    parent_idx = 0
-                    for item in chunk_items:
-                        if item.chunk_role == "parent":
-                            parent_content_by_ref[parent_idx] = item.content
-                            parent_idx += 1
-
-                    embedding_inputs = []
-                    for item, context in zip(chunk_items, contexts):
-                        base_text = item.content
-                        if item.chunk_role == "child" and item.parent_ref is not None:
-                            parent_text = parent_content_by_ref.get(item.parent_ref)
-                            if parent_text:
-                                base_text = f"{parent_text}\n\n{item.content}"
-
-                        heading_path = None
-                        if item.metadata:
-                            raw_heading_path = item.metadata.get("heading_path")
-                            if isinstance(raw_heading_path, str):
-                                heading_path = raw_heading_path
-                        base_text = _build_embedding_input_text(
-                            chunk_text=base_text,
-                            heading_path=heading_path,
-                        )
-
-                        if index_config.contextual.enabled and context:
-                            embedding_inputs.append(f"{base_text}\n\n{context}")
-                        else:
-                            embedding_inputs.append(base_text)
+                    embedding_inputs = build_embedding_inputs(
+                        chunk_items=chunk_items,
+                        contexts=contexts,
+                        contextual_enabled=index_config.contextual.enabled,
+                    )
 
                     # 批量生成 embedding
                     batch_size = max(settings.ingestion_embedding_batch_size, 1)

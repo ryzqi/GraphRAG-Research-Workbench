@@ -80,7 +80,7 @@ export default function KnowledgeBasesPage() {
   );
 
   // React Query hooks
-  const { data: kbs = [], isLoading, error, refetch } = useKnowledgeBases();
+  const { data: kbs = [], isLoading, error, refetch } = useKnowledgeBases({ status: 'all' });
   const createMutation = useCreateKnowledgeBase();
   const updateMutation = useUpdateKnowledgeBase();
   const updateIndexConfigMutation = useUpdateKnowledgeBaseIndexConfig();

@@ -1,7 +1,7 @@
 /**
  * 知识库问答页面（Gemini 风格重构）
  */
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Box, Stack, Typography } from '@mui/material';
 import RestartAltIcon from '@mui/icons-material/RestartAlt';
@@ -36,24 +36,9 @@ import {
   parseDelta,
 } from '../lib/deltaParser';
 
-function isReloadNavigation(): boolean {
-  if (typeof performance === 'undefined') return false;
-  const entries = performance.getEntriesByType('navigation');
-  if (entries.length > 0) {
-    const nav = entries[0] as PerformanceNavigationTiming;
-    return nav.type === 'reload';
-  }
-  const legacy = (performance as Performance & { navigation?: { type?: number } }).navigation;
-  return legacy?.type === 1;
-}
-
 export function KbChatPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const sessionId = searchParams.get('sessionId');
-  const initialSessionIdRef = useRef(sessionId);
-  const bootstrapPromiseRef = useRef<Promise<{ session: ChatSession; kbIds: string[] }> | null>(
-    null
-  );
   const knowledgeBasesQuery = useKnowledgeBases();
   const knowledgeBases = knowledgeBasesQuery.data ?? [];
 
@@ -64,7 +49,6 @@ export function KbChatPage() {
   const [loading, setLoading] = useState(false);
   const [loadingSession, setLoadingSession] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [skipSessionLoad, setSkipSessionLoad] = useState(() => isReloadNavigation());
 
   const { upsertSession } = useRecentHistory();
 
@@ -72,7 +56,7 @@ export function KbChatPage() {
     error ?? (knowledgeBasesQuery.error ? getErrorMessage(knowledgeBasesQuery.error) : null);
 
   useEffect(() => {
-    if (!sessionId || skipSessionLoad) {
+    if (!sessionId) {
       return;
     }
     let active = true;
@@ -117,63 +101,7 @@ export function KbChatPage() {
     return () => {
       active = false;
     };
-  }, [sessionId, skipSessionLoad]);
-
-  useEffect(() => {
-    if (!skipSessionLoad) {
-      return;
-    }
-    if (!initialSessionIdRef.current) {
-      setSkipSessionLoad(false);
-      return;
-    }
-    let active = true;
-    let cancelled = false;
-    const bootstrapSession = async () => {
-      setLoadingSession(true);
-      setError(null);
-      try {
-        if (!bootstrapPromiseRef.current) {
-          bootstrapPromiseRef.current = (async () => {
-            const sourceSession = await getChatSession(initialSessionIdRef.current as string);
-            const kbIds = sourceSession.selected_kb_ids ?? [];
-            if (kbIds.length === 0) {
-              throw new Error('请至少选择一个知识库');
-            }
-            const newSession = await createChatSession({
-              session_type: 'kb_chat',
-              selected_kb_ids: kbIds,
-              allow_external: false,
-              mode: 'single_agent' as AgentMode,
-            });
-            return { session: newSession, kbIds };
-          })();
-        }
-        const result = await bootstrapPromiseRef.current;
-        if (!active || cancelled) return;
-        setSelectedKbIds(result.kbIds);
-        setSession(result.session);
-        setMessages([]);
-        const nextParams = new URLSearchParams(window.location.search);
-        nextParams.set('sessionId', result.session.id);
-        setSearchParams(nextParams, { replace: true });
-      } catch (e) {
-        if (!active || cancelled) return;
-        setError(getErrorMessage(e));
-        bootstrapPromiseRef.current = null;
-      } finally {
-        if (active && !cancelled) {
-          setLoadingSession(false);
-          setSkipSessionLoad(false);
-        }
-      }
-    };
-    void bootstrapSession();
-    return () => {
-      active = false;
-      cancelled = true;
-    };
-  }, [setSearchParams, skipSessionLoad]);
+  }, [sessionId, setSearchParams]);
 
   useEffect(() => {
     if (sessionId) return;

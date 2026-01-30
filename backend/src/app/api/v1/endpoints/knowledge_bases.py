@@ -8,6 +8,7 @@ from fastapi import APIRouter, HTTPException, Query, Response, status
 from fastapi.exceptions import RequestValidationError
 
 from app.api.deps import AsyncSessionDep
+from app.models.knowledge_base import KnowledgeBaseStatus as ModelKnowledgeBaseStatus
 from app.schemas.knowledge_bases import (
     ChunkingStrategy,
     IndexConfig,
@@ -16,6 +17,7 @@ from app.schemas.knowledge_bases import (
     KnowledgeBaseIndexConfigUpdateResponse,
     KnowledgeBaseListResponse,
     KnowledgeBaseRead,
+    KnowledgeBaseStatusFilter,
     KnowledgeBaseUpdate,
 )
 from app.schemas.pagination import PageMeta
@@ -32,10 +34,18 @@ async def list_knowledge_bases(
     db: AsyncSessionDep,
     skip: int = Query(0, ge=0, description="跳过记录数"),
     limit: int = Query(100, ge=1, le=100, description="返回记录数"),
+    status: KnowledgeBaseStatusFilter = Query(
+        KnowledgeBaseStatusFilter.ACTIVE, description="按状态过滤"
+    ),
 ) -> KnowledgeBaseListResponse:
-    """列出所有活跃知识库。"""
+    """列出知识库（默认仅 active）。"""
     service = KnowledgeBaseService(db)
-    kbs, total = await service.list_active_page(skip=skip, limit=limit)
+    model_status = (
+        None
+        if status == KnowledgeBaseStatusFilter.ALL
+        else ModelKnowledgeBaseStatus(status.value)
+    )
+    kbs, total = await service.list_page(skip=skip, limit=limit, status=model_status)
     return KnowledgeBaseListResponse(
         items=[KnowledgeBaseRead.model_validate(kb) for kb in kbs],
         page=PageMeta(
