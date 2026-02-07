@@ -53,14 +53,28 @@ class KnowledgeBase(Base):
 
     # 关系
     materials: Mapped[list["SourceMaterial"]] = relationship(
-        "SourceMaterial", back_populates="knowledge_base", lazy="selectin"
+        "SourceMaterial",
+        back_populates="knowledge_base",
+        lazy="selectin",
+        # Use DB-level ON DELETE CASCADE and prevent ORM nulling FK columns.
+        passive_deletes="all",
     )
     chunks: Mapped[list["DocumentChunk"]] = relationship(
-        "DocumentChunk", back_populates="knowledge_base", lazy="selectin"
+        "DocumentChunk",
+        back_populates="knowledge_base",
+        lazy="selectin",
+        passive_deletes="all",
     )
     ingestion_jobs: Mapped[list["IngestionJob"]] = relationship(
-        "IngestionJob", back_populates="knowledge_base", lazy="selectin"
+        "IngestionJob",
+        back_populates="knowledge_base",
+        lazy="selectin",
+        passive_deletes="all",
     )
     index_rebuild_jobs: Mapped[list["IndexRebuildJob"]] = relationship(
-        "IndexRebuildJob", back_populates="knowledge_base", lazy="selectin"
+        "IndexRebuildJob",
+        back_populates="knowledge_base",
+        lazy="selectin",
+        passive_deletes="all",
     )
+
