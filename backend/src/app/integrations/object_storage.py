@@ -6,6 +6,7 @@ from datetime import timedelta
 import asyncio
 import anyio
 from minio import Minio
+from minio.error import S3Error
 
 from app.core.settings import get_settings
 
@@ -13,6 +14,10 @@ from app.core.settings import get_settings
 _BUCKET_CACHE: set[str] = set()
 _BUCKET_LOCK: asyncio.Lock | None = None
 _BUCKET_LOCK_LOOP: asyncio.AbstractEventLoop | None = None
+
+
+def _is_not_found_error(exc: S3Error) -> bool:
+    return exc.code in {"NoSuchKey", "NoSuchBucket"}
 
 
 def _get_bucket_lock() -> asyncio.Lock:
@@ -113,3 +118,42 @@ class ObjectStorage:
                 response.release_conn()
 
         return await anyio.to_thread.run_sync(_get)
+
+    async def remove_object(self, ref: ObjectRef, *, ignore_missing: bool = True) -> None:
+        """删除单个对象。"""
+
+        def _remove() -> None:
+            self._client.remove_object(ref.bucket, ref.object_name)
+
+        try:
+            await anyio.to_thread.run_sync(_remove)
+        except S3Error as exc:
+            if ignore_missing and _is_not_found_error(exc):
+                return
+            raise
+
+    async def remove_by_prefix(self, *, bucket: str, prefix: str) -> int:
+        """按前缀删除对象，返回删除数量。"""
+
+        def _remove() -> int:
+            removed = 0
+            for obj in self._client.list_objects(
+                bucket_name=bucket,
+                prefix=prefix,
+                recursive=True,
+            ):
+                try:
+                    self._client.remove_object(bucket, obj.object_name)
+                except S3Error as exc:
+                    if _is_not_found_error(exc):
+                        continue
+                    raise
+                removed += 1
+            return removed
+
+        try:
+            return await anyio.to_thread.run_sync(_remove)
+        except S3Error as exc:
+            if _is_not_found_error(exc):
+                return 0
+            raise

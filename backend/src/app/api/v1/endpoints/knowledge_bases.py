@@ -6,6 +6,7 @@ import uuid
 
 from fastapi import APIRouter, HTTPException, Query, Response, status
 from fastapi.exceptions import RequestValidationError
+from sqlalchemy.exc import IntegrityError
 
 from app.api.deps import AsyncSessionDep
 from app.models.knowledge_base import KnowledgeBaseStatus as ModelKnowledgeBaseStatus
@@ -27,6 +28,19 @@ from app.services.index_rebuild_service import IndexRebuildService
 from app.services.material_service import MaterialService
 
 router = APIRouter()
+
+
+def _is_kb_name_conflict_error(exc: IntegrityError) -> bool:
+    """Return whether an IntegrityError maps to knowledge-base name conflict."""
+    orig = getattr(exc, "orig", None)
+    sqlstate = getattr(orig, "sqlstate", None) or getattr(orig, "pgcode", None)
+    if sqlstate == "23505":
+        return True
+
+    message = str(orig or exc).lower()
+    return "knowledge_bases_name_key" in message or (
+        "duplicate" in message and "knowledge_bases" in message and "name" in message
+    )
 
 
 @router.get("", response_model=KnowledgeBaseListResponse)
@@ -77,12 +91,21 @@ async def create_knowledge_base(
         if body.index_config is not None
         else IndexConfig().model_dump(mode="json")
     )
-    kb = await service.create(
-        name=body.name,
-        description=body.description,
-        tags=body.tags,
-        index_config=index_config,
-    )
+    try:
+        kb = await service.create(
+            name=body.name,
+            description=body.description,
+            tags=body.tags,
+            index_config=index_config,
+        )
+    except IntegrityError as exc:
+        await db.rollback()
+        if _is_kb_name_conflict_error(exc):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={"code": "KB_NAME_EXISTS", "message": "知识库名称已存在"},
+            ) from exc
+        raise
     return KnowledgeBaseRead.model_validate(kb)
 
 
@@ -207,6 +230,7 @@ async def update_index_config(
 
     rebuild_service = IndexRebuildService(db)
     job = await rebuild_service.create_job(kb=kb, index_config=new_config)
+    await db.refresh(kb)
     return KnowledgeBaseIndexConfigUpdateResponse(
         knowledge_base=KnowledgeBaseRead.model_validate(kb),
         rebuild_job=job,

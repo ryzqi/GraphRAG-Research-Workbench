@@ -7,6 +7,9 @@ import uuid
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.settings import get_settings
+from app.integrations.milvus_client import create_milvus_client
+from app.integrations.object_storage import ObjectStorage
 from app.models.knowledge_base import KnowledgeBase, KnowledgeBaseStatus
 
 
@@ -122,14 +125,37 @@ class KnowledgeBaseService:
         await self._db.refresh(kb)
         return kb
 
+    async def _cleanup_external_resources(self, kb_id: uuid.UUID) -> None:
+        """清理知识库关联的外部资源（Milvus + MinIO 上传对象）。"""
+
+        milvus_client = create_milvus_client()
+        try:
+            await milvus_client.delete_by_kb_id(str(kb_id))
+        finally:
+            await milvus_client.aclose()
+
+        storage = ObjectStorage()
+        settings = get_settings()
+        await storage.remove_by_prefix(
+            bucket=settings.minio_bucket_uploads,
+            prefix=f"{kb_id}/",
+        )
+
     async def delete(self, kb_id: uuid.UUID) -> bool:
         """删除知识库（级联删除关联数据）。"""
         kb = await self.get_by_id(kb_id)
         if not kb:
             return False
 
-        await self._db.delete(kb)
-        await self._db.commit()
+        try:
+            await self._db.delete(kb)
+            # Flush first so DB-side failures surface before external cleanup.
+            await self._db.flush()
+            await self._cleanup_external_resources(kb_id)
+            await self._db.commit()
+        except Exception:
+            await self._db.rollback()
+            raise
         return True
 
     async def archive(self, kb_id: uuid.UUID) -> KnowledgeBase | None:
