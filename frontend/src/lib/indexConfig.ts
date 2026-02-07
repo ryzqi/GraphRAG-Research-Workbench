@@ -187,7 +187,7 @@ export function validateIndexConfig(config: IndexConfig): string[] {
     );
   }
 
-  if (retrieval.parent_child.enabled) {
+  if (chunking.general_strategy === 'parent_child') {
     checkRange(
       { value: retrieval.parent_child.max_parents, min: 1, max: 20, label: '父子检索 max_parents' },
       errors

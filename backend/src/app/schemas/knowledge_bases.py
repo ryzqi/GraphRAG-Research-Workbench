@@ -142,7 +142,6 @@ class ContextualConfig(BaseModel):
 class RetrievalParentChildConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    enabled: bool = False
     max_parents: int = Field(6, ge=1, le=20)
     max_children_per_parent: int = Field(2, ge=1, le=10)
 
@@ -161,7 +160,6 @@ class IndexConfig(BaseModel):
     chunking: ChunkingConfig = Field(default_factory=ChunkingConfig)
     contextual: ContextualConfig = Field(default_factory=ContextualConfig)
     retrieval: RetrievalConfig = Field(default_factory=RetrievalConfig)
-
 
 class KnowledgeBaseStatus(str, Enum):
     ACTIVE = "active"

@@ -99,24 +99,6 @@ export function IndexConfigForm({
     updateContextual({ enabled: true });
   };
 
-  const handleRetrievalParentChildToggle = (enabled: boolean) => {
-    if (!enabled) {
-      onChange({
-        ...value,
-        retrieval: {
-          ...value.retrieval,
-          parent_child: { ...defaults.retrieval.parent_child, enabled: false },
-        },
-      });
-      return;
-    }
-    updateRetrieval({
-      parent_child: {
-        ...value.retrieval.parent_child,
-        enabled: true,
-      },
-    });
-  };
 
   const slidingOverlapError =
     value.chunking.sliding_window.chunk_overlap >= value.chunking.sliding_window.chunk_size;
@@ -552,18 +534,7 @@ export function IndexConfigForm({
                 />
               </Stack>
             )}
-
-            <FormControlLabel
-              control={
-                <Switch
-                  checked={value.retrieval.parent_child.enabled}
-                  onChange={(e) => handleRetrievalParentChildToggle(e.target.checked)}
-                  disabled={disabled}
-                />
-              }
-              label="启用父子检索"
-            />
-            {value.retrieval.parent_child.enabled && (
+            {selectedStrategy === 'parent_child' && (
               <Stack spacing={2} direction={{ xs: 'column', sm: 'row' }}>
                 <TextField
                   label="max_parents"

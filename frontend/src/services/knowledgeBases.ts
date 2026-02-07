@@ -61,7 +61,6 @@ export interface ContextualConfig {
 }
 
 export interface RetrievalParentChildConfig {
-  enabled: boolean;
   max_parents: number;
   max_children_per_parent: number;
 }
@@ -146,7 +145,6 @@ export function createDefaultIndexConfig(): IndexConfig {
     },
     retrieval: {
       parent_child: {
-        enabled: false,
         max_parents: 6,
         max_children_per_parent: 2,
       },

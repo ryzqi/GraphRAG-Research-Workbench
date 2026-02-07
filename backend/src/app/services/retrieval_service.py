@@ -22,7 +22,7 @@ from app.integrations.rerank_client import RerankClient
 from app.models.document_chunk import DocumentChunk
 from app.models.knowledge_base import KnowledgeBase
 from app.schemas.chats import EvidenceItem, EvidenceSourceKind
-from app.schemas.knowledge_bases import IndexConfig
+from app.schemas.knowledge_bases import ChunkingStrategy, IndexConfig
 from app.schemas.query_enhancement import QueryHitSource, QueryItem
 from app.services.query_rewrite_service import (
     QueryRewriteService,
@@ -916,6 +916,7 @@ class RetrievalService:
         fingerprint: dict[str, dict] = {}
         for kb_id, cfg in configs.items():
             fingerprint[str(kb_id)] = {
+                "general_strategy": cfg.chunking.general_strategy.value,
                 "parent_child": cfg.retrieval.parent_child.model_dump(mode="json"),
             }
         return dict(sorted(fingerprint.items(), key=lambda item: item[0]))
@@ -989,7 +990,7 @@ class RetrievalService:
             if not kb_results:
                 continue
 
-            if not cfg.retrieval.parent_child.enabled:
+            if cfg.chunking.general_strategy != ChunkingStrategy.PARENT_CHILD:
                 for r in kb_results:
                     r.context_text = r.chunk.content
                 continue
