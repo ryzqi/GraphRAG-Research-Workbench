@@ -6,7 +6,6 @@ import { useState, useEffect, useRef } from 'react';
 import { Box, Typography, Collapse, keyframes } from '@mui/material';
 import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
-import { motion, AnimatePresence } from 'framer-motion';
 
 // 品牌渐变色
 const BRAND_GRADIENT = 'linear-gradient(135deg, #4285F4, #9B72CB, #D96570)';
@@ -91,10 +90,10 @@ export function ThinkingContainer({
         setThinkDuration(Math.floor((Date.now() - startTime) / 1000));
       }, 1000);
       return () => clearInterval(interval);
-    } else {
-      // 完成时，固定时长
-      setThinkDuration(Math.floor((Date.now() - startTime) / 1000));
     }
+
+    // 完成时，固定时长
+    setThinkDuration(Math.floor((Date.now() - startTime) / 1000));
   }, [startTime, isStreaming]);
 
   // 检测流式结束，触发过渡动画并自动收起
@@ -208,11 +207,7 @@ export function ThinkingContainer({
 
         {/* 展开/收起箭头（仅完成后显示） */}
         {!isStreaming && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ duration: 0.2 }}
-          >
+          <Box sx={{ display: 'flex', opacity: 1, transition: 'opacity 0.2s' }}>
             <ExpandMoreIcon
               sx={{
                 fontSize: 18,
@@ -221,51 +216,47 @@ export function ThinkingContainer({
                 transition: 'transform 0.2s ease',
               }}
             />
-          </motion.div>
+          </Box>
         )}
       </Box>
 
       {/* 思考内容 */}
-      <AnimatePresence mode="wait">
-        <Collapse in={isExpanded} timeout={200}>
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{
-              opacity: isStreaming ? 1 : isTransitioning ? 0 : 1,
+      <Collapse in={isExpanded} timeout={200}>
+        <Box
+          sx={{
+            opacity: isStreaming ? 1 : isTransitioning ? 0 : 1,
+            transition: 'opacity 0.3s ease',
+          }}
+        >
+          <Box
+            sx={{
+              mt: 0.5,
+              ml: contentIndent,
+              pl: 2,
+              borderLeft: 2,
+              borderColor: 'divider',
             }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.3 }}
           >
-            <Box
+            <Typography
+              variant="body2"
               sx={{
-                mt: 0.5,
-                ml: contentIndent,
-                pl: 2,
-                borderLeft: 2,
-                borderColor: 'divider',
+                fontSize: 13,
+                whiteSpace: 'pre-wrap',
+                color: 'text.secondary',
+                opacity: isStreaming ? 0.7 : 0.85,
+                animation: isStreaming ? `${breathe} 2.5s ease-in-out infinite` : 'none',
+                lineHeight: 1.6,
+                '@media (prefers-reduced-motion: reduce)': {
+                  animation: 'none',
+                  opacity: 0.7,
+                },
               }}
             >
-              <Typography
-                variant="body2"
-                sx={{
-                  fontSize: 13,
-                  whiteSpace: 'pre-wrap',
-                  color: 'text.secondary',
-                  opacity: isStreaming ? 0.7 : 0.85,
-                  animation: isStreaming ? `${breathe} 2.5s ease-in-out infinite` : 'none',
-                  lineHeight: 1.6,
-                  '@media (prefers-reduced-motion: reduce)': {
-                    animation: 'none',
-                    opacity: 0.7,
-                  },
-                }}
-              >
-                {content}
-              </Typography>
-            </Box>
-          </motion.div>
-        </Collapse>
-      </AnimatePresence>
+              {content}
+            </Typography>
+          </Box>
+        </Box>
+      </Collapse>
     </Box>
   );
 }

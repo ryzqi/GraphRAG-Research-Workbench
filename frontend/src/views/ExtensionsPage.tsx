@@ -10,7 +10,7 @@ import {
   useExtensionTools,
   useExtensions,
   useUpdateExtension,
-} from '../hooks/queries';
+} from '../hooks/queries/useExtensions';
 import { getErrorMessage } from '../lib/errorHandler';
 
 export function ExtensionsPage() {
@@ -205,7 +205,7 @@ export function ExtensionsPage() {
         <div style={{ textAlign: 'center', color: '#6b7280', padding: 40 }}>加载中...</div>
       ) : extensions.length === 0 ? (
         <div style={{ textAlign: 'center', color: '#6b7280', padding: 40 }}>
-          暂无扩展，点击"添加扩展"开始
+          暂无扩展，点击「添加扩展」开始
         </div>
       ) : (
         <div style={{ display: 'grid', gap: 12 }}>
@@ -320,3 +320,5 @@ export function ExtensionsPage() {
 }
 
 export default ExtensionsPage;
+
+

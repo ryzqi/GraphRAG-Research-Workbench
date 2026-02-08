@@ -16,8 +16,6 @@ function normalizeApiBaseUrl(raw: string): string {
   const trimmed = raw.trim().replace(/\/+$/, '');
   const normalized = trimmed.replace(/\/api\/v1$/, '');
 
-  // Some environments (IPv6 / system proxy tools) treat "localhost" differently than 127.0.0.1.
-  // To avoid "ERR_CONNECTION_REFUSED" where requests never reach the local backend, force localhost -> 127.0.0.1.
   try {
     const url = new URL(normalized);
     if (url.hostname === 'localhost') {
@@ -25,22 +23,17 @@ function normalizeApiBaseUrl(raw: string): string {
       return url.toString().replace(/\/$/, '');
     }
   } catch {
-    // Ignore parsing errors (e.g., relative URLs) and fall back to the normalized string.
+    // Ignore parsing errors for relative paths.
   }
 
   return normalized;
 }
 
 const API_BASE_URL = (() => {
-  const raw = import.meta.env.VITE_API_BASE_URL as string | undefined;
+  const raw = process.env.NEXT_PUBLIC_API_BASE_URL;
   if (!raw) {
-    // In dev, prefer same-origin so Vite's dev proxy can forward to the backend.
-    // This avoids CORS and also avoids browser/system-proxy loopback edge cases.
-    return import.meta.env.DEV ? '' : 'http://127.0.0.1:8000';
+    return 'http://127.0.0.1:8000';
   }
-
-  // If the user explicitly configured a backend base URL, honor it.
-  // This makes the frontend-backend integration deterministic and avoids relying on Vite's dev proxy.
   return normalizeApiBaseUrl(raw);
 })();
 
@@ -69,10 +62,7 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
       headers,
     });
   } catch (err) {
-    // fetch throws on network errors (e.g., backend not started / connection refused).
-    const hint = API_BASE_URL
-      ? `无法连接到后端服务（${API_BASE_URL}）。请确认后端已启动并可访问：${url}，或在 frontend/.env.local 配置 VITE_API_BASE_URL。`
-      : `无法通过前端代理访问后端。请确认后端已启动（http://127.0.0.1:8000），并检查 frontend/vite.config.ts 的 server.proxy 配置。请求：${url}`;
+    const hint = `无法连接到后端服务（${API_BASE_URL}）。请确认后端已启动并可访问：${url}，或在 frontend/.env.local 配置 NEXT_PUBLIC_API_BASE_URL。`;
     throw new HttpError(hint, 0, { requestId, body: err instanceof Error ? err.message : err });
   }
 
@@ -92,3 +82,4 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
 
   return body as T;
 }
+

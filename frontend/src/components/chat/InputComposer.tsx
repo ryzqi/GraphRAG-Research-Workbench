@@ -18,7 +18,6 @@ import {
 import SendIcon from '@mui/icons-material/Send';
 import AttachFileIcon from '@mui/icons-material/AttachFile';
 import UploadFileIcon from '@mui/icons-material/UploadFile';
-import { motion } from 'framer-motion';
 import { ACCEPTED_FILE_TYPES, SUPPORTED_FILE_TYPES_LABEL } from '../../utils/fileValidation';
 
 // 视觉上更接近单行输入框的高度（用于“垂直居中”的观感）
@@ -123,10 +122,23 @@ export function InputComposer({
   const canSend = !isDisabled && value.trim().length > 0;
 
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 20 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.3, ease: [0.2, 0, 0, 1] }}
+    <Box
+      sx={{
+        animation: 'composerEnter 300ms cubic-bezier(0.2, 0, 0, 1)',
+        '@keyframes composerEnter': {
+          from: {
+            opacity: 0,
+            transform: 'translateY(20px)',
+          },
+          to: {
+            opacity: 1,
+            transform: 'translateY(0)',
+          },
+        },
+        '@media (prefers-reduced-motion: reduce)': {
+          animation: 'none',
+        },
+      }}
     >
       <Paper
         elevation={0}
@@ -259,6 +271,6 @@ export function InputComposer({
       >
         Enter 发送，Shift+Enter 换行
       </Typography>
-    </motion.div>
+    </Box>
   );
 }

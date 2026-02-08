@@ -1,7 +1,6 @@
 /**
- * 扩展管理 React Query Hooks
+ * Extension data hooks based on SWR
  */
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   createExtension,
   deleteExtension,
@@ -11,8 +10,8 @@ import {
   type ToolExtensionCreate,
   type ToolExtensionUpdate,
 } from '../../services/extensions';
+import { useApiMutation, useApiQuery } from '../../lib/swr';
 
-// Query Keys
 const NO_ID = '__none__';
 
 const KEYS = {
@@ -22,70 +21,43 @@ const KEYS = {
   tools: (id: string | undefined) => [...KEYS.all, 'tools', id ?? NO_ID] as const,
 };
 
-/**
- * 获取扩展列表
- */
 export function useExtensions() {
-  return useQuery({
-    queryKey: KEYS.list(),
-    queryFn: () => listExtensions().then((res) => res.items),
-  });
+  return useApiQuery(KEYS.list(), () => listExtensions().then((res) => res.items));
 }
 
-/**
- * 获取扩展提供的工具列表
- */
 export function useExtensionTools(extensionId: string | undefined) {
-  return useQuery({
-    queryKey: KEYS.tools(extensionId),
-    queryFn: () => getExtensionTools(extensionId as string).then((res) => res.items),
-    enabled: !!extensionId,
-  });
+  return useApiQuery(
+    extensionId ? KEYS.tools(extensionId) : null,
+    extensionId
+      ? () => getExtensionTools(extensionId).then((res) => res.items)
+      : null
+  );
 }
 
-/**
- * 创建扩展
- */
 export function useCreateExtension() {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: (data: ToolExtensionCreate) => createExtension(data),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: KEYS.list() });
+  return useApiMutation((data: ToolExtensionCreate) => createExtension(data), {
+    onSuccess: async (_, __, { invalidate }) => {
+      await invalidate([KEYS.list()]);
     },
   });
 }
 
-/**
- * 更新扩展
- */
 export function useUpdateExtension() {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: ({ id, data }: { id: string; data: ToolExtensionUpdate }) =>
+  return useApiMutation(
+    ({ id, data }: { id: string; data: ToolExtensionUpdate }) =>
       updateExtension(id, data),
-    onSuccess: (_, { id }) => {
-      queryClient.invalidateQueries({ queryKey: KEYS.list() });
-      queryClient.invalidateQueries({ queryKey: KEYS.detail(id) });
-      queryClient.invalidateQueries({ queryKey: KEYS.tools(id) });
-    },
-  });
+    {
+      onSuccess: async (_, { id }, { invalidate }) => {
+        await invalidate([KEYS.list(), KEYS.detail(id), KEYS.tools(id)]);
+      },
+    }
+  );
 }
 
-/**
- * 删除扩展
- */
 export function useDeleteExtension() {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: (id: string) => deleteExtension(id),
-    onSuccess: (_, id) => {
-      queryClient.invalidateQueries({ queryKey: KEYS.list() });
-      queryClient.removeQueries({ queryKey: KEYS.detail(id) });
-      queryClient.removeQueries({ queryKey: KEYS.tools(id) });
+  return useApiMutation((id: string) => deleteExtension(id), {
+    onSuccess: async (_, id, { invalidate }) => {
+      await invalidate([KEYS.list(), KEYS.detail(id), KEYS.tools(id)]);
     },
   });
 }

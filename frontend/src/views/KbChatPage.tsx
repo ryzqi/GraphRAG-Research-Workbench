@@ -2,18 +2,15 @@
  * 知识库问答页面（Gemini 风格重构）
  */
 import { useCallback, useEffect, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { Box, Stack, Typography } from '@mui/material';
 import RestartAltIcon from '@mui/icons-material/RestartAlt';
 import { Button } from '../components/ui/Button';
 import { ErrorAlert } from '../components/ui/ErrorAlert';
 import { KnowledgeBaseSelector } from '../components/KnowledgeBaseSelector';
-import {
-  WelcomeScreen,
-  MessageList,
-  InputComposer,
-  type ChatMessage,
-} from '../components/chat';
+import { WelcomeScreen } from '../components/chat/WelcomeScreen';
+import { MessageList, type ChatMessage } from '../components/chat/MessageList';
+import { InputComposer } from '../components/chat/InputComposer';
 import {
   type AgentMode,
   type ChatSession,
@@ -25,7 +22,7 @@ import {
   streamChatMessage,
 } from '../services/chats';
 import { HttpError } from '../services/http';
-import { useSelectableKnowledgeBases } from '../hooks/queries';
+import { useSelectableKnowledgeBases } from '../hooks/queries/useKnowledgeBases';
 import { useRecentHistory } from '../hooks/useRecentHistory';
 import { getErrorMessage } from '../lib/errorHandler';
 import { parseSseJson } from '../lib/sse';
@@ -37,8 +34,19 @@ import {
 } from '../lib/deltaParser';
 
 export function KbChatPage() {
-  const [searchParams, setSearchParams] = useSearchParams();
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
   const sessionId = searchParams.get('sessionId');
+
+  const replaceSearchParams = useCallback(
+    (next: URLSearchParams) => {
+      const query = next.toString();
+      const href = query ? `${pathname}?${query}` : pathname;
+      router.replace(href);
+    },
+    [pathname, router]
+  );
   const knowledgeBasesQuery = useSelectableKnowledgeBases();
   const knowledgeBases = knowledgeBasesQuery.data ?? [];
 
@@ -64,9 +72,11 @@ export function KbChatPage() {
       setLoadingSession(true);
       setError(null);
       try {
-        // Load session first so that when it doesn't exist we avoid triggering an extra 404 on /messages.
-        const loadedSession = await getChatSession(sessionId);
-        const history = await getChatMessages(sessionId);
+        // Fire both requests together to reduce route hydration latency.
+        const sessionPromise = getChatSession(sessionId);
+        const historyPromise = getChatMessages(sessionId);
+        const loadedSession = await sessionPromise;
+        const history = await historyPromise;
         if (!active) return;
         setSession(loadedSession);
         setSelectedKbIds(loadedSession.selected_kb_ids ?? []);
@@ -85,9 +95,9 @@ export function KbChatPage() {
           setSession(null);
           setMessages([]);
           setSelectedKbIds([]);
-          const nextParams = new URLSearchParams(window.location.search);
+          const nextParams = new URLSearchParams(searchParams.toString());
           nextParams.delete('sessionId');
-          setSearchParams(nextParams, { replace: true });
+          replaceSearchParams(nextParams);
           return;
         }
         setError(getErrorMessage(e));
@@ -101,7 +111,7 @@ export function KbChatPage() {
     return () => {
       active = false;
     };
-  }, [sessionId, setSearchParams]);
+  }, [sessionId, searchParams, replaceSearchParams]);
 
   useEffect(() => {
     if (sessionId) return;
@@ -112,7 +122,23 @@ export function KbChatPage() {
 
   const updateMessage = useCallback(
     (id: string, updater: (msg: ChatMessage) => ChatMessage) => {
-      setMessages((prev) => prev.map((msg) => (msg.id === id ? updater(msg) : msg)));
+      setMessages((prev) => {
+        const lastIndex = prev.length - 1;
+        if (lastIndex >= 0 && prev[lastIndex].id === id) {
+          const next = prev.slice();
+          next[lastIndex] = updater(prev[lastIndex]);
+          return next;
+        }
+
+        const index = prev.findIndex((msg) => msg.id === id);
+        if (index === -1) {
+          return prev;
+        }
+
+        const next = prev.slice();
+        next[index] = updater(prev[index]);
+        return next;
+      });
     },
     []
   );
@@ -423,3 +449,8 @@ export function KbChatPage() {
     </Box>
   );
 }
+
+
+
+
+

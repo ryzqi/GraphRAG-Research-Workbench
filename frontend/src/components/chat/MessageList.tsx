@@ -3,10 +3,9 @@
  * 管理消息滚动和布局
  */
 import { useRef, useEffect, useCallback, useMemo, useState } from 'react';
-import { Box, IconButton, Paper, Stack, Tooltip } from '@mui/material';
+import { Box, Fade, IconButton, Paper, Stack, Tooltip } from '@mui/material';
 import { alpha } from '@mui/material/styles';
 import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
-import { AnimatePresence, motion } from 'framer-motion';
 import { MessageItem, ToolApprovalCard } from './MessageItem';
 import { SparkleLoading } from './SparkleLoading';
 import type { EvidenceItem } from '../../services/chats';
@@ -119,35 +118,35 @@ export function MessageList({
           if (isEmptyStreamingAssistant) return null;
 
           return (
-          <Box key={msg.id}>
-            <MessageItem
-              role={msg.role}
-              content={msg.content}
-              think={msg.think}
-              isStreaming={msg.isStreaming}
-              thinkStartTime={msg.thinkStartTime}
-            />
+            <Box key={msg.id} sx={{ contentVisibility: 'auto', containIntrinsicSize: '1px 220px' }}>
+              <MessageItem
+                role={msg.role}
+                content={msg.content}
+                think={msg.think}
+                isStreaming={msg.isStreaming}
+                thinkStartTime={msg.thinkStartTime}
+              />
 
-            {/* 工具审批卡片 */}
-            {msg.pendingToolApproval && onToolApprove && onToolReject && msg.runId && (
-              <Box sx={{ mt: 2, ml: 7 }}>
-                <ToolApprovalCard
-                  message={msg.pendingToolApproval.message}
-                  toolCalls={msg.pendingToolApproval.toolCalls}
-                  loading={approvalLoading}
-                  onApprove={() => onToolApprove(msg.id, msg.runId!)}
-                  onReject={() => onToolReject(msg.id, msg.runId!)}
-                />
-              </Box>
-            )}
+              {/* 工具审批卡片 */}
+              {msg.pendingToolApproval && onToolApprove && onToolReject && msg.runId && (
+                <Box sx={{ mt: 2, ml: 7 }}>
+                  <ToolApprovalCard
+                    message={msg.pendingToolApproval.message}
+                    toolCalls={msg.pendingToolApproval.toolCalls}
+                    loading={approvalLoading}
+                    onApprove={() => onToolApprove(msg.id, msg.runId!)}
+                    onReject={() => onToolReject(msg.id, msg.runId!)}
+                  />
+                </Box>
+              )}
 
-            {/* 证据列表 */}
-            {msg.evidence && msg.evidence.length > 0 && (
-              <Box sx={{ mt: 2, ml: 7 }}>
-                <EvidenceList evidence={msg.evidence} />
-              </Box>
-            )}
-          </Box>
+              {/* 证据列表 */}
+              {msg.evidence && msg.evidence.length > 0 && (
+                <Box sx={{ mt: 2, ml: 7 }}>
+                  <EvidenceList evidence={msg.evidence} />
+                </Box>
+              )}
+            </Box>
           );
         })}
 
@@ -172,39 +171,37 @@ export function MessageList({
           pointerEvents: 'none',
         }}
       >
-        <AnimatePresence>
-          {!isAtBottom && (
-            <motion.div
-              initial={{ opacity: 0, y: 8 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: 8 }}
-              transition={{ duration: 0.18, ease: [0.2, 0, 0, 1] }}
-              style={{ pointerEvents: 'auto' }}
-            >
-              <Tooltip title="回到底部" placement="top">
-                <Paper
-                  elevation={0}
-                  sx={{
-                    borderRadius: 999,
-                    border: 1,
-                    borderColor: 'divider',
-                    bgcolor: (theme) => alpha(theme.palette.background.paper, 0.88),
-                    backdropFilter: 'blur(14px)',
-                    WebkitBackdropFilter: 'blur(14px)',
-                    boxShadow: (theme) =>
-                      theme.palette.mode === 'light'
-                        ? '0 10px 30px rgba(0,0,0,0.10)'
-                        : '0 14px 40px rgba(0,0,0,0.40)',
-                  }}
-                >
-                  <IconButton onClick={scrollToBottom} aria-label="回到底部">
-                    <KeyboardArrowDownIcon />
-                  </IconButton>
-                </Paper>
-              </Tooltip>
-            </motion.div>
-          )}
-        </AnimatePresence>
+        <Fade in={!isAtBottom} timeout={180} mountOnEnter unmountOnExit>
+          <Box
+            sx={{
+              pointerEvents: 'auto',
+              transform: !isAtBottom ? 'translateY(0)' : 'translateY(8px)',
+              transition: 'transform 180ms cubic-bezier(0.2, 0, 0, 1)',
+            }}
+          >
+            <Tooltip title="回到底部" placement="top">
+              <Paper
+                elevation={0}
+                sx={{
+                  borderRadius: 999,
+                  border: 1,
+                  borderColor: 'divider',
+                  bgcolor: (theme) => alpha(theme.palette.background.paper, 0.88),
+                  backdropFilter: 'blur(14px)',
+                  WebkitBackdropFilter: 'blur(14px)',
+                  boxShadow: (theme) =>
+                    theme.palette.mode === 'light'
+                      ? '0 10px 30px rgba(0,0,0,0.10)'
+                      : '0 14px 40px rgba(0,0,0,0.40)',
+                }}
+              >
+                <IconButton onClick={scrollToBottom} aria-label="回到底部">
+                  <KeyboardArrowDownIcon />
+                </IconButton>
+              </Paper>
+            </Tooltip>
+          </Box>
+        </Fade>
       </Box>
     </Box>
   );

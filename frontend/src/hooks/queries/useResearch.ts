@@ -1,19 +1,21 @@
 /**
- * 研究相关 React Query Hooks
+ * Research hooks based on SWR
  */
 import { useEffect, useState } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useSWRConfig } from 'swr';
 import { parseSseJson } from '../../lib/sse';
+import { useApiMutation, useApiQuery } from '../../lib/swr';
+import type { AgentRun } from '../../services/chats';
 import {
   createResearchRun,
   getResearchRun,
   getResearchReport,
   cancelResearchRun,
   streamResearchRun,
+  type ResearchReport,
   type ResearchRunCreateRequest,
 } from '../../services/research';
 
-// Query Keys
 const NO_ID = '__none__';
 
 const KEYS = {
@@ -23,39 +25,45 @@ const KEYS = {
   report: (runId: string | undefined) => [...KEYS.all, 'report', runId ?? NO_ID] as const,
 };
 
-/**
- * 获取研究状态
- */
 export function useResearchRun(runId: string | undefined) {
-  const queryClient = useQueryClient();
+  const { mutate } = useSWRConfig();
   const [streamStatus, setStreamStatus] = useState<'idle' | 'active' | 'failed'>('idle');
 
   useEffect(() => {
-    if (!runId) return;
+    if (!runId) {
+      setStreamStatus('idle');
+      return;
+    }
 
     const controller = new AbortController();
     let active = true;
 
-    (async () => {
+    void (async () => {
       try {
         const stream = await streamResearchRun(runId, controller.signal);
         setStreamStatus('active');
+
         for await (const event of stream) {
           if (!active) break;
+
           if (event.event === 'update' || event.event === 'final') {
-            const data = parseSseJson(event.data);
-            queryClient.setQueryData(KEYS.run(runId), data);
+            const data = parseSseJson<AgentRun>(event.data);
+            await mutate(KEYS.run(runId), data, { revalidate: false });
+
             if (event.event === 'final') {
               setStreamStatus('idle');
               break;
             }
           }
+
           if (event.event === 'error') {
-            throw new Error('研究进度流异常');
+            throw new Error('Research progress stream failed');
           }
         }
-      } catch (e) {
-        if (!active || controller.signal.aborted) return;
+      } catch {
+        if (!active || controller.signal.aborted) {
+          return;
+        }
         setStreamStatus('failed');
       }
     })();
@@ -64,55 +72,41 @@ export function useResearchRun(runId: string | undefined) {
       active = false;
       controller.abort();
     };
-  }, [runId, queryClient]);
+  }, [runId, mutate]);
 
-  return useQuery({
-    queryKey: KEYS.run(runId),
-    queryFn: () => getResearchRun(runId as string),
-    enabled: !!runId,
-    refetchInterval: (query) => {
-      if (streamStatus === 'active') return false;
-      const status = query.state.data?.status;
-      return status === 'running' ? 2000 : false;
-    },
-  });
+  return useApiQuery<AgentRun>(
+    runId ? KEYS.run(runId) : null,
+    runId ? () => getResearchRun(runId) : null,
+    {
+      refreshInterval: (latestRun) => {
+        if (streamStatus === 'active') {
+          return 0;
+        }
+        return (latestRun as AgentRun | undefined)?.status === 'running' ? 2_000 : 0;
+      },
+    }
+  );
 }
 
-/**
- * 获取研究报告
- */
 export function useResearchReport(runId: string | undefined) {
-  return useQuery({
-    queryKey: KEYS.report(runId),
-    queryFn: () => getResearchReport(runId as string),
-    enabled: !!runId,
-  });
+  return useApiQuery<ResearchReport>(
+    runId ? KEYS.report(runId) : null,
+    runId ? () => getResearchReport(runId) : null
+  );
 }
 
-/**
- * 发起深度研究
- */
 export function useCreateResearchRun() {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: (data: ResearchRunCreateRequest) => createResearchRun(data),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: KEYS.runs() });
+  return useApiMutation((data: ResearchRunCreateRequest) => createResearchRun(data), {
+    onSuccess: async (_, __, { invalidate }) => {
+      await invalidate([KEYS.runs()]);
     },
   });
 }
 
-/**
- * 取消研究任务
- */
 export function useCancelResearchRun() {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: (runId: string) => cancelResearchRun(runId),
-    onSuccess: (_, runId) => {
-      queryClient.invalidateQueries({ queryKey: KEYS.run(runId) });
+  return useApiMutation((runId: string) => cancelResearchRun(runId), {
+    onSuccess: async (_, runId, { invalidate }) => {
+      await invalidate([KEYS.run(runId), KEYS.runs()]);
     },
   });
 }

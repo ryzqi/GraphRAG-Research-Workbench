@@ -4,7 +4,6 @@
  */
 import { Box, Stack, Typography, Chip } from '@mui/material';
 import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
-import { motion } from 'framer-motion';
 
 interface SuggestionChip {
   label: string;
@@ -17,6 +16,25 @@ interface WelcomeScreenProps {
   suggestions?: SuggestionChip[];
   onSuggestionClick?: (value: string) => void;
   disabled?: boolean;
+}
+
+function createFadeUpSx(delayMs: number) {
+  return {
+    animation: `welcomeFadeUp 400ms cubic-bezier(0.2, 0, 0, 1) ${delayMs}ms both`,
+    '@keyframes welcomeFadeUp': {
+      from: {
+        opacity: 0,
+        transform: 'translateY(20px)',
+      },
+      to: {
+        opacity: 1,
+        transform: 'translateY(0)',
+      },
+    },
+    '@media (prefers-reduced-motion: reduce)': {
+      animation: 'none',
+    },
+  };
 }
 
 export function WelcomeScreen({
@@ -39,10 +57,23 @@ export function WelcomeScreen({
       }}
     >
       {/* Logo 动画 */}
-      <motion.div
-        initial={{ scale: 0.8, opacity: 0 }}
-        animate={{ scale: 1, opacity: 1 }}
-        transition={{ duration: 0.4, ease: [0.2, 0, 0, 1] }}
+      <Box
+        sx={{
+          animation: 'welcomePopIn 400ms cubic-bezier(0.2, 0, 0, 1) both',
+          '@keyframes welcomePopIn': {
+            from: {
+              scale: 0.8,
+              opacity: 0,
+            },
+            to: {
+              scale: 1,
+              opacity: 1,
+            },
+          },
+          '@media (prefers-reduced-motion: reduce)': {
+            animation: 'none',
+          },
+        }}
       >
         <Box
           sx={{
@@ -59,14 +90,10 @@ export function WelcomeScreen({
         >
           <AutoAwesomeIcon sx={{ fontSize: 40, color: 'white' }} />
         </Box>
-      </motion.div>
+      </Box>
 
       {/* 标题 */}
-      <motion.div
-        initial={{ y: 20, opacity: 0 }}
-        animate={{ y: 0, opacity: 1 }}
-        transition={{ duration: 0.4, delay: 0.1, ease: [0.2, 0, 0, 1] }}
-      >
+      <Box sx={createFadeUpSx(100)}>
         <Typography
           variant="h4"
           fontWeight={400}
@@ -83,30 +110,18 @@ export function WelcomeScreen({
         >
           {title}
         </Typography>
-      </motion.div>
+      </Box>
 
       {/* 副标题 */}
-      <motion.div
-        initial={{ y: 20, opacity: 0 }}
-        animate={{ y: 0, opacity: 1 }}
-        transition={{ duration: 0.4, delay: 0.2, ease: [0.2, 0, 0, 1] }}
-      >
-        <Typography
-          variant="body1"
-          color="text.secondary"
-          sx={{ maxWidth: 500, mb: 4 }}
-        >
+      <Box sx={createFadeUpSx(200)}>
+        <Typography variant="body1" color="text.secondary" sx={{ maxWidth: 500, mb: 4 }}>
           {subtitle}
         </Typography>
-      </motion.div>
+      </Box>
 
       {/* 建议 Chips */}
       {suggestions.length > 0 && (
-        <motion.div
-          initial={{ y: 20, opacity: 0 }}
-          animate={{ y: 0, opacity: 1 }}
-          transition={{ duration: 0.4, delay: 0.3, ease: [0.2, 0, 0, 1] }}
-        >
+        <Box sx={createFadeUpSx(300)}>
           <Stack
             direction="row"
             spacing={1}
@@ -137,7 +152,7 @@ export function WelcomeScreen({
               />
             ))}
           </Stack>
-        </motion.div>
+        </Box>
       )}
     </Box>
   );

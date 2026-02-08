@@ -77,7 +77,7 @@ cd backend
 uv run celery -A app.worker.celery_app worker --loglevel=INFO --pool=solo
 ```
 
-### 4) 启动前端（React + Vite）
+### 4) 启动前端（Next.js App Router）
 
 ```powershell
 cd frontend
@@ -133,3 +133,4 @@ KB_CHAT_HYDE_ENABLED=false
 # KB Chat observability
 KB_CHAT_TRACE_ENABLED=true
 ```
+

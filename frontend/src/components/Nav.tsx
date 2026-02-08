@@ -1,8 +1,11 @@
+'use client';
+
 /**
  * MD3 导航栏组件
  * 支持滚动时背景填充效果
  */
-import { NavLink, useLocation } from 'react-router-dom';
+import Link from 'next/link';
+import { usePathname, useRouter } from 'next/navigation';
 import {
   AppBar,
   Box,
@@ -24,17 +27,6 @@ import Brightness7Icon from '@mui/icons-material/Brightness7';
 import { useThemeMode } from '../theme/ThemeProvider';
 import { md3Easing, md3Duration } from '../utils/motion';
 
-// 路由预加载配置
-const routePreloaders: Record<string, () => Promise<unknown>> = {
-  '/': () => import('../pages/GeneralChatPage'),
-  '/kb-chat': () => import('../pages/KbChatPage'),
-  '/general-chat': () => import('../pages/GeneralChatPage'),
-  '/knowledge-bases': () => import('../pages/KnowledgeBasesPage'),
-  '/research': () => import('../pages/ResearchPage'),
-  '/extensions': () => import('../pages/ExtensionsPage'),
-  '/evaluations': () => import('../pages/EvaluationsPage'),
-};
-
 function shouldPreloadRoute() {
   if (typeof navigator === 'undefined') return true;
   const connection = (
@@ -46,23 +38,23 @@ function shouldPreloadRoute() {
   return !effectiveType || (effectiveType !== 'slow-2g' && effectiveType !== '2g');
 }
 
-function preloadRoute(path: string) {
+function preloadRoute(path: string, router: { prefetch: (href: string) => void }) {
   if (!shouldPreloadRoute()) return;
-  const preload = routePreloaders[path];
-  if (preload) void preload();
+  void router.prefetch(path);
 }
 
 const navItems = [
-  { path: '/', label: '普通代理', icon: SmartToyIcon, end: true },
-  { path: '/kb-chat', label: '知识库问答', icon: ChatIcon },
-  { path: '/knowledge-bases', label: '知识库管理', icon: StorageIcon },
-  { path: '/research', label: '深度研究', icon: SearchIcon },
-  { path: '/extensions', label: 'MCP扩展', icon: ExtensionIcon },
-  { path: '/evaluations', label: '对比评测', icon: AssessmentIcon },
+  { href: '/', label: '普通代理', icon: SmartToyIcon, end: true },
+  { href: '/kb-chat', label: '知识库问答', icon: ChatIcon },
+  { href: '/knowledge-bases', label: '知识库管理', icon: StorageIcon },
+  { href: '/research', label: '深度研究', icon: SearchIcon },
+  { href: '/extensions', label: 'MCP扩展', icon: ExtensionIcon },
+  { href: '/evaluations', label: '对比评测', icon: AssessmentIcon },
 ];
 
 export function Nav() {
-  const location = useLocation();
+  const pathname = usePathname();
+  const router = useRouter();
   const { resolvedMode, toggleMode } = useThemeMode();
 
   // 滚动检测 - 用于 On-scroll 背景填充效果
@@ -105,21 +97,21 @@ export function Nav() {
         </Typography>
 
         <Box sx={{ display: 'flex', gap: 0.5, flex: 1 }}>
-          {navItems.map(({ path, label, icon: Icon, end }) => {
+          {navItems.map(({ href, label, icon: Icon, end }) => {
             const isActive = end
-              ? location.pathname === path
-              : location.pathname.startsWith(path);
+              ? pathname === href || pathname.startsWith('/general-chat')
+              : pathname.startsWith(href);
 
             return (
               <Button
-                key={path}
-                component={NavLink}
-                to={path}
+                key={href}
+                component={Link}
+                href={href}
                 startIcon={<Icon fontSize="small" />}
                 size="small"
-                onMouseEnter={() => preloadRoute(path)}
-                onFocus={() => preloadRoute(path)}
-                onTouchStart={() => preloadRoute(path)}
+                onMouseEnter={() => preloadRoute(href, router)}
+                onFocus={() => preloadRoute(href, router)}
+                onTouchStart={() => preloadRoute(href, router)}
                 sx={{
                   color: isActive ? 'primary.main' : 'text.secondary',
                   bgcolor: isActive
@@ -165,3 +157,5 @@ export function Nav() {
     </AppBar>
   );
 }
+
+

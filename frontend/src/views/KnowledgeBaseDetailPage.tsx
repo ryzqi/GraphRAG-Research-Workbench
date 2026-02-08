@@ -3,7 +3,7 @@
  */
 
 import { useMemo, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useParams, useRouter } from 'next/navigation';
 import {
   Alert,
   Box,
@@ -25,9 +25,9 @@ import {
   useCancelIngestionBatch,
   useCreateIngestionBatch,
   useIngestionBatch,
-  useKnowledgeBase,
   useRetryIngestionBatch,
-} from '../hooks/queries';
+} from '../hooks/queries/useIngestionBatches';
+import { useKnowledgeBase } from '../hooks/queries/useKnowledgeBases';
 import { getErrorMessage } from '../lib/errorHandler';
 import type { EntryError, ManifestEntry, BatchStatus } from '../services/ingestionBatches';
 import { HttpError } from '../services/http';
@@ -102,8 +102,9 @@ function batchStatusColor(status: BatchStatus): 'default' | 'warning' | 'success
 }
 
 export default function KnowledgeBaseDetailPage() {
-  const navigate = useNavigate();
-  const { kbId } = useParams<{ kbId: string }>();
+  const router = useRouter();
+  const params = useParams<{ kbId: string }>();
+  const kbId = Array.isArray(params.kbId) ? params.kbId[0] : params.kbId;
 
   const kbQuery = useKnowledgeBase(kbId ?? '');
   const createBatchMutation = useCreateIngestionBatch();
@@ -274,10 +275,10 @@ export default function KnowledgeBaseDetailPage() {
         subtitle='Incremental batches always reuse current config version.'
         action={
           <Stack direction='row' spacing={1}>
-            <Button variant='outlined' onClick={() => navigate('/knowledge-bases')}>
+            <Button variant='outlined' onClick={() => router.push('/knowledge-bases')}>
               Back to list
             </Button>
-            <Button variant='contained' onClick={() => navigate('/knowledge-bases/new')}>
+            <Button variant='contained' onClick={() => router.push('/knowledge-bases/new')}>
               New wizard
             </Button>
           </Stack>
@@ -395,3 +396,5 @@ export default function KnowledgeBaseDetailPage() {
     </Box>
   );
 }
+
+

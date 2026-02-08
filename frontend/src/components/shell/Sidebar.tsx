@@ -2,7 +2,8 @@
  * Gemini 风格侧边栏组件
  * 支持桌面端可折叠、移动端 Drawer 模式
  */
-import { NavLink, useLocation } from 'react-router-dom';
+import Link from 'next/link';
+import { usePathname, useRouter } from 'next/navigation';
 import {
   Box,
   Drawer,
@@ -19,7 +20,6 @@ import {
   useTheme,
 } from '@mui/material';
 import { alpha } from '@mui/material/styles';
-import { motion, AnimatePresence } from 'framer-motion';
 import MenuIcon from '@mui/icons-material/Menu';
 import MenuOpenIcon from '@mui/icons-material/MenuOpen';
 import AddIcon from '@mui/icons-material/Add';
@@ -36,16 +36,8 @@ import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import { useThemeMode } from '../../theme/ThemeProvider';
 import type { RecentSession } from '../../hooks/useRecentHistory';
 
-// 路由预加载配置
-const routePreloaders: Record<string, () => Promise<unknown>> = {
-  '/': () => import('../../pages/GeneralChatPage'),
-  '/kb-chat': () => import('../../pages/KbChatPage'),
-  '/general-chat': () => import('../../pages/GeneralChatPage'),
-  '/knowledge-bases': () => import('../../pages/KnowledgeBasesPage'),
-  '/research': () => import('../../pages/ResearchPage'),
-  '/extensions': () => import('../../pages/ExtensionsPage'),
-  '/evaluations': () => import('../../pages/EvaluationsPage'),
-};
+const TEXT_REVEAL_EASING = 'cubic-bezier(0.2, 0, 0, 1)';
+const TEXT_REVEAL_DURATION_MS = 180;
 
 function shouldPreloadRoute() {
   if (typeof navigator === 'undefined') return true;
@@ -58,14 +50,13 @@ function shouldPreloadRoute() {
   return !effectiveType || (effectiveType !== 'slow-2g' && effectiveType !== '2g');
 }
 
-function preloadRoute(path: string) {
+function preloadRoute(path: string, router: { prefetch: (href: string) => void }) {
   if (!shouldPreloadRoute()) return;
-  const preload = routePreloaders[path];
-  if (preload) void preload();
+  void router.prefetch(path);
 }
 
 const navItems = [
-  { path: '/', label: '普通代理', icon: SmartToyIcon, end: true },
+  { path: '/general-chat', label: '普通代理', icon: SmartToyIcon, end: true },
   { path: '/kb-chat', label: '知识库问答', icon: ChatIcon },
   { path: '/knowledge-bases', label: '知识库管理', icon: StorageIcon },
   { path: '/research', label: '深度研究', icon: SearchIcon },
@@ -97,9 +88,14 @@ export function Sidebar({
   onRemoveSession,
 }: SidebarProps) {
   const theme = useTheme();
-  const location = useLocation();
+  const pathname = usePathname();
+  const router = useRouter();
   const { resolvedMode, toggleMode } = useThemeMode();
   const isMobile = useMediaQuery(theme.breakpoints.down('md'));
+  const textRevealTransition = theme.transitions.create(['max-width', 'opacity'], {
+    duration: TEXT_REVEAL_DURATION_MS,
+    easing: TEXT_REVEAL_EASING,
+  });
 
   const sidebarContent = (
     <Box
@@ -139,24 +135,18 @@ export function Sidebar({
         >
           K
         </Box>
-        <AnimatePresence>
-          {expanded && (
-            <motion.div
-              initial={{ opacity: 0, width: 0 }}
-              animate={{ opacity: 1, width: 'auto' }}
-              exit={{ opacity: 0, width: 0 }}
-              transition={{ duration: 0.2 }}
-            >
-              <Typography
-                variant="h6"
-                fontWeight={600}
-                sx={{ whiteSpace: 'nowrap', color: 'primary.main' }}
-              >
-                知识代理
-              </Typography>
-            </motion.div>
-          )}
-        </AnimatePresence>
+        <Box
+          sx={{
+            maxWidth: expanded ? 160 : 0,
+            opacity: expanded ? 1 : 0,
+            overflow: 'hidden',
+            transition: textRevealTransition,
+          }}
+        >
+          <Typography variant="h6" fontWeight={600} sx={{ whiteSpace: 'nowrap', color: 'primary.main' }}>
+            知识代理
+          </Typography>
+        </Box>
       </Box>
 
       {/* 新对话按钮 */}
@@ -171,27 +161,23 @@ export function Sidebar({
               borderColor: 'divider',
               '&:hover': {
                 bgcolor: alpha(theme.palette.primary.main, 0.08),
-                borderColor: alpha(theme.palette.primary.main, 0.35),
+                borderColor: alpha(theme.palette.primary.main, 0.24),
               },
-              justifyContent: expanded ? 'flex-start' : 'center',
-              px: expanded ? 2 : 1.5,
-              py: 1.5,
             }}
           >
             <AddIcon sx={{ mr: expanded ? 1.5 : 0 }} />
-            <AnimatePresence>
-              {expanded && (
-                <motion.span
-                  initial={{ opacity: 0, width: 0 }}
-                  animate={{ opacity: 1, width: 'auto' }}
-                  exit={{ opacity: 0, width: 0 }}
-                >
-                  <Typography variant="body2" fontWeight={500} sx={{ whiteSpace: 'nowrap' }}>
-                    新对话
-                  </Typography>
-                </motion.span>
-              )}
-            </AnimatePresence>
+            <Box
+              sx={{
+                maxWidth: expanded ? 120 : 0,
+                opacity: expanded ? 1 : 0,
+                overflow: 'hidden',
+                transition: textRevealTransition,
+              }}
+            >
+              <Typography variant="body2" fontWeight={500} sx={{ whiteSpace: 'nowrap' }}>
+                新对话
+              </Typography>
+            </Box>
           </ListItemButton>
         </Tooltip>
       </Box>
@@ -199,15 +185,15 @@ export function Sidebar({
       {/* 主导航 */}
       <List sx={{ px: 1, flex: 1, overflowY: 'auto' }}>
         {navItems.map(({ path, label, icon: Icon, end }) => {
-          const isActive = end ? location.pathname === path : location.pathname.startsWith(path);
+          const isActive = end ? pathname === path : pathname.startsWith(path);
           return (
             <ListItem key={path} disablePadding sx={{ mb: 0.5 }}>
               <Tooltip title={expanded ? '' : label} placement="right">
                 <ListItemButton
-                  component={NavLink}
-                  to={path}
-                  onMouseEnter={() => preloadRoute(path)}
-                  onFocus={() => preloadRoute(path)}
+                  component={Link}
+                  href={path}
+                  onMouseEnter={() => preloadRoute(path, router)}
+                  onFocus={() => preloadRoute(path, router)}
                   onClick={isMobile ? onMobileClose : undefined}
                   sx={{
                     borderRadius: 6,
@@ -234,26 +220,24 @@ export function Sidebar({
                   >
                     <Icon />
                   </ListItemIcon>
-                  <AnimatePresence>
-                    {expanded && (
-                      <motion.div
-                        initial={{ opacity: 0 }}
-                        animate={{ opacity: 1 }}
-                        exit={{ opacity: 0 }}
-                        transition={{ duration: 0.15 }}
-                      >
-                        <ListItemText
-                          primary={label}
-                          primaryTypographyProps={{
-                            fontSize: 14,
-                            fontWeight: isActive ? 600 : 400,
-                            color: isActive ? 'primary.main' : 'text.primary',
-                            whiteSpace: 'nowrap',
-                          }}
-                        />
-                      </motion.div>
-                    )}
-                  </AnimatePresence>
+                  <Box
+                    sx={{
+                      maxWidth: expanded ? 180 : 0,
+                      opacity: expanded ? 1 : 0,
+                      overflow: 'hidden',
+                      transition: textRevealTransition,
+                    }}
+                  >
+                    <ListItemText
+                      primary={label}
+                      primaryTypographyProps={{
+                        fontSize: 14,
+                        fontWeight: isActive ? 600 : 400,
+                        color: isActive ? 'primary.main' : 'text.primary',
+                        whiteSpace: 'nowrap',
+                      }}
+                    />
+                  </Box>
                 </ListItemButton>
               </Tooltip>
             </ListItem>
@@ -296,10 +280,9 @@ export function Sidebar({
                 }
               >
                 <ListItemButton
-                  component={NavLink}
-                  to={`${
-                    session.type === 'kb_chat' ? '/kb-chat' : '/'
-                  }?sessionId=${session.sessionId}`}
+                  component={Link}
+                  href={`${session.type === 'kb_chat' ? '/kb-chat' : '/general-chat'}?sessionId=${session.sessionId}`}
+                  onClick={isMobile ? onMobileClose : undefined}
                   sx={{
                     borderRadius: 6,
                     py: 1,
@@ -390,20 +373,25 @@ export function Sidebar({
 
   // 桌面端使用固定侧边栏
   return (
-    <motion.div
-      animate={{ width: expanded ? SIDEBAR_WIDTH_EXPANDED : SIDEBAR_WIDTH_COLLAPSED }}
-      transition={{ duration: 0.2, ease: [0.2, 0, 0, 1] }}
-      style={{
+    <Box
+      sx={{
+        width: expanded ? SIDEBAR_WIDTH_EXPANDED : SIDEBAR_WIDTH_COLLAPSED,
         flexShrink: 0,
         height: '100vh',
         position: 'sticky',
         top: 0,
         overflow: 'hidden',
+        transition: theme.transitions.create('width', {
+          duration: 200,
+          easing: TEXT_REVEAL_EASING,
+        }),
       }}
     >
       {sidebarContent}
-    </motion.div>
+    </Box>
   );
 }
 
 export { SIDEBAR_WIDTH_EXPANDED, SIDEBAR_WIDTH_COLLAPSED };
+
+

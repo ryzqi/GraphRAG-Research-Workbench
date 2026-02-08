@@ -35,7 +35,7 @@ export function useAsyncData<T>(
         error: err instanceof Error ? err.message : '加载失败',
       });
     }
-  }, deps);
+  }, [fetcher]);
 
   useEffect(() => {
     fetchData();
@@ -43,3 +43,5 @@ export function useAsyncData<T>(
 
   return { ...state, refetch: fetchData };
 }
+
+

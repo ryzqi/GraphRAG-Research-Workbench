@@ -1,4 +1,4 @@
-# 最小验收脚本
+﻿# 最小验收脚本
 # 用于验证 quickstart 的关键检查点
 
 param(
@@ -62,8 +62,8 @@ Write-Host ""
 # 4. 检查前端关键文件
 Write-Host "4. 前端关键文件检查" -ForegroundColor Yellow
 Write-Check "package.json 存在" (Test-Path "frontend/package.json")
-Write-Check "vite.config.ts 存在" (Test-Path "frontend/vite.config.ts")
-Write-Check "router.tsx 存在" (Test-Path "frontend/src/router.tsx")
+Write-Check "next.config.mjs 存在" (Test-Path "frontend/next.config.mjs")
+Write-Check "App Router layout 存在" (Test-Path "frontend/src/app/layout.tsx")
 Write-Host ""
 
 # 5. 检查导出器
@@ -89,7 +89,7 @@ if (-not $SkipInfra) {
     Write-Check "后端 API 健康检查" $apiHealth "请确保后端服务已启动: uv run uvicorn app.main:app"
 
     # 前端
-    $frontendHealth = Test-Endpoint "http://localhost:5173" "Frontend"
+    $frontendHealth = Test-Endpoint "http://localhost:3000" "Frontend"
     Write-Check "前端服务" $frontendHealth "请确保前端服务已启动: npm run dev"
 
     # OpenAPI 文档
@@ -121,3 +121,4 @@ if ($script:failed -gt 0) {
     Write-Host "所有检查通过！" -ForegroundColor Green
     exit 0
 }
+

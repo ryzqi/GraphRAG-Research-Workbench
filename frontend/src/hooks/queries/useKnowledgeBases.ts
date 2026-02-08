@@ -1,7 +1,6 @@
 /**
- * 知识库相关 React Query Hooks
+ * Knowledge base hooks based on SWR
  */
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   listKnowledgeBases,
   listSelectableKnowledgeBases,
@@ -18,6 +17,7 @@ import {
   type KnowledgeBaseStatusFilter,
   type KnowledgeBaseReadinessFilter,
 } from '../../services/knowledgeBases';
+import { useApiMutation, useApiQuery } from '../../lib/swr';
 import { indexRebuildKeys } from './useIndexRebuilds';
 
 const KEYS = {
@@ -34,86 +34,78 @@ export function useKnowledgeBases(params?: {
 }) {
   const status = params?.status ?? 'active';
   const readiness = params?.readiness ?? 'all';
-  return useQuery({
-    queryKey: KEYS.list(status, readiness),
-    queryFn: () => listKnowledgeBases({ status, readiness }).then((res) => res.items),
-  });
+
+  return useApiQuery(
+    KEYS.list(status, readiness),
+    () => listKnowledgeBases({ status, readiness }).then((res) => res.items)
+  );
 }
 
 export function useSelectableKnowledgeBases() {
-  return useQuery({
-    queryKey: KEYS.selectable(),
-    queryFn: () => listSelectableKnowledgeBases().then((res) => res.items),
-  });
+  return useApiQuery(KEYS.selectable(), () =>
+    listSelectableKnowledgeBases().then((res) => res.items)
+  );
 }
 
 export function useKnowledgeBase(id: string) {
-  return useQuery({
-    queryKey: KEYS.detail(id),
-    queryFn: () => getKnowledgeBase(id),
-    enabled: !!id,
-  });
+  return useApiQuery(
+    id ? KEYS.detail(id) : null,
+    id ? () => getKnowledgeBase(id) : null
+  );
 }
 
 export function useCreateKnowledgeBase() {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: (data: KnowledgeBaseCreate) => createKnowledgeBase(data),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: KEYS.all });
+  return useApiMutation((data: KnowledgeBaseCreate) => createKnowledgeBase(data), {
+    onSuccess: async (_, __, { invalidate }) => {
+      await invalidate([KEYS.all, KEYS.selectable()]);
     },
   });
 }
 
 export function useUpdateKnowledgeBase() {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: ({ id, data }: { id: string; data: KnowledgeBaseUpdate }) =>
+  return useApiMutation(
+    ({ id, data }: { id: string; data: KnowledgeBaseUpdate }) =>
       updateKnowledgeBase(id, data),
-    onSuccess: (_, { id }) => {
-      queryClient.invalidateQueries({ queryKey: KEYS.all });
-      queryClient.invalidateQueries({ queryKey: KEYS.detail(id) });
-    },
-  });
+    {
+      onSuccess: async (_, { id }, { invalidate }) => {
+        await invalidate([KEYS.all, KEYS.detail(id), KEYS.selectable()]);
+      },
+    }
+  );
 }
 
 export function useUpdateKnowledgeBaseIndexConfig() {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: ({ id, index_config }: { id: string; index_config: IndexConfig }) =>
+  return useApiMutation(
+    ({ id, index_config }: { id: string; index_config: IndexConfig }) =>
       updateKnowledgeBaseIndexConfig(id, index_config),
-    onSuccess: (res: KnowledgeBaseIndexConfigUpdateResponse, { id }) => {
-      queryClient.invalidateQueries({ queryKey: KEYS.all });
-      queryClient.setQueryData(KEYS.detail(id), res.knowledge_base);
-      if (res.rebuild_job) {
-        queryClient.setQueryData(indexRebuildKeys.job(res.rebuild_job.id), res.rebuild_job);
-      }
-    },
-  });
+    {
+      onSuccess: async (
+        res: KnowledgeBaseIndexConfigUpdateResponse,
+        { id },
+        { invalidate, setCachedData }
+      ) => {
+        await invalidate([KEYS.all, KEYS.selectable()]);
+        await setCachedData(KEYS.detail(id), res.knowledge_base);
+        if (res.rebuild_job) {
+          await setCachedData(indexRebuildKeys.job(res.rebuild_job.id), res.rebuild_job);
+        }
+      },
+    }
+  );
 }
 
 export function useDeleteKnowledgeBase() {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: (id: string) => deleteKnowledgeBase(id),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: KEYS.all });
+  return useApiMutation((id: string) => deleteKnowledgeBase(id), {
+    onSuccess: async (_, id, { invalidate }) => {
+      await invalidate([KEYS.all, KEYS.detail(id), KEYS.selectable()]);
     },
   });
 }
 
 export function useArchiveKnowledgeBase() {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: (id: string) => archiveKnowledgeBase(id),
-    onSuccess: (_, id) => {
-      queryClient.invalidateQueries({ queryKey: KEYS.all });
-      queryClient.invalidateQueries({ queryKey: KEYS.detail(id) });
+  return useApiMutation((id: string) => archiveKnowledgeBase(id), {
+    onSuccess: async (_, id, { invalidate }) => {
+      await invalidate([KEYS.all, KEYS.detail(id), KEYS.selectable()]);
     },
   });
 }

@@ -24,8 +24,8 @@ export async function openSseStream(
   } catch (err) {
     const baseUrl = getApiBaseUrl();
     const message = baseUrl
-      ? `无法连接到后端服务（${baseUrl}）。请确认后端已启动并可访问：${url}，或在 frontend/.env.local 配置 VITE_API_BASE_URL。`
-      : `无法通过前端代理访问后端。请确认后端已启动（http://127.0.0.1:8000），并检查 frontend/vite.config.ts 的 server.proxy 配置。请求：${url}`;
+      ? `无法连接到后端服务（${baseUrl}）。请确认后端已启动并可访问：${url}，或在 frontend/.env.local 配置 NEXT_PUBLIC_API_BASE_URL。`
+      : `无法连接到后端服务。请确认后端已启动（http://127.0.0.1:8000），并在 frontend/.env.local 配置 NEXT_PUBLIC_API_BASE_URL。请求：${url}`;
     throw new HttpError(message, 0, { body: err instanceof Error ? err.message : err });
   }
 
@@ -51,3 +51,4 @@ export async function openSseStream(
 
   return parseSseStream(res.body);
 }
+

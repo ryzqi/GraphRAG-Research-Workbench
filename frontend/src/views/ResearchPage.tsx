@@ -2,7 +2,7 @@
  * 深度研究页面
  */
 import { useCallback, useState } from 'react';
-import { useQueryClient } from '@tanstack/react-query';
+import { useSWRConfig } from 'swr';
 import {
   Box,
   Container,
@@ -21,22 +21,17 @@ import { LoadingSpinner } from '../components/ui/LoadingSpinner';
 import { PageHeader } from '../components/ui/PageHeader';
 import { StatusBadge } from '../components/ui/StatusBadge';
 import { createExport, pollExportUntilDone } from '../services/exports';
-import {
-  researchKeys,
-  useCreateResearchRun,
-  useSelectableKnowledgeBases,
-  useResearchReport,
-  useResearchRun,
-} from '../hooks/queries';
+import { researchKeys, useCreateResearchRun, useResearchReport, useResearchRun } from '../hooks/queries/useResearch';
+import { useSelectableKnowledgeBases } from '../hooks/queries/useKnowledgeBases';
 import { getErrorMessage } from '../lib/errorHandler';
 import { safeOpenDownloadUrl } from '../utils/urlValidation';
 
 export function ResearchPage() {
-  // React Query：自动去重/缓存知识库列表（对齐 Vercel client-swr-dedup 思路）
+  // SWR：自动去重/缓存知识库列表（对齐 Vercel client-swr-dedup）
   const knowledgeBasesQuery = useSelectableKnowledgeBases();
   const knowledgeBases = knowledgeBasesQuery.data ?? [];
 
-  const queryClient = useQueryClient();
+  const { mutate } = useSWRConfig();
   const createRunMutation = useCreateResearchRun();
 
   const [selectedKbIds, setSelectedKbIds] = useState<string[]>([]);
@@ -105,13 +100,13 @@ export function ResearchPage() {
         mode: 'single_agent',
       });
 
-      // 直接回填 query cache，避免额外请求并立即启动 refetchInterval 轮询。
-      queryClient.setQueryData(researchKeys.run(newRun.id), newRun);
+      // 直接回填 SWR cache，避免额外请求并立即启动轮询。
+      await mutate(researchKeys.run(newRun.id), newRun, { revalidate: false });
       setRunId(newRun.id);
     } catch (e) {
       setError(getErrorMessage(e));
     }
-  }, [createRunMutation, queryClient, question, selectedKbIds]);
+  }, [createRunMutation, mutate, question, selectedKbIds]);
 
   const handleExport = useCallback(async () => {
     if (!run) return;
@@ -337,3 +332,5 @@ export function ResearchPage() {
     </Container>
   );
 }
+
+

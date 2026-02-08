@@ -1,17 +1,18 @@
 /**
- * 评测相关 React Query Hooks
+ * Evaluation hooks based on SWR
  */
 import { useEffect, useState } from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useSWRConfig } from 'swr';
 import { parseSseJson } from '../../lib/sse';
+import { useApiMutation, useApiQuery } from '../../lib/swr';
 import {
   createEvaluationRun,
   getEvaluationRun,
   streamEvaluationRun,
+  type EvaluationRun,
   type EvaluationRunCreateRequest,
 } from '../../services/evaluations';
 
-// Query Keys
 const NO_ID = '__none__';
 
 const KEYS = {
@@ -19,39 +20,45 @@ const KEYS = {
   run: (id: string | undefined) => [...KEYS.all, 'run', id ?? NO_ID] as const,
 };
 
-/**
- * 获取评测任务状态（运行中自动轮询）
- */
 export function useEvaluationRun(evalRunId: string | undefined) {
-  const queryClient = useQueryClient();
+  const { mutate } = useSWRConfig();
   const [streamStatus, setStreamStatus] = useState<'idle' | 'active' | 'failed'>('idle');
 
   useEffect(() => {
-    if (!evalRunId) return;
+    if (!evalRunId) {
+      setStreamStatus('idle');
+      return;
+    }
 
     const controller = new AbortController();
     let active = true;
 
-    (async () => {
+    void (async () => {
       try {
         const stream = await streamEvaluationRun(evalRunId, controller.signal);
         setStreamStatus('active');
+
         for await (const event of stream) {
           if (!active) break;
+
           if (event.event === 'update' || event.event === 'final') {
-            const data = parseSseJson(event.data);
-            queryClient.setQueryData(KEYS.run(evalRunId), data);
+            const data = parseSseJson<EvaluationRun>(event.data);
+            await mutate(KEYS.run(evalRunId), data, { revalidate: false });
+
             if (event.event === 'final') {
               setStreamStatus('idle');
               break;
             }
           }
+
           if (event.event === 'error') {
-            throw new Error('评测进度流异常');
+            throw new Error('Evaluation progress stream failed');
           }
         }
-      } catch (e) {
-        if (!active || controller.signal.aborted) return;
+      } catch {
+        if (!active || controller.signal.aborted) {
+          return;
+        }
         setStreamStatus('failed');
       }
     })();
@@ -60,27 +67,25 @@ export function useEvaluationRun(evalRunId: string | undefined) {
       active = false;
       controller.abort();
     };
-  }, [evalRunId, queryClient]);
+  }, [evalRunId, mutate]);
 
-  return useQuery({
-    queryKey: KEYS.run(evalRunId),
-    queryFn: () => getEvaluationRun(evalRunId as string),
-    enabled: !!evalRunId,
-    refetchInterval: (query) => {
-      if (streamStatus === 'active') return false;
-      const status = query.state.data?.status;
-      return status === 'queued' || status === 'running' ? 3000 : false;
-    },
-  });
+  return useApiQuery<EvaluationRun>(
+    evalRunId ? KEYS.run(evalRunId) : null,
+    evalRunId ? () => getEvaluationRun(evalRunId) : null,
+    {
+      refreshInterval: (latestRun) => {
+        if (streamStatus === 'active') {
+          return 0;
+        }
+        const status = (latestRun as EvaluationRun | undefined)?.status;
+        return status === 'queued' || status === 'running' ? 3_000 : 0;
+      },
+    }
+  );
 }
 
-/**
- * 发起评测任务
- */
 export function useCreateEvaluationRun() {
-  return useMutation({
-    mutationFn: (data: EvaluationRunCreateRequest) => createEvaluationRun(data),
-  });
+  return useApiMutation((data: EvaluationRunCreateRequest) => createEvaluationRun(data));
 }
 
 export { KEYS as evaluationKeys };

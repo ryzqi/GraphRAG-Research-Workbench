@@ -1,8 +1,6 @@
 /**
- * ingestion-batch React Query Hooks
+ * Ingestion batch hooks based on SWR
  */
-
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   cancelIngestionBatch,
   createIngestionBatch,
@@ -11,6 +9,7 @@ import {
   type IngestionBatchCreateRequest,
   type IngestionBatch,
 } from '../../services/ingestionBatches';
+import { useApiMutation, useApiQuery } from '../../lib/swr';
 
 const NO_ID = '__none__';
 
@@ -27,55 +26,50 @@ function isBatchRunning(batch: IngestionBatch | undefined): boolean {
 }
 
 export function useIngestionBatch(batchId: string | undefined) {
-  return useQuery({
-    queryKey: KEYS.batch(batchId),
-    queryFn: () => getIngestionBatch(batchId as string),
-    enabled: !!batchId,
-    refetchInterval: (query) => (isBatchRunning(query.state.data) ? 2000 : false),
-  });
+  return useApiQuery(
+    batchId ? KEYS.batch(batchId) : null,
+    batchId ? () => getIngestionBatch(batchId) : null,
+    {
+      refreshInterval: (latestBatch) =>
+        isBatchRunning(latestBatch as IngestionBatch | undefined) ? 2_000 : 0,
+    }
+  );
 }
 
 export function useCreateIngestionBatch() {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: (data: IngestionBatchCreateRequest) => createIngestionBatch(data),
-    onSuccess: (resp) => {
-      queryClient.invalidateQueries({ queryKey: KEYS.all });
-      queryClient.invalidateQueries({ queryKey: ['knowledgeBases'] });
-      queryClient.invalidateQueries({ queryKey: ['materials'] });
-      queryClient.invalidateQueries({ queryKey: ['research'] });
-      queryClient.invalidateQueries({ queryKey: ['evaluations'] });
-      queryClient.invalidateQueries({ queryKey: ['chats'] });
+  return useApiMutation((data: IngestionBatchCreateRequest) => createIngestionBatch(data), {
+    onSuccess: async (resp, __, { invalidate }) => {
+      const keysToInvalidate: Array<readonly unknown[]> = [
+        KEYS.all,
+        ['knowledgeBases'],
+        ['materials'],
+        ['research'],
+        ['evaluations'],
+        ['chats'],
+      ];
       if (resp.batch_id) {
-        queryClient.invalidateQueries({ queryKey: KEYS.batch(resp.batch_id) });
+        keysToInvalidate.push(KEYS.batch(resp.batch_id));
       }
+      await invalidate(keysToInvalidate);
     },
   });
 }
 
 export function useRetryIngestionBatch() {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: (batchId: string) => retryIngestionBatch(batchId),
-    onSuccess: (_, batchId) => {
-      queryClient.invalidateQueries({ queryKey: KEYS.batch(batchId) });
-      queryClient.invalidateQueries({ queryKey: KEYS.all });
+  return useApiMutation((batchId: string) => retryIngestionBatch(batchId), {
+    onSuccess: async (_, batchId, { invalidate }) => {
+      await invalidate([KEYS.batch(batchId), KEYS.all]);
     },
   });
 }
 
 export function useCancelIngestionBatch() {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: (batchId: string) => cancelIngestionBatch(batchId),
-    onSuccess: (_, batchId) => {
-      queryClient.invalidateQueries({ queryKey: KEYS.batch(batchId) });
-      queryClient.invalidateQueries({ queryKey: KEYS.all });
+  return useApiMutation((batchId: string) => cancelIngestionBatch(batchId), {
+    onSuccess: async (_, batchId, { invalidate }) => {
+      await invalidate([KEYS.batch(batchId), KEYS.all]);
     },
   });
 }
 
 export { KEYS as ingestionBatchKeys };
+

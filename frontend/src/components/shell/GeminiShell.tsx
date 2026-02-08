@@ -1,9 +1,11 @@
+'use client';
+
 /**
  * Gemini 风格应用壳布局
  * 左侧可折叠 Sidebar + 中心主内容区
  */
-import { useState, useCallback } from 'react';
-import { Outlet, useLocation, useNavigate } from 'react-router-dom';
+import { useState, useCallback, type ReactNode } from 'react';
+import { usePathname, useRouter } from 'next/navigation';
 import { Box, IconButton, Typography, useMediaQuery, useTheme } from '@mui/material';
 import { alpha } from '@mui/material/styles';
 import MenuIcon from '@mui/icons-material/Menu';
@@ -11,27 +13,26 @@ import { Sidebar, SIDEBAR_WIDTH_EXPANDED, SIDEBAR_WIDTH_COLLAPSED } from './Side
 import { useRecentHistory } from '../../hooks/useRecentHistory';
 import { PageTransition } from '../ui/PageTransition';
 
-export function GeminiShell() {
+interface GeminiShellProps {
+  children?: ReactNode;
+}
+
+export function GeminiShell({ children }: GeminiShellProps) {
   const theme = useTheme();
-  const location = useLocation();
-  const navigate = useNavigate();
+  const pathname = usePathname();
+  const router = useRouter();
   const isMobile = useMediaQuery(theme.breakpoints.down('md'));
 
-  // 侧边栏状态
   const [sidebarExpanded, setSidebarExpanded] = useState(true);
   const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false);
-
-  // 用于强制重置聊天页面状态（点击“新对话”时）
   const [chatResetKey, setChatResetKey] = useState(0);
 
-  // Recent 历史 hook
   const { sessions: recentSessions, removeSession } = useRecentHistory();
 
-  // 判断是否为聊天页面（用于调整主内容区样式）
   const isChatPage =
-    location.pathname === '/' ||
-    location.pathname.startsWith('/general-chat') ||
-    location.pathname.startsWith('/kb-chat');
+    pathname === '/' ||
+    pathname.startsWith('/general-chat') ||
+    pathname.startsWith('/kb-chat');
 
   const handleToggleSidebar = useCallback(() => {
     setSidebarExpanded((prev) => !prev);
@@ -46,14 +47,12 @@ export function GeminiShell() {
   }, []);
 
   const handleNewChat = useCallback(() => {
-    // 通过更新 key 强制 remount 子路由，避免在同一路由下“新对话”无效果（状态不重置）
     setChatResetKey((prev) => prev + 1);
-
-    navigate('/');
+    router.push('/general-chat');
     if (isMobile) {
       setMobileDrawerOpen(false);
     }
-  }, [navigate, isMobile]);
+  }, [router, isMobile]);
 
   return (
     <Box
@@ -63,7 +62,6 @@ export function GeminiShell() {
         bgcolor: 'background.default',
       }}
     >
-      {/* Skip Link（可访问性） */}
       <Box
         component="a"
         href="#main-content"
@@ -85,7 +83,6 @@ export function GeminiShell() {
         跳到主要内容
       </Box>
 
-      {/* 侧边栏 */}
       <Sidebar
         expanded={sidebarExpanded}
         onToggle={handleToggleSidebar}
@@ -96,7 +93,6 @@ export function GeminiShell() {
         onRemoveSession={removeSession}
       />
 
-      {/* 主内容区 */}
       <Box
         component="main"
         id="main-content"
@@ -106,7 +102,6 @@ export function GeminiShell() {
           flexDirection: 'column',
           minWidth: 0,
           position: 'relative',
-          // 聊天页的“Gemini/Google”氛围光晕（轻量渐变，不影响可读性）。
           backgroundImage: isChatPage
             ? (t) =>
                 t.palette.mode === 'light'
@@ -116,7 +111,6 @@ export function GeminiShell() {
                      radial-gradient(1000px 420px at 90% 0%, ${alpha(t.palette.success.main, 0.08)} 0%, rgba(0,0,0,0) 60%)`
             : undefined,
           backgroundRepeat: 'no-repeat',
-          // 聊天页面全宽，其他页面限制最大宽度
           maxWidth: isChatPage
             ? '100%'
             : {
@@ -125,7 +119,6 @@ export function GeminiShell() {
               },
         }}
       >
-        {/* 移动端顶部栏 */}
         {isMobile && (
           <Box
             sx={{
@@ -151,7 +144,6 @@ export function GeminiShell() {
           </Box>
         )}
 
-        {/* 页面内容 */}
         <Box
           sx={{
             flex: 1,
@@ -164,8 +156,8 @@ export function GeminiShell() {
             width: '100%',
           }}
         >
-          <PageTransition key={`${location.pathname}:${chatResetKey}`}>
-            <Outlet />
+          <PageTransition key={`${pathname}:${chatResetKey}`}>
+            {children}
           </PageTransition>
         </Box>
       </Box>

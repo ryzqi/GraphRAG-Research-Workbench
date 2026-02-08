@@ -2,7 +2,7 @@
  * 普通代理聊天页面（Gemini 风格重构）
  */
 import { useCallback, useEffect, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { Box, Chip, FormControlLabel, Stack, Switch, Typography } from '@mui/material';
 import {
   createChatSession,
@@ -25,12 +25,9 @@ import {
   parseDelta,
   type MessageState,
 } from '../lib/deltaParser';
-import {
-  WelcomeScreen,
-  MessageList,
-  InputComposer,
-  type ChatMessage,
-} from '../components/chat';
+import { WelcomeScreen } from '../components/chat/WelcomeScreen';
+import { MessageList, type ChatMessage } from '../components/chat/MessageList';
+import { InputComposer } from '../components/chat/InputComposer';
 import { useRecentHistory } from '../hooks/useRecentHistory';
 
 const quickPrompts = [
@@ -41,8 +38,19 @@ const quickPrompts = [
 ];
 
 export function GeneralChatPage() {
-  const [searchParams, setSearchParams] = useSearchParams();
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
   const sessionId = searchParams.get('sessionId');
+
+  const replaceSearchParams = useCallback(
+    (next: URLSearchParams) => {
+      const query = next.toString();
+      const href = query ? `${pathname}?${query}` : pathname;
+      router.replace(href);
+    },
+    [pathname, router]
+  );
   const [session, setSession] = useState<ChatSession | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
@@ -65,9 +73,11 @@ export function GeneralChatPage() {
       setLoadingSession(true);
       setError(null);
       try {
-        // Load session first so that when it doesn't exist we avoid triggering an extra 404 on /messages.
-        const loadedSession = await getChatSession(sessionId);
-        const history = await getChatMessages(sessionId);
+        // Fire both requests together to reduce route hydration latency.
+        const sessionPromise = getChatSession(sessionId);
+        const historyPromise = getChatMessages(sessionId);
+        const loadedSession = await sessionPromise;
+        const history = await historyPromise;
         if (!active) return;
         setSession(loadedSession);
         setAllowExternal(loadedSession.allow_external);
@@ -86,9 +96,9 @@ export function GeneralChatPage() {
           setSession(null);
           setMessages([]);
           setError(null);
-          const nextParams = new URLSearchParams(window.location.search);
+          const nextParams = new URLSearchParams(searchParams.toString());
           nextParams.delete('sessionId');
-          setSearchParams(nextParams, { replace: true });
+          replaceSearchParams(nextParams);
           return;
         }
         setError(e instanceof Error ? e.message : '加载会话失败');
@@ -102,7 +112,7 @@ export function GeneralChatPage() {
     return () => {
       active = false;
     };
-  }, [sessionId, setSearchParams]);
+  }, [sessionId, searchParams, replaceSearchParams]);
 
   useEffect(() => {
     if (sessionId) return;
@@ -113,7 +123,23 @@ export function GeneralChatPage() {
 
   const updateMessage = useCallback(
     (id: string, updater: (msg: ChatMessage) => ChatMessage) => {
-      setMessages((prev) => prev.map((msg) => (msg.id === id ? updater(msg) : msg)));
+      setMessages((prev) => {
+        const lastIndex = prev.length - 1;
+        if (lastIndex >= 0 && prev[lastIndex].id === id) {
+          const next = prev.slice();
+          next[lastIndex] = updater(prev[lastIndex]);
+          return next;
+        }
+
+        const index = prev.findIndex((msg) => msg.id === id);
+        if (index === -1) {
+          return prev;
+        }
+
+        const next = prev.slice();
+        next[index] = updater(prev[index]);
+        return next;
+      });
     },
     []
   );
@@ -590,3 +616,8 @@ export function GeneralChatPage() {
 }
 
 export default GeneralChatPage;
+
+
+
+
+

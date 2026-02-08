@@ -2,11 +2,12 @@
   "name": "multi-kb-agent-frontend",
   "private": true,
   "version": "0.1.0",
-  "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "vite build",
-    "preview": "vite preview"
+    "dev": "next dev --hostname 127.0.0.1 --port 3000",
+    "build": "next build",
+    "start": "next start --hostname 127.0.0.1 --port 3000",
+    "lint": "next lint",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "engines": {
     "node": "^20.19.0 || >=22.12.0"
@@ -16,21 +17,21 @@
     "@emotion/styled": "^11.14.1",
     "@mui/icons-material": "^7.3.7",
     "@mui/material": "^7.3.7",
-    "@tanstack/react-query": "^5.90.16",
-    "framer-motion": "^12.29.2",
+    "next": "^15.1.0",
     "react": "^19.2.3",
     "react-dom": "^19.2.3",
     "react-markdown": "^10.1.0",
-    "react-router-dom": "^7.12.0",
     "react-syntax-highlighter": "^16.1.0",
-    "remark-gfm": "^4.0.1"
+    "remark-gfm": "^4.0.1",
+    "swr": "^2.3.6"
   },
   "devDependencies": {
+    "@types/node": "^22.13.5",
     "@types/react": "^19.2.10",
     "@types/react-dom": "^19.2.3",
     "@types/react-syntax-highlighter": "^15.5.13",
-    "@vitejs/plugin-react": "^5.1.2",
-    "typescript": "^5.9.3",
-    "vite": "^7.3.1"
+    "eslint": "^9.22.0",
+    "eslint-config-next": "^15.1.0",
+    "typescript": "^5.9.3"
   }
 }

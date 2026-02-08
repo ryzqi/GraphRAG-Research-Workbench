@@ -2,15 +2,13 @@
  * 消息项组件
  * Gemini 风格：左对齐布局，实心圆点光标，透气设计
  */
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { Suspense, lazy, useState, useCallback, useEffect, useRef } from 'react';
 import { Box, IconButton, Paper, Stack, Tooltip, Typography, Chip, keyframes } from '@mui/material';
 import { alpha } from '@mui/material/styles';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import CheckIcon from '@mui/icons-material/Check';
 import PersonIcon from '@mui/icons-material/Person';
 import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
-import { motion } from 'framer-motion';
-import { MarkdownContent } from './MarkdownContent';
 import { useTypewriterStream } from './useTypewriterStream';
 import { ThinkingContainer } from './ThinkingContainer';
 import { Button } from '../ui/Button';
@@ -40,6 +38,10 @@ const cursorFadeOut = keyframes`
 // 品牌渐变色（蓝紫粉）
 const BRAND_GRADIENT = 'linear-gradient(135deg, #4285F4, #9B72CB, #D96570)';
 const AVATAR_SIZE = 36;
+
+const MarkdownContent = lazy(async () => ({
+  default: (await import('./MarkdownContent')).MarkdownContent,
+}));
 
 interface MessageItemProps {
   role: 'user' | 'assistant';
@@ -116,10 +118,23 @@ export function MessageItem({
   }, [content]);
 
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 10 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.2, ease: [0.2, 0, 0, 1] }}
+    <Box
+      sx={{
+        animation: 'messageEnter 200ms cubic-bezier(0.2, 0, 0, 1)',
+        '@keyframes messageEnter': {
+          from: {
+            opacity: 0,
+            transform: 'translateY(10px)',
+          },
+          to: {
+            opacity: 1,
+            transform: 'translateY(0)',
+          },
+        },
+        '@media (prefers-reduced-motion: reduce)': {
+          animation: 'none',
+        },
+      }}
     >
       <Box
         sx={{
@@ -150,7 +165,8 @@ export function MessageItem({
             borderColor: isUser
               ? (theme) =>
                   alpha(theme.palette.primary.main, theme.palette.mode === 'light' ? 0.18 : 0.28)
-              : (theme) => alpha(theme.palette.common.white, theme.palette.mode === 'light' ? 0.38 : 0.20),
+              : (theme) =>
+                  alpha(theme.palette.common.white, theme.palette.mode === 'light' ? 0.38 : 0.20),
             background: isUser ? undefined : BRAND_GRADIENT,
             boxShadow: (theme) =>
               theme.palette.mode === 'light'
@@ -244,7 +260,9 @@ export function MessageItem({
                 />
               )}
               <Box sx={cursorSx}>
-                <MarkdownContent content={displayContent} isStreaming={isStreaming} />
+                <Suspense fallback={<Typography variant="body2" color="text.secondary">加载渲染器...</Typography>}>
+                  <MarkdownContent content={displayContent} isStreaming={isStreaming} />
+                </Suspense>
               </Box>
             </Box>
           )}
@@ -266,7 +284,7 @@ export function MessageItem({
           )}
         </Box>
       </Box>
-    </motion.div>
+    </Box>
   );
 }
 

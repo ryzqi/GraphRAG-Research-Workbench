@@ -3,7 +3,7 @@
  * 列表 + 编辑/归档/删除
  */
 import { useMemo, useState, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useRouter } from 'next/navigation';
 import {
   Box,
   Chip,
@@ -40,7 +40,7 @@ import {
   useUpdateKnowledgeBase,
   useDeleteKnowledgeBase,
   useArchiveKnowledgeBase,
-} from '../hooks/queries';
+} from '../hooks/queries/useKnowledgeBases';
 import { getErrorMessage } from '../lib/errorHandler';
 import {
   type KnowledgeBase,
@@ -52,7 +52,7 @@ type ModalType = 'edit' | 'delete' | 'archive' | null;
 type StatusFilter = 'all' | 'active' | 'archived';
 
 export default function KnowledgeBasesPage() {
-  const navigate = useNavigate();
+  const router = useRouter();
   const [modalType, setModalType] = useState<ModalType>(null);
   const [selectedKb, setSelectedKb] = useState<KnowledgeBase | null>(null);
   const [menuAnchor, setMenuAnchor] = useState<{ el: HTMLElement; kb: KnowledgeBase } | null>(null);
@@ -148,7 +148,7 @@ export default function KnowledgeBasesPage() {
         title='知识库管理'
         subtitle='创建向导、增量处理与可用性状态统一管理'
         action={
-          <Button variant='contained' startIcon={<AddIcon />} onClick={() => navigate('/knowledge-bases/new')}>
+          <Button variant='contained' startIcon={<AddIcon />} onClick={() => router.push('/knowledge-bases/new')}>
             新建知识库
           </Button>
         }
@@ -220,7 +220,7 @@ export default function KnowledgeBasesPage() {
           title='暂无知识库'
           description='点击上方按钮开始三步创建向导'
           action={
-            <Button variant='contained' startIcon={<AddIcon />} onClick={() => navigate('/knowledge-bases/new')}>
+            <Button variant='contained' startIcon={<AddIcon />} onClick={() => router.push('/knowledge-bases/new')}>
               新建知识库
             </Button>
           }
@@ -246,7 +246,7 @@ export default function KnowledgeBasesPage() {
                 borderColor: 'divider',
                 overflow: 'hidden',
               }}
-              onClick={() => navigate('/knowledge-bases/' + kb.id)}
+              onClick={() => router.push('/knowledge-bases/' + kb.id)}
             >
               <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 1 }}>
                 <Stack direction='row' spacing={1.25} sx={{ minWidth: 0 }} alignItems='center'>
@@ -316,7 +316,7 @@ export default function KnowledgeBasesPage() {
         onClose={handleMenuClose}
         onClick={(e) => e.stopPropagation()}
       >
-        <MenuItem onClick={() => menuAnchor && navigate('/knowledge-bases/' + menuAnchor.kb.id)}>
+        <MenuItem onClick={() => menuAnchor && router.push('/knowledge-bases/' + menuAnchor.kb.id)}>
           <VisibilityIcon fontSize='small' sx={{ mr: 1 }} />
           查看详情
         </MenuItem>
@@ -387,3 +387,5 @@ export default function KnowledgeBasesPage() {
     </Box>
   );
 }
+
+

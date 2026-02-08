@@ -3,7 +3,7 @@
  */
 
 import { useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useRouter } from 'next/navigation';
 import {
   Alert,
   Box,
@@ -28,10 +28,10 @@ import { IndexConfigForm } from '../components/IndexConfigForm';
 import {
   useCancelIngestionBatch,
   useCreateIngestionBatch,
-  useCreateKnowledgeBase,
   useIngestionBatch,
   useRetryIngestionBatch,
-} from '../hooks/queries';
+} from '../hooks/queries/useIngestionBatches';
+import { useCreateKnowledgeBase } from '../hooks/queries/useKnowledgeBases';
 import { getErrorMessage } from '../lib/errorHandler';
 import { validateIndexConfig } from '../lib/indexConfig';
 import { HttpError } from '../services/http';
@@ -118,7 +118,7 @@ function batchStatusColor(status: BatchStatus): 'default' | 'warning' | 'success
 }
 
 export default function KnowledgeBaseCreateWizardPage() {
-  const navigate = useNavigate();
+  const router = useRouter();
   const [activeStep, setActiveStep] = useState(0);
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
@@ -322,7 +322,7 @@ export default function KnowledgeBaseCreateWizardPage() {
         title='Create Knowledge Base'
         subtitle='Fixed 3 steps: Configure -> Documents -> Submit'
         action={
-          <Button variant='outlined' onClick={() => navigate('/knowledge-bases')}>
+          <Button variant='outlined' onClick={() => router.push('/knowledge-bases')}>
             Back to list
           </Button>
         }
@@ -518,7 +518,7 @@ export default function KnowledgeBaseCreateWizardPage() {
                   Cancel batch
                 </Button>
                 {createdKbId && (
-                  <Button variant='text' onClick={() => navigate('/knowledge-bases/' + createdKbId)}>
+                  <Button variant='text' onClick={() => router.push('/knowledge-bases/' + createdKbId)}>
                     Open KB detail
                   </Button>
                 )}
@@ -530,3 +530,5 @@ export default function KnowledgeBaseCreateWizardPage() {
     </Box>
   );
 }
+
+

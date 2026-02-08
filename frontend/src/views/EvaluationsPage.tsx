@@ -2,7 +2,7 @@
  * 对比评测页面
  */
 import { useCallback, useState } from 'react';
-import { useQueryClient } from '@tanstack/react-query';
+import { useSWRConfig } from 'swr';
 import {
   Box,
   Container,
@@ -22,12 +22,8 @@ import { PageHeader } from '../components/ui/PageHeader';
 import { StatusBadge } from '../components/ui/StatusBadge';
 import { createExport, pollExportUntilDone } from '../services/exports';
 import type { EvaluationRunCreateRequest } from '../services/evaluations';
-import {
-  evaluationKeys,
-  useCreateEvaluationRun,
-  useEvaluationRun,
-  useSelectableKnowledgeBases,
-} from '../hooks/queries';
+import { evaluationKeys, useCreateEvaluationRun, useEvaluationRun } from '../hooks/queries/useEvaluations';
+import { useSelectableKnowledgeBases } from '../hooks/queries/useKnowledgeBases';
 import { safeOpenDownloadUrl } from '../utils/urlValidation';
 import { getErrorMessage } from '../lib/errorHandler';
 
@@ -42,11 +38,11 @@ const DEFAULT_DATASET = {
 };
 
 export function EvaluationsPage() {
-  // React Query：自动去重/缓存知识库列表（对齐 Vercel client-swr-dedup 思路）
+  // SWR：自动去重/缓存知识库列表（对齐 Vercel client-swr-dedup）
   const knowledgeBasesQuery = useSelectableKnowledgeBases();
   const knowledgeBases = knowledgeBasesQuery.data ?? [];
 
-  const queryClient = useQueryClient();
+  const { mutate } = useSWRConfig();
   const createRunMutation = useCreateEvaluationRun();
 
   const [selectedKbIds, setSelectedKbIds] = useState<string[]>([]);
@@ -118,13 +114,13 @@ export function EvaluationsPage() {
 
       const run = await createRunMutation.mutateAsync(req);
 
-      // 直接回填 query cache，避免额外请求并立即启动轮询。
-      queryClient.setQueryData(evaluationKeys.run(run.id), run);
+      // 直接回填 SWR cache，避免额外请求并立即启动轮询。
+      await mutate(evaluationKeys.run(run.id), run, { revalidate: false });
       setEvalRunId(run.id);
     } catch (e) {
       setError(getErrorMessage(e));
     }
-  }, [createRunMutation, datasetJson, queryClient, selectedKbIds]);
+  }, [createRunMutation, datasetJson, mutate, selectedKbIds]);
 
   const handleExport = useCallback(async () => {
     if (!evalRun) return;
@@ -383,3 +379,5 @@ export function EvaluationsPage() {
 }
 
 export default EvaluationsPage;
+
+

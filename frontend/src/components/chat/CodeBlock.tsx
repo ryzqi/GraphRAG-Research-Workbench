@@ -1,13 +1,35 @@
 /**
  * 代码块组件
- * 支持语法高亮、语言标签、复制按钮
+ * 轻量语法高亮 + 复制按钮
  */
 import { useState, useCallback } from 'react';
 import { Box, IconButton, Tooltip, Typography } from '@mui/material';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import CheckIcon from '@mui/icons-material/Check';
-import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
+import { PrismLight as SyntaxHighlighter } from 'react-syntax-highlighter';
+import js from 'react-syntax-highlighter/dist/esm/languages/prism/javascript';
+import ts from 'react-syntax-highlighter/dist/esm/languages/prism/typescript';
+import tsx from 'react-syntax-highlighter/dist/esm/languages/prism/tsx';
+import python from 'react-syntax-highlighter/dist/esm/languages/prism/python';
+import bash from 'react-syntax-highlighter/dist/esm/languages/prism/bash';
+import json from 'react-syntax-highlighter/dist/esm/languages/prism/json';
+import yaml from 'react-syntax-highlighter/dist/esm/languages/prism/yaml';
+import sql from 'react-syntax-highlighter/dist/esm/languages/prism/sql';
+import markdown from 'react-syntax-highlighter/dist/esm/languages/prism/markdown';
+import jsx from 'react-syntax-highlighter/dist/esm/languages/prism/jsx';
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
+
+SyntaxHighlighter.registerLanguage('javascript', js);
+SyntaxHighlighter.registerLanguage('typescript', ts);
+SyntaxHighlighter.registerLanguage('tsx', tsx);
+SyntaxHighlighter.registerLanguage('python', python);
+SyntaxHighlighter.registerLanguage('bash', bash);
+SyntaxHighlighter.registerLanguage('shell', bash);
+SyntaxHighlighter.registerLanguage('json', json);
+SyntaxHighlighter.registerLanguage('yaml', yaml);
+SyntaxHighlighter.registerLanguage('sql', sql);
+SyntaxHighlighter.registerLanguage('markdown', markdown);
+SyntaxHighlighter.registerLanguage('jsx', jsx);
 
 interface CodeBlockProps {
   language?: string;
@@ -23,14 +45,14 @@ export function CodeBlock({ language = 'text', children }: CodeBlockProps) {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch {
-      // 静默失败
+      // Ignore copy failures.
     }
   }, [children]);
 
-  // 语言显示名称映射
   const languageLabels: Record<string, string> = {
     javascript: 'JavaScript',
     typescript: 'TypeScript',
+    tsx: 'TSX',
     python: 'Python',
     java: 'Java',
     cpp: 'C++',
@@ -49,7 +71,8 @@ export function CodeBlock({ language = 'text', children }: CodeBlockProps) {
     text: 'Text',
   };
 
-  const displayLanguage = languageLabels[language.toLowerCase()] || language.toUpperCase();
+  const normalizedLanguage = language.toLowerCase();
+  const displayLanguage = languageLabels[normalizedLanguage] ?? language.toUpperCase();
 
   return (
     <Box
@@ -60,7 +83,6 @@ export function CodeBlock({ language = 'text', children }: CodeBlockProps) {
         my: 2,
       }}
     >
-      {/* 代码块头部 */}
       <Box
         sx={{
           display: 'flex',
@@ -99,9 +121,8 @@ export function CodeBlock({ language = 'text', children }: CodeBlockProps) {
         </Tooltip>
       </Box>
 
-      {/* 代码内容 */}
       <SyntaxHighlighter
-        language={language}
+        language={normalizedLanguage}
         style={oneDark}
         customStyle={{
           margin: 0,
