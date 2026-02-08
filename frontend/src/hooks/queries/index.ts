@@ -3,6 +3,7 @@
  */
 export {
   useKnowledgeBases,
+  useSelectableKnowledgeBases,
   useKnowledgeBase,
   useCreateKnowledgeBase,
   useUpdateKnowledgeBase,
@@ -42,19 +43,12 @@ export {
 } from './useExtensions';
 
 export {
-  useMaterials,
-  useCreateTextMaterial,
-  useCreateUrlMaterial,
-  useUploadMaterial,
-  materialKeys,
-} from './useMaterials';
-
-export {
-  useIngestionJob,
-  useCreateIngestionJob,
-  useCancelIngestionJob,
-  ingestionKeys,
-} from './useIngestions';
+  useIngestionBatch,
+  useCreateIngestionBatch,
+  useRetryIngestionBatch,
+  useCancelIngestionBatch,
+  ingestionBatchKeys,
+} from './useIngestionBatches';
 
 export {
   useIndexRebuildJob,

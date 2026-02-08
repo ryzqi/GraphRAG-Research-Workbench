@@ -2,8 +2,8 @@
  * 文件上传验证工具。
  */
 
-// 文件大小限制 (100MB)
-export const MAX_FILE_SIZE = 100 * 1024 * 1024;
+// 文件大小限制 (50MB)
+export const MAX_FILE_SIZE = 50 * 1024 * 1024;
 
 // 允许的文件扩展名
 export const ALLOWED_EXTENSIONS = new Set(['.pdf', '.txt', '.md', '.docx']);

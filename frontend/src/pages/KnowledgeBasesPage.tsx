@@ -1,6 +1,6 @@
 /**
  * 知识库管理页
- * 列表 + 新建/编辑/归档/删除
+ * 列表 + 编辑/归档/删除
  */
 import { useMemo, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -35,28 +35,20 @@ import { LoadingSpinner } from '../components/ui/LoadingSpinner';
 import { Modal } from '../components/ui/Modal';
 import { PageHeader } from '../components/ui/PageHeader';
 import { KnowledgeBaseForm } from '../components/KnowledgeBaseForm';
-import { IndexConfigForm } from '../components/IndexConfigForm';
 import {
   useKnowledgeBases,
-  useCreateKnowledgeBase,
   useUpdateKnowledgeBase,
-  useUpdateKnowledgeBaseIndexConfig,
   useDeleteKnowledgeBase,
   useArchiveKnowledgeBase,
 } from '../hooks/queries';
 import { getErrorMessage } from '../lib/errorHandler';
-import { validateIndexConfig } from '../lib/indexConfig';
 import {
-  createDefaultIndexConfig,
-  type ChunkingStrategy,
-  type IndexConfig,
   type KnowledgeBase,
-  type KnowledgeBaseCreate,
   type KnowledgeBaseUpdate,
 } from '../services/knowledgeBases';
 import { StaggerGrid } from '../components/ui/StaggerList';
 
-type ModalType = 'create' | 'edit' | 'delete' | 'archive' | null;
+type ModalType = 'edit' | 'delete' | 'archive' | null;
 type StatusFilter = 'all' | 'active' | 'archived';
 
 export default function KnowledgeBasesPage() {
@@ -65,25 +57,11 @@ export default function KnowledgeBasesPage() {
   const [selectedKb, setSelectedKb] = useState<KnowledgeBase | null>(null);
   const [menuAnchor, setMenuAnchor] = useState<{ el: HTMLElement; kb: KnowledgeBase } | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
-  const [actionInfo, setActionInfo] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
-  const [postCreateIndexConfigOpen, setPostCreateIndexConfigOpen] = useState(false);
-  const [postCreateKb, setPostCreateKb] = useState<KnowledgeBase | null>(null);
-  const [postCreateMainStrategy, setPostCreateMainStrategy] =
-    useState<ChunkingStrategy | null>(null);
-  const [postCreateIndexConfig, setPostCreateIndexConfig] = useState<IndexConfig>(
-    createDefaultIndexConfig()
-  );
-  const [postCreateIndexConfigError, setPostCreateIndexConfigError] = useState<string | null>(
-    null
-  );
 
-  // React Query hooks
   const { data: kbs = [], isLoading, error, refetch } = useKnowledgeBases({ status: 'all' });
-  const createMutation = useCreateKnowledgeBase();
   const updateMutation = useUpdateKnowledgeBase();
-  const updateIndexConfigMutation = useUpdateKnowledgeBaseIndexConfig();
   const deleteMutation = useDeleteKnowledgeBase();
   const archiveMutation = useArchiveKnowledgeBase();
 
@@ -98,28 +76,24 @@ export default function KnowledgeBasesPage() {
     setModalType(null);
     setSelectedKb(null);
     setActionError(null);
-    setActionInfo(null);
   }, []);
 
-  const handleCreate = useCallback(async (data: KnowledgeBaseCreate) => {
-    const kb = await createMutation.mutateAsync(data);
-    closeModal();
-    // Post-create: let user configure index config explicitly.
-    setPostCreateKb(kb);
-    setPostCreateIndexConfig(kb.index_config ?? createDefaultIndexConfig());
-    setPostCreateMainStrategy(null);
-    setPostCreateIndexConfigError(null);
-    setPostCreateIndexConfigOpen(true);
-  }, [createMutation, closeModal]);
-
   const handleUpdate = useCallback(async (data: KnowledgeBaseUpdate) => {
-    if (!selectedKb) return;
-    await updateMutation.mutateAsync({ id: selectedKb.id, data });
-    closeModal();
+    if (!selectedKb) {
+      return;
+    }
+    try {
+      await updateMutation.mutateAsync({ id: selectedKb.id, data });
+      closeModal();
+    } catch (err) {
+      setActionError(getErrorMessage(err));
+    }
   }, [selectedKb, updateMutation, closeModal]);
 
   const handleDelete = useCallback(async () => {
-    if (!selectedKb) return;
+    if (!selectedKb) {
+      return;
+    }
     try {
       await deleteMutation.mutateAsync(selectedKb.id);
       closeModal();
@@ -129,7 +103,9 @@ export default function KnowledgeBasesPage() {
   }, [selectedKb, deleteMutation, closeModal]);
 
   const handleArchive = useCallback(async () => {
-    if (!selectedKb) return;
+    if (!selectedKb) {
+      return;
+    }
     try {
       await archiveMutation.mutateAsync(selectedKb.id);
       closeModal();
@@ -137,51 +113,6 @@ export default function KnowledgeBasesPage() {
       setActionError(getErrorMessage(err));
     }
   }, [selectedKb, archiveMutation, closeModal]);
-
-  const closePostCreateIndexConfig = useCallback(() => {
-    setPostCreateIndexConfigOpen(false);
-    setPostCreateKb(null);
-    setPostCreateMainStrategy(null);
-    setPostCreateIndexConfig(createDefaultIndexConfig());
-    setPostCreateIndexConfigError(null);
-  }, []);
-
-  const handleSavePostCreateIndexConfig = useCallback(async () => {
-    if (!postCreateKb) return;
-    setPostCreateIndexConfigError(null);
-
-    if (!postCreateMainStrategy) {
-      setPostCreateIndexConfigError('请先选择分块策略');
-      return;
-    }
-
-    const validationErrors = validateIndexConfig(postCreateIndexConfig);
-    if (validationErrors.length > 0) {
-      setPostCreateIndexConfigError(`索引配置校验失败：${validationErrors.join('；')}`);
-      return;
-    }
-
-    try {
-      const res = await updateIndexConfigMutation.mutateAsync({
-        id: postCreateKb.id,
-        index_config: postCreateIndexConfig,
-      });
-      setActionInfo(
-        res.rebuild_job
-          ? `索引配置已保存，已创建索引重建任务：${res.rebuild_job.id}`
-          : '索引配置已保存'
-      );
-      closePostCreateIndexConfig();
-    } catch (err) {
-      setPostCreateIndexConfigError(getErrorMessage(err));
-    }
-  }, [
-    postCreateKb,
-    postCreateMainStrategy,
-    postCreateIndexConfig,
-    updateIndexConfigMutation,
-    closePostCreateIndexConfig,
-  ]);
 
   const handleMenuOpen = useCallback((event: React.MouseEvent<HTMLElement>, kb: KnowledgeBase) => {
     event.stopPropagation();
@@ -192,18 +123,19 @@ export default function KnowledgeBasesPage() {
     setMenuAnchor(null);
   }, []);
 
-  const actionLoading = createMutation.isPending || updateMutation.isPending || deleteMutation.isPending || archiveMutation.isPending;
+  const actionLoading =
+    updateMutation.isPending || deleteMutation.isPending || archiveMutation.isPending;
 
   const filteredKbs = useMemo(() => {
     const q = query.trim().toLowerCase();
     return kbs.filter((kb) => {
-      if (statusFilter !== 'all' && kb.status !== statusFilter) return false;
-      if (!q) return true;
-      const haystack = [
-        kb.name,
-        kb.description ?? '',
-        ...(kb.tags ?? []),
-      ]
+      if (statusFilter !== 'all' && kb.status !== statusFilter) {
+        return false;
+      }
+      if (!q) {
+        return true;
+      }
+      const haystack = [kb.name, kb.description ?? '', ...(kb.tags ?? [])]
         .join(' ')
         .toLowerCase();
       return haystack.includes(q);
@@ -213,14 +145,10 @@ export default function KnowledgeBasesPage() {
   return (
     <Box>
       <PageHeader
-        title="知识库管理"
-        subtitle="创建和管理您的知识库"
+        title='知识库管理'
+        subtitle='创建向导、增量处理与可用性状态统一管理'
         action={
-          <Button
-            variant="contained"
-            startIcon={<AddIcon />}
-            onClick={() => openModal('create')}
-          >
+          <Button variant='contained' startIcon={<AddIcon />} onClick={() => navigate('/knowledge-bases/new')}>
             新建知识库
           </Button>
         }
@@ -243,13 +171,13 @@ export default function KnowledgeBasesPage() {
         <TextField
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="搜索知识库（名称/描述/标签）"
-          size="small"
+          placeholder='搜索知识库（名称/描述/标签）'
+          size='small'
           sx={{ minWidth: { xs: '100%', sm: 360 }, flex: 1 }}
           InputProps={{
             startAdornment: (
-              <InputAdornment position="start">
-                <SearchIcon fontSize="small" />
+              <InputAdornment position='start'>
+                <SearchIcon fontSize='small' />
               </InputAdornment>
             ),
           }}
@@ -259,8 +187,8 @@ export default function KnowledgeBasesPage() {
           value={statusFilter}
           exclusive
           onChange={(_, next) => next && setStatusFilter(next)}
-          size="small"
-          aria-label="按状态筛选"
+          size='small'
+          aria-label='按状态筛选'
           sx={{
             '& .MuiToggleButton-root': {
               textTransform: 'none',
@@ -269,12 +197,12 @@ export default function KnowledgeBasesPage() {
             },
           }}
         >
-          <ToggleButton value="all">全部</ToggleButton>
-          <ToggleButton value="active">活跃</ToggleButton>
-          <ToggleButton value="archived">已归档</ToggleButton>
+          <ToggleButton value='all'>全部</ToggleButton>
+          <ToggleButton value='active'>活跃</ToggleButton>
+          <ToggleButton value='archived'>已归档</ToggleButton>
         </ToggleButtonGroup>
 
-        <Typography variant="caption" color="text.secondary" sx={{ ml: 'auto' }}>
+        <Typography variant='caption' color='text.secondary' sx={{ ml: 'auto' }}>
           {filteredKbs.length} / {kbs.length}
         </Typography>
       </Paper>
@@ -284,35 +212,25 @@ export default function KnowledgeBasesPage() {
         onClose={() => refetch()}
         sx={{ mb: 2 }}
       />
-      <ErrorAlert
-        error={actionInfo}
-        severity="info"
-        onClose={() => setActionInfo(null)}
-        sx={{ mb: 2 }}
-      />
 
       {isLoading ? (
-        <LoadingSpinner text="加载知识库列表..." />
+        <LoadingSpinner text='加载知识库列表...' />
       ) : kbs.length === 0 ? (
         <EmptyState
-          title="暂无知识库"
-          description="点击上方按钮创建您的第一个知识库"
+          title='暂无知识库'
+          description='点击上方按钮开始三步创建向导'
           action={
-            <Button
-              variant="contained"
-              startIcon={<AddIcon />}
-              onClick={() => openModal('create')}
-            >
+            <Button variant='contained' startIcon={<AddIcon />} onClick={() => navigate('/knowledge-bases/new')}>
               新建知识库
             </Button>
           }
         />
       ) : filteredKbs.length === 0 ? (
         <EmptyState
-          title="未找到匹配的知识库"
-          description="尝试更换关键词或切换筛选条件。"
+          title='未找到匹配的知识库'
+          description='尝试更换关键词或切换筛选条件。'
           action={
-            <Button variant="outlined" onClick={() => { setQuery(''); setStatusFilter('all'); }}>
+            <Button variant='outlined' onClick={() => { setQuery(''); setStatusFilter('all'); }}>
               清空筛选
             </Button>
           }
@@ -328,10 +246,10 @@ export default function KnowledgeBasesPage() {
                 borderColor: 'divider',
                 overflow: 'hidden',
               }}
-              onClick={() => navigate(`/knowledge-bases/${kb.id}`)}
+              onClick={() => navigate('/knowledge-bases/' + kb.id)}
             >
               <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 1 }}>
-                <Stack direction="row" spacing={1.25} sx={{ minWidth: 0 }} alignItems="center">
+                <Stack direction='row' spacing={1.25} sx={{ minWidth: 0 }} alignItems='center'>
                   <Box
                     sx={{
                       width: 40,
@@ -348,11 +266,11 @@ export default function KnowledgeBasesPage() {
                     {(kb.name || 'K').trim().slice(0, 1).toUpperCase()}
                   </Box>
                   <Box sx={{ minWidth: 0 }}>
-                    <Typography variant="h6" fontWeight={600} noWrap>
+                    <Typography variant='h6' fontWeight={600} noWrap>
                       {kb.name}
                     </Typography>
                     {kb.description && (
-                      <Typography variant="body2" color="text.secondary" noWrap>
+                      <Typography variant='body2' color='text.secondary' noWrap>
                         {kb.description}
                       </Typography>
                     )}
@@ -362,123 +280,72 @@ export default function KnowledgeBasesPage() {
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexShrink: 0 }}>
                   <Chip
                     label={kb.status === 'active' ? '活跃' : '已归档'}
-                    size="small"
+                    size='small'
                     color={kb.status === 'active' ? 'primary' : 'default'}
-                    variant="outlined"
+                    variant='outlined'
                   />
                   <IconButton
-                    size="small"
+                    size='small'
                     onClick={(e) => handleMenuOpen(e, kb)}
-                    aria-label={`更多操作：${kb.name}`}
+                    aria-label={'更多操作：' + kb.name}
                   >
-                    <MoreVertIcon fontSize="small" />
+                    <MoreVertIcon fontSize='small' />
                   </IconButton>
                 </Box>
               </Box>
 
-              {kb.tags && kb.tags.length > 0 && (
-                <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap>
-                  {kb.tags.map((tag) => (
-                    <Chip key={tag} label={tag} size="small" variant="outlined" />
-                  ))}
-                </Stack>
-              )}
+              <Stack direction='row' spacing={0.5} flexWrap='wrap' useFlexGap>
+                <Chip
+                  label={kb.readiness === 'ready' ? '可用' : '未就绪'}
+                  size='small'
+                  color={kb.readiness === 'ready' ? 'success' : 'warning'}
+                  variant='outlined'
+                />
+                {kb.tags?.map((tag) => (
+                  <Chip key={tag} label={tag} size='small' variant='outlined' />
+                ))}
+              </Stack>
             </Card>
           ))}
         </StaggerGrid>
       )}
 
-      {/* 操作菜单 */}
       <Menu
         anchorEl={menuAnchor?.el}
         open={Boolean(menuAnchor)}
         onClose={handleMenuClose}
         onClick={(e) => e.stopPropagation()}
       >
-        <MenuItem onClick={() => menuAnchor && navigate(`/knowledge-bases/${menuAnchor.kb.id}`)}>
-          <VisibilityIcon fontSize="small" sx={{ mr: 1 }} />
+        <MenuItem onClick={() => menuAnchor && navigate('/knowledge-bases/' + menuAnchor.kb.id)}>
+          <VisibilityIcon fontSize='small' sx={{ mr: 1 }} />
           查看详情
         </MenuItem>
         <MenuItem onClick={() => menuAnchor && openModal('edit', menuAnchor.kb)}>
-          <EditIcon fontSize="small" sx={{ mr: 1 }} />
+          <EditIcon fontSize='small' sx={{ mr: 1 }} />
           编辑
         </MenuItem>
         <MenuItem onClick={() => menuAnchor && openModal('archive', menuAnchor.kb)}>
-          <ArchiveIcon fontSize="small" sx={{ mr: 1 }} />
+          <ArchiveIcon fontSize='small' sx={{ mr: 1 }} />
           归档
         </MenuItem>
         <MenuItem
           onClick={() => menuAnchor && openModal('delete', menuAnchor.kb)}
           sx={{ color: 'error.main' }}
         >
-          <DeleteIcon fontSize="small" sx={{ mr: 1 }} />
+          <DeleteIcon fontSize='small' sx={{ mr: 1 }} />
           删除
         </MenuItem>
       </Menu>
 
-      {/* 创建/编辑模态框 */}
-      <Modal
-        open={modalType === 'create'}
-        onClose={closeModal}
-        title="新建知识库"
-        maxWidth="sm"
-      >
-        <KnowledgeBaseForm
-          mode="create"
-          onSubmit={handleCreate}
-          onCancel={closeModal}
-          loading={actionLoading}
-        />
-      </Modal>
-
-      <Modal
-        open={postCreateIndexConfigOpen && postCreateKb !== null}
-        onClose={closePostCreateIndexConfig}
-        title="配置索引"
-        maxWidth="md"
-      >
-        <ErrorAlert
-          error={postCreateIndexConfigError}
-          onClose={() => setPostCreateIndexConfigError(null)}
-          sx={{ mb: 2 }}
-        />
-
-        <IndexConfigForm
-          value={postCreateIndexConfig}
-          onChange={setPostCreateIndexConfig}
-          mainStrategy={postCreateMainStrategy}
-          onMainStrategyChange={setPostCreateMainStrategy}
-          disabled={updateIndexConfigMutation.isPending}
-        />
-
-        <Stack direction="row" spacing={1.5} justifyContent="flex-end" sx={{ mt: 3 }}>
-          <Button
-            variant="outlined"
-            onClick={closePostCreateIndexConfig}
-            disabled={updateIndexConfigMutation.isPending}
-          >
-            稍后配置
-          </Button>
-          <Button
-            variant="contained"
-            onClick={handleSavePostCreateIndexConfig}
-            loading={updateIndexConfigMutation.isPending}
-            disabled={!postCreateMainStrategy}
-          >
-            保存
-          </Button>
-        </Stack>
-      </Modal>
-
       <Modal
         open={modalType === 'edit' && selectedKb !== null}
         onClose={closeModal}
-        title="编辑知识库"
-        maxWidth="sm"
+        title='编辑知识库'
+        maxWidth='sm'
       >
         {selectedKb && (
           <KnowledgeBaseForm
-            mode="edit"
+            mode='edit'
             initialData={selectedKb}
             onSubmit={handleUpdate}
             onCancel={closeModal}
@@ -487,33 +354,31 @@ export default function KnowledgeBasesPage() {
         )}
       </Modal>
 
-      {/* 删除确认对话框 */}
       <ConfirmDialog
         open={modalType === 'delete' && selectedKb !== null}
-        title="删除知识库"
+        title='删除知识库'
         message={
           <>
             确定要删除知识库 <strong>{selectedKb?.name}</strong> 吗？此操作不可恢复。
           </>
         }
-        confirmText="确认删除"
-        variant="destructive"
+        confirmText='确认删除'
+        variant='destructive'
         onConfirm={handleDelete}
         onCancel={closeModal}
         loading={deleteMutation.isPending}
         error={actionError}
       />
 
-      {/* 归档确认对话框 */}
       <ConfirmDialog
         open={modalType === 'archive' && selectedKb !== null}
-        title="归档知识库"
+        title='归档知识库'
         message={
           <>
-            确定要归档知识库 <strong>{selectedKb?.name}</strong> 吗？归档后将不再出现在列表中。
+            确定要归档知识库 <strong>{selectedKb?.name}</strong> 吗？归档后将不再出现在可选入口中。
           </>
         }
-        confirmText="确认归档"
+        confirmText='确认归档'
         onConfirm={handleArchive}
         onCancel={closeModal}
         loading={archiveMutation.isPending}

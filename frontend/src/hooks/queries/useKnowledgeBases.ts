@@ -4,6 +4,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   listKnowledgeBases,
+  listSelectableKnowledgeBases,
   getKnowledgeBase,
   createKnowledgeBase,
   updateKnowledgeBase,
@@ -15,30 +16,37 @@ import {
   type IndexConfig,
   type KnowledgeBaseIndexConfigUpdateResponse,
   type KnowledgeBaseStatusFilter,
+  type KnowledgeBaseReadinessFilter,
 } from '../../services/knowledgeBases';
 import { indexRebuildKeys } from './useIndexRebuilds';
 
-// Query Keys
 const KEYS = {
   all: ['knowledgeBases'] as const,
-  list: () => [...KEYS.all, 'list'] as const,
+  list: (status: KnowledgeBaseStatusFilter, readiness: KnowledgeBaseReadinessFilter) =>
+    [...KEYS.all, 'list', status, readiness] as const,
+  selectable: () => [...KEYS.all, 'selectable'] as const,
   detail: (id: string) => [...KEYS.all, 'detail', id] as const,
 };
 
-/**
- * 获取知识库列表
- */
-export function useKnowledgeBases(params?: { status?: KnowledgeBaseStatusFilter }) {
+export function useKnowledgeBases(params?: {
+  status?: KnowledgeBaseStatusFilter;
+  readiness?: KnowledgeBaseReadinessFilter;
+}) {
   const status = params?.status ?? 'active';
+  const readiness = params?.readiness ?? 'all';
   return useQuery({
-    queryKey: [...KEYS.list(), status],
-    queryFn: () => listKnowledgeBases({ status }).then((res) => res.items),
+    queryKey: KEYS.list(status, readiness),
+    queryFn: () => listKnowledgeBases({ status, readiness }).then((res) => res.items),
   });
 }
 
-/**
- * 获取知识库详情
- */
+export function useSelectableKnowledgeBases() {
+  return useQuery({
+    queryKey: KEYS.selectable(),
+    queryFn: () => listSelectableKnowledgeBases().then((res) => res.items),
+  });
+}
+
 export function useKnowledgeBase(id: string) {
   return useQuery({
     queryKey: KEYS.detail(id),
@@ -47,23 +55,17 @@ export function useKnowledgeBase(id: string) {
   });
 }
 
-/**
- * 创建知识库
- */
 export function useCreateKnowledgeBase() {
   const queryClient = useQueryClient();
 
   return useMutation({
     mutationFn: (data: KnowledgeBaseCreate) => createKnowledgeBase(data),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: KEYS.list() });
+      queryClient.invalidateQueries({ queryKey: KEYS.all });
     },
   });
 }
 
-/**
- * 更新知识库
- */
 export function useUpdateKnowledgeBase() {
   const queryClient = useQueryClient();
 
@@ -71,15 +73,12 @@ export function useUpdateKnowledgeBase() {
     mutationFn: ({ id, data }: { id: string; data: KnowledgeBaseUpdate }) =>
       updateKnowledgeBase(id, data),
     onSuccess: (_, { id }) => {
-      queryClient.invalidateQueries({ queryKey: KEYS.list() });
+      queryClient.invalidateQueries({ queryKey: KEYS.all });
       queryClient.invalidateQueries({ queryKey: KEYS.detail(id) });
     },
   });
 }
 
-/**
- * 更新知识库索引配置（触发重建）
- */
 export function useUpdateKnowledgeBaseIndexConfig() {
   const queryClient = useQueryClient();
 
@@ -87,7 +86,7 @@ export function useUpdateKnowledgeBaseIndexConfig() {
     mutationFn: ({ id, index_config }: { id: string; index_config: IndexConfig }) =>
       updateKnowledgeBaseIndexConfig(id, index_config),
     onSuccess: (res: KnowledgeBaseIndexConfigUpdateResponse, { id }) => {
-      queryClient.invalidateQueries({ queryKey: KEYS.list() });
+      queryClient.invalidateQueries({ queryKey: KEYS.all });
       queryClient.setQueryData(KEYS.detail(id), res.knowledge_base);
       if (res.rebuild_job) {
         queryClient.setQueryData(indexRebuildKeys.job(res.rebuild_job.id), res.rebuild_job);
@@ -96,30 +95,24 @@ export function useUpdateKnowledgeBaseIndexConfig() {
   });
 }
 
-/**
- * 删除知识库
- */
 export function useDeleteKnowledgeBase() {
   const queryClient = useQueryClient();
 
   return useMutation({
     mutationFn: (id: string) => deleteKnowledgeBase(id),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: KEYS.list() });
+      queryClient.invalidateQueries({ queryKey: KEYS.all });
     },
   });
 }
 
-/**
- * 归档知识库
- */
 export function useArchiveKnowledgeBase() {
   const queryClient = useQueryClient();
 
   return useMutation({
     mutationFn: (id: string) => archiveKnowledgeBase(id),
     onSuccess: (_, id) => {
-      queryClient.invalidateQueries({ queryKey: KEYS.list() });
+      queryClient.invalidateQueries({ queryKey: KEYS.all });
       queryClient.invalidateQueries({ queryKey: KEYS.detail(id) });
     },
   });

@@ -23,6 +23,9 @@ def _build_kb(kb_id: uuid.UUID) -> SimpleNamespace:
         description=None,
         tags=None,
         status="active",
+        readiness="ready",
+        readiness_updated_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        current_config_version=1,
         index_config=IndexConfig().model_dump(mode="json"),
         created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
         updated_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
@@ -155,10 +158,12 @@ async def test_list_knowledge_bases_status_all_uses_unfiltered_query(
             skip: int = 0,
             limit: int = 100,
             status: object | None = None,
+            readiness: object | None = None,
         ) -> tuple[list[object], int]:
             captured["skip"] = skip
             captured["limit"] = limit
             captured["status"] = status
+            captured["readiness"] = readiness
             return [_build_kb(kb_id)], 2
 
     monkeypatch.setattr(kb_ep, "KnowledgeBaseService", _KbService)
@@ -170,7 +175,7 @@ async def test_list_knowledge_bases_status_all_uses_unfiltered_query(
         status=KnowledgeBaseStatusFilter.ALL,
     )
 
-    assert captured == {"skip": 0, "limit": 10, "status": None}
+    assert captured == {"skip": 0, "limit": 10, "status": None, "readiness": None}
     assert len(result.items) == 1
     assert result.items[0].id == kb_id
     assert result.page.total == 2

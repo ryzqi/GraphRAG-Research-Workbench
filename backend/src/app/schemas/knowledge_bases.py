@@ -166,9 +166,20 @@ class KnowledgeBaseStatus(str, Enum):
     ARCHIVED = "archived"
 
 
+class KnowledgeBaseReadiness(str, Enum):
+    NOT_READY = "not_ready"
+    READY = "ready"
+
+
 class KnowledgeBaseStatusFilter(str, Enum):
     ACTIVE = "active"
     ARCHIVED = "archived"
+    ALL = "all"
+
+
+class KnowledgeBaseReadinessFilter(str, Enum):
+    READY = "ready"
+    NOT_READY = "not_ready"
     ALL = "all"
 
 
@@ -197,6 +208,9 @@ class KnowledgeBaseRead(BaseModel):
     description: str | None = None
     tags: list[str] | None = None
     status: KnowledgeBaseStatus
+    readiness: KnowledgeBaseReadiness
+    readiness_updated_at: datetime
+    current_config_version: int
     index_config: IndexConfig | None = None
     created_at: datetime
     updated_at: datetime

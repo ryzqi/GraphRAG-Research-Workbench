@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timezone
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -10,7 +11,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.settings import get_settings
 from app.integrations.milvus_client import create_milvus_client
 from app.integrations.object_storage import ObjectStorage
-from app.models.knowledge_base import KnowledgeBase, KnowledgeBaseStatus
+from app.models.kb_config_snapshot import KBConfigSnapshot
+from app.models.knowledge_base import (
+    KnowledgeBase,
+    KnowledgeBaseReadiness,
+    KnowledgeBaseStatus,
+)
 
 
 class KnowledgeBaseService:
@@ -23,16 +29,19 @@ class KnowledgeBaseService:
         skip: int = 0,
         limit: int = 100,
         status: KnowledgeBaseStatus | None = None,
+        readiness: KnowledgeBaseReadiness | None = None,
     ) -> tuple[list[KnowledgeBase], int]:
-        """分页列出知识库。
+        """分页列出知识库。"""
 
-        - status=None 表示不过滤（返回 active + archived）。
-        """
         count_stmt = select(func.count()).select_from(KnowledgeBase)
         stmt = select(KnowledgeBase)
+
         if status is not None:
             count_stmt = count_stmt.where(KnowledgeBase.status == status)
             stmt = stmt.where(KnowledgeBase.status == status)
+        if readiness is not None:
+            count_stmt = count_stmt.where(KnowledgeBase.readiness == readiness)
+            stmt = stmt.where(KnowledgeBase.readiness == readiness)
 
         total = int((await self._db.execute(count_stmt)).scalar_one())
 
@@ -45,7 +54,6 @@ class KnowledgeBaseService:
         return list(result.scalars().all()), total
 
     async def list_active(self, skip: int = 0, limit: int = 100) -> list[KnowledgeBase]:
-        """列出所有活跃知识库。"""
         stmt = (
             select(KnowledgeBase)
             .where(KnowledgeBase.status == KnowledgeBaseStatus.ACTIVE)
@@ -56,20 +64,31 @@ class KnowledgeBaseService:
         result = await self._db.execute(stmt)
         return list(result.scalars().all())
 
-    async def list_active_page(
-        self, *, skip: int = 0, limit: int = 100
+    async def list_selectable_page(
+        self,
+        *,
+        skip: int = 0,
+        limit: int = 100,
     ) -> tuple[list[KnowledgeBase], int]:
-        """分页列出所有活跃知识库。"""
         return await self.list_page(
-            skip=skip, limit=limit, status=KnowledgeBaseStatus.ACTIVE
+            skip=skip,
+            limit=limit,
+            status=KnowledgeBaseStatus.ACTIVE,
+            readiness=KnowledgeBaseReadiness.READY,
         )
 
+    async def list_active_page(
+        self,
+        *,
+        skip: int = 0,
+        limit: int = 100,
+    ) -> tuple[list[KnowledgeBase], int]:
+        return await self.list_page(skip=skip, limit=limit, status=KnowledgeBaseStatus.ACTIVE)
+
     async def get_by_id(self, kb_id: uuid.UUID) -> KnowledgeBase | None:
-        """根据 ID 获取知识库。"""
         return await self._db.get(KnowledgeBase, kb_id)
 
     async def get_by_ids(self, kb_ids: list[uuid.UUID]) -> list[KnowledgeBase]:
-        """根据 ID 列表获取知识库。"""
         if not kb_ids:
             return []
         stmt = select(KnowledgeBase).where(KnowledgeBase.id.in_(kb_ids))
@@ -77,39 +96,53 @@ class KnowledgeBaseService:
         return list(result.scalars().all())
 
     async def get_by_name(self, name: str) -> KnowledgeBase | None:
-        """根据名称获取知识库。"""
         stmt = select(KnowledgeBase).where(KnowledgeBase.name == name)
         result = await self._db.execute(stmt)
         return result.scalar_one_or_none()
 
     async def create(
         self,
+        *,
         name: str,
         description: str | None = None,
         tags: list[str] | None = None,
         index_config: dict | None = None,
     ) -> KnowledgeBase:
-        """创建知识库。"""
+        """创建知识库并初始化 version=1 快照。"""
+
+        now = datetime.now(timezone.utc)
         kb = KnowledgeBase(
             name=name,
             description=description,
             tags=tags,
             index_config=index_config or {},
             status=KnowledgeBaseStatus.ACTIVE,
+            readiness=KnowledgeBaseReadiness.NOT_READY,
+            readiness_updated_at=now,
+            current_config_version=1,
         )
         self._db.add(kb)
+        await self._db.flush()
+
+        snapshot = KBConfigSnapshot(
+            kb_id=kb.id,
+            version=1,
+            config_json=kb.index_config or {},
+        )
+        self._db.add(snapshot)
+
         await self._db.commit()
         await self._db.refresh(kb)
         return kb
 
     async def update(
         self,
+        *,
         kb_id: uuid.UUID,
         name: str | None = None,
         description: str | None = None,
         tags: list[str] | None = None,
     ) -> KnowledgeBase | None:
-        """更新知识库。"""
         kb = await self.get_by_id(kb_id)
         if not kb:
             return None
@@ -126,8 +159,6 @@ class KnowledgeBaseService:
         return kb
 
     async def _cleanup_external_resources(self, kb_id: uuid.UUID) -> None:
-        """清理知识库关联的外部资源（Milvus + MinIO 上传对象）。"""
-
         milvus_client = create_milvus_client()
         try:
             await milvus_client.delete_by_kb_id(str(kb_id))
@@ -142,14 +173,12 @@ class KnowledgeBaseService:
         )
 
     async def delete(self, kb_id: uuid.UUID) -> bool:
-        """删除知识库（级联删除关联数据）。"""
         kb = await self.get_by_id(kb_id)
         if not kb:
             return False
 
         try:
             await self._db.delete(kb)
-            # Flush first so DB-side failures surface before external cleanup.
             await self._db.flush()
             await self._cleanup_external_resources(kb_id)
             await self._db.commit()
@@ -159,7 +188,6 @@ class KnowledgeBaseService:
         return True
 
     async def archive(self, kb_id: uuid.UUID) -> KnowledgeBase | None:
-        """归档知识库。"""
         kb = await self.get_by_id(kb_id)
         if not kb:
             return None

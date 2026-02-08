@@ -25,7 +25,7 @@ import {
   streamChatMessage,
 } from '../services/chats';
 import { HttpError } from '../services/http';
-import { useKnowledgeBases } from '../hooks/queries';
+import { useSelectableKnowledgeBases } from '../hooks/queries';
 import { useRecentHistory } from '../hooks/useRecentHistory';
 import { getErrorMessage } from '../lib/errorHandler';
 import { parseSseJson } from '../lib/sse';
@@ -39,7 +39,7 @@ import {
 export function KbChatPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const sessionId = searchParams.get('sessionId');
-  const knowledgeBasesQuery = useKnowledgeBases();
+  const knowledgeBasesQuery = useSelectableKnowledgeBases();
   const knowledgeBases = knowledgeBasesQuery.data ?? [];
 
   const [selectedKbIds, setSelectedKbIds] = useState<string[]>([]);

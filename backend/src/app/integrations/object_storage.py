@@ -119,6 +119,15 @@ class ObjectStorage:
 
         return await anyio.to_thread.run_sync(_get)
 
+    async def get_size(self, ref: ObjectRef) -> int:
+        """获取对象大小（字节）。"""
+
+        def _stat() -> int:
+            stat = self._client.stat_object(ref.bucket, ref.object_name)
+            return int(getattr(stat, "size", 0) or 0)
+
+        return await anyio.to_thread.run_sync(_stat)
+
     async def remove_object(self, ref: ObjectRef, *, ignore_missing: bool = True) -> None:
         """删除单个对象。"""
 

@@ -9,6 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.index_rebuild_job import IndexRebuildJob, IndexRebuildStatus
+from app.models.kb_config_snapshot import KBConfigSnapshot
 from app.models.knowledge_base import KnowledgeBase
 
 
@@ -35,21 +36,27 @@ class IndexRebuildService:
         kb: KnowledgeBase,
         index_config: dict,
     ) -> IndexRebuildJob:
-        """Replace index_config and enqueue rebuild job."""
+        """Replace index_config, bump config version, create snapshot, and enqueue rebuild."""
 
         now = datetime.now(timezone.utc)
-        stmt = select(IndexRebuildJob).where(
+        running_stmt = select(IndexRebuildJob).where(
             IndexRebuildJob.kb_id == kb.id,
-            IndexRebuildJob.status.in_(
-                [IndexRebuildStatus.QUEUED, IndexRebuildStatus.RUNNING]
-            ),
+            IndexRebuildJob.status.in_([IndexRebuildStatus.QUEUED, IndexRebuildStatus.RUNNING]),
         )
-        result = await self._db.execute(stmt)
-        for job in result.scalars().all():
+        running_result = await self._db.execute(running_stmt)
+        for job in running_result.scalars().all():
             job.status = IndexRebuildStatus.CANCELED
             job.finished_at = now
 
         kb.index_config = index_config
+        kb.current_config_version = kb.current_config_version + 1
+
+        snapshot = KBConfigSnapshot(
+            kb_id=kb.id,
+            version=kb.current_config_version,
+            config_json=index_config,
+        )
+        self._db.add(snapshot)
 
         job = IndexRebuildJob(kb_id=kb.id, status=IndexRebuildStatus.QUEUED)
         self._db.add(job)

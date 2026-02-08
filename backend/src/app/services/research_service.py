@@ -7,9 +7,12 @@ from datetime import datetime, timezone
 
 from celery import Celery
 from sqlalchemy import select
+
+from app.core.errors import bad_request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.agent_run import AgentRun, AgentRunStatus, AgentRunType
+from app.models.knowledge_base import KnowledgeBase, KnowledgeBaseReadiness, KnowledgeBaseStatus
 from app.models.research_report import ResearchReport
 from app.schemas.research import ResearchRunCreateRequest
 from app.worker.celery_app import celery_app
@@ -25,6 +28,25 @@ class ResearchService:
         self, session: AsyncSession, req: ResearchRunCreateRequest
     ) -> AgentRun:
         """创建研究任务并入队。"""
+        if req.selected_kb_ids:
+            stmt = select(KnowledgeBase).where(KnowledgeBase.id.in_(req.selected_kb_ids))
+            kbs = list((await session.execute(stmt)).scalars().all())
+            if len(kbs) != len(req.selected_kb_ids):
+                raise bad_request(code="KB_NOT_FOUND", message="存在不存在的知识库")
+
+            not_selectable = [
+                str(kb.id)
+                for kb in kbs
+                if kb.status != KnowledgeBaseStatus.ACTIVE
+                or kb.readiness != KnowledgeBaseReadiness.READY
+            ]
+            if not_selectable:
+                raise bad_request(
+                    code="KB_NOT_SELECTABLE",
+                    message="所选知识库尚不可用于业务入口",
+                    details={"kb_ids": not_selectable},
+                )
+
         run = AgentRun(
             run_type=AgentRunType.RESEARCH,
             question=req.question,

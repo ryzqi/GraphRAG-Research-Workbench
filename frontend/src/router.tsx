@@ -2,7 +2,6 @@ import { Suspense, lazy } from 'react';
 import { createBrowserRouter, RouterProvider } from 'react-router-dom';
 import { GeminiShell } from './components/shell';
 
-// 提取静态 JSX，避免每个路由重复创建 element（Vercel rendering-hoist-jsx）
 const routeFallback = <div style={{ padding: 24 }}>加载中...</div>;
 
 const KbChatPage = lazy(async () => ({
@@ -22,9 +21,8 @@ const EvaluationsPage = lazy(async () => ({
 }));
 
 const KnowledgeBasesPage = lazy(() => import('./pages/KnowledgeBasesPage'));
-
+const KnowledgeBaseCreateWizardPage = lazy(() => import('./pages/KnowledgeBaseCreateWizardPage'));
 const KnowledgeBaseDetailPage = lazy(() => import('./pages/KnowledgeBaseDetailPage'));
-
 const ExtensionsPage = lazy(() => import('./pages/ExtensionsPage'));
 
 const router = createBrowserRouter([
@@ -69,6 +67,14 @@ const router = createBrowserRouter([
         element: (
           <Suspense fallback={routeFallback}>
             <KnowledgeBasesPage />
+          </Suspense>
+        ),
+      },
+      {
+        path: 'knowledge-bases/new',
+        element: (
+          <Suspense fallback={routeFallback}>
+            <KnowledgeBaseCreateWizardPage />
           </Suspense>
         ),
       },

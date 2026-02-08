@@ -24,7 +24,7 @@ import { createExport, pollExportUntilDone } from '../services/exports';
 import {
   researchKeys,
   useCreateResearchRun,
-  useKnowledgeBases,
+  useSelectableKnowledgeBases,
   useResearchReport,
   useResearchRun,
 } from '../hooks/queries';
@@ -33,7 +33,7 @@ import { safeOpenDownloadUrl } from '../utils/urlValidation';
 
 export function ResearchPage() {
   // React Query：自动去重/缓存知识库列表（对齐 Vercel client-swr-dedup 思路）
-  const knowledgeBasesQuery = useKnowledgeBases();
+  const knowledgeBasesQuery = useSelectableKnowledgeBases();
   const knowledgeBases = knowledgeBasesQuery.data ?? [];
 
   const queryClient = useQueryClient();

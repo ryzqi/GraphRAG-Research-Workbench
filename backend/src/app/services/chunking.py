@@ -261,37 +261,6 @@ class ChunkingEngine:
         return items
 
 
-class TextChunker:
-    """Compatibility wrapper for legacy ingestion."""
-
-    def __init__(
-        self,
-        *,
-        settings: Settings | None = None,
-        embedding: EmbeddingClient | None = None,
-    ) -> None:
-        self._settings = settings if settings is not None else get_settings()
-        self._embedding = embedding
-
-    async def split(self, text: str) -> list[str]:
-        if not text:
-            return []
-
-        strategy = self._settings.ingestion_chunk_strategy
-        if strategy == "max_min_semantic":
-            return await _split_semantic_with_settings(text, self._settings, self._embedding)
-        if strategy != "sliding_window":
-            logger.warning(
-                "Unknown chunking strategy, fallback to sliding window",
-                extra={"strategy": strategy},
-            )
-        return _split_sliding_window(
-            text,
-            self._settings.ingestion_chunk_size,
-            self._settings.ingestion_chunk_overlap,
-        )
-
-
 def _split_sentences(text: str) -> list[str]:
     sentences: list[str] = []
     buf: list[str] = []
@@ -319,60 +288,6 @@ def _split_sliding_window(text: str, chunk_size: int, chunk_overlap: int) -> lis
         if chunk.strip():
             chunks.append(chunk.strip())
         start = end - chunk_overlap if end < len(text) else end
-    return chunks
-
-
-async def _split_semantic_with_settings(
-    text: str, settings: Settings, embedding: EmbeddingClient | None
-) -> list[str]:
-    sentences = _split_sentences(text)
-    if not sentences:
-        return []
-
-    embedder = embedding or EmbeddingClient()
-    try:
-        vectors = await embedder.embed(texts=sentences)
-    except Exception as exc:
-        logger.warning(
-            "Semantic chunking failed, fallback to sliding window",
-            extra={"error": str(exc)},
-        )
-        return _split_sliding_window(
-            text, settings.ingestion_chunk_size, settings.ingestion_chunk_overlap
-        )
-
-    min_tokens = max(settings.ingestion_semantic_min_tokens, 1)
-    max_tokens = max(settings.ingestion_semantic_max_tokens, min_tokens)
-    threshold = settings.ingestion_semantic_similarity_threshold
-    overlap_chars = max(settings.ingestion_chunk_overlap, 0)
-
-    chunks: list[str] = []
-    current = sentences[0]
-    current_tokens = count_tokens_approximately(current)
-
-    for idx in range(1, len(sentences)):
-        sentence = sentences[idx]
-        sentence_tokens = count_tokens_approximately(sentence)
-        sim = _cosine_similarity(vectors[idx - 1], vectors[idx])
-
-        if current_tokens + sentence_tokens > max_tokens:
-            chunks.append(current.strip())
-            current = _apply_overlap(chunks[-1], sentence, overlap_chars)
-            current_tokens = count_tokens_approximately(current)
-            continue
-
-        if sim < threshold and current_tokens >= min_tokens:
-            chunks.append(current.strip())
-            current = _apply_overlap(chunks[-1], sentence, overlap_chars)
-            current_tokens = count_tokens_approximately(current)
-            continue
-
-        current = _merge_text(current, sentence)
-        current_tokens += sentence_tokens
-
-    if current.strip():
-        chunks.append(current.strip())
-
     return chunks
 
 

@@ -7,7 +7,8 @@ def test_knowledge_base_delete_relations_use_passive_deletes_all() -> None:
     relation_names = (
         "materials",
         "chunks",
-        "ingestion_jobs",
+        "ingestion_batches",
+        "config_snapshots",
         "index_rebuild_jobs",
     )
 

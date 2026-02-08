@@ -12,7 +12,7 @@ celery_app = Celery(
     backend=settings.celery_result_backend,
     include=[
         "app.worker.tasks.export",
-        "app.worker.tasks.ingestion",
+        "app.worker.tasks.ingestion_batches",
         "app.worker.tasks.index_rebuild",
         "app.worker.tasks.research",
         "app.worker.tasks.evaluation",

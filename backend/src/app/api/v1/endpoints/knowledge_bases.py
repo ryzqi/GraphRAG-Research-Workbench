@@ -3,13 +3,18 @@
 from __future__ import annotations
 
 import uuid
+from typing import Annotated
 
 from fastapi import APIRouter, HTTPException, Query, Response, status
 from fastapi.exceptions import RequestValidationError
 from sqlalchemy.exc import IntegrityError
 
 from app.api.deps import AsyncSessionDep
-from app.models.knowledge_base import KnowledgeBaseStatus as ModelKnowledgeBaseStatus
+from app.models.knowledge_base import (
+    KnowledgeBaseReadiness as ModelKnowledgeBaseReadiness,
+    KnowledgeBaseStatus as ModelKnowledgeBaseStatus,
+)
+from app.models.source_material import SourceType
 from app.schemas.knowledge_bases import (
     ChunkingStrategy,
     IndexConfig,
@@ -18,20 +23,19 @@ from app.schemas.knowledge_bases import (
     KnowledgeBaseIndexConfigUpdateResponse,
     KnowledgeBaseListResponse,
     KnowledgeBaseRead,
+    KnowledgeBaseReadinessFilter,
     KnowledgeBaseStatusFilter,
     KnowledgeBaseUpdate,
 )
 from app.schemas.pagination import PageMeta
-from app.models.source_material import SourceType
-from app.services.knowledge_base_service import KnowledgeBaseService
 from app.services.index_rebuild_service import IndexRebuildService
+from app.services.knowledge_base_service import KnowledgeBaseService
 from app.services.material_service import MaterialService
 
 router = APIRouter()
 
 
 def _is_kb_name_conflict_error(exc: IntegrityError) -> bool:
-    """Return whether an IntegrityError maps to knowledge-base name conflict."""
     orig = getattr(exc, "orig", None)
     sqlstate = getattr(orig, "sqlstate", None) or getattr(orig, "pgcode", None)
     if sqlstate == "23505":
@@ -46,20 +50,52 @@ def _is_kb_name_conflict_error(exc: IntegrityError) -> bool:
 @router.get("", response_model=KnowledgeBaseListResponse)
 async def list_knowledge_bases(
     db: AsyncSessionDep,
-    skip: int = Query(0, ge=0, description="跳过记录数"),
-    limit: int = Query(100, ge=1, le=100, description="返回记录数"),
-    status: KnowledgeBaseStatusFilter = Query(
-        KnowledgeBaseStatusFilter.ACTIVE, description="按状态过滤"
-    ),
+    skip: Annotated[int, Query(ge=0, description="跳过记录数")] = 0,
+    limit: Annotated[int, Query(ge=1, le=100, description="返回记录数")] = 100,
+    status: Annotated[KnowledgeBaseStatusFilter, Query(description="按状态过滤")] = KnowledgeBaseStatusFilter.ACTIVE,
+    readiness: Annotated[KnowledgeBaseReadinessFilter, Query(description="按 readiness 过滤")] = KnowledgeBaseReadinessFilter.ALL,
 ) -> KnowledgeBaseListResponse:
-    """列出知识库（默认仅 active）。"""
+    """列出知识库（默认 active；可按 readiness 二次过滤）。"""
+
     service = KnowledgeBaseService(db)
     model_status = (
         None
         if status == KnowledgeBaseStatusFilter.ALL
         else ModelKnowledgeBaseStatus(status.value)
     )
-    kbs, total = await service.list_page(skip=skip, limit=limit, status=model_status)
+    model_readiness = (
+        None
+        if readiness == KnowledgeBaseReadinessFilter.ALL
+        else ModelKnowledgeBaseReadiness(readiness.value)
+    )
+
+    kbs, total = await service.list_page(
+        skip=skip,
+        limit=limit,
+        status=model_status,
+        readiness=model_readiness,
+    )
+    return KnowledgeBaseListResponse(
+        items=[KnowledgeBaseRead.model_validate(kb) for kb in kbs],
+        page=PageMeta(
+            skip=skip,
+            limit=limit,
+            total=total,
+            has_more=(skip + len(kbs)) < total,
+        ),
+    )
+
+
+@router.get("/selectable", response_model=KnowledgeBaseListResponse)
+async def list_selectable_knowledge_bases(
+    db: AsyncSessionDep,
+    skip: Annotated[int, Query(ge=0, description="跳过记录数")] = 0,
+    limit: Annotated[int, Query(ge=1, le=100, description="返回记录数")] = 100,
+) -> KnowledgeBaseListResponse:
+    """业务入口口径：仅返回 status=active 且 readiness=ready 的知识库。"""
+
+    service = KnowledgeBaseService(db)
+    kbs, total = await service.list_selectable_page(skip=skip, limit=limit)
     return KnowledgeBaseListResponse(
         items=[KnowledgeBaseRead.model_validate(kb) for kb in kbs],
         page=PageMeta(
@@ -73,12 +109,11 @@ async def list_knowledge_bases(
 
 @router.post("", response_model=KnowledgeBaseRead, status_code=status.HTTP_201_CREATED)
 async def create_knowledge_base(
-    db: AsyncSessionDep, body: KnowledgeBaseCreate
+    db: AsyncSessionDep,
+    body: KnowledgeBaseCreate,
 ) -> KnowledgeBaseRead:
-    """创建知识库。"""
     service = KnowledgeBaseService(db)
 
-    # 检查名称是否已存在
     existing = await service.get_by_name(body.name)
     if existing:
         raise HTTPException(
@@ -106,14 +141,12 @@ async def create_knowledge_base(
                 detail={"code": "KB_NAME_EXISTS", "message": "知识库名称已存在"},
             ) from exc
         raise
+
     return KnowledgeBaseRead.model_validate(kb)
 
 
 @router.get("/{kb_id}", response_model=KnowledgeBaseRead)
-async def get_knowledge_base(
-    db: AsyncSessionDep, kb_id: uuid.UUID
-) -> KnowledgeBaseRead:
-    """获取知识库详情。"""
+async def get_knowledge_base(db: AsyncSessionDep, kb_id: uuid.UUID) -> KnowledgeBaseRead:
     service = KnowledgeBaseService(db)
     kb = await service.get_by_id(kb_id)
     if not kb:
@@ -126,9 +159,10 @@ async def get_knowledge_base(
 
 @router.patch("/{kb_id}", response_model=KnowledgeBaseRead)
 async def update_knowledge_base(
-    db: AsyncSessionDep, kb_id: uuid.UUID, body: KnowledgeBaseUpdate
+    db: AsyncSessionDep,
+    kb_id: uuid.UUID,
+    body: KnowledgeBaseUpdate,
 ) -> KnowledgeBaseRead:
-    """更新知识库。"""
     service = KnowledgeBaseService(db)
     extra = getattr(body, "model_extra", None) or {}
     if "index_config" in extra:
@@ -149,6 +183,7 @@ async def update_knowledge_base(
             for key in extra.keys()
         ]
         raise RequestValidationError(errors)
+
     kb = await service.get_by_id(kb_id)
     if not kb:
         raise HTTPException(
@@ -156,7 +191,6 @@ async def update_knowledge_base(
             detail={"code": "KB_NOT_FOUND", "message": "知识库不存在"},
         )
 
-    # 检查名称是否与其他知识库冲突
     if body.name and body.name != kb.name:
         existing = await service.get_by_name(body.name)
         if existing:
@@ -185,7 +219,6 @@ async def update_index_config(
     body: KnowledgeBaseIndexConfigUpdateRequest,
     response: Response,
 ) -> KnowledgeBaseIndexConfigUpdateResponse:
-    """Replace index_config and trigger rebuild."""
     kb_service = KnowledgeBaseService(db)
     kb = await kb_service.get_by_id(kb_id)
     if not kb:
@@ -203,8 +236,6 @@ async def update_index_config(
         )
 
     if body.index_config.chunking.general_strategy == ChunkingStrategy.MARKDOWN_HEADING:
-        # Pre-check: markdown_heading only supports Markdown uploads; block switching if existing
-        # uploaded materials include non-.md files.
         material_service = MaterialService(db)
         skip = 0
         limit = 200
@@ -243,7 +274,6 @@ async def delete_knowledge_base(
     kb_id: uuid.UUID,
     confirm: bool = Query(..., description="二次确认（true 才执行）"),
 ) -> None:
-    """删除知识库（需二次确认）。"""
     if not confirm:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -262,10 +292,7 @@ async def delete_knowledge_base(
 
 
 @router.post("/{kb_id}/archive", response_model=KnowledgeBaseRead)
-async def archive_knowledge_base(
-    db: AsyncSessionDep, kb_id: uuid.UUID
-) -> KnowledgeBaseRead:
-    """归档知识库。"""
+async def archive_knowledge_base(db: AsyncSessionDep, kb_id: uuid.UUID) -> KnowledgeBaseRead:
     service = KnowledgeBaseService(db)
     kb = await service.get_by_id(kb_id)
     if not kb:

@@ -334,8 +334,8 @@ async def _parse_url(url: str, *, http_client: httpx.AsyncClient, settings: Sett
         raise ParseError(error_code="INVALID_URL_SCHEME", message=f"不支持的 URL scheme: {parsed.scheme!r}")
 
     # 这些配置项按需求建议可配置；默认值在 Settings 中提供（若缺失则走兜底）。
-    max_redirects = getattr(settings, "ingestion_url_max_redirects", 5)
-    max_bytes = getattr(settings, "ingestion_url_max_bytes", 5 * 1024 * 1024)
+    max_redirects = getattr(settings, "ingestion_url_max_redirects", 3)
+    max_bytes = getattr(settings, "ingestion_url_max_bytes", 20 * 1024 * 1024)
     user_agent = getattr(settings, "ingestion_url_user_agent", "multi-kb-agent/ingestion")
 
     headers = {"User-Agent": user_agent}
@@ -347,6 +347,13 @@ async def _parse_url(url: str, *, http_client: httpx.AsyncClient, settings: Sett
             follow_redirects=True,
             headers=headers,
         ) as resp:
+            if len(resp.history) > max_redirects:
+                raise ParseError(
+                    error_code="URL_TOO_MANY_REDIRECTS",
+                    message=f"URL 重定向次数过多（>{max_redirects}）",
+                    details={"max_redirects": max_redirects, "url": url},
+                )
+
             if resp.status_code >= 400:
                 raise ParseError(
                     error_code="URL_FETCH_FAILED",

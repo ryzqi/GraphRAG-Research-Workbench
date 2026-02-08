@@ -19,6 +19,7 @@ from app.models.chat_message import ChatMessage, MessageRole
 from app.models.chat_session import ChatSession, ChatSessionType
 from app.models.evaluation_run import EvaluationRun
 from app.models.export_job import ExportJob
+from app.models.knowledge_base import KnowledgeBaseReadiness, KnowledgeBaseStatus
 from app.schemas.chats import (
     ChatAnswerResponse,
     ChatPendingToolApprovalResponse,
@@ -32,6 +33,7 @@ from app.schemas.chats import (
 )
 from app.services.general_chat_service import GeneralChatService
 from app.services.kb_chat_service import KbChatService
+from app.services.knowledge_base_service import KnowledgeBaseService
 
 router = APIRouter()
 
@@ -42,12 +44,31 @@ async def create_chat_session(
     body: ChatSessionCreate,
 ) -> ChatSessionRead:
     """创建会话。"""
-    # kb_chat 必须选择知识库
     if body.session_type == ChatSessionType.KB_CHAT and not body.selected_kb_ids:
         raise bad_request(
             code="CHAT_MISSING_KB_IDS",
             message="kb_chat 类型必须选择至少一个知识库",
         )
+
+    if body.session_type == ChatSessionType.KB_CHAT:
+        kb_service = KnowledgeBaseService(db)
+        kb_ids = body.selected_kb_ids or []
+        kbs = await kb_service.get_by_ids(kb_ids)
+        if len(kbs) != len(kb_ids):
+            raise bad_request(code="KB_NOT_FOUND", message="存在不存在的知识库")
+
+        not_selectable = [
+            str(kb.id)
+            for kb in kbs
+            if kb.status != KnowledgeBaseStatus.ACTIVE
+            or kb.readiness != KnowledgeBaseReadiness.READY
+        ]
+        if not_selectable:
+            raise bad_request(
+                code="KB_NOT_SELECTABLE",
+                message="所选知识库尚不可用于业务入口",
+                details={"kb_ids": not_selectable},
+            )
 
     session = ChatSession(
         session_type=body.session_type,

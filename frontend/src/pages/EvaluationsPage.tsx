@@ -26,7 +26,7 @@ import {
   evaluationKeys,
   useCreateEvaluationRun,
   useEvaluationRun,
-  useKnowledgeBases,
+  useSelectableKnowledgeBases,
 } from '../hooks/queries';
 import { safeOpenDownloadUrl } from '../utils/urlValidation';
 import { getErrorMessage } from '../lib/errorHandler';
@@ -43,7 +43,7 @@ const DEFAULT_DATASET = {
 
 export function EvaluationsPage() {
   // React Query：自动去重/缓存知识库列表（对齐 Vercel client-swr-dedup 思路）
-  const knowledgeBasesQuery = useKnowledgeBases();
+  const knowledgeBasesQuery = useSelectableKnowledgeBases();
   const knowledgeBases = knowledgeBasesQuery.data ?? [];
 
   const queryClient = useQueryClient();

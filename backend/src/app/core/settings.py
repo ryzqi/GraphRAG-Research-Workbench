@@ -301,21 +301,6 @@ class Settings(BaseSettings):
     summary_trigger_min_tokens: int = Field(800, alias="SUMMARY_TRIGGER_MIN_TOKENS")
     summary_max_tokens: int = Field(256, alias="SUMMARY_MAX_TOKENS")
 
-    # 导入切分配置
-    ingestion_chunk_size: int = Field(512, alias="INGESTION_CHUNK_SIZE")
-    ingestion_chunk_overlap: int = Field(64, alias="INGESTION_CHUNK_OVERLAP")
-    ingestion_chunk_strategy: str = Field(
-        "sliding_window", alias="INGESTION_CHUNK_STRATEGY"
-    )
-    ingestion_semantic_min_tokens: int = Field(
-        80, alias="INGESTION_SEMANTIC_MIN_TOKENS"
-    )
-    ingestion_semantic_max_tokens: int = Field(
-        256, alias="INGESTION_SEMANTIC_MAX_TOKENS"
-    )
-    ingestion_semantic_similarity_threshold: float = Field(
-        0.6, alias="INGESTION_SEMANTIC_SIMILARITY_THRESHOLD"
-    )
     ingestion_contextual_enabled: bool = Field(
         True, alias="INGESTION_CONTEXTUAL_ENABLED"
     )
@@ -333,9 +318,9 @@ class Settings(BaseSettings):
     )
 
     # 导入：URL 抓取/正文抽取配置（最小安全基线）
-    ingestion_url_max_redirects: int = Field(5, alias="INGESTION_URL_MAX_REDIRECTS")
+    ingestion_url_max_redirects: int = Field(3, alias="INGESTION_URL_MAX_REDIRECTS")
     ingestion_url_max_bytes: int = Field(
-        5 * 1024 * 1024, alias="INGESTION_URL_MAX_BYTES"
+        20 * 1024 * 1024, alias="INGESTION_URL_MAX_BYTES"
     )
     ingestion_url_user_agent: str = Field(
         "multi-kb-agent/ingestion", alias="INGESTION_URL_USER_AGENT"

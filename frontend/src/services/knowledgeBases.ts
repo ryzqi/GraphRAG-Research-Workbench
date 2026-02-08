@@ -75,12 +75,17 @@ export interface IndexConfig {
   retrieval: RetrievalConfig;
 }
 
+export type KnowledgeBaseReadiness = 'not_ready' | 'ready';
+
 export interface KnowledgeBase {
   id: string;
   name: string;
   description: string | null;
   tags: string[] | null;
   status: 'active' | 'archived';
+  readiness: KnowledgeBaseReadiness;
+  readiness_updated_at: string;
+  current_config_version: number;
   index_config: IndexConfig | null;
   created_at: string;
   updated_at: string;
@@ -88,6 +93,7 @@ export interface KnowledgeBase {
 
 export type KnowledgeBaseListResponse = ListResponse<KnowledgeBase>;
 export type KnowledgeBaseStatusFilter = 'active' | 'archived' | 'all';
+export type KnowledgeBaseReadinessFilter = 'ready' | 'not_ready' | 'all';
 
 export interface KnowledgeBaseCreate {
   name: string;
@@ -157,16 +163,46 @@ export function createDefaultIndexConfig(): IndexConfig {
  */
 export async function listKnowledgeBases(params?: {
   status?: KnowledgeBaseStatusFilter;
+  readiness?: KnowledgeBaseReadinessFilter;
   skip?: number;
   limit?: number;
 }): Promise<KnowledgeBaseListResponse> {
   const searchParams = new URLSearchParams();
-  if (params?.status) searchParams.set('status', params.status);
-  if (params?.skip !== undefined) searchParams.set('skip', String(params.skip));
-  if (params?.limit !== undefined) searchParams.set('limit', String(params.limit));
+  if (params?.status) {
+    searchParams.set('status', params.status);
+  }
+  if (params?.readiness) {
+    searchParams.set('readiness', params.readiness);
+  }
+  if (params?.skip !== undefined) {
+    searchParams.set('skip', String(params.skip));
+  }
+  if (params?.limit !== undefined) {
+    searchParams.set('limit', String(params.limit));
+  }
   const query = searchParams.toString();
   return apiFetch<KnowledgeBaseListResponse>(
-    `/api/v1/knowledge-bases${query ? `?${query}` : ''}`
+    '/api/v1/knowledge-bases' + (query ? '?' + query : '')
+  );
+}
+
+/**
+ * 业务入口口径：仅获取 active + ready 知识库
+ */
+export async function listSelectableKnowledgeBases(params?: {
+  skip?: number;
+  limit?: number;
+}): Promise<KnowledgeBaseListResponse> {
+  const searchParams = new URLSearchParams();
+  if (params?.skip !== undefined) {
+    searchParams.set('skip', String(params.skip));
+  }
+  if (params?.limit !== undefined) {
+    searchParams.set('limit', String(params.limit));
+  }
+  const query = searchParams.toString();
+  return apiFetch<KnowledgeBaseListResponse>(
+    '/api/v1/knowledge-bases/selectable' + (query ? '?' + query : '')
   );
 }
 
@@ -174,7 +210,7 @@ export async function listKnowledgeBases(params?: {
  * 获取知识库详情
  */
 export async function getKnowledgeBase(kbId: string): Promise<KnowledgeBase> {
-  return apiFetch<KnowledgeBase>(`/api/v1/knowledge-bases/${kbId}`);
+  return apiFetch<KnowledgeBase>('/api/v1/knowledge-bases/' + kbId);
 }
 
 /**
@@ -196,7 +232,7 @@ export async function updateKnowledgeBase(
   kbId: string,
   data: KnowledgeBaseUpdate
 ): Promise<KnowledgeBase> {
-  return apiFetch<KnowledgeBase>(`/api/v1/knowledge-bases/${kbId}`, {
+  return apiFetch<KnowledgeBase>('/api/v1/knowledge-bases/' + kbId, {
     method: 'PATCH',
     body: JSON.stringify(data),
   });
@@ -210,7 +246,7 @@ export async function updateKnowledgeBaseIndexConfig(
   index_config: IndexConfig
 ): Promise<KnowledgeBaseIndexConfigUpdateResponse> {
   return apiFetch<KnowledgeBaseIndexConfigUpdateResponse>(
-    `/api/v1/knowledge-bases/${kbId}/index-config`,
+    '/api/v1/knowledge-bases/' + kbId + '/index-config',
     {
       method: 'PUT',
       body: JSON.stringify({ index_config }),
@@ -222,7 +258,7 @@ export async function updateKnowledgeBaseIndexConfig(
  * 删除知识库
  */
 export async function deleteKnowledgeBase(kbId: string): Promise<void> {
-  await apiFetch<void>(`/api/v1/knowledge-bases/${kbId}?confirm=true`, {
+  await apiFetch<void>('/api/v1/knowledge-bases/' + kbId + '?confirm=true', {
     method: 'DELETE',
   });
 }
@@ -231,7 +267,7 @@ export async function deleteKnowledgeBase(kbId: string): Promise<void> {
  * 归档知识库
  */
 export async function archiveKnowledgeBase(kbId: string): Promise<KnowledgeBase> {
-  return apiFetch<KnowledgeBase>(`/api/v1/knowledge-bases/${kbId}/archive`, {
+  return apiFetch<KnowledgeBase>('/api/v1/knowledge-bases/' + kbId + '/archive', {
     method: 'POST',
   });
 }
