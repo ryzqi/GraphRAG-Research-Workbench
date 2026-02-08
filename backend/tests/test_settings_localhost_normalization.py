@@ -50,3 +50,26 @@ def test_settings_keeps_localhost_urls_on_non_windows(monkeypatch) -> None:
     assert settings.minio_endpoint == "localhost:9000"
     assert settings.milvus_host == "localhost"
 
+
+def test_settings_includes_only_nextjs_dev_origins_in_dev_mode() -> None:
+    settings = Settings(
+        app_env="dev",
+        app_cors_allow_origins='["http://localhost:5173", "http://127.0.0.1:5173", "https://dev.example.com"]',
+        _env_file=None,
+    )
+
+    assert "http://localhost:3000" in settings.app_cors_allow_origins
+    assert "http://127.0.0.1:3000" in settings.app_cors_allow_origins
+    assert "http://localhost:5173" not in settings.app_cors_allow_origins
+    assert "http://127.0.0.1:5173" not in settings.app_cors_allow_origins
+    assert "https://dev.example.com" in settings.app_cors_allow_origins
+
+
+def test_settings_preserves_custom_cors_origins_in_non_dev_mode() -> None:
+    settings = Settings(
+        app_env="prod",
+        app_cors_allow_origins='["https://app.example.com"]',
+        _env_file=None,
+    )
+
+    assert settings.app_cors_allow_origins == ["https://app.example.com"]

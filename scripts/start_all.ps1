@@ -174,6 +174,14 @@ function Wait-BackendReady {
 
 Write-Host "加载环境变量 (.env) ..." -ForegroundColor Cyan
 Import-DotEnv -Path $envFile
+
+if (-not $env:NEXT_PUBLIC_API_BASE_URL -and $env:VITE_API_BASE_URL) {
+    $env:NEXT_PUBLIC_API_BASE_URL = Normalize-ApiBaseUrl -Raw $env:VITE_API_BASE_URL
+    if ($Verbose) {
+        Write-Host "检测到旧变量 VITE_API_BASE_URL，已映射到 NEXT_PUBLIC_API_BASE_URL=$($env:NEXT_PUBLIC_API_BASE_URL)" -ForegroundColor DarkGray
+    }
+}
+
 $env:PYTHONUNBUFFERED = "1"
 
 if (-not $SkipInfra) {

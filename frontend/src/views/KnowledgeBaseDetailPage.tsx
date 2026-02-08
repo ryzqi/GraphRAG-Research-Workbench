@@ -31,7 +31,10 @@ import { useKnowledgeBase } from '../hooks/queries/useKnowledgeBases';
 import { getErrorMessage } from '../lib/errorHandler';
 import type { EntryError, ManifestEntry, BatchStatus } from '../services/ingestionBatches';
 import { HttpError } from '../services/http';
+import { runWithConcurrency } from '../lib/runWithConcurrency';
 import { uploadMaterial } from '../services/materials';
+
+const MAX_PARALLEL_UPLOADS = 4;
 
 function mapEntryErrors(errors: EntryError[]): Record<string, string[]> {
   const mapped: Record<string, string[]> = {};
@@ -147,9 +150,24 @@ export default function KnowledgeBaseDetailPage() {
 
     const manifestEntries: ManifestEntry[] = [];
     const uploadErrors: Record<string, string[]> = {};
+    const fileEntries = validation.normalizedValidEntries.filter((entry) => entry.sourceType === 'file');
 
     setUploadingFiles(true);
     try {
+      const fileUploadResults = await runWithConcurrency(
+        fileEntries,
+        MAX_PARALLEL_UPLOADS,
+        async (entry) => {
+          try {
+            const uploaded = await uploadMaterial(kbId, entry.title ?? entry.file.name, entry.file);
+            return { entryId: entry.id, materialId: uploaded.id };
+          } catch (error) {
+            return { entryId: entry.id, error: getErrorMessage(error) };
+          }
+        }
+      );
+      const fileResultById = new Map(fileUploadResults.map((item) => [item.entryId, item]));
+
       for (const entry of validation.normalizedValidEntries) {
         if (entry.sourceType === 'text') {
           manifestEntries.push({
@@ -171,17 +189,22 @@ export default function KnowledgeBaseDetailPage() {
           continue;
         }
 
-        try {
-          const uploaded = await uploadMaterial(kbId, entry.title ?? entry.file.name, entry.file);
-          manifestEntries.push({
-            source_type: 'file',
-            entry_id: entry.id,
-            title: entry.title,
-            material_id: uploaded.id,
-          });
-        } catch (error) {
-          uploadErrors[entry.id] = [getErrorMessage(error)];
+        const uploadResult = fileResultById.get(entry.id);
+        if (!uploadResult) {
+          uploadErrors[entry.id] = ['File upload result missing'];
+          continue;
         }
+        if ('error' in uploadResult) {
+          uploadErrors[entry.id] = [uploadResult.error];
+          continue;
+        }
+
+        manifestEntries.push({
+          source_type: 'file',
+          entry_id: entry.id,
+          title: entry.title,
+          material_id: uploadResult.materialId,
+        });
       }
     } finally {
       setUploadingFiles(false);

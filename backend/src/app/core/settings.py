@@ -6,13 +6,36 @@ from functools import lru_cache
 from pathlib import Path
 from urllib.parse import quote, urlsplit, urlunsplit
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 ROOT_DIR = Path(__file__).resolve().parents[4]
 ENV_FILE = ROOT_DIR / ".env"
 
 _IPV4_LOOPBACK = "127.0.0.1"
+
+# Keep only Next.js dev origins on port 3000.
+_DEV_LOCAL_CORS_ORIGINS = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+]
+
+_LEGACY_VITE_LOCAL_CORS_ORIGINS = {
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+}
+
+
+def _dedupe_keep_order(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    deduped: list[str] = []
+    for value in values:
+        normalized = value.strip()
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        deduped.append(normalized)
+    return deduped
 
 
 def _prefer_ipv4_loopback_url(value: str) -> str:
@@ -80,7 +103,7 @@ class Settings(BaseSettings):
     app_env: str = Field("dev", alias="APP_ENV")
     app_log_level: str = Field("INFO", alias="APP_LOG_LEVEL")
     app_cors_allow_origins: list[str] = Field(
-        default_factory=lambda: ["http://localhost:5173", "http://127.0.0.1:5173"],
+        default_factory=lambda: _DEV_LOCAL_CORS_ORIGINS.copy(),
         alias="APP_CORS_ALLOW_ORIGINS",
     )
 
@@ -368,9 +391,9 @@ class Settings(BaseSettings):
     @classmethod
     def _parse_origins(cls, v: object) -> list[str]:
         if v is None:
-            return ["http://localhost:5173", "http://127.0.0.1:5173"]
+            return _DEV_LOCAL_CORS_ORIGINS.copy()
         if isinstance(v, list):
-            return [str(x).strip() for x in v if str(x).strip()]
+            return _dedupe_keep_order([str(x) for x in v])
         if isinstance(v, str):
             raw = v.strip()
             if not raw:
@@ -382,10 +405,23 @@ class Settings(BaseSettings):
                     parsed = None
                 else:
                     if isinstance(parsed, list):
-                        return [str(x).strip() for x in parsed if str(x).strip()]
+                        return _dedupe_keep_order([str(x) for x in parsed])
             parts = [p.strip().strip('"').strip("'") for p in raw.split(",")]
-            return [p for p in parts if p]
-        return [str(v)]
+            return _dedupe_keep_order(parts)
+        return _dedupe_keep_order([str(v)])
+
+    @model_validator(mode="after")
+    def _ensure_local_dev_cors_origins(self) -> "Settings":
+        if _is_dev_env(self.app_env):
+            custom_origins = [
+                origin
+                for origin in self.app_cors_allow_origins
+                if origin not in _LEGACY_VITE_LOCAL_CORS_ORIGINS
+            ]
+            self.app_cors_allow_origins = _dedupe_keep_order(
+                [*custom_origins, *_DEV_LOCAL_CORS_ORIGINS]
+            )
+        return self
 
     @field_validator("milvus_text_analyzer_filters", mode="before")
     @classmethod
