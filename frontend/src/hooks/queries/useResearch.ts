@@ -17,6 +17,7 @@ import {
 } from '../../services/research';
 
 const NO_ID = '__none__';
+const STREAM_MUTATION_INTERVAL_MS = 250;
 
 const KEYS = {
   all: ['research'] as const,
@@ -37,6 +38,27 @@ export function useResearchRun(runId: string | undefined) {
 
     const controller = new AbortController();
     let active = true;
+    let pendingRun: AgentRun | null = null;
+    let flushTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const flushPendingRun = async () => {
+      if (!pendingRun || !active) {
+        return;
+      }
+      const snapshot = pendingRun;
+      pendingRun = null;
+      await mutate(KEYS.run(runId), snapshot, { revalidate: false });
+    };
+
+    const scheduleFlush = () => {
+      if (flushTimer !== null) {
+        return;
+      }
+      flushTimer = setTimeout(() => {
+        flushTimer = null;
+        void flushPendingRun();
+      }, STREAM_MUTATION_INTERVAL_MS);
+    };
 
     void (async () => {
       try {
@@ -47,13 +69,19 @@ export function useResearchRun(runId: string | undefined) {
           if (!active) break;
 
           if (event.event === 'update' || event.event === 'final') {
-            const data = parseSseJson<AgentRun>(event.data);
-            await mutate(KEYS.run(runId), data, { revalidate: false });
+            pendingRun = parseSseJson<AgentRun>(event.data);
 
             if (event.event === 'final') {
+              if (flushTimer !== null) {
+                clearTimeout(flushTimer);
+                flushTimer = null;
+              }
+              await flushPendingRun();
               setStreamStatus('idle');
               break;
             }
+
+            scheduleFlush();
           }
 
           if (event.event === 'error') {
@@ -70,6 +98,9 @@ export function useResearchRun(runId: string | undefined) {
 
     return () => {
       active = false;
+      if (flushTimer !== null) {
+        clearTimeout(flushTimer);
+      }
       controller.abort();
     };
   }, [runId, mutate]);

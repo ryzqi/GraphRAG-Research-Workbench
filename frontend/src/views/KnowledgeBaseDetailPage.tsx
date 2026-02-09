@@ -1,3 +1,5 @@
+'use client';
+
 /**
  * Knowledge base detail page (manifest submit + batch polling)
  */
@@ -160,9 +162,9 @@ export default function KnowledgeBaseDetailPage() {
         async (entry) => {
           try {
             const uploaded = await uploadMaterial(kbId, entry.title ?? entry.file.name, entry.file);
-            return { entryId: entry.id, materialId: uploaded.id };
+            return { entryId: entry.id, materialId: uploaded.id, error: null as string | null };
           } catch (error) {
-            return { entryId: entry.id, error: getErrorMessage(error) };
+            return { entryId: entry.id, materialId: null as string | null, error: getErrorMessage(error) };
           }
         }
       );
@@ -194,8 +196,8 @@ export default function KnowledgeBaseDetailPage() {
           uploadErrors[entry.id] = ['File upload result missing'];
           continue;
         }
-        if ('error' in uploadResult) {
-          uploadErrors[entry.id] = [uploadResult.error];
+        if (!uploadResult.materialId) {
+          uploadErrors[entry.id] = [uploadResult.error ?? 'File upload failed'];
           continue;
         }
 

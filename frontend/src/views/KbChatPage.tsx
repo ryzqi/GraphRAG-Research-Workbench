@@ -1,3 +1,5 @@
+'use client';
+
 /**
  * 知识库问答页面（Gemini 风格重构）
  */
@@ -31,7 +33,49 @@ import {
   completeMessageState,
   createMessageState,
   parseDelta,
+  type MessageState,
 } from '../lib/deltaParser';
+
+function createMessageStateBatcher(onFlush: (nextState: MessageState) => void) {
+  let pendingState: MessageState | null = null;
+  let rafId: number | null = null;
+
+  const flush = () => {
+    if (rafId !== null && typeof window !== 'undefined') {
+      window.cancelAnimationFrame(rafId);
+      rafId = null;
+    }
+    if (!pendingState) {
+      return;
+    }
+    const snapshot = pendingState;
+    pendingState = null;
+    onFlush(snapshot);
+  };
+
+  const push = (nextState: MessageState) => {
+    pendingState = nextState;
+    if (typeof window === 'undefined') {
+      flush();
+      return;
+    }
+    if (rafId !== null) {
+      return;
+    }
+
+    rafId = window.requestAnimationFrame(() => {
+      rafId = null;
+      if (!pendingState) {
+        return;
+      }
+      const snapshot = pendingState;
+      pendingState = null;
+      onFlush(snapshot);
+    });
+  };
+
+  return { push, flush };
+}
 
 export function KbChatPage() {
   const router = useRouter();
@@ -232,6 +276,15 @@ export function KbChatPage() {
     };
 
     let hadStreamEvent = false;
+    const deltaBatcher = createMessageStateBatcher((nextState) => {
+      updateMessage(assistantId, (msg) => ({
+        ...msg,
+        content: nextState.final_content,
+        think: nextState.thought_log,
+        toolSteps: nextState.tool_steps,
+        isStreaming: true,
+      }));
+    });
 
     try {
       const stream = await streamChatMessage(session.id, userContent);
@@ -250,17 +303,12 @@ export function KbChatPage() {
           const delta = parseDelta(data);
           if (delta) {
             msgState = applyDelta(msgState, delta);
-            updateMessage(assistantId, (msg) => ({
-              ...msg,
-              content: msgState.final_content,
-              think: msgState.thought_log,
-              toolSteps: msgState.tool_steps,
-              isStreaming: true,
-            }));
+            deltaBatcher.push(msgState);
           }
         }
 
         if (event.event === 'final') {
+          deltaBatcher.flush();
           const data = parseSseJson<ChatMessageResponse>(event.data);
           if (data.status === 'succeeded') {
             updateMessage(assistantId, (msg) => ({
@@ -277,10 +325,13 @@ export function KbChatPage() {
         }
 
         if (event.event === 'error') {
+          deltaBatcher.flush();
           const err = parseSseJson<{ message?: string }>(event.data);
           throw new Error(err?.message ?? '流式响应失败');
         }
       }
+
+      deltaBatcher.flush();
 
       // 流式结束，完成消息状态
       msgState = completeMessageState(msgState);
@@ -303,6 +354,7 @@ export function KbChatPage() {
         setError(getErrorMessage(fallbackError));
       }
     } finally {
+      deltaBatcher.flush();
       setLoading(false);
     }
   }, [session, input, loading, loadingSession, upsertSession, updateMessage]);

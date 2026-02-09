@@ -6,7 +6,7 @@
     "dev": "next dev --hostname 127.0.0.1 --port 3000",
     "build": "next build",
     "start": "next start --hostname 127.0.0.1 --port 3000",
-    "lint": "next lint",
+    "lint": "eslint . --max-warnings=0",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "engines": {
@@ -17,21 +17,21 @@
     "@emotion/styled": "^11.14.1",
     "@mui/icons-material": "^7.3.7",
     "@mui/material": "^7.3.7",
-    "next": "^15.1.0",
-    "react": "^19.2.3",
-    "react-dom": "^19.2.3",
+    "next": "^16.1.6",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
     "react-markdown": "^10.1.0",
     "react-syntax-highlighter": "^16.1.0",
     "remark-gfm": "^4.0.1",
-    "swr": "^2.3.6"
+    "swr": "^2.4.0"
   },
   "devDependencies": {
-    "@types/node": "^22.13.5",
-    "@types/react": "^19.2.10",
+    "@types/node": "^25.2.2",
+    "@types/react": "^19.2.13",
     "@types/react-dom": "^19.2.3",
     "@types/react-syntax-highlighter": "^15.5.13",
-    "eslint": "^9.22.0",
-    "eslint-config-next": "^15.1.0",
+    "eslint": "^9.39.2",
+    "eslint-config-next": "^16.1.6",
     "typescript": "^5.9.3"
   }
 }

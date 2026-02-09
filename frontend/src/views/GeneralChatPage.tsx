@@ -1,3 +1,5 @@
+'use client';
+
 /**
  * 普通代理聊天页面（Gemini 风格重构）
  */
@@ -36,6 +38,47 @@ const quickPrompts = [
   { label: '优化表达', value: '请把下面内容润色成更专业的表达：' },
   { label: '风险与下一步', value: '请列出潜在风险与下一步建议：' },
 ];
+
+function createMessageStateBatcher(onFlush: (nextState: MessageState) => void) {
+  let pendingState: MessageState | null = null;
+  let rafId: number | null = null;
+
+  const flush = () => {
+    if (rafId !== null && typeof window !== 'undefined') {
+      window.cancelAnimationFrame(rafId);
+      rafId = null;
+    }
+    if (!pendingState) {
+      return;
+    }
+    const snapshot = pendingState;
+    pendingState = null;
+    onFlush(snapshot);
+  };
+
+  const push = (nextState: MessageState) => {
+    pendingState = nextState;
+    if (typeof window === 'undefined') {
+      flush();
+      return;
+    }
+    if (rafId !== null) {
+      return;
+    }
+
+    rafId = window.requestAnimationFrame(() => {
+      rafId = null;
+      if (!pendingState) {
+        return;
+      }
+      const snapshot = pendingState;
+      pendingState = null;
+      onFlush(snapshot);
+    });
+  };
+
+  return { push, flush };
+}
 
 export function GeneralChatPage() {
   const router = useRouter();
@@ -243,6 +286,15 @@ export function GeneralChatPage() {
     };
 
     let hadStreamEvent = false;
+    const deltaBatcher = createMessageStateBatcher((nextState) => {
+      updateMessage(assistantId, (msg) => ({
+        ...msg,
+        content: nextState.final_content,
+        think: nextState.thought_log,
+        toolSteps: nextState.tool_steps,
+        isStreaming: true,
+      }));
+    });
 
     try {
       const stream = await streamChatMessage(activeSession.id, content);
@@ -261,17 +313,12 @@ export function GeneralChatPage() {
           const delta = parseDelta(data);
           if (delta) {
             msgState = applyDelta(msgState, delta);
-            updateMessage(assistantId, (msg) => ({
-              ...msg,
-              content: msgState.final_content,
-              think: msgState.thought_log,
-              toolSteps: msgState.tool_steps,
-              isStreaming: true,
-            }));
+            deltaBatcher.push(msgState);
           }
         }
 
         if (event.event === 'interrupt') {
+          deltaBatcher.flush();
           const data = parseSseJson<ChatMessageResponse>(event.data);
           if (data.status === 'pending_tool_approval') {
             updateMessage(assistantId, (msg) => ({
@@ -294,6 +341,7 @@ export function GeneralChatPage() {
         }
 
         if (event.event === 'final') {
+          deltaBatcher.flush();
           const data = parseSseJson<ChatMessageResponse>(event.data);
           if (data.status === 'succeeded') {
             updateMessage(assistantId, (msg) => ({
@@ -310,10 +358,13 @@ export function GeneralChatPage() {
         }
 
         if (event.event === 'error') {
+          deltaBatcher.flush();
           const err = parseSseJson<{ message?: string }>(event.data);
           throw new Error(err?.message ?? '流式响应失败');
         }
       }
+
+      deltaBatcher.flush();
 
       // 流式结束，完成消息状态
       msgState = completeMessageState(msgState);
@@ -336,6 +387,7 @@ export function GeneralChatPage() {
         setError(fallbackError instanceof Error ? fallbackError.message : '发送消息失败');
       }
     } finally {
+      deltaBatcher.flush();
       setLoading(false);
     }
   }, [
@@ -397,6 +449,15 @@ export function GeneralChatPage() {
       };
 
       let hadStreamEvent = false;
+      const deltaBatcher = createMessageStateBatcher((nextState) => {
+        updateMessage(pendingMessageId, (msg) => ({
+          ...msg,
+          content: nextState.final_content,
+          think: nextState.thought_log,
+          toolSteps: nextState.tool_steps,
+          isStreaming: true,
+        }));
+      });
 
       try {
         const stream = await streamResumeToolApproval(session.id, runId, approved);
@@ -414,17 +475,12 @@ export function GeneralChatPage() {
             const delta = parseDelta(data);
             if (delta) {
               msgState = applyDelta(msgState, delta);
-              updateMessage(pendingMessageId, (msg) => ({
-                ...msg,
-                content: msgState.final_content,
-                think: msgState.thought_log,
-                toolSteps: msgState.tool_steps,
-                isStreaming: true,
-              }));
+              deltaBatcher.push(msgState);
             }
           }
 
           if (event.event === 'interrupt') {
+            deltaBatcher.flush();
             const data = parseSseJson<ChatMessageResponse>(event.data);
             if (data.status === 'pending_tool_approval') {
               updateMessage(pendingMessageId, (msg) => ({
@@ -447,6 +503,7 @@ export function GeneralChatPage() {
           }
 
           if (event.event === 'final') {
+            deltaBatcher.flush();
             const data = parseSseJson<ChatMessageResponse>(event.data);
             if (data.status === 'succeeded') {
               updateMessage(pendingMessageId, (msg) => ({
@@ -463,10 +520,13 @@ export function GeneralChatPage() {
           }
 
           if (event.event === 'error') {
+            deltaBatcher.flush();
             const err = parseSseJson<{ message?: string }>(event.data);
             throw new Error(err?.message ?? '恢复执行失败');
           }
         }
+
+        deltaBatcher.flush();
 
         // 流式结束，完成消息状态
         msgState = completeMessageState(msgState);
@@ -489,6 +549,7 @@ export function GeneralChatPage() {
           setError(fallbackError instanceof Error ? fallbackError.message : '恢复执行失败');
         }
       } finally {
+        deltaBatcher.flush();
         setLoading(false);
       }
     },

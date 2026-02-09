@@ -14,6 +14,7 @@ import {
 } from '../../services/evaluations';
 
 const NO_ID = '__none__';
+const STREAM_MUTATION_INTERVAL_MS = 250;
 
 const KEYS = {
   all: ['evaluations'] as const,
@@ -32,6 +33,27 @@ export function useEvaluationRun(evalRunId: string | undefined) {
 
     const controller = new AbortController();
     let active = true;
+    let pendingRun: EvaluationRun | null = null;
+    let flushTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const flushPendingRun = async () => {
+      if (!pendingRun || !active) {
+        return;
+      }
+      const snapshot = pendingRun;
+      pendingRun = null;
+      await mutate(KEYS.run(evalRunId), snapshot, { revalidate: false });
+    };
+
+    const scheduleFlush = () => {
+      if (flushTimer !== null) {
+        return;
+      }
+      flushTimer = setTimeout(() => {
+        flushTimer = null;
+        void flushPendingRun();
+      }, STREAM_MUTATION_INTERVAL_MS);
+    };
 
     void (async () => {
       try {
@@ -42,13 +64,19 @@ export function useEvaluationRun(evalRunId: string | undefined) {
           if (!active) break;
 
           if (event.event === 'update' || event.event === 'final') {
-            const data = parseSseJson<EvaluationRun>(event.data);
-            await mutate(KEYS.run(evalRunId), data, { revalidate: false });
+            pendingRun = parseSseJson<EvaluationRun>(event.data);
 
             if (event.event === 'final') {
+              if (flushTimer !== null) {
+                clearTimeout(flushTimer);
+                flushTimer = null;
+              }
+              await flushPendingRun();
               setStreamStatus('idle');
               break;
             }
+
+            scheduleFlush();
           }
 
           if (event.event === 'error') {
@@ -65,6 +93,9 @@ export function useEvaluationRun(evalRunId: string | undefined) {
 
     return () => {
       active = false;
+      if (flushTimer !== null) {
+        clearTimeout(flushTimer);
+      }
       controller.abort();
     };
   }, [evalRunId, mutate]);

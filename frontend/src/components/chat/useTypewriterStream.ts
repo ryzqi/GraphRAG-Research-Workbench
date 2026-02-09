@@ -69,24 +69,34 @@ export function useTypewriterStream(
 
   useEffect(() => {
     if (!shouldAnimate) return;
-    const timer = window.setInterval(() => {
-      const pending = pendingRef.current;
-      if (!pending) return;
 
-      const backlog = pending.length;
-      let step = 1;
-      if (backlog > 240) step = 6;
-      else if (backlog > 120) step = 4;
-      else if (backlog > 60) step = 3;
-      else if (backlog > 20) step = 2;
+    let frameId = 0;
+    let lastFlushAt = performance.now();
 
-      step = Math.min(step, maxCharsPerTick);
-      const chunk = pending.slice(0, step);
-      pendingRef.current = pending.slice(step);
-      setRenderText((prev) => prev + chunk);
-    }, intervalMs);
+    const tick = (now: number) => {
+      if (now - lastFlushAt >= intervalMs) {
+        lastFlushAt = now;
+        const pending = pendingRef.current;
+        if (pending) {
+          const backlog = pending.length;
+          let step = 1;
+          if (backlog > 240) step = 6;
+          else if (backlog > 120) step = 4;
+          else if (backlog > 60) step = 3;
+          else if (backlog > 20) step = 2;
 
-    return () => window.clearInterval(timer);
+          step = Math.min(step, maxCharsPerTick);
+          const chunk = pending.slice(0, step);
+          pendingRef.current = pending.slice(step);
+          setRenderText((prev) => prev + chunk);
+        }
+      }
+
+      frameId = window.requestAnimationFrame(tick);
+    };
+
+    frameId = window.requestAnimationFrame(tick);
+    return () => window.cancelAnimationFrame(frameId);
   }, [intervalMs, maxCharsPerTick, shouldAnimate]);
 
   const isTyping = isStreaming && renderText.length < targetText.length;

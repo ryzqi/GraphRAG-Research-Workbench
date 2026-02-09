@@ -65,6 +65,9 @@ export function MessageList({
     [messages]
   );
   const showThinking = loading && !hasStreamingContent;
+  const lastMessage = messages[messages.length - 1];
+  const lastMessageContentSize =
+    (lastMessage?.content?.length ?? 0) + (lastMessage?.think?.length ?? 0);
 
   const updateIsAtBottom = useCallback(() => {
     const container = containerRef.current;
@@ -88,7 +91,14 @@ export function MessageList({
     if (!isAtBottom) return;
     const behavior = hasStreaming || showThinking ? 'smooth' : 'auto';
     bottomRef.current?.scrollIntoView({ behavior, block: 'end' });
-  }, [messages, hasStreaming, showThinking, isAtBottom]);
+  }, [
+    messages.length,
+    lastMessage?.id,
+    lastMessageContentSize,
+    hasStreaming,
+    showThinking,
+    isAtBottom,
+  ]);
 
   if (messages.length === 0 && !loading) {
     return null;
