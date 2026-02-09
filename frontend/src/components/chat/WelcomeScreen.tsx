@@ -12,7 +12,6 @@ interface SuggestionChip {
 
 interface WelcomeScreenProps {
   title?: string;
-  subtitle?: string;
   suggestions?: SuggestionChip[];
   onSuggestionClick?: (value: string) => void;
   disabled?: boolean;
@@ -39,7 +38,6 @@ function createFadeUpSx(delayMs: number) {
 
 export function WelcomeScreen({
   title = '你好，需要我为你做些什么？',
-  subtitle = '输入你的目标，我会拆解步骤并提供可执行的建议。',
   suggestions = [],
   onSuggestionClick,
   disabled = false,
@@ -98,7 +96,7 @@ export function WelcomeScreen({
           variant="h4"
           fontWeight={400}
           sx={{
-            mb: 2,
+            mb: 4,
             background: (theme) =>
               theme.palette.mode === 'light'
                 ? 'linear-gradient(135deg, #1a73e8, #34a853)'
@@ -109,13 +107,6 @@ export function WelcomeScreen({
           }}
         >
           {title}
-        </Typography>
-      </Box>
-
-      {/* 副标题 */}
-      <Box sx={createFadeUpSx(200)}>
-        <Typography variant="body1" color="text.secondary" sx={{ maxWidth: 500, mb: 4 }}>
-          {subtitle}
         </Typography>
       </Box>
 

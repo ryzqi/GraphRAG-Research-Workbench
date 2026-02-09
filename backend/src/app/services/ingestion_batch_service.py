@@ -508,7 +508,7 @@ class IngestionBatchService:
         entries: list[ManifestEntry],
         entry_errors: list[EntryErrorRead],
     ) -> list[_PreparedEntry]:
-        prepared_entries: list[_PreparedEntry] = []
+        prepared_candidates: list[_PreparedEntry] = []
         fingerprints_seen: set[str] = set()
         url_count = 0
         file_count = 0
@@ -549,20 +549,30 @@ class IngestionBatchService:
                 )
                 continue
 
-            dup_stmt = (
-                select(IngestionBatchDoc.id)
-                .where(
-                    IngestionBatchDoc.kb_id == kb.id,
-                    IngestionBatchDoc.config_version == kb.current_config_version,
-                    IngestionBatchDoc.fingerprint == prepared.fingerprint,
-                )
-                .limit(1)
-            )
-            duplicate_doc_id = (await self._db.execute(dup_stmt)).scalar_one_or_none()
+            fingerprints_seen.add(prepared.fingerprint)
+            prepared_candidates.append(prepared)
+
+        if not prepared_candidates:
+            return []
+
+        fingerprints = [prepared.fingerprint for prepared in prepared_candidates]
+        dup_stmt = select(IngestionBatchDoc.id, IngestionBatchDoc.fingerprint).where(
+            IngestionBatchDoc.kb_id == kb.id,
+            IngestionBatchDoc.config_version == kb.current_config_version,
+            IngestionBatchDoc.fingerprint.in_(fingerprints),
+        )
+        duplicate_by_fingerprint = {
+            fingerprint: doc_id
+            for doc_id, fingerprint in (await self._db.execute(dup_stmt)).all()
+        }
+
+        prepared_entries: list[_PreparedEntry] = []
+        for prepared in prepared_candidates:
+            duplicate_doc_id = duplicate_by_fingerprint.get(prepared.fingerprint)
             if duplicate_doc_id is not None:
                 entry_errors.append(
                     EntryErrorRead(
-                        entry_id=entry_id,
+                        entry_id=prepared.entry_id,
                         source_type=prepared.source_type,
                         code="IDEMPOTENCY_DUPLICATE",
                         message=INGESTION_ERROR_SPECS["IDEMPOTENCY_DUPLICATE"].message,
@@ -572,7 +582,6 @@ class IngestionBatchService:
                 )
                 continue
 
-            fingerprints_seen.add(prepared.fingerprint)
             prepared_entries.append(prepared)
 
         return prepared_entries
@@ -680,6 +689,7 @@ class IngestionBatchService:
             text = str(prepared.payload["text"])
             content_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()[:32]
             material = SourceMaterial(
+                id=uuid.uuid4(),
                 kb_id=kb_id,
                 source_type=SourceType.TEXT,
                 title=prepared.title or "文本条目",
@@ -687,13 +697,13 @@ class IngestionBatchService:
                 metadata_={"text": text},
             )
             self._db.add(material)
-            await self._db.flush()
             return material.id
 
         if prepared.source_type == ManifestSourceType.URL:
             url = str(prepared.payload["url"])
             content_hash = hashlib.sha256(url.encode("utf-8")).hexdigest()[:32]
             material = SourceMaterial(
+                id=uuid.uuid4(),
                 kb_id=kb_id,
                 source_type=SourceType.URL,
                 title=prepared.title or url,
@@ -701,7 +711,6 @@ class IngestionBatchService:
                 content_hash=content_hash,
             )
             self._db.add(material)
-            await self._db.flush()
             return material.id
 
         return uuid.UUID(str(prepared.payload["material_id"]))
@@ -1106,3 +1115,4 @@ class IngestionBatchService:
         orig = getattr(exc, "orig", None)
         message = str(orig or exc).lower()
         return "uq_ingestion_batches_bootstrap_kb" in message or "is_bootstrap" in message
+

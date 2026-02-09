@@ -184,7 +184,6 @@ export default function KnowledgeBasesPage() {
     <Box>
       <PageHeader
         title='知识库管理'
-        subtitle='创建向导、增量处理与可用性状态统一管理'
         action={
           <Button variant='contained' startIcon={<AddIcon />} onClick={() => router.push('/knowledge-bases/new')}>
             新建知识库
@@ -256,7 +255,6 @@ export default function KnowledgeBasesPage() {
       ) : visibleKbs.length === 0 ? (
         <EmptyState
           title='暂无知识库'
-          description='点击上方按钮开始三步创建向导'
           action={
             <Button variant='contained' startIcon={<AddIcon />} onClick={() => router.push('/knowledge-bases/new')}>
               新建知识库

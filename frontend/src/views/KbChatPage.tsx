@@ -387,7 +387,6 @@ export function KbChatPage() {
         <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
           <WelcomeScreen
             title="知识库问答"
-            subtitle="选择知识库，开始基于您的文档进行智能问答"
             suggestions={[]}
           />
 
@@ -471,7 +470,6 @@ export function KbChatPage() {
         <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
           <WelcomeScreen
             title="开始提问吧"
-            subtitle="基于您选择的知识库，我会为您提供精准的回答"
             suggestions={[]}
           />
         </Box>

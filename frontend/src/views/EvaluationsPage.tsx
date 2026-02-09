@@ -171,10 +171,6 @@ export function EvaluationsPage() {
   return (
     <Container maxWidth="lg" sx={{ py: 3 }}>
       <PageHeader title="对比评测" />
-      <Typography color="text.secondary" sx={{ mb: 3 }}>
-        在同一问题集下运行单智能体与多智能体协作，对比评测效果
-      </Typography>
-
       {!evalRunId ? (
         <Stack spacing={3}>
           {/* 知识库选择 */}

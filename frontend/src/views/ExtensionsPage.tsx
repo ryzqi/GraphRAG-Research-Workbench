@@ -117,7 +117,6 @@ export function ExtensionsPage() {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
         <div>
           <h1 style={{ marginBottom: 8 }}>MCP扩展</h1>
-          <p style={{ color: '#6b7280' }}>管理 MCP 扩展，增强普通代理能力</p>
         </div>
         <button
           onClick={() => setShowForm(true)}
@@ -207,7 +206,7 @@ export function ExtensionsPage() {
         <div style={{ textAlign: 'center', color: '#6b7280', padding: 40 }}>加载中...</div>
       ) : extensions.length === 0 ? (
         <div style={{ textAlign: 'center', color: '#6b7280', padding: 40 }}>
-          暂无扩展，点击「添加扩展」开始
+          暂无扩展
         </div>
       ) : (
         <div style={{ display: 'grid', gap: 12 }}>

@@ -166,7 +166,7 @@ export default function KnowledgeBaseCreateWizardPage() {
   const [uploadingFiles, setUploadingFiles] = useState(false);
 
   const createKbMutation = useCreateKnowledgeBase();
-  const createBatchMutation = useCreateIngestionBatch();
+  const createBatchMutation = useCreateIngestionBatch({ invalidateMode: 'background' });
   const retryBatchMutation = useRetryIngestionBatch();
   const cancelBatchMutation = useCancelIngestionBatch();
   const batchQuery = useIngestionBatch(batchId ?? undefined);
@@ -311,6 +311,8 @@ export default function KnowledgeBaseCreateWizardPage() {
         kbId = created.id;
         setCreatedKbId(created.id);
       }
+
+      void router.prefetch(`/knowledge-bases/${kbId}`);
 
       const { manifestEntries, uploadErrors } = await buildManifestEntries(kbId);
 

@@ -637,7 +637,6 @@ export function GeneralChatPage() {
         <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
           <WelcomeScreen
             title="你好，需要我为你做些什么？"
-            subtitle="输入你的目标，我会拆解步骤并提供可执行的建议。"
             suggestions={quickPrompts}
             onSuggestionClick={handleSuggestionClick}
             disabled={isInputDisabled}

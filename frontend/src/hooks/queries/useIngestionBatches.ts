@@ -43,6 +43,10 @@ interface UseIngestionBatchLiveResult {
   fallbackIntervalMs: number;
 }
 
+interface UseCreateIngestionBatchOptions {
+  invalidateMode?: 'blocking' | 'background';
+}
+
 const KEYS = {
   all: ['ingestionBatches'] as const,
   batch: (id: string | undefined) => [...KEYS.all, 'batch', id ?? NO_ID] as const,
@@ -247,7 +251,9 @@ export function useIngestionBatchLive(options: UseIngestionBatchLiveOptions): Us
   };
 }
 
-export function useCreateIngestionBatch() {
+export function useCreateIngestionBatch(options?: UseCreateIngestionBatchOptions) {
+  const invalidateMode = options?.invalidateMode ?? 'background';
+
   return useApiMutation((data: IngestionBatchCreateRequest) => createIngestionBatch(data), {
     onSuccess: async (resp, __, { invalidate }) => {
       const keysToInvalidate: Array<readonly unknown[]> = [
@@ -265,7 +271,13 @@ export function useCreateIngestionBatch() {
       if (resp.kb_id) {
         keysToInvalidate.push(KEYS.latest(resp.kb_id));
       }
-      await invalidate(keysToInvalidate);
+
+      const invalidatePromise = invalidate(keysToInvalidate);
+      if (invalidateMode === 'blocking') {
+        await invalidatePromise;
+        return;
+      }
+      void invalidatePromise;
     },
   });
 }
