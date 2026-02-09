@@ -251,7 +251,7 @@ export default function KnowledgeBaseDetailPage() {
 
         const uploadResult = fileResultById.get(entry.id);
         if (!uploadResult) {
-          uploadErrors[entry.id] = ['文件上传结果缺失'];
+          uploadErrors[entry.id] = ['未获取上传结果'];
           continue;
         }
         if (!uploadResult.materialId) {
@@ -282,7 +282,7 @@ export default function KnowledgeBaseDetailPage() {
     setServerEntryErrors({});
 
     if (validation.globalErrors.length > 0 || validation.normalizedValidEntries.length === 0) {
-      setLocalError('提交前请先修复条目问题。');
+      setLocalError('请先修复条目问题。');
       return;
     }
 
@@ -291,7 +291,7 @@ export default function KnowledgeBaseDetailPage() {
 
       if (manifestEntries.length === 0) {
         setServerEntryErrors(uploadErrors);
-        setLocalError('没有可提交的有效条目。');
+        setLocalError('无可提交条目。');
         return;
       }
 
@@ -355,14 +355,14 @@ export default function KnowledgeBaseDetailPage() {
     <Box>
       <PageHeader
         title={kb.name}
-        subtitle='增量批次始终复用当前配置版本。'
+        subtitle='增量批次复用当前配置。'
         action={
           <Stack direction='row' spacing={1}>
             <Button variant='outlined' onClick={() => router.push('/knowledge-bases')}>
               返回列表
             </Button>
             <Button variant='contained' onClick={() => router.push('/knowledge-bases/new')}>
-              新建向导
+              新建知识库
             </Button>
           </Stack>
         }
@@ -378,7 +378,7 @@ export default function KnowledgeBaseDetailPage() {
         <Stack direction='row' spacing={1} flexWrap='wrap' useFlexGap>
           <Chip label={'状态：' + knowledgeBaseStatusLabel(kb.status)} variant='outlined' />
           <Chip
-            label={'就绪状态：' + readinessLabel(kb.readiness)}
+            label={'可用性：' + readinessLabel(kb.readiness)}
             color={kb.readiness === 'ready' ? 'success' : 'warning'}
           />
           <Chip label={'配置版本：' + kb.current_config_version} variant='outlined' />
@@ -389,7 +389,7 @@ export default function KnowledgeBaseDetailPage() {
         <Stack spacing={2}>
           <Typography variant='h6'>统一文档输入</Typography>
           <Typography color='text.secondary' variant='body2'>
-            支持混合文本/URL/文件条目，批次进度每 2 秒轮询一次。
+            支持文本/URL/文件混合导入，每 2 秒刷新进度。
           </Typography>
 
           <IngestionManifestEditor
@@ -440,7 +440,7 @@ export default function KnowledgeBaseDetailPage() {
                 currentBatch.succeeded_docs +
                 ' / 失败 ' +
                 currentBatch.failed_docs +
-                ' / 已取消 ' +
+                ' / 取消 ' +
                 currentBatch.canceled_docs
               }
             </Typography>
@@ -460,7 +460,7 @@ export default function KnowledgeBaseDetailPage() {
                           {doc.title || doc.id}
                         </Typography>
                         <Typography variant='caption' color='text.secondary'>
-                          {sourceTypeLabel(doc.source_type) + ' · 重试次数 ' + doc.retry_count}
+                          {sourceTypeLabel(doc.source_type) + ' · 重试 ' + doc.retry_count}
                         </Typography>
                       </Box>
                       <Stack direction='row' spacing={1} alignItems='center'>
