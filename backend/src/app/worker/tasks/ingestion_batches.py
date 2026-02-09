@@ -224,6 +224,7 @@ async def _process_doc(*, doc, resources) -> int:
                 material_id=material.id,
                 chunk_items=chunk_items,
                 chunk_ids=chunk_ids,
+                processed_texts=embedding_inputs,
             )
 
             records: list[dict] = []

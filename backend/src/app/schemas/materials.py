@@ -79,6 +79,7 @@ class DocumentChunkRead(BaseModel):
     material_id: uuid.UUID
     chunk_index: int
     text: str
+    processed_text: str
     locator: dict[str, Any] | None = None
     token_count: int | None = None
     created_at: datetime

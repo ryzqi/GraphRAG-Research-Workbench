@@ -18,6 +18,7 @@ export interface DocumentChunk {
   material_id: string;
   chunk_index: number;
   text: string;
+  processed_text: string;
   locator: Record<string, unknown> | null;
   token_count: number | null;
   created_at: string;

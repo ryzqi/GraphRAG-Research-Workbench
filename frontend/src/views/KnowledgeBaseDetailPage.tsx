@@ -5,6 +5,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import {
+  Accordion,
+  AccordionDetails,
+  AccordionSummary,
   Alert,
   Box,
   Chip,
@@ -21,6 +24,8 @@ import {
   useMediaQuery,
   useTheme
 } from '@mui/material';
+import { alpha } from '@mui/material/styles';
+import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import SearchIcon from '@mui/icons-material/Search';
 import { Button } from '../components/ui/Button';
 import { LoadingSpinner } from '../components/ui/LoadingSpinner';
@@ -62,6 +67,10 @@ function chunkPreview(text: string, max = 92): string {
     return compact;
   }
   return compact.slice(0, max) + '…';
+}
+
+function resolvedChunkText(chunk: DocumentChunk): string {
+  return chunk.processed_text || chunk.text;
 }
 
 function formatLocatorValue(value: unknown): string {
@@ -182,26 +191,45 @@ function ChunkBrowserSection({
     }
   };
 
-  const panelBaseSx = { p: 2, minHeight: 460 } as const;
+  const panelBaseSx = {
+    p: { xs: 2, md: 2.5 },
+    minHeight: { xs: 420, md: 560 }
+  } as const;
+  const listSx = { maxHeight: { xs: 320, md: 500 }, overflowY: 'auto', pr: 0.5 } as const;
+  const selectedBg = alpha(theme.palette.primary.main, theme.palette.mode === 'light' ? 0.1 : 0.22);
 
   return (
-    <Paper variant='outlined' sx={{ overflow: 'hidden' }}>
+    <Paper
+      variant='outlined'
+      sx={{
+        overflow: 'hidden',
+        borderRadius: 3,
+        borderColor: 'divider',
+        bgcolor: 'background.paper'
+      }}
+    >
       <Stack
         direction={{ xs: 'column', md: 'row' }}
         justifyContent='space-between'
-        spacing={1}
+        spacing={1.25}
         sx={{
-          p: 2,
+          p: { xs: 2, md: 2.5 },
           borderBottom: 1,
           borderColor: 'divider',
           bgcolor: 'background.paper'
         }}
       >
-        <Typography variant='h6'>文档分块浏览</Typography>
+        <Stack spacing={0.5}>
+          <Typography variant='h6'>文档分块浏览</Typography>
+          <Typography variant='body2' color='text.secondary'>
+            展示文档最终处理后的分块文本
+          </Typography>
+        </Stack>
         <Chip
           label={`文档 ${filteredMaterials.length} · 分块 ${chunks.length}`}
           size='small'
           variant='outlined'
+          color='primary'
           sx={{ alignSelf: { xs: 'flex-start', md: 'center' } }}
         />
       </Stack>
@@ -221,6 +249,8 @@ function ChunkBrowserSection({
       <Box
         sx={{
           display: { xs: 'block', md: 'none' },
+          px: 1,
+          pt: 1,
           borderBottom: 1,
           borderColor: 'divider'
         }}
@@ -229,17 +259,18 @@ function ChunkBrowserSection({
           value={mobilePanel}
           onChange={(_, value: MobilePanel) => setMobilePanel(value)}
           variant='fullWidth'
+          sx={{ minHeight: 44 }}
         >
-          <Tab value='docs' label='文档' />
-          <Tab value='chunks' label='分块' />
-          <Tab value='content' label='内容' />
+          <Tab value='docs' label='文档' sx={{ minHeight: 44 }} />
+          <Tab value='chunks' label='分块' sx={{ minHeight: 44 }} />
+          <Tab value='content' label='内容' sx={{ minHeight: 44 }} />
         </Tabs>
       </Box>
 
       <Box
         sx={{
           display: 'grid',
-          gridTemplateColumns: { xs: '1fr', md: '300px 340px minmax(0, 1fr)' },
+          gridTemplateColumns: { xs: '1fr', md: '320px 360px minmax(0, 1fr)' },
           bgcolor: 'background.default'
         }}
       >
@@ -260,7 +291,7 @@ function ChunkBrowserSection({
             value={materialFilter}
             onChange={(event) => setMaterialFilter(event.target.value)}
             fullWidth
-            sx={{ mb: 1.5 }}
+            sx={{ mb: 2 }}
             InputProps={{
               startAdornment: (
                 <InputAdornment position='start'>
@@ -277,45 +308,62 @@ function ChunkBrowserSection({
               暂无文档。
             </Typography>
           ) : (
-            <List dense disablePadding sx={{ maxHeight: 380, overflowY: 'auto' }}>
-              {filteredMaterials.map((item) => (
-                <ListItemButton
-                  key={item.id}
-                  selected={item.id === selectedMaterialId}
-                  onClick={() => onSelectMaterial(item)}
-                  sx={{
-                    mb: 0.75,
-                    borderRadius: 2,
-                    alignItems: 'flex-start',
-                    border: 1,
-                    borderColor: item.id === selectedMaterialId ? 'primary.main' : 'divider',
-                    '&.Mui-selected': { bgcolor: 'action.selected' }
-                  }}
-                >
-                  <ListItemText
-                    primary={
-                      <Typography variant='body2' fontWeight={600} noWrap>
-                        {item.title || item.id}
-                      </Typography>
-                    }
-                    secondary={
-                      <Stack direction='row' spacing={0.75} sx={{ mt: 0.5 }}>
-                        <Chip
-                          label={sourceTypeLabel(item.source_type)}
-                          size='small'
-                          variant='outlined'
-                        />
-                        <Chip
-                          label={`${item.chunk_count} 块`}
-                          size='small'
-                          color='primary'
-                          variant='outlined'
-                        />
-                      </Stack>
-                    }
-                  />
-                </ListItemButton>
-              ))}
+            <List disablePadding sx={listSx}>
+              {filteredMaterials.map((item) => {
+                const selected = item.id === selectedMaterialId;
+                return (
+                  <ListItemButton
+                    key={item.id}
+                    selected={selected}
+                    onClick={() => onSelectMaterial(item)}
+                    sx={{
+                      mb: 1,
+                      p: 1.5,
+                      borderRadius: 2.5,
+                      alignItems: 'flex-start',
+                      border: 1,
+                      borderColor: selected ? 'primary.main' : 'divider',
+                      bgcolor: selected ? selectedBg : 'background.paper',
+                      '&.Mui-selected': { bgcolor: selectedBg },
+                      '&:hover': {
+                        borderColor: selected ? 'primary.main' : 'text.disabled'
+                      }
+                    }}
+                  >
+                    <ListItemText
+                      primary={
+                        <Typography
+                          variant='body2'
+                          fontWeight={600}
+                          sx={{
+                            display: '-webkit-box',
+                            WebkitLineClamp: 2,
+                            WebkitBoxOrient: 'vertical',
+                            overflow: 'hidden'
+                          }}
+                        >
+                          {item.title || item.id}
+                        </Typography>
+                      }
+                      secondary={
+                        <Stack direction='row' spacing={0.75} sx={{ mt: 0.75 }}>
+                          <Chip
+                            label={sourceTypeLabel(item.source_type)}
+                            size='small'
+                            variant='outlined'
+                          />
+                          <Chip
+                            label={`${item.chunk_count} 块`}
+                            size='small'
+                            color='primary'
+                            variant='outlined'
+                          />
+                        </Stack>
+                      }
+                    />
+                  </ListItemButton>
+                );
+              })}
             </List>
           )}
         </Box>
@@ -331,7 +379,7 @@ function ChunkBrowserSection({
             borderColor: 'divider'
           }}
         >
-          <Typography variant='subtitle2' color='text.secondary' sx={{ mb: 1 }}>
+          <Typography variant='subtitle2' color='text.secondary' sx={{ mb: 1.25 }}>
             {selectedMaterial ? selectedMaterial.title : '请先选择文档'}
           </Typography>
 
@@ -346,35 +394,54 @@ function ChunkBrowserSection({
               该文档暂无分块。
             </Typography>
           ) : (
-            <List dense disablePadding sx={{ maxHeight: 380, overflowY: 'auto' }}>
-              {chunks.map((item) => (
-                <ListItemButton
-                  key={item.id}
-                  selected={item.id === selectedChunkId}
-                  onClick={() => onSelectChunk(item)}
-                  sx={{
-                    mb: 0.75,
-                    borderRadius: 2,
-                    alignItems: 'flex-start',
-                    border: 1,
-                    borderColor: item.id === selectedChunkId ? 'primary.main' : 'divider',
-                    '&.Mui-selected': { bgcolor: 'action.selected' }
-                  }}
-                >
-                  <ListItemText
-                    primary={
-                      <Typography variant='body2' fontWeight={600}>
-                        #{item.chunk_index}
-                      </Typography>
-                    }
-                    secondary={
-                      <Typography variant='caption' color='text.secondary' sx={{ mt: 0.5 }}>
-                        {chunkPreview(item.text)}
-                      </Typography>
-                    }
-                  />
-                </ListItemButton>
-              ))}
+            <List disablePadding sx={listSx}>
+              {chunks.map((item) => {
+                const selected = item.id === selectedChunkId;
+                return (
+                  <ListItemButton
+                    key={item.id}
+                    selected={selected}
+                    onClick={() => onSelectChunk(item)}
+                    sx={{
+                      mb: 1,
+                      p: 1.5,
+                      borderRadius: 2.5,
+                      alignItems: 'flex-start',
+                      border: 1,
+                      borderColor: selected ? 'primary.main' : 'divider',
+                      bgcolor: selected ? selectedBg : 'background.paper',
+                      '&.Mui-selected': { bgcolor: selectedBg },
+                      '&:hover': {
+                        borderColor: selected ? 'primary.main' : 'text.disabled'
+                      }
+                    }}
+                  >
+                    <ListItemText
+                      primary={
+                        <Typography variant='body2' fontWeight={600}>
+                          #{item.chunk_index}
+                        </Typography>
+                      }
+                      secondary={
+                        <Typography
+                          variant='caption'
+                          color='text.secondary'
+                          sx={{
+                            mt: 0.75,
+                            display: '-webkit-box',
+                            WebkitLineClamp: 2,
+                            WebkitBoxOrient: 'vertical',
+                            overflow: 'hidden',
+                            lineHeight: 1.5
+                          }}
+                        >
+                          {chunkPreview(resolvedChunkText(item), 110)}
+                        </Typography>
+                      }
+                    />
+                  </ListItemButton>
+                );
+              })}
             </List>
           )}
         </Box>
@@ -419,56 +486,74 @@ function ChunkBrowserSection({
               <Paper
                 variant='outlined'
                 sx={{
-                  p: 2,
-                  maxHeight: 260,
+                  p: { xs: 2, md: 2.5 },
+                  maxHeight: { xs: 360, md: 520 },
                   overflowY: 'auto',
-                  bgcolor: 'background.paper'
+                  bgcolor: 'background.paper',
+                  borderRadius: 2.5
                 }}
               >
+                <Typography variant='overline' color='text.secondary'>
+                  最终处理文本
+                </Typography>
                 <Typography
                   variant='body2'
                   sx={{
+                    mt: 0.75,
                     whiteSpace: 'pre-wrap',
-                    lineHeight: 1.7,
+                    lineHeight: 1.72,
                     wordBreak: 'break-word'
                   }}
                 >
-                  {selectedChunk.text}
+                  {resolvedChunkText(selectedChunk)}
                 </Typography>
               </Paper>
-              <Paper variant='outlined' sx={{ p: 1.5, bgcolor: 'background.paper' }}>
-                <Typography variant='subtitle2' sx={{ mb: 1 }}>
-                  定位信息
-                </Typography>
-                {selectedChunk.locator && Object.keys(selectedChunk.locator).length > 0 ? (
-                  <Stack spacing={0.75}>
-                    {Object.entries(selectedChunk.locator).map(([key, value]) => (
-                      <Stack key={key} direction='row' spacing={1} alignItems='flex-start'>
-                        <Typography
-                          variant='caption'
-                          color='text.secondary'
-                          sx={{ minWidth: 72, fontWeight: 600 }}
-                        >
-                          {key}
-                        </Typography>
-                        <Typography
-                          variant='caption'
-                          sx={{
-                            whiteSpace: 'pre-wrap',
-                            wordBreak: 'break-word'
-                          }}
-                        >
-                          {formatLocatorValue(value)}
-                        </Typography>
-                      </Stack>
-                    ))}
-                  </Stack>
-                ) : (
-                  <Typography variant='caption' color='text.secondary'>
-                    暂无定位信息。
-                  </Typography>
-                )}
-              </Paper>
+              <Accordion
+                disableGutters
+                elevation={0}
+                sx={{
+                  border: 1,
+                  borderColor: 'divider',
+                  borderRadius: 2.5,
+                  bgcolor: 'background.paper',
+                  '&::before': { display: 'none' }
+                }}
+              >
+                <AccordionSummary expandIcon={<ExpandMoreIcon fontSize='small' />}>
+                  <Typography variant='subtitle2'>定位信息</Typography>
+                </AccordionSummary>
+                <AccordionDetails sx={{ pt: 0.5 }}>
+                  {selectedChunk.locator && Object.keys(selectedChunk.locator).length > 0 ? (
+                    <Stack spacing={0.85}>
+                      {Object.entries(selectedChunk.locator).map(([key, value]) => (
+                        <Stack key={key} direction='row' spacing={1} alignItems='flex-start'>
+                          <Typography
+                            variant='caption'
+                            color='text.secondary'
+                            sx={{ minWidth: 84, fontWeight: 600 }}
+                          >
+                            {key}
+                          </Typography>
+                          <Typography
+                            variant='caption'
+                            sx={{
+                              whiteSpace: 'pre-wrap',
+                              wordBreak: 'break-word',
+                              lineHeight: 1.5
+                            }}
+                          >
+                            {formatLocatorValue(value)}
+                          </Typography>
+                        </Stack>
+                      ))}
+                    </Stack>
+                  ) : (
+                    <Typography variant='caption' color='text.secondary'>
+                      暂无定位信息。
+                    </Typography>
+                  )}
+                </AccordionDetails>
+              </Accordion>
             </Stack>
           )}
         </Box>

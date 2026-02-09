@@ -201,6 +201,7 @@ async def _run_index_rebuild_job(job_id: str) -> None:
                             material_id=material.id,
                             chunk_items=chunk_items,
                             chunk_ids=chunk_ids,
+                            processed_texts=embedding_inputs,
                         )
 
                         parent_id_by_ref: dict[int, str] = {}

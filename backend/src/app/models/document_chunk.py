@@ -37,6 +37,7 @@ class DocumentChunk(Base):
     )
     chunk_index: Mapped[int] = mapped_column(sa.Integer, nullable=False)
     text: Mapped[str] = mapped_column(sa.Text, nullable=False)
+    processed_text: Mapped[str] = mapped_column(sa.Text, nullable=False)
     locator: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     content_hash: Mapped[str | None] = mapped_column(sa.String(64), nullable=True)
     token_count: Mapped[int | None] = mapped_column(sa.Integer, nullable=True)

@@ -19,6 +19,18 @@ class ChunkPersistenceService:
     def __init__(self, db: AsyncSession) -> None:
         self._db = db
 
+    @staticmethod
+    def _resolve_processed_texts(
+        *,
+        chunk_items: Sequence[ChunkItem],
+        processed_texts: Sequence[str] | None,
+    ) -> list[str]:
+        if processed_texts is None:
+            return [str(item.content or "") for item in chunk_items]
+        if len(processed_texts) != len(chunk_items):
+            raise ValueError("processed_texts length must match chunk_items length")
+        return [str(text) if text is not None else "" for text in processed_texts]
+
     async def replace_material_chunks(
         self,
         *,
@@ -26,6 +38,7 @@ class ChunkPersistenceService:
         material_id: uuid.UUID,
         chunk_items: Sequence[ChunkItem],
         chunk_ids: Sequence[uuid.UUID] | None = None,
+        processed_texts: Sequence[str] | None = None,
     ) -> list[uuid.UUID]:
         """Replace all chunks for a material in one transaction scope."""
         if chunk_ids is not None and len(chunk_ids) != len(chunk_items):
@@ -46,19 +59,24 @@ class ChunkPersistenceService:
             if chunk_ids is not None
             else [uuid.uuid4() for _ in chunk_items]
         )
+        resolved_processed_texts = self._resolve_processed_texts(
+            chunk_items=chunk_items,
+            processed_texts=processed_texts,
+        )
 
         rows: list[dict] = []
         for idx, chunk_item in enumerate(chunk_items):
-            text = chunk_item.content
+            raw_text = str(chunk_item.content or "")
             rows.append(
                 {
                     "id": resolved_chunk_ids[idx],
                     "kb_id": kb_id,
                     "material_id": material_id,
                     "chunk_index": idx,
-                    "text": text,
+                    "text": raw_text,
+                    "processed_text": resolved_processed_texts[idx],
                     "locator": chunk_item.locator,
-                    "content_hash": hashlib.sha256(text.encode("utf-8")).hexdigest(),
+                    "content_hash": hashlib.sha256(raw_text.encode("utf-8")).hexdigest(),
                     "token_count": None,
                 }
             )
