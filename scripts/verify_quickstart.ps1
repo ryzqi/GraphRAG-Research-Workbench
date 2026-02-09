@@ -86,11 +86,11 @@ if (-not $SkipInfra) {
 
     # 后端 API
     $apiHealth = Test-Endpoint "http://localhost:8000/api/v1/health" "Backend API"
-    Write-Check "后端 API 健康检查" $apiHealth "请确保后端服务已启动: uv run uvicorn app.main:app"
+    Write-Check "后端 API 健康检查" $apiHealth "请确保后端服务已启动: uv run uvicorn app.main:app --host 127.0.0.1 --port 8000 --loop asyncio:SelectorEventLoop"
 
     # 前端
     $frontendHealth = Test-Endpoint "http://localhost:3000" "Frontend"
-    Write-Check "前端服务" $frontendHealth "请确保前端服务已启动: npm run dev"
+    Write-Check "前端服务" $frontendHealth "请确保前端服务已启动: npm run start"
 
     # OpenAPI 文档
     $docsHealth = Test-Endpoint "http://localhost:8000/docs" "OpenAPI Docs"
@@ -121,4 +121,5 @@ if ($script:failed -gt 0) {
     Write-Host "所有检查通过！" -ForegroundColor Green
     exit 0
 }
+
 

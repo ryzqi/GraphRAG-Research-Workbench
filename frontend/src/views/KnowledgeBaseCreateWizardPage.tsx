@@ -1,7 +1,7 @@
 'use client';
 
 /**
- * Knowledge base creation wizard (3 fixed steps)
+ * 知识库创建向导（固定 3 步）
  */
 
 import { useMemo, useState } from 'react';
@@ -52,7 +52,20 @@ import { uploadMaterial } from '../services/materials';
 
 const MAX_PARALLEL_UPLOADS = 4;
 
-const STEPS = ['Configure', 'Documents', 'Submit'];
+const STEPS = ['配置', '文档', '提交'];
+
+function sourceTypeLabel(sourceType: ManifestEntry['source_type']): string {
+  switch (sourceType) {
+    case 'text':
+      return '文本';
+    case 'url':
+      return 'URL';
+    case 'file':
+      return '文件';
+    default:
+      return sourceType;
+  }
+}
 
 function mapEntryErrors(errors: EntryError[]): Record<string, string[]> {
   const mapped: Record<string, string[]> = {};
@@ -88,17 +101,34 @@ function extractEntryErrors(error: unknown): EntryError[] {
 function batchStatusLabel(status: BatchStatus): string {
   switch (status) {
     case 'queued':
-      return 'Queued';
+      return '排队中';
     case 'running':
-      return 'Running';
+      return '进行中';
     case 'succeeded':
-      return 'Succeeded';
+      return '成功';
     case 'partial_failed':
-      return 'Partial failed';
+      return '部分失败';
     case 'failed':
-      return 'Failed';
+      return '失败';
     case 'canceled':
-      return 'Canceled';
+      return '已取消';
+    default:
+      return status;
+  }
+}
+
+function docStatusLabel(status: string): string {
+  switch (status) {
+    case 'pending':
+      return '待处理';
+    case 'running':
+      return '进行中';
+    case 'succeeded':
+      return '成功';
+    case 'failed':
+      return '失败';
+    case 'canceled':
+      return '已取消';
     default:
       return status;
   }
@@ -174,12 +204,12 @@ export default function KnowledgeBaseCreateWizardPage() {
     }
 
     if (nextStep === 1 && !canProceedStep1) {
-      setLocalError('Complete step 1 and fix index config errors first.');
+      setLocalError('请先完成第 1 步并修复索引配置错误。');
       return;
     }
 
     if (nextStep === 2 && !canProceedStep2) {
-      setLocalError('Keep at least one valid entry before submit.');
+      setLocalError('提交前请至少保留一个有效条目。');
       return;
     }
 
@@ -234,11 +264,11 @@ export default function KnowledgeBaseCreateWizardPage() {
 
         const uploadResult = fileResultById.get(entry.id);
         if (!uploadResult) {
-          uploadErrors[entry.id] = ['File upload result missing'];
+          uploadErrors[entry.id] = ['缺少文件上传结果'];
           continue;
         }
         if (!uploadResult.materialId) {
-          uploadErrors[entry.id] = [uploadResult.error ?? 'File upload failed'];
+          uploadErrors[entry.id] = [uploadResult.error ?? '文件上传失败'];
           continue;
         }
 
@@ -261,7 +291,7 @@ export default function KnowledgeBaseCreateWizardPage() {
     setServerEntryErrors({});
 
     if (!canProceedStep1 || !canProceedStep2) {
-      setLocalError('Please complete the first two steps.');
+      setLocalError('请先完成前两步。');
       return;
     }
 
@@ -289,7 +319,7 @@ export default function KnowledgeBaseCreateWizardPage() {
 
       if (manifestEntries.length === 0) {
         setServerEntryErrors(uploadErrors);
-        setLocalError('No valid entries to submit.');
+        setLocalError('没有可提交的有效条目。');
         return;
       }
 
@@ -344,11 +374,11 @@ export default function KnowledgeBaseCreateWizardPage() {
   return (
     <Box>
       <PageHeader
-        title='Create Knowledge Base'
-        subtitle='Fixed 3 steps: Configure -> Documents -> Submit'
+        title='新建知识库'
+        subtitle='固定 3 步：配置 -> 文档 -> 提交'
         action={
           <Button variant='outlined' onClick={() => router.push('/knowledge-bases')}>
-            Back to list
+            返回列表
           </Button>
         }
       />
@@ -372,10 +402,10 @@ export default function KnowledgeBaseCreateWizardPage() {
       {activeStep === 0 && (
         <Paper variant='outlined' sx={{ p: 2.5 }}>
           <Stack spacing={2}>
-            <Typography variant='h6'>Step 1: Configure</Typography>
+            <Typography variant='h6'>第 1 步：配置</Typography>
 
             <TextField
-              label='Name'
+              label='名称'
               required
               value={name}
               onChange={(e) => setName(e.target.value)}
@@ -383,7 +413,7 @@ export default function KnowledgeBaseCreateWizardPage() {
               fullWidth
             />
             <TextField
-              label='Description'
+              label='描述'
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               inputProps={{ maxLength: 500 }}
@@ -392,10 +422,10 @@ export default function KnowledgeBaseCreateWizardPage() {
               fullWidth
             />
             <TextField
-              label='Tags'
+              label='标签'
               value={tagsInput}
               onChange={(e) => setTagsInput(e.target.value)}
-              placeholder='Comma-separated tags'
+              placeholder='多个标签请用逗号分隔'
               fullWidth
             />
 
@@ -403,14 +433,14 @@ export default function KnowledgeBaseCreateWizardPage() {
 
             {configErrors.length > 0 && (
               <Alert severity='warning' variant='outlined'>
-                {'Index config validation failed: ' + configErrors.join('; ')}
+                {'索引配置校验失败：' + configErrors.join('；')}
               </Alert>
             )}
 
             <Stack direction='row' justifyContent='space-between' sx={{ pt: 1 }}>
               <Box />
               <Button variant='contained' onClick={() => goToStep(1)} disabled={!canProceedStep1}>
-                Next: Documents
+                下一步：文档
               </Button>
             </Stack>
           </Stack>
@@ -420,9 +450,9 @@ export default function KnowledgeBaseCreateWizardPage() {
       {activeStep === 1 && (
         <Paper variant='outlined' sx={{ p: 2.5 }}>
           <Stack spacing={2}>
-            <Typography variant='h6'>Step 2: Documents</Typography>
+            <Typography variant='h6'>第 2 步：文档</Typography>
             <Typography color='text.secondary' variant='body2'>
-              Mixed text/url/file entries are supported. Going back keeps your draft.
+              支持混合文本/URL/文件条目。返回上一步会保留当前草稿。
             </Typography>
 
             <IngestionManifestEditor
@@ -435,10 +465,10 @@ export default function KnowledgeBaseCreateWizardPage() {
 
             <Stack direction='row' justifyContent='space-between' sx={{ pt: 1 }}>
               <Button variant='outlined' onClick={() => goToStep(0)}>
-                Back
+                上一步
               </Button>
               <Button variant='contained' onClick={() => goToStep(2)} disabled={!canProceedStep2}>
-                Next: Submit
+                下一步：提交
               </Button>
             </Stack>
           </Stack>
@@ -449,16 +479,16 @@ export default function KnowledgeBaseCreateWizardPage() {
         <Stack spacing={2}>
           <Paper variant='outlined' sx={{ p: 2.5 }}>
             <Stack spacing={1.5}>
-              <Typography variant='h6'>Step 3: Submit</Typography>
+              <Typography variant='h6'>第 3 步：提交</Typography>
               <Typography color='text.secondary' variant='body2'>
-                A first bootstrap batch will be created and polled every 2 seconds.
+                将创建首个初始化批次，并每 2 秒轮询一次状态。
               </Typography>
 
               <Stack direction='row' spacing={1} flexWrap='wrap' useFlexGap>
-                {createdKbId && <Chip label={'KB ID: ' + createdKbId} variant='outlined' />}
+                {createdKbId && <Chip label={'知识库 ID：' + createdKbId} variant='outlined' />}
                 {currentBatch && (
                   <Chip
-                    label={'Batch: ' + batchStatusLabel(currentBatch.status)}
+                    label={'批次：' + batchStatusLabel(currentBatch.status)}
                     color={batchStatusColor(currentBatch.status)}
                   />
                 )}
@@ -468,20 +498,20 @@ export default function KnowledgeBaseCreateWizardPage() {
                 <Paper variant='outlined' sx={{ p: 1.5, bgcolor: 'background.default' }}>
                   <Stack spacing={1}>
                     <Typography variant='body2'>
-                      {'Progress: ' + currentBatch.progress_percent + '%'}
+                      {'进度：' + currentBatch.progress_percent + '%'}
                     </Typography>
                     <Typography variant='body2' color='text.secondary'>
                       {
-                        'Docs: success ' +
+                        '文档：成功 ' +
                         currentBatch.succeeded_docs +
-                        ' / failed ' +
+                        ' / 失败 ' +
                         currentBatch.failed_docs +
-                        ' / canceled ' +
+                        ' / 取消 ' +
                         currentBatch.canceled_docs
                       }
                     </Typography>
                     <Typography variant='body2' color='text.secondary'>
-                      {'Succeeded chunks: ' + currentBatch.succeeded_chunks}
+                      {'成功分块数：' + currentBatch.succeeded_chunks}
                     </Typography>
                   </Stack>
                 </Paper>
@@ -502,11 +532,11 @@ export default function KnowledgeBaseCreateWizardPage() {
                             {doc.title || doc.id}
                           </Typography>
                           <Typography variant='caption' color='text.secondary'>
-                            {doc.source_type + ' · retries ' + doc.retry_count}
+                            {sourceTypeLabel(doc.source_type) + ' · 重试次数 ' + doc.retry_count}
                           </Typography>
                         </Box>
                         <Stack direction='row' spacing={1} alignItems='center'>
-                          <Chip label={doc.status} size='small' variant='outlined' />
+                          <Chip label={docStatusLabel(doc.status)} size='small' variant='outlined' />
                           {doc.error_message && (
                             <Typography variant='caption' color='error.main'>
                               {doc.error_message}
@@ -521,10 +551,10 @@ export default function KnowledgeBaseCreateWizardPage() {
 
               <Stack direction='row' spacing={1} flexWrap='wrap' useFlexGap>
                 <Button variant='outlined' onClick={() => goToStep(1)} disabled={submitPending || batchRunning}>
-                  Back to documents
+                  返回文档
                 </Button>
                 <Button variant='contained' onClick={submitBatch} loading={submitPending} disabled={batchRunning}>
-                  {createdKbId ? 'Submit next batch' : 'Create and submit'}
+                  {createdKbId ? '提交下一批' : '创建并提交'}
                 </Button>
                 <Button
                   variant='outlined'
@@ -532,7 +562,7 @@ export default function KnowledgeBaseCreateWizardPage() {
                   disabled={!batchId || !hasRetryableFailedDocs || retryBatchMutation.isPending}
                   loading={retryBatchMutation.isPending}
                 >
-                  Retry failed docs
+                  重试失败文档
                 </Button>
                 <Button
                   variant='outlined'
@@ -540,11 +570,11 @@ export default function KnowledgeBaseCreateWizardPage() {
                   disabled={!batchId || !batchRunning || cancelBatchMutation.isPending}
                   loading={cancelBatchMutation.isPending}
                 >
-                  Cancel batch
+                  取消批次
                 </Button>
                 {createdKbId && (
                   <Button variant='text' onClick={() => router.push('/knowledge-bases/' + createdKbId)}>
-                    Open KB detail
+                    打开知识库详情
                   </Button>
                 )}
               </Stack>

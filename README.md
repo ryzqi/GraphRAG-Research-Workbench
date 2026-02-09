@@ -10,15 +10,10 @@ preface exists mainly to keep the file ASCII-friendly for tooling and patching o
 
 本仓库为毕业设计代码与演示脚手架，目标是实现：多知识库隔离与联合检索、可追溯证据清单、多智能体协作/深度研究、对比评测与导出复现。
 
-- 规格与设计文档：`specs/001-multi-kb-agent-collab/`
-- 快速开始（强烈建议先读）：`specs/001-multi-kb-agent-collab/quickstart.md`
-- API 契约（OpenAPI）：`specs/001-multi-kb-agent-collab/contracts/openapi.yaml`
-
 ## 功能与导航
 
 - 根路径 `/` 默认进入普通代理。
 - 顶部导航顺序：普通代理 → 知识库问答 → 知识库管理 → 深度研究 → MCP扩展 → 对比评测。
-- 反馈功能已移除。
 
 ## 先决条件
 
@@ -31,7 +26,7 @@ preface exists mainly to keep the file ASCII-friendly for tooling and patching o
 
 ## 本地运行（Windows）
 
-### 一键启动（推荐）
+### 一键启动（唯一入口，推荐）
 
 - 复制 `.env.example` 为 `.env` 并按需修改后，在仓库根目录执行：
 
@@ -40,6 +35,11 @@ pwsh -ExecutionPolicy Bypass -File .\scripts\start_all.ps1
 ```
 
 - 可选参数：`-SkipInfra`（跳过 Podman 依赖）、`-NoDetachInfra`（前台启动依赖）、`-SkipBackend`、`-SkipWorker`、`-SkipFrontend`、`-SkipMigrate`、`-RunSeed`（导入演示数据）、`-Verbose`。
+- **唯一启动入口**：请仅使用 `scripts/start_all.ps1`；下文 1-4 为脚本内部流程说明（排障时参考）。
+- 脚本默认按**生产模式**启动：
+  - 前端会先执行 `npm run build` 再启动 `next start`。
+  - 后端使用无 `--reload` 的 uvicorn 参数（Windows 自动启用 `--loop asyncio:SelectorEventLoop`）。
+  - Worker 使用生产并发池（Windows 默认 `threads`，可通过 `CELERY_WORKER_POOL` / `CELERY_WORKER_CONCURRENCY` 覆盖）。
 
 ### 1) 启动基础依赖（Podman）
 
@@ -59,30 +59,35 @@ pwsh -ExecutionPolicy Bypass -File .\scripts\start_all.ps1
 
 > **端口冲突**：若本地已安装 PostgreSQL 占用 5432 端口，需在 `.env` 中将 `POSTGRES_PORT` 改为 `5433`，并同步修改 `DATABASE_URL` 和 `MEMORY_STORE_URL` 中的端口。
 
-### 2) 启动后端（FastAPI）
+### 2) 启动后端（FastAPI，生产参数）
 
 ```powershell
 cd backend
 uv sync
-uv run uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+uv run uvicorn app.main:app --host 127.0.0.1 --port 8000 --loop asyncio:SelectorEventLoop
 ```
 
 - 文档：`http://localhost:8000/docs`
 - 健康检查：`GET http://localhost:8000/api/v1/health`
 
-### 3) 启动 Worker（Celery）
+### 3) 启动 Worker（Celery，生产并发）
 
 ```powershell
 cd backend
-uv run celery -A app.worker.celery_app worker --loglevel=INFO --pool=solo
+# Linux/macOS 推荐
+uv run celery -A app.worker.celery_app worker --loglevel=INFO --pool=prefork --concurrency=4
+
+# Windows 推荐
+uv run celery -A app.worker.celery_app worker --loglevel=INFO --pool=threads --concurrency=8
 ```
 
-### 4) 启动前端（Next.js App Router）
+### 4) 启动前端（Next.js 生产模式）
 
 ```powershell
 cd frontend
 npm install
-npm run dev
+npm run build
+npm run start
 ```
 
 ## Web 搜索（Tavily）配置

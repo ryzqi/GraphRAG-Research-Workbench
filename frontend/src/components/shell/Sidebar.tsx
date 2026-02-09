@@ -34,7 +34,8 @@ import Brightness7Icon from '@mui/icons-material/Brightness7';
 import HistoryIcon from '@mui/icons-material/History';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import { useThemeMode } from '../../theme/ThemeProvider';
-import type { RecentSession } from '../../hooks/useRecentHistory';
+import { useRecentHistory } from '../../hooks/useRecentHistory';
+import { SIDEBAR_WIDTH_COLLAPSED, SIDEBAR_WIDTH_EXPANDED } from './constants';
 
 const TEXT_REVEAL_EASING = 'cubic-bezier(0.2, 0, 0, 1)';
 const TEXT_REVEAL_DURATION_MS = 180;
@@ -64,18 +65,12 @@ const navItems = [
   { path: '/evaluations', label: '对比评测', icon: AssessmentIcon },
 ];
 
-// 侧边栏宽度常量
-const SIDEBAR_WIDTH_EXPANDED = 260;
-const SIDEBAR_WIDTH_COLLAPSED = 72;
-
-interface SidebarProps {
+export interface SidebarProps {
   expanded: boolean;
   onToggle: () => void;
   mobileOpen: boolean;
   onMobileClose: () => void;
-  recentSessions: RecentSession[];
   onNewChat: () => void;
-  onRemoveSession?: (sessionId: string) => void;
 }
 
 export function Sidebar({
@@ -83,15 +78,14 @@ export function Sidebar({
   onToggle,
   mobileOpen,
   onMobileClose,
-  recentSessions,
   onNewChat,
-  onRemoveSession,
 }: SidebarProps) {
   const theme = useTheme();
   const pathname = usePathname();
   const router = useRouter();
   const { resolvedMode, toggleMode } = useThemeMode();
   const isMobile = useMediaQuery(theme.breakpoints.down('md'));
+  const { sessions: recentSessions, removeSession } = useRecentHistory();
   const textRevealTransition = theme.transitions.create(['max-width', 'opacity'], {
     duration: TEXT_REVEAL_DURATION_MS,
     easing: TEXT_REVEAL_EASING,
@@ -264,19 +258,17 @@ export function Sidebar({
                 disablePadding
                 sx={{ mb: 0.5 }}
                 secondaryAction={
-                  onRemoveSession && (
-                    <IconButton
-                      edge="end"
-                      size="small"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onRemoveSession(session.sessionId);
-                      }}
-                      sx={{ opacity: 0.6, '&:hover': { opacity: 1 } }}
-                    >
-                      <DeleteOutlineIcon fontSize="small" />
-                    </IconButton>
-                  )
+                  <IconButton
+                    edge="end"
+                    size="small"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      removeSession(session.sessionId);
+                    }}
+                    sx={{ opacity: 0.6, '&:hover': { opacity: 1 } }}
+                  >
+                    <DeleteOutlineIcon fontSize="small" />
+                  </IconButton>
                 }
               >
                 <ListItemButton
@@ -393,5 +385,8 @@ export function Sidebar({
 }
 
 export { SIDEBAR_WIDTH_EXPANDED, SIDEBAR_WIDTH_COLLAPSED };
+
+
+
 
 

@@ -2,7 +2,7 @@
  * 消息项组件
  * Gemini 风格：左对齐布局，实心圆点光标，透气设计
  */
-import { Suspense, lazy, useState, useCallback, useEffect, useRef } from 'react';
+import { Suspense, lazy, memo, useState, useCallback, useEffect, useRef } from 'react';
 import { Box, IconButton, Paper, Stack, Tooltip, Typography, Chip, keyframes } from '@mui/material';
 import { alpha } from '@mui/material/styles';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
@@ -54,7 +54,7 @@ interface MessageItemProps {
   thinkStartTime?: number;
 }
 
-export function MessageItem({
+function MessageItemComponent({
   role,
   content,
   think,
@@ -288,6 +288,16 @@ export function MessageItem({
   );
 }
 
+export const MessageItem = memo(
+  MessageItemComponent,
+  (prev, next) =>
+    prev.role === next.role &&
+    prev.content === next.content &&
+    prev.think === next.think &&
+    prev.isStreaming === next.isStreaming &&
+    prev.showActions === next.showActions &&
+    prev.thinkStartTime === next.thinkStartTime
+);
 // 工具审批卡片
 interface ToolApprovalCardProps {
   message?: string | null;
@@ -351,3 +361,5 @@ export function ToolApprovalCard({
     </Paper>
   );
 }
+
+

@@ -172,6 +172,49 @@ function Wait-BackendReady {
     return $false
 }
 
+function Get-CeleryWorkerCommand {
+    $explicitPool = if ($env:CELERY_WORKER_POOL) { $env:CELERY_WORKER_POOL.Trim().ToLowerInvariant() } else { "" }
+    $runningOnWindows = ($env:OS -eq "Windows_NT")
+
+    $pool = if ($explicitPool) {
+        $explicitPool
+    }
+    elseif ($runningOnWindows) {
+        # Windows 下 prefork 不稳定，使用 threads 保持生产并发语义。
+        "threads"
+    }
+    else {
+        "prefork"
+    }
+
+    $concurrency = if ($env:CELERY_WORKER_CONCURRENCY) {
+        $env:CELERY_WORKER_CONCURRENCY
+    }
+    elseif ($pool -eq "prefork") {
+        "4"
+    }
+    elseif ($pool -eq "threads") {
+        "8"
+    }
+    else {
+        "1"
+    }
+
+    if ($runningOnWindows -and $pool -eq "threads") {
+        Write-Host "检测到 Windows 环境，Celery 使用线程池（--pool=threads --concurrency=$concurrency）。" -ForegroundColor DarkYellow
+    }
+
+    return "uv run celery -A app.worker.celery_app worker --loglevel=INFO --pool=$pool --concurrency=$concurrency"
+}
+function Get-BackendApiCommand {
+    $command = "uv run uvicorn app.main:app --host 127.0.0.1 --port 8000"
+    if ($env:OS -eq "Windows_NT") {
+        Write-Host "检测到 Windows 环境，后端启用 SelectorEventLoop 以兼容 psycopg 异步连接。" -ForegroundColor DarkYellow
+        return "$command --loop asyncio:SelectorEventLoop"
+    }
+    return $command
+}
+
 Write-Host "加载环境变量 (.env) ..." -ForegroundColor Cyan
 Import-DotEnv -Path $envFile
 
@@ -203,6 +246,9 @@ if ($needBackend) {
         if (-not (Test-Path (Join-Path $backendDir ".venv"))) {
             Write-Host "检测到缺少 backend/.venv，执行 uv sync 安装依赖..." -ForegroundColor Yellow
             uv sync
+            if ($LASTEXITCODE -ne 0) {
+                throw "uv sync 失败（exit=$LASTEXITCODE）"
+            }
         }
         elseif ($Verbose) {
             Write-Host "已检测到 backend/.venv，跳过 uv sync" -ForegroundColor DarkGray
@@ -211,6 +257,9 @@ if ($needBackend) {
         if (-not $SkipMigrate) {
             Write-Host "执行数据库迁移 (alembic upgrade head)..." -ForegroundColor Yellow
             uv run alembic upgrade head
+            if ($LASTEXITCODE -ne 0) {
+                throw "数据库迁移失败（exit=$LASTEXITCODE）"
+            }
         }
         elseif ($Verbose) {
             Write-Host "已跳过迁移步骤" -ForegroundColor DarkGray
@@ -222,11 +271,13 @@ if ($needBackend) {
 }
 
 if (-not $SkipBackend) {
-    Start-Terminal -Title "backend-api" -WorkingDirectory $backendDir -Command "uv run uvicorn app.main:app --reload --host 127.0.0.1 --port 8000"
+    $backendCommand = Get-BackendApiCommand
+    Start-Terminal -Title "backend-api" -WorkingDirectory $backendDir -Command $backendCommand
 }
 
 if (-not $SkipWorker) {
-    Start-Terminal -Title "celery-worker" -WorkingDirectory $backendDir -Command "uv run celery -A app.worker.celery_app worker --loglevel=INFO --pool=solo"
+    $workerCommand = Get-CeleryWorkerCommand
+    Start-Terminal -Title "celery-worker" -WorkingDirectory $backendDir -Command $workerCommand
 }
 
 if ($RunSeed) {
@@ -234,6 +285,9 @@ if ($RunSeed) {
     Push-Location $backendDir
     try {
         uv run python scripts/seed_demo_kb.py
+        if ($LASTEXITCODE -ne 0) {
+            throw "导入演示数据失败（exit=$LASTEXITCODE）"
+        }
     }
     finally {
         Pop-Location
@@ -248,7 +302,7 @@ if (-not $SkipFrontend) {
         Write-Host "等待后端依赖就绪（/api/v1/ready）..." -ForegroundColor Cyan
         $ok = Wait-BackendReady -TimeoutSeconds 30
         if (-not $ok) {
-            Write-Host "警告：后端 API 未在 30 秒内就绪，前端可能出现接口连接错误（ECONNREFUSED）。" -ForegroundColor Yellow
+            throw "后端 API 未在 30 秒内就绪。请查看 backend-api 窗口日志（常见原因：依赖服务未启动、数据库未就绪、Windows 事件循环不兼容）。"
         }
     }
 
@@ -258,24 +312,33 @@ if (-not $SkipFrontend) {
         if (-not (Test-Path (Join-Path $frontendDir "node_modules"))) {
             Write-Host "检测到缺少 frontend/node_modules，执行 npm install..." -ForegroundColor Yellow
             npm install
+            if ($LASTEXITCODE -ne 0) {
+                throw "npm install 失败（exit=$LASTEXITCODE）"
+            }
         }
         elseif ($Verbose) {
             Write-Host "已检测到 frontend/node_modules，跳过 npm install" -ForegroundColor DarkGray
+        }
+
+        Write-Host "执行前端生产构建 (npm run build)..." -ForegroundColor Yellow
+        npm run build
+        if ($LASTEXITCODE -ne 0) {
+            throw "前端生产构建失败（exit=$LASTEXITCODE）"
         }
     }
     finally {
         Pop-Location
     }
 
-    Start-Terminal -Title "frontend" -WorkingDirectory $frontendDir -Command "npm run dev"
+    Start-Terminal -Title "frontend" -WorkingDirectory $frontendDir -Command "npm run start"
 }
 
-Write-Host "" 
-Write-Host "一键启动流程已完成，以下服务已启动（或启动中）：" -ForegroundColor Cyan
+Write-Host ""
+Write-Host "一键启动流程已完成，以下服务已启动（或启动中）:" -ForegroundColor Cyan
 if (-not $SkipInfra) { Write-Host " - 基础依赖：Podman compose (infra/up.ps1)" -ForegroundColor Cyan }
-if (-not $SkipBackend) { Write-Host " - 后端 API：uvicorn 监听 8000" -ForegroundColor Cyan }
-if (-not $SkipWorker) { Write-Host " - Celery Worker：Redis 队列" -ForegroundColor Cyan }
-if (-not $SkipFrontend) { Write-Host " - 前端：Next.js Dev Server 监听 3000" -ForegroundColor Cyan }
+if (-not $SkipBackend) { Write-Host " - 后端 API：uvicorn 生产参数监听 8000（Windows 使用 SelectorEventLoop）" -ForegroundColor Cyan }
+if (-not $SkipWorker) { Write-Host " - Celery Worker：生产并发池" -ForegroundColor Cyan }
+if (-not $SkipFrontend) { Write-Host " - 前端：Next.js 生产服务监听 3000" -ForegroundColor Cyan }
 if ($RunSeed) { Write-Host " - 演示数据：已执行 seed_demo_kb.py" -ForegroundColor Cyan }
 
 

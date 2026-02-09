@@ -4,15 +4,16 @@
  * 知识库问答页面（Gemini 风格重构）
  */
 import { useCallback, useEffect, useState } from 'react';
+import dynamic from 'next/dynamic';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { Box, Stack, Typography } from '@mui/material';
 import RestartAltIcon from '@mui/icons-material/RestartAlt';
 import { Button } from '../components/ui/Button';
 import { ErrorAlert } from '../components/ui/ErrorAlert';
 import { KnowledgeBaseSelector } from '../components/KnowledgeBaseSelector';
-import { WelcomeScreen } from '../components/chat/WelcomeScreen';
-import { MessageList, type ChatMessage } from '../components/chat/MessageList';
-import { InputComposer } from '../components/chat/InputComposer';
+
+import type { ChatMessage } from '../components/chat/MessageList';
+
 import {
   type AgentMode,
   type ChatSession,
@@ -26,6 +27,8 @@ import {
 import { HttpError } from '../services/http';
 import { useSelectableKnowledgeBases } from '../hooks/queries/useKnowledgeBases';
 import { useRecentHistory } from '../hooks/useRecentHistory';
+import { WelcomeScreen } from '../components/chat/WelcomeScreen';
+import { InputComposer } from '../components/chat/InputComposer';
 import { getErrorMessage } from '../lib/errorHandler';
 import { parseSseJson } from '../lib/sse';
 import {
@@ -35,6 +38,11 @@ import {
   parseDelta,
   type MessageState,
 } from '../lib/deltaParser';
+
+const MessageList = dynamic(
+  () => import('../components/chat/MessageList').then((mod) => mod.MessageList),
+  { ssr: false }
+);
 
 function createMessageStateBatcher(onFlush: (nextState: MessageState) => void) {
   let pendingState: MessageState | null = null;
@@ -117,10 +125,10 @@ export function KbChatPage() {
       setError(null);
       try {
         // Fire both requests together to reduce route hydration latency.
-        const sessionPromise = getChatSession(sessionId);
-        const historyPromise = getChatMessages(sessionId);
-        const loadedSession = await sessionPromise;
-        const history = await historyPromise;
+        const [loadedSession, history] = await Promise.all([
+          getChatSession(sessionId),
+          getChatMessages(sessionId),
+        ]);
         if (!active) return;
         setSession(loadedSession);
         setSelectedKbIds(loadedSession.selected_kb_ids ?? []);
@@ -501,8 +509,4 @@ export function KbChatPage() {
     </Box>
   );
 }
-
-
-
-
 

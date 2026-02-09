@@ -2,7 +2,7 @@
  * 消息列表组件
  * 管理消息滚动和布局
  */
-import { useRef, useEffect, useCallback, useMemo, useState } from 'react';
+import { memo, useRef, useEffect, useCallback, useMemo, useState } from 'react';
 import { Box, Fade, IconButton, Paper, Stack, Tooltip } from '@mui/material';
 import { alpha } from '@mui/material/styles';
 import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
@@ -45,6 +45,62 @@ interface MessageListProps {
   approvalLoading?: boolean;
 }
 
+interface MessageRowProps {
+  message: ChatMessage;
+  onToolApprove?: (messageId: string, runId: string) => void;
+  onToolReject?: (messageId: string, runId: string) => void;
+  approvalLoading: boolean;
+}
+
+const MessageRow = memo(
+  function MessageRow({ message, onToolApprove, onToolReject, approvalLoading }: MessageRowProps) {
+    const isEmptyStreamingAssistant =
+      message.role === 'assistant' &&
+      message.isStreaming &&
+      !message.content &&
+      !message.think;
+
+    if (isEmptyStreamingAssistant) {
+      return null;
+    }
+
+    return (
+      <Box sx={{ contentVisibility: 'auto', containIntrinsicSize: '1px 220px' }}>
+        <MessageItem
+          role={message.role}
+          content={message.content}
+          think={message.think}
+          isStreaming={message.isStreaming}
+          thinkStartTime={message.thinkStartTime}
+        />
+
+        {message.pendingToolApproval && onToolApprove && onToolReject && message.runId && (
+          <Box sx={{ mt: 2, ml: 7 }}>
+            <ToolApprovalCard
+              message={message.pendingToolApproval.message}
+              toolCalls={message.pendingToolApproval.toolCalls}
+              loading={approvalLoading}
+              onApprove={() => onToolApprove(message.id, message.runId!)}
+              onReject={() => onToolReject(message.id, message.runId!)}
+            />
+          </Box>
+        )}
+
+        {message.evidence && message.evidence.length > 0 && (
+          <Box sx={{ mt: 2, ml: 7 }}>
+            <EvidenceList evidence={message.evidence} />
+          </Box>
+        )}
+      </Box>
+    );
+  },
+  (prev, next) =>
+    prev.message === next.message &&
+    prev.onToolApprove === next.onToolApprove &&
+    prev.onToolReject === next.onToolReject &&
+    prev.approvalLoading === next.approvalLoading
+);
+
 export function MessageList({
   messages,
   loading = false,
@@ -81,12 +137,10 @@ export function MessageList({
     bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
   }, []);
 
-  // 初始化和消息变更时重新计算
   useEffect(() => {
     updateIsAtBottom();
   }, [messages.length, loading, updateIsAtBottom]);
 
-  // 仅在用户位于底部时自动跟随
   useEffect(() => {
     if (!isAtBottom) return;
     const behavior = hasStreaming || showThinking ? 'smooth' : 'auto';
@@ -117,50 +171,16 @@ export function MessageList({
       }}
     >
       <Stack spacing={3} sx={{ maxWidth: 900, mx: 'auto' }}>
-        {messages.map((msg) => {
-          // 跳过空内容的流式助手消息（此时显示 SparkleLoading）
-          const isEmptyStreamingAssistant =
-            msg.role === 'assistant' &&
-            msg.isStreaming &&
-            !msg.content &&
-            !msg.think;
+        {messages.map((message) => (
+          <MessageRow
+            key={message.id}
+            message={message}
+            onToolApprove={onToolApprove}
+            onToolReject={onToolReject}
+            approvalLoading={approvalLoading}
+          />
+        ))}
 
-          if (isEmptyStreamingAssistant) return null;
-
-          return (
-            <Box key={msg.id} sx={{ contentVisibility: 'auto', containIntrinsicSize: '1px 220px' }}>
-              <MessageItem
-                role={msg.role}
-                content={msg.content}
-                think={msg.think}
-                isStreaming={msg.isStreaming}
-                thinkStartTime={msg.thinkStartTime}
-              />
-
-              {/* 工具审批卡片 */}
-              {msg.pendingToolApproval && onToolApprove && onToolReject && msg.runId && (
-                <Box sx={{ mt: 2, ml: 7 }}>
-                  <ToolApprovalCard
-                    message={msg.pendingToolApproval.message}
-                    toolCalls={msg.pendingToolApproval.toolCalls}
-                    loading={approvalLoading}
-                    onApprove={() => onToolApprove(msg.id, msg.runId!)}
-                    onReject={() => onToolReject(msg.id, msg.runId!)}
-                  />
-                </Box>
-              )}
-
-              {/* 证据列表 */}
-              {msg.evidence && msg.evidence.length > 0 && (
-                <Box sx={{ mt: 2, ml: 7 }}>
-                  <EvidenceList evidence={msg.evidence} />
-                </Box>
-              )}
-            </Box>
-          );
-        })}
-
-        {/* 思考占位（首个 delta 到达前）- Gemini Sparkle 风格 */}
         {showThinking && (
           <Box sx={{ ml: 7 }}>
             <SparkleLoading variant="sparkle" />
@@ -170,7 +190,6 @@ export function MessageList({
         <div ref={bottomRef} />
       </Stack>
 
-      {/* “回到底部”按钮：仅当用户离开底部时出现 */}
       <Box
         sx={{
           position: 'sticky',

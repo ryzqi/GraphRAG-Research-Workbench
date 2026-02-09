@@ -4,6 +4,7 @@
  * 普通代理聊天页面（Gemini 风格重构）
  */
 import { useCallback, useEffect, useState } from 'react';
+import dynamic from 'next/dynamic';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { Box, Chip, FormControlLabel, Stack, Switch, Typography } from '@mui/material';
 import {
@@ -27,10 +28,17 @@ import {
   parseDelta,
   type MessageState,
 } from '../lib/deltaParser';
-import { WelcomeScreen } from '../components/chat/WelcomeScreen';
-import { MessageList, type ChatMessage } from '../components/chat/MessageList';
-import { InputComposer } from '../components/chat/InputComposer';
+
+import type { ChatMessage } from '../components/chat/MessageList';
+
 import { useRecentHistory } from '../hooks/useRecentHistory';
+import { WelcomeScreen } from '../components/chat/WelcomeScreen';
+import { InputComposer } from '../components/chat/InputComposer';
+
+const MessageList = dynamic(
+  () => import('../components/chat/MessageList').then((mod) => mod.MessageList),
+  { ssr: false }
+);
 
 const quickPrompts = [
   { label: '总结要点', value: '请帮我总结以下内容：' },
@@ -117,10 +125,10 @@ export function GeneralChatPage() {
       setError(null);
       try {
         // Fire both requests together to reduce route hydration latency.
-        const sessionPromise = getChatSession(sessionId);
-        const historyPromise = getChatMessages(sessionId);
-        const loadedSession = await sessionPromise;
-        const history = await historyPromise;
+        const [loadedSession, history] = await Promise.all([
+          getChatSession(sessionId),
+          getChatMessages(sessionId),
+        ]);
         if (!active) return;
         setSession(loadedSession);
         setAllowExternal(loadedSession.allow_external);
@@ -677,8 +685,4 @@ export function GeneralChatPage() {
 }
 
 export default GeneralChatPage;
-
-
-
-
 

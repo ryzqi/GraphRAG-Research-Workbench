@@ -5,13 +5,30 @@
  * 左侧可折叠 Sidebar + 中心主内容区
  */
 import { useState, useCallback, type ReactNode } from 'react';
+import dynamic from 'next/dynamic';
 import { usePathname, useRouter } from 'next/navigation';
 import { Box, IconButton, Typography, useMediaQuery, useTheme } from '@mui/material';
 import { alpha } from '@mui/material/styles';
 import MenuIcon from '@mui/icons-material/Menu';
-import { Sidebar, SIDEBAR_WIDTH_EXPANDED, SIDEBAR_WIDTH_COLLAPSED } from './Sidebar';
-import { useRecentHistory } from '../../hooks/useRecentHistory';
+import type { SidebarProps } from './Sidebar';
+import { SIDEBAR_WIDTH_EXPANDED, SIDEBAR_WIDTH_COLLAPSED } from './constants';
 import { PageTransition } from '../ui/PageTransition';
+
+const Sidebar = dynamic<SidebarProps>(
+  () => import('./Sidebar').then((mod) => mod.Sidebar),
+  {
+    ssr: false,
+    loading: () => (
+      <Box
+        sx={{
+          display: { xs: 'none', md: 'block' },
+          width: SIDEBAR_WIDTH_EXPANDED,
+          flexShrink: 0,
+        }}
+      />
+    ),
+  }
+);
 
 interface GeminiShellProps {
   children?: ReactNode;
@@ -26,8 +43,6 @@ export function GeminiShell({ children }: GeminiShellProps) {
   const [sidebarExpanded, setSidebarExpanded] = useState(true);
   const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false);
   const [chatResetKey, setChatResetKey] = useState(0);
-
-  const { sessions: recentSessions, removeSession } = useRecentHistory();
 
   const isChatPage =
     pathname === '/' ||
@@ -88,9 +103,7 @@ export function GeminiShell({ children }: GeminiShellProps) {
         onToggle={handleToggleSidebar}
         mobileOpen={mobileDrawerOpen}
         onMobileClose={handleMobileDrawerClose}
-        recentSessions={recentSessions}
         onNewChat={handleNewChat}
-        onRemoveSession={removeSession}
       />
 
       <Box
@@ -164,3 +177,4 @@ export function GeminiShell({ children }: GeminiShellProps) {
     </Box>
   );
 }
+
