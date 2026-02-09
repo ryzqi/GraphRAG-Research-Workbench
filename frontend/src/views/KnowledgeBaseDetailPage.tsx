@@ -31,7 +31,13 @@ import {
 } from '../hooks/queries/useIngestionBatches';
 import { useKnowledgeBase } from '../hooks/queries/useKnowledgeBases';
 import { getErrorMessage } from '../lib/errorHandler';
-import type { EntryError, ManifestEntry, BatchStatus } from '../services/ingestionBatches';
+import type {
+  EntryError,
+  ManifestEntry,
+  BatchStatus,
+  DocStatus,
+  ManifestSourceType,
+} from '../services/ingestionBatches';
 import { HttpError } from '../services/http';
 import { runWithConcurrency } from '../lib/runWithConcurrency';
 import { uploadMaterial } from '../services/materials';
@@ -72,19 +78,71 @@ function mergeEntryErrors(
 function batchStatusLabel(status: BatchStatus): string {
   switch (status) {
     case 'queued':
-      return 'Queued';
+      return '排队中';
     case 'running':
-      return 'Running';
+      return '进行中';
     case 'succeeded':
-      return 'Succeeded';
+      return '成功';
     case 'partial_failed':
-      return 'Partial failed';
+      return '部分失败';
     case 'failed':
-      return 'Failed';
+      return '失败';
     case 'canceled':
-      return 'Canceled';
+      return '已取消';
     default:
       return status;
+  }
+}
+
+function docStatusLabel(status: DocStatus): string {
+  switch (status) {
+    case 'pending':
+      return '待处理';
+    case 'running':
+      return '进行中';
+    case 'succeeded':
+      return '成功';
+    case 'failed':
+      return '失败';
+    case 'canceled':
+      return '已取消';
+    default:
+      return status;
+  }
+}
+
+function sourceTypeLabel(sourceType: ManifestSourceType): string {
+  switch (sourceType) {
+    case 'text':
+      return '文本';
+    case 'url':
+      return 'URL';
+    case 'file':
+      return '文件';
+    default:
+      return sourceType;
+  }
+}
+
+function knowledgeBaseStatusLabel(status: string): string {
+  switch (status) {
+    case 'active':
+      return '活跃';
+    case 'archived':
+      return '已归档';
+    default:
+      return status;
+  }
+}
+
+function readinessLabel(readiness: string): string {
+  switch (readiness) {
+    case 'ready':
+      return '可用';
+    case 'not_ready':
+      return '未就绪';
+    default:
+      return readiness;
   }
 }
 
@@ -193,11 +251,11 @@ export default function KnowledgeBaseDetailPage() {
 
         const uploadResult = fileResultById.get(entry.id);
         if (!uploadResult) {
-          uploadErrors[entry.id] = ['File upload result missing'];
+          uploadErrors[entry.id] = ['文件上传结果缺失'];
           continue;
         }
         if (!uploadResult.materialId) {
-          uploadErrors[entry.id] = [uploadResult.error ?? 'File upload failed'];
+          uploadErrors[entry.id] = [uploadResult.error ?? '文件上传失败'];
           continue;
         }
 
@@ -224,7 +282,7 @@ export default function KnowledgeBaseDetailPage() {
     setServerEntryErrors({});
 
     if (validation.globalErrors.length > 0 || validation.normalizedValidEntries.length === 0) {
-      setLocalError('Please fix entry issues before submit.');
+      setLocalError('提交前请先修复条目问题。');
       return;
     }
 
@@ -233,7 +291,7 @@ export default function KnowledgeBaseDetailPage() {
 
       if (manifestEntries.length === 0) {
         setServerEntryErrors(uploadErrors);
-        setLocalError('No valid entries to submit.');
+        setLocalError('没有可提交的有效条目。');
         return;
       }
 
@@ -282,13 +340,13 @@ export default function KnowledgeBaseDetailPage() {
   };
 
   if (kbQuery.isPending) {
-    return <LoadingSpinner text='Loading knowledge base...' />;
+    return <LoadingSpinner text='加载知识库...' />;
   }
 
   if (!kb) {
     return (
       <Alert severity='error'>
-        {mergedError ?? 'Knowledge base not found'}
+        {mergedError ?? '未找到知识库'}
       </Alert>
     );
   }
@@ -297,14 +355,14 @@ export default function KnowledgeBaseDetailPage() {
     <Box>
       <PageHeader
         title={kb.name}
-        subtitle='Incremental batches always reuse current config version.'
+        subtitle='增量批次始终复用当前配置版本。'
         action={
           <Stack direction='row' spacing={1}>
             <Button variant='outlined' onClick={() => router.push('/knowledge-bases')}>
-              Back to list
+              返回列表
             </Button>
             <Button variant='contained' onClick={() => router.push('/knowledge-bases/new')}>
-              New wizard
+              新建向导
             </Button>
           </Stack>
         }
@@ -318,17 +376,20 @@ export default function KnowledgeBaseDetailPage() {
 
       <Paper variant='outlined' sx={{ p: 2, mb: 2 }}>
         <Stack direction='row' spacing={1} flexWrap='wrap' useFlexGap>
-          <Chip label={'Status: ' + kb.status} variant='outlined' />
-          <Chip label={'Readiness: ' + kb.readiness} color={kb.readiness === 'ready' ? 'success' : 'warning'} />
-          <Chip label={'Config version: ' + kb.current_config_version} variant='outlined' />
+          <Chip label={'状态：' + knowledgeBaseStatusLabel(kb.status)} variant='outlined' />
+          <Chip
+            label={'就绪状态：' + readinessLabel(kb.readiness)}
+            color={kb.readiness === 'ready' ? 'success' : 'warning'}
+          />
+          <Chip label={'配置版本：' + kb.current_config_version} variant='outlined' />
         </Stack>
       </Paper>
 
       <Paper variant='outlined' sx={{ p: 2.5, mb: 2 }}>
         <Stack spacing={2}>
-          <Typography variant='h6'>Unified document input</Typography>
+          <Typography variant='h6'>统一文档输入</Typography>
           <Typography color='text.secondary' variant='body2'>
-            Mixed text/url/file entries are supported. Batch progress is polled every 2 seconds.
+            支持混合文本/URL/文件条目，批次进度每 2 秒轮询一次。
           </Typography>
 
           <IngestionManifestEditor
@@ -342,7 +403,7 @@ export default function KnowledgeBaseDetailPage() {
 
           <Stack direction='row' spacing={1} flexWrap='wrap' useFlexGap>
             <Button variant='contained' onClick={submitBatch} loading={submitPending} disabled={batchRunning}>
-              Submit batch
+              提交批次
             </Button>
             <Button
               variant='outlined'
@@ -350,7 +411,7 @@ export default function KnowledgeBaseDetailPage() {
               disabled={!batchId || !hasRetryableFailedDocs || retryBatchMutation.isPending}
               loading={retryBatchMutation.isPending}
             >
-              Retry failed docs
+              重试失败文档
             </Button>
             <Button
               variant='outlined'
@@ -358,7 +419,7 @@ export default function KnowledgeBaseDetailPage() {
               disabled={!batchId || !batchRunning || cancelBatchMutation.isPending}
               loading={cancelBatchMutation.isPending}
             >
-              Cancel batch
+              取消批次
             </Button>
           </Stack>
         </Stack>
@@ -368,18 +429,18 @@ export default function KnowledgeBaseDetailPage() {
         <Paper variant='outlined' sx={{ p: 2.5 }}>
           <Stack spacing={1.5}>
             <Stack direction='row' spacing={1} flexWrap='wrap' useFlexGap>
-              <Chip label={'Batch: ' + currentBatch.id} variant='outlined' />
+              <Chip label={'批次：' + currentBatch.id} variant='outlined' />
               <Chip label={batchStatusLabel(currentBatch.status)} color={batchStatusColor(currentBatch.status)} />
-              <Chip label={'Progress: ' + currentBatch.progress_percent + '%'} variant='outlined' />
+              <Chip label={'进度：' + currentBatch.progress_percent + '%'} variant='outlined' />
             </Stack>
 
             <Typography variant='body2' color='text.secondary'>
               {
-                'Docs: success ' +
+                '文档：成功 ' +
                 currentBatch.succeeded_docs +
-                ' / failed ' +
+                ' / 失败 ' +
                 currentBatch.failed_docs +
-                ' / canceled ' +
+                ' / 已取消 ' +
                 currentBatch.canceled_docs
               }
             </Typography>
@@ -399,11 +460,11 @@ export default function KnowledgeBaseDetailPage() {
                           {doc.title || doc.id}
                         </Typography>
                         <Typography variant='caption' color='text.secondary'>
-                          {doc.source_type + ' · retries ' + doc.retry_count}
+                          {sourceTypeLabel(doc.source_type) + ' · 重试次数 ' + doc.retry_count}
                         </Typography>
                       </Box>
                       <Stack direction='row' spacing={1} alignItems='center'>
-                        <Chip label={doc.status} size='small' variant='outlined' />
+                        <Chip label={docStatusLabel(doc.status)} size='small' variant='outlined' />
                         {doc.error_message && (
                           <Typography variant='caption' color='error.main'>
                             {doc.error_message}

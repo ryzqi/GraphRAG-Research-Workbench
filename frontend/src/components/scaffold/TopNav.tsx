@@ -13,7 +13,7 @@ import { useThemeMode } from '@/providers/ThemeModeProvider';
 const navItems = [
   { href: '/general-chat', label: 'General Chat' },
   { href: '/kb-chat', label: 'KB Chat' },
-  { href: '/knowledge-bases', label: 'Knowledge Bases' },
+  { href: '/knowledge-bases', label: '知识库' },
   { href: '/research', label: 'Research' },
   { href: '/extensions', label: 'Extensions' },
   { href: '/evaluations', label: 'Evaluations' },

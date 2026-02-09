@@ -7,7 +7,7 @@ from fastapi import HTTPException, status
 # 文件大小限制 (100MB)
 MAX_FILE_SIZE = 100 * 1024 * 1024
 
-# 允许的 MIME 类型白名单
+# 允许的 MIME 类型白名单（规范化后）
 ALLOWED_MIME_TYPES = frozenset({
     "application/pdf",
     "text/plain",
@@ -15,8 +15,31 @@ ALLOWED_MIME_TYPES = frozenset({
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
 })
 
+# MIME 类型别名归一化
+MIME_TYPE_ALIASES = {
+    "text/x-markdown": "text/markdown",
+    "application/x-pdf": "application/pdf",
+}
+
+# 浏览器在无法识别类型时常见的兜底 MIME，需结合扩展名校验放行
+GENERIC_MIME_TYPES = frozenset({
+    "application/octet-stream",
+    "binary/octet-stream",
+})
+
 # 允许的文件扩展名
 ALLOWED_EXTENSIONS = frozenset({".pdf", ".txt", ".md", ".docx"})
+
+
+def _normalize_content_type(content_type: str | None) -> str | None:
+    if not content_type:
+        return None
+
+    normalized = content_type.split(";", 1)[0].strip().lower()
+    if not normalized:
+        return None
+
+    return MIME_TYPE_ALIASES.get(normalized, normalized)
 
 
 def validate_file_upload(
@@ -43,7 +66,12 @@ def validate_file_upload(
         )
 
     # 检查 MIME 类型
-    if content_type and content_type not in ALLOWED_MIME_TYPES:
+    normalized_content_type = _normalize_content_type(content_type)
+    if (
+        normalized_content_type
+        and normalized_content_type not in GENERIC_MIME_TYPES
+        and normalized_content_type not in ALLOWED_MIME_TYPES
+    ):
         raise HTTPException(
             status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
             detail={"code": "INVALID_MIME_TYPE", "message": f"不支持的 MIME 类型: {content_type}"},

@@ -16,7 +16,7 @@ export const SUPPORTED_FILE_TYPES_LABEL = Array.from(ALLOWED_EXTENSIONS)
   .map((ext) => ext.replace('.', '').toUpperCase())
   .join(', ');
 
-// 允许的 MIME 类型
+// 允许的 MIME 类型（规范化后）
 export const ALLOWED_MIME_TYPES = new Set([
   'application/pdf',
   'text/plain',
@@ -24,9 +24,22 @@ export const ALLOWED_MIME_TYPES = new Set([
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
 ]);
 
+// MIME 类型别名归一化
+const MIME_TYPE_ALIASES = new Map([
+  ['text/x-markdown', 'text/markdown'],
+  ['application/x-pdf', 'application/pdf'],
+]);
+
+// 浏览器无法识别文件类型时的通用 MIME，后端会结合扩展名再次校验
+const GENERIC_MIME_TYPES = new Set(['application/octet-stream', 'binary/octet-stream']);
+
 export interface FileValidationResult {
   valid: boolean;
   error?: string;
+}
+
+function normalizeMimeType(rawMimeType: string): string {
+  return rawMimeType.split(';', 1)[0]?.trim().toLowerCase() ?? '';
 }
 
 /**
@@ -51,11 +64,20 @@ export function validateFile(file: File): FileValidationResult {
   }
 
   // 检查 MIME 类型
-  if (file.type && !ALLOWED_MIME_TYPES.has(file.type)) {
-    return {
-      valid: false,
-      error: `不支持的 MIME 类型: ${file.type}`,
-    };
+  if (file.type) {
+    const normalizedMimeType = normalizeMimeType(file.type);
+    const canonicalMimeType = MIME_TYPE_ALIASES.get(normalizedMimeType) ?? normalizedMimeType;
+
+    if (
+      canonicalMimeType &&
+      !GENERIC_MIME_TYPES.has(canonicalMimeType) &&
+      !ALLOWED_MIME_TYPES.has(canonicalMimeType)
+    ) {
+      return {
+        valid: false,
+        error: `不支持的 MIME 类型: ${file.type}`,
+      };
+    }
   }
 
   return { valid: true };
