@@ -3,6 +3,7 @@
  */
 
 import { apiFetch } from './http';
+import type { BatchStatus } from './ingestionBatches';
 import type { IndexRebuildJob } from './indexRebuilds';
 import type { ListResponse } from './types';
 
@@ -87,6 +88,16 @@ export interface KnowledgeBase {
   current_config_version: number;
   index_config: IndexConfig | null;
   created_at: string;
+  updated_at: string;
+}
+
+export interface KnowledgeBaseIngestionState {
+  kb_id: string;
+  has_active_batch: boolean;
+  active_batch_id: string | null;
+  active_batch_status: BatchStatus | null;
+  pending_docs: number;
+  running_docs: number;
   updated_at: string;
 }
 
@@ -209,6 +220,17 @@ export async function listSelectableKnowledgeBases(params?: {
  */
 export async function getKnowledgeBase(kbId: string): Promise<KnowledgeBase> {
   return apiFetch<KnowledgeBase>('/api/v1/knowledge-bases/' + kbId);
+}
+
+/**
+ * 获取知识库 ingestion 状态
+ */
+export async function getKnowledgeBaseIngestionState(
+  kbId: string
+): Promise<KnowledgeBaseIngestionState> {
+  return apiFetch<KnowledgeBaseIngestionState>(
+    '/api/v1/knowledge-bases/' + kbId + '/ingestion-state'
+  );
 }
 
 /**

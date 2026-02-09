@@ -130,6 +130,16 @@ class IngestionBatchRead(BaseModel):
     docs: list[IngestionBatchDocRead]
 
 
+class KnowledgeBaseIngestionStateRead(BaseModel):
+    kb_id: uuid.UUID
+    has_active_batch: bool
+    active_batch_id: uuid.UUID | None = None
+    active_batch_status: BatchStatus | None = None
+    pending_docs: int
+    running_docs: int
+    updated_at: datetime
+
+
 class IngestionBatchRetryResponse(BaseModel):
     batch_id: uuid.UUID
     status: BatchStatus

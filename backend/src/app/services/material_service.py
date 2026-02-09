@@ -7,12 +7,13 @@ import uuid
 from typing import BinaryIO
 
 import anyio
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.settings import get_settings
 from app.core.validators import validate_file_upload
 from app.integrations.object_storage import ObjectRef, ObjectStorage
+from app.models.document_chunk import DocumentChunk
 from app.models.source_material import SourceMaterial, SourceType
 
 
@@ -53,6 +54,89 @@ class MaterialService:
         )
         result = await self._db.execute(stmt)
         return list(result.scalars().all()), total
+
+    async def list_by_kb_with_chunk_stats_page(
+        self,
+        kb_id: uuid.UUID,
+        *,
+        skip: int = 0,
+        limit: int = 100,
+    ) -> tuple[list[tuple[SourceMaterial, int]], int]:
+        """分页列出资料并附带分块数量。"""
+        count_stmt = (
+            select(func.count())
+            .select_from(SourceMaterial)
+            .where(SourceMaterial.kb_id == kb_id)
+        )
+        total = int((await self._db.execute(count_stmt)).scalar_one())
+
+        chunk_count = func.count(DocumentChunk.id).label("chunk_count")
+        stmt = (
+            select(SourceMaterial, chunk_count)
+            .outerjoin(
+                DocumentChunk,
+                and_(
+                    DocumentChunk.material_id == SourceMaterial.id,
+                    DocumentChunk.kb_id == SourceMaterial.kb_id,
+                ),
+            )
+            .where(SourceMaterial.kb_id == kb_id)
+            .group_by(SourceMaterial.id)
+            .order_by(SourceMaterial.created_at.desc(), SourceMaterial.id.desc())
+            .offset(skip)
+            .limit(limit)
+        )
+        result = await self._db.execute(stmt)
+        rows = result.all()
+        return [(material, int(cnt or 0)) for material, cnt in rows], total
+
+    async def list_chunks_by_material_page(
+        self,
+        *,
+        kb_id: uuid.UUID,
+        material_id: uuid.UUID,
+        skip: int = 0,
+        limit: int = 200,
+    ) -> tuple[list[DocumentChunk], int]:
+        """分页列出指定资料的分块（稳定顺序）。"""
+        count_stmt = (
+            select(func.count())
+            .select_from(DocumentChunk)
+            .where(
+                DocumentChunk.kb_id == kb_id,
+                DocumentChunk.material_id == material_id,
+            )
+        )
+        total = int((await self._db.execute(count_stmt)).scalar_one())
+
+        stmt = (
+            select(DocumentChunk)
+            .where(
+                DocumentChunk.kb_id == kb_id,
+                DocumentChunk.material_id == material_id,
+            )
+            .order_by(DocumentChunk.chunk_index.asc(), DocumentChunk.id.asc())
+            .offset(skip)
+            .limit(limit)
+        )
+        result = await self._db.execute(stmt)
+        return list(result.scalars().all()), total
+
+    async def get_chunk_by_id(
+        self,
+        *,
+        kb_id: uuid.UUID,
+        material_id: uuid.UUID,
+        chunk_id: uuid.UUID,
+    ) -> DocumentChunk | None:
+        """按知识库/资料范围获取单个分块。"""
+        stmt = select(DocumentChunk).where(
+            DocumentChunk.id == chunk_id,
+            DocumentChunk.kb_id == kb_id,
+            DocumentChunk.material_id == material_id,
+        )
+        result = await self._db.execute(stmt)
+        return result.scalar_one_or_none()
 
     async def get_by_id(self, material_id: uuid.UUID) -> SourceMaterial | None:
         """根据 ID 获取资料。"""

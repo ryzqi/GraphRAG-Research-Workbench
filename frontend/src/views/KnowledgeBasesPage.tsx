@@ -4,7 +4,7 @@
  * 知识库管理页
  * 列表 + 编辑/归档/删除
  */
-import { useMemo, useState, useCallback } from 'react';
+import { useMemo, useState, useCallback, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   Box,
@@ -59,6 +59,7 @@ export default function KnowledgeBasesPage() {
   const [selectedKb, setSelectedKb] = useState<KnowledgeBase | null>(null);
   const [menuAnchor, setMenuAnchor] = useState<{ el: HTMLElement; kb: KnowledgeBase } | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [optimisticallyHiddenKbIds, setOptimisticallyHiddenKbIds] = useState<Set<string>>(new Set());
   const [query, setQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
 
@@ -96,10 +97,23 @@ export default function KnowledgeBasesPage() {
     if (!selectedKb) {
       return;
     }
+
+    const deletingKbId = selectedKb.id;
+    setOptimisticallyHiddenKbIds((prev) => {
+      const next = new Set(prev);
+      next.add(deletingKbId);
+      return next;
+    });
+
     try {
-      await deleteMutation.mutateAsync(selectedKb.id);
+      await deleteMutation.mutateAsync(deletingKbId);
       closeModal();
     } catch (err) {
+      setOptimisticallyHiddenKbIds((prev) => {
+        const next = new Set(prev);
+        next.delete(deletingKbId);
+        return next;
+      });
       setActionError(getErrorMessage(err));
     }
   }, [selectedKb, deleteMutation, closeModal]);
@@ -128,9 +142,31 @@ export default function KnowledgeBasesPage() {
   const actionLoading =
     updateMutation.isPending || deleteMutation.isPending || archiveMutation.isPending;
 
+  useEffect(() => {
+    setOptimisticallyHiddenKbIds((prev) => {
+      if (prev.size === 0) {
+        return prev;
+      }
+
+      const currentKbIds = new Set(kbs.map((kb) => kb.id));
+      const next = new Set<string>();
+      prev.forEach((id) => {
+        if (currentKbIds.has(id)) {
+          next.add(id);
+        }
+      });
+
+      return next.size === prev.size ? prev : next;
+    });
+  }, [kbs]);
+
+  const visibleKbs = useMemo(() => {
+    return kbs.filter((kb) => !optimisticallyHiddenKbIds.has(kb.id));
+  }, [kbs, optimisticallyHiddenKbIds]);
+
   const filteredKbs = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return kbs.filter((kb) => {
+    return visibleKbs.filter((kb) => {
       if (statusFilter !== 'all' && kb.status !== statusFilter) {
         return false;
       }
@@ -142,7 +178,7 @@ export default function KnowledgeBasesPage() {
         .toLowerCase();
       return haystack.includes(q);
     });
-  }, [kbs, query, statusFilter]);
+  }, [visibleKbs, query, statusFilter]);
 
   return (
     <Box>
@@ -205,7 +241,7 @@ export default function KnowledgeBasesPage() {
         </ToggleButtonGroup>
 
         <Typography variant='caption' color='text.secondary' sx={{ ml: 'auto' }}>
-          {filteredKbs.length} / {kbs.length}
+          {filteredKbs.length} / {visibleKbs.length}
         </Typography>
       </Paper>
 
@@ -217,7 +253,7 @@ export default function KnowledgeBasesPage() {
 
       {isLoading ? (
         <LoadingSpinner text='加载知识库列表...' />
-      ) : kbs.length === 0 ? (
+      ) : visibleKbs.length === 0 ? (
         <EmptyState
           title='暂无知识库'
           description='点击上方按钮开始三步创建向导'

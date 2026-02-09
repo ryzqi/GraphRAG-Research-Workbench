@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Request, status
+from fastapi import APIRouter, Query, Request, Response, status
+from fastapi.responses import StreamingResponse
 
 from app.api.deps import AsyncSessionDep
+from app.api.sse import SSE_HEADERS, encode_sse
 from app.schemas.ingestion_batches import (
     IngestionBatchCancelResponse,
     IngestionBatchCreateRequest,
@@ -34,6 +36,26 @@ async def create_ingestion_batch(
     )
 
 
+@router.get(
+    "/latest",
+    response_model=IngestionBatchRead,
+    responses={status.HTTP_204_NO_CONTENT: {"description": "No ingestion batch found"}},
+)
+async def get_latest_ingestion_batch(
+    db: AsyncSessionDep,
+    kb_id: uuid.UUID = Query(..., description="知识库 ID"),
+    prefer_active: bool = Query(True, description="优先返回运行中的批次"),
+) -> IngestionBatchRead | Response:
+    service = IngestionBatchService(db)
+    batch = await service.get_latest_batch_for_kb(
+        kb_id=kb_id,
+        prefer_active=prefer_active,
+    )
+    if batch is None:
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+    return batch
+
+
 @router.get("/{batch_id}", response_model=IngestionBatchRead)
 async def get_ingestion_batch(
     db: AsyncSessionDep,
@@ -41,6 +63,29 @@ async def get_ingestion_batch(
 ) -> IngestionBatchRead:
     service = IngestionBatchService(db)
     return await service.get_batch(batch_id=batch_id)
+
+
+@router.get("/{batch_id}/stream")
+async def stream_ingestion_batch(
+    db: AsyncSessionDep,
+    batch_id: uuid.UUID,
+    request: Request,
+):
+    service = IngestionBatchService(db)
+    await service.get_batch(batch_id=batch_id)
+
+    async def _events():
+        yield "meta", {"batch_id": str(batch_id), "type": "ingestion_batch"}
+        async for event, payload in service.stream_batch_updates(batch_id=batch_id):
+            if await request.is_disconnected():
+                return
+            yield event, payload
+
+    return StreamingResponse(
+        encode_sse(_events()),
+        media_type="text/event-stream",
+        headers=SSE_HEADERS,
+    )
 
 
 @router.post("/{batch_id}/retry", response_model=IngestionBatchRetryResponse)

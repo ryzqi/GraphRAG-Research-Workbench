@@ -15,6 +15,7 @@ from app.models.knowledge_base import (
     KnowledgeBaseStatus as ModelKnowledgeBaseStatus,
 )
 from app.models.source_material import SourceType
+from app.schemas.ingestion_batches import KnowledgeBaseIngestionStateRead
 from app.schemas.knowledge_bases import (
     ChunkingStrategy,
     IndexConfig,
@@ -29,6 +30,7 @@ from app.schemas.knowledge_bases import (
 )
 from app.schemas.pagination import PageMeta
 from app.services.index_rebuild_service import IndexRebuildService
+from app.services.ingestion_batch_service import IngestionBatchService
 from app.services.knowledge_base_service import KnowledgeBaseService
 from app.services.material_service import MaterialService
 
@@ -155,6 +157,15 @@ async def get_knowledge_base(db: AsyncSessionDep, kb_id: uuid.UUID) -> Knowledge
             detail={"code": "KB_NOT_FOUND", "message": "知识库不存在"},
         )
     return KnowledgeBaseRead.model_validate(kb)
+
+
+@router.get("/{kb_id}/ingestion-state", response_model=KnowledgeBaseIngestionStateRead)
+async def get_knowledge_base_ingestion_state(
+    db: AsyncSessionDep,
+    kb_id: uuid.UUID,
+) -> KnowledgeBaseIngestionStateRead:
+    service = IngestionBatchService(db)
+    return await service.get_kb_ingestion_state(kb_id=kb_id)
 
 
 @router.patch("/{kb_id}", response_model=KnowledgeBaseRead)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import ipaddress
 import math
@@ -9,12 +10,13 @@ import socket
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any
+from time import monotonic
+from typing import Any, AsyncIterator
 from urllib.parse import urljoin, urlparse, urlunparse
 
 import anyio
 import httpx
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -40,6 +42,7 @@ from app.schemas.ingestion_batches import (
     IngestionBatchRead,
     IngestionBatchRetryResponse,
     IngestionBatchSubmitResponse,
+    KnowledgeBaseIngestionStateRead,
     ManifestEntry,
     ManifestFileEntry,
     ManifestSourceType,
@@ -143,6 +146,156 @@ class IngestionBatchService:
     async def get_batch(self, *, batch_id: uuid.UUID) -> IngestionBatchRead:
         batch = await self._get_batch_or_raise(batch_id=batch_id)
         return IngestionBatchRead.model_validate(batch)
+
+    async def get_latest_batch_for_kb(
+        self,
+        *,
+        kb_id: uuid.UUID,
+        prefer_active: bool = True,
+    ) -> IngestionBatchRead | None:
+        kb = await self._db.get(KnowledgeBase, kb_id)
+        if kb is None:
+            raise ingestion_error("KB_NOT_FOUND")
+
+        batch: IngestionBatch | None = None
+        if prefer_active:
+            batch = await self.get_active_batch_for_kb(kb_id=kb_id, with_docs=True)
+
+        if batch is None:
+            stmt = (
+                select(IngestionBatch)
+                .where(IngestionBatch.kb_id == kb_id)
+                .options(selectinload(IngestionBatch.docs))
+                .order_by(IngestionBatch.created_at.desc(), IngestionBatch.id.desc())
+                .limit(1)
+            )
+            batch = (await self._db.execute(stmt)).scalar_one_or_none()
+
+        if batch is None:
+            return None
+
+        return IngestionBatchRead.model_validate(batch)
+
+    async def stream_batch_updates(
+        self,
+        *,
+        batch_id: uuid.UUID,
+        poll_interval: float = 1.0,
+        heartbeat_interval: float = 10.0,
+    ) -> AsyncIterator[tuple[str, dict[str, Any]]]:
+        terminal_statuses = {
+            IngestionBatchStatus.SUCCEEDED,
+            IngestionBatchStatus.PARTIAL_FAILED,
+            IngestionBatchStatus.FAILED,
+            IngestionBatchStatus.CANCELED,
+        }
+
+        batch = await self._get_batch_or_raise(
+            batch_id=batch_id,
+            populate_existing=True,
+        )
+        snapshot_payload = IngestionBatchRead.model_validate(batch).model_dump(mode="json")
+        yield "snapshot", snapshot_payload
+
+        if batch.status in terminal_statuses:
+            yield "final", snapshot_payload
+            return
+
+        last_snapshot_key = self._batch_snapshot_key(batch)
+        last_event_count = await self._get_event_count(batch_id=batch_id)
+        last_emit_at = monotonic()
+
+        try:
+            while True:
+                await asyncio.sleep(poll_interval)
+
+                batch = await self._get_batch_or_raise(
+                    batch_id=batch_id,
+                    populate_existing=True,
+                )
+                payload = IngestionBatchRead.model_validate(batch).model_dump(mode="json")
+                snapshot_key = self._batch_snapshot_key(batch)
+                event_count = await self._get_event_count(batch_id=batch_id)
+                changed = snapshot_key != last_snapshot_key or event_count != last_event_count
+
+                if changed:
+                    if batch.status in terminal_statuses:
+                        yield "final", payload
+                        return
+                    yield "update", payload
+                    last_snapshot_key = snapshot_key
+                    last_event_count = event_count
+                    last_emit_at = monotonic()
+                    continue
+
+                if monotonic() - last_emit_at >= heartbeat_interval:
+                    yield "heartbeat", {
+                        "batch_id": str(batch_id),
+                        "ts": datetime.now(timezone.utc).isoformat(),
+                    }
+                    last_emit_at = monotonic()
+        except asyncio.CancelledError:
+            return
+
+    async def get_kb_ingestion_state(
+        self,
+        *,
+        kb_id: uuid.UUID,
+    ) -> KnowledgeBaseIngestionStateRead:
+        kb = await self._db.get(KnowledgeBase, kb_id)
+        if kb is None:
+            raise ingestion_error("KB_NOT_FOUND")
+
+        active_batch = await self.get_active_batch_for_kb(kb_id=kb_id, with_docs=True)
+        if active_batch is None:
+            return KnowledgeBaseIngestionStateRead(
+                kb_id=kb_id,
+                has_active_batch=False,
+                active_batch_id=None,
+                active_batch_status=None,
+                pending_docs=0,
+                running_docs=0,
+                updated_at=datetime.now(timezone.utc),
+            )
+
+        pending_docs = sum(
+            1 for doc in active_batch.docs if doc.status == IngestionDocStatus.PENDING
+        )
+        running_docs = sum(
+            1 for doc in active_batch.docs if doc.status == IngestionDocStatus.RUNNING
+        )
+
+        return KnowledgeBaseIngestionStateRead(
+            kb_id=kb_id,
+            has_active_batch=True,
+            active_batch_id=active_batch.id,
+            active_batch_status=BatchStatus(active_batch.status.value),
+            pending_docs=pending_docs,
+            running_docs=running_docs,
+            updated_at=datetime.now(timezone.utc),
+        )
+
+    async def get_active_batch_for_kb(
+        self,
+        *,
+        kb_id: uuid.UUID,
+        with_docs: bool = False,
+    ) -> IngestionBatch | None:
+        stmt = (
+            select(IngestionBatch)
+            .where(
+                IngestionBatch.kb_id == kb_id,
+                IngestionBatch.status.in_(
+                    (IngestionBatchStatus.QUEUED, IngestionBatchStatus.RUNNING)
+                ),
+            )
+            .order_by(IngestionBatch.created_at.desc(), IngestionBatch.id.desc())
+            .limit(1)
+        )
+        if with_docs:
+            stmt = stmt.options(selectinload(IngestionBatch.docs))
+
+        return (await self._db.execute(stmt)).scalar_one_or_none()
 
     async def retry_failed_docs(
         self,
@@ -589,9 +742,12 @@ class IngestionBatchService:
         *,
         batch_id: uuid.UUID,
         for_update: bool = False,
+        populate_existing: bool = False,
     ) -> IngestionBatch:
         stmt = select(IngestionBatch).where(IngestionBatch.id == batch_id)
         stmt = stmt.options(selectinload(IngestionBatch.docs))
+        if populate_existing:
+            stmt = stmt.execution_options(populate_existing=True)
         if for_update:
             stmt = stmt.with_for_update()
         batch = (await self._db.execute(stmt)).scalar_one_or_none()
@@ -788,6 +944,39 @@ class IngestionBatchService:
                 to_status=to_status,
                 reason=reason,
             )
+        )
+
+    async def _get_event_count(self, *, batch_id: uuid.UUID) -> int:
+        stmt = select(func.count(IngestionEvent.id)).where(IngestionEvent.batch_id == batch_id)
+        result = await self._db.execute(stmt)
+        value = result.scalar_one()
+        return int(value or 0)
+
+    @staticmethod
+    def _batch_snapshot_key(batch: IngestionBatch) -> tuple[Any, ...]:
+        doc_states = tuple(
+            sorted(
+                (
+                    str(doc.id),
+                    doc.status.value,
+                    doc.retry_count,
+                    doc.retryable,
+                    doc.chunk_count,
+                    doc.error_code or "",
+                    doc.error_message or "",
+                )
+                for doc in batch.docs
+            )
+        )
+        return (
+            batch.status.value,
+            batch.progress_percent,
+            batch.succeeded_docs,
+            batch.failed_docs,
+            batch.canceled_docs,
+            batch.succeeded_chunks,
+            batch.finished_at.isoformat() if batch.finished_at else "",
+            doc_states,
         )
 
     @staticmethod

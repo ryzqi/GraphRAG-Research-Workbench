@@ -2,7 +2,9 @@
  * 统一 ingestion-batch API 封装
  */
 
+import type { SseEvent } from '../lib/sse';
 import { apiFetch } from './http';
+import { openSseStream } from './sse';
 
 export type ManifestSourceType = 'text' | 'url' | 'file';
 export type BatchStatus =
@@ -124,8 +126,21 @@ export async function createIngestionBatch(
   });
 }
 
+export async function getLatestIngestionBatch(kbId: string): Promise<IngestionBatch | null> {
+  const query = new URLSearchParams({ kb_id: kbId, prefer_active: 'true' }).toString();
+  const payload = await apiFetch<IngestionBatch | null>(`/api/v1/ingestion-batches/latest?${query}`);
+  return payload ?? null;
+}
+
 export async function getIngestionBatch(batchId: string): Promise<IngestionBatch> {
   return apiFetch<IngestionBatch>('/api/v1/ingestion-batches/' + batchId);
+}
+
+export async function streamIngestionBatch(
+  batchId: string,
+  signal?: AbortSignal
+): Promise<AsyncIterable<SseEvent>> {
+  return openSseStream(`/api/v1/ingestion-batches/${batchId}/stream`, { method: 'GET' }, signal);
 }
 
 export async function retryIngestionBatch(batchId: string): Promise<IngestionBatchRetryResponse> {

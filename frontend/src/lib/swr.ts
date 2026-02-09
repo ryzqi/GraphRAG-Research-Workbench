@@ -46,6 +46,21 @@ interface MutationHelpers {
   setCachedData: <TData>(key: Key, data: TData) => Promise<TData | undefined>;
 }
 
+function isArrayKey(key: Key): key is readonly unknown[] {
+  return Array.isArray(key);
+}
+
+function matchesArrayKeyPrefix(
+  cachedKey: unknown,
+  prefixKey: readonly unknown[]
+): boolean {
+  if (!Array.isArray(cachedKey) || cachedKey.length < prefixKey.length) {
+    return false;
+  }
+
+  return prefixKey.every((segment, index) => Object.is(cachedKey[index], segment));
+}
+
 interface UseApiMutationOptions<TArg, TData> {
   onSuccess?: (data: TData, arg: TArg, helpers: MutationHelpers) => void | Promise<void>;
   onError?: (error: Error, arg: TArg) => void;
@@ -76,7 +91,19 @@ export function useApiMutation<TArg, TData>(
 
   const invalidate = useCallback(
     async (keys: Key[]) => {
-      await Promise.all(keys.map((key) => mutate(key)));
+      await Promise.all(
+        keys.map((key) => {
+          if (!isArrayKey(key)) {
+            return mutate(key);
+          }
+
+          return mutate(
+            (cachedKey) => matchesArrayKeyPrefix(cachedKey, key),
+            undefined,
+            { revalidate: true }
+          );
+        })
+      );
     },
     [mutate]
   );
@@ -146,4 +173,3 @@ export function useApiMutation<TArg, TData>(
     reset,
   };
 }
-

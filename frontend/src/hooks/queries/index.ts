@@ -5,6 +5,7 @@ export {
   useKnowledgeBases,
   useSelectableKnowledgeBases,
   useKnowledgeBase,
+  useKnowledgeBaseIngestionState,
   useCreateKnowledgeBase,
   useUpdateKnowledgeBase,
   useDeleteKnowledgeBase,
@@ -44,11 +45,19 @@ export {
 
 export {
   useIngestionBatch,
+  useIngestionBatchLive,
   useCreateIngestionBatch,
   useRetryIngestionBatch,
   useCancelIngestionBatch,
   ingestionBatchKeys,
 } from './useIngestionBatches';
+
+export {
+  useMaterialsWithChunkStats,
+  useMaterialChunks,
+  useMaterialChunkDetail,
+  materialChunkKeys,
+} from './useMaterialChunks';
 
 export {
   useIndexRebuildJob,

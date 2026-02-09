@@ -5,6 +5,7 @@ import {
   listKnowledgeBases,
   listSelectableKnowledgeBases,
   getKnowledgeBase,
+  getKnowledgeBaseIngestionState,
   createKnowledgeBase,
   updateKnowledgeBase,
   deleteKnowledgeBase,
@@ -16,6 +17,7 @@ import {
   type KnowledgeBaseIndexConfigUpdateResponse,
   type KnowledgeBaseStatusFilter,
   type KnowledgeBaseReadinessFilter,
+  type KnowledgeBaseIngestionState,
 } from '../../services/knowledgeBases';
 import { useApiMutation, useApiQuery } from '../../lib/swr';
 import { indexRebuildKeys } from './useIndexRebuilds';
@@ -26,6 +28,7 @@ const KEYS = {
     [...KEYS.all, 'list', status, readiness] as const,
   selectable: () => [...KEYS.all, 'selectable'] as const,
   detail: (id: string) => [...KEYS.all, 'detail', id] as const,
+  ingestionState: (id: string) => [...KEYS.all, 'ingestionState', id] as const,
 };
 
 export function useKnowledgeBases(params?: {
@@ -51,6 +54,19 @@ export function useKnowledgeBase(id: string) {
   return useApiQuery(
     id ? KEYS.detail(id) : null,
     id ? () => getKnowledgeBase(id) : null
+  );
+}
+
+export function useKnowledgeBaseIngestionState(id: string) {
+  return useApiQuery(
+    id ? KEYS.ingestionState(id) : null,
+    id ? () => getKnowledgeBaseIngestionState(id) : null,
+    {
+      refreshInterval: (latestState) =>
+        (latestState as KnowledgeBaseIngestionState | undefined)?.has_active_batch
+          ? 2_000
+          : 0,
+    }
   );
 }
 

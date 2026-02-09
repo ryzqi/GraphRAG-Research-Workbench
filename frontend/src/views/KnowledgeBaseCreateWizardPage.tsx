@@ -332,6 +332,7 @@ export default function KnowledgeBaseCreateWizardPage() {
       setServerEntryErrors(mergeEntryErrors(uploadErrors, backendErrors));
       setBatchId(response.batch_id);
       setActiveStep(2);
+      router.push(`/knowledge-bases/${kbId}?batch=${response.batch_id}&from=create`);
     } catch (error) {
       const backendErrors = extractEntryErrors(error);
       if (backendErrors.length > 0) {

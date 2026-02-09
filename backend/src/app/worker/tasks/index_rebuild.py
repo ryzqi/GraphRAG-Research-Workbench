@@ -6,15 +6,17 @@ import asyncio
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
 from app.core.settings import get_settings
 from app.integrations.embedding_client import EmbeddingClient
 from app.integrations.object_storage import ObjectStorage
+from app.models.document_chunk import DocumentChunk
 from app.models.index_rebuild_job import IndexRebuildJob, IndexRebuildStatus
 from app.models.knowledge_base import KnowledgeBase
 from app.models.source_material import SourceMaterial
 from app.schemas.knowledge_bases import IndexConfig
+from app.services.chunk_persistence_service import ChunkPersistenceService
 from app.services.chunking import ChunkingEngine
 from app.services.contextual_embedding_service import ContextualEmbeddingService
 from app.services.parsing import ParseError, parse_material
@@ -69,6 +71,7 @@ async def _run_index_rebuild_job(job_id: str) -> None:
                 embedding_client = EmbeddingClient(http_client=http_client)
                 chunker = ChunkingEngine(settings=settings, embedding=embedding_client)
                 context_service = ContextualEmbeddingService(settings=settings)
+                chunk_store = ChunkPersistenceService(session)
                 embedding_dim = settings.embedding_dim
                 collection_ready = False
 
@@ -90,8 +93,11 @@ async def _run_index_rebuild_job(job_id: str) -> None:
 
                 index_config = IndexConfig.model_validate(kb.index_config or {})
 
-                # Clear old vectors for this KB
+                # Clear old vectors/chunks for this KB.
                 await milvus_client.delete_by_kb_id(str(job.kb_id))
+                await session.execute(
+                    delete(DocumentChunk).where(DocumentChunk.kb_id == job.kb_id)
+                )
                 await session.commit()
 
                 stmt = select(SourceMaterial).where(SourceMaterial.kb_id == job.kb_id)
@@ -136,6 +142,12 @@ async def _run_index_rebuild_job(job_id: str) -> None:
 
                     chunk_items = await chunker.split(parsed, index_config)
                     if not chunk_items:
+                        await chunk_store.replace_material_chunks(
+                            kb_id=material.kb_id,
+                            material_id=material.id,
+                            chunk_items=[],
+                        )
+                        await session.commit()
                         continue
 
                     contexts = ["" for _ in chunk_items]
@@ -183,12 +195,19 @@ async def _run_index_rebuild_job(job_id: str) -> None:
                     milvus_chunk_ids: list[str] = []
                     milvus_upserted = False
                     try:
-                        chunk_ids = [str(uuid.uuid4()) for _ in chunk_items]
+                        chunk_ids = [uuid.uuid4() for _ in chunk_items]
+                        chunk_ids = await chunk_store.replace_material_chunks(
+                            kb_id=material.kb_id,
+                            material_id=material.id,
+                            chunk_items=chunk_items,
+                            chunk_ids=chunk_ids,
+                        )
+
                         parent_id_by_ref: dict[int, str] = {}
                         parent_idx = 0
                         for idx, chunk_item in enumerate(chunk_items):
                             if chunk_item.chunk_role == "parent":
-                                parent_id_by_ref[parent_idx] = chunk_ids[idx]
+                                parent_id_by_ref[parent_idx] = str(chunk_ids[idx])
                                 parent_idx += 1
 
                         milvus_records: list[dict] = []
@@ -202,7 +221,7 @@ async def _run_index_rebuild_job(job_id: str) -> None:
                                 )
                             milvus_records.append(
                                 {
-                                    "chunk_id": chunk_ids[idx],
+                                    "chunk_id": str(chunk_ids[idx]),
                                     "kb_id": str(material.kb_id),
                                     "material_id": str(material.id),
                                     "chunk_role": chunk_item.chunk_role,
@@ -216,12 +235,13 @@ async def _run_index_rebuild_job(job_id: str) -> None:
                                 }
                             )
 
-                        milvus_chunk_ids = chunk_ids
+                        milvus_chunk_ids = [str(cid) for cid in chunk_ids]
                         await milvus_client.upsert_batch(records=milvus_records)
                         milvus_upserted = True
 
                         stats["succeeded_materials"] += 1
                         stats["total_chunks"] += len(milvus_chunk_ids)
+                        await session.commit()
 
                     except Exception as exc:
                         if milvus_upserted and milvus_chunk_ids:
@@ -237,6 +257,7 @@ async def _run_index_rebuild_job(job_id: str) -> None:
                                         "error": str(cleanup_exc),
                                     }
                                 )
+                        await session.rollback()
                         stats["errors"].append(
                             {
                                 "material_id": str(material.id),

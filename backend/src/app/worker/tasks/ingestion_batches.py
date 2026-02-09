@@ -13,6 +13,7 @@ from app.integrations.object_storage import ObjectStorage
 from app.models.knowledge_base import KnowledgeBase
 from app.models.source_material import SourceMaterial
 from app.schemas.knowledge_bases import IndexConfig
+from app.services.chunk_persistence_service import ChunkPersistenceService
 from app.services.chunking import ChunkingEngine
 from app.services.contextual_embedding_service import ContextualEmbeddingService
 from app.services.ingestion_batch_service import IngestionBatchService
@@ -212,26 +213,40 @@ async def _process_doc(*, doc, resources) -> int:
         if embeddings:
             await milvus.ensure_collection(dim=len(embeddings[0]))
 
-        await milvus.delete_by_material(str(material.id))
+        chunk_store = ChunkPersistenceService(session)
+        chunk_ids = [uuid.uuid4() for _ in chunk_items]
 
-        chunk_ids = [str(uuid.uuid4()) for _ in chunk_items]
-        records: list[dict] = []
-        for idx, (chunk_item, emb) in enumerate(zip(chunk_items, embeddings, strict=False)):
-            records.append(
-                {
-                    "chunk_id": chunk_ids[idx],
-                    "kb_id": str(material.kb_id),
-                    "material_id": str(material.id),
-                    "chunk_role": chunk_item.chunk_role,
-                    "parent_chunk_id": "",
-                    "child_seq": chunk_item.child_seq or 0,
-                    "content": chunk_item.content,
-                    "context": contexts[idx] if contexts else "",
-                    "locator": chunk_item.locator or {},
-                    "metadata": chunk_item.metadata or {},
-                    "dense_vector": emb,
-                }
+        try:
+            await milvus.delete_by_material(str(material.id))
+
+            chunk_ids = await chunk_store.replace_material_chunks(
+                kb_id=material.kb_id,
+                material_id=material.id,
+                chunk_items=chunk_items,
+                chunk_ids=chunk_ids,
             )
 
-        await milvus.upsert_batch(records=records)
-        return len(records)
+            records: list[dict] = []
+            for idx, (chunk_item, emb) in enumerate(zip(chunk_items, embeddings, strict=False)):
+                records.append(
+                    {
+                        "chunk_id": str(chunk_ids[idx]),
+                        "kb_id": str(material.kb_id),
+                        "material_id": str(material.id),
+                        "chunk_role": chunk_item.chunk_role,
+                        "parent_chunk_id": "",
+                        "child_seq": chunk_item.child_seq or 0,
+                        "content": chunk_item.content,
+                        "context": contexts[idx] if contexts else "",
+                        "locator": chunk_item.locator or {},
+                        "metadata": chunk_item.metadata or {},
+                        "dense_vector": emb,
+                    }
+                )
+
+            await milvus.upsert_batch(records=records)
+            await session.commit()
+            return len(records)
+        except Exception:
+            await session.rollback()
+            raise
