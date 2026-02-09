@@ -327,9 +327,6 @@ class Settings(BaseSettings):
     ingestion_contextual_enabled: bool = Field(
         True, alias="INGESTION_CONTEXTUAL_ENABLED"
     )
-    ingestion_contextual_timeout_seconds: int = Field(
-        15, alias="INGESTION_CONTEXTUAL_TIMEOUT_SECONDS"
-    )
     ingestion_contextual_max_tokens: int = Field(
         128, alias="INGESTION_CONTEXTUAL_MAX_TOKENS"
     )

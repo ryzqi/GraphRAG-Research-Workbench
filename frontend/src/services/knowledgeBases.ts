@@ -55,7 +55,6 @@ export interface ChunkingConfig {
 
 export interface ContextualConfig {
   enabled: boolean;
-  timeout_seconds: number;
   max_tokens: number;
   concurrency: number;
 }
@@ -145,7 +144,6 @@ export function createDefaultIndexConfig(): IndexConfig {
     },
     contextual: {
       enabled: true,
-      timeout_seconds: 15,
       max_tokens: 128,
       concurrency: 3,
     },

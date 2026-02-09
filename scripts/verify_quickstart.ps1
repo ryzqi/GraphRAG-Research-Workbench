@@ -86,7 +86,7 @@ if (-not $SkipInfra) {
 
     # 后端 API
     $apiHealth = Test-Endpoint "http://localhost:8000/api/v1/health" "Backend API"
-    Write-Check "后端 API 健康检查" $apiHealth "请确保后端服务已启动: uv run uvicorn app.main:app --host 127.0.0.1 --port 8000 --loop asyncio:SelectorEventLoop"
+    Write-Check "后端 API 健康检查" $apiHealth "请先运行: pwsh -ExecutionPolicy Bypass -File .\scripts\start_all.ps1（或仅后端命令: uv run uvicorn app.main:app --host 127.0.0.1 --port 8000 --loop asyncio:SelectorEventLoop）"
 
     # 前端
     $frontendHealth = Test-Endpoint "http://localhost:3000" "Frontend"

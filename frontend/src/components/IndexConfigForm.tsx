@@ -490,20 +490,6 @@ export function IndexConfigForm({
             {value.contextual.enabled && (
               <Stack spacing={2} direction={{ xs: 'column', sm: 'row' }}>
                 <TextField
-                  label="timeout_seconds"
-                  type="number"
-                  value={value.contextual.timeout_seconds}
-                  onChange={(e) =>
-                    updateContextual({
-                      timeout_seconds: numberValue(e.target.value),
-                    })
-                  }
-                  inputProps={{ min: 1, max: 60 }}
-                  disabled={disabled}
-                  helperText="超时秒数，过短可能失败"
-                  fullWidth
-                />
-                <TextField
                   label="max_tokens"
                   type="number"
                   value={value.contextual.max_tokens}

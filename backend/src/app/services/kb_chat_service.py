@@ -45,6 +45,7 @@ from app.schemas.chats import (
     AgentRunRead,
     ChatAnswerResponse,
     ChatMessageRead,
+    ChatPendingUserClarificationResponse,
     EvidenceItem,
 )
 from app.services.context_builder import ContextBuilder
@@ -210,8 +211,9 @@ class KbChatService:
         *,
         session: ChatSession,
         user_content: str,
+        run: AgentRun | None = None,
     ) -> _KbChatExecution:
-        started_at = datetime.now(timezone.utc)
+        started_at = run.started_at if run and run.started_at else datetime.now(timezone.utc)
         thread_id = str(session.id)
         checkpoint_tuple = await CheckpointManager.get_state(thread_id)
         existing_messages = None
@@ -254,18 +256,27 @@ class KbChatService:
         )
         self._db.add(user_msg)
 
-        # 创建运行记录
-        run = AgentRun(
-            run_type=AgentRunType.KB_ANSWER,
-            session_id=session.id,
-            question=user_content,
-            selected_kb_ids=session.selected_kb_ids,
-            allow_external=session.allow_external,
-            mode=session.mode,
-            status=AgentRunStatus.RUNNING,
-            started_at=started_at,
-        )
-        self._db.add(run)
+        # 创建或复用运行记录
+        if run is None:
+            run = AgentRun(
+                run_type=AgentRunType.KB_ANSWER,
+                session_id=session.id,
+                question=user_content,
+                selected_kb_ids=session.selected_kb_ids,
+                allow_external=session.allow_external,
+                mode=session.mode,
+                status=AgentRunStatus.RUNNING,
+                started_at=started_at,
+            )
+            self._db.add(run)
+        else:
+            if run.started_at is None:
+                run.started_at = started_at
+            run.status = AgentRunStatus.RUNNING
+            run.finished_at = None
+            run.error_message = None
+            run.final_output = None
+
         await self._db.flush()
         await self._db.commit()
         set_run_id(str(run.id))
@@ -575,15 +586,82 @@ class KbChatService:
             return AIMessage(content=msg.content)
         return HumanMessage(content=msg.content)
 
+    @staticmethod
+    def _extract_clarification_message(
+        *,
+        stage_summaries: dict[str, Any],
+        answer: str,
+    ) -> str | None:
+        force_exit = (
+            stage_summaries.get("force_exit")
+            if isinstance(stage_summaries, dict)
+            else None
+        )
+        reason = force_exit.get("reason") if isinstance(force_exit, dict) else None
+        if reason != "clarify":
+            return None
+        text = extract_answer_text(answer).strip()
+        if text:
+            return text
+        return "为了更准确地回答，请补充必要信息后再提问。"
+
+    async def _persist_clarification_pending(
+        self,
+        *,
+        session: ChatSession,
+        run: AgentRun,
+        started_at: datetime,
+        message: str,
+        stage_summaries: dict[str, Any],
+        metrics: dict[str, Any],
+    ) -> ChatPendingUserClarificationResponse:
+        now = datetime.now(timezone.utc)
+        stage_summaries = {
+            **(stage_summaries if isinstance(stage_summaries, dict) else {}),
+            "clarification_pending": {
+                "pending": True,
+                "message": message,
+                "requested_at": now.isoformat(),
+            },
+        }
+        stage_summaries = ensure_json_safe(
+            stage_summaries, settings=self._settings, label="stage_summaries"
+        )
+
+        metrics = ensure_json_safe(
+            metrics if isinstance(metrics, dict) else {},
+            settings=self._settings,
+            label="metrics",
+        )
+        run.status = AgentRunStatus.RUNNING
+        run.finished_at = None
+        run.final_output = None
+        run.error_message = None
+        run.stage_summaries = stage_summaries
+        run.metrics = {
+            **metrics,
+            "latency_ms": int((now - started_at).total_seconds() * 1000),
+            "clarification_pending": True,
+        }
+
+        await self._db.commit()
+        await self._db.refresh(run)
+        return ChatPendingUserClarificationResponse(
+            thread_id=str(session.id),
+            message=message,
+            run=AgentRunRead.model_validate(run),
+        )
+
     async def answer(
         self,
         *,
         session: ChatSession,
         user_content: str,
-    ) -> ChatAnswerResponse:
+        run: AgentRun | None = None,
+    ) -> ChatAnswerResponse | ChatPendingUserClarificationResponse:
         "处理用户问题并生成答案（使用 LangGraph）。"
         exec_ctx = await self._prepare_kb_chat_execution(
-            session=session, user_content=user_content
+            session=session, user_content=user_content, run=run
         )
         run = exec_ctx.run
         total_timeout = float(self._settings.kb_chat_total_timeout_seconds)
@@ -640,6 +718,20 @@ class KbChatService:
                 if isinstance(exec_ctx.retrieval_meta, dict)
                 else None,
             )
+
+            clarification_message = self._extract_clarification_message(
+                stage_summaries=stage_summaries,
+                answer=answer,
+            )
+            if clarification_message is not None:
+                return await self._persist_clarification_pending(
+                    session=session,
+                    run=run,
+                    started_at=exec_ctx.started_at,
+                    message=clarification_message,
+                    stage_summaries=stage_summaries,
+                    metrics=metrics,
+                )
 
             return await self._finalize_run(
                 session=session,
@@ -712,10 +804,11 @@ class KbChatService:
         session: ChatSession,
         user_content: str,
         request: object | None = None,
+        run: AgentRun | None = None,
     ) -> Any:
         "处理用户问题并生成答案（流式 SSE）。"
         exec_ctx = await self._prepare_kb_chat_execution(
-            session=session, user_content=user_content
+            session=session, user_content=user_content, run=run
         )
         run = exec_ctx.run
         total_timeout = float(self._settings.kb_chat_total_timeout_seconds)
@@ -907,6 +1000,22 @@ class KbChatService:
                 if isinstance(exec_ctx.retrieval_meta, dict)
                 else None,
             )
+
+            clarification_message = self._extract_clarification_message(
+                stage_summaries=stage_summaries,
+                answer=answer,
+            )
+            if clarification_message is not None:
+                pending_response = await self._persist_clarification_pending(
+                    session=session,
+                    run=run,
+                    started_at=exec_ctx.started_at,
+                    message=clarification_message,
+                    stage_summaries=stage_summaries,
+                    metrics=metrics,
+                )
+                yield "interrupt", pending_response.model_dump(mode="json")
+                return
 
             final_response = await self._finalize_run(
                 session=session,

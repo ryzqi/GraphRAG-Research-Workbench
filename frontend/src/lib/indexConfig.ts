@@ -171,10 +171,6 @@ export function validateIndexConfig(config: IndexConfig): string[] {
   // Only validate enabled enhancement strategies.
   if (contextual.enabled) {
     checkRange(
-      { value: contextual.timeout_seconds, min: 1, max: 60, label: 'Contextual 超时' },
-      errors
-    );
-    checkRange(
       { value: contextual.max_tokens, min: 0, max: 512, label: 'Contextual max_tokens' },
       errors
     );

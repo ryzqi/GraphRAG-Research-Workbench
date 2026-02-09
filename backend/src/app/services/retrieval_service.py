@@ -737,10 +737,17 @@ class RetrievalService:
                     candidates_for_rerank,
                     top_n,
                     timeout_seconds=rerank_timeout,
-                    hard_timeout=deadline is not None,
+                    hard_timeout=False,
                 )
             except asyncio.TimeoutError:
-                return _timeout_draft()
+                # Rerank is optional: degrade to RRF order when timeout happens.
+                logger.warning("Rerank 超时，降级为 RRF 顺序")
+                ordered, applied, reason, latency_ms = (
+                    candidates_for_rerank,
+                    False,
+                    "timeout",
+                    None,
+                )
             rerank_applied = applied
             rerank_reason = reason
             rerank_latency_ms = latency_ms

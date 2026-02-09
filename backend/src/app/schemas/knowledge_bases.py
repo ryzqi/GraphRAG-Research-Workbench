@@ -128,7 +128,6 @@ class ContextualConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     enabled: bool = True
-    timeout_seconds: int = Field(15, ge=1, le=60)
     max_tokens: int = Field(128, ge=0, le=512)
     concurrency: int = Field(3, ge=1, le=10)
 

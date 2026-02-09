@@ -16,6 +16,10 @@ $repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $backendDir = Join-Path $repoRoot "backend"
 $frontendDir = Join-Path $repoRoot "frontend"
 $envFile = Join-Path $repoRoot ".env"
+$isWindowsRuntime = ($env:OS -eq "Windows_NT")
+if (-not $isWindowsRuntime) {
+    throw "scripts/start_all.ps1 仅支持 Windows 环境。当前环境不受支持。"
+}
 
 function Import-DotEnv {
     param([Parameter(Mandatory = $true)][string]$Path)
@@ -174,43 +178,36 @@ function Wait-BackendReady {
 
 function Get-CeleryWorkerCommand {
     $explicitPool = if ($env:CELERY_WORKER_POOL) { $env:CELERY_WORKER_POOL.Trim().ToLowerInvariant() } else { "" }
-    $runningOnWindows = ($env:OS -eq "Windows_NT")
 
     $pool = if ($explicitPool) {
         $explicitPool
     }
-    elseif ($runningOnWindows) {
-        # Windows 下 prefork 不稳定，使用 threads 保持生产并发语义。
-        "threads"
-    }
     else {
-        "prefork"
+        "threads"
     }
 
     $concurrency = if ($env:CELERY_WORKER_CONCURRENCY) {
         $env:CELERY_WORKER_CONCURRENCY
     }
-    elseif ($pool -eq "prefork") {
-        "4"
-    }
     elseif ($pool -eq "threads") {
-        "8"
+        $cpuCount = [Environment]::ProcessorCount
+        if ($cpuCount -lt 1) { $cpuCount = 1 }
+        [Math]::Min($cpuCount, 8).ToString()
     }
     else {
         "1"
     }
 
-    if ($runningOnWindows -and $pool -eq "threads") {
-        Write-Host "检测到 Windows 环境，Celery 使用线程池（--pool=threads --concurrency=$concurrency）。" -ForegroundColor DarkYellow
+    if ($Verbose) {
+        Write-Host "Celery Worker 参数：--pool=$pool --concurrency=$concurrency" -ForegroundColor DarkGray
     }
 
     return "uv run celery -A app.worker.celery_app worker --loglevel=INFO --pool=$pool --concurrency=$concurrency"
 }
 function Get-BackendApiCommand {
-    $command = "uv run uvicorn app.main:app --host 127.0.0.1 --port 8000"
-    if ($env:OS -eq "Windows_NT") {
-        Write-Host "检测到 Windows 环境，后端启用 SelectorEventLoop 以兼容 psycopg 异步连接。" -ForegroundColor DarkYellow
-        return "$command --loop asyncio:SelectorEventLoop"
+    $command = "uv run uvicorn app.main:app --host 127.0.0.1 --port 8000 --loop asyncio:SelectorEventLoop"
+    if ($Verbose) {
+        Write-Host "后端 API 参数：--loop asyncio:SelectorEventLoop（Windows + psycopg 兼容）" -ForegroundColor DarkGray
     }
     return $command
 }
@@ -337,7 +334,7 @@ Write-Host ""
 Write-Host "一键启动流程已完成，以下服务已启动（或启动中）:" -ForegroundColor Cyan
 if (-not $SkipInfra) { Write-Host " - 基础依赖：Podman compose (infra/up.ps1)" -ForegroundColor Cyan }
 if (-not $SkipBackend) { Write-Host " - 后端 API：uvicorn 生产参数监听 8000（Windows 使用 SelectorEventLoop）" -ForegroundColor Cyan }
-if (-not $SkipWorker) { Write-Host " - Celery Worker：生产并发池" -ForegroundColor Cyan }
+if (-not $SkipWorker) { Write-Host " - Celery Worker：threads 池（默认并发 min(逻辑 CPU 核数, 8)）" -ForegroundColor Cyan }
 if (-not $SkipFrontend) { Write-Host " - 前端：Next.js 生产服务监听 3000" -ForegroundColor Cyan }
 if ($RunSeed) { Write-Host " - 演示数据：已执行 seed_demo_kb.py" -ForegroundColor Cyan }
 

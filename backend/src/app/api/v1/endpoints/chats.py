@@ -23,6 +23,8 @@ from app.models.knowledge_base import KnowledgeBaseReadiness, KnowledgeBaseStatu
 from app.schemas.chats import (
     ChatAnswerResponse,
     ChatPendingToolApprovalResponse,
+    ChatPendingUserClarificationResponse,
+    ClarificationResumeRequest,
     ChatMessageCreate,
     ChatMessageRead,
     ChatRecentListResponse,
@@ -239,7 +241,11 @@ async def get_chat_messages(
 
 @router.post(
     "/{session_id}/messages",
-    response_model=ChatAnswerResponse | ChatPendingToolApprovalResponse,
+    response_model=(
+        ChatAnswerResponse
+        | ChatPendingToolApprovalResponse
+        | ChatPendingUserClarificationResponse
+    ),
 )
 async def create_chat_message(
     db: AsyncSessionDep,
@@ -247,7 +253,9 @@ async def create_chat_message(
     response: Response,
     session_id: uuid.UUID,
     body: ChatMessageCreate,
-) -> ChatAnswerResponse | ChatPendingToolApprovalResponse:
+) -> (
+    ChatAnswerResponse | ChatPendingToolApprovalResponse | ChatPendingUserClarificationResponse
+):
     """发送消息并获得回答。"""
     session = await db.get(ChatSession, session_id)
     if not session:
@@ -264,8 +272,7 @@ async def create_chat_message(
         service = KbChatService(
             db, llm, milvus, embedding, reranker=reranker, redis=redis
         )
-        return await service.answer(session=session, user_content=body.content)
-
+        result = await service.answer(session=session, user_content=body.content)
     elif session.session_type == ChatSessionType.GENERAL_CHAT:
         # 普通代理
         service = GeneralChatService(
@@ -275,12 +282,15 @@ async def create_chat_message(
             http_client=request.app.state.http_client,
         )
         result = await service.answer(session=session, user_content=body.content)
-        if getattr(result, "status", None) == "pending_tool_approval":
-            response.status_code = status.HTTP_202_ACCEPTED
-        return result
-
     else:
         raise bad_request(code="CHAT_UNSUPPORTED_SESSION_TYPE", message="不支持的会话类型")
+
+    if getattr(result, "status", None) in {
+        "pending_tool_approval",
+        "pending_user_clarification",
+    }:
+        response.status_code = status.HTTP_202_ACCEPTED
+    return result
 
 
 @router.post("/{session_id}/messages/stream")
@@ -358,7 +368,6 @@ async def resume_general_chat(
         raise bad_request(code="CHAT_RUN_TYPE_MISMATCH", message="运行记录类型不匹配")
     if run.status != AgentRunStatus.RUNNING:
         raise bad_request(code="CHAT_RUN_NOT_RUNNING", message="运行记录已完成或已失败")
-
     llm = request.app.state.llm_client
     service = GeneralChatService(
         db,
@@ -372,6 +381,124 @@ async def resume_general_chat(
     if getattr(result, "status", None) == "pending_tool_approval":
         response.status_code = status.HTTP_202_ACCEPTED
     return result
+
+
+@router.post(
+    "/{session_id}/runs/{run_id}/clarification",
+    response_model=ChatAnswerResponse | ChatPendingUserClarificationResponse,
+)
+async def resume_kb_chat_after_clarification(
+    db: AsyncSessionDep,
+    request: Request,
+    response: Response,
+    session_id: uuid.UUID,
+    run_id: uuid.UUID,
+    body: ClarificationResumeRequest,
+) -> ChatAnswerResponse | ChatPendingUserClarificationResponse:
+    """提交澄清信息并恢复 KB Chat 执行。"""
+    session = await db.get(ChatSession, session_id)
+    if not session:
+        raise not_found("会话不存在", code="CHAT_SESSION_NOT_FOUND")
+    if session.session_type != ChatSessionType.KB_CHAT:
+        raise bad_request(code="CHAT_NOT_KB_CHAT", message="仅知识库会话支持该恢复接口")
+
+    run = await db.get(AgentRun, run_id)
+    if not run or run.session_id != session.id:
+        raise not_found("运行记录不存在", code="CHAT_RUN_NOT_FOUND")
+    if run.run_type != AgentRunType.KB_ANSWER:
+        raise bad_request(code="CHAT_RUN_TYPE_MISMATCH", message="运行记录类型不匹配")
+    if run.status != AgentRunStatus.RUNNING:
+        raise bad_request(code="CHAT_RUN_NOT_RUNNING", message="运行记录已完成或已失败")
+    clarification_pending = (
+        run.stage_summaries.get("clarification_pending")
+        if isinstance(run.stage_summaries, dict)
+        else None
+    )
+    if not (
+        isinstance(clarification_pending, dict)
+        and clarification_pending.get("pending") is True
+    ):
+        raise bad_request(
+            code="CHAT_NO_PENDING_CLARIFICATION",
+            message="当前运行没有待补充澄清信息",
+        )
+
+    llm = request.app.state.llm_client
+    service = KbChatService(
+        db,
+        llm,
+        request.app.state.milvus_client,
+        request.app.state.embedding_client,
+        reranker=request.app.state.rerank_client,
+        redis=request.app.state.redis,
+    )
+    result = await service.answer(
+        session=session,
+        user_content=body.content,
+        run=run,
+    )
+    if getattr(result, "status", None) == "pending_user_clarification":
+        response.status_code = status.HTTP_202_ACCEPTED
+    return result
+
+
+@router.post("/{session_id}/runs/{run_id}/clarification/stream")
+async def resume_kb_chat_after_clarification_stream(
+    db: AsyncSessionDep,
+    request: Request,
+    session_id: uuid.UUID,
+    run_id: uuid.UUID,
+    body: ClarificationResumeRequest,
+):
+    """提交澄清信息并恢复 KB Chat 执行（流式）。"""
+    session = await db.get(ChatSession, session_id)
+    if not session:
+        raise not_found("会话不存在", code="CHAT_SESSION_NOT_FOUND")
+    if session.session_type != ChatSessionType.KB_CHAT:
+        raise bad_request(code="CHAT_NOT_KB_CHAT", message="仅知识库会话支持该恢复接口")
+
+    run = await db.get(AgentRun, run_id)
+    if not run or run.session_id != session.id:
+        raise not_found("运行记录不存在", code="CHAT_RUN_NOT_FOUND")
+    if run.run_type != AgentRunType.KB_ANSWER:
+        raise bad_request(code="CHAT_RUN_TYPE_MISMATCH", message="运行记录类型不匹配")
+    if run.status != AgentRunStatus.RUNNING:
+        raise bad_request(code="CHAT_RUN_NOT_RUNNING", message="运行记录已完成或已失败")
+    clarification_pending = (
+        run.stage_summaries.get("clarification_pending")
+        if isinstance(run.stage_summaries, dict)
+        else None
+    )
+    if not (
+        isinstance(clarification_pending, dict)
+        and clarification_pending.get("pending") is True
+    ):
+        raise bad_request(
+            code="CHAT_NO_PENDING_CLARIFICATION",
+            message="当前运行没有待补充澄清信息",
+        )
+
+    llm = request.app.state.llm_client
+    service = KbChatService(
+        db,
+        llm,
+        request.app.state.milvus_client,
+        request.app.state.embedding_client,
+        reranker=request.app.state.rerank_client,
+        redis=request.app.state.redis,
+    )
+    events = service.answer_stream(
+        session=session,
+        user_content=body.content,
+        request=request,
+        run=run,
+    )
+
+    return StreamingResponse(
+        encode_sse(events),
+        media_type="text/event-stream",
+        headers=SSE_HEADERS,
+    )
 
 
 @router.post("/{session_id}/runs/{run_id}/resume/stream")

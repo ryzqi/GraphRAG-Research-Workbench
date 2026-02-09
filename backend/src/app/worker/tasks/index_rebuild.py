@@ -149,7 +149,6 @@ async def _run_index_rebuild_job(job_id: str) -> None:
                                     full_text=parsed.text or "",
                                     chunk=chunk_text,
                                     enabled=index_config.contextual.enabled,
-                                    timeout_seconds=index_config.contextual.timeout_seconds,
                                     max_tokens=index_config.contextual.max_tokens,
                                 )
 

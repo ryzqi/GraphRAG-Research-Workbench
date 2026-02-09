@@ -17,14 +17,14 @@ preface exists mainly to keep the file ASCII-friendly for tooling and patching o
 
 ## 先决条件
 
-- **操作系统**：Windows 11
+- **操作系统**：Windows 11（仅支持 Windows）
 - **Python**：3.13+
 - **Node.js**：20+
 - **uv**：Python 包管理器（用于后端依赖）
 - **Podman**：容器运行时（建议安装 Podman Desktop）
 - **podman-compose**：容器编排工具（`pip install podman-compose`）
 
-## 本地运行（Windows）
+## 本地运行（仅 Windows）
 
 ### 一键启动（唯一入口，推荐）
 
@@ -36,10 +36,10 @@ pwsh -ExecutionPolicy Bypass -File .\scripts\start_all.ps1
 
 - 可选参数：`-SkipInfra`（跳过 Podman 依赖）、`-NoDetachInfra`（前台启动依赖）、`-SkipBackend`、`-SkipWorker`、`-SkipFrontend`、`-SkipMigrate`、`-RunSeed`（导入演示数据）、`-Verbose`。
 - **唯一启动入口**：请仅使用 `scripts/start_all.ps1`；下文 1-4 为脚本内部流程说明（排障时参考）。
-- 脚本默认按**生产模式**启动：
+- 脚本默认按**Windows 生产模式**启动：
   - 前端会先执行 `npm run build` 再启动 `next start`。
-  - 后端使用无 `--reload` 的 uvicorn 参数（Windows 自动启用 `--loop asyncio:SelectorEventLoop`）。
-  - Worker 使用生产并发池（Windows 默认 `threads`，可通过 `CELERY_WORKER_POOL` / `CELERY_WORKER_CONCURRENCY` 覆盖）。
+  - 后端使用无 `--reload` 的 uvicorn 参数，并固定 `--loop asyncio:SelectorEventLoop`（兼容 psycopg 异步连接）。
+  - Worker 默认 `--pool=threads`，并发默认 `min(逻辑 CPU 核数, 8)`；可通过 `CELERY_WORKER_POOL` / `CELERY_WORKER_CONCURRENCY` 覆盖。
 
 ### 1) 启动基础依赖（Podman）
 
@@ -74,10 +74,7 @@ uv run uvicorn app.main:app --host 127.0.0.1 --port 8000 --loop asyncio:Selector
 
 ```powershell
 cd backend
-# Linux/macOS 推荐
-uv run celery -A app.worker.celery_app worker --loglevel=INFO --pool=prefork --concurrency=4
-
-# Windows 推荐
+# Windows 默认池策略：threads（脚本默认并发 = min(逻辑 CPU 核数, 8)）
 uv run celery -A app.worker.celery_app worker --loglevel=INFO --pool=threads --concurrency=8
 ```
 

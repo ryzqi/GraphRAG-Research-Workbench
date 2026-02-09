@@ -142,6 +142,12 @@ class ToolApprovalRequest(BaseModel):
     approved: bool
 
 
+class ClarificationResumeRequest(BaseModel):
+    """澄清补充请求。"""
+
+    content: str = Field(..., min_length=1)
+
+
 # 问答响应（完成）
 class ChatAnswerResponse(BaseModel):
     status: Literal["succeeded"] = "succeeded"
@@ -159,3 +165,13 @@ class ChatPendingToolApprovalResponse(BaseModel):
     message: str | None = None
     pending_tool_calls: list[PendingToolCall]
     run: AgentRunRead
+
+
+class ChatPendingUserClarificationResponse(BaseModel):
+    """两阶段交互的第 1 阶段：返回待用户补充澄清信息。"""
+
+    status: Literal["pending_user_clarification"] = "pending_user_clarification"
+    thread_id: str
+    message: str
+    run: AgentRunRead
+

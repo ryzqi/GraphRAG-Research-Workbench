@@ -187,7 +187,6 @@ async def _process_doc(*, doc, resources) -> int:
                         full_text=parsed.text or "",
                         chunk=text,
                         enabled=index_config.contextual.enabled,
-                        timeout_seconds=index_config.contextual.timeout_seconds,
                         max_tokens=index_config.contextual.max_tokens,
                     )
                     return result.context if result.success else ""

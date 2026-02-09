@@ -35,7 +35,6 @@ class ContextualEmbeddingService:
         full_text: str,
         chunk: str,
         enabled: bool | None = None,
-        timeout_seconds: int | None = None,
         max_tokens: int | None = None,
     ) -> ContextResult:
         enabled_flag = (
@@ -62,25 +61,8 @@ class ContextualEmbeddingService:
         )
 
         start_time = time.perf_counter()
-        timeout_value = (
-            self._settings.ingestion_contextual_timeout_seconds
-            if timeout_seconds is None
-            else timeout_seconds
-        )
         try:
-            result_text = await asyncio.wait_for(
-                self._call_llm(prompt, max_tokens=max_tokens_value),
-                timeout=timeout_value,
-            )
-        except asyncio.TimeoutError:
-            latency_ms = int((time.perf_counter() - start_time) * 1000)
-            logger.warning("Context 生成超时", extra={"timeout": timeout_value})
-            return ContextResult(
-                context="",
-                success=False,
-                reason="timeout",
-                latency_ms=latency_ms,
-            )
+            result_text = await self._call_llm(prompt, max_tokens=max_tokens_value)
         except Exception as exc:
             latency_ms = int((time.perf_counter() - start_time) * 1000)
             logger.warning("Context 生成失败", extra={"error": str(exc)})

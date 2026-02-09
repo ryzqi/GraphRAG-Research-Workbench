@@ -78,6 +78,12 @@ class ChunkingEngine:
         strategy = index_config.chunking.general_strategy
         if strategy == ChunkingStrategy.MARKDOWN_HEADING:
             return await self._split_markdown_heading(document, index_config)
+        return await self._split_non_markdown_general(document, index_config)
+
+    async def _split_non_markdown_general(
+        self, document: ParsedDocument, index_config: IndexConfig
+    ) -> list[ChunkItem]:
+        strategy = index_config.chunking.general_strategy
         if strategy == ChunkingStrategy.PARENT_CHILD:
             return await self._split_parent_child(document, index_config)
         if strategy == ChunkingStrategy.MAX_MIN_SEMANTIC:
@@ -87,6 +93,7 @@ class ChunkingEngine:
                 document,
                 chunking_strategy="max_min_semantic",
             )
+        # Includes explicit SLIDING_WINDOW and markdown-heading fallback.
         return _wrap_chunks(
             _split_sliding_window(
                 document.text or "",
@@ -161,17 +168,9 @@ class ChunkingEngine:
             return []
         if MarkdownHeaderTextSplitter is None:
             logger.warning(
-                "MarkdownHeaderTextSplitter not available, fallback to general strategy"
+                "MarkdownHeaderTextSplitter not available, fallback to non-markdown strategy"
             )
-            return _wrap_chunks(
-                _split_sliding_window(
-                    document.text or "",
-                    index_config.chunking.markdown_heading.chunk_size,
-                    index_config.chunking.markdown_heading.chunk_overlap,
-                ),
-                document,
-                chunking_strategy="markdown_heading",
-            )
+            return await self._split_non_markdown_general(document, index_config)
 
         max_level = index_config.chunking.markdown_heading.max_heading_level
         headers = [("#" * level, f"h{level}") for level in range(1, max_level + 1)]
@@ -179,7 +178,19 @@ class ChunkingEngine:
         docs = splitter.split_text(document.text)
 
         if not docs:
-            return []
+            logger.info("Markdown 文档未识别到标题结构，回退非 Markdown 策略")
+            return await self._split_non_markdown_general(document, index_config)
+
+        has_heading_structure = False
+        for doc in docs:
+            meta = getattr(doc, "metadata", {}) or {}
+            heading_path = _build_heading_path(meta, headers)
+            if heading_path:
+                has_heading_structure = True
+                break
+        if not has_heading_structure:
+            logger.info("Markdown 文档无标题树，回退非 Markdown 策略")
+            return await self._split_non_markdown_general(document, index_config)
 
         chunk_size = index_config.chunking.markdown_heading.chunk_size
         overlap = index_config.chunking.markdown_heading.chunk_overlap
