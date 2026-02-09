@@ -61,6 +61,8 @@ MAX_FILE_SIZE_BYTES = 50 * 1024 * 1024
 ALLOWED_FILE_EXTENSIONS = {".pdf", ".md", ".txt", ".docx"}
 AUTO_RETRY_DELAYS = (30, 120)
 MAX_DOC_ATTEMPTS = 5
+RUNNING_DOC_PROGRESS_WEIGHT = 0.5
+NON_TERMINAL_PROGRESS_CAP = 99
 
 _URL_BLOCKED_IPV4 = {ipaddress.ip_address("169.254.169.254")}
 
@@ -888,9 +890,14 @@ class IngestionBatchService:
         batch.succeeded_chunks = sum(doc.chunk_count for doc in docs if doc.status == IngestionDocStatus.SUCCEEDED)
 
         completed = succeeded + failed + canceled
-        batch.progress_percent = math.floor((completed / total) * 100) if total else 0
-
         terminal = completed == total
+        batch.progress_percent = self._calculate_progress_percent(
+            total=total,
+            completed=completed,
+            running=running,
+            terminal=terminal,
+        )
+
         if terminal:
             if succeeded == total:
                 target_status = IngestionBatchStatus.SUCCEEDED
@@ -917,6 +924,24 @@ class IngestionBatchService:
             "canceled_docs": canceled,
             "reason": reason,
         }
+
+    @staticmethod
+    def _calculate_progress_percent(
+        *,
+        total: int,
+        completed: int,
+        running: int,
+        terminal: bool,
+    ) -> int:
+        if total <= 0:
+            return 0
+
+        if terminal:
+            return 100
+
+        effective_progress = completed + (running * RUNNING_DOC_PROGRESS_WEIGHT)
+        raw_percent = math.floor((effective_progress / total) * 100)
+        return max(0, min(NON_TERMINAL_PROGRESS_CAP, raw_percent))
 
     async def _apply_readiness(self, *, batch: IngestionBatch) -> None:
         kb = await self._db.get(KnowledgeBase, batch.kb_id)
