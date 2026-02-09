@@ -22,7 +22,6 @@ import { Button } from '../components/ui/Button';
 import { PageHeader } from '../components/ui/PageHeader';
 import {
   IngestionManifestEditor,
-  createEmptyManifestEntry,
   validateManifestDraftEntries,
   type ManifestDraftEntry,
 } from '../components/IngestionManifestEditor';
@@ -159,9 +158,7 @@ export default function KnowledgeBaseCreateWizardPage() {
   const [description, setDescription] = useState('');
   const [tagsInput, setTagsInput] = useState('');
   const [indexConfig, setIndexConfig] = useState<IndexConfig>(createDefaultIndexConfig());
-  const [entries, setEntries] = useState<ManifestDraftEntry[]>([
-    createEmptyManifestEntry('text'),
-  ]);
+  const [entries, setEntries] = useState<ManifestDraftEntry[]>([]);
   const [serverEntryErrors, setServerEntryErrors] = useState<Record<string, string[]>>({});
   const [createdKbId, setCreatedKbId] = useState<string | null>(null);
   const [batchId, setBatchId] = useState<string | null>(null);

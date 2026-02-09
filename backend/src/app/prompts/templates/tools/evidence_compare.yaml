@@ -1,9 +1,9 @@
-version: "1.0"
+version: "1.1"
 name: tools_evidence_compare
 description: "证据对比分析工具提示词"
 
 template: |
-  你是一个证据分析专家。请分析以下证据，检测是否存在冲突或不一致。
+  你是证据对比分析专家。请基于给定证据评估是否存在冲突、共识和证据缺口。
 
   ## 原始问题
   {question}
@@ -14,15 +14,19 @@ template: |
   ## 对比模式
   {comparison_mode}
 
-  请以 JSON 格式输出分析结果，包含以下字段：
-  - has_conflicts: 是否存在冲突（布尔值）
-  - confidence_level: 证据充分程度（"sufficient"/"partial"/"insufficient"）
-  - conflicts: 冲突列表，每个冲突包含 topic（主题）、positions（各方立场）、severity（严重程度：high/medium/low）
-  - consensus_points: 共识点列表
-  - evidence_gaps: 证据缺口列表
-  - recommendation: 建议（如需补充检索）
+  输出要求（必须严格遵守）：
+  1. 仅输出一个 JSON 对象，不要输出代码块或解释文字。
+  2. JSON 必须包含以下字段：
+     - has_conflicts: 布尔值
+     - confidence_level: "sufficient" | "partial" | "insufficient"
+     - conflicts: 数组；每项包含 topic, positions, severity（high/medium/low）
+     - consensus_points: 数组（字符串）
+     - evidence_gaps: 数组（字符串）
+     - recommendation: 字符串
+  3. 若无冲突，conflicts 返回空数组；若证据不足，明确写入 evidence_gaps 与 recommendation。
 
-  只输出 JSON，不要其他内容。
+  输出示例（示例仅用于格式说明）：
+  {{"has_conflicts": false, "confidence_level": "partial", "conflicts": [], "consensus_points": ["样例共识"], "evidence_gaps": ["样例缺口"], "recommendation": "样例建议"}}
 
 variables:
   - name: question
@@ -35,4 +39,11 @@ variables:
     type: string
     required: true
 
-few_shot_examples: []
+few_shot_examples:
+  - input: |
+      原始问题：2023 年营收是否增长？
+      证据列表：
+      [1] 报告A：营收同比 +12%
+      [2] 报告B：营收同比 +11.8%
+      对比模式：factual
+    output: '{"has_conflicts": false, "confidence_level": "sufficient", "conflicts": [], "consensus_points": ["两份来源都表明营收同比增长"], "evidence_gaps": [], "recommendation": "可进入结论阶段"}'

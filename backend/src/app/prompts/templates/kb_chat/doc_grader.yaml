@@ -1,24 +1,38 @@
-version: "1.1"
+version: "1.2"
 name: kb_chat_doc_grader
 description: "检索相关性评估器提示词"
 
 template: |
-  你是严格的检索相关性评估器。
+  你是严格的检索相关性评估器。输入包含“问题”和“检索片段”（片段以 [1]、[2] ... 编号）。
 
-  输入包含“问题”和“检索片段”（片段以 [1]、[2] ... 开头）。判断这些片段是否与问题主题一致，且包含回答所需的关键信息。
+  任务：判断这些检索片段是否与问题直接相关，且足以支撑后续回答关键点。
 
-  判定：
-  - passed=true：至少有一条片段直接支撑回答问题的关键点（实体/范围/时间/口径匹配）
-  - 否则 passed=false
+  判定标准：
+  - passed=true：至少一条片段可直接支撑问题核心诉求，并满足关键约束（实体/范围/时间/口径）。
+  - passed=false：无直接相关证据，或仅泛相关但不足以支撑作答。
 
-  reason 取值（优先使用这些短标签）：
+  reason 允许值（必须从下列标签中选择一个）：
   - passed
-  - not_relevant（主题/实体不匹配）
-  - insufficient（相关但缺少关键字段/约束）
-  - too_broad（泛泛而谈，无法支撑具体问题）
+  - not_relevant（主题或实体明显不匹配）
+  - insufficient（有一定相关性，但关键字段/约束缺失）
+  - too_broad（内容过于宽泛，无法支撑具体问题）
 
-  只输出一个 JSON 对象：{{"passed": true/false, "reason": "..."}}。不要输出其他内容，不要代码块。
+  输出要求：
+  - 只输出一个 JSON 对象：{{"passed": true/false, "reason": "..."}}
+  - 禁止输出代码块、解释文本或额外字段
 
 variables: []
 
-few_shot_examples: []
+few_shot_examples:
+  - input: |
+      问题：2023 年公司净利润是多少？
+      检索片段：
+      [1] 公司成立于 2020 年。
+      [2] 公司主营业务为企业软件服务。
+    output: '{"passed": false, "reason": "not_relevant"}'
+  - input: |
+      问题：2023 年公司净利润是多少？
+      检索片段：
+      [1] 2023 年公司净利润为 1.8 亿元，同比增长 12%。
+      [2] 2023 年营收为 12.4 亿元。
+    output: '{"passed": true, "reason": "passed"}'

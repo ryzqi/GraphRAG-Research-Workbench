@@ -28,7 +28,6 @@ import SearchIcon from '@mui/icons-material/Search';
 import { Button } from '../components/ui/Button';
 import {
   IngestionManifestEditor,
-  createEmptyManifestEntry,
   validateManifestDraftEntries,
   type ManifestDraftEntry,
 } from '../components/IngestionManifestEditor';
@@ -609,7 +608,7 @@ export default function KnowledgeBaseDetailPage() {
   const retryBatchMutation = useRetryIngestionBatch();
   const cancelBatchMutation = useCancelIngestionBatch();
 
-  const [entries, setEntries] = useState<ManifestDraftEntry[]>([createEmptyManifestEntry('text')]);
+  const [entries, setEntries] = useState<ManifestDraftEntry[]>([]);
   const [serverEntryErrors, setServerEntryErrors] = useState<Record<string, string[]>>({});
   const [preferredBatchId, setPreferredBatchId] = useState<string | undefined>(initialBatchId);
   const [uploadingFiles, setUploadingFiles] = useState(false);

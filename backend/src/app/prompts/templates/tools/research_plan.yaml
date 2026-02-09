@@ -1,9 +1,9 @@
-version: "1.0"
+version: "1.1"
 name: tools_research_plan
 description: "研究计划工具提示词"
 
 template: |
-  你是一个研究规划专家。请分析以下研究问题，生成结构化的研究计划。
+  你是研究规划专家。请把研究问题拆解为可执行、可验证的研究计划。
 
   ## 研究问题
   {question}
@@ -15,26 +15,30 @@ template: |
   - 知识库: {kb_info}
   - 外部搜索: {external_info}
 
-  ## 要求
+  ## 约束
   - 最多生成 {max_subtasks} 个子任务
-  - 每个子任务应该是独立可执行的
-  - 考虑任务之间的依赖关系
+  - 每个子任务应独立可执行且描述清晰
+  - 子任务之间的依赖关系要明确
 
-  请以 JSON 格式输出研究计划，包含以下字段：
-  - original_question: 原始问题
-  - complexity: 复杂度（"simple"/"moderate"/"complex"）
-  - research_type: 研究类型（"factual"/"analytical"/"comparative"/"exploratory"）
-  - subtasks: 子任务列表，每个子任务包含：
-    - id: 任务 ID（如 "task_1"）
-    - description: 任务描述
-    - search_queries: 建议的搜索查询列表
-    - target_sources: 目标来源（"kb"/"web"）
-    - dependencies: 依赖的任务 ID 列表
-    - priority: 优先级（1-5，1 最高）
-  - estimated_steps: 预计步骤数
-  - suggested_approach: 建议的研究方法
+  输出要求（严格）：
+  1. 只输出一个 JSON 对象，不要解释、不要代码块。
+  2. 顶层字段必须包含：
+     - original_question
+     - complexity（simple/moderate/complex）
+     - research_type（factual/analytical/comparative/exploratory）
+     - subtasks
+     - estimated_steps
+     - suggested_approach
+  3. subtasks 每项必须包含：
+     - id（如 task_1）
+     - description
+     - search_queries（字符串数组）
+     - target_sources（"kb" 或 "web"）
+     - dependencies（任务 id 数组）
+     - priority（1-5，1 为最高）
 
-  只输出 JSON，不要其他内容。
+  输出示例（仅示例格式）：
+  {{"original_question": "...", "complexity": "moderate", "research_type": "analytical", "subtasks": [{{"id": "task_1", "description": "...", "search_queries": ["..."], "target_sources": "kb", "dependencies": [], "priority": 1}}], "estimated_steps": 3, "suggested_approach": "..."}}
 
 variables:
   - name: question
@@ -53,4 +57,12 @@ variables:
     type: integer
     required: true
 
-few_shot_examples: []
+few_shot_examples:
+  - input: |
+      研究问题：为什么近两季度用户留存下降？
+      背景上下文：移动端 DAU 稳定
+      可用资源：
+      - 知识库: 3 个知识库可用
+      - 外部搜索: 未启用
+      要求：最多 4 个子任务
+    output: '{"original_question": "为什么近两季度用户留存下降？", "complexity": "complex", "research_type": "analytical", "subtasks": [{"id": "task_1", "description": "拆分留存下降的用户分层特征", "search_queries": ["用户留存 分层 渠道 版本"], "target_sources": "kb", "dependencies": [], "priority": 1}], "estimated_steps": 4, "suggested_approach": "先分层定位，再验证关键假设"}'
