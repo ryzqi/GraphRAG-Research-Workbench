@@ -103,12 +103,17 @@ class MilvusClient:
             raise RuntimeError("pymilvus API 不匹配：缺少 describe_collection")
         await describe(collection_name=self._collection)
 
-    async def _describe_fields(self) -> set[str]:
+    async def _describe_fields(
+        self,
+        *,
+        collection_name: str | None = None,
+    ) -> set[str]:
         describe = getattr(self._client, "describe_collection", None)
         if describe is None:
             raise RuntimeError("pymilvus API 不匹配：缺少 describe_collection")
 
-        info = await describe(collection_name=self._collection)
+        target_collection = collection_name or self._collection
+        info = await describe(collection_name=target_collection)
         if not isinstance(info, dict):
             raise RuntimeError("pymilvus describe_collection 返回类型异常，预期为 dict")
 
@@ -125,10 +130,16 @@ class MilvusClient:
                 names.add(str(name))
         return names
 
-    async def _load_field_cache(self) -> None:
+    async def _load_field_cache(
+        self,
+        *,
+        collection_name: str | None = None,
+    ) -> None:
         if self._field_cache is not None:
             return
-        self._field_cache = await self._describe_fields()
+        self._field_cache = await self._describe_fields(
+            collection_name=collection_name
+        )
 
     def _required_fields(self) -> set[str]:
         return {
@@ -251,7 +262,12 @@ class MilvusClient:
             return extra
         return f"({expr}) and ({extra})"
 
-    async def ensure_collection(self, *, dim: int) -> None:
+    async def ensure_collection(
+        self,
+        *,
+        dim: int,
+        collection_name: str | None = None,
+    ) -> None:
         """确保 collection 存在并对齐最新 schema。"""
 
         has_collection = getattr(self._client, "has_collection", None)
@@ -259,9 +275,10 @@ class MilvusClient:
         if has_collection is None or create_collection is None:
             raise RuntimeError("pymilvus API 不匹配：缺少 has_collection/create_collection")
 
-        exists = await has_collection(collection_name=self._collection)
+        target_collection = collection_name or self._collection
+        exists = await has_collection(collection_name=target_collection)
         if exists:
-            await self._load_field_cache()
+            await self._load_field_cache(collection_name=target_collection)
             self._assert_schema_compatible()
             return
 
@@ -280,7 +297,7 @@ class MilvusClient:
                 index_params = None
 
         await create_collection(
-            collection_name=self._collection,
+            collection_name=target_collection,
             schema=schema,
             index_params=index_params,
         )
@@ -355,6 +372,7 @@ class MilvusClient:
         kb_ids: list[str],
         top_k: int = 5,
         extra_filter_expr: str | None = None,
+        collection_name: str | None = None,
     ) -> list[MilvusSearchHit]:
         """在指定 kb_ids 范围内检索相似 chunk_id（dense）。"""
 
@@ -362,12 +380,13 @@ class MilvusClient:
         if search is None:
             raise RuntimeError("pymilvus API 不匹配：缺少 search")
 
-        await self._load_field_cache()
+        target_collection = collection_name or self._collection
+        await self._load_field_cache(collection_name=target_collection)
         self._assert_schema_compatible()
 
         expr = self._build_filter_expr(kb_ids, extra_filter_expr)
         res = await search(
-            collection_name=self._collection,
+            collection_name=target_collection,
             data=[embedding],
             anns_field=self._DEFAULT_VECTOR_FIELD,
             limit=top_k,
@@ -395,6 +414,7 @@ class MilvusClient:
         kb_ids: list[str],
         top_k: int = 5,
         extra_filter_expr: str | None = None,
+        collection_name: str | None = None,
     ) -> list[MilvusSearchHit]:
         """BM25 keyword retrieval (sparse) within kb_ids scope."""
 
@@ -402,12 +422,13 @@ class MilvusClient:
         if search is None:
             raise RuntimeError("pymilvus API 不匹配：缺少 search")
 
-        await self._load_field_cache()
+        target_collection = collection_name or self._collection
+        await self._load_field_cache(collection_name=target_collection)
         self._assert_schema_compatible()
 
         expr = self._build_filter_expr(kb_ids, extra_filter_expr)
         res = await search(
-            collection_name=self._collection,
+            collection_name=target_collection,
             data=[query],
             anns_field=self._SPARSE_FIELD,
             limit=top_k,
@@ -440,6 +461,7 @@ class MilvusClient:
         sparse_weight: float = 0.3,
         rrf_k: int = 60,
         extra_filter_expr: str | None = None,
+        collection_name: str | None = None,
     ) -> list[MilvusSearchHit]:
         """混合检索：dense + BM25。"""
 
@@ -447,7 +469,8 @@ class MilvusClient:
         if hybrid_search is None or AnnSearchRequest is None:
             raise RuntimeError("pymilvus API 不匹配：缺少 hybrid_search/AnnSearchRequest")
 
-        await self._load_field_cache()
+        target_collection = collection_name or self._collection
+        await self._load_field_cache(collection_name=target_collection)
         self._assert_schema_compatible()
 
         expr = self._build_filter_expr(kb_ids, extra_filter_expr)
@@ -477,7 +500,7 @@ class MilvusClient:
             raise RuntimeError("pymilvus 缺少 ranker 实现")
 
         res = await hybrid_search(
-            collection_name=self._collection,
+            collection_name=target_collection,
             reqs=reqs,
             ranker=ranker_impl,
             limit=top_k,
@@ -538,6 +561,7 @@ class MilvusClient:
         child_seq: int | None = None,
         locator: dict | None = None,
         metadata: dict | None = None,
+        collection_name: str | None = None,
     ) -> None:
         """插入或更新单条向量记录。"""
 
@@ -545,7 +569,8 @@ class MilvusClient:
         if upsert is None:
             raise RuntimeError("pymilvus API 不匹配：缺少 upsert")
 
-        await self._load_field_cache()
+        target_collection = collection_name or self._collection
+        await self._load_field_cache(collection_name=target_collection)
         self._assert_schema_compatible()
 
         record = {
@@ -561,9 +586,14 @@ class MilvusClient:
             "locator": locator or {},
             "metadata": metadata or {},
         }
-        await upsert(collection_name=self._collection, data=[record])
+        await upsert(collection_name=target_collection, data=[record])
 
-    async def upsert_batch(self, *, records: list[dict]) -> None:
+    async def upsert_batch(
+        self,
+        *,
+        records: list[dict],
+        collection_name: str | None = None,
+    ) -> None:
         """批量插入或更新向量记录。"""
 
         if not records:
@@ -573,37 +603,63 @@ class MilvusClient:
         if upsert is None:
             raise RuntimeError("pymilvus API 不匹配：缺少 upsert")
 
-        await self._load_field_cache()
+        target_collection = collection_name or self._collection
+        await self._load_field_cache(collection_name=target_collection)
         self._assert_schema_compatible()
 
         normalized_records = [self._normalize_record(r) for r in records]
-        await upsert(collection_name=self._collection, data=normalized_records)
+        await upsert(collection_name=target_collection, data=normalized_records)
 
-    async def delete_by_material(self, material_id: str) -> None:
+    async def delete_by_material(
+        self,
+        material_id: str,
+        *,
+        collection_name: str | None = None,
+    ) -> None:
         """删除指定资料的所有向量记录。"""
 
         await self.delete_by_expr(
-            f"material_id == \"{_escape_string(material_id)}\""
+            f"material_id == \"{_escape_string(material_id)}\"",
+            collection_name=collection_name,
         )
 
-    async def delete_by_kb_id(self, kb_id: str) -> None:
+    async def delete_by_kb_id(
+        self,
+        kb_id: str,
+        *,
+        collection_name: str | None = None,
+    ) -> None:
         """删除指定知识库的所有向量记录。"""
 
-        await self.delete_by_expr(f"kb_id == \"{_escape_string(kb_id)}\"")
+        await self.delete_by_expr(
+            f"kb_id == \"{_escape_string(kb_id)}\"",
+            collection_name=collection_name,
+        )
 
-    async def delete_by_expr(self, expr: str) -> None:
+    async def delete_by_expr(
+        self,
+        expr: str,
+        *,
+        collection_name: str | None = None,
+    ) -> None:
         """按表达式删除向量记录。"""
 
         delete = getattr(self._client, "delete", None)
         if delete is None:
             raise RuntimeError("pymilvus API 不匹配：缺少 delete")
 
+        target_collection = collection_name or self._collection
         await delete(
-            collection_name=self._collection,
+            collection_name=target_collection,
             filter=expr,
         )
 
-    async def delete_by_chunk_ids(self, chunk_ids: list[str]) -> None:
+    async def delete_by_chunk_ids(
+        self,
+        chunk_ids: list[str],
+        *,
+        collection_name: str | None = None,
+    ) -> None:
         """按 chunk_id 批量删除向量记录。"""
 
         delete = getattr(self._client, "delete", None)
@@ -614,8 +670,9 @@ class MilvusClient:
 
         escaped = [_escape_string(cid) for cid in chunk_ids]
         quoted = ", ".join(f"\"{cid}\"" for cid in escaped)
+        target_collection = collection_name or self._collection
         await delete(
-            collection_name=self._collection,
+            collection_name=target_collection,
             filter=f"chunk_id in [{quoted}]",
         )
 
@@ -624,6 +681,7 @@ class MilvusClient:
         *,
         chunk_ids: list[str],
         output_fields: list[str] | None = None,
+        collection_name: str | None = None,
     ) -> list[dict]:
         """按 chunk_id 批量查询向量记录。"""
 
@@ -633,7 +691,8 @@ class MilvusClient:
         if not chunk_ids:
             return []
 
-        await self._load_field_cache()
+        target_collection = collection_name or self._collection
+        await self._load_field_cache(collection_name=target_collection)
         self._assert_schema_compatible()
 
         escaped = [_escape_string(cid) for cid in chunk_ids]
@@ -651,7 +710,7 @@ class MilvusClient:
             "metadata",
         ]
         res = await query(
-            collection_name=self._collection,
+            collection_name=target_collection,
             filter=f"chunk_id in [{quoted}]",
             output_fields=fields,
         )
@@ -663,3 +722,4 @@ class MilvusClient:
 def create_milvus_client() -> MilvusClient:
     """创建 Milvus 客户端实例。"""
     return MilvusClient()
+
