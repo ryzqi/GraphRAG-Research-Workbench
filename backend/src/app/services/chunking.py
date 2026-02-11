@@ -56,6 +56,12 @@ class ChunkingEngine:
             return []
 
         if _is_pdf_blocks(document):
+            if (
+                index_config.chunking.general_strategy
+                == ChunkingStrategy.QUERY_DEPENDENT_CHUNKING
+            ):
+                return self._split_pdf_query_dependent_chunking(document, index_config)
+
             chunk_size, overlap = _first_query_dependent_window(index_config)
             aggregated = _aggregate_pdf_blocks(document.chunks or [], chunk_size, overlap)
             items: list[ChunkItem] = []
@@ -118,6 +124,45 @@ class ChunkingEngine:
                         content=chunk,
                         locator=_merge_locators(document.locator, locator),
                         metadata=_merge_metadata(document.metadata, metadata),
+                    )
+                )
+
+        return items
+
+    def _split_pdf_query_dependent_chunking(
+        self, document: ParsedDocument, index_config: IndexConfig
+    ) -> list[ChunkItem]:
+        items: list[ChunkItem] = []
+        blocks = document.chunks or []
+
+        for window_index, window in enumerate(
+            index_config.chunking.query_dependent_chunking.windows
+        ):
+            aggregated = _aggregate_pdf_blocks(
+                blocks,
+                window.chunk_size,
+                window.chunk_overlap,
+            )
+            for chunk_index, block in enumerate(aggregated):
+                metadata = {
+                    "chunking_strategy": "query_dependent_chunking",
+                    "window_index": window_index,
+                    "window_size": window.chunk_size,
+                    "window_overlap": window.chunk_overlap,
+                    "index": chunk_index,
+                }
+                locator = {"window_index": window_index, "index": chunk_index}
+                items.append(
+                    ChunkItem(
+                        content=block.text,
+                        locator=_merge_locators(
+                            _merge_locators(document.locator, block.locator),
+                            locator,
+                        ),
+                        metadata=_merge_metadata(
+                            _merge_metadata(document.metadata, block.metadata),
+                            metadata,
+                        ),
                     )
                 )
 
@@ -492,3 +537,4 @@ def _aggregate_pdf_blocks(
             idx = j
 
     return aggregated
+
