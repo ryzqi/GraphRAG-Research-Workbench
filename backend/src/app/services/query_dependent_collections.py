@@ -3,7 +3,6 @@ from __future__ import annotations
 
 def collection_name_for_window(
     base_collection: str,
-    *,
     chunk_size: int,
     chunk_overlap: int,
 ) -> str:

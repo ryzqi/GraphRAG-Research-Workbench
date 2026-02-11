@@ -16,6 +16,13 @@ def test_collection_name_for_window_builds_expected_suffix() -> None:
     )
 
 
+def test_collection_name_for_window_accepts_positional_window_args() -> None:
+    assert (
+        collection_name_for_window("knowledge_chunks", 512, 64)
+        == "knowledge_chunks__qdc_s512_o64"
+    )
+
+
 def test_collection_name_for_window_is_deterministic() -> None:
     first = collection_name_for_window(
         "kb_main",
