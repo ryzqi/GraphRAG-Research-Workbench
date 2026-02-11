@@ -160,3 +160,87 @@ async def test_pdf_blocks_do_not_require_removed_sliding_window() -> None:
         "window_overlap": 0,
         "index": 0,
     }
+
+
+@pytest.mark.asyncio
+async def test_pdf_blocks_apply_each_window_across_full_document() -> None:
+    engine = ChunkingEngine()
+    document = ParsedDocument(
+        text="",
+        mime_type="application/pdf",
+        chunks=[
+            ParsedChunk(
+                text="A" * 60,
+                locator={
+                    "kind": "pdf",
+                    "page_start": 1,
+                    "page_end": 1,
+                    "blocks": [{"id": "p1_b1"}],
+                },
+                metadata={"mineru_block_type": "text"},
+            ),
+            ParsedChunk(
+                text="B" * 60,
+                locator={
+                    "kind": "pdf",
+                    "page_start": 2,
+                    "page_end": 2,
+                    "blocks": [{"id": "p2_b1"}],
+                },
+                metadata={"mineru_block_type": "text"},
+            ),
+            ParsedChunk(
+                text="C" * 60,
+                locator={
+                    "kind": "pdf",
+                    "page_start": 3,
+                    "page_end": 3,
+                    "blocks": [{"id": "p3_b1"}],
+                },
+                metadata={"mineru_block_type": "text"},
+            ),
+            ParsedChunk(
+                text="D" * 60,
+                locator={
+                    "kind": "pdf",
+                    "page_start": 4,
+                    "page_end": 4,
+                    "blocks": [{"id": "p4_b1"}],
+                },
+                metadata={"mineru_block_type": "text"},
+            ),
+        ],
+    )
+    index_config = IndexConfig.model_validate(
+        {
+            "chunking": {
+                "query_dependent_chunking": {
+                    "windows": [
+                        {"chunk_size": 128, "chunk_overlap": 0},
+                        {"chunk_size": 200, "chunk_overlap": 0},
+                    ]
+                }
+            }
+        }
+    )
+
+    chunks = await engine.split(document, index_config)
+
+    window_zero = [item for item in chunks if item.metadata["window_index"] == 0]
+    window_one = [item for item in chunks if item.metadata["window_index"] == 1]
+
+    assert len(window_zero) == 2
+    assert [len(item.locator["blocks"]) for item in window_zero] == [3, 1]
+    assert len(window_one) == 1
+    assert window_one[0].locator["page_start"] == 1
+    assert window_one[0].locator["page_end"] == 4
+    assert len(window_one[0].locator["blocks"]) == 4
+    assert window_one[0].metadata == {
+        "mineru_block_types": ["text", "text", "text", "text"],
+        "chunking_strategy": "query_dependent_chunking",
+        "window_index": 1,
+        "window_size": 200,
+        "window_overlap": 0,
+        "index": 0,
+    }
+
