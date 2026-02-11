@@ -16,11 +16,12 @@ from app.models.index_rebuild_job import IndexRebuildJob, IndexRebuildStatus
 from app.models.kb_config_snapshot import KBConfigSnapshot
 from app.models.knowledge_base import KnowledgeBase
 from app.models.source_material import SourceMaterial
-from app.schemas.knowledge_bases import IndexConfig
+from app.schemas.knowledge_bases import ChunkingStrategy, IndexConfig
 from app.services.chunk_persistence_service import ChunkPersistenceService
 from app.services.chunking import ChunkingEngine
 from app.services.contextual_embedding_service import ContextualEmbeddingService
 from app.services.parsing import ParseError, parse_material
+from app.services.query_dependent_collections import collection_name_for_window
 from app.worker.celery_app import celery_app
 from app.worker.task_resources import managed_task_resources
 from app.worker.tasks.contextual_retry import generate_contexts_for_chunks
@@ -31,6 +32,101 @@ from app.worker.tasks.embedding_inputs import build_embedding_inputs
 def run_index_rebuild_job(job_id: str) -> None:
     """Celery entrypoint for index rebuild."""
     asyncio.run(_run_index_rebuild_job(job_id))
+
+
+def _records_for_window(
+    records: list[dict],
+    *,
+    chunk_size: int,
+    chunk_overlap: int,
+) -> list[dict]:
+    matched: list[dict] = []
+    for record in records:
+        metadata = record.get("metadata")
+        if not isinstance(metadata, dict):
+            continue
+        if (
+            metadata.get("window_size") == chunk_size
+            and metadata.get("window_overlap") == chunk_overlap
+        ):
+            matched.append(record)
+    return matched
+
+
+async def _prepare_rebuild_collections(
+    *,
+    milvus_client,
+    index_config: IndexConfig,
+    base_collection: str,
+    kb_id: str,
+    embedding_dim: int | None,
+) -> list[str]:
+    if index_config.chunking.general_strategy == ChunkingStrategy.QUERY_DEPENDENT_CHUNKING:
+        collections: list[str] = []
+        for window in index_config.chunking.query_dependent_chunking.windows:
+            collection_name = collection_name_for_window(
+                base_collection,
+                window.chunk_size,
+                window.chunk_overlap,
+            )
+            if embedding_dim is not None:
+                await milvus_client.ensure_collection(
+                    dim=embedding_dim,
+                    collection_name=collection_name,
+                )
+            await milvus_client.delete_by_kb_id(
+                kb_id,
+                collection_name=collection_name,
+            )
+            collections.append(collection_name)
+        return collections
+
+    if embedding_dim is not None:
+        await milvus_client.ensure_collection(dim=embedding_dim)
+    await milvus_client.delete_by_kb_id(kb_id)
+    return [base_collection]
+
+
+async def _upsert_rebuild_records(
+    *,
+    milvus_client,
+    index_config: IndexConfig,
+    base_collection: str,
+    records: list[dict],
+    embedding_dim: int | None,
+) -> list[str]:
+    if index_config.chunking.general_strategy == ChunkingStrategy.QUERY_DEPENDENT_CHUNKING:
+        upserted_collections: list[str] = []
+        for window in index_config.chunking.query_dependent_chunking.windows:
+            collection_name = collection_name_for_window(
+                base_collection,
+                window.chunk_size,
+                window.chunk_overlap,
+            )
+            if embedding_dim is not None:
+                await milvus_client.ensure_collection(
+                    dim=embedding_dim,
+                    collection_name=collection_name,
+                )
+            window_records = _records_for_window(
+                records,
+                chunk_size=window.chunk_size,
+                chunk_overlap=window.chunk_overlap,
+            )
+            if window_records:
+                await milvus_client.upsert_batch(
+                    records=window_records,
+                    collection_name=collection_name,
+                )
+                upserted_collections.append(collection_name)
+        return upserted_collections
+
+    if not records:
+        return []
+    if embedding_dim is not None:
+        await milvus_client.ensure_collection(dim=embedding_dim)
+    await milvus_client.upsert_batch(records=records)
+    return [base_collection]
 
 
 async def _run_index_rebuild_job(job_id: str) -> None:
@@ -76,11 +172,7 @@ async def _run_index_rebuild_job(job_id: str) -> None:
                 context_service = ContextualEmbeddingService(settings=settings)
                 chunk_store = ChunkPersistenceService(session)
                 embedding_dim = settings.embedding_dim
-                collection_ready = False
-
-                if embedding_dim:
-                    await milvus_client.ensure_collection(dim=embedding_dim)
-                    collection_ready = True
+                base_collection = settings.milvus_collection
 
                 storage = ObjectStorage()
                 await storage.ensure_buckets()
@@ -107,7 +199,13 @@ async def _run_index_rebuild_job(job_id: str) -> None:
                 index_config = IndexConfig.model_validate(snapshot_config or kb.index_config or {})
 
                 # Clear old vectors/chunks for this KB.
-                await milvus_client.delete_by_kb_id(str(job.kb_id))
+                await _prepare_rebuild_collections(
+                    milvus_client=milvus_client,
+                    index_config=index_config,
+                    base_collection=base_collection,
+                    kb_id=str(job.kb_id),
+                    embedding_dim=embedding_dim,
+                )
                 await session.execute(
                     delete(DocumentChunk).where(DocumentChunk.kb_id == job.kb_id)
                 )
@@ -190,11 +288,9 @@ async def _run_index_rebuild_job(job_id: str) -> None:
 
                     if embedding_dim is None and embeddings:
                         embedding_dim = len(embeddings[0])
-                    if not collection_ready and embedding_dim:
-                        await milvus_client.ensure_collection(dim=embedding_dim)
-                        collection_ready = True
 
                     milvus_chunk_ids: list[str] = []
+                    upserted_collections: list[str] = []
                     milvus_upserted = False
                     try:
                         chunk_ids = [uuid.uuid4() for _ in chunk_items]
@@ -243,8 +339,14 @@ async def _run_index_rebuild_job(job_id: str) -> None:
                             )
 
                         milvus_chunk_ids = [str(cid) for cid in chunk_ids]
-                        await milvus_client.upsert_batch(records=milvus_records)
-                        milvus_upserted = True
+                        upserted_collections = await _upsert_rebuild_records(
+                            milvus_client=milvus_client,
+                            index_config=index_config,
+                            base_collection=base_collection,
+                            records=milvus_records,
+                            embedding_dim=embedding_dim,
+                        )
+                        milvus_upserted = bool(upserted_collections)
 
                         stats["succeeded_materials"] += 1
                         stats["total_chunks"] += len(milvus_chunk_ids)
@@ -253,9 +355,11 @@ async def _run_index_rebuild_job(job_id: str) -> None:
                     except Exception as exc:
                         if milvus_upserted and milvus_chunk_ids:
                             try:
-                                await milvus_client.delete_by_chunk_ids(
-                                    milvus_chunk_ids
-                                )
+                                for collection_name in upserted_collections:
+                                    await milvus_client.delete_by_chunk_ids(
+                                        milvus_chunk_ids,
+                                        collection_name=collection_name,
+                                    )
                             except Exception as cleanup_exc:  # pragma: no cover
                                 stats["warnings"].append(
                                     {

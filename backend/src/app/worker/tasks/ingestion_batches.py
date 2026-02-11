@@ -15,12 +15,13 @@ from app.integrations.object_storage import ObjectStorage
 from app.models.kb_config_snapshot import KBConfigSnapshot
 from app.models.knowledge_base import KnowledgeBase
 from app.models.source_material import SourceMaterial
-from app.schemas.knowledge_bases import IndexConfig
+from app.schemas.knowledge_bases import ChunkingStrategy, IndexConfig
 from app.services.chunk_persistence_service import ChunkPersistenceService
 from app.services.chunking import ChunkingEngine
 from app.services.contextual_embedding_service import ContextualEmbeddingService
 from app.services.ingestion_batch_service import IngestionBatchService
 from app.services.parsing import ParseError, parse_material
+from app.services.query_dependent_collections import collection_name_for_window
 from app.worker.celery_app import celery_app
 from app.worker.task_resources import managed_task_resources
 from app.worker.tasks.contextual_retry import generate_contexts_for_chunks
@@ -38,6 +39,69 @@ class _ProcessingFailure(Exception):
 class _DocProcessOutcome:
     chunk_count: int
     context_failed_chunks: list[dict]
+
+
+def _records_for_window(
+    records: list[dict],
+    *,
+    chunk_size: int,
+    chunk_overlap: int,
+) -> list[dict]:
+    matched: list[dict] = []
+    for record in records:
+        metadata = record.get("metadata")
+        if not isinstance(metadata, dict):
+            continue
+        if (
+            metadata.get("window_size") == chunk_size
+            and metadata.get("window_overlap") == chunk_overlap
+        ):
+            matched.append(record)
+    return matched
+
+
+async def _write_records_to_milvus(
+    *,
+    milvus,
+    index_config: IndexConfig,
+    base_collection: str,
+    material_id: str,
+    records: list[dict],
+    embedding_dim: int | None,
+) -> None:
+    if index_config.chunking.general_strategy == ChunkingStrategy.QUERY_DEPENDENT_CHUNKING:
+        for window in index_config.chunking.query_dependent_chunking.windows:
+            collection_name = collection_name_for_window(
+                base_collection,
+                window.chunk_size,
+                window.chunk_overlap,
+            )
+            if embedding_dim is not None:
+                await milvus.ensure_collection(
+                    dim=embedding_dim,
+                    collection_name=collection_name,
+                )
+            await milvus.delete_by_material(
+                material_id,
+                collection_name=collection_name,
+            )
+            window_records = _records_for_window(
+                records,
+                chunk_size=window.chunk_size,
+                chunk_overlap=window.chunk_overlap,
+            )
+            if window_records:
+                await milvus.upsert_batch(
+                    records=window_records,
+                    collection_name=collection_name,
+                )
+        return
+
+    if embedding_dim is not None:
+        await milvus.ensure_collection(dim=embedding_dim)
+    await milvus.delete_by_material(material_id)
+    if records:
+        await milvus.upsert_batch(records=records)
 
 
 _RETRYABLE_PARSE_CODES = {
@@ -230,9 +294,6 @@ async def _process_doc(*, doc, resources) -> _DocProcessOutcome:
         if milvus is None:
             raise _ProcessingFailure("MILVUS_UNAVAILABLE", "Milvus 客户端不可用", True)
 
-        if embeddings:
-            await milvus.ensure_collection(dim=len(embeddings[0]))
-
         chunk_store = ChunkPersistenceService(session)
         chunk_ids = [uuid.uuid4() for _ in chunk_items]
         context_failed_chunks = [
@@ -246,8 +307,6 @@ async def _process_doc(*, doc, resources) -> _DocProcessOutcome:
         ]
 
         try:
-            await milvus.delete_by_material(str(material.id))
-
             chunk_ids = await chunk_store.replace_material_chunks(
                 kb_id=material.kb_id,
                 material_id=material.id,
@@ -278,7 +337,14 @@ async def _process_doc(*, doc, resources) -> _DocProcessOutcome:
                     }
                 )
 
-            await milvus.upsert_batch(records=records)
+            await _write_records_to_milvus(
+                milvus=milvus,
+                index_config=index_config,
+                base_collection=get_settings().milvus_collection,
+                material_id=str(material.id),
+                records=records,
+                embedding_dim=len(embeddings[0]) if embeddings else None,
+            )
             await session.commit()
             return _DocProcessOutcome(
                 chunk_count=len(records),
