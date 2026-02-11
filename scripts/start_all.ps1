@@ -5,6 +5,7 @@
     [switch]$SkipWorker,
     [switch]$SkipFrontend,
     [switch]$SkipMigrate,
+    [switch]$RunMigrate,
     [switch]$RunSeed,
     [switch]$Verbose
 )
@@ -223,6 +224,14 @@ if (-not $env:NEXT_PUBLIC_API_BASE_URL -and $env:VITE_API_BASE_URL) {
 }
 
 $env:PYTHONUNBUFFERED = "1"
+$shouldRunMigrate = $RunMigrate
+if ($SkipMigrate) {
+    Write-Host "参数 -SkipMigrate 仅为兼容保留；默认已跳过迁移。请优先使用 -RunMigrate 显式开启迁移。" -ForegroundColor DarkYellow
+    if ($RunMigrate) {
+        Write-Host "检测到 -RunMigrate 与 -SkipMigrate 同时传入，按 -SkipMigrate 优先，跳过迁移。" -ForegroundColor Yellow
+    }
+    $shouldRunMigrate = $false
+}
 
 if (-not $SkipInfra) {
     Write-Host "启动基础依赖 (Podman) ..." -ForegroundColor Green
@@ -235,7 +244,7 @@ if (-not $SkipInfra) {
     & $infraScript @infraArgs
 }
 
-$needBackend = (-not $SkipBackend) -or (-not $SkipWorker) -or $RunSeed
+$needBackend = (-not $SkipBackend) -or (-not $SkipWorker) -or $RunSeed -or $shouldRunMigrate
 if ($needBackend) {
     Ensure-Command -Name "uv" -InstallHint "pip install uv"
     Push-Location $backendDir
@@ -251,15 +260,15 @@ if ($needBackend) {
             Write-Host "已检测到 backend/.venv，跳过 uv sync" -ForegroundColor DarkGray
         }
 
-        if (-not $SkipMigrate) {
+        if ($shouldRunMigrate) {
             Write-Host "执行数据库迁移 (alembic upgrade head)..." -ForegroundColor Yellow
             uv run alembic upgrade head
             if ($LASTEXITCODE -ne 0) {
-                throw "数据库迁移失败（exit=$LASTEXITCODE）"
+                throw "数据库迁移失败（exit=$LASTEXITCODE）。若本地数据库来自旧迁移链，请先重置 schema 后再执行 -RunMigrate。"
             }
         }
-        elseif ($Verbose) {
-            Write-Host "已跳过迁移步骤" -ForegroundColor DarkGray
+        else {
+            Write-Host "默认跳过数据库迁移；如需迁移请添加 -RunMigrate。" -ForegroundColor DarkGray
         }
     }
     finally {

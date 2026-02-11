@@ -22,8 +22,17 @@ class ContextResult:
     latency_ms: int | None = None
 
 
+@dataclass(slots=True)
+class _LLMCallOutput:
+    text: str
+    finish_reason: str | None = None
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
+
+
 class ContextualEmbeddingService:
     _SOURCE_MAX_CHARS = 2000
+    _MIN_MAX_TOKENS = 1
 
     def __init__(self, settings: Settings | None = None) -> None:
         self._settings = settings if settings is not None else get_settings()
@@ -53,7 +62,8 @@ class ContextualEmbeddingService:
             if max_tokens is None
             else max_tokens
         )
-        prompt = self._prompts.render(
+        max_tokens_value = max(int(max_tokens_value), self._MIN_MAX_TOKENS)
+        prompt = self._prompts.render_with_few_shot(
             "ingestion/contextual_embedding",
             content=source,
             chunk=chunk,
@@ -62,7 +72,7 @@ class ContextualEmbeddingService:
 
         start_time = time.perf_counter()
         try:
-            result_text = await self._call_llm(prompt, max_tokens=max_tokens_value)
+            llm_output = await self._call_llm(prompt)
         except Exception as exc:
             latency_ms = int((time.perf_counter() - start_time) * 1000)
             logger.warning("Context 生成失败", extra={"error": str(exc)})
@@ -74,8 +84,18 @@ class ContextualEmbeddingService:
             )
 
         latency_ms = int((time.perf_counter() - start_time) * 1000)
-        context = (result_text or "").strip()
+        context = (llm_output.text or "").strip()
         if not context:
+            logger.warning(
+                "Context 生成为空",
+                extra={
+                    "model": self._settings.llm_model,
+                    "finish_reason": llm_output.finish_reason,
+                    "prompt_tokens": llm_output.prompt_tokens,
+                    "completion_tokens": llm_output.completion_tokens,
+                    "latency_ms": latency_ms,
+                },
+            )
             return ContextResult(
                 context="",
                 success=False,
@@ -101,9 +121,11 @@ class ContextualEmbeddingService:
         end = min(len(full_text), idx + len(chunk) + half)
         return full_text[start:end]
 
-    async def _call_llm(self, prompt: str, *, max_tokens: int) -> str:
+    async def _call_llm(self, prompt: str) -> _LLMCallOutput:
         from langchain.messages import HumanMessage
         from langchain_openai import ChatOpenAI
+
+        from app.services.streaming import extract_answer_text
 
         model = ChatOpenAI(
             model=self._settings.llm_model,
@@ -111,10 +133,23 @@ class ContextualEmbeddingService:
             base_url=self._settings.llm_base_url.rstrip("/"),
             profile=build_chat_model_profile(self._settings),
         )
-        model = model.bind(max_tokens=max_tokens)
 
         def _run() -> object:
             return model.invoke([HumanMessage(content=prompt)])
 
         result = await asyncio.to_thread(_run)
-        return getattr(result, "content", "") or ""
+        raw_content = getattr(result, "content", "")
+        response_metadata = getattr(result, "response_metadata", {})
+        if not isinstance(response_metadata, dict):
+            response_metadata = {}
+
+        token_usage = response_metadata.get("token_usage")
+        if not isinstance(token_usage, dict):
+            token_usage = {}
+
+        return _LLMCallOutput(
+            text=extract_answer_text(raw_content),
+            finish_reason=response_metadata.get("finish_reason"),
+            prompt_tokens=token_usage.get("prompt_tokens"),
+            completion_tokens=token_usage.get("completion_tokens"),
+        )

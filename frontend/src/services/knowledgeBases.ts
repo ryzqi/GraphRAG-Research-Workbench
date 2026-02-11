@@ -96,8 +96,6 @@ export interface KnowledgeBaseIngestionState {
   has_active_batch: boolean;
   active_batch_id: string | null;
   active_batch_status: BatchStatus | null;
-  pending_docs: number;
-  running_docs: number;
   updated_at: string;
 }
 

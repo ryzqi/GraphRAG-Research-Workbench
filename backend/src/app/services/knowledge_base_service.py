@@ -128,6 +128,7 @@ class KnowledgeBaseService:
             kb_id=kb.id,
             version=1,
             config_json=kb.index_config or {},
+            is_active=True,
         )
         self._db.add(snapshot)
 

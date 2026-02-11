@@ -57,6 +57,7 @@ Write-Check "main.py 存在" (Test-Path "backend/src/app/main.py")
 Write-Check "settings.py 存在" (Test-Path "backend/src/app/core/settings.py")
 Write-Check "celery_app.py 存在" (Test-Path "backend/src/app/worker/celery_app.py")
 Write-Check "alembic 配置存在" (Test-Path "backend/alembic/env.py")
+Write-Check "alembic 模板存在" (Test-Path "backend/alembic/script.py.mako")
 Write-Host ""
 
 # 4. 检查前端关键文件

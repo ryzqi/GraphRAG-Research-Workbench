@@ -7,14 +7,8 @@ import { apiFetch } from './http';
 import { openSseStream } from './sse';
 
 export type ManifestSourceType = 'text' | 'url' | 'file';
-export type BatchStatus =
-  | 'queued'
-  | 'running'
-  | 'succeeded'
-  | 'partial_failed'
-  | 'failed'
-  | 'canceled';
-export type DocStatus = 'pending' | 'running' | 'succeeded' | 'failed' | 'canceled';
+export type BatchStatus = 'processing' | 'completed';
+export type DocStatus = 'processing' | 'completed';
 
 export interface ManifestTextEntry {
   source_type: 'text';
@@ -78,6 +72,7 @@ export interface IngestionBatchDoc {
   retry_count: number;
   retryable: boolean;
   chunk_count: number;
+  context_failed_chunks: Array<{ chunk_index: number; attempts: number; reason: string }> | null;
   config_version: number;
   created_at: string;
   updated_at: string;
@@ -95,7 +90,6 @@ export interface IngestionBatch {
   failed_docs: number;
   canceled_docs: number;
   succeeded_chunks: number;
-  progress_percent: number;
   error_summary: Record<string, unknown> | null;
   created_at: string;
   started_at: string | null;

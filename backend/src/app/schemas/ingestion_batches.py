@@ -17,20 +17,13 @@ class ManifestSourceType(str, Enum):
 
 
 class BatchStatus(str, Enum):
-    QUEUED = "queued"
-    RUNNING = "running"
-    SUCCEEDED = "succeeded"
-    PARTIAL_FAILED = "partial_failed"
-    FAILED = "failed"
-    CANCELED = "canceled"
+    PROCESSING = "processing"
+    COMPLETED = "completed"
 
 
 class DocStatus(str, Enum):
-    PENDING = "pending"
-    RUNNING = "running"
-    SUCCEEDED = "succeeded"
-    FAILED = "failed"
-    CANCELED = "canceled"
+    PROCESSING = "processing"
+    COMPLETED = "completed"
 
 
 class ManifestTextEntry(BaseModel):
@@ -103,6 +96,7 @@ class IngestionBatchDocRead(BaseModel):
     retry_count: int
     retryable: bool
     chunk_count: int
+    context_failed_chunks: list[dict] | None = None
     config_version: int
     created_at: datetime
     updated_at: datetime
@@ -122,7 +116,6 @@ class IngestionBatchRead(BaseModel):
     failed_docs: int
     canceled_docs: int
     succeeded_chunks: int
-    progress_percent: int
     error_summary: dict | None = None
     created_at: datetime
     started_at: datetime | None = None
@@ -135,8 +128,6 @@ class KnowledgeBaseIngestionStateRead(BaseModel):
     has_active_batch: bool
     active_batch_id: uuid.UUID | None = None
     active_batch_status: BatchStatus | None = None
-    pending_docs: int
-    running_docs: int
     updated_at: datetime
 
 

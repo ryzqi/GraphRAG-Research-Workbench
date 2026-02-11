@@ -57,19 +57,14 @@ function isBatchRunning(batch: IngestionBatch | undefined): boolean {
   if (!batch) {
     return false;
   }
-  return batch.status === 'queued' || batch.status === 'running';
+  return batch.status === 'processing';
 }
 
 function isBatchTerminal(batch: IngestionBatch | undefined): boolean {
   if (!batch) {
     return false;
   }
-  return (
-    batch.status === 'succeeded' ||
-    batch.status === 'partial_failed' ||
-    batch.status === 'failed' ||
-    batch.status === 'canceled'
-  );
+  return batch.status === 'completed';
 }
 
 function matchesArrayKeyPrefix(cachedKey: unknown, prefixKey: readonly unknown[]): boolean {
@@ -212,7 +207,7 @@ export function useIngestionBatchLive(options: UseIngestionBatchLiveOptions): Us
           }
 
           if (event.event === 'error') {
-            throw new Error('Ingestion progress stream failed');
+            throw new Error('Ingestion status stream failed');
           }
         }
       } catch {

@@ -8,7 +8,6 @@ import {
   Alert,
   Box,
   Chip,
-  LinearProgress,
   Paper,
   Stack,
   Typography
@@ -82,18 +81,10 @@ function mergeEntryErrors(
 
 function batchStatusLabel(status: BatchStatus): string {
   switch (status) {
-    case 'queued':
-      return '排队中';
-    case 'running':
-      return '进行中';
-    case 'succeeded':
-      return '成功';
-    case 'partial_failed':
-      return '部分失败';
-    case 'failed':
-      return '失败';
-    case 'canceled':
-      return '已取消';
+    case 'processing':
+      return '处理中';
+    case 'completed':
+      return '已完成';
     default:
       return status;
   }
@@ -101,19 +92,17 @@ function batchStatusLabel(status: BatchStatus): string {
 
 function docStatusLabel(status: DocStatus): string {
   switch (status) {
-    case 'pending':
-      return '待处理';
-    case 'running':
-      return '进行中';
-    case 'succeeded':
-      return '成功';
-    case 'failed':
-      return '失败';
-    case 'canceled':
-      return '已取消';
+    case 'processing':
+      return '处理中';
+    case 'completed':
+      return '已完成';
     default:
       return status;
   }
+}
+
+function isDocFailed(doc: { status: DocStatus; error_code: string | null }): boolean {
+  return doc.status === 'completed' && doc.error_code !== null && doc.error_code !== 'DOC_CANCELED';
 }
 
 function sourceTypeLabel(sourceType: ManifestSourceType | 'upload'): string {
@@ -131,19 +120,12 @@ function sourceTypeLabel(sourceType: ManifestSourceType | 'upload'): string {
   }
 }
 
-function batchStatusColor(status: BatchStatus): 'default' | 'warning' | 'success' | 'error' {
+function batchStatusColor(status: BatchStatus): 'default' | 'warning' | 'success' {
   switch (status) {
-    case 'queued':
-    case 'running':
+    case 'processing':
       return 'warning';
-    case 'succeeded':
+    case 'completed':
       return 'success';
-    case 'partial_failed':
-      return 'warning';
-    case 'failed':
-      return 'error';
-    case 'canceled':
-      return 'default';
     default:
       return 'default';
   }
@@ -242,19 +224,19 @@ export default function KnowledgeBaseAddDocumentsPage() {
   );
 
   const submitPending = createBatchMutation.isPending || uploadingFiles;
-  const batchRunning = displayedBatch?.status === 'queued' || displayedBatch?.status === 'running';
+  const batchRunning = displayedBatch?.status === 'processing';
   const hasRetryableFailedDocs =
-    displayedBatch?.docs.some((doc) => doc.status === 'failed' && doc.retryable) ?? false;
+    displayedBatch?.docs.some((doc) => isDocFailed(doc) && doc.retryable) ?? false;
 
   const streamHint = useMemo(() => {
     if (!activeBatchId || !displayedBatch) {
       return null;
     }
     if (liveBatchQuery.streamStatus === 'connecting') {
-      return '正在建立实时进度连接…';
+      return '正在建立实时状态连接…';
     }
     if (liveBatchQuery.streamStatus === 'live') {
-      return '实时进度已连接。';
+      return '实时状态已连接。';
     }
     if (liveBatchQuery.streamStatus === 'fallback_polling') {
       return `实时连接中断，已切换轮询（每 ${Math.round(liveBatchQuery.fallbackIntervalMs / 1000)} 秒）。`;
@@ -512,7 +494,7 @@ export default function KnowledgeBaseAddDocumentsPage() {
 
       <Paper variant='outlined' sx={{ p: 2.5 }}>
         <Stack spacing={1.5}>
-          <Typography variant='h6'>实时进度</Typography>
+          <Typography variant='h6'>实时状态</Typography>
 
           {!waitingSubmittedBatch && streamHint && (
             <Alert
@@ -528,14 +510,11 @@ export default function KnowledgeBaseAddDocumentsPage() {
               <Stack direction='row' spacing={1} flexWrap='wrap' useFlexGap>
                 <Chip label={'批次：' + pendingSubmittedBatch.batchId} variant='outlined' />
                 <Chip label='排队中' color='warning' />
-                <Chip label='进度：0%' variant='outlined' />
+                <Chip label='状态同步中' variant='outlined' color='info' />
               </Stack>
-              <Box>
-                <Typography variant='body2' color='text.secondary' sx={{ mb: 0.75 }}>
-                  {'文档：待处理 ' + pendingSubmittedBatch.submittedDocTitles.length}
-                </Typography>
-                <LinearProgress variant='determinate' value={0} />
-              </Box>
+              <Typography variant='body2' color='text.secondary'>
+                {'文档：处理中 ' + pendingSubmittedBatch.submittedDocTitles.length + '（等待服务端首个状态快照）'}
+              </Typography>
               <Paper variant='outlined' sx={{ p: 1.5, maxHeight: 460, overflowY: 'auto' }}>
                 <Stack spacing={1}>
                   {pendingSubmittedBatch.submittedDocTitles.map((title, index) => (
@@ -557,7 +536,7 @@ export default function KnowledgeBaseAddDocumentsPage() {
                           等待服务端返回文档详情
                         </Typography>
                       </Box>
-                      <Chip label={docStatusLabel('pending')} size='small' variant='outlined' />
+                      <Chip label={docStatusLabel('processing')} size='small' variant='outlined' />
                     </Stack>
                   ))}
                 </Stack>
@@ -575,24 +554,17 @@ export default function KnowledgeBaseAddDocumentsPage() {
                   label={batchStatusLabel(displayedBatch.status)}
                   color={batchStatusColor(displayedBatch.status)}
                 />
-                <Chip label={'进度：' + displayedBatch.progress_percent + '%'} variant='outlined' />
               </Stack>
-              <Box>
-                <Typography variant='body2' color='text.secondary' sx={{ mb: 0.75 }}>
-                  {'文档：成功 ' +
-                    displayedBatch.succeeded_docs +
-                    ' / 失败 ' +
-                    displayedBatch.failed_docs +
-                    ' / 取消 ' +
-                    displayedBatch.canceled_docs +
-                    ' / 分块 ' +
-                    displayedBatch.succeeded_chunks}
-                </Typography>
-                <LinearProgress
-                  variant='determinate'
-                  value={Math.max(0, Math.min(100, displayedBatch.progress_percent))}
-                />
-              </Box>
+              <Typography variant='body2' color='text.secondary'>
+                {'文档：成功 ' +
+                  displayedBatch.succeeded_docs +
+                  ' / 失败 ' +
+                  displayedBatch.failed_docs +
+                  ' / 取消 ' +
+                  displayedBatch.canceled_docs +
+                  ' / 分块 ' +
+                  displayedBatch.succeeded_chunks}
+              </Typography>
               {displayedBatch.docs.length > 0 ? (
                 <Paper variant='outlined' sx={{ p: 1.5, maxHeight: 460, overflowY: 'auto' }}>
                   <Stack spacing={1}>
@@ -612,7 +584,11 @@ export default function KnowledgeBaseAddDocumentsPage() {
                             {doc.title || doc.id}
                           </Typography>
                           <Typography variant='caption' color='text.secondary'>
-                            {sourceTypeLabel(doc.source_type) + ' · 重试 ' + doc.retry_count}
+                            {sourceTypeLabel(doc.source_type) +
+                              ' · 重试 ' +
+                              doc.retry_count +
+                              ' · 上下文降级 ' +
+                              (doc.context_failed_chunks?.length ?? 0)}
                           </Typography>
                         </Box>
                         <Stack direction='row' spacing={1} alignItems='center'>

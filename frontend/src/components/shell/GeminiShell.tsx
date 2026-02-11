@@ -11,7 +11,7 @@ import { Box, IconButton, Typography, useMediaQuery, useTheme } from '@mui/mater
 import { alpha } from '@mui/material/styles';
 import MenuIcon from '@mui/icons-material/Menu';
 import type { SidebarProps } from './Sidebar';
-import { SIDEBAR_WIDTH_EXPANDED, SIDEBAR_WIDTH_COLLAPSED } from './constants';
+import { SIDEBAR_WIDTH_EXPANDED } from './constants';
 import { PageTransition } from '../ui/PageTransition';
 
 const Sidebar = dynamic<SidebarProps>(
@@ -48,6 +48,11 @@ export function GeminiShell({ children }: GeminiShellProps) {
     pathname === '/' ||
     pathname.startsWith('/general-chat') ||
     pathname.startsWith('/kb-chat');
+
+  const isKnowledgeWorkspacePage = /^\/knowledge-bases\/[^/]+(?:\/documents\/new)?$/.test(
+    pathname
+  );
+  const useFluidContent = isChatPage || isKnowledgeWorkspacePage;
 
   const handleToggleSidebar = useCallback(() => {
     setSidebarExpanded((prev) => !prev);
@@ -114,6 +119,8 @@ export function GeminiShell({ children }: GeminiShellProps) {
           display: 'flex',
           flexDirection: 'column',
           minWidth: 0,
+          width: '100%',
+          maxWidth: '100%',
           position: 'relative',
           backgroundImage: isChatPage
             ? (t) =>
@@ -124,12 +131,6 @@ export function GeminiShell({ children }: GeminiShellProps) {
                      radial-gradient(1000px 420px at 90% 0%, ${alpha(t.palette.success.main, 0.08)} 0%, rgba(0,0,0,0) 60%)`
             : undefined,
           backgroundRepeat: 'no-repeat',
-          maxWidth: isChatPage
-            ? '100%'
-            : {
-                xs: '100%',
-                lg: `calc(100% - ${sidebarExpanded ? SIDEBAR_WIDTH_EXPANDED : SIDEBAR_WIDTH_COLLAPSED}px)`,
-              },
         }}
       >
         {isMobile && (
@@ -162,10 +163,18 @@ export function GeminiShell({ children }: GeminiShellProps) {
             flex: 1,
             display: 'flex',
             flexDirection: 'column',
-            px: isChatPage ? 0 : { xs: 2, sm: 3, md: 4 },
-            py: isChatPage ? 0 : 3,
-            maxWidth: isChatPage ? '100%' : 1200,
-            mx: isChatPage ? 0 : 'auto',
+            px: isChatPage
+              ? 0
+              : isKnowledgeWorkspacePage
+                ? { xs: 1.5, sm: 2, md: 2.5 }
+                : { xs: 2, sm: 3, md: 4 },
+            py: isChatPage
+              ? 0
+              : isKnowledgeWorkspacePage
+                ? { xs: 1.5, md: 2 }
+                : 3,
+            maxWidth: useFluidContent ? '100%' : 1200,
+            mx: useFluidContent ? 0 : 'auto',
             width: '100%',
           }}
         >
@@ -177,4 +186,3 @@ export function GeminiShell({ children }: GeminiShellProps) {
     </Box>
   );
 }
-

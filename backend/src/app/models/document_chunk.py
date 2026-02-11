@@ -36,8 +36,16 @@ class DocumentChunk(Base):
         index=True,
     )
     chunk_index: Mapped[int] = mapped_column(sa.Integer, nullable=False)
-    text: Mapped[str] = mapped_column(sa.Text, nullable=False)
-    processed_text: Mapped[str] = mapped_column(sa.Text, nullable=False)
+    raw_text: Mapped[str] = mapped_column(sa.Text, nullable=False)
+    embedding_text: Mapped[str] = mapped_column(sa.Text, nullable=False)
+    context_text: Mapped[str | None] = mapped_column(sa.Text, nullable=True)
+    context_status: Mapped[str] = mapped_column(
+        sa.String(24), nullable=False, default="not_enabled", server_default="not_enabled"
+    )
+    context_error: Mapped[str | None] = mapped_column(sa.Text, nullable=True)
+    context_attempts: Mapped[int] = mapped_column(
+        sa.Integer, nullable=False, default=0, server_default=sa.text("0")
+    )
     locator: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     content_hash: Mapped[str | None] = mapped_column(sa.String(64), nullable=True)
     token_count: Mapped[int | None] = mapped_column(sa.Integer, nullable=True)

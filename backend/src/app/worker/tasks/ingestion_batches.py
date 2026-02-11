@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import asyncio
 import uuid
+
+from sqlalchemy import select
 from dataclasses import dataclass
 
 from app.core.errors import AppError
 from app.core.settings import get_settings
 from app.integrations.embedding_client import EmbeddingClient
 from app.integrations.object_storage import ObjectStorage
+from app.models.kb_config_snapshot import KBConfigSnapshot
 from app.models.knowledge_base import KnowledgeBase
 from app.models.source_material import SourceMaterial
 from app.schemas.knowledge_bases import IndexConfig
@@ -20,6 +23,7 @@ from app.services.ingestion_batch_service import IngestionBatchService
 from app.services.parsing import ParseError, parse_material
 from app.worker.celery_app import celery_app
 from app.worker.task_resources import managed_task_resources
+from app.worker.tasks.contextual_retry import generate_contexts_for_chunks
 from app.worker.tasks.embedding_inputs import build_embedding_inputs
 
 
@@ -28,6 +32,12 @@ class _ProcessingFailure(Exception):
     code: str
     message: str
     retryable: bool
+
+
+@dataclass(slots=True)
+class _DocProcessOutcome:
+    chunk_count: int
+    context_failed_chunks: list[dict]
 
 
 _RETRYABLE_PARSE_CODES = {
@@ -62,17 +72,22 @@ async def _run_ingestion_batch_doc(doc_id: str) -> None:
             if doc is None:
                 return
             batch = doc.batch
-            if batch is not None and batch.status.value == "canceled":
+            if batch is not None and batch.status.value == "completed":
                 return
-            if doc.status.value == "canceled":
+            if doc.status.value == "completed":
                 return
 
             try:
                 await service.mark_doc_running(doc=doc)
+                await service.recalculate_batch_for_doc(doc=doc, reason="doc_start")
                 await service.commit()
 
-                chunk_count = await _process_doc(doc=doc, resources=resources)
-                await service.mark_doc_succeeded(doc=doc, chunk_count=chunk_count)
+                outcome = await _process_doc(doc=doc, resources=resources)
+                await service.mark_doc_succeeded(
+                    doc=doc,
+                    chunk_count=outcome.chunk_count,
+                    context_failed_chunks=outcome.context_failed_chunks,
+                )
                 await service.recalculate_batch_for_doc(doc=doc, reason="doc_succeeded")
                 await service.commit()
             except _ProcessingFailure as failure:
@@ -111,7 +126,7 @@ async def _run_ingestion_batch_doc(doc_id: str) -> None:
                     run_ingestion_batch_doc.apply_async(args=[str(doc.id)], countdown=delay)
 
 
-async def _process_doc(*, doc, resources) -> int:
+async def _process_doc(*, doc, resources) -> _DocProcessOutcome:
     if not doc.source_ref:
         raise _ProcessingFailure(
             code="DOC_SOURCE_REF_MISSING",
@@ -145,7 +160,17 @@ async def _process_doc(*, doc, resources) -> int:
         if kb is None:
             raise _ProcessingFailure("KB_NOT_FOUND", "知识库不存在", retryable=False)
 
-        index_config = IndexConfig.model_validate(kb.index_config or {})
+        snapshot_stmt = (
+            select(KBConfigSnapshot.config_json)
+            .where(
+                KBConfigSnapshot.kb_id == kb.id,
+                KBConfigSnapshot.is_active.is_(True),
+            )
+            .order_by(KBConfigSnapshot.version.desc())
+            .limit(1)
+        )
+        snapshot_config = (await session.execute(snapshot_stmt)).scalar_one_or_none()
+        index_config = IndexConfig.model_validate(snapshot_config or kb.index_config or {})
 
         try:
             parsed = await parse_material(
@@ -178,21 +203,16 @@ async def _process_doc(*, doc, resources) -> int:
                 retryable=False,
             )
 
-        contexts = ["" for _ in chunk_items]
-        if index_config.contextual.enabled:
-            semaphore = asyncio.Semaphore(max(index_config.contextual.concurrency, 1))
-
-            async def _generate_context(text: str) -> str:
-                async with semaphore:
-                    result = await context_service.generate(
-                        full_text=parsed.text or "",
-                        chunk=text,
-                        enabled=index_config.contextual.enabled,
-                        max_tokens=index_config.contextual.max_tokens,
-                    )
-                    return result.context if result.success else ""
-
-            contexts = await asyncio.gather(*[_generate_context(item.content) for item in chunk_items])
+        context_results = await generate_contexts_for_chunks(
+            full_text=parsed.text or "",
+            chunk_texts=[item.content for item in chunk_items],
+            context_service=context_service,
+            enabled=index_config.contextual.enabled,
+            max_tokens=index_config.contextual.max_tokens,
+            concurrency=max(index_config.contextual.concurrency, 1),
+            max_attempts=3,
+        )
+        contexts = [item.context for item in context_results]
 
         embedding_inputs = build_embedding_inputs(
             chunk_items=chunk_items,
@@ -215,6 +235,15 @@ async def _process_doc(*, doc, resources) -> int:
 
         chunk_store = ChunkPersistenceService(session)
         chunk_ids = [uuid.uuid4() for _ in chunk_items]
+        context_failed_chunks = [
+            {
+                "chunk_index": idx,
+                "attempts": result.attempts,
+                "reason": result.error or "context_generation_failed",
+            }
+            for idx, result in enumerate(context_results)
+            if result.status == "fallback"
+        ]
 
         try:
             await milvus.delete_by_material(str(material.id))
@@ -224,7 +253,11 @@ async def _process_doc(*, doc, resources) -> int:
                 material_id=material.id,
                 chunk_items=chunk_items,
                 chunk_ids=chunk_ids,
-                processed_texts=embedding_inputs,
+                embedding_texts=embedding_inputs,
+                context_texts=contexts,
+                context_statuses=[item.status for item in context_results],
+                context_errors=[item.error for item in context_results],
+                context_attempts=[item.attempts for item in context_results],
             )
 
             records: list[dict] = []
@@ -247,7 +280,10 @@ async def _process_doc(*, doc, resources) -> int:
 
             await milvus.upsert_batch(records=records)
             await session.commit()
-            return len(records)
+            return _DocProcessOutcome(
+                chunk_count=len(records),
+                context_failed_chunks=context_failed_chunks,
+            )
         except Exception:
             await session.rollback()
             raise

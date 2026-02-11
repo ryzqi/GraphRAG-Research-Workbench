@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import ipaddress
-import math
 import socket
 import uuid
 from dataclasses import dataclass
@@ -61,8 +60,7 @@ MAX_FILE_SIZE_BYTES = 50 * 1024 * 1024
 ALLOWED_FILE_EXTENSIONS = {".pdf", ".md", ".txt", ".docx"}
 AUTO_RETRY_DELAYS = (30, 120)
 MAX_DOC_ATTEMPTS = 5
-RUNNING_DOC_PROGRESS_WEIGHT = 0.5
-NON_TERMINAL_PROGRESS_CAP = 99
+DOC_CANCELED_ERROR_CODE = "DOC_CANCELED"
 
 _URL_BLOCKED_IPV4 = {ipaddress.ip_address("169.254.169.254")}
 
@@ -185,12 +183,7 @@ class IngestionBatchService:
         poll_interval: float = 1.0,
         heartbeat_interval: float = 10.0,
     ) -> AsyncIterator[tuple[str, dict[str, Any]]]:
-        terminal_statuses = {
-            IngestionBatchStatus.SUCCEEDED,
-            IngestionBatchStatus.PARTIAL_FAILED,
-            IngestionBatchStatus.FAILED,
-            IngestionBatchStatus.CANCELED,
-        }
+        terminal_statuses = {IngestionBatchStatus.COMPLETED}
 
         batch = await self._get_batch_or_raise(
             batch_id=batch_id,
@@ -248,32 +241,21 @@ class IngestionBatchService:
         if kb is None:
             raise ingestion_error("KB_NOT_FOUND")
 
-        active_batch = await self.get_active_batch_for_kb(kb_id=kb_id, with_docs=True)
+        active_batch = await self.get_active_batch_for_kb(kb_id=kb_id)
         if active_batch is None:
             return KnowledgeBaseIngestionStateRead(
                 kb_id=kb_id,
                 has_active_batch=False,
                 active_batch_id=None,
                 active_batch_status=None,
-                pending_docs=0,
-                running_docs=0,
                 updated_at=datetime.now(timezone.utc),
             )
-
-        pending_docs = sum(
-            1 for doc in active_batch.docs if doc.status == IngestionDocStatus.PENDING
-        )
-        running_docs = sum(
-            1 for doc in active_batch.docs if doc.status == IngestionDocStatus.RUNNING
-        )
 
         return KnowledgeBaseIngestionStateRead(
             kb_id=kb_id,
             has_active_batch=True,
             active_batch_id=active_batch.id,
             active_batch_status=BatchStatus(active_batch.status.value),
-            pending_docs=pending_docs,
-            running_docs=running_docs,
             updated_at=datetime.now(timezone.utc),
         )
 
@@ -287,9 +269,7 @@ class IngestionBatchService:
             select(IngestionBatch)
             .where(
                 IngestionBatch.kb_id == kb_id,
-                IngestionBatch.status.in_(
-                    (IngestionBatchStatus.QUEUED, IngestionBatchStatus.RUNNING)
-                ),
+                IngestionBatch.status == IngestionBatchStatus.PROCESSING,
             )
             .order_by(IngestionBatch.created_at.desc(), IngestionBatch.id.desc())
             .limit(1)
@@ -309,14 +289,14 @@ class IngestionBatchService:
         ignored_docs = 0
 
         for doc in list(batch.docs):
-            if doc.status != IngestionDocStatus.FAILED:
+            if not self._is_doc_failed(doc):
                 ignored_docs += 1
                 continue
             if doc.retry_count >= MAX_DOC_ATTEMPTS:
                 ignored_docs += 1
                 continue
 
-            await self._set_doc_status(doc, IngestionDocStatus.PENDING, reason="manual_retry")
+            await self._set_doc_status(doc, IngestionDocStatus.PROCESSING, reason="manual_retry")
             doc.retryable = True
             doc.error_code = None
             doc.error_message = None
@@ -338,14 +318,18 @@ class IngestionBatchService:
 
     async def cancel_batch(self, *, batch_id: uuid.UUID) -> IngestionBatchCancelResponse:
         batch = await self._get_batch_or_raise(batch_id=batch_id, for_update=True)
-        if batch.status not in {IngestionBatchStatus.QUEUED, IngestionBatchStatus.RUNNING}:
+        if batch.status != IngestionBatchStatus.PROCESSING:
             raise ingestion_error("BATCH_STATUS_CONFLICT", details={"status": batch.status.value})
 
         canceled_docs = 0
         for doc in list(batch.docs):
-            if doc.status in {IngestionDocStatus.PENDING, IngestionDocStatus.RUNNING}:
-                await self._set_doc_status(doc, IngestionDocStatus.CANCELED, reason="batch_cancel")
-                canceled_docs += 1
+            if doc.status != IngestionDocStatus.PROCESSING:
+                continue
+            doc.retryable = False
+            doc.error_code = DOC_CANCELED_ERROR_CODE
+            doc.error_message = "批次已取消"
+            await self._set_doc_status(doc, IngestionDocStatus.COMPLETED, reason="batch_cancel")
+            canceled_docs += 1
 
         await self._recalculate_batch(batch, reason="batch_cancel")
         await self._db.commit()
@@ -377,26 +361,33 @@ class IngestionBatchService:
                 details={"doc_id": str(doc.id), "retry_count": doc.retry_count},
             )
 
-        if doc.status not in {
-            IngestionDocStatus.PENDING,
-            IngestionDocStatus.FAILED,
-            IngestionDocStatus.RUNNING,
-        }:
+        if doc.status == IngestionDocStatus.PROCESSING:
+            pass
+        elif self._is_doc_failed(doc):
+            pass
+        else:
             raise ingestion_error(
                 "DOC_RETRY_NOT_ALLOWED",
                 details={"doc_id": str(doc.id), "status": doc.status.value},
             )
 
         doc.retry_count += 1
-        await self._set_doc_status(doc, IngestionDocStatus.RUNNING, reason="doc_start")
+        await self._set_doc_status(doc, IngestionDocStatus.PROCESSING, reason="doc_start")
         doc.retryable = doc.retry_count < MAX_DOC_ATTEMPTS
 
-    async def mark_doc_succeeded(self, *, doc: IngestionBatchDoc, chunk_count: int) -> None:
+    async def mark_doc_succeeded(
+        self,
+        *,
+        doc: IngestionBatchDoc,
+        chunk_count: int,
+        context_failed_chunks: list[dict] | None = None,
+    ) -> None:
         doc.chunk_count = max(chunk_count, 0)
+        doc.context_failed_chunks = context_failed_chunks or None
         doc.retryable = False
         doc.error_code = None
         doc.error_message = None
-        await self._set_doc_status(doc, IngestionDocStatus.SUCCEEDED, reason="doc_succeeded")
+        await self._set_doc_status(doc, IngestionDocStatus.COMPLETED, reason="doc_succeeded")
 
     async def mark_doc_failed(
         self,
@@ -410,18 +401,19 @@ class IngestionBatchService:
         auto_retryable = retryable and doc.retry_count <= len(AUTO_RETRY_DELAYS)
         within_attempt_limit = doc.retry_count < MAX_DOC_ATTEMPTS
 
+        doc.context_failed_chunks = None
         if auto_retryable and within_attempt_limit:
             delay = AUTO_RETRY_DELAYS[doc.retry_count - 1]
             doc.retryable = True
             doc.error_code = error_code
             doc.error_message = error_message
-            await self._set_doc_status(doc, IngestionDocStatus.PENDING, reason="auto_retry")
+            await self._set_doc_status(doc, IngestionDocStatus.PROCESSING, reason="auto_retry")
             auto_retry_delay = delay
         else:
             doc.retryable = retryable and within_attempt_limit
             doc.error_code = error_code
             doc.error_message = error_message
-            await self._set_doc_status(doc, IngestionDocStatus.FAILED, reason="doc_failed")
+            await self._set_doc_status(doc, IngestionDocStatus.COMPLETED, reason="doc_failed")
 
         return auto_retry_delay
 
@@ -461,10 +453,10 @@ class IngestionBatchService:
             config_snapshot_id=snapshot.id,
             config_version=kb.current_config_version,
             is_bootstrap=not has_bootstrap,
-            status=IngestionBatchStatus.QUEUED,
+            status=IngestionBatchStatus.PROCESSING,
+            started_at=datetime.now(timezone.utc),
             requested_by=requested_by,
             total_docs=len(prepared_entries),
-            progress_percent=0,
         )
         self._db.add(batch)
         await self._db.flush()
@@ -481,9 +473,10 @@ class IngestionBatchService:
                 source_ref=str(material_id),
                 title=prepared.title,
                 fingerprint=prepared.fingerprint,
-                status=IngestionDocStatus.PENDING,
+                status=IngestionDocStatus.PROCESSING,
                 retry_count=0,
                 retryable=True,
+                context_failed_chunks=None,
             )
             self._db.add(doc)
             docs.append(doc)
@@ -718,23 +711,37 @@ class IngestionBatchService:
         return uuid.UUID(str(prepared.payload["material_id"]))
 
     async def _ensure_current_snapshot(self, *, kb: KnowledgeBase) -> KBConfigSnapshot:
-        stmt = (
+        active_stmt = (
             select(KBConfigSnapshot)
             .where(
                 KBConfigSnapshot.kb_id == kb.id,
-                KBConfigSnapshot.version == kb.current_config_version,
+                KBConfigSnapshot.is_active.is_(True),
             )
+            .order_by(KBConfigSnapshot.version.desc())
             .limit(1)
         )
-        snapshot = (await self._db.execute(stmt)).scalar_one_or_none()
+        snapshot = (await self._db.execute(active_stmt)).scalar_one_or_none()
         if snapshot is not None:
+            if kb.current_config_version != snapshot.version:
+                kb.current_config_version = snapshot.version
+            if (kb.index_config or {}) != (snapshot.config_json or {}):
+                kb.index_config = snapshot.config_json or {}
             return snapshot
+
+        max_version_stmt = select(func.max(KBConfigSnapshot.version)).where(
+            KBConfigSnapshot.kb_id == kb.id
+        )
+        max_version = (await self._db.execute(max_version_stmt)).scalar_one()
+        next_version = int(max_version or kb.current_config_version or 0)
+        next_version = max(next_version, 1)
 
         snapshot = KBConfigSnapshot(
             kb_id=kb.id,
-            version=kb.current_config_version,
+            version=next_version,
             config_json=kb.index_config or {},
+            is_active=True,
         )
+        kb.current_config_version = next_version
         self._db.add(snapshot)
         await self._db.flush()
         return snapshot
@@ -778,16 +785,8 @@ class IngestionBatchService:
             return
 
         allowed: dict[IngestionDocStatus, set[IngestionDocStatus]] = {
-            IngestionDocStatus.PENDING: {IngestionDocStatus.RUNNING, IngestionDocStatus.CANCELED},
-            IngestionDocStatus.RUNNING: {
-                IngestionDocStatus.SUCCEEDED,
-                IngestionDocStatus.FAILED,
-                IngestionDocStatus.CANCELED,
-                IngestionDocStatus.PENDING,
-            },
-            IngestionDocStatus.FAILED: {IngestionDocStatus.PENDING},
-            IngestionDocStatus.SUCCEEDED: set(),
-            IngestionDocStatus.CANCELED: set(),
+            IngestionDocStatus.PROCESSING: {IngestionDocStatus.COMPLETED},
+            IngestionDocStatus.COMPLETED: {IngestionDocStatus.PROCESSING},
         }
         if new_status not in allowed.get(old, set()):
             raise ingestion_error(
@@ -821,24 +820,8 @@ class IngestionBatchService:
             return
 
         allowed: dict[IngestionBatchStatus, set[IngestionBatchStatus]] = {
-            IngestionBatchStatus.QUEUED: {
-                IngestionBatchStatus.RUNNING,
-                IngestionBatchStatus.CANCELED,
-                IngestionBatchStatus.SUCCEEDED,
-                IngestionBatchStatus.PARTIAL_FAILED,
-                IngestionBatchStatus.FAILED,
-            },
-            IngestionBatchStatus.RUNNING: {
-                IngestionBatchStatus.QUEUED,
-                IngestionBatchStatus.CANCELED,
-                IngestionBatchStatus.SUCCEEDED,
-                IngestionBatchStatus.PARTIAL_FAILED,
-                IngestionBatchStatus.FAILED,
-            },
-            IngestionBatchStatus.SUCCEEDED: {IngestionBatchStatus.QUEUED, IngestionBatchStatus.RUNNING},
-            IngestionBatchStatus.PARTIAL_FAILED: {IngestionBatchStatus.QUEUED, IngestionBatchStatus.RUNNING},
-            IngestionBatchStatus.FAILED: {IngestionBatchStatus.QUEUED, IngestionBatchStatus.RUNNING},
-            IngestionBatchStatus.CANCELED: {IngestionBatchStatus.QUEUED, IngestionBatchStatus.RUNNING},
+            IngestionBatchStatus.PROCESSING: {IngestionBatchStatus.COMPLETED},
+            IngestionBatchStatus.COMPLETED: {IngestionBatchStatus.PROCESSING},
         }
         if new_status not in allowed.get(old, set()):
             raise ingestion_error(
@@ -853,15 +836,9 @@ class IngestionBatchService:
 
         batch.status = new_status
         now = datetime.now(timezone.utc)
-        terminal = {
-            IngestionBatchStatus.SUCCEEDED,
-            IngestionBatchStatus.PARTIAL_FAILED,
-            IngestionBatchStatus.FAILED,
-            IngestionBatchStatus.CANCELED,
-        }
-        if new_status == IngestionBatchStatus.RUNNING and batch.started_at is None:
+        if new_status == IngestionBatchStatus.PROCESSING and batch.started_at is None:
             batch.started_at = now
-        if new_status in terminal:
+        if new_status == IngestionBatchStatus.COMPLETED:
             batch.finished_at = now
         else:
             batch.finished_at = None
@@ -877,45 +854,28 @@ class IngestionBatchService:
     async def _recalculate_batch(self, batch: IngestionBatch, *, reason: str) -> None:
         docs = list(batch.docs)
         total = len(docs)
-        succeeded = sum(1 for doc in docs if doc.status == IngestionDocStatus.SUCCEEDED)
-        failed = sum(1 for doc in docs if doc.status == IngestionDocStatus.FAILED)
-        canceled = sum(1 for doc in docs if doc.status == IngestionDocStatus.CANCELED)
-        running = sum(1 for doc in docs if doc.status == IngestionDocStatus.RUNNING)
-        pending = sum(1 for doc in docs if doc.status == IngestionDocStatus.PENDING)
+
+        succeeded = sum(1 for doc in docs if self._is_doc_succeeded(doc))
+        failed = sum(1 for doc in docs if self._is_doc_failed(doc))
+        canceled = sum(1 for doc in docs if self._is_doc_canceled(doc))
+        processing = sum(1 for doc in docs if doc.status == IngestionDocStatus.PROCESSING)
 
         batch.total_docs = total
         batch.succeeded_docs = succeeded
         batch.failed_docs = failed
         batch.canceled_docs = canceled
-        batch.succeeded_chunks = sum(doc.chunk_count for doc in docs if doc.status == IngestionDocStatus.SUCCEEDED)
-
-        completed = succeeded + failed + canceled
-        terminal = completed == total
-        batch.progress_percent = self._calculate_progress_percent(
-            total=total,
-            completed=completed,
-            running=running,
-            terminal=terminal,
+        batch.succeeded_chunks = sum(
+            doc.chunk_count for doc in docs if self._is_doc_succeeded(doc)
         )
 
-        if terminal:
-            if succeeded == total:
-                target_status = IngestionBatchStatus.SUCCEEDED
-            elif succeeded > 0:
-                target_status = IngestionBatchStatus.PARTIAL_FAILED
-            elif canceled > 0:
-                target_status = IngestionBatchStatus.CANCELED
-            else:
-                target_status = IngestionBatchStatus.FAILED
-        elif running > 0:
-            target_status = IngestionBatchStatus.RUNNING
-        elif pending > 0:
-            target_status = IngestionBatchStatus.QUEUED
-        else:
-            target_status = IngestionBatchStatus.RUNNING
+        target_status = (
+            IngestionBatchStatus.PROCESSING
+            if processing > 0
+            else IngestionBatchStatus.COMPLETED
+        )
 
         await self._set_batch_status(batch, target_status, reason=reason)
-        if terminal:
+        if target_status == IngestionBatchStatus.COMPLETED:
             await self._apply_readiness(batch=batch)
 
         batch.error_summary = {
@@ -926,22 +886,26 @@ class IngestionBatchService:
         }
 
     @staticmethod
-    def _calculate_progress_percent(
-        *,
-        total: int,
-        completed: int,
-        running: int,
-        terminal: bool,
-    ) -> int:
-        if total <= 0:
-            return 0
+    def _is_doc_canceled(doc: IngestionBatchDoc) -> bool:
+        return (
+            doc.status == IngestionDocStatus.COMPLETED
+            and doc.error_code == DOC_CANCELED_ERROR_CODE
+        )
 
-        if terminal:
-            return 100
+    @classmethod
+    def _is_doc_failed(cls, doc: IngestionBatchDoc) -> bool:
+        return (
+            doc.status == IngestionDocStatus.COMPLETED
+            and doc.error_code is not None
+            and not cls._is_doc_canceled(doc)
+        )
 
-        effective_progress = completed + (running * RUNNING_DOC_PROGRESS_WEIGHT)
-        raw_percent = math.floor((effective_progress / total) * 100)
-        return max(0, min(NON_TERMINAL_PROGRESS_CAP, raw_percent))
+    @classmethod
+    def _is_doc_succeeded(cls, doc: IngestionBatchDoc) -> bool:
+        return (
+            doc.status == IngestionDocStatus.COMPLETED
+            and doc.error_code is None
+        )
 
     async def _apply_readiness(self, *, batch: IngestionBatch) -> None:
         kb = await self._db.get(KnowledgeBase, batch.kb_id)
@@ -949,13 +913,11 @@ class IngestionBatchService:
             return
 
         if batch.is_bootstrap:
-            terminal = {
-                IngestionBatchStatus.SUCCEEDED,
-                IngestionBatchStatus.PARTIAL_FAILED,
-                IngestionBatchStatus.FAILED,
-                IngestionBatchStatus.CANCELED,
-            }
-            if batch.status in terminal and batch.succeeded_docs >= 1 and batch.succeeded_chunks >= 1:
+            if (
+                batch.status == IngestionBatchStatus.COMPLETED
+                and batch.succeeded_docs >= 1
+                and batch.succeeded_chunks >= 1
+            ):
                 kb.readiness = KnowledgeBaseReadiness.READY
             else:
                 kb.readiness = KnowledgeBaseReadiness.NOT_READY
@@ -1004,7 +966,6 @@ class IngestionBatchService:
         )
         return (
             batch.status.value,
-            batch.progress_percent,
             batch.succeeded_docs,
             batch.failed_docs,
             batch.canceled_docs,
@@ -1140,4 +1101,3 @@ class IngestionBatchService:
         orig = getattr(exc, "orig", None)
         message = str(orig or exc).lower()
         return "uq_ingestion_batches_bootstrap_kb" in message or "is_bootstrap" in message
-

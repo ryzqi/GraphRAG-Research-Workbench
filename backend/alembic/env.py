@@ -4,6 +4,7 @@ import asyncio
 import sys
 from logging.config import fileConfig
 from pathlib import Path
+from typing import Any
 
 from alembic import context
 from sqlalchemy import pool
@@ -27,9 +28,48 @@ import_all_models()
 
 target_metadata = Base.metadata
 
+# 这些表由外部组件（LangGraph checkpointer）在运行时自动创建和维护。
+EXCLUDED_TABLES = {
+    "checkpoint_migrations",
+    "checkpoints",
+    "checkpoint_blobs",
+    "checkpoint_writes",
+}
+
 
 def get_url() -> str:
     return get_settings().database_url
+
+
+def _object_table_name(object_: Any, type_: str) -> str | None:
+    if type_ == "table":
+        return getattr(object_, "name", None)
+
+    table = getattr(object_, "table", None)
+    if table is not None:
+        return getattr(table, "name", None)
+
+    parent = getattr(object_, "parent", None)
+    if parent is not None:
+        return getattr(parent, "name", None)
+
+    return None
+
+
+def include_object(
+    object_: Any,
+    name: str | None,
+    type_: str,
+    reflected: bool,
+    compare_to: Any,
+) -> bool:
+    del name, reflected, compare_to
+
+    table_name = _object_table_name(object_, type_)
+    if table_name in EXCLUDED_TABLES:
+        return False
+
+    return True
 
 
 def run_migrations_offline() -> None:
@@ -39,13 +79,20 @@ def run_migrations_offline() -> None:
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
         compare_type=True,
+        include_object=include_object,
     )
 
     with context.begin_transaction():
         context.run_migrations()
 
+
 def do_run_migrations(connection: Connection) -> None:
-    context.configure(connection=connection, target_metadata=target_metadata, compare_type=True)
+    context.configure(
+        connection=connection,
+        target_metadata=target_metadata,
+        compare_type=True,
+        include_object=include_object,
+    )
 
     with context.begin_transaction():
         context.run_migrations()

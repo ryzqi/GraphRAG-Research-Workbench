@@ -16,6 +16,33 @@ from app.core.settings import get_settings
 
 logger = logging.getLogger(__name__)
 
+SCHEMA_NOT_READY_MESSAGE = "数据库未初始化/未迁移：请执行数据库迁移（alembic upgrade head）"
+INGESTION_STATUS_ENUM_NAMES = ("ingestion_batch_status", "ingestion_doc_status")
+
+
+def _is_schema_missing(reason: str) -> bool:
+    lowered = reason.lower()
+    return "does not exist" in lowered or "undefinedtableerror" in lowered
+
+
+def _is_ingestion_enum_schema_mismatch(reason: str) -> bool:
+    lowered = reason.lower()
+    is_enum_parse_error = (
+        "invalidtextrepresentationerror" in lowered
+        or "invalid input value for enum" in lowered
+    )
+    return is_enum_parse_error and any(
+        enum_name in lowered for enum_name in INGESTION_STATUS_ENUM_NAMES
+    )
+
+
+def _classify_dbapi_error(*, reason: str, connection_invalidated: bool) -> tuple[int, str, str]:
+    if _is_schema_missing(reason) or _is_ingestion_enum_schema_mismatch(reason):
+        return 503, "DATABASE_SCHEMA_NOT_READY", SCHEMA_NOT_READY_MESSAGE
+    if connection_invalidated:
+        return 503, "DATABASE_UNAVAILABLE", "数据库连接已失效：请确认 Postgres 已启动"
+    return 500, "DATABASE_ERROR", "数据库执行错误"
+
 
 class ErrorCode(str, Enum):
     VALIDATION_ERROR = "VALIDATION_ERROR"
@@ -235,20 +262,10 @@ def register_exception_handlers(app: FastAPI) -> None:
     async def _handle_dbapi_error(request: Request, exc: DBAPIError):
         reason = str(getattr(exc, "orig", exc))
 
-        # 开发环境常见：库/表/枚举未迁移（比如直接启动后端但跳过 alembic upgrade）。
-        is_schema_missing = "does not exist" in reason or "UndefinedTableError" in reason
-        if is_schema_missing:
-            status_code = 503
-            code = "DATABASE_SCHEMA_NOT_READY"
-            message = "数据库未初始化/未迁移：请执行数据库迁移（alembic upgrade head）"
-        elif getattr(exc, "connection_invalidated", False):
-            status_code = 503
-            code = "DATABASE_UNAVAILABLE"
-            message = "数据库连接已失效：请确认 Postgres 已启动"
-        else:
-            status_code = 500
-            code = "DATABASE_ERROR"
-            message = "数据库执行错误"
+        status_code, code, message = _classify_dbapi_error(
+            reason=reason,
+            connection_invalidated=bool(getattr(exc, "connection_invalidated", False)),
+        )
 
         logger.warning("Database DBAPIError", extra={"error": reason, "status_code": status_code})
 

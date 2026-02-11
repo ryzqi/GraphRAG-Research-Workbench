@@ -17,8 +17,12 @@ export interface DocumentChunk {
   kb_id: string;
   material_id: string;
   chunk_index: number;
-  text: string;
-  processed_text: string;
+  raw_text: string;
+  embedding_text: string;
+  context_text: string | null;
+  context_status: string;
+  context_error: string | null;
+  context_attempts: number;
   locator: Record<string, unknown> | null;
   token_count: number | null;
   created_at: string;

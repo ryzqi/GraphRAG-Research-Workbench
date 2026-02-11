@@ -20,6 +20,7 @@ from app.integrations.milvus_client import MilvusClient
 from app.integrations.redis_client import RedisClient
 from app.integrations.rerank_client import RerankClient
 from app.models.document_chunk import DocumentChunk
+from app.models.kb_config_snapshot import KBConfigSnapshot
 from app.models.knowledge_base import KnowledgeBase
 from app.schemas.chats import EvidenceItem, EvidenceSourceKind
 from app.schemas.knowledge_bases import ChunkingStrategy, IndexConfig
@@ -194,11 +195,11 @@ class RetrievalService:
             return
 
         stmt = select(
-            DocumentChunk.id, DocumentChunk.text, DocumentChunk.locator
+            DocumentChunk.id, DocumentChunk.raw_text, DocumentChunk.locator
         ).where(DocumentChunk.id.in_(list(missing)))
         result = await self._db.execute(stmt)
         by_id: dict[uuid.UUID, tuple[str, dict | None]] = {
-            row.id: (row.text, row.locator) for row in result.all()
+            row.id: (row.raw_text, row.locator) for row in result.all()
         }
         for c in chunks:
             got = by_id.get(c.id)
@@ -901,19 +902,36 @@ class RetrievalService:
     ) -> dict[uuid.UUID, IndexConfig]:
         if not kb_ids or self._db is None:
             return {}
-        stmt = select(KnowledgeBase.id, KnowledgeBase.index_config).where(
-            KnowledgeBase.id.in_(kb_ids)
-        )
-        result = await self._db.execute(stmt)
+
         configs: dict[uuid.UUID, IndexConfig] = {}
-        for kb_id, raw in result.all():
+        snapshot_stmt = select(KBConfigSnapshot.kb_id, KBConfigSnapshot.config_json).where(
+            KBConfigSnapshot.kb_id.in_(kb_ids),
+            KBConfigSnapshot.is_active.is_(True),
+        )
+        snapshot_rows = await self._db.execute(snapshot_stmt)
+        for kb_id, raw in snapshot_rows.all():
             try:
                 configs[kb_id] = IndexConfig.model_validate(raw or {})
             except Exception as exc:  # pragma: no cover
                 logger.warning(
-                    "IndexConfig 解析失败，回退默认",
+                    "Snapshot IndexConfig 解析失败，回退 knowledge_bases",
                     extra={"kb_id": str(kb_id), "error": str(exc)},
                 )
+
+        missing_kb_ids = [kb_id for kb_id in kb_ids if kb_id not in configs]
+        if missing_kb_ids:
+            fallback_stmt = select(KnowledgeBase.id, KnowledgeBase.index_config).where(
+                KnowledgeBase.id.in_(missing_kb_ids)
+            )
+            fallback_rows = await self._db.execute(fallback_stmt)
+            for kb_id, raw in fallback_rows.all():
+                try:
+                    configs[kb_id] = IndexConfig.model_validate(raw or {})
+                except Exception as exc:  # pragma: no cover
+                    logger.warning(
+                        "IndexConfig 解析失败，回退默认",
+                        extra={"kb_id": str(kb_id), "error": str(exc)},
+                    )
         return configs
 
     @staticmethod

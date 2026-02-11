@@ -99,18 +99,10 @@ function extractEntryErrors(error: unknown): EntryError[] {
 
 function batchStatusLabel(status: BatchStatus): string {
   switch (status) {
-    case 'queued':
-      return '排队中';
-    case 'running':
-      return '进行中';
-    case 'succeeded':
-      return '成功';
-    case 'partial_failed':
-      return '部分失败';
-    case 'failed':
-      return '失败';
-    case 'canceled':
-      return '已取消';
+    case 'processing':
+      return '处理中';
+    case 'completed':
+      return '已完成';
     default:
       return status;
   }
@@ -118,34 +110,25 @@ function batchStatusLabel(status: BatchStatus): string {
 
 function docStatusLabel(status: string): string {
   switch (status) {
-    case 'pending':
-      return '待处理';
-    case 'running':
-      return '进行中';
-    case 'succeeded':
-      return '成功';
-    case 'failed':
-      return '失败';
-    case 'canceled':
-      return '已取消';
+    case 'processing':
+      return '处理中';
+    case 'completed':
+      return '已完成';
     default:
       return status;
   }
 }
 
-function batchStatusColor(status: BatchStatus): 'default' | 'warning' | 'success' | 'error' {
+function isDocFailed(doc: { status: string; error_code: string | null }): boolean {
+  return doc.status === 'completed' && doc.error_code !== null && doc.error_code !== 'DOC_CANCELED';
+}
+
+function batchStatusColor(status: BatchStatus): 'default' | 'warning' | 'success' {
   switch (status) {
-    case 'queued':
-    case 'running':
+    case 'processing':
       return 'warning';
-    case 'succeeded':
+    case 'completed':
       return 'success';
-    case 'partial_failed':
-      return 'warning';
-    case 'failed':
-      return 'error';
-    case 'canceled':
-      return 'default';
     default:
       return 'default';
   }
@@ -331,7 +314,7 @@ export default function KnowledgeBaseCreateWizardPage() {
       setServerEntryErrors(mergeEntryErrors(uploadErrors, backendErrors));
       setBatchId(response.batch_id);
       setActiveStep(2);
-      router.push(`/knowledge-bases/${kbId}?batch=${response.batch_id}&from=create`);
+      router.push(`/knowledge-bases/${kbId}/documents/new?batch=${response.batch_id}`);
     } catch (error) {
       const backendErrors = extractEntryErrors(error);
       if (backendErrors.length > 0) {
@@ -367,9 +350,9 @@ export default function KnowledgeBaseCreateWizardPage() {
     }
   };
 
-  const batchRunning = currentBatch?.status === 'queued' || currentBatch?.status === 'running';
+  const batchRunning = currentBatch?.status === 'processing';
   const hasRetryableFailedDocs =
-    currentBatch?.docs.some((doc) => doc.status === 'failed' && doc.retryable) ?? false;
+    currentBatch?.docs.some((doc) => isDocFailed(doc) && doc.retryable) ?? false;
 
   return (
     <Box>
@@ -498,7 +481,7 @@ export default function KnowledgeBaseCreateWizardPage() {
                 <Paper variant='outlined' sx={{ p: 1.5, bgcolor: 'background.default' }}>
                   <Stack spacing={1}>
                     <Typography variant='body2'>
-                      {'进度：' + currentBatch.progress_percent + '%'}
+                      {'批次状态：' + batchStatusLabel(currentBatch.status)}
                     </Typography>
                     <Typography variant='body2' color='text.secondary'>
                       {
@@ -532,7 +515,11 @@ export default function KnowledgeBaseCreateWizardPage() {
                             {doc.title || doc.id}
                           </Typography>
                           <Typography variant='caption' color='text.secondary'>
-                            {sourceTypeLabel(doc.source_type) + ' · 重试次数 ' + doc.retry_count}
+                            {sourceTypeLabel(doc.source_type) +
+                              ' · 重试次数 ' +
+                              doc.retry_count +
+                              ' · 上下文降级 ' +
+                              (doc.context_failed_chunks?.length ?? 0)}
                           </Typography>
                         </Box>
                         <Stack direction='row' spacing={1} alignItems='center'>
@@ -585,5 +572,3 @@ export default function KnowledgeBaseCreateWizardPage() {
     </Box>
   );
 }
-
-

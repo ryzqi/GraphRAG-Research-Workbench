@@ -1,4 +1,4 @@
-version: "1.1"
+version: "1.2"
 name: ingestion_contextual_embedding
 description: "文档片段上下文增强提示词"
 
@@ -15,6 +15,7 @@ template: |
   3. 禁止复制原文长句；可压缩复述，但不得引入新事实。
   4. 输出应简洁、信息密度高，长度不超过 {max_tokens} tokens。
   5. 只输出上下文描述正文，不要标题、编号、代码块或额外解释。
+  6. 即使上下文有限也必须输出至少一句可检索描述，不得输出空内容。
 
   文档上下文：
   {content}

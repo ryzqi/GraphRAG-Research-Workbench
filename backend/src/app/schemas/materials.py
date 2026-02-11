@@ -78,8 +78,12 @@ class DocumentChunkRead(BaseModel):
     kb_id: uuid.UUID
     material_id: uuid.UUID
     chunk_index: int
-    text: str
-    processed_text: str
+    raw_text: str
+    embedding_text: str
+    context_text: str | None = None
+    context_status: str
+    context_error: str | None = None
+    context_attempts: int
     locator: dict[str, Any] | None = None
     token_count: int | None = None
     created_at: datetime

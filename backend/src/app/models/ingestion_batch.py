@@ -18,20 +18,13 @@ if TYPE_CHECKING:
 
 
 class IngestionBatchStatus(str, Enum):
-    QUEUED = "queued"
-    RUNNING = "running"
-    SUCCEEDED = "succeeded"
-    PARTIAL_FAILED = "partial_failed"
-    FAILED = "failed"
-    CANCELED = "canceled"
+    PROCESSING = "processing"
+    COMPLETED = "completed"
 
 
 class IngestionDocStatus(str, Enum):
-    PENDING = "pending"
-    RUNNING = "running"
-    SUCCEEDED = "succeeded"
-    FAILED = "failed"
-    CANCELED = "canceled"
+    PROCESSING = "processing"
+    COMPLETED = "completed"
 
 
 class IngestionSourceType(str, Enum):
@@ -64,7 +57,7 @@ class IngestionBatch(Base):
     status: Mapped[IngestionBatchStatus] = mapped_column(
         enum_values(IngestionBatchStatus, name="ingestion_batch_status"),
         nullable=False,
-        default=IngestionBatchStatus.QUEUED,
+        default=IngestionBatchStatus.PROCESSING,
     )
     total_docs: Mapped[int] = mapped_column(
         sa.Integer, nullable=False, default=0, server_default=sa.text("0")
@@ -79,9 +72,6 @@ class IngestionBatch(Base):
         sa.Integer, nullable=False, default=0, server_default=sa.text("0")
     )
     succeeded_chunks: Mapped[int] = mapped_column(
-        sa.Integer, nullable=False, default=0, server_default=sa.text("0")
-    )
-    progress_percent: Mapped[int] = mapped_column(
         sa.Integer, nullable=False, default=0, server_default=sa.text("0")
     )
     error_summary: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
@@ -151,7 +141,7 @@ class IngestionBatchDoc(Base):
     status: Mapped[IngestionDocStatus] = mapped_column(
         enum_values(IngestionDocStatus, name="ingestion_doc_status"),
         nullable=False,
-        default=IngestionDocStatus.PENDING,
+        default=IngestionDocStatus.PROCESSING,
     )
     error_code: Mapped[str | None] = mapped_column(sa.String(64), nullable=True)
     error_message: Mapped[str | None] = mapped_column(sa.Text, nullable=True)
@@ -164,6 +154,7 @@ class IngestionBatchDoc(Base):
     chunk_count: Mapped[int] = mapped_column(
         sa.Integer, nullable=False, default=0, server_default=sa.text("0")
     )
+    context_failed_chunks: Mapped[list[dict] | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()
     )

@@ -13,6 +13,7 @@ from app.integrations.embedding_client import EmbeddingClient
 from app.integrations.object_storage import ObjectStorage
 from app.models.document_chunk import DocumentChunk
 from app.models.index_rebuild_job import IndexRebuildJob, IndexRebuildStatus
+from app.models.kb_config_snapshot import KBConfigSnapshot
 from app.models.knowledge_base import KnowledgeBase
 from app.models.source_material import SourceMaterial
 from app.schemas.knowledge_bases import IndexConfig
@@ -22,6 +23,7 @@ from app.services.contextual_embedding_service import ContextualEmbeddingService
 from app.services.parsing import ParseError, parse_material
 from app.worker.celery_app import celery_app
 from app.worker.task_resources import managed_task_resources
+from app.worker.tasks.contextual_retry import generate_contexts_for_chunks
 from app.worker.tasks.embedding_inputs import build_embedding_inputs
 
 
@@ -60,6 +62,7 @@ async def _run_index_rebuild_job(job_id: str) -> None:
                 "total_materials": 0,
                 "succeeded_materials": 0,
                 "total_chunks": 0,
+                "context_fallback_chunks": 0,
                 "errors": [],
                 "warnings": [],
             }
@@ -91,7 +94,17 @@ async def _run_index_rebuild_job(job_id: str) -> None:
                     await session.commit()
                     return
 
-                index_config = IndexConfig.model_validate(kb.index_config or {})
+                snapshot_stmt = (
+                    select(KBConfigSnapshot.config_json)
+                    .where(
+                        KBConfigSnapshot.kb_id == kb.id,
+                        KBConfigSnapshot.is_active.is_(True),
+                    )
+                    .order_by(KBConfigSnapshot.version.desc())
+                    .limit(1)
+                )
+                snapshot_config = (await session.execute(snapshot_stmt)).scalar_one_or_none()
+                index_config = IndexConfig.model_validate(snapshot_config or kb.index_config or {})
 
                 # Clear old vectors/chunks for this KB.
                 await milvus_client.delete_by_kb_id(str(job.kb_id))
@@ -150,29 +163,18 @@ async def _run_index_rebuild_job(job_id: str) -> None:
                         await session.commit()
                         continue
 
-                    contexts = ["" for _ in chunk_items]
-                    if index_config.contextual.enabled:
-                        concurrency = max(index_config.contextual.concurrency, 1)
-                        semaphore = asyncio.Semaphore(concurrency)
-
-                        async def _generate_context(chunk_text: str):
-                            async with semaphore:
-                                return await context_service.generate(
-                                    full_text=parsed.text or "",
-                                    chunk=chunk_text,
-                                    enabled=index_config.contextual.enabled,
-                                    max_tokens=index_config.contextual.max_tokens,
-                                )
-
-                        results = await asyncio.gather(
-                            *[_generate_context(item.content) for item in chunk_items],
-                            return_exceptions=True,
-                        )
-                        for idx, result in enumerate(results):
-                            if isinstance(result, Exception):
-                                continue
-                            if result.success:
-                                contexts[idx] = result.context
+                    context_results = await generate_contexts_for_chunks(
+                        full_text=parsed.text or "",
+                        chunk_texts=[item.content for item in chunk_items],
+                        context_service=context_service,
+                        enabled=index_config.contextual.enabled,
+                        max_tokens=index_config.contextual.max_tokens,
+                        concurrency=max(index_config.contextual.concurrency, 1),
+                        max_attempts=3,
+                    )
+                    contexts = [item.context for item in context_results]
+                    fallback_count = sum(1 for item in context_results if item.status == "fallback")
+                    stats["context_fallback_chunks"] += fallback_count
 
                     embedding_inputs = build_embedding_inputs(
                         chunk_items=chunk_items,
@@ -201,7 +203,11 @@ async def _run_index_rebuild_job(job_id: str) -> None:
                             material_id=material.id,
                             chunk_items=chunk_items,
                             chunk_ids=chunk_ids,
-                            processed_texts=embedding_inputs,
+                            embedding_texts=embedding_inputs,
+                            context_texts=contexts,
+                            context_statuses=[item.status for item in context_results],
+                            context_errors=[item.error for item in context_results],
+                            context_attempts=[item.attempts for item in context_results],
                         )
 
                         parent_id_by_ref: dict[int, str] = {}

@@ -14,6 +14,7 @@ from app.core.logging import configure_logging
 from app.core.memory_store import StoreManager
 from app.core.middleware.request_id import RequestIdMiddleware
 from app.core.settings import get_settings, validate_startup_settings
+from app.db.schema_guard import ensure_ingestion_schema_ready
 from app.db.session import get_engine, get_sessionmaker
 from app.integrations.embedding_client import EmbeddingClient
 from app.integrations.http_client import close_http_client, create_http_client
@@ -31,6 +32,8 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     """应用生命周期管理。"""
     validate_startup_settings(settings)
+    app.state.engine = get_engine()
+    await ensure_ingestion_schema_ready(app.state.engine)
     await CheckpointManager.initialize()
     await StoreManager.initialize()
     DeepAgentsStoreManager.initialize()
@@ -40,7 +43,6 @@ async def lifespan(app: FastAPI):
     app.state.rerank_client = RerankClient(settings=settings, http_client=app.state.http_client)
     app.state.milvus_client = create_milvus_client()
     app.state.redis = create_redis_client(settings)
-    app.state.engine = get_engine()
     yield
     try:
         await close_http_client(app.state.http_client)
