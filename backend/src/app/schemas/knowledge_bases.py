@@ -13,7 +13,7 @@ from app.schemas.pagination import PageMeta
 
 
 class ChunkingStrategy(str, Enum):
-    SLIDING_WINDOW = "sliding_window"
+    QUERY_DEPENDENT_CHUNKING = "query_dependent_chunking"
     MAX_MIN_SEMANTIC = "max_min_semantic"
     PARENT_CHILD = "parent_child"
     MARKDOWN_HEADING = "markdown_heading"
@@ -47,17 +47,27 @@ class MarkdownHeadingConfig(BaseModel):
         return self
 
 
-class SlidingWindowConfig(BaseModel):
+class QueryDependentWindowConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     chunk_size: int = Field(512, ge=128, le=20000)
     chunk_overlap: int = Field(64, ge=0, le=2000)
 
     @model_validator(mode="after")
-    def _validate_overlap(self) -> "SlidingWindowConfig":
+    def _validate_overlap(self) -> "QueryDependentWindowConfig":
         if self.chunk_overlap >= self.chunk_size:
             raise ValueError("chunk_overlap must be less than chunk_size")
         return self
+
+
+class QueryDependentChunkingConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    windows: list[QueryDependentWindowConfig] = Field(
+        default_factory=lambda: [QueryDependentWindowConfig()],
+        min_length=1,
+        max_length=5,
+    )
 
 
 class SemanticConfig(BaseModel):
@@ -118,8 +128,10 @@ class ChunkingConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     markdown_heading: MarkdownHeadingConfig = Field(default_factory=MarkdownHeadingConfig)
-    general_strategy: ChunkingStrategy = ChunkingStrategy.SLIDING_WINDOW
-    sliding_window: SlidingWindowConfig = Field(default_factory=SlidingWindowConfig)
+    general_strategy: ChunkingStrategy = ChunkingStrategy.QUERY_DEPENDENT_CHUNKING
+    query_dependent_chunking: QueryDependentChunkingConfig = Field(
+        default_factory=QueryDependentChunkingConfig
+    )
     semantic: SemanticConfig = Field(default_factory=SemanticConfig)
     parent_child: ParentChildConfig = Field(default_factory=ParentChildConfig)
 
@@ -145,11 +157,21 @@ class RetrievalParentChildConfig(BaseModel):
     max_children_per_parent: int = Field(2, ge=1, le=10)
 
 
+class RetrievalQueryDependentConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    rrf_k: int = Field(60, ge=1, le=200)
+    max_chunks_per_document: int = Field(2, ge=1, le=20)
+
+
 class RetrievalConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     parent_child: RetrievalParentChildConfig = Field(
         default_factory=RetrievalParentChildConfig
+    )
+    query_dependent: RetrievalQueryDependentConfig = Field(
+        default_factory=RetrievalQueryDependentConfig
     )
 
 
