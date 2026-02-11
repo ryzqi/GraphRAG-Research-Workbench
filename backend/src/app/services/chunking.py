@@ -56,8 +56,7 @@ class ChunkingEngine:
             return []
 
         if _is_pdf_blocks(document):
-            chunk_size = index_config.chunking.sliding_window.chunk_size
-            overlap = index_config.chunking.sliding_window.chunk_overlap
+            chunk_size, overlap = _first_query_dependent_window(index_config)
             aggregated = _aggregate_pdf_blocks(document.chunks or [], chunk_size, overlap)
             items: list[ChunkItem] = []
             for block in aggregated:
@@ -93,16 +92,36 @@ class ChunkingEngine:
                 document,
                 chunking_strategy="max_min_semantic",
             )
-        # Includes explicit SLIDING_WINDOW and markdown-heading fallback.
-        return _wrap_chunks(
-            _split_sliding_window(
-                document.text or "",
-                index_config.chunking.sliding_window.chunk_size,
-                index_config.chunking.sliding_window.chunk_overlap,
-            ),
-            document,
-            chunking_strategy="sliding_window",
-        )
+        return self._split_query_dependent_chunking(document, index_config)
+
+    def _split_query_dependent_chunking(
+        self, document: ParsedDocument, index_config: IndexConfig
+    ) -> list[ChunkItem]:
+        text = document.text or ""
+        items: list[ChunkItem] = []
+
+        for window_index, window in enumerate(
+            index_config.chunking.query_dependent_chunking.windows
+        ):
+            chunks = _split_sliding_window(text, window.chunk_size, window.chunk_overlap)
+            for chunk_index, chunk in enumerate(chunks):
+                metadata = {
+                    "chunking_strategy": "query_dependent_chunking",
+                    "window_index": window_index,
+                    "window_size": window.chunk_size,
+                    "window_overlap": window.chunk_overlap,
+                    "index": chunk_index,
+                }
+                locator = {"window_index": window_index, "index": chunk_index}
+                items.append(
+                    ChunkItem(
+                        content=chunk,
+                        locator=_merge_locators(document.locator, locator),
+                        metadata=_merge_metadata(document.metadata, metadata),
+                    )
+                )
+
+        return items
 
     async def _split_semantic(
         self, text: str, index_config: IndexConfig
@@ -117,15 +136,12 @@ class ChunkingEngine:
         try:
             vectors = await embedding.embed(texts=sentences)
         except Exception as exc:
+            chunk_size, chunk_overlap = _first_query_dependent_window(index_config)
             logger.warning(
-                "Semantic chunking failed, fallback to sliding window",
+                "Semantic chunking failed, fallback to first query-dependent window",
                 extra={"error": str(exc)},
             )
-            return _split_sliding_window(
-                text,
-                index_config.chunking.sliding_window.chunk_size,
-                index_config.chunking.sliding_window.chunk_overlap,
-            )
+            return _split_sliding_window(text, chunk_size, chunk_overlap)
 
         min_tokens = max(index_config.chunking.semantic.min_tokens, 1)
         max_tokens = max(index_config.chunking.semantic.max_tokens, min_tokens)
@@ -286,6 +302,11 @@ def _split_sentences(text: str) -> list[str]:
     if tail:
         sentences.append(tail)
     return sentences
+
+
+def _first_query_dependent_window(index_config: IndexConfig) -> tuple[int, int]:
+    window = index_config.chunking.query_dependent_chunking.windows[0]
+    return window.chunk_size, window.chunk_overlap
 
 
 def _split_sliding_window(text: str, chunk_size: int, chunk_overlap: int) -> list[str]:
