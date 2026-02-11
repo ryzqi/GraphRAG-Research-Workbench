@@ -22,7 +22,6 @@ import {
   Tab,
   Tabs,
   TextField,
-  Tooltip,
   Typography,
   useMediaQuery,
   useTheme,
@@ -406,7 +405,7 @@ function ChunkBrowserSection({
         <Stack direction='row' spacing={1} flexWrap='wrap' useFlexGap>
           <Chip icon={<DescriptionOutlinedIcon />} label={`文档 ${filteredMaterials.length}`} size='small' variant='outlined' />
           <Chip icon={<ViewAgendaOutlinedIcon />} label={`分块 ${chunks.length}`} size='small' variant='outlined' color='primary' />
-          <Chip icon={<NotesOutlinedIcon />} label={selectedChunk ? `当前 #${selectedChunk.chunk_index}` : '未选择分块'} size='small' variant='outlined' />
+          <Chip icon={<NotesOutlinedIcon />} label={selectedChunk ? `当前 ${selectedChunk.chunk_index}` : '未选择分块'} size='small' variant='outlined' />
         </Stack>
       </Stack>
 
@@ -580,7 +579,7 @@ function ChunkBrowserSection({
                       primary={
                         <Stack direction='row' spacing={1} alignItems='center' flexWrap='wrap' useFlexGap>
                           <Typography variant='body2' fontWeight={700}>
-                            #{item.chunk_index}
+                            {item.chunk_index}
                           </Typography>
                           <Chip
                             label={contextStatusLabel(item.context_status)}
@@ -637,7 +636,7 @@ function ChunkBrowserSection({
           ) : (
             <Stack spacing={1.25}>
               <Stack direction='row' spacing={1} flexWrap='wrap' useFlexGap>
-                <Chip label={`Chunk #${selectedChunk.chunk_index}`} size='small' color='primary' />
+                <Chip label={`Chunk ${selectedChunk.chunk_index}`} size='small' color='primary' />
                 <Chip
                   label={contextStatusLabel(selectedChunk.context_status)}
                   size='small'
@@ -876,10 +875,6 @@ export default function KnowledgeBaseDetailPage() {
               size='small'
               variant='outlined'
             />
-            <Chip label={`配置版本 v${kb.current_config_version}`} size='small' variant='outlined' />
-            <Tooltip title={`最后更新时间 ${new Date(kb.updated_at).toLocaleString()}`}>
-              <Chip label='详情工作台' size='small' color='primary' variant='outlined' />
-            </Tooltip>
           </Stack>
         </Stack>
       </Paper>
