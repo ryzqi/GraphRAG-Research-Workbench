@@ -40,6 +40,4 @@ docs/
 AGENTS.md
 CLAUDE.md
 .plans
-知识代理实现方案.md
-知识库代理编排图.md
 frontend\node_modules/

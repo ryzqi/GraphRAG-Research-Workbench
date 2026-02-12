@@ -59,6 +59,18 @@ function clampWindowCount(value: number): number {
   return Math.max(1, Math.min(5, Math.trunc(value)));
 }
 
+const SEMANTIC_THRESHOLD_MODE_OPTIONS: SemanticThresholdMode[] = [
+  'percentile',
+  'hybrid',
+  'fixed',
+];
+
+const SEMANTIC_THRESHOLD_MODE_LABELS: Record<SemanticThresholdMode, string> = {
+  percentile: '百分位阈值',
+  hybrid: '混合阈值',
+  fixed: '固定阈值',
+};
+
 export function IndexConfigForm({
   value,
   onChange,
@@ -348,9 +360,11 @@ export function IndexConfigForm({
                     helperText="语义断点阈值策略"
                     fullWidth
                   >
-                    <MenuItem value="percentile">percentile</MenuItem>
-                    <MenuItem value="hybrid">hybrid</MenuItem>
-                    <MenuItem value="fixed">fixed</MenuItem>
+                    {SEMANTIC_THRESHOLD_MODE_OPTIONS.map((mode) => (
+                      <MenuItem key={mode} value={mode}>
+                        {SEMANTIC_THRESHOLD_MODE_LABELS[mode]}
+                      </MenuItem>
+                    ))}
                   </TextField>
                   <TextField
                     label="overlap_chars"
