@@ -102,6 +102,19 @@ class MemoryKeys(TypedDict, total=False):
     kb_ids: list[str]
 
 
+class KbChatRuntimeConfig(TypedDict, total=False):
+    """Per-session runtime feature toggles for KB answer chain."""
+
+    query_rewrite_enabled: bool
+    ambiguity_check_enabled: bool
+    decomposition_enabled: bool
+    multi_query_enabled: bool
+    hyde_enabled: bool
+    hybrid_retrieval_enabled: bool
+    rerank_enabled: bool
+    force_retrieve_enabled: bool
+
+
 # -----------------------------
 # Graph state schema
 # -----------------------------
@@ -129,6 +142,7 @@ class KbChatAgenticStateBase(TypedDict):
 
     # Store/checkpointer namespace (values are JSON-friendly).
     memory_keys: MemoryKeys
+    runtime_config: KbChatRuntimeConfig
 
 
 class KbChatAgenticState(KbChatAgenticStateBase, total=False):
@@ -174,6 +188,7 @@ def make_initial_state(
     user_input: str,
     messages: list[AnyMessage] | None = None,
     memory_keys: MemoryKeys | None = None,
+    runtime_config: KbChatRuntimeConfig | None = None,
 ) -> KbChatAgenticState:
     """Create a minimal, serializable initial state for an agentic KB chat run."""
 
@@ -190,6 +205,7 @@ def make_initial_state(
         "stage_summaries": {},
         "metrics": {},
         "memory_keys": memory_keys or {},
+        "runtime_config": runtime_config or {},
         # Pre-initialize list fields to reduce KeyError risk in early node work.
         "sub_queries": [],
         "multi_queries": [],

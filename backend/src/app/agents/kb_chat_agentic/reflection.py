@@ -24,6 +24,7 @@ from app.services.query_rewrite_service import QueryRewriteService, build_query_
 
 from .budget import effective_timeout_seconds, now_iso, remaining_budget_seconds
 from .json_safety import ensure_json_safe
+from .runtime_config import force_retrieve_enabled, query_rewrite_enabled
 
 _CODE_FENCE_RE = re.compile(r"^```(?:json)?\s*|\s*```$", re.IGNORECASE)
 _JSON_OBJ_RE = re.compile(r"\{.*\}", re.DOTALL)
@@ -727,7 +728,11 @@ async def transform_query_for_retry(
     new_query = current
     try:
         svc = QueryRewriteService(settings=settings)
-        result = await svc.transform_query(current, reason=_as_str(reason) or "retry")
+        result = await svc.transform_query(
+            current,
+            reason=_as_str(reason) or "retry",
+            enabled=query_rewrite_enabled(state, settings),
+        )
         if result.query.strip():
             new_query = result.query.strip()
     except asyncio.CancelledError:
@@ -816,7 +821,7 @@ def route_after_answer_check(state: dict, settings: Settings) -> str:
     if _total_rounds_exceeded(loop_counts, settings):
         return "force_exit"
 
-    force_retrieve = bool(state.get("force_kb_retrieve"))
+    force_retrieve = force_retrieve_enabled(state, settings)
     if force_retrieve and not _retrieval_attempted(state):
         if loop_counts["retrieval_retries"] < int(
             settings.kb_chat_max_retrieval_retries

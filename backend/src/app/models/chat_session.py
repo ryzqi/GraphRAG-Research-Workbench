@@ -8,7 +8,7 @@ from enum import Enum
 from typing import TYPE_CHECKING
 
 import sqlalchemy as sa
-from sqlalchemy.dialects.postgresql import ARRAY
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -47,6 +47,7 @@ class ChatSession(Base):
     mode: Mapped[AgentMode] = mapped_column(
         enum_values(AgentMode, name="agent_mode"), nullable=False
     )
+    kb_chat_config: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     title: Mapped[str | None] = mapped_column(sa.String(256), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()

@@ -16,11 +16,23 @@ export type ChatMessageResponseStatus =
   | 'pending_tool_approval'
   | 'pending_user_clarification';
 
+export interface KbChatConfig {
+  query_rewrite_enabled: boolean;
+  ambiguity_check_enabled: boolean;
+  decomposition_enabled: boolean;
+  multi_query_enabled: boolean;
+  hyde_enabled: boolean;
+  hybrid_retrieval_enabled: boolean;
+  rerank_enabled: boolean;
+  force_retrieve_enabled: boolean;
+}
+
 export interface ChatSessionCreate {
   session_type: ChatSessionType;
   selected_kb_ids?: string[];
   allow_external?: boolean;
   mode: AgentMode;
+  kb_chat_config?: KbChatConfig;
 }
 
 export interface ChatSession {
@@ -29,6 +41,7 @@ export interface ChatSession {
   selected_kb_ids: string[] | null;
   allow_external: boolean;
   mode: AgentMode;
+  kb_chat_config: KbChatConfig | null;
   created_at: string;
   updated_at: string;
 }

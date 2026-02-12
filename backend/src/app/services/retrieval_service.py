@@ -81,6 +81,13 @@ class RetrievalStats:
 
 
 @dataclass(slots=True)
+class RetrievalFeatureFlags:
+    query_rewrite_enabled: bool
+    hybrid_enabled: bool
+    rerank_enabled: bool
+
+
+@dataclass(slots=True)
 class RetrievalLayerDraft:
     """Unified retrieval layer output (for agentic state + legacy tool compatibility).
 
@@ -230,25 +237,58 @@ class RetrievalService:
         return f"rewrite:{hashlib.md5(query.encode()).hexdigest()}"
 
     def _strategy_fingerprint(
-        self, top_k: int, kb_fingerprint: dict[str, dict] | None = None
+        self,
+        top_k: int,
+        *,
+        feature_flags: RetrievalFeatureFlags,
+        kb_fingerprint: dict[str, dict] | None = None,
     ) -> dict:
         """生成策略指纹，避免配置变更误命中缓存。"""
         fingerprint = {
             "top_k": top_k,
             "min_score": self._settings.retrieval_min_score,
-            "hybrid_enabled": self._settings.retrieval_hybrid_enabled,
+            "hybrid_enabled": feature_flags.hybrid_enabled,
             "hybrid_ranker": self._settings.retrieval_hybrid_ranker,
             "hybrid_dense_weight": self._settings.retrieval_hybrid_dense_weight,
             "hybrid_sparse_weight": self._settings.retrieval_hybrid_sparse_weight,
             "hybrid_rrf_k": self._settings.retrieval_hybrid_rrf_k,
-            "rewrite_enabled": self._settings.retrieval_query_rewrite_enabled,
-            "rerank_enabled": self._settings.retrieval_rerank_enabled,
+            "rewrite_enabled": feature_flags.query_rewrite_enabled,
+            "rerank_enabled": feature_flags.rerank_enabled,
             "rerank_model": self._settings.retrieval_rerank_model,
             "embedding_model": self._settings.embedding_model,
         }
         if kb_fingerprint:
             fingerprint["kb_retrieval"] = kb_fingerprint
         return fingerprint
+
+    def _resolve_feature_flags(
+        self,
+        feature_overrides: dict[str, bool] | None,
+    ) -> RetrievalFeatureFlags:
+        query_rewrite_enabled = bool(self._settings.retrieval_query_rewrite_enabled)
+        hybrid_enabled = bool(self._settings.retrieval_hybrid_enabled)
+        rerank_enabled = bool(self._settings.retrieval_rerank_enabled)
+
+        if isinstance(feature_overrides, dict):
+            override_rewrite = feature_overrides.get("query_rewrite_enabled")
+            if isinstance(override_rewrite, bool):
+                query_rewrite_enabled = override_rewrite
+
+            override_hybrid = feature_overrides.get("hybrid_retrieval_enabled")
+            if not isinstance(override_hybrid, bool):
+                override_hybrid = feature_overrides.get("hybrid_enabled")
+            if isinstance(override_hybrid, bool):
+                hybrid_enabled = override_hybrid
+
+            override_rerank = feature_overrides.get("rerank_enabled")
+            if isinstance(override_rerank, bool):
+                rerank_enabled = override_rerank
+
+        return RetrievalFeatureFlags(
+            query_rewrite_enabled=query_rewrite_enabled,
+            hybrid_enabled=hybrid_enabled,
+            rerank_enabled=rerank_enabled,
+        )
 
     def _normalize_query(self, query: str) -> str:
         """规范化 query，用于缓存一致性。"""
@@ -307,10 +347,19 @@ class RetrievalService:
         return embeddings[0]
 
     async def _maybe_rewrite_query(
-        self, query: str, *, timeout_seconds: float | None = None
+        self,
+        query: str,
+        *,
+        timeout_seconds: float | None = None,
+        enabled: bool | None = None,
     ) -> RewriteResult:
         """可选查询重写，失败回退原 query。"""
-        if not self._settings.retrieval_query_rewrite_enabled:
+        rewrite_enabled = (
+            bool(self._settings.retrieval_query_rewrite_enabled)
+            if enabled is None
+            else bool(enabled)
+        )
+        if not rewrite_enabled:
             return RewriteResult(
                 query=query,
                 rewritten=False,
@@ -464,6 +513,7 @@ class RetrievalService:
         rerank_input_limit: int | None = None,
         extra_filter_expr: str | None = None,
         timeout_seconds: float | None = None,
+        feature_overrides: dict[str, bool] | None = None,
     ) -> RetrievalLayerDraft:
         """Unified RetrievalLayer: dense + BM25 + global RRF + optional rerank + Top-N.
 
@@ -481,6 +531,8 @@ class RetrievalService:
             draft = self._empty_layer_draft()
             self._last_layer_draft = draft
             return draft
+
+        feature_flags = self._resolve_feature_flags(feature_overrides)
 
         def _timeout_draft() -> RetrievalLayerDraft:
             draft = self._empty_layer_draft(reason="timeout")
@@ -559,9 +611,7 @@ class RetrievalService:
                     return _timeout_draft()
 
             use_dense = bool(item.get("use_dense", True))
-            use_bm25 = bool(item.get("use_bm25", True)) and bool(
-                self._settings.retrieval_hybrid_enabled
-            )
+            use_bm25 = bool(item.get("use_bm25", True)) and feature_flags.hybrid_enabled
 
             embedding: list[float] | None = None
             if use_dense:
@@ -829,7 +879,7 @@ class RetrievalService:
         final_results: list[RetrievalResult] = []
 
         candidates_for_rerank = rrf_results[:rerank_input_limit]
-        if candidates_for_rerank and self._settings.retrieval_rerank_enabled:
+        if candidates_for_rerank and feature_flags.rerank_enabled:
             try:
                 rerank_timeout = self._effective_timeout(
                     deadline=deadline, per_call_timeout=timeout_seconds
@@ -840,6 +890,7 @@ class RetrievalService:
                     top_n,
                     timeout_seconds=rerank_timeout,
                     hard_timeout=False,
+                    enabled=feature_flags.rerank_enabled,
                 )
             except asyncio.TimeoutError:
                 # Rerank is optional: degrade to RRF order when timeout happens.
@@ -925,6 +976,8 @@ class RetrievalService:
                 "rrf_candidates": len(rrf_results),
                 "global_candidates_limit": global_candidates_limit,
                 "rerank_input_limit": rerank_input_limit,
+                "hybrid_enabled": feature_flags.hybrid_enabled,
+                "rerank_enabled": feature_flags.rerank_enabled,
                 "rerank_applied": rerank_applied,
                 "rerank_reason": rerank_reason,
                 "rerank_latency_ms": rerank_latency_ms,
@@ -941,9 +994,15 @@ class RetrievalService:
         *,
         timeout_seconds: float | None = None,
         hard_timeout: bool = False,
+        enabled: bool | None = None,
     ) -> tuple[list[RetrievalResult], bool, str | None, int | None]:
         """可选 rerank，失败回退原排序。"""
-        if not self._settings.retrieval_rerank_enabled:
+        rerank_enabled = (
+            bool(self._settings.retrieval_rerank_enabled)
+            if enabled is None
+            else bool(enabled)
+        )
+        if not rerank_enabled:
             return results, False, "disabled", None
 
         if not results:
@@ -1331,9 +1390,11 @@ class RetrievalService:
         kb_ids: list[uuid.UUID],
         top_k: int | None = None,
         timeout_seconds: float | None = None,
+        feature_overrides: dict[str, bool] | None = None,
     ) -> list[RetrievalResult]:
         """检索相关 chunk。"""
         deadline = self._make_deadline(timeout_seconds)
+        feature_flags = self._resolve_feature_flags(feature_overrides)
         if not kb_ids:
             self._last_layer_draft = self._empty_layer_draft()
             return []
@@ -1354,17 +1415,17 @@ class RetrievalService:
                 filtered_count=0,
                 returned_count=0,
                 cache_hit=False,
-                rewrite_enabled=self._settings.retrieval_query_rewrite_enabled,
+                rewrite_enabled=feature_flags.query_rewrite_enabled,
                 rewrite_applied=False,
                 rewrite_reason="timeout",
                 rewrite_latency_ms=None,
-                hybrid_enabled=self._settings.retrieval_hybrid_enabled,
+                hybrid_enabled=feature_flags.hybrid_enabled,
                 hybrid_ranker=(
                     self._settings.retrieval_hybrid_ranker
-                    if self._settings.retrieval_hybrid_enabled
+                    if feature_flags.hybrid_enabled
                     else None
                 ),
-                rerank_enabled=self._settings.retrieval_rerank_enabled,
+                rerank_enabled=feature_flags.rerank_enabled,
                 reason="timeout",
             )
             return []
@@ -1388,17 +1449,17 @@ class RetrievalService:
                 filtered_count=0,
                 returned_count=0,
                 cache_hit=False,
-                rewrite_enabled=self._settings.retrieval_query_rewrite_enabled,
+                rewrite_enabled=feature_flags.query_rewrite_enabled,
                 rewrite_applied=False,
                 rewrite_reason="timeout",
                 rewrite_latency_ms=None,
-                hybrid_enabled=self._settings.retrieval_hybrid_enabled,
+                hybrid_enabled=feature_flags.hybrid_enabled,
                 hybrid_ranker=(
                     self._settings.retrieval_hybrid_ranker
-                    if self._settings.retrieval_hybrid_enabled
+                    if feature_flags.hybrid_enabled
                     else None
                 ),
-                rerank_enabled=self._settings.retrieval_rerank_enabled,
+                rerank_enabled=feature_flags.rerank_enabled,
                 reason="timeout",
             )
             return []
@@ -1418,7 +1479,9 @@ class RetrievalService:
         if remaining is not None and remaining <= 0:
             return _timeout_return()
         rewrite_result = await self._maybe_rewrite_query(
-            normalized_query, timeout_seconds=remaining
+            normalized_query,
+            timeout_seconds=remaining,
+            enabled=feature_flags.query_rewrite_enabled,
         )
         effective_query = rewrite_result.query or normalized_query
         if not effective_query.strip():
@@ -1430,7 +1493,11 @@ class RetrievalService:
                 latency_ms=rewrite_result.latency_ms,
             )
 
-        strategy = self._strategy_fingerprint(top_k, kb_fingerprint)
+        strategy = self._strategy_fingerprint(
+            top_k,
+            feature_flags=feature_flags,
+            kb_fingerprint=kb_fingerprint,
+        )
         cache_key = self._cache_key(effective_query, kb_ids, top_k, strategy)
         if self._redis and self._settings.retrieval_cache_enabled:
             timeout_value = self._effective_timeout(
@@ -1522,17 +1589,17 @@ class RetrievalService:
                     filtered_count=filtered_count,
                     returned_count=len(results),
                     cache_hit=True,
-                    rewrite_enabled=self._settings.retrieval_query_rewrite_enabled,
+                    rewrite_enabled=feature_flags.query_rewrite_enabled,
                     rewrite_applied=rewrite_result.rewritten,
                     rewrite_reason=rewrite_result.reason,
                     rewrite_latency_ms=rewrite_result.latency_ms,
-                    hybrid_enabled=self._settings.retrieval_hybrid_enabled,
+                    hybrid_enabled=feature_flags.hybrid_enabled,
                     hybrid_ranker=(
                         self._settings.retrieval_hybrid_ranker
-                        if self._settings.retrieval_hybrid_enabled
+                        if feature_flags.hybrid_enabled
                         else None
                     ),
-                    rerank_enabled=self._settings.retrieval_rerank_enabled,
+                    rerank_enabled=feature_flags.rerank_enabled,
                 )
                 return results
 
@@ -1550,6 +1617,11 @@ class RetrievalService:
             global_candidates_limit=self._settings.retrieval_max_top_k,
             rerank_input_limit=self._settings.retrieval_max_top_k,
             timeout_seconds=remaining,
+            feature_overrides={
+                "query_rewrite_enabled": feature_flags.query_rewrite_enabled,
+                "hybrid_retrieval_enabled": feature_flags.hybrid_enabled,
+                "rerank_enabled": feature_flags.rerank_enabled,
+            },
         )
         results = layer.results
         total_hits = int(
@@ -1570,17 +1642,17 @@ class RetrievalService:
                 filtered_count=0,
                 returned_count=0,
                 cache_hit=False,
-                rewrite_enabled=self._settings.retrieval_query_rewrite_enabled,
+                rewrite_enabled=feature_flags.query_rewrite_enabled,
                 rewrite_applied=rewrite_result.rewritten,
                 rewrite_reason=rewrite_result.reason,
                 rewrite_latency_ms=rewrite_result.latency_ms,
-                hybrid_enabled=self._settings.retrieval_hybrid_enabled,
+                hybrid_enabled=feature_flags.hybrid_enabled,
                 hybrid_ranker=(
                     self._settings.retrieval_hybrid_ranker
-                    if self._settings.retrieval_hybrid_enabled
+                    if feature_flags.hybrid_enabled
                     else None
                 ),
-                rerank_enabled=self._settings.retrieval_rerank_enabled,
+                rerank_enabled=feature_flags.rerank_enabled,
                 reason=cast(str | None, layer.stats.get("reason")),
             )
             return []
@@ -1609,17 +1681,17 @@ class RetrievalService:
             filtered_count=filtered_count,
             returned_count=len(results),
             cache_hit=False,
-            rewrite_enabled=self._settings.retrieval_query_rewrite_enabled,
+            rewrite_enabled=feature_flags.query_rewrite_enabled,
             rewrite_applied=rewrite_result.rewritten,
             rewrite_reason=rewrite_result.reason,
             rewrite_latency_ms=rewrite_result.latency_ms,
-            hybrid_enabled=self._settings.retrieval_hybrid_enabled,
+            hybrid_enabled=feature_flags.hybrid_enabled,
             hybrid_ranker=(
                 self._settings.retrieval_hybrid_ranker
-                if self._settings.retrieval_hybrid_enabled
+                if feature_flags.hybrid_enabled
                 else None
             ),
-            rerank_enabled=self._settings.retrieval_rerank_enabled,
+            rerank_enabled=feature_flags.rerank_enabled,
             rerank_applied=bool(layer.stats.get("rerank_applied")),
             rerank_reason=cast(str | None, layer.stats.get("rerank_reason")),
             rerank_latency_ms=cast(int | None, layer.stats.get("rerank_latency_ms")),

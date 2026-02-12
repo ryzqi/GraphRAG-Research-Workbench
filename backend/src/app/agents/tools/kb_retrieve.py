@@ -46,6 +46,7 @@ def build_kb_retrieve_tool(
     *,
     retrieval: RetrievalService,
     default_kb_ids: list[uuid.UUID],
+    retrieval_overrides: dict[str, bool] | None = None,
     context_builder: ContextBuilder | None = None,
     tool_output_max_chars: int = DEFAULT_TOOL_OUTPUT_MAX_CHARS,
     on_results: Callable[[list[RetrievalResult], dict[str, Any]], None] | None = None,
@@ -111,6 +112,7 @@ def build_kb_retrieve_tool(
                 top_n=top_n,
                 per_query_top_k=top_n,
                 timeout_seconds=timeout_seconds,
+                feature_overrides=retrieval_overrides,
             )
             results = layer.results
         else:
@@ -119,6 +121,7 @@ def build_kb_retrieve_tool(
                 kb_ids=resolved,
                 top_k=top_k,
                 timeout_seconds=timeout_seconds,
+                feature_overrides=retrieval_overrides,
             )
 
         if context_builder is None:

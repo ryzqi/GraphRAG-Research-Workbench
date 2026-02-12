@@ -45,8 +45,10 @@ from app.schemas.chats import (
     AgentRunRead,
     ChatAnswerResponse,
     ChatMessageRead,
+    KbChatConfig,
     ChatPendingUserClarificationResponse,
     EvidenceItem,
+    resolve_kb_chat_config,
 )
 from app.services.context_builder import ContextBuilder
 from app.services.conversation_summary_service import ConversationSummaryService
@@ -110,6 +112,7 @@ class _KbChatExecution:
     started_at: datetime
     thread_id: str
     run: AgentRun
+    kb_chat_config: KbChatConfig
     history_usage: dict[str, Any]
     history_truncation: dict[str, Any]
     retrieval_results: list
@@ -153,7 +156,24 @@ class KbChatService:
             tool_meta_by_name=tool_meta_by_name,
         )
 
-    def _build_trace_snapshot(self, *, layer_stats: dict[str, Any]) -> dict[str, Any]:
+    def _resolve_session_kb_chat_config(self, session: ChatSession) -> KbChatConfig:
+        raw = session.kb_chat_config if isinstance(session.kb_chat_config, dict) else None
+        return resolve_kb_chat_config(raw=raw, settings=self._settings)
+
+    @staticmethod
+    def _to_retrieval_overrides(config: KbChatConfig) -> dict[str, bool]:
+        return {
+            "query_rewrite_enabled": bool(config.query_rewrite_enabled),
+            "hybrid_retrieval_enabled": bool(config.hybrid_retrieval_enabled),
+            "rerank_enabled": bool(config.rerank_enabled),
+        }
+
+    def _build_trace_snapshot(
+        self,
+        *,
+        layer_stats: dict[str, Any],
+        kb_chat_config: KbChatConfig,
+    ) -> dict[str, Any]:
         """Build a minimal, non-sensitive snapshot for production observability."""
         prompt_version = None
         try:
@@ -163,7 +183,7 @@ class KbChatService:
 
         return {
             "config": {
-                "force_retrieve": bool(self._settings.kb_chat_force_retrieve),
+                "force_retrieve": bool(kb_chat_config.force_retrieve_enabled),
                 "total_timeout_seconds": float(
                     self._settings.kb_chat_total_timeout_seconds
                 ),
@@ -174,20 +194,21 @@ class KbChatService:
                 "max_generation_retries": int(
                     self._settings.kb_chat_max_generation_retries
                 ),
-                "ambiguity_check_enabled": bool(
-                    self._settings.kb_chat_ambiguity_check_enabled
-                ),
-                "decomposition_enabled": bool(
-                    self._settings.kb_chat_decomposition_enabled
-                ),
+                "query_rewrite_enabled": bool(kb_chat_config.query_rewrite_enabled),
+                "ambiguity_check_enabled": bool(kb_chat_config.ambiguity_check_enabled),
+                "decomposition_enabled": bool(kb_chat_config.decomposition_enabled),
                 "decomposition_max_sub_questions": int(
                     self._settings.kb_chat_decomposition_max_sub_questions
                 ),
-                "multi_query_enabled": bool(self._settings.kb_chat_multi_query_enabled),
+                "multi_query_enabled": bool(kb_chat_config.multi_query_enabled),
                 "multi_query_max_variants": int(
                     self._settings.kb_chat_multi_query_max_variants
                 ),
-                "hyde_enabled": bool(self._settings.kb_chat_hyde_enabled),
+                "hyde_enabled": bool(kb_chat_config.hyde_enabled),
+                "hybrid_retrieval_enabled": bool(
+                    kb_chat_config.hybrid_retrieval_enabled
+                ),
+                "rerank_enabled": bool(kb_chat_config.rerank_enabled),
             },
             "versions": {
                 "llm_model": self._settings.llm_model,
@@ -326,6 +347,8 @@ class KbChatService:
 
         kb_ids = session.selected_kb_ids or []
         default_kb_ids = [uuid.UUID(str(kid)) for kid in kb_ids]
+        kb_chat_config = self._resolve_session_kb_chat_config(session)
+        retrieval_overrides = self._to_retrieval_overrides(kb_chat_config)
 
         # kb_retrieve：通过回调收集检索结果（用于 Evidence 落库/指标）
         retrieval_results: list = []
@@ -379,6 +402,7 @@ class KbChatService:
         kb_tool = build_kb_retrieve_tool(
             retrieval=self._retrieval,
             default_kb_ids=default_kb_ids,
+            retrieval_overrides=retrieval_overrides,
             context_builder=self._context_builder,
             on_results=_on_results,
         )
@@ -427,14 +451,16 @@ class KbChatService:
                 "thread_id": str(session.id),
                 "kb_ids": [str(kid) for kid in (session.selected_kb_ids or [])],
             },
+            runtime_config=kb_chat_config.model_dump(mode="json"),
         )
         state["metrics"] = {"context": context_metrics}
-        state["force_kb_retrieve"] = self._settings.kb_chat_force_retrieve
+        state["force_kb_retrieve"] = kb_chat_config.force_retrieve_enabled
 
         return _KbChatExecution(
             started_at=started_at,
             thread_id=thread_id,
             run=run,
+            kb_chat_config=kb_chat_config,
             history_usage=history_usage,
             history_truncation=history_truncation,
             retrieval_results=retrieval_results,
@@ -447,6 +473,7 @@ class KbChatService:
     def _build_observability(
         self,
         *,
+        kb_chat_config: KbChatConfig,
         history_usage: dict[str, Any],
         history_truncation: dict[str, Any],
         retrieval_meta: dict[str, Any],
@@ -498,7 +525,10 @@ class KbChatService:
         if self._settings.kb_chat_trace_enabled:
             metrics = {
                 **metrics,
-                **self._build_trace_snapshot(layer_stats=layer_stats),
+                **self._build_trace_snapshot(
+                    layer_stats=layer_stats,
+                    kb_chat_config=kb_chat_config,
+                ),
             }
 
         metrics = ensure_json_safe(metrics, settings=self._settings, label="metrics")
@@ -563,6 +593,7 @@ class KbChatService:
             )
         )
         metrics, stage_summaries = self._build_observability(
+            kb_chat_config=exec_ctx.kb_chat_config,
             history_usage=exec_ctx.history_usage,
             history_truncation=exec_ctx.history_truncation,
             retrieval_meta=exec_ctx.retrieval_meta,
@@ -817,6 +848,7 @@ class KbChatService:
                         break
 
             metrics, stage_summaries = self._build_observability(
+                kb_chat_config=exec_ctx.kb_chat_config,
                 history_usage=exec_ctx.history_usage,
                 history_truncation=exec_ctx.history_truncation,
                 retrieval_meta=exec_ctx.retrieval_meta,
@@ -864,6 +896,7 @@ class KbChatService:
 
         except asyncio.TimeoutError:
             metrics, stage_summaries = self._build_observability(
+                kb_chat_config=exec_ctx.kb_chat_config,
                 history_usage=exec_ctx.history_usage,
                 history_truncation=exec_ctx.history_truncation,
                 retrieval_meta=exec_ctx.retrieval_meta,
@@ -1226,6 +1259,7 @@ class KbChatService:
                     break
 
             metrics, stage_summaries = self._build_observability(
+                kb_chat_config=exec_ctx.kb_chat_config,
                 history_usage=exec_ctx.history_usage,
                 history_truncation=exec_ctx.history_truncation,
                 retrieval_meta=exec_ctx.retrieval_meta,
@@ -1288,6 +1322,7 @@ class KbChatService:
         except asyncio.TimeoutError:
             await _cancel_graph()
             metrics, stage_summaries = self._build_observability(
+                kb_chat_config=exec_ctx.kb_chat_config,
                 history_usage=exec_ctx.history_usage,
                 history_truncation=exec_ctx.history_truncation,
                 retrieval_meta=exec_ctx.retrieval_meta,

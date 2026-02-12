@@ -22,12 +22,14 @@ import RestartAltIcon from '@mui/icons-material/RestartAlt';
 import { Button } from '../components/ui/Button';
 import { ErrorAlert } from '../components/ui/ErrorAlert';
 import { KnowledgeBaseSelector } from '../components/KnowledgeBaseSelector';
+import { KbChatConfigPanel } from '../components/chat/KbChatConfigPanel';
 
 import type { ChatMessage } from '../components/chat/MessageList';
 import type { PipelineStep } from '../components/chat/PipelineProgress';
 
 import {
   type AgentMode,
+  type KbChatConfig,
   type ChatMessageResponse,
   type ChatSession,
   createChatSession,
@@ -68,6 +70,28 @@ const PIPELINE_STEP_ORDER: Record<string, number> = {
   generate: 3,
   verify: 4,
   finalize: 5,
+};
+
+const DEFAULT_KB_CHAT_CONFIG: KbChatConfig = {
+  query_rewrite_enabled: true,
+  ambiguity_check_enabled: true,
+  decomposition_enabled: false,
+  multi_query_enabled: false,
+  hyde_enabled: false,
+  hybrid_retrieval_enabled: true,
+  rerank_enabled: true,
+  force_retrieve_enabled: true,
+};
+
+const KB_CHAT_CONFIG_LABELS: Record<keyof KbChatConfig, string> = {
+  query_rewrite_enabled: '查询改写',
+  ambiguity_check_enabled: '歧义检测',
+  decomposition_enabled: '问题分解',
+  multi_query_enabled: '多路查询',
+  hyde_enabled: 'HyDE',
+  hybrid_retrieval_enabled: '混合检索',
+  rerank_enabled: '重排序',
+  force_retrieve_enabled: '强制检索',
 };
 
 function isPipelineStatus(value: unknown): value is PipelineStatus {
@@ -197,6 +221,7 @@ export function KbChatPage() {
   const knowledgeBases = knowledgeBasesQuery.data;
 
   const [selectedKbIds, setSelectedKbIds] = useState<string[]>([]);
+  const [kbChatConfig, setKbChatConfig] = useState<KbChatConfig>(DEFAULT_KB_CHAT_CONFIG);
   const [session, setSession] = useState<ChatSession | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
@@ -213,6 +238,15 @@ export function KbChatPage() {
     const map = new Map((knowledgeBases ?? []).map((kb) => [kb.id, kb.name]));
     return selectedKbIds.map((id) => map.get(id) ?? id);
   }, [knowledgeBases, selectedKbIds]);
+
+  const activeConfig = session?.kb_chat_config ?? kbChatConfig;
+  const enabledConfigLabels = useMemo(
+    () =>
+      (Object.keys(KB_CHAT_CONFIG_LABELS) as Array<keyof KbChatConfig>)
+        .filter((key) => Boolean(activeConfig[key]))
+        .map((key) => KB_CHAT_CONFIG_LABELS[key]),
+    [activeConfig]
+  );
 
   const hasPendingClarification = useMemo(
     () => messages.some((msg) => Boolean(msg.pendingClarification)),
@@ -235,6 +269,7 @@ export function KbChatPage() {
         if (!active) return;
         setSession(loadedSession);
         setSelectedKbIds(loadedSession.selected_kb_ids ?? []);
+        setKbChatConfig(loadedSession.kb_chat_config ?? DEFAULT_KB_CHAT_CONFIG);
         setMessages(
           history.map((msg) => ({
             id: msg.id,
@@ -248,6 +283,7 @@ export function KbChatPage() {
           setSession(null);
           setMessages([]);
           setSelectedKbIds([]);
+          setKbChatConfig(DEFAULT_KB_CHAT_CONFIG);
           const nextParams = new URLSearchParams(searchParams.toString());
           nextParams.delete('sessionId');
           replaceSearchParams(nextParams);
@@ -271,6 +307,7 @@ export function KbChatPage() {
     setSession(null);
     setMessages([]);
     setError(null);
+    setKbChatConfig(DEFAULT_KB_CHAT_CONFIG);
   }, [sessionId]);
 
   const updateMessage = useCallback(
@@ -360,15 +397,17 @@ export function KbChatPage() {
         selected_kb_ids: selectedKbIds,
         allow_external: false,
         mode: 'single_agent' as AgentMode,
+        kb_chat_config: kbChatConfig,
       });
       setSession(newSession);
+      setKbChatConfig(newSession.kb_chat_config ?? kbChatConfig);
       setMessages([]);
     } catch (e) {
       setError(getErrorMessage(e));
     } finally {
       setLoading(false);
     }
-  }, [selectedKbIds]);
+  }, [selectedKbIds, kbChatConfig]);
 
   const handleSend = useCallback(async () => {
     if (!session || !input.trim() || loading || loadingSession || hasPendingClarification) return;
@@ -765,6 +804,12 @@ export function KbChatPage() {
                   </Stack>
                 )}
 
+                <KbChatConfigPanel
+                  value={kbChatConfig}
+                  onChange={setKbChatConfig}
+                  disabled={loading || loadingSession || knowledgeBasesQuery.isLoading}
+                />
+
                 <Button
                   variant="contained"
                   onClick={startSession}
@@ -813,13 +858,27 @@ export function KbChatPage() {
           borderColor: 'divider',
         }}
       >
-        <Stack direction="row" spacing={1} alignItems="center">
-          <Typography variant="body2" color="text.secondary">
-            已选择 {session.selected_kb_ids?.length || 0} 个知识库
-          </Typography>
-          {hasPendingClarification && (
-            <Chip size="small" color="warning" label="等待补充信息" />
-          )}
+        <Stack spacing={0.75}>
+          <Stack direction="row" spacing={1} alignItems="center">
+            <Typography variant="body2" color="text.secondary">
+              已选择 {session.selected_kb_ids?.length || 0} 个知识库
+            </Typography>
+            {hasPendingClarification && (
+              <Chip size="small" color="warning" label="等待补充信息" />
+            )}
+          </Stack>
+          <Stack direction="row" spacing={0.75} flexWrap="wrap" useFlexGap>
+            {enabledConfigLabels.slice(0, 6).map((label) => (
+              <Chip key={label} size="small" label={label} variant="outlined" />
+            ))}
+            {enabledConfigLabels.length > 6 && (
+              <Chip
+                size="small"
+                label={`+${enabledConfigLabels.length - 6}`}
+                variant="outlined"
+              />
+            )}
+          </Stack>
         </Stack>
         <Button
           variant="outlined"

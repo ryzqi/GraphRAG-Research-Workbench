@@ -338,8 +338,17 @@ class QueryRewriteService:
         reason: str,
         hint: str | None = None,
         timeout_seconds: float | None = None,
+        enabled: bool = True,
     ) -> RewriteResult:
         """Transform query for retry (rewrite/expand), with safe fallback."""
+        if not enabled:
+            return RewriteResult(
+                query=query,
+                rewritten=False,
+                reason="disabled",
+                latency_ms=0,
+            )
+
         start = time.perf_counter()
         llm_result = await self._call_prompt_text(
             "kb_chat/transform_query",

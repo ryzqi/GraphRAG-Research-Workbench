@@ -7,7 +7,9 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from app.core.settings import Settings, get_settings
 
 
 class ChatSessionType(str, Enum):
@@ -45,12 +47,64 @@ class EvidenceSourceKind(str, Enum):
     EXTERNAL = "external"
 
 
+class KbChatConfig(BaseModel):
+    """Session-scoped KB answer chain feature toggles."""
+
+    query_rewrite_enabled: bool = True
+    ambiguity_check_enabled: bool = True
+    decomposition_enabled: bool = False
+    multi_query_enabled: bool = False
+    hyde_enabled: bool = False
+    hybrid_retrieval_enabled: bool = True
+    rerank_enabled: bool = True
+    force_retrieve_enabled: bool = True
+
+    @model_validator(mode="after")
+    def validate_mutual_exclusion(self) -> "KbChatConfig":
+        if self.decomposition_enabled and self.multi_query_enabled:
+            raise ValueError("decomposition_enabled 与 multi_query_enabled 不能同时开启")
+        return self
+
+
+def default_kb_chat_config(*, settings: Settings | None = None) -> KbChatConfig:
+    cfg = settings if settings is not None else get_settings()
+    return KbChatConfig(
+        query_rewrite_enabled=bool(cfg.retrieval_query_rewrite_enabled),
+        ambiguity_check_enabled=bool(cfg.kb_chat_ambiguity_check_enabled),
+        decomposition_enabled=bool(cfg.kb_chat_decomposition_enabled),
+        multi_query_enabled=bool(cfg.kb_chat_multi_query_enabled),
+        hyde_enabled=bool(cfg.kb_chat_hyde_enabled),
+        hybrid_retrieval_enabled=bool(cfg.retrieval_hybrid_enabled),
+        rerank_enabled=bool(cfg.retrieval_rerank_enabled),
+        force_retrieve_enabled=bool(cfg.kb_chat_force_retrieve),
+    )
+
+
+def resolve_kb_chat_config(
+    *,
+    raw: KbChatConfig | dict[str, Any] | None,
+    settings: Settings | None = None,
+) -> KbChatConfig:
+    defaults = default_kb_chat_config(settings=settings).model_dump(mode="json")
+    if raw is None:
+        return KbChatConfig.model_validate(defaults)
+    if isinstance(raw, KbChatConfig):
+        payload = raw.model_dump(mode="json")
+    elif isinstance(raw, dict):
+        payload = raw
+    else:
+        payload = defaults
+    merged = {**defaults, **payload}
+    return KbChatConfig.model_validate(merged)
+
+
 # 会话相关
 class ChatSessionCreate(BaseModel):
     session_type: ChatSessionType
     selected_kb_ids: list[uuid.UUID] | None = None
     allow_external: bool = False
     mode: AgentMode
+    kb_chat_config: KbChatConfig | None = None
 
 
 class ChatSessionRead(BaseModel):
@@ -61,6 +115,7 @@ class ChatSessionRead(BaseModel):
     selected_kb_ids: list[uuid.UUID] | None = None
     allow_external: bool
     mode: AgentMode
+    kb_chat_config: KbChatConfig | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -174,4 +229,3 @@ class ChatPendingUserClarificationResponse(BaseModel):
     thread_id: str
     message: str
     run: AgentRunRead
-

@@ -27,6 +27,13 @@ from .budget import (
     remaining_budget_seconds,
 )
 from .json_safety import ensure_json_safe
+from .runtime_config import (
+    ambiguity_check_enabled,
+    decomposition_enabled,
+    hyde_enabled,
+    multi_query_enabled,
+    query_rewrite_enabled,
+)
 
 
 def _get_last_human(messages: list[Any]) -> HumanMessage | None:
@@ -179,16 +186,24 @@ async def coref_rewrite(state: dict, settings: Settings) -> dict[str, Any]:
     rewritten = query
     reason: str | None = None
     remaining = remaining_budget_seconds(state, settings)
+    rewrite_enabled = query_rewrite_enabled(state, settings)
     timeout_value = effective_timeout_seconds(
         settings.retrieval_query_rewrite_timeout_seconds, remaining
     )
     if remaining <= 0 or timeout_value <= 0:
         rewritten = query
         reason = "budget_exhausted"
+    elif not rewrite_enabled:
+        rewritten = query
+        reason = "disabled"
     else:
         try:
             svc = QueryRewriteService(settings=settings)
-            result = await svc.coref_rewrite(query, timeout_seconds=timeout_value)
+            result = await svc.coref_rewrite(
+                query,
+                enabled=rewrite_enabled,
+                timeout_seconds=timeout_value,
+            )
             rewritten = result.query
             reason = result.reason
         except Exception:  # pragma: no cover
@@ -226,7 +241,7 @@ async def ambiguity_check(state: dict, settings: Settings) -> dict[str, Any]:
     reverse_question = ""
     reason: str | None = None
     remaining = remaining_budget_seconds(state, settings)
-    if settings.kb_chat_ambiguity_check_enabled and remaining > 0:
+    if ambiguity_check_enabled(state, settings) and remaining > 0:
         timeout_value = effective_timeout_seconds(
             settings.retrieval_query_rewrite_timeout_seconds, remaining
         )
@@ -306,7 +321,7 @@ async def normalize_rewrite(state: dict, settings: Settings) -> dict[str, Any]:
 
 def decomp_check_route(state: dict, settings: Settings) -> str:
     """Route: Decomposition enabled? (Decomposition and multi-query are mutually exclusive.)"""
-    if settings.kb_chat_decomposition_enabled:
+    if decomposition_enabled(state, settings):
         return "decomposition"
     return "multi_query_check"
 
@@ -322,7 +337,10 @@ async def decomposition(state: dict, settings: Settings) -> dict[str, Any]:
     reason: str | None = None
     try:
         svc = QueryRewriteService(settings=settings)
-        result = await svc.decompose(query, enabled=True)
+        result = await svc.decompose(
+            query,
+            enabled=decomposition_enabled(state, settings),
+        )
         sub_queries = result.queries
         reason = result.reason
     except Exception:  # pragma: no cover
@@ -346,7 +364,7 @@ async def decomposition(state: dict, settings: Settings) -> dict[str, Any]:
 
 def multi_query_check_route(state: dict, settings: Settings) -> str:
     """Route: multi-query enabled? (skipped when decomposition is enabled)."""
-    if settings.kb_chat_multi_query_enabled:
+    if multi_query_enabled(state, settings):
         return "generate_variants"
     return "hyde_check"
 
@@ -361,7 +379,10 @@ async def generate_variants(state: dict, settings: Settings) -> dict[str, Any]:
     reason: str | None = None
     try:
         svc = QueryRewriteService(settings=settings)
-        result = await svc.generate_variants(query, enabled=True)
+        result = await svc.generate_variants(
+            query,
+            enabled=multi_query_enabled(state, settings),
+        )
         deduped = result.queries
         reason = result.reason
     except Exception:  # pragma: no cover
@@ -413,7 +434,7 @@ async def entity_expand(state: dict, settings: Settings) -> dict[str, Any]:
 
 
 def hyde_check_route(state: dict, settings: Settings) -> str:
-    if settings.kb_chat_hyde_enabled:
+    if hyde_enabled(state, settings):
         return "hyde"
     return "prepare_messages"
 
@@ -428,7 +449,8 @@ async def hyde(state: dict, settings: Settings) -> dict[str, Any]:
     reason: str | None = None
     try:
         svc = QueryRewriteService(settings=settings)
-        result = await svc.hyde(query, enabled=True)
+        enabled = hyde_enabled(state, settings)
+        result = await svc.hyde(query, enabled=enabled)
         hyde_doc = result.text
         reason = result.reason
     except Exception:  # pragma: no cover
@@ -439,7 +461,7 @@ async def hyde(state: dict, settings: Settings) -> dict[str, Any]:
         state,
         "hyde",
         {
-            "enabled": True,
+            "enabled": hyde_enabled(state, settings),
             "reason": reason,
             "completed_at": now_iso(),
             "latency_ms": int((time.perf_counter() - start) * 1000),

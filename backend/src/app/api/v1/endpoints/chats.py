@@ -31,6 +31,7 @@ from app.schemas.chats import (
     ChatSessionCreate,
     ChatSessionRecentRead,
     ChatSessionRead,
+    resolve_kb_chat_config,
     ToolApprovalRequest,
 )
 from app.services.general_chat_service import GeneralChatService
@@ -46,6 +47,8 @@ async def create_chat_session(
     body: ChatSessionCreate,
 ) -> ChatSessionRead:
     """创建会话。"""
+    settings = get_settings()
+
     if body.session_type == ChatSessionType.KB_CHAT and not body.selected_kb_ids:
         raise bad_request(
             code="CHAT_MISSING_KB_IDS",
@@ -71,12 +74,26 @@ async def create_chat_session(
                 message="所选知识库尚不可用于业务入口",
                 details={"kb_ids": not_selectable},
             )
+    elif body.kb_chat_config is not None:
+        raise bad_request(
+            code="CHAT_KB_CONFIG_UNSUPPORTED",
+            message="仅 kb_chat 会话支持 kb_chat_config",
+        )
+
+    kb_chat_config_json = None
+    if body.session_type == ChatSessionType.KB_CHAT:
+        resolved = resolve_kb_chat_config(
+            raw=body.kb_chat_config,
+            settings=settings,
+        )
+        kb_chat_config_json = resolved.model_dump(mode="json")
 
     session = ChatSession(
         session_type=body.session_type,
         selected_kb_ids=body.selected_kb_ids,
         allow_external=body.allow_external,
         mode=body.mode,
+        kb_chat_config=kb_chat_config_json,
     )
     db.add(session)
     await db.commit()
