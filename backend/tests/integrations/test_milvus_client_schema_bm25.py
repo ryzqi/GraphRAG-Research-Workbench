@@ -83,6 +83,21 @@ async def test_ensure_collection_sets_enable_analyzer_for_bm25_input_field() -> 
 
 
 @pytest.mark.asyncio
+async def test_ensure_collection_enables_dynamic_field_for_extra_metadata() -> None:
+    fake_client = _FakeCreateCollectionClient()
+    client = _build_client(fake_client)
+
+    await client.ensure_collection(
+        dim=768,
+        collection_name='kb_chunks_default__msqdc_t100_o20',
+    )
+
+    schema = fake_client.create_calls[0]['schema']
+    schema_dict = schema.to_dict()
+    assert schema_dict['enable_dynamic_field'] is True
+
+
+@pytest.mark.asyncio
 async def test_ensure_collection_builds_dense_and_sparse_indexes() -> None:
     fake_client = _FakeCreateCollectionClient()
     client = _build_client(fake_client)

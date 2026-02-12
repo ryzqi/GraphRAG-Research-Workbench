@@ -241,6 +241,7 @@ class MilvusClient:
             fields=fields,
             description="kb chunks with hybrid retrieval",
             functions=functions,
+            enable_dynamic_field=True,
         )
 
     def _build_filter_expr(self, kb_ids: list[str], extra_expr: str | None = None) -> str | None:
