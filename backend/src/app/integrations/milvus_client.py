@@ -294,6 +294,17 @@ class MilvusClient:
                     index_type="AUTOINDEX",
                     metric_type="COSINE",
                 )
+                if self._bm25_supported():
+                    index_params.add_index(
+                        self._SPARSE_FIELD,
+                        index_type="SPARSE_INVERTED_INDEX",
+                        metric_type="BM25",
+                        params={
+                            "inverted_index_algo": "DAAT_MAXSCORE",
+                            "bm25_k1": 1.2,
+                            "bm25_b": 0.75,
+                        },
+                    )
             except Exception:
                 index_params = None
 

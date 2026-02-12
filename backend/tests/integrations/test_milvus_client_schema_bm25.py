@@ -49,6 +49,19 @@ def _extract_content_params(schema: object) -> dict:
     return dict(content_field.get('params') or {})
 
 
+def _extract_indexes(create_call: dict) -> list[dict]:
+    index_params = create_call.get('index_params')
+    if index_params is None:
+        return []
+    indexes: list[dict] = []
+    for item in index_params:
+        if hasattr(item, 'to_dict'):
+            indexes.append(dict(item.to_dict()))
+        else:
+            indexes.append(dict(item))
+    return indexes
+
+
 @pytest.mark.asyncio
 async def test_ensure_collection_sets_enable_analyzer_for_bm25_input_field() -> None:
     fake_client = _FakeCreateCollectionClient()
@@ -67,6 +80,30 @@ async def test_ensure_collection_sets_enable_analyzer_for_bm25_input_field() -> 
         'type': 'chinese',
         'filter': ['lowercase'],
     }
+
+
+@pytest.mark.asyncio
+async def test_ensure_collection_builds_dense_and_sparse_indexes() -> None:
+    fake_client = _FakeCreateCollectionClient()
+    client = _build_client(fake_client)
+
+    await client.ensure_collection(
+        dim=768,
+        collection_name='kb_chunks_default__msqdc_t100_o20',
+    )
+
+    indexes = _extract_indexes(fake_client.create_calls[0])
+
+    dense = next(i for i in indexes if i['field_name'] == 'dense_vector')
+    assert dense['index_type'] == 'AUTOINDEX'
+    assert dense['metric_type'] == 'COSINE'
+
+    sparse = next(i for i in indexes if i['field_name'] == 'sparse_vector')
+    assert sparse['index_type'] == 'SPARSE_INVERTED_INDEX'
+    assert sparse['metric_type'] == 'BM25'
+    assert sparse['inverted_index_algo'] == 'DAAT_MAXSCORE'
+    assert sparse['bm25_k1'] == 1.2
+    assert sparse['bm25_b'] == 0.75
 
 
 @pytest.mark.asyncio

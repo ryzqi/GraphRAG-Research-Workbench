@@ -6,7 +6,7 @@ version: "3.9"
 
 services:
   postgres:
-    image: docker.io/postgres:18-alpine
+    image: docker.io/postgres:18.1-alpine
     container_name: mkb_postgres
     restart: unless-stopped
     environment:
@@ -26,7 +26,7 @@ services:
       - postgres_data:/var/lib/postgresql/data
 
   redis:
-    image: docker.io/redis:8-alpine
+    image: docker.io/redis:8.6.0-alpine
     container_name: mkb_redis
     restart: unless-stopped
     command: ["redis-server", "--appendonly", "yes"]
@@ -42,7 +42,7 @@ services:
       NO_PROXY: "localhost,127.0.0.1,postgres,redis,minio,milvus,etcd,*.local,10.*,172.16.*,172.17.*,172.18.*,172.19.*,172.30.*,172.31.*,192.168.*"
 
   etcd:
-    image: quay.io/coreos/etcd:v3.6.6
+    image: quay.io/coreos/etcd:v3.6.7
     container_name: mkb_etcd
     restart: unless-stopped
     environment:
@@ -71,7 +71,7 @@ services:
       - ./data/etcd:/etcd
 
   minio:
-    image: docker.io/minio/minio:latest
+    image: docker.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
     container_name: mkb_minio
     restart: unless-stopped
     environment:
@@ -90,7 +90,7 @@ services:
       - ./data/minio:/minio_data
 
   milvus:
-    image: docker.io/milvusdb/milvus:v2.6.7
+    image: docker.io/milvusdb/milvus:v2.6.11
     container_name: mkb_milvus
     restart: unless-stopped
     command: ["milvus", "run", "standalone"]
