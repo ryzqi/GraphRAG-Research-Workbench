@@ -8,14 +8,21 @@ from datetime import datetime, timezone
 
 from sqlalchemy import select
 
+from app.agents.deep_research_agent import DeepResearchAgent
 from app.agents.research_graph import ResearchGraph
 from app.core.checkpoint import CheckpointManager
 from app.core.settings import get_settings
 from app.integrations.embedding_client import EmbeddingClient
 from app.models.agent_run import AgentRun, AgentRunStatus
 from app.models.evidence import Evidence, EvidenceSourceKind
+from app.models.research_session import (
+    TERMINAL_RESEARCH_SESSION_STATUSES,
+    ResearchSession,
+    ResearchSessionStatus,
+)
 from app.models.research_report import ResearchReport
 from app.models.tool_extension import ExtensionStatus, ToolExtension
+from app.services.research_v2_service import ResearchArtifactStore, ResearchEventStore
 from app.services.retrieval_service import RetrievalService
 from app.services.streaming import StreamState, apply_updates_chunk
 from app.worker.celery_app import celery_app
@@ -202,6 +209,170 @@ async def _run_research(
 
                 await session.commit()
 
+    finally:
+        try:
+            await CheckpointManager.shutdown()
+        except Exception:  # pragma: no cover - best effort
+            pass
+
+
+@celery_app.task(name="app.worker.tasks.research.run_research_v2")
+def run_research_v2(
+    session_id: str,
+    resume_from_event_id: str | None,
+    idempotency_key: str | None,
+    decision: str,
+    instructions: str | None,
+) -> None:
+    """执行 research v2 任务。"""
+    asyncio.run(
+        _run_research_v2(
+            session_id=session_id,
+            resume_from_event_id=resume_from_event_id,
+            idempotency_key=idempotency_key,
+            decision=decision,
+            instructions=instructions,
+        )
+    )
+
+
+async def _run_research_v2(
+    *,
+    session_id: str,
+    resume_from_event_id: str | None,
+    idempotency_key: str | None,
+    decision: str,
+    instructions: str | None,
+) -> None:
+    """异步执行 v2 研究任务（DeepAgents 单入口）。"""
+    settings = get_settings()
+    session_uuid = uuid.UUID(session_id)
+
+    try:
+        await CheckpointManager.initialize()
+        async with managed_task_resources(
+            settings=settings,
+            with_engine=True,
+            with_http=True,
+            with_redis=True,
+            with_milvus=True,
+        ) as resources:
+            sessionmaker = resources.sessionmaker
+            if sessionmaker is None:  # pragma: no cover - defensive
+                return
+
+            async with sessionmaker() as db:
+                run_session = await db.get(ResearchSession, session_uuid)
+                if run_session is None:
+                    return
+                if run_session.status in TERMINAL_RESEARCH_SESSION_STATUSES:
+                    return
+
+                event_store = ResearchEventStore(db)
+                artifact_store = ResearchArtifactStore(db)
+
+                run_session.status = ResearchSessionStatus.RUNNING
+                if run_session.started_at is None:
+                    run_session.started_at = datetime.now(timezone.utc)
+                await db.commit()
+                await db.refresh(run_session)
+                await event_store.append(
+                    session_obj=run_session,
+                    event_type="session.running",
+                    payload={
+                        "resume_from_event_id": resume_from_event_id,
+                        "idempotency_key": idempotency_key,
+                        "decision": decision,
+                        "has_instructions": bool(instructions),
+                    },
+                    idempotency_key=idempotency_key,
+                )
+
+                try:
+                    http_client = resources.http_client
+                    milvus = resources.milvus
+                    redis = resources.redis
+                    if (
+                        http_client is None
+                        or milvus is None
+                        or redis is None
+                    ):  # pragma: no cover - defensive
+                        raise RuntimeError("研究任务资源初始化失败")
+
+                    embedding = EmbeddingClient(http_client=http_client)
+                    retrieval = RetrievalService(db, milvus, embedding, redis)
+
+                    # v2 研究路径不再装配 MCP 扩展，保留空列表占位。
+                    deep_agent = DeepResearchAgent(
+                        retrieval=retrieval,
+                        extensions=[],
+                        redis=redis,
+                        http_client=http_client,
+                    )
+                    output = await deep_agent.run(
+                        question=run_session.question,
+                        kb_ids=list(run_session.selected_kb_ids or []),
+                        allow_external=run_session.allow_external,
+                        thread_id=run_session.thread_id,
+                        enable_subagents=run_session.mode.value == "multi_agent",
+                    )
+
+                    report_json = {
+                        "report_md": output.report_md,
+                        "citations": output.citations,
+                        "stage_summaries": output.stage_summaries,
+                    }
+                    await artifact_store.upsert_text(
+                        session_id=run_session.id,
+                        key="report_md",
+                        content=output.report_md,
+                    )
+                    await artifact_store.upsert_json(
+                        session_id=run_session.id,
+                        key="report_json",
+                        content=report_json,
+                    )
+                    await event_store.append(
+                        session_obj=run_session,
+                        event_type="artifact.updated",
+                        payload={"keys": ["report_md", "report_json"]},
+                    )
+
+                    run_session.status = ResearchSessionStatus.FINAL
+                    run_session.finished_at = datetime.now(timezone.utc)
+                    run_session.final_output = output.report_md[:1000]
+                    run_session.stage_summaries = output.stage_summaries
+                    run_session.metrics = {
+                        "citation_count": len(output.citations),
+                        "retrieval_count": len(output.retrieval_results),
+                    }
+                    run_session.error_message = None
+                    await db.commit()
+                    await db.refresh(run_session)
+                    await event_store.append(
+                        session_obj=run_session,
+                        event_type="session.final",
+                        payload={
+                            "status": run_session.status.value,
+                            "metrics": run_session.metrics or {},
+                        },
+                    )
+                except Exception as exc:
+                    await db.rollback()
+                    run_session = await db.get(ResearchSession, session_uuid)
+                    if run_session is None:
+                        return
+                    run_session.status = ResearchSessionStatus.FAILED
+                    run_session.finished_at = datetime.now(timezone.utc)
+                    run_session.error_message = str(exc)
+                    await db.commit()
+                    await db.refresh(run_session)
+                    await event_store.append(
+                        session_obj=run_session,
+                        event_type="session.failed",
+                        payload={"error": str(exc)},
+                        idempotency_key=idempotency_key,
+                    )
     finally:
         try:
             await CheckpointManager.shutdown()

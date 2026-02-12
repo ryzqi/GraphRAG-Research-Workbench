@@ -25,8 +25,12 @@ async def create_research_run(
     req: ResearchRunCreateRequest, session: AsyncSessionDep
 ) -> AgentRunRead:
     """发起深度研究（异步）。"""
-    run = await ResearchService().create_run(session, req)
-    return AgentRunRead.model_validate(run)
+    del req, session
+    raise AppError(
+        code="RESEARCH_V1_WRITE_DISABLED",
+        message="研究写接口已切换到 /api/v2/research/sessions",
+        status_code=410,
+    )
 
 
 @router.get("/runs/{run_id}", response_model=AgentRunRead)
@@ -49,14 +53,12 @@ async def cancel_research_run(
     run_id: uuid.UUID, session: AsyncSessionDep
 ) -> AgentRunRead:
     """取消研究任务。"""
-    run = await ResearchService().cancel_run(session, run_id)
-    if run is None:
-        raise AppError(
-            code=ErrorCode.NOT_FOUND.value,
-            message="研究任务不存在",
-            status_code=404,
-        )
-    return AgentRunRead.model_validate(run)
+    del run_id, session
+    raise AppError(
+        code="RESEARCH_V1_WRITE_DISABLED",
+        message="研究写接口已切换到 /api/v2/research/sessions",
+        status_code=410,
+    )
 
 
 @router.get("/runs/{run_id}/stream")

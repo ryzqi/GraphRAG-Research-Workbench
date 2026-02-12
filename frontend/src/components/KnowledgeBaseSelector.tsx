@@ -7,11 +7,11 @@ import {
   Box,
   Checkbox,
   Chip,
-  FormControlLabel,
   Paper,
   Stack,
   Typography,
 } from '@mui/material';
+import { alpha } from '@mui/material/styles';
 import type { KnowledgeBase } from '../services/knowledgeBases';
 import { EmptyState } from './ui/EmptyState';
 import { LoadingSpinner } from './ui/LoadingSpinner';
@@ -44,53 +44,95 @@ export function KnowledgeBaseSelector({
   }
 
   return (
-    <Stack spacing={1}>
-      {knowledgeBases.map((kb) => {
+    <Stack spacing={1.25}>
+      {knowledgeBases.map((kb, index) => {
         const isSelected = selectedIdSet.has(kb.id);
         return (
           <Paper
             key={kb.id}
             variant="outlined"
             sx={{
-              p: 1.5,
+              position: 'relative',
+              overflow: 'hidden',
+              p: 1.75,
+              borderRadius: 3,
               cursor: loading ? 'not-allowed' : 'pointer',
-              bgcolor: isSelected ? 'primary.50' : 'background.paper',
+              bgcolor: (theme) =>
+                theme.palette.mode === 'light'
+                  ? alpha(theme.palette.common.white, isSelected ? 0.86 : 0.72)
+                  : alpha(theme.palette.background.paper, isSelected ? 0.72 : 0.62),
               borderColor: isSelected ? 'primary.main' : 'divider',
-              transition: 'all 0.2s',
+              boxShadow: (theme) =>
+                isSelected
+                  ? `0 0 0 1px ${alpha(theme.palette.primary.main, 0.32)}, 0 14px 40px ${alpha(theme.palette.primary.main, theme.palette.mode === 'light' ? 0.16 : 0.35)}`
+                  : 'none',
+              transform: isSelected ? 'translateY(-1px)' : 'translateY(0)',
+              transition: 'border-color 200ms ease, background-color 200ms ease, box-shadow 220ms ease, transform 220ms ease',
+              animation: 'kbCardEnter 380ms cubic-bezier(0.2, 0, 0, 1)',
+              animationDelay: `${index * 35}ms`,
+              animationFillMode: 'backwards',
+              '@keyframes kbCardEnter': {
+                from: { opacity: 0, transform: 'translateY(8px)' },
+                to: { opacity: 1, transform: 'translateY(0)' },
+              },
+              '&::before': {
+                content: '""',
+                position: 'absolute',
+                inset: 0,
+                opacity: isSelected ? 1 : 0,
+                background:
+                  'linear-gradient(120deg, rgba(66,133,244,0.16), rgba(155,114,203,0.12), rgba(217,101,112,0.16))',
+                transition: 'opacity 220ms ease',
+                pointerEvents: 'none',
+              },
+              '@media (prefers-reduced-motion: reduce)': {
+                animation: 'none',
+                transition: 'none',
+                transform: 'none',
+              },
               '&:hover': {
                 borderColor: loading ? undefined : 'primary.main',
-                bgcolor: loading ? undefined : isSelected ? 'primary.100' : 'action.hover',
+                transform: loading ? undefined : 'translateY(-2px)',
+                boxShadow: loading
+                  ? undefined
+                  : (theme) =>
+                      `0 10px 30px ${alpha(theme.palette.primary.main, theme.palette.mode === 'light' ? 0.14 : 0.28)}`,
               },
             }}
             onClick={() => !loading && onToggle(kb.id)}
           >
-            <FormControlLabel
-              sx={{ m: 0, alignItems: 'flex-start', width: '100%' }}
-              control={
-                <Checkbox
-                  checked={isSelected}
-                  disabled={loading}
-                  sx={{ pt: 0 }}
-                />
-              }
-              label={
-                <Box sx={{ ml: 1 }}>
-                  <Typography fontWeight={500}>{kb.name}</Typography>
-                  {kb.description && (
-                    <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-                      {kb.description}
-                    </Typography>
+            <Stack direction="row" alignItems="flex-start" sx={{ width: '100%' }}>
+              <Checkbox
+                checked={isSelected}
+                disabled={loading}
+                onChange={() => !loading && onToggle(kb.id)}
+                onClick={(event) => event.stopPropagation()}
+                sx={{
+                  pt: 0,
+                  '& .MuiSvgIcon-root': { fontSize: 22 },
+                }}
+              />
+              <Box sx={{ ml: 1, flex: 1, minWidth: 0 }}>
+                <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
+                  <Typography fontWeight={600}>{kb.name}</Typography>
+                  {isSelected && (
+                    <Chip size="small" label="已选择" color="primary" variant="filled" />
                   )}
-                  {kb.tags && kb.tags.length > 0 && (
-                    <Stack direction="row" spacing={0.5} sx={{ mt: 1 }} flexWrap="wrap" useFlexGap>
-                      {kb.tags.map((tag) => (
-                        <Chip key={tag} label={tag} size="small" variant="outlined" />
-                      ))}
-                    </Stack>
-                  )}
-                </Box>
-              }
-            />
+                </Stack>
+                {kb.description && (
+                  <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+                    {kb.description}
+                  </Typography>
+                )}
+                {kb.tags && kb.tags.length > 0 && (
+                  <Stack direction="row" spacing={0.5} sx={{ mt: 1 }} flexWrap="wrap" useFlexGap>
+                    {kb.tags.map((tag) => (
+                      <Chip key={tag} label={tag} size="small" variant="outlined" />
+                    ))}
+                  </Stack>
+                )}
+              </Box>
+            </Stack>
           </Paper>
         );
       })}

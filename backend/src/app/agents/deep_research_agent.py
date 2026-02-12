@@ -29,7 +29,6 @@ from app.agents.tools.web_search import (
 from app.core.settings import get_settings
 from app.integrations.langchain_profiles import build_chat_model_profile
 from app.integrations.llm_client import LLMClient
-from app.integrations.mcp_adapters import load_mcp_tools
 from app.integrations.redis_client import RedisClient
 from app.models.tool_extension import ToolExtension
 from app.prompts import get_prompt_loader
@@ -210,11 +209,6 @@ class DeepResearchAgent:
                         http_client=self._http_client,
                     )
                 )
-            if self._extensions:
-                mcp_entries = await load_mcp_tools(
-                    settings=self._settings, extensions=self._extensions
-                )
-                tools.extend([entry.tool for entry in mcp_entries])
 
         if enable_subagents:
             tools.append(build_subagent_coordinate_tool(model=self._model))

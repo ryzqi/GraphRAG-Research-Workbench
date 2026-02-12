@@ -11,7 +11,10 @@ export type AgentMode = 'single_agent' | 'multi_agent';
 export type MessageRole = 'user' | 'assistant' | 'system';
 export type AgentRunStatus = 'running' | 'succeeded' | 'failed' | 'canceled';
 export type EvidenceSourceKind = 'kb' | 'external';
-export type ChatMessageResponseStatus = 'succeeded' | 'pending_tool_approval';
+export type ChatMessageResponseStatus =
+  | 'succeeded'
+  | 'pending_tool_approval'
+  | 'pending_user_clarification';
 
 export interface ChatSessionCreate {
   session_type: ChatSessionType;
@@ -98,7 +101,17 @@ export interface ChatPendingToolApprovalResponse {
   run: AgentRun;
 }
 
-export type ChatMessageResponse = ChatAnswerResponse | ChatPendingToolApprovalResponse;
+export interface ChatPendingUserClarificationResponse {
+  status: 'pending_user_clarification';
+  thread_id: string;
+  message: string;
+  run: AgentRun;
+}
+
+export type ChatMessageResponse =
+  | ChatAnswerResponse
+  | ChatPendingToolApprovalResponse
+  | ChatPendingUserClarificationResponse;
 
 /**
  * 创建会话
@@ -199,6 +212,39 @@ export async function streamResumeToolApproval(
     {
       method: 'POST',
       body: JSON.stringify({ approved }),
+    },
+    signal
+  );
+}
+
+/**
+ * 提交澄清信息并恢复 KB Chat 执行
+ */
+export async function resumeClarification(
+  sessionId: string,
+  runId: string,
+  content: string
+): Promise<ChatMessageResponse> {
+  return apiFetch<ChatMessageResponse>(`/api/v1/chats/${sessionId}/runs/${runId}/clarification`, {
+    method: 'POST',
+    body: JSON.stringify({ content }),
+  });
+}
+
+/**
+ * 提交澄清信息并恢复 KB Chat 执行（流式）
+ */
+export async function streamResumeClarification(
+  sessionId: string,
+  runId: string,
+  content: string,
+  signal?: AbortSignal
+): Promise<AsyncIterable<SseEvent>> {
+  return openSseStream(
+    `/api/v1/chats/${sessionId}/runs/${runId}/clarification/stream`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ content }),
     },
     signal
   );

@@ -3,7 +3,7 @@
  * Gemini 风格：左对齐布局，实心圆点光标，透气设计
  */
 import { Suspense, lazy, memo, useState, useCallback, useEffect, useRef } from 'react';
-import { Box, IconButton, Paper, Stack, Tooltip, Typography, Chip, keyframes } from '@mui/material';
+import { Box, IconButton, Paper, Stack, Tooltip, Typography, Chip, TextField, keyframes } from '@mui/material';
 import { alpha } from '@mui/material/styles';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import CheckIcon from '@mui/icons-material/Check';
@@ -357,6 +357,66 @@ export function ToolApprovalCard({
             拒绝执行
           </Button>
         </Stack>
+      </Stack>
+    </Paper>
+  );
+}
+
+interface ClarificationCardProps {
+  message: string;
+  loading?: boolean;
+  onSubmit: (content: string) => void;
+}
+
+export function ClarificationCard({
+  message,
+  loading,
+  onSubmit,
+}: ClarificationCardProps) {
+  const [content, setContent] = useState('');
+
+  const handleSubmit = () => {
+    const value = content.trim();
+    if (!value || loading) {
+      return;
+    }
+    onSubmit(value);
+    setContent('');
+  };
+
+  return (
+    <Paper
+      variant="outlined"
+      sx={{
+        p: 2,
+        borderRadius: 3,
+        borderColor: 'info.main',
+        bgcolor: (theme) => (theme.palette.mode === 'light' ? '#f4f9ff' : '#14263a'),
+        maxWidth: 560,
+      }}
+    >
+      <Stack spacing={1.5}>
+        <Typography variant="subtitle2" fontWeight={600}>
+          需要补充信息
+        </Typography>
+        <Typography variant="body2" color="text.secondary">
+          {message}
+        </Typography>
+        <TextField
+          multiline
+          minRows={2}
+          maxRows={5}
+          value={content}
+          onChange={(event) => setContent(event.target.value)}
+          placeholder="补充必要信息后继续..."
+          size="small"
+          disabled={loading}
+        />
+        <Box>
+          <Button variant="contained" onClick={handleSubmit} loading={loading} disabled={!content.trim()}>
+            继续回答
+          </Button>
+        </Box>
       </Stack>
     </Paper>
   );

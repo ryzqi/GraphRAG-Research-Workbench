@@ -6,10 +6,11 @@ import { memo, useRef, useEffect, useCallback, useMemo, useState } from 'react';
 import { Box, Fade, IconButton, Paper, Stack, Tooltip } from '@mui/material';
 import { alpha } from '@mui/material/styles';
 import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
-import { MessageItem, ToolApprovalCard } from './MessageItem';
+import { ClarificationCard, MessageItem, ToolApprovalCard } from './MessageItem';
 import { SparkleLoading } from './SparkleLoading';
 import type { EvidenceItem } from '../../services/chats';
 import { EvidenceList } from '../EvidenceList';
+import { PipelineProgress, type PipelineStep } from './PipelineProgress';
 
 export interface ChatMessage {
   id: string;
@@ -27,12 +28,16 @@ export interface ChatMessage {
     tool_output?: string;
     status: 'pending' | 'completed' | 'failed';
   }>;
+  pipelineSteps?: PipelineStep[];
   pendingToolApproval?: {
     message?: string | null;
     toolCalls: Array<{
       tool_name: string;
       extension_name?: string;
     }>;
+  };
+  pendingClarification?: {
+    message: string;
   };
   runId?: string;
 }
@@ -42,6 +47,7 @@ interface MessageListProps {
   loading?: boolean;
   onToolApprove?: (messageId: string, runId: string) => void;
   onToolReject?: (messageId: string, runId: string) => void;
+  onClarificationSubmit?: (messageId: string, runId: string, content: string) => void;
   approvalLoading?: boolean;
 }
 
@@ -49,11 +55,18 @@ interface MessageRowProps {
   message: ChatMessage;
   onToolApprove?: (messageId: string, runId: string) => void;
   onToolReject?: (messageId: string, runId: string) => void;
+  onClarificationSubmit?: (messageId: string, runId: string, content: string) => void;
   approvalLoading: boolean;
 }
 
 const MessageRow = memo(
-  function MessageRow({ message, onToolApprove, onToolReject, approvalLoading }: MessageRowProps) {
+  function MessageRow({
+    message,
+    onToolApprove,
+    onToolReject,
+    onClarificationSubmit,
+    approvalLoading,
+  }: MessageRowProps) {
     const isEmptyStreamingAssistant =
       message.role === 'assistant' &&
       message.isStreaming &&
@@ -66,6 +79,12 @@ const MessageRow = memo(
 
     return (
       <Box sx={{ contentVisibility: 'auto', containIntrinsicSize: '1px 220px' }}>
+        {message.role === 'assistant' && message.pipelineSteps && message.pipelineSteps.length > 0 && (
+          <Box sx={{ ml: 7, mb: 1.5 }}>
+            <PipelineProgress steps={message.pipelineSteps} isStreaming={Boolean(message.isStreaming)} />
+          </Box>
+        )}
+
         <MessageItem
           role={message.role}
           content={message.content}
@@ -86,6 +105,16 @@ const MessageRow = memo(
           </Box>
         )}
 
+        {message.pendingClarification && onClarificationSubmit && message.runId && (
+          <Box sx={{ mt: 2, ml: 7 }}>
+            <ClarificationCard
+              message={message.pendingClarification.message}
+              loading={approvalLoading}
+              onSubmit={(content) => onClarificationSubmit(message.id, message.runId!, content)}
+            />
+          </Box>
+        )}
+
         {message.evidence && message.evidence.length > 0 && (
           <Box sx={{ mt: 2, ml: 7 }}>
             <EvidenceList evidence={message.evidence} />
@@ -98,6 +127,7 @@ const MessageRow = memo(
     prev.message === next.message &&
     prev.onToolApprove === next.onToolApprove &&
     prev.onToolReject === next.onToolReject &&
+    prev.onClarificationSubmit === next.onClarificationSubmit &&
     prev.approvalLoading === next.approvalLoading
 );
 
@@ -106,6 +136,7 @@ export function MessageList({
   loading = false,
   onToolApprove,
   onToolReject,
+  onClarificationSubmit,
   approvalLoading = false,
 }: MessageListProps) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -177,6 +208,7 @@ export function MessageList({
             message={message}
             onToolApprove={onToolApprove}
             onToolReject={onToolReject}
+            onClarificationSubmit={onClarificationSubmit}
             approvalLoading={approvalLoading}
           />
         ))}

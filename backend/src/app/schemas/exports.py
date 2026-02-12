@@ -22,7 +22,8 @@ class ExportStatus(str, Enum):
 
 class ExportCreateRequest(BaseModel):
     type: ExportType
-    run_id: uuid.UUID
+    run_id: uuid.UUID | None = None
+    session_id: uuid.UUID | None = None
 
 
 class ExportJob(BaseModel):
@@ -30,7 +31,9 @@ class ExportJob(BaseModel):
 
     id: uuid.UUID
     run_id: uuid.UUID | None = None
+    session_id: uuid.UUID | None = None
     status: ExportStatus
     download_url: str | None = None
+    error_code: str | None = None
     error_message: str | None = None
     created_at: datetime

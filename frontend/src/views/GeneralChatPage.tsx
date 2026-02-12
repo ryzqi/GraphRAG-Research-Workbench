@@ -47,6 +47,12 @@ const quickPrompts = [
   { label: '风险与下一步', value: '请列出潜在风险与下一步建议：' },
 ];
 
+function isPendingClarification(
+  response: ChatMessageResponse
+): response is Extract<ChatMessageResponse, { status: 'pending_user_clarification' }> {
+  return response.status === 'pending_user_clarification';
+}
+
 function createMessageStateBatcher(onFlush: (nextState: MessageState) => void) {
   let pendingState: MessageState | null = null;
   let rafId: number | null = null;
@@ -282,6 +288,9 @@ export function GeneralChatPage() {
         }));
         return;
       }
+      if (isPendingClarification(response)) {
+        throw new Error('普通聊天不支持澄清补充流程');
+      }
 
       updateMessage(assistantId, () => ({
         id: response.assistant_message.id,
@@ -346,6 +355,9 @@ export function GeneralChatPage() {
             setLoading(false);
             return;
           }
+          if (isPendingClarification(data)) {
+            throw new Error('普通聊天不支持澄清补充流程');
+          }
         }
 
         if (event.event === 'final') {
@@ -360,6 +372,9 @@ export function GeneralChatPage() {
               runId: data.run.id,
               isStreaming: false,
             }));
+          }
+          if (isPendingClarification(data)) {
+            throw new Error('普通聊天不支持澄清补充流程');
           }
           setLoading(false);
           return;
@@ -445,6 +460,9 @@ export function GeneralChatPage() {
           }));
           return;
         }
+        if (isPendingClarification(response)) {
+          throw new Error('普通聊天不支持澄清补充流程');
+        }
 
         updateMessage(pendingMessageId, () => ({
           id: response.assistant_message.id,
@@ -508,6 +526,9 @@ export function GeneralChatPage() {
               setLoading(false);
               return;
             }
+            if (isPendingClarification(data)) {
+              throw new Error('普通聊天不支持澄清补充流程');
+            }
           }
 
           if (event.event === 'final') {
@@ -522,6 +543,9 @@ export function GeneralChatPage() {
                 runId: data.run.id,
                 isStreaming: false,
               }));
+            }
+            if (isPendingClarification(data)) {
+              throw new Error('普通聊天不支持澄清补充流程');
             }
             setLoading(false);
             return;
@@ -684,4 +708,3 @@ export function GeneralChatPage() {
 }
 
 export default GeneralChatPage;
-

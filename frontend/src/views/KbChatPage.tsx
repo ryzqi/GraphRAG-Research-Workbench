@@ -1,28 +1,42 @@
 'use client';
 
 /**
- * 知识库问答页面（Gemini 风格重构）
+ * 知识库问答页面
+ * - 玻璃感知识库选择交互
+ * - LangGraph 步骤实时可视化
+ * - 澄清补充交互（pending_user_clarification）
  */
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import dynamic from 'next/dynamic';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
-import { Box, Stack, Typography } from '@mui/material';
+import {
+  Box,
+  Chip,
+  Paper,
+  Stack,
+  Typography,
+} from '@mui/material';
+import { alpha } from '@mui/material/styles';
+import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import RestartAltIcon from '@mui/icons-material/RestartAlt';
 import { Button } from '../components/ui/Button';
 import { ErrorAlert } from '../components/ui/ErrorAlert';
 import { KnowledgeBaseSelector } from '../components/KnowledgeBaseSelector';
 
 import type { ChatMessage } from '../components/chat/MessageList';
+import type { PipelineStep } from '../components/chat/PipelineProgress';
 
 import {
   type AgentMode,
-  type ChatSession,
   type ChatMessageResponse,
+  type ChatSession,
   createChatSession,
   getChatMessages,
   getChatSession,
+  resumeClarification,
   sendMessage,
   streamChatMessage,
+  streamResumeClarification,
 } from '../services/chats';
 import { HttpError } from '../services/http';
 import { useSelectableKnowledgeBases } from '../hooks/queries/useKnowledgeBases';
@@ -43,6 +57,86 @@ const MessageList = dynamic(
   () => import('../components/chat/MessageList').then((mod) => mod.MessageList),
   { ssr: false }
 );
+
+const PIPELINE_STATUS = ['started', 'completed', 'failed', 'waiting_user', 'skipped'] as const;
+type PipelineStatus = (typeof PIPELINE_STATUS)[number];
+
+const PIPELINE_STEP_ORDER: Record<string, number> = {
+  preprocess: 0,
+  retrieve: 1,
+  judge: 2,
+  generate: 3,
+  verify: 4,
+  finalize: 5,
+};
+
+function isPipelineStatus(value: unknown): value is PipelineStatus {
+  return typeof value === 'string' && (PIPELINE_STATUS as readonly string[]).includes(value);
+}
+
+function sortPipelineSteps(steps: PipelineStep[]): PipelineStep[] {
+  return [...steps].sort((a, b) => {
+    const orderA = PIPELINE_STEP_ORDER[a.step_id] ?? Number.MAX_SAFE_INTEGER;
+    const orderB = PIPELINE_STEP_ORDER[b.step_id] ?? Number.MAX_SAFE_INTEGER;
+    if (orderA !== orderB) {
+      return orderA - orderB;
+    }
+    return (a.ts ?? '').localeCompare(b.ts ?? '');
+  });
+}
+
+function upsertPipelineStep(
+  steps: PipelineStep[] | undefined,
+  incoming: PipelineStep
+): PipelineStep[] {
+  const current = [...(steps ?? [])];
+  const index = current.findIndex((step) => step.step_id === incoming.step_id);
+  if (index === -1) {
+    current.push(incoming);
+  } else {
+    current[index] = {
+      ...current[index],
+      ...incoming,
+      label: incoming.label || current[index].label,
+    };
+  }
+  return sortPipelineSteps(current);
+}
+
+function finalizePipelineSteps(steps: PipelineStep[] | undefined): PipelineStep[] | undefined {
+  if (!steps || steps.length === 0) {
+    return steps;
+  }
+  return steps.map((step) => {
+    if (step.status === 'started') {
+      return { ...step, status: 'completed' };
+    }
+    return step;
+  });
+}
+
+function parseStepEvent(data: Record<string, unknown>): PipelineStep | null {
+  const stepId = typeof data.step_id === 'string' ? data.step_id : '';
+  const status = isPipelineStatus(data.status) ? data.status : null;
+  if (!stepId || !status) {
+    return null;
+  }
+  return {
+    step_id: stepId,
+    label: typeof data.label === 'string' ? data.label : stepId,
+    status,
+    node: typeof data.node === 'string' ? data.node : undefined,
+    message: typeof data.message === 'string' ? data.message : undefined,
+    ts: typeof data.ts === 'string' ? data.ts : new Date().toISOString(),
+    meta: data.meta && typeof data.meta === 'object' ? (data.meta as Record<string, unknown>) : undefined,
+  };
+}
+
+function isPendingClarificationResponse(
+  response: ChatMessageResponse
+): response is Extract<ChatMessageResponse, { status: 'pending_user_clarification' }> {
+  return response.status === 'pending_user_clarification';
+}
 
 function createMessageStateBatcher(onFlush: (nextState: MessageState) => void) {
   let pendingState: MessageState | null = null;
@@ -100,7 +194,7 @@ export function KbChatPage() {
     [pathname, router]
   );
   const knowledgeBasesQuery = useSelectableKnowledgeBases();
-  const knowledgeBases = knowledgeBasesQuery.data ?? [];
+  const knowledgeBases = knowledgeBasesQuery.data;
 
   const [selectedKbIds, setSelectedKbIds] = useState<string[]>([]);
   const [session, setSession] = useState<ChatSession | null>(null);
@@ -115,6 +209,16 @@ export function KbChatPage() {
   const mergedError =
     error ?? (knowledgeBasesQuery.error ? getErrorMessage(knowledgeBasesQuery.error) : null);
 
+  const selectedKbNames = useMemo(() => {
+    const map = new Map((knowledgeBases ?? []).map((kb) => [kb.id, kb.name]));
+    return selectedKbIds.map((id) => map.get(id) ?? id);
+  }, [knowledgeBases, selectedKbIds]);
+
+  const hasPendingClarification = useMemo(
+    () => messages.some((msg) => Boolean(msg.pendingClarification)),
+    [messages]
+  );
+
   useEffect(() => {
     if (!sessionId) {
       return;
@@ -124,7 +228,6 @@ export function KbChatPage() {
       setLoadingSession(true);
       setError(null);
       try {
-        // Fire both requests together to reduce route hydration latency.
         const [loadedSession, history] = await Promise.all([
           getChatSession(sessionId),
           getChatMessages(sessionId),
@@ -141,8 +244,6 @@ export function KbChatPage() {
         );
       } catch (e) {
         if (!active) return;
-        // If the sessionId is stale/deleted, clear it so the user can start a new KB chat.
-        // (KB chat needs selected KBs, so we cannot auto-create like general chat.)
         if (e instanceof HttpError && e.status === 404) {
           setSession(null);
           setMessages([]);
@@ -195,6 +296,41 @@ export function KbChatPage() {
     []
   );
 
+  const applyStepEvent = useCallback(
+    (messageId: string, raw: Record<string, unknown>) => {
+      const step = parseStepEvent(raw);
+      if (!step) {
+        return;
+      }
+      updateMessage(messageId, (msg) => ({
+        ...msg,
+        pipelineSteps: upsertPipelineStep(msg.pipelineSteps, step),
+      }));
+    },
+    [updateMessage]
+  );
+
+  const markClarificationPending = useCallback(
+    (messageId: string, runId: string, message: string) => {
+      updateMessage(messageId, (msg) => ({
+        ...msg,
+        content: '',
+        think: '',
+        runId,
+        pendingClarification: { message },
+        pipelineSteps: upsertPipelineStep(msg.pipelineSteps, {
+          step_id: 'finalize',
+          label: '输出结果',
+          status: 'waiting_user',
+          message,
+          ts: new Date().toISOString(),
+        }),
+        isStreaming: false,
+      }));
+    },
+    [updateMessage]
+  );
+
   const handleCloseError = () => {
     if (error) {
       setError(null);
@@ -227,7 +363,6 @@ export function KbChatPage() {
       });
       setSession(newSession);
       setMessages([]);
-
     } catch (e) {
       setError(getErrorMessage(e));
     } finally {
@@ -236,7 +371,7 @@ export function KbChatPage() {
   }, [selectedKbIds]);
 
   const handleSend = useCallback(async () => {
-    if (!session || !input.trim() || loading || loadingSession) return;
+    if (!session || !input.trim() || loading || loadingSession || hasPendingClarification) return;
 
     const userContent = input.trim();
     const assistantId = `assistant-${Date.now()}`;
@@ -253,7 +388,16 @@ export function KbChatPage() {
     setMessages((prev) => [
       ...prev,
       userMsg,
-      { id: assistantId, role: 'assistant', content: '', think: '', toolSteps: [], isStreaming: true, thinkStartTime: Date.now() },
+      {
+        id: assistantId,
+        role: 'assistant',
+        content: '',
+        think: '',
+        toolSteps: [],
+        pipelineSteps: [],
+        isStreaming: true,
+        thinkStartTime: Date.now(),
+      },
     ]);
 
     let recentTouched = false;
@@ -270,15 +414,23 @@ export function KbChatPage() {
 
     const fallbackToJson = async () => {
       const response: ChatMessageResponse = await sendMessage(session.id, userContent);
-      if (response.status !== 'succeeded') {
-        throw new Error('知识库对话不支持工具审批流程');
-      }
       touchRecent();
-      updateMessage(assistantId, () => ({
+      if (isPendingClarificationResponse(response)) {
+        markClarificationPending(assistantId, response.run.id, response.message);
+        return;
+      }
+      if (response.status !== 'succeeded') {
+        throw new Error('知识库对话返回了不支持的中间状态');
+      }
+      updateMessage(assistantId, (msg) => ({
+        ...msg,
         id: response.assistant_message.id,
         role: 'assistant',
         content: response.assistant_message.content,
         evidence: response.evidence,
+        runId: response.run.id,
+        pipelineSteps: finalizePipelineSteps(msg.pipelineSteps),
+        pendingClarification: undefined,
         isStreaming: false,
       }));
     };
@@ -306,12 +458,26 @@ export function KbChatPage() {
           }
         }
 
+        if (event.event === 'step') {
+          applyStepEvent(assistantId, parseSseJson<Record<string, unknown>>(event.data));
+        }
+
         if (event.event === 'delta') {
           const data = parseSseJson<Record<string, unknown>>(event.data);
           const delta = parseDelta(data);
           if (delta) {
             msgState = applyDelta(msgState, delta);
             deltaBatcher.push(msgState);
+          }
+        }
+
+        if (event.event === 'interrupt') {
+          deltaBatcher.flush();
+          const data = parseSseJson<ChatMessageResponse>(event.data);
+          if (isPendingClarificationResponse(data)) {
+            markClarificationPending(assistantId, data.run.id, data.message);
+            setLoading(false);
+            return;
           }
         }
 
@@ -325,6 +491,8 @@ export function KbChatPage() {
               content: data.assistant_message.content,
               evidence: data.evidence,
               runId: data.run.id,
+              pipelineSteps: finalizePipelineSteps(msg.pipelineSteps),
+              pendingClarification: undefined,
               isStreaming: false,
             }));
           }
@@ -340,14 +508,13 @@ export function KbChatPage() {
       }
 
       deltaBatcher.flush();
-
-      // 流式结束，完成消息状态
       msgState = completeMessageState(msgState);
       updateMessage(assistantId, (msg) => ({
         ...msg,
         content: msgState.final_content,
         think: msgState.thought_log,
         toolSteps: msgState.tool_steps,
+        pipelineSteps: finalizePipelineSteps(msg.pipelineSteps),
         isStreaming: false,
       }));
     } catch (e) {
@@ -365,7 +532,168 @@ export function KbChatPage() {
       deltaBatcher.flush();
       setLoading(false);
     }
-  }, [session, input, loading, loadingSession, upsertSession, updateMessage]);
+  }, [
+    session,
+    input,
+    loading,
+    loadingSession,
+    hasPendingClarification,
+    upsertSession,
+    updateMessage,
+    applyStepEvent,
+    markClarificationPending,
+  ]);
+
+  const handleClarificationSubmit = useCallback(
+    async (messageId: string, runId: string, content: string) => {
+      if (!session || loading || loadingSession) return;
+
+      setLoading(true);
+      setError(null);
+      let msgState = createMessageState();
+      updateMessage(messageId, (msg) => ({
+        ...msg,
+        content: '',
+        think: '',
+        pendingClarification: undefined,
+        pipelineSteps: upsertPipelineStep(msg.pipelineSteps, {
+          step_id: 'finalize',
+          label: '输出结果',
+          status: 'started',
+          message: '已收到补充信息，继续执行',
+          ts: new Date().toISOString(),
+        }),
+        isStreaming: true,
+        thinkStartTime: Date.now(),
+      }));
+
+      const fallbackToJson = async () => {
+        const response = await resumeClarification(session.id, runId, content);
+        if (isPendingClarificationResponse(response)) {
+          markClarificationPending(messageId, response.run.id, response.message);
+          return;
+        }
+        if (response.status !== 'succeeded') {
+          throw new Error('恢复执行返回了不支持的状态');
+        }
+        updateMessage(messageId, (msg) => ({
+          ...msg,
+          id: response.assistant_message.id,
+          content: response.assistant_message.content,
+          evidence: response.evidence,
+          runId: response.run.id,
+          pendingClarification: undefined,
+          pipelineSteps: finalizePipelineSteps(msg.pipelineSteps),
+          isStreaming: false,
+        }));
+      };
+
+      let hadStreamEvent = false;
+      const deltaBatcher = createMessageStateBatcher((nextState) => {
+        updateMessage(messageId, (msg) => ({
+          ...msg,
+          content: nextState.final_content,
+          think: nextState.thought_log,
+          toolSteps: nextState.tool_steps,
+          isStreaming: true,
+        }));
+      });
+
+      try {
+        const stream = await streamResumeClarification(session.id, runId, content);
+        for await (const event of stream) {
+          hadStreamEvent = true;
+          if (event.event === 'meta') {
+            const meta = parseSseJson<{ run_id?: string }>(event.data);
+            if (meta.run_id) {
+              updateMessage(messageId, (msg) => ({ ...msg, runId: meta.run_id }));
+            }
+          }
+
+          if (event.event === 'step') {
+            applyStepEvent(messageId, parseSseJson<Record<string, unknown>>(event.data));
+          }
+
+          if (event.event === 'delta') {
+            const data = parseSseJson<Record<string, unknown>>(event.data);
+            const delta = parseDelta(data);
+            if (delta) {
+              msgState = applyDelta(msgState, delta);
+              deltaBatcher.push(msgState);
+            }
+          }
+
+          if (event.event === 'interrupt') {
+            deltaBatcher.flush();
+            const data = parseSseJson<ChatMessageResponse>(event.data);
+            if (isPendingClarificationResponse(data)) {
+              markClarificationPending(messageId, data.run.id, data.message);
+              setLoading(false);
+              return;
+            }
+          }
+
+          if (event.event === 'final') {
+            deltaBatcher.flush();
+            const data = parseSseJson<ChatMessageResponse>(event.data);
+            if (data.status === 'succeeded') {
+              updateMessage(messageId, (msg) => ({
+                ...msg,
+                id: data.assistant_message.id,
+                content: data.assistant_message.content,
+                evidence: data.evidence,
+                runId: data.run.id,
+                pendingClarification: undefined,
+                pipelineSteps: finalizePipelineSteps(msg.pipelineSteps),
+                isStreaming: false,
+              }));
+            }
+            setLoading(false);
+            return;
+          }
+
+          if (event.event === 'error') {
+            deltaBatcher.flush();
+            const err = parseSseJson<{ message?: string }>(event.data);
+            throw new Error(err?.message ?? '恢复执行失败');
+          }
+        }
+
+        deltaBatcher.flush();
+        msgState = completeMessageState(msgState);
+        updateMessage(messageId, (msg) => ({
+          ...msg,
+          content: msgState.final_content,
+          think: msgState.thought_log,
+          toolSteps: msgState.tool_steps,
+          pipelineSteps: finalizePipelineSteps(msg.pipelineSteps),
+          isStreaming: false,
+        }));
+      } catch (e) {
+        if (hadStreamEvent) {
+          setError(getErrorMessage(e));
+          setLoading(false);
+          return;
+        }
+        try {
+          await fallbackToJson();
+        } catch (fallbackError) {
+          setError(getErrorMessage(fallbackError));
+        }
+      } finally {
+        deltaBatcher.flush();
+        setLoading(false);
+      }
+    },
+    [
+      session,
+      loading,
+      loadingSession,
+      updateMessage,
+      applyStepEvent,
+      markClarificationPending,
+    ]
+  );
 
   const resetSession = useCallback(() => {
     setSession(null);
@@ -373,7 +701,6 @@ export function KbChatPage() {
     setError(null);
   }, []);
 
-  // 知识库选择界面
   if (!session) {
     return (
       <Box
@@ -382,37 +709,73 @@ export function KbChatPage() {
           flexDirection: 'column',
           height: '100%',
           minHeight: 'calc(100vh - 64px)',
+          background:
+            'radial-gradient(circle at 10% 0%, rgba(66,133,244,0.16), transparent 40%), radial-gradient(circle at 100% 10%, rgba(155,114,203,0.12), transparent 35%)',
         }}
       >
         <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
-          <WelcomeScreen
-            title="知识库问答"
-            suggestions={[]}
-          />
+          <WelcomeScreen title="知识库问答" suggestions={[]} />
 
-          <Box sx={{ maxWidth: 800, mx: 'auto', px: 3, width: '100%' }}>
-            <Stack spacing={3}>
-              <Typography variant="subtitle1" fontWeight={500}>
-                选择知识库
-              </Typography>
+          <Box sx={{ maxWidth: 860, mx: 'auto', px: 3, width: '100%' }}>
+            <Paper
+              variant="outlined"
+              sx={{
+                p: { xs: 2.5, md: 3 },
+                borderRadius: 4,
+                bgcolor: (theme) =>
+                  theme.palette.mode === 'light'
+                    ? alpha(theme.palette.common.white, 0.72)
+                    : alpha(theme.palette.background.paper, 0.58),
+                backdropFilter: 'blur(14px)',
+                WebkitBackdropFilter: 'blur(14px)',
+                borderColor: (theme) => alpha(theme.palette.primary.main, 0.18),
+                boxShadow: (theme) =>
+                  `0 18px 40px ${alpha(
+                    theme.palette.mode === 'light' ? theme.palette.primary.main : theme.palette.common.black,
+                    theme.palette.mode === 'light' ? 0.14 : 0.34
+                  )}`,
+              }}
+            >
+              <Stack spacing={2.5}>
+                <Stack direction="row" alignItems="center" spacing={1}>
+                  <AutoAwesomeIcon color="primary" fontSize="small" />
+                  <Typography variant="subtitle1" fontWeight={600}>
+                    选择知识库范围
+                  </Typography>
+                </Stack>
+                <Typography variant="body2" color="text.secondary">
+                  支持多库联合检索。建议优先选择最相关的 1-3 个知识库，提升命中率与响应速度。
+                </Typography>
 
-              <KnowledgeBaseSelector
-                knowledgeBases={knowledgeBases}
-                selectedIds={selectedKbIds}
-                onToggle={toggleKb}
-                loading={loading || loadingSession || knowledgeBasesQuery.isLoading}
-              />
+                <KnowledgeBaseSelector
+                  knowledgeBases={knowledgeBases ?? []}
+                  selectedIds={selectedKbIds}
+                  onToggle={toggleKb}
+                  loading={loading || loadingSession || knowledgeBasesQuery.isLoading}
+                />
 
-              <Button
-                variant="contained"
-                onClick={startSession}
-                disabled={loadingSession || knowledgeBasesQuery.isLoading || selectedKbIds.length === 0}
-                loading={loading || loadingSession}
-                sx={{ alignSelf: 'flex-start' }}
-              >
-                开始对话
-              </Button>
-            </Stack>
+                {selectedKbNames.length > 0 && (
+                  <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+                    {selectedKbNames.slice(0, 5).map((name) => (
+                      <Chip key={name} label={name} size="small" color="primary" variant="outlined" />
+                    ))}
+                    {selectedKbNames.length > 5 && (
+                      <Chip label={`+${selectedKbNames.length - 5}`} size="small" variant="outlined" />
+                    )}
+                  </Stack>
+                )}
+
+                <Button
+                  variant="contained"
+                  onClick={startSession}
+                  disabled={loadingSession || knowledgeBasesQuery.isLoading || selectedKbIds.length === 0}
+                  loading={loading || loadingSession}
+                  sx={{ alignSelf: 'flex-start' }}
+                >
+                  开始对话
+                </Button>
+              </Stack>
+            </Paper>
           </Box>
         </Box>
 
@@ -421,7 +784,6 @@ export function KbChatPage() {
     );
   }
 
-  // 对话界面
   return (
     <Box
       sx={{
@@ -431,7 +793,6 @@ export function KbChatPage() {
         minHeight: 'calc(100vh - 64px)',
       }}
     >
-      {/* 顶部栏 */}
       <Box
         sx={{
           display: 'flex',
@@ -452,9 +813,14 @@ export function KbChatPage() {
           borderColor: 'divider',
         }}
       >
-        <Typography variant="body2" color="text.secondary">
-          已选择 {session.selected_kb_ids?.length || 0} 个知识库
-        </Typography>
+        <Stack direction="row" spacing={1} alignItems="center">
+          <Typography variant="body2" color="text.secondary">
+            已选择 {session.selected_kb_ids?.length || 0} 个知识库
+          </Typography>
+          {hasPendingClarification && (
+            <Chip size="small" color="warning" label="等待补充信息" />
+          )}
+        </Stack>
         <Button
           variant="outlined"
           size="small"
@@ -465,22 +831,21 @@ export function KbChatPage() {
         </Button>
       </Box>
 
-      {/* 消息区域 */}
       {messages.length === 0 ? (
         <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
-          <WelcomeScreen
-            title="开始提问吧"
-            suggestions={[]}
-          />
+          <WelcomeScreen title="开始提问吧" suggestions={[]} />
         </Box>
       ) : (
-        <MessageList messages={messages} loading={loading || loadingSession} />
+        <MessageList
+          messages={messages}
+          loading={loading || loadingSession}
+          onClarificationSubmit={handleClarificationSubmit}
+          approvalLoading={loading || loadingSession}
+        />
       )}
 
-      {/* 错误提示 */}
       <ErrorAlert error={mergedError} onClose={handleCloseError} />
 
-      {/* 底部输入区 */}
       <Box
         sx={{
           position: 'sticky',
@@ -498,13 +863,12 @@ export function KbChatPage() {
             value={input}
             onChange={setInput}
             onSend={handleSend}
-            disabled={loading || loadingSession}
+            disabled={loading || loadingSession || hasPendingClarification}
             loading={loading || loadingSession}
-            placeholder="输入你的问题..."
+            placeholder={hasPendingClarification ? '请先补充上方澄清信息...' : '输入你的问题...'}
           />
         </Box>
       </Box>
     </Box>
   );
 }
-
