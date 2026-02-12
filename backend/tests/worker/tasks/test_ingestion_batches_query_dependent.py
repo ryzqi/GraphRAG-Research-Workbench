@@ -39,15 +39,15 @@ class _FakeMilvusClient:
 
 
 @pytest.mark.asyncio
-async def test_write_records_to_milvus_routes_records_to_window_collections() -> None:
+async def test_write_records_to_milvus_routes_records_to_multiscale_collections() -> None:
     index_config = IndexConfig.model_validate(
         {
             "chunking": {
-                "general_strategy": "query_dependent_chunking",
-                "query_dependent_chunking": {
+                "general_strategy": "query_dependent_multiscale",
+                "query_dependent_multiscale": {
                     "windows": [
-                        {"chunk_size": 200, "chunk_overlap": 20},
-                        {"chunk_size": 400, "chunk_overlap": 40},
+                        {"chunk_size_tokens": 100, "chunk_overlap_tokens": 20},
+                        {"chunk_size_tokens": 200, "chunk_overlap_tokens": 40},
                     ]
                 },
             }
@@ -60,14 +60,18 @@ async def test_write_records_to_milvus_routes_records_to_window_collections() ->
             "kb_id": "kb-1",
             "material_id": "m-1",
             "dense_vector": [0.1, 0.2],
-            "metadata": {"window_size": 200, "window_overlap": 20},
+            "window_size_tokens": 100,
+            "window_overlap_tokens": 20,
+            "metadata": {"window_size_tokens": 100, "window_overlap_tokens": 20},
         },
         {
             "chunk_id": "c-2",
             "kb_id": "kb-1",
             "material_id": "m-1",
             "dense_vector": [0.3, 0.4],
-            "metadata": {"window_size": 400, "window_overlap": 40},
+            "window_size_tokens": 200,
+            "window_overlap_tokens": 40,
+            "metadata": {"window_size_tokens": 200, "window_overlap_tokens": 40},
         },
     ]
 
@@ -82,11 +86,17 @@ async def test_write_records_to_milvus_routes_records_to_window_collections() ->
     )
 
     expected_collections = [
-        collection_name_for_window("kb_chunks_v1", 200, 20),
-        collection_name_for_window("kb_chunks_v1", 400, 40),
+        collection_name_for_window("kb_chunks_v1", 100, 20),
+        collection_name_for_window("kb_chunks_v1", 200, 40),
     ]
 
     assert [call["collection_name"] for call in fake_milvus.ensure_calls] == expected_collections
-    assert [call["collection_name"] for call in fake_milvus.delete_calls] == expected_collections
     assert [call["collection_name"] for call in fake_milvus.upsert_calls] == expected_collections
     assert [len(call["records"]) for call in fake_milvus.upsert_calls] == [1, 1]
+
+    # first cleanup default collection, then each new window collection
+    assert [call["collection_name"] for call in fake_milvus.delete_calls] == [
+        None,
+        expected_collections[0],
+        expected_collections[1],
+    ]

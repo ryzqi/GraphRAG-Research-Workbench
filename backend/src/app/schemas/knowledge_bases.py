@@ -13,7 +13,7 @@ from app.schemas.pagination import PageMeta
 
 
 class ChunkingStrategy(str, Enum):
-    QUERY_DEPENDENT_CHUNKING = "query_dependent_chunking"
+    QUERY_DEPENDENT_MULTISCALE = "query_dependent_multiscale"
     MAX_MIN_SEMANTIC = "max_min_semantic"
     PARENT_CHILD = "parent_child"
     MARKDOWN_HEADING = "markdown_heading"
@@ -47,27 +47,49 @@ class MarkdownHeadingConfig(BaseModel):
         return self
 
 
-class QueryDependentWindowConfig(BaseModel):
+class QueryDependentMultiscaleWindowConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    chunk_size: int = Field(512, ge=128, le=20000)
-    chunk_overlap: int = Field(64, ge=0, le=2000)
+    chunk_size_tokens: int = Field(100, ge=16, le=8000)
+    chunk_overlap_tokens: int = Field(20, ge=0, le=4000)
 
     @model_validator(mode="after")
-    def _validate_overlap(self) -> "QueryDependentWindowConfig":
-        if self.chunk_overlap >= self.chunk_size:
-            raise ValueError("chunk_overlap must be less than chunk_size")
+    def _validate_overlap(self) -> "QueryDependentMultiscaleWindowConfig":
+        if self.chunk_overlap_tokens >= self.chunk_size_tokens:
+            raise ValueError("chunk_overlap_tokens must be less than chunk_size_tokens")
         return self
 
 
-class QueryDependentChunkingConfig(BaseModel):
+class QueryDependentMultiscaleChunkingConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    windows: list[QueryDependentWindowConfig] = Field(
-        default_factory=lambda: [QueryDependentWindowConfig()],
-        min_length=1,
+    windows: list[QueryDependentMultiscaleWindowConfig] = Field(
+        default_factory=list,
         max_length=5,
     )
+
+    @model_validator(mode="after")
+    def _validate_windows(self) -> "QueryDependentMultiscaleChunkingConfig":
+        seen: set[tuple[int, int]] = set()
+        previous_size: int | None = None
+        for window in self.windows:
+            key = (window.chunk_size_tokens, window.chunk_overlap_tokens)
+            if key in seen:
+                raise ValueError("query_dependent_multiscale.windows contains duplicate windows")
+            seen.add(key)
+
+            if previous_size is not None and window.chunk_size_tokens <= previous_size:
+                raise ValueError(
+                    "query_dependent_multiscale.windows must be sorted by chunk_size_tokens ascending"
+                )
+            previous_size = window.chunk_size_tokens
+        return self
+
+
+class SemanticThresholdMode(str, Enum):
+    PERCENTILE = "percentile"
+    HYBRID = "hybrid"
+    FIXED = "fixed"
 
 
 class SemanticConfig(BaseModel):
@@ -75,13 +97,29 @@ class SemanticConfig(BaseModel):
 
     min_tokens: int = Field(80, ge=16, le=1024)
     max_tokens: int = Field(256, ge=16, le=2048)
-    similarity_threshold: float = Field(0.6, ge=0.0, le=1.0)
+    threshold_mode: SemanticThresholdMode = SemanticThresholdMode.PERCENTILE
+    breakpoint_percentile: int | None = Field(25, ge=1, le=99)
+    similarity_threshold: float | None = Field(0.6, ge=0.0, le=1.0)
     overlap_chars: int = Field(64, ge=0, le=2000)
+    embedding_batch_size: int = Field(128, ge=8, le=1024)
 
     @model_validator(mode="after")
     def _validate_range(self) -> "SemanticConfig":
         if self.max_tokens < self.min_tokens:
             raise ValueError("max_tokens must be greater than or equal to min_tokens")
+
+        if self.threshold_mode in {
+            SemanticThresholdMode.PERCENTILE,
+            SemanticThresholdMode.HYBRID,
+        } and self.breakpoint_percentile is None:
+            raise ValueError("breakpoint_percentile is required for percentile/hybrid mode")
+
+        if self.threshold_mode in {
+            SemanticThresholdMode.FIXED,
+            SemanticThresholdMode.HYBRID,
+        } and self.similarity_threshold is None:
+            raise ValueError("similarity_threshold is required for fixed/hybrid mode")
+
         return self
 
 
@@ -128,12 +166,23 @@ class ChunkingConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     markdown_heading: MarkdownHeadingConfig = Field(default_factory=MarkdownHeadingConfig)
-    general_strategy: ChunkingStrategy = ChunkingStrategy.QUERY_DEPENDENT_CHUNKING
-    query_dependent_chunking: QueryDependentChunkingConfig = Field(
-        default_factory=QueryDependentChunkingConfig
+    general_strategy: ChunkingStrategy = ChunkingStrategy.QUERY_DEPENDENT_MULTISCALE
+    query_dependent_multiscale: QueryDependentMultiscaleChunkingConfig = Field(
+        default_factory=QueryDependentMultiscaleChunkingConfig
     )
     semantic: SemanticConfig = Field(default_factory=SemanticConfig)
     parent_child: ParentChildConfig = Field(default_factory=ParentChildConfig)
+
+    @model_validator(mode="after")
+    def _validate_query_dependent_windows_required(self) -> "ChunkingConfig":
+        if (
+            self.general_strategy == ChunkingStrategy.QUERY_DEPENDENT_MULTISCALE
+            and not self.query_dependent_multiscale.windows
+        ):
+            raise ValueError(
+                "chunking.query_dependent_multiscale.windows is required when general_strategy is query_dependent_multiscale"
+            )
+        return self
 
 
 class ContextualConfig(BaseModel):
@@ -157,10 +206,12 @@ class RetrievalParentChildConfig(BaseModel):
     max_children_per_parent: int = Field(2, ge=1, le=10)
 
 
-class RetrievalQueryDependentConfig(BaseModel):
+class RetrievalQueryDependentMultiscaleConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     rrf_k: int = Field(60, ge=1, le=200)
+    per_window_top_k: int = Field(20, ge=1, le=200)
+    max_documents: int = Field(8, ge=1, le=100)
     max_chunks_per_document: int = Field(2, ge=1, le=20)
 
 
@@ -170,8 +221,8 @@ class RetrievalConfig(BaseModel):
     parent_child: RetrievalParentChildConfig = Field(
         default_factory=RetrievalParentChildConfig
     )
-    query_dependent: RetrievalQueryDependentConfig = Field(
-        default_factory=RetrievalQueryDependentConfig
+    query_dependent_multiscale: RetrievalQueryDependentMultiscaleConfig = Field(
+        default_factory=RetrievalQueryDependentMultiscaleConfig
     )
 
 
@@ -181,6 +232,7 @@ class IndexConfig(BaseModel):
     chunking: ChunkingConfig = Field(default_factory=ChunkingConfig)
     contextual: ContextualConfig = Field(default_factory=ContextualConfig)
     retrieval: RetrievalConfig = Field(default_factory=RetrievalConfig)
+
 
 class KnowledgeBaseStatus(str, Enum):
     ACTIVE = "active"

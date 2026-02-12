@@ -9,6 +9,7 @@ import {
   FormControl,
   FormControlLabel,
   FormLabel,
+  MenuItem,
   Radio,
   RadioGroup,
   Stack,
@@ -21,6 +22,7 @@ import {
   createDefaultIndexConfig,
   type ChunkingStrategy,
   type IndexConfig,
+  type SemanticThresholdMode,
 } from '../services/knowledgeBases';
 
 interface IndexConfigFormProps {
@@ -40,6 +42,21 @@ interface IndexConfigFormProps {
 function numberValue(value: string) {
   const parsed = Number(value);
   return Number.isNaN(parsed) ? 0 : parsed;
+}
+
+function nullableNumberValue(value: string): number | null {
+  if (value.trim() === '') {
+    return null;
+  }
+  const parsed = Number(value);
+  return Number.isNaN(parsed) ? null : parsed;
+}
+
+function clampWindowCount(value: number): number {
+  if (!Number.isFinite(value)) {
+    return 1;
+  }
+  return Math.max(1, Math.min(5, Math.trunc(value)));
 }
 
 export function IndexConfigForm({
@@ -72,8 +89,9 @@ export function IndexConfigForm({
     // Switching strategy: reset the strategy you are leaving to defaults to avoid hidden invalid values.
     if (prev && prev !== nextStrategy) {
       switch (prev) {
-        case 'sliding_window':
-          nextConfig.chunking.sliding_window = defaults.chunking.sliding_window;
+        case 'query_dependent_multiscale':
+          nextConfig.chunking.query_dependent_multiscale =
+            defaults.chunking.query_dependent_multiscale;
           break;
         case 'max_min_semantic':
           nextConfig.chunking.semantic = defaults.chunking.semantic;
@@ -99,10 +117,63 @@ export function IndexConfigForm({
     updateContextual({ enabled: true });
   };
 
+  const multiscaleWindows =
+    value.chunking.query_dependent_multiscale.windows.length > 0
+      ? value.chunking.query_dependent_multiscale.windows
+      : defaults.chunking.query_dependent_multiscale.windows;
 
-  const slidingOverlapError =
-    value.chunking.sliding_window.chunk_overlap >= value.chunking.sliding_window.chunk_size;
+  const setMultiscaleWindows = (
+    windows: IndexConfig['chunking']['query_dependent_multiscale']['windows']
+  ) => {
+    updateChunking({
+      query_dependent_multiscale: {
+        ...value.chunking.query_dependent_multiscale,
+        windows,
+      },
+    });
+  };
+
+  const handleWindowCountChange = (nextCountRaw: string) => {
+    const nextCount = clampWindowCount(numberValue(nextCountRaw));
+    const current = [...multiscaleWindows];
+    if (nextCount <= current.length) {
+      setMultiscaleWindows(current.slice(0, nextCount));
+      return;
+    }
+
+    const defaultsWindows = defaults.chunking.query_dependent_multiscale.windows;
+    while (current.length < nextCount) {
+      const fallback =
+        defaultsWindows[current.length] ?? defaultsWindows[defaultsWindows.length - 1];
+      current.push({ ...fallback });
+    }
+    setMultiscaleWindows(current);
+  };
+
+  const updateWindowField = (
+    idx: number,
+    field: 'chunk_size_tokens' | 'chunk_overlap_tokens',
+    rawValue: string
+  ) => {
+    const next = multiscaleWindows.map((window, windowIdx) =>
+      windowIdx === idx ? { ...window, [field]: numberValue(rawValue) } : window
+    );
+    setMultiscaleWindows(next);
+  };
+
   const semanticRangeError = value.chunking.semantic.max_tokens < value.chunking.semantic.min_tokens;
+  const semanticMode = value.chunking.semantic.threshold_mode;
+  const semanticNeedsPercentile = semanticMode === 'percentile' || semanticMode === 'hybrid';
+  const semanticNeedsSimilarity = semanticMode === 'fixed' || semanticMode === 'hybrid';
+  const semanticPercentileError =
+    semanticNeedsPercentile &&
+    (value.chunking.semantic.breakpoint_percentile == null ||
+      value.chunking.semantic.breakpoint_percentile < 1 ||
+      value.chunking.semantic.breakpoint_percentile > 99);
+  const semanticSimilarityValue = value.chunking.semantic.similarity_threshold;
+  const semanticSimilarityError =
+    semanticNeedsSimilarity &&
+    (semanticSimilarityValue == null || semanticSimilarityValue < 0 || semanticSimilarityValue > 1);
   const markdownOverlapError =
     value.chunking.markdown_heading.chunk_overlap >= value.chunking.markdown_heading.chunk_size;
   const parentOverlapError =
@@ -129,9 +200,9 @@ export function IndexConfigForm({
                 onChange={(e) => handleMainStrategyChange(e.target.value as ChunkingStrategy)}
               >
                 <FormControlLabel
-                  value="sliding_window"
+                  value="query_dependent_multiscale"
                   control={<Radio />}
-                  label="滑动窗口"
+                  label="多尺度滑动窗口分块"
                   disabled={disabled}
                 />
                 <FormControlLabel
@@ -155,51 +226,65 @@ export function IndexConfigForm({
               </RadioGroup>
             </FormControl>
 
-            {selectedStrategy === 'sliding_window' && (
+            {selectedStrategy === 'query_dependent_multiscale' && (
               <Box>
                 <Typography fontWeight={600} sx={{ mb: 1 }}>
-                  滑动窗口参数
+                  多尺度滑动窗口分块参数
                 </Typography>
-                <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
-                  <TextField
-                    label="chunk_size"
-                    type="number"
-                    value={value.chunking.sliding_window.chunk_size}
-                    onChange={(e) =>
-                      updateChunking({
-                        sliding_window: {
-                          ...value.chunking.sliding_window,
-                          chunk_size: numberValue(e.target.value),
-                        },
-                      })
-                    }
-                    inputProps={{ min: 128, max: 20000 }}
-                    disabled={disabled}
-                    helperText="字符数，越大上下文更完整但召回更粗"
-                    fullWidth
-                  />
-                  <TextField
-                    label="chunk_overlap"
-                    type="number"
-                    value={value.chunking.sliding_window.chunk_overlap}
-                    onChange={(e) =>
-                      updateChunking({
-                        sliding_window: {
-                          ...value.chunking.sliding_window,
-                          chunk_overlap: numberValue(e.target.value),
-                        },
-                      })
-                    }
-                    error={slidingOverlapError}
-                    helperText={
-                      slidingOverlapError
-                        ? 'overlap 必须小于 chunk_size'
-                        : '字符数，提升连续性但过大会冗余'
-                    }
-                    inputProps={{ min: 0, max: 2000 }}
-                    disabled={disabled}
-                    fullWidth
-                  />
+
+                <TextField
+                  label="window_count"
+                  type="number"
+                  value={multiscaleWindows.length}
+                  onChange={(e) => handleWindowCountChange(e.target.value)}
+                  inputProps={{ min: 1, max: 5 }}
+                  helperText="先选择窗口数量（1~5），再设置每个窗口参数"
+                  disabled={disabled}
+                  sx={{ mb: 2, maxWidth: 280 }}
+                />
+
+                <Stack spacing={2}>
+                  {multiscaleWindows.map((window, idx) => {
+                    const overlapError = window.chunk_overlap_tokens >= window.chunk_size_tokens;
+                    return (
+                      <Stack key={`multiscale-window-${idx}`} spacing={1}>
+                        <Typography variant="body2" fontWeight={600}>
+                          窗口 {idx + 1}
+                        </Typography>
+                        <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
+                          <TextField
+                            label="chunk_size_tokens"
+                            type="number"
+                            value={window.chunk_size_tokens}
+                            onChange={(e) =>
+                              updateWindowField(idx, 'chunk_size_tokens', e.target.value)
+                            }
+                            inputProps={{ min: 16, max: 8000 }}
+                            helperText="token 数，窗口大小"
+                            disabled={disabled}
+                            fullWidth
+                          />
+                          <TextField
+                            label="chunk_overlap_tokens"
+                            type="number"
+                            value={window.chunk_overlap_tokens}
+                            onChange={(e) =>
+                              updateWindowField(idx, 'chunk_overlap_tokens', e.target.value)
+                            }
+                            error={overlapError}
+                            helperText={
+                              overlapError
+                                ? 'chunk_overlap_tokens 必须小于 chunk_size_tokens'
+                                : 'token 数，窗口重叠'
+                            }
+                            inputProps={{ min: 0, max: 4000 }}
+                            disabled={disabled}
+                            fullWidth
+                          />
+                        </Stack>
+                      </Stack>
+                    );
+                  })}
                 </Stack>
               </Box>
             )}
@@ -248,22 +333,25 @@ export function IndexConfigForm({
                 </Stack>
                 <Stack spacing={2} direction={{ xs: 'column', sm: 'row' }} sx={{ mt: 2 }}>
                   <TextField
-                    label="similarity_threshold"
-                    type="number"
-                    value={value.chunking.semantic.similarity_threshold}
+                    label="threshold_mode"
+                    select
+                    value={semanticMode}
                     onChange={(e) =>
                       updateChunking({
                         semantic: {
                           ...value.chunking.semantic,
-                          similarity_threshold: numberValue(e.target.value),
+                          threshold_mode: e.target.value as SemanticThresholdMode,
                         },
                       })
                     }
-                    inputProps={{ min: 0, max: 1, step: 0.01 }}
                     disabled={disabled}
-                    helperText="相似度阈值，越高越容易切分"
+                    helperText="语义断点阈值策略"
                     fullWidth
-                  />
+                  >
+                    <MenuItem value="percentile">percentile</MenuItem>
+                    <MenuItem value="hybrid">hybrid</MenuItem>
+                    <MenuItem value="fixed">fixed</MenuItem>
+                  </TextField>
                   <TextField
                     label="overlap_chars"
                     type="number"
@@ -281,7 +369,78 @@ export function IndexConfigForm({
                     helperText="字符数，用于语义切分的重叠"
                     fullWidth
                   />
+                  <TextField
+                    label="embedding_batch_size"
+                    type="number"
+                    value={value.chunking.semantic.embedding_batch_size}
+                    onChange={(e) =>
+                      updateChunking({
+                        semantic: {
+                          ...value.chunking.semantic,
+                          embedding_batch_size: numberValue(e.target.value),
+                        },
+                      })
+                    }
+                    inputProps={{ min: 8, max: 1024 }}
+                    disabled={disabled}
+                    helperText="句向量请求分批大小"
+                    fullWidth
+                  />
                 </Stack>
+
+                {(semanticNeedsPercentile || semanticNeedsSimilarity) && (
+                  <Stack spacing={2} direction={{ xs: 'column', sm: 'row' }} sx={{ mt: 2 }}>
+                    {semanticNeedsPercentile && (
+                      <TextField
+                        label="breakpoint_percentile"
+                        type="number"
+                        value={value.chunking.semantic.breakpoint_percentile ?? ''}
+                        onChange={(e) =>
+                          updateChunking({
+                            semantic: {
+                              ...value.chunking.semantic,
+                              breakpoint_percentile: nullableNumberValue(e.target.value),
+                            },
+                          })
+                        }
+                        error={semanticPercentileError}
+                        helperText={
+                          semanticPercentileError
+                            ? 'breakpoint_percentile 必须在 1~99'
+                            : '相邻句相似度百分位断点'
+                        }
+                        inputProps={{ min: 1, max: 99 }}
+                        disabled={disabled}
+                        fullWidth
+                      />
+                    )}
+
+                    {semanticNeedsSimilarity && (
+                      <TextField
+                        label="similarity_threshold"
+                        type="number"
+                        value={semanticSimilarityValue ?? ''}
+                        onChange={(e) =>
+                          updateChunking({
+                            semantic: {
+                              ...value.chunking.semantic,
+                              similarity_threshold: nullableNumberValue(e.target.value),
+                            },
+                          })
+                        }
+                        error={semanticSimilarityError}
+                        helperText={
+                          semanticSimilarityError
+                            ? 'similarity_threshold 必须在 0~1'
+                            : '固定相似度阈值'
+                        }
+                        inputProps={{ min: 0, max: 1, step: 0.01 }}
+                        disabled={disabled}
+                        fullWidth
+                      />
+                    )}
+                  </Stack>
+                )}
               </Box>
             )}
 
@@ -310,7 +469,7 @@ export function IndexConfigForm({
                       }
                       inputProps={{ min: 512, max: 20000 }}
                       disabled={disabled}
-                      helperText="父块用于上下文，需大于子块"
+                      helperText="字符数，父块长度"
                       fullWidth
                     />
                     <TextField
@@ -328,13 +487,11 @@ export function IndexConfigForm({
                           },
                         })
                       }
-                      error={parentOverlapError || parentSizeError}
+                      error={parentOverlapError}
                       helperText={
                         parentOverlapError
-                          ? 'overlap 必须小于 chunk_size'
-                          : parentSizeError
-                            ? '父块必须大于子块'
-                            : '字符数，提升父块连续性'
+                          ? 'overlap 必须小于 parent.chunk_size'
+                          : '字符数，父块重叠'
                       }
                       inputProps={{ min: 0, max: 5000 }}
                       disabled={disabled}
@@ -359,9 +516,14 @@ export function IndexConfigForm({
                           },
                         })
                       }
+                      error={parentSizeError}
+                      helperText={
+                        parentSizeError
+                          ? 'child.chunk_size 必须小于 parent.chunk_size'
+                          : '字符数，子块长度'
+                      }
                       inputProps={{ min: 128, max: 5000 }}
                       disabled={disabled}
-                      helperText="子块用于检索，越小越精细"
                       fullWidth
                     />
                     <TextField
@@ -379,13 +541,11 @@ export function IndexConfigForm({
                           },
                         })
                       }
-                      error={childOverlapError || parentSizeError}
+                      error={childOverlapError}
                       helperText={
                         childOverlapError
-                          ? 'overlap 必须小于 chunk_size'
-                          : parentSizeError
-                            ? '父块必须大于子块'
-                            : '字符数，提升子块连续性'
+                          ? 'overlap 必须小于 child.chunk_size'
+                          : '字符数，子块重叠'
                       }
                       inputProps={{ min: 0, max: 2000 }}
                       disabled={disabled}
@@ -401,64 +561,65 @@ export function IndexConfigForm({
                 <Typography fontWeight={600} sx={{ mb: 1 }}>
                   Markdown 标题分块参数
                 </Typography>
-                <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
-                  仅支持上传 .md 文件；按标题先切分章节，再在章节内按长度二次切分。
-                </Typography>
-                <Stack spacing={2} direction={{ xs: 'column', sm: 'row' }}>
-                  <TextField
-                    label="max_heading_level"
-                    type="number"
-                    value={value.chunking.markdown_heading.max_heading_level}
-                    onChange={(e) =>
-                      updateChunking({
-                        markdown_heading: {
-                          ...value.chunking.markdown_heading,
-                          max_heading_level: numberValue(e.target.value),
-                        },
-                      })
-                    }
-                    inputProps={{ min: 1, max: 6 }}
-                    disabled={disabled}
-                    helperText="标题层级，1~6"
-                    fullWidth
-                  />
-                  <TextField
-                    label="chunk_size"
-                    type="number"
-                    value={value.chunking.markdown_heading.chunk_size}
-                    onChange={(e) =>
-                      updateChunking({
-                        markdown_heading: {
-                          ...value.chunking.markdown_heading,
-                          chunk_size: numberValue(e.target.value),
-                        },
-                      })
-                    }
-                    inputProps={{ min: 200, max: 20000 }}
-                    disabled={disabled}
-                    helperText="字符数，章节内切分的 chunk_size"
-                    fullWidth
-                  />
-                  <TextField
-                    label="chunk_overlap"
-                    type="number"
-                    value={value.chunking.markdown_heading.chunk_overlap}
-                    onChange={(e) =>
-                      updateChunking({
-                        markdown_heading: {
-                          ...value.chunking.markdown_heading,
-                          chunk_overlap: numberValue(e.target.value),
-                        },
-                      })
-                    }
-                    error={markdownOverlapError}
-                    helperText={
-                      markdownOverlapError ? 'overlap 必须小于 chunk_size' : '字符数，章节内二次切分的重叠'
-                    }
-                    inputProps={{ min: 0, max: 5000 }}
-                    disabled={disabled}
-                    fullWidth
-                  />
+                <Stack spacing={2}>
+                  <Stack spacing={2} direction={{ xs: 'column', sm: 'row' }}>
+                    <TextField
+                      label="max_heading_level"
+                      type="number"
+                      value={value.chunking.markdown_heading.max_heading_level}
+                      onChange={(e) =>
+                        updateChunking({
+                          markdown_heading: {
+                            ...value.chunking.markdown_heading,
+                            max_heading_level: numberValue(e.target.value),
+                          },
+                        })
+                      }
+                      inputProps={{ min: 1, max: 6 }}
+                      disabled={disabled}
+                      helperText="标题层级上限"
+                      fullWidth
+                    />
+                    <TextField
+                      label="chunk_size"
+                      type="number"
+                      value={value.chunking.markdown_heading.chunk_size}
+                      onChange={(e) =>
+                        updateChunking({
+                          markdown_heading: {
+                            ...value.chunking.markdown_heading,
+                            chunk_size: numberValue(e.target.value),
+                          },
+                        })
+                      }
+                      inputProps={{ min: 200, max: 20000 }}
+                      disabled={disabled}
+                      helperText="字符数，章节内二次切分大小"
+                      fullWidth
+                    />
+                    <TextField
+                      label="chunk_overlap"
+                      type="number"
+                      value={value.chunking.markdown_heading.chunk_overlap}
+                      onChange={(e) =>
+                        updateChunking({
+                          markdown_heading: {
+                            ...value.chunking.markdown_heading,
+                            chunk_overlap: numberValue(e.target.value),
+                          },
+                        })
+                      }
+                      error={markdownOverlapError}
+                      helperText={
+                        markdownOverlapError
+                          ? 'overlap 必须小于 chunk_size'
+                          : '字符数，章节内二次切分重叠'
+                      }
+                      inputProps={{ min: 0, max: 5000 }}
+                      disabled={disabled}
+                      fullWidth
+                    />
+                  </Stack>
                 </Stack>
               </Box>
             )}
@@ -482,11 +643,7 @@ export function IndexConfigForm({
               }
               label="启用 Contextual"
             />
-            {selectedStrategy === 'parent_child' && (
-              <Typography variant="body2" color="text.secondary">
-                提示：父子分块启用 Contextual 可能增加成本/冗余，但允许开启。
-              </Typography>
-            )}
+
             {value.contextual.enabled && (
               <Stack spacing={2} direction={{ xs: 'column', sm: 'row' }}>
                 <TextField
@@ -520,6 +677,7 @@ export function IndexConfigForm({
                 />
               </Stack>
             )}
+
             {selectedStrategy === 'parent_child' && (
               <Stack spacing={2} direction={{ xs: 'column', sm: 'row' }}>
                 <TextField
@@ -556,6 +714,83 @@ export function IndexConfigForm({
                   helperText="每个父块保留的子块数"
                   fullWidth
                 />
+              </Stack>
+            )}
+
+            {selectedStrategy === 'query_dependent_multiscale' && (
+              <Stack spacing={2}>
+                <Stack spacing={2} direction={{ xs: 'column', sm: 'row' }}>
+                  <TextField
+                    label="rrf_k"
+                    type="number"
+                    value={value.retrieval.query_dependent_multiscale.rrf_k}
+                    onChange={(e) =>
+                      updateRetrieval({
+                        query_dependent_multiscale: {
+                          ...value.retrieval.query_dependent_multiscale,
+                          rrf_k: numberValue(e.target.value),
+                        },
+                      })
+                    }
+                    inputProps={{ min: 1, max: 200 }}
+                    disabled={disabled}
+                    helperText="RRF 融合参数"
+                    fullWidth
+                  />
+                  <TextField
+                    label="per_window_top_k"
+                    type="number"
+                    value={value.retrieval.query_dependent_multiscale.per_window_top_k}
+                    onChange={(e) =>
+                      updateRetrieval({
+                        query_dependent_multiscale: {
+                          ...value.retrieval.query_dependent_multiscale,
+                          per_window_top_k: numberValue(e.target.value),
+                        },
+                      })
+                    }
+                    inputProps={{ min: 1, max: 200 }}
+                    disabled={disabled}
+                    helperText="每个窗口保留的候选上限"
+                    fullWidth
+                  />
+                </Stack>
+                <Stack spacing={2} direction={{ xs: 'column', sm: 'row' }}>
+                  <TextField
+                    label="max_documents"
+                    type="number"
+                    value={value.retrieval.query_dependent_multiscale.max_documents}
+                    onChange={(e) =>
+                      updateRetrieval({
+                        query_dependent_multiscale: {
+                          ...value.retrieval.query_dependent_multiscale,
+                          max_documents: numberValue(e.target.value),
+                        },
+                      })
+                    }
+                    inputProps={{ min: 1, max: 100 }}
+                    disabled={disabled}
+                    helperText="文档级聚合后最多保留文档数"
+                    fullWidth
+                  />
+                  <TextField
+                    label="max_chunks_per_document"
+                    type="number"
+                    value={value.retrieval.query_dependent_multiscale.max_chunks_per_document}
+                    onChange={(e) =>
+                      updateRetrieval({
+                        query_dependent_multiscale: {
+                          ...value.retrieval.query_dependent_multiscale,
+                          max_chunks_per_document: numberValue(e.target.value),
+                        },
+                      })
+                    }
+                    inputProps={{ min: 1, max: 20 }}
+                    disabled={disabled}
+                    helperText="每篇文档最多保留 chunk 数"
+                    fullWidth
+                  />
+                </Stack>
               </Stack>
             )}
           </Stack>

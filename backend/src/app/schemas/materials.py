@@ -84,6 +84,17 @@ class DocumentChunkRead(BaseModel):
     context_status: str
     context_error: str | None = None
     context_attempts: int
+    chunking_strategy: str
+    heading_path: str | None = None
+    global_chunk_order: int
+    window_id: int | None = None
+    window_size_tokens: int | None = None
+    window_overlap_tokens: int | None = None
+    token_start: int | None = None
+    token_end: int | None = None
+    source_kind: str | None = None
+    source_page_start: int | None = None
+    source_page_end: int | None = None
     locator: dict[str, Any] | None = None
     token_count: int | None = None
     created_at: datetime

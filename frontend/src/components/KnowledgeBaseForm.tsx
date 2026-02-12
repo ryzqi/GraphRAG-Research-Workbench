@@ -7,6 +7,7 @@ import { Button } from './ui/Button';
 import { ErrorAlert } from './ui/ErrorAlert';
 import { getErrorMessage } from '../lib/errorHandler';
 import {
+  createDefaultIndexConfig,
   type KnowledgeBase,
   type KnowledgeBaseCreate,
   type KnowledgeBaseUpdate,
@@ -56,6 +57,7 @@ export function KnowledgeBaseForm(props: KnowledgeBaseFormProps) {
           name: name.trim(),
           description: description.trim() || undefined,
           tags: tags.length > 0 ? tags : undefined,
+          index_config: createDefaultIndexConfig(),
         };
         await props.onSubmit(payload);
       } else {

@@ -37,17 +37,16 @@ def run_index_rebuild_job(job_id: str) -> None:
 def _records_for_window(
     records: list[dict],
     *,
-    chunk_size: int,
-    chunk_overlap: int,
+    chunk_size_tokens: int,
+    chunk_overlap_tokens: int,
 ) -> list[dict]:
     matched: list[dict] = []
     for record in records:
-        metadata = record.get("metadata")
-        if not isinstance(metadata, dict):
-            continue
+        size = record.get("window_size_tokens")
+        overlap = record.get("window_overlap_tokens")
         if (
-            metadata.get("window_size") == chunk_size
-            and metadata.get("window_overlap") == chunk_overlap
+            size == chunk_size_tokens
+            and overlap == chunk_overlap_tokens
         ):
             matched.append(record)
     return matched
@@ -61,13 +60,20 @@ async def _prepare_rebuild_collections(
     kb_id: str,
     embedding_dim: int | None,
 ) -> list[str]:
-    if index_config.chunking.general_strategy == ChunkingStrategy.QUERY_DEPENDENT_CHUNKING:
+    if (
+        index_config.chunking.general_strategy
+        == ChunkingStrategy.QUERY_DEPENDENT_MULTISCALE
+    ):
         collections: list[str] = []
-        for window in index_config.chunking.query_dependent_chunking.windows:
+
+        # Cleanup legacy single-collection data to avoid mixed retrieval after migration.
+        await milvus_client.delete_by_kb_id(kb_id)
+
+        for window in index_config.chunking.query_dependent_multiscale.windows:
             collection_name = collection_name_for_window(
                 base_collection,
-                window.chunk_size,
-                window.chunk_overlap,
+                window.chunk_size_tokens,
+                window.chunk_overlap_tokens,
             )
             if embedding_dim is not None:
                 await milvus_client.ensure_collection(
@@ -95,13 +101,16 @@ async def _upsert_rebuild_records(
     records: list[dict],
     embedding_dim: int | None,
 ) -> list[str]:
-    if index_config.chunking.general_strategy == ChunkingStrategy.QUERY_DEPENDENT_CHUNKING:
+    if (
+        index_config.chunking.general_strategy
+        == ChunkingStrategy.QUERY_DEPENDENT_MULTISCALE
+    ):
         upserted_collections: list[str] = []
-        for window in index_config.chunking.query_dependent_chunking.windows:
+        for window in index_config.chunking.query_dependent_multiscale.windows:
             collection_name = collection_name_for_window(
                 base_collection,
-                window.chunk_size,
-                window.chunk_overlap,
+                window.chunk_size_tokens,
+                window.chunk_overlap_tokens,
             )
             if embedding_dim is not None:
                 await milvus_client.ensure_collection(
@@ -110,8 +119,8 @@ async def _upsert_rebuild_records(
                 )
             window_records = _records_for_window(
                 records,
-                chunk_size=window.chunk_size,
-                chunk_overlap=window.chunk_overlap,
+                chunk_size_tokens=window.chunk_size_tokens,
+                chunk_overlap_tokens=window.chunk_overlap_tokens,
             )
             if window_records:
                 await milvus_client.upsert_batch(
@@ -159,6 +168,8 @@ async def _run_index_rebuild_job(job_id: str) -> None:
                 "succeeded_materials": 0,
                 "total_chunks": 0,
                 "context_fallback_chunks": 0,
+                "semantic_fallback_chunks": 0,
+                "semantic_fallback_materials": 0,
                 "errors": [],
                 "warnings": [],
             }
@@ -261,6 +272,16 @@ async def _run_index_rebuild_job(job_id: str) -> None:
                         await session.commit()
                         continue
 
+                    semantic_fallback_chunks = sum(
+                        1
+                        for item in chunk_items
+                        if isinstance(item.metadata, dict)
+                        and item.metadata.get("semantic_fallback") is True
+                    )
+                    if semantic_fallback_chunks > 0:
+                        stats["semantic_fallback_chunks"] += semantic_fallback_chunks
+                        stats["semantic_fallback_materials"] += 1
+
                     context_results = await generate_contexts_for_chunks(
                         full_text=parsed.text or "",
                         chunk_texts=[item.content for item in chunk_items],
@@ -322,6 +343,9 @@ async def _run_index_rebuild_job(job_id: str) -> None:
                                 parent_chunk_id = parent_id_by_ref.get(
                                     chunk_item.parent_ref, ""
                                 )
+                            chunk_meta = (
+                                chunk_item.metadata if isinstance(chunk_item.metadata, dict) else {}
+                            )
                             milvus_records.append(
                                 {
                                     "chunk_id": str(chunk_ids[idx]),
@@ -333,7 +357,12 @@ async def _run_index_rebuild_job(job_id: str) -> None:
                                     "content": chunk_item.content,
                                     "context": contexts[idx] if contexts else "",
                                     "locator": chunk_item.locator or {},
-                                    "metadata": chunk_item.metadata or {},
+                                    "window_id": chunk_meta.get("window_id"),
+                                    "window_size_tokens": chunk_meta.get("window_size_tokens"),
+                                    "window_overlap_tokens": chunk_meta.get("window_overlap_tokens"),
+                                    "token_start": chunk_meta.get("token_start"),
+                                    "token_end": chunk_meta.get("token_end"),
+                                    "metadata": chunk_meta,
                                     "dense_vector": emb,
                                 }
                             )

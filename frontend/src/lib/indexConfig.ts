@@ -23,30 +23,39 @@ export function validateIndexConfig(config: IndexConfig): string[] {
 
   // Only validate the currently selected main strategy.
   switch (chunking.general_strategy) {
-    case 'sliding_window':
-      checkRange(
-        {
-          value: chunking.sliding_window.chunk_size,
-          min: 128,
-          max: 20000,
-          label: '滑动窗口 chunk_size',
-        },
-        errors
-      );
-      checkRange(
-        {
-          value: chunking.sliding_window.chunk_overlap,
-          min: 0,
-          max: 2000,
-          label: '滑动窗口 overlap',
-        },
-        errors
-      );
-      if (chunking.sliding_window.chunk_overlap >= chunking.sliding_window.chunk_size) {
-        errors.push('滑动窗口 overlap 必须小于 chunk_size');
+    case 'query_dependent_multiscale': {
+      if (chunking.query_dependent_multiscale.windows.length < 1) {
+        errors.push('多尺度滑动窗口分块至少需要 1 个窗口');
+        break;
+      }
+
+      for (const [idx, window] of chunking.query_dependent_multiscale.windows.entries()) {
+        const labelPrefix = `多尺度滑动窗口分块窗口 ${idx + 1}`;
+        checkRange(
+          {
+            value: window.chunk_size_tokens,
+            min: 16,
+            max: 8000,
+            label: `${labelPrefix} chunk_size_tokens`,
+          },
+          errors
+        );
+        checkRange(
+          {
+            value: window.chunk_overlap_tokens,
+            min: 0,
+            max: 4000,
+            label: `${labelPrefix} chunk_overlap_tokens`,
+          },
+          errors
+        );
+        if (window.chunk_overlap_tokens >= window.chunk_size_tokens) {
+          errors.push(`${labelPrefix} chunk_overlap_tokens 必须小于 chunk_size_tokens`);
+        }
       }
       break;
-    case 'max_min_semantic':
+    }
+    case 'max_min_semantic': {
       checkRange(
         {
           value: chunking.semantic.min_tokens,
@@ -70,15 +79,6 @@ export function validateIndexConfig(config: IndexConfig): string[] {
       }
       checkRange(
         {
-          value: chunking.semantic.similarity_threshold,
-          min: 0,
-          max: 1,
-          label: '语义分块相似度阈值',
-        },
-        errors
-      );
-      checkRange(
-        {
           value: chunking.semantic.overlap_chars,
           min: 0,
           max: 2000,
@@ -86,7 +86,50 @@ export function validateIndexConfig(config: IndexConfig): string[] {
         },
         errors
       );
+      checkRange(
+        {
+          value: chunking.semantic.embedding_batch_size,
+          min: 8,
+          max: 1024,
+          label: '语义分块 embedding_batch_size',
+        },
+        errors
+      );
+
+      const mode = chunking.semantic.threshold_mode;
+      if (mode === 'percentile' || mode === 'hybrid') {
+        if (chunking.semantic.breakpoint_percentile == null) {
+          errors.push('语义分块 breakpoint_percentile 不能为空');
+        } else {
+          checkRange(
+            {
+              value: chunking.semantic.breakpoint_percentile,
+              min: 1,
+              max: 99,
+              label: '语义分块 breakpoint_percentile',
+            },
+            errors
+          );
+        }
+      }
+
+      if (mode === 'fixed' || mode === 'hybrid') {
+        if (chunking.semantic.similarity_threshold == null) {
+          errors.push('语义分块相似度阈值不能为空');
+        } else {
+          checkRange(
+            {
+              value: chunking.semantic.similarity_threshold,
+              min: 0,
+              max: 1,
+              label: '语义分块相似度阈值',
+            },
+            errors
+          );
+        }
+      }
       break;
+    }
     case 'parent_child':
       checkRange(
         {
@@ -102,12 +145,12 @@ export function validateIndexConfig(config: IndexConfig): string[] {
           value: chunking.parent_child.parent.chunk_overlap,
           min: 0,
           max: 5000,
-          label: '父块 overlap',
+          label: '父块 chunk_overlap',
         },
         errors
       );
       if (chunking.parent_child.parent.chunk_overlap >= chunking.parent_child.parent.chunk_size) {
-        errors.push('父块 overlap 必须小于父块 chunk_size');
+        errors.push('父块 chunk_overlap 必须小于父块 chunk_size');
       }
       checkRange(
         {
@@ -123,12 +166,12 @@ export function validateIndexConfig(config: IndexConfig): string[] {
           value: chunking.parent_child.child.chunk_overlap,
           min: 0,
           max: 2000,
-          label: '子块 overlap',
+          label: '子块 chunk_overlap',
         },
         errors
       );
       if (chunking.parent_child.child.chunk_overlap >= chunking.parent_child.child.chunk_size) {
-        errors.push('子块 overlap 必须小于子块 chunk_size');
+        errors.push('子块 chunk_overlap 必须小于子块 chunk_size');
       }
       if (chunking.parent_child.parent.chunk_size <= chunking.parent_child.child.chunk_size) {
         errors.push('父块 chunk_size 必须大于子块 chunk_size');
@@ -178,7 +221,7 @@ export function validateIndexConfig(config: IndexConfig): string[] {
       errors.push('Contextual 启用时 max_tokens 需大于 0');
     }
     checkRange(
-      { value: contextual.concurrency, min: 1, max: 10, label: 'Contextual 并发' },
+      { value: contextual.concurrency, min: 1, max: 10, label: 'Contextual concurrency' },
       errors
     );
   }
@@ -199,5 +242,45 @@ export function validateIndexConfig(config: IndexConfig): string[] {
     );
   }
 
+  if (chunking.general_strategy === 'query_dependent_multiscale') {
+    checkRange(
+      {
+        value: retrieval.query_dependent_multiscale.rrf_k,
+        min: 1,
+        max: 200,
+        label: '多尺度检索 rrf_k',
+      },
+      errors
+    );
+    checkRange(
+      {
+        value: retrieval.query_dependent_multiscale.per_window_top_k,
+        min: 1,
+        max: 200,
+        label: '多尺度检索 per_window_top_k',
+      },
+      errors
+    );
+    checkRange(
+      {
+        value: retrieval.query_dependent_multiscale.max_documents,
+        min: 1,
+        max: 100,
+        label: '多尺度检索 max_documents',
+      },
+      errors
+    );
+    checkRange(
+      {
+        value: retrieval.query_dependent_multiscale.max_chunks_per_document,
+        min: 1,
+        max: 20,
+        label: '多尺度检索 max_chunks_per_document',
+      },
+      errors
+    );
+  }
+
   return errors;
 }
+

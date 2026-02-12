@@ -25,6 +25,7 @@ from app.models.knowledge_base import KnowledgeBase
 from app.schemas.chats import EvidenceItem, EvidenceSourceKind
 from app.schemas.knowledge_bases import ChunkingStrategy, IndexConfig
 from app.schemas.query_enhancement import QueryHitSource, QueryItem
+from app.services.query_dependent_collections import collection_name_for_window
 from app.services.query_rewrite_service import (
     QueryRewriteService,
     RewriteResult,
@@ -414,6 +415,44 @@ class RetrievalService:
         )
         return ordered, scores
 
+    @staticmethod
+    def _build_multiscale_window_collections(
+        configs: dict[uuid.UUID, IndexConfig],
+        *,
+        base_collection: str,
+    ) -> list[str]:
+        names: set[str] = set()
+        for cfg in configs.values():
+            if cfg.chunking.general_strategy != ChunkingStrategy.QUERY_DEPENDENT_MULTISCALE:
+                continue
+            for window in cfg.chunking.query_dependent_multiscale.windows:
+                names.add(
+                    collection_name_for_window(
+                        base_collection,
+                        window.chunk_size_tokens,
+                        window.chunk_overlap_tokens,
+                    )
+                )
+        return sorted(names)
+
+    @staticmethod
+    def _split_kb_ids_by_strategy(
+        kb_ids: list[uuid.UUID],
+        configs: dict[uuid.UUID, IndexConfig],
+    ) -> tuple[list[str], list[str]]:
+        default_kb_ids: list[str] = []
+        multiscale_kb_ids: list[str] = []
+        for kb_id in kb_ids:
+            cfg = configs.get(kb_id)
+            if cfg is None:
+                default_kb_ids.append(str(kb_id))
+                continue
+            if cfg.chunking.general_strategy == ChunkingStrategy.QUERY_DEPENDENT_MULTISCALE:
+                multiscale_kb_ids.append(str(kb_id))
+            else:
+                default_kb_ids.append(str(kb_id))
+        return default_kb_ids, multiscale_kb_ids
+
     async def retrieve_layer(
         self,
         *,
@@ -474,7 +513,24 @@ class RetrievalService:
         rerank_input_limit = max(int(rerank_input_limit), top_n)
         rerank_input_limit = min(rerank_input_limit, global_candidates_limit)
 
-        kb_id_strs = [str(kid) for kid in kb_ids]
+        try:
+            timeout_value = self._effective_timeout(
+                deadline=deadline, per_call_timeout=None
+            )
+            kb_configs = await self._run_with_timeout(
+                self._load_kb_index_configs(kb_ids), timeout_value
+            )
+        except asyncio.TimeoutError:
+            return _timeout_draft()
+
+        default_kb_id_strs, multiscale_kb_id_strs = self._split_kb_ids_by_strategy(
+            kb_ids, kb_configs
+        )
+        multiscale_collections = self._build_multiscale_window_collections(
+            kb_configs,
+            base_collection=self._settings.milvus_collection,
+        )
+
         rrf_k = int(self._settings.retrieval_hybrid_rrf_k)
 
         chunk_by_key: dict[tuple[str, str, str], RetrievedChunk] = {}
@@ -534,19 +590,40 @@ class RetrievalService:
             async def _safe_dense():
                 if not use_dense or embedding is None:
                     return []
+                hits = []
                 try:
                     timeout_value = self._effective_timeout(
                         deadline=deadline, per_call_timeout=None
                     )
-                    return await self._run_with_timeout(
-                        self._milvus.search(
-                            embedding=embedding,
-                            kb_ids=kb_id_strs,
-                            top_k=per_query_top_k,
-                            extra_filter_expr=extra_filter_expr,
-                        ),
-                        timeout_value,
-                    )
+                    if default_kb_id_strs:
+                        dense_default = await self._run_with_timeout(
+                            self._milvus.search(
+                                embedding=embedding,
+                                kb_ids=default_kb_id_strs,
+                                top_k=per_query_top_k,
+                                extra_filter_expr=extra_filter_expr,
+                            ),
+                            timeout_value,
+                        )
+                        hits.extend(dense_default)
+
+                    if multiscale_kb_id_strs:
+                        for collection_name in multiscale_collections:
+                            timeout_value = self._effective_timeout(
+                                deadline=deadline, per_call_timeout=None
+                            )
+                            dense_window = await self._run_with_timeout(
+                                self._milvus.search(
+                                    embedding=embedding,
+                                    kb_ids=multiscale_kb_id_strs,
+                                    top_k=per_query_top_k,
+                                    extra_filter_expr=extra_filter_expr,
+                                    collection_name=collection_name,
+                                ),
+                                timeout_value,
+                            )
+                            hits.extend(dense_window)
+                    return hits
                 except asyncio.TimeoutError:
                     if deadline is not None:
                         raise
@@ -556,26 +633,47 @@ class RetrievalService:
                     raise
                 except Exception as exc:
                     logger.warning(
-                        "Dense ����ʧ�ܣ�����Ϊ��", extra={"error": str(exc)}
+                        "Dense 检索失败，降级为空", extra={"error": str(exc)}
                     )
                     return []
 
             async def _safe_bm25():
                 if not use_bm25:
                     return []
+                hits = []
                 try:
                     timeout_value = self._effective_timeout(
                         deadline=deadline, per_call_timeout=None
                     )
-                    return await self._run_with_timeout(
-                        self._milvus.bm25_search(
-                            query=q,
-                            kb_ids=kb_id_strs,
-                            top_k=per_query_top_k,
-                            extra_filter_expr=extra_filter_expr,
-                        ),
-                        timeout_value,
-                    )
+                    if default_kb_id_strs:
+                        bm25_default = await self._run_with_timeout(
+                            self._milvus.bm25_search(
+                                query=q,
+                                kb_ids=default_kb_id_strs,
+                                top_k=per_query_top_k,
+                                extra_filter_expr=extra_filter_expr,
+                            ),
+                            timeout_value,
+                        )
+                        hits.extend(bm25_default)
+
+                    if multiscale_kb_id_strs:
+                        for collection_name in multiscale_collections:
+                            timeout_value = self._effective_timeout(
+                                deadline=deadline, per_call_timeout=None
+                            )
+                            bm25_window = await self._run_with_timeout(
+                                self._milvus.bm25_search(
+                                    query=q,
+                                    kb_ids=multiscale_kb_id_strs,
+                                    top_k=per_query_top_k,
+                                    extra_filter_expr=extra_filter_expr,
+                                    collection_name=collection_name,
+                                ),
+                                timeout_value,
+                            )
+                            hits.extend(bm25_window)
+                    return hits
                 except asyncio.TimeoutError:
                     if deadline is not None:
                         raise
@@ -584,7 +682,7 @@ class RetrievalService:
                 except asyncio.CancelledError:
                     raise
                 except Exception as exc:
-                    logger.warning("BM25 ����ʧ�ܣ�����Ϊ��", extra={"error": str(exc)})
+                    logger.warning("BM25 检索失败，降级为空", extra={"error": str(exc)})
                     return []
 
             dense_hits = []
@@ -700,15 +798,7 @@ class RetrievalService:
         except asyncio.TimeoutError:
             return _timeout_draft()
 
-        try:
-            timeout_value = self._effective_timeout(
-                deadline=deadline, per_call_timeout=None
-            )
-            kb_configs = await self._run_with_timeout(
-                self._load_kb_index_configs(kb_ids), timeout_value
-            )
-        except asyncio.TimeoutError:
-            return _timeout_draft()
+        # kb_configs has been loaded before retrieval loop for multiscale routing.
         try:
             timeout_value = self._effective_timeout(
                 deadline=deadline, per_call_timeout=None
@@ -718,6 +808,17 @@ class RetrievalService:
             )
         except asyncio.TimeoutError:
             return _timeout_draft()
+
+        try:
+            timeout_value = self._effective_timeout(
+                deadline=deadline, per_call_timeout=None
+            )
+            rrf_results = await self._apply_query_dependent_multiscale_strategy(
+                rrf_results, kb_configs, timeout_seconds=timeout_value
+            )
+        except asyncio.TimeoutError:
+            return _timeout_draft()
+
         pre_min_score_count = len(rrf_results)
         rrf_results, filtered_count = self._apply_min_score(rrf_results)
 
@@ -940,10 +1041,24 @@ class RetrievalService:
             return {}
         fingerprint: dict[str, dict] = {}
         for kb_id, cfg in configs.items():
-            fingerprint[str(kb_id)] = {
+            item = {
                 "general_strategy": cfg.chunking.general_strategy.value,
                 "parent_child": cfg.retrieval.parent_child.model_dump(mode="json"),
             }
+            if cfg.chunking.general_strategy == ChunkingStrategy.QUERY_DEPENDENT_MULTISCALE:
+                item["query_dependent_multiscale"] = {
+                    "windows": [
+                        {
+                            "chunk_size_tokens": window.chunk_size_tokens,
+                            "chunk_overlap_tokens": window.chunk_overlap_tokens,
+                        }
+                        for window in cfg.chunking.query_dependent_multiscale.windows
+                    ],
+                    "retrieval": cfg.retrieval.query_dependent_multiscale.model_dump(
+                        mode="json"
+                    ),
+                }
+            fingerprint[str(kb_id)] = item
         return dict(sorted(fingerprint.items(), key=lambda item: item[0]))
 
     @staticmethod
@@ -1095,6 +1210,119 @@ class RetrievalService:
             else:
                 ordered.append(r)
         return ordered
+
+    @staticmethod
+    def _window_key_from_metadata(metadata: dict | None) -> tuple[int, int] | None:
+        if not isinstance(metadata, dict):
+            return None
+        size = metadata.get("window_size_tokens")
+        overlap = metadata.get("window_overlap_tokens")
+        if not isinstance(size, int) or not isinstance(overlap, int):
+            return None
+        return size, overlap
+
+    async def _apply_query_dependent_multiscale_strategy(
+        self,
+        results: list[RetrievalResult],
+        kb_configs: dict[uuid.UUID, IndexConfig],
+        *,
+        timeout_seconds: float | None = None,
+    ) -> list[RetrievalResult]:
+        if not results or not kb_configs:
+            return results
+        if timeout_seconds is not None and float(timeout_seconds) <= 0:
+            raise asyncio.TimeoutError()
+
+        multiscale_kb_ids = {
+            kb_id
+            for kb_id, cfg in kb_configs.items()
+            if cfg.chunking.general_strategy == ChunkingStrategy.QUERY_DEPENDENT_MULTISCALE
+        }
+        if not multiscale_kb_ids:
+            return results
+
+        selected_results: list[RetrievalResult] = []
+        selected_chunk_ids: set[uuid.UUID] = set()
+
+        for kb_id in multiscale_kb_ids:
+            cfg = kb_configs.get(kb_id)
+            if cfg is None:
+                continue
+            kb_results = [r for r in results if r.chunk.kb_id == kb_id]
+            if not kb_results:
+                continue
+
+            by_window: dict[tuple[int, int], list[RetrievalResult]] = {}
+            for item in kb_results:
+                key = self._window_key_from_metadata(item.chunk.metadata)
+                if key is None:
+                    continue
+                by_window.setdefault(key, []).append(item)
+
+            if not by_window:
+                continue
+
+            ranked_doc_lists: list[list[tuple[str, str, str]]] = []
+            per_window_top_k = cfg.retrieval.query_dependent_multiscale.per_window_top_k
+            for window_items in by_window.values():
+                ranked = sorted(window_items, key=lambda row: row.score, reverse=True)
+                ranked = ranked[:per_window_top_k]
+
+                seen_materials: set[str] = set()
+                doc_list: list[tuple[str, str, str]] = []
+                for row in ranked:
+                    material_id = str(row.chunk.material_id)
+                    if material_id in seen_materials:
+                        continue
+                    seen_materials.add(material_id)
+                    doc_list.append((str(row.chunk.kb_id), material_id, "__doc__"))
+                if doc_list:
+                    ranked_doc_lists.append(doc_list)
+
+            if not ranked_doc_lists:
+                continue
+
+            doc_rrf_keys, _ = self._rrf_rank(
+                ranked_doc_lists,
+                k=cfg.retrieval.query_dependent_multiscale.rrf_k,
+            )
+            max_documents = cfg.retrieval.query_dependent_multiscale.max_documents
+            max_chunks_per_document = (
+                cfg.retrieval.query_dependent_multiscale.max_chunks_per_document
+            )
+            ordered_material_ids = [key[1] for key in doc_rrf_keys[:max_documents]]
+
+            for material_id in ordered_material_ids:
+                material_chunks = [
+                    row
+                    for row in kb_results
+                    if str(row.chunk.material_id) == material_id
+                ]
+                material_chunks = sorted(
+                    material_chunks,
+                    key=lambda row: row.score,
+                    reverse=True,
+                )[:max_chunks_per_document]
+                for row in material_chunks:
+                    if row.chunk.id in selected_chunk_ids:
+                        continue
+                    selected_chunk_ids.add(row.chunk.id)
+                    if row.context_text is None:
+                        row.context_text = row.chunk.content
+                    selected_results.append(row)
+
+        if not selected_results:
+            return results
+
+        fallback_results: list[RetrievalResult] = []
+        for row in results:
+            if row.chunk.kb_id in multiscale_kb_ids:
+                continue
+            if row.context_text is None:
+                row.context_text = row.chunk.content
+            fallback_results.append(row)
+
+        return selected_results + fallback_results
 
     async def retrieve(
         self,

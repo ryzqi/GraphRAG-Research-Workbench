@@ -5,8 +5,14 @@ from datetime import timedelta
 
 import asyncio
 import anyio
-from minio import Minio
-from minio.error import S3Error
+try:
+    from minio import Minio
+    from minio.error import S3Error
+except Exception:  # pragma: no cover - optional dependency in lightweight test env
+    Minio = None  # type: ignore[assignment]
+
+    class S3Error(Exception):  # type: ignore[no-redef]
+        code: str = "Unknown"
 
 from app.core.settings import get_settings
 
@@ -39,6 +45,9 @@ class ObjectStorage:
     def __init__(self) -> None:
         settings = get_settings()
         self._settings = settings
+        if Minio is None:
+            raise RuntimeError("minio dependency is required to use ObjectStorage")
+
         self._client = Minio(
             settings.minio_endpoint,
             access_key=settings.minio_access_key,

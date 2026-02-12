@@ -18,7 +18,6 @@ from app.models.source_material import SourceType
 from app.schemas.ingestion_batches import KnowledgeBaseIngestionStateRead
 from app.schemas.knowledge_bases import (
     ChunkingStrategy,
-    IndexConfig,
     KnowledgeBaseCreate,
     KnowledgeBaseIndexConfigUpdateRequest,
     KnowledgeBaseIndexConfigUpdateResponse,
@@ -123,11 +122,16 @@ async def create_knowledge_base(
             detail={"code": "KB_NAME_EXISTS", "message": "知识库名称已存在"},
         )
 
-    index_config = (
-        body.index_config.model_dump(mode="json")
-        if body.index_config is not None
-        else IndexConfig().model_dump(mode="json")
-    )
+    if body.index_config is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail={
+                "code": "INDEX_CONFIG_REQUIRED",
+                "message": "创建知识库时必须提供 index_config，并显式配置多尺度窗口参数",
+            },
+        )
+
+    index_config = body.index_config.model_dump(mode="json")
     try:
         kb = await service.create(
             name=body.name,
@@ -178,7 +182,7 @@ async def update_knowledge_base(
     extra = getattr(body, "model_extra", None) or {}
     if "index_config" in extra:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail={
                 "code": "INDEX_CONFIG_NOT_ALLOWED",
                 "message": "index_config 不允许通过该接口更新，请使用 PUT /api/v1/knowledge-bases/{kb_id}/index-config",

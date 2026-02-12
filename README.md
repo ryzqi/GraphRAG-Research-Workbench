@@ -89,6 +89,21 @@ npm run build
 npm run start
 ```
 
+### 5) 重置本地数据（PostgreSQL + Milvus + Redis）
+
+当你需要彻底清空本地知识库数据并重新导入时，可执行：
+pwsh -ExecutionPolicy Bypass -File ./scripts/reset_data.ps1 -Force
+
+- 该脚本会执行：
+  - podman compose down -v（清空 PostgreSQL 命名卷）
+  - 删除 infra/data/redis、infra/data/milvus、infra/data/etcd
+  - 重新启动基础依赖
+  - 默认执行 cd backend; uv run alembic upgrade head
+- 如需只清理不迁移：
+  pwsh -ExecutionPolicy Bypass -File ./scripts/reset_data.ps1 -Force -SkipMigrate
+
+> ⚠️ 警告：这是**破坏性操作**，会删除本地数据库、向量库和 Redis 持久化数据。
+
 ## Web 搜索（Tavily）配置
 
 - 必填：`WEB_SEARCH_API_KEY`

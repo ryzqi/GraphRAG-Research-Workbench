@@ -21,7 +21,7 @@ def build_embedding_inputs(
 
     Rules:
     - If chunk_role == "child" and parent_ref is set, prefix with parent chunk content.
-    - If metadata.heading_path is present, prefix with "heading_path : ".
+    - If metadata.heading_path is present, prefix with "heading_path : " unless strategy is markdown_heading.
     - If contextual_enabled and context is present, append "\n\n{context}".
     """
 
@@ -51,12 +51,16 @@ def build_embedding_inputs(
                 base_text = f"{parent_text}\n\n{base_text}"
 
         heading_path = None
+        chunking_strategy = None
         metadata = getattr(item, "metadata", None)
         if isinstance(metadata, dict):
             raw_heading_path = metadata.get("heading_path")
             if isinstance(raw_heading_path, str) and raw_heading_path.strip():
                 heading_path = raw_heading_path.strip()
-        if heading_path:
+            raw_chunking_strategy = metadata.get("chunking_strategy")
+            if isinstance(raw_chunking_strategy, str) and raw_chunking_strategy.strip():
+                chunking_strategy = raw_chunking_strategy.strip()
+        if heading_path and chunking_strategy != "markdown_heading":
             base_text = f"{heading_path} : {base_text}"
 
         ctx = str(context or "")

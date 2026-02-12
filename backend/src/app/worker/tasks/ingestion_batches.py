@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import uuid
 
-from sqlalchemy import select
 from dataclasses import dataclass
+from sqlalchemy import select
 
 from app.core.errors import AppError
 from app.core.settings import get_settings
@@ -28,6 +29,9 @@ from app.worker.tasks.contextual_retry import generate_contexts_for_chunks
 from app.worker.tasks.embedding_inputs import build_embedding_inputs
 
 
+logger = logging.getLogger(__name__)
+
+
 @dataclass(slots=True)
 class _ProcessingFailure(Exception):
     code: str
@@ -39,22 +43,22 @@ class _ProcessingFailure(Exception):
 class _DocProcessOutcome:
     chunk_count: int
     context_failed_chunks: list[dict]
+    semantic_fallback_chunks: int
 
 
 def _records_for_window(
     records: list[dict],
     *,
-    chunk_size: int,
-    chunk_overlap: int,
+    chunk_size_tokens: int,
+    chunk_overlap_tokens: int,
 ) -> list[dict]:
     matched: list[dict] = []
     for record in records:
-        metadata = record.get("metadata")
-        if not isinstance(metadata, dict):
-            continue
+        size = record.get("window_size_tokens")
+        overlap = record.get("window_overlap_tokens")
         if (
-            metadata.get("window_size") == chunk_size
-            and metadata.get("window_overlap") == chunk_overlap
+            size == chunk_size_tokens
+            and overlap == chunk_overlap_tokens
         ):
             matched.append(record)
     return matched
@@ -69,12 +73,18 @@ async def _write_records_to_milvus(
     records: list[dict],
     embedding_dim: int | None,
 ) -> None:
-    if index_config.chunking.general_strategy == ChunkingStrategy.QUERY_DEPENDENT_CHUNKING:
-        for window in index_config.chunking.query_dependent_chunking.windows:
+    if (
+        index_config.chunking.general_strategy
+        == ChunkingStrategy.QUERY_DEPENDENT_MULTISCALE
+    ):
+        # Cleanup legacy single-collection data for the same material to prevent stale mix.
+        await milvus.delete_by_material(material_id)
+
+        for window in index_config.chunking.query_dependent_multiscale.windows:
             collection_name = collection_name_for_window(
                 base_collection,
-                window.chunk_size,
-                window.chunk_overlap,
+                window.chunk_size_tokens,
+                window.chunk_overlap_tokens,
             )
             if embedding_dim is not None:
                 await milvus.ensure_collection(
@@ -85,10 +95,12 @@ async def _write_records_to_milvus(
                 material_id,
                 collection_name=collection_name,
             )
+
+
             window_records = _records_for_window(
                 records,
-                chunk_size=window.chunk_size,
-                chunk_overlap=window.chunk_overlap,
+                chunk_size_tokens=window.chunk_size_tokens,
+                chunk_overlap_tokens=window.chunk_overlap_tokens,
             )
             if window_records:
                 await milvus.upsert_batch(
@@ -152,6 +164,15 @@ async def _run_ingestion_batch_doc(doc_id: str) -> None:
                     chunk_count=outcome.chunk_count,
                     context_failed_chunks=outcome.context_failed_chunks,
                 )
+                if outcome.semantic_fallback_chunks > 0:
+                    logger.warning(
+                        "Semantic chunking fallback detected during ingestion",
+                        extra={
+                            "doc_id": str(doc.id),
+                            "kb_id": str(doc.kb_id),
+                            "semantic_fallback_chunks": outcome.semantic_fallback_chunks,
+                        },
+                    )
                 await service.recalculate_batch_for_doc(doc=doc, reason="doc_succeeded")
                 await service.commit()
             except _ProcessingFailure as failure:
@@ -260,6 +281,11 @@ async def _process_doc(*, doc, resources) -> _DocProcessOutcome:
         chunker = ChunkingEngine(settings=get_settings(), embedding=embedding_client)
         context_service = ContextualEmbeddingService(settings=get_settings())
         chunk_items = await chunker.split(parsed, index_config)
+        semantic_fallback_chunks = sum(
+            1
+            for item in chunk_items
+            if isinstance(item.metadata, dict) and item.metadata.get("semantic_fallback") is True
+        )
         if not chunk_items:
             raise _ProcessingFailure(
                 code="DOC_CHUNK_EMPTY",
@@ -321,6 +347,7 @@ async def _process_doc(*, doc, resources) -> _DocProcessOutcome:
 
             records: list[dict] = []
             for idx, (chunk_item, emb) in enumerate(zip(chunk_items, embeddings, strict=False)):
+                chunk_meta = chunk_item.metadata if isinstance(chunk_item.metadata, dict) else {}
                 records.append(
                     {
                         "chunk_id": str(chunk_ids[idx]),
@@ -332,7 +359,12 @@ async def _process_doc(*, doc, resources) -> _DocProcessOutcome:
                         "content": chunk_item.content,
                         "context": contexts[idx] if contexts else "",
                         "locator": chunk_item.locator or {},
-                        "metadata": chunk_item.metadata or {},
+                        "window_id": chunk_meta.get("window_id"),
+                        "window_size_tokens": chunk_meta.get("window_size_tokens"),
+                        "window_overlap_tokens": chunk_meta.get("window_overlap_tokens"),
+                        "token_start": chunk_meta.get("token_start"),
+                        "token_end": chunk_meta.get("token_end"),
+                        "metadata": chunk_meta,
                         "dense_vector": emb,
                     }
                 )
@@ -349,6 +381,7 @@ async def _process_doc(*, doc, resources) -> _DocProcessOutcome:
             return _DocProcessOutcome(
                 chunk_count=len(records),
                 context_failed_chunks=context_failed_chunks,
+                semantic_fallback_chunks=semantic_fallback_chunks,
             )
         except Exception:
             await session.rollback()

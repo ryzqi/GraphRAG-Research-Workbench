@@ -123,6 +123,102 @@ function contextStatusColor(status: string):
   }
 }
 
+type StrategyChipColor = 'default' | 'primary' | 'secondary' | 'success' | 'warning' | 'error' | 'info';
+
+function normalizedChunkStrategy(chunk: DocumentChunk): string {
+  const direct = chunk.chunking_strategy?.trim();
+  if (direct) {
+    return direct;
+  }
+  const locatorStrategy = chunk.locator?.['chunking_strategy'];
+  if (typeof locatorStrategy === 'string' && locatorStrategy.trim()) {
+    return locatorStrategy.trim();
+  }
+  return 'unknown';
+}
+
+function chunkStrategyLabel(strategy: string): string {
+  switch (strategy) {
+    case 'query_dependent_multiscale':
+      return '多尺度窗口';
+    case 'markdown_heading':
+      return 'Markdown 标题';
+    case 'max_min_semantic':
+      return '语义分块';
+    case 'parent_child':
+      return '父子子块';
+    case 'parent_window':
+      return '父子父块';
+    default:
+      return strategy || '未知策略';
+  }
+}
+
+function chunkStrategyColor(strategy: string): StrategyChipColor {
+  switch (strategy) {
+    case 'query_dependent_multiscale':
+      return 'info';
+    case 'markdown_heading':
+      return 'success';
+    case 'max_min_semantic':
+      return 'secondary';
+    case 'parent_child':
+    case 'parent_window':
+      return 'warning';
+    default:
+      return 'default';
+  }
+}
+
+function locatorNumber(chunk: DocumentChunk, key: string): number | null {
+  const rawValue = chunk.locator?.[key];
+  if (typeof rawValue === 'number' && Number.isFinite(rawValue)) {
+    return rawValue;
+  }
+  if (typeof rawValue === 'string') {
+    const parsed = Number(rawValue);
+    if (Number.isFinite(parsed)) {
+      return parsed;
+    }
+  }
+  return null;
+}
+
+function chunkStrategyHighlights(chunk: DocumentChunk): string[] {
+  const strategy = normalizedChunkStrategy(chunk);
+  const highlights: string[] = [];
+
+  if (strategy === 'markdown_heading' && chunk.heading_path) {
+    highlights.push('标题路径 ' + chunk.heading_path);
+  }
+
+  if (strategy === 'query_dependent_multiscale') {
+    const windowId = locatorNumber(chunk, 'window_id');
+    const tokenStart = locatorNumber(chunk, 'token_start');
+    const tokenEnd = locatorNumber(chunk, 'token_end');
+    if (windowId != null) {
+      highlights.push('窗口 ' + String(windowId));
+    }
+    if (tokenStart != null && tokenEnd != null) {
+      highlights.push('Token ' + String(tokenStart) + '-' + String(tokenEnd));
+    }
+  }
+
+  if (strategy === 'parent_child' || strategy === 'parent_window') {
+    highlights.push(strategy === 'parent_child' ? '层级子块' : '层级父块');
+    const index = locatorNumber(chunk, 'index');
+    if (index != null) {
+      highlights.push('定位 ' + String(index));
+    }
+  }
+
+  if (strategy === 'max_min_semantic' && chunk.token_count != null) {
+    highlights.push('Token ' + String(chunk.token_count));
+  }
+
+  return highlights;
+}
+
 function chunkPreview(text: string, max = 100): string {
   const compact = text.replace(/\s+/g, ' ').trim();
   if (compact.length <= max) {
@@ -352,6 +448,8 @@ function ChunkBrowserSection({
     ? null
     : chunkDetailQuery.data ?? chunks.find((item) => item.id === selectedChunkId) ?? null;
   const selectedMaterial = filteredMaterials.find((item) => item.id === selectedMaterialId) ?? null;
+  const selectedChunkStrategy = selectedChunk ? normalizedChunkStrategy(selectedChunk) : null;
+  const selectedChunkHighlights = selectedChunk ? chunkStrategyHighlights(selectedChunk) : [];
 
   const sectionError =
     (materialsQuery.error ? getErrorMessage(materialsQuery.error) : null) ??
@@ -560,6 +658,8 @@ function ChunkBrowserSection({
             <List disablePadding sx={listSx}>
               {chunks.map((item, index) => {
                 const selected = item.id === selectedChunkId;
+                const strategy = normalizedChunkStrategy(item);
+                const strategyHighlights = chunkStrategyHighlights(item);
                 return (
                   <ListItemButton
                     key={item.id}
@@ -582,6 +682,12 @@ function ChunkBrowserSection({
                             {item.chunk_index}
                           </Typography>
                           <Chip
+                            label={chunkStrategyLabel(strategy)}
+                            color={chunkStrategyColor(strategy)}
+                            size='small'
+                            variant='outlined'
+                          />
+                          <Chip
                             label={contextStatusLabel(item.context_status)}
                             color={contextStatusColor(item.context_status)}
                             size='small'
@@ -590,20 +696,33 @@ function ChunkBrowserSection({
                         </Stack>
                       }
                       secondary={
-                        <Typography
-                          variant='caption'
-                          color='text.secondary'
-                          sx={{
-                            mt: 0.75,
-                            display: '-webkit-box',
-                            WebkitLineClamp: 2,
-                            WebkitBoxOrient: 'vertical',
-                            overflow: 'hidden',
-                            lineHeight: 1.5,
-                          }}
-                        >
-                          {chunkPreview(resolvedChunkText(item), 120)}
-                        </Typography>
+                        <Stack spacing={0.65} sx={{ mt: 0.75 }}>
+                          {strategyHighlights.length > 0 && (
+                            <Stack direction='row' spacing={0.6} flexWrap='wrap' useFlexGap>
+                              {strategyHighlights.map((hint, hintIndex) => (
+                                <Chip
+                                  key={hint + String(hintIndex)}
+                                  label={hint}
+                                  size='small'
+                                  variant='outlined'
+                                />
+                              ))}
+                            </Stack>
+                          )}
+                          <Typography
+                            variant='caption'
+                            color='text.secondary'
+                            sx={{
+                              display: '-webkit-box',
+                              WebkitLineClamp: 2,
+                              WebkitBoxOrient: 'vertical',
+                              overflow: 'hidden',
+                              lineHeight: 1.5,
+                            }}
+                          >
+                            {chunkPreview(resolvedChunkText(item), 120)}
+                          </Typography>
+                        </Stack>
                       }
                     />
                   </ListItemButton>
@@ -636,7 +755,15 @@ function ChunkBrowserSection({
           ) : (
             <Stack spacing={1.25}>
               <Stack direction='row' spacing={1} flexWrap='wrap' useFlexGap>
-                <Chip label={`Chunk ${selectedChunk.chunk_index}`} size='small' color='primary' />
+                <Chip label={'Chunk ' + String(selectedChunk.chunk_index)} size='small' color='primary' />
+                {selectedChunkStrategy && (
+                  <Chip
+                    label={chunkStrategyLabel(selectedChunkStrategy)}
+                    size='small'
+                    color={chunkStrategyColor(selectedChunkStrategy)}
+                    variant='outlined'
+                  />
+                )}
                 <Chip
                   label={contextStatusLabel(selectedChunk.context_status)}
                   size='small'
@@ -644,15 +771,41 @@ function ChunkBrowserSection({
                   variant='outlined'
                 />
                 {selectedChunk.token_count != null && (
-                  <Chip label={`Token ${selectedChunk.token_count}`} size='small' variant='outlined' />
+                  <Chip label={'Token ' + String(selectedChunk.token_count)} size='small' variant='outlined' />
                 )}
-                <Chip label={`增强尝试 ${selectedChunk.context_attempts}`} size='small' variant='outlined' />
+                <Chip label={'增强尝试 ' + String(selectedChunk.context_attempts)} size='small' variant='outlined' />
                 <Chip
-                  label={`创建于 ${new Date(selectedChunk.created_at).toLocaleString()}`}
+                  label={'创建于 ' + new Date(selectedChunk.created_at).toLocaleString()}
                   size='small'
                   variant='outlined'
                 />
               </Stack>
+
+              <Paper
+                variant='outlined'
+                sx={{
+                  p: { xs: 1.25, md: 1.5 },
+                  bgcolor: 'background.paper',
+                  borderRadius: 2,
+                }}
+              >
+                <Typography variant='overline' color='text.secondary'>
+                  分块策略信息
+                </Typography>
+                <Stack direction='row' spacing={0.75} flexWrap='wrap' useFlexGap sx={{ mt: 0.5 }}>
+                  {selectedChunkStrategy && (
+                    <Chip
+                      label={chunkStrategyLabel(selectedChunkStrategy)}
+                      color={chunkStrategyColor(selectedChunkStrategy)}
+                      size='small'
+                      variant='outlined'
+                    />
+                  )}
+                  {selectedChunkHighlights.map((hint, hintIndex) => (
+                    <Chip key={hint + String(hintIndex)} label={hint} size='small' variant='outlined' />
+                  ))}
+                </Stack>
+              </Paper>
 
               <Paper
                 variant='outlined'

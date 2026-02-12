@@ -44,3 +44,23 @@ def test_embedding_inputs_append_context_when_present() -> None:
     )
 
     assert outputs == ["原始分块\n\n增强上下文"]
+
+
+def test_embedding_inputs_do_not_double_prefix_markdown_heading_chunks() -> None:
+    item = SimpleNamespace(
+        content='# Title 1\n## Title 2\nBody',
+        chunk_role='default',
+        parent_ref=None,
+        metadata={
+            'chunking_strategy': 'markdown_heading',
+            'heading_path': 'Title 1 > Title 2',
+        },
+    )
+
+    outputs = build_embedding_inputs(
+        chunk_items=[item],
+        contexts=[''],
+        contextual_enabled=True,
+    )
+
+    assert outputs == ['# Title 1\n## Title 2\nBody']

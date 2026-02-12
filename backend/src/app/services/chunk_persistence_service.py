@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.document_chunk import DocumentChunk
 from app.services.chunking import ChunkItem
+from app.utils.token_counter import count_tokens
 
 
 class ChunkPersistenceService:
@@ -78,6 +79,55 @@ class ChunkPersistenceService:
         if len(values) != expected_len:
             raise ValueError("context_attempts length must match chunk_items length")
         return [max(int(value or 0), 0) for value in values]
+
+    @staticmethod
+    def _resolve_chunking_strategy(chunk_item: ChunkItem) -> str:
+        metadata = chunk_item.metadata if isinstance(chunk_item.metadata, dict) else {}
+        raw_strategy = metadata.get("chunking_strategy")
+        if isinstance(raw_strategy, str):
+            strategy = raw_strategy.strip()
+            if strategy:
+                return strategy
+        return "unknown"
+
+    @staticmethod
+    def _resolve_heading_path(chunk_item: ChunkItem) -> str | None:
+        metadata = chunk_item.metadata if isinstance(chunk_item.metadata, dict) else {}
+        raw_heading_path = metadata.get("heading_path")
+        if not isinstance(raw_heading_path, str):
+            return None
+        heading_path = raw_heading_path.strip()
+        return heading_path or None
+
+    @staticmethod
+    def _resolve_int_from_metadata(chunk_item: ChunkItem, key: str) -> int | None:
+        metadata = chunk_item.metadata if isinstance(chunk_item.metadata, dict) else {}
+        value = metadata.get(key)
+        if isinstance(value, bool):
+            return None
+        if isinstance(value, int):
+            return value
+        return None
+
+    @staticmethod
+    def _resolve_source_kind(chunk_item: ChunkItem) -> str | None:
+        locator = chunk_item.locator if isinstance(chunk_item.locator, dict) else {}
+        kind = locator.get("kind")
+        if isinstance(kind, str):
+            normalized = kind.strip()
+            if normalized:
+                return normalized
+        return None
+
+    @staticmethod
+    def _resolve_source_page(chunk_item: ChunkItem, key: str) -> int | None:
+        locator = chunk_item.locator if isinstance(chunk_item.locator, dict) else {}
+        value = locator.get(key)
+        if isinstance(value, bool):
+            return None
+        if isinstance(value, int):
+            return value
+        return None
 
     async def replace_material_chunks(
         self,
@@ -150,9 +200,26 @@ class ChunkPersistenceService:
                     "context_status": resolved_context_statuses[idx],
                     "context_error": resolved_context_errors[idx],
                     "context_attempts": resolved_context_attempts[idx],
+                    "chunking_strategy": self._resolve_chunking_strategy(chunk_item),
+                    "heading_path": self._resolve_heading_path(chunk_item),
+                    "global_chunk_order": idx,
+                    "window_id": self._resolve_int_from_metadata(chunk_item, "window_id"),
+                    "window_size_tokens": self._resolve_int_from_metadata(
+                        chunk_item,
+                        "window_size_tokens",
+                    ),
+                    "window_overlap_tokens": self._resolve_int_from_metadata(
+                        chunk_item,
+                        "window_overlap_tokens",
+                    ),
+                    "token_start": self._resolve_int_from_metadata(chunk_item, "token_start"),
+                    "token_end": self._resolve_int_from_metadata(chunk_item, "token_end"),
+                    "source_kind": self._resolve_source_kind(chunk_item),
+                    "source_page_start": self._resolve_source_page(chunk_item, "page_start"),
+                    "source_page_end": self._resolve_source_page(chunk_item, "page_end"),
                     "locator": chunk_item.locator,
                     "content_hash": hashlib.sha256(raw_text.encode("utf-8")).hexdigest(),
-                    "token_count": None,
+                    "token_count": count_tokens(raw_text),
                 }
             )
 

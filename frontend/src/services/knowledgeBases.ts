@@ -8,7 +8,7 @@ import type { IndexRebuildJob } from './indexRebuilds';
 import type { ListResponse } from './types';
 
 export type ChunkingStrategy =
-  | 'sliding_window'
+  | 'query_dependent_multiscale'
   | 'max_min_semantic'
   | 'parent_child'
   | 'markdown_heading';
@@ -19,16 +19,25 @@ export interface MarkdownHeadingConfig {
   chunk_overlap: number;
 }
 
-export interface SlidingWindowConfig {
-  chunk_size: number;
-  chunk_overlap: number;
+export interface QueryDependentMultiscaleWindowConfig {
+  chunk_size_tokens: number;
+  chunk_overlap_tokens: number;
 }
+
+export interface QueryDependentMultiscaleChunkingConfig {
+  windows: QueryDependentMultiscaleWindowConfig[];
+}
+
+export type SemanticThresholdMode = 'percentile' | 'hybrid' | 'fixed';
 
 export interface SemanticConfig {
   min_tokens: number;
   max_tokens: number;
-  similarity_threshold: number;
+  threshold_mode: SemanticThresholdMode;
+  breakpoint_percentile: number | null;
+  similarity_threshold: number | null;
   overlap_chars: number;
+  embedding_batch_size: number;
 }
 
 export interface ParentChunkConfig {
@@ -49,7 +58,7 @@ export interface ParentChildConfig {
 export interface ChunkingConfig {
   markdown_heading: MarkdownHeadingConfig;
   general_strategy: ChunkingStrategy;
-  sliding_window: SlidingWindowConfig;
+  query_dependent_multiscale: QueryDependentMultiscaleChunkingConfig;
   semantic: SemanticConfig;
   parent_child: ParentChildConfig;
 }
@@ -65,8 +74,16 @@ export interface RetrievalParentChildConfig {
   max_children_per_parent: number;
 }
 
+export interface RetrievalQueryDependentMultiscaleConfig {
+  rrf_k: number;
+  per_window_top_k: number;
+  max_documents: number;
+  max_chunks_per_document: number;
+}
+
 export interface RetrievalConfig {
   parent_child: RetrievalParentChildConfig;
+  query_dependent_multiscale: RetrievalQueryDependentMultiscaleConfig;
 }
 
 export interface IndexConfig {
@@ -107,7 +124,7 @@ export interface KnowledgeBaseCreate {
   name: string;
   description?: string;
   tags?: string[];
-  index_config?: IndexConfig;
+  index_config: IndexConfig;
 }
 
 export interface KnowledgeBaseUpdate {
@@ -129,16 +146,22 @@ export function createDefaultIndexConfig(): IndexConfig {
         chunk_size: 4000,
         chunk_overlap: 200,
       },
-      general_strategy: 'sliding_window',
-      sliding_window: {
-        chunk_size: 512,
-        chunk_overlap: 64,
+      general_strategy: 'query_dependent_multiscale',
+      query_dependent_multiscale: {
+        windows: [
+          { chunk_size_tokens: 100, chunk_overlap_tokens: 20 },
+          { chunk_size_tokens: 200, chunk_overlap_tokens: 40 },
+          { chunk_size_tokens: 500, chunk_overlap_tokens: 100 },
+        ],
       },
       semantic: {
         min_tokens: 80,
         max_tokens: 256,
+        threshold_mode: 'percentile',
+        breakpoint_percentile: 25,
         similarity_threshold: 0.6,
         overlap_chars: 64,
+        embedding_batch_size: 128,
       },
       parent_child: {
         parent: {
@@ -160,6 +183,12 @@ export function createDefaultIndexConfig(): IndexConfig {
       parent_child: {
         max_parents: 6,
         max_children_per_parent: 2,
+      },
+      query_dependent_multiscale: {
+        rrf_k: 60,
+        per_window_top_k: 20,
+        max_documents: 8,
+        max_chunks_per_document: 2,
       },
     },
   };

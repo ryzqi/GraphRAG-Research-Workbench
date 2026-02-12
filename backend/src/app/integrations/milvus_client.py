@@ -209,6 +209,7 @@ class MilvusClient:
                 name="content",
                 dtype=DataType.VARCHAR,
                 max_length=65535,
+                enable_analyzer=True,
                 analyzer_params=analyzer_params,
             ),
             FieldSchema(name="context", dtype=DataType.VARCHAR, max_length=2048),
@@ -296,11 +297,27 @@ class MilvusClient:
             except Exception:
                 index_params = None
 
-        await create_collection(
-            collection_name=target_collection,
-            schema=schema,
-            index_params=index_params,
-        )
+        try:
+            await create_collection(
+                collection_name=target_collection,
+                schema=schema,
+                index_params=index_params,
+            )
+        except Exception as exc:
+            bm25_enabled = self._bm25_supported()
+            logger.exception(
+                "Milvus create_collection 失败",
+                extra={
+                    "collection_name": target_collection,
+                    "bm25_enabled": bm25_enabled,
+                },
+            )
+            raise RuntimeError(
+                "Milvus create_collection 失败："
+                f"collection={target_collection}, bm25_enabled={bm25_enabled}, error={exc}。"
+                "若启用 BM25，请确认 content 字段已设置 enable_analyzer=True；"
+                "如为旧 schema，请清空并重建 collection 后重试。"
+            ) from exc
 
         self._field_cache = {
             "chunk_id",

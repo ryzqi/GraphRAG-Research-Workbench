@@ -23,6 +23,8 @@ export interface DocumentChunk {
   context_status: string;
   context_error: string | null;
   context_attempts: number;
+  chunking_strategy: string;
+  heading_path: string | null;
   locator: Record<string, unknown> | null;
   token_count: number | null;
   created_at: string;

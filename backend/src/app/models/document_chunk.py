@@ -46,6 +46,21 @@ class DocumentChunk(Base):
     context_attempts: Mapped[int] = mapped_column(
         sa.Integer, nullable=False, default=0, server_default=sa.text("0")
     )
+    chunking_strategy: Mapped[str] = mapped_column(
+        sa.String(32), nullable=False, default="unknown", server_default="unknown"
+    )
+    heading_path: Mapped[str | None] = mapped_column(sa.Text, nullable=True)
+    global_chunk_order: Mapped[int] = mapped_column(
+        sa.Integer, nullable=False, default=0, server_default=sa.text("0")
+    )
+    window_id: Mapped[int | None] = mapped_column(sa.Integer, nullable=True)
+    window_size_tokens: Mapped[int | None] = mapped_column(sa.Integer, nullable=True)
+    window_overlap_tokens: Mapped[int | None] = mapped_column(sa.Integer, nullable=True)
+    token_start: Mapped[int | None] = mapped_column(sa.Integer, nullable=True)
+    token_end: Mapped[int | None] = mapped_column(sa.Integer, nullable=True)
+    source_kind: Mapped[str | None] = mapped_column(sa.String(24), nullable=True)
+    source_page_start: Mapped[int | None] = mapped_column(sa.Integer, nullable=True)
+    source_page_end: Mapped[int | None] = mapped_column(sa.Integer, nullable=True)
     locator: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     content_hash: Mapped[str | None] = mapped_column(sa.String(64), nullable=True)
     token_count: Mapped[int | None] = mapped_column(sa.Integer, nullable=True)
@@ -63,4 +78,17 @@ class DocumentChunk(Base):
 
     __table_args__ = (
         sa.Index("ix_document_chunks_kb_material_idx", "kb_id", "material_id", "chunk_index"),
+        sa.Index(
+            "ix_document_chunks_kb_material_global_order",
+            "kb_id",
+            "material_id",
+            "global_chunk_order",
+        ),
+        sa.Index(
+            "ix_document_chunks_kb_material_window_token",
+            "kb_id",
+            "material_id",
+            "window_id",
+            "token_start",
+        ),
     )
