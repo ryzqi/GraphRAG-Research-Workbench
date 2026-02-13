@@ -8,9 +8,13 @@ import { alpha } from '@mui/material/styles';
 import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
 import { ClarificationCard, MessageItem, ToolApprovalCard } from './MessageItem';
 import { SparkleLoading } from './SparkleLoading';
-import type { EvidenceItem } from '../../services/chats';
+import type { ChatRunStateEvent, EvidenceItem } from '../../services/chats';
 import { EvidenceList } from '../EvidenceList';
-import { PipelineProgress, type PipelineStep } from './PipelineProgress';
+import {
+  PipelineProgress,
+  type PipelineStep,
+  type PipelineTimelineEvent,
+} from './PipelineProgress';
 
 export interface ChatMessage {
   id: string;
@@ -29,6 +33,7 @@ export interface ChatMessage {
     status: 'pending' | 'completed' | 'failed';
   }>;
   pipelineSteps?: PipelineStep[];
+  nodeTimeline?: PipelineTimelineEvent[];
   pendingToolApproval?: {
     message?: string | null;
     toolCalls: Array<{
@@ -40,6 +45,7 @@ export interface ChatMessage {
     message: string;
   };
   runId?: string;
+  runState?: ChatRunStateEvent;
 }
 
 interface MessageListProps {
@@ -49,6 +55,7 @@ interface MessageListProps {
   onToolReject?: (messageId: string, runId: string) => void;
   onClarificationSubmit?: (messageId: string, runId: string, content: string) => void;
   approvalLoading?: boolean;
+  bottomInset?: number;
 }
 
 interface MessageRowProps {
@@ -79,11 +86,16 @@ const MessageRow = memo(
 
     return (
       <Box sx={{ contentVisibility: 'auto', containIntrinsicSize: '1px 220px' }}>
-        {message.role === 'assistant' && message.pipelineSteps && message.pipelineSteps.length > 0 && (
+        {message.role === 'assistant' &&
+          ((message.nodeTimeline?.length ?? 0) > 0 || Boolean(message.runState)) && (
           <Box sx={{ ml: 7, mb: 1.5 }}>
-            <PipelineProgress steps={message.pipelineSteps} isStreaming={Boolean(message.isStreaming)} />
+            <PipelineProgress
+              timeline={message.nodeTimeline ?? []}
+              isStreaming={Boolean(message.isStreaming)}
+              runState={message.runState}
+            />
           </Box>
-        )}
+          )}
 
         <MessageItem
           role={message.role}
@@ -138,6 +150,7 @@ export function MessageList({
   onToolReject,
   onClarificationSubmit,
   approvalLoading = false,
+  bottomInset = 220,
 }: MessageListProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -155,6 +168,7 @@ export function MessageList({
   const lastMessage = messages[messages.length - 1];
   const lastMessageContentSize =
     (lastMessage?.content?.length ?? 0) + (lastMessage?.think?.length ?? 0);
+  const scrollButtonBottom = Math.max(24, bottomInset - 120);
 
   const updateIsAtBottom = useCallback(() => {
     const container = containerRef.current;
@@ -197,7 +211,9 @@ export function MessageList({
         flex: 1,
         overflowY: 'auto',
         px: { xs: 2, sm: 3, md: 4 },
-        py: 3,
+        pt: 3,
+        pb: `${bottomInset}px`,
+        scrollPaddingBottom: `${bottomInset + 24}px`,
         position: 'relative',
       }}
     >
@@ -225,7 +241,7 @@ export function MessageList({
       <Box
         sx={{
           position: 'sticky',
-          bottom: 16,
+          bottom: `${scrollButtonBottom}px`,
           mt: 2,
           display: 'flex',
           justifyContent: 'center',

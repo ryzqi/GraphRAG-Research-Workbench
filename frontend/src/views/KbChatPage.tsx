@@ -6,7 +6,7 @@
  * - LangGraph 步骤实时可视化
  * - 澄清补充交互（pending_user_clarification）
  */
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import dynamic from 'next/dynamic';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import {
@@ -25,10 +25,16 @@ import { KnowledgeBaseSelector } from '../components/KnowledgeBaseSelector';
 import { KbChatConfigPanel } from '../components/chat/KbChatConfigPanel';
 
 import type { ChatMessage } from '../components/chat/MessageList';
-import type { PipelineStep } from '../components/chat/PipelineProgress';
+import type {
+  PipelineStep,
+  PipelineTimelineEvent,
+} from '../components/chat/PipelineProgress';
 
 import {
+  type AgentRunStatus,
   type AgentMode,
+  type ChatRunStateEvent,
+  type ChatRunUiEvent,
   type KbChatConfig,
   type ChatMessageResponse,
   type ChatSession,
@@ -62,14 +68,31 @@ const MessageList = dynamic(
 
 const PIPELINE_STATUS = ['started', 'completed', 'failed', 'waiting_user', 'skipped'] as const;
 type PipelineStatus = (typeof PIPELINE_STATUS)[number];
+const RUN_STREAM_STATUS = ['running', 'succeeded', 'failed', 'canceled', 'waiting_user'] as const;
+type RunStreamStatus = (typeof RUN_STREAM_STATUS)[number];
+type TerminalRunStatus = Exclude<RunStreamStatus, 'running'>;
 
 const PIPELINE_STEP_ORDER: Record<string, number> = {
-  preprocess: 0,
-  retrieve: 1,
-  judge: 2,
-  generate: 3,
-  verify: 4,
-  finalize: 5,
+  merge_context: 0,
+  coref_rewrite: 1,
+  ambiguity_check: 2,
+  normalize_rewrite: 3,
+  decomposition: 4,
+  multi_query_check: 5,
+  generate_variants: 6,
+  entity_expand: 7,
+  hyde_check: 8,
+  hyde: 9,
+  prepare_messages: 10,
+  retrieve: 11,
+  doc_grader: 12,
+  transform_query: 13,
+  generate: 14,
+  generate_strict: 15,
+  hallucination_check: 16,
+  answer_check: 17,
+  finalize: 18,
+  force_exit: 19,
 };
 
 const DEFAULT_KB_CHAT_CONFIG: KbChatConfig = {
@@ -96,6 +119,10 @@ const KB_CHAT_CONFIG_LABELS: Record<keyof KbChatConfig, string> = {
 
 function isPipelineStatus(value: unknown): value is PipelineStatus {
   return typeof value === 'string' && (PIPELINE_STATUS as readonly string[]).includes(value);
+}
+
+function isRunStreamStatus(value: unknown): value is RunStreamStatus {
+  return typeof value === 'string' && (RUN_STREAM_STATUS as readonly string[]).includes(value);
 }
 
 function sortPipelineSteps(steps: PipelineStep[]): PipelineStep[] {
@@ -139,6 +166,39 @@ function finalizePipelineSteps(steps: PipelineStep[] | undefined): PipelineStep[
   });
 }
 
+function calculateProgress(steps: PipelineStep[] | undefined) {
+  const stepList = steps ?? [];
+  const total = Math.max(stepList.length, 1);
+  const completed = stepList.filter(
+    (step) =>
+      step.status === 'completed' ||
+      step.status === 'skipped' ||
+      step.status === 'failed' ||
+      step.status === 'waiting_user'
+  ).length;
+  const percent = total > 0 ? Math.min(100, Math.round((completed / total) * 1000) / 10) : 0;
+  return { completed, total, percent };
+}
+
+function createInitialRunState(runId: string): ChatRunStateEvent {
+  return {
+    run_id: runId,
+    run_status: 'running',
+    current_step_id: null,
+    current_step_label: null,
+    current_step_status: null,
+    current_node: null,
+    attempt: null,
+    message: null,
+    progress: {
+      completed: 0,
+      total: Object.keys(PIPELINE_STEP_ORDER).length,
+      percent: 0,
+    },
+    ts: new Date().toISOString(),
+  };
+}
+
 function parseStepEvent(data: Record<string, unknown>): PipelineStep | null {
   const stepId = typeof data.step_id === 'string' ? data.step_id : '';
   const status = isPipelineStatus(data.status) ? data.status : null;
@@ -154,6 +214,202 @@ function parseStepEvent(data: Record<string, unknown>): PipelineStep | null {
     ts: typeof data.ts === 'string' ? data.ts : new Date().toISOString(),
     meta: data.meta && typeof data.meta === 'object' ? (data.meta as Record<string, unknown>) : undefined,
   };
+}
+
+function parseStateEvent(data: Record<string, unknown>): ChatRunStateEvent | null {
+  const runId = typeof data.run_id === 'string' ? data.run_id : '';
+  const runStatus = isRunStreamStatus(data.run_status) ? data.run_status : null;
+  if (!runId || !runStatus) {
+    return null;
+  }
+  const progressRaw =
+    data.progress && typeof data.progress === 'object'
+      ? (data.progress as Record<string, unknown>)
+      : {};
+  const completed =
+    typeof progressRaw.completed === 'number' ? progressRaw.completed : 0;
+  const total =
+    typeof progressRaw.total === 'number'
+      ? progressRaw.total
+      : Object.keys(PIPELINE_STEP_ORDER).length;
+  const percent =
+    typeof progressRaw.percent === 'number'
+      ? progressRaw.percent
+      : total > 0
+        ? Math.min(100, Math.round((completed / total) * 1000) / 10)
+        : 0;
+  return {
+    run_id: runId,
+    run_status: runStatus,
+    current_step_id: typeof data.current_step_id === 'string' ? data.current_step_id : null,
+    current_step_label: typeof data.current_step_label === 'string' ? data.current_step_label : null,
+    current_step_status: typeof data.current_step_status === 'string' ? data.current_step_status : null,
+    current_node: typeof data.current_node === 'string' ? data.current_node : null,
+    attempt: typeof data.attempt === 'number' ? data.attempt : null,
+    message: typeof data.message === 'string' ? data.message : null,
+    state_version: typeof data.state_version === 'number' ? data.state_version : undefined,
+    active_path: Array.isArray(data.active_path)
+      ? data.active_path.filter((item): item is string => typeof item === 'string')
+      : undefined,
+    last_good_answer:
+      typeof data.last_good_answer === 'string' ? data.last_good_answer : undefined,
+    degrade_reason: typeof data.degrade_reason === 'string' ? data.degrade_reason : undefined,
+    progress: { completed, total, percent },
+    ts: typeof data.ts === 'string' ? data.ts : new Date().toISOString(),
+  };
+}
+
+function parseUiEvent(data: Record<string, unknown>): ChatRunUiEvent | null {
+  const runId = typeof data.run_id === 'string' ? data.run_id : '';
+  const eventType = typeof data.event_type === 'string' ? data.event_type : '';
+  if (!runId || !eventType) {
+    return null;
+  }
+  return {
+    event_type: eventType,
+    run_id: runId,
+    step_id: typeof data.step_id === 'string' ? data.step_id : null,
+    status: typeof data.status === 'string' ? data.status : null,
+    node: typeof data.node === 'string' ? data.node : null,
+    message: typeof data.message === 'string' ? data.message : null,
+    candidate_answer:
+      typeof data.candidate_answer === 'string' ? data.candidate_answer : null,
+    source_step_id:
+      typeof data.source_step_id === 'string' ? data.source_step_id : null,
+    degrade_reason:
+      typeof data.degrade_reason === 'string' ? data.degrade_reason : null,
+    meta:
+      data.meta && typeof data.meta === 'object'
+        ? (data.meta as Record<string, unknown>)
+        : null,
+    ts: typeof data.ts === 'string' ? data.ts : new Date().toISOString(),
+  };
+}
+
+function createTimelineEventFromStep(step: PipelineStep): PipelineTimelineEvent {
+  const attempt = typeof step.meta?.attempt === 'number' ? step.meta.attempt : null;
+  const ioSummaryRaw = step.meta?.io_summary;
+  const ioSummary =
+    ioSummaryRaw && typeof ioSummaryRaw === 'object'
+      ? (ioSummaryRaw as Record<string, unknown>)
+      : null;
+  return {
+    id: `step-${step.step_id}-${step.status}-${step.ts ?? Date.now()}`,
+    source: 'step',
+    step_id: step.step_id,
+    label: step.label,
+    node: step.node ?? null,
+    status: step.status,
+    run_status: null,
+    attempt,
+    message: step.message ?? null,
+    io_summary: ioSummary,
+    ts: step.ts ?? new Date().toISOString(),
+  };
+}
+
+function createTimelineEventFromState(state: ChatRunStateEvent): PipelineTimelineEvent {
+  return {
+    id: `state-${state.run_id}-${state.state_version ?? state.ts}`,
+    source: 'state',
+    step_id: state.current_step_id,
+    label: state.current_step_label ?? state.current_node ?? '执行状态',
+    node: state.current_node,
+    status: state.current_step_status ?? state.run_status,
+    run_status: state.run_status,
+    attempt: state.attempt,
+    message: state.message,
+    event_type: 'state',
+    ts: state.ts,
+  };
+}
+
+function createTimelineEventFromUi(event: ChatRunUiEvent): PipelineTimelineEvent {
+  const label =
+    event.event_type === 'degraded_to_candidate'
+      ? '降级候选答案'
+      : event.event_type === 'candidate_answer_updated'
+        ? '候选答案更新'
+        : event.step_id ?? event.event_type;
+  return {
+    id: `ui-${event.run_id}-${event.event_type}-${event.ts}`,
+    source: 'ui',
+    step_id: event.step_id ?? null,
+    label,
+    node: event.node ?? null,
+    status: event.status ?? 'running',
+    run_status: null,
+    attempt:
+      typeof event.meta?.attempt === 'number' ? (event.meta.attempt as number) : null,
+    message: event.message ?? null,
+    event_type: event.event_type,
+    ts: event.ts,
+  };
+}
+
+function appendTimelineEvent(
+  timeline: PipelineTimelineEvent[] | undefined,
+  event: PipelineTimelineEvent
+): PipelineTimelineEvent[] {
+  const current = timeline ?? [];
+  const last = current[current.length - 1];
+  const lastSummary = last?.io_summary ? JSON.stringify(last.io_summary) : '';
+  const nextSummary = event.io_summary ? JSON.stringify(event.io_summary) : '';
+  if (
+    last &&
+    last.source === event.source &&
+    last.step_id === event.step_id &&
+    last.node === event.node &&
+    last.status === event.status &&
+    last.run_status === event.run_status &&
+    last.event_type === event.event_type &&
+    last.attempt === event.attempt &&
+    last.message === event.message &&
+    lastSummary === nextSummary
+  ) {
+    return current;
+  }
+  return [...current, event];
+}
+
+function createTerminalRunState(
+  runId: string,
+  status: TerminalRunStatus,
+  steps: PipelineStep[] | undefined,
+  message?: string,
+  previousState?: ChatRunStateEvent
+): ChatRunStateEvent {
+  const sorted = sortPipelineSteps(steps ?? []);
+  const current = sorted[sorted.length - 1];
+  return {
+    run_id: runId,
+    run_status: status,
+    current_step_id: current?.step_id ?? (status === 'waiting_user' ? 'finalize' : null),
+    current_step_label: current?.label ?? (status === 'waiting_user' ? '输出结果' : null),
+    current_step_status: current?.status ?? (status === 'waiting_user' ? 'waiting_user' : null),
+    current_node: current?.node ?? null,
+    attempt: typeof current?.meta?.attempt === 'number' ? current.meta.attempt : null,
+    message: message ?? current?.message ?? null,
+    state_version: previousState?.state_version,
+    active_path: previousState?.active_path,
+    last_good_answer: previousState?.last_good_answer,
+    degrade_reason: previousState?.degrade_reason,
+    progress: calculateProgress(sorted),
+    ts: new Date().toISOString(),
+  };
+}
+
+function resolveTerminalRunStatus(
+  status: AgentRunStatus | RunStreamStatus | undefined,
+  fallback: TerminalRunStatus = 'succeeded'
+): TerminalRunStatus {
+  if (!status || !isRunStreamStatus(status)) {
+    return fallback;
+  }
+  if (status === 'running') {
+    return fallback;
+  }
+  return status;
 }
 
 function isPendingClarificationResponse(
@@ -228,6 +484,8 @@ export function KbChatPage() {
   const [loading, setLoading] = useState(false);
   const [loadingSession, setLoadingSession] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const composerRef = useRef<HTMLDivElement | null>(null);
+  const [bottomInset, setBottomInset] = useState(220);
 
   const { upsertSession } = useRecentHistory();
 
@@ -310,6 +568,26 @@ export function KbChatPage() {
     setKbChatConfig(DEFAULT_KB_CHAT_CONFIG);
   }, [sessionId]);
 
+  useEffect(() => {
+    const element = composerRef.current;
+    if (!element) {
+      return;
+    }
+
+    const updateInset = () => {
+      const next = Math.max(180, Math.ceil(element.getBoundingClientRect().height) + 24);
+      setBottomInset(next);
+    };
+
+    updateInset();
+    if (typeof ResizeObserver === 'undefined') {
+      return;
+    }
+    const observer = new ResizeObserver(updateInset);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [session, hasPendingClarification]);
+
   const updateMessage = useCallback(
     (id: string, updater: (msg: ChatMessage) => ChatMessage) => {
       setMessages((prev) => {
@@ -342,28 +620,122 @@ export function KbChatPage() {
       updateMessage(messageId, (msg) => ({
         ...msg,
         pipelineSteps: upsertPipelineStep(msg.pipelineSteps, step),
+        nodeTimeline: appendTimelineEvent(
+          msg.nodeTimeline,
+          createTimelineEventFromStep(step)
+        ),
       }));
+    },
+    [updateMessage]
+  );
+
+  const applyStateEvent = useCallback(
+    (messageId: string, raw: Record<string, unknown>) => {
+      const state = parseStateEvent(raw);
+      if (!state) {
+        return;
+      }
+      updateMessage(messageId, (msg) => {
+        const nextTimeline = appendTimelineEvent(
+          msg.nodeTimeline,
+          createTimelineEventFromState(state)
+        );
+        const nextRunState = {
+          ...(msg.runState ?? createInitialRunState(state.run_id)),
+          ...state,
+          last_good_answer:
+            state.last_good_answer ?? msg.runState?.last_good_answer ?? null,
+          degrade_reason: state.degrade_reason ?? msg.runState?.degrade_reason ?? null,
+        };
+        const shouldUseCandidateFallback =
+          nextRunState.run_status === 'failed' &&
+          (!msg.content || !msg.content.trim()) &&
+          typeof nextRunState.last_good_answer === 'string' &&
+          nextRunState.last_good_answer.trim().length > 0;
+        return {
+          ...msg,
+          runId: state.run_id,
+          runState: nextRunState,
+          nodeTimeline: nextTimeline,
+          content: shouldUseCandidateFallback
+            ? nextRunState.last_good_answer ?? msg.content
+            : msg.content,
+        };
+      });
+    },
+    [updateMessage]
+  );
+
+  const applyUiEvent = useCallback(
+    (messageId: string, raw: Record<string, unknown>) => {
+      const uiEvent = parseUiEvent(raw);
+      if (!uiEvent) {
+        return;
+      }
+      updateMessage(messageId, (msg) => {
+        const nextTimeline = appendTimelineEvent(
+          msg.nodeTimeline,
+          createTimelineEventFromUi(uiEvent)
+        );
+        const baseRunState =
+          msg.runState ??
+          (msg.runId ? createInitialRunState(msg.runId) : createInitialRunState(uiEvent.run_id));
+        const nextRunState = {
+          ...baseRunState,
+          run_id: uiEvent.run_id,
+          last_good_answer:
+            uiEvent.candidate_answer ?? baseRunState.last_good_answer ?? null,
+          degrade_reason: uiEvent.degrade_reason ?? baseRunState.degrade_reason ?? null,
+          message: uiEvent.message ?? baseRunState.message,
+          ts: uiEvent.ts,
+        };
+        const shouldUseCandidateFallback =
+          uiEvent.event_type === 'degraded_to_candidate' &&
+          (!msg.content || !msg.content.trim()) &&
+          typeof nextRunState.last_good_answer === 'string' &&
+          nextRunState.last_good_answer.trim().length > 0;
+        return {
+          ...msg,
+          runId: uiEvent.run_id,
+          runState: nextRunState,
+          nodeTimeline: nextTimeline,
+          content: shouldUseCandidateFallback
+            ? nextRunState.last_good_answer ?? msg.content
+            : msg.content,
+        };
+      });
     },
     [updateMessage]
   );
 
   const markClarificationPending = useCallback(
     (messageId: string, runId: string, message: string) => {
-      updateMessage(messageId, (msg) => ({
-        ...msg,
-        content: '',
-        think: '',
-        runId,
-        pendingClarification: { message },
-        pipelineSteps: upsertPipelineStep(msg.pipelineSteps, {
+      updateMessage(messageId, (msg) => {
+        const nextSteps = upsertPipelineStep(msg.pipelineSteps, {
           step_id: 'finalize',
           label: '输出结果',
           status: 'waiting_user',
           message,
           ts: new Date().toISOString(),
-        }),
-        isStreaming: false,
-      }));
+        });
+        const nextRunState = createTerminalRunState(
+          runId,
+          'waiting_user',
+          nextSteps,
+          message,
+          msg.runState
+        );
+        return {
+          ...msg,
+          content: '',
+          think: '',
+          runId,
+          pendingClarification: { message },
+          pipelineSteps: nextSteps,
+          runState: nextRunState,
+          isStreaming: false,
+        };
+      });
     },
     [updateMessage]
   );
@@ -434,6 +806,7 @@ export function KbChatPage() {
         think: '',
         toolSteps: [],
         pipelineSteps: [],
+        nodeTimeline: [],
         isStreaming: true,
         thinkStartTime: Date.now(),
       },
@@ -461,17 +834,28 @@ export function KbChatPage() {
       if (response.status !== 'succeeded') {
         throw new Error('知识库对话返回了不支持的中间状态');
       }
-      updateMessage(assistantId, (msg) => ({
-        ...msg,
-        id: response.assistant_message.id,
-        role: 'assistant',
-        content: response.assistant_message.content,
-        evidence: response.evidence,
-        runId: response.run.id,
-        pipelineSteps: finalizePipelineSteps(msg.pipelineSteps),
-        pendingClarification: undefined,
-        isStreaming: false,
-      }));
+      updateMessage(assistantId, (msg) => {
+        const nextSteps = finalizePipelineSteps(msg.pipelineSteps);
+        const nextRunState = createTerminalRunState(
+          response.run.id,
+          resolveTerminalRunStatus(response.run.status),
+          nextSteps,
+          undefined,
+          msg.runState
+        );
+        return {
+          ...msg,
+          id: response.assistant_message.id,
+          role: 'assistant',
+          content: response.assistant_message.content,
+          evidence: response.evidence,
+          runId: response.run.id,
+          pipelineSteps: nextSteps,
+          runState: nextRunState,
+          pendingClarification: undefined,
+          isStreaming: false,
+        };
+      });
     };
 
     let hadStreamEvent = false;
@@ -492,13 +876,29 @@ export function KbChatPage() {
         hadStreamEvent = true;
         if (event.event === 'meta') {
           const meta = parseSseJson<{ run_id?: string }>(event.data);
-          if (meta.run_id) {
-            updateMessage(assistantId, (msg) => ({ ...msg, runId: meta.run_id }));
+          const runIdFromMeta = meta.run_id;
+          if (runIdFromMeta) {
+            updateMessage(assistantId, (msg) => {
+              const nextRunState = msg.runState ?? createInitialRunState(runIdFromMeta);
+              return {
+                ...msg,
+                runId: runIdFromMeta,
+                runState: nextRunState,
+              };
+            });
           }
         }
 
         if (event.event === 'step') {
           applyStepEvent(assistantId, parseSseJson<Record<string, unknown>>(event.data));
+        }
+
+        if (event.event === 'state') {
+          applyStateEvent(assistantId, parseSseJson<Record<string, unknown>>(event.data));
+        }
+
+        if (event.event === 'ui_event') {
+          applyUiEvent(assistantId, parseSseJson<Record<string, unknown>>(event.data));
         }
 
         if (event.event === 'delta') {
@@ -524,16 +924,30 @@ export function KbChatPage() {
           deltaBatcher.flush();
           const data = parseSseJson<ChatMessageResponse>(event.data);
           if (data.status === 'succeeded') {
-            updateMessage(assistantId, (msg) => ({
-              ...msg,
-              id: data.assistant_message.id,
-              content: data.assistant_message.content,
-              evidence: data.evidence,
-              runId: data.run.id,
-              pipelineSteps: finalizePipelineSteps(msg.pipelineSteps),
-              pendingClarification: undefined,
-              isStreaming: false,
-            }));
+            updateMessage(assistantId, (msg) => {
+              const nextSteps = finalizePipelineSteps(msg.pipelineSteps);
+              const nextRunState = createTerminalRunState(
+                data.run.id,
+                resolveTerminalRunStatus(
+                  data.run.status,
+                  resolveTerminalRunStatus(msg.runState?.run_status)
+                ),
+                nextSteps,
+                undefined,
+                msg.runState
+              );
+              return {
+                ...msg,
+                id: data.assistant_message.id,
+                content: data.assistant_message.content,
+                evidence: data.evidence,
+                runId: data.run.id,
+                pipelineSteps: nextSteps,
+                runState: nextRunState,
+                pendingClarification: undefined,
+                isStreaming: false,
+              };
+            });
           }
           setLoading(false);
           return;
@@ -548,16 +962,45 @@ export function KbChatPage() {
 
       deltaBatcher.flush();
       msgState = completeMessageState(msgState);
-      updateMessage(assistantId, (msg) => ({
-        ...msg,
-        content: msgState.final_content,
-        think: msgState.thought_log,
-        toolSteps: msgState.tool_steps,
-        pipelineSteps: finalizePipelineSteps(msg.pipelineSteps),
-        isStreaming: false,
-      }));
+      updateMessage(assistantId, (msg) => {
+        const nextSteps = finalizePipelineSteps(msg.pipelineSteps);
+        const nextRunState = msg.runId
+          ? createTerminalRunState(
+              msg.runId,
+              resolveTerminalRunStatus(msg.runState?.run_status),
+              nextSteps,
+              undefined,
+              msg.runState
+            )
+          : msg.runState;
+        return {
+          ...msg,
+          content: msgState.final_content,
+          think: msgState.thought_log,
+          toolSteps: msgState.tool_steps,
+          pipelineSteps: nextSteps,
+          runState: nextRunState,
+          isStreaming: false,
+        };
+      });
     } catch (e) {
       if (hadStreamEvent) {
+        updateMessage(assistantId, (msg) => {
+          const nextRunState = msg.runId
+            ? createTerminalRunState(
+                msg.runId,
+                'failed',
+                msg.pipelineSteps,
+                getErrorMessage(e),
+                msg.runState
+              )
+            : msg.runState;
+          return {
+            ...msg,
+            isStreaming: false,
+            runState: nextRunState,
+          };
+        });
         setError(getErrorMessage(e));
         setLoading(false);
         return;
@@ -580,6 +1023,8 @@ export function KbChatPage() {
     upsertSession,
     updateMessage,
     applyStepEvent,
+    applyStateEvent,
+    applyUiEvent,
     markClarificationPending,
   ]);
 
@@ -590,21 +1035,31 @@ export function KbChatPage() {
       setLoading(true);
       setError(null);
       let msgState = createMessageState();
-      updateMessage(messageId, (msg) => ({
-        ...msg,
-        content: '',
-        think: '',
-        pendingClarification: undefined,
-        pipelineSteps: upsertPipelineStep(msg.pipelineSteps, {
+      updateMessage(messageId, (msg) => {
+        const nextSteps = upsertPipelineStep(msg.pipelineSteps, {
           step_id: 'finalize',
           label: '输出结果',
           status: 'started',
           message: '已收到补充信息，继续执行',
           ts: new Date().toISOString(),
-        }),
-        isStreaming: true,
-        thinkStartTime: Date.now(),
-      }));
+        });
+        const startedStep = nextSteps.find((step) => step.step_id === 'finalize');
+        return {
+          ...msg,
+          content: '',
+          think: '',
+          pendingClarification: undefined,
+          pipelineSteps: nextSteps,
+          nodeTimeline: startedStep
+            ? appendTimelineEvent(
+                msg.nodeTimeline,
+                createTimelineEventFromStep(startedStep)
+              )
+            : msg.nodeTimeline,
+          isStreaming: true,
+          thinkStartTime: Date.now(),
+        };
+      });
 
       const fallbackToJson = async () => {
         const response = await resumeClarification(session.id, runId, content);
@@ -615,16 +1070,27 @@ export function KbChatPage() {
         if (response.status !== 'succeeded') {
           throw new Error('恢复执行返回了不支持的状态');
         }
-        updateMessage(messageId, (msg) => ({
-          ...msg,
-          id: response.assistant_message.id,
-          content: response.assistant_message.content,
-          evidence: response.evidence,
-          runId: response.run.id,
-          pendingClarification: undefined,
-          pipelineSteps: finalizePipelineSteps(msg.pipelineSteps),
-          isStreaming: false,
-        }));
+        updateMessage(messageId, (msg) => {
+          const nextSteps = finalizePipelineSteps(msg.pipelineSteps);
+          const nextRunState = createTerminalRunState(
+            response.run.id,
+            resolveTerminalRunStatus(response.run.status),
+            nextSteps,
+            undefined,
+            msg.runState
+          );
+          return {
+            ...msg,
+            id: response.assistant_message.id,
+            content: response.assistant_message.content,
+            evidence: response.evidence,
+            runId: response.run.id,
+            pendingClarification: undefined,
+            pipelineSteps: nextSteps,
+            runState: nextRunState,
+            isStreaming: false,
+          };
+        });
       };
 
       let hadStreamEvent = false;
@@ -644,13 +1110,29 @@ export function KbChatPage() {
           hadStreamEvent = true;
           if (event.event === 'meta') {
             const meta = parseSseJson<{ run_id?: string }>(event.data);
-            if (meta.run_id) {
-              updateMessage(messageId, (msg) => ({ ...msg, runId: meta.run_id }));
+            const runIdFromMeta = meta.run_id;
+            if (runIdFromMeta) {
+              updateMessage(messageId, (msg) => {
+                const nextRunState = msg.runState ?? createInitialRunState(runIdFromMeta);
+                return {
+                  ...msg,
+                  runId: runIdFromMeta,
+                  runState: nextRunState,
+                };
+              });
             }
           }
 
           if (event.event === 'step') {
             applyStepEvent(messageId, parseSseJson<Record<string, unknown>>(event.data));
+          }
+
+          if (event.event === 'state') {
+            applyStateEvent(messageId, parseSseJson<Record<string, unknown>>(event.data));
+          }
+
+          if (event.event === 'ui_event') {
+            applyUiEvent(messageId, parseSseJson<Record<string, unknown>>(event.data));
           }
 
           if (event.event === 'delta') {
@@ -676,16 +1158,30 @@ export function KbChatPage() {
             deltaBatcher.flush();
             const data = parseSseJson<ChatMessageResponse>(event.data);
             if (data.status === 'succeeded') {
-              updateMessage(messageId, (msg) => ({
-                ...msg,
-                id: data.assistant_message.id,
-                content: data.assistant_message.content,
-                evidence: data.evidence,
-                runId: data.run.id,
-                pendingClarification: undefined,
-                pipelineSteps: finalizePipelineSteps(msg.pipelineSteps),
-                isStreaming: false,
-              }));
+              updateMessage(messageId, (msg) => {
+                const nextSteps = finalizePipelineSteps(msg.pipelineSteps);
+                const nextRunState = createTerminalRunState(
+                  data.run.id,
+                  resolveTerminalRunStatus(
+                    data.run.status,
+                    resolveTerminalRunStatus(msg.runState?.run_status)
+                  ),
+                  nextSteps,
+                  undefined,
+                  msg.runState
+                );
+                return {
+                  ...msg,
+                  id: data.assistant_message.id,
+                  content: data.assistant_message.content,
+                  evidence: data.evidence,
+                  runId: data.run.id,
+                  pendingClarification: undefined,
+                  pipelineSteps: nextSteps,
+                  runState: nextRunState,
+                  isStreaming: false,
+                };
+              });
             }
             setLoading(false);
             return;
@@ -700,16 +1196,45 @@ export function KbChatPage() {
 
         deltaBatcher.flush();
         msgState = completeMessageState(msgState);
-        updateMessage(messageId, (msg) => ({
-          ...msg,
-          content: msgState.final_content,
-          think: msgState.thought_log,
-          toolSteps: msgState.tool_steps,
-          pipelineSteps: finalizePipelineSteps(msg.pipelineSteps),
-          isStreaming: false,
-        }));
+        updateMessage(messageId, (msg) => {
+          const nextSteps = finalizePipelineSteps(msg.pipelineSteps);
+          const nextRunState = msg.runId
+            ? createTerminalRunState(
+                msg.runId,
+                resolveTerminalRunStatus(msg.runState?.run_status),
+                nextSteps,
+                undefined,
+                msg.runState
+              )
+            : msg.runState;
+          return {
+            ...msg,
+            content: msgState.final_content,
+            think: msgState.thought_log,
+            toolSteps: msgState.tool_steps,
+            pipelineSteps: nextSteps,
+            runState: nextRunState,
+            isStreaming: false,
+          };
+        });
       } catch (e) {
         if (hadStreamEvent) {
+          updateMessage(messageId, (msg) => {
+            const nextRunState = msg.runId
+              ? createTerminalRunState(
+                  msg.runId,
+                  'failed',
+                  msg.pipelineSteps,
+                  getErrorMessage(e),
+                  msg.runState
+                )
+              : msg.runState;
+            return {
+              ...msg,
+              isStreaming: false,
+              runState: nextRunState,
+            };
+          });
           setError(getErrorMessage(e));
           setLoading(false);
           return;
@@ -730,6 +1255,8 @@ export function KbChatPage() {
       loadingSession,
       updateMessage,
       applyStepEvent,
+      applyStateEvent,
+      applyUiEvent,
       markClarificationPending,
     ]
   );
@@ -900,18 +1427,19 @@ export function KbChatPage() {
           loading={loading || loadingSession}
           onClarificationSubmit={handleClarificationSubmit}
           approvalLoading={loading || loadingSession}
+          bottomInset={bottomInset}
         />
       )}
 
       <ErrorAlert error={mergedError} onClose={handleCloseError} />
 
       <Box
+        ref={composerRef}
         sx={{
           position: 'sticky',
           bottom: 0,
           p: { xs: 2, md: 3 },
-          background: (theme) =>
-            `linear-gradient(to top, ${theme.palette.background.default} 0%, rgba(0,0,0,0) 110%)`,
+          bgcolor: 'background.default',
           borderTop: messages.length > 0 ? 1 : 0,
           borderColor: 'divider',
           zIndex: 10,

@@ -8,7 +8,6 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-import time
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -63,38 +62,64 @@ from app.services.streaming import (
 
 logger = logging.getLogger(__name__)
 
-_KB_PIPELINE_STAGE_ORDER = (
-    "preprocess",
+_KB_PIPELINE_NODE_ORDER = (
+    "merge_context",
+    "coref_rewrite",
+    "ambiguity_check",
+    "normalize_rewrite",
+    "decomposition",
+    "multi_query_check",
+    "generate_variants",
+    "entity_expand",
+    "hyde_check",
+    "hyde",
+    "prepare_messages",
     "retrieve",
-    "judge",
+    "doc_grader",
+    "transform_query",
     "generate",
-    "verify",
+    "generate_strict",
+    "hallucination_check",
+    "answer_check",
     "finalize",
+    "force_exit",
 )
 
-_KB_PIPELINE_STAGE_LABELS: dict[str, str] = {
-    "preprocess": "理解问题",
-    "retrieve": "检索证据",
-    "judge": "评估相关性",
-    "generate": "生成回答",
-    "verify": "校验答案",
-    "finalize": "输出结果",
+_KB_PIPELINE_NODE_LABELS: dict[str, str] = {
+    "merge_context": "上下文合并",
+    "coref_rewrite": "指代消解",
+    "ambiguity_check": "歧义检测",
+    "normalize_rewrite": "问题规范化",
+    "decomposition": "问题分解",
+    "multi_query_check": "分支判断（多路查询）",
+    "generate_variants": "多路查询扩展",
+    "entity_expand": "实体扩展",
+    "hyde_check": "分支判断（HyDE）",
+    "hyde": "HyDE 扩展",
+    "prepare_messages": "检索查询打包",
+    "retrieve": "知识检索",
+    "doc_grader": "相关性评估",
+    "transform_query": "查询重写重试",
+    "generate": "草稿生成",
+    "generate_strict": "严格重生成",
+    "hallucination_check": "幻觉校验",
+    "answer_check": "回答有效性校验",
+    "finalize": "输出最终答案",
+    "force_exit": "提前终止",
 }
 
-_KB_PIPELINE_NODE_TO_STAGE: dict[str, str] = {
-    # preprocess
+_KB_PIPELINE_NODE_PHASE: dict[str, str] = {
     "merge_context": "preprocess",
     "coref_rewrite": "preprocess",
     "ambiguity_check": "preprocess",
     "normalize_rewrite": "preprocess",
     "decomposition": "preprocess",
+    "multi_query_check": "preprocess",
     "generate_variants": "preprocess",
     "entity_expand": "preprocess",
+    "hyde_check": "preprocess",
     "hyde": "preprocess",
     "prepare_messages": "preprocess",
-    "multi_query_check": "preprocess",
-    "hyde_check": "preprocess",
-    # retrieval/reflection/generation
     "retrieve": "retrieve",
     "doc_grader": "judge",
     "transform_query": "retrieve",
@@ -104,6 +129,10 @@ _KB_PIPELINE_NODE_TO_STAGE: dict[str, str] = {
     "answer_check": "verify",
     "finalize": "finalize",
     "force_exit": "finalize",
+}
+
+_KB_PIPELINE_NODE_INDEX = {
+    node_name: idx for idx, node_name in enumerate(_KB_PIPELINE_NODE_ORDER)
 }
 
 
@@ -184,9 +213,6 @@ class KbChatService:
         return {
             "config": {
                 "force_retrieve": bool(kb_chat_config.force_retrieve_enabled),
-                "total_timeout_seconds": float(
-                    self._settings.kb_chat_total_timeout_seconds
-                ),
                 "max_total_rounds": int(self._settings.kb_chat_max_total_rounds),
                 "max_retrieval_retries": int(
                     self._settings.kb_chat_max_retrieval_retries
@@ -680,6 +706,38 @@ class KbChatService:
         return "为了更准确地回答，请补充必要信息后再提问。"
 
     @staticmethod
+    def _resolve_terminal_run_status(
+        *,
+        stage_summaries: dict[str, Any],
+        answer: str,
+    ) -> tuple[AgentRunStatus, str | None]:
+        """Resolve terminal run status from guardrail summaries + final answer."""
+        force_exit = (
+            stage_summaries.get("force_exit")
+            if isinstance(stage_summaries, dict)
+            else None
+        )
+        if not isinstance(force_exit, dict):
+            return AgentRunStatus.SUCCEEDED, None
+
+        reason = str(force_exit.get("reason") or "").strip().lower()
+        if reason == "clarify":
+            return AgentRunStatus.SUCCEEDED, None
+
+        answer_passed = force_exit.get("answer_passed")
+        used_best_answer = force_exit.get("used_best_answer") is True
+        answer_text = extract_answer_text(answer).strip()
+        if (
+            (answer_passed is True or used_best_answer)
+            and answer_text
+            and "无法回答" not in answer_text
+        ):
+            return AgentRunStatus.SUCCEEDED, None
+
+        message = "根据现有资料无法回答该问题（已停止重试）。"
+        return AgentRunStatus.FAILED, message
+
+    @staticmethod
     def _build_no_evidence_response(
         *,
         stage_summaries: dict[str, Any],
@@ -753,6 +811,253 @@ class KbChatService:
             f"3) {suggestions[2]}"
         )
 
+    @staticmethod
+    def _calculate_stream_progress(
+        *,
+        stage_status: dict[str, str],
+        run_status: str,
+    ) -> dict[str, int | float]:
+        done_status = {"completed", "skipped"}
+        observed = max(len(stage_status), 1)
+        completed = sum(1 for status in stage_status.values() if status in done_status)
+        terminal_status = {"succeeded", "failed", "canceled", "waiting_user"}
+        if run_status in terminal_status:
+            total = max(observed, completed, 1)
+            completed = total
+            percent = 100.0
+            return {
+                "completed": completed,
+                "total": total,
+                "percent": percent,
+            }
+        total = observed
+        percent = round((completed / total) * 100, 1) if total else 0.0
+        return {
+            "completed": completed,
+            "total": total,
+            "percent": percent,
+        }
+
+    @staticmethod
+    def _shorten_stream_text(value: object, limit: int = 120) -> str:
+        text = str(value or "").strip()
+        if len(text) <= limit:
+            return text
+        return f"{text[:limit].rstrip()}..."
+
+    @staticmethod
+    def _build_node_io_summary(
+        *,
+        node: str,
+        update: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        if not isinstance(update, dict):
+            return None
+
+        stage_summaries = update.get("stage_summaries")
+        node_summary = None
+        if isinstance(stage_summaries, dict):
+            summary_key = {
+                "retrieve": "retrieval_layer",
+                "generate": "generator",
+                "generate_strict": "generator",
+            }.get(node, node)
+            candidate = stage_summaries.get(summary_key)
+            if isinstance(candidate, dict):
+                node_summary = candidate
+
+        io_summary: dict[str, Any] = {}
+        if isinstance(node_summary, dict):
+            for key in (
+                "rewritten",
+                "reason",
+                "count",
+                "query_items_count",
+                "ambiguous",
+                "enabled",
+                "evidence_count",
+                "passed",
+                "fallback_reason",
+                "strict",
+                "skipped",
+                "used_best_answer",
+                "answer_passed",
+                "latency_ms",
+            ):
+                value = node_summary.get(key)
+                if value is not None:
+                    io_summary[key] = value
+
+        if node in {"coref_rewrite", "normalize_rewrite", "transform_query"}:
+            query = update.get("normalized_query") or update.get("coref_query")
+            if isinstance(query, str) and query.strip():
+                io_summary["query"] = KbChatService._shorten_stream_text(query, 160)
+
+        if node in {"decomposition", "generate_variants", "entity_expand"}:
+            list_key = "sub_queries" if node == "decomposition" else "multi_queries"
+            values = update.get(list_key)
+            if isinstance(values, list):
+                io_summary["query_count"] = len([v for v in values if isinstance(v, str)])
+
+        if node == "hyde":
+            hyde_doc = update.get("hyde_doc")
+            if isinstance(hyde_doc, str) and hyde_doc.strip():
+                io_summary["hyde_preview"] = KbChatService._shorten_stream_text(
+                    hyde_doc, 160
+                )
+
+        if node == "prepare_messages":
+            query_items = update.get("query_items")
+            if isinstance(query_items, list):
+                io_summary["query_items_count"] = len(query_items)
+
+        if node == "retrieve":
+            metrics = update.get("metrics")
+            retrieval_layer = (
+                metrics.get("retrieval_layer") if isinstance(metrics, dict) else None
+            )
+            if isinstance(retrieval_layer, dict):
+                evidence_count = retrieval_layer.get("evidence_count")
+                if isinstance(evidence_count, int):
+                    io_summary["evidence_count"] = evidence_count
+                attempted = retrieval_layer.get("attempted")
+                if isinstance(attempted, bool):
+                    io_summary["attempted"] = attempted
+
+        if node in {"generate", "generate_strict"}:
+            draft_answer = update.get("draft_answer")
+            if isinstance(draft_answer, str) and draft_answer.strip():
+                io_summary["draft_preview"] = KbChatService._shorten_stream_text(
+                    draft_answer, 180
+                )
+
+        if node in {"ambiguity_check", "finalize", "force_exit"}:
+            final_answer = update.get("final_answer")
+            if isinstance(final_answer, str) and final_answer.strip():
+                io_summary["final_preview"] = KbChatService._shorten_stream_text(
+                    final_answer, 180
+                )
+
+        if node == "answer_check":
+            best_answer = update.get("best_answer")
+            if isinstance(best_answer, str) and best_answer.strip():
+                io_summary["best_answer_preview"] = KbChatService._shorten_stream_text(
+                    best_answer, 120
+                )
+
+        if not io_summary:
+            return None
+        return io_summary
+
+    @staticmethod
+    def _build_stream_state_payload(
+        *,
+        run_id: uuid.UUID,
+        run_status: str,
+        current_step_id: str | None,
+        current_node: str | None,
+        stage_status: dict[str, str],
+        stage_attempts: dict[str, int],
+        state_version: int,
+        active_path: list[str] | None = None,
+        last_good_answer: str | None = None,
+        degrade_reason: str | None = None,
+        message: str | None = None,
+    ) -> dict[str, Any]:
+        current_step_status = (
+            stage_status.get(current_step_id) if current_step_id else None
+        )
+        current_attempt = (
+            stage_attempts.get(current_step_id) if current_step_id else None
+        )
+        current_label = (
+            _KB_PIPELINE_NODE_LABELS.get(current_step_id, current_step_id)
+            if current_step_id
+            else None
+        )
+        return {
+            "run_id": str(run_id),
+            "run_status": run_status,
+            "current_step_id": current_step_id,
+            "current_step_label": current_label,
+            "current_step_status": current_step_status,
+            "current_node": current_node,
+            "attempt": current_attempt,
+            "message": message,
+            "state_version": state_version,
+            "active_path": active_path or [],
+            "last_good_answer": last_good_answer,
+            "degrade_reason": degrade_reason,
+            "progress": KbChatService._calculate_stream_progress(
+                stage_status=stage_status, run_status=run_status
+            ),
+            "ts": datetime.now(timezone.utc).isoformat(),
+        }
+
+    @staticmethod
+    def _build_active_path(
+        *,
+        stage_status: dict[str, str],
+        current_step_id: str | None,
+    ) -> list[str]:
+        path = [
+            step_id
+            for step_id, status in stage_status.items()
+            if status in {"started", "completed", "failed", "waiting_user"}
+        ]
+        if current_step_id and current_step_id not in path:
+            path.append(current_step_id)
+        return sorted(path, key=lambda step_id: _KB_PIPELINE_NODE_INDEX.get(step_id, 10_000))
+
+    @staticmethod
+    def _extract_last_good_answer(
+        *,
+        answer: str,
+        stage_summaries: dict[str, Any],
+        stream_state: StreamState,
+    ) -> tuple[str | None, str | None]:
+        answer_text = extract_answer_text(answer).strip()
+        if answer_text:
+            return answer_text, "final_answer"
+
+        for msg in reversed(stream_state.messages):
+            if isinstance(msg, AIMessage):
+                text = extract_answer_text(msg.content).strip()
+                if text:
+                    return text, "ai_message"
+
+        force_exit = (
+            stage_summaries.get("force_exit")
+            if isinstance(stage_summaries, dict)
+            else None
+        )
+        if isinstance(force_exit, dict):
+            best_answer = force_exit.get("best_answer")
+            if isinstance(best_answer, str) and best_answer.strip():
+                return best_answer.strip(), "force_exit.best_answer"
+
+        answer_check = (
+            stage_summaries.get("answer_check")
+            if isinstance(stage_summaries, dict)
+            else None
+        )
+        if isinstance(answer_check, dict):
+            best_answer = answer_check.get("best_answer")
+            if isinstance(best_answer, str) and best_answer.strip():
+                return best_answer.strip(), "answer_check.best_answer"
+
+        generator = (
+            stage_summaries.get("generator")
+            if isinstance(stage_summaries, dict)
+            else None
+        )
+        if isinstance(generator, dict):
+            draft_answer = generator.get("draft_answer")
+            if isinstance(draft_answer, str) and draft_answer.strip():
+                return draft_answer.strip(), "generator.draft_answer"
+
+        return None, None
+
     async def _persist_clarification_pending(
         self,
         *,
@@ -812,7 +1117,6 @@ class KbChatService:
             session=session, user_content=user_content, run=run
         )
         run = exec_ctx.run
-        total_timeout = float(self._settings.kb_chat_total_timeout_seconds)
 
         try:
             store = None
@@ -821,14 +1125,11 @@ class KbChatService:
             except Exception:
                 store = None
 
-            result = await asyncio.wait_for(
-                exec_ctx.graph.run(
-                    exec_ctx.state,
-                    thread_id=exec_ctx.thread_id,
-                    checkpointer=CheckpointManager.get_checkpointer(),
-                    store=store,
-                ),
-                timeout=total_timeout,
+            result = await exec_ctx.graph.run(
+                exec_ctx.state,
+                thread_id=exec_ctx.thread_id,
+                checkpointer=CheckpointManager.get_checkpointer(),
+                store=store,
             )
 
             if not isinstance(result, dict):
@@ -882,6 +1183,10 @@ class KbChatService:
                     metrics=metrics,
                 )
 
+            terminal_status, terminal_message = self._resolve_terminal_run_status(
+                stage_summaries=stage_summaries,
+                answer=answer,
+            )
             return await self._finalize_run(
                 session=session,
                 run=run,
@@ -891,46 +1196,10 @@ class KbChatService:
                 evidence_draft_items=exec_ctx.evidence_draft_items,
                 stage_summaries=stage_summaries,
                 metrics=metrics,
-                status=AgentRunStatus.SUCCEEDED,
+                status=terminal_status,
+                error_message=terminal_message,
             )
 
-        except asyncio.TimeoutError:
-            metrics, stage_summaries = self._build_observability(
-                kb_chat_config=exec_ctx.kb_chat_config,
-                history_usage=exec_ctx.history_usage,
-                history_truncation=exec_ctx.history_truncation,
-                retrieval_meta=exec_ctx.retrieval_meta,
-                retrieval_results=exec_ctx.retrieval_results,
-                base_metrics={},
-                base_stage_summaries={},
-            )
-            stage_summaries = {
-                **stage_summaries,
-                "service_guardrail": {
-                    "reason": "timeout",
-                    "completed_at": datetime.now(timezone.utc).isoformat(),
-                },
-            }
-            metrics = self._apply_guardrail_metrics(
-                metrics=metrics,
-                stage_summaries=stage_summaries,
-                kb_scope=exec_ctx.retrieval_meta.get("kb_scope")
-                if isinstance(exec_ctx.retrieval_meta, dict)
-                else None,
-            )
-            safe_answer = "请求超时，未能完成回答。请稍后重试。"
-            return await self._finalize_run(
-                session=session,
-                run=run,
-                started_at=exec_ctx.started_at,
-                answer=safe_answer,
-                retrieval_results=exec_ctx.retrieval_results,
-                evidence_draft_items=exec_ctx.evidence_draft_items,
-                stage_summaries=stage_summaries,
-                metrics=metrics,
-                status=AgentRunStatus.FAILED,
-                error_message="timeout",
-            )
         except asyncio.CancelledError:
             await self._persist_guardrail_run(
                 exec_ctx=exec_ctx,
@@ -961,8 +1230,6 @@ class KbChatService:
             session=session, user_content=user_content, run=run
         )
         run = exec_ctx.run
-        total_timeout = float(self._settings.kb_chat_total_timeout_seconds)
-        deadline = time.monotonic() + max(total_timeout, 0.0)
         graph_task: asyncio.Task | None = None
         disconnect_task: asyncio.Task | None = None
 
@@ -995,6 +1262,48 @@ class KbChatService:
             stage_status: dict[str, str] = {}
             stage_attempts: dict[str, int] = {}
             active_stage: str | None = None
+            active_node: str | None = None
+            last_state_signature: tuple[Any, ...] | None = None
+            state_version = 0
+            running_status = AgentRunStatus.RUNNING.value
+            last_good_answer: str | None = None
+            last_good_answer_source: str | None = None
+            degrade_reason: str | None = None
+
+            def _emit_ui_event(
+                *,
+                event_type: str,
+                step_id: str | None = None,
+                status: str | None = None,
+                node: str | None = None,
+                message: str | None = None,
+                candidate_answer: str | None = None,
+                source_step_id: str | None = None,
+                degrade_reason_value: str | None = None,
+                meta: dict[str, Any] | None = None,
+            ) -> tuple[str, dict[str, Any]]:
+                payload: dict[str, Any] = {
+                    "event_type": event_type,
+                    "run_id": str(run.id),
+                    "ts": datetime.now(timezone.utc).isoformat(),
+                }
+                if step_id is not None:
+                    payload["step_id"] = step_id
+                if status is not None:
+                    payload["status"] = status
+                if node is not None:
+                    payload["node"] = node
+                if message is not None:
+                    payload["message"] = message
+                if candidate_answer is not None:
+                    payload["candidate_answer"] = candidate_answer
+                if source_step_id is not None:
+                    payload["source_step_id"] = source_step_id
+                if degrade_reason_value is not None:
+                    payload["degrade_reason"] = degrade_reason_value
+                if meta is not None:
+                    payload["meta"] = meta
+                return "ui_event", payload
 
             def _build_step_payload(
                 *,
@@ -1006,7 +1315,7 @@ class KbChatService:
             ) -> dict[str, Any]:
                 payload: dict[str, Any] = {
                     "step_id": step_id,
-                    "label": _KB_PIPELINE_STAGE_LABELS.get(step_id, step_id),
+                    "label": _KB_PIPELINE_NODE_LABELS.get(step_id, step_id),
                     "status": status,
                     "ts": datetime.now(timezone.utc).isoformat(),
                 }
@@ -1018,10 +1327,66 @@ class KbChatService:
                     payload["meta"] = meta
                 return payload
 
-            def _touch_stage(
-                step_id: str, *, node: str | None = None
+            def _emit_state(
+                *,
+                run_status: str,
+                current_step_id: str | None = None,
+                current_node: str | None = None,
+                message: str | None = None,
+                force: bool = False,
             ) -> list[dict[str, Any]]:
-                nonlocal active_stage
+                nonlocal last_state_signature, state_version
+                step_id = current_step_id if current_step_id is not None else active_stage
+                node = current_node if current_node is not None else active_node
+                state_version += 1
+                payload = self._build_stream_state_payload(
+                    run_id=run.id,
+                    run_status=run_status,
+                    current_step_id=step_id,
+                    current_node=node,
+                    stage_status=stage_status,
+                    stage_attempts=stage_attempts,
+                    state_version=state_version,
+                    active_path=self._build_active_path(
+                        stage_status=stage_status,
+                        current_step_id=step_id,
+                    ),
+                    last_good_answer=last_good_answer,
+                    degrade_reason=degrade_reason,
+                    message=message,
+                )
+                progress = payload.get("progress")
+                progress_key = None
+                if isinstance(progress, dict):
+                    progress_key = (
+                        progress.get("completed"),
+                        progress.get("total"),
+                        progress.get("percent"),
+                    )
+                signature = (
+                    payload.get("run_status"),
+                    payload.get("current_step_id"),
+                    payload.get("current_step_status"),
+                    payload.get("current_node"),
+                    payload.get("attempt"),
+                    payload.get("message"),
+                    payload.get("last_good_answer"),
+                    payload.get("degrade_reason"),
+                    progress_key,
+                )
+                if not force and signature == last_state_signature:
+                    state_version -= 1
+                    return []
+                last_state_signature = signature
+                return [payload]
+
+            def _touch_stage(
+                step_id: str,
+                *,
+                node: str | None = None,
+                io_summary: dict[str, Any] | None = None,
+            ) -> list[dict[str, Any]]:
+                nonlocal active_stage, active_node
                 events: list[dict[str, Any]] = []
                 previous = active_stage
                 if (
@@ -1044,17 +1409,21 @@ class KbChatService:
                             node=node,
                             meta={
                                 "attempt": stage_attempts[step_id],
-                                "order": _KB_PIPELINE_STAGE_ORDER.index(step_id)
-                                if step_id in _KB_PIPELINE_STAGE_ORDER
-                                else None,
+                                "phase": _KB_PIPELINE_NODE_PHASE.get(step_id),
+                                "order": _KB_PIPELINE_NODE_INDEX.get(step_id),
+                                "io_summary": io_summary,
                             },
                         )
                     )
                 active_stage = step_id
+                if node is not None:
+                    active_node = node
+                elif previous != step_id:
+                    active_node = None
                 return events
 
             def _complete_active_stage() -> list[dict[str, Any]]:
-                nonlocal active_stage
+                nonlocal active_stage, active_node
                 if (
                     active_stage
                     and stage_status.get(active_stage) == "started"
@@ -1064,6 +1433,7 @@ class KbChatService:
                         step_id=active_stage, status="completed"
                     )
                     active_stage = None
+                    active_node = None
                     return [payload]
                 return []
 
@@ -1073,16 +1443,22 @@ class KbChatService:
                 status: str,
                 message: str | None = None,
             ) -> list[dict[str, Any]]:
-                nonlocal active_stage
+                nonlocal active_stage, active_node
                 events: list[dict[str, Any]] = []
                 if stage_status.get(step_id) != "started":
                     stage_attempts[step_id] = stage_attempts.get(step_id, 0) + 1
                     stage_status[step_id] = "started"
+                    active_stage = step_id
+                    active_node = None
                     events.append(
                         _build_step_payload(
                             step_id=step_id,
                             status="started",
-                            meta={"attempt": stage_attempts[step_id]},
+                            meta={
+                                "attempt": stage_attempts[step_id],
+                                "phase": _KB_PIPELINE_NODE_PHASE.get(step_id),
+                                "order": _KB_PIPELINE_NODE_INDEX.get(step_id),
+                            },
                         )
                     )
                 if stage_status.get(step_id) != status:
@@ -1096,7 +1472,11 @@ class KbChatService:
                     )
                 if active_stage == step_id and status != "started":
                     active_stage = None
+                    active_node = None
                 return events
+
+            for state_event in _emit_state(run_status=running_status, force=True):
+                yield "state", state_event
 
             store = None
             try:
@@ -1159,11 +1539,13 @@ class KbChatService:
                         reason="canceled",
                         stream_state=stream_state,
                     )
+                    for state_event in _emit_state(
+                        run_status=AgentRunStatus.CANCELED.value,
+                        current_step_id=None,
+                        current_node=None,
+                    ):
+                        yield "state", state_event
                     return
-
-                remaining = deadline - time.monotonic()
-                if remaining <= 0:
-                    raise asyncio.TimeoutError()
 
                 queue_task = asyncio.create_task(queue.get())
                 wait_tasks = {queue_task}
@@ -1171,15 +1553,8 @@ class KbChatService:
                     wait_tasks.add(disconnect_task)
                 done, _pending = await asyncio.wait(
                     wait_tasks,
-                    timeout=remaining,
                     return_when=asyncio.FIRST_COMPLETED,
                 )
-
-                if not done:
-                    queue_task.cancel()
-                    with contextlib.suppress(asyncio.CancelledError):
-                        await queue_task
-                    raise asyncio.TimeoutError()
 
                 if disconnect_task is not None and disconnect_task in done:
                     if disconnect_event.is_set():
@@ -1195,6 +1570,12 @@ class KbChatService:
                             reason="canceled",
                             stream_state=stream_state,
                         )
+                        for state_event in _emit_state(
+                            run_status=AgentRunStatus.CANCELED.value,
+                            current_step_id=None,
+                            current_node=None,
+                        ):
+                            yield "state", state_event
                         return
                     disconnect_task = None
 
@@ -1209,12 +1590,12 @@ class KbChatService:
                         if isinstance(_meta, dict):
                             node_name = _meta.get("langgraph_node")
                             if isinstance(node_name, str):
-                                step_id = _KB_PIPELINE_NODE_TO_STAGE.get(node_name)
-                                if step_id:
-                                    for step_event in _touch_stage(
-                                        step_id, node=node_name
-                                    ):
-                                        yield "step", step_event
+                                for state_event in _emit_state(
+                                    run_status=running_status,
+                                    current_step_id=node_name,
+                                    current_node=node_name,
+                                ):
+                                    yield "state", state_event
                         deltas = extract_stream_delta(
                             token,
                             _meta if isinstance(_meta, dict) else None,
@@ -1225,16 +1606,48 @@ class KbChatService:
                         continue
 
                     if mode == "updates" and isinstance(chunk, dict):
-                        for source in chunk:
+                        for source, node_update in chunk.items():
                             if source == "__interrupt__":
                                 continue
-                            step_id = _KB_PIPELINE_NODE_TO_STAGE.get(source)
-                            if step_id:
-                                for step_event in _touch_stage(
-                                    step_id, node=source
-                                ):
-                                    yield "step", step_event
+                            if not isinstance(source, str):
+                                continue
+                            io_summary = (
+                                self._build_node_io_summary(
+                                    node=source,
+                                    update=node_update if isinstance(node_update, dict) else {},
+                                )
+                                if isinstance(node_update, dict)
+                                else None
+                            )
+                            for step_event in _touch_stage(
+                                source, node=source, io_summary=io_summary
+                            ):
+                                yield "step", step_event
+                                yield _emit_ui_event(
+                                    event_type="stage_transition",
+                                    step_id=step_event.get("step_id"),
+                                    status=step_event.get("status"),
+                                    node=source,
+                                    message=step_event.get("message"),
+                                    meta=step_event.get("meta"),
+                                )
+                            for state_event in _emit_state(
+                                run_status=running_status,
+                                current_step_id=source,
+                                current_node=source,
+                            ):
+                                yield "state", state_event
                         interrupts = apply_updates_chunk(stream_state, chunk)
+                        candidate, candidate_source = self._extract_last_good_answer(
+                            answer="",
+                            stage_summaries=stream_state.stage_summaries
+                            if isinstance(stream_state.stage_summaries, dict)
+                            else {},
+                            stream_state=stream_state,
+                        )
+                        if candidate:
+                            last_good_answer = candidate
+                            last_good_answer_source = candidate_source
                         self._ensure_no_pending_tool_approval(
                             pending_tool_calls=stream_state.pending_tool_calls,
                             interrupts=interrupts,
@@ -1279,15 +1692,47 @@ class KbChatService:
                 stage_summaries=stage_summaries,
                 answer=answer,
             )
+            candidate, candidate_source = self._extract_last_good_answer(
+                answer=answer,
+                stage_summaries=stage_summaries,
+                stream_state=stream_state,
+            )
+            if candidate:
+                last_good_answer = candidate
+                last_good_answer_source = candidate_source
             if clarification_message is not None:
                 for step_event in _complete_active_stage():
                     yield "step", step_event
+                    yield _emit_ui_event(
+                        event_type="stage_transition",
+                        step_id=step_event.get("step_id"),
+                        status=step_event.get("status"),
+                    )
                 for step_event in _mark_stage_status(
                     step_id="finalize",
                     status="waiting_user",
                     message=clarification_message,
                 ):
                     yield "step", step_event
+                    yield _emit_ui_event(
+                        event_type="stage_transition",
+                        step_id=step_event.get("step_id"),
+                        status=step_event.get("status"),
+                        message=step_event.get("message"),
+                    )
+                for state_event in _emit_state(
+                    run_status="waiting_user",
+                    current_step_id="finalize",
+                    current_node=None,
+                    message=clarification_message,
+                ):
+                    yield "state", state_event
+                if last_good_answer:
+                    yield _emit_ui_event(
+                        event_type="candidate_answer_updated",
+                        candidate_answer=last_good_answer,
+                        source_step_id=last_good_answer_source,
+                    )
                 pending_response = await self._persist_clarification_pending(
                     session=session,
                     run=run,
@@ -1299,13 +1744,54 @@ class KbChatService:
                 yield "interrupt", pending_response.model_dump(mode="json")
                 return
 
+            terminal_status, terminal_message = self._resolve_terminal_run_status(
+                stage_summaries=stage_summaries,
+                answer=answer,
+            )
             for step_event in _complete_active_stage():
                 yield "step", step_event
+                yield _emit_ui_event(
+                    event_type="stage_transition",
+                    step_id=step_event.get("step_id"),
+                    status=step_event.get("status"),
+                )
+            finalize_status = (
+                "completed"
+                if terminal_status == AgentRunStatus.SUCCEEDED
+                else "failed"
+            )
             for step_event in _mark_stage_status(
                 step_id="finalize",
-                status="completed",
+                status=finalize_status,
+                message=(
+                    terminal_message
+                    if finalize_status == "failed"
+                    else None
+                ),
             ):
                 yield "step", step_event
+                yield _emit_ui_event(
+                    event_type="stage_transition",
+                    step_id=step_event.get("step_id"),
+                    status=step_event.get("status"),
+                    message=step_event.get("message"),
+                )
+            if terminal_status == AgentRunStatus.FAILED and last_good_answer:
+                degrade_reason = terminal_message
+                yield _emit_ui_event(
+                    event_type="degraded_to_candidate",
+                    candidate_answer=last_good_answer,
+                    source_step_id=last_good_answer_source,
+                    degrade_reason_value=terminal_message,
+                    message="最终答案失败，已回退展示候选答案。",
+                )
+            for state_event in _emit_state(
+                run_status=terminal_status.value,
+                current_step_id="finalize",
+                current_node=None,
+                message=terminal_message if finalize_status == "failed" else None,
+            ):
+                yield "state", state_event
             final_response = await self._finalize_run(
                 session=session,
                 run=run,
@@ -1315,58 +1801,10 @@ class KbChatService:
                 evidence_draft_items=exec_ctx.evidence_draft_items,
                 stage_summaries=stage_summaries,
                 metrics=metrics,
-                status=AgentRunStatus.SUCCEEDED,
+                status=terminal_status,
+                error_message=terminal_message,
             )
             yield "final", final_response.model_dump(mode="json")
-
-        except asyncio.TimeoutError:
-            await _cancel_graph()
-            metrics, stage_summaries = self._build_observability(
-                kb_chat_config=exec_ctx.kb_chat_config,
-                history_usage=exec_ctx.history_usage,
-                history_truncation=exec_ctx.history_truncation,
-                retrieval_meta=exec_ctx.retrieval_meta,
-                retrieval_results=exec_ctx.retrieval_results,
-                base_metrics=stream_state.metrics,
-                base_stage_summaries=stream_state.stage_summaries,
-            )
-            stage_summaries = {
-                **stage_summaries,
-                "service_guardrail": {
-                    "reason": "timeout",
-                    "completed_at": datetime.now(timezone.utc).isoformat(),
-                },
-            }
-            metrics = self._apply_guardrail_metrics(
-                metrics=metrics,
-                stage_summaries=stage_summaries,
-                kb_scope=exec_ctx.retrieval_meta.get("kb_scope")
-                if isinstance(exec_ctx.retrieval_meta, dict)
-                else None,
-            )
-            safe_answer = "请求超时，未能完成回答。请稍后重试。"
-            for step_event in _complete_active_stage():
-                yield "step", step_event
-            for step_event in _mark_stage_status(
-                step_id="finalize",
-                status="failed",
-                message="执行超时",
-            ):
-                yield "step", step_event
-            final_response = await self._finalize_run(
-                session=session,
-                run=run,
-                started_at=exec_ctx.started_at,
-                answer=safe_answer,
-                retrieval_results=exec_ctx.retrieval_results,
-                evidence_draft_items=exec_ctx.evidence_draft_items,
-                stage_summaries=stage_summaries,
-                metrics=metrics,
-                status=AgentRunStatus.FAILED,
-                error_message="timeout",
-            )
-            yield "final", final_response.model_dump(mode="json")
-            return
 
         except asyncio.CancelledError:
             await _cancel_graph()
@@ -1386,12 +1824,30 @@ class KbChatService:
             await self._db.commit()
             for step_event in _complete_active_stage():
                 yield "step", step_event
+                yield _emit_ui_event(
+                    event_type="stage_transition",
+                    step_id=step_event.get("step_id"),
+                    status=step_event.get("status"),
+                )
             for step_event in _mark_stage_status(
                 step_id="finalize",
                 status="failed",
                 message=run.error_message,
             ):
                 yield "step", step_event
+                yield _emit_ui_event(
+                    event_type="stage_transition",
+                    step_id=step_event.get("step_id"),
+                    status=step_event.get("status"),
+                    message=step_event.get("message"),
+                )
+            for state_event in _emit_state(
+                run_status=AgentRunStatus.FAILED.value,
+                current_step_id="finalize",
+                current_node=None,
+                message=run.error_message,
+            ):
+                yield "state", state_event
             if isinstance(e, AppError):
                 yield (
                     "error",

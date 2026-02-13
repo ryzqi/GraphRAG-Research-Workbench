@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 import re
 import time
 from typing import Any
@@ -241,7 +242,7 @@ async def kb_retrieve_context(
             "kb_ids": kb_ids,
             # Use RetrievalService default when omitted.
             "top_k": None,
-            "timeout_seconds": remaining,
+            "timeout_seconds": None if math.isinf(remaining) else remaining,
         }
         query_items = state.get("query_items")
         if isinstance(query_items, list) and query_items:
@@ -659,6 +660,18 @@ async def answer_check(
 
     action = "none" if passed else "transform_query"
     exit_updates: dict[str, Any] = {}
+    best_answer_updates: dict[str, Any] = {}
+    if passed:
+        if draft:
+            best_answer_updates = {
+                "best_answer": draft,
+                "best_answer_meta": {
+                    "from_node": "answer_check",
+                    "reason": reason,
+                    "total_rounds": _get_loop_counts(state).get("total_rounds", 0),
+                    "completed_at": now_iso(),
+                },
+            }
     if fallback_reason == "budget_exhausted":
         action = "force_exit"
         reason = "budget_exhausted"
@@ -667,6 +680,7 @@ async def answer_check(
         )
 
     return {
+        **best_answer_updates,
         **exit_updates,
         **_merge_reflection(
             state,

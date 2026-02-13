@@ -1,14 +1,13 @@
-"""KB Chat budgets (timeout/rounds/retries) for agentic graph.
+"""KB Chat budgets (rounds/retries) for agentic graph.
 
 Design notes:
 - Budgets must be checkpointer-friendly (JSON-serializable).
-- We persist a fixed `deadline_ts` (epoch seconds) in state.metrics to enforce
-  a total timeout even across async awaits.
+- We no longer enforce a global deadline budget.
 """
 
 from __future__ import annotations
 
-import time
+import math
 from datetime import datetime, timezone
 
 from app.core.settings import Settings
@@ -28,27 +27,19 @@ def ensure_budget_initialized(state: dict, settings: Settings) -> dict:
     if not isinstance(budget, dict):
         budget = {}
 
-    if "deadline_ts" not in budget:
-        total = float(settings.kb_chat_total_timeout_seconds)
-        budget = {
-            **budget,
-            "total_timeout_seconds": total,
-            "started_at": now_iso(),
-            "deadline_ts": time.time() + max(total, 0.0),
-        }
+    if "started_at" not in budget:
+        budget = {**budget, "started_at": now_iso()}
+
+    # Drop legacy timeout fields from old checkpoints.
+    budget.pop("total_timeout_seconds", None)
+    budget.pop("deadline_ts", None)
 
     metrics = {**metrics, "budget": budget}
     return {"metrics": metrics}
 
 
 def budget_exceeded(state: dict, settings: Settings) -> tuple[bool, str]:
-    """Return (exceeded, reason) for any configured KB chat budgets."""
-    metrics = state.get("metrics")
-    budget = metrics.get("budget") if isinstance(metrics, dict) else None
-    deadline_ts = budget.get("deadline_ts") if isinstance(budget, dict) else None
-
-    if isinstance(deadline_ts, (int, float)) and time.time() > float(deadline_ts):
-        return True, "budget_exhausted"
+    """Return (exceeded, reason) for KB chat round/retry budgets."""
 
     loop_counts = state.get("loop_counts")
     if isinstance(loop_counts, dict):
@@ -71,15 +62,9 @@ def budget_exceeded(state: dict, settings: Settings) -> tuple[bool, str]:
 def remaining_budget_seconds(
     state: dict, settings: Settings, *, now_ts: float | None = None
 ) -> float:
-    """Return remaining budget seconds based on deadline_ts (>= 0)."""
-    metrics = state.get("metrics")
-    budget = metrics.get("budget") if isinstance(metrics, dict) else None
-    deadline_ts = budget.get("deadline_ts") if isinstance(budget, dict) else None
-    if not isinstance(deadline_ts, (int, float)):
-        total = float(settings.kb_chat_total_timeout_seconds)
-        return max(total, 0.0)
-    now_value = time.time() if now_ts is None else float(now_ts)
-    return max(0.0, float(deadline_ts) - now_value)
+    """Return remaining budget seconds (unbounded when total timeout is disabled)."""
+    _ = state, settings, now_ts
+    return float("inf")
 
 
 def budget_exhausted(state: dict, settings: Settings) -> bool:
@@ -89,9 +74,13 @@ def budget_exhausted(state: dict, settings: Settings) -> bool:
 
 def effective_timeout_seconds(
     component_timeout_seconds: float | None, remaining_seconds: float
-) -> float:
+) -> float | None:
     """Clamp component timeout by remaining budget (>= 0)."""
     remaining = max(float(remaining_seconds), 0.0)
+    if math.isinf(remaining):
+        if component_timeout_seconds is None:
+            return None
+        return max(float(component_timeout_seconds), 0.0)
     if component_timeout_seconds is None:
         return remaining
     return max(0.0, min(float(component_timeout_seconds), remaining))

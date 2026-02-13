@@ -179,6 +179,8 @@ class KbChatAgenticState(KbChatAgenticStateBase, total=False):
     final_context: str
     draft_answer: str
     final_answer: str
+    best_answer: str
+    best_answer_meta: dict[str, Any]
 
     reflection: ReflectionResult
 

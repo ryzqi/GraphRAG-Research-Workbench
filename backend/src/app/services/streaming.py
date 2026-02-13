@@ -6,6 +6,27 @@ from enum import Enum
 from typing import Any, AsyncIterator, Awaitable, Callable
 
 
+_NON_ANSWER_STREAM_NODES = {
+    # KB preprocess / retrieval / reflection nodes
+    "merge_context",
+    "coref_rewrite",
+    "ambiguity_check",
+    "normalize_rewrite",
+    "decomposition",
+    "generate_variants",
+    "entity_expand",
+    "hyde",
+    "prepare_messages",
+    "multi_query_check",
+    "hyde_check",
+    "retrieve",
+    "doc_grader",
+    "transform_query",
+    "hallucination_check",
+    "answer_check",
+}
+
+
 class DeltaKind(str, Enum):
     """流式增量类型枚举，对齐 LangChain 消息内容块格式。"""
 
@@ -175,6 +196,15 @@ class LegacyThinkParser:
         return deltas
 
 
+def _should_stream_answer_content(node: str) -> bool:
+    """Return whether raw text from a node should be treated as answer content."""
+    if not node:
+        return True
+    if node == "tools":
+        return False
+    return node not in _NON_ANSWER_STREAM_NODES
+
+
 def extract_stream_delta(
     token: object,
     meta: dict[str, Any] | None = None,
@@ -229,11 +259,12 @@ def extract_stream_delta(
 
     # 3. 提取回答内容（必要时兼容 legacy <think> 标签）
     content = getattr(token, "content", None)
+    node = str((meta or {}).get("langgraph_node") or "")
+    allow_answer_content = _should_stream_answer_content(node)
     if isinstance(content, str) and content:
-        node = (meta or {}).get("langgraph_node", "")
         if node == "tools":
             deltas.append(StreamDelta(kind=DeltaKind.THINKING, content=content))
-        else:
+        elif allow_answer_content:
             if legacy_think_parser is None:
                 deltas.append(StreamDelta(kind=DeltaKind.ANSWER, content=content))
             else:
@@ -248,7 +279,7 @@ def extract_stream_delta(
                 continue
             if item_type in ("thinking", "reasoning"):
                 deltas.append(StreamDelta(kind=DeltaKind.THINKING, content=text))
-            elif item_type == "text":
+            elif item_type == "text" and allow_answer_content:
                 if legacy_think_parser is None:
                     deltas.append(StreamDelta(kind=DeltaKind.ANSWER, content=text))
                 else:

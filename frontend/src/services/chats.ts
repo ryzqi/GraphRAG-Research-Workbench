@@ -10,11 +10,49 @@ export type ChatSessionType = 'kb_chat' | 'general_chat';
 export type AgentMode = 'single_agent' | 'multi_agent';
 export type MessageRole = 'user' | 'assistant' | 'system';
 export type AgentRunStatus = 'running' | 'succeeded' | 'failed' | 'canceled';
+export type ChatRunStreamStatus = AgentRunStatus | 'waiting_user';
 export type EvidenceSourceKind = 'kb' | 'external';
 export type ChatMessageResponseStatus =
   | 'succeeded'
   | 'pending_tool_approval'
   | 'pending_user_clarification';
+
+export interface ChatRunProgress {
+  completed: number;
+  total: number;
+  percent: number;
+}
+
+export interface ChatRunStateEvent {
+  run_id: string;
+  run_status: ChatRunStreamStatus;
+  current_step_id: string | null;
+  current_step_label: string | null;
+  current_step_status: string | null;
+  current_node: string | null;
+  attempt: number | null;
+  message: string | null;
+  state_version?: number;
+  active_path?: string[];
+  last_good_answer?: string | null;
+  degrade_reason?: string | null;
+  progress: ChatRunProgress;
+  ts: string;
+}
+
+export interface ChatRunUiEvent {
+  event_type: string;
+  run_id: string;
+  step_id?: string | null;
+  status?: string | null;
+  node?: string | null;
+  message?: string | null;
+  candidate_answer?: string | null;
+  source_step_id?: string | null;
+  degrade_reason?: string | null;
+  meta?: Record<string, unknown> | null;
+  ts: string;
+}
 
 export interface KbChatConfig {
   query_rewrite_enabled: boolean;

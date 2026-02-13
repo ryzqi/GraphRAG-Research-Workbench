@@ -33,6 +33,8 @@ def force_exit_node(state: dict, settings: Settings) -> dict[str, Any]:
 
     final_answer = state.get("final_answer")
     draft_answer = state.get("draft_answer")
+    best_answer = state.get("best_answer")
+    used_best_answer = False
     if action == "clarify":
         if not isinstance(final_answer, str) or not final_answer.strip():
             final_answer = "为了更准确地回答，请补充必要信息后再提问。"
@@ -44,6 +46,13 @@ def force_exit_node(state: dict, settings: Settings) -> dict[str, Any]:
         else:
             # Answer didn't pass guardrails; discard any prefilled final answer.
             final_answer = None
+        if (
+            (not isinstance(final_answer, str) or not final_answer.strip())
+            and isinstance(best_answer, str)
+            and best_answer.strip()
+        ):
+            final_answer = best_answer
+            used_best_answer = True
         if not isinstance(final_answer, str) or not final_answer.strip():
             final_answer = "根据现有资料无法回答该问题（已停止重试）。"
 
@@ -55,6 +64,7 @@ def force_exit_node(state: dict, settings: Settings) -> dict[str, Any]:
         "force_exit": {
             "reason": reason,
             "answer_passed": answer_passed,
+            "used_best_answer": used_best_answer,
             "completed_at": now_iso(),
         },
     }
