@@ -1,6 +1,6 @@
 version: "1.0"
 name: kb_chat_hyde
-description: "HyDE 假设文档生成提示词（LLM驱动）"
+description: "HyDE 假设文档生成提示词"
 
 template: |
   你是检索增强助手。请基于用户问题生成一段“假设性参考文档”，用于向量检索（HyDE）。

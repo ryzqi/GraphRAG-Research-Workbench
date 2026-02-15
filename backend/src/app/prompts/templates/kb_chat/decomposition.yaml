@@ -1,6 +1,6 @@
 version: "1.0"
 name: kb_chat_decomposition
-description: "问题分解提示词（LLM驱动）"
+description: "问题分解提示词"
 
 template: |
   你是知识库检索查询规划助手。请将用户问题拆分为最多 {max_sub_questions} 个可独立检索的子问题。

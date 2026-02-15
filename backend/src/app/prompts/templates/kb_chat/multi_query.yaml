@@ -1,6 +1,6 @@
 version: "1.0"
 name: kb_chat_multi_query
-description: "多路查询扩展提示词（LLM驱动）"
+description: "多路查询扩展提示词"
 
 template: |
   你是知识库检索扩展助手。请围绕用户问题生成最多 {max_variants} 条不同检索视角的查询。
