@@ -1,7 +1,7 @@
 """知识库检索工具（kb_retrieve）。
 
 用于 ToolNode/工具调用框架：
-- 返回带编号的引用片段（便于回答中使用 [1]、[2] 引用）
+- 返回带标签的引用片段（便于回答中使用 [agent基础] 这类引用）
 - 通过回调将结构化检索结果交给上层（用于 Evidence 落库/指标）
 """
 
@@ -40,6 +40,48 @@ class KbRetrieveArgs(BaseModel):
         default=None,
         description="可选：统一检索层 QueryItem 列表（用于多路/分解/HyDE fanout 融合）。提供时将优先使用该列表进行融合检索。",
     )
+    retrieval_round: int | None = Field(
+        default=None,
+        ge=0,
+        description="可选：检索轮次（用于将证据与最终答案绑定到同一轮检索上下文）。",
+    )
+
+
+def _citation_id(index: int) -> str:
+    return f"S{index}"
+
+
+def _citation_title_from_result(result: RetrievalResult, *, index: int) -> str:
+    chunk = getattr(result, "chunk", None)
+    locator = getattr(chunk, "locator", None)
+    if isinstance(locator, dict):
+        raw = locator.get("citation_label")
+        if isinstance(raw, str) and raw.strip():
+            normalized = " ".join(raw.replace("[", " ").replace("]", " ").split())
+            if normalized:
+                return normalized
+        filename = locator.get("filename")
+        if isinstance(filename, str) and filename.strip():
+            base = filename.strip().replace("\\", "/").rsplit("/", 1)[-1]
+            stem = base.rsplit(".", 1)[0] if "." in base else base
+            normalized = " ".join(stem.replace("[", " ").replace("]", " ").split())
+            if normalized:
+                return normalized
+    return f"资料{index}"
+
+
+def _citation_source_from_result(result: RetrievalResult) -> str | None:
+    chunk = getattr(result, "chunk", None)
+    locator = getattr(chunk, "locator", None)
+    if not isinstance(locator, dict):
+        return None
+    filename = locator.get("filename")
+    if isinstance(filename, str) and filename.strip():
+        return filename.strip()
+    source = locator.get("source")
+    if isinstance(source, str) and source.strip():
+        return source.strip()
+    return None
 
 
 def build_kb_retrieve_tool(
@@ -59,6 +101,7 @@ def build_kb_retrieve_tool(
         top_k: int | None = None,
         timeout_seconds: float | None = None,
         query_items: list[dict[str, Any]] | None = None,
+        retrieval_round: int | None = None,
     ) -> str:
         allowed_kb_ids = list(default_kb_ids)
         requested_raw = kb_ids or []
@@ -127,7 +170,7 @@ def build_kb_retrieve_tool(
         if context_builder is None:
             included = results
             parts = [
-                f"[{i}] {r.context_text or r.chunk.content}"
+                f"[{_citation_id(i)}] {r.context_text or r.chunk.content}"
                 for i, r in enumerate(included, 1)
             ]
             context = "\n\n".join(parts) if parts else "（未找到相关内容）"
@@ -162,7 +205,10 @@ def build_kb_retrieve_tool(
                             draft_by_chunk_id[cid] = it
 
             evidence_items: list[dict[str, Any]] = []
-            for r in included:
+            for i, r in enumerate(included, 1):
+                citation_id = _citation_id(i)
+                citation_title = _citation_title_from_result(r, index=i)
+                citation_source = _citation_source_from_result(r)
                 chunk_id = getattr(getattr(r, "chunk", None), "id", None)
                 if chunk_id is None:
                     continue
@@ -185,11 +231,17 @@ def build_kb_retrieve_tool(
                             "excerpt": excerpt_text,
                             "score": float(getattr(r, "score", 0.0) or 0.0),
                             "hits": [],
+                            "citation_id": citation_id,
+                            "citation_title": citation_title,
+                            "citation_source": citation_source,
                         }
                     )
                 else:
                     merged = dict(item)
                     merged["excerpt"] = excerpt_text
+                    merged["citation_id"] = citation_id
+                    merged["citation_title"] = citation_title
+                    merged["citation_source"] = citation_source
                     evidence_items.append(merged)
 
             on_results(
@@ -200,7 +252,22 @@ def build_kb_retrieve_tool(
                     "truncation": truncation,
                     "char_truncated": char_truncated,
                     "evidence_items": evidence_items,
+                    "citation_catalog": [
+                        {
+                            "citation_id": it.get("citation_id"),
+                            "title": it.get("citation_title"),
+                            "source": it.get("citation_source"),
+                            "locator": it.get("locator"),
+                            "chunk_id": it.get("chunk_id"),
+                            "material_id": it.get("material_id"),
+                            "kb_id": it.get("kb_id"),
+                        }
+                        for it in evidence_items
+                    ],
                     "kb_scope": kb_scope,
+                    "retrieval_round": retrieval_round
+                    if isinstance(retrieval_round, int)
+                    else None,
                     "completed_at": datetime.now(timezone.utc).isoformat(),
                 },
             )

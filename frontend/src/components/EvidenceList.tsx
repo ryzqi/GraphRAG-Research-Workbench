@@ -19,6 +19,35 @@ function getLocatorString(
   return typeof value === 'string' ? value : null;
 }
 
+function stripExtension(name: string): string {
+  const trimmed = name.trim();
+  if (!trimmed) {
+    return '';
+  }
+  const normalized = trimmed.replace(/\\/g, '/');
+  const base = normalized.split('/').pop() ?? normalized;
+  const dotIndex = base.lastIndexOf('.');
+  if (dotIndex <= 0) {
+    return base;
+  }
+  return base.slice(0, dotIndex);
+}
+
+function getCitationLabel(item: EvidenceItem, index: number): string {
+  const explicit = getLocatorString(item.locator, 'citation_label');
+  if (explicit && explicit.trim()) {
+    return explicit.trim();
+  }
+  const filename = getLocatorString(item.locator, 'filename');
+  if (filename && filename.trim()) {
+    const stem = stripExtension(filename);
+    if (stem.trim()) {
+      return stem.trim();
+    }
+  }
+  return `资料${index + 1}`;
+}
+
 /**
  * 生成证据项的唯一 key
  */
@@ -53,6 +82,7 @@ export function EvidenceList({ evidence }: EvidenceListProps) {
       </div>
       {evidence.map((item, index) => {
         const materialTitle = getLocatorString(item.locator, 'material_title');
+        const citationLabel = getCitationLabel(item, index);
 
         return (
           <div
@@ -70,23 +100,23 @@ export function EvidenceList({ evidence }: EvidenceListProps) {
                 alignItems: 'center',
                 gap: 8,
                 marginBottom: 8,
+                flexWrap: 'wrap',
               }}
             >
               <span
                 style={{
                   display: 'inline-flex',
                   alignItems: 'center',
-                  justifyContent: 'center',
-                  width: 20,
-                  height: 20,
-                  borderRadius: '50%',
-                  background: '#3b82f6',
-                  color: '#fff',
+                  borderRadius: 999,
+                  padding: '2px 10px',
+                  background: '#eff6ff',
+                  border: '1px solid #bfdbfe',
                   fontSize: 12,
                   fontWeight: 500,
+                  color: '#1e40af',
                 }}
               >
-                {index + 1}
+                {citationLabel}
               </span>
               <span style={{ fontSize: 12, color: '#6b7280' }}>
                 {item.source_kind === 'kb' ? '知识库' : '外部来源'}

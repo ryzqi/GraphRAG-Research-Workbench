@@ -89,10 +89,28 @@ class ChatExporter:
 
         # 证据列表
         if evidence_list:
+            def _citation_label(locator: dict | None, index: int) -> str:
+                if isinstance(locator, dict):
+                    raw = locator.get("citation_label")
+                    if isinstance(raw, str):
+                        label = " ".join(raw.replace("[", " ").replace("]", " ").split())
+                        if label:
+                            return label
+                    filename = locator.get("filename")
+                    if isinstance(filename, str) and filename.strip():
+                        base = filename.strip().replace("\\", "/").rsplit("/", 1)[-1]
+                        stem = base.rsplit(".", 1)[0] if "." in base else base
+                        label = " ".join(
+                            stem.replace("[", " ").replace("]", " ").split()
+                        )
+                        if label:
+                            return label
+                return f"资料{index}"
+
             lines.append("## 证据详情")
             lines.append("")
             for i, ev in enumerate(evidence_list, 1):
-                lines.append(f"### 证据 {i}")
+                lines.append(f"### 证据：{_citation_label(ev.locator, i)}")
                 lines.append(f"- **来源类型**: {ev.source_kind.value}")
                 if ev.kb_id:
                     lines.append(f"- **知识库 ID**: {ev.kb_id}")

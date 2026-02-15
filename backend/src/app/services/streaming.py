@@ -22,8 +22,7 @@ _NON_ANSWER_STREAM_NODES = {
     "retrieve",
     "doc_grader",
     "transform_query",
-    "hallucination_check",
-    "answer_check",
+    "answer_review",
 }
 
 
@@ -380,6 +379,9 @@ class StreamState:
     pending_tool_calls: list[dict] = field(default_factory=list)
     stage_summaries: dict[str, Any] = field(default_factory=dict)
     metrics: dict[str, Any] = field(default_factory=dict)
+    loop_counts: dict[str, Any] = field(default_factory=dict)
+    best_answer: str | None = None
+    best_answer_meta: dict[str, Any] | None = None
     human_approved: bool | None = None
 
     def apply_update(self, update: dict[str, Any]) -> None:
@@ -398,6 +400,15 @@ class StreamState:
         metrics = update.get("metrics")
         if isinstance(metrics, dict):
             self.metrics = metrics
+        loop_counts = update.get("loop_counts")
+        if isinstance(loop_counts, dict):
+            self.loop_counts = loop_counts
+        best_answer = update.get("best_answer")
+        if isinstance(best_answer, str):
+            self.best_answer = best_answer
+        best_answer_meta = update.get("best_answer_meta")
+        if isinstance(best_answer_meta, dict):
+            self.best_answer_meta = best_answer_meta
         if "human_approved" in update:
             self.human_approved = update.get("human_approved")
 

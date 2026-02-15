@@ -16,6 +16,12 @@ import time
 from dataclasses import dataclass
 from typing import Iterable
 
+from pydantic import BaseModel, ValidationError
+
+from app.agents.kb_chat_agentic.schemas import (
+    ReverseQuestionDecision,
+    TransformQueryDecision,
+)
 from app.core.settings import Settings, get_settings
 from app.integrations.langchain_profiles import build_chat_model_profile
 from app.prompts import get_prompt_loader
@@ -52,6 +58,14 @@ class QueryListResult:
 class AmbiguityResult:
     ambiguous: bool
     reverse_question: str | None = None
+    reason: str | None = None
+    latency_ms: int | None = None
+
+
+@dataclass(slots=True)
+class StructuredCallResult:
+    payload: BaseModel | None = None
+    success: bool = False
     reason: str | None = None
     latency_ms: int | None = None
 
@@ -185,10 +199,13 @@ class QueryRewriteService:
             else int(max_tokens)
         )
         try:
-            rewritten = await asyncio.wait_for(
-                self._call_llm(prompt, max_tokens=max_tokens_value),
-                timeout=timeout_value,
-            )
+            if timeout_value <= 0:
+                rewritten = await self._call_llm(prompt, max_tokens=max_tokens_value)
+            else:
+                rewritten = await asyncio.wait_for(
+                    self._call_llm(prompt, max_tokens=max_tokens_value),
+                    timeout=timeout_value,
+                )
         except asyncio.TimeoutError:
             latency_ms = int((time.perf_counter() - start_time) * 1000)
             logger.warning("Query rewrite 超时", extra={"timeout": timeout_value})
@@ -312,7 +329,26 @@ class QueryRewriteService:
         """Generate a clarifying question (degrades to a fixed safe template)."""
         start = time.perf_counter()
 
-        # Follow-up task 1.11 will add prompt templates; keep a safe fallback now.
+        structured_result = await self._call_prompt_structured(
+            "kb_chat/reverse_question",
+            schema=ReverseQuestionDecision,
+            timeout_seconds=timeout_seconds,
+            max_tokens=128,
+            question=query,
+        )
+        if (
+            structured_result.success
+            and isinstance(structured_result.payload, ReverseQuestionDecision)
+            and structured_result.payload.question.strip()
+        ):
+            return TextResult(
+                text=structured_result.payload.question.strip(),
+                success=True,
+                reason=structured_result.reason,
+                latency_ms=structured_result.latency_ms,
+            )
+
+        # Keep text fallback for compatibility with older prompt/template behaviors.
         llm_result = await self._call_prompt_text(
             "kb_chat/reverse_question",
             timeout_seconds=timeout_seconds,
@@ -350,6 +386,28 @@ class QueryRewriteService:
             )
 
         start = time.perf_counter()
+        structured_result = await self._call_prompt_structured(
+            "kb_chat/transform_query",
+            schema=TransformQueryDecision,
+            timeout_seconds=timeout_seconds,
+            max_tokens=96,
+            question=query,
+            reason=reason,
+            hint=hint or "",
+        )
+        if (
+            structured_result.success
+            and isinstance(structured_result.payload, TransformQueryDecision)
+            and structured_result.payload.query.strip()
+        ):
+            text = structured_result.payload.query.strip()
+            return RewriteResult(
+                query=text,
+                rewritten=text != query,
+                reason=structured_result.reason,
+                latency_ms=structured_result.latency_ms,
+            )
+
         llm_result = await self._call_prompt_text(
             "kb_chat/transform_query",
             timeout_seconds=timeout_seconds,
@@ -531,6 +589,96 @@ class QueryRewriteService:
             return True
         return False
 
+    async def _call_prompt_structured(
+        self,
+        prompt_key: str,
+        *,
+        schema: type[BaseModel],
+        timeout_seconds: float | None,
+        max_tokens: int,
+        **kwargs: object,
+    ) -> StructuredCallResult:
+        """Call prompt and parse structured output via model.with_structured_output()."""
+        try:
+            prompt = self._prompts.render(prompt_key, **kwargs)
+        except KeyError:
+            return StructuredCallResult(
+                payload=None, success=False, reason="prompt_missing", latency_ms=0
+            )
+        except Exception as exc:  # pragma: no cover
+            logger.warning(
+                "Prompt render 失败",
+                extra={"prompt_key": prompt_key, "error": str(exc)},
+            )
+            return StructuredCallResult(
+                payload=None, success=False, reason="prompt_error", latency_ms=0
+            )
+
+        start_time = time.perf_counter()
+        timeout_value = (
+            float(self._settings.retrieval_query_rewrite_timeout_seconds)
+            if timeout_seconds is None
+            else float(timeout_seconds)
+        )
+        try:
+            if timeout_value <= 0:
+                payload = await self._call_llm_structured(
+                    prompt, schema=schema, max_tokens=max_tokens
+                )
+            else:
+                payload = await asyncio.wait_for(
+                    self._call_llm_structured(
+                        prompt, schema=schema, max_tokens=max_tokens
+                    ),
+                    timeout=timeout_value,
+                )
+        except asyncio.TimeoutError:
+            latency_ms = int((time.perf_counter() - start_time) * 1000)
+            logger.warning(
+                "Prompt LLM structured 超时",
+                extra={"prompt_key": prompt_key, "timeout": timeout_value},
+            )
+            return StructuredCallResult(
+                payload=None, success=False, reason="timeout", latency_ms=latency_ms
+            )
+        except asyncio.CancelledError:
+            raise
+        except ValidationError:
+            latency_ms = int((time.perf_counter() - start_time) * 1000)
+            return StructuredCallResult(
+                payload=None,
+                success=False,
+                reason="invalid_schema",
+                latency_ms=latency_ms,
+            )
+        except Exception as exc:
+            latency_ms = int((time.perf_counter() - start_time) * 1000)
+            logger.warning(
+                "Prompt LLM structured 调用失败",
+                extra={"prompt_key": prompt_key, "error": str(exc)},
+            )
+            return StructuredCallResult(
+                payload=None, success=False, reason="error", latency_ms=latency_ms
+            )
+
+        latency_ms = int((time.perf_counter() - start_time) * 1000)
+        if not isinstance(payload, schema):
+            try:
+                payload = schema.model_validate(payload)
+            except ValidationError:
+                return StructuredCallResult(
+                    payload=None,
+                    success=False,
+                    reason="invalid_schema",
+                    latency_ms=latency_ms,
+                )
+        return StructuredCallResult(
+            payload=payload,
+            success=True,
+            reason=None,
+            latency_ms=latency_ms,
+        )
+
     async def _call_prompt_text(
         self,
         prompt_key: str,
@@ -562,9 +710,12 @@ class QueryRewriteService:
             else float(timeout_seconds)
         )
         try:
-            text = await asyncio.wait_for(
-                self._call_llm(prompt, max_tokens=max_tokens), timeout=timeout_value
-            )
+            if timeout_value <= 0:
+                text = await self._call_llm(prompt, max_tokens=max_tokens)
+            else:
+                text = await asyncio.wait_for(
+                    self._call_llm(prompt, max_tokens=max_tokens), timeout=timeout_value
+                )
         except asyncio.TimeoutError:
             latency_ms = int((time.perf_counter() - start_time) * 1000)
             logger.warning(
@@ -596,6 +747,33 @@ class QueryRewriteService:
                 latency_ms=latency_ms,
             )
         return TextResult(text=text, success=True, reason=None, latency_ms=latency_ms)
+
+    async def _call_llm_structured(
+        self,
+        prompt: str,
+        *,
+        schema: type[BaseModel],
+        max_tokens: int,
+    ) -> BaseModel | dict[str, object]:
+        from langchain.messages import HumanMessage
+        from langchain_openai import ChatOpenAI
+
+        model = ChatOpenAI(
+            model=self._settings.llm_model,
+            api_key=self._settings.llm_api_key,
+            base_url=self._settings.llm_base_url.rstrip("/"),
+            profile=build_chat_model_profile(self._settings),
+        )
+        model = model.bind(temperature=0, max_tokens=max_tokens)
+        model = model.with_structured_output(schema)
+
+        def _run() -> object:
+            return model.invoke([HumanMessage(content=prompt)])
+
+        result = await asyncio.to_thread(_run)
+        if isinstance(result, schema):
+            return result
+        return schema.model_validate(result)
 
     async def _call_llm(self, prompt: str, *, max_tokens: int) -> str:
         from langchain.messages import HumanMessage

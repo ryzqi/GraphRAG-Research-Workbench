@@ -1,36 +1,44 @@
-"""KB Chat agentic ReflectionLayer nodes (relevance / hallucination / answer-check).
+"""KB Chat agentic ReflectionLayer nodes (relevance / answer-review).
 
 These nodes are designed to be:
-- Minimal & production-safe (timeouts + fallbacks)
+- Minimal & production-safe (fallbacks)
 - Serializable-friendly (only write JSON-ish values to state)
-- Budget-aware (bind routing to loop_counts budgets)
+- Budget-aware (bind routing to loop_counts rounds/retries budgets)
 """
 
 from __future__ import annotations
 
 import asyncio
-import json
-import math
 import re
 import time
-from typing import Any
+from typing import Any, TypeVar
 
 from langchain.messages import AIMessage, HumanMessage, SystemMessage
 from langchain.tools import BaseTool
 from langchain_openai import ChatOpenAI
+from pydantic import BaseModel, ValidationError
 
 from app.core.settings import Settings, get_settings
 from app.prompts import get_prompt_loader
+from app.services.evidence_guardrails import (
+    extract_citation_labels,
+    normalize_citation_label,
+)
 from app.services.query_rewrite_service import QueryRewriteService, build_query_items
 
-from .budget import effective_timeout_seconds, now_iso, remaining_budget_seconds
+from .budget import now_iso
 from .json_safety import ensure_json_safe
-from .runtime_config import force_retrieve_enabled, query_rewrite_enabled
+from .runtime_config import query_rewrite_enabled
+from .schemas import AnswerReviewDecision, DocGraderDecision
 
-_CODE_FENCE_RE = re.compile(r"^```(?:json)?\s*|\s*```$", re.IGNORECASE)
-_JSON_OBJ_RE = re.compile(r"\{.*\}", re.DOTALL)
-_CITATION_RE = re.compile(r"\[(\d+)\]")
-_EVIDENCE_LINE_RE = re.compile(r"^\[(\d+)\]\s+", re.MULTILINE)
+_EVIDENCE_LINE_RE = re.compile(r"^\[([^\[\]\n]{1,128})\]\s+", re.MULTILINE)
+_CITATION_ONLY_FAILURE_REASONS = {
+    "missing_citations",
+    "invalid_citations",
+    "citation_mismatch",
+    # Backward compatibility for old checkpoints.
+    "missing_or_invalid_citations",
+}
 
 
 def _as_str(value: object) -> str:
@@ -52,57 +60,47 @@ def _get_loop_counts(state: dict) -> dict[str, int]:
     }
 
 
-def _deadline_exceeded(state: dict) -> bool:
-    metrics = state.get("metrics")
-    budget = metrics.get("budget") if isinstance(metrics, dict) else None
-    deadline_ts = budget.get("deadline_ts") if isinstance(budget, dict) else None
-    return isinstance(deadline_ts, (int, float)) and time.time() > float(deadline_ts)
-
-
 def _total_rounds_exceeded(loop_counts: dict[str, int], settings: Settings) -> bool:
     return loop_counts.get("total_rounds", 0) >= int(settings.kb_chat_max_total_rounds)
+
+
+def _normalize_citation_label(value: str) -> str:
+    return normalize_citation_label(value)
+
+
+def _extract_evidence_labels(final_context: str) -> dict[str, str]:
+    if not final_context:
+        return {}
+    labels: dict[str, str] = {}
+    for match in _EVIDENCE_LINE_RE.finditer(final_context):
+        label = _normalize_citation_label(match.group(1))
+        if not label:
+            continue
+        labels.setdefault(label.casefold(), label)
+    return labels
 
 
 def _extract_evidence_count(final_context: str) -> int:
     if not final_context:
         return 0
-    matches = [int(m.group(1)) for m in _EVIDENCE_LINE_RE.finditer(final_context)]
-    return max(matches) if matches else 0
+    return sum(1 for _ in _EVIDENCE_LINE_RE.finditer(final_context))
 
 
-def _extract_valid_citations(answer: str, *, evidence_count: int) -> set[int]:
-    if not answer or evidence_count <= 0:
-        return set()
-    found: set[int] = set()
-    for raw in _CITATION_RE.findall(answer):
-        try:
-            idx = int(raw)
-        except Exception:
-            continue
-        if 1 <= idx <= evidence_count:
-            found.add(idx)
-    return found
-
-
-def _strip_code_fences(text: str) -> str:
-    text = (text or "").strip()
-    if not text:
-        return ""
-    # Remove leading/trailing ``` fences to improve JSON parse stability.
-    return _CODE_FENCE_RE.sub("", text).strip()
-
-
-def _parse_json_object(text: str) -> dict[str, Any] | None:
-    cleaned = _strip_code_fences(text)
-    if not cleaned:
-        return None
-    m = _JSON_OBJ_RE.search(cleaned)
-    payload = m.group(0) if m else cleaned
-    try:
-        obj = json.loads(payload)
-    except json.JSONDecodeError:
-        return None
-    return obj if isinstance(obj, dict) else None
+def _partition_citations(
+    answer: str, *, allowed_labels: dict[str, str]
+) -> tuple[list[str], set[str], set[str]]:
+    if not answer or not allowed_labels:
+        return [], set(), set()
+    all_citations = extract_citation_labels(answer)
+    valid_found: set[str] = set()
+    invalid_found: set[str] = set()
+    for label in all_citations:
+        key = label.casefold()
+        if key in allowed_labels:
+            valid_found.add(allowed_labels[key])
+        else:
+            invalid_found.add(label)
+    return all_citations, valid_found, invalid_found
 
 
 def _render_prompt_or_default(prompt_key: str, default: str) -> str:
@@ -113,30 +111,37 @@ def _render_prompt_or_default(prompt_key: str, default: str) -> str:
         return default
 
 
-async def _judge_json(
+_StructuredT = TypeVar("_StructuredT", bound=BaseModel)
+
+
+async def _judge_structured(
     *,
     chat_model: ChatOpenAI,
+    schema: type[_StructuredT],
     system: str,
     user: str,
-    timeout_seconds: float,
     max_tokens: int,
-) -> tuple[dict[str, Any] | None, str | None]:
+) -> tuple[_StructuredT | None, str | None]:
     model = chat_model.bind(temperature=0, max_tokens=max_tokens)
+    try:
+        model = model.with_structured_output(schema)
+    except Exception:
+        return None, "structured_output_unsupported"
     messages = [SystemMessage(content=system), HumanMessage(content=user)]
     try:
-        msg = await asyncio.wait_for(
-            model.ainvoke(messages), timeout=float(timeout_seconds)
-        )
-    except asyncio.TimeoutError:
-        return None, "timeout"
+        payload = await model.ainvoke(messages)
     except asyncio.CancelledError:
         raise
     except Exception:
         return None, "exception"
-    parsed = _parse_json_object(_as_str(getattr(msg, "content", "")))
-    if parsed is None:
-        return None, "invalid_json"
-    return parsed, None
+    try:
+        if isinstance(payload, schema):
+            return payload, None
+        return schema.model_validate(payload), None
+    except ValidationError:
+        return None, "invalid_schema"
+    except Exception:
+        return None, "invalid_schema"
 
 
 def _merge_stage_summary(
@@ -176,18 +181,6 @@ def _force_exit_requested(state: dict) -> bool:
     return isinstance(reflection, dict) and reflection.get("action") == "force_exit"
 
 
-def _retrieval_attempted(state: dict) -> bool:
-    metrics = state.get("metrics")
-    retrieval_layer = (
-        metrics.get("retrieval_layer") if isinstance(metrics, dict) else None
-    )
-    if isinstance(retrieval_layer, dict):
-        if retrieval_layer.get("attempted") is True:
-            return True
-    stage_summaries = state.get("stage_summaries")
-    return isinstance(stage_summaries, dict) and "retrieval_layer" in stage_summaries
-
-
 async def kb_retrieve_context(
     state: dict,
     *,
@@ -197,31 +190,6 @@ async def kb_retrieve_context(
     """Run kb_retrieve once and store the resulting Top-N context into state.final_context."""
     start = time.perf_counter()
     loop_counts = _get_loop_counts(state)
-    remaining = remaining_budget_seconds(state, settings)
-    if remaining <= 0:
-        metrics = state.get("metrics")
-        if not isinstance(metrics, dict):
-            metrics = {}
-        metrics = {
-            **metrics,
-            "retrieval_layer": {"evidence_count": 0, "attempted": False},
-        }
-        metrics = ensure_json_safe(metrics, settings=settings, label="metrics")
-        return {
-            **_set_final_answer_for_exit(state, "", reason="budget_exhausted"),
-            "metrics": metrics,
-            **_merge_stage_summary(
-                state,
-                "retrieval_layer",
-                {
-                    "skipped": True,
-                    "reason": "budget_exhausted",
-                    "evidence_count": 0,
-                    "latency_ms": int((time.perf_counter() - start) * 1000),
-                    "completed_at": now_iso(),
-                },
-            ),
-        }
     if _total_rounds_exceeded(loop_counts, settings):
         return _set_final_answer_for_exit(state, "", reason="max_total_rounds")
     query = _as_str(
@@ -235,6 +203,7 @@ async def kb_retrieve_context(
     if not isinstance(kb_ids, list):
         kb_ids = None
 
+    retrieval_round = max(loop_counts.get("retrieval_retries", 0), 0)
     retrieval_reason: str | None = None
     try:
         payload: dict[str, Any] = {
@@ -242,18 +211,13 @@ async def kb_retrieve_context(
             "kb_ids": kb_ids,
             # Use RetrievalService default when omitted.
             "top_k": None,
-            "timeout_seconds": None if math.isinf(remaining) else remaining,
+            "retrieval_round": retrieval_round,
         }
         query_items = state.get("query_items")
         if isinstance(query_items, list) and query_items:
             # Pass fanout query bundle to kb_retrieve so RetrievalService.retrieve_layer() can do cross-query fusion.
             payload["query_items"] = query_items
-        context = await asyncio.wait_for(
-            kb_tool.ainvoke(payload), timeout=effective_timeout_seconds(None, remaining)
-        )
-    except asyncio.TimeoutError:
-        retrieval_reason = "timeout"
-        context = "（未找到相关内容）"
+        context = await kb_tool.ainvoke(payload)
     except asyncio.CancelledError:
         raise
     except Exception:
@@ -302,47 +266,35 @@ async def doc_grader(
     start = time.perf_counter()
     question = _as_str(state.get("merged_context") or state.get("user_input")).strip()
     final_context = _as_str(state.get("final_context")).strip()
-    evidence_count = _extract_evidence_count(final_context)
+    evidence_labels = _extract_evidence_labels(final_context)
 
     passed = False
     reason = "no_evidence"
     fallback_used = False
     fallback_reason: str | None = None
-    if evidence_count > 0 and "未找到相关内容" not in final_context:
+    if evidence_labels and "未找到相关内容" not in final_context:
         system_prompt = _render_prompt_or_default(
             "kb_chat/doc_grader",
             (
-                "你是严格的检索相关性评估器。判断“检索片段”是否与“问题”相关且足以支撑回答。"
-                '仅输出 JSON：{"passed": true/false, "reason": "..."}。'
+                "You are a strict retrieval relevance grader. "
+                "Determine whether the retrieved snippets are directly relevant to the question "
+                "and sufficient to support the answer."
+                ' Output JSON only: {"passed": true/false, "reason": "..."}'
             ),
         )
-        judge: dict[str, Any] | None = None
-        remaining = remaining_budget_seconds(state, settings)
-        if remaining <= 0:
+        judge: DocGraderDecision | None = None
+        judge, fallback_reason = await _judge_structured(
+            chat_model=chat_model,
+            schema=DocGraderDecision,
+            system=system_prompt,
+            user=f"Question: {question}\n\nRetrieved snippets:\n{final_context[:4000]}",
+            max_tokens=128,
+        )
+        if judge is None:
             fallback_used = True
-            fallback_reason = "budget_exhausted"
-        else:
-            timeout_value = effective_timeout_seconds(
-                settings.llm_timeout_seconds, remaining
-            )
-            if timeout_value <= 0:
-                fallback_used = True
-                fallback_reason = "budget_exhausted"
-            else:
-                judge, fallback_reason = await _judge_json(
-                    chat_model=chat_model,
-                    system=system_prompt,
-                    user=f"问题：{question}\n\n检索片段：\n{final_context[:4000]}",
-                    timeout_seconds=timeout_value,
-                    max_tokens=128,
-                )
-                if judge is None:
-                    fallback_used = True
-        if isinstance(judge, dict):
-            passed = bool(judge.get("passed"))
-            reason = _as_str(judge.get("reason") or "").strip() or (
-                "passed" if passed else "not_relevant"
-            )
+        if isinstance(judge, DocGraderDecision):
+            passed = bool(judge.passed)
+            reason = judge.reason
         else:
             policy = settings.kb_chat_grader_fail_policy
             passed = policy == "open"
@@ -350,17 +302,11 @@ async def doc_grader(
                 "fallback_open" if passed else "fallback_closed"
             )
             if fallback_reason is None:
-                fallback_reason = "invalid_json"
+                fallback_reason = "invalid_schema"
 
     action = "none" if passed else "transform_query"
-    exit_updates: dict[str, Any] = {}
-    if fallback_reason == "budget_exhausted":
-        action = "force_exit"
-        reason = "budget_exhausted"
-        exit_updates = _set_final_answer_for_exit(state, "", reason="budget_exhausted")
 
     updates: dict[str, Any] = {
-        **exit_updates,
         **_merge_reflection(
             state,
             {
@@ -390,37 +336,13 @@ async def generate_draft(
     *,
     settings: Settings,
     chat_model: ChatOpenAI,
-    strict: bool,
 ) -> dict[str, Any]:
     """Generate a draft answer using ONLY Top-N final_context; do not append to messages."""
     start = time.perf_counter()
     loop_counts = _get_loop_counts(state)
-    remaining = remaining_budget_seconds(state, settings)
-    if remaining <= 0:
-        return {
-            **_set_final_answer_for_exit(
-                state, _as_str(state.get("draft_answer")), reason="budget_exhausted"
-            ),
-            **_merge_stage_summary(
-                state,
-                "generator",
-                {
-                    "strict": strict,
-                    "skipped": True,
-                    "reason": "budget_exhausted",
-                    "latency_ms": int((time.perf_counter() - start) * 1000),
-                    "completed_at": now_iso(),
-                },
-            ),
-        }
 
     # Budget accounting: count each generation as one "round".
     loop_counts = {**loop_counts, "total_rounds": loop_counts["total_rounds"] + 1}
-    if strict:
-        loop_counts = {
-            **loop_counts,
-            "generation_retries": loop_counts["generation_retries"] + 1,
-        }
 
     if _total_rounds_exceeded(loop_counts, settings):
         # Prefer current best draft if any.
@@ -443,43 +365,27 @@ async def generate_draft(
     question = _as_str(state.get("merged_context") or state.get("user_input")).strip()
     final_context = _as_str(state.get("final_context")).strip()
     prompts = get_prompt_loader()
-    system_prompt = prompts.render("kb_chat/system")
-    if strict:
-        system_prompt = (
-            f"{system_prompt}\n\n"
-            "你的上一版回答存在“幻觉/引用不匹配/答非所问”等问题。请严格基于参考内容重新生成，"
-            "不要添加任何参考内容中没有的信息；每个关键事实都需要在句末给出引用编号。"
-        )
+    system_prompt = (
+        f"{prompts.render('kb_chat/system')}\n\n"
+        "请严格基于参考内容回答，不要添加任何参考内容中没有的信息；"
+        "每个关键事实都需要在句末给出 [S编号] 引用标签。"
+    )
 
     user = f"参考内容：\n{final_context}\n\n问题：{question}"
 
-    timeout_value = effective_timeout_seconds(settings.llm_timeout_seconds, remaining)
-    if timeout_value <= 0:
-        return {
-            "loop_counts": loop_counts,
-            **_set_final_answer_for_exit(
-                state, _as_str(state.get("draft_answer")), reason="budget_exhausted"
-            ),
-        }
-
     model = chat_model.bind(max_tokens=1024)
     try:
-        msg = await asyncio.wait_for(
-            model.ainvoke(
-                [SystemMessage(content=system_prompt), HumanMessage(content=user)]
-            ),
-            timeout=timeout_value,
+        msg = await model.ainvoke(
+            [SystemMessage(content=system_prompt), HumanMessage(content=user)]
         )
         draft = _as_str(getattr(msg, "content", "")).strip()
-    except asyncio.TimeoutError:
-        draft = ""
     except asyncio.CancelledError:
         raise
     except Exception:
         draft = ""
 
     if not draft:
-        draft = "根据现有资料无法回答该问题（生成失败或超时）。"
+        draft = "根据现有资料无法回答该问题（生成失败）。"
 
     return {
         "loop_counts": loop_counts,
@@ -490,7 +396,6 @@ async def generate_draft(
             state,
             "generator",
             {
-                "strict": strict,
                 "latency_ms": int((time.perf_counter() - start) * 1000),
                 "completed_at": now_iso(),
             },
@@ -498,157 +403,60 @@ async def generate_draft(
     }
 
 
-async def hallucination_check(
+async def answer_review(
     state: dict,
     *,
     settings: Settings,
     chat_model: ChatOpenAI,
 ) -> dict[str, Any]:
-    """Check hallucination / citation mismatch for the current draft answer."""
+    """Review draft answer in one pass: factual support + answerability + relevance."""
     start = time.perf_counter()
-    final_context = _as_str(state.get("final_context")).strip()
-    draft = _as_str(state.get("draft_answer")).strip()
-
-    evidence_count = _extract_evidence_count(final_context)
-    valid_citations = _extract_valid_citations(draft, evidence_count=evidence_count)
-    fallback_used = False
-    fallback_reason: str | None = None
-    if evidence_count <= 0:
-        passed = False
-        reason = "no_evidence"
-    elif not valid_citations:
-        passed = False
-        reason = "missing_or_invalid_citations"
-    else:
-        system_prompt = _render_prompt_or_default(
-            "kb_chat/hallucination_check",
-            (
-                "你是严格的事实一致性评估器。判断“回答”是否完全由“参考内容”支持，"
-                '且引用编号有效。仅输出 JSON：{"passed": true/false, "reason": "..."}。'
-            ),
-        )
-        judge: dict[str, Any] | None = None
-        remaining = remaining_budget_seconds(state, settings)
-        if remaining <= 0:
-            fallback_used = True
-            fallback_reason = "budget_exhausted"
-        else:
-            timeout_value = effective_timeout_seconds(
-                settings.llm_timeout_seconds, remaining
-            )
-            if timeout_value <= 0:
-                fallback_used = True
-                fallback_reason = "budget_exhausted"
-            else:
-                judge, fallback_reason = await _judge_json(
-                    chat_model=chat_model,
-                    system=system_prompt,
-                    user=(
-                        f"参考内容：\n{final_context[:4000]}\n\n回答：\n{draft[:1500]}"
-                    ),
-                    timeout_seconds=timeout_value,
-                    max_tokens=128,
-                )
-                if judge is None:
-                    fallback_used = True
-        if isinstance(judge, dict):
-            passed = bool(judge.get("passed"))
-            reason = _as_str(judge.get("reason") or "").strip() or (
-                "passed" if passed else "not_supported"
-            )
-        else:
-            policy = settings.kb_chat_grader_fail_policy
-            passed = policy == "open"
-            reason = fallback_reason or (
-                "fallback_open" if passed else "fallback_closed"
-            )
-            if fallback_reason is None:
-                fallback_reason = "invalid_json"
-
-    action = "none"
-    exit_updates: dict[str, Any] = {}
-    if fallback_reason == "budget_exhausted":
-        action = "force_exit"
-        reason = "budget_exhausted"
-        exit_updates = _set_final_answer_for_exit(
-            state, _as_str(state.get("draft_answer")), reason="budget_exhausted"
-        )
-
-    return {
-        **exit_updates,
-        **_merge_reflection(
-            state,
-            {
-                "hallucination_passed": passed,
-                "action": action,
-                "reason": reason,
-            },
-        ),
-        **_merge_stage_summary(
-            state,
-            "hallucination_check",
-            {
-                "passed": passed,
-                "reason": reason,
-                "fallback_used": fallback_used,
-                "fallback_reason": fallback_reason,
-                "latency_ms": int((time.perf_counter() - start) * 1000),
-                "completed_at": now_iso(),
-            },
-        ),
-    }
-
-
-async def answer_check(
-    state: dict,
-    *,
-    settings: Settings,
-    chat_model: ChatOpenAI,
-) -> dict[str, Any]:
-    """Check whether the draft answer addresses the question (off-topic guard)."""
-    start = time.perf_counter()
+    loop_counts = _get_loop_counts(state)
     question = _as_str(state.get("merged_context") or state.get("user_input")).strip()
+    final_context = _as_str(state.get("final_context")).strip()
     draft = _as_str(state.get("draft_answer")).strip()
 
     passed = False
     reason = "empty"
     fallback_used = False
     fallback_reason: str | None = None
-    if draft:
+    evidence_labels = _extract_evidence_labels(final_context)
+    all_citations, valid_citations, invalid_citations = _partition_citations(
+        draft, allowed_labels=evidence_labels
+    )
+    if not draft:
+        reason = "empty"
+    elif not evidence_labels:
+        reason = "no_evidence"
+    elif not all_citations:
+        reason = "missing_citations"
+    elif invalid_citations:
+        reason = "invalid_citations"
+    else:
         system_prompt = _render_prompt_or_default(
-            "kb_chat/answer_check",
+            "kb_chat/answer_review",
             (
-                "你是严格的答复有效性评估器。判断“回答”是否直接回答“问题”，"
-                '是否答非所问。仅输出 JSON：{"passed": true/false, "reason": "..."}。'
+                "你是严格的知识库回答审查器。"
+                "请同时判断回答是否被参考内容支持且引用有效、并且是否直接回答问题。"
+                '仅输出 JSON：{"passed": true/false, "reason": "..."}。'
             ),
         )
-        judge: dict[str, Any] | None = None
-        remaining = remaining_budget_seconds(state, settings)
-        if remaining <= 0:
+        judge: AnswerReviewDecision | None = None
+        judge, fallback_reason = await _judge_structured(
+            chat_model=chat_model,
+            schema=AnswerReviewDecision,
+            system=system_prompt,
+            user=(
+                f"问题：{question}\n\n参考内容：\n{final_context[:4000]}"
+                f"\n\n回答：\n{draft[:2000]}"
+            ),
+            max_tokens=128,
+        )
+        if judge is None:
             fallback_used = True
-            fallback_reason = "budget_exhausted"
-        else:
-            timeout_value = effective_timeout_seconds(
-                settings.llm_timeout_seconds, remaining
-            )
-            if timeout_value <= 0:
-                fallback_used = True
-                fallback_reason = "budget_exhausted"
-            else:
-                judge, fallback_reason = await _judge_json(
-                    chat_model=chat_model,
-                    system=system_prompt,
-                    user=f"问题：{question}\n\n回答：\n{draft[:2000]}",
-                    timeout_seconds=timeout_value,
-                    max_tokens=128,
-                )
-                if judge is None:
-                    fallback_used = True
-        if isinstance(judge, dict):
-            passed = bool(judge.get("passed"))
-            reason = _as_str(judge.get("reason") or "").strip() or (
-                "passed" if passed else "off_topic"
-            )
+        if isinstance(judge, AnswerReviewDecision):
+            passed = bool(judge.passed)
+            reason = judge.reason
         else:
             policy = settings.kb_chat_grader_fail_policy
             passed = policy == "open"
@@ -656,48 +464,58 @@ async def answer_check(
                 "fallback_open" if passed else "fallback_closed"
             )
             if fallback_reason is None:
-                fallback_reason = "invalid_json"
+                fallback_reason = "invalid_schema"
+
+    loop_counts_updates = loop_counts
+    if not passed and reason in _CITATION_ONLY_FAILURE_REASONS:
+        loop_counts_updates = {
+            **loop_counts,
+            "generation_retries": loop_counts.get("generation_retries", 0) + 1,
+        }
 
     action = "none" if passed else "transform_query"
-    exit_updates: dict[str, Any] = {}
+    if not passed and reason in _CITATION_ONLY_FAILURE_REASONS:
+        action = "generate"
     best_answer_updates: dict[str, Any] = {}
+    best_answer_meta: dict[str, Any] | None = None
     if passed:
         if draft:
+            best_answer_meta = {
+                "from_node": "answer_review",
+                "reason": reason,
+                "retrieval_round": max(loop_counts.get("retrieval_retries", 0), 0),
+                "total_rounds": loop_counts.get("total_rounds", 0),
+                "completed_at": now_iso(),
+            }
             best_answer_updates = {
                 "best_answer": draft,
-                "best_answer_meta": {
-                    "from_node": "answer_check",
-                    "reason": reason,
-                    "total_rounds": _get_loop_counts(state).get("total_rounds", 0),
-                    "completed_at": now_iso(),
-                },
+                "best_answer_meta": best_answer_meta,
             }
-    if fallback_reason == "budget_exhausted":
-        action = "force_exit"
-        reason = "budget_exhausted"
-        exit_updates = _set_final_answer_for_exit(
-            state, _as_str(state.get("draft_answer")), reason="budget_exhausted"
-        )
 
     return {
+        "loop_counts": loop_counts_updates,
         **best_answer_updates,
-        **exit_updates,
         **_merge_reflection(
             state,
             {
-                "answer_passed": passed,
+                "review_passed": passed,
                 "action": action,
                 "reason": reason,
             },
         ),
         **_merge_stage_summary(
             state,
-            "answer_check",
+            "answer_review",
             {
                 "passed": passed,
                 "reason": reason,
+                "best_answer": draft if passed and draft else None,
+                "best_answer_meta": best_answer_meta,
                 "fallback_used": fallback_used,
                 "fallback_reason": fallback_reason,
+                "citation_count": len(all_citations),
+                "valid_citation_count": len(valid_citations),
+                "invalid_citations": sorted(invalid_citations),
                 "latency_ms": int((time.perf_counter() - start) * 1000),
                 "completed_at": now_iso(),
             },
@@ -711,10 +529,6 @@ async def transform_query_for_retry(
     """Transform query and bump retrieval_retries (budget-aware)."""
     start = time.perf_counter()
     loop_counts = _get_loop_counts(state)
-    if remaining_budget_seconds(state, settings) <= 0:
-        return _set_final_answer_for_exit(
-            state, _as_str(state.get("draft_answer")), reason="budget_exhausted"
-        )
 
     loop_counts = {
         **loop_counts,
@@ -745,6 +559,7 @@ async def transform_query_for_retry(
         result = await svc.transform_query(
             current,
             reason=_as_str(reason) or "retry",
+            timeout_seconds=0,
             enabled=query_rewrite_enabled(state, settings),
         )
         if result.query.strip():
@@ -784,8 +599,6 @@ def route_after_doc_grader(state: dict, settings: Settings) -> str:
     """Route after DocGrader: generate vs transform_query vs force_exit."""
     if _force_exit_requested(state):
         return "force_exit"
-    if _deadline_exceeded(state):
-        return "force_exit"
     reflection = state.get("reflection")
     passed = (
         reflection.get("relevance_passed") if isinstance(reflection, dict) else None
@@ -798,59 +611,30 @@ def route_after_doc_grader(state: dict, settings: Settings) -> str:
     return "transform_query"
 
 
-def route_after_hallucination(state: dict, settings: Settings) -> str:
-    """Route after HallucinationCheck: answer_check vs strict_regen vs transform_query vs force_exit."""
+def route_after_answer_review(state: dict, settings: Settings) -> str:
+    """Route after AnswerReview: finalize vs generate vs transform_query vs force_exit."""
     if _force_exit_requested(state):
-        return "force_exit"
-    if _deadline_exceeded(state):
         return "force_exit"
     loop_counts = _get_loop_counts(state)
     if _total_rounds_exceeded(loop_counts, settings):
         return "force_exit"
 
     reflection = state.get("reflection")
-    passed = (
-        reflection.get("hallucination_passed") if isinstance(reflection, dict) else None
-    )
-    if passed is True:
-        return "answer_check"
-
-    # First try strict regeneration within generation budget.
-    if loop_counts["generation_retries"] < int(settings.kb_chat_max_generation_retries):
-        return "generate_strict"
-
-    # If regeneration budget is exhausted, fall back to query transform (if available).
-    if loop_counts["retrieval_retries"] < int(settings.kb_chat_max_retrieval_retries):
-        return "transform_query"
-    return "force_exit"
-
-
-def route_after_answer_check(state: dict, settings: Settings) -> str:
-    """Route after AnswerCheck: finalize vs transform_query vs force_exit."""
-    if _force_exit_requested(state):
-        return "force_exit"
-    if _deadline_exceeded(state):
-        return "force_exit"
-    loop_counts = _get_loop_counts(state)
-    if _total_rounds_exceeded(loop_counts, settings):
-        return "force_exit"
-
-    force_retrieve = force_retrieve_enabled(state, settings)
-    if force_retrieve and not _retrieval_attempted(state):
-        if loop_counts["retrieval_retries"] < int(
-            settings.kb_chat_max_retrieval_retries
-        ):
-            return "transform_query"
-        return "force_exit"
-
-    reflection = state.get("reflection")
-    passed = reflection.get("answer_passed") if isinstance(reflection, dict) else None
+    passed = reflection.get("review_passed") if isinstance(reflection, dict) else None
     if passed is True:
         return "finalize"
 
-    if loop_counts["retrieval_retries"] < int(settings.kb_chat_max_retrieval_retries):
-        return "transform_query"
-    return "force_exit"
+    reason = _as_str(reflection.get("reason")) if isinstance(reflection, dict) else ""
+    if reason in _CITATION_ONLY_FAILURE_REASONS:
+        if loop_counts.get("generation_retries", 0) > int(
+            settings.kb_chat_max_generation_retries
+        ):
+            return "force_exit"
+        return "generate"
+
+    if loop_counts["retrieval_retries"] >= int(settings.kb_chat_max_retrieval_retries):
+        return "force_exit"
+    return "transform_query"
 
 
 def finalize_answer(state: dict) -> dict[str, Any]:

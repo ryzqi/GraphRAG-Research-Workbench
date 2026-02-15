@@ -21,10 +21,8 @@ from app.core.settings import Settings
 from app.services.query_rewrite_service import QueryRewriteService, build_query_items
 
 from .budget import (
-    effective_timeout_seconds,
     ensure_budget_initialized,
     now_iso,
-    remaining_budget_seconds,
 )
 from .json_safety import ensure_json_safe
 from .runtime_config import (
@@ -185,15 +183,8 @@ async def coref_rewrite(state: dict, settings: Settings) -> dict[str, Any]:
 
     rewritten = query
     reason: str | None = None
-    remaining = remaining_budget_seconds(state, settings)
     rewrite_enabled = query_rewrite_enabled(state, settings)
-    timeout_value = effective_timeout_seconds(
-        settings.retrieval_query_rewrite_timeout_seconds, remaining
-    )
-    if remaining <= 0 or timeout_value <= 0:
-        rewritten = query
-        reason = "budget_exhausted"
-    elif not rewrite_enabled:
+    if not rewrite_enabled:
         rewritten = query
         reason = "disabled"
     else:
@@ -202,7 +193,7 @@ async def coref_rewrite(state: dict, settings: Settings) -> dict[str, Any]:
             result = await svc.coref_rewrite(
                 query,
                 enabled=rewrite_enabled,
-                timeout_seconds=timeout_value,
+                timeout_seconds=0,
             )
             rewritten = result.query
             reason = result.reason
@@ -240,16 +231,10 @@ async def ambiguity_check(state: dict, settings: Settings) -> dict[str, Any]:
     ambiguous = False
     reverse_question = ""
     reason: str | None = None
-    remaining = remaining_budget_seconds(state, settings)
-    if ambiguity_check_enabled(state, settings) and remaining > 0:
-        timeout_value = effective_timeout_seconds(
-            settings.retrieval_query_rewrite_timeout_seconds, remaining
-        )
-        if timeout_value <= 0:
-            timeout_value = None
+    if ambiguity_check_enabled(state, settings):
         try:
             svc = QueryRewriteService(settings=settings)
-            result = await svc.ambiguity_check(query, timeout_seconds=timeout_value)
+            result = await svc.ambiguity_check(query, timeout_seconds=0)
             ambiguous = result.ambiguous
             reverse_question = result.reverse_question or ""
             reason = result.reason
@@ -257,8 +242,6 @@ async def ambiguity_check(state: dict, settings: Settings) -> dict[str, Any]:
             ambiguous = False
             reverse_question = ""
             reason = "error"
-    elif remaining <= 0:
-        reason = "budget_exhausted"
 
     stage_summaries = _merge_stage_summary(
         state,

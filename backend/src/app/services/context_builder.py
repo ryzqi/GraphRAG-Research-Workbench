@@ -114,7 +114,8 @@ class ContextBuilder:
             context_parts: list[str] = []
             for i, r in enumerate(included, 1):
                 text = first_override if i == 1 and first_override else self._result_text(r)
-                context_parts.append(f"[{i}] {text}")
+                label = self._result_citation_label(r, index=i)
+                context_parts.append(f"[{label}] {text}")
             context = "\n\n".join(context_parts)
 
         usage = {
@@ -128,6 +129,11 @@ class ContextBuilder:
             "dropped_tokens": max(total_tokens - used_tokens, 0),
         }
         return context, included, usage, truncation
+
+    @staticmethod
+    def _result_citation_label(result: RetrievalResult, *, index: int) -> str:
+        del result
+        return f"S{index}"
 
     def build_tool_context(
         self, tool_results: list[dict]

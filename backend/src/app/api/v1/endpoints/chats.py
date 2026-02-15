@@ -22,6 +22,7 @@ from app.models.export_job import ExportJob
 from app.models.knowledge_base import KnowledgeBaseReadiness, KnowledgeBaseStatus
 from app.schemas.chats import (
     ChatAnswerResponse,
+    KbGraphSchemaResponse,
     ChatPendingToolApprovalResponse,
     ChatPendingUserClarificationResponse,
     ClarificationResumeRequest,
@@ -39,6 +40,45 @@ from app.services.kb_chat_service import KbChatService
 from app.services.knowledge_base_service import KnowledgeBaseService
 
 router = APIRouter()
+
+
+@router.get("/kb-graph-schema", response_model=KbGraphSchemaResponse)
+async def get_kb_chat_graph_schema(
+    db: AsyncSessionDep,
+    request: Request,
+    query_rewrite_enabled: bool | None = Query(None),
+    ambiguity_check_enabled: bool | None = Query(None),
+    decomposition_enabled: bool | None = Query(None),
+    multi_query_enabled: bool | None = Query(None),
+    hyde_enabled: bool | None = Query(None),
+    hybrid_retrieval_enabled: bool | None = Query(None),
+    rerank_enabled: bool | None = Query(None),
+) -> KbGraphSchemaResponse:
+    """返回 KB Chat 的 LangGraph 节点/边结构（含节点 metadata）。"""
+    raw_config = {
+        key: value
+        for key, value in {
+            "query_rewrite_enabled": query_rewrite_enabled,
+            "ambiguity_check_enabled": ambiguity_check_enabled,
+            "decomposition_enabled": decomposition_enabled,
+            "multi_query_enabled": multi_query_enabled,
+            "hyde_enabled": hyde_enabled,
+            "hybrid_retrieval_enabled": hybrid_retrieval_enabled,
+            "rerank_enabled": rerank_enabled,
+        }.items()
+        if value is not None
+    }
+    resolved = resolve_kb_chat_config(raw=raw_config or None, settings=get_settings())
+    service = KbChatService(
+        db,
+        request.app.state.llm_client,
+        request.app.state.milvus_client,
+        request.app.state.embedding_client,
+        reranker=request.app.state.rerank_client,
+        redis=request.app.state.redis,
+    )
+    schema = await service.get_graph_schema(kb_chat_config=resolved)
+    return KbGraphSchemaResponse.model_validate(schema)
 
 
 @router.post("", response_model=ChatSessionRead, status_code=status.HTTP_201_CREATED)

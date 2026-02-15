@@ -11,11 +11,20 @@ export type AgentMode = 'single_agent' | 'multi_agent';
 export type MessageRole = 'user' | 'assistant' | 'system';
 export type AgentRunStatus = 'running' | 'succeeded' | 'failed' | 'canceled';
 export type ChatRunStreamStatus = AgentRunStatus | 'waiting_user';
+export type TerminalRunStatus = Exclude<ChatRunStreamStatus, 'running'>;
 export type EvidenceSourceKind = 'kb' | 'external';
 export type ChatMessageResponseStatus =
   | 'succeeded'
   | 'pending_tool_approval'
   | 'pending_user_clarification';
+
+const CHAT_RUN_STREAM_STATUS_VALUES = [
+  'running',
+  'succeeded',
+  'failed',
+  'canceled',
+  'waiting_user',
+] as const;
 
 export interface ChatRunProgress {
   completed: number;
@@ -62,7 +71,6 @@ export interface KbChatConfig {
   hyde_enabled: boolean;
   hybrid_retrieval_enabled: boolean;
   rerank_enabled: boolean;
-  force_retrieve_enabled: boolean;
 }
 
 export interface ChatSessionCreate {
@@ -164,6 +172,200 @@ export type ChatMessageResponse =
   | ChatPendingToolApprovalResponse
   | ChatPendingUserClarificationResponse;
 
+export type ChatStreamEventName =
+  | 'meta'
+  | 'messages'
+  | 'updates'
+  | 'custom'
+  | 'delta'
+  | 'step'
+  | 'state'
+  | 'ui_event'
+  | 'node_io'
+  | 'node_trace'
+  | 'tool_trace'
+  | 'interrupt'
+  | 'final'
+  | 'error';
+
+export interface NormalizedChatStreamEvent {
+  event: ChatStreamEventName;
+  version: string;
+  payload: Record<string, unknown>;
+}
+
+export interface ChatNodeIoEvent {
+  display_input_items?: ChatNodeDisplayItem[] | null;
+  display_output_items?: ChatNodeDisplayItem[] | null;
+  run_id: string;
+  node_name: string;
+  node_id: string;
+  phase: 'start' | 'end' | 'error';
+  attempt?: number | null;
+  latency_ms?: number | null;
+  input_summary?: Record<string, unknown> | null;
+  output_summary?: Record<string, unknown> | null;
+  input_snapshot?: Record<string, unknown> | null;
+  output_snapshot?: Record<string, unknown> | null;
+  error_summary?: string | null;
+  ts: string;
+}
+
+export interface ChatNodeDisplayItem {
+  key: string;
+  label: string;
+  value: string | string[];
+}
+
+export interface KbGraphNode {
+  id: string;
+  label: string;
+  phase: string | null;
+  order: number | null;
+}
+
+export interface KbGraphEdge {
+  source: string;
+  target: string;
+  conditional: boolean;
+}
+
+export interface KbGraphSchema {
+  version: string;
+  nodes: KbGraphNode[];
+  edges: KbGraphEdge[];
+}
+
+export function isChatRunStreamStatus(value: unknown): value is ChatRunStreamStatus {
+  return (
+    typeof value === 'string' &&
+    (CHAT_RUN_STREAM_STATUS_VALUES as readonly string[]).includes(value)
+  );
+}
+
+export function resolveTerminalRunStatus(
+  status: AgentRunStatus | ChatRunStreamStatus | undefined,
+  fallback: TerminalRunStatus = 'failed'
+): TerminalRunStatus {
+  if (!isChatRunStreamStatus(status)) {
+    return fallback;
+  }
+  if (status === 'running') {
+    return fallback;
+  }
+  return status;
+}
+
+export function isUnexpectedStreamEnd(params: {
+  sawFinalEvent: boolean;
+  sawErrorEvent: boolean;
+}): boolean {
+  return !params.sawFinalEvent && !params.sawErrorEvent;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return null;
+  }
+  return value as Record<string, unknown>;
+}
+
+function withLegacyFieldCompatibility(
+  fallbackEvent: string,
+  payload: Record<string, unknown>
+): Record<string, unknown> {
+  const next = { ...payload };
+  const run = asRecord(next.run);
+  const node = asRecord(next.node);
+  const tool = asRecord(next.tool);
+  const eventType = typeof next.type === 'string' ? next.type : fallbackEvent;
+
+  if (run && typeof run.id === 'string' && typeof next.run_id !== 'string') {
+    next.run_id = run.id;
+  }
+
+  if (node) {
+    if (typeof node.id === 'string' && typeof next.node_id !== 'string') {
+      next.node_id = node.id;
+    }
+    if (typeof node.name === 'string') {
+      if (typeof next.node !== 'string') {
+        next.node = node.name;
+      }
+      if (typeof next.node_name !== 'string') {
+        next.node_name = node.name;
+      }
+      if (typeof next.current_node !== 'string' && eventType === 'state') {
+        next.current_node = node.name;
+      }
+      if (typeof next.step_id !== 'string' && eventType === 'step') {
+        next.step_id = node.name;
+      }
+    }
+  }
+
+  if (tool) {
+    if (typeof tool.name === 'string' && typeof next.tool_name !== 'string') {
+      next.tool_name = tool.name;
+    }
+    if (typeof tool.call_index === 'number' && typeof next.call_index !== 'number') {
+      next.call_index = tool.call_index;
+    }
+  }
+
+  return next;
+}
+
+export function normalizeChatStreamEvent(event: SseEvent): NormalizedChatStreamEvent | null {
+  const parsed = (() => {
+    try {
+      return JSON.parse(event.data) as unknown;
+    } catch {
+      return null;
+    }
+  })();
+  const record = asRecord(parsed);
+  if (!record) {
+    return null;
+  }
+
+  const explicitType = typeof record.type === 'string' ? record.type : null;
+  const normalizedEvent = (explicitType ?? event.event) as ChatStreamEventName;
+  const version =
+    typeof record.version === 'string'
+      ? record.version
+      : explicitType
+        ? '2.0'
+        : '1.0';
+
+  return {
+    event: normalizedEvent,
+    version,
+    payload: withLegacyFieldCompatibility(event.event, record),
+  };
+}
+
+export function toKbGraphSchemaQuery(config: Partial<KbChatConfig>): string {
+  const params = new URLSearchParams();
+  const orderedKeys: Array<keyof KbChatConfig> = [
+    'query_rewrite_enabled',
+    'ambiguity_check_enabled',
+    'decomposition_enabled',
+    'multi_query_enabled',
+    'hyde_enabled',
+    'hybrid_retrieval_enabled',
+    'rerank_enabled',
+  ];
+  for (const key of orderedKeys) {
+    const value = config[key];
+    if (typeof value === 'boolean') {
+      params.set(key, String(value));
+    }
+  }
+  const query = params.toString();
+  return query ? `?${query}` : '';
+}
+
 /**
  * 创建会话
  */
@@ -202,6 +404,14 @@ export async function getRecentChats(limit = 20): Promise<RecentChatListResponse
  */
 export async function getChatMessages(sessionId: string): Promise<ChatMessage[]> {
   return apiFetch<ChatMessage[]>(`/api/v1/chats/${sessionId}/messages`);
+}
+
+export async function getKbChatGraphSchema(
+  config: Partial<KbChatConfig> = {}
+): Promise<KbGraphSchema> {
+  return apiFetch<KbGraphSchema>(
+    `/api/v1/chats/kb-graph-schema${toKbGraphSchemaQuery(config)}`
+  );
 }
 
 /**

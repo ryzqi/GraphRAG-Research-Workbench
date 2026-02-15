@@ -8,7 +8,7 @@ import { alpha } from '@mui/material/styles';
 import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
 import { ClarificationCard, MessageItem, ToolApprovalCard } from './MessageItem';
 import { SparkleLoading } from './SparkleLoading';
-import type { ChatRunStateEvent, EvidenceItem } from '../../services/chats';
+import type { ChatNodeIoEvent, ChatRunStateEvent, EvidenceItem } from '../../services/chats';
 import { EvidenceList } from '../EvidenceList';
 import {
   PipelineProgress,
@@ -34,6 +34,7 @@ export interface ChatMessage {
   }>;
   pipelineSteps?: PipelineStep[];
   nodeTimeline?: PipelineTimelineEvent[];
+  nodeIoEvents?: ChatNodeIoEvent[];
   pendingToolApproval?: {
     message?: string | null;
     toolCalls: Array<{
@@ -56,6 +57,10 @@ interface MessageListProps {
   onClarificationSubmit?: (messageId: string, runId: string, content: string) => void;
   approvalLoading?: boolean;
   bottomInset?: number;
+  showPipeline?: boolean;
+  showEvidence?: boolean;
+  selectedAssistantId?: string | null;
+  onAssistantSelect?: (messageId: string) => void;
 }
 
 interface MessageRowProps {
@@ -64,6 +69,10 @@ interface MessageRowProps {
   onToolReject?: (messageId: string, runId: string) => void;
   onClarificationSubmit?: (messageId: string, runId: string, content: string) => void;
   approvalLoading: boolean;
+  showPipeline: boolean;
+  showEvidence: boolean;
+  selectedAssistantId?: string | null;
+  onAssistantSelect?: (messageId: string) => void;
 }
 
 const MessageRow = memo(
@@ -73,6 +82,10 @@ const MessageRow = memo(
     onToolReject,
     onClarificationSubmit,
     approvalLoading,
+    showPipeline,
+    showEvidence,
+    selectedAssistantId,
+    onAssistantSelect,
   }: MessageRowProps) {
     const isEmptyStreamingAssistant =
       message.role === 'assistant' &&
@@ -84,9 +97,27 @@ const MessageRow = memo(
       return null;
     }
 
+    const isSelected = message.role === 'assistant' && selectedAssistantId === message.id;
+
     return (
-      <Box sx={{ contentVisibility: 'auto', containIntrinsicSize: '1px 220px' }}>
-        {message.role === 'assistant' &&
+      <Box
+        sx={{
+          contentVisibility: 'auto',
+          containIntrinsicSize: '1px 220px',
+          borderRadius: 2,
+          p: 0.5,
+          border: isSelected ? 1 : 0,
+          borderColor: isSelected ? 'primary.main' : 'transparent',
+          cursor: message.role === 'assistant' && onAssistantSelect ? 'pointer' : 'default',
+        }}
+        onClick={() => {
+          if (message.role === 'assistant' && onAssistantSelect) {
+            onAssistantSelect(message.id);
+          }
+        }}
+      >
+        {showPipeline &&
+          message.role === 'assistant' &&
           ((message.nodeTimeline?.length ?? 0) > 0 || Boolean(message.runState)) && (
           <Box sx={{ ml: 7, mb: 1.5 }}>
             <PipelineProgress
@@ -127,7 +158,7 @@ const MessageRow = memo(
           </Box>
         )}
 
-        {message.evidence && message.evidence.length > 0 && (
+        {showEvidence && message.evidence && message.evidence.length > 0 && (
           <Box sx={{ mt: 2, ml: 7 }}>
             <EvidenceList evidence={message.evidence} />
           </Box>
@@ -140,7 +171,11 @@ const MessageRow = memo(
     prev.onToolApprove === next.onToolApprove &&
     prev.onToolReject === next.onToolReject &&
     prev.onClarificationSubmit === next.onClarificationSubmit &&
-    prev.approvalLoading === next.approvalLoading
+    prev.approvalLoading === next.approvalLoading &&
+    prev.showPipeline === next.showPipeline &&
+    prev.showEvidence === next.showEvidence &&
+    prev.selectedAssistantId === next.selectedAssistantId &&
+    prev.onAssistantSelect === next.onAssistantSelect
 );
 
 export function MessageList({
@@ -151,6 +186,10 @@ export function MessageList({
   onClarificationSubmit,
   approvalLoading = false,
   bottomInset = 220,
+  showPipeline = true,
+  showEvidence = true,
+  selectedAssistantId,
+  onAssistantSelect,
 }: MessageListProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -207,9 +246,20 @@ export function MessageList({
     <Box
       ref={containerRef}
       onScroll={updateIsAtBottom}
+      onWheelCapture={(event) => {
+        event.stopPropagation();
+      }}
+      onTouchMoveCapture={(event) => {
+        event.stopPropagation();
+      }}
       sx={{
         flex: 1,
+        height: '100%',
+        minHeight: 0,
+        overflowX: 'hidden',
         overflowY: 'auto',
+        overscrollBehaviorY: 'contain',
+        WebkitOverflowScrolling: 'touch',
         px: { xs: 2, sm: 3, md: 4 },
         pt: 3,
         pb: `${bottomInset}px`,
@@ -226,6 +276,10 @@ export function MessageList({
             onToolReject={onToolReject}
             onClarificationSubmit={onClarificationSubmit}
             approvalLoading={approvalLoading}
+            showPipeline={showPipeline}
+            showEvidence={showEvidence}
+            selectedAssistantId={selectedAssistantId}
+            onAssistantSelect={onAssistantSelect}
           />
         ))}
 

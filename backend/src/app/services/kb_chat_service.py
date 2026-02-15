@@ -51,6 +51,12 @@ from app.schemas.chats import (
 )
 from app.services.context_builder import ContextBuilder
 from app.services.conversation_summary_service import ConversationSummaryService
+from app.services.evidence_guardrails import (
+    enforce_kb_answer_citation_guardrails,
+    extract_citation_labels,
+    is_stable_citation_id,
+    normalize_citation_label,
+)
 from app.services.retrieval_service import RetrievalService
 from app.services.streaming import (
     LegacyThinkParser,
@@ -61,79 +67,7 @@ from app.services.streaming import (
 )
 
 logger = logging.getLogger(__name__)
-
-_KB_PIPELINE_NODE_ORDER = (
-    "merge_context",
-    "coref_rewrite",
-    "ambiguity_check",
-    "normalize_rewrite",
-    "decomposition",
-    "multi_query_check",
-    "generate_variants",
-    "entity_expand",
-    "hyde_check",
-    "hyde",
-    "prepare_messages",
-    "retrieve",
-    "doc_grader",
-    "transform_query",
-    "generate",
-    "generate_strict",
-    "hallucination_check",
-    "answer_check",
-    "finalize",
-    "force_exit",
-)
-
-_KB_PIPELINE_NODE_LABELS: dict[str, str] = {
-    "merge_context": "上下文合并",
-    "coref_rewrite": "指代消解",
-    "ambiguity_check": "歧义检测",
-    "normalize_rewrite": "问题规范化",
-    "decomposition": "问题分解",
-    "multi_query_check": "分支判断（多路查询）",
-    "generate_variants": "多路查询扩展",
-    "entity_expand": "实体扩展",
-    "hyde_check": "分支判断（HyDE）",
-    "hyde": "HyDE 扩展",
-    "prepare_messages": "检索查询打包",
-    "retrieve": "知识检索",
-    "doc_grader": "相关性评估",
-    "transform_query": "查询重写重试",
-    "generate": "草稿生成",
-    "generate_strict": "严格重生成",
-    "hallucination_check": "幻觉校验",
-    "answer_check": "回答有效性校验",
-    "finalize": "输出最终答案",
-    "force_exit": "提前终止",
-}
-
-_KB_PIPELINE_NODE_PHASE: dict[str, str] = {
-    "merge_context": "preprocess",
-    "coref_rewrite": "preprocess",
-    "ambiguity_check": "preprocess",
-    "normalize_rewrite": "preprocess",
-    "decomposition": "preprocess",
-    "multi_query_check": "preprocess",
-    "generate_variants": "preprocess",
-    "entity_expand": "preprocess",
-    "hyde_check": "preprocess",
-    "hyde": "preprocess",
-    "prepare_messages": "preprocess",
-    "retrieve": "retrieve",
-    "doc_grader": "judge",
-    "transform_query": "retrieve",
-    "generate": "generate",
-    "generate_strict": "generate",
-    "hallucination_check": "verify",
-    "answer_check": "verify",
-    "finalize": "finalize",
-    "force_exit": "finalize",
-}
-
-_KB_PIPELINE_NODE_INDEX = {
-    node_name: idx for idx, node_name in enumerate(_KB_PIPELINE_NODE_ORDER)
-}
+_STREAM_EVENT_VERSION = "2.0"
 
 
 @dataclass
@@ -145,7 +79,7 @@ class _KbChatExecution:
     history_usage: dict[str, Any]
     history_truncation: dict[str, Any]
     retrieval_results: list
-    evidence_draft_items: list[dict[str, Any]]
+    evidence_draft_items_by_round: dict[int, list[dict[str, Any]]]
     retrieval_meta: dict[str, Any]
     graph: object
     state: dict[str, Any]
@@ -177,12 +111,14 @@ class KbChatService:
         chat_model: ChatOpenAI,
         tools: list,
         tool_meta_by_name: dict,
+        kb_chat_config: KbChatConfig,
     ):
         """构建 KB Chat 图（agentic RAG 流程，已移除 legacy 实现）。"""
         return build_kb_chat_graph(
             chat_model=chat_model,
             tools=tools,
             tool_meta_by_name=tool_meta_by_name,
+            kb_chat_config=kb_chat_config.model_dump(mode="json"),
         )
 
     def _resolve_session_kb_chat_config(self, session: ChatSession) -> KbChatConfig:
@@ -196,6 +132,119 @@ class KbChatService:
             "hybrid_retrieval_enabled": bool(config.hybrid_retrieval_enabled),
             "rerank_enabled": bool(config.rerank_enabled),
         }
+
+    @staticmethod
+    def _build_graph_schema_payload(
+        graph_json: dict[str, Any], config: KbChatConfig
+    ) -> dict[str, Any]:
+        del config  # graph schema strictly reflects LangGraph topology + node metadata
+        raw_nodes = graph_json.get("nodes") if isinstance(graph_json, dict) else None
+        raw_edges = graph_json.get("edges") if isinstance(graph_json, dict) else None
+
+        def _node_order(node: dict[str, Any]) -> int:
+            order = node.get("order")
+            if isinstance(order, int):
+                return order
+            return 10_000
+
+        nodes: list[dict[str, Any]] = []
+        if isinstance(raw_nodes, list):
+            for raw_node in raw_nodes:
+                if not isinstance(raw_node, dict):
+                    continue
+                node_id = raw_node.get("id")
+                if not isinstance(node_id, str):
+                    continue
+                if node_id in {"__start__", "__end__"}:
+                    continue
+                metadata = (
+                    raw_node.get("metadata")
+                    if isinstance(raw_node.get("metadata"), dict)
+                    else {}
+                )
+                label = metadata.get("label")
+                phase = metadata.get("phase")
+                order = metadata.get("order")
+                nodes.append(
+                    {
+                        "id": node_id,
+                        "label": label if isinstance(label, str) and label.strip() else node_id,
+                        "phase": phase if isinstance(phase, str) else None,
+                        "order": order if isinstance(order, int) else None,
+                    }
+                )
+
+        nodes.sort(key=_node_order)
+
+        edges: list[dict[str, Any]] = []
+        if isinstance(raw_edges, list):
+            for raw_edge in raw_edges:
+                if not isinstance(raw_edge, dict):
+                    continue
+                source = raw_edge.get("source")
+                target = raw_edge.get("target")
+                if not isinstance(source, str) or not isinstance(target, str):
+                    continue
+                if source in {"__start__", "__end__"} or target in {"__start__", "__end__"}:
+                    continue
+                edges.append(
+                    {
+                        "source": source,
+                        "target": target,
+                        "conditional": bool(raw_edge.get("conditional", False)),
+                    }
+                )
+
+        node_order_index = {
+            node["id"]: idx for idx, node in enumerate(nodes) if isinstance(node.get("id"), str)
+        }
+        edges.sort(
+            key=lambda edge: (
+                node_order_index.get(edge["source"], 10_000),
+                node_order_index.get(edge["target"], 10_000),
+            )
+        )
+
+        return {"version": "1.0", "nodes": nodes, "edges": edges}
+
+    async def get_graph_schema(
+        self,
+        *,
+        kb_chat_config: KbChatConfig | None = None,
+        selected_kb_ids: list[uuid.UUID] | None = None,
+    ) -> dict[str, Any]:
+        config = resolve_kb_chat_config(raw=kb_chat_config, settings=self._settings)
+        default_kb_ids = selected_kb_ids or []
+        retrieval_overrides = self._to_retrieval_overrides(config)
+
+        kb_tool = build_kb_retrieve_tool(
+            retrieval=self._retrieval,
+            default_kb_ids=default_kb_ids,
+            retrieval_overrides=retrieval_overrides,
+            context_builder=self._context_builder,
+            on_results=lambda _included, _meta: None,
+        )
+        tools, tool_meta_by_name = await build_tool_registry(
+            settings=self._settings,
+            extensions=None,
+            extra_tools=[kb_tool],
+            include_web_search=False,
+            include_mcp=False,
+        )
+        chat_model = ChatOpenAI(
+            model=self._settings.llm_model,
+            api_key=self._settings.llm_api_key,
+            base_url=self._settings.llm_base_url.rstrip("/"),
+            profile=build_chat_model_profile(self._settings),
+        )
+        graph = self._build_graph(
+            chat_model=chat_model,
+            tools=tools,
+            tool_meta_by_name=tool_meta_by_name,
+            kb_chat_config=config,
+        )
+        drawable_graph = graph.compile().get_graph().to_json()
+        return self._build_graph_schema_payload(drawable_graph, config)
 
     def _build_trace_snapshot(
         self,
@@ -212,7 +261,9 @@ class KbChatService:
 
         return {
             "config": {
-                "force_retrieve": bool(kb_chat_config.force_retrieve_enabled),
+                "graph_recursion_limit": int(
+                    self._settings.kb_chat_graph_recursion_limit
+                ),
                 "max_total_rounds": int(self._settings.kb_chat_max_total_rounds),
                 "max_retrieval_retries": int(
                     self._settings.kb_chat_max_retrieval_retries
@@ -379,12 +430,12 @@ class KbChatService:
         # kb_retrieve：通过回调收集检索结果（用于 Evidence 落库/指标）
         retrieval_results: list = []
         seen_chunk_ids: set[uuid.UUID] = set()
-        evidence_draft_items: list[dict[str, Any]] = []
-        seen_evidence_chunk_ids: set[str] = set()
+        evidence_draft_items_by_round: dict[int, list[dict[str, Any]]] = {}
         retrieval_meta: dict[str, Any] = {
             "usage": None,
             "truncation": None,
             "kb_scope": None,
+            "retrieval_round": None,
         }
 
         def _on_results(included: list, meta: dict[str, Any]) -> None:
@@ -405,14 +456,16 @@ class KbChatService:
             if isinstance(kb_scope, dict):
                 retrieval_meta["kb_scope"] = kb_scope
 
+            raw_round = meta.get("retrieval_round")
+            retrieval_round = self._safe_non_negative_int(raw_round)
+            if retrieval_round is None:
+                retrieval_round = 0
+            retrieval_meta["retrieval_round"] = retrieval_round
+
             items = meta.get("evidence_items")
             if isinstance(items, list):
-                # IMPORTANT: Evidence numbering in the answer ("[1]..[n]") is tied to the
-                # *latest* retrieval context constructed by kb_retrieve, which always starts
-                # numbering from 1 for that call. If we accumulate evidence across multiple
-                # retrieval retries, the UI evidence list order can drift and citations break.
-                evidence_draft_items.clear()
-                seen_evidence_chunk_ids.clear()
+                round_items: list[dict[str, Any]] = []
+                seen_evidence_chunk_ids: set[str] = set()
                 for it in items:
                     if not isinstance(it, dict):
                         continue
@@ -422,8 +475,9 @@ class KbChatService:
                         and cid
                         and cid not in seen_evidence_chunk_ids
                     ):
-                        evidence_draft_items.append(it)
+                        round_items.append(it)
                         seen_evidence_chunk_ids.add(cid)
+                evidence_draft_items_by_round[retrieval_round] = round_items
 
         kb_tool = build_kb_retrieve_tool(
             retrieval=self._retrieval,
@@ -466,6 +520,7 @@ class KbChatService:
             chat_model=chat_model,
             tools=tools,
             tool_meta_by_name=tool_meta_by_name,
+            kb_chat_config=kb_chat_config,
         )
         from app.agents.kb_chat_agentic_state import make_initial_state
 
@@ -480,7 +535,6 @@ class KbChatService:
             runtime_config=kb_chat_config.model_dump(mode="json"),
         )
         state["metrics"] = {"context": context_metrics}
-        state["force_kb_retrieve"] = kb_chat_config.force_retrieve_enabled
 
         return _KbChatExecution(
             started_at=started_at,
@@ -490,7 +544,7 @@ class KbChatService:
             history_usage=history_usage,
             history_truncation=history_truncation,
             retrieval_results=retrieval_results,
-            evidence_draft_items=evidence_draft_items,
+            evidence_draft_items_by_round=evidence_draft_items_by_round,
             retrieval_meta=retrieval_meta,
             graph=graph,
             state=state,
@@ -724,11 +778,11 @@ class KbChatService:
         if reason == "clarify":
             return AgentRunStatus.SUCCEEDED, None
 
-        answer_passed = force_exit.get("answer_passed")
+        review_passed = force_exit.get("review_passed")
         used_best_answer = force_exit.get("used_best_answer") is True
         answer_text = extract_answer_text(answer).strip()
         if (
-            (answer_passed is True or used_best_answer)
+            (review_passed is True or used_best_answer)
             and answer_text
             and "无法回答" not in answer_text
         ):
@@ -754,11 +808,9 @@ class KbChatService:
 
         reason_text_map = {
             "clarify": "当前问题信息不足，需要先补充关键条件",
-            "budget_exhausted": "已达到本轮查询预算上限",
             "max_total_rounds": "多轮检索与校验后仍无可用证据",
             "max_retrieval_retries": "多次重写检索后仍未命中相关证据",
             "max_generation_retries": "多次生成与校验后仍无法得到可引用答案",
-            "timeout": "执行超时，未能在时限内完成可用检索",
             "fallback_closed": "评估器触发保守策略，未通过证据校验",
         }
         reason_text = reason_text_map.get(reason_code, "未检索到可用于回答的证据片段")
@@ -776,8 +828,7 @@ class KbChatService:
             "retrieval": "检索融合",
             "doc_grader": "相关性评估",
             "generator": "答案生成",
-            "hallucination_check": "事实一致性校验",
-            "answer_check": "答题有效性校验",
+            "answer_review": "答案审查",
             "transform_query": "重写检索问题",
             "force_exit": "提前终止",
             "service_guardrail": "服务保护",
@@ -797,8 +848,6 @@ class KbChatService:
         ]
         if reason_code == "clarify":
             suggestions[0] = "先补充缺失条件（对象、时间、范围）后继续提问。"
-        elif reason_code in {"timeout", "budget_exhausted"}:
-            suggestions[0] = "缩小问题范围，拆成更小的问题分步提问。"
 
         return (
             "我暂时无法从当前知识库中找到足够证据来回答这个问题。\n\n"
@@ -860,7 +909,6 @@ class KbChatService:
             summary_key = {
                 "retrieve": "retrieval_layer",
                 "generate": "generator",
-                "generate_strict": "generator",
             }.get(node, node)
             candidate = stage_summaries.get(summary_key)
             if isinstance(candidate, dict):
@@ -878,10 +926,9 @@ class KbChatService:
                 "evidence_count",
                 "passed",
                 "fallback_reason",
-                "strict",
                 "skipped",
                 "used_best_answer",
-                "answer_passed",
+                "review_passed",
                 "latency_ms",
             ):
                 value = node_summary.get(key)
@@ -924,7 +971,7 @@ class KbChatService:
                 if isinstance(attempted, bool):
                     io_summary["attempted"] = attempted
 
-        if node in {"generate", "generate_strict"}:
+        if node == "generate":
             draft_answer = update.get("draft_answer")
             if isinstance(draft_answer, str) and draft_answer.strip():
                 io_summary["draft_preview"] = KbChatService._shorten_stream_text(
@@ -938,7 +985,7 @@ class KbChatService:
                     final_answer, 180
                 )
 
-        if node == "answer_check":
+        if node == "answer_review":
             best_answer = update.get("best_answer")
             if isinstance(best_answer, str) and best_answer.strip():
                 io_summary["best_answer_preview"] = KbChatService._shorten_stream_text(
@@ -970,11 +1017,7 @@ class KbChatService:
         current_attempt = (
             stage_attempts.get(current_step_id) if current_step_id else None
         )
-        current_label = (
-            _KB_PIPELINE_NODE_LABELS.get(current_step_id, current_step_id)
-            if current_step_id
-            else None
-        )
+        current_label = current_step_id if current_step_id else None
         return {
             "run_id": str(run_id),
             "run_status": run_status,
@@ -995,6 +1038,106 @@ class KbChatService:
         }
 
     @staticmethod
+    def _build_protocol_event_payload(
+        *,
+        event_type: str,
+        run_id: uuid.UUID,
+        payload: dict[str, Any],
+        node: dict[str, str] | None = None,
+        tool: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        envelope: dict[str, Any] = {
+            "type": event_type,
+            "version": _STREAM_EVENT_VERSION,
+            "run": {"id": str(run_id)},
+        }
+        if node:
+            node_id = node.get("id")
+            node_name = node.get("name")
+            envelope["node"] = {
+                "id": str(node_id or node_name or ""),
+                "name": str(node_name or node_id or ""),
+            }
+        if tool:
+            envelope["tool"] = tool
+        return {**payload, **envelope}
+
+    @staticmethod
+    def _build_node_io_payload(
+        *,
+        run_id: uuid.UUID,
+        node_name: str,
+        node_id: str,
+        phase: str,
+        attempt: int | None,
+        input_summary: dict[str, Any] | None = None,
+        output_summary: dict[str, Any] | None = None,
+        input_snapshot: dict[str, Any] | None = None,
+        output_snapshot: dict[str, Any] | None = None,
+        error_summary: str | None = None,
+        latency_ms: int | None = None,
+        ts: datetime | None = None,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "run_id": str(run_id),
+            "node_name": node_name,
+            "node_id": node_id,
+            "phase": phase,
+            "attempt": attempt,
+            "ts": (ts or datetime.now(timezone.utc)).isoformat(),
+        }
+        if input_summary is not None:
+            payload["input_summary"] = input_summary
+        if output_summary is not None:
+            payload["output_summary"] = output_summary
+        if input_snapshot is not None:
+            payload["input_snapshot"] = input_snapshot
+        if output_snapshot is not None:
+            payload["output_snapshot"] = output_snapshot
+        if error_summary is not None:
+            payload["error_summary"] = error_summary
+        if latency_ms is not None:
+            payload["latency_ms"] = latency_ms
+        return KbChatService._build_protocol_event_payload(
+            event_type="node_io",
+            run_id=run_id,
+            payload=payload,
+            node={"id": node_id, "name": node_name},
+        )
+
+    @staticmethod
+    def _json_safe_custom_payload(value: Any) -> dict[str, Any] | None:
+        if not isinstance(value, dict):
+            return None
+        try:
+            import json
+
+            return json.loads(json.dumps(value, default=str))
+        except Exception:
+            return None
+
+    @staticmethod
+    def _normalize_graph_stream_event(event: Any) -> tuple[str, Any] | None:
+        """Normalize LangGraph stream tuple for both plain and subgraph modes."""
+        if isinstance(event, tuple):
+            if len(event) == 2:
+                mode, chunk = event
+            elif len(event) == 3:
+                _, mode, chunk = event
+            else:
+                return None
+            return (mode, chunk) if isinstance(mode, str) else None
+        if isinstance(event, list):
+            if len(event) == 2:
+                mode, chunk = event[0], event[1]
+            elif len(event) == 3:
+                mode, chunk = event[1], event[2]
+            else:
+                return None
+            return (mode, chunk) if isinstance(mode, str) else None
+        return None
+
+    @staticmethod
     def _build_active_path(
         *,
         stage_status: dict[str, str],
@@ -1007,7 +1150,164 @@ class KbChatService:
         ]
         if current_step_id and current_step_id not in path:
             path.append(current_step_id)
-        return sorted(path, key=lambda step_id: _KB_PIPELINE_NODE_INDEX.get(step_id, 10_000))
+        return path
+
+    @staticmethod
+    def _safe_non_negative_int(value: Any) -> int | None:
+        if isinstance(value, bool):
+            return None
+        if isinstance(value, int):
+            return max(value, 0)
+        return None
+
+    @staticmethod
+    def _citation_sort_key(citation_id: str) -> tuple[int, str]:
+        normalized = citation_id.strip().upper()
+        if normalized.startswith("S"):
+            suffix = normalized[1:]
+            if suffix.isdigit():
+                return int(suffix), normalized
+        return 10_000_000, normalized
+
+    @staticmethod
+    def _extract_citation_title(item: dict[str, Any], *, fallback_index: int) -> str:
+        raw = item.get("citation_title")
+        if isinstance(raw, str) and raw.strip():
+            return raw.strip()
+        legacy_title = item.get("title")
+        if isinstance(legacy_title, str) and legacy_title.strip():
+            return legacy_title.strip()
+
+        locator = item.get("locator")
+        if isinstance(locator, dict):
+            label = locator.get("citation_label")
+            if isinstance(label, str):
+                normalized = normalize_citation_label(label)
+                if normalized:
+                    return normalized
+            filename = locator.get("filename")
+            if isinstance(filename, str) and filename.strip():
+                base = filename.strip().replace("\\", "/").rsplit("/", 1)[-1]
+                stem = base.rsplit(".", 1)[0] if "." in base else base
+                normalized = normalize_citation_label(stem)
+                if normalized:
+                    return normalized
+        return f"资料{fallback_index}"
+
+    @staticmethod
+    def _extract_citation_page_hint(locator: dict[str, Any] | None) -> str | None:
+        if not isinstance(locator, dict):
+            return None
+        page_start = locator.get("page_start")
+        page_end = locator.get("page_end")
+        if isinstance(page_start, int) and page_start > 0:
+            if isinstance(page_end, int) and page_end > 0 and page_end != page_start:
+                return f"p.{page_start}-{page_end}"
+            return f"p.{page_start}"
+        if isinstance(page_end, int) and page_end > 0:
+            return f"p.{page_end}"
+        return None
+
+    @classmethod
+    def _append_citation_sources(
+        cls,
+        answer: str,
+        *,
+        citation_catalog: dict[str, dict[str, Any]] | None,
+    ) -> str:
+        text = str(answer or "").strip()
+        if not text or not isinstance(citation_catalog, dict) or not citation_catalog:
+            return text
+
+        used = [
+            label.strip().upper()
+            for label in extract_citation_labels(text)
+            if is_stable_citation_id(label)
+        ]
+        if not used:
+            return text
+
+        ordered_ids: list[str] = []
+        seen: set[str] = set()
+        for citation_id in sorted(set(used), key=cls._citation_sort_key):
+            if citation_id in seen:
+                continue
+            if citation_id not in citation_catalog:
+                continue
+            seen.add(citation_id)
+            ordered_ids.append(citation_id)
+        if not ordered_ids:
+            return text
+
+        lines = ["参考来源："]
+        for idx, citation_id in enumerate(ordered_ids, 1):
+            item = citation_catalog[citation_id]
+            title = cls._extract_citation_title(item, fallback_index=idx)
+            locator = item.get("locator")
+            page_hint = cls._extract_citation_page_hint(locator if isinstance(locator, dict) else None)
+            if page_hint:
+                lines.append(f"[{citation_id}] {title}（{page_hint}）")
+            else:
+                lines.append(f"[{citation_id}] {title}")
+
+        return f"{text}\n\n" + "\n".join(lines)
+
+    @classmethod
+    def _resolve_preferred_evidence_round(
+        cls,
+        *,
+        stage_summaries: dict[str, Any],
+        loop_counts: dict[str, Any] | None,
+    ) -> int | None:
+        force_exit = (
+            stage_summaries.get("force_exit")
+            if isinstance(stage_summaries, dict)
+            else None
+        )
+        if isinstance(force_exit, dict):
+            best_meta = force_exit.get("best_answer_meta")
+            if isinstance(best_meta, dict):
+                round_value = cls._safe_non_negative_int(best_meta.get("retrieval_round"))
+                if round_value is not None:
+                    return round_value
+
+        answer_review = (
+            stage_summaries.get("answer_review")
+            if isinstance(stage_summaries, dict)
+            else None
+        )
+        if isinstance(answer_review, dict):
+            best_meta = answer_review.get("best_answer_meta")
+            if isinstance(best_meta, dict):
+                round_value = cls._safe_non_negative_int(best_meta.get("retrieval_round"))
+                if round_value is not None:
+                    return round_value
+
+        if isinstance(loop_counts, dict):
+            round_value = cls._safe_non_negative_int(loop_counts.get("retrieval_retries"))
+            if round_value is not None:
+                return round_value
+        return None
+
+    @staticmethod
+    def _select_evidence_draft_items(
+        *,
+        evidence_draft_items_by_round: dict[int, list[dict[str, Any]]] | None,
+        preferred_round: int | None,
+    ) -> list[dict[str, Any]]:
+        if not isinstance(evidence_draft_items_by_round, dict) or not evidence_draft_items_by_round:
+            return []
+        if preferred_round is not None:
+            items = evidence_draft_items_by_round.get(preferred_round)
+            if isinstance(items, list):
+                return list(items)
+            return []
+        available_rounds = [k for k in evidence_draft_items_by_round if isinstance(k, int)]
+        if not available_rounds:
+            return []
+        latest_round = max(available_rounds)
+        items = evidence_draft_items_by_round.get(latest_round)
+        return list(items) if isinstance(items, list) else []
 
     @staticmethod
     def _extract_last_good_answer(
@@ -1026,6 +1326,10 @@ class KbChatService:
                 if text:
                     return text, "ai_message"
 
+        best_answer = stream_state.best_answer
+        if isinstance(best_answer, str) and best_answer.strip():
+            return best_answer.strip(), "stream_state.best_answer"
+
         force_exit = (
             stage_summaries.get("force_exit")
             if isinstance(stage_summaries, dict)
@@ -1036,15 +1340,15 @@ class KbChatService:
             if isinstance(best_answer, str) and best_answer.strip():
                 return best_answer.strip(), "force_exit.best_answer"
 
-        answer_check = (
-            stage_summaries.get("answer_check")
+        answer_review = (
+            stage_summaries.get("answer_review")
             if isinstance(stage_summaries, dict)
             else None
         )
-        if isinstance(answer_check, dict):
-            best_answer = answer_check.get("best_answer")
+        if isinstance(answer_review, dict):
+            best_answer = answer_review.get("best_answer")
             if isinstance(best_answer, str) and best_answer.strip():
-                return best_answer.strip(), "answer_check.best_answer"
+                return best_answer.strip(), "answer_review.best_answer"
 
         generator = (
             stage_summaries.get("generator")
@@ -1187,13 +1491,20 @@ class KbChatService:
                 stage_summaries=stage_summaries,
                 answer=answer,
             )
+            preferred_evidence_round = self._resolve_preferred_evidence_round(
+                stage_summaries=stage_summaries,
+                loop_counts=result.get("loop_counts")
+                if isinstance(result.get("loop_counts"), dict)
+                else None,
+            )
             return await self._finalize_run(
                 session=session,
                 run=run,
                 started_at=exec_ctx.started_at,
                 answer=answer,
                 retrieval_results=exec_ctx.retrieval_results,
-                evidence_draft_items=exec_ctx.evidence_draft_items,
+                evidence_draft_items_by_round=exec_ctx.evidence_draft_items_by_round,
+                preferred_evidence_round=preferred_evidence_round,
                 stage_summaries=stage_summaries,
                 metrics=metrics,
                 status=terminal_status,
@@ -1225,13 +1536,64 @@ class KbChatService:
         request: object | None = None,
         run: AgentRun | None = None,
     ) -> Any:
-        "处理用户问题并生成答案（流式 SSE）。"
+        """处理用户问题并返回流式 SSE（状态与节点事件基于 LangGraph 原生流）。"""
         exec_ctx = await self._prepare_kb_chat_execution(
             session=session, user_content=user_content, run=run
         )
         run = exec_ctx.run
         graph_task: asyncio.Task | None = None
         disconnect_task: asyncio.Task | None = None
+
+        stream_state = StreamState(
+            messages=list(exec_ctx.state.get("messages") or []),
+            pending_tool_calls=list(exec_ctx.state.get("pending_tool_calls") or []),
+            stage_summaries=dict(exec_ctx.state.get("stage_summaries") or {}),
+            metrics=dict(exec_ctx.state.get("metrics") or {}),
+            loop_counts=dict(exec_ctx.state.get("loop_counts") or {}),
+        )
+        legacy_think_parser = LegacyThinkParser()
+
+        def _emit_enveloped(
+            *,
+            event_type: str,
+            payload: dict[str, Any],
+            node_name: str | None = None,
+        ) -> tuple[str, dict[str, Any]]:
+            node = None
+            if isinstance(node_name, str) and node_name:
+                node = {"id": node_name, "name": node_name}
+            return (
+                event_type,
+                self._build_protocol_event_payload(
+                    event_type=event_type,
+                    run_id=run.id,
+                    payload=payload,
+                    node=node,
+                ),
+            )
+
+        def _emit_ui_event(
+            *,
+            event_type: str,
+            message: str | None = None,
+            candidate_answer: str | None = None,
+            source_step_id: str | None = None,
+            degrade_reason_value: str | None = None,
+        ) -> tuple[str, dict[str, Any]]:
+            payload: dict[str, Any] = {
+                "event_type": event_type,
+                "run_id": str(run.id),
+                "ts": datetime.now(timezone.utc).isoformat(),
+            }
+            if message is not None:
+                payload["message"] = message
+            if candidate_answer is not None:
+                payload["candidate_answer"] = candidate_answer
+            if source_step_id is not None:
+                payload["source_step_id"] = source_step_id
+            if degrade_reason_value is not None:
+                payload["degrade_reason"] = degrade_reason_value
+            return _emit_enveloped(event_type="ui_event", payload=payload)
 
         async def _cancel_graph() -> None:
             if graph_task is None or graph_task.done():
@@ -1243,240 +1605,18 @@ class KbChatService:
         try:
             yield (
                 "meta",
-                {
-                    "run_id": str(run.id),
-                    "session_id": str(session.id),
-                    "session_type": session.session_type.value,
-                    "thread_id": exec_ctx.thread_id,
-                    "mode": session.mode.value,
-                },
-            )
-
-            stream_state = StreamState(
-                messages=list(exec_ctx.state.get("messages") or []),
-                pending_tool_calls=list(exec_ctx.state.get("pending_tool_calls") or []),
-                stage_summaries=dict(exec_ctx.state.get("stage_summaries") or {}),
-                metrics=dict(exec_ctx.state.get("metrics") or {}),
-            )
-            legacy_think_parser = LegacyThinkParser()
-            stage_status: dict[str, str] = {}
-            stage_attempts: dict[str, int] = {}
-            active_stage: str | None = None
-            active_node: str | None = None
-            last_state_signature: tuple[Any, ...] | None = None
-            state_version = 0
-            running_status = AgentRunStatus.RUNNING.value
-            last_good_answer: str | None = None
-            last_good_answer_source: str | None = None
-            degrade_reason: str | None = None
-
-            def _emit_ui_event(
-                *,
-                event_type: str,
-                step_id: str | None = None,
-                status: str | None = None,
-                node: str | None = None,
-                message: str | None = None,
-                candidate_answer: str | None = None,
-                source_step_id: str | None = None,
-                degrade_reason_value: str | None = None,
-                meta: dict[str, Any] | None = None,
-            ) -> tuple[str, dict[str, Any]]:
-                payload: dict[str, Any] = {
-                    "event_type": event_type,
-                    "run_id": str(run.id),
-                    "ts": datetime.now(timezone.utc).isoformat(),
-                }
-                if step_id is not None:
-                    payload["step_id"] = step_id
-                if status is not None:
-                    payload["status"] = status
-                if node is not None:
-                    payload["node"] = node
-                if message is not None:
-                    payload["message"] = message
-                if candidate_answer is not None:
-                    payload["candidate_answer"] = candidate_answer
-                if source_step_id is not None:
-                    payload["source_step_id"] = source_step_id
-                if degrade_reason_value is not None:
-                    payload["degrade_reason"] = degrade_reason_value
-                if meta is not None:
-                    payload["meta"] = meta
-                return "ui_event", payload
-
-            def _build_step_payload(
-                *,
-                step_id: str,
-                status: str,
-                node: str | None = None,
-                message: str | None = None,
-                meta: dict[str, Any] | None = None,
-            ) -> dict[str, Any]:
-                payload: dict[str, Any] = {
-                    "step_id": step_id,
-                    "label": _KB_PIPELINE_NODE_LABELS.get(step_id, step_id),
-                    "status": status,
-                    "ts": datetime.now(timezone.utc).isoformat(),
-                }
-                if node:
-                    payload["node"] = node
-                if message:
-                    payload["message"] = message
-                if meta:
-                    payload["meta"] = meta
-                return payload
-
-            def _emit_state(
-                *,
-                run_status: str,
-                current_step_id: str | None = None,
-                current_node: str | None = None,
-                message: str | None = None,
-                force: bool = False,
-            ) -> list[dict[str, Any]]:
-                nonlocal last_state_signature, state_version
-                step_id = current_step_id if current_step_id is not None else active_stage
-                node = current_node if current_node is not None else active_node
-                state_version += 1
-                payload = self._build_stream_state_payload(
+                self._build_protocol_event_payload(
+                    event_type="meta",
                     run_id=run.id,
-                    run_status=run_status,
-                    current_step_id=step_id,
-                    current_node=node,
-                    stage_status=stage_status,
-                    stage_attempts=stage_attempts,
-                    state_version=state_version,
-                    active_path=self._build_active_path(
-                        stage_status=stage_status,
-                        current_step_id=step_id,
-                    ),
-                    last_good_answer=last_good_answer,
-                    degrade_reason=degrade_reason,
-                    message=message,
-                )
-                progress = payload.get("progress")
-                progress_key = None
-                if isinstance(progress, dict):
-                    progress_key = (
-                        progress.get("completed"),
-                        progress.get("total"),
-                        progress.get("percent"),
-                    )
-                signature = (
-                    payload.get("run_status"),
-                    payload.get("current_step_id"),
-                    payload.get("current_step_status"),
-                    payload.get("current_node"),
-                    payload.get("attempt"),
-                    payload.get("message"),
-                    payload.get("last_good_answer"),
-                    payload.get("degrade_reason"),
-                    progress_key,
-                )
-                if not force and signature == last_state_signature:
-                    state_version -= 1
-                    return []
-                last_state_signature = signature
-                return [payload]
-
-            def _touch_stage(
-                step_id: str,
-                *,
-                node: str | None = None,
-                io_summary: dict[str, Any] | None = None,
-            ) -> list[dict[str, Any]]:
-                nonlocal active_stage, active_node
-                events: list[dict[str, Any]] = []
-                previous = active_stage
-                if (
-                    previous
-                    and previous != step_id
-                    and stage_status.get(previous) == "started"
-                ):
-                    stage_status[previous] = "completed"
-                    events.append(
-                        _build_step_payload(step_id=previous, status="completed")
-                    )
-
-                if stage_status.get(step_id) != "started":
-                    stage_attempts[step_id] = stage_attempts.get(step_id, 0) + 1
-                    stage_status[step_id] = "started"
-                    events.append(
-                        _build_step_payload(
-                            step_id=step_id,
-                            status="started",
-                            node=node,
-                            meta={
-                                "attempt": stage_attempts[step_id],
-                                "phase": _KB_PIPELINE_NODE_PHASE.get(step_id),
-                                "order": _KB_PIPELINE_NODE_INDEX.get(step_id),
-                                "io_summary": io_summary,
-                            },
-                        )
-                    )
-                active_stage = step_id
-                if node is not None:
-                    active_node = node
-                elif previous != step_id:
-                    active_node = None
-                return events
-
-            def _complete_active_stage() -> list[dict[str, Any]]:
-                nonlocal active_stage, active_node
-                if (
-                    active_stage
-                    and stage_status.get(active_stage) == "started"
-                ):
-                    stage_status[active_stage] = "completed"
-                    payload = _build_step_payload(
-                        step_id=active_stage, status="completed"
-                    )
-                    active_stage = None
-                    active_node = None
-                    return [payload]
-                return []
-
-            def _mark_stage_status(
-                *,
-                step_id: str,
-                status: str,
-                message: str | None = None,
-            ) -> list[dict[str, Any]]:
-                nonlocal active_stage, active_node
-                events: list[dict[str, Any]] = []
-                if stage_status.get(step_id) != "started":
-                    stage_attempts[step_id] = stage_attempts.get(step_id, 0) + 1
-                    stage_status[step_id] = "started"
-                    active_stage = step_id
-                    active_node = None
-                    events.append(
-                        _build_step_payload(
-                            step_id=step_id,
-                            status="started",
-                            meta={
-                                "attempt": stage_attempts[step_id],
-                                "phase": _KB_PIPELINE_NODE_PHASE.get(step_id),
-                                "order": _KB_PIPELINE_NODE_INDEX.get(step_id),
-                            },
-                        )
-                    )
-                if stage_status.get(step_id) != status:
-                    stage_status[step_id] = status
-                    events.append(
-                        _build_step_payload(
-                            step_id=step_id,
-                            status=status,
-                            message=message,
-                        )
-                    )
-                if active_stage == step_id and status != "started":
-                    active_stage = None
-                    active_node = None
-                return events
-
-            for state_event in _emit_state(run_status=running_status, force=True):
-                yield "state", state_event
+                    payload={
+                        "run_id": str(run.id),
+                        "session_id": str(session.id),
+                        "session_type": session.session_type.value,
+                        "thread_id": exec_ctx.thread_id,
+                        "mode": session.mode.value,
+                    },
+                ),
+            )
 
             store = None
             try:
@@ -1487,11 +1627,16 @@ class KbChatService:
                 checkpointer=CheckpointManager.get_checkpointer(),
                 store=store,
             )
-            config = CheckpointManager.make_config(exec_ctx.thread_id)
+            make_run_config = getattr(exec_ctx.graph, "make_run_config", None)
+            if callable(make_run_config):
+                config = make_run_config(thread_id=exec_ctx.thread_id)
+            else:
+                config = CheckpointManager.make_config(exec_ctx.thread_id)
             stream = compiled.astream(
                 exec_ctx.state,
                 config,
-                stream_mode=["messages", "updates"],
+                stream_mode=["messages", "updates", "custom"],
+                subgraphs=True,
             )
 
             queue: asyncio.Queue[tuple[str, object]] = asyncio.Queue()
@@ -1499,8 +1644,11 @@ class KbChatService:
 
             async def _run_graph() -> None:
                 try:
-                    async for mode, chunk in stream:
-                        await queue.put(("event", (mode, chunk)))
+                    async for raw_event in stream:
+                        normalized = self._normalize_graph_stream_event(raw_event)
+                        if normalized is None:
+                            continue
+                        await queue.put(("event", normalized))
                 except asyncio.CancelledError:
                     raise
                 except Exception as exc:
@@ -1529,6 +1677,9 @@ class KbChatService:
                 asyncio.create_task(_monitor_disconnect()) if request is not None else None
             )
 
+            last_good_answer: str | None = None
+            last_good_answer_source: str | None = None
+
             while True:
                 if disconnect_event.is_set():
                     await _cancel_graph()
@@ -1539,12 +1690,13 @@ class KbChatService:
                         reason="canceled",
                         stream_state=stream_state,
                     )
-                    for state_event in _emit_state(
-                        run_status=AgentRunStatus.CANCELED.value,
-                        current_step_id=None,
-                        current_node=None,
-                    ):
-                        yield "state", state_event
+                    yield (
+                        "error",
+                        {
+                            "code": "CHAT_STREAM_CANCELED",
+                            "message": "client disconnected",
+                        },
+                    )
                     return
 
                 queue_task = asyncio.create_task(queue.get())
@@ -1570,12 +1722,13 @@ class KbChatService:
                             reason="canceled",
                             stream_state=stream_state,
                         )
-                        for state_event in _emit_state(
-                            run_status=AgentRunStatus.CANCELED.value,
-                            current_step_id=None,
-                            current_node=None,
-                        ):
-                            yield "state", state_event
+                        yield (
+                            "error",
+                            {
+                                "code": "CHAT_STREAM_CANCELED",
+                                "message": "client disconnected",
+                            },
+                        )
                         return
                     disconnect_task = None
 
@@ -1585,58 +1738,54 @@ class KbChatService:
                 kind, payload = queue_task.result()
                 if kind == "event":
                     mode, chunk = payload
+
                     if mode == "messages":
-                        token, _meta = chunk
-                        if isinstance(_meta, dict):
-                            node_name = _meta.get("langgraph_node")
-                            if isinstance(node_name, str):
-                                for state_event in _emit_state(
-                                    run_status=running_status,
-                                    current_step_id=node_name,
-                                    current_node=node_name,
-                                ):
-                                    yield "state", state_event
+                        token = None
+                        token_meta: dict[str, Any] | None = None
+                        if isinstance(chunk, tuple) and len(chunk) == 2:
+                            token = chunk[0]
+                            if isinstance(chunk[1], dict):
+                                token_meta = chunk[1]
+                        elif isinstance(chunk, list) and len(chunk) == 2:
+                            token = chunk[0]
+                            if isinstance(chunk[1], dict):
+                                token_meta = chunk[1]
+                        else:
+                            token = chunk
+
                         deltas = extract_stream_delta(
                             token,
-                            _meta if isinstance(_meta, dict) else None,
+                            token_meta,
                             legacy_think_parser=legacy_think_parser,
                         )
-                        for delta in deltas:
-                            yield "delta", delta.to_dict()
+                        if deltas:
+                            node_name = (
+                                token_meta.get("langgraph_node")
+                                if isinstance(token_meta, dict)
+                                and isinstance(token_meta.get("langgraph_node"), str)
+                                else None
+                            )
+                            yield _emit_enveloped(
+                                event_type="messages",
+                                payload={
+                                    "run_id": str(run.id),
+                                    "node": node_name,
+                                    "deltas": [delta.to_dict() for delta in deltas],
+                                    "ts": datetime.now(timezone.utc).isoformat(),
+                                },
+                                node_name=node_name,
+                            )
                         continue
 
                     if mode == "updates" and isinstance(chunk, dict):
-                        for source, node_update in chunk.items():
-                            if source == "__interrupt__":
-                                continue
-                            if not isinstance(source, str):
-                                continue
-                            io_summary = (
-                                self._build_node_io_summary(
-                                    node=source,
-                                    update=node_update if isinstance(node_update, dict) else {},
-                                )
-                                if isinstance(node_update, dict)
-                                else None
-                            )
-                            for step_event in _touch_stage(
-                                source, node=source, io_summary=io_summary
-                            ):
-                                yield "step", step_event
-                                yield _emit_ui_event(
-                                    event_type="stage_transition",
-                                    step_id=step_event.get("step_id"),
-                                    status=step_event.get("status"),
-                                    node=source,
-                                    message=step_event.get("message"),
-                                    meta=step_event.get("meta"),
-                                )
-                            for state_event in _emit_state(
-                                run_status=running_status,
-                                current_step_id=source,
-                                current_node=source,
-                            ):
-                                yield "state", state_event
+                        candidate_node = next(
+                            (
+                                source
+                                for source in chunk.keys()
+                                if isinstance(source, str) and source != "__interrupt__"
+                            ),
+                            None,
+                        )
                         interrupts = apply_updates_chunk(stream_state, chunk)
                         candidate, candidate_source = self._extract_last_good_answer(
                             answer="",
@@ -1652,6 +1801,37 @@ class KbChatService:
                             pending_tool_calls=stream_state.pending_tool_calls,
                             interrupts=interrupts,
                         )
+                        yield _emit_enveloped(
+                            event_type="updates",
+                            payload={
+                                "run_id": str(run.id),
+                                "chunk": chunk,
+                                "ts": datetime.now(timezone.utc).isoformat(),
+                            },
+                            node_name=candidate_node,
+                        )
+                        continue
+
+                    if mode == "custom":
+                        safe_payload = self._json_safe_custom_payload(chunk)
+                        if isinstance(safe_payload, dict):
+                            node_name = (
+                                safe_payload.get("node_name")
+                                if isinstance(safe_payload.get("node_name"), str)
+                                else None
+                            )
+                            payload_dict = dict(safe_payload)
+                            payload_dict.setdefault("run_id", str(run.id))
+                            payload_dict.setdefault(
+                                "ts", datetime.now(timezone.utc).isoformat()
+                            )
+                            yield _emit_enveloped(
+                                event_type="custom",
+                                payload=payload_dict,
+                                node_name=node_name,
+                            )
+                        continue
+
                     continue
 
                 if kind == "error":
@@ -1659,12 +1839,23 @@ class KbChatService:
                 if kind == "done":
                     break
 
-            for delta in legacy_think_parser.flush():
-                yield "delta", delta.to_dict()
+            flushed_deltas = legacy_think_parser.flush()
+            if flushed_deltas:
+                yield _emit_enveloped(
+                    event_type="messages",
+                    payload={
+                        "run_id": str(run.id),
+                        "node": None,
+                        "deltas": [delta.to_dict() for delta in flushed_deltas],
+                        "ts": datetime.now(timezone.utc).isoformat(),
+                    },
+                )
+
             self._ensure_no_pending_tool_approval(
                 pending_tool_calls=stream_state.pending_tool_calls,
                 interrupts=None,
             )
+
             answer = ""
             for msg in reversed(stream_state.messages):
                 if isinstance(msg, AIMessage):
@@ -1700,33 +1891,8 @@ class KbChatService:
             if candidate:
                 last_good_answer = candidate
                 last_good_answer_source = candidate_source
+
             if clarification_message is not None:
-                for step_event in _complete_active_stage():
-                    yield "step", step_event
-                    yield _emit_ui_event(
-                        event_type="stage_transition",
-                        step_id=step_event.get("step_id"),
-                        status=step_event.get("status"),
-                    )
-                for step_event in _mark_stage_status(
-                    step_id="finalize",
-                    status="waiting_user",
-                    message=clarification_message,
-                ):
-                    yield "step", step_event
-                    yield _emit_ui_event(
-                        event_type="stage_transition",
-                        step_id=step_event.get("step_id"),
-                        status=step_event.get("status"),
-                        message=step_event.get("message"),
-                    )
-                for state_event in _emit_state(
-                    run_status="waiting_user",
-                    current_step_id="finalize",
-                    current_node=None,
-                    message=clarification_message,
-                ):
-                    yield "state", state_event
                 if last_good_answer:
                     yield _emit_ui_event(
                         event_type="candidate_answer_updated",
@@ -1748,57 +1914,27 @@ class KbChatService:
                 stage_summaries=stage_summaries,
                 answer=answer,
             )
-            for step_event in _complete_active_stage():
-                yield "step", step_event
-                yield _emit_ui_event(
-                    event_type="stage_transition",
-                    step_id=step_event.get("step_id"),
-                    status=step_event.get("status"),
-                )
-            finalize_status = (
-                "completed"
-                if terminal_status == AgentRunStatus.SUCCEEDED
-                else "failed"
-            )
-            for step_event in _mark_stage_status(
-                step_id="finalize",
-                status=finalize_status,
-                message=(
-                    terminal_message
-                    if finalize_status == "failed"
-                    else None
-                ),
-            ):
-                yield "step", step_event
-                yield _emit_ui_event(
-                    event_type="stage_transition",
-                    step_id=step_event.get("step_id"),
-                    status=step_event.get("status"),
-                    message=step_event.get("message"),
-                )
             if terminal_status == AgentRunStatus.FAILED and last_good_answer:
-                degrade_reason = terminal_message
                 yield _emit_ui_event(
                     event_type="degraded_to_candidate",
+                    message="最终回答失败，已回退展示候选答案。",
                     candidate_answer=last_good_answer,
                     source_step_id=last_good_answer_source,
                     degrade_reason_value=terminal_message,
-                    message="最终答案失败，已回退展示候选答案。",
                 )
-            for state_event in _emit_state(
-                run_status=terminal_status.value,
-                current_step_id="finalize",
-                current_node=None,
-                message=terminal_message if finalize_status == "failed" else None,
-            ):
-                yield "state", state_event
+
+            preferred_evidence_round = self._resolve_preferred_evidence_round(
+                stage_summaries=stage_summaries,
+                loop_counts=stream_state.loop_counts,
+            )
             final_response = await self._finalize_run(
                 session=session,
                 run=run,
                 started_at=exec_ctx.started_at,
                 answer=answer,
                 retrieval_results=exec_ctx.retrieval_results,
-                evidence_draft_items=exec_ctx.evidence_draft_items,
+                evidence_draft_items_by_round=exec_ctx.evidence_draft_items_by_round,
+                preferred_evidence_round=preferred_evidence_round,
                 stage_summaries=stage_summaries,
                 metrics=metrics,
                 status=terminal_status,
@@ -1822,32 +1958,6 @@ class KbChatService:
             run.finished_at = datetime.now(timezone.utc)
             run.error_message = e.message if isinstance(e, AppError) else str(e)
             await self._db.commit()
-            for step_event in _complete_active_stage():
-                yield "step", step_event
-                yield _emit_ui_event(
-                    event_type="stage_transition",
-                    step_id=step_event.get("step_id"),
-                    status=step_event.get("status"),
-                )
-            for step_event in _mark_stage_status(
-                step_id="finalize",
-                status="failed",
-                message=run.error_message,
-            ):
-                yield "step", step_event
-                yield _emit_ui_event(
-                    event_type="stage_transition",
-                    step_id=step_event.get("step_id"),
-                    status=step_event.get("status"),
-                    message=step_event.get("message"),
-                )
-            for state_event in _emit_state(
-                run_status=AgentRunStatus.FAILED.value,
-                current_step_id="finalize",
-                current_node=None,
-                message=run.error_message,
-            ):
-                yield "state", state_event
             if isinstance(e, AppError):
                 yield (
                     "error",
@@ -1873,6 +1983,7 @@ class KbChatService:
             set_run_id(None)
 
     async def _finalize_run(
+
         self,
         *,
         session: ChatSession,
@@ -1880,7 +1991,8 @@ class KbChatService:
         started_at: datetime,
         answer: str,
         retrieval_results: list,
-        evidence_draft_items: list[dict[str, Any]] | None = None,
+        evidence_draft_items_by_round: dict[int, list[dict[str, Any]]] | None = None,
+        preferred_evidence_round: int | None = None,
         stage_summaries: dict[str, Any],
         metrics: dict[str, Any],
         status: AgentRunStatus = AgentRunStatus.SUCCEEDED,
@@ -1899,9 +2011,17 @@ class KbChatService:
 
         evidence_items: list[EvidenceItem] = []
         seen_evidence_chunk_ids: set[uuid.UUID] = set()
+        citation_catalog: dict[str, dict[str, Any]] = {}
+        selected_evidence_draft_items = self._select_evidence_draft_items(
+            evidence_draft_items_by_round=evidence_draft_items_by_round,
+            preferred_round=preferred_evidence_round,
+        )
+        should_fallback_to_retrieval_results = (
+            not selected_evidence_draft_items and preferred_evidence_round is None
+        )
 
-        if evidence_draft_items:
-            for it in evidence_draft_items:
+        if selected_evidence_draft_items:
+            for it in selected_evidence_draft_items:
                 if not isinstance(it, dict):
                     continue
 
@@ -1931,6 +2051,22 @@ class KbChatService:
                 locator = (
                     it.get("locator") if isinstance(it.get("locator"), dict) else None
                 )
+                raw_citation_id = it.get("citation_id")
+                citation_id = (
+                    str(raw_citation_id).strip().upper()
+                    if isinstance(raw_citation_id, str)
+                    else ""
+                )
+                if is_stable_citation_id(citation_id):
+                    citation_catalog[citation_id] = {
+                        "citation_id": citation_id,
+                        "citation_title": it.get("citation_title"),
+                        "citation_source": it.get("citation_source"),
+                        "locator": locator,
+                        "chunk_id": str(chunk_id) if chunk_id else None,
+                        "material_id": str(material_id) if material_id else None,
+                        "kb_id": str(kb_id) if kb_id else None,
+                    }
 
                 self._db.add(
                     Evidence(
@@ -1955,8 +2091,8 @@ class KbChatService:
                 )
                 if chunk_id:
                     seen_evidence_chunk_ids.add(chunk_id)
-        else:
-            for r in retrieval_results:
+        elif should_fallback_to_retrieval_results:
+            for idx, r in enumerate(retrieval_results, 1):
                 ev = Evidence(
                     run_id=run.id,
                     source_kind=EvidenceSourceKind.KB,
@@ -1977,8 +2113,51 @@ class KbChatService:
                         excerpt=r.chunk.content[:500],
                     )
                 )
+                citation_id = f"S{idx}"
+                locator = r.chunk.locator if isinstance(r.chunk.locator, dict) else None
+                citation_catalog[citation_id] = {
+                    "citation_id": citation_id,
+                    "citation_title": None,
+                    "citation_source": None,
+                    "locator": locator,
+                    "chunk_id": str(r.chunk.id),
+                    "material_id": str(r.chunk.material_id),
+                    "kb_id": str(r.chunk.kb_id),
+                }
 
-        # 强约束：引用必须与证据数量一致；无证据（非澄清）时禁止输出看似引用的编号/ID。
+        def _label_from_locator(locator: dict | None) -> str | None:
+            if not isinstance(locator, dict):
+                return None
+            raw = locator.get("citation_label")
+            if isinstance(raw, str):
+                text = " ".join(raw.replace("[", " ").replace("]", " ").split()).strip()
+                if text:
+                    return text
+            filename = locator.get("filename")
+            if isinstance(filename, str) and filename.strip():
+                base = filename.strip().replace("\\", "/").rsplit("/", 1)[-1]
+                stem = base.rsplit(".", 1)[0] if "." in base else base
+                normalized = " ".join(stem.replace("[", " ").replace("]", " ").split())
+                if normalized:
+                    return normalized
+            return None
+
+        allowed_labels: list[str] = sorted(citation_catalog, key=self._citation_sort_key)
+        if not allowed_labels:
+            seen_labels: set[str] = set()
+            for item in evidence_items:
+                label = _label_from_locator(
+                    item.locator if isinstance(item.locator, dict) else None
+                )
+                if not label:
+                    continue
+                key = label.casefold()
+                if key in seen_labels:
+                    continue
+                seen_labels.add(key)
+                allowed_labels.append(label)
+
+        # 强约束：引用必须与证据标签一致；无证据（非澄清）时禁止输出看似引用标签。
         force_exit = (
             stage_summaries.get("force_exit")
             if isinstance(stage_summaries, dict)
@@ -1987,15 +2166,12 @@ class KbChatService:
         allow_no_evidence = (
             isinstance(force_exit, dict) and force_exit.get("reason") == "clarify"
         )
-        from app.services.evidence_guardrails import (
-            enforce_kb_answer_citation_guardrails,
-        )
-
         answer = enforce_kb_answer_citation_guardrails(
             answer,
-            evidence_count=len(evidence_items),
+            allowed_labels=allowed_labels,
             allow_no_evidence=allow_no_evidence,
         )
+        answer = self._append_citation_sources(answer, citation_catalog=citation_catalog)
         no_evidence_answer = "根据现有资料无法回答该问题（未检索到相关证据）。"
         if (
             not allow_no_evidence
@@ -2064,6 +2240,7 @@ class KbChatService:
                 for item in evidence_items
                 if item.chunk_id is not None
             ],
+            "citation_ids": sorted(citation_catalog, key=self._citation_sort_key),
             "latency_ms": int((run.finished_at - started_at).total_seconds() * 1000),
             **summary_metrics,
             **metrics,

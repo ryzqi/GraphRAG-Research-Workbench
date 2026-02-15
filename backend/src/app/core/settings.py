@@ -285,15 +285,14 @@ class Settings(BaseSettings):
     context_tool_max_tokens: int | None = Field(None, alias="CONTEXT_TOOL_MAX_TOKENS")
 
     # KB Chat（灰度开关 + 预算 + 查询增强 + 可观测）
-    kb_chat_total_timeout_seconds: float = Field(
-        45.0, alias="KB_CHAT_TOTAL_TIMEOUT_SECONDS"
+    kb_chat_graph_recursion_limit: int = Field(
+        30, alias="KB_CHAT_GRAPH_RECURSION_LIMIT"
     )
     kb_chat_max_total_rounds: int = Field(3, alias="KB_CHAT_MAX_TOTAL_ROUNDS")
     kb_chat_max_retrieval_retries: int = Field(2, alias="KB_CHAT_MAX_RETRIEVAL_RETRIES")
     kb_chat_max_generation_retries: int = Field(
         1, alias="KB_CHAT_MAX_GENERATION_RETRIES"
     )
-    kb_chat_force_retrieve: bool = Field(True, alias="KB_CHAT_FORCE_RETRIEVE")
     kb_chat_grader_fail_policy: str = Field(
         "closed", alias="KB_CHAT_GRADER_FAIL_POLICY"
     )

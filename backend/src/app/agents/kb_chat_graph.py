@@ -18,10 +18,11 @@ def build_kb_chat_graph(
     chat_model: ChatOpenAI,
     tools: list[BaseTool],
     tool_meta_by_name: dict[str, ToolMeta],
+    kb_chat_config: dict[str, bool] | None = None,
 ) -> KbChatAgenticGraph:
     return KbChatAgenticGraph(
         chat_model=chat_model,
         tools=tools,
         tool_meta_by_name=tool_meta_by_name,
+        kb_chat_config=kb_chat_config,
     )
-

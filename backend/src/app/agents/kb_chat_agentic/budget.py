@@ -2,12 +2,11 @@
 
 Design notes:
 - Budgets must be checkpointer-friendly (JSON-serializable).
-- We no longer enforce a global deadline budget.
+- KB chat termination relies only on rounds/retries budgets.
 """
 
 from __future__ import annotations
 
-import math
 from datetime import datetime, timezone
 
 from app.core.settings import Settings
@@ -19,6 +18,7 @@ def now_iso() -> str:
 
 def ensure_budget_initialized(state: dict, settings: Settings) -> dict:
     """Initialize budget metadata inside state.metrics if missing."""
+    _ = settings
     metrics = state.get("metrics")
     if not isinstance(metrics, dict):
         metrics = {}
@@ -57,30 +57,3 @@ def budget_exceeded(state: dict, settings: Settings) -> tuple[bool, str]:
         return True, "max_generation_retries"
 
     return False, ""
-
-
-def remaining_budget_seconds(
-    state: dict, settings: Settings, *, now_ts: float | None = None
-) -> float:
-    """Return remaining budget seconds (unbounded when total timeout is disabled)."""
-    _ = state, settings, now_ts
-    return float("inf")
-
-
-def budget_exhausted(state: dict, settings: Settings) -> bool:
-    """Return True if remaining budget is depleted."""
-    return remaining_budget_seconds(state, settings) <= 0.0
-
-
-def effective_timeout_seconds(
-    component_timeout_seconds: float | None, remaining_seconds: float
-) -> float | None:
-    """Clamp component timeout by remaining budget (>= 0)."""
-    remaining = max(float(remaining_seconds), 0.0)
-    if math.isinf(remaining):
-        if component_timeout_seconds is None:
-            return None
-        return max(float(component_timeout_seconds), 0.0)
-    if component_timeout_seconds is None:
-        return remaining
-    return max(0.0, min(float(component_timeout_seconds), remaining))

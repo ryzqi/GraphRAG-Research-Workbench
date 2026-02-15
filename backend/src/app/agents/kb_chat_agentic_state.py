@@ -73,15 +73,14 @@ class GraphEvidenceItem(TypedDict, total=False):
 # Reflection / budget / metrics
 # -----------------------------
 
-ReflectionAction = Literal["none", "clarify", "transform_query", "force_exit"]
+ReflectionAction = Literal["none", "clarify", "transform_query", "generate", "force_exit"]
 
 
 class ReflectionResult(TypedDict, total=False):
     """Outputs from reflection layer graders (serializable)."""
 
     relevance_passed: bool
-    hallucination_passed: bool
-    answer_passed: bool
+    review_passed: bool
     action: ReflectionAction
     reason: str
 
@@ -112,7 +111,6 @@ class KbChatRuntimeConfig(TypedDict, total=False):
     hyde_enabled: bool
     hybrid_retrieval_enabled: bool
     rerank_enabled: bool
-    force_retrieve_enabled: bool
 
 
 # -----------------------------
@@ -130,10 +128,6 @@ class KbChatAgenticStateBase(TypedDict):
 
     # Keep compatibility with existing streaming/service plumbing.
     pending_tool_calls: list[dict]
-
-    # Enforce "retrieve at least once before final answer" in the tool-calling loop.
-    # (Matches legacy KB chat behavior, see prompts/kb_chat/system.yaml.)
-    force_kb_retrieve: bool
 
     # Budget / observability (kept compatible with existing AgentRun fields).
     loop_counts: LoopCounts
@@ -198,7 +192,6 @@ def make_initial_state(
         "messages": messages or [],
         "user_input": user_input,
         "pending_tool_calls": [],
-        "force_kb_retrieve": False,
         "loop_counts": {
             "total_rounds": 0,
             "retrieval_retries": 0,

@@ -9,6 +9,7 @@ import logging
 import time
 import uuid
 from dataclasses import dataclass
+from pathlib import PurePosixPath, PureWindowsPath
 from typing import cast
 
 from sqlalchemy import select
@@ -22,6 +23,7 @@ from app.integrations.rerank_client import RerankClient
 from app.models.document_chunk import DocumentChunk
 from app.models.kb_config_snapshot import KBConfigSnapshot
 from app.models.knowledge_base import KnowledgeBase
+from app.models.source_material import SourceMaterial
 from app.schemas.chats import EvidenceItem, EvidenceSourceKind
 from app.schemas.knowledge_bases import ChunkingStrategy, IndexConfig
 from app.schemas.query_enhancement import QueryHitSource, QueryItem
@@ -183,6 +185,87 @@ class RetrievalService:
             results=[],
             stats=stats,
         )
+
+    @staticmethod
+    def _strip_file_extension(name: str) -> str:
+        raw = (name or "").strip()
+        if not raw:
+            return ""
+        stem = PurePosixPath(raw).stem
+        if stem == raw:
+            stem = PureWindowsPath(raw).stem
+        return stem.strip() or raw
+
+    @staticmethod
+    def _normalize_citation_label(value: str) -> str:
+        cleaned = value.replace("[", " ").replace("]", " ")
+        normalized = " ".join(cleaned.split())
+        return normalized.strip()
+
+    @staticmethod
+    def _extract_filename_from_locator(locator: dict | None) -> str | None:
+        if not isinstance(locator, dict):
+            return None
+        raw = locator.get("filename")
+        if not isinstance(raw, str):
+            return None
+        value = raw.strip()
+        if not value:
+            return None
+        # Normalize both POSIX/Windows style path separators.
+        value = value.replace("\\", "/")
+        return value.rsplit("/", 1)[-1] or None
+
+    @classmethod
+    def _derive_citation_label(
+        cls, *, locator: dict | None, material_title: str | None
+    ) -> str:
+        filename = cls._extract_filename_from_locator(locator)
+        if filename:
+            label = cls._normalize_citation_label(cls._strip_file_extension(filename))
+            if label:
+                return label
+
+        if isinstance(material_title, str) and material_title.strip():
+            label = cls._normalize_citation_label(
+                cls._strip_file_extension(material_title.strip())
+            )
+            if label:
+                return label
+
+        return "资料"
+
+    async def _load_material_titles_by_id(
+        self, material_ids: set[uuid.UUID]
+    ) -> dict[uuid.UUID, str]:
+        if not material_ids or self._db is None:
+            return {}
+        stmt = select(SourceMaterial.id, SourceMaterial.title).where(
+            SourceMaterial.id.in_(list(material_ids))
+        )
+        result = await self._db.execute(stmt)
+        title_by_id: dict[uuid.UUID, str] = {}
+        for row in result.all():
+            material_id = row[0]
+            title = row[1]
+            if isinstance(title, str) and title.strip():
+                title_by_id[material_id] = title.strip()
+        return title_by_id
+
+    async def _ensure_chunk_citation_labels(self, chunks: list[RetrievedChunk]) -> None:
+        if not chunks:
+            return
+        material_ids = {chunk.material_id for chunk in chunks}
+        title_by_id = await self._load_material_titles_by_id(material_ids)
+        for chunk in chunks:
+            locator = chunk.locator if isinstance(chunk.locator, dict) else {}
+            label = self._derive_citation_label(
+                locator=locator,
+                material_title=title_by_id.get(chunk.material_id),
+            )
+            if not isinstance(chunk.locator, dict):
+                chunk.locator = {}
+            chunk.locator["citation_label"] = label
 
     async def _hydrate_chunks_from_postgres(self, chunks: list[RetrievedChunk]) -> None:
         """Backfill chunk fields when Milvus hits lack output_fields.
@@ -865,6 +948,17 @@ class RetrievalService:
             )
             rrf_results = await self._apply_query_dependent_multiscale_strategy(
                 rrf_results, kb_configs, timeout_seconds=timeout_value
+            )
+        except asyncio.TimeoutError:
+            return _timeout_draft()
+
+        try:
+            timeout_value = self._effective_timeout(
+                deadline=deadline, per_call_timeout=None
+            )
+            await self._run_with_timeout(
+                self._ensure_chunk_citation_labels([r.chunk for r in rrf_results]),
+                timeout_value,
             )
         except asyncio.TimeoutError:
             return _timeout_draft()
@@ -1552,6 +1646,20 @@ class RetrievalService:
                 except asyncio.TimeoutError:
                     return _timeout_return()
                 results, filtered_count = self._apply_min_score(results)
+                try:
+                    timeout_value = self._effective_timeout(
+                        deadline=deadline, per_call_timeout=None
+                    )
+                    if timeout_value is not None and timeout_value <= 0:
+                        return _timeout_return()
+                    await self._run_with_timeout(
+                        self._ensure_chunk_citation_labels(
+                            [r.chunk for r in results]
+                        ),
+                        timeout_value,
+                    )
+                except asyncio.TimeoutError:
+                    return _timeout_return()
 
                 # Cache path has no per-query provenance. Still expose evidence draft.
                 evidence_items: list[dict] = []

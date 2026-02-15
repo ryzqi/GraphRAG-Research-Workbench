@@ -50,6 +50,8 @@ class EvidenceSourceKind(str, Enum):
 class KbChatConfig(BaseModel):
     """Session-scoped KB answer chain feature toggles."""
 
+    model_config = ConfigDict(extra="forbid")
+
     query_rewrite_enabled: bool = True
     ambiguity_check_enabled: bool = True
     decomposition_enabled: bool = False
@@ -57,13 +59,31 @@ class KbChatConfig(BaseModel):
     hyde_enabled: bool = False
     hybrid_retrieval_enabled: bool = True
     rerank_enabled: bool = True
-    force_retrieve_enabled: bool = True
 
     @model_validator(mode="after")
     def validate_mutual_exclusion(self) -> "KbChatConfig":
         if self.decomposition_enabled and self.multi_query_enabled:
             raise ValueError("decomposition_enabled 与 multi_query_enabled 不能同时开启")
         return self
+
+
+class KbGraphNode(BaseModel):
+    id: str
+    label: str
+    phase: str | None = None
+    order: int | None = None
+
+
+class KbGraphEdge(BaseModel):
+    source: str
+    target: str
+    conditional: bool = False
+
+
+class KbGraphSchemaResponse(BaseModel):
+    version: str
+    nodes: list[KbGraphNode]
+    edges: list[KbGraphEdge]
 
 
 def default_kb_chat_config(*, settings: Settings | None = None) -> KbChatConfig:
@@ -76,7 +96,6 @@ def default_kb_chat_config(*, settings: Settings | None = None) -> KbChatConfig:
         hyde_enabled=bool(cfg.kb_chat_hyde_enabled),
         hybrid_retrieval_enabled=bool(cfg.retrieval_hybrid_enabled),
         rerank_enabled=bool(cfg.retrieval_rerank_enabled),
-        force_retrieve_enabled=bool(cfg.kb_chat_force_retrieve),
     )
 
 

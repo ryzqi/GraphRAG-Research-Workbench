@@ -59,11 +59,3 @@ def hyde_enabled(state: dict[str, Any], settings: Settings) -> bool:
         key="hyde_enabled",
         default=bool(settings.kb_chat_hyde_enabled),
     )
-
-
-def force_retrieve_enabled(state: dict[str, Any], settings: Settings) -> bool:
-    return _state_flag(
-        state,
-        key="force_retrieve_enabled",
-        default=bool(settings.kb_chat_force_retrieve),
-    )

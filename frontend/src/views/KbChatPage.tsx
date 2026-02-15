@@ -12,13 +12,18 @@ import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import {
   Box,
   Chip,
+  Drawer,
+  Divider,
   Paper,
   Stack,
   Typography,
+  useMediaQuery,
+  useTheme,
 } from '@mui/material';
 import { alpha } from '@mui/material/styles';
 import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import RestartAltIcon from '@mui/icons-material/RestartAlt';
+import InsightsIcon from '@mui/icons-material/Insights';
 import { Button } from '../components/ui/Button';
 import { ErrorAlert } from '../components/ui/ErrorAlert';
 import { KnowledgeBaseSelector } from '../components/KnowledgeBaseSelector';
@@ -31,17 +36,22 @@ import type {
 } from '../components/chat/PipelineProgress';
 
 import {
-  type AgentRunStatus,
   type AgentMode,
   type ChatRunStateEvent,
   type ChatRunUiEvent,
+  type ChatNodeDisplayItem,
+  type ChatNodeIoEvent,
+  type KbGraphSchema,
   type KbChatConfig,
   type ChatMessageResponse,
   type ChatSession,
   createChatSession,
+  getKbChatGraphSchema,
   getChatMessages,
   getChatSession,
+  isUnexpectedStreamEnd,
   resumeClarification,
+  resolveTerminalRunStatus,
   sendMessage,
   streamChatMessage,
   streamResumeClarification,
@@ -51,6 +61,8 @@ import { useSelectableKnowledgeBases } from '../hooks/queries/useKnowledgeBases'
 import { useRecentHistory } from '../hooks/useRecentHistory';
 import { WelcomeScreen } from '../components/chat/WelcomeScreen';
 import { InputComposer } from '../components/chat/InputComposer';
+import { KbChatFlowPanel } from '../components/chat/KbChatFlowPanel';
+import { createChatStreamMetricsCollector } from '../services/chatStreamingMetrics';
 import { getErrorMessage } from '../lib/errorHandler';
 import { parseSseJson } from '../lib/sse';
 import {
@@ -66,34 +78,7 @@ const MessageList = dynamic(
   { ssr: false }
 );
 
-const PIPELINE_STATUS = ['started', 'completed', 'failed', 'waiting_user', 'skipped'] as const;
-type PipelineStatus = (typeof PIPELINE_STATUS)[number];
-const RUN_STREAM_STATUS = ['running', 'succeeded', 'failed', 'canceled', 'waiting_user'] as const;
-type RunStreamStatus = (typeof RUN_STREAM_STATUS)[number];
-type TerminalRunStatus = Exclude<RunStreamStatus, 'running'>;
-
-const PIPELINE_STEP_ORDER: Record<string, number> = {
-  merge_context: 0,
-  coref_rewrite: 1,
-  ambiguity_check: 2,
-  normalize_rewrite: 3,
-  decomposition: 4,
-  multi_query_check: 5,
-  generate_variants: 6,
-  entity_expand: 7,
-  hyde_check: 8,
-  hyde: 9,
-  prepare_messages: 10,
-  retrieve: 11,
-  doc_grader: 12,
-  transform_query: 13,
-  generate: 14,
-  generate_strict: 15,
-  hallucination_check: 16,
-  answer_check: 17,
-  finalize: 18,
-  force_exit: 19,
-};
+type TerminalRunStatus = 'succeeded' | 'failed' | 'canceled' | 'waiting_user';
 
 const DEFAULT_KB_CHAT_CONFIG: KbChatConfig = {
   query_rewrite_enabled: true,
@@ -103,7 +88,6 @@ const DEFAULT_KB_CHAT_CONFIG: KbChatConfig = {
   hyde_enabled: false,
   hybrid_retrieval_enabled: true,
   rerank_enabled: true,
-  force_retrieve_enabled: true,
 };
 
 const KB_CHAT_CONFIG_LABELS: Record<keyof KbChatConfig, string> = {
@@ -114,25 +98,15 @@ const KB_CHAT_CONFIG_LABELS: Record<keyof KbChatConfig, string> = {
   hyde_enabled: 'HyDE',
   hybrid_retrieval_enabled: '混合检索',
   rerank_enabled: '重排序',
-  force_retrieve_enabled: '强制检索',
 };
-
-function isPipelineStatus(value: unknown): value is PipelineStatus {
-  return typeof value === 'string' && (PIPELINE_STATUS as readonly string[]).includes(value);
-}
-
-function isRunStreamStatus(value: unknown): value is RunStreamStatus {
-  return typeof value === 'string' && (RUN_STREAM_STATUS as readonly string[]).includes(value);
-}
 
 function sortPipelineSteps(steps: PipelineStep[]): PipelineStep[] {
   return [...steps].sort((a, b) => {
-    const orderA = PIPELINE_STEP_ORDER[a.step_id] ?? Number.MAX_SAFE_INTEGER;
-    const orderB = PIPELINE_STEP_ORDER[b.step_id] ?? Number.MAX_SAFE_INTEGER;
-    if (orderA !== orderB) {
-      return orderA - orderB;
+    const tsCompare = (a.ts ?? '').localeCompare(b.ts ?? '');
+    if (tsCompare !== 0) {
+      return tsCompare;
     }
-    return (a.ts ?? '').localeCompare(b.ts ?? '');
+    return a.step_id.localeCompare(b.step_id);
   });
 }
 
@@ -180,7 +154,7 @@ function calculateProgress(steps: PipelineStep[] | undefined) {
   return { completed, total, percent };
 }
 
-function createInitialRunState(runId: string): ChatRunStateEvent {
+function createInitialRunState(runId: string, totalNodes = 1): ChatRunStateEvent {
   return {
     run_id: runId,
     run_status: 'running',
@@ -192,70 +166,10 @@ function createInitialRunState(runId: string): ChatRunStateEvent {
     message: null,
     progress: {
       completed: 0,
-      total: Object.keys(PIPELINE_STEP_ORDER).length,
+      total: Math.max(1, totalNodes),
       percent: 0,
     },
     ts: new Date().toISOString(),
-  };
-}
-
-function parseStepEvent(data: Record<string, unknown>): PipelineStep | null {
-  const stepId = typeof data.step_id === 'string' ? data.step_id : '';
-  const status = isPipelineStatus(data.status) ? data.status : null;
-  if (!stepId || !status) {
-    return null;
-  }
-  return {
-    step_id: stepId,
-    label: typeof data.label === 'string' ? data.label : stepId,
-    status,
-    node: typeof data.node === 'string' ? data.node : undefined,
-    message: typeof data.message === 'string' ? data.message : undefined,
-    ts: typeof data.ts === 'string' ? data.ts : new Date().toISOString(),
-    meta: data.meta && typeof data.meta === 'object' ? (data.meta as Record<string, unknown>) : undefined,
-  };
-}
-
-function parseStateEvent(data: Record<string, unknown>): ChatRunStateEvent | null {
-  const runId = typeof data.run_id === 'string' ? data.run_id : '';
-  const runStatus = isRunStreamStatus(data.run_status) ? data.run_status : null;
-  if (!runId || !runStatus) {
-    return null;
-  }
-  const progressRaw =
-    data.progress && typeof data.progress === 'object'
-      ? (data.progress as Record<string, unknown>)
-      : {};
-  const completed =
-    typeof progressRaw.completed === 'number' ? progressRaw.completed : 0;
-  const total =
-    typeof progressRaw.total === 'number'
-      ? progressRaw.total
-      : Object.keys(PIPELINE_STEP_ORDER).length;
-  const percent =
-    typeof progressRaw.percent === 'number'
-      ? progressRaw.percent
-      : total > 0
-        ? Math.min(100, Math.round((completed / total) * 1000) / 10)
-        : 0;
-  return {
-    run_id: runId,
-    run_status: runStatus,
-    current_step_id: typeof data.current_step_id === 'string' ? data.current_step_id : null,
-    current_step_label: typeof data.current_step_label === 'string' ? data.current_step_label : null,
-    current_step_status: typeof data.current_step_status === 'string' ? data.current_step_status : null,
-    current_node: typeof data.current_node === 'string' ? data.current_node : null,
-    attempt: typeof data.attempt === 'number' ? data.attempt : null,
-    message: typeof data.message === 'string' ? data.message : null,
-    state_version: typeof data.state_version === 'number' ? data.state_version : undefined,
-    active_path: Array.isArray(data.active_path)
-      ? data.active_path.filter((item): item is string => typeof item === 'string')
-      : undefined,
-    last_good_answer:
-      typeof data.last_good_answer === 'string' ? data.last_good_answer : undefined,
-    degrade_reason: typeof data.degrade_reason === 'string' ? data.degrade_reason : undefined,
-    progress: { completed, total, percent },
-    ts: typeof data.ts === 'string' ? data.ts : new Date().toISOString(),
   };
 }
 
@@ -286,6 +200,182 @@ function parseUiEvent(data: Record<string, unknown>): ChatRunUiEvent | null {
   };
 }
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return null;
+  }
+  return value as Record<string, unknown>;
+}
+
+function resolveNodeLabel(
+  nodeId: string,
+  schema: KbGraphSchema | null | undefined
+): string {
+  const found = schema?.nodes.find((node) => node.id === nodeId);
+  if (!found) {
+    return nodeId;
+  }
+  return typeof found.label === 'string' && found.label.trim() ? found.label : nodeId;
+}
+
+function resolveGraphTotalNodes(schema: KbGraphSchema | null | undefined): number {
+  if (!schema || !Array.isArray(schema.nodes) || schema.nodes.length === 0) {
+    return 1;
+  }
+  return Math.max(1, schema.nodes.length);
+}
+
+function resolveClarificationStep(
+  schema: KbGraphSchema | null | undefined
+): { step_id: string; label: string } {
+  const nodes = Array.isArray(schema?.nodes) ? [...schema.nodes] : [];
+  if (nodes.length === 0) {
+    return { step_id: 'waiting_user', label: '待补充信息' };
+  }
+  nodes.sort((a, b) => {
+    const aOrder = typeof a.order === 'number' ? a.order : Number.MAX_SAFE_INTEGER;
+    const bOrder = typeof b.order === 'number' ? b.order : Number.MAX_SAFE_INTEGER;
+    if (aOrder !== bOrder) {
+      return aOrder - bOrder;
+    }
+    return a.id.localeCompare(b.id);
+  });
+  const target = nodes.find((node) => node.phase === 'finalize') ?? nodes[nodes.length - 1];
+  const label = typeof target.label === 'string' && target.label.trim() ? target.label : target.id;
+  return { step_id: target.id, label };
+}
+
+function mergeActivePath(
+  current: string[] | undefined,
+  nodeIds: string[]
+): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const nodeId of current ?? []) {
+    if (!seen.has(nodeId)) {
+      seen.add(nodeId);
+      result.push(nodeId);
+    }
+  }
+  for (const nodeId of nodeIds) {
+    if (!seen.has(nodeId)) {
+      seen.add(nodeId);
+      result.push(nodeId);
+    }
+  }
+  return result;
+}
+
+function buildProgressFromActivePath(
+  activePath: string[] | undefined,
+  totalNodes: number,
+  runStatus: ChatRunStateEvent['run_status']
+) {
+  const completed = runStatus === 'succeeded'
+    ? Math.max(1, totalNodes)
+    : Math.min(Math.max(0, activePath?.length ?? 0), Math.max(1, totalNodes));
+  const total = Math.max(1, totalNodes);
+  const percent = total > 0 ? Math.min(100, Math.round((completed / total) * 1000) / 10) : 0;
+  return { completed, total, percent };
+}
+
+function parseMessagesDeltas(data: Record<string, unknown>): Record<string, unknown>[] {
+  const deltas = data.deltas;
+  if (!Array.isArray(deltas)) {
+    return [];
+  }
+  return deltas.filter(
+    (item): item is Record<string, unknown> => asRecord(item) !== null
+  );
+}
+
+function parseUpdatesChunk(data: Record<string, unknown>): Record<string, unknown> | null {
+  const nested = asRecord(data.chunk);
+  if (nested) {
+    return nested;
+  }
+  return asRecord(data);
+}
+
+function parseNodeDisplayItems(value: unknown): ChatNodeDisplayItem[] | null {
+  if (!Array.isArray(value)) {
+    return null;
+  }
+  const normalized: ChatNodeDisplayItem[] = [];
+  for (const item of value) {
+    const record = asRecord(item);
+    if (!record) {
+      continue;
+    }
+    const key = typeof record.key === 'string' ? record.key : null;
+    const label = typeof record.label === 'string' ? record.label : null;
+    const rawValue = record.value;
+    if (!key || !label) {
+      continue;
+    }
+    if (typeof rawValue === 'string') {
+      normalized.push({ key, label, value: rawValue });
+      continue;
+    }
+    if (Array.isArray(rawValue)) {
+      const lines = rawValue.filter((line): line is string => typeof line === 'string');
+      if (lines.length > 0) {
+        normalized.push({ key, label, value: lines });
+      }
+    }
+  }
+  return normalized.length > 0 ? normalized : null;
+}
+
+function parseNodeIoEvent(data: Record<string, unknown>): ChatNodeIoEvent | null {
+  const run = asRecord(data.run);
+  const node = asRecord(data.node);
+  const runId =
+    typeof data.run_id === 'string'
+      ? data.run_id
+      : typeof run?.id === 'string'
+        ? run.id
+        : null;
+  const nodeName =
+    typeof data.node_name === 'string'
+      ? data.node_name
+      : typeof data.node === 'string'
+        ? data.node
+        : typeof node?.name === 'string'
+          ? node.name
+          : null;
+  const nodeId =
+    typeof data.node_id === 'string'
+      ? data.node_id
+      : typeof node?.id === 'string'
+        ? node.id
+        : nodeName;
+  const phaseRaw = typeof data.phase === 'string' ? data.phase : null;
+  const phase =
+    phaseRaw === 'start' || phaseRaw === 'end' || phaseRaw === 'error'
+      ? phaseRaw
+      : null;
+  if (!runId || !nodeName || !nodeId || !phase) {
+    return null;
+  }
+  return {
+    run_id: runId,
+    node_name: nodeName,
+    node_id: nodeId,
+    phase,
+    display_input_items: parseNodeDisplayItems(data.display_input_items),
+    display_output_items: parseNodeDisplayItems(data.display_output_items),
+    attempt: typeof data.attempt === 'number' ? data.attempt : null,
+    latency_ms: typeof data.latency_ms === 'number' ? data.latency_ms : null,
+    input_summary: asRecord(data.input_summary),
+    output_summary: asRecord(data.output_summary),
+    input_snapshot: asRecord(data.input_snapshot),
+    output_snapshot: asRecord(data.output_snapshot),
+    error_summary: typeof data.error_summary === 'string' ? data.error_summary : null,
+    ts: typeof data.ts === 'string' ? data.ts : new Date().toISOString(),
+  };
+}
+
 function createTimelineEventFromStep(step: PipelineStep): PipelineTimelineEvent {
   const attempt = typeof step.meta?.attempt === 'number' ? step.meta.attempt : null;
   const ioSummaryRaw = step.meta?.io_summary;
@@ -305,22 +395,6 @@ function createTimelineEventFromStep(step: PipelineStep): PipelineTimelineEvent 
     message: step.message ?? null,
     io_summary: ioSummary,
     ts: step.ts ?? new Date().toISOString(),
-  };
-}
-
-function createTimelineEventFromState(state: ChatRunStateEvent): PipelineTimelineEvent {
-  return {
-    id: `state-${state.run_id}-${state.state_version ?? state.ts}`,
-    source: 'state',
-    step_id: state.current_step_id,
-    label: state.current_step_label ?? state.current_node ?? '执行状态',
-    node: state.current_node,
-    status: state.current_step_status ?? state.run_status,
-    run_status: state.run_status,
-    attempt: state.attempt,
-    message: state.message,
-    event_type: 'state',
-    ts: state.ts,
   };
 }
 
@@ -384,11 +458,18 @@ function createTerminalRunState(
   return {
     run_id: runId,
     run_status: status,
-    current_step_id: current?.step_id ?? (status === 'waiting_user' ? 'finalize' : null),
-    current_step_label: current?.label ?? (status === 'waiting_user' ? '输出结果' : null),
+    current_step_id:
+      current?.step_id ?? (status === 'waiting_user' ? previousState?.current_step_id ?? null : null),
+    current_step_label:
+      current?.label ?? (status === 'waiting_user' ? previousState?.current_step_label ?? null : null),
     current_step_status: current?.status ?? (status === 'waiting_user' ? 'waiting_user' : null),
-    current_node: current?.node ?? null,
-    attempt: typeof current?.meta?.attempt === 'number' ? current.meta.attempt : null,
+    current_node: current?.node ?? (status === 'waiting_user' ? previousState?.current_node ?? null : null),
+    attempt:
+      typeof current?.meta?.attempt === 'number'
+        ? current.meta.attempt
+        : status === 'waiting_user'
+          ? previousState?.attempt ?? null
+          : null,
     message: message ?? current?.message ?? null,
     state_version: previousState?.state_version,
     active_path: previousState?.active_path,
@@ -399,17 +480,21 @@ function createTerminalRunState(
   };
 }
 
-function resolveTerminalRunStatus(
-  status: AgentRunStatus | RunStreamStatus | undefined,
-  fallback: TerminalRunStatus = 'succeeded'
-): TerminalRunStatus {
-  if (!status || !isRunStreamStatus(status)) {
-    return fallback;
+function resolveAssistantContentByRunStatus(params: {
+  status: TerminalRunStatus;
+  serverContent: string;
+  lastGoodAnswer?: string | null;
+}): string {
+  const lastGoodAnswer =
+    typeof params.lastGoodAnswer === 'string' ? params.lastGoodAnswer : null;
+  if (
+    params.status === 'failed' &&
+    typeof lastGoodAnswer === 'string' &&
+    lastGoodAnswer.trim().length > 0
+  ) {
+    return lastGoodAnswer;
   }
-  if (status === 'running') {
-    return fallback;
-  }
-  return status;
+  return params.serverContent;
 }
 
 function isPendingClarificationResponse(
@@ -460,6 +545,8 @@ function createMessageStateBatcher(onFlush: (nextState: MessageState) => void) {
 }
 
 export function KbChatPage() {
+  const theme = useTheme();
+  const isTabletOrDown = useMediaQuery(theme.breakpoints.down('lg'));
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -480,17 +567,19 @@ export function KbChatPage() {
   const [kbChatConfig, setKbChatConfig] = useState<KbChatConfig>(DEFAULT_KB_CHAT_CONFIG);
   const [session, setSession] = useState<ChatSession | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [graphSchema, setGraphSchema] = useState<KbGraphSchema | null>(null);
+  const clarificationStep = useMemo(() => resolveClarificationStep(graphSchema), [graphSchema]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [loadingSession, setLoadingSession] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const composerRef = useRef<HTMLDivElement | null>(null);
   const [bottomInset, setBottomInset] = useState(220);
+  const [mobileTraceOpen, setMobileTraceOpen] = useState(false);
 
   const { upsertSession } = useRecentHistory();
 
-  const mergedError =
-    error ?? (knowledgeBasesQuery.error ? getErrorMessage(knowledgeBasesQuery.error) : null);
+  const mergedError = error ?? (knowledgeBasesQuery.error ? getErrorMessage(knowledgeBasesQuery.error) : null);
 
   const selectedKbNames = useMemo(() => {
     const map = new Map((knowledgeBases ?? []).map((kb) => [kb.id, kb.name]));
@@ -510,6 +599,55 @@ export function KbChatPage() {
     () => messages.some((msg) => Boolean(msg.pendingClarification)),
     [messages]
   );
+  const [activeAssistantId, setActiveAssistantId] = useState<string | null>(null);
+
+  const assistantMessages = useMemo(
+    () => messages.filter((msg) => msg.role === 'assistant'),
+    [messages]
+  );
+
+  useEffect(() => {
+    if (assistantMessages.length === 0) {
+      setActiveAssistantId(null);
+      return;
+    }
+    const exists = assistantMessages.some((msg) => msg.id === activeAssistantId);
+    if (!exists) {
+      setActiveAssistantId(assistantMessages[assistantMessages.length - 1].id);
+    }
+  }, [assistantMessages, activeAssistantId]);
+
+  const activeAssistantMessage = useMemo(
+    () =>
+      assistantMessages.find((msg) => msg.id === activeAssistantId) ??
+      assistantMessages[assistantMessages.length - 1] ??
+      null,
+    [assistantMessages, activeAssistantId]
+  );
+
+  useEffect(() => {
+    if (!session) {
+      setGraphSchema(null);
+      return;
+    }
+    let active = true;
+    const loadGraphSchema = async () => {
+      try {
+        const schema = await getKbChatGraphSchema(activeConfig);
+        if (active) {
+          setGraphSchema(schema);
+        }
+      } catch (e) {
+        if (active) {
+          setError(getErrorMessage(e));
+        }
+      }
+    };
+    void loadGraphSchema();
+    return () => {
+      active = false;
+    };
+  }, [activeConfig, session]);
 
   useEffect(() => {
     if (!sessionId) {
@@ -569,6 +707,33 @@ export function KbChatPage() {
   }, [sessionId]);
 
   useEffect(() => {
+    if (!isTabletOrDown) {
+      setMobileTraceOpen(false);
+    }
+  }, [isTabletOrDown]);
+
+  useEffect(() => {
+    if (isTabletOrDown || typeof document === 'undefined') {
+      return;
+    }
+
+    const { documentElement, body } = document;
+    const prevHtmlOverflow = documentElement.style.overflow;
+    const prevBodyOverflow = body.style.overflow;
+    const prevBodyOverscrollY = body.style.overscrollBehaviorY;
+
+    documentElement.style.overflow = 'hidden';
+    body.style.overflow = 'hidden';
+    body.style.overscrollBehaviorY = 'none';
+
+    return () => {
+      documentElement.style.overflow = prevHtmlOverflow;
+      body.style.overflow = prevBodyOverflow;
+      body.style.overscrollBehaviorY = prevBodyOverscrollY;
+    };
+  }, [isTabletOrDown]);
+
+  useEffect(() => {
     const element = composerRef.current;
     if (!element) {
       return;
@@ -611,59 +776,82 @@ export function KbChatPage() {
     []
   );
 
-  const applyStepEvent = useCallback(
+  const applyUpdatesEvent = useCallback(
     (messageId: string, raw: Record<string, unknown>) => {
-      const step = parseStepEvent(raw);
-      if (!step) {
+      const chunk = parseUpdatesChunk(raw);
+      if (!chunk) {
         return;
       }
-      updateMessage(messageId, (msg) => ({
-        ...msg,
-        pipelineSteps: upsertPipelineStep(msg.pipelineSteps, step),
-        nodeTimeline: appendTimelineEvent(
-          msg.nodeTimeline,
-          createTimelineEventFromStep(step)
-        ),
-      }));
-    },
-    [updateMessage]
-  );
-
-  const applyStateEvent = useCallback(
-    (messageId: string, raw: Record<string, unknown>) => {
-      const state = parseStateEvent(raw);
-      if (!state) {
+      const touchedNodes = Object.keys(chunk).filter((nodeId) => nodeId !== '__interrupt__');
+      if (touchedNodes.length === 0) {
         return;
       }
+      const runEnvelope = asRecord(raw.run);
+      const runIdFromPayload =
+        typeof raw.run_id === 'string'
+          ? raw.run_id
+          : typeof runEnvelope?.id === 'string'
+            ? runEnvelope.id
+            : null;
+      const totalNodes = resolveGraphTotalNodes(graphSchema);
       updateMessage(messageId, (msg) => {
-        const nextTimeline = appendTimelineEvent(
-          msg.nodeTimeline,
-          createTimelineEventFromState(state)
-        );
-        const nextRunState = {
-          ...(msg.runState ?? createInitialRunState(state.run_id)),
-          ...state,
-          last_good_answer:
-            state.last_good_answer ?? msg.runState?.last_good_answer ?? null,
-          degrade_reason: state.degrade_reason ?? msg.runState?.degrade_reason ?? null,
+        let nextSteps = msg.pipelineSteps ?? [];
+        let nextTimeline = msg.nodeTimeline;
+        for (const nodeId of touchedNodes) {
+          const step: PipelineStep = {
+            step_id: nodeId,
+            label: resolveNodeLabel(nodeId, graphSchema),
+            status: 'completed',
+            node: nodeId,
+            ts: new Date().toISOString(),
+            meta: asRecord(chunk[nodeId]) ?? undefined,
+          };
+          nextSteps = upsertPipelineStep(nextSteps, step);
+          nextTimeline = appendTimelineEvent(
+            nextTimeline,
+            createTimelineEventFromStep(step)
+          );
+        }
+
+        const runId =
+          runIdFromPayload ??
+          msg.runId ??
+          (typeof msg.runState?.run_id === 'string' ? msg.runState.run_id : null);
+        if (!runId) {
+          return {
+            ...msg,
+            pipelineSteps: nextSteps,
+            nodeTimeline: nextTimeline,
+          };
+        }
+        const baseRunState =
+          msg.runState ?? createInitialRunState(runId, totalNodes);
+        const currentNode = touchedNodes[touchedNodes.length - 1];
+        const activePath = mergeActivePath(baseRunState.active_path, touchedNodes);
+        const nextRunStatus: ChatRunStateEvent['run_status'] =
+          baseRunState.run_status === 'running' ? 'running' : baseRunState.run_status;
+        const nextRunState: ChatRunStateEvent = {
+          ...baseRunState,
+          run_id: runId,
+          run_status: nextRunStatus,
+          current_step_id: currentNode,
+          current_step_label: resolveNodeLabel(currentNode, graphSchema),
+          current_step_status: 'completed',
+          current_node: currentNode,
+          active_path: activePath,
+          progress: buildProgressFromActivePath(activePath, totalNodes, nextRunStatus),
+          ts: new Date().toISOString(),
         };
-        const shouldUseCandidateFallback =
-          nextRunState.run_status === 'failed' &&
-          (!msg.content || !msg.content.trim()) &&
-          typeof nextRunState.last_good_answer === 'string' &&
-          nextRunState.last_good_answer.trim().length > 0;
         return {
           ...msg,
-          runId: state.run_id,
+          runId,
           runState: nextRunState,
+          pipelineSteps: nextSteps,
           nodeTimeline: nextTimeline,
-          content: shouldUseCandidateFallback
-            ? nextRunState.last_good_answer ?? msg.content
-            : msg.content,
         };
       });
     },
-    [updateMessage]
+    [graphSchema, updateMessage]
   );
 
   const applyUiEvent = useCallback(
@@ -673,25 +861,39 @@ export function KbChatPage() {
         return;
       }
       updateMessage(messageId, (msg) => {
+        const totalNodes = resolveGraphTotalNodes(graphSchema);
         const nextTimeline = appendTimelineEvent(
           msg.nodeTimeline,
           createTimelineEventFromUi(uiEvent)
         );
         const baseRunState =
           msg.runState ??
-          (msg.runId ? createInitialRunState(msg.runId) : createInitialRunState(uiEvent.run_id));
+          (msg.runId
+            ? createInitialRunState(msg.runId, totalNodes)
+            : createInitialRunState(uiEvent.run_id, totalNodes));
+        const normalizedBaseRunState =
+          baseRunState.progress.total > 1
+            ? baseRunState
+            : {
+                ...baseRunState,
+                progress: buildProgressFromActivePath(
+                  baseRunState.active_path,
+                  totalNodes,
+                  baseRunState.run_status
+                ),
+              };
         const nextRunState = {
-          ...baseRunState,
+          ...normalizedBaseRunState,
           run_id: uiEvent.run_id,
           last_good_answer:
-            uiEvent.candidate_answer ?? baseRunState.last_good_answer ?? null,
-          degrade_reason: uiEvent.degrade_reason ?? baseRunState.degrade_reason ?? null,
-          message: uiEvent.message ?? baseRunState.message,
+            uiEvent.candidate_answer ?? normalizedBaseRunState.last_good_answer ?? null,
+          degrade_reason:
+            uiEvent.degrade_reason ?? normalizedBaseRunState.degrade_reason ?? null,
+          message: uiEvent.message ?? normalizedBaseRunState.message,
           ts: uiEvent.ts,
         };
         const shouldUseCandidateFallback =
           uiEvent.event_type === 'degraded_to_candidate' &&
-          (!msg.content || !msg.content.trim()) &&
           typeof nextRunState.last_good_answer === 'string' &&
           nextRunState.last_good_answer.trim().length > 0;
         return {
@@ -705,15 +907,95 @@ export function KbChatPage() {
         };
       });
     },
-    [updateMessage]
+    [graphSchema, updateMessage]
+  );
+
+  const applyNodeIoEvent = useCallback(
+    (messageId: string, raw: Record<string, unknown>) => {
+      const event = parseNodeIoEvent(raw);
+      if (!event) {
+        return;
+      }
+      const totalNodes = resolveGraphTotalNodes(graphSchema);
+      updateMessage(messageId, (msg) => {
+        const nextNodeEvents = [...(msg.nodeIoEvents ?? []), event].slice(-240);
+        const statusFromPhase: PipelineStep['status'] =
+          event.phase === 'start'
+            ? 'started'
+            : event.phase === 'error'
+              ? 'failed'
+              : 'completed';
+        const step: PipelineStep = {
+          step_id: event.node_name,
+          label: resolveNodeLabel(event.node_name, graphSchema),
+          status: statusFromPhase,
+          node: event.node_name,
+          message: event.error_summary ?? undefined,
+          ts: event.ts,
+          meta: event.output_summary ?? event.input_summary ?? undefined,
+        };
+        const nextSteps = upsertPipelineStep(msg.pipelineSteps, step);
+        const runId = event.run_id || msg.runId;
+        const baseRunState =
+          runId
+            ? msg.runState ?? createInitialRunState(runId, totalNodes)
+            : msg.runState;
+        const activePath = mergeActivePath(baseRunState?.active_path, [event.node_name]);
+        const nextRunState =
+          runId && baseRunState
+            ? ({
+                ...baseRunState,
+                run_id: runId,
+                current_step_id: event.node_name,
+                current_step_label: resolveNodeLabel(event.node_name, graphSchema),
+                current_step_status: statusFromPhase,
+                current_node: event.node_name,
+                active_path: activePath,
+                progress: buildProgressFromActivePath(
+                  activePath,
+                  totalNodes,
+                  baseRunState.run_status
+                ),
+                ts: event.ts,
+              } as ChatRunStateEvent)
+            : baseRunState;
+        return {
+          ...msg,
+          runId: runId ?? msg.runId,
+          runState: nextRunState,
+          pipelineSteps: nextSteps,
+          nodeIoEvents: nextNodeEvents,
+          nodeTimeline: appendTimelineEvent(msg.nodeTimeline, {
+            id: `node-io-${event.node_id}-${event.phase}-${event.ts}`,
+            source: 'ui',
+            step_id: event.node_name,
+            label: `${event.node_name} · ${event.phase}`,
+            node: event.node_name,
+            status:
+              event.phase === 'start'
+                ? 'started'
+                : event.phase === 'error'
+                  ? 'failed'
+                  : 'completed',
+            run_status: null,
+            attempt: typeof event.attempt === 'number' ? event.attempt : null,
+            message: event.error_summary ?? null,
+            io_summary: event.output_summary ?? event.input_summary ?? null,
+            event_type: 'node_io',
+            ts: event.ts,
+          }),
+        };
+      });
+    },
+    [graphSchema, updateMessage]
   );
 
   const markClarificationPending = useCallback(
     (messageId: string, runId: string, message: string) => {
       updateMessage(messageId, (msg) => {
         const nextSteps = upsertPipelineStep(msg.pipelineSteps, {
-          step_id: 'finalize',
-          label: '输出结果',
+          step_id: clarificationStep.step_id,
+          label: clarificationStep.label,
           status: 'waiting_user',
           message,
           ts: new Date().toISOString(),
@@ -737,7 +1019,7 @@ export function KbChatPage() {
         };
       });
     },
-    [updateMessage]
+    [clarificationStep, updateMessage]
   );
 
   const handleCloseError = () => {
@@ -807,6 +1089,7 @@ export function KbChatPage() {
         toolSteps: [],
         pipelineSteps: [],
         nodeTimeline: [],
+        nodeIoEvents: [],
         isStreaming: true,
         thinkStartTime: Date.now(),
       },
@@ -859,6 +1142,9 @@ export function KbChatPage() {
     };
 
     let hadStreamEvent = false;
+    let sawFinalEvent = false;
+    let sawErrorEvent = false;
+    const streamMetrics = createChatStreamMetricsCollector();
     const deltaBatcher = createMessageStateBatcher((nextState) => {
       updateMessage(assistantId, (msg) => ({
         ...msg,
@@ -874,12 +1160,18 @@ export function KbChatPage() {
       touchRecent();
       for await (const event of stream) {
         hadStreamEvent = true;
+        streamMetrics.onEvent(event.event);
         if (event.event === 'meta') {
           const meta = parseSseJson<{ run_id?: string }>(event.data);
           const runIdFromMeta = meta.run_id;
           if (runIdFromMeta) {
             updateMessage(assistantId, (msg) => {
-              const nextRunState = msg.runState ?? createInitialRunState(runIdFromMeta);
+              const nextRunState =
+                msg.runState ??
+                createInitialRunState(
+                  runIdFromMeta,
+                  resolveGraphTotalNodes(graphSchema)
+                );
               return {
                 ...msg,
                 runId: runIdFromMeta,
@@ -889,18 +1181,32 @@ export function KbChatPage() {
           }
         }
 
-        if (event.event === 'step') {
-          applyStepEvent(assistantId, parseSseJson<Record<string, unknown>>(event.data));
-        }
-
-        if (event.event === 'state') {
-          applyStateEvent(assistantId, parseSseJson<Record<string, unknown>>(event.data));
+        if (event.event === 'updates') {
+          applyUpdatesEvent(assistantId, parseSseJson<Record<string, unknown>>(event.data));
         }
 
         if (event.event === 'ui_event') {
           applyUiEvent(assistantId, parseSseJson<Record<string, unknown>>(event.data));
         }
+        if (event.event === 'custom') {
+          const data = parseSseJson<Record<string, unknown>>(event.data);
+          if (data.event_type === 'node_io') {
+            applyNodeIoEvent(assistantId, data);
+          }
+        }
 
+        if (event.event === 'messages') {
+          const data = parseSseJson<Record<string, unknown>>(event.data);
+          const deltas = parseMessagesDeltas(data);
+          for (const rawDelta of deltas) {
+            const delta = parseDelta(rawDelta);
+            if (!delta) {
+              continue;
+            }
+            msgState = applyDelta(msgState, delta);
+            deltaBatcher.push(msgState);
+          }
+        }
         if (event.event === 'delta') {
           const data = parseSseJson<Record<string, unknown>>(event.data);
           const delta = parseDelta(data);
@@ -908,6 +1214,9 @@ export function KbChatPage() {
             msgState = applyDelta(msgState, delta);
             deltaBatcher.push(msgState);
           }
+        }
+        if (event.event === 'node_io') {
+          applyNodeIoEvent(assistantId, parseSseJson<Record<string, unknown>>(event.data));
         }
 
         if (event.event === 'interrupt') {
@@ -921,17 +1230,19 @@ export function KbChatPage() {
         }
 
         if (event.event === 'final') {
+          sawFinalEvent = true;
           deltaBatcher.flush();
           const data = parseSseJson<ChatMessageResponse>(event.data);
           if (data.status === 'succeeded') {
             updateMessage(assistantId, (msg) => {
               const nextSteps = finalizePipelineSteps(msg.pipelineSteps);
+              const nextStatus = resolveTerminalRunStatus(
+                data.run.status,
+                resolveTerminalRunStatus(msg.runState?.run_status)
+              );
               const nextRunState = createTerminalRunState(
                 data.run.id,
-                resolveTerminalRunStatus(
-                  data.run.status,
-                  resolveTerminalRunStatus(msg.runState?.run_status)
-                ),
+                nextStatus,
                 nextSteps,
                 undefined,
                 msg.runState
@@ -939,7 +1250,11 @@ export function KbChatPage() {
               return {
                 ...msg,
                 id: data.assistant_message.id,
-                content: data.assistant_message.content,
+                content: resolveAssistantContentByRunStatus({
+                  status: nextStatus,
+                  serverContent: data.assistant_message.content,
+                  lastGoodAnswer: nextRunState.last_good_answer,
+                }),
                 evidence: data.evidence,
                 runId: data.run.id,
                 pipelineSteps: nextSteps,
@@ -950,14 +1265,20 @@ export function KbChatPage() {
             });
           }
           setLoading(false);
+          console.info('kb-chat-stream-metrics', streamMetrics.finalize());
           return;
         }
 
         if (event.event === 'error') {
+          sawErrorEvent = true;
           deltaBatcher.flush();
           const err = parseSseJson<{ message?: string }>(event.data);
           throw new Error(err?.message ?? '流式响应失败');
         }
+      }
+
+      if (isUnexpectedStreamEnd({ sawFinalEvent, sawErrorEvent })) {
+        throw new Error('Stream ended unexpectedly without a terminal event');
       }
 
       deltaBatcher.flush();
@@ -1003,6 +1324,8 @@ export function KbChatPage() {
         });
         setError(getErrorMessage(e));
         setLoading(false);
+        streamMetrics.onFailure();
+        console.info('kb-chat-stream-metrics', streamMetrics.finalize());
         return;
       }
       try {
@@ -1012,19 +1335,21 @@ export function KbChatPage() {
       }
     } finally {
       deltaBatcher.flush();
+      console.info('kb-chat-stream-metrics', streamMetrics.finalize());
       setLoading(false);
     }
   }, [
     session,
+    graphSchema,
     input,
     loading,
     loadingSession,
     hasPendingClarification,
     upsertSession,
     updateMessage,
-    applyStepEvent,
-    applyStateEvent,
+    applyUpdatesEvent,
     applyUiEvent,
+    applyNodeIoEvent,
     markClarificationPending,
   ]);
 
@@ -1037,13 +1362,13 @@ export function KbChatPage() {
       let msgState = createMessageState();
       updateMessage(messageId, (msg) => {
         const nextSteps = upsertPipelineStep(msg.pipelineSteps, {
-          step_id: 'finalize',
-          label: '输出结果',
+          step_id: clarificationStep.step_id,
+          label: clarificationStep.label,
           status: 'started',
           message: '已收到补充信息，继续执行',
           ts: new Date().toISOString(),
         });
-        const startedStep = nextSteps.find((step) => step.step_id === 'finalize');
+        const startedStep = nextSteps.find((step) => step.step_id === clarificationStep.step_id);
         return {
           ...msg,
           content: '',
@@ -1094,6 +1419,9 @@ export function KbChatPage() {
       };
 
       let hadStreamEvent = false;
+      let sawFinalEvent = false;
+      let sawErrorEvent = false;
+      const streamMetrics = createChatStreamMetricsCollector();
       const deltaBatcher = createMessageStateBatcher((nextState) => {
         updateMessage(messageId, (msg) => ({
           ...msg,
@@ -1108,12 +1436,18 @@ export function KbChatPage() {
         const stream = await streamResumeClarification(session.id, runId, content);
         for await (const event of stream) {
           hadStreamEvent = true;
+          streamMetrics.onEvent(event.event);
           if (event.event === 'meta') {
             const meta = parseSseJson<{ run_id?: string }>(event.data);
             const runIdFromMeta = meta.run_id;
             if (runIdFromMeta) {
               updateMessage(messageId, (msg) => {
-                const nextRunState = msg.runState ?? createInitialRunState(runIdFromMeta);
+                const nextRunState =
+                  msg.runState ??
+                  createInitialRunState(
+                    runIdFromMeta,
+                    resolveGraphTotalNodes(graphSchema)
+                  );
                 return {
                   ...msg,
                   runId: runIdFromMeta,
@@ -1123,18 +1457,32 @@ export function KbChatPage() {
             }
           }
 
-          if (event.event === 'step') {
-            applyStepEvent(messageId, parseSseJson<Record<string, unknown>>(event.data));
-          }
-
-          if (event.event === 'state') {
-            applyStateEvent(messageId, parseSseJson<Record<string, unknown>>(event.data));
+          if (event.event === 'updates') {
+            applyUpdatesEvent(messageId, parseSseJson<Record<string, unknown>>(event.data));
           }
 
           if (event.event === 'ui_event') {
             applyUiEvent(messageId, parseSseJson<Record<string, unknown>>(event.data));
           }
+          if (event.event === 'custom') {
+            const data = parseSseJson<Record<string, unknown>>(event.data);
+            if (data.event_type === 'node_io') {
+              applyNodeIoEvent(messageId, data);
+            }
+          }
 
+          if (event.event === 'messages') {
+            const data = parseSseJson<Record<string, unknown>>(event.data);
+            const deltas = parseMessagesDeltas(data);
+            for (const rawDelta of deltas) {
+              const delta = parseDelta(rawDelta);
+              if (!delta) {
+                continue;
+              }
+              msgState = applyDelta(msgState, delta);
+              deltaBatcher.push(msgState);
+            }
+          }
           if (event.event === 'delta') {
             const data = parseSseJson<Record<string, unknown>>(event.data);
             const delta = parseDelta(data);
@@ -1143,6 +1491,9 @@ export function KbChatPage() {
               deltaBatcher.push(msgState);
             }
           }
+          if (event.event === 'node_io') {
+            applyNodeIoEvent(messageId, parseSseJson<Record<string, unknown>>(event.data));
+          }
 
           if (event.event === 'interrupt') {
             deltaBatcher.flush();
@@ -1150,22 +1501,25 @@ export function KbChatPage() {
             if (isPendingClarificationResponse(data)) {
               markClarificationPending(messageId, data.run.id, data.message);
               setLoading(false);
+              console.info('kb-chat-stream-metrics', streamMetrics.finalize());
               return;
             }
           }
 
           if (event.event === 'final') {
+            sawFinalEvent = true;
             deltaBatcher.flush();
             const data = parseSseJson<ChatMessageResponse>(event.data);
             if (data.status === 'succeeded') {
               updateMessage(messageId, (msg) => {
                 const nextSteps = finalizePipelineSteps(msg.pipelineSteps);
+                const nextStatus = resolveTerminalRunStatus(
+                  data.run.status,
+                  resolveTerminalRunStatus(msg.runState?.run_status)
+                );
                 const nextRunState = createTerminalRunState(
                   data.run.id,
-                  resolveTerminalRunStatus(
-                    data.run.status,
-                    resolveTerminalRunStatus(msg.runState?.run_status)
-                  ),
+                  nextStatus,
                   nextSteps,
                   undefined,
                   msg.runState
@@ -1173,7 +1527,11 @@ export function KbChatPage() {
                 return {
                   ...msg,
                   id: data.assistant_message.id,
-                  content: data.assistant_message.content,
+                  content: resolveAssistantContentByRunStatus({
+                    status: nextStatus,
+                    serverContent: data.assistant_message.content,
+                    lastGoodAnswer: nextRunState.last_good_answer,
+                  }),
                   evidence: data.evidence,
                   runId: data.run.id,
                   pendingClarification: undefined,
@@ -1184,14 +1542,20 @@ export function KbChatPage() {
               });
             }
             setLoading(false);
+            console.info('kb-chat-stream-metrics', streamMetrics.finalize());
             return;
           }
 
           if (event.event === 'error') {
+            sawErrorEvent = true;
             deltaBatcher.flush();
             const err = parseSseJson<{ message?: string }>(event.data);
             throw new Error(err?.message ?? '恢复执行失败');
           }
+        }
+
+        if (isUnexpectedStreamEnd({ sawFinalEvent, sawErrorEvent })) {
+          throw new Error('Stream ended unexpectedly without a terminal event');
         }
 
         deltaBatcher.flush();
@@ -1237,6 +1601,8 @@ export function KbChatPage() {
           });
           setError(getErrorMessage(e));
           setLoading(false);
+          streamMetrics.onFailure();
+          console.info('kb-chat-stream-metrics', streamMetrics.finalize());
           return;
         }
         try {
@@ -1246,17 +1612,20 @@ export function KbChatPage() {
         }
       } finally {
         deltaBatcher.flush();
+        console.info('kb-chat-stream-metrics', streamMetrics.finalize());
         setLoading(false);
       }
     },
     [
       session,
+      graphSchema,
+      clarificationStep,
       loading,
       loadingSession,
       updateMessage,
-      applyStepEvent,
-      applyStateEvent,
+      applyUpdatesEvent,
       applyUiEvent,
+      applyNodeIoEvent,
       markClarificationPending,
     ]
   );
@@ -1264,7 +1633,10 @@ export function KbChatPage() {
   const resetSession = useCallback(() => {
     setSession(null);
     setMessages([]);
+    setGraphSchema(null);
     setError(null);
+    setActiveAssistantId(null);
+    setMobileTraceOpen(false);
   }, []);
 
   if (!session) {
@@ -1273,82 +1645,176 @@ export function KbChatPage() {
         sx={{
           display: 'flex',
           flexDirection: 'column',
-          height: '100%',
-          minHeight: 'calc(100vh - 64px)',
-          background:
-            'radial-gradient(circle at 10% 0%, rgba(66,133,244,0.16), transparent 40%), radial-gradient(circle at 100% 10%, rgba(155,114,203,0.12), transparent 35%)',
+          height: { xs: '100%', lg: '100dvh' },
+          maxHeight: '100%',
+          minHeight: 0,
+          position: 'relative',
+          overflow: 'hidden',
+          px: { xs: 1.5, md: 3 },
+          py: { xs: 2, md: 3 },
         }}
       >
-        <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
-          <WelcomeScreen title="知识库问答" suggestions={[]} />
+        <Box
+          sx={{
+            position: 'absolute',
+            inset: -120,
+            background: (theme) =>
+              theme.palette.mode === 'light'
+                ? `radial-gradient(680px 320px at 8% 10%, ${alpha(theme.palette.primary.main, 0.22)} 0%, transparent 65%),
+                   radial-gradient(620px 280px at 88% 16%, ${alpha(theme.palette.success.main, 0.16)} 0%, transparent 60%),
+                   radial-gradient(480px 260px at 74% 86%, ${alpha(theme.palette.primary.main, 0.16)} 0%, transparent 64%)`
+                : `radial-gradient(680px 320px at 8% 10%, ${alpha(theme.palette.primary.main, 0.18)} 0%, transparent 65%),
+                   radial-gradient(620px 280px at 88% 16%, ${alpha(theme.palette.success.main, 0.12)} 0%, transparent 60%),
+                   radial-gradient(480px 260px at 74% 86%, ${alpha(theme.palette.primary.main, 0.1)} 0%, transparent 64%)`,
+            pointerEvents: 'none',
+            zIndex: 0,
+          }}
+        />
 
-          <Box sx={{ maxWidth: 860, mx: 'auto', px: 3, width: '100%' }}>
-            <Paper
-              variant="outlined"
-              sx={{
-                p: { xs: 2.5, md: 3 },
-                borderRadius: 4,
-                bgcolor: (theme) =>
-                  theme.palette.mode === 'light'
-                    ? alpha(theme.palette.common.white, 0.72)
-                    : alpha(theme.palette.background.paper, 0.58),
-                backdropFilter: 'blur(14px)',
-                WebkitBackdropFilter: 'blur(14px)',
-                borderColor: (theme) => alpha(theme.palette.primary.main, 0.18),
-                boxShadow: (theme) =>
-                  `0 18px 40px ${alpha(
-                    theme.palette.mode === 'light' ? theme.palette.primary.main : theme.palette.common.black,
-                    theme.palette.mode === 'light' ? 0.14 : 0.34
-                  )}`,
-              }}
-            >
-              <Stack spacing={2.5}>
-                <Stack direction="row" alignItems="center" spacing={1}>
-                  <AutoAwesomeIcon color="primary" fontSize="small" />
-                  <Typography variant="subtitle1" fontWeight={600}>
-                    选择知识库范围
-                  </Typography>
-                </Stack>
-                <Typography variant="body2" color="text.secondary">
-                  支持多库联合检索。建议优先选择最相关的 1-3 个知识库，提升命中率与响应速度。
+        <Box
+          sx={{
+            position: 'relative',
+            zIndex: 1,
+            flex: 1,
+            minHeight: 0,
+            width: '100%',
+            maxWidth: 1320,
+            mx: 'auto',
+            display: 'grid',
+            alignItems: 'center',
+            gap: { xs: 2, lg: 2.5 },
+            gridTemplateColumns: {
+              xs: '1fr',
+              lg: 'minmax(0, 0.9fr) minmax(0, 1.1fr)',
+            },
+            overflowX: 'hidden',
+            overflowY: 'auto',
+            overscrollBehaviorY: 'contain',
+          }}
+        >
+          <Stack spacing={2.25} sx={{ px: { xs: 0.5, md: 1 } }}>
+            <Stack direction='row' spacing={1} alignItems='center'>
+              <Chip size='small' color='primary' variant='outlined' label='知识工作区' />
+              <Typography variant='caption' color='text.secondary'>
+                已就绪
+              </Typography>
+            </Stack>
+            <Stack spacing={1.25}>
+              <Typography
+                variant='h3'
+                fontWeight={700}
+                sx={{
+                  fontSize: { xs: '1.85rem', md: '2.45rem' },
+                  letterSpacing: '-0.01em',
+                }}
+              >
+                面向知识库的可观测问答
+              </Typography>
+              <Typography variant='body1' color='text.secondary' sx={{ maxWidth: 560 }}>
+                先圈定知识范围，再开始提问。会话中可实时查看查询分析、知识检索、重排序与答案生成的执行过程。
+              </Typography>
+            </Stack>
+
+            <Stack spacing={1}>
+              {[
+                '查询分析 —— 识别意图、歧义与改写结果',
+                '知识检索 —— 展示召回结果与关键指标',
+                '重排序 —— 候选过滤与打分状态',
+                '答案生成 —— 生成结果并执行校验',
+              ].map((item) => (
+                <Paper
+                  key={item}
+                  variant='outlined'
+                  sx={{
+                    px: 1.5,
+                    py: 1,
+                    borderRadius: 2,
+                    borderColor: (t) => alpha(t.palette.primary.main, 0.18),
+                    bgcolor: (t) =>
+                      t.palette.mode === 'light'
+                        ? alpha(t.palette.common.white, 0.7)
+                        : alpha(t.palette.background.paper, 0.35),
+                    backdropFilter: 'blur(10px)',
+                    WebkitBackdropFilter: 'blur(10px)',
+                  }}
+                >
+                  <Typography variant='body2'>{item}</Typography>
+                </Paper>
+              ))}
+            </Stack>
+          </Stack>
+
+          <Paper
+            variant='outlined'
+            sx={{
+              p: { xs: 2, md: 2.5 },
+              borderRadius: 4,
+              borderColor: (theme) => alpha(theme.palette.primary.main, 0.2),
+              bgcolor: (theme) =>
+                theme.palette.mode === 'light'
+                  ? alpha(theme.palette.common.white, 0.78)
+                  : alpha(theme.palette.background.paper, 0.52),
+              backdropFilter: 'blur(14px)',
+              WebkitBackdropFilter: 'blur(14px)',
+              boxShadow: (theme) =>
+                `0 22px 52px ${alpha(
+                  theme.palette.mode === 'light' ? theme.palette.primary.main : theme.palette.common.black,
+                  theme.palette.mode === 'light' ? 0.16 : 0.38
+                )}`,
+            }}
+          >
+            <Stack spacing={2.2}>
+              <Stack direction='row' alignItems='center' spacing={1}>
+                <AutoAwesomeIcon color='primary' fontSize='small' />
+                <Typography variant='subtitle1' fontWeight={700}>
+                  选择知识库范围
                 </Typography>
+              </Stack>
+              <Typography variant='body2' color='text.secondary'>
+                支持多库联合检索。建议优先选择 1-3 个最相关知识库，提升命中率与响应速度。
+              </Typography>
 
-                <KnowledgeBaseSelector
-                  knowledgeBases={knowledgeBases ?? []}
-                  selectedIds={selectedKbIds}
-                  onToggle={toggleKb}
-                  loading={loading || loadingSession || knowledgeBasesQuery.isLoading}
-                />
+              <KnowledgeBaseSelector
+                knowledgeBases={knowledgeBases ?? []}
+                selectedIds={selectedKbIds}
+                onToggle={toggleKb}
+                loading={loading || loadingSession || knowledgeBasesQuery.isLoading}
+              />
 
-                {selectedKbNames.length > 0 && (
-                  <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
-                    {selectedKbNames.slice(0, 5).map((name) => (
-                      <Chip key={name} label={name} size="small" color="primary" variant="outlined" />
-                    ))}
-                    {selectedKbNames.length > 5 && (
-                      <Chip label={`+${selectedKbNames.length - 5}`} size="small" variant="outlined" />
-                    )}
-                  </Stack>
-                )}
+              {selectedKbNames.length > 0 && (
+                <Stack direction='row' spacing={0.75} flexWrap='wrap' useFlexGap>
+                  {selectedKbNames.slice(0, 5).map((name) => (
+                    <Chip key={name} label={name} size='small' color='primary' variant='outlined' />
+                  ))}
+                  {selectedKbNames.length > 5 && (
+                    <Chip label={`+${selectedKbNames.length - 5}`} size='small' variant='outlined' />
+                  )}
+                </Stack>
+              )}
 
-                <KbChatConfigPanel
-                  value={kbChatConfig}
-                  onChange={setKbChatConfig}
-                  disabled={loading || loadingSession || knowledgeBasesQuery.isLoading}
-                />
+              <Divider />
 
+              <KbChatConfigPanel
+                value={kbChatConfig}
+                onChange={setKbChatConfig}
+                disabled={loading || loadingSession || knowledgeBasesQuery.isLoading}
+              />
+
+              <Stack direction='row' spacing={1} alignItems='center' justifyContent='space-between'>
+                <Typography variant='caption' color='text.secondary'>
+                  默认进入单代理知识库问答模式
+                </Typography>
                 <Button
-                  variant="contained"
+                  variant='contained'
                   onClick={startSession}
                   disabled={loadingSession || knowledgeBasesQuery.isLoading || selectedKbIds.length === 0}
                   loading={loading || loadingSession}
-                  sx={{ alignSelf: 'flex-start' }}
                 >
                   开始对话
                 </Button>
               </Stack>
-            </Paper>
-          </Box>
+            </Stack>
+          </Paper>
         </Box>
 
         <ErrorAlert error={mergedError} onClose={handleCloseError} />
@@ -1361,101 +1827,270 @@ export function KbChatPage() {
       sx={{
         display: 'flex',
         flexDirection: 'column',
-        height: '100%',
-        minHeight: 'calc(100vh - 64px)',
+        height: { xs: '100%', lg: '100dvh' },
+        maxHeight: '100%',
+        minHeight: 0,
+        overflow: 'hidden',
+        position: 'relative',
+        px: { xs: 1, md: 2.5 },
+        py: { xs: 1, md: 1.5 },
       }}
     >
       <Box
         sx={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          px: { xs: 2, md: 4 },
-          py: 1.5,
-          position: 'sticky',
-          top: 0,
-          zIndex: 5,
+          position: 'absolute',
+          inset: -90,
+          background: (theme) =>
+            theme.palette.mode === 'light'
+              ? `radial-gradient(860px 360px at 8% 2%, ${alpha(theme.palette.primary.main, 0.2)} 0%, transparent 64%),
+                 radial-gradient(720px 280px at 94% 8%, ${alpha(theme.palette.success.main, 0.15)} 0%, transparent 64%)`
+              : `radial-gradient(860px 360px at 8% 2%, ${alpha(theme.palette.primary.main, 0.16)} 0%, transparent 64%),
+                 radial-gradient(720px 280px at 94% 8%, ${alpha(theme.palette.success.main, 0.1)} 0%, transparent 64%)`,
+          pointerEvents: 'none',
+          zIndex: 0,
+        }}
+      />
+
+      <Paper
+        variant='outlined'
+        sx={{
+          position: 'relative',
+          zIndex: 1,
+          p: { xs: 1.25, md: 1.5 },
+          borderRadius: 3,
+          mb: 1,
+          borderColor: (theme) => alpha(theme.palette.primary.main, 0.2),
           bgcolor: (theme) =>
             theme.palette.mode === 'light'
-              ? 'rgba(240, 244, 249, 0.72)'
-              : 'rgba(30, 31, 32, 0.72)',
-          backdropFilter: 'blur(18px)',
-          WebkitBackdropFilter: 'blur(18px)',
-          borderBottom: 1,
-          borderColor: 'divider',
+              ? alpha(theme.palette.background.paper, 0.85)
+              : alpha(theme.palette.background.paper, 0.52),
+          backdropFilter: 'blur(14px)',
+          WebkitBackdropFilter: 'blur(14px)',
         }}
       >
-        <Stack spacing={0.75}>
-          <Stack direction="row" spacing={1} alignItems="center">
-            <Typography variant="body2" color="text.secondary">
-              已选择 {session.selected_kb_ids?.length || 0} 个知识库
-            </Typography>
-            {hasPendingClarification && (
-              <Chip size="small" color="warning" label="等待补充信息" />
-            )}
+        <Stack spacing={1.1}>
+          <Stack direction='row' alignItems='center' justifyContent='space-between' spacing={1}>
+            <Stack direction='row' spacing={1} alignItems='center'>
+              <Chip size='small' color='primary' variant='outlined' label='知识库问答会话' />
+              <Typography variant='caption' color='text.secondary'>
+                {new Date().toLocaleTimeString('zh-CN', { hour12: false })}
+              </Typography>
+            </Stack>
+            <Stack direction='row' spacing={1}>
+              {isTabletOrDown && (
+                <Button
+                  variant='outlined'
+                  size='small'
+                  startIcon={<InsightsIcon />}
+                  onClick={() => setMobileTraceOpen(true)}
+                >
+                  推理过程
+                </Button>
+              )}
+              <Button
+                variant='outlined'
+                size='small'
+                startIcon={<RestartAltIcon />}
+                onClick={resetSession}
+              >
+                重新选择
+              </Button>
+            </Stack>
           </Stack>
-          <Stack direction="row" spacing={0.75} flexWrap="wrap" useFlexGap>
+
+          <Stack direction='row' spacing={0.75} useFlexGap flexWrap='wrap'>
+            <Chip size='small' label={`知识库 ${session.selected_kb_ids?.length || 0} 个`} />
+            {selectedKbNames.slice(0, 4).map((name) => (
+              <Chip key={`selected-kb-${name}`} size='small' variant='outlined' label={name} />
+            ))}
+            {selectedKbNames.length > 4 && (
+              <Chip size='small' variant='outlined' label={`+${selectedKbNames.length - 4}`} />
+            )}
+            {hasPendingClarification && <Chip size='small' color='warning' label='等待补充信息' />}
             {enabledConfigLabels.slice(0, 6).map((label) => (
-              <Chip key={label} size="small" label={label} variant="outlined" />
+              <Chip key={label} size='small' variant='outlined' label={label} />
             ))}
             {enabledConfigLabels.length > 6 && (
-              <Chip
-                size="small"
-                label={`+${enabledConfigLabels.length - 6}`}
-                variant="outlined"
-              />
+              <Chip size='small' variant='outlined' label={`+${enabledConfigLabels.length - 6}`} />
             )}
           </Stack>
         </Stack>
-        <Button
-          variant="outlined"
-          size="small"
-          startIcon={<RestartAltIcon />}
-          onClick={resetSession}
-        >
-          重新选择
-        </Button>
-      </Box>
-
-      {messages.length === 0 ? (
-        <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
-          <WelcomeScreen title="开始提问吧" suggestions={[]} />
-        </Box>
-      ) : (
-        <MessageList
-          messages={messages}
-          loading={loading || loadingSession}
-          onClarificationSubmit={handleClarificationSubmit}
-          approvalLoading={loading || loadingSession}
-          bottomInset={bottomInset}
-        />
-      )}
-
-      <ErrorAlert error={mergedError} onClose={handleCloseError} />
+      </Paper>
 
       <Box
-        ref={composerRef}
         sx={{
-          position: 'sticky',
-          bottom: 0,
-          p: { xs: 2, md: 3 },
-          bgcolor: 'background.default',
-          borderTop: messages.length > 0 ? 1 : 0,
-          borderColor: 'divider',
-          zIndex: 10,
+          position: 'relative',
+          zIndex: 1,
+          flex: 1,
+          minHeight: 0,
+          overflow: 'hidden',
         }}
       >
-        <Box sx={{ maxWidth: 800, mx: 'auto' }}>
-          <InputComposer
-            value={input}
-            onChange={setInput}
-            onSend={handleSend}
-            disabled={loading || loadingSession || hasPendingClarification}
-            loading={loading || loadingSession}
-            placeholder={hasPendingClarification ? '请先补充上方澄清信息...' : '输入你的问题...'}
-          />
+        <Box
+          sx={{
+            display: 'grid',
+            gap: 1,
+            gridTemplateColumns: {
+              xs: '1fr',
+              lg: 'minmax(0, 1fr) minmax(320px, 400px)',
+            },
+            height: '100%',
+            minHeight: 0,
+            overflow: 'hidden',
+          }}
+        >
+          <Paper
+            variant='outlined'
+            sx={{
+              height: '100%',
+              p: { xs: 0.75, md: 1 },
+              borderRadius: 3,
+              borderColor: (theme) => alpha(theme.palette.primary.main, 0.18),
+              bgcolor: (theme) =>
+                theme.palette.mode === 'light'
+                  ? alpha(theme.palette.background.paper, 0.86)
+                  : alpha(theme.palette.background.paper, 0.46),
+              backdropFilter: 'blur(12px)',
+              WebkitBackdropFilter: 'blur(12px)',
+              display: 'flex',
+              flexDirection: 'column',
+              minHeight: 0,
+              overflow: 'hidden',
+            }}
+          >
+            <Box
+              sx={{
+                px: { xs: 1, md: 1.5 },
+                pt: 1,
+                pb: 0.5,
+              }}
+            >
+              <Typography variant='subtitle1' fontWeight={700}>
+                知识库问答
+              </Typography>
+              <Typography variant='caption' color='text.secondary'>
+                选中一条助手回复，可在右侧查看对应运行链路
+              </Typography>
+            </Box>
+
+            <Box
+              sx={{
+                flex: 1,
+                minHeight: 0,
+                mt: 0.5,
+                display: 'flex',
+                flexDirection: 'column',
+                overflow: 'hidden',
+              }}
+            >
+              {messages.length === 0 ? (
+                <Stack
+                  spacing={1.5}
+                  sx={{
+                    height: '100%',
+                    px: { xs: 2, md: 2.5 },
+                    py: { xs: 2, md: 3 },
+                    justifyContent: 'center',
+                  }}
+                >
+                  <WelcomeScreen title='开始提问吧' suggestions={[]} />
+                </Stack>
+              ) : (
+                <MessageList
+                  messages={messages}
+                  loading={loading || loadingSession}
+                  onClarificationSubmit={handleClarificationSubmit}
+                  approvalLoading={loading || loadingSession}
+                  bottomInset={bottomInset}
+                  showPipeline={false}
+                  showEvidence
+                  selectedAssistantId={activeAssistantMessage?.id ?? null}
+                  onAssistantSelect={setActiveAssistantId}
+                />
+              )}
+            </Box>
+
+            <Box
+              ref={composerRef}
+              sx={{
+                position: 'sticky',
+                bottom: 0,
+                p: { xs: 1.5, md: 2 },
+                bgcolor: (theme) =>
+                  theme.palette.mode === 'light'
+                    ? alpha(theme.palette.background.paper, 0.88)
+                    : alpha(theme.palette.background.paper, 0.58),
+                borderTop: 1,
+                borderColor: (theme) => alpha(theme.palette.divider, 0.75),
+                backdropFilter: 'blur(10px)',
+                WebkitBackdropFilter: 'blur(10px)',
+                zIndex: 10,
+              }}
+            >
+              <Box sx={{ maxWidth: 900, mx: 'auto' }}>
+                <InputComposer
+                  value={input}
+                  onChange={setInput}
+                  onSend={handleSend}
+                  disabled={loading || loadingSession || hasPendingClarification}
+                  loading={loading || loadingSession}
+                  placeholder={hasPendingClarification ? '请先补充上方澄清信息...' : '输入你的问题...'}
+                />
+              </Box>
+            </Box>
+          </Paper>
+
+          {!isTabletOrDown && (
+            <Box
+              sx={{
+                display: 'flex',
+                flexDirection: 'column',
+                height: '100%',
+                minHeight: 0,
+                overflow: 'hidden',
+              }}
+            >
+              <KbChatFlowPanel
+                schema={graphSchema}
+                runState={activeAssistantMessage?.runState}
+                pipelineSteps={activeAssistantMessage?.pipelineSteps}
+                nodeIoEvents={activeAssistantMessage?.nodeIoEvents}
+                isStreaming={Boolean(activeAssistantMessage?.isStreaming)}
+              />
+            </Box>
+          )}
         </Box>
       </Box>
+
+      <Drawer
+        anchor='right'
+        open={isTabletOrDown && mobileTraceOpen}
+        onClose={() => setMobileTraceOpen(false)}
+        ModalProps={{ keepMounted: true }}
+        PaperProps={{
+          sx: {
+            width: { xs: '100%', sm: 440 },
+            p: 1.2,
+            display: 'flex',
+            flexDirection: 'column',
+            minHeight: 0,
+            bgcolor: (theme) =>
+              theme.palette.mode === 'light'
+                ? alpha(theme.palette.background.default, 0.96)
+                : alpha(theme.palette.background.default, 0.96),
+          },
+        }}
+      >
+        <KbChatFlowPanel
+          schema={graphSchema}
+          runState={activeAssistantMessage?.runState}
+          pipelineSteps={activeAssistantMessage?.pipelineSteps}
+          nodeIoEvents={activeAssistantMessage?.nodeIoEvents}
+          isStreaming={Boolean(activeAssistantMessage?.isStreaming)}
+        />
+      </Drawer>
+
+      <ErrorAlert error={mergedError} onClose={handleCloseError} />
     </Box>
   );
 }

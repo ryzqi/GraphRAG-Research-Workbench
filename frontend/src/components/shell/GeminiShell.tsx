@@ -163,6 +163,7 @@ export function GeminiShell({ children }: GeminiShellProps) {
             flex: 1,
             display: 'flex',
             flexDirection: 'column',
+            minHeight: 0,
             px: isChatPage
               ? 0
               : isKnowledgeWorkspacePage
@@ -178,7 +179,16 @@ export function GeminiShell({ children }: GeminiShellProps) {
             width: '100%',
           }}
         >
-          <PageTransition key={`${pathname}:${chatResetKey}`}>
+          <PageTransition
+            key={`${pathname}:${chatResetKey}`}
+            sx={{
+              display: 'flex',
+              flexDirection: 'column',
+              flex: 1,
+              minHeight: 0,
+              ...(isChatPage ? { overflow: 'hidden' } : {}),
+            }}
+          >
             {children}
           </PageTransition>
         </Box>

@@ -3,7 +3,6 @@ import { Box, Chip, FormControlLabel, Grid, Paper, Stack, Switch, Typography } f
 import TuneIcon from '@mui/icons-material/Tune';
 import RouteIcon from '@mui/icons-material/Route';
 import FindInPageIcon from '@mui/icons-material/FindInPage';
-import ShieldOutlinedIcon from '@mui/icons-material/ShieldOutlined';
 import { alpha } from '@mui/material/styles';
 
 import type { KbChatConfig } from '../../services/chats';
@@ -77,18 +76,6 @@ const GROUPS: ToggleGroupDef[] = [
       },
     ],
   },
-  {
-    id: 'guardrail',
-    title: '保障',
-    icon: <ShieldOutlinedIcon fontSize="small" />,
-    toggles: [
-      {
-        key: 'force_retrieve_enabled',
-        label: '强制检索',
-        description: '确保最终回答前至少执行一次检索流程。',
-      },
-    ],
-  },
 ];
 
 export function KbChatConfigPanel({ value, onChange, disabled = false }: KbChatConfigPanelProps) {
@@ -104,6 +91,7 @@ export function KbChatConfigPanel({ value, onChange, disabled = false }: KbChatC
   };
 
   const enabledCount = Object.values(value).filter(Boolean).length;
+  const totalCount = Object.keys(value).length;
 
   return (
     <Paper
@@ -126,7 +114,7 @@ export function KbChatConfigPanel({ value, onChange, disabled = false }: KbChatC
           <Typography variant="subtitle1" fontWeight={700}>
             回答链路配置
           </Typography>
-          <Chip label={`已开启 ${enabledCount}/8`} size="small" color="primary" variant="outlined" />
+          <Chip label={`已开启 ${enabledCount}/${totalCount}`} size="small" color="primary" variant="outlined" />
         </Stack>
         <Typography variant="body2" color="text.secondary">
           配置会在本会话内固定生效，便于复现回答结果与排查差异。
@@ -134,7 +122,7 @@ export function KbChatConfigPanel({ value, onChange, disabled = false }: KbChatC
 
         <Grid container spacing={1.5}>
           {GROUPS.map((group) => (
-            <Grid key={group.id} size={{ xs: 12, md: 4 }}>
+            <Grid key={group.id} size={{ xs: 12, md: 6 }}>
               <Paper
                 variant="outlined"
                 sx={{
