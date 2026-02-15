@@ -42,7 +42,6 @@ import type {
 import {
   buildTraceStages,
   type TraceStageStatus,
-  type TraceStageViewModel,
 } from '../../services/chatTraceStages';
 import type { PipelineStep } from './PipelineProgress';
 
@@ -102,11 +101,21 @@ function statusBorderColor(status: TraceStageStatus): string {
   }
 }
 
-function formatMetricsCount(stage: TraceStageViewModel): string {
-  if (stage.total <= 0) {
-    return '0/0';
+function formatProgressLabel(status: TraceStageStatus): string {
+  switch (status) {
+    case 'running':
+      return '执行中';
+    case 'completed':
+      return '已完成';
+    case 'failed':
+      return '失败';
+    case 'waiting_user':
+      return '待补充';
+    case 'skipped':
+      return '已跳过';
+    default:
+      return '待执行';
   }
-  return `${stage.completed}/${stage.total}`;
 }
 
 interface NodeDetailItem {
@@ -313,14 +322,13 @@ function NodeBadge({ nodeId }: { nodeId: string }) {
   return (
     <Box
       component='span'
+      aria-label={theme.label}
       sx={(muiTheme) => ({
         display: 'inline-flex',
         alignItems: 'center',
-        justifyContent: 'flex-start',
-        maxWidth: 136,
-        px: 0.7,
-        py: 0.25,
-        gap: 0.45,
+        justifyContent: 'center',
+        width: 22,
+        height: 22,
         borderRadius: 999,
         color: theme.color,
         border: `1px solid ${alpha(theme.color, muiTheme.palette.mode === 'light' ? 0.35 : 0.58)}`,
@@ -328,20 +336,6 @@ function NodeBadge({ nodeId }: { nodeId: string }) {
       })}
     >
       <Icon sx={{ fontSize: 14 }} />
-      <Typography
-        component='span'
-        sx={{
-          fontSize: 11,
-          fontWeight: 700,
-          lineHeight: 1.3,
-          letterSpacing: 0.2,
-          overflow: 'hidden',
-          textOverflow: 'ellipsis',
-          whiteSpace: 'nowrap',
-        }}
-      >
-        {theme.label}
-      </Typography>
     </Box>
   );
 }
@@ -931,7 +925,7 @@ export function KbChatFlowPanel({
                       节点进度
                     </Typography>
                     <Typography variant='caption' color='text.secondary'>
-                      {formatMetricsCount(stage)}
+                      {formatProgressLabel(stage.status)}
                     </Typography>
                   </Stack>
                   <LinearProgress

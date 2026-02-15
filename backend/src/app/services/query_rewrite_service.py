@@ -10,6 +10,7 @@ Keep outputs JSON-friendly so they can be safely stored in LangGraph state.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import re
 import time
@@ -19,6 +20,9 @@ from typing import Iterable
 from pydantic import BaseModel, ValidationError
 
 from app.agents.kb_chat_agentic.schemas import (
+    DecompositionDecision,
+    HyDEDecision,
+    MultiQueryDecision,
     ReverseQuestionDecision,
     TransformQueryDecision,
 )
@@ -95,6 +99,43 @@ def _sanitize_reverse_question(text: str) -> str:
     if value.endswith("？"):
         return value
     return f"{value.rstrip('。.!！')}？"
+
+
+def _strip_list_prefix(text: str) -> str:
+    return re.sub(r"^\s*(?:[-*]+|\d+[.)])\s*", "", text).strip()
+
+
+def _extract_query_list_from_text(text: str) -> list[str]:
+    raw = (text or "").strip()
+    if not raw:
+        return []
+
+    fence_match = re.match(r"^```(?:json)?\s*(.*?)\s*```$", raw, flags=re.DOTALL)
+    if fence_match:
+        raw = fence_match.group(1).strip()
+
+    try:
+        parsed = json.loads(raw)
+    except Exception:
+        parsed = None
+
+    if isinstance(parsed, list):
+        return _dedupe_keep_order(str(item) for item in parsed if str(item).strip())
+    if isinstance(parsed, dict):
+        for key in ("sub_queries", "queries", "items"):
+            value = parsed.get(key)
+            if isinstance(value, list):
+                return _dedupe_keep_order(str(item) for item in value if str(item).strip())
+
+    candidates: list[str] = []
+    for line in raw.splitlines():
+        stripped = _strip_list_prefix(line)
+        if stripped:
+            candidates.append(stripped)
+    if candidates:
+        return _dedupe_keep_order(candidates)
+
+    return _dedupe_keep_order(part.strip() for part in re.split(r"[；;\n]+", raw))
 
 
 def _dedupe_keep_order(items: Iterable[str]) -> list[str]:
@@ -475,7 +516,7 @@ class QueryRewriteService:
         enabled: bool | None = None,
         max_sub_questions: int | None = None,
     ) -> QueryListResult:
-        """Decompose query into sub-questions (heuristic-first)."""
+        """Decompose query into sub-questions (LLM-first with safe fallback)."""
         start = time.perf_counter()
         enabled_flag = (
             bool(self._settings.kb_chat_decomposition_enabled)
@@ -493,20 +534,56 @@ class QueryRewriteService:
                 queries=[], success=False, reason="empty", latency_ms=0
             )
 
-        # Split by obvious separators; keep it conservative.
-        parts = [p.strip() for p in re.split(r"[；;\\n]+", q) if p.strip()]
-        if not parts:
-            parts = [q]
-
         max_n = int(
             max_sub_questions or self._settings.kb_chat_decomposition_max_sub_questions
         )
-        sub_queries = parts[: max(max_n, 1)]
+        max_n = max(max_n, 1)
+
+        structured_result = await self._call_prompt_structured(
+            "kb_chat/decomposition",
+            schema=DecompositionDecision,
+            timeout_seconds=None,
+            max_tokens=256,
+            question=q,
+            max_sub_questions=max_n,
+        )
+        if (
+            structured_result.success
+            and isinstance(structured_result.payload, DecompositionDecision)
+        ):
+            sub_queries = _dedupe_keep_order(structured_result.payload.sub_queries)[:max_n]
+            if sub_queries:
+                latency_ms = int((time.perf_counter() - start) * 1000)
+                return QueryListResult(
+                    queries=sub_queries,
+                    success=True,
+                    reason="llm_structured",
+                    latency_ms=latency_ms,
+                )
+
+        text_result = await self._call_prompt_text(
+            "kb_chat/decomposition",
+            timeout_seconds=None,
+            max_tokens=256,
+            question=q,
+            max_sub_questions=max_n,
+        )
+        if text_result.success:
+            parsed = _extract_query_list_from_text(text_result.text)[:max_n]
+            if parsed:
+                latency_ms = int((time.perf_counter() - start) * 1000)
+                return QueryListResult(
+                    queries=parsed,
+                    success=True,
+                    reason="llm_text_fallback",
+                    latency_ms=latency_ms,
+                )
+
         latency_ms = int((time.perf_counter() - start) * 1000)
         return QueryListResult(
-            queries=sub_queries,
-            success=True,
-            reason="heuristic",
+            queries=[q],
+            success=False,
+            reason="llm_failed_fallback_original",
             latency_ms=latency_ms,
         )
 
@@ -517,7 +594,7 @@ class QueryRewriteService:
         enabled: bool | None = None,
         max_variants: int | None = None,
     ) -> QueryListResult:
-        """Generate multi-query variants (heuristic-first)."""
+        """Generate multi-query variants (LLM-first with safe fallback)."""
         start = time.perf_counter()
         enabled_flag = (
             bool(self._settings.kb_chat_multi_query_enabled)
@@ -535,21 +612,54 @@ class QueryRewriteService:
                 queries=[], success=False, reason="empty", latency_ms=0
             )
 
-        variants: list[str] = [q]
-        if "是什么" not in q:
-            variants.append(f"{q} 是什么")
-        if "定义" not in q:
-            variants.append(f"{q} 定义")
-
-        deduped = _dedupe_keep_order(variants)
         max_n = int(max_variants or self._settings.kb_chat_multi_query_max_variants)
-        deduped = deduped[: max(max_n, 1)]
+        max_n = max(max_n, 1)
+
+        structured_result = await self._call_prompt_structured(
+            "kb_chat/multi_query",
+            schema=MultiQueryDecision,
+            timeout_seconds=None,
+            max_tokens=256,
+            question=q,
+            max_variants=max_n,
+        )
+        if (
+            structured_result.success
+            and isinstance(structured_result.payload, MultiQueryDecision)
+        ):
+            deduped = _dedupe_keep_order(structured_result.payload.queries)[:max_n]
+            if deduped:
+                latency_ms = int((time.perf_counter() - start) * 1000)
+                return QueryListResult(
+                    queries=deduped,
+                    success=True,
+                    reason="llm_structured",
+                    latency_ms=latency_ms,
+                )
+
+        text_result = await self._call_prompt_text(
+            "kb_chat/multi_query",
+            timeout_seconds=None,
+            max_tokens=256,
+            question=q,
+            max_variants=max_n,
+        )
+        if text_result.success:
+            deduped = _extract_query_list_from_text(text_result.text)[:max_n]
+            if deduped:
+                latency_ms = int((time.perf_counter() - start) * 1000)
+                return QueryListResult(
+                    queries=deduped,
+                    success=True,
+                    reason="llm_text_fallback",
+                    latency_ms=latency_ms,
+                )
 
         latency_ms = int((time.perf_counter() - start) * 1000)
         return QueryListResult(
-            queries=deduped,
-            success=True,
-            reason="heuristic",
+            queries=[q],
+            success=False,
+            reason="llm_failed_fallback_original",
             latency_ms=latency_ms,
         )
 
@@ -571,7 +681,7 @@ class QueryRewriteService:
         *,
         enabled: bool | None = None,
     ) -> TextResult:
-        """HyDE generator (placeholder; creates a short synthetic snippet)."""
+        """HyDE generator (LLM-first with safe fallback)."""
         start = time.perf_counter()
         enabled_flag = (
             bool(self._settings.kb_chat_hyde_enabled)
@@ -585,13 +695,52 @@ class QueryRewriteService:
         if not q:
             return TextResult(text="", success=False, reason="empty", latency_ms=0)
 
-        # Default to a single HyDE doc for main query; keep short.
-        hyde_doc = f"（HyDE）假设性说明：{q}"
+        structured_result = await self._call_prompt_structured(
+            "kb_chat/hyde",
+            schema=HyDEDecision,
+            timeout_seconds=None,
+            max_tokens=256,
+            question=q,
+        )
+        if (
+            structured_result.success
+            and isinstance(structured_result.payload, HyDEDecision)
+            and structured_result.payload.hypothetical_document.strip()
+        ):
+            text = _normalize_whitespace(
+                structured_result.payload.hypothetical_document
+            )
+            if text:
+                latency_ms = int((time.perf_counter() - start) * 1000)
+                return TextResult(
+                    text=text,
+                    success=True,
+                    reason="llm_structured",
+                    latency_ms=latency_ms,
+                )
+
+        text_result = await self._call_prompt_text(
+            "kb_chat/hyde",
+            timeout_seconds=None,
+            max_tokens=256,
+            question=q,
+        )
+        if text_result.success and text_result.text.strip():
+            text = _normalize_whitespace(text_result.text)
+            if text:
+                latency_ms = int((time.perf_counter() - start) * 1000)
+                return TextResult(
+                    text=text,
+                    success=True,
+                    reason="llm_text_fallback",
+                    latency_ms=latency_ms,
+                )
+
         latency_ms = int((time.perf_counter() - start) * 1000)
         return TextResult(
-            text=hyde_doc,
-            success=True,
-            reason="placeholder",
+            text="",
+            success=False,
+            reason="llm_failed_fallback_empty",
             latency_ms=latency_ms,
         )
 

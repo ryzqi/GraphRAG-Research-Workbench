@@ -67,3 +67,27 @@ class TransformQueryDecision(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     query: str = Field(..., min_length=1)
+
+
+class DecompositionDecision(BaseModel):
+    """Structured output for query decomposition."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    sub_queries: list[str] = Field(default_factory=list)
+
+
+class MultiQueryDecision(BaseModel):
+    """Structured output for multi-query generation."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    queries: list[str] = Field(default_factory=list)
+
+
+class HyDEDecision(BaseModel):
+    """Structured output for HyDE hypothetical document generation."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    hypothetical_document: str = Field(..., min_length=1)

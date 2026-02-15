@@ -25,6 +25,7 @@ from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, StateGraph
 from langgraph.runtime import Runtime
 from langgraph.store.base import BaseStore
+from langgraph.types import RetryPolicy
 
 from app.agents.kb_chat_agentic_state import KbChatAgenticState
 from app.agents.tool_calling.registry import ToolMeta
@@ -897,6 +898,7 @@ class KbChatAgenticGraph:
             settings=settings,
             kb_chat_config=kb_chat_config,
         )
+        llm_preprocess_retry_policy = RetryPolicy(max_attempts=2)
 
         graph = StateGraph(KbChatAgenticState)
 
@@ -935,6 +937,7 @@ class KbChatAgenticGraph:
                     "decomposition", partial(decomposition, settings=settings)
                 ),
                 metadata=_NODE_METADATA["decomposition"],
+                retry_policy=llm_preprocess_retry_policy,
             )
         if multi_query_enabled:
             graph.add_node(
@@ -943,6 +946,7 @@ class KbChatAgenticGraph:
                     "generate_variants", partial(generate_variants, settings=settings)
                 ),
                 metadata=_NODE_METADATA["generate_variants"],
+                retry_policy=llm_preprocess_retry_policy,
             )
             graph.add_node(
                 "entity_expand",
@@ -956,6 +960,7 @@ class KbChatAgenticGraph:
                 "hyde",
                 _wrap_node_with_io("hyde", partial(hyde, settings=settings)),
                 metadata=_NODE_METADATA["hyde"],
+                retry_policy=llm_preprocess_retry_policy,
             )
         graph.add_node(
             "prepare_messages",

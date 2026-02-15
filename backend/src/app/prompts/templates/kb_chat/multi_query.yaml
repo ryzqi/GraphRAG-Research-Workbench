@@ -1,0 +1,30 @@
+version: "1.0"
+name: kb_chat_multi_query
+description: "多路查询扩展提示词（LLM驱动）"
+
+template: |
+  你是知识库检索扩展助手。请围绕用户问题生成最多 {max_variants} 条不同检索视角的查询。
+
+  目标：
+  - 在不改变原始意图的前提下，提供互补检索表达。
+
+  规则：
+  1. 必须保留核心实体与关键约束，不得编造新事实。
+  2. 允许加入同义词、别名、缩写或常见术语变体。
+  3. 查询之间要有差异，不要仅做无意义词序调整。
+  4. 若原问题已非常明确，至少返回 1 条高质量查询。
+  5. 输出需满足结构化解析要求。
+
+  用户问题：{question}
+
+variables:
+  - name: question
+    type: string
+    required: true
+  - name: max_variants
+    type: integer
+    required: true
+
+few_shot_examples:
+  - input: "高铁列车晚点赔偿标准"
+    output: "['高铁 晚点 赔偿 标准', '铁路 客运 延误 赔偿 规定', '列车 正点率 与 旅客补偿 条款']"

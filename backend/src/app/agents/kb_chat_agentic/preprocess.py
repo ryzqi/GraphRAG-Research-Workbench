@@ -317,6 +317,7 @@ async def decomposition(state: dict, settings: Settings) -> dict[str, Any]:
         query = _extract_user_input(state)
 
     sub_queries: list[str] = []
+    success = False
     reason: str | None = None
     try:
         svc = QueryRewriteService(settings=settings)
@@ -325,16 +326,20 @@ async def decomposition(state: dict, settings: Settings) -> dict[str, Any]:
             enabled=decomposition_enabled(state, settings),
         )
         sub_queries = result.queries
+        success = result.success
         reason = result.reason
     except Exception:  # pragma: no cover
-        sub_queries = []
+        sub_queries = [query.strip()] if query.strip() else []
+        success = False
         reason = "error"
 
     stage_summaries = _merge_stage_summary(
         state,
         "decomposition",
         {
+            "driver": "llm",
             "count": len(sub_queries),
+            "success": success,
             "reason": reason,
             "completed_at": now_iso(),
             "latency_ms": int((time.perf_counter() - start) * 1000),
@@ -359,6 +364,7 @@ async def generate_variants(state: dict, settings: Settings) -> dict[str, Any]:
     if not isinstance(query, str) or not query.strip():
         query = _extract_user_input(state)
     deduped: list[str] = []
+    success = False
     reason: str | None = None
     try:
         svc = QueryRewriteService(settings=settings)
@@ -367,16 +373,20 @@ async def generate_variants(state: dict, settings: Settings) -> dict[str, Any]:
             enabled=multi_query_enabled(state, settings),
         )
         deduped = result.queries
+        success = result.success
         reason = result.reason
     except Exception:  # pragma: no cover
         deduped = [query.strip()] if query.strip() else []
+        success = False
         reason = "error"
 
     stage_summaries = _merge_stage_summary(
         state,
         "generate_variants",
         {
+            "driver": "llm",
             "count": len(deduped),
+            "success": success,
             "reason": reason,
             "completed_at": now_iso(),
             "latency_ms": int((time.perf_counter() - start) * 1000),
@@ -423,28 +433,33 @@ def hyde_check_route(state: dict, settings: Settings) -> str:
 
 
 async def hyde(state: dict, settings: Settings) -> dict[str, Any]:
-    """HyDE node (placeholder; creates a short synthetic snippet)."""
+    """HyDE node (LLM-driven with safe fallback)."""
     start = time.perf_counter()
     query = state.get("normalized_query")
     if not isinstance(query, str) or not query.strip():
         query = _extract_user_input(state)
     hyde_doc = ""
+    success = False
     reason: str | None = None
     try:
         svc = QueryRewriteService(settings=settings)
         enabled = hyde_enabled(state, settings)
         result = await svc.hyde(query, enabled=enabled)
         hyde_doc = result.text
+        success = result.success
         reason = result.reason
     except Exception:  # pragma: no cover
         hyde_doc = ""
+        success = False
         reason = "error"
 
     stage_summaries = _merge_stage_summary(
         state,
         "hyde",
         {
+            "driver": "llm",
             "enabled": hyde_enabled(state, settings),
+            "success": success,
             "reason": reason,
             "completed_at": now_iso(),
             "latency_ms": int((time.perf_counter() - start) * 1000),
