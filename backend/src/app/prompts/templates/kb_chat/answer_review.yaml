@@ -1,4 +1,4 @@
-version: "1.0"
+version: "1.1"
 name: kb_chat_answer_review
 description: "统一答案审查评估器提示词（可回答性 + 事实一致性 + 回答有效性）"
 
@@ -16,6 +16,7 @@ template: |
 
   reason 允许值（必须从下列标签中选择一个）：
   - passed
+  - no_evidence（参考内容为空或无可用证据）
   - insufficient_evidence（参考内容不足，无法回答）
   - unsupported_claims（存在参考内容不支持的断言）
   - citation_mismatch（引用标签存在，但不支持对应语句）
@@ -26,8 +27,16 @@ template: |
   - non_answer（未形成有效回答）
   - needs_clarification（问题本身需进一步澄清）
 
+  missing_citations 规则：
+  - 输出字符串数组，最多 3 项，写“缺少引用的关键事实”短语。
+  - 若 reason 不是 missing_citations，输出 []。
+
+  unsupported_claims 规则：
+  - 输出字符串数组，最多 3 项，写“无法被证据支持的断言”短语。
+  - 若 reason 不是 unsupported_claims，输出 []。
+
   输出要求：
-  - 仅输出一个 JSON 对象：{{"passed": true/false, "reason": "..."}}
+  - 仅输出一个 JSON 对象：{{"passed": true/false, "reason": "...", "missing_citations": ["..."], "unsupported_claims": ["..."]}}
   - 禁止输出代码块、解释文本或额外字段
 
 variables: []
@@ -38,10 +47,10 @@ few_shot_examples:
       参考内容：
       [S1] 向量数据库用于存储和检索向量表示，常用于语义检索和 RAG。
       回答：向量数据库用于存储和检索向量表示，常用于语义检索和 RAG[S1]。
-    output: '{"passed": true, "reason": "passed"}'
+    output: '{"passed": true, "reason": "passed", "missing_citations": [], "unsupported_claims": []}'
   - input: |
       问题：公司 2024 年海外收入占比是多少？
       参考内容：
       [S2] 公司 2024 年收入同比增长 12%。
       回答：公司 2024 年海外收入占比是 35%[S2]。
-    output: '{"passed": false, "reason": "unsupported_claims"}'
+    output: '{"passed": false, "reason": "unsupported_claims", "missing_citations": [], "unsupported_claims": ["海外收入占比是35%"]}'

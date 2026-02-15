@@ -21,7 +21,7 @@ import UploadFileIcon from '@mui/icons-material/UploadFile';
 import { ACCEPTED_FILE_TYPES, SUPPORTED_FILE_TYPES_LABEL } from '../../utils/fileValidation';
 
 // 视觉上更接近单行输入框的高度（用于“垂直居中”的观感）
-const MIN_TEXTAREA_HEIGHT = 40;
+const MIN_TEXTAREA_HEIGHT = 36;
 const MAX_TEXTAREA_HEIGHT = 200;
 
 interface InputComposerProps {
@@ -33,6 +33,7 @@ interface InputComposerProps {
   placeholder?: string;
   loading?: boolean;
   showAttachment?: boolean;
+  showShortcutHint?: boolean;
 }
 
 export function InputComposer({
@@ -44,6 +45,7 @@ export function InputComposer({
   placeholder = '输入消息...',
   loading = false,
   showAttachment = false,
+  showShortcutHint = true,
 }: InputComposerProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -145,9 +147,9 @@ export function InputComposer({
         sx={{
           display: 'flex',
           alignItems: 'flex-end',
-          gap: 1,
-          p: 1.5,
-          borderRadius: '28px',
+          gap: 0.75,
+          p: 1.1,
+          borderRadius: '24px',
           // Glassmorphism 效果
           bgcolor: (theme) =>
             theme.palette.mode === 'light' ? 'rgba(255, 255, 255, 0.8)' : 'rgba(30, 31, 34, 0.85)',
@@ -218,15 +220,15 @@ export function InputComposer({
             resize: 'none',
             bgcolor: 'transparent',
             color: 'text.primary',
-            fontSize: 15,
-            lineHeight: 1.5,
+            fontSize: 14,
+            lineHeight: 1.45,
             fontFamily: 'inherit',
             // 单行时通过固定最小高度 + 上下内边距实现“垂直居中”的视觉效果
             textAlign: 'left',
             minHeight: MIN_TEXTAREA_HEIGHT,
             maxHeight: MAX_TEXTAREA_HEIGHT,
-            px: 1.5,
-            py: 1,
+            px: 1.25,
+            py: 0.75,
             '&::placeholder': {
               color: 'text.secondary',
               opacity: 0.7,
@@ -264,13 +266,15 @@ export function InputComposer({
       </Paper>
 
       {/* 提示文字 */}
-      <Typography
-        variant="caption"
-        color="text.secondary"
-        sx={{ display: 'block', textAlign: 'center', mt: 1 }}
-      >
-        Enter 发送，Shift+Enter 换行
-      </Typography>
+      {showShortcutHint && (
+        <Typography
+          variant="caption"
+          color="text.secondary"
+          sx={{ display: 'block', textAlign: 'center', mt: 1 }}
+        >
+          Enter 发送，Shift+Enter 换行
+        </Typography>
+      )}
     </Box>
   );
 }

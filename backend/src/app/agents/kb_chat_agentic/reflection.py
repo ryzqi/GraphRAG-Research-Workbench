@@ -270,6 +270,7 @@ async def doc_grader(
 
     passed = False
     reason = "no_evidence"
+    missing_constraints: list[str] = []
     fallback_used = False
     fallback_reason: str | None = None
     if evidence_labels and "未找到相关内容" not in final_context:
@@ -295,6 +296,11 @@ async def doc_grader(
         if isinstance(judge, DocGraderDecision):
             passed = bool(judge.passed)
             reason = judge.reason
+            missing_constraints = [
+                _as_str(item).strip()
+                for item in (judge.missing_constraints or [])
+                if _as_str(item).strip()
+            ][:3]
         else:
             policy = settings.kb_chat_grader_fail_policy
             passed = policy == "open"
@@ -303,6 +309,20 @@ async def doc_grader(
             )
             if fallback_reason is None:
                 fallback_reason = "invalid_schema"
+    elif not evidence_labels:
+        missing_constraints = ["相关证据"]
+
+    if not passed and not missing_constraints:
+        if reason == "insufficient":
+            missing_constraints = ["关键约束"]
+        elif reason == "too_broad":
+            missing_constraints = ["限定条件"]
+        elif reason == "needs_clarification":
+            missing_constraints = ["对象/范围/时间/口径"]
+        elif reason == "no_evidence":
+            missing_constraints = ["相关证据"]
+
+    hint = "、".join(missing_constraints[:3])
 
     action = "none" if passed else "transform_query"
 
@@ -313,6 +333,7 @@ async def doc_grader(
                 "relevance_passed": passed,
                 "action": action,
                 "reason": reason,
+                "hint": hint,
             },
         ),
         **_merge_stage_summary(
@@ -321,6 +342,7 @@ async def doc_grader(
             {
                 "passed": passed,
                 "reason": reason,
+                "missing_constraints": missing_constraints,
                 "fallback_used": fallback_used,
                 "fallback_reason": fallback_reason,
                 "latency_ms": int((time.perf_counter() - start) * 1000),
@@ -418,6 +440,8 @@ async def answer_review(
 
     passed = False
     reason = "empty"
+    missing_citations: list[str] = []
+    unsupported_claims: list[str] = []
     fallback_used = False
     fallback_reason: str | None = None
     evidence_labels = _extract_evidence_labels(final_context)
@@ -457,6 +481,16 @@ async def answer_review(
         if isinstance(judge, AnswerReviewDecision):
             passed = bool(judge.passed)
             reason = judge.reason
+            missing_citations = [
+                _as_str(item).strip()
+                for item in (judge.missing_citations or [])
+                if _as_str(item).strip()
+            ][:3]
+            unsupported_claims = [
+                _as_str(item).strip()
+                for item in (judge.unsupported_claims or [])
+                if _as_str(item).strip()
+            ][:3]
         else:
             policy = settings.kb_chat_grader_fail_policy
             passed = policy == "open"
@@ -516,6 +550,8 @@ async def answer_review(
                 "citation_count": len(all_citations),
                 "valid_citation_count": len(valid_citations),
                 "invalid_citations": sorted(invalid_citations),
+                "missing_citations": missing_citations,
+                "unsupported_claims": unsupported_claims,
                 "latency_ms": int((time.perf_counter() - start) * 1000),
                 "completed_at": now_iso(),
             },
@@ -552,6 +588,7 @@ async def transform_query_for_retry(
     ).strip()
     reflection = state.get("reflection")
     reason = reflection.get("reason") if isinstance(reflection, dict) else None
+    hint = reflection.get("hint") if isinstance(reflection, dict) else None
 
     new_query = current
     try:
@@ -559,6 +596,7 @@ async def transform_query_for_retry(
         result = await svc.transform_query(
             current,
             reason=_as_str(reason) or "retry",
+            hint=_as_str(hint) or None,
             timeout_seconds=0,
             enabled=query_rewrite_enabled(state, settings),
         )
@@ -581,7 +619,12 @@ async def transform_query_for_retry(
         "hyde_doc": "",
         "query_items": query_items,
         **_merge_reflection(
-            state, {"action": "transform_query", "reason": _as_str(reason) or "retry"}
+            state,
+            {
+                "action": "transform_query",
+                "reason": _as_str(reason) or "retry",
+                "hint": _as_str(hint),
+            },
         ),
         **_merge_stage_summary(
             state,

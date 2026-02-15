@@ -1,4 +1,4 @@
-version: "1.1"
+version: "1.2"
 name: tools_report_generate
 description: "研究报告生成工具提示词"
 
@@ -24,11 +24,13 @@ template: |
   1. 报告正文使用 Markdown。
   2. 章节必须包含：摘要、研究发现、证据分析、结论与建议、参考来源。
   3. 结论必须与证据摘要一致；若证据不足或冲突，需在报告中明确体现。
-  4. 同时返回结构化元数据，包含 confidence_level、evidence_count、has_conflicts、generated_at。
+  4. 摘要中必须明确结论适用范围；结论与建议必须区分“已证实事实”与“待验证推断”。
+  5. 同时返回结构化元数据，包含 confidence_level、evidence_count、has_conflicts、generated_at。
 
   输出要求（严格）：
   - 只输出一个 JSON 对象，不要输出代码块或解释文字。
   - JSON 顶层字段必须为：report_md, sections, metadata。
+  - sections 中每项必须包含 title 与 content 字段。
 
   JSON 结构示例（仅示例格式）：
   {{

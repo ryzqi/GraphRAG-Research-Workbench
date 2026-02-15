@@ -10,6 +10,7 @@ import { ClarificationCard, MessageItem, ToolApprovalCard } from './MessageItem'
 import { SparkleLoading } from './SparkleLoading';
 import type { ChatNodeIoEvent, ChatRunStateEvent, EvidenceItem } from '../../services/chats';
 import { EvidenceList } from '../EvidenceList';
+import { stripTrailingReferenceSection } from '../../lib/kbChatContent';
 import {
   PipelineProgress,
   type PipelineStep,
@@ -47,6 +48,8 @@ export interface ChatMessage {
   };
   runId?: string;
   runState?: ChatRunStateEvent;
+  stagedContent?: string;
+  answerRevealReady?: boolean;
 }
 
 interface MessageListProps {
@@ -61,6 +64,8 @@ interface MessageListProps {
   showEvidence?: boolean;
   selectedAssistantId?: string | null;
   onAssistantSelect?: (messageId: string) => void;
+  normalizeInlineEvidenceSection?: boolean;
+  scrollButtonAlign?: 'center' | 'right';
 }
 
 interface MessageRowProps {
@@ -73,6 +78,7 @@ interface MessageRowProps {
   showEvidence: boolean;
   selectedAssistantId?: string | null;
   onAssistantSelect?: (messageId: string) => void;
+  normalizeInlineEvidenceSection: boolean;
 }
 
 const MessageRow = memo(
@@ -86,6 +92,7 @@ const MessageRow = memo(
     showEvidence,
     selectedAssistantId,
     onAssistantSelect,
+    normalizeInlineEvidenceSection,
   }: MessageRowProps) {
     const isEmptyStreamingAssistant =
       message.role === 'assistant' &&
@@ -98,6 +105,12 @@ const MessageRow = memo(
     }
 
     const isSelected = message.role === 'assistant' && selectedAssistantId === message.id;
+    const content =
+      normalizeInlineEvidenceSection &&
+      message.role === 'assistant' &&
+      (message.evidence?.length ?? 0) > 0
+        ? stripTrailingReferenceSection(message.content)
+        : message.content;
 
     return (
       <Box
@@ -130,7 +143,7 @@ const MessageRow = memo(
 
         <MessageItem
           role={message.role}
-          content={message.content}
+          content={content}
           think={message.think}
           isStreaming={message.isStreaming}
           thinkStartTime={message.thinkStartTime}
@@ -175,7 +188,8 @@ const MessageRow = memo(
     prev.showPipeline === next.showPipeline &&
     prev.showEvidence === next.showEvidence &&
     prev.selectedAssistantId === next.selectedAssistantId &&
-    prev.onAssistantSelect === next.onAssistantSelect
+    prev.onAssistantSelect === next.onAssistantSelect &&
+    prev.normalizeInlineEvidenceSection === next.normalizeInlineEvidenceSection
 );
 
 export function MessageList({
@@ -190,6 +204,8 @@ export function MessageList({
   showEvidence = true,
   selectedAssistantId,
   onAssistantSelect,
+  normalizeInlineEvidenceSection = false,
+  scrollButtonAlign = 'center',
 }: MessageListProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -207,7 +223,7 @@ export function MessageList({
   const lastMessage = messages[messages.length - 1];
   const lastMessageContentSize =
     (lastMessage?.content?.length ?? 0) + (lastMessage?.think?.length ?? 0);
-  const scrollButtonBottom = Math.max(24, bottomInset - 120);
+  const scrollButtonBottom = Math.max(20, bottomInset - 72);
 
   const updateIsAtBottom = useCallback(() => {
     const container = containerRef.current;
@@ -280,6 +296,7 @@ export function MessageList({
             showEvidence={showEvidence}
             selectedAssistantId={selectedAssistantId}
             onAssistantSelect={onAssistantSelect}
+            normalizeInlineEvidenceSection={normalizeInlineEvidenceSection}
           />
         ))}
 
@@ -297,42 +314,50 @@ export function MessageList({
           position: 'sticky',
           bottom: `${scrollButtonBottom}px`,
           mt: 2,
-          display: 'flex',
-          justifyContent: 'center',
           pointerEvents: 'none',
+          px: { xs: 2, sm: 3, md: 4 },
         }}
       >
-        <Fade in={!isAtBottom} timeout={180} mountOnEnter unmountOnExit>
-          <Box
-            sx={{
-              pointerEvents: 'auto',
-              transform: !isAtBottom ? 'translateY(0)' : 'translateY(8px)',
-              transition: 'transform 180ms cubic-bezier(0.2, 0, 0, 1)',
-            }}
-          >
-            <Tooltip title="回到底部" placement="top">
-              <Paper
-                elevation={0}
-                sx={{
-                  borderRadius: 999,
-                  border: 1,
-                  borderColor: 'divider',
-                  bgcolor: (theme) => alpha(theme.palette.background.paper, 0.88),
-                  backdropFilter: 'blur(14px)',
-                  WebkitBackdropFilter: 'blur(14px)',
-                  boxShadow: (theme) =>
-                    theme.palette.mode === 'light'
-                      ? '0 10px 30px rgba(0,0,0,0.10)'
-                      : '0 14px 40px rgba(0,0,0,0.40)',
-                }}
-              >
-                <IconButton onClick={scrollToBottom} aria-label="回到底部">
-                  <KeyboardArrowDownIcon />
-                </IconButton>
-              </Paper>
-            </Tooltip>
-          </Box>
-        </Fade>
+        <Box
+          sx={{
+            maxWidth: 900,
+            mx: 'auto',
+            display: 'flex',
+            justifyContent: scrollButtonAlign === 'right' ? 'flex-end' : 'center',
+          }}
+        >
+          <Fade in={!isAtBottom} timeout={180} mountOnEnter unmountOnExit>
+            <Box
+              sx={{
+                pointerEvents: 'auto',
+                transform: !isAtBottom ? 'translateY(0)' : 'translateY(8px)',
+                transition: 'transform 180ms cubic-bezier(0.2, 0, 0, 1)',
+              }}
+            >
+              <Tooltip title="回到底部" placement="top">
+                <Paper
+                  elevation={0}
+                  sx={{
+                    borderRadius: 999,
+                    border: 1,
+                    borderColor: 'divider',
+                    bgcolor: (theme) => alpha(theme.palette.background.paper, 0.88),
+                    backdropFilter: 'blur(14px)',
+                    WebkitBackdropFilter: 'blur(14px)',
+                    boxShadow: (theme) =>
+                      theme.palette.mode === 'light'
+                        ? '0 10px 30px rgba(0,0,0,0.10)'
+                        : '0 14px 40px rgba(0,0,0,0.40)',
+                  }}
+                >
+                  <IconButton onClick={scrollToBottom} aria-label="回到底部">
+                    <KeyboardArrowDownIcon />
+                  </IconButton>
+                </Paper>
+              </Tooltip>
+            </Box>
+          </Fade>
+        </Box>
       </Box>
     </Box>
   );

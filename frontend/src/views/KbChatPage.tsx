@@ -63,6 +63,10 @@ import { WelcomeScreen } from '../components/chat/WelcomeScreen';
 import { InputComposer } from '../components/chat/InputComposer';
 import { KbChatFlowPanel } from '../components/chat/KbChatFlowPanel';
 import { createChatStreamMetricsCollector } from '../services/chatStreamingMetrics';
+import {
+  resolveFinalizeNodeIds,
+  shouldRevealAnswerOnNodeEvent,
+} from '../services/kbChatAnswerReveal';
 import { getErrorMessage } from '../lib/errorHandler';
 import { parseSseJson } from '../lib/sse';
 import {
@@ -569,12 +573,13 @@ export function KbChatPage() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [graphSchema, setGraphSchema] = useState<KbGraphSchema | null>(null);
   const clarificationStep = useMemo(() => resolveClarificationStep(graphSchema), [graphSchema]);
+  const finalizeNodeIds = useMemo(() => resolveFinalizeNodeIds(graphSchema), [graphSchema]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [loadingSession, setLoadingSession] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const composerRef = useRef<HTMLDivElement | null>(null);
-  const [bottomInset, setBottomInset] = useState(220);
+  const [bottomInset, setBottomInset] = useState(180);
   const [mobileTraceOpen, setMobileTraceOpen] = useState(false);
 
   const { upsertSession } = useRecentHistory();
@@ -740,7 +745,7 @@ export function KbChatPage() {
     }
 
     const updateInset = () => {
-      const next = Math.max(180, Math.ceil(element.getBoundingClientRect().height) + 24);
+      const next = Math.max(140, Math.ceil(element.getBoundingClientRect().height) + 16);
       setBottomInset(next);
     };
 
@@ -959,10 +964,15 @@ export function KbChatPage() {
                 ts: event.ts,
               } as ChatRunStateEvent)
             : baseRunState;
+        const shouldRevealAnswer = shouldRevealAnswerOnNodeEvent(event, finalizeNodeIds);
+        const answerRevealReady = Boolean(msg.answerRevealReady || shouldRevealAnswer);
+        const content = answerRevealReady ? msg.stagedContent ?? msg.content : msg.content;
         return {
           ...msg,
           runId: runId ?? msg.runId,
           runState: nextRunState,
+          answerRevealReady,
+          content,
           pipelineSteps: nextSteps,
           nodeIoEvents: nextNodeEvents,
           nodeTimeline: appendTimelineEvent(msg.nodeTimeline, {
@@ -987,7 +997,7 @@ export function KbChatPage() {
         };
       });
     },
-    [graphSchema, updateMessage]
+    [finalizeNodeIds, graphSchema, updateMessage]
   );
 
   const markClarificationPending = useCallback(
@@ -1010,6 +1020,8 @@ export function KbChatPage() {
         return {
           ...msg,
           content: '',
+          stagedContent: '',
+          answerRevealReady: false,
           think: '',
           runId,
           pendingClarification: { message },
@@ -1085,6 +1097,8 @@ export function KbChatPage() {
         id: assistantId,
         role: 'assistant',
         content: '',
+        stagedContent: '',
+        answerRevealReady: false,
         think: '',
         toolSteps: [],
         pipelineSteps: [],
@@ -1131,6 +1145,8 @@ export function KbChatPage() {
           id: response.assistant_message.id,
           role: 'assistant',
           content: response.assistant_message.content,
+          stagedContent: response.assistant_message.content,
+          answerRevealReady: true,
           evidence: response.evidence,
           runId: response.run.id,
           pipelineSteps: nextSteps,
@@ -1146,13 +1162,17 @@ export function KbChatPage() {
     let sawErrorEvent = false;
     const streamMetrics = createChatStreamMetricsCollector();
     const deltaBatcher = createMessageStateBatcher((nextState) => {
-      updateMessage(assistantId, (msg) => ({
-        ...msg,
-        content: nextState.final_content,
-        think: nextState.thought_log,
-        toolSteps: nextState.tool_steps,
-        isStreaming: true,
-      }));
+      updateMessage(assistantId, (msg) => {
+        const content = msg.answerRevealReady ? nextState.final_content : msg.content;
+        return {
+          ...msg,
+          content,
+          stagedContent: nextState.final_content,
+          think: nextState.thought_log,
+          toolSteps: nextState.tool_steps,
+          isStreaming: true,
+        };
+      });
     });
 
     try {
@@ -1247,14 +1267,17 @@ export function KbChatPage() {
                 undefined,
                 msg.runState
               );
+              const finalContent = resolveAssistantContentByRunStatus({
+                status: nextStatus,
+                serverContent: data.assistant_message.content,
+                lastGoodAnswer: nextRunState.last_good_answer,
+              });
               return {
                 ...msg,
                 id: data.assistant_message.id,
-                content: resolveAssistantContentByRunStatus({
-                  status: nextStatus,
-                  serverContent: data.assistant_message.content,
-                  lastGoodAnswer: nextRunState.last_good_answer,
-                }),
+                content: finalContent,
+                stagedContent: finalContent,
+                answerRevealReady: true,
                 evidence: data.evidence,
                 runId: data.run.id,
                 pipelineSteps: nextSteps,
@@ -1296,7 +1319,8 @@ export function KbChatPage() {
           : msg.runState;
         return {
           ...msg,
-          content: msgState.final_content,
+          content: msg.answerRevealReady ? msgState.final_content : msg.content,
+          stagedContent: msgState.final_content,
           think: msgState.thought_log,
           toolSteps: msgState.tool_steps,
           pipelineSteps: nextSteps,
@@ -1372,6 +1396,8 @@ export function KbChatPage() {
         return {
           ...msg,
           content: '',
+          stagedContent: '',
+          answerRevealReady: false,
           think: '',
           pendingClarification: undefined,
           pipelineSteps: nextSteps,
@@ -1408,6 +1434,8 @@ export function KbChatPage() {
             ...msg,
             id: response.assistant_message.id,
             content: response.assistant_message.content,
+            stagedContent: response.assistant_message.content,
+            answerRevealReady: true,
             evidence: response.evidence,
             runId: response.run.id,
             pendingClarification: undefined,
@@ -1423,13 +1451,17 @@ export function KbChatPage() {
       let sawErrorEvent = false;
       const streamMetrics = createChatStreamMetricsCollector();
       const deltaBatcher = createMessageStateBatcher((nextState) => {
-        updateMessage(messageId, (msg) => ({
-          ...msg,
-          content: nextState.final_content,
-          think: nextState.thought_log,
-          toolSteps: nextState.tool_steps,
-          isStreaming: true,
-        }));
+        updateMessage(messageId, (msg) => {
+          const content = msg.answerRevealReady ? nextState.final_content : msg.content;
+          return {
+            ...msg,
+            content,
+            stagedContent: nextState.final_content,
+            think: nextState.thought_log,
+            toolSteps: nextState.tool_steps,
+            isStreaming: true,
+          };
+        });
       });
 
       try {
@@ -1524,14 +1556,17 @@ export function KbChatPage() {
                   undefined,
                   msg.runState
                 );
+                const finalContent = resolveAssistantContentByRunStatus({
+                  status: nextStatus,
+                  serverContent: data.assistant_message.content,
+                  lastGoodAnswer: nextRunState.last_good_answer,
+                });
                 return {
                   ...msg,
                   id: data.assistant_message.id,
-                  content: resolveAssistantContentByRunStatus({
-                    status: nextStatus,
-                    serverContent: data.assistant_message.content,
-                    lastGoodAnswer: nextRunState.last_good_answer,
-                  }),
+                  content: finalContent,
+                  stagedContent: finalContent,
+                  answerRevealReady: true,
                   evidence: data.evidence,
                   runId: data.run.id,
                   pendingClarification: undefined,
@@ -1573,7 +1608,8 @@ export function KbChatPage() {
             : msg.runState;
           return {
             ...msg,
-            content: msgState.final_content,
+            content: msg.answerRevealReady ? msgState.final_content : msg.content,
+            stagedContent: msgState.final_content,
             think: msgState.thought_log,
             toolSteps: msgState.tool_steps,
             pipelineSteps: nextSteps,
@@ -2004,6 +2040,8 @@ export function KbChatPage() {
                   bottomInset={bottomInset}
                   showPipeline={false}
                   showEvidence
+                  normalizeInlineEvidenceSection
+                  scrollButtonAlign='right'
                   selectedAssistantId={activeAssistantMessage?.id ?? null}
                   onAssistantSelect={setActiveAssistantId}
                 />
@@ -2015,7 +2053,7 @@ export function KbChatPage() {
               sx={{
                 position: 'sticky',
                 bottom: 0,
-                p: { xs: 1.5, md: 2 },
+                p: { xs: 1, md: 1.25 },
                 bgcolor: (theme) =>
                   theme.palette.mode === 'light'
                     ? alpha(theme.palette.background.paper, 0.88)
@@ -2035,6 +2073,7 @@ export function KbChatPage() {
                   disabled={loading || loadingSession || hasPendingClarification}
                   loading={loading || loadingSession}
                   placeholder={hasPendingClarification ? '请先补充上方澄清信息...' : '输入你的问题...'}
+                  showShortcutHint={false}
                 />
               </Box>
             </Box>

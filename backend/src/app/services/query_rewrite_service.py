@@ -74,6 +74,29 @@ def _normalize_whitespace(text: str) -> str:
     return re.sub(r"\\s+", " ", text).strip()
 
 
+def _normalize_single_line(text: str) -> str:
+    for line in text.splitlines():
+        normalized = _normalize_whitespace(line)
+        if normalized:
+            return normalized
+    return _normalize_whitespace(text)
+
+
+def _sanitize_query_text(text: str) -> str:
+    return _normalize_single_line(text).strip("`\"' ")
+
+
+def _sanitize_reverse_question(text: str) -> str:
+    value = _normalize_single_line(text).strip("`\"' ")
+    if not value:
+        return ""
+    if value.endswith("?"):
+        return f"{value[:-1]}？"
+    if value.endswith("？"):
+        return value
+    return f"{value.rstrip('。.!！')}？"
+
+
 def _dedupe_keep_order(items: Iterable[str]) -> list[str]:
     deduped: list[str] = []
     seen: set[str] = set()
@@ -228,7 +251,7 @@ class QueryRewriteService:
             )
 
         latency_ms = int((time.perf_counter() - start_time) * 1000)
-        rewritten = (rewritten or "").strip()
+        rewritten = _sanitize_query_text((rewritten or "").strip())
         if not rewritten:
             return RewriteResult(
                 query=query,
@@ -341,8 +364,13 @@ class QueryRewriteService:
             and isinstance(structured_result.payload, ReverseQuestionDecision)
             and structured_result.payload.question.strip()
         ):
+            text = _sanitize_reverse_question(structured_result.payload.question.strip())
+            if not text:
+                text = (
+                    "为了更准确地回答，你指的是哪个对象/范围？请补充具体指代或上下文。"
+                )
             return TextResult(
-                text=structured_result.payload.question.strip(),
+                text=text,
                 success=True,
                 reason=structured_result.reason,
                 latency_ms=structured_result.latency_ms,
@@ -356,7 +384,14 @@ class QueryRewriteService:
             question=query,
         )
         if llm_result.success and llm_result.text.strip():
-            return llm_result
+            text = _sanitize_reverse_question(llm_result.text)
+            if text:
+                return TextResult(
+                    text=text,
+                    success=True,
+                    reason=llm_result.reason,
+                    latency_ms=llm_result.latency_ms,
+                )
 
         text = "为了更准确地回答，你指的是哪个对象/范围？请补充具体指代或上下文。"
         latency_ms = int((time.perf_counter() - start) * 1000)
@@ -400,7 +435,7 @@ class QueryRewriteService:
             and isinstance(structured_result.payload, TransformQueryDecision)
             and structured_result.payload.query.strip()
         ):
-            text = structured_result.payload.query.strip()
+            text = _sanitize_query_text(structured_result.payload.query.strip())
             return RewriteResult(
                 query=text,
                 rewritten=text != query,
@@ -418,7 +453,7 @@ class QueryRewriteService:
         )
         if llm_result.success and llm_result.text.strip():
             latency_ms = int((time.perf_counter() - start) * 1000)
-            text = llm_result.text.strip()
+            text = _sanitize_query_text(llm_result.text.strip())
             return RewriteResult(
                 query=text,
                 rewritten=text != query,

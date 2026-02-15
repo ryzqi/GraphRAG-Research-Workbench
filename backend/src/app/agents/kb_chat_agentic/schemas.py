@@ -7,7 +7,14 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 
-DocGraderReason = Literal["passed", "not_relevant", "insufficient", "too_broad"]
+DocGraderReason = Literal[
+    "passed",
+    "no_evidence",
+    "not_relevant",
+    "insufficient",
+    "too_broad",
+    "needs_clarification",
+]
 
 
 class DocGraderDecision(BaseModel):
@@ -17,10 +24,12 @@ class DocGraderDecision(BaseModel):
 
     passed: bool
     reason: DocGraderReason
+    missing_constraints: list[str] = Field(default_factory=list)
 
 
 AnswerReviewReason = Literal[
     "passed",
+    "no_evidence",
     "insufficient_evidence",
     "unsupported_claims",
     "citation_mismatch",
@@ -40,6 +49,8 @@ class AnswerReviewDecision(BaseModel):
 
     passed: bool
     reason: AnswerReviewReason
+    missing_citations: list[str] = Field(default_factory=list)
+    unsupported_claims: list[str] = Field(default_factory=list)
 
 
 class ReverseQuestionDecision(BaseModel):

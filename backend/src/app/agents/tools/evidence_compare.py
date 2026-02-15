@@ -9,7 +9,7 @@ import json
 from typing import Literal
 
 from langchain.tools import BaseTool, tool as lc_tool
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from app.integrations.llm_client import ChatMessage, LLMClient
 from app.prompts import PromptLoader
@@ -36,6 +36,30 @@ class EvidenceCompareArgs(BaseModel):
     )
 
 
+class EvidenceConflict(BaseModel):
+    """单条冲突结构。"""
+
+    model_config = ConfigDict(extra="ignore")
+
+    topic: str
+    positions: list[str] = Field(default_factory=list)
+    severity: Literal["high", "medium", "low"] = "medium"
+
+
+class EvidenceCompareResult(BaseModel):
+    """证据对比结构化结果。"""
+
+    model_config = ConfigDict(extra="ignore")
+
+    has_conflicts: bool
+    confidence_level: Literal["sufficient", "partial", "insufficient"] = "partial"
+    conflicts: list[EvidenceConflict] = Field(default_factory=list)
+    consensus_points: list[str] = Field(default_factory=list)
+    evidence_gaps: list[str] = Field(default_factory=list)
+    recommendation: str
+    next_actions: list[str] = Field(default_factory=list)
+
+
 COMPARE_PROMPT = """你是一个证据分析专家。请分析以下证据，检测是否存在冲突或不一致。
 
 ## 原始问题
@@ -54,8 +78,28 @@ COMPARE_PROMPT = """你是一个证据分析专家。请分析以下证据，检
 - consensus_points: 共识点列表
 - evidence_gaps: 证据缺口列表
 - recommendation: 建议（如需补充检索）
+- next_actions: 下一步动作列表
 
 只输出 JSON，不要其他内容。"""
+
+
+def _extract_json_object(text: str) -> dict | None:
+    content = text.strip()
+    if content.startswith("```"):
+        lines = content.splitlines()
+        if len(lines) >= 3:
+            content = "\n".join(lines[1:-1]).strip()
+    decoder = json.JSONDecoder()
+    start = content.find("{")
+    while start >= 0:
+        try:
+            payload, _ = decoder.raw_decode(content[start:])
+            if isinstance(payload, dict):
+                return payload
+        except json.JSONDecodeError:
+            pass
+        start = content.find("{", start + 1)
+    return None
 
 
 def _format_evidence_list(items: list[EvidenceItem]) -> str:
@@ -67,23 +111,52 @@ def _format_evidence_list(items: list[EvidenceItem]) -> str:
     return "\n\n".join(parts)
 
 
-def _parse_llm_response(response: str) -> dict:
-    """解析 LLM 响应为结构化结果。"""
-    response = response.strip()
-    if response.startswith("```"):
-        response = response.split("\n", 1)[1].rsplit("```", 1)[0]
+def _fallback_result(message: str) -> EvidenceCompareResult:
+    return EvidenceCompareResult(
+        has_conflicts=False,
+        confidence_level="insufficient",
+        conflicts=[],
+        consensus_points=[],
+        evidence_gaps=[message],
+        recommendation="建议补充更多可交叉验证的证据来源。",
+        next_actions=["补充至少一个独立来源并再次对比"],
+    )
 
+
+def _normalize_result(result: EvidenceCompareResult) -> EvidenceCompareResult:
+    conflicts: list[EvidenceConflict] = []
+    for conflict in result.conflicts[:5]:
+        positions = [p.strip() for p in conflict.positions if p and p.strip()][:5]
+        conflicts.append(
+            EvidenceConflict(
+                topic=(conflict.topic or "").strip() or "未命名冲突",
+                positions=positions,
+                severity=conflict.severity,
+            )
+        )
+    return EvidenceCompareResult(
+        has_conflicts=bool(result.has_conflicts and conflicts),
+        confidence_level=result.confidence_level,
+        conflicts=conflicts,
+        consensus_points=[p.strip() for p in result.consensus_points if p and p.strip()][
+            :8
+        ],
+        evidence_gaps=[p.strip() for p in result.evidence_gaps if p and p.strip()][:8],
+        recommendation=(result.recommendation or "").strip() or "建议补充证据后再下结论。",
+        next_actions=[p.strip() for p in result.next_actions if p and p.strip()][:8],
+    )
+
+
+def _parse_llm_response(response: str) -> EvidenceCompareResult:
+    """解析 LLM 响应为结构化结果。"""
+    payload = _extract_json_object(response)
+    if not isinstance(payload, dict):
+        return _fallback_result("无法解析分析结果")
     try:
-        return json.loads(response)
-    except json.JSONDecodeError:
-        return {
-            "has_conflicts": False,
-            "confidence_level": "insufficient",
-            "conflicts": [],
-            "consensus_points": [],
-            "evidence_gaps": ["无法解析分析结果"],
-            "recommendation": "请重新提交证据进行分析",
-        }
+        parsed = EvidenceCompareResult.model_validate(payload)
+    except ValidationError:
+        return _fallback_result("分析结果结构不合法")
+    return _normalize_result(parsed)
 
 
 def build_evidence_compare_tool(
@@ -99,17 +172,16 @@ def build_evidence_compare_tool(
         items = [EvidenceItem(**e) for e in evidence_items]
 
         if len(items) < 2:
-            return json.dumps(
-                {
-                    "has_conflicts": False,
-                    "confidence_level": "partial" if items else "insufficient",
-                    "conflicts": [],
-                    "consensus_points": [],
-                    "evidence_gaps": ["证据数量不足，无法进行对比分析"],
-                    "recommendation": "建议补充更多证据来源",
-                },
-                ensure_ascii=False,
+            result = EvidenceCompareResult(
+                has_conflicts=False,
+                confidence_level="partial" if items else "insufficient",
+                conflicts=[],
+                consensus_points=[],
+                evidence_gaps=["证据数量不足，无法进行对比分析"],
+                recommendation="建议补充更多证据来源",
+                next_actions=["补充至少 2 个来源后重新对比"],
             )
+            return json.dumps(result.model_dump(mode="json"), ensure_ascii=False)
 
         evidence_list = _format_evidence_list(items)
 
@@ -127,10 +199,13 @@ def build_evidence_compare_tool(
                 comparison_mode=comparison_mode,
             )
 
-        response = (await llm.chat_with_metrics(messages=[ChatMessage(role="user", content=prompt)])).content
+        response = (
+            await llm.chat_with_metrics(
+                messages=[ChatMessage(role="user", content=prompt)]
+            )
+        ).content
         result = _parse_llm_response(response)
-
-        return json.dumps(result, ensure_ascii=False)
+        return json.dumps(result.model_dump(mode="json"), ensure_ascii=False)
 
     return lc_tool(
         "evidence_compare",

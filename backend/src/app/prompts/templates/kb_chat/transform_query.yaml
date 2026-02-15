@@ -1,4 +1,4 @@
-version: "1.2"
+version: "1.3"
 name: kb_chat_transform_query
 description: "查询改写/扩检提示词"
 
@@ -11,9 +11,11 @@ template: |
   1. 必须保留关键实体、时间范围、约束条件与问题口径。
   2. 可补充同义词、常见别名、中英文名称或缩写，但不得引入新事实。
   3. 当原因为 no_evidence/insufficient：适度扩词并放宽表述。
-  4. 当原因为 not_relevant/off_topic：强化限定词并去除噪声。
-  5. 若 hint 有效，应优先吸收；若 hint 为空或无效，可忽略。
-  6. 只输出一行查询文本（建议空格分隔关键词），禁止解释、代码块、编号。
+  4. 当原因为 not_relevant/too_broad/off_topic：强化限定词并去除噪声。
+  5. 当原因为 needs_clarification：优先补齐 hint 中给出的关键约束。
+  6. 若 hint 有效，应优先吸收；若 hint 为空或无效，可忽略。
+  7. 若 reason 不在已知类别，执行“保守改写”：仅做去噪与术语规范化。
+  8. 只输出一行查询文本（建议空格分隔关键词），禁止解释、代码块、编号。
 
   用户问题：{question}
   原因：{reason}

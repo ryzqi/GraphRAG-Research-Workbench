@@ -1,4 +1,4 @@
-version: "1.1"
+version: "1.2"
 name: tools_research_plan
 description: "研究计划工具提示词"
 
@@ -29,6 +29,8 @@ template: |
      - subtasks
      - estimated_steps
      - suggested_approach
+     - key_assumptions（字符串数组）
+     - success_criteria（字符串数组）
   3. subtasks 每项必须包含：
      - id（如 task_1）
      - description
@@ -36,9 +38,11 @@ template: |
      - target_sources（"kb" 或 "web"）
      - dependencies（任务 id 数组）
      - priority（1-5，1 为最高）
+  4. subtasks 数量不得超过 {max_subtasks}。
+  5. dependencies 只能引用已存在的任务 id，禁止循环依赖。
 
   输出示例（仅示例格式）：
-  {{"original_question": "...", "complexity": "moderate", "research_type": "analytical", "subtasks": [{{"id": "task_1", "description": "...", "search_queries": ["..."], "target_sources": "kb", "dependencies": [], "priority": 1}}], "estimated_steps": 3, "suggested_approach": "..."}}
+  {{"original_question": "...", "complexity": "moderate", "research_type": "analytical", "subtasks": [{{"id": "task_1", "description": "...", "search_queries": ["..."], "target_sources": "kb", "dependencies": [], "priority": 1}}], "estimated_steps": 3, "suggested_approach": "...", "key_assumptions": ["..."], "success_criteria": ["..."]}}
 
 variables:
   - name: question
@@ -65,4 +69,4 @@ few_shot_examples:
       - 知识库: 3 个知识库可用
       - 外部搜索: 未启用
       要求：最多 4 个子任务
-    output: '{"original_question": "为什么近两季度用户留存下降？", "complexity": "complex", "research_type": "analytical", "subtasks": [{"id": "task_1", "description": "拆分留存下降的用户分层特征", "search_queries": ["用户留存 分层 渠道 版本"], "target_sources": "kb", "dependencies": [], "priority": 1}], "estimated_steps": 4, "suggested_approach": "先分层定位，再验证关键假设"}'
+    output: '{"original_question": "为什么近两季度用户留存下降？", "complexity": "complex", "research_type": "analytical", "subtasks": [{"id": "task_1", "description": "拆分留存下降的用户分层特征", "search_queries": ["用户留存 分层 渠道 版本"], "target_sources": "kb", "dependencies": [], "priority": 1}], "estimated_steps": 4, "suggested_approach": "先分层定位，再验证关键假设", "key_assumptions": ["埋点口径在对比周期内一致"], "success_criteria": ["定位到可验证的主要下滑因子"]}'

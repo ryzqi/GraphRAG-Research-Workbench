@@ -1,4 +1,4 @@
-version: "1.2"
+version: "1.3"
 name: kb_chat_doc_grader
 description: "检索相关性评估器提示词"
 
@@ -8,17 +8,24 @@ template: |
   任务：判断这些检索片段是否与问题直接相关，且足以支撑后续回答关键点。
 
   判定标准：
-  - passed=true：至少一条片段可直接支撑问题核心诉求，并满足关键约束（实体/范围/时间/口径）。
+  - passed=true：至少一条或多条片段可覆盖问题核心诉求，并满足关键约束（实体/范围/时间/口径/指标）。
   - passed=false：无直接相关证据，或仅泛相关但不足以支撑作答。
 
   reason 允许值（必须从下列标签中选择一个）：
   - passed
+  - no_evidence（没有可用证据片段）
   - not_relevant（主题或实体明显不匹配）
   - insufficient（有一定相关性，但关键字段/约束缺失）
   - too_broad（内容过于宽泛，无法支撑具体问题）
+  - needs_clarification（问题本身约束缺失，需要先澄清）
+
+  missing_constraints 规则：
+  - 输出一个字符串数组，最多 3 项。
+  - 当 passed=true 时，必须输出空数组 []。
+  - 当 passed=false 时，写出最关键缺口（如“时间范围”“统计口径”“目标实体”）。
 
   输出要求：
-  - 只输出一个 JSON 对象：{{"passed": true/false, "reason": "..."}}
+  - 只输出一个 JSON 对象：{{"passed": true/false, "reason": "...", "missing_constraints": ["..."]}}
   - 禁止输出代码块、解释文本或额外字段
 
 variables: []
@@ -29,10 +36,10 @@ few_shot_examples:
       检索片段：
       [agent基础] Agent 是由模型、工具和记忆组成的系统。
       [agent进阶] 多代理协作可提升复杂任务处理能力。
-    output: '{"passed": false, "reason": "not_relevant"}'
+    output: '{"passed": false, "reason": "not_relevant", "missing_constraints": ["可用性指标", "时间范围"]}'
   - input: |
       问题：2024 年 Agent 平台的可用性指标是多少？
       检索片段：
       [平台SLA] 2024 年平台月均可用性为 99.95%，峰值为 99.99%。
       [平台运营] 2024 年故障恢复时间中位数为 4 分钟。
-    output: '{"passed": true, "reason": "passed"}'
+    output: '{"passed": true, "reason": "passed", "missing_constraints": []}'
