@@ -48,7 +48,7 @@ export function stripTrailingReferenceSection(content: string): string {
   const tailLines = lines.slice(referenceStart + 1);
   const hasTailContent = tailLines.some((line) => line.trim().length > 0);
 
-  if (isInline && hasTailContent) {
+  if (isInline && hasTailContent && !tailLines.every(isLikelyReferenceBodyLine)) {
     return content;
   }
 

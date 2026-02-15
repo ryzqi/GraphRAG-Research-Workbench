@@ -2042,6 +2042,7 @@ export function KbChatPage() {
                   showEvidence
                   normalizeInlineEvidenceSection
                   scrollButtonAlign='right'
+                  showScrollToBottom={false}
                   selectedAssistantId={activeAssistantMessage?.id ?? null}
                   onAssistantSelect={setActiveAssistantId}
                 />

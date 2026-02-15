@@ -66,6 +66,7 @@ interface MessageListProps {
   onAssistantSelect?: (messageId: string) => void;
   normalizeInlineEvidenceSection?: boolean;
   scrollButtonAlign?: 'center' | 'right';
+  showScrollToBottom?: boolean;
 }
 
 interface MessageRowProps {
@@ -206,6 +207,7 @@ export function MessageList({
   onAssistantSelect,
   normalizeInlineEvidenceSection = false,
   scrollButtonAlign = 'center',
+  showScrollToBottom = true,
 }: MessageListProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -309,56 +311,58 @@ export function MessageList({
         <div ref={bottomRef} />
       </Stack>
 
-      <Box
-        sx={{
-          position: 'sticky',
-          bottom: `${scrollButtonBottom}px`,
-          mt: 2,
-          pointerEvents: 'none',
-          px: { xs: 2, sm: 3, md: 4 },
-        }}
-      >
+      {showScrollToBottom && (
         <Box
           sx={{
-            maxWidth: 900,
-            mx: 'auto',
-            display: 'flex',
-            justifyContent: scrollButtonAlign === 'right' ? 'flex-end' : 'center',
+            position: 'sticky',
+            bottom: `${scrollButtonBottom}px`,
+            mt: 2,
+            pointerEvents: 'none',
+            px: { xs: 2, sm: 3, md: 4 },
           }}
         >
-          <Fade in={!isAtBottom} timeout={180} mountOnEnter unmountOnExit>
-            <Box
-              sx={{
-                pointerEvents: 'auto',
-                transform: !isAtBottom ? 'translateY(0)' : 'translateY(8px)',
-                transition: 'transform 180ms cubic-bezier(0.2, 0, 0, 1)',
-              }}
-            >
-              <Tooltip title="回到底部" placement="top">
-                <Paper
-                  elevation={0}
-                  sx={{
-                    borderRadius: 999,
-                    border: 1,
-                    borderColor: 'divider',
-                    bgcolor: (theme) => alpha(theme.palette.background.paper, 0.88),
-                    backdropFilter: 'blur(14px)',
-                    WebkitBackdropFilter: 'blur(14px)',
-                    boxShadow: (theme) =>
-                      theme.palette.mode === 'light'
-                        ? '0 10px 30px rgba(0,0,0,0.10)'
-                        : '0 14px 40px rgba(0,0,0,0.40)',
-                  }}
-                >
-                  <IconButton onClick={scrollToBottom} aria-label="回到底部">
-                    <KeyboardArrowDownIcon />
-                  </IconButton>
-                </Paper>
-              </Tooltip>
-            </Box>
-          </Fade>
+          <Box
+            sx={{
+              maxWidth: 900,
+              mx: 'auto',
+              display: 'flex',
+              justifyContent: scrollButtonAlign === 'right' ? 'flex-end' : 'center',
+            }}
+          >
+            <Fade in={!isAtBottom} timeout={180} mountOnEnter unmountOnExit>
+              <Box
+                sx={{
+                  pointerEvents: 'auto',
+                  transform: !isAtBottom ? 'translateY(0)' : 'translateY(8px)',
+                  transition: 'transform 180ms cubic-bezier(0.2, 0, 0, 1)',
+                }}
+              >
+                <Tooltip title="回到底部" placement="top">
+                  <Paper
+                    elevation={0}
+                    sx={{
+                      borderRadius: 999,
+                      border: 1,
+                      borderColor: 'divider',
+                      bgcolor: (theme) => alpha(theme.palette.background.paper, 0.88),
+                      backdropFilter: 'blur(14px)',
+                      WebkitBackdropFilter: 'blur(14px)',
+                      boxShadow: (theme) =>
+                        theme.palette.mode === 'light'
+                          ? '0 10px 30px rgba(0,0,0,0.10)'
+                          : '0 14px 40px rgba(0,0,0,0.40)',
+                    }}
+                  >
+                    <IconButton onClick={scrollToBottom} aria-label="回到底部">
+                      <KeyboardArrowDownIcon />
+                    </IconButton>
+                  </Paper>
+                </Tooltip>
+              </Box>
+            </Fade>
+          </Box>
         </Box>
-      </Box>
+      )}
     </Box>
   );
 }

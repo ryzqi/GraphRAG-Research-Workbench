@@ -1214,9 +1214,15 @@ class KbChatService:
         answer: str,
         *,
         citation_catalog: dict[str, dict[str, Any]] | None,
+        include_reference_section: bool = False,
     ) -> str:
         text = str(answer or "").strip()
-        if not text or not isinstance(citation_catalog, dict) or not citation_catalog:
+        if (
+            not include_reference_section
+            or not text
+            or not isinstance(citation_catalog, dict)
+            or not citation_catalog
+        ):
             return text
 
         used = [
@@ -2171,7 +2177,11 @@ class KbChatService:
             allowed_labels=allowed_labels,
             allow_no_evidence=allow_no_evidence,
         )
-        answer = self._append_citation_sources(answer, citation_catalog=citation_catalog)
+        answer = self._append_citation_sources(
+            answer,
+            citation_catalog=citation_catalog,
+            include_reference_section=False,
+        )
         no_evidence_answer = "根据现有资料无法回答该问题（未检索到相关证据）。"
         if (
             not allow_no_evidence

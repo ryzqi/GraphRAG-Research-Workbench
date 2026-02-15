@@ -21,8 +21,20 @@ describe('stripTrailingReferenceSection', () => {
     expect(stripTrailingReferenceSection(content)).toBe(['第一段', '第二段'].join('\n'));
   });
 
+  it('removes trailing sources when inline heading is followed by citation lines', () => {
+    const content = ['第一段', '', '参考来源：', '[S1] Agent基础', '[S2] image'].join('\n');
+
+    expect(stripTrailingReferenceSection(content)).toBe('第一段');
+  });
+
   it('keeps content unchanged when reference label appears in non-trailing position', () => {
     const content = ['参考来源： [S1] Agent基础', '', '这里是正文，说明仍在继续。'].join('\n');
+
+    expect(stripTrailingReferenceSection(content)).toBe(content);
+  });
+
+  it('keeps inline reference heading when following lines are not source entries', () => {
+    const content = ['第一段', '参考来源：', '这里是补充说明段落，不是来源列表。'].join('\n');
 
     expect(stripTrailingReferenceSection(content)).toBe(content);
   });

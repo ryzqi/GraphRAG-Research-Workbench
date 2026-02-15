@@ -2,10 +2,21 @@
  * 证据清单组件
  */
 
+import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
+import {
+  Accordion,
+  AccordionDetails,
+  AccordionSummary,
+  Chip,
+  Stack,
+  Typography,
+} from '@mui/material';
+import { alpha } from '@mui/material/styles';
 import type { EvidenceItem } from '../services/chats';
 
 interface EvidenceListProps {
   evidence: EvidenceItem[];
+  collapseByDefault?: boolean;
 }
 
 /**
@@ -66,76 +77,94 @@ function getEvidenceKey(item: EvidenceItem, index: number): string {
   return `${item.source_kind}-${excerptHash}-${index}`;
 }
 
-export function EvidenceList({ evidence }: EvidenceListProps) {
+export function EvidenceList({ evidence, collapseByDefault = true }: EvidenceListProps) {
   if (evidence.length === 0) {
     return (
-      <div style={{ color: '#6b7280', fontSize: 14, padding: '8px 0' }}>
+      <Typography variant='body2' color='text.secondary' sx={{ py: 1 }}>
         暂无相关证据
-      </div>
+      </Typography>
     );
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-      <div style={{ fontSize: 14, fontWeight: 500, color: '#374151' }}>
+    <Stack spacing={1}>
+      <Typography variant='body2' fontWeight={600} color='text.primary'>
         参考来源 ({evidence.length})
-      </div>
+      </Typography>
       {evidence.map((item, index) => {
         const materialTitle = getLocatorString(item.locator, 'material_title');
         const citationLabel = getCitationLabel(item, index);
 
         return (
-          <div
+          <Accordion
+            disableGutters
+            elevation={0}
             key={getEvidenceKey(item, index)}
-            style={{
-              padding: 12,
-              background: '#f9fafb',
-              borderRadius: 8,
-              border: '1px solid #e5e7eb',
+            defaultExpanded={!collapseByDefault}
+            sx={{
+              borderRadius: 2,
+              border: 1,
+              borderColor: 'divider',
+              bgcolor: (theme) =>
+                theme.palette.mode === 'light'
+                  ? alpha(theme.palette.background.paper, 0.86)
+                  : alpha(theme.palette.background.paper, 0.56),
+              '&::before': { display: 'none' },
             }}
           >
-            <div
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 8,
-                marginBottom: 8,
-                flexWrap: 'wrap',
+            <AccordionSummary
+              expandIcon={<ExpandMoreIcon fontSize='small' />}
+              sx={{
+                px: 1.5,
+                py: 0.5,
+                minHeight: 'unset',
+                '& .MuiAccordionSummary-content': {
+                  my: 0.25,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 1,
+                  flexWrap: 'wrap',
+                },
+                '& .MuiAccordionSummary-expandIconWrapper': {
+                  color: 'text.secondary',
+                },
               }}
             >
-              <span
-                style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
+              <Chip
+                size='small'
+                label={citationLabel}
+                sx={{
                   borderRadius: 999,
-                  padding: '2px 10px',
-                  background: '#eff6ff',
-                  border: '1px solid #bfdbfe',
-                  fontSize: 12,
-                  fontWeight: 500,
-                  color: '#1e40af',
+                  bgcolor: (theme) =>
+                    theme.palette.mode === 'light'
+                      ? alpha(theme.palette.primary.main, 0.12)
+                      : alpha(theme.palette.primary.main, 0.28),
+                  color: 'primary.main',
+                  border: 1,
+                  borderColor: (theme) => alpha(theme.palette.primary.main, 0.28),
+                  fontWeight: 600,
                 }}
-              >
-                {citationLabel}
-              </span>
-              <span style={{ fontSize: 12, color: '#6b7280' }}>
+              />
+              <Typography variant='caption' color='text.secondary'>
                 {item.source_kind === 'kb' ? '知识库' : '外部来源'}
                 {materialTitle ? ` · ${materialTitle}` : null}
-              </span>
-            </div>
-            <div
-              style={{
-                fontSize: 14,
-                color: '#374151',
-                lineHeight: 1.6,
-                whiteSpace: 'pre-wrap',
-              }}
-            >
-              {item.excerpt}
-            </div>
-          </div>
+              </Typography>
+            </AccordionSummary>
+            <AccordionDetails sx={{ px: 1.5, pt: 0, pb: 1.25 }}>
+              <Typography
+                variant='body2'
+                sx={{
+                  color: 'text.primary',
+                  lineHeight: 1.65,
+                  whiteSpace: 'pre-wrap',
+                }}
+              >
+                {item.excerpt}
+              </Typography>
+            </AccordionDetails>
+          </Accordion>
         );
       })}
-    </div>
+    </Stack>
   );
 }
