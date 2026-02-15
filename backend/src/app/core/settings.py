@@ -180,6 +180,9 @@ class Settings(BaseSettings):
     mcp_streamable_http: bool = Field(False, alias="MCP_STREAMABLE_HTTP")
     mcp_http_timeout_seconds: int = Field(30, alias="MCP_HTTP_TIMEOUT_SECONDS")
     mcp_stdio_timeout_seconds: int = Field(10, alias="MCP_STDIO_TIMEOUT_SECONDS")
+    mcp_stdio_templates: dict[str, dict[str, object]] = Field(
+        default_factory=dict, alias="MCP_STDIO_TEMPLATES"
+    )
 
     deepagents_enabled: bool = Field(True, alias="DEEPAGENTS_ENABLED")
     memory_enabled: bool = Field(False, alias="MEMORY_ENABLED")
@@ -430,6 +433,59 @@ class Settings(BaseSettings):
             parts = [p.strip() for p in v.split(",")]
             return [p for p in parts if p]
         return [str(v).strip()]
+
+    @field_validator("mcp_stdio_templates", mode="before")
+    @classmethod
+    def _parse_mcp_stdio_templates(cls, v: object) -> dict[str, dict[str, object]]:
+        if v is None:
+            return {}
+        raw: object = v
+        if isinstance(v, str):
+            text = v.strip()
+            if not text:
+                return {}
+            try:
+                raw = json.loads(text)
+            except json.JSONDecodeError as exc:
+                raise ValueError("MCP_STDIO_TEMPLATES must be valid JSON") from exc
+        if not isinstance(raw, dict):
+            raise ValueError("MCP_STDIO_TEMPLATES must be a JSON object")
+
+        templates: dict[str, dict[str, object]] = {}
+        for template_id, config in raw.items():
+            key = str(template_id).strip()
+            if not key:
+                continue
+            if not isinstance(config, dict):
+                raise ValueError(f"stdio template '{key}' must be an object")
+            command = str(config.get("command", "")).strip()
+            if not command:
+                raise ValueError(f"stdio template '{key}' requires command")
+            args_raw = config.get("args", [])
+            if args_raw is None:
+                args_raw = []
+            if not isinstance(args_raw, list):
+                raise ValueError(f"stdio template '{key}'.args must be an array")
+            env_raw = config.get("env", {})
+            if env_raw is None:
+                env_raw = {}
+            if not isinstance(env_raw, dict):
+                raise ValueError(f"stdio template '{key}'.env must be an object")
+            label = str(config.get("label", key)).strip() or key
+            description_raw = config.get("description")
+            description = (
+                str(description_raw).strip()
+                if isinstance(description_raw, str) and description_raw.strip()
+                else None
+            )
+            templates[key] = {
+                "command": command,
+                "args": [str(item) for item in args_raw],
+                "env": {str(k): str(v) for k, v in env_raw.items()},
+                "label": label,
+                "description": description,
+            }
+        return templates
 
     @field_validator("kb_chat_grader_fail_policy", mode="before")
     @classmethod

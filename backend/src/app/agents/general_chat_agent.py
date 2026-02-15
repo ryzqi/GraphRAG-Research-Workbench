@@ -19,9 +19,11 @@ HITL_REJECT_MESSAGE = "用户拒绝执行外部工具调用。"
 def build_interrupt_on(tool_meta_by_name: dict[str, Any]) -> dict[str, object]:
     interrupt_on: dict[str, object] = {}
     for name, meta in tool_meta_by_name.items():
-        is_external = bool(getattr(meta, "is_external", False))
+        requires_confirmation = bool(getattr(meta, "confirmation_required", False))
         interrupt_on[name] = (
-            {"allowed_decisions": ["approve", "reject"]} if is_external else False
+            {"allowed_decisions": ["approve", "reject"]}
+            if requires_confirmation
+            else False
         )
     return interrupt_on
 

@@ -37,6 +37,7 @@ export {
 export {
   useExtensions,
   useExtensionTools,
+  useStdioTemplates,
   useCreateExtension,
   useUpdateExtension,
   useDeleteExtension,

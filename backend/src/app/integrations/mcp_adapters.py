@@ -6,7 +6,6 @@ import asyncio
 import json
 import os
 import re
-import shlex
 import time
 from dataclasses import dataclass
 from typing import Awaitable, Callable, Iterable
@@ -24,20 +23,22 @@ from app.models.tool_extension import ExtensionTransport, ToolExtension
 logger = get_logger(__name__)
 
 # MCP 命令白名单（仅允许执行这些命令）
-_ALLOWED_MCP_COMMANDS = frozenset({
-    "npx",
-    "node",
-    "python",
-    "python3",
-    "uvx",
-})
+_ALLOWED_MCP_COMMANDS = frozenset(
+    {
+        "npx",
+        "node",
+        "python",
+        "python3",
+        "uvx",
+    }
+)
 
 # 危险字符检测模式
-_DANGEROUS_CHARS = re.compile(r"[;&|`$]")
-
-_SCOPE_TOOL_ALLOWLIST_KEYS = ("tools_allowlist", "tool_allowlist", "allow_tools")
+_DANGEROUS_CHARS = re.compile(r"[;&|`$<>]")
 _MAX_TOOL_ARGS_BYTES = 32 * 1024
 _MAX_AUDIT_SNIPPET_CHARS = 2000
+_MAX_STDIO_ARG_CHARS = 512
+_MAX_STDIO_ARGS = 64
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,7 +50,18 @@ class McpToolEntry:
     raw_tool_name: str
 
 
-def _format_audit_payload(payload: object, max_chars: int = _MAX_AUDIT_SNIPPET_CHARS) -> str:
+@dataclass(frozen=True, slots=True)
+class McpServerDiagnostics:
+    """MCP 连接诊断信息。"""
+
+    status: str
+    last_error: str | None = None
+    latency_ms: int | None = None
+
+
+def _format_audit_payload(
+    payload: object, max_chars: int = _MAX_AUDIT_SNIPPET_CHARS
+) -> str:
     try:
         text = json.dumps(payload, ensure_ascii=False, default=str)
     except TypeError:
@@ -59,14 +71,7 @@ def _format_audit_payload(payload: object, max_chars: int = _MAX_AUDIT_SNIPPET_C
     return f"{text[:max_chars].rstrip()}…"
 
 
-def _parse_tool_allowlist(scope: dict | None) -> set[str] | None:
-    if not scope:
-        return None
-    value: object | None = None
-    for key in _SCOPE_TOOL_ALLOWLIST_KEYS:
-        if key in scope:
-            value = scope.get(key)
-            break
+def _normalize_allowlist(value: object) -> set[str] | None:
     if value is None:
         return None
     if isinstance(value, str):
@@ -78,12 +83,130 @@ def _parse_tool_allowlist(scope: dict | None) -> set[str] | None:
     return None
 
 
-class McpToolCallAuditInterceptor(ToolCallInterceptor):
-    """MCP 工具调用拦截器：安全校验 + 审计 + 超时/降级。
+def _resolve_allowlist(extension: ToolExtension) -> set[str] | None:
+    security = extension.security_config if isinstance(extension.security_config, dict) else {}
+    return _normalize_allowlist(security.get("allowlist_tools"))
 
-    注意：该拦截器只能拿到 tool_name/args/server_name，因此降级以“返回可读文本结果”的方式完成，
-    不依赖 ToolMessage（缺少 tool_call_id）。
-    """
+
+def _validate_stdio_token(value: str, *, field: str) -> str:
+    candidate = value.strip()
+    if not candidate:
+        raise ValueError(f"无效的 stdio {field}")
+    if "\n" in candidate or "\r" in candidate:
+        raise ValueError(f"stdio {field} 包含换行符")
+    if _DANGEROUS_CHARS.search(candidate):
+        raise ValueError(f"stdio {field} 包含危险字符")
+    if len(candidate) > _MAX_STDIO_ARG_CHARS:
+        raise ValueError(f"stdio {field} 过长")
+    return candidate
+
+
+def _to_str_dict(value: object | None) -> dict[str, str]:
+    if not isinstance(value, dict):
+        return {}
+    result: dict[str, str] = {}
+    for key, item in value.items():
+        k = str(key).strip()
+        if not k:
+            continue
+        if item is None:
+            continue
+        result[k] = str(item)
+    return result
+
+
+def _resolve_timeout_seconds(extension: ToolExtension, settings: Settings) -> int:
+    default_timeout = (
+        int(settings.mcp_http_timeout_seconds)
+        if extension.transport == ExtensionTransport.HTTP
+        else int(settings.mcp_stdio_timeout_seconds)
+    )
+    if extension.transport == ExtensionTransport.HTTP:
+        config = extension.http_config if isinstance(extension.http_config, dict) else {}
+    else:
+        config = extension.stdio_config if isinstance(extension.stdio_config, dict) else {}
+    value = config.get("timeout_seconds")
+    if value is None:
+        return default_timeout
+    try:
+        timeout = int(value)
+    except (TypeError, ValueError):
+        return default_timeout
+    return timeout if timeout > 0 else default_timeout
+
+
+def _resolve_stdio_template(
+    extension: ToolExtension,
+    settings: Settings,
+) -> tuple[str, list[str], dict[str, str]]:
+    config = extension.stdio_config if isinstance(extension.stdio_config, dict) else None
+    if not isinstance(config, dict):
+        raise ValueError("stdio_config 缺失")
+    template_id = str(config.get("template_id", "")).strip()
+    if not template_id:
+        raise ValueError("stdio_config.template_id 不能为空")
+
+    template = settings.mcp_stdio_templates.get(template_id)
+    if not isinstance(template, dict):
+        raise ValueError(f"未知 stdio 模板: {template_id}")
+
+    command = str(template.get("command", "")).strip()
+    if not command:
+        raise ValueError(f"stdio 模板 {template_id} 缺少 command")
+    cmd_name = os.path.splitext(os.path.basename(command))[0].lower()
+    if cmd_name not in _ALLOWED_MCP_COMMANDS:
+        raise ValueError(f"不允许的 MCP 命令: {command}")
+
+    template_args = template.get("args", [])
+    if template_args is None:
+        template_args = []
+    if not isinstance(template_args, list):
+        raise ValueError(f"stdio 模板 {template_id}.args 必须为数组")
+    ext_args = config.get("args", [])
+    if ext_args is None:
+        ext_args = []
+    if not isinstance(ext_args, list):
+        raise ValueError("stdio_config.args 必须为数组")
+    merged_args = [*template_args, *ext_args]
+    if len(merged_args) > _MAX_STDIO_ARGS:
+        raise ValueError("stdio 参数数量过多")
+
+    args: list[str] = []
+    for index, item in enumerate(merged_args, start=1):
+        args.append(_validate_stdio_token(str(item), field=f"args[{index}]"))
+
+    env = _to_str_dict(template.get("env"))
+    env.update(_to_str_dict(config.get("env")))
+    return command, args, env
+
+
+def _resolve_http_headers(extension: ToolExtension) -> tuple[str, dict[str, str]]:
+    config = extension.http_config if isinstance(extension.http_config, dict) else None
+    if not isinstance(config, dict):
+        raise ValueError("http_config 缺失")
+    url = str(config.get("url", "")).strip()
+    if not url:
+        raise ValueError("http_config.url 不能为空")
+    if not url.lower().startswith(("http://", "https://")):
+        raise ValueError("http_config.url 必须以 http:// 或 https:// 开头")
+
+    protocol = str(config.get("protocol", "streamable_http")).strip().lower()
+    if protocol not in {"streamable_http", "streamable-http"}:
+        raise ValueError("仅支持 streamable_http 协议")
+
+    headers = _to_str_dict(config.get("headers"))
+    auth = config.get("auth")
+    if isinstance(auth, dict):
+        auth_type = str(auth.get("type", "none")).strip().lower()
+        token = auth.get("token")
+        if auth_type in {"bearer", "basic"} and token:
+            prefix = "Bearer" if auth_type == "bearer" else "Basic"
+            headers.setdefault("Authorization", f"{prefix} {str(token)}")
+    return url, headers
+
+
+class McpToolCallAuditInterceptor(ToolCallInterceptor):
+    """MCP 工具调用拦截器：安全校验 + 审计 + 超时/降级。"""
 
     def __init__(
         self,
@@ -96,15 +219,12 @@ class McpToolCallAuditInterceptor(ToolCallInterceptor):
         self._allow_external = allow_external
         self._extensions_by_id = extensions_by_id
         self._allowlist_by_server: dict[str, set[str] | None] = {
-            ext_id: _parse_tool_allowlist(ext.scope)
+            ext_id: _resolve_allowlist(ext) for ext_id, ext in extensions_by_id.items()
+        }
+        self._timeout_by_server: dict[str, int] = {
+            ext_id: _resolve_timeout_seconds(ext, settings)
             for ext_id, ext in extensions_by_id.items()
         }
-        self._timeout_by_server: dict[str, int] = {}
-        for ext_id, ext in extensions_by_id.items():
-            if ext.transport == ExtensionTransport.STDIO:
-                self._timeout_by_server[ext_id] = int(settings.mcp_stdio_timeout_seconds)
-            else:
-                self._timeout_by_server[ext_id] = int(settings.mcp_http_timeout_seconds)
 
     async def __call__(
         self,
@@ -205,6 +325,7 @@ class McpToolCallAuditInterceptor(ToolCallInterceptor):
             extra={
                 "extension_id": request.server_name,
                 "extension_name": getattr(ext, "name", None),
+                "transport": getattr(ext.transport, "value", None) if ext else None,
                 "tool_name": request.name,
                 "args": _format_audit_payload(redact_dict(request.args)),
                 "timeout_seconds": timeout_seconds,
@@ -280,93 +401,30 @@ class McpToolCallAuditInterceptor(ToolCallInterceptor):
         return result
 
 
-def _parse_stdio_endpoint(endpoint: str) -> tuple[str, list[str]]:
-    endpoint = endpoint.strip()
-    if not endpoint:
-        raise ValueError("无效的 stdio 端点")
-    if _DANGEROUS_CHARS.search(endpoint):
-        raise ValueError("端点包含危险字符")
-
-    try:
-        parts = shlex.split(endpoint)
-    except ValueError as exc:  # pragma: no cover
-        raise ValueError(f"无效的 stdio 端点: {exc}") from exc
-
-    if not parts:
-        raise ValueError("无效的 stdio 端点")
-
-    raw = os.path.basename(parts[0])
-    cmd, _ = os.path.splitext(raw)
-    if cmd.lower() not in _ALLOWED_MCP_COMMANDS:
-        raise ValueError(f"不允许的 MCP 命令: {raw}")
-
-    return parts[0], parts[1:]
-
-
-def _parse_scope(scope: dict | None) -> tuple[dict[str, str], dict[str, str], bool]:
-    headers: dict[str, str] = {}
-    env: dict[str, str] = {}
-    prefer_streamable = False
-    if not scope:
-        return headers, env, prefer_streamable
-
-    raw_headers = scope.get("headers")
-    if isinstance(raw_headers, dict):
-        for key, value in raw_headers.items():
-            if key and value is not None:
-                headers[str(key)] = str(value)
-
-    raw_env = scope.get("env")
-    if isinstance(raw_env, dict):
-        for key, value in raw_env.items():
-            if key and value is not None:
-                env[str(key)] = str(value)
-
-    auth = scope.get("auth")
-    if isinstance(auth, dict):
-        auth_type = str(auth.get("type", "")).lower()
-        token = auth.get("token")
-        if token:
-            token_value = str(token)
-            if auth_type == "bearer":
-                headers.setdefault("Authorization", f"Bearer {token_value}")
-            elif auth_type == "basic":
-                headers.setdefault("Authorization", f"Basic {token_value}")
-
-    protocol = scope.get("protocol")
-    if isinstance(protocol, str):
-        protocol_lower = protocol.lower()
-        if protocol_lower in {"streamable_http", "streamable-http"}:
-            prefer_streamable = True
-        elif protocol_lower == "jsonrpc":
-            logger.warning(
-                "MCP scope.protocol=jsonrpc 已不再支持，已回退为 http/streamable_http"
-            )
-
-    return headers, env, prefer_streamable
-
-
 def build_mcp_server_params(
     extension: ToolExtension, settings: Settings
 ) -> dict[str, object]:
     """将 ToolExtension 转换为 MultiServerMCPClient 连接参数。"""
-    headers, env, prefer_streamable = _parse_scope(extension.scope)
     transport = extension.transport
 
     if transport == ExtensionTransport.HTTP:
-        use_streamable = bool(settings.mcp_streamable_http or prefer_streamable)
+        url, headers = _resolve_http_headers(extension)
         params: dict[str, object] = {
-            "transport": "streamable_http" if use_streamable else "http",
-            "url": extension.endpoint,
+            "transport": "streamable_http",
+            "url": url,
+            "timeout": _resolve_timeout_seconds(extension, settings),
         }
         if headers:
             params["headers"] = headers
-        params["timeout"] = settings.mcp_http_timeout_seconds
         return params
 
     if transport == ExtensionTransport.STDIO:
-        command, args = _parse_stdio_endpoint(extension.endpoint)
-        params = {"transport": "stdio", "command": command, "args": args}
+        command, args, env = _resolve_stdio_template(extension, settings)
+        params: dict[str, object] = {
+            "transport": "stdio",
+            "command": command,
+            "args": args,
+        }
         if env:
             params["env"] = env
         return params
@@ -390,20 +448,26 @@ def build_mcp_connections(
     return connections
 
 
-async def load_mcp_tools(
+async def load_mcp_tools_with_diagnostics(
     *,
     settings: Settings,
     extensions: Iterable[ToolExtension],
     allow_external: bool = True,
-) -> list[McpToolEntry]:
-    """加载 MCP 工具列表（按扩展分组）。"""
+) -> tuple[list[McpToolEntry], dict[str, McpServerDiagnostics]]:
+    """加载 MCP 工具列表并返回每个扩展的连接诊断。"""
     extensions_list = list(extensions)
     if not settings.mcp_enabled or not extensions_list:
-        return []
+        return [], {}
 
     connections = build_mcp_connections(extensions_list, settings)
     if not connections:
-        return []
+        diagnostics = {
+            str(ext.id): McpServerDiagnostics(
+                status="failed", last_error="扩展配置无效", latency_ms=None
+            )
+            for ext in extensions_list
+        }
+        return [], diagnostics
 
     extensions_by_id = {str(ext.id): ext for ext in extensions_list}
     client = MultiServerMCPClient(
@@ -418,22 +482,67 @@ async def load_mcp_tools(
         ],
     )
     entries: list[McpToolEntry] = []
+    diagnostics: dict[str, McpServerDiagnostics] = {}
     for ext in extensions_list:
         server_name = str(ext.id)
         if server_name not in connections:
+            diagnostics[server_name] = McpServerDiagnostics(
+                status="failed",
+                last_error="扩展配置无效",
+                latency_ms=None,
+            )
             continue
+        start = time.perf_counter()
         try:
             tools = await client.get_tools(server_name=server_name)
         except Exception as exc:  # pragma: no cover - 依赖外部 MCP
+            latency_ms = int((time.perf_counter() - start) * 1000)
+            diagnostics[server_name] = McpServerDiagnostics(
+                status="failed",
+                last_error=str(exc),
+                latency_ms=latency_ms,
+            )
             logger.warning(
                 "加载 MCP 工具失败",
-                extra={"extension_id": server_name, "error": str(exc)},
+                extra={
+                    "extension_id": server_name,
+                    "error": str(exc),
+                    "latency_ms": latency_ms,
+                },
             )
             continue
+        latency_ms = int((time.perf_counter() - start) * 1000)
+        if not tools:
+            diagnostics[server_name] = McpServerDiagnostics(
+                status="degraded",
+                last_error="未发现可用工具",
+                latency_ms=latency_ms,
+            )
+            continue
+        diagnostics[server_name] = McpServerDiagnostics(
+            status="ok",
+            last_error=None,
+            latency_ms=latency_ms,
+        )
         for tool in tools:
             entries.append(
                 McpToolEntry(extension=ext, tool=tool, raw_tool_name=tool.name)
             )
+    return entries, diagnostics
+
+
+async def load_mcp_tools(
+    *,
+    settings: Settings,
+    extensions: Iterable[ToolExtension],
+    allow_external: bool = True,
+) -> list[McpToolEntry]:
+    """加载 MCP 工具列表（按扩展分组）。"""
+    entries, _ = await load_mcp_tools_with_diagnostics(
+        settings=settings,
+        extensions=extensions,
+        allow_external=allow_external,
+    )
     return entries
 
 
