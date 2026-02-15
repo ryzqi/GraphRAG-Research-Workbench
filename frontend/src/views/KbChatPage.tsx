@@ -2095,7 +2095,6 @@ export function KbChatPage() {
                 runState={activeAssistantMessage?.runState}
                 pipelineSteps={activeAssistantMessage?.pipelineSteps}
                 nodeIoEvents={activeAssistantMessage?.nodeIoEvents}
-                isStreaming={Boolean(activeAssistantMessage?.isStreaming)}
               />
             </Box>
           )}
@@ -2126,7 +2125,6 @@ export function KbChatPage() {
           runState={activeAssistantMessage?.runState}
           pipelineSteps={activeAssistantMessage?.pipelineSteps}
           nodeIoEvents={activeAssistantMessage?.nodeIoEvents}
-          isStreaming={Boolean(activeAssistantMessage?.isStreaming)}
         />
       </Drawer>
 

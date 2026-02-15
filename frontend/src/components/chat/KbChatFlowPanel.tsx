@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from 'react';
+import { useMemo, useState, type ElementType } from 'react';
 import {
   Button,
   Box,
@@ -13,10 +13,25 @@ import {
 } from '@mui/material';
 import { alpha } from '@mui/material/styles';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
-import QueryStatsIcon from '@mui/icons-material/QueryStats';
-import TravelExploreIcon from '@mui/icons-material/TravelExplore';
+import MergeTypeIcon from '@mui/icons-material/MergeType';
+import AccountTreeIcon from '@mui/icons-material/AccountTree';
+import HelpOutlineIcon from '@mui/icons-material/HelpOutline';
 import TuneIcon from '@mui/icons-material/Tune';
+import CallSplitIcon from '@mui/icons-material/CallSplit';
+import ChecklistIcon from '@mui/icons-material/Checklist';
+import AltRouteIcon from '@mui/icons-material/AltRoute';
+import HubIcon from '@mui/icons-material/Hub';
+import FactCheckIcon from '@mui/icons-material/FactCheck';
+import AutoFixHighIcon from '@mui/icons-material/AutoFixHigh';
+import TextSnippetIcon from '@mui/icons-material/TextSnippet';
+import SearchIcon from '@mui/icons-material/Search';
+import GavelIcon from '@mui/icons-material/Gavel';
+import SyncAltIcon from '@mui/icons-material/SyncAlt';
 import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
+import RateReviewIcon from '@mui/icons-material/RateReview';
+import TaskAltIcon from '@mui/icons-material/TaskAlt';
+import BlockIcon from '@mui/icons-material/Block';
+import LensIcon from '@mui/icons-material/Lens';
 
 import type {
   ChatNodeDisplayItem,
@@ -36,23 +51,6 @@ interface KbChatFlowPanelProps {
   runState?: ChatRunStateEvent;
   pipelineSteps?: PipelineStep[];
   nodeIoEvents?: ChatNodeIoEvent[];
-  isStreaming: boolean;
-}
-
-function phaseIcon(phase: string | null): ReactNode {
-  switch (phase) {
-    case 'retrieve':
-      return <TravelExploreIcon fontSize='small' />;
-    case 'judge':
-      return <TuneIcon fontSize='small' />;
-    case 'generate':
-    case 'verify':
-    case 'finalize':
-      return <AutoAwesomeIcon fontSize='small' />;
-    case 'preprocess':
-    default:
-      return <QueryStatsIcon fontSize='small' />;
-  }
 }
 
 function statusLabel(status: TraceStageStatus): string {
@@ -104,39 +102,6 @@ function statusBorderColor(status: TraceStageStatus): string {
   }
 }
 
-function runStatusLabel(status: ChatRunStateEvent['run_status'] | undefined): string {
-  switch (status) {
-    case 'running':
-      return '处理中';
-    case 'succeeded':
-      return '已完成';
-    case 'failed':
-      return '失败';
-    case 'canceled':
-      return '已取消';
-    case 'waiting_user':
-      return '待补充';
-    default:
-      return '空闲';
-  }
-}
-
-function runStatusToTraceStatus(status: ChatRunStateEvent['run_status'] | undefined): TraceStageStatus {
-  if (status === 'succeeded') {
-    return 'completed';
-  }
-  if (status === 'failed') {
-    return 'failed';
-  }
-  if (status === 'waiting_user') {
-    return 'waiting_user';
-  }
-  if (status === 'running') {
-    return 'running';
-  }
-  return 'idle';
-}
-
 function formatMetricsCount(stage: TraceStageViewModel): string {
   if (stage.total <= 0) {
     return '0/0';
@@ -148,6 +113,237 @@ interface NodeDetailItem {
   key: string;
   label: string;
   value: string | string[];
+}
+
+interface NodeBadgeTheme {
+  icon: ElementType;
+  label: string;
+  color: string;
+}
+
+type DetailSectionKind = 'input' | 'output';
+
+interface NodeDetailPolicy {
+  input: string[];
+  output: string[];
+}
+
+const DETAIL_ITEM_LIMIT: Record<DetailSectionKind, number> = {
+  input: 2,
+  output: 2,
+};
+
+const NODE_BADGE_THEME_MAP: Record<string, NodeBadgeTheme> = {
+  merge_context: { icon: MergeTypeIcon, label: '上下文合并', color: '#0EA5E9' },
+  coref_rewrite: { icon: AccountTreeIcon, label: '指代消解', color: '#2563EB' },
+  ambiguity_check: { icon: HelpOutlineIcon, label: '歧义判断', color: '#7C3AED' },
+  normalize_rewrite: { icon: TuneIcon, label: '问题规范', color: '#4F46E5' },
+  decomposition: { icon: CallSplitIcon, label: '问题分解', color: '#0284C7' },
+  multi_query_check: { icon: ChecklistIcon, label: '多路判断', color: '#0284C7' },
+  generate_variants: { icon: AltRouteIcon, label: '多路扩展', color: '#0D9488' },
+  entity_expand: { icon: HubIcon, label: '实体扩展', color: '#059669' },
+  hyde_check: { icon: FactCheckIcon, label: 'HyDE判断', color: '#16A34A' },
+  hyde: { icon: AutoFixHighIcon, label: 'HyDE扩展', color: '#16A34A' },
+  prepare_messages: { icon: TextSnippetIcon, label: '消息整理', color: '#65A30D' },
+  retrieve: { icon: SearchIcon, label: '知识检索', color: '#CA8A04' },
+  doc_grader: { icon: GavelIcon, label: '文档判定', color: '#EA580C' },
+  transform_query: { icon: SyncAltIcon, label: '查询改写', color: '#DC2626' },
+  generate: { icon: AutoAwesomeIcon, label: '答案生成', color: '#C026D3' },
+  answer_review: { icon: RateReviewIcon, label: '答案审查', color: '#9333EA' },
+  finalize: { icon: TaskAltIcon, label: '答案整理', color: '#0891B2' },
+  force_exit: { icon: BlockIcon, label: '提前终止', color: '#475569' },
+};
+
+const NODE_DETAIL_POLICY_MAP: Record<string, NodeDetailPolicy> = {
+  merge_context: {
+    input: ['user_input'],
+    output: ['merged_context', 'memory_included'],
+  },
+  coref_rewrite: {
+    input: ['query'],
+    output: ['coref_query', 'rewritten'],
+  },
+  ambiguity_check: {
+    input: ['query'],
+    output: ['ambiguous', 'action', 'final_answer'],
+  },
+  normalize_rewrite: {
+    input: ['query'],
+    output: ['normalized_query', 'rewritten'],
+  },
+  decomposition: {
+    input: ['normalized_query'],
+    output: ['sub_queries', 'count'],
+  },
+  multi_query_check: {
+    input: ['normalized_query'],
+    output: ['query_count', 'reason'],
+  },
+  generate_variants: {
+    input: ['normalized_query'],
+    output: ['multi_queries', 'count'],
+  },
+  entity_expand: {
+    input: ['normalized_query'],
+    output: ['multi_queries', 'count'],
+  },
+  hyde: {
+    input: ['normalized_query'],
+    output: ['enabled', 'hyde_doc'],
+  },
+  hyde_check: {
+    input: ['normalized_query'],
+    output: ['enabled', 'reason'],
+  },
+  prepare_messages: {
+    input: ['normalized_query'],
+    output: ['query_items_count', 'query_items'],
+  },
+  retrieve: {
+    input: ['query_items', 'normalized_query'],
+    output: ['evidence_count', 'attempted'],
+  },
+  doc_grader: {
+    input: ['question'],
+    output: ['passed', 'action'],
+  },
+  transform_query: {
+    input: ['normalized_query'],
+    output: ['normalized_query', 'rewritten'],
+  },
+  generate: {
+    input: ['question'],
+    output: ['draft_answer', 'final_answer'],
+  },
+  answer_review: {
+    input: ['question'],
+    output: ['passed', 'best_answer', 'action'],
+  },
+  finalize: {
+    input: ['draft_answer'],
+    output: ['final_answer'],
+  },
+  force_exit: {
+    input: ['action', 'reason'],
+    output: ['final_answer', 'reason'],
+  },
+};
+
+function detailItemText(value: string | string[]): string {
+  return Array.isArray(value) ? value.join('\n') : value;
+}
+
+function normalizeDetailItems(
+  items: ChatNodeDisplayItem[] | NodeDetailItem[] | null | undefined
+): NodeDetailItem[] {
+  if (!items || items.length === 0) {
+    return [];
+  }
+  return items.map((item) => ({
+    key: item.key,
+    label: item.label,
+    value: item.value,
+  }));
+}
+
+function selectKeyDetailItems(params: {
+  nodeId: string;
+  section: DetailSectionKind;
+  items: ChatNodeDisplayItem[] | NodeDetailItem[] | null | undefined;
+  event: ChatNodeIoEvent | null;
+}): NodeDetailItem[] {
+  const normalized = normalizeDetailItems(params.items);
+  if (params.event?.error_summary && !normalized.some((item) => item.key === 'error_summary')) {
+    normalized.push({ key: 'error_summary', label: '错误信息', value: params.event.error_summary });
+  }
+
+  const errorItems = normalized.filter((item) => item.key === 'error_summary');
+  const candidates = normalized.filter((item) => item.key !== 'error_summary');
+  const selected: NodeDetailItem[] = [];
+  const seen = new Set<string>();
+  const limit = DETAIL_ITEM_LIMIT[params.section];
+  const policyKeys = [...(NODE_DETAIL_POLICY_MAP[params.nodeId]?.[params.section] ?? [])];
+
+  if (params.nodeId === 'ambiguity_check' && params.section === 'output') {
+    const action = candidates.find((item) => item.key === 'action');
+    const actionText = action ? detailItemText(action.value).toLowerCase() : '';
+    if (actionText.includes('clarify') || actionText.includes('澄清')) {
+      policyKeys.splice(0, policyKeys.length, 'action', 'final_answer');
+    }
+  }
+
+  const appendItem = (item: NodeDetailItem | undefined) => {
+    if (!item) {
+      return;
+    }
+    const identity = `${item.key}:${detailItemText(item.value)}`;
+    if (seen.has(identity)) {
+      return;
+    }
+    selected.push(item);
+    seen.add(identity);
+  };
+
+  for (const key of policyKeys) {
+    appendItem(candidates.find((item) => item.key === key));
+    if (selected.length >= limit) {
+      break;
+    }
+  }
+
+  if (selected.length < limit) {
+    for (const item of candidates) {
+      appendItem(item);
+      if (selected.length >= limit) {
+        break;
+      }
+    }
+  }
+
+  return [...selected, ...errorItems];
+}
+
+function nodeBadgeTheme(nodeId: string): NodeBadgeTheme {
+  return NODE_BADGE_THEME_MAP[nodeId] ?? { icon: LensIcon, label: '节点', color: '#64748B' };
+}
+
+function NodeBadge({ nodeId }: { nodeId: string }) {
+  const theme = nodeBadgeTheme(nodeId);
+  const Icon = theme.icon;
+  return (
+    <Box
+      component='span'
+      sx={(muiTheme) => ({
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'flex-start',
+        maxWidth: 136,
+        px: 0.7,
+        py: 0.25,
+        gap: 0.45,
+        borderRadius: 999,
+        color: theme.color,
+        border: `1px solid ${alpha(theme.color, muiTheme.palette.mode === 'light' ? 0.35 : 0.58)}`,
+        backgroundImage: `linear-gradient(135deg, ${alpha(theme.color, muiTheme.palette.mode === 'light' ? 0.16 : 0.36)}, ${alpha(theme.color, muiTheme.palette.mode === 'light' ? 0.08 : 0.18)})`,
+      })}
+    >
+      <Icon sx={{ fontSize: 14 }} />
+      <Typography
+        component='span'
+        sx={{
+          fontSize: 11,
+          fontWeight: 700,
+          lineHeight: 1.3,
+          letterSpacing: 0.2,
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap',
+        }}
+      >
+        {theme.label}
+      </Typography>
+    </Box>
+  );
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -565,7 +761,6 @@ export function KbChatFlowPanel({
   runState,
   pipelineSteps,
   nodeIoEvents,
-  isStreaming,
 }: KbChatFlowPanelProps) {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const stages = useMemo(
@@ -578,32 +773,6 @@ export function KbChatFlowPanel({
       }),
     [nodeIoEvents, pipelineSteps, runState, schema]
   );
-
-  const progress = useMemo(() => {
-    if (stages.length === 0) {
-      const base = runState?.progress ?? { completed: 0, total: 0, percent: 0 };
-      return {
-        completed: base.completed,
-        total: base.total,
-        percent: base.percent,
-      };
-    }
-    const done = stages.filter(
-      (item) =>
-        item.status === 'completed' || item.status === 'failed' || item.status === 'waiting_user'
-    ).length;
-    const total = Math.max(stages.length, 1);
-    return {
-      completed: done,
-      total,
-      percent: Math.round((done / total) * 100),
-    };
-  }, [runState?.progress, stages]);
-
-  const progressValue = progress.percent;
-  const progressCompleted = progress.completed;
-  const progressTotal = progress.total;
-  const runStatusChipColor = statusChipColor(runStatusToTraceStatus(runState?.run_status));
 
   return (
     <Paper
@@ -628,50 +797,11 @@ export function KbChatFlowPanel({
         WebkitBackdropFilter: 'blur(14px)',
       }}
     >
-      <Stack spacing={1.25} sx={{ mb: 1.25 }}>
-        <Stack direction='row' alignItems='center' justifyContent='space-between'>
-          <Stack spacing={0.1}>
-            <Typography variant='subtitle1' fontWeight={700}>
-              节点执行过程
-            </Typography>
-            <Typography variant='caption' color='text.secondary'>
-              按 LangGraph 节点实时展示
-            </Typography>
-          </Stack>
-          <Chip
-            size='small'
-            label={runStatusLabel(runState?.run_status)}
-            color={runStatusChipColor}
-            variant='outlined'
-          />
-        </Stack>
-
-        <Stack spacing={0.6}>
-          <Stack direction='row' justifyContent='space-between'>
-            <Typography variant='caption' color='text.secondary'>
-              进度 {progressCompleted}/{progressTotal}
-            </Typography>
-            <Typography variant='caption' color='text.secondary'>
-              {Math.max(0, Math.min(100, progressValue))}%
-            </Typography>
-          </Stack>
-          <LinearProgress
-            variant='determinate'
-            value={Math.max(0, Math.min(100, progressValue))}
-            sx={{ height: 6, borderRadius: 999 }}
-          />
-        </Stack>
-
-        <Stack direction='row' spacing={0.75} useFlexGap flexWrap='wrap'>
-          <Chip size='small' variant='outlined' label={`节点 ${stages.length} 个`} />
-          <Chip
-            size='small'
-            variant='outlined'
-            color={isStreaming ? 'info' : 'default'}
-            label={isStreaming ? '流式中' : '空闲'}
-          />
-        </Stack>
-      </Stack>
+      <Box sx={{ mb: 1.25 }}>
+        <Typography variant='subtitle1' fontWeight={700}>
+          节点执行过程
+        </Typography>
+      </Box>
 
       <Stack
         spacing={1}
@@ -728,12 +858,24 @@ export function KbChatFlowPanel({
         {stages.map((stage) => {
           const expanded = expandedId === stage.id;
           const chipColor = statusChipColor(stage.status);
-          const inputDetailItems =
+          const rawInputItems =
             stage.latestNodeEvent?.display_input_items ??
             buildFallbackInputItems(stage.id, stage.latestNodeEvent);
-          const outputDetailItems =
+          const rawOutputItems =
             stage.latestNodeEvent?.display_output_items ??
             buildFallbackOutputItems(stage.id, stage.latestNodeEvent);
+          const inputDetailItems = selectKeyDetailItems({
+            nodeId: stage.id,
+            section: 'input',
+            items: rawInputItems,
+            event: stage.latestNodeEvent,
+          });
+          const outputDetailItems = selectKeyDetailItems({
+            nodeId: stage.id,
+            section: 'output',
+            items: rawOutputItems,
+            event: stage.latestNodeEvent,
+          });
           return (
             <Paper
               key={stage.id}
@@ -755,9 +897,7 @@ export function KbChatFlowPanel({
               <Stack spacing={1}>
                 <Stack direction='row' justifyContent='space-between' alignItems='center' spacing={1}>
                   <Stack direction='row' spacing={0.75} alignItems='center' sx={{ minWidth: 0 }}>
-                    <Box sx={{ color: chipColor === 'default' ? 'text.secondary' : `${chipColor}.main` }}>
-                      {phaseIcon(stage.phase)}
-                    </Box>
+                    <NodeBadge nodeId={stage.id} />
                     <Box sx={{ minWidth: 0 }}>
                       <Typography variant='body2' fontWeight={700} noWrap>
                         {stage.title}

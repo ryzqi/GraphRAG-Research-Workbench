@@ -70,8 +70,8 @@ function boolToText(value: boolean): string {
   return value ? '是' : '否';
 }
 
-function formatMs(value: number): string {
-  return `${Math.max(0, Math.round(value))}ms`;
+function formatSeconds(value: number): string {
+  return `${Math.max(0, value / 1000).toFixed(1)}s`;
 }
 
 function phaseLabel(phase: string | null): string {
@@ -221,7 +221,7 @@ function metricFromSummary(
   const summary = output ?? fromStep ?? input ?? {};
 
   if (typeof latestNodeEvent?.latency_ms === 'number') {
-    metrics.push({ label: '耗时', value: formatMs(latestNodeEvent.latency_ms), tone: 'info' });
+    metrics.push({ label: '耗时', value: formatSeconds(latestNodeEvent.latency_ms), tone: 'info' });
   }
 
   const evidenceCount = summary.evidence_count ?? summary.count;

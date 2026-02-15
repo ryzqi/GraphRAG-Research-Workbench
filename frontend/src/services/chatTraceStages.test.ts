@@ -173,7 +173,7 @@ describe('buildTraceStages', () => {
 
     const metrics = stages[0]?.metrics ?? [];
     expect(metrics.some((item) => item.label === '证据数' && item.value === '15')).toBe(true);
-    expect(metrics.some((item) => item.label === '耗时' && item.value === '420ms')).toBe(true);
+    expect(metrics.some((item) => item.label === '耗时' && item.value === '0.4s')).toBe(true);
   });
 
   it('当节点出现 error 事件时标记失败', () => {
