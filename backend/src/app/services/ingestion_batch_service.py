@@ -418,7 +418,11 @@ class IngestionBatchService:
         return auto_retry_delay
 
     async def recalculate_batch_for_doc(self, *, doc: IngestionBatchDoc, reason: str) -> None:
-        batch = await self._get_batch_or_raise(batch_id=doc.batch_id, for_update=True)
+        batch = await self._get_batch_or_raise(
+            batch_id=doc.batch_id,
+            for_update=True,
+            populate_existing=True,
+        )
         await self._recalculate_batch(batch, reason=reason)
 
     async def commit(self) -> None:

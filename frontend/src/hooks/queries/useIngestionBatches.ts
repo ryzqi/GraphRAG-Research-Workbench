@@ -47,6 +47,12 @@ interface UseCreateIngestionBatchOptions {
   invalidateMode?: 'blocking' | 'background';
 }
 
+interface StreamExitState {
+  active: boolean;
+  aborted: boolean;
+  receivedFinal: boolean;
+}
+
 const KEYS = {
   all: ['ingestionBatches'] as const,
   batch: (id: string | undefined) => [...KEYS.all, 'batch', id ?? NO_ID] as const,
@@ -73,6 +79,10 @@ function matchesArrayKeyPrefix(cachedKey: unknown, prefixKey: readonly unknown[]
   }
 
   return prefixKey.every((segment, index) => Object.is(cachedKey[index], segment));
+}
+
+export function shouldFallbackAfterStreamExit(state: StreamExitState): boolean {
+  return state.active && !state.aborted && !state.receivedFinal;
 }
 
 export function useIngestionBatch(batchId: string | undefined, options?: UseIngestionBatchOptions) {
@@ -144,14 +154,18 @@ export function useIngestionBatchLive(options: UseIngestionBatchLiveOptions): Us
     const controller = new AbortController();
     let active = true;
     let retryTimer: ReturnType<typeof setTimeout> | null = null;
+    let receivedFinal = false;
 
-    const scheduleRetry = () => {
+    const scheduleRetry = (options?: { immediateRefetch?: boolean }) => {
       let nextStep = 0;
       setFallbackStep((prev) => {
         nextStep = Math.min(prev + 1, FALLBACK_POLLING_STEPS.length - 1);
         return nextStep;
       });
       setStreamStatus('fallback_polling');
+      if (options?.immediateRefetch) {
+        void mutate(KEYS.batch(resolvedBatchId));
+      }
 
       const retryDelayMs = FALLBACK_POLLING_STEPS[nextStep] * STREAM_RETRY_MULTIPLIER;
       retryTimer = setTimeout(() => {
@@ -187,6 +201,7 @@ export function useIngestionBatchLive(options: UseIngestionBatchLiveOptions): Us
             await mutate(KEYS.batch(resolvedBatchId), payload, { revalidate: false });
 
             if (event.event === 'final') {
+              receivedFinal = true;
               setStreamStatus('idle');
               await Promise.all([
                 mutate(KEYS.batch(resolvedBatchId)),
@@ -209,6 +224,16 @@ export function useIngestionBatchLive(options: UseIngestionBatchLiveOptions): Us
           if (event.event === 'error') {
             throw new Error('Ingestion status stream failed');
           }
+        }
+
+        if (
+          shouldFallbackAfterStreamExit({
+            active,
+            aborted: controller.signal.aborted,
+            receivedFinal,
+          })
+        ) {
+          scheduleRetry({ immediateRefetch: true });
         }
       } catch {
         if (!active || controller.signal.aborted) {

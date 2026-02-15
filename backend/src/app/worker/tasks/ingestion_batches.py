@@ -128,6 +128,29 @@ def run_ingestion_batch_doc(doc_id: str) -> None:
     asyncio.run(_run_ingestion_batch_doc(doc_id))
 
 
+async def _finalize_doc_on_app_error(
+    *,
+    service: IngestionBatchService,
+    doc_id: uuid.UUID,
+    error: AppError,
+) -> None:
+    await service.rollback()
+    doc = await service.get_doc(doc_id=doc_id, for_update=True)
+    if doc is None:
+        return
+    if doc.status.value == "completed":
+        return
+
+    await service.mark_doc_failed(
+        doc=doc,
+        error_code=error.code,
+        error_message=error.message,
+        retryable=False,
+    )
+    await service.recalculate_batch_for_doc(doc=doc, reason="doc_failed_app_error")
+    await service.commit()
+
+
 async def _run_ingestion_batch_doc(doc_id: str) -> None:
     settings = get_settings()
     doc_uuid = uuid.UUID(doc_id)
@@ -192,8 +215,20 @@ async def _run_ingestion_batch_doc(doc_id: str) -> None:
 
                 if delay is not None:
                     run_ingestion_batch_doc.apply_async(args=[str(doc.id)], countdown=delay)
-            except AppError:
-                await service.rollback()
+            except AppError as exc:
+                logger.warning(
+                    "Ingestion doc processing hit AppError",
+                    extra={
+                        "doc_id": str(doc_uuid),
+                        "error_code": exc.code,
+                        "error_message": exc.message,
+                    },
+                )
+                await _finalize_doc_on_app_error(
+                    service=service,
+                    doc_id=doc_uuid,
+                    error=exc,
+                )
             except Exception as exc:  # pragma: no cover - defensive fallback
                 await service.rollback()
                 doc = await service.get_doc(doc_id=doc_uuid, for_update=True)
