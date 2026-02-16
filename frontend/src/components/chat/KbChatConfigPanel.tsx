@@ -2,7 +2,6 @@ import {
   Alert,
   Box,
   Chip,
-  Divider,
   FormControlLabel,
   Grid,
   MenuItem,
@@ -182,7 +181,6 @@ export function KbChatConfigPanel({ value, onChange, disabled = false }: KbChatC
             variant='outlined'
             label={`特性开关 ${enabledCount}/${FEATURE_TOGGLE_META.length + 2}`}
           />
-          <Chip size='small' variant='outlined' label='全部参数在初始页配置' />
         </Stack>
 
         <Typography variant='body2' color='text.secondary'>
@@ -532,10 +530,6 @@ export function KbChatConfigPanel({ value, onChange, disabled = false }: KbChatC
           </Grid>
         </Grid>
 
-        <Divider />
-        <Typography variant='caption' color='text.secondary'>
-          当前配置会写入会话，并贯穿整轮问答流程，便于复现实验结果。
-        </Typography>
       </Stack>
     </Paper>
   );

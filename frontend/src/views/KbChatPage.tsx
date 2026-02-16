@@ -1724,12 +1724,10 @@ export function KbChatPage() {
             inset: -120,
             background: (theme) =>
               theme.palette.mode === 'light'
-                ? `radial-gradient(680px 320px at 8% 10%, ${alpha(theme.palette.primary.main, 0.22)} 0%, transparent 65%),
-                   radial-gradient(620px 280px at 88% 16%, ${alpha(theme.palette.success.main, 0.16)} 0%, transparent 60%),
-                   radial-gradient(480px 260px at 74% 86%, ${alpha(theme.palette.primary.main, 0.16)} 0%, transparent 64%)`
-                : `radial-gradient(680px 320px at 8% 10%, ${alpha(theme.palette.primary.main, 0.18)} 0%, transparent 65%),
-                   radial-gradient(620px 280px at 88% 16%, ${alpha(theme.palette.success.main, 0.12)} 0%, transparent 60%),
-                   radial-gradient(480px 260px at 74% 86%, ${alpha(theme.palette.primary.main, 0.1)} 0%, transparent 64%)`,
+                ? `radial-gradient(560px 260px at 12% 8%, ${alpha(theme.palette.primary.main, 0.14)} 0%, transparent 65%),
+                   radial-gradient(520px 240px at 88% 14%, ${alpha(theme.palette.success.main, 0.1)} 0%, transparent 62%)`
+                : `radial-gradient(560px 260px at 12% 8%, ${alpha(theme.palette.primary.main, 0.12)} 0%, transparent 65%),
+                   radial-gradient(520px 240px at 88% 14%, ${alpha(theme.palette.success.main, 0.08)} 0%, transparent 62%)`,
             pointerEvents: 'none',
             zIndex: 0,
           }}
@@ -1742,148 +1740,100 @@ export function KbChatPage() {
             flex: 1,
             minHeight: 0,
             width: '100%',
-            maxWidth: 1320,
-            mx: 'auto',
-            display: 'grid',
-            alignItems: 'center',
-            gap: { xs: 2, lg: 2.5 },
-            gridTemplateColumns: {
-              xs: '1fr',
-              lg: 'minmax(0, 0.9fr) minmax(0, 1.1fr)',
-            },
+            display: 'flex',
+            flexDirection: 'column',
+            gap: { xs: 1.5, md: 2 },
             overflowX: 'hidden',
             overflowY: 'auto',
             overscrollBehaviorY: 'contain',
+            pb: { xs: 0.5, md: 1 },
           }}
         >
-          <Stack spacing={2.25} sx={{ px: { xs: 0.5, md: 1 } }}>
-            <Stack direction='row' spacing={1} alignItems='center'>
-              <Chip size='small' color='primary' variant='outlined' label='知识工作区' />
-              <Typography variant='caption' color='text.secondary'>
-                已就绪
-              </Typography>
-            </Stack>
-            <Stack spacing={1.25}>
-              <Typography
-                variant='h3'
-                fontWeight={700}
-                sx={{
-                  fontSize: { xs: '1.85rem', md: '2.45rem' },
-                  letterSpacing: '-0.01em',
-                }}
-              >
-                面向知识库的可观测问答
-              </Typography>
-              <Typography variant='body1' color='text.secondary' sx={{ maxWidth: 560 }}>
-                先圈定知识范围，再开始提问。会话中可实时查看查询分析、知识检索、重排序与答案生成的执行过程。
-              </Typography>
-            </Stack>
-
-            <Stack spacing={1}>
-              {[
-                '查询分析 —— 识别意图、歧义与改写结果',
-                '知识检索 —— 展示召回结果与关键指标',
-                '重排序 —— 候选过滤与打分状态',
-                '答案生成 —— 生成结果并执行校验',
-              ].map((item) => (
-                <Paper
-                  key={item}
-                  variant='outlined'
-                  sx={{
-                    px: 1.5,
-                    py: 1,
-                    borderRadius: 2,
-                    borderColor: (t) => alpha(t.palette.primary.main, 0.18),
-                    bgcolor: (t) =>
-                      t.palette.mode === 'light'
-                        ? alpha(t.palette.common.white, 0.7)
-                        : alpha(t.palette.background.paper, 0.35),
-                    backdropFilter: 'blur(10px)',
-                    WebkitBackdropFilter: 'blur(10px)',
-                  }}
-                >
-                  <Typography variant='body2'>{item}</Typography>
-                </Paper>
-              ))}
-            </Stack>
-          </Stack>
-
-          <Paper
-            variant='outlined'
+          <Stack
+            spacing={2.2}
             sx={{
-              p: { xs: 2, md: 2.5 },
-              borderRadius: 4,
-              borderColor: (theme) => alpha(theme.palette.primary.main, 0.2),
-              bgcolor: (theme) =>
-                theme.palette.mode === 'light'
-                  ? alpha(theme.palette.common.white, 0.78)
-                  : alpha(theme.palette.background.paper, 0.52),
-              backdropFilter: 'blur(14px)',
-              WebkitBackdropFilter: 'blur(14px)',
-              boxShadow: (theme) =>
-                `0 22px 52px ${alpha(
-                  theme.palette.mode === 'light' ? theme.palette.primary.main : theme.palette.common.black,
-                  theme.palette.mode === 'light' ? 0.16 : 0.38
-                )}`,
+              width: '100%',
+              px: { xs: 0.5, md: 1 },
             }}
           >
-            <Stack spacing={2.2}>
+            <Stack spacing={1.25}>
+              <Stack direction='row' spacing={1} alignItems='center'>
+                <Chip size='small' color='primary' variant='outlined' label='知识工作区' />
+                <Typography variant='caption' color='text.secondary'>
+                  已就绪
+                </Typography>
+              </Stack>
               <Stack direction='row' alignItems='center' spacing={1}>
                 <AutoAwesomeIcon color='primary' fontSize='small' />
-                <Typography variant='subtitle1' fontWeight={700}>
-                  选择知识库范围
-                </Typography>
-              </Stack>
-              <Typography variant='body2' color='text.secondary'>
-                支持多库联合检索。建议优先选择 1-3 个最相关知识库，提升命中率与响应速度。
-              </Typography>
-
-              <KnowledgeBaseSelector
-                knowledgeBases={knowledgeBases ?? []}
-                selectedIds={selectedKbIds}
-                onToggle={toggleKb}
-                loading={loading || loadingSession || knowledgeBasesQuery.isLoading}
-              />
-
-              {selectedKbNames.length > 0 && (
-                <Stack direction='row' spacing={0.75} flexWrap='wrap' useFlexGap>
-                  {selectedKbNames.slice(0, 5).map((name) => (
-                    <Chip key={name} label={name} size='small' color='primary' variant='outlined' />
-                  ))}
-                  {selectedKbNames.length > 5 && (
-                    <Chip label={`+${selectedKbNames.length - 5}`} size='small' variant='outlined' />
-                  )}
-                </Stack>
-              )}
-
-              <Divider />
-
-              <KbChatConfigPanel
-                value={kbChatConfig}
-                onChange={setKbChatConfig}
-                disabled={loading || loadingSession || knowledgeBasesQuery.isLoading}
-              />
-
-              <Stack direction='row' spacing={1} alignItems='center' justifyContent='space-between'>
-                <Typography variant='caption' color='text.secondary'>
-                  默认进入单代理知识库问答模式
-                </Typography>
-                <Button
-                  variant='contained'
-                  onClick={startSession}
-                  disabled={
-                    loadingSession ||
-                    knowledgeBasesQuery.isLoading ||
-                    selectedKbIds.length === 0 ||
-                    initialConfigErrors.length > 0
-                  }
-                  loading={loading || loadingSession}
+                <Typography
+                  variant='h4'
+                  fontWeight={700}
+                  sx={{
+                    fontSize: { xs: '1.55rem', md: '2rem' },
+                    letterSpacing: '-0.01em',
+                  }}
                 >
-                  开始对话
-                </Button>
+                  面向知识库的可观测问答
+                </Typography>
               </Stack>
             </Stack>
-          </Paper>
+
+            <Divider />
+
+            <Stack spacing={0.8}>
+              <Typography variant='subtitle1' fontWeight={700}>
+                选择知识库
+              </Typography>
+              <Typography variant='body2' color='text.secondary'>
+                支持多库联合检索，建议优先选择 1-3 个最相关知识库。
+              </Typography>
+            </Stack>
+
+            <KnowledgeBaseSelector
+              knowledgeBases={knowledgeBases ?? []}
+              selectedIds={selectedKbIds}
+              onToggle={toggleKb}
+              loading={loading || loadingSession || knowledgeBasesQuery.isLoading}
+            />
+
+            {selectedKbNames.length > 0 && (
+              <Stack direction='row' spacing={0.75} flexWrap='wrap' useFlexGap>
+                {selectedKbNames.slice(0, 5).map((name) => (
+                  <Chip key={name} label={name} size='small' color='primary' variant='outlined' />
+                ))}
+                {selectedKbNames.length > 5 && (
+                  <Chip label={`+${selectedKbNames.length - 5}`} size='small' variant='outlined' />
+                )}
+              </Stack>
+            )}
+
+            <Divider />
+
+            <KbChatConfigPanel
+              value={kbChatConfig}
+              onChange={setKbChatConfig}
+              disabled={loading || loadingSession || knowledgeBasesQuery.isLoading}
+            />
+
+            <Stack
+              direction='row'
+              justifyContent='flex-end'
+            >
+              <Button
+                variant='contained'
+                onClick={startSession}
+                disabled={
+                  loadingSession ||
+                  knowledgeBasesQuery.isLoading ||
+                  selectedKbIds.length === 0 ||
+                  initialConfigErrors.length > 0
+                }
+                loading={loading || loadingSession}
+              >
+                开始对话
+              </Button>
+            </Stack>
+          </Stack>
         </Box>
 
         <ErrorAlert error={mergedError} onClose={handleCloseError} />

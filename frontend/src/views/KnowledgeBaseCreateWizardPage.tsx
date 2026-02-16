@@ -414,10 +414,6 @@ export default function KnowledgeBaseCreateWizardPage() {
 
             <IndexConfigForm value={indexConfig} onChange={setIndexConfig} />
 
-            <Alert severity='info' variant='outlined'>
-              问答运行参数（如重排序 Top-K、混合检索权重、RRF 配置）统一在“知识库问答”初始页配置。
-            </Alert>
-
             {configErrors.length > 0 && (
               <Alert severity='warning' variant='outlined'>
                 {'索引配置校验失败：' + configErrors.join('；')}
