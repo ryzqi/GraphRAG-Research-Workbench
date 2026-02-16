@@ -28,7 +28,7 @@ from app.services.query_rewrite_service import QueryRewriteService, build_query_
 
 from .budget import now_iso
 from .json_safety import ensure_json_safe
-from .runtime_config import query_rewrite_enabled
+from .runtime_config import query_rewrite_enabled, retrieval_top_k
 from .schemas import AnswerReviewDecision, DocGraderDecision
 
 _EVIDENCE_LINE_RE = re.compile(r"^\[([^\[\]\n]{1,128})\]\s+", re.MULTILINE)
@@ -209,8 +209,7 @@ async def kb_retrieve_context(
         payload: dict[str, Any] = {
             "query": query,
             "kb_ids": kb_ids,
-            # Use RetrievalService default when omitted.
-            "top_k": None,
+            "top_k": retrieval_top_k(state, settings),
             "retrieval_round": retrieval_round,
         }
         query_items = state.get("query_items")

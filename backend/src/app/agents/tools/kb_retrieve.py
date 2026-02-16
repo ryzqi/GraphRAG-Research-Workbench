@@ -88,7 +88,7 @@ def build_kb_retrieve_tool(
     *,
     retrieval: RetrievalService,
     default_kb_ids: list[uuid.UUID],
-    retrieval_overrides: dict[str, bool] | None = None,
+    retrieval_overrides: dict[str, Any] | None = None,
     context_builder: ContextBuilder | None = None,
     tool_output_max_chars: int = DEFAULT_TOOL_OUTPUT_MAX_CHARS,
     on_results: Callable[[list[RetrievalResult], dict[str, Any]], None] | None = None,
@@ -144,16 +144,27 @@ def build_kb_retrieve_tool(
             # Agentic KB chat passes a fanout query bundle (sub-queries/variants/HyDE).
             # Use the unified RetrievalLayer so cross-query fusion (RRF/rerank/Top-N) actually takes effect.
             settings = get_settings()
+            configured_top_k = None
+            configured_rerank_top_k = None
+            if isinstance(retrieval_overrides, dict):
+                raw_top_k = retrieval_overrides.get("retrieval_top_k")
+                if isinstance(raw_top_k, int):
+                    configured_top_k = raw_top_k
+                raw_rerank_top_k = retrieval_overrides.get("retrieval_rerank_top_k")
+                if isinstance(raw_rerank_top_k, int):
+                    configured_rerank_top_k = raw_rerank_top_k
             top_n = (
                 int(top_k)
                 if top_k is not None
-                else int(settings.retrieval_default_top_k)
+                else int(configured_top_k or settings.retrieval_default_top_k)
             )
+            rerank_top_k = int(configured_rerank_top_k or settings.retrieval_max_top_k)
             layer = await retrieval.retrieve_layer(
                 query_items=query_items,
                 kb_ids=resolved,
                 top_n=top_n,
                 per_query_top_k=top_n,
+                rerank_input_limit=rerank_top_k,
                 timeout_seconds=timeout_seconds,
                 feature_overrides=retrieval_overrides,
             )

@@ -199,39 +199,21 @@ class ContextualConfig(BaseModel):
         return self
 
 
-class RetrievalParentChildConfig(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    max_parents: int = Field(6, ge=1, le=20)
-    max_children_per_parent: int = Field(2, ge=1, le=10)
-
-
-class RetrievalQueryDependentMultiscaleConfig(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    rrf_k: int = Field(60, ge=1, le=200)
-    per_window_top_k: int = Field(20, ge=1, le=200)
-    max_documents: int = Field(8, ge=1, le=100)
-    max_chunks_per_document: int = Field(2, ge=1, le=20)
-
-
-class RetrievalConfig(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    parent_child: RetrievalParentChildConfig = Field(
-        default_factory=RetrievalParentChildConfig
-    )
-    query_dependent_multiscale: RetrievalQueryDependentMultiscaleConfig = Field(
-        default_factory=RetrievalQueryDependentMultiscaleConfig
-    )
-
-
 class IndexConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     chunking: ChunkingConfig = Field(default_factory=ChunkingConfig)
     contextual: ContextualConfig = Field(default_factory=ContextualConfig)
-    retrieval: RetrievalConfig = Field(default_factory=RetrievalConfig)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _drop_legacy_retrieval(cls, data: object) -> object:
+        if not isinstance(data, dict):
+            return data
+        payload = dict(data)
+        # Retrieval tuning has moved to kb_chat session config.
+        payload.pop("retrieval", None)
+        return payload
 
 
 class KnowledgeBaseStatus(str, Enum):

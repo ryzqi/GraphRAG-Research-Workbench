@@ -67,6 +67,7 @@ import {
   resolveFinalizeNodeIds,
   shouldRevealAnswerOnNodeEvent,
 } from '../services/kbChatAnswerReveal';
+import { validateKbChatConfig } from '../services/kbChatConfig';
 import { getErrorMessage } from '../lib/errorHandler';
 import { parseSseJson } from '../lib/sse';
 import {
@@ -88,13 +89,39 @@ const DEFAULT_KB_CHAT_CONFIG: KbChatConfig = {
   query_rewrite_enabled: true,
   ambiguity_check_enabled: true,
   decomposition_enabled: false,
+  decomposition_max_sub_questions: 4,
   multi_query_enabled: false,
+  multi_query_max_variants: 4,
   hyde_enabled: false,
   hybrid_retrieval_enabled: true,
   rerank_enabled: true,
+  retrieval_top_k: 5,
+  retrieval_rerank_top_k: 20,
+  retrieval_hybrid_ranker: 'rrf',
+  retrieval_hybrid_dense_weight: 0.7,
+  retrieval_hybrid_sparse_weight: 0.3,
+  retrieval_hybrid_rrf_k: 60,
+  retrieval_parent_max_parents: 6,
+  retrieval_parent_max_children_per_parent: 2,
+  retrieval_multiscale_per_window_top_k: 20,
+  retrieval_multiscale_rrf_k: 60,
+  retrieval_multiscale_max_documents: 8,
+  retrieval_multiscale_max_chunks_per_document: 2,
 };
 
-const KB_CHAT_CONFIG_LABELS: Record<keyof KbChatConfig, string> = {
+const KB_CHAT_BOOLEAN_KEYS = [
+  'query_rewrite_enabled',
+  'ambiguity_check_enabled',
+  'decomposition_enabled',
+  'multi_query_enabled',
+  'hyde_enabled',
+  'hybrid_retrieval_enabled',
+  'rerank_enabled',
+] as const;
+
+type KbChatBooleanKey = (typeof KB_CHAT_BOOLEAN_KEYS)[number];
+
+const KB_CHAT_CONFIG_LABELS: Record<KbChatBooleanKey, string> = {
   query_rewrite_enabled: '查询改写',
   ambiguity_check_enabled: '歧义检测',
   decomposition_enabled: '问题分解',
@@ -594,11 +621,12 @@ export function KbChatPage() {
   const activeConfig = session?.kb_chat_config ?? kbChatConfig;
   const enabledConfigLabels = useMemo(
     () =>
-      (Object.keys(KB_CHAT_CONFIG_LABELS) as Array<keyof KbChatConfig>)
+      (KB_CHAT_BOOLEAN_KEYS as readonly KbChatBooleanKey[])
         .filter((key) => Boolean(activeConfig[key]))
         .map((key) => KB_CHAT_CONFIG_LABELS[key]),
     [activeConfig]
   );
+  const initialConfigErrors = useMemo(() => validateKbChatConfig(kbChatConfig), [kbChatConfig]);
 
   const hasPendingClarification = useMemo(
     () => messages.some((msg) => Boolean(msg.pendingClarification)),
@@ -1843,7 +1871,12 @@ export function KbChatPage() {
                 <Button
                   variant='contained'
                   onClick={startSession}
-                  disabled={loadingSession || knowledgeBasesQuery.isLoading || selectedKbIds.length === 0}
+                  disabled={
+                    loadingSession ||
+                    knowledgeBasesQuery.isLoading ||
+                    selectedKbIds.length === 0 ||
+                    initialConfigErrors.length > 0
+                  }
                   loading={loading || loadingSession}
                 >
                   开始对话

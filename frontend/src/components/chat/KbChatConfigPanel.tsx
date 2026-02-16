@@ -1,11 +1,28 @@
-import type { ReactNode } from 'react';
-import { Box, Chip, FormControlLabel, Grid, Paper, Stack, Switch, Typography } from '@mui/material';
-import TuneIcon from '@mui/icons-material/Tune';
-import RouteIcon from '@mui/icons-material/Route';
-import FindInPageIcon from '@mui/icons-material/FindInPage';
+import {
+  Alert,
+  Box,
+  Chip,
+  Divider,
+  FormControlLabel,
+  Grid,
+  MenuItem,
+  Paper,
+  Stack,
+  Switch,
+  TextField,
+  ToggleButton,
+  ToggleButtonGroup,
+  Typography,
+} from '@mui/material';
+import SettingsSuggestIcon from '@mui/icons-material/SettingsSuggest';
+import PrecisionManufacturingIcon from '@mui/icons-material/PrecisionManufacturing';
+import AccountTreeIcon from '@mui/icons-material/AccountTree';
+import FilterAltIcon from '@mui/icons-material/FilterAlt';
 import { alpha } from '@mui/material/styles';
+import type { Theme } from '@mui/material/styles';
 
 import type { KbChatConfig } from '../../services/chats';
+import { validateKbChatConfig } from '../../services/kbChatConfig';
 
 interface KbChatConfigPanelProps {
   value: KbChatConfig;
@@ -13,73 +30,89 @@ interface KbChatConfigPanelProps {
   disabled?: boolean;
 }
 
-interface ToggleDef {
-  key: keyof KbChatConfig;
+type ToggleKey =
+  | 'query_rewrite_enabled'
+  | 'ambiguity_check_enabled'
+  | 'hyde_enabled'
+  | 'hybrid_retrieval_enabled'
+  | 'rerank_enabled';
+
+type StrategyToggleKey = 'decomposition_enabled' | 'multi_query_enabled';
+
+const FEATURE_TOGGLE_META: ReadonlyArray<{
+  key: ToggleKey;
   label: string;
   description: string;
-}
-
-interface ToggleGroupDef {
-  id: string;
-  title: string;
-  icon: ReactNode;
-  toggles: ToggleDef[];
-}
-
-const GROUPS: ToggleGroupDef[] = [
+}> = [
   {
-    id: 'preprocess',
-    title: '预处理',
-    icon: <RouteIcon fontSize="small" />,
-    toggles: [
-      {
-        key: 'query_rewrite_enabled',
-        label: '查询改写',
-        description: '在检索前改写问题，提高召回稳定性。',
-      },
-      {
-        key: 'ambiguity_check_enabled',
-        label: '歧义检测',
-        description: '先判断问题是否缺少关键信息，必要时引导澄清。',
-      },
-      {
-        key: 'decomposition_enabled',
-        label: '问题分解',
-        description: '把复杂问题拆成子问题；与多路查询互斥。',
-      },
-      {
-        key: 'multi_query_enabled',
-        label: '多路查询',
-        description: '为问题生成多个变体并融合检索结果；与问题分解互斥。',
-      },
-      {
-        key: 'hyde_enabled',
-        label: 'HyDE',
-        description: '生成假设文档参与检索，提升语义命中概率。',
-      },
-    ],
+    key: 'query_rewrite_enabled',
+    label: '查询改写',
+    description: '检索前先做问题规范化与改写。',
   },
   {
-    id: 'retrieval',
-    title: '检索',
-    icon: <FindInPageIcon fontSize="small" />,
-    toggles: [
-      {
-        key: 'hybrid_retrieval_enabled',
-        label: '混合检索',
-        description: '同时使用 Dense + BM25 召回，再做融合排序。',
-      },
-      {
-        key: 'rerank_enabled',
-        label: '重排序',
-        description: '对候选证据做语义重排，提升 Top-N 质量。',
-      },
-    ],
+    key: 'ambiguity_check_enabled',
+    label: '歧义检测',
+    description: '先判断问题是否缺信息，再决定是否澄清。',
+  },
+  {
+    key: 'hyde_enabled',
+    label: 'HyDE',
+    description: '生成假设文档并参与检索。',
+  },
+  {
+    key: 'hybrid_retrieval_enabled',
+    label: '混合检索',
+    description: '融合 Dense 与 BM25 召回。',
+  },
+  {
+    key: 'rerank_enabled',
+    label: '重排序',
+    description: '对候选结果语义重排，提升前排质量。',
   },
 ];
 
+const STRATEGY_COUNT_OPTIONS = [2, 3, 4] as const;
+
+const SECTION_SX = {
+  p: 1.5,
+  borderRadius: 2.5,
+  border: 1,
+  borderColor: (theme: Theme) => alpha(theme.palette.primary.main, 0.18),
+  bgcolor: (theme: Theme) =>
+    theme.palette.mode === 'light'
+      ? alpha(theme.palette.common.white, 0.7)
+      : alpha(theme.palette.background.default, 0.32),
+};
+
+const STRATEGY_CARD_SX = {
+  p: 1.25,
+  borderRadius: 2,
+  border: 1,
+  borderColor: (theme: Theme) => alpha(theme.palette.primary.main, 0.16),
+};
+
+function toInt(value: string): number | null {
+  if (value.trim() === '') {
+    return null;
+  }
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? Math.trunc(parsed) : null;
+}
+
+function toFloat(value: string): number | null {
+  if (value.trim() === '') {
+    return null;
+  }
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
 export function KbChatConfigPanel({ value, onChange, disabled = false }: KbChatConfigPanelProps) {
-  const handleToggle = (key: keyof KbChatConfig, checked: boolean) => {
+  const handleFeatureToggle = (key: ToggleKey, checked: boolean) => {
+    onChange({ ...value, [key]: checked });
+  };
+
+  const handleStrategyToggle = (key: StrategyToggleKey, checked: boolean) => {
     let next: KbChatConfig = { ...value, [key]: checked };
     if (key === 'decomposition_enabled' && checked) {
       next = { ...next, multi_query_enabled: false };
@@ -90,100 +123,419 @@ export function KbChatConfigPanel({ value, onChange, disabled = false }: KbChatC
     onChange(next);
   };
 
-  const enabledCount = Object.values(value).filter(Boolean).length;
-  const totalCount = Object.keys(value).length;
+  const handleCountSelection = (
+    key: 'decomposition_max_sub_questions' | 'multi_query_max_variants',
+    nextCount: number | null
+  ) => {
+    if (nextCount == null) {
+      return;
+    }
+    onChange({ ...value, [key]: nextCount });
+  };
+
+  const handleIntField = (key: keyof KbChatConfig, raw: string) => {
+    const parsed = toInt(raw);
+    if (parsed === null) {
+      return;
+    }
+    onChange({ ...value, [key]: parsed });
+  };
+
+  const handleFloatField = (key: keyof KbChatConfig, raw: string) => {
+    const parsed = toFloat(raw);
+    if (parsed === null) {
+      return;
+    }
+    onChange({ ...value, [key]: parsed });
+  };
+
+  const enabledCount =
+    FEATURE_TOGGLE_META.filter((item) => value[item.key]).length +
+    Number(value.decomposition_enabled) +
+    Number(value.multi_query_enabled);
+  const errors = validateKbChatConfig(value);
 
   return (
     <Paper
-      variant="outlined"
+      variant='outlined'
       sx={{
         p: { xs: 2, md: 2.5 },
         borderRadius: 3.5,
-        borderColor: (theme) => alpha(theme.palette.primary.main, 0.22),
+        borderColor: (theme) => alpha(theme.palette.primary.main, 0.25),
         bgcolor: (theme) =>
           theme.palette.mode === 'light'
-            ? alpha(theme.palette.common.white, 0.78)
+            ? alpha(theme.palette.common.white, 0.82)
             : alpha(theme.palette.background.paper, 0.56),
         backdropFilter: 'blur(14px)',
         WebkitBackdropFilter: 'blur(14px)',
       }}
     >
       <Stack spacing={2}>
-        <Stack direction="row" alignItems="center" spacing={1} flexWrap="wrap" useFlexGap>
-          <TuneIcon color="primary" fontSize="small" />
-          <Typography variant="subtitle1" fontWeight={700}>
-            回答链路配置
+        <Stack direction='row' spacing={1} alignItems='center' flexWrap='wrap' useFlexGap>
+          <SettingsSuggestIcon color='primary' fontSize='small' />
+          <Typography variant='subtitle1' fontWeight={700}>
+            问答检索参数面板
           </Typography>
-          <Chip label={`已开启 ${enabledCount}/${totalCount}`} size="small" color="primary" variant="outlined" />
+          <Chip
+            size='small'
+            color='primary'
+            variant='outlined'
+            label={`特性开关 ${enabledCount}/${FEATURE_TOGGLE_META.length + 2}`}
+          />
+          <Chip size='small' variant='outlined' label='全部参数在初始页配置' />
         </Stack>
-        <Typography variant="body2" color="text.secondary">
-          配置会在本会话内固定生效，便于复现回答结果与排查差异。
+
+        <Typography variant='body2' color='text.secondary'>
+          问题分解和多路查询可都关闭；若开启则两者互斥。对应数量由用户在 2~4 内选择。
         </Typography>
 
+        {errors.length > 0 && (
+          <Alert severity='warning' variant='outlined'>
+            {errors.join('；')}
+          </Alert>
+        )}
+
         <Grid container spacing={1.5}>
-          {GROUPS.map((group) => (
-            <Grid key={group.id} size={{ xs: 12, md: 6 }}>
-              <Paper
-                variant="outlined"
-                sx={{
-                  p: 1.5,
-                  borderRadius: 2.5,
-                  height: '100%',
-                  borderColor: (theme) => alpha(theme.palette.primary.main, 0.16),
-                  bgcolor: (theme) =>
-                    theme.palette.mode === 'light'
-                      ? alpha(theme.palette.background.paper, 0.82)
-                      : alpha(theme.palette.background.default, 0.34),
-                }}
-              >
-                <Stack spacing={1}>
-                  <Stack direction="row" alignItems="center" spacing={0.75}>
-                    {group.icon}
-                    <Typography variant="subtitle2" fontWeight={700}>
-                      {group.title}
-                    </Typography>
-                  </Stack>
-                  {group.toggles.map((item) => (
-                    <Box
-                      key={item.key}
-                      sx={{
-                        px: 1,
-                        py: 0.75,
-                        borderRadius: 1.5,
-                        transition: 'background-color 180ms ease',
-                        '&:hover': {
-                          bgcolor: (theme) => alpha(theme.palette.primary.main, 0.06),
-                        },
-                      }}
-                    >
-                      <FormControlLabel
-                        sx={{ m: 0, width: '100%', alignItems: 'flex-start' }}
-                        control={
-                          <Switch
-                            checked={value[item.key]}
-                            disabled={disabled}
-                            onChange={(_, checked) => handleToggle(item.key, checked)}
-                            inputProps={{ 'aria-label': item.label }}
-                          />
-                        }
-                        label={
-                          <Stack spacing={0.25} sx={{ mt: 0.25 }}>
-                            <Typography variant="body2" fontWeight={600}>
-                              {item.label}
-                            </Typography>
-                            <Typography variant="caption" color="text.secondary">
-                              {item.description}
-                            </Typography>
-                          </Stack>
-                        }
-                      />
-                    </Box>
-                  ))}
+          <Grid size={{ xs: 12 }}>
+            <Box sx={SECTION_SX}>
+              <Stack spacing={1.25}>
+                <Stack direction='row' spacing={1} alignItems='center'>
+                  <AccountTreeIcon fontSize='small' color='primary' />
+                  <Typography variant='subtitle2' fontWeight={700}>
+                    问题分解 / 多路查询开关
+                  </Typography>
                 </Stack>
-              </Paper>
-            </Grid>
-          ))}
+
+                <Grid container spacing={1.2}>
+                  <Grid size={{ xs: 12, md: 6 }}>
+                    <Box sx={STRATEGY_CARD_SX}>
+                      <Stack spacing={0.9}>
+                        <FormControlLabel
+                          sx={{ m: 0 }}
+                          control={
+                            <Switch
+                              checked={value.decomposition_enabled}
+                              disabled={disabled}
+                              onChange={(_, checked) =>
+                                handleStrategyToggle('decomposition_enabled', checked)
+                              }
+                            />
+                          }
+                          label={
+                            <Stack spacing={0.2}>
+                              <Typography variant='body2' fontWeight={700}>
+                                问题分解
+                              </Typography>
+                              <Typography variant='caption' color='text.secondary'>
+                                拆分为多个子问题进行检索（开启时自动关闭多路查询）
+                              </Typography>
+                            </Stack>
+                          }
+                        />
+                        <Typography variant='body2' fontWeight={700}>
+                          问题分解子问题数（2~4）
+                        </Typography>
+                        <ToggleButtonGroup
+                          exclusive
+                          size='small'
+                          value={value.decomposition_max_sub_questions}
+                          onChange={(_, next) =>
+                            handleCountSelection('decomposition_max_sub_questions', next as number | null)
+                          }
+                          disabled={disabled || !value.decomposition_enabled}
+                        >
+                          {STRATEGY_COUNT_OPTIONS.map((count) => (
+                            <ToggleButton key={count} value={count}>{`${count} 个`}</ToggleButton>
+                          ))}
+                        </ToggleButtonGroup>
+                        <Typography variant='caption' color='text.secondary'>
+                          {value.decomposition_enabled ? '当前启用' : '未启用时保留预设值'}
+                        </Typography>
+                      </Stack>
+                    </Box>
+                  </Grid>
+
+                  <Grid size={{ xs: 12, md: 6 }}>
+                    <Box sx={STRATEGY_CARD_SX}>
+                      <Stack spacing={0.9}>
+                        <FormControlLabel
+                          sx={{ m: 0 }}
+                          control={
+                            <Switch
+                              checked={value.multi_query_enabled}
+                              disabled={disabled}
+                              onChange={(_, checked) =>
+                                handleStrategyToggle('multi_query_enabled', checked)
+                              }
+                            />
+                          }
+                          label={
+                            <Stack spacing={0.2}>
+                              <Typography variant='body2' fontWeight={700}>
+                                多路查询
+                              </Typography>
+                              <Typography variant='caption' color='text.secondary'>
+                                生成多种检索表达并融合（开启时自动关闭问题分解）
+                              </Typography>
+                            </Stack>
+                          }
+                        />
+                        <Typography variant='body2' fontWeight={700}>
+                          多路查询数量（2~4）
+                        </Typography>
+                        <ToggleButtonGroup
+                          exclusive
+                          size='small'
+                          value={value.multi_query_max_variants}
+                          onChange={(_, next) =>
+                            handleCountSelection('multi_query_max_variants', next as number | null)
+                          }
+                          disabled={disabled || !value.multi_query_enabled}
+                        >
+                          {STRATEGY_COUNT_OPTIONS.map((count) => (
+                            <ToggleButton key={count} value={count}>{`${count} 个`}</ToggleButton>
+                          ))}
+                        </ToggleButtonGroup>
+                        <Typography variant='caption' color='text.secondary'>
+                          {value.multi_query_enabled ? '当前启用' : '未启用时保留预设值'}
+                        </Typography>
+                      </Stack>
+                    </Box>
+                  </Grid>
+                </Grid>
+              </Stack>
+            </Box>
+          </Grid>
+
+          <Grid size={{ xs: 12 }}>
+            <Box sx={SECTION_SX}>
+              <Stack spacing={1}>
+                <Stack direction='row' spacing={1} alignItems='center'>
+                  <FilterAltIcon fontSize='small' color='primary' />
+                  <Typography variant='subtitle2' fontWeight={700}>
+                    流程能力开关
+                  </Typography>
+                </Stack>
+                <Grid container spacing={1}>
+                  {FEATURE_TOGGLE_META.map((item) => (
+                    <Grid key={item.key} size={{ xs: 12, md: 6 }}>
+                      <Box
+                        sx={{
+                          px: 1.1,
+                          py: 0.9,
+                          borderRadius: 1.5,
+                          border: 1,
+                          borderColor: (theme) => alpha(theme.palette.primary.main, 0.14),
+                        }}
+                      >
+                        <FormControlLabel
+                          sx={{ m: 0, width: '100%', alignItems: 'flex-start' }}
+                          control={
+                            <Switch
+                              checked={value[item.key]}
+                              disabled={disabled}
+                              onChange={(_, checked) => handleFeatureToggle(item.key, checked)}
+                            />
+                          }
+                          label={
+                            <Stack spacing={0.2} sx={{ mt: 0.3 }}>
+                              <Typography variant='body2' fontWeight={600}>
+                                {item.label}
+                              </Typography>
+                              <Typography variant='caption' color='text.secondary'>
+                                {item.description}
+                              </Typography>
+                            </Stack>
+                          }
+                        />
+                      </Box>
+                    </Grid>
+                  ))}
+                </Grid>
+              </Stack>
+            </Box>
+          </Grid>
+
+          <Grid size={{ xs: 12, md: 6 }}>
+            <Box sx={SECTION_SX}>
+              <Stack spacing={1.2}>
+                <Stack direction='row' spacing={1} alignItems='center'>
+                  <PrecisionManufacturingIcon fontSize='small' color='primary' />
+                  <Typography variant='subtitle2' fontWeight={700}>
+                    检索核心参数
+                  </Typography>
+                </Stack>
+                <TextField
+                  label='检索 Top-K'
+                  type='number'
+                  value={value.retrieval_top_k}
+                  onChange={(event) => handleIntField('retrieval_top_k', event.target.value)}
+                  inputProps={{ min: 1, max: 20 }}
+                  disabled={disabled}
+                  fullWidth
+                />
+                <TextField
+                  label='重排序 Top-K'
+                  type='number'
+                  value={value.retrieval_rerank_top_k}
+                  onChange={(event) => handleIntField('retrieval_rerank_top_k', event.target.value)}
+                  inputProps={{ min: value.retrieval_top_k, max: 20 }}
+                  helperText='需大于等于检索 Top-K'
+                  disabled={disabled}
+                  fullWidth
+                />
+                <TextField
+                  label='Hybrid Ranker'
+                  select
+                  value={value.retrieval_hybrid_ranker}
+                  onChange={(event) =>
+                    onChange({
+                      ...value,
+                      retrieval_hybrid_ranker: event.target.value as KbChatConfig['retrieval_hybrid_ranker'],
+                    })
+                  }
+                  disabled={disabled}
+                  fullWidth
+                >
+                  <MenuItem value='rrf'>RRF</MenuItem>
+                  <MenuItem value='weighted'>Weighted</MenuItem>
+                </TextField>
+                <TextField
+                  label='Hybrid RRF k'
+                  type='number'
+                  value={value.retrieval_hybrid_rrf_k}
+                  onChange={(event) => handleIntField('retrieval_hybrid_rrf_k', event.target.value)}
+                  inputProps={{ min: 1, max: 200 }}
+                  disabled={disabled}
+                  fullWidth
+                />
+              </Stack>
+            </Box>
+          </Grid>
+
+          <Grid size={{ xs: 12, md: 6 }}>
+            <Box sx={SECTION_SX}>
+              <Stack spacing={1.2}>
+                <Typography variant='subtitle2' fontWeight={700}>
+                  融合与策略限制参数
+                </Typography>
+                <Grid container spacing={1.2}>
+                  <Grid size={{ xs: 12, md: 6 }}>
+                    <TextField
+                      label='Dense 权重'
+                      type='number'
+                      value={value.retrieval_hybrid_dense_weight}
+                      onChange={(event) => handleFloatField('retrieval_hybrid_dense_weight', event.target.value)}
+                      inputProps={{ min: 0, max: 1, step: 0.05 }}
+                      helperText={
+                        value.retrieval_hybrid_ranker === 'weighted'
+                          ? 'Weighted 模式生效'
+                          : '当前为 RRF 模式'
+                      }
+                      disabled={disabled || value.retrieval_hybrid_ranker !== 'weighted'}
+                      fullWidth
+                    />
+                  </Grid>
+                  <Grid size={{ xs: 12, md: 6 }}>
+                    <TextField
+                      label='BM25 权重'
+                      type='number'
+                      value={value.retrieval_hybrid_sparse_weight}
+                      onChange={(event) => handleFloatField('retrieval_hybrid_sparse_weight', event.target.value)}
+                      inputProps={{ min: 0, max: 1, step: 0.05 }}
+                      helperText={
+                        value.retrieval_hybrid_ranker === 'weighted'
+                          ? 'Weighted 模式生效'
+                          : '当前为 RRF 模式'
+                      }
+                      disabled={disabled || value.retrieval_hybrid_ranker !== 'weighted'}
+                      fullWidth
+                    />
+                  </Grid>
+                  <Grid size={{ xs: 12, md: 6 }}>
+                    <TextField
+                      label='父块保留上限'
+                      type='number'
+                      value={value.retrieval_parent_max_parents}
+                      onChange={(event) => handleIntField('retrieval_parent_max_parents', event.target.value)}
+                      inputProps={{ min: 1, max: 20 }}
+                      disabled={disabled}
+                      fullWidth
+                    />
+                  </Grid>
+                  <Grid size={{ xs: 12, md: 6 }}>
+                    <TextField
+                      label='每父块子块上限'
+                      type='number'
+                      value={value.retrieval_parent_max_children_per_parent}
+                      onChange={(event) =>
+                        handleIntField('retrieval_parent_max_children_per_parent', event.target.value)
+                      }
+                      inputProps={{ min: 1, max: 10 }}
+                      disabled={disabled}
+                      fullWidth
+                    />
+                  </Grid>
+                  <Grid size={{ xs: 12, md: 6 }}>
+                    <TextField
+                      label='多尺度窗口 Top-K'
+                      type='number'
+                      value={value.retrieval_multiscale_per_window_top_k}
+                      onChange={(event) =>
+                        handleIntField('retrieval_multiscale_per_window_top_k', event.target.value)
+                      }
+                      inputProps={{ min: 1, max: 200 }}
+                      disabled={disabled}
+                      fullWidth
+                    />
+                  </Grid>
+                  <Grid size={{ xs: 12, md: 6 }}>
+                    <TextField
+                      label='多尺度 RRF k'
+                      type='number'
+                      value={value.retrieval_multiscale_rrf_k}
+                      onChange={(event) => handleIntField('retrieval_multiscale_rrf_k', event.target.value)}
+                      inputProps={{ min: 1, max: 200 }}
+                      disabled={disabled}
+                      fullWidth
+                    />
+                  </Grid>
+                  <Grid size={{ xs: 12, md: 6 }}>
+                    <TextField
+                      label='文档保留上限'
+                      type='number'
+                      value={value.retrieval_multiscale_max_documents}
+                      onChange={(event) =>
+                        handleIntField('retrieval_multiscale_max_documents', event.target.value)
+                      }
+                      inputProps={{ min: 1, max: 100 }}
+                      disabled={disabled}
+                      fullWidth
+                    />
+                  </Grid>
+                  <Grid size={{ xs: 12, md: 6 }}>
+                    <TextField
+                      label='每文档 Chunk 上限'
+                      type='number'
+                      value={value.retrieval_multiscale_max_chunks_per_document}
+                      onChange={(event) =>
+                        handleIntField('retrieval_multiscale_max_chunks_per_document', event.target.value)
+                      }
+                      inputProps={{ min: 1, max: 20 }}
+                      disabled={disabled}
+                      fullWidth
+                    />
+                  </Grid>
+                </Grid>
+              </Stack>
+            </Box>
+          </Grid>
         </Grid>
+
+        <Divider />
+        <Typography variant='caption' color='text.secondary'>
+          当前配置会写入会话，并贯穿整轮问答流程，便于复现实验结果。
+        </Typography>
       </Stack>
     </Paper>
   );

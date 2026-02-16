@@ -67,10 +67,24 @@ export interface KbChatConfig {
   query_rewrite_enabled: boolean;
   ambiguity_check_enabled: boolean;
   decomposition_enabled: boolean;
+  decomposition_max_sub_questions: number;
   multi_query_enabled: boolean;
+  multi_query_max_variants: number;
   hyde_enabled: boolean;
   hybrid_retrieval_enabled: boolean;
   rerank_enabled: boolean;
+  retrieval_top_k: number;
+  retrieval_rerank_top_k: number;
+  retrieval_hybrid_ranker: 'rrf' | 'weighted';
+  retrieval_hybrid_dense_weight: number;
+  retrieval_hybrid_sparse_weight: number;
+  retrieval_hybrid_rrf_k: number;
+  retrieval_parent_max_parents: number;
+  retrieval_parent_max_children_per_parent: number;
+  retrieval_multiscale_per_window_top_k: number;
+  retrieval_multiscale_rrf_k: number;
+  retrieval_multiscale_max_documents: number;
+  retrieval_multiscale_max_chunks_per_document: number;
 }
 
 export interface ChatSessionCreate {
@@ -351,14 +365,28 @@ export function toKbGraphSchemaQuery(config: Partial<KbChatConfig>): string {
     'query_rewrite_enabled',
     'ambiguity_check_enabled',
     'decomposition_enabled',
+    'decomposition_max_sub_questions',
     'multi_query_enabled',
+    'multi_query_max_variants',
     'hyde_enabled',
     'hybrid_retrieval_enabled',
     'rerank_enabled',
+    'retrieval_top_k',
+    'retrieval_rerank_top_k',
+    'retrieval_hybrid_ranker',
+    'retrieval_hybrid_dense_weight',
+    'retrieval_hybrid_sparse_weight',
+    'retrieval_hybrid_rrf_k',
+    'retrieval_parent_max_parents',
+    'retrieval_parent_max_children_per_parent',
+    'retrieval_multiscale_per_window_top_k',
+    'retrieval_multiscale_rrf_k',
+    'retrieval_multiscale_max_documents',
+    'retrieval_multiscale_max_chunks_per_document',
   ];
   for (const key of orderedKeys) {
     const value = config[key];
-    if (typeof value === 'boolean') {
+    if (typeof value === 'boolean' || typeof value === 'number' || typeof value === 'string') {
       params.set(key, String(value));
     }
   }

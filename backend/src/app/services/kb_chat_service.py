@@ -126,11 +126,29 @@ class KbChatService:
         return resolve_kb_chat_config(raw=raw, settings=self._settings)
 
     @staticmethod
-    def _to_retrieval_overrides(config: KbChatConfig) -> dict[str, bool]:
+    def _to_retrieval_overrides(config: KbChatConfig) -> dict[str, Any]:
         return {
             "query_rewrite_enabled": bool(config.query_rewrite_enabled),
             "hybrid_retrieval_enabled": bool(config.hybrid_retrieval_enabled),
             "rerank_enabled": bool(config.rerank_enabled),
+            "retrieval_top_k": int(config.retrieval_top_k),
+            "retrieval_rerank_top_k": int(config.retrieval_rerank_top_k),
+            "hybrid_ranker": str(config.retrieval_hybrid_ranker),
+            "hybrid_dense_weight": float(config.retrieval_hybrid_dense_weight),
+            "hybrid_sparse_weight": float(config.retrieval_hybrid_sparse_weight),
+            "hybrid_rrf_k": int(config.retrieval_hybrid_rrf_k),
+            "parent_max_parents": int(config.retrieval_parent_max_parents),
+            "parent_max_children_per_parent": int(
+                config.retrieval_parent_max_children_per_parent
+            ),
+            "multiscale_per_window_top_k": int(
+                config.retrieval_multiscale_per_window_top_k
+            ),
+            "multiscale_rrf_k": int(config.retrieval_multiscale_rrf_k),
+            "multiscale_max_documents": int(config.retrieval_multiscale_max_documents),
+            "multiscale_max_chunks_per_document": int(
+                config.retrieval_multiscale_max_chunks_per_document
+            ),
         }
 
     @staticmethod
@@ -275,17 +293,45 @@ class KbChatService:
                 "ambiguity_check_enabled": bool(kb_chat_config.ambiguity_check_enabled),
                 "decomposition_enabled": bool(kb_chat_config.decomposition_enabled),
                 "decomposition_max_sub_questions": int(
-                    self._settings.kb_chat_decomposition_max_sub_questions
+                    kb_chat_config.decomposition_max_sub_questions
                 ),
                 "multi_query_enabled": bool(kb_chat_config.multi_query_enabled),
                 "multi_query_max_variants": int(
-                    self._settings.kb_chat_multi_query_max_variants
+                    kb_chat_config.multi_query_max_variants
                 ),
                 "hyde_enabled": bool(kb_chat_config.hyde_enabled),
                 "hybrid_retrieval_enabled": bool(
                     kb_chat_config.hybrid_retrieval_enabled
                 ),
                 "rerank_enabled": bool(kb_chat_config.rerank_enabled),
+                "retrieval_top_k": int(kb_chat_config.retrieval_top_k),
+                "retrieval_rerank_top_k": int(kb_chat_config.retrieval_rerank_top_k),
+                "retrieval_hybrid_ranker": str(kb_chat_config.retrieval_hybrid_ranker),
+                "retrieval_hybrid_dense_weight": float(
+                    kb_chat_config.retrieval_hybrid_dense_weight
+                ),
+                "retrieval_hybrid_sparse_weight": float(
+                    kb_chat_config.retrieval_hybrid_sparse_weight
+                ),
+                "retrieval_hybrid_rrf_k": int(kb_chat_config.retrieval_hybrid_rrf_k),
+                "retrieval_parent_max_parents": int(
+                    kb_chat_config.retrieval_parent_max_parents
+                ),
+                "retrieval_parent_max_children_per_parent": int(
+                    kb_chat_config.retrieval_parent_max_children_per_parent
+                ),
+                "retrieval_multiscale_per_window_top_k": int(
+                    kb_chat_config.retrieval_multiscale_per_window_top_k
+                ),
+                "retrieval_multiscale_rrf_k": int(
+                    kb_chat_config.retrieval_multiscale_rrf_k
+                ),
+                "retrieval_multiscale_max_documents": int(
+                    kb_chat_config.retrieval_multiscale_max_documents
+                ),
+                "retrieval_multiscale_max_chunks_per_document": int(
+                    kb_chat_config.retrieval_multiscale_max_chunks_per_document
+                ),
             },
             "versions": {
                 "llm_model": self._settings.llm_model,

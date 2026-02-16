@@ -111,6 +111,20 @@ class KbChatRuntimeConfig(TypedDict, total=False):
     hyde_enabled: bool
     hybrid_retrieval_enabled: bool
     rerank_enabled: bool
+    decomposition_max_sub_questions: int
+    multi_query_max_variants: int
+    retrieval_top_k: int
+    retrieval_rerank_top_k: int
+    retrieval_hybrid_ranker: Literal["rrf", "weighted"]
+    retrieval_hybrid_dense_weight: float
+    retrieval_hybrid_sparse_weight: float
+    retrieval_hybrid_rrf_k: int
+    retrieval_parent_max_parents: int
+    retrieval_parent_max_children_per_parent: int
+    retrieval_multiscale_per_window_top_k: int
+    retrieval_multiscale_rrf_k: int
+    retrieval_multiscale_max_documents: int
+    retrieval_multiscale_max_chunks_per_document: int
 
 
 # -----------------------------

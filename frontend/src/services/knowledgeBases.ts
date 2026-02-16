@@ -69,27 +69,9 @@ export interface ContextualConfig {
   concurrency: number;
 }
 
-export interface RetrievalParentChildConfig {
-  max_parents: number;
-  max_children_per_parent: number;
-}
-
-export interface RetrievalQueryDependentMultiscaleConfig {
-  rrf_k: number;
-  per_window_top_k: number;
-  max_documents: number;
-  max_chunks_per_document: number;
-}
-
-export interface RetrievalConfig {
-  parent_child: RetrievalParentChildConfig;
-  query_dependent_multiscale: RetrievalQueryDependentMultiscaleConfig;
-}
-
 export interface IndexConfig {
   chunking: ChunkingConfig;
   contextual: ContextualConfig;
-  retrieval: RetrievalConfig;
 }
 
 export type KnowledgeBaseReadiness = 'not_ready' | 'ready';
@@ -178,18 +160,6 @@ export function createDefaultIndexConfig(): IndexConfig {
       enabled: true,
       max_tokens: 128,
       concurrency: 3,
-    },
-    retrieval: {
-      parent_child: {
-        max_parents: 6,
-        max_children_per_parent: 2,
-      },
-      query_dependent_multiscale: {
-        rrf_k: 60,
-        per_window_top_k: 20,
-        max_documents: 8,
-        max_chunks_per_document: 2,
-      },
     },
   };
 }

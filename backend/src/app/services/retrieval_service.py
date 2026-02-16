@@ -90,6 +90,22 @@ class RetrievalFeatureFlags:
 
 
 @dataclass(slots=True)
+class RetrievalRuntimeOverrides:
+    hybrid_ranker: str
+    hybrid_dense_weight: float
+    hybrid_sparse_weight: float
+    hybrid_rrf_k: int
+    retrieval_top_k: int
+    retrieval_rerank_top_k: int
+    parent_max_parents: int
+    parent_max_children_per_parent: int
+    multiscale_per_window_top_k: int
+    multiscale_rrf_k: int
+    multiscale_max_documents: int
+    multiscale_max_chunks_per_document: int
+
+
+@dataclass(slots=True)
 class RetrievalLayerDraft:
     """Unified retrieval layer output (for agentic state + legacy tool compatibility).
 
@@ -324,6 +340,7 @@ class RetrievalService:
         top_k: int,
         *,
         feature_flags: RetrievalFeatureFlags,
+        runtime_overrides: RetrievalRuntimeOverrides,
         kb_fingerprint: dict[str, dict] | None = None,
     ) -> dict:
         """生成策略指纹，避免配置变更误命中缓存。"""
@@ -331,13 +348,20 @@ class RetrievalService:
             "top_k": top_k,
             "min_score": self._settings.retrieval_min_score,
             "hybrid_enabled": feature_flags.hybrid_enabled,
-            "hybrid_ranker": self._settings.retrieval_hybrid_ranker,
-            "hybrid_dense_weight": self._settings.retrieval_hybrid_dense_weight,
-            "hybrid_sparse_weight": self._settings.retrieval_hybrid_sparse_weight,
-            "hybrid_rrf_k": self._settings.retrieval_hybrid_rrf_k,
+            "hybrid_ranker": runtime_overrides.hybrid_ranker,
+            "hybrid_dense_weight": runtime_overrides.hybrid_dense_weight,
+            "hybrid_sparse_weight": runtime_overrides.hybrid_sparse_weight,
+            "hybrid_rrf_k": runtime_overrides.hybrid_rrf_k,
             "rewrite_enabled": feature_flags.query_rewrite_enabled,
             "rerank_enabled": feature_flags.rerank_enabled,
             "rerank_model": self._settings.retrieval_rerank_model,
+            "retrieval_rerank_top_k": runtime_overrides.retrieval_rerank_top_k,
+            "parent_max_parents": runtime_overrides.parent_max_parents,
+            "parent_max_children_per_parent": runtime_overrides.parent_max_children_per_parent,
+            "multiscale_per_window_top_k": runtime_overrides.multiscale_per_window_top_k,
+            "multiscale_rrf_k": runtime_overrides.multiscale_rrf_k,
+            "multiscale_max_documents": runtime_overrides.multiscale_max_documents,
+            "multiscale_max_chunks_per_document": runtime_overrides.multiscale_max_chunks_per_document,
             "embedding_model": self._settings.embedding_model,
         }
         if kb_fingerprint:
@@ -346,7 +370,7 @@ class RetrievalService:
 
     def _resolve_feature_flags(
         self,
-        feature_overrides: dict[str, bool] | None,
+        feature_overrides: dict[str, object] | None,
     ) -> RetrievalFeatureFlags:
         query_rewrite_enabled = bool(self._settings.retrieval_query_rewrite_enabled)
         hybrid_enabled = bool(self._settings.retrieval_hybrid_enabled)
@@ -372,6 +396,145 @@ class RetrievalService:
             hybrid_enabled=hybrid_enabled,
             rerank_enabled=rerank_enabled,
         )
+
+    def _resolve_runtime_overrides(
+        self, feature_overrides: dict[str, object] | None
+    ) -> RetrievalRuntimeOverrides:
+        ranker = str(self._settings.retrieval_hybrid_ranker or "rrf").strip().lower()
+        if ranker not in {"rrf", "weighted"}:
+            ranker = "rrf"
+
+        dense_weight = float(self._settings.retrieval_hybrid_dense_weight)
+        sparse_weight = float(self._settings.retrieval_hybrid_sparse_weight)
+        hybrid_rrf_k = int(self._settings.retrieval_hybrid_rrf_k)
+        retrieval_top_k = int(self._settings.retrieval_default_top_k)
+        retrieval_rerank_top_k = int(self._settings.retrieval_max_top_k)
+
+        parent_max_parents = 6
+        parent_max_children_per_parent = 2
+        multiscale_per_window_top_k = 20
+        multiscale_rrf_k = 60
+        multiscale_max_documents = 8
+        multiscale_max_chunks_per_document = 2
+
+        if isinstance(feature_overrides, dict):
+            override_ranker = feature_overrides.get("hybrid_ranker")
+            if isinstance(override_ranker, str):
+                candidate = override_ranker.strip().lower()
+                if candidate in {"rrf", "weighted"}:
+                    ranker = candidate
+
+            override_dense = feature_overrides.get("hybrid_dense_weight")
+            if isinstance(override_dense, (int, float)):
+                dense_weight = float(override_dense)
+
+            override_sparse = feature_overrides.get("hybrid_sparse_weight")
+            if isinstance(override_sparse, (int, float)):
+                sparse_weight = float(override_sparse)
+
+            override_rrf_k = feature_overrides.get("hybrid_rrf_k")
+            if isinstance(override_rrf_k, int):
+                hybrid_rrf_k = override_rrf_k
+
+            override_top_k = feature_overrides.get("retrieval_top_k")
+            if isinstance(override_top_k, int):
+                retrieval_top_k = override_top_k
+
+            override_rerank_top_k = feature_overrides.get("retrieval_rerank_top_k")
+            if isinstance(override_rerank_top_k, int):
+                retrieval_rerank_top_k = override_rerank_top_k
+
+            override_parent_max = feature_overrides.get("parent_max_parents")
+            if isinstance(override_parent_max, int):
+                parent_max_parents = override_parent_max
+
+            override_parent_children = feature_overrides.get(
+                "parent_max_children_per_parent"
+            )
+            if isinstance(override_parent_children, int):
+                parent_max_children_per_parent = override_parent_children
+
+            override_multiscale_per_window_top_k = feature_overrides.get(
+                "multiscale_per_window_top_k"
+            )
+            if isinstance(override_multiscale_per_window_top_k, int):
+                multiscale_per_window_top_k = override_multiscale_per_window_top_k
+
+            override_multiscale_rrf_k = feature_overrides.get("multiscale_rrf_k")
+            if isinstance(override_multiscale_rrf_k, int):
+                multiscale_rrf_k = override_multiscale_rrf_k
+
+            override_multiscale_max_documents = feature_overrides.get(
+                "multiscale_max_documents"
+            )
+            if isinstance(override_multiscale_max_documents, int):
+                multiscale_max_documents = override_multiscale_max_documents
+
+            override_multiscale_max_chunks_per_document = feature_overrides.get(
+                "multiscale_max_chunks_per_document"
+            )
+            if isinstance(override_multiscale_max_chunks_per_document, int):
+                multiscale_max_chunks_per_document = (
+                    override_multiscale_max_chunks_per_document
+                )
+
+        dense_weight = max(0.0, min(1.0, dense_weight))
+        sparse_weight = max(0.0, min(1.0, sparse_weight))
+        if ranker == "weighted":
+            total_weight = dense_weight + sparse_weight
+            if total_weight <= 0:
+                dense_weight = 0.5
+                sparse_weight = 0.5
+            else:
+                dense_weight /= total_weight
+                sparse_weight /= total_weight
+
+        return RetrievalRuntimeOverrides(
+            hybrid_ranker=ranker,
+            hybrid_dense_weight=dense_weight,
+            hybrid_sparse_weight=sparse_weight,
+            hybrid_rrf_k=max(1, min(int(hybrid_rrf_k), 200)),
+            retrieval_top_k=max(1, int(retrieval_top_k)),
+            retrieval_rerank_top_k=max(1, int(retrieval_rerank_top_k)),
+            parent_max_parents=max(1, min(int(parent_max_parents), 20)),
+            parent_max_children_per_parent=max(
+                1, min(int(parent_max_children_per_parent), 10)
+            ),
+            multiscale_per_window_top_k=max(
+                1, min(int(multiscale_per_window_top_k), 200)
+            ),
+            multiscale_rrf_k=max(1, min(int(multiscale_rrf_k), 200)),
+            multiscale_max_documents=max(1, min(int(multiscale_max_documents), 100)),
+            multiscale_max_chunks_per_document=max(
+                1, min(int(multiscale_max_chunks_per_document), 20)
+            ),
+        )
+
+    @staticmethod
+    def _weighted_rank(
+        dense_keys: list[tuple[str, str, str]],
+        bm25_keys: list[tuple[str, str, str]],
+        *,
+        dense_weight: float,
+        sparse_weight: float,
+        k: int,
+    ) -> tuple[list[tuple[str, str, str]], dict[tuple[str, str, str], float]]:
+        scores: dict[tuple[str, str, str], float] = {}
+        best_rank: dict[tuple[str, str, str], int] = {}
+
+        for rank, key in enumerate(dense_keys, start=1):
+            scores[key] = scores.get(key, 0.0) + dense_weight / float(k + rank)
+            best_rank[key] = min(best_rank.get(key, rank), rank)
+
+        for rank, key in enumerate(bm25_keys, start=1):
+            scores[key] = scores.get(key, 0.0) + sparse_weight / float(k + rank)
+            best_rank[key] = min(best_rank.get(key, rank), rank)
+
+        ordered = sorted(
+            scores.keys(),
+            key=lambda key: (-scores[key], best_rank.get(key, 10**9), key),
+        )
+        return ordered, scores
 
     def _normalize_query(self, query: str) -> str:
         """规范化 query，用于缓存一致性。"""
@@ -596,7 +759,7 @@ class RetrievalService:
         rerank_input_limit: int | None = None,
         extra_filter_expr: str | None = None,
         timeout_seconds: float | None = None,
-        feature_overrides: dict[str, bool] | None = None,
+        feature_overrides: dict[str, object] | None = None,
     ) -> RetrievalLayerDraft:
         """Unified RetrievalLayer: dense + BM25 + global RRF + optional rerank + Top-N.
 
@@ -610,12 +773,13 @@ class RetrievalService:
             self._last_layer_draft = draft
             return draft
 
-        if not kb_ids or not query_items or top_n <= 0:
+        if not kb_ids or not query_items:
             draft = self._empty_layer_draft()
             self._last_layer_draft = draft
             return draft
 
         feature_flags = self._resolve_feature_flags(feature_overrides)
+        runtime_overrides = self._resolve_runtime_overrides(feature_overrides)
 
         def _timeout_draft() -> RetrievalLayerDraft:
             draft = self._empty_layer_draft(reason="timeout")
@@ -623,9 +787,13 @@ class RetrievalService:
             return draft
 
         # Enforce reasonable caps (production guardrails).
+        if top_n <= 0:
+            top_n = runtime_overrides.retrieval_top_k
         top_n = min(int(top_n), int(self._settings.retrieval_max_top_k))
         per_query_top_k = (
-            int(per_query_top_k) if per_query_top_k is not None else int(top_n)
+            int(per_query_top_k)
+            if per_query_top_k is not None
+            else int(runtime_overrides.retrieval_top_k)
         )
         per_query_top_k = max(
             1, min(per_query_top_k, int(self._settings.retrieval_max_top_k))
@@ -644,7 +812,7 @@ class RetrievalService:
         )
 
         if rerank_input_limit is None:
-            rerank_input_limit = global_candidates_limit
+            rerank_input_limit = runtime_overrides.retrieval_rerank_top_k
         rerank_input_limit = max(int(rerank_input_limit), top_n)
         rerank_input_limit = min(rerank_input_limit, global_candidates_limit)
 
@@ -666,7 +834,7 @@ class RetrievalService:
             base_collection=self._settings.milvus_collection,
         )
 
-        rrf_k = int(self._settings.retrieval_hybrid_rrf_k)
+        rrf_k = int(runtime_overrides.hybrid_rrf_k)
 
         chunk_by_key: dict[tuple[str, str, str], RetrievedChunk] = {}
         hits_by_key: dict[tuple[str, str, str], list[QueryHitSource]] = {}
@@ -887,7 +1055,20 @@ class RetrievalService:
                 continue
 
             # Per-query fusion (dense + BM25) -> per-query ranked list.
-            per_keys, _ = self._rrf_rank(ranked_lists, k=rrf_k)
+            if (
+                runtime_overrides.hybrid_ranker == "weighted"
+                and dense_keys
+                and bm25_keys
+            ):
+                per_keys, _ = self._weighted_rank(
+                    dense_keys,
+                    bm25_keys,
+                    dense_weight=runtime_overrides.hybrid_dense_weight,
+                    sparse_weight=runtime_overrides.hybrid_sparse_weight,
+                    k=rrf_k,
+                )
+            else:
+                per_keys, _ = self._rrf_rank(ranked_lists, k=rrf_k)
             per_query_ranked.append(per_keys)
 
         if not per_query_ranked:
@@ -937,7 +1118,11 @@ class RetrievalService:
                 deadline=deadline, per_call_timeout=None
             )
             rrf_results = await self._apply_parent_child_strategy(
-                rrf_results, kb_configs, timeout_seconds=timeout_value
+                rrf_results,
+                kb_configs,
+                max_parents=runtime_overrides.parent_max_parents,
+                max_children_per_parent=runtime_overrides.parent_max_children_per_parent,
+                timeout_seconds=timeout_value,
             )
         except asyncio.TimeoutError:
             return _timeout_draft()
@@ -947,7 +1132,13 @@ class RetrievalService:
                 deadline=deadline, per_call_timeout=None
             )
             rrf_results = await self._apply_query_dependent_multiscale_strategy(
-                rrf_results, kb_configs, timeout_seconds=timeout_value
+                rrf_results,
+                kb_configs,
+                per_window_top_k=runtime_overrides.multiscale_per_window_top_k,
+                rrf_k=runtime_overrides.multiscale_rrf_k,
+                max_documents=runtime_overrides.multiscale_max_documents,
+                max_chunks_per_document=runtime_overrides.multiscale_max_chunks_per_document,
+                timeout_seconds=timeout_value,
             )
         except asyncio.TimeoutError:
             return _timeout_draft()
@@ -1071,6 +1262,10 @@ class RetrievalService:
                 "global_candidates_limit": global_candidates_limit,
                 "rerank_input_limit": rerank_input_limit,
                 "hybrid_enabled": feature_flags.hybrid_enabled,
+                "hybrid_ranker": runtime_overrides.hybrid_ranker,
+                "hybrid_dense_weight": runtime_overrides.hybrid_dense_weight,
+                "hybrid_sparse_weight": runtime_overrides.hybrid_sparse_weight,
+                "hybrid_rrf_k": runtime_overrides.hybrid_rrf_k,
                 "rerank_enabled": feature_flags.rerank_enabled,
                 "rerank_applied": rerank_applied,
                 "rerank_reason": rerank_reason,
@@ -1196,7 +1391,6 @@ class RetrievalService:
         for kb_id, cfg in configs.items():
             item = {
                 "general_strategy": cfg.chunking.general_strategy.value,
-                "parent_child": cfg.retrieval.parent_child.model_dump(mode="json"),
             }
             if cfg.chunking.general_strategy == ChunkingStrategy.QUERY_DEPENDENT_MULTISCALE:
                 item["query_dependent_multiscale"] = {
@@ -1207,9 +1401,6 @@ class RetrievalService:
                         }
                         for window in cfg.chunking.query_dependent_multiscale.windows
                     ],
-                    "retrieval": cfg.retrieval.query_dependent_multiscale.model_dump(
-                        mode="json"
-                    ),
                 }
             fingerprint[str(kb_id)] = item
         return dict(sorted(fingerprint.items(), key=lambda item: item[0]))
@@ -1265,6 +1456,8 @@ class RetrievalService:
         results: list[RetrievalResult],
         kb_configs: dict[uuid.UUID, IndexConfig],
         *,
+        max_parents: int,
+        max_children_per_parent: int,
         timeout_seconds: float | None = None,
     ) -> list[RetrievalResult]:
         if not results or not kb_configs:
@@ -1308,19 +1501,17 @@ class RetrievalService:
                     parent_scores.get(parent_id, -1e9), r.score
                 )
 
-            max_parents = cfg.retrieval.parent_child.max_parents
             sorted_parents = sorted(
                 parent_scores.items(), key=lambda item: item[1], reverse=True
             )[:max_parents]
             allowed_parents = {pid for pid, _ in sorted_parents}
 
-            max_children = cfg.retrieval.parent_child.max_children_per_parent
             kept_children: dict[str, int] = {pid: 0 for pid in allowed_parents}
             for r in child_results:
                 parent_id = r.chunk.parent_chunk_id
                 if not parent_id or parent_id not in allowed_parents:
                     continue
-                if kept_children[parent_id] >= max_children:
+                if kept_children[parent_id] >= max_children_per_parent:
                     continue
                 kept_children[parent_id] += 1
                 selected_child_ids.add(r.chunk.id)
@@ -1379,6 +1570,10 @@ class RetrievalService:
         results: list[RetrievalResult],
         kb_configs: dict[uuid.UUID, IndexConfig],
         *,
+        per_window_top_k: int,
+        rrf_k: int,
+        max_documents: int,
+        max_chunks_per_document: int,
         timeout_seconds: float | None = None,
     ) -> list[RetrievalResult]:
         if not results or not kb_configs:
@@ -1416,7 +1611,6 @@ class RetrievalService:
                 continue
 
             ranked_doc_lists: list[list[tuple[str, str, str]]] = []
-            per_window_top_k = cfg.retrieval.query_dependent_multiscale.per_window_top_k
             for window_items in by_window.values():
                 ranked = sorted(window_items, key=lambda row: row.score, reverse=True)
                 ranked = ranked[:per_window_top_k]
@@ -1437,11 +1631,7 @@ class RetrievalService:
 
             doc_rrf_keys, _ = self._rrf_rank(
                 ranked_doc_lists,
-                k=cfg.retrieval.query_dependent_multiscale.rrf_k,
-            )
-            max_documents = cfg.retrieval.query_dependent_multiscale.max_documents
-            max_chunks_per_document = (
-                cfg.retrieval.query_dependent_multiscale.max_chunks_per_document
+                k=rrf_k,
             )
             ordered_material_ids = [key[1] for key in doc_rrf_keys[:max_documents]]
 
@@ -1484,11 +1674,12 @@ class RetrievalService:
         kb_ids: list[uuid.UUID],
         top_k: int | None = None,
         timeout_seconds: float | None = None,
-        feature_overrides: dict[str, bool] | None = None,
+        feature_overrides: dict[str, object] | None = None,
     ) -> list[RetrievalResult]:
         """检索相关 chunk。"""
         deadline = self._make_deadline(timeout_seconds)
         feature_flags = self._resolve_feature_flags(feature_overrides)
+        runtime_overrides = self._resolve_runtime_overrides(feature_overrides)
         if not kb_ids:
             self._last_layer_draft = self._empty_layer_draft()
             return []
@@ -1496,7 +1687,7 @@ class RetrievalService:
         if deadline is not None and float(timeout_seconds) <= 0:
             normalized_query = self._normalize_query(query)
             if top_k is None:
-                top_k = self._settings.retrieval_default_top_k
+                top_k = runtime_overrides.retrieval_top_k
             top_k = min(top_k, self._settings.retrieval_max_top_k)
             self._last_layer_draft = self._empty_layer_draft(reason="timeout")
             self._last_stats = RetrievalStats(
@@ -1515,7 +1706,7 @@ class RetrievalService:
                 rewrite_latency_ms=None,
                 hybrid_enabled=feature_flags.hybrid_enabled,
                 hybrid_ranker=(
-                    self._settings.retrieval_hybrid_ranker
+                    runtime_overrides.hybrid_ranker
                     if feature_flags.hybrid_enabled
                     else None
                 ),
@@ -1528,7 +1719,7 @@ class RetrievalService:
 
         # 应用配置限制
         if top_k is None:
-            top_k = self._settings.retrieval_default_top_k
+            top_k = runtime_overrides.retrieval_top_k
         top_k = min(top_k, self._settings.retrieval_max_top_k)
 
         def _timeout_return() -> list[RetrievalResult]:
@@ -1549,7 +1740,7 @@ class RetrievalService:
                 rewrite_latency_ms=None,
                 hybrid_enabled=feature_flags.hybrid_enabled,
                 hybrid_ranker=(
-                    self._settings.retrieval_hybrid_ranker
+                    runtime_overrides.hybrid_ranker
                     if feature_flags.hybrid_enabled
                     else None
                 ),
@@ -1590,6 +1781,7 @@ class RetrievalService:
         strategy = self._strategy_fingerprint(
             top_k,
             feature_flags=feature_flags,
+            runtime_overrides=runtime_overrides,
             kb_fingerprint=kb_fingerprint,
         )
         cache_key = self._cache_key(effective_query, kb_ids, top_k, strategy)
@@ -1703,7 +1895,7 @@ class RetrievalService:
                     rewrite_latency_ms=rewrite_result.latency_ms,
                     hybrid_enabled=feature_flags.hybrid_enabled,
                     hybrid_ranker=(
-                        self._settings.retrieval_hybrid_ranker
+                        runtime_overrides.hybrid_ranker
                         if feature_flags.hybrid_enabled
                         else None
                     ),
@@ -1723,12 +1915,24 @@ class RetrievalService:
             per_query_top_k=top_k,
             # Keep defaults conservative: global cap and rerank cap follow Settings max_top_k.
             global_candidates_limit=self._settings.retrieval_max_top_k,
-            rerank_input_limit=self._settings.retrieval_max_top_k,
+            rerank_input_limit=runtime_overrides.retrieval_rerank_top_k,
             timeout_seconds=remaining,
             feature_overrides={
                 "query_rewrite_enabled": feature_flags.query_rewrite_enabled,
                 "hybrid_retrieval_enabled": feature_flags.hybrid_enabled,
                 "rerank_enabled": feature_flags.rerank_enabled,
+                "hybrid_ranker": runtime_overrides.hybrid_ranker,
+                "hybrid_dense_weight": runtime_overrides.hybrid_dense_weight,
+                "hybrid_sparse_weight": runtime_overrides.hybrid_sparse_weight,
+                "hybrid_rrf_k": runtime_overrides.hybrid_rrf_k,
+                "retrieval_top_k": runtime_overrides.retrieval_top_k,
+                "retrieval_rerank_top_k": runtime_overrides.retrieval_rerank_top_k,
+                "parent_max_parents": runtime_overrides.parent_max_parents,
+                "parent_max_children_per_parent": runtime_overrides.parent_max_children_per_parent,
+                "multiscale_per_window_top_k": runtime_overrides.multiscale_per_window_top_k,
+                "multiscale_rrf_k": runtime_overrides.multiscale_rrf_k,
+                "multiscale_max_documents": runtime_overrides.multiscale_max_documents,
+                "multiscale_max_chunks_per_document": runtime_overrides.multiscale_max_chunks_per_document,
             },
         )
         results = layer.results
@@ -1756,7 +1960,7 @@ class RetrievalService:
                 rewrite_latency_ms=rewrite_result.latency_ms,
                 hybrid_enabled=feature_flags.hybrid_enabled,
                 hybrid_ranker=(
-                    self._settings.retrieval_hybrid_ranker
+                    runtime_overrides.hybrid_ranker
                     if feature_flags.hybrid_enabled
                     else None
                 ),
@@ -1795,7 +1999,7 @@ class RetrievalService:
             rewrite_latency_ms=rewrite_result.latency_ms,
             hybrid_enabled=feature_flags.hybrid_enabled,
             hybrid_ranker=(
-                self._settings.retrieval_hybrid_ranker
+                runtime_overrides.hybrid_ranker
                 if feature_flags.hybrid_enabled
                 else None
             ),

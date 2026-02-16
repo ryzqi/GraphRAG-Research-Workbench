@@ -87,9 +87,6 @@ export function IndexConfigForm({
   const updateContextual = (next: Partial<IndexConfig['contextual']>) => {
     onChange({ ...value, contextual: { ...value.contextual, ...next } });
   };
-  const updateRetrieval = (next: Partial<IndexConfig['retrieval']>) => {
-    onChange({ ...value, retrieval: { ...value.retrieval, ...next } });
-  };
 
   const handleMainStrategyChange = (nextStrategy: ChunkingStrategy) => {
     const prev = selectedStrategy;
@@ -692,121 +689,9 @@ export function IndexConfigForm({
               </Stack>
             )}
 
-            {selectedStrategy === 'parent_child' && (
-              <Stack spacing={2} direction={{ xs: 'column', sm: 'row' }}>
-                <TextField
-                  label="max_parents"
-                  type="number"
-                  value={value.retrieval.parent_child.max_parents}
-                  onChange={(e) =>
-                    updateRetrieval({
-                      parent_child: {
-                        ...value.retrieval.parent_child,
-                        max_parents: numberValue(e.target.value),
-                      },
-                    })
-                  }
-                  inputProps={{ min: 1, max: 20 }}
-                  disabled={disabled}
-                  helperText="最多保留父块数量"
-                  fullWidth
-                />
-                <TextField
-                  label="max_children_per_parent"
-                  type="number"
-                  value={value.retrieval.parent_child.max_children_per_parent}
-                  onChange={(e) =>
-                    updateRetrieval({
-                      parent_child: {
-                        ...value.retrieval.parent_child,
-                        max_children_per_parent: numberValue(e.target.value),
-                      },
-                    })
-                  }
-                  inputProps={{ min: 1, max: 10 }}
-                  disabled={disabled}
-                  helperText="每个父块保留的子块数"
-                  fullWidth
-                />
-              </Stack>
-            )}
-
-            {selectedStrategy === 'query_dependent_multiscale' && (
-              <Stack spacing={2}>
-                <Stack spacing={2} direction={{ xs: 'column', sm: 'row' }}>
-                  <TextField
-                    label="rrf_k"
-                    type="number"
-                    value={value.retrieval.query_dependent_multiscale.rrf_k}
-                    onChange={(e) =>
-                      updateRetrieval({
-                        query_dependent_multiscale: {
-                          ...value.retrieval.query_dependent_multiscale,
-                          rrf_k: numberValue(e.target.value),
-                        },
-                      })
-                    }
-                    inputProps={{ min: 1, max: 200 }}
-                    disabled={disabled}
-                    helperText="RRF 融合参数"
-                    fullWidth
-                  />
-                  <TextField
-                    label="per_window_top_k"
-                    type="number"
-                    value={value.retrieval.query_dependent_multiscale.per_window_top_k}
-                    onChange={(e) =>
-                      updateRetrieval({
-                        query_dependent_multiscale: {
-                          ...value.retrieval.query_dependent_multiscale,
-                          per_window_top_k: numberValue(e.target.value),
-                        },
-                      })
-                    }
-                    inputProps={{ min: 1, max: 200 }}
-                    disabled={disabled}
-                    helperText="每个窗口保留的候选上限"
-                    fullWidth
-                  />
-                </Stack>
-                <Stack spacing={2} direction={{ xs: 'column', sm: 'row' }}>
-                  <TextField
-                    label="max_documents"
-                    type="number"
-                    value={value.retrieval.query_dependent_multiscale.max_documents}
-                    onChange={(e) =>
-                      updateRetrieval({
-                        query_dependent_multiscale: {
-                          ...value.retrieval.query_dependent_multiscale,
-                          max_documents: numberValue(e.target.value),
-                        },
-                      })
-                    }
-                    inputProps={{ min: 1, max: 100 }}
-                    disabled={disabled}
-                    helperText="文档级聚合后最多保留文档数"
-                    fullWidth
-                  />
-                  <TextField
-                    label="max_chunks_per_document"
-                    type="number"
-                    value={value.retrieval.query_dependent_multiscale.max_chunks_per_document}
-                    onChange={(e) =>
-                      updateRetrieval({
-                        query_dependent_multiscale: {
-                          ...value.retrieval.query_dependent_multiscale,
-                          max_chunks_per_document: numberValue(e.target.value),
-                        },
-                      })
-                    }
-                    inputProps={{ min: 1, max: 20 }}
-                    disabled={disabled}
-                    helperText="每篇文档最多保留 chunk 数"
-                    fullWidth
-                  />
-                </Stack>
-              </Stack>
-            )}
+            <Typography variant="body2" color="text.secondary">
+              检索相关参数已迁移至知识库问答初始页配置，不再在知识库创建时设置。
+            </Typography>
           </Stack>
         </AccordionDetails>
       </Accordion>

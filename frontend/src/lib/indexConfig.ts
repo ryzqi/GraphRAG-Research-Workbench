@@ -19,7 +19,7 @@ function checkRange({ value, min, max, label }: RangeCheck, errors: string[]) {
 
 export function validateIndexConfig(config: IndexConfig): string[] {
   const errors: string[] = [];
-  const { chunking, contextual, retrieval } = config;
+  const { chunking, contextual } = config;
 
   // Only validate the currently selected main strategy.
   switch (chunking.general_strategy) {
@@ -222,61 +222,6 @@ export function validateIndexConfig(config: IndexConfig): string[] {
     }
     checkRange(
       { value: contextual.concurrency, min: 1, max: 10, label: 'Contextual concurrency' },
-      errors
-    );
-  }
-
-  if (chunking.general_strategy === 'parent_child') {
-    checkRange(
-      { value: retrieval.parent_child.max_parents, min: 1, max: 20, label: '父子检索 max_parents' },
-      errors
-    );
-    checkRange(
-      {
-        value: retrieval.parent_child.max_children_per_parent,
-        min: 1,
-        max: 10,
-        label: '父子检索 max_children_per_parent',
-      },
-      errors
-    );
-  }
-
-  if (chunking.general_strategy === 'query_dependent_multiscale') {
-    checkRange(
-      {
-        value: retrieval.query_dependent_multiscale.rrf_k,
-        min: 1,
-        max: 200,
-        label: '多尺度检索 rrf_k',
-      },
-      errors
-    );
-    checkRange(
-      {
-        value: retrieval.query_dependent_multiscale.per_window_top_k,
-        min: 1,
-        max: 200,
-        label: '多尺度检索 per_window_top_k',
-      },
-      errors
-    );
-    checkRange(
-      {
-        value: retrieval.query_dependent_multiscale.max_documents,
-        min: 1,
-        max: 100,
-        label: '多尺度检索 max_documents',
-      },
-      errors
-    );
-    checkRange(
-      {
-        value: retrieval.query_dependent_multiscale.max_chunks_per_document,
-        min: 1,
-        max: 20,
-        label: '多尺度检索 max_chunks_per_document',
-      },
       errors
     );
   }
