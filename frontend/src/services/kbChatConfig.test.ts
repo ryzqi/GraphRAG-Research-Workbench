@@ -12,15 +12,15 @@ function createConfig(overrides: Partial<KbChatConfig> = {}): KbChatConfig {
     hyde_enabled: false,
     hybrid_retrieval_enabled: true,
     rerank_enabled: true,
-    retrieval_top_k: 5,
-    retrieval_rerank_top_k: 20,
+    retrieval_top_k: 8,
+    retrieval_rerank_top_k: 50,
     retrieval_hybrid_ranker: 'rrf',
     retrieval_hybrid_dense_weight: 0.7,
     retrieval_hybrid_sparse_weight: 0.3,
     retrieval_hybrid_rrf_k: 60,
     retrieval_parent_max_parents: 6,
     retrieval_parent_max_children_per_parent: 2,
-    retrieval_multiscale_per_window_top_k: 20,
+    retrieval_multiscale_per_window_top_k: 30,
     retrieval_multiscale_rrf_k: 60,
     retrieval_multiscale_max_documents: 8,
     retrieval_multiscale_max_chunks_per_document: 2,
@@ -59,7 +59,7 @@ describe('validateKbChatConfig', () => {
       })
     );
 
-    expect(errors).toContain('重排序 Top-K 需在检索 Top-K 与 20 之间。');
+    expect(errors).toContain('重排序 Top-K 需在检索 Top-K 与 50 之间。');
     expect(errors).toContain('Weighted 模式下 Dense + BM25 权重之和必须为 1。');
   });
 });

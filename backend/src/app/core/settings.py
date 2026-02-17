@@ -239,8 +239,8 @@ class Settings(BaseSettings):
     )
 
     # 检索配置
-    retrieval_default_top_k: int = Field(5, alias="RETRIEVAL_DEFAULT_TOP_K")
-    retrieval_max_top_k: int = Field(20, alias="RETRIEVAL_MAX_TOP_K")
+    retrieval_default_top_k: int = Field(8, alias="RETRIEVAL_DEFAULT_TOP_K")
+    retrieval_max_top_k: int = Field(50, alias="RETRIEVAL_MAX_TOP_K")
     retrieval_cache_ttl_seconds: int = Field(300, alias="RETRIEVAL_CACHE_TTL_SECONDS")
     retrieval_cache_enabled: bool = Field(True, alias="RETRIEVAL_CACHE_ENABLED")
     retrieval_min_score: float | None = Field(None, alias="RETRIEVAL_MIN_SCORE")

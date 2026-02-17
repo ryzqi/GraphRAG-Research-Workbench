@@ -416,7 +416,7 @@ class RetrievalService:
 
         parent_max_parents = 6
         parent_max_children_per_parent = 2
-        multiscale_per_window_top_k = 20
+        multiscale_per_window_top_k = 30
         multiscale_rrf_k = 60
         multiscale_max_documents = 8
         multiscale_max_chunks_per_document = 2

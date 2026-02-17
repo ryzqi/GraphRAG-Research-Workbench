@@ -54,7 +54,7 @@ async def get_kb_chat_graph_schema(
     hybrid_retrieval_enabled: bool | None = Query(None),
     rerank_enabled: bool | None = Query(None),
     retrieval_top_k: int | None = Query(None, ge=1, le=20),
-    retrieval_rerank_top_k: int | None = Query(None, ge=1, le=20),
+    retrieval_rerank_top_k: int | None = Query(None, ge=1, le=50),
     retrieval_hybrid_ranker: str | None = Query(None, pattern="^(rrf|weighted)$"),
     retrieval_hybrid_dense_weight: float | None = Query(None, ge=0.0, le=1.0),
     retrieval_hybrid_sparse_weight: float | None = Query(None, ge=0.0, le=1.0),
