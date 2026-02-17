@@ -106,8 +106,6 @@ class KbChatRuntimeConfig(TypedDict, total=False):
 
     query_rewrite_enabled: bool
     ambiguity_check_enabled: bool
-    decomposition_enabled: bool
-    multi_query_enabled: bool
     hyde_enabled: bool
     hybrid_retrieval_enabled: bool
     rerank_enabled: bool
@@ -159,6 +157,7 @@ class KbChatAgenticState(KbChatAgenticStateBase, total=False):
     - CorefRewrite: reads merged_context -> writes coref_query
     - AmbiguityCheck: reads coref_query/normalized_query -> writes reflection/action (clarify)
     - NormalizeRewrite: reads coref_query -> writes normalized_query
+    - ComplexityRouter: reads normalized_query -> writes query_strategy/query_complexity
     - Decomposition: reads normalized_query -> writes sub_queries
     - MultiQuery: reads normalized_query -> writes multi_queries
     - HyDE: reads normalized_query -> writes hyde_doc/hyde_docs
@@ -172,6 +171,8 @@ class KbChatAgenticState(KbChatAgenticStateBase, total=False):
 
     coref_query: str
     normalized_query: str
+    query_strategy: Literal["direct", "decomposition", "multi_query"]
+    query_complexity: Literal["simple", "complex"]
 
     sub_queries: list[str]
     multi_queries: list[str]

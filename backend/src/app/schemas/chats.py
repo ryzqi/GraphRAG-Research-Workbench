@@ -54,8 +54,6 @@ class KbChatConfig(BaseModel):
 
     query_rewrite_enabled: bool = True
     ambiguity_check_enabled: bool = True
-    decomposition_enabled: bool = False
-    multi_query_enabled: bool = False
     hyde_enabled: bool = False
     hybrid_retrieval_enabled: bool = True
     rerank_enabled: bool = True
@@ -73,9 +71,7 @@ class KbChatConfig(BaseModel):
     retrieval_multiscale_max_chunks_per_document: int = Field(2, ge=1, le=20)
 
     @model_validator(mode="after")
-    def validate_mutual_exclusion(self) -> "KbChatConfig":
-        if self.decomposition_enabled and self.multi_query_enabled:
-            raise ValueError("decomposition_enabled 与 multi_query_enabled 不能同时开启")
+    def validate_constraints(self) -> "KbChatConfig":
         if self.retrieval_rerank_top_k < self.retrieval_top_k:
             raise ValueError("retrieval_rerank_top_k 必须大于等于 retrieval_top_k")
         if self.retrieval_hybrid_ranker == "weighted":
@@ -116,8 +112,6 @@ def default_kb_chat_config(*, settings: Settings | None = None) -> KbChatConfig:
     return KbChatConfig(
         query_rewrite_enabled=bool(cfg.retrieval_query_rewrite_enabled),
         ambiguity_check_enabled=bool(cfg.kb_chat_ambiguity_check_enabled),
-        decomposition_enabled=bool(cfg.kb_chat_decomposition_enabled),
-        multi_query_enabled=bool(cfg.kb_chat_multi_query_enabled),
         hyde_enabled=bool(cfg.kb_chat_hyde_enabled),
         hybrid_retrieval_enabled=bool(cfg.retrieval_hybrid_enabled),
         rerank_enabled=bool(cfg.retrieval_rerank_enabled),

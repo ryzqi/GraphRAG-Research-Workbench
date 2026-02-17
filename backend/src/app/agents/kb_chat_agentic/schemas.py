@@ -69,6 +69,20 @@ class TransformQueryDecision(BaseModel):
     query: str = Field(..., min_length=1)
 
 
+ComplexityLabel = Literal["simple", "complex"]
+ComplexityStrategy = Literal["direct", "decomposition", "multi_query"]
+
+
+class ComplexityDecision(BaseModel):
+    """Structured output for query complexity routing."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    complexity: ComplexityLabel = "simple"
+    strategy: ComplexityStrategy = "direct"
+    reason: str = Field(default="fallback_direct")
+
+
 class DecompositionDecision(BaseModel):
     """Structured output for query decomposition."""
 

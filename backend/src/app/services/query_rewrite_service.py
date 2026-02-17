@@ -20,6 +20,7 @@ from typing import Iterable
 from pydantic import BaseModel, ValidationError
 
 from app.agents.kb_chat_agentic.schemas import (
+    ComplexityDecision,
     DecompositionDecision,
     HyDEBatchDecision,
     MultiQueryDecision,
@@ -68,6 +69,15 @@ class QueryListResult:
 class AmbiguityResult:
     ambiguous: bool
     reverse_question: str | None = None
+    reason: str | None = None
+    latency_ms: int | None = None
+
+
+@dataclass(slots=True)
+class ComplexityRouteResult:
+    strategy: str
+    complexity: str
+    success: bool
     reason: str | None = None
     latency_ms: int | None = None
 
@@ -571,6 +581,57 @@ class QueryRewriteService:
             fallback.reason = llm_result.reason or "fallback_rewrite"
         return fallback
 
+    async def classify_complexity(
+        self,
+        query: str,
+    ) -> ComplexityRouteResult:
+        """Classify query complexity and decide preprocess routing strategy."""
+        start = time.perf_counter()
+        q = _normalize_whitespace(query)
+        if not q:
+            return ComplexityRouteResult(
+                strategy="direct",
+                complexity="simple",
+                success=False,
+                reason="empty",
+                latency_ms=0,
+            )
+
+        structured_result = await self._call_prompt_structured(
+            "kb_chat/complexity_router",
+            schema=ComplexityDecision,
+            timeout_seconds=None,
+            max_tokens=160,
+            question=q,
+        )
+        if (
+            structured_result.success
+            and isinstance(structured_result.payload, ComplexityDecision)
+        ):
+            payload = structured_result.payload
+            strategy = str(payload.strategy or "direct").strip().lower()
+            if strategy not in {"direct", "decomposition", "multi_query"}:
+                strategy = "direct"
+            complexity = str(payload.complexity or "simple").strip().lower()
+            if complexity not in {"simple", "complex"}:
+                complexity = "simple"
+            return ComplexityRouteResult(
+                strategy=strategy,
+                complexity=complexity,
+                success=True,
+                reason=(payload.reason or "llm_structured").strip() or "llm_structured",
+                latency_ms=structured_result.latency_ms,
+            )
+
+        latency_ms = int((time.perf_counter() - start) * 1000)
+        return ComplexityRouteResult(
+            strategy="direct",
+            complexity="simple",
+            success=False,
+            reason=structured_result.reason or "fallback_direct",
+            latency_ms=latency_ms,
+        )
+
     async def decompose(
         self,
         query: str,
@@ -579,11 +640,7 @@ class QueryRewriteService:
     ) -> QueryListResult:
         """Decompose query into sub-questions via structured LLM output only."""
         start = time.perf_counter()
-        enabled_flag = (
-            bool(self._settings.kb_chat_decomposition_enabled)
-            if enabled is None
-            else bool(enabled)
-        )
+        enabled_flag = True if enabled is None else bool(enabled)
         if not enabled_flag:
             return QueryListResult(
                 queries=[], success=False, reason="disabled", latency_ms=0
@@ -635,11 +692,7 @@ class QueryRewriteService:
     ) -> QueryListResult:
         """Generate exactly 3 multi-query variants (LLM-first with safe fallback)."""
         start = time.perf_counter()
-        enabled_flag = (
-            bool(self._settings.kb_chat_multi_query_enabled)
-            if enabled is None
-            else bool(enabled)
-        )
+        enabled_flag = True if enabled is None else bool(enabled)
         if not enabled_flag:
             return QueryListResult(
                 queries=[], success=False, reason="disabled", latency_ms=0

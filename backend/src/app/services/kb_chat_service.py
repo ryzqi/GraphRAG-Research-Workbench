@@ -292,8 +292,6 @@ class KbChatService:
                 ),
                 "query_rewrite_enabled": bool(kb_chat_config.query_rewrite_enabled),
                 "ambiguity_check_enabled": bool(kb_chat_config.ambiguity_check_enabled),
-                "decomposition_enabled": bool(kb_chat_config.decomposition_enabled),
-                "multi_query_enabled": bool(kb_chat_config.multi_query_enabled),
                 "hyde_enabled": bool(kb_chat_config.hyde_enabled),
                 "hybrid_retrieval_enabled": bool(
                     kb_chat_config.hybrid_retrieval_enabled

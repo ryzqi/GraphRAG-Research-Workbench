@@ -120,6 +120,9 @@ _RETRYABLE_PARSE_CODES = {
     "URL_FETCH_FAILED",
     "URL_FETCH_EXCEPTION",
     "URL_TOO_MANY_REDIRECTS",
+    "MINERU_RUNTIME_ERROR",
+    "MINERU_TIMEOUT",
+    "MINERU_BAD_OUTPUT",
 }
 
 
@@ -312,6 +315,21 @@ async def _process_doc(*, doc, resources) -> _DocProcessOutcome:
                 retryable=True,
             ) from exc
 
+        parse_metadata = parsed.metadata if isinstance(parsed.metadata, dict) else {}
+        logger.info(
+            "Ingestion parse completed",
+            extra={
+                "doc_id": str(doc.id),
+                "kb_id": str(doc.kb_id),
+                "material_id": str(material.id),
+                "source_type": material.source_type.value,
+                "pdf_parse_path": parse_metadata.get("pdf_parse_path"),
+                "fallback_used": bool(parse_metadata.get("fallback_used", False)),
+                "mineru_block_count": parse_metadata.get("mineru_block_count"),
+                "output_text_chars": len((parsed.text or "").strip()),
+            },
+        )
+
         embedding_client = EmbeddingClient(http_client=resources.http_client)
         chunker = ChunkingEngine(settings=get_settings(), embedding=embedding_client)
         context_service = ContextualEmbeddingService(settings=get_settings())
@@ -327,6 +345,15 @@ async def _process_doc(*, doc, resources) -> _DocProcessOutcome:
                 message="解析后未生成分块",
                 retryable=False,
             )
+        logger.info(
+            "Ingestion chunking completed",
+            extra={
+                "doc_id": str(doc.id),
+                "kb_id": str(doc.kb_id),
+                "material_id": str(material.id),
+                "output_chunk_count": len(chunk_items),
+            },
+        )
 
         context_results = await generate_contexts_for_chunks(
             full_text=parsed.text or "",

@@ -1,7 +1,7 @@
 """KB Chat agentic LangGraph (preprocess → retrieval → reflection → answer).
 
 This graph follows the OpenSpec change `refactor-kb-agent-orchestration`:
-- Preprocess: MergeContext → Coref → Ambiguity → Normalize → (Decomp|MultiQuery) → HyDE
+- Preprocess: MergeContext → Coref → Ambiguity → Normalize → ComplexityRouter → (Direct|Decomp|MultiQuery) → HyDE
 - RetrievalLayer: run kb_retrieve once per round (Top-N context)
 - ReflectionLayer: doc relevance → generation → answer review (with retrieval rewrites)
 
@@ -33,6 +33,7 @@ from app.core.settings import get_settings
 
 from app.agents.kb_chat_agentic.preprocess import (
     ambiguity_check,
+    complexity_router,
     decomposition,
     entity_expand,
     generate_variants,
@@ -40,6 +41,7 @@ from app.agents.kb_chat_agentic.preprocess import (
     merge_context,
     normalize_rewrite,
     prepare_messages,
+    route_after_complexity_router,
     coref_rewrite,
 )
 from app.agents.kb_chat_agentic.tool_loop import force_exit_node
@@ -60,20 +62,19 @@ _NODE_METADATA: dict[str, dict[str, Any]] = {
     "coref_rewrite": {"label": "指代消解", "phase": "preprocess", "order": 1},
     "ambiguity_check": {"label": "歧义判断", "phase": "preprocess", "order": 2},
     "normalize_rewrite": {"label": "问题规范化", "phase": "preprocess", "order": 3},
-    "decomposition": {"label": "问题分解", "phase": "preprocess", "order": 4},
-    "multi_query_check": {"label": "多路查询判断", "phase": "preprocess", "order": 5},
+    "complexity_router": {"label": "复杂度路由", "phase": "preprocess", "order": 4},
+    "decomposition": {"label": "问题分解", "phase": "preprocess", "order": 5},
     "generate_variants": {"label": "多路查询扩展", "phase": "preprocess", "order": 6},
     "entity_expand": {"label": "实体扩展", "phase": "preprocess", "order": 7},
-    "hyde_check": {"label": "HyDE 判断", "phase": "preprocess", "order": 8},
-    "hyde": {"label": "HyDE 扩展", "phase": "preprocess", "order": 9},
-    "prepare_messages": {"label": "构建查询消息", "phase": "preprocess", "order": 10},
-    "retrieve": {"label": "知识检索", "phase": "retrieve", "order": 11},
-    "doc_grader": {"label": "文档相关性判断", "phase": "judge", "order": 12},
-    "transform_query": {"label": "查询改写重试", "phase": "retrieve", "order": 13},
-    "generate": {"label": "答案生成", "phase": "generate", "order": 14},
-    "answer_review": {"label": "答案审查", "phase": "verify", "order": 15},
-    "finalize": {"label": "答案整理", "phase": "finalize", "order": 16},
-    "force_exit": {"label": "提前终止", "phase": "finalize", "order": 17},
+    "hyde": {"label": "HyDE 扩展", "phase": "preprocess", "order": 8},
+    "prepare_messages": {"label": "构建查询消息", "phase": "preprocess", "order": 9},
+    "retrieve": {"label": "知识检索", "phase": "retrieve", "order": 10},
+    "doc_grader": {"label": "文档相关性判断", "phase": "judge", "order": 11},
+    "transform_query": {"label": "查询改写重试", "phase": "retrieve", "order": 12},
+    "generate": {"label": "答案生成", "phase": "generate", "order": 13},
+    "answer_review": {"label": "答案审查", "phase": "verify", "order": 14},
+    "finalize": {"label": "答案整理", "phase": "finalize", "order": 15},
+    "force_exit": {"label": "提前终止", "phase": "finalize", "order": 16},
 }
 
 
@@ -86,32 +87,19 @@ def _resolve_topology_config(
     *,
     settings: Any,
     kb_chat_config: dict[str, Any] | None,
-) -> tuple[bool, bool, bool, bool]:
+) -> tuple[bool, bool]:
     raw = kb_chat_config if isinstance(kb_chat_config, dict) else {}
     ambiguity = _resolve_flag(
         raw,
         "ambiguity_check_enabled",
         bool(settings.kb_chat_ambiguity_check_enabled),
     )
-    decomposition_flag = _resolve_flag(
-        raw,
-        "decomposition_enabled",
-        bool(settings.kb_chat_decomposition_enabled),
-    )
-    multi_query = _resolve_flag(
-        raw,
-        "multi_query_enabled",
-        bool(settings.kb_chat_multi_query_enabled),
-    )
     hyde_flag = _resolve_flag(
         raw,
         "hyde_enabled",
         bool(settings.kb_chat_hyde_enabled),
     )
-    if decomposition_flag and multi_query:
-        # Keep consistency with config validation: decomposition wins.
-        multi_query = False
-    return ambiguity, decomposition_flag, multi_query, hyde_flag
+    return ambiguity, hyde_flag
 
 
 def build_kb_chat_run_config(*, thread_id: str | None, recursion_limit: int) -> dict[str, Any]:
@@ -341,7 +329,13 @@ def _build_node_input_display_items(
             label="输入问题",
             value=_pick_text(snapshot, "coref_query", "merged_context", "user_input"),
         )
-    elif node_name in {"decomposition", "generate_variants", "entity_expand", "hyde"}:
+    elif node_name in {
+        "complexity_router",
+        "decomposition",
+        "generate_variants",
+        "entity_expand",
+        "hyde",
+    }:
         _append_display_item(
             items,
             key="normalized_query",
@@ -555,6 +549,25 @@ def _build_node_output_display_items(
             key="rewritten",
             label="是否变化",
             value=summary.get("rewritten"),
+        )
+    elif node_name == "complexity_router":
+        _append_display_item(
+            items,
+            key="query_complexity",
+            label="问题复杂度",
+            value=snapshot.get("query_complexity"),
+        )
+        _append_display_item(
+            items,
+            key="query_strategy",
+            label="路由策略",
+            value=snapshot.get("query_strategy"),
+        )
+        _append_display_item(
+            items,
+            key="reason",
+            label="判定原因",
+            value=summary.get("reason"),
         )
     elif node_name == "decomposition":
         sub_queries = _pick_string_list(snapshot, "sub_queries")
@@ -927,12 +940,7 @@ class KbChatAgenticGraph:
         del tool_meta_by_name  # not used in this stage (no human review)
         settings = get_settings()
         self._settings = settings
-        (
-            ambiguity_enabled,
-            decomposition_enabled,
-            multi_query_enabled,
-            hyde_enabled,
-        ) = _resolve_topology_config(
+        (ambiguity_enabled, hyde_enabled) = _resolve_topology_config(
             settings=settings,
             kb_chat_config=kb_chat_config,
         )
@@ -968,31 +976,37 @@ class KbChatAgenticGraph:
             ),
             metadata=_NODE_METADATA["normalize_rewrite"],
         )
-        if decomposition_enabled:
-            graph.add_node(
-                "decomposition",
-                _wrap_node_with_io(
-                    "decomposition", partial(decomposition, settings=settings)
-                ),
-                metadata=_NODE_METADATA["decomposition"],
-                retry_policy=llm_preprocess_retry_policy,
-            )
-        if multi_query_enabled:
-            graph.add_node(
-                "generate_variants",
-                _wrap_node_with_io(
-                    "generate_variants", partial(generate_variants, settings=settings)
-                ),
-                metadata=_NODE_METADATA["generate_variants"],
-                retry_policy=llm_preprocess_retry_policy,
-            )
-            graph.add_node(
-                "entity_expand",
-                _wrap_node_with_io(
-                    "entity_expand", partial(entity_expand, settings=settings)
-                ),
-                metadata=_NODE_METADATA["entity_expand"],
-            )
+        graph.add_node(
+            "complexity_router",
+            _wrap_node_with_io(
+                "complexity_router", partial(complexity_router, settings=settings)
+            ),
+            metadata=_NODE_METADATA["complexity_router"],
+            retry_policy=llm_preprocess_retry_policy,
+        )
+        graph.add_node(
+            "decomposition",
+            _wrap_node_with_io(
+                "decomposition", partial(decomposition, settings=settings)
+            ),
+            metadata=_NODE_METADATA["decomposition"],
+            retry_policy=llm_preprocess_retry_policy,
+        )
+        graph.add_node(
+            "generate_variants",
+            _wrap_node_with_io(
+                "generate_variants", partial(generate_variants, settings=settings)
+            ),
+            metadata=_NODE_METADATA["generate_variants"],
+            retry_policy=llm_preprocess_retry_policy,
+        )
+        graph.add_node(
+            "entity_expand",
+            _wrap_node_with_io(
+                "entity_expand", partial(entity_expand, settings=settings)
+            ),
+            metadata=_NODE_METADATA["entity_expand"],
+        )
         if hyde_enabled:
             graph.add_node(
                 "hyde",
@@ -1068,7 +1082,6 @@ class KbChatAgenticGraph:
         # Entry
         graph.set_entry_point("merge_context")
         graph.add_edge("merge_context", "coref_rewrite")
-        preprocess_tail = "normalize_rewrite"
 
         if ambiguity_enabled:
             graph.add_edge("coref_rewrite", "ambiguity_check")
@@ -1087,19 +1100,25 @@ class KbChatAgenticGraph:
         else:
             graph.add_edge("coref_rewrite", "normalize_rewrite")
 
-        if decomposition_enabled:
-            graph.add_edge("normalize_rewrite", "decomposition")
-            preprocess_tail = "decomposition"
-        elif multi_query_enabled:
-            graph.add_edge("normalize_rewrite", "generate_variants")
-            graph.add_edge("generate_variants", "entity_expand")
-            preprocess_tail = "entity_expand"
+        graph.add_edge("normalize_rewrite", "complexity_router")
+        graph.add_conditional_edges(
+            "complexity_router",
+            lambda s: route_after_complexity_router(s, settings),
+            {
+                "decomposition": "decomposition",
+                "multi_query": "generate_variants",
+                "direct": "hyde" if hyde_enabled else "prepare_messages",
+            },
+        )
+        graph.add_edge("generate_variants", "entity_expand")
 
         if hyde_enabled:
-            graph.add_edge(preprocess_tail, "hyde")
+            graph.add_edge("decomposition", "hyde")
+            graph.add_edge("entity_expand", "hyde")
             graph.add_edge("hyde", "prepare_messages")
         else:
-            graph.add_edge(preprocess_tail, "prepare_messages")
+            graph.add_edge("decomposition", "prepare_messages")
+            graph.add_edge("entity_expand", "prepare_messages")
 
         graph.add_edge("prepare_messages", "retrieve")
         graph.add_edge("retrieve", "doc_grader")

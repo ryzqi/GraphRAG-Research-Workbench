@@ -48,8 +48,6 @@ async def get_kb_chat_graph_schema(
     request: Request,
     query_rewrite_enabled: bool | None = Query(None),
     ambiguity_check_enabled: bool | None = Query(None),
-    decomposition_enabled: bool | None = Query(None),
-    multi_query_enabled: bool | None = Query(None),
     hyde_enabled: bool | None = Query(None),
     hybrid_retrieval_enabled: bool | None = Query(None),
     rerank_enabled: bool | None = Query(None),
@@ -72,8 +70,6 @@ async def get_kb_chat_graph_schema(
         for key, value in {
             "query_rewrite_enabled": query_rewrite_enabled,
             "ambiguity_check_enabled": ambiguity_check_enabled,
-            "decomposition_enabled": decomposition_enabled,
-            "multi_query_enabled": multi_query_enabled,
             "hyde_enabled": hyde_enabled,
             "hybrid_retrieval_enabled": hybrid_retrieval_enabled,
             "rerank_enabled": rerank_enabled,

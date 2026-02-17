@@ -66,8 +66,6 @@ export interface ChatRunUiEvent {
 export interface KbChatConfig {
   query_rewrite_enabled: boolean;
   ambiguity_check_enabled: boolean;
-  decomposition_enabled: boolean;
-  multi_query_enabled: boolean;
   hyde_enabled: boolean;
   hybrid_retrieval_enabled: boolean;
   rerank_enabled: boolean;
@@ -366,8 +364,6 @@ export function toKbGraphSchemaQuery(config: Partial<KbChatConfig>): string {
   const orderedKeys: Array<keyof KbChatConfig> = [
     'query_rewrite_enabled',
     'ambiguity_check_enabled',
-    'decomposition_enabled',
-    'multi_query_enabled',
     'hyde_enabled',
     'hybrid_retrieval_enabled',
     'rerank_enabled',

@@ -12,7 +12,6 @@ import {
 } from '@mui/material';
 import SettingsSuggestIcon from '@mui/icons-material/SettingsSuggest';
 import PrecisionManufacturingIcon from '@mui/icons-material/PrecisionManufacturing';
-import AccountTreeIcon from '@mui/icons-material/AccountTree';
 import FilterAltIcon from '@mui/icons-material/FilterAlt';
 import { alpha } from '@mui/material/styles';
 import type { Theme } from '@mui/material/styles';
@@ -33,8 +32,6 @@ type ToggleKey =
   | 'hyde_enabled'
   | 'hybrid_retrieval_enabled'
   | 'rerank_enabled';
-
-type StrategyToggleKey = 'decomposition_enabled' | 'multi_query_enabled';
 
 const FEATURE_TOGGLE_META: ReadonlyArray<{
   key: ToggleKey;
@@ -79,13 +76,6 @@ const SECTION_SX = {
       : alpha(theme.palette.background.default, 0.32),
 };
 
-const STRATEGY_CARD_SX = {
-  p: 1.25,
-  borderRadius: 2,
-  border: 1,
-  borderColor: (theme: Theme) => alpha(theme.palette.primary.main, 0.16),
-};
-
 function toInt(value: string): number | null {
   if (value.trim() === '') {
     return null;
@@ -110,17 +100,6 @@ export function KbChatConfigPanel({
 }: KbChatConfigPanelProps) {
   const handleFeatureToggle = (key: ToggleKey, checked: boolean) => {
     onChange({ ...value, [key]: checked });
-  };
-
-  const handleStrategyToggle = (key: StrategyToggleKey, checked: boolean) => {
-    let next: KbChatConfig = { ...value, [key]: checked };
-    if (key === 'decomposition_enabled' && checked) {
-      next = { ...next, multi_query_enabled: false };
-    }
-    if (key === 'multi_query_enabled' && checked) {
-      next = { ...next, decomposition_enabled: false };
-    }
-    onChange(next);
   };
 
   const handleIntField = (key: keyof KbChatConfig, raw: string) => {
@@ -182,7 +161,7 @@ export function KbChatConfigPanel({
         </Stack>
 
         <Typography variant='body2' color='text.secondary'>
-          问题分解和多路查询可都关闭；若开启则两者互斥。问题分解数量由模型自动决定（最多 5 个）。
+          系统会自动判断问题复杂度，并在原查询、问题分解、多路查询之间动态路由。
         </Typography>
 
         {errors.length > 0 && (
@@ -192,89 +171,6 @@ export function KbChatConfigPanel({
         )}
 
         <Grid container spacing={1.5}>
-          <Grid size={{ xs: 12 }}>
-            <Box sx={SECTION_SX}>
-              <Stack spacing={1.25}>
-                <Stack direction='row' spacing={1} alignItems='center'>
-                  <AccountTreeIcon fontSize='small' color='primary' />
-                  <Typography variant='subtitle2' fontWeight={700}>
-                    问题分解 / 多路查询开关
-                  </Typography>
-                </Stack>
-
-                <Grid container spacing={1.2}>
-                  <Grid size={{ xs: 12, md: 6 }}>
-                    <Box sx={STRATEGY_CARD_SX}>
-                      <Stack spacing={0.9}>
-                        <FormControlLabel
-                          sx={{ m: 0 }}
-                          control={
-                            <Switch
-                              checked={value.decomposition_enabled}
-                              disabled={disabled}
-                              onChange={(_, checked) =>
-                                handleStrategyToggle('decomposition_enabled', checked)
-                              }
-                            />
-                          }
-                          label={
-                            <Stack spacing={0.2}>
-                              <Typography variant='body2' fontWeight={700}>
-                                问题分解
-                              </Typography>
-                              <Typography variant='caption' color='text.secondary'>
-                                拆分为多个子问题进行检索（开启时自动关闭多路查询）
-                              </Typography>
-                            </Stack>
-                          }
-                        />
-                        <Typography variant='caption' color='text.secondary'>
-                          {value.decomposition_enabled
-                            ? '当前启用：分解数量由 LLM 自动决定（上限 5）'
-                            : '未启用'}
-                        </Typography>
-                      </Stack>
-                    </Box>
-                  </Grid>
-
-                  <Grid size={{ xs: 12, md: 6 }}>
-                    <Box sx={STRATEGY_CARD_SX}>
-                      <Stack spacing={0.9}>
-                        <FormControlLabel
-                          sx={{ m: 0 }}
-                          control={
-                            <Switch
-                              checked={value.multi_query_enabled}
-                              disabled={disabled}
-                              onChange={(_, checked) =>
-                                handleStrategyToggle('multi_query_enabled', checked)
-                              }
-                            />
-                          }
-                          label={
-                            <Stack spacing={0.2}>
-                              <Typography variant='body2' fontWeight={700}>
-                                多路查询
-                              </Typography>
-                              <Typography variant='caption' color='text.secondary'>
-                                生成多种检索表达并融合（开启时自动关闭问题分解）
-                              </Typography>
-                            </Stack>
-                          }
-                        />
-                        <Typography variant='caption' color='text.secondary'>
-                          {value.multi_query_enabled
-                            ? '当前启用：固定生成 3 条多样化变体（同义词/视角/范围）'
-                            : '未启用'}
-                        </Typography>
-                      </Stack>
-                    </Box>
-                  </Grid>
-                </Grid>
-              </Stack>
-            </Box>
-          </Grid>
-
           <Grid size={{ xs: 12 }}>
             <Box sx={SECTION_SX}>
               <Stack spacing={1}>

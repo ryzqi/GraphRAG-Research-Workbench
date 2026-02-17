@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import ipaddress
+import logging
 import socket
 import uuid
 from dataclasses import dataclass
@@ -54,15 +55,37 @@ MAX_MANIFEST_ENTRIES = 100
 MAX_TEXT_LENGTH = 200_000
 MAX_URL_ENTRIES = 50
 MAX_FILE_ENTRIES = 50
-MAX_URL_REDIRECTS = 3
-MAX_URL_TIMEOUT_SECONDS = 25
 MAX_FILE_SIZE_BYTES = 50 * 1024 * 1024
 ALLOWED_FILE_EXTENSIONS = {".pdf", ".md", ".txt", ".docx"}
 AUTO_RETRY_DELAYS = (30, 120)
 MAX_DOC_ATTEMPTS = 5
 DOC_CANCELED_ERROR_CODE = "DOC_CANCELED"
 
-_URL_BLOCKED_IPV4 = {ipaddress.ip_address("169.254.169.254")}
+_DEFAULT_URL_TIMEOUT_SECONDS = 25
+_DEFAULT_URL_REDIRECTS = 3
+_FALLBACK_BLOCKED_CIDRS_V4 = (
+    "0.0.0.0/8",
+    "10.0.0.0/8",
+    "127.0.0.0/8",
+    "169.254.0.0/16",
+    "172.16.0.0/12",
+    "192.168.0.0/16",
+)
+_FALLBACK_BLOCKED_CIDRS_V6 = (
+    "::/128",
+    "::1/128",
+    "fc00::/7",
+    "fe80::/10",
+)
+_FALLBACK_METADATA_BLOCKED_IPS = ("169.254.169.254",)
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True, slots=True)
+class _BlockedCidrRule:
+    network: ipaddress.IPv4Network | ipaddress.IPv6Network
+    reason: str
 
 
 @dataclass(slots=True)
@@ -78,6 +101,8 @@ class IngestionBatchService:
     def __init__(self, db: AsyncSession) -> None:
         self._db = db
         self._settings = get_settings()
+        self._blocked_cidr_rules = self._build_blocked_cidr_rules()
+        self._metadata_blocked_ips = self._build_metadata_blocked_ips()
 
     async def submit_manifest(
         self,
@@ -620,7 +645,11 @@ class IngestionBatchService:
         if parsed.scheme not in {"http", "https"}:
             raise ingestion_error("URL_SCHEME_NOT_ALLOWED", details={"url": entry.url})
 
-        async with httpx.AsyncClient(timeout=MAX_URL_TIMEOUT_SECONDS) as client:
+        timeout_seconds = max(
+            float(getattr(self._settings, "ingestion_url_timeout_seconds", _DEFAULT_URL_TIMEOUT_SECONDS)),
+            1.0,
+        )
+        async with httpx.AsyncClient(timeout=timeout_seconds) as client:
             final_url = await self._validate_url_security(url=canonical_url, client=client)
 
         fingerprint = hashlib.sha256(final_url.encode("utf-8")).hexdigest()
@@ -986,17 +1015,103 @@ class IngestionBatchService:
         path = parsed.path or "/"
         return urlunparse((scheme, netloc, path, parsed.params, parsed.query, ""))
 
+    def _build_blocked_cidr_rules(self) -> tuple[_BlockedCidrRule, ...]:
+        rules: list[_BlockedCidrRule] = []
+        configured_v4 = [raw for raw in getattr(self._settings, "ingestion_url_blocked_cidrs_v4", [])]
+        configured_v6 = [raw for raw in getattr(self._settings, "ingestion_url_blocked_cidrs_v6", [])]
+
+        if not configured_v4 and not configured_v6:
+            configured_v4 = list(_FALLBACK_BLOCKED_CIDRS_V4)
+            configured_v6 = list(_FALLBACK_BLOCKED_CIDRS_V6)
+
+        configured: list[tuple[str, str]] = [(raw, "private_or_local_cidr") for raw in configured_v4]
+        configured.extend((raw, "private_or_local_cidr") for raw in configured_v6)
+        for raw, reason in configured:
+            text = raw.strip()
+            if not text:
+                continue
+            try:
+                network = ipaddress.ip_network(text, strict=False)
+            except ValueError:
+                logger.warning("Ignore invalid ingestion URL blocked CIDR: %s", text)
+                continue
+            rules.append(_BlockedCidrRule(network=network, reason=reason))
+        if not rules:
+            logger.warning("No valid ingestion URL blocked CIDRs configured; fallback to safe defaults")
+            for raw in [*_FALLBACK_BLOCKED_CIDRS_V4, *_FALLBACK_BLOCKED_CIDRS_V6]:
+                network = ipaddress.ip_network(raw, strict=False)
+                rules.append(_BlockedCidrRule(network=network, reason="private_or_local_cidr"))
+        return tuple(rules)
+
+    def _build_metadata_blocked_ips(self) -> frozenset[ipaddress.IPv4Address | ipaddress.IPv6Address]:
+        blocked_ips: set[ipaddress.IPv4Address | ipaddress.IPv6Address] = set()
+        configured = list(getattr(self._settings, "ingestion_url_metadata_blocklist", []))
+        if not configured:
+            configured = list(_FALLBACK_METADATA_BLOCKED_IPS)
+        for raw in configured:
+            text = raw.strip()
+            if not text:
+                continue
+            try:
+                blocked_ips.add(ipaddress.ip_address(text))
+            except ValueError:
+                logger.warning("Ignore invalid ingestion URL metadata blocked IP: %s", text)
+        if not blocked_ips:
+            logger.warning("No valid ingestion URL metadata blocked IP configured; fallback to safe defaults")
+            blocked_ips = {
+                ipaddress.ip_address(raw)
+                for raw in _FALLBACK_METADATA_BLOCKED_IPS
+            }
+        return frozenset(blocked_ips)
+
+    def _blocked_reason_for_ip(
+        self,
+        ip: ipaddress.IPv4Address | ipaddress.IPv6Address,
+    ) -> str | None:
+        if ip in self._metadata_blocked_ips:
+            return "metadata_ip"
+
+        for rule in self._blocked_cidr_rules:
+            if ip.version != rule.network.version:
+                continue
+            if ip in rule.network:
+                return rule.reason
+
+        # Keep explicit checks for high-risk categories even when CIDR config is overridden.
+        if ip.is_loopback:
+            return "loopback"
+        if ip.is_link_local:
+            return "link_local"
+        if ip.is_multicast:
+            return "multicast"
+        if ip.is_unspecified:
+            return "unspecified"
+        return None
+
     async def _validate_url_security(self, *, url: str, client: httpx.AsyncClient) -> str:
         current = url
-        for redirect_hops in range(MAX_URL_REDIRECTS + 1):
+        max_redirects = max(
+            int(getattr(self._settings, "ingestion_url_max_redirects", _DEFAULT_URL_REDIRECTS)),
+            0,
+        )
+        for redirect_hops in range(max_redirects + 1):
             parsed = urlparse(current)
             host = parsed.hostname
             if not host:
                 raise ingestion_error("URL_SCHEME_NOT_ALLOWED", details={"url": current})
 
-            await self._assert_host_safe(host)
+            try:
+                await self._assert_host_safe(host)
+            except AppError as exc:
+                if exc.code != "URL_SSRF_BLOCKED":
+                    raise
+                details = dict(exc.details or {})
+                details.setdefault("host", host)
+                details.setdefault("url", current)
+                details.setdefault("redirect_hop", redirect_hops)
+                raise ingestion_error("URL_SSRF_BLOCKED", details=details) from exc
 
-            if redirect_hops == MAX_URL_REDIRECTS:
+            if redirect_hops == max_redirects:
                 break
 
             try:
@@ -1024,16 +1139,41 @@ class IngestionBatchService:
         except ValueError:
             ips = await anyio.to_thread.run_sync(self._resolve_host_ips, host)
 
+        resolved_ips = [str(ip) for ip in ips]
         if not ips:
-            raise ingestion_error("URL_SSRF_BLOCKED", details={"host": host, "reason": "unresolvable"})
+            raise ingestion_error(
+                "URL_SSRF_BLOCKED",
+                details={
+                    "host": host,
+                    "resolved_ips": [],
+                    "blocked_ips": [],
+                    "blocked_reason": "unresolvable",
+                },
+            )
 
+        blocked: list[tuple[str, str]] = []
         for ip in ips:
-            if self._is_blocked_ip(ip):
-                raise ingestion_error("URL_SSRF_BLOCKED", details={"host": host, "blocked_ip": str(ip)})
+            reason = self._blocked_reason_for_ip(ip)
+            if reason:
+                blocked.append((str(ip), reason))
+
+        if blocked:
+            blocked_ips = [ip for ip, _ in blocked]
+            blocked_reasons = sorted({reason for _, reason in blocked})
+            raise ingestion_error(
+                "URL_SSRF_BLOCKED",
+                details={
+                    "host": host,
+                    "resolved_ips": resolved_ips,
+                    "blocked_ips": blocked_ips,
+                    "blocked_reason": blocked_reasons[0] if len(blocked_reasons) == 1 else "multiple",
+                    "blocked_reasons": blocked_reasons,
+                },
+            )
 
     @staticmethod
-    def _resolve_host_ips(host: str) -> list[ipaddress._BaseAddress]:
-        addresses: list[ipaddress._BaseAddress] = []
+    def _resolve_host_ips(host: str) -> list[ipaddress.IPv4Address | ipaddress.IPv6Address]:
+        addresses: list[ipaddress.IPv4Address | ipaddress.IPv6Address] = []
         for info in socket.getaddrinfo(host, None):
             raw = info[4][0]
             try:
@@ -1042,19 +1182,6 @@ class IngestionBatchService:
                 continue
         uniq = {str(ip): ip for ip in addresses}
         return list(uniq.values())
-
-    @staticmethod
-    def _is_blocked_ip(ip: ipaddress._BaseAddress) -> bool:
-        if ip in _URL_BLOCKED_IPV4:
-            return True
-        return (
-            ip.is_loopback
-            or ip.is_private
-            or ip.is_link_local
-            or ip.is_multicast
-            or ip.is_reserved
-            or ip.is_unspecified
-        )
 
     @staticmethod
     def _entry_error_from_app_error(

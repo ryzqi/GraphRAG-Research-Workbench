@@ -41,6 +41,7 @@ import {
   type ManifestEntry,
   type BatchStatus,
 } from '../services/ingestionBatches';
+import { formatIngestionEntryError } from '../services/ingestionEntryErrors';
 import {
   createDefaultIndexConfig,
   type IndexConfig,
@@ -70,7 +71,7 @@ function mapEntryErrors(errors: EntryError[]): Record<string, string[]> {
   const mapped: Record<string, string[]> = {};
   for (const err of errors) {
     mapped[err.entry_id] = mapped[err.entry_id] ?? [];
-    mapped[err.entry_id].push(err.message);
+    mapped[err.entry_id].push(formatIngestionEntryError(err));
   }
   return mapped;
 }

@@ -25,6 +25,26 @@ _LEGACY_VITE_LOCAL_CORS_ORIGINS = {
     "http://127.0.0.1:5173",
 }
 
+_DEFAULT_INGESTION_BLOCKED_CIDRS_V4 = [
+    "0.0.0.0/8",
+    "10.0.0.0/8",
+    "127.0.0.0/8",
+    "169.254.0.0/16",
+    "172.16.0.0/12",
+    "192.168.0.0/16",
+]
+
+_DEFAULT_INGESTION_BLOCKED_CIDRS_V6 = [
+    "::/128",
+    "::1/128",
+    "fc00::/7",
+    "fe80::/10",
+]
+
+_DEFAULT_INGESTION_METADATA_BLOCKLIST = [
+    "169.254.169.254",
+]
+
 
 def _dedupe_keep_order(values: list[str]) -> list[str]:
     seen: set[str] = set()
@@ -36,6 +56,28 @@ def _dedupe_keep_order(values: list[str]) -> list[str]:
         seen.add(normalized)
         deduped.append(normalized)
     return deduped
+
+
+def _parse_string_list(value: object) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return _dedupe_keep_order([str(item) for item in value])
+    if isinstance(value, str):
+        raw = value.strip()
+        if not raw:
+            return []
+        if raw.startswith("[") and raw.endswith("]"):
+            try:
+                parsed = json.loads(raw)
+            except json.JSONDecodeError:
+                parsed = None
+            else:
+                if isinstance(parsed, list):
+                    return _dedupe_keep_order([str(item) for item in parsed])
+        parts = [part.strip().strip('"').strip("'") for part in raw.split(",")]
+        return _dedupe_keep_order(parts)
+    return _dedupe_keep_order([str(value)])
 
 
 def _prefer_ipv4_loopback_url(value: str) -> str:
@@ -304,12 +346,6 @@ class Settings(BaseSettings):
     kb_chat_ambiguity_check_enabled: bool = Field(
         True, alias="KB_CHAT_AMBIGUITY_CHECK_ENABLED"
     )
-    kb_chat_decomposition_enabled: bool = Field(
-        False, alias="KB_CHAT_DECOMPOSITION_ENABLED"
-    )
-    kb_chat_multi_query_enabled: bool = Field(
-        False, alias="KB_CHAT_MULTI_QUERY_ENABLED"
-    )
     kb_chat_hyde_enabled: bool = Field(False, alias="KB_CHAT_HYDE_ENABLED")
 
     kb_chat_trace_enabled: bool = Field(True, alias="KB_CHAT_TRACE_ENABLED")
@@ -335,15 +371,37 @@ class Settings(BaseSettings):
 
     # 导入：URL 抓取/正文抽取配置（最小安全基线）
     ingestion_url_max_redirects: int = Field(3, alias="INGESTION_URL_MAX_REDIRECTS")
+    ingestion_url_timeout_seconds: float = Field(
+        25.0, alias="INGESTION_URL_TIMEOUT_SECONDS"
+    )
     ingestion_url_max_bytes: int = Field(
         20 * 1024 * 1024, alias="INGESTION_URL_MAX_BYTES"
     )
     ingestion_url_user_agent: str = Field(
         "multi-kb-agent/ingestion", alias="INGESTION_URL_USER_AGENT"
     )
+    ingestion_url_blocked_cidrs_v4: list[str] = Field(
+        default_factory=lambda: _DEFAULT_INGESTION_BLOCKED_CIDRS_V4.copy(),
+        alias="INGESTION_URL_BLOCKED_CIDRS_V4",
+    )
+    ingestion_url_blocked_cidrs_v6: list[str] = Field(
+        default_factory=lambda: _DEFAULT_INGESTION_BLOCKED_CIDRS_V6.copy(),
+        alias="INGESTION_URL_BLOCKED_CIDRS_V6",
+    )
+    ingestion_url_metadata_blocklist: list[str] = Field(
+        default_factory=lambda: _DEFAULT_INGESTION_METADATA_BLOCKLIST.copy(),
+        alias="INGESTION_URL_METADATA_BLOCKLIST",
+    )
 
-    # PDF 解析（MinerU）
+    # PDF 解析（MinerU + 文本兜底）
     mineru_model_source: str | None = Field(None, alias="MINERU_MODEL_SOURCE")
+    mineru_lang: str = Field("ch", alias="MINERU_LANG")
+    mineru_parse_method: str = Field("auto", alias="MINERU_PARSE_METHOD")
+    mineru_formula_enable: bool = Field(True, alias="MINERU_FORMULA_ENABLE")
+    mineru_table_enable: bool = Field(True, alias="MINERU_TABLE_ENABLE")
+    pdf_fallback_enabled: bool = Field(True, alias="PDF_FALLBACK_ENABLED")
+    pdf_fallback_max_pages: int = Field(500, ge=1, alias="PDF_FALLBACK_MAX_PAGES")
+    pdf_fallback_min_text_chars: int = Field(20, ge=0, alias="PDF_FALLBACK_MIN_TEXT_CHARS")
 
     # OpenTelemetry 配置
     otel_enabled: bool = Field(False, alias="OTEL_ENABLED")
@@ -380,6 +438,14 @@ class Settings(BaseSettings):
             return _IPV4_LOOPBACK
         return raw
 
+    @field_validator("mineru_parse_method", mode="before")
+    @classmethod
+    def _normalize_mineru_parse_method(cls, v: object) -> str:
+        raw = str(v or "auto").strip().lower()
+        if raw in {"auto", "txt", "ocr"}:
+            return raw
+        return "auto"
+
     @field_validator("app_cors_allow_origins", mode="before")
     @classmethod
     def _parse_origins(cls, v: object) -> list[str]:
@@ -402,6 +468,16 @@ class Settings(BaseSettings):
             parts = [p.strip().strip('"').strip("'") for p in raw.split(",")]
             return _dedupe_keep_order(parts)
         return _dedupe_keep_order([str(v)])
+
+    @field_validator(
+        "ingestion_url_blocked_cidrs_v4",
+        "ingestion_url_blocked_cidrs_v6",
+        "ingestion_url_metadata_blocklist",
+        mode="before",
+    )
+    @classmethod
+    def _parse_ingestion_url_lists(cls, v: object) -> list[str]:
+        return _parse_string_list(v)
 
     @model_validator(mode="after")
     def _ensure_local_dev_cors_origins(self) -> "Settings":

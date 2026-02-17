@@ -114,15 +114,11 @@ describe('normalizeChatStreamEvent', () => {
 
   it('builds kb graph schema query from toggles', () => {
     const query = toKbGraphSchemaQuery({
-      decomposition_enabled: true,
-      multi_query_enabled: false,
       hyde_enabled: true,
       retrieval_hybrid_ranker: 'weighted',
       retrieval_hybrid_dense_weight: 0.6,
       retrieval_hybrid_sparse_weight: 0.4,
     });
-    expect(query).toContain('decomposition_enabled=true');
-    expect(query).toContain('multi_query_enabled=false');
     expect(query).toContain('hyde_enabled=true');
     expect(query).toContain('retrieval_hybrid_ranker=weighted');
     expect(query).toContain('retrieval_hybrid_dense_weight=0.6');

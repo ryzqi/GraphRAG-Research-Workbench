@@ -104,6 +104,20 @@ pwsh -ExecutionPolicy Bypass -File ./scripts/reset_data.ps1 -Force
 
 > ⚠️ 警告：这是**破坏性操作**，会删除本地数据库、向量库和 Redis 持久化数据。
 
+## 文档导入解析（MinerU + PDF 文本兜底）
+
+- PDF 默认先走 MinerU（pipeline）解析；若失败或输出为空，可自动回退到 `pypdf` 文本提取兜底，保证“至少可检索”。
+- URL / DOCX / Markdown / TXT 的解析行为保持不变。
+- 相关环境变量（放入 `.env`）：
+  - `MINERU_MODEL_SOURCE`：`huggingface` / `modelscope` / `local`
+  - `MINERU_LANG`：默认 `ch`
+  - `MINERU_PARSE_METHOD`：`auto` / `txt` / `ocr`（默认 `auto`）
+  - `MINERU_FORMULA_ENABLE`：默认 `true`
+  - `MINERU_TABLE_ENABLE`：默认 `true`
+  - `PDF_FALLBACK_ENABLED`：默认 `true`
+  - `PDF_FALLBACK_MAX_PAGES`：默认 `500`
+  - `PDF_FALLBACK_MIN_TEXT_CHARS`：默认 `20`
+
 ## Web 搜索（Tavily）配置
 
 - 必填：`WEB_SEARCH_API_KEY`
@@ -125,8 +139,6 @@ pwsh -ExecutionPolicy Bypass -File ./scripts/reset_data.ps1 -Force
   - `KB_CHAT_MAX_GENERATION_RETRIES=1`
 - 查询增强：
   - `KB_CHAT_AMBIGUITY_CHECK_ENABLED=true`
-  - `KB_CHAT_DECOMPOSITION_ENABLED=false`（分解数量由 LLM 自主决定，内部上限为 5）
-  - `KB_CHAT_MULTI_QUERY_ENABLED=false`、`KB_CHAT_MULTI_QUERY_MAX_VARIANTS=4`
   - `KB_CHAT_HYDE_ENABLED=false`
 - 观测：
   - `KB_CHAT_TRACE_ENABLED=true`
@@ -143,9 +155,6 @@ KB_CHAT_MAX_GENERATION_RETRIES=1
 
 # KB Chat query enhancement (optional)
 KB_CHAT_AMBIGUITY_CHECK_ENABLED=true
-KB_CHAT_DECOMPOSITION_ENABLED=false
-KB_CHAT_MULTI_QUERY_ENABLED=false
-KB_CHAT_MULTI_QUERY_MAX_VARIANTS=4
 KB_CHAT_HYDE_ENABLED=false
 
 # KB Chat observability

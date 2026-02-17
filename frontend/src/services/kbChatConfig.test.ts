@@ -7,8 +7,6 @@ function createConfig(overrides: Partial<KbChatConfig> = {}): KbChatConfig {
   return {
     query_rewrite_enabled: true,
     ambiguity_check_enabled: true,
-    decomposition_enabled: true,
-    multi_query_enabled: false,
     hyde_enabled: false,
     hybrid_retrieval_enabled: true,
     rerank_enabled: true,
@@ -31,22 +29,6 @@ function createConfig(overrides: Partial<KbChatConfig> = {}): KbChatConfig {
 describe('validateKbChatConfig', () => {
   it('accepts a valid config', () => {
     expect(validateKbChatConfig(createConfig())).toEqual([]);
-  });
-
-  it('accepts configs when both decomposition and multi-query are disabled', () => {
-    const errors = validateKbChatConfig(
-      createConfig({ decomposition_enabled: false, multi_query_enabled: false })
-    );
-
-    expect(errors).toEqual([]);
-  });
-
-  it('rejects strategy states when both decomposition and multi-query are enabled', () => {
-    const errors = validateKbChatConfig(
-      createConfig({ decomposition_enabled: true, multi_query_enabled: true })
-    );
-
-    expect(errors).toContain('问题分解与多路查询不能同时开启。');
   });
 
   it('enforces rerank top-k lower bound and weighted sum constraint', () => {

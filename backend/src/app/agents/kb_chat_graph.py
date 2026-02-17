@@ -6,6 +6,8 @@ KB chat now always runs the structured agentic RAG flow.
 
 from __future__ import annotations
 
+from typing import Any
+
 from langchain.tools import BaseTool
 from langchain_openai import ChatOpenAI
 
@@ -18,7 +20,7 @@ def build_kb_chat_graph(
     chat_model: ChatOpenAI,
     tools: list[BaseTool],
     tool_meta_by_name: dict[str, ToolMeta],
-    kb_chat_config: dict[str, bool] | None = None,
+    kb_chat_config: dict[str, Any] | None = None,
 ) -> KbChatAgenticGraph:
     return KbChatAgenticGraph(
         chat_model=chat_model,

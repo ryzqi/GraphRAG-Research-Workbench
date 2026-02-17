@@ -31,9 +31,7 @@ from .budget import (
 from .json_safety import ensure_json_safe
 from .runtime_config import (
     ambiguity_check_enabled,
-    decomposition_enabled,
     hyde_enabled,
-    multi_query_enabled,
     query_rewrite_enabled,
 )
 
@@ -306,11 +304,67 @@ async def normalize_rewrite(state: dict, settings: Settings) -> dict[str, Any]:
     return {"normalized_query": rewritten, "stage_summaries": stage_summaries}
 
 
-def decomp_check_route(state: dict, settings: Settings) -> str:
-    """Route: Decomposition enabled? (Decomposition and multi-query are mutually exclusive.)"""
-    if decomposition_enabled(state, settings):
+def route_after_complexity_router(state: dict, settings: Settings) -> str:
+    """Route by complexity router result."""
+    del settings
+    strategy = state.get("query_strategy")
+    if strategy == "decomposition":
         return "decomposition"
-    return "multi_query_check"
+    if strategy == "multi_query":
+        return "multi_query"
+    return "direct"
+
+
+async def complexity_router(state: dict, settings: Settings) -> dict[str, Any]:
+    """Decide preprocess strategy: direct / decomposition / multi-query."""
+    start = time.perf_counter()
+    query = state.get("normalized_query")
+    if not isinstance(query, str) or not query.strip():
+        query = _extract_user_input(state)
+
+    strategy = "direct"
+    complexity = "simple"
+    success = False
+    reason: str | None = None
+    try:
+        svc = QueryRewriteService(settings=settings)
+        decision = await svc.classify_complexity(query)
+        strategy = (
+            decision.strategy
+            if decision.strategy in {"direct", "decomposition", "multi_query"}
+            else "direct"
+        )
+        complexity = decision.complexity if decision.complexity in {"simple", "complex"} else "simple"
+        success = decision.success
+        reason = decision.reason
+    except Exception:  # pragma: no cover
+        strategy = "direct"
+        complexity = "simple"
+        success = False
+        reason = "error"
+
+    stage_summaries = _merge_stage_summary(
+        state,
+        "complexity_router",
+        {
+            "strategy": strategy,
+            "complexity": complexity,
+            "success": success,
+            "reason": reason,
+            "completed_at": now_iso(),
+            "latency_ms": int((time.perf_counter() - start) * 1000),
+        },
+        settings=settings,
+    )
+
+    # Reset fan-out artifacts before entering the selected branch.
+    return {
+        "query_strategy": strategy,
+        "query_complexity": complexity,
+        "sub_queries": [],
+        "multi_queries": [],
+        "stage_summaries": stage_summaries,
+    }
 
 
 async def decomposition(state: dict, settings: Settings) -> dict[str, Any]:
@@ -325,10 +379,7 @@ async def decomposition(state: dict, settings: Settings) -> dict[str, Any]:
     reason: str | None = None
     try:
         svc = QueryRewriteService(settings=settings)
-        result = await svc.decompose(
-            query,
-            enabled=decomposition_enabled(state, settings),
-        )
+        result = await svc.decompose(query)
         sub_queries = result.queries
         success = result.success
         reason = result.reason
@@ -353,14 +404,6 @@ async def decomposition(state: dict, settings: Settings) -> dict[str, Any]:
 
     return {"sub_queries": sub_queries, "stage_summaries": stage_summaries}
 
-
-def multi_query_check_route(state: dict, settings: Settings) -> str:
-    """Route: multi-query enabled? (skipped when decomposition is enabled)."""
-    if multi_query_enabled(state, settings):
-        return "generate_variants"
-    return "hyde_check"
-
-
 async def generate_variants(state: dict, settings: Settings) -> dict[str, Any]:
     """Generate query variants (via QueryRewriteService; degrades safely)."""
     start = time.perf_counter()
@@ -372,10 +415,7 @@ async def generate_variants(state: dict, settings: Settings) -> dict[str, Any]:
     reason: str | None = None
     try:
         svc = QueryRewriteService(settings=settings)
-        result = await svc.generate_variants(
-            query,
-            enabled=multi_query_enabled(state, settings),
-        )
+        result = await svc.generate_variants(query)
         deduped = result.queries
         success = result.success
         reason = result.reason

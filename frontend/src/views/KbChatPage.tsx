@@ -90,8 +90,6 @@ type TerminalRunStatus = 'succeeded' | 'failed' | 'canceled' | 'waiting_user';
 const DEFAULT_KB_CHAT_CONFIG: KbChatConfig = {
   query_rewrite_enabled: true,
   ambiguity_check_enabled: true,
-  decomposition_enabled: false,
-  multi_query_enabled: false,
   hyde_enabled: false,
   hybrid_retrieval_enabled: true,
   rerank_enabled: true,
@@ -112,8 +110,6 @@ const DEFAULT_KB_CHAT_CONFIG: KbChatConfig = {
 const KB_CHAT_BOOLEAN_KEYS = [
   'query_rewrite_enabled',
   'ambiguity_check_enabled',
-  'decomposition_enabled',
-  'multi_query_enabled',
   'hyde_enabled',
   'hybrid_retrieval_enabled',
   'rerank_enabled',
@@ -124,8 +120,6 @@ type KbChatBooleanKey = (typeof KB_CHAT_BOOLEAN_KEYS)[number];
 const KB_CHAT_CONFIG_LABELS: Record<KbChatBooleanKey, string> = {
   query_rewrite_enabled: '查询改写',
   ambiguity_check_enabled: '歧义检测',
-  decomposition_enabled: '问题分解',
-  multi_query_enabled: '多路查询',
   hyde_enabled: 'HyDE',
   hybrid_retrieval_enabled: '混合检索',
   rerank_enabled: '重排序',

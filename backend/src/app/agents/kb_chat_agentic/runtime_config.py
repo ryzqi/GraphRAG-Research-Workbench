@@ -53,22 +53,6 @@ def ambiguity_check_enabled(state: dict[str, Any], settings: Settings) -> bool:
     )
 
 
-def decomposition_enabled(state: dict[str, Any], settings: Settings) -> bool:
-    return _state_flag(
-        state,
-        key="decomposition_enabled",
-        default=bool(settings.kb_chat_decomposition_enabled),
-    )
-
-
-def multi_query_enabled(state: dict[str, Any], settings: Settings) -> bool:
-    return _state_flag(
-        state,
-        key="multi_query_enabled",
-        default=bool(settings.kb_chat_multi_query_enabled),
-    )
-
-
 def hyde_enabled(state: dict[str, Any], settings: Settings) -> bool:
     return _state_flag(
         state,
