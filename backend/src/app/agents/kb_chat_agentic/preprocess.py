@@ -18,7 +18,11 @@ from app.agents.kb_chat_memory import (
     render_kb_chat_memory_snippet,
 )
 from app.core.settings import Settings
-from app.services.query_rewrite_service import QueryRewriteService, build_query_items
+from app.services.query_rewrite_service import (
+    HYDE_NUM_HYPOTHESES,
+    QueryRewriteService,
+    build_query_items,
+)
 
 from .budget import (
     ensure_budget_initialized,
@@ -438,6 +442,7 @@ async def hyde(state: dict, settings: Settings) -> dict[str, Any]:
     query = state.get("normalized_query")
     if not isinstance(query, str) or not query.strip():
         query = _extract_user_input(state)
+    hyde_docs: list[str] = []
     hyde_doc = ""
     success = False
     reason: str | None = None
@@ -445,13 +450,19 @@ async def hyde(state: dict, settings: Settings) -> dict[str, Any]:
         svc = QueryRewriteService(settings=settings)
         enabled = hyde_enabled(state, settings)
         result = await svc.hyde(query, enabled=enabled)
-        hyde_doc = result.text
+        hyde_docs = [item for item in result.queries if isinstance(item, str) and item.strip()]
+        hyde_doc = hyde_docs[0] if hyde_docs else ""
         success = result.success
         reason = result.reason
     except Exception:  # pragma: no cover
+        hyde_docs = []
         hyde_doc = ""
         success = False
         reason = "error"
+    loop_counts = state.get("loop_counts")
+    retry_regenerated = (
+        isinstance(loop_counts, dict) and int(loop_counts.get("retrieval_retries") or 0) > 0
+    )
 
     stage_summaries = _merge_stage_summary(
         state,
@@ -460,13 +471,16 @@ async def hyde(state: dict, settings: Settings) -> dict[str, Any]:
             "driver": "llm",
             "enabled": hyde_enabled(state, settings),
             "success": success,
+            "requested_count": HYDE_NUM_HYPOTHESES,
+            "generated_count": len(hyde_docs),
+            "retry_regenerated": retry_regenerated,
             "reason": reason,
             "completed_at": now_iso(),
             "latency_ms": int((time.perf_counter() - start) * 1000),
         },
         settings=settings,
     )
-    return {"hyde_doc": hyde_doc, "stage_summaries": stage_summaries}
+    return {"hyde_doc": hyde_doc, "hyde_docs": hyde_docs, "stage_summaries": stage_summaries}
 
 
 async def prepare_messages(state: dict, settings: Settings) -> dict[str, Any]:
@@ -493,12 +507,19 @@ async def prepare_messages(state: dict, settings: Settings) -> dict[str, Any]:
     hyde_doc = state.get("hyde_doc")
     if not isinstance(hyde_doc, str):
         hyde_doc = ""
+    hyde_docs = state.get("hyde_docs")
+    if not isinstance(hyde_docs, list):
+        hyde_docs = []
+    normalized_hyde_docs = [doc for doc in hyde_docs if isinstance(doc, str) and doc.strip()]
+    if not normalized_hyde_docs and hyde_doc.strip():
+        normalized_hyde_docs = [hyde_doc.strip()]
 
     query_items = build_query_items(
         main_query=normalized.strip(),
         sub_queries=[q for q in sub_queries if isinstance(q, str)],
         variants=[q for q in multi_queries if isinstance(q, str)],
         hyde_doc=hyde_doc.strip() or None,
+        hyde_docs=normalized_hyde_docs or None,
     )
 
     stage_summaries = _merge_stage_summary(
@@ -506,6 +527,7 @@ async def prepare_messages(state: dict, settings: Settings) -> dict[str, Any]:
         "prepare_messages",
         {
             "query_items_count": len(query_items),
+            "hyde_docs_count": len(normalized_hyde_docs),
             "completed_at": now_iso(),
             "latency_ms": int((time.perf_counter() - start) * 1000),
         },

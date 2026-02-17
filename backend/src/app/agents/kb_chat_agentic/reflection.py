@@ -24,11 +24,15 @@ from app.services.evidence_guardrails import (
     extract_citation_labels,
     normalize_citation_label,
 )
-from app.services.query_rewrite_service import QueryRewriteService, build_query_items
+from app.services.query_rewrite_service import (
+    HYDE_REGENERATE_ON_RETRY,
+    QueryRewriteService,
+    build_query_items,
+)
 
 from .budget import now_iso
 from .json_safety import ensure_json_safe
-from .runtime_config import query_rewrite_enabled, retrieval_top_k
+from .runtime_config import hyde_enabled, query_rewrite_enabled, retrieval_top_k
 from .schemas import AnswerReviewDecision, DocGraderDecision
 
 _EVIDENCE_LINE_RE = re.compile(r"^\[([^\[\]\n]{1,128})\]\s+", re.MULTILINE)
@@ -606,8 +610,34 @@ async def transform_query_for_retry(
     except Exception:
         new_query = current
 
-    # Keep query bundle consistent: after transform, reset fanout artifacts.
-    query_items = build_query_items(main_query=new_query)
+    hyde_docs: list[str] = []
+    hyde_doc = ""
+    hyde_reason: str | None = None
+    hyde_should_regenerate = HYDE_REGENERATE_ON_RETRY and hyde_enabled(state, settings)
+    if hyde_should_regenerate:
+        try:
+            svc = QueryRewriteService(settings=settings)
+            hyde_result = await svc.hyde(new_query, enabled=True)
+            hyde_docs = [
+                value
+                for value in hyde_result.queries
+                if isinstance(value, str) and value.strip()
+            ]
+            hyde_doc = hyde_docs[0] if hyde_docs else ""
+            hyde_reason = hyde_result.reason
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            hyde_docs = []
+            hyde_doc = ""
+            hyde_reason = "error"
+
+    # Keep query bundle consistent: after transform, rebuild retrieval inputs.
+    query_items = build_query_items(
+        main_query=new_query,
+        hyde_docs=hyde_docs or None,
+        hyde_note="retry_regenerated" if hyde_docs else None,
+    )
 
     return {
         "loop_counts": loop_counts,
@@ -615,7 +645,8 @@ async def transform_query_for_retry(
         "coref_query": new_query,
         "sub_queries": [],
         "multi_queries": [],
-        "hyde_doc": "",
+        "hyde_doc": hyde_doc,
+        "hyde_docs": hyde_docs,
         "query_items": query_items,
         **_merge_reflection(
             state,
@@ -630,6 +661,9 @@ async def transform_query_for_retry(
             "transform_query",
             {
                 "rewritten": new_query != current,
+                "hyde_regenerated": bool(hyde_docs),
+                "hyde_docs_count": len(hyde_docs),
+                "hyde_reason": hyde_reason,
                 "latency_ms": int((time.perf_counter() - start) * 1000),
                 "completed_at": now_iso(),
             },

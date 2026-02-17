@@ -21,7 +21,7 @@ from pydantic import BaseModel, ValidationError
 
 from app.agents.kb_chat_agentic.schemas import (
     DecompositionDecision,
-    HyDEDecision,
+    HyDEBatchDecision,
     MultiQueryDecision,
     ReverseQuestionDecision,
     TransformQueryDecision,
@@ -35,6 +35,9 @@ logger = logging.getLogger(__name__)
 
 DECOMPOSITION_MAX_SUB_QUERIES = 5
 MULTI_QUERY_FIXED_VARIANTS = 3
+HYDE_NUM_HYPOTHESES = 5
+HYDE_AGGREGATION = "mean_embedding"
+HYDE_REGENERATE_ON_RETRY = True
 
 
 @dataclass(slots=True)
@@ -125,7 +128,7 @@ def _extract_query_list_from_text(text: str) -> list[str]:
     if isinstance(parsed, list):
         return _dedupe_keep_order(str(item) for item in parsed if str(item).strip())
     if isinstance(parsed, dict):
-        for key in ("sub_queries", "queries", "items"):
+        for key in ("sub_queries", "queries", "items", "hypothetical_documents"):
             value = parsed.get(key)
             if isinstance(value, list):
                 return _dedupe_keep_order(str(item) for item in value if str(item).strip())
@@ -183,17 +186,36 @@ def _coerce_fixed_multi_query_variants(
     return completed[:MULTI_QUERY_FIXED_VARIANTS], True
 
 
+def _normalize_hyde_documents(
+    docs: Iterable[str], *, limit: int = HYDE_NUM_HYPOTHESES
+) -> list[str]:
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for doc in docs:
+        value = _normalize_whitespace(_strip_list_prefix(str(doc or "")))
+        if not value or value in seen:
+            continue
+        normalized.append(value)
+        seen.add(value)
+        if len(normalized) >= limit:
+            break
+    return normalized
+
+
 def build_query_items(
     *,
     main_query: str,
     sub_queries: list[str] | None = None,
     variants: list[str] | None = None,
     hyde_doc: str | None = None,
+    hyde_docs: list[str] | None = None,
+    hyde_note: str | None = None,
 ) -> list[QueryItem]:
     """Build a unified query collection for retrieval + provenance.
 
     - Decomposition and multi-query are mutually exclusive; caller should enforce.
     - HyDE is included as a *dense-only* query item by default.
+    - When `hyde_docs` has multiple candidates, retrieval may aggregate embeddings.
     """
 
     main = _normalize_whitespace(main_query)
@@ -236,18 +258,25 @@ def build_query_items(
                     }
                 )
 
+    hyde_candidates: list[str] = []
+    if hyde_docs:
+        hyde_candidates.extend([str(value) for value in hyde_docs if str(value).strip()])
     if hyde_doc:
-        hd = _normalize_whitespace(hyde_doc)
-        if hd:
-            items.append(
-                {
-                    "kind": "hyde",
-                    "query": hd,
-                    "index": 0,
-                    "use_dense": True,
-                    "use_bm25": False,
-                }
-            )
+        hyde_candidates.append(hyde_doc)
+    hyde_candidates = _normalize_hyde_documents(hyde_candidates)
+    if hyde_candidates:
+        hyde_item: QueryItem = {
+            "kind": "hyde",
+            "query": hyde_candidates[0],
+            "index": 0,
+            "use_dense": True,
+            "use_bm25": False,
+            "hyde_queries": hyde_candidates,
+            "hyde_aggregation": HYDE_AGGREGATION,
+        }
+        if hyde_note:
+            hyde_item["note"] = _normalize_whitespace(hyde_note)
+        items.append(hyde_item)
 
     # Global dedupe to avoid repeated retrieval calls. Keep first occurrence.
     deduped: list[QueryItem] = []
@@ -698,7 +727,7 @@ class QueryRewriteService:
         query: str,
         *,
         enabled: bool | None = None,
-    ) -> TextResult:
+    ) -> QueryListResult:
         """HyDE generator (LLM-first with safe fallback)."""
         start = time.perf_counter()
         enabled_flag = (
@@ -707,31 +736,31 @@ class QueryRewriteService:
             else bool(enabled)
         )
         if not enabled_flag:
-            return TextResult(text="", success=False, reason="disabled", latency_ms=0)
+            return QueryListResult(queries=[], success=False, reason="disabled", latency_ms=0)
 
         q = _normalize_whitespace(query)
         if not q:
-            return TextResult(text="", success=False, reason="empty", latency_ms=0)
+            return QueryListResult(queries=[], success=False, reason="empty", latency_ms=0)
 
         structured_result = await self._call_prompt_structured(
             "kb_chat/hyde",
-            schema=HyDEDecision,
+            schema=HyDEBatchDecision,
             timeout_seconds=None,
-            max_tokens=256,
+            max_tokens=768,
             question=q,
+            num_hypotheses=HYDE_NUM_HYPOTHESES,
         )
-        if (
-            structured_result.success
-            and isinstance(structured_result.payload, HyDEDecision)
-            and structured_result.payload.hypothetical_document.strip()
+        if structured_result.success and isinstance(
+            structured_result.payload, HyDEBatchDecision
         ):
-            text = _normalize_whitespace(
-                structured_result.payload.hypothetical_document
+            docs = _normalize_hyde_documents(
+                structured_result.payload.hypothetical_documents,
+                limit=HYDE_NUM_HYPOTHESES,
             )
-            if text:
+            if docs:
                 latency_ms = int((time.perf_counter() - start) * 1000)
-                return TextResult(
-                    text=text,
+                return QueryListResult(
+                    queries=docs,
                     success=True,
                     reason="llm_structured",
                     latency_ms=latency_ms,
@@ -740,23 +769,27 @@ class QueryRewriteService:
         text_result = await self._call_prompt_text(
             "kb_chat/hyde",
             timeout_seconds=None,
-            max_tokens=256,
+            max_tokens=768,
             question=q,
+            num_hypotheses=HYDE_NUM_HYPOTHESES,
         )
-        if text_result.success and text_result.text.strip():
-            text = _normalize_whitespace(text_result.text)
-            if text:
+        if text_result.success:
+            docs = _normalize_hyde_documents(
+                _extract_query_list_from_text(text_result.text),
+                limit=HYDE_NUM_HYPOTHESES,
+            )
+            if docs:
                 latency_ms = int((time.perf_counter() - start) * 1000)
-                return TextResult(
-                    text=text,
+                return QueryListResult(
+                    queries=docs,
                     success=True,
                     reason="llm_text_fallback",
                     latency_ms=latency_ms,
                 )
 
         latency_ms = int((time.perf_counter() - start) * 1000)
-        return TextResult(
-            text="",
+        return QueryListResult(
+            queries=[],
             success=False,
             reason="llm_failed_fallback_empty",
             latency_ms=latency_ms,

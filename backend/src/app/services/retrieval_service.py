@@ -30,6 +30,8 @@ from app.schemas.knowledge_bases import ChunkingStrategy, IndexConfig
 from app.schemas.query_enhancement import QueryHitSource, QueryItem
 from app.services.query_dependent_collections import collection_name_for_window
 from app.services.query_rewrite_service import (
+    HYDE_AGGREGATION,
+    HYDE_NUM_HYPOTHESES,
     QueryRewriteService,
     RewriteResult,
     build_query_items,
@@ -840,6 +842,84 @@ class RetrievalService:
 
         return embeddings[0]
 
+    @staticmethod
+    def _mean_embedding(vectors: list[list[float]]) -> list[float]:
+        if not vectors:
+            raise ValueError("empty_vectors")
+        dim = len(vectors[0])
+        if dim == 0:
+            raise ValueError("empty_vector")
+        if any(len(vec) != dim for vec in vectors):
+            raise ValueError("embedding_dim_mismatch")
+        sums = [0.0] * dim
+        for vec in vectors:
+            for idx, value in enumerate(vec):
+                sums[idx] += float(value)
+        count = float(len(vectors))
+        return [value / count for value in sums]
+
+    async def _resolve_query_embedding(
+        self,
+        item: QueryItem,
+        *,
+        timeout_seconds: float | None = None,
+    ) -> tuple[list[float], int, int, str]:
+        """Resolve a query embedding, with HyDE batch aggregation when present."""
+        query = str(item.get("query") or "").strip()
+        if not query:
+            raise ValueError("empty_query")
+
+        if str(item.get("kind") or "") != "hyde":
+            embedding = await self._get_query_embedding(query, timeout_seconds=timeout_seconds)
+            return embedding, 0, 0, "not_hyde"
+
+        raw_hyde_queries = item.get("hyde_queries")
+        hyde_queries: list[str] = []
+        if isinstance(raw_hyde_queries, list):
+            for value in raw_hyde_queries:
+                if not isinstance(value, str):
+                    continue
+                normalized = " ".join(value.strip().split())
+                if normalized and normalized not in hyde_queries:
+                    hyde_queries.append(normalized)
+                if len(hyde_queries) >= HYDE_NUM_HYPOTHESES:
+                    break
+        if not hyde_queries:
+            hyde_queries = [query]
+
+        aggregation = (
+            str(item.get("hyde_aggregation") or "").strip().lower() or HYDE_AGGREGATION
+        )
+        if aggregation != HYDE_AGGREGATION:
+            embedding = await self._get_query_embedding(
+                hyde_queries[0], timeout_seconds=timeout_seconds
+            )
+            return embedding, len(hyde_queries), 1, "unsupported_aggregation"
+        if len(hyde_queries) == 1:
+            embedding = await self._get_query_embedding(
+                hyde_queries[0], timeout_seconds=timeout_seconds
+            )
+            return embedding, len(hyde_queries), 1, "single_sample"
+
+        deadline = self._make_deadline(timeout_seconds)
+        vectors: list[list[float]] = []
+        for hyde_query in hyde_queries:
+            remaining = self._remaining_seconds(deadline)
+            if remaining is not None and remaining <= 0:
+                raise asyncio.TimeoutError()
+            vec = await self._get_query_embedding(
+                hyde_query,
+                timeout_seconds=remaining,
+            )
+            vectors.append(vec)
+
+        try:
+            merged = self._mean_embedding(vectors)
+        except ValueError:
+            # Degrade gracefully to the first usable sample.
+            return vectors[0], len(hyde_queries), 1, "dim_mismatch_first_sample"
+        return merged, len(hyde_queries), len(vectors), "none"
+
     async def _maybe_rewrite_query(
         self,
         query: str,
@@ -1090,6 +1170,9 @@ class RetrievalService:
 
         dense_hits_total = 0
         bm25_hits_total = 0
+        hyde_requested_total = 0
+        hyde_used_total = 0
+        hyde_aggregation_reason = "not_used"
 
         # Use the "main" query as rerank query, fallback to the first available.
         main_query = ""
@@ -1099,6 +1182,11 @@ class RetrievalService:
                 break
         if not main_query:
             main_query = str(query_items[0].get("query") or "")
+        hyde_retry_regenerated = any(
+            str(item.get("kind") or "") == "hyde"
+            and str(item.get("note") or "") == "retry_regenerated"
+            for item in query_items
+        )
 
         async def _process_query_item(
             index: int,
@@ -1110,10 +1198,13 @@ class RetrievalService:
             dict[tuple[str, str, str], RetrievedChunk],
             dict[tuple[str, str, str], list[QueryHitSource]],
             list[tuple[str, str, str]],
+            int,
+            int,
+            str,
         ]:
             q = (item.get("query") or "").strip()
             if not q:
-                return index, 0, 0, {}, {}, []
+                return index, 0, 0, {}, {}, [], 0, 0, "empty_query"
 
             if deadline is not None:
                 remaining = self._remaining_seconds(deadline)
@@ -1123,13 +1214,22 @@ class RetrievalService:
             use_dense = bool(item.get("use_dense", True))
             use_bm25 = bool(item.get("use_bm25", True)) and feature_flags.hybrid_enabled
             embedding: list[float] | None = None
+            hyde_requested_count = 0
+            hyde_used_count = 0
+            hyde_reason = "not_hyde"
             if use_dense:
                 try:
                     remaining = self._remaining_seconds(deadline)
                     if remaining is not None and remaining <= 0:
                         raise asyncio.TimeoutError()
-                    embedding = await self._get_query_embedding(
-                        q, timeout_seconds=remaining
+                    (
+                        embedding,
+                        hyde_requested_count,
+                        hyde_used_count,
+                        hyde_reason,
+                    ) = await self._resolve_query_embedding(
+                        item,
+                        timeout_seconds=remaining,
                     )
                 except asyncio.TimeoutError:
                     if deadline is not None:
@@ -1305,6 +1405,9 @@ class RetrievalService:
                     local_chunk_by_key,
                     local_hits_by_key,
                     [],
+                    hyde_requested_count,
+                    hyde_used_count,
+                    hyde_reason,
                 )
 
             if (
@@ -1329,6 +1432,9 @@ class RetrievalService:
                 local_chunk_by_key,
                 local_hits_by_key,
                 per_keys,
+                hyde_requested_count,
+                hyde_used_count,
+                hyde_reason,
             )
 
         semaphore = asyncio.Semaphore(QUERY_FANOUT_CONCURRENCY)
@@ -1342,6 +1448,9 @@ class RetrievalService:
             dict[tuple[str, str, str], RetrievedChunk],
             dict[tuple[str, str, str], list[QueryHitSource]],
             list[tuple[str, str, str]],
+            int,
+            int,
+            str,
         ]:
             async with semaphore:
                 return await _process_query_item(index, item)
@@ -1371,9 +1480,16 @@ class RetrievalService:
                 local_chunk_by_key,
                 local_hits_by_key,
                 per_keys,
+                hyde_requested_count,
+                hyde_used_count,
+                hyde_reason,
             ) = result
             dense_hits_total += dense_count
             bm25_hits_total += bm25_count
+            hyde_requested_total += hyde_requested_count
+            hyde_used_total += hyde_used_count
+            if hyde_requested_count > 0:
+                hyde_aggregation_reason = hyde_reason
 
             for key, chunk in local_chunk_by_key.items():
                 chunk_by_key.setdefault(key, chunk)
@@ -1393,6 +1509,15 @@ class RetrievalService:
                 stats={
                     "dense_hits": dense_hits_total,
                     "bm25_hits": bm25_hits_total,
+                    "hyde_requested_count": hyde_requested_total,
+                    "hyde_used_count": hyde_used_total,
+                    "hyde_aggregation": (
+                        HYDE_AGGREGATION if hyde_requested_total > 0 else None
+                    ),
+                    "hyde_embedding_fallback": (
+                        hyde_aggregation_reason if hyde_requested_total > 0 else None
+                    ),
+                    "hyde_retry_regenerated": hyde_retry_regenerated,
                     "rrf_candidates": 0,
                     "rerank_applied": False,
                 },
@@ -1631,6 +1756,13 @@ class RetrievalService:
             stats={
                 "dense_hits": dense_hits_total,
                 "bm25_hits": bm25_hits_total,
+                "hyde_requested_count": hyde_requested_total,
+                "hyde_used_count": hyde_used_total,
+                "hyde_aggregation": HYDE_AGGREGATION if hyde_requested_total > 0 else None,
+                "hyde_embedding_fallback": (
+                    hyde_aggregation_reason if hyde_requested_total > 0 else None
+                ),
+                "hyde_retry_regenerated": hyde_retry_regenerated,
                 "pre_min_score_candidates": pre_min_score_count,
                 "filtered_count": filtered_count,
                 "pre_dedup_candidates": pre_dedup_count,

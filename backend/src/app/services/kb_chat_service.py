@@ -378,6 +378,11 @@ class KbChatService:
             else None,
             "dense_hits": layer_stats.get("dense_hits"),
             "bm25_hits": layer_stats.get("bm25_hits"),
+            "hyde_requested_count": layer_stats.get("hyde_requested_count"),
+            "hyde_used_count": layer_stats.get("hyde_used_count"),
+            "hyde_aggregation": layer_stats.get("hyde_aggregation"),
+            "hyde_embedding_fallback": layer_stats.get("hyde_embedding_fallback"),
+            "hyde_retry_regenerated": layer_stats.get("hyde_retry_regenerated"),
             "rrf_candidates": layer_stats.get("rrf_candidates"),
             "rerank_applied": layer_stats.get("rerank_applied"),
             "rerank_reason": layer_stats.get("rerank_reason"),
@@ -962,6 +967,11 @@ class KbChatService:
                 "reason",
                 "count",
                 "query_items_count",
+                "hyde_docs_count",
+                "requested_count",
+                "generated_count",
+                "hyde_regenerated",
+                "hyde_reason",
                 "ambiguous",
                 "enabled",
                 "evidence_count",
@@ -992,6 +1002,11 @@ class KbChatService:
             if isinstance(hyde_doc, str) and hyde_doc.strip():
                 io_summary["hyde_preview"] = KbChatService._shorten_stream_text(
                     hyde_doc, 160
+                )
+            hyde_docs = update.get("hyde_docs")
+            if isinstance(hyde_docs, list):
+                io_summary["hyde_docs_count"] = len(
+                    [doc for doc in hyde_docs if isinstance(doc, str) and doc.strip()]
                 )
 
         if node == "prepare_messages":

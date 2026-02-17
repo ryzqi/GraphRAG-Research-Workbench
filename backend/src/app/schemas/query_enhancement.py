@@ -48,4 +48,6 @@ class QueryItem(QueryRef, total=False):
 
     use_dense: bool
     use_bm25: bool
-
+    # Optional batched HyDE payload. Keep `query` as the primary/preview item.
+    hyde_queries: list[str]
+    hyde_aggregation: Literal["mean_embedding"]

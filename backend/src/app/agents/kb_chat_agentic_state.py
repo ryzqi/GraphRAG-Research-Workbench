@@ -161,7 +161,7 @@ class KbChatAgenticState(KbChatAgenticStateBase, total=False):
     - NormalizeRewrite: reads coref_query -> writes normalized_query
     - Decomposition: reads normalized_query -> writes sub_queries
     - MultiQuery: reads normalized_query -> writes multi_queries
-    - HyDE: reads normalized_query -> writes hyde_doc
+    - HyDE: reads normalized_query -> writes hyde_doc/hyde_docs
     - QueryBundle: reads query family -> writes query_items (flattened, for retrieval)
     - RetrievalLayer: reads query family -> writes retrieval_candidates (+ optional reranked_candidates)
     - ReflectionLayer: reads candidates/evidence -> writes reflection (+ optional rewritten query)
@@ -176,6 +176,7 @@ class KbChatAgenticState(KbChatAgenticStateBase, total=False):
     sub_queries: list[str]
     multi_queries: list[str]
     hyde_doc: str
+    hyde_docs: list[str]
     query_items: list[QueryItem]
 
     retrieval_candidates: list[RetrievalCandidate]
@@ -216,6 +217,7 @@ def make_initial_state(
         # Pre-initialize list fields to reduce KeyError risk in early node work.
         "sub_queries": [],
         "multi_queries": [],
+        "hyde_docs": [],
         "query_items": [],
         "retrieval_candidates": [],
         "reranked_candidates": [],

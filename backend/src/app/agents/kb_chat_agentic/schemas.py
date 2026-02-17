@@ -91,3 +91,11 @@ class HyDEDecision(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     hypothetical_document: str = Field(..., min_length=1)
+
+
+class HyDEBatchDecision(BaseModel):
+    """Structured output for batched HyDE hypothetical document generation."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    hypothetical_documents: list[str] = Field(default_factory=list, min_length=1, max_length=8)

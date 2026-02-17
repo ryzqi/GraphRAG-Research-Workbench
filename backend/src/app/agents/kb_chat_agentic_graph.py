@@ -251,6 +251,18 @@ def _format_query_items(value: Any) -> list[str]:
             continue
         kind = _non_empty_text(item_dict.get("kind"))
         prefix = f"[{kind}] " if kind else ""
+        if kind == "hyde":
+            hyde_queries = item_dict.get("hyde_queries")
+            if isinstance(hyde_queries, list):
+                count = len(
+                    [
+                        value
+                        for value in hyde_queries
+                        if isinstance(value, str) and value.strip()
+                    ]
+                )
+                if count > 0:
+                    prefix = f"[hyde x{count}] "
         lines.append(f"{index}. {prefix}{query}")
     return lines
 
@@ -368,6 +380,14 @@ def _build_node_input_display_items(
             label="HyDE 内容",
             value=_pick_text(snapshot, "hyde_doc"),
         )
+        hyde_docs = _pick_string_list(snapshot, "hyde_docs")
+        if hyde_docs:
+            _append_display_item(
+                items,
+                key="hyde_docs_count",
+                label="HyDE 文档数量",
+                value=len(hyde_docs),
+            )
     elif node_name == "retrieve":
         query_items = _format_query_items(snapshot.get("query_items"))
         if query_items:
@@ -592,6 +612,24 @@ def _build_node_output_display_items(
             key="hyde_doc",
             label="HyDE 生成内容",
             value=_pick_text(snapshot, "hyde_doc"),
+        )
+        _append_display_item(
+            items,
+            key="requested_count",
+            label="目标生成数量",
+            value=summary.get("requested_count"),
+        )
+        _append_display_item(
+            items,
+            key="generated_count",
+            label="实际生成数量",
+            value=summary.get("generated_count"),
+        )
+        _append_display_item(
+            items,
+            key="retry_regenerated",
+            label="是否重试重生",
+            value=summary.get("retry_regenerated"),
         )
         _append_display_item(
             items,

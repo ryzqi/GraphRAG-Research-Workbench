@@ -20,31 +20,26 @@ depends_on = None
 
 
 def upgrade() -> None:
+    transport_enum = postgresql.ENUM(
+        "stdio",
+        "http",
+        name="extension_transport",
+        create_type=False,
+    )
+    status_enum = postgresql.ENUM(
+        "enabled",
+        "disabled",
+        name="extension_status",
+        create_type=False,
+    )
+
     op.drop_table("tool_extensions")
     op.create_table(
         "tool_extensions",
         sa.Column("id", sa.Uuid(), nullable=False),
         sa.Column("name", sa.String(length=128), nullable=False),
-        sa.Column(
-            "transport",
-            sa.Enum(
-                "stdio",
-                "http",
-                name="extension_transport",
-                create_type=False,
-            ),
-            nullable=False,
-        ),
-        sa.Column(
-            "status",
-            sa.Enum(
-                "enabled",
-                "disabled",
-                name="extension_status",
-                create_type=False,
-            ),
-            nullable=False,
-        ),
+        sa.Column("transport", transport_enum, nullable=False),
+        sa.Column("status", status_enum, nullable=False),
         sa.Column("http_config", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
         sa.Column("stdio_config", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
         sa.Column(
@@ -76,32 +71,27 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    transport_enum = postgresql.ENUM(
+        "stdio",
+        "http",
+        name="extension_transport",
+        create_type=False,
+    )
+    status_enum = postgresql.ENUM(
+        "enabled",
+        "disabled",
+        name="extension_status",
+        create_type=False,
+    )
+
     op.drop_table("tool_extensions")
     op.create_table(
         "tool_extensions",
         sa.Column("id", sa.Uuid(), nullable=False),
         sa.Column("name", sa.String(length=128), nullable=False),
-        sa.Column(
-            "transport",
-            sa.Enum(
-                "stdio",
-                "http",
-                name="extension_transport",
-                create_type=False,
-            ),
-            nullable=False,
-        ),
+        sa.Column("transport", transport_enum, nullable=False),
         sa.Column("endpoint", sa.Text(), nullable=False),
-        sa.Column(
-            "status",
-            sa.Enum(
-                "enabled",
-                "disabled",
-                name="extension_status",
-                create_type=False,
-            ),
-            nullable=False,
-        ),
+        sa.Column("status", status_enum, nullable=False),
         sa.Column("scope", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
         sa.Column(
             "created_at",
