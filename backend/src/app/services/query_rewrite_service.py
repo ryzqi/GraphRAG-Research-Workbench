@@ -76,9 +76,7 @@ class AmbiguityResult:
 @dataclass(slots=True)
 class ComplexityRouteResult:
     strategy: str
-    complexity: str
     success: bool
-    reason: str | None = None
     latency_ms: int | None = None
 
 
@@ -585,15 +583,13 @@ class QueryRewriteService:
         self,
         query: str,
     ) -> ComplexityRouteResult:
-        """Classify query complexity and decide preprocess routing strategy."""
+        """Decide preprocess routing strategy."""
         start = time.perf_counter()
         q = _normalize_whitespace(query)
         if not q:
             return ComplexityRouteResult(
                 strategy="direct",
-                complexity="simple",
                 success=False,
-                reason="empty",
                 latency_ms=0,
             )
 
@@ -612,23 +608,16 @@ class QueryRewriteService:
             strategy = str(payload.strategy or "direct").strip().lower()
             if strategy not in {"direct", "decomposition", "multi_query"}:
                 strategy = "direct"
-            complexity = str(payload.complexity or "simple").strip().lower()
-            if complexity not in {"simple", "complex"}:
-                complexity = "simple"
             return ComplexityRouteResult(
                 strategy=strategy,
-                complexity=complexity,
                 success=True,
-                reason=(payload.reason or "llm_structured").strip() or "llm_structured",
                 latency_ms=structured_result.latency_ms,
             )
 
         latency_ms = int((time.perf_counter() - start) * 1000)
         return ComplexityRouteResult(
             strategy="direct",
-            complexity="simple",
             success=False,
-            reason=structured_result.reason or "fallback_direct",
             latency_ms=latency_ms,
         )
 

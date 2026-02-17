@@ -553,21 +553,9 @@ def _build_node_output_display_items(
     elif node_name == "complexity_router":
         _append_display_item(
             items,
-            key="query_complexity",
-            label="问题复杂度",
-            value=snapshot.get("query_complexity"),
-        )
-        _append_display_item(
-            items,
             key="query_strategy",
             label="路由策略",
             value=snapshot.get("query_strategy"),
-        )
-        _append_display_item(
-            items,
-            key="reason",
-            label="判定原因",
-            value=summary.get("reason"),
         )
     elif node_name == "decomposition":
         sub_queries = _pick_string_list(snapshot, "sub_queries")

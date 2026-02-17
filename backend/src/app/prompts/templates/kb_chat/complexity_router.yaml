@@ -1,4 +1,4 @@
-version: "1.1"
+version: "1.2"
 name: kb_chat_complexity_router
 description: "问题复杂度与检索策略路由提示词"
 
@@ -20,25 +20,15 @@ template: |
   2. 否则若主目标单一但表达存在召回风险，选 multi_query。
   3. 其他情况选 direct。
 
-  complexity 映射规则：
-  - strategy=decomposition -> complexity=complex
-  - strategy=direct 或 multi_query -> complexity=simple
-
-  reason 规则：
-  - 输出一个简短英文标签（snake_case，建议 2~24 字符）。
-  - 推荐标签：multi_hop、multi_goal、lexical_variance、alias_uncertain、direct_clear、fallback_direct。
-
   输出要求（必须仅返回一个 JSON 对象）：
   {{
-    "complexity": "simple|complex",
-    "strategy": "direct|decomposition|multi_query",
-    "reason": "snake_case 短标签"
+    "strategy": "direct|decomposition|multi_query"
   }}
 
   规则：
   1. 不得输出 JSON 以外的任何内容（禁止解释、前后缀、代码块）。
   2. 不要编造用户未提供的事实或约束。
-  3. 若仍无法判断，默认输出 direct + simple，reason=fallback_direct。
+  3. 若仍无法判断，默认输出 strategy=direct。
 
   用户问题：{question}
 

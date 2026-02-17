@@ -323,9 +323,7 @@ async def complexity_router(state: dict, settings: Settings) -> dict[str, Any]:
         query = _extract_user_input(state)
 
     strategy = "direct"
-    complexity = "simple"
     success = False
-    reason: str | None = None
     try:
         svc = QueryRewriteService(settings=settings)
         decision = await svc.classify_complexity(query)
@@ -334,23 +332,17 @@ async def complexity_router(state: dict, settings: Settings) -> dict[str, Any]:
             if decision.strategy in {"direct", "decomposition", "multi_query"}
             else "direct"
         )
-        complexity = decision.complexity if decision.complexity in {"simple", "complex"} else "simple"
         success = decision.success
-        reason = decision.reason
     except Exception:  # pragma: no cover
         strategy = "direct"
-        complexity = "simple"
         success = False
-        reason = "error"
 
     stage_summaries = _merge_stage_summary(
         state,
         "complexity_router",
         {
             "strategy": strategy,
-            "complexity": complexity,
             "success": success,
-            "reason": reason,
             "completed_at": now_iso(),
             "latency_ms": int((time.perf_counter() - start) * 1000),
         },
@@ -360,7 +352,6 @@ async def complexity_router(state: dict, settings: Settings) -> dict[str, Any]:
     # Reset fan-out artifacts before entering the selected branch.
     return {
         "query_strategy": strategy,
-        "query_complexity": complexity,
         "sub_queries": [],
         "multi_queries": [],
         "stage_summaries": stage_summaries,
