@@ -310,9 +310,6 @@ class Settings(BaseSettings):
     kb_chat_multi_query_enabled: bool = Field(
         False, alias="KB_CHAT_MULTI_QUERY_ENABLED"
     )
-    kb_chat_multi_query_max_variants: int = Field(
-        4, alias="KB_CHAT_MULTI_QUERY_MAX_VARIANTS"
-    )
     kb_chat_hyde_enabled: bool = Field(False, alias="KB_CHAT_HYDE_ENABLED")
 
     kb_chat_trace_enabled: bool = Field(True, alias="KB_CHAT_TRACE_ENABLED")

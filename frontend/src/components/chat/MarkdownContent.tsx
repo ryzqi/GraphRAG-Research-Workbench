@@ -13,6 +13,77 @@ const CodeBlock = lazy(async () => ({
 interface MarkdownContentProps {
   content: string;
   isStreaming?: boolean;
+  onCitationClick?: (citationId: string) => void;
+}
+
+const INLINE_CITATION_RE = /\[S([1-9]\d*)\]/gi;
+const CITATION_LINK_RE = /^#cite-(S[1-9]\d*)$/i;
+
+type MarkdownTreeNode = {
+  type?: string;
+  value?: string;
+  url?: string;
+  title?: string | null;
+  children?: MarkdownTreeNode[];
+  data?: Record<string, unknown>;
+};
+
+function splitCitationText(value: string): MarkdownTreeNode[] {
+  const nodes: MarkdownTreeNode[] = [];
+  let lastIndex = 0;
+  INLINE_CITATION_RE.lastIndex = 0;
+
+  for (const match of value.matchAll(INLINE_CITATION_RE)) {
+    const raw = match[0];
+    const start = match.index ?? 0;
+    const citationId = `S${match[1]}`;
+    if (start > lastIndex) {
+      nodes.push({ type: 'text', value: value.slice(lastIndex, start) });
+    }
+    nodes.push({
+      type: 'link',
+      url: `#cite-${citationId}`,
+      title: null,
+      children: [{ type: 'text', value: raw }],
+      data: { citationId },
+    });
+    lastIndex = start + raw.length;
+  }
+
+  if (lastIndex < value.length) {
+    nodes.push({ type: 'text', value: value.slice(lastIndex) });
+  }
+
+  if (nodes.length === 0) {
+    return [{ type: 'text', value }];
+  }
+  return nodes;
+}
+
+function linkifyCitationNodes(node: MarkdownTreeNode): void {
+  if (!Array.isArray(node.children) || node.children.length === 0) {
+    return;
+  }
+  if (node.type === 'link' || node.type === 'inlineCode' || node.type === 'code') {
+    return;
+  }
+
+  const transformed: MarkdownTreeNode[] = [];
+  for (const child of node.children) {
+    if (child.type === 'text' && typeof child.value === 'string' && child.value.includes('[S')) {
+      transformed.push(...splitCitationText(child.value));
+      continue;
+    }
+    transformed.push(child);
+    linkifyCitationNodes(child);
+  }
+  node.children = transformed;
+}
+
+function citationLinkPlugin() {
+  return (tree: MarkdownTreeNode) => {
+    linkifyCitationNodes(tree);
+  };
 }
 
 function splitUnclosedFence(content: string) {
@@ -29,10 +100,16 @@ function splitUnclosedFence(content: string) {
   };
 }
 
-export function MarkdownContent({ content, isStreaming = false }: MarkdownContentProps) {
+export function MarkdownContent({
+  content,
+  isStreaming = false,
+  onCitationClick,
+}: MarkdownContentProps) {
   const { safeContent, pendingContent } = isStreaming
     ? splitUnclosedFence(content)
     : { safeContent: content, pendingContent: '' };
+
+  const remarkPlugins = useMemo(() => [remarkGfm, citationLinkPlugin], []);
 
   const markdownComponents = useMemo(
     () => ({
@@ -57,9 +134,30 @@ export function MarkdownContent({ content, isStreaming = false }: MarkdownConten
         </Typography>
       ),
       a: ({ href, children }: { href?: string; children?: React.ReactNode }) => (
-        <Link href={href} target="_blank" rel="noopener noreferrer" underline="hover">
-          {children}
-        </Link>
+        (() => {
+          const citationMatch = typeof href === 'string' ? href.match(CITATION_LINK_RE) : null;
+          if (citationMatch) {
+            const citationId = citationMatch[1].toUpperCase();
+            return (
+              <Link
+                href={href}
+                underline="always"
+                sx={{ fontWeight: 600 }}
+                onClick={(event) => {
+                  event.preventDefault();
+                  onCitationClick?.(citationId);
+                }}
+              >
+                {children}
+              </Link>
+            );
+          }
+          return (
+            <Link href={href} target="_blank" rel="noopener noreferrer" underline="hover">
+              {children}
+            </Link>
+          );
+        })()
       ),
       code: ({ className, children }: { className?: string; children?: React.ReactNode }) => {
         const match = /language-(\w+)/.exec(className || '');
@@ -207,7 +305,7 @@ export function MarkdownContent({ content, isStreaming = false }: MarkdownConten
         </Typography>
       ),
     }),
-    []
+    [onCitationClick]
   );
 
   if (!safeContent && !pendingContent) {
@@ -217,7 +315,7 @@ export function MarkdownContent({ content, isStreaming = false }: MarkdownConten
   return (
     <>
       {safeContent && (
-        <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+        <ReactMarkdown remarkPlugins={remarkPlugins} components={markdownComponents}>
           {safeContent}
         </ReactMarkdown>
       )}

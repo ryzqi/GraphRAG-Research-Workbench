@@ -6,9 +6,6 @@ export function validateKbChatConfig(value: KbChatConfig): string[] {
   if (value.decomposition_enabled && value.multi_query_enabled) {
     errors.push('问题分解与多路查询不能同时开启。');
   }
-  if (value.multi_query_max_variants < 2 || value.multi_query_max_variants > 4) {
-    errors.push('多路查询数量需在 2~4。');
-  }
   if (value.retrieval_top_k < 1 || value.retrieval_top_k > 20) {
     errors.push('检索 Top-K 需在 1~20。');
   }

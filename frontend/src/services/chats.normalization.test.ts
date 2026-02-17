@@ -116,7 +116,6 @@ describe('normalizeChatStreamEvent', () => {
     const query = toKbGraphSchemaQuery({
       decomposition_enabled: true,
       multi_query_enabled: false,
-      multi_query_max_variants: 3,
       hyde_enabled: true,
       retrieval_hybrid_ranker: 'weighted',
       retrieval_hybrid_dense_weight: 0.6,
@@ -124,7 +123,6 @@ describe('normalizeChatStreamEvent', () => {
     });
     expect(query).toContain('decomposition_enabled=true');
     expect(query).toContain('multi_query_enabled=false');
-    expect(query).toContain('multi_query_max_variants=3');
     expect(query).toContain('hyde_enabled=true');
     expect(query).toContain('retrieval_hybrid_ranker=weighted');
     expect(query).toContain('retrieval_hybrid_dense_weight=0.6');

@@ -111,7 +111,6 @@ class KbChatRuntimeConfig(TypedDict, total=False):
     hyde_enabled: bool
     hybrid_retrieval_enabled: bool
     rerank_enabled: bool
-    multi_query_max_variants: int
     retrieval_top_k: int
     retrieval_rerank_top_k: int
     retrieval_hybrid_ranker: Literal["rrf", "weighted"]

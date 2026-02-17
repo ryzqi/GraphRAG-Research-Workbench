@@ -7,7 +7,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.core.settings import Settings, get_settings
 
@@ -59,7 +59,6 @@ class KbChatConfig(BaseModel):
     hyde_enabled: bool = False
     hybrid_retrieval_enabled: bool = True
     rerank_enabled: bool = True
-    multi_query_max_variants: int = Field(4, ge=2, le=4)
     retrieval_top_k: int = Field(5, ge=1, le=20)
     retrieval_rerank_top_k: int = Field(20, ge=1, le=20)
     retrieval_hybrid_ranker: Literal["rrf", "weighted"] = "rrf"
@@ -122,10 +121,6 @@ def default_kb_chat_config(*, settings: Settings | None = None) -> KbChatConfig:
         hyde_enabled=bool(cfg.kb_chat_hyde_enabled),
         hybrid_retrieval_enabled=bool(cfg.retrieval_hybrid_enabled),
         rerank_enabled=bool(cfg.retrieval_rerank_enabled),
-        multi_query_max_variants=max(
-            2,
-            min(4, int(cfg.kb_chat_multi_query_max_variants)),
-        ),
         retrieval_top_k=int(cfg.retrieval_default_top_k),
         retrieval_rerank_top_k=max(
             int(cfg.retrieval_default_top_k),
@@ -149,13 +144,14 @@ def resolve_kb_chat_config(
     raw: KbChatConfig | dict[str, Any] | None,
     settings: Settings | None = None,
 ) -> KbChatConfig:
+    allowed_keys = set(KbChatConfig.model_fields.keys())
     defaults = default_kb_chat_config(settings=settings).model_dump(mode="json")
     if raw is None:
         return KbChatConfig.model_validate(defaults)
     if isinstance(raw, KbChatConfig):
         payload = raw.model_dump(mode="json")
     elif isinstance(raw, dict):
-        payload = raw
+        payload = {key: value for key, value in raw.items() if key in allowed_keys}
     else:
         payload = defaults
     merged = {**defaults, **payload}
@@ -182,6 +178,13 @@ class ChatSessionRead(BaseModel):
     kb_chat_config: KbChatConfig | None = None
     created_at: datetime
     updated_at: datetime
+
+    @field_validator("kb_chat_config", mode="before")
+    @classmethod
+    def _normalize_kb_chat_config(cls, value: Any) -> Any:
+        if isinstance(value, dict):
+            return resolve_kb_chat_config(raw=value).model_dump(mode="json")
+        return value
 
 
 # 最近对话列表
@@ -223,6 +226,10 @@ class EvidenceItem(BaseModel):
     chunk_id: uuid.UUID | None = None
     locator: dict | None = None
     excerpt: str
+    citation_id: str | None = None
+    citation_title: str | None = None
+    citation_page_hint: str | None = None
+    citation_source: str | None = None
 
 
 # 运行记录相关

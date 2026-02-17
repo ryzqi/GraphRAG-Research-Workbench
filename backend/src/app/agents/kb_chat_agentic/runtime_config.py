@@ -77,20 +77,6 @@ def hyde_enabled(state: dict[str, Any], settings: Settings) -> bool:
     )
 
 
-def multi_query_max_variants(state: dict[str, Any], settings: Settings) -> int:
-    return max(
-        2,
-        min(
-            4,
-            _state_int(
-                state,
-                key="multi_query_max_variants",
-                default=int(settings.kb_chat_multi_query_max_variants),
-            ),
-        ),
-    )
-
-
 def retrieval_top_k(state: dict[str, Any], settings: Settings) -> int:
     return max(
         1,

@@ -3,16 +3,21 @@ name: kb_chat_multi_query
 description: "多路查询扩展提示词"
 
 template: |
-  你是知识库检索扩展助手。请围绕用户问题生成最多 {max_variants} 条不同检索视角的查询。
+  你是知识库检索扩展助手。请围绕用户问题生成且仅生成 3 条多样化检索查询。
 
   目标：
-  - 在不改变原始意图的前提下，提供互补检索表达。
+  - 在不改变原始意图的前提下，输出互补且可检索的表达，提升召回覆盖率。
+
+  多样化维度（3 条需尽量同时覆盖）：
+  1) 词汇维度：同义词、近义词、术语化表达（synonyms / technical terms）
+  2) 视角维度：用户口语视角 vs 专家术语视角（user vs expert perspective）
+  3) 范围维度：窄范围具体约束 vs 广范围概览（narrow vs broad scope）
 
   规则：
   1. 必须保留核心实体与关键约束，不得编造新事实。
-  2. 允许加入同义词、别名、缩写或常见术语变体。
-  3. 查询之间要有差异，不要仅做无意义词序调整。
-  4. 若原问题已非常明确，至少返回 1 条高质量查询。
+  2. 查询之间必须实质差异化，禁止仅词序调整或轻微停用词变化。
+  3. 每条查询尽量短且可直接用于检索，不要解释性句子。
+  4. 必须输出 3 条；若有冲突，优先保证准确性与实体约束。
   5. 输出需满足结构化解析要求。
 
   用户问题：{question}
@@ -20,9 +25,6 @@ template: |
 variables:
   - name: question
     type: string
-    required: true
-  - name: max_variants
-    type: integer
     required: true
 
 few_shot_examples:

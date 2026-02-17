@@ -8,8 +8,6 @@ import {
   Stack,
   Switch,
   TextField,
-  ToggleButton,
-  ToggleButtonGroup,
   Typography,
 } from '@mui/material';
 import SettingsSuggestIcon from '@mui/icons-material/SettingsSuggest';
@@ -26,6 +24,7 @@ interface KbChatConfigPanelProps {
   value: KbChatConfig;
   onChange: (next: KbChatConfig) => void;
   disabled?: boolean;
+  parentChildLimitsEnabled?: boolean;
 }
 
 type ToggleKey =
@@ -69,8 +68,6 @@ const FEATURE_TOGGLE_META: ReadonlyArray<{
   },
 ];
 
-const STRATEGY_COUNT_OPTIONS = [2, 3, 4] as const;
-
 const SECTION_SX = {
   p: 1.5,
   borderRadius: 2.5,
@@ -105,7 +102,12 @@ function toFloat(value: string): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-export function KbChatConfigPanel({ value, onChange, disabled = false }: KbChatConfigPanelProps) {
+export function KbChatConfigPanel({
+  value,
+  onChange,
+  disabled = false,
+  parentChildLimitsEnabled = true,
+}: KbChatConfigPanelProps) {
   const handleFeatureToggle = (key: ToggleKey, checked: boolean) => {
     onChange({ ...value, [key]: checked });
   };
@@ -119,16 +121,6 @@ export function KbChatConfigPanel({ value, onChange, disabled = false }: KbChatC
       next = { ...next, decomposition_enabled: false };
     }
     onChange(next);
-  };
-
-  const handleCountSelection = (
-    key: 'multi_query_max_variants',
-    nextCount: number | null
-  ) => {
-    if (nextCount == null) {
-      return;
-    }
-    onChange({ ...value, [key]: nextCount });
   };
 
   const handleIntField = (key: keyof KbChatConfig, raw: string) => {
@@ -148,6 +140,23 @@ export function KbChatConfigPanel({ value, onChange, disabled = false }: KbChatC
   };
 
   const errors = validateKbChatConfig(value);
+  const isWeightedRanker = value.retrieval_hybrid_ranker === 'weighted';
+  const hybridRankerHelperText = isWeightedRanker
+    ? '当前 Weighted：按 Dense/BM25 权重融合，便于精细控制召回偏好。'
+    : '当前 RRF：按排名融合，通常更稳健且无需调 Dense/BM25 权重。';
+  const hybridRrfKHelperText = isWeightedRanker
+    ? '当前 Weighted 模式下不生效；切换到 RRF 后用于控制融合平滑度。'
+    : '控制 RRF 对排名差异的敏感度；调大更平滑，调小更偏向前排结果。';
+  const denseWeightHelperText = isWeightedRanker
+    ? 'Weighted 生效：调大后更偏向语义（Dense）召回结果。'
+    : '当前 RRF 模式：该参数暂不生效，切换 Weighted 后可调语义召回占比。';
+  const sparseWeightHelperText = isWeightedRanker
+    ? 'Weighted 生效：调大后更偏向关键词（BM25）召回结果。'
+    : '当前 RRF 模式：该参数暂不生效，切换 Weighted 后可调关键词召回占比。';
+  const parentChildLimitStateText = parentChildLimitsEnabled ? '父子分块生效' : '仅父子分块生效';
+  const parentChildLimitDisabled = disabled || !parentChildLimitsEnabled;
+  const parentMaxParentsHelperText = `${parentChildLimitStateText}；控制可保留父块数，调大可提升覆盖但会增加噪声。`;
+  const parentMaxChildrenHelperText = `${parentChildLimitStateText}；控制每个父块保留子块数，调大可补充细节但更占上下文。`;
 
   return (
     <Paper
@@ -253,24 +262,10 @@ export function KbChatConfigPanel({ value, onChange, disabled = false }: KbChatC
                             </Stack>
                           }
                         />
-                        <Typography variant='body2' fontWeight={700}>
-                          多路查询数量（2~4）
-                        </Typography>
-                        <ToggleButtonGroup
-                          exclusive
-                          size='small'
-                          value={value.multi_query_max_variants}
-                          onChange={(_, next) =>
-                            handleCountSelection('multi_query_max_variants', next as number | null)
-                          }
-                          disabled={disabled || !value.multi_query_enabled}
-                        >
-                          {STRATEGY_COUNT_OPTIONS.map((count) => (
-                            <ToggleButton key={count} value={count}>{`${count} 个`}</ToggleButton>
-                          ))}
-                        </ToggleButtonGroup>
                         <Typography variant='caption' color='text.secondary'>
-                          {value.multi_query_enabled ? '当前启用' : '未启用时保留预设值'}
+                          {value.multi_query_enabled
+                            ? '当前启用：固定生成 3 条多样化变体（同义词/视角/范围）'
+                            : '未启用'}
                         </Typography>
                       </Stack>
                     </Box>
@@ -344,6 +339,7 @@ export function KbChatConfigPanel({ value, onChange, disabled = false }: KbChatC
                   value={value.retrieval_top_k}
                   onChange={(event) => handleIntField('retrieval_top_k', event.target.value)}
                   inputProps={{ min: 1, max: 20 }}
+                  helperText='控制初次召回数量；调大可提高覆盖率，但会增加噪声与耗时。'
                   disabled={disabled}
                   fullWidth
                 />
@@ -353,7 +349,7 @@ export function KbChatConfigPanel({ value, onChange, disabled = false }: KbChatC
                   value={value.retrieval_rerank_top_k}
                   onChange={(event) => handleIntField('retrieval_rerank_top_k', event.target.value)}
                   inputProps={{ min: value.retrieval_top_k, max: 20 }}
-                  helperText='需大于等于检索 Top-K'
+                  helperText={`控制进入重排序的候选量；调大可提升命中率但更耗时（需 ≥ 检索 Top-K ${value.retrieval_top_k}）。`}
                   disabled={disabled}
                   fullWidth
                 />
@@ -367,6 +363,7 @@ export function KbChatConfigPanel({ value, onChange, disabled = false }: KbChatC
                       retrieval_hybrid_ranker: event.target.value as KbChatConfig['retrieval_hybrid_ranker'],
                     })
                   }
+                  helperText={hybridRankerHelperText}
                   disabled={disabled}
                   fullWidth
                 >
@@ -379,6 +376,7 @@ export function KbChatConfigPanel({ value, onChange, disabled = false }: KbChatC
                   value={value.retrieval_hybrid_rrf_k}
                   onChange={(event) => handleIntField('retrieval_hybrid_rrf_k', event.target.value)}
                   inputProps={{ min: 1, max: 200 }}
+                  helperText={hybridRrfKHelperText}
                   disabled={disabled}
                   fullWidth
                 />
@@ -400,11 +398,7 @@ export function KbChatConfigPanel({ value, onChange, disabled = false }: KbChatC
                       value={value.retrieval_hybrid_dense_weight}
                       onChange={(event) => handleFloatField('retrieval_hybrid_dense_weight', event.target.value)}
                       inputProps={{ min: 0, max: 1, step: 0.05 }}
-                      helperText={
-                        value.retrieval_hybrid_ranker === 'weighted'
-                          ? 'Weighted 模式生效'
-                          : '当前为 RRF 模式'
-                      }
+                      helperText={denseWeightHelperText}
                       disabled={disabled || value.retrieval_hybrid_ranker !== 'weighted'}
                       fullWidth
                     />
@@ -416,11 +410,7 @@ export function KbChatConfigPanel({ value, onChange, disabled = false }: KbChatC
                       value={value.retrieval_hybrid_sparse_weight}
                       onChange={(event) => handleFloatField('retrieval_hybrid_sparse_weight', event.target.value)}
                       inputProps={{ min: 0, max: 1, step: 0.05 }}
-                      helperText={
-                        value.retrieval_hybrid_ranker === 'weighted'
-                          ? 'Weighted 模式生效'
-                          : '当前为 RRF 模式'
-                      }
+                      helperText={sparseWeightHelperText}
                       disabled={disabled || value.retrieval_hybrid_ranker !== 'weighted'}
                       fullWidth
                     />
@@ -432,7 +422,8 @@ export function KbChatConfigPanel({ value, onChange, disabled = false }: KbChatC
                       value={value.retrieval_parent_max_parents}
                       onChange={(event) => handleIntField('retrieval_parent_max_parents', event.target.value)}
                       inputProps={{ min: 1, max: 20 }}
-                      disabled={disabled}
+                      helperText={parentMaxParentsHelperText}
+                      disabled={parentChildLimitDisabled}
                       fullWidth
                     />
                   </Grid>
@@ -445,7 +436,8 @@ export function KbChatConfigPanel({ value, onChange, disabled = false }: KbChatC
                         handleIntField('retrieval_parent_max_children_per_parent', event.target.value)
                       }
                       inputProps={{ min: 1, max: 10 }}
-                      disabled={disabled}
+                      helperText={parentMaxChildrenHelperText}
+                      disabled={parentChildLimitDisabled}
                       fullWidth
                     />
                   </Grid>
@@ -458,6 +450,7 @@ export function KbChatConfigPanel({ value, onChange, disabled = false }: KbChatC
                         handleIntField('retrieval_multiscale_per_window_top_k', event.target.value)
                       }
                       inputProps={{ min: 1, max: 200 }}
+                      helperText='控制每个尺度窗口的候选量；调大可提高覆盖，但会增加计算开销。'
                       disabled={disabled}
                       fullWidth
                     />
@@ -469,6 +462,7 @@ export function KbChatConfigPanel({ value, onChange, disabled = false }: KbChatC
                       value={value.retrieval_multiscale_rrf_k}
                       onChange={(event) => handleIntField('retrieval_multiscale_rrf_k', event.target.value)}
                       inputProps={{ min: 1, max: 200 }}
+                      helperText='控制多尺度融合平滑度；调大更均衡，调小更偏向高排结果。'
                       disabled={disabled}
                       fullWidth
                     />
@@ -482,6 +476,7 @@ export function KbChatConfigPanel({ value, onChange, disabled = false }: KbChatC
                         handleIntField('retrieval_multiscale_max_documents', event.target.value)
                       }
                       inputProps={{ min: 1, max: 100 }}
+                      helperText='限制进入多尺度阶段的文档数；调大更全面，但噪声和耗时会增加。'
                       disabled={disabled}
                       fullWidth
                     />
@@ -495,6 +490,7 @@ export function KbChatConfigPanel({ value, onChange, disabled = false }: KbChatC
                         handleIntField('retrieval_multiscale_max_chunks_per_document', event.target.value)
                       }
                       inputProps={{ min: 1, max: 20 }}
+                      helperText='限制单文档保留的 Chunk 数；调大可补充细节，但会挤占其他文档配额。'
                       disabled={disabled}
                       fullWidth
                     />

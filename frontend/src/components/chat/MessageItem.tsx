@@ -52,6 +52,7 @@ interface MessageItemProps {
   showActions?: boolean;
   /** 思考开始时间戳 */
   thinkStartTime?: number;
+  onCitationClick?: (citationId: string) => void;
 }
 
 function MessageItemComponent({
@@ -61,6 +62,7 @@ function MessageItemComponent({
   isStreaming = false,
   showActions = true,
   thinkStartTime,
+  onCitationClick,
 }: MessageItemProps) {
   const [copied, setCopied] = useState(false);
   const [cursorFading, setCursorFading] = useState(false);
@@ -261,7 +263,11 @@ function MessageItemComponent({
               )}
               <Box sx={cursorSx}>
                 <Suspense fallback={<Typography variant="body2" color="text.secondary">加载渲染器...</Typography>}>
-                  <MarkdownContent content={displayContent} isStreaming={isStreaming} />
+                  <MarkdownContent
+                    content={displayContent}
+                    isStreaming={isStreaming}
+                    onCitationClick={onCitationClick}
+                  />
                 </Suspense>
               </Box>
             </Box>
@@ -296,7 +302,8 @@ export const MessageItem = memo(
     prev.think === next.think &&
     prev.isStreaming === next.isStreaming &&
     prev.showActions === next.showActions &&
-    prev.thinkStartTime === next.thinkStartTime
+    prev.thinkStartTime === next.thinkStartTime &&
+    prev.onCitationClick === next.onCitationClick
 );
 // 工具审批卡片
 interface ToolApprovalCardProps {

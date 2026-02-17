@@ -67,7 +67,9 @@ import {
   resolveFinalizeNodeIds,
   shouldRevealAnswerOnNodeEvent,
 } from '../services/kbChatAnswerReveal';
+import { resolveActiveAssistantId } from '../services/kbChatAssistantSelection';
 import { validateKbChatConfig } from '../services/kbChatConfig';
+import { hasSelectedParentChildKnowledgeBase } from '../services/kbChatStrategyAvailability';
 import { getErrorMessage } from '../lib/errorHandler';
 import { parseSseJson } from '../lib/sse';
 import {
@@ -90,7 +92,6 @@ const DEFAULT_KB_CHAT_CONFIG: KbChatConfig = {
   ambiguity_check_enabled: true,
   decomposition_enabled: false,
   multi_query_enabled: false,
-  multi_query_max_variants: 4,
   hyde_enabled: false,
   hybrid_retrieval_enabled: true,
   rerank_enabled: true,
@@ -626,6 +627,10 @@ export function KbChatPage() {
     [activeConfig]
   );
   const initialConfigErrors = useMemo(() => validateKbChatConfig(kbChatConfig), [kbChatConfig]);
+  const parentChildLimitsEnabled = useMemo(
+    () => hasSelectedParentChildKnowledgeBase(selectedKbIds, knowledgeBases),
+    [knowledgeBases, selectedKbIds]
+  );
 
   const hasPendingClarification = useMemo(
     () => messages.some((msg) => Boolean(msg.pendingClarification)),
@@ -639,13 +644,12 @@ export function KbChatPage() {
   );
 
   useEffect(() => {
-    if (assistantMessages.length === 0) {
-      setActiveAssistantId(null);
-      return;
-    }
-    const exists = assistantMessages.some((msg) => msg.id === activeAssistantId);
-    if (!exists) {
-      setActiveAssistantId(assistantMessages[assistantMessages.length - 1].id);
+    const nextActiveAssistantId = resolveActiveAssistantId(
+      assistantMessages,
+      activeAssistantId
+    );
+    if (nextActiveAssistantId !== activeAssistantId) {
+      setActiveAssistantId(nextActiveAssistantId);
     }
   }, [assistantMessages, activeAssistantId]);
 
@@ -1812,6 +1816,7 @@ export function KbChatPage() {
               value={kbChatConfig}
               onChange={setKbChatConfig}
               disabled={loading || loadingSession || knowledgeBasesQuery.isLoading}
+              parentChildLimitsEnabled={parentChildLimitsEnabled}
             />
 
             <Stack

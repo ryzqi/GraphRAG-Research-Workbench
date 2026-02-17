@@ -34,6 +34,7 @@ from app.schemas.query_enhancement import QueryItem
 logger = logging.getLogger(__name__)
 
 DECOMPOSITION_MAX_SUB_QUERIES = 5
+MULTI_QUERY_FIXED_VARIANTS = 3
 
 
 @dataclass(slots=True)
@@ -150,6 +151,36 @@ def _dedupe_keep_order(items: Iterable[str]) -> list[str]:
         deduped.append(value)
         seen.add(value)
     return deduped
+
+
+def _rule_based_multi_query_candidates(query: str) -> list[str]:
+    q = _normalize_whitespace(query)
+    if not q:
+        return []
+    return [
+        q,
+        f"{q} 同义词 技术术语 表达",
+        f"{q} 用户视角 实际问题",
+        f"{q} 专家视角 专业术语",
+        f"{q} 窄范围 具体条件",
+        f"{q} 广范围 全局概览",
+    ]
+
+
+def _coerce_fixed_multi_query_variants(
+    queries: Iterable[str], *, original_query: str
+) -> tuple[list[str], bool]:
+    base = _dedupe_keep_order(queries)
+    if len(base) >= MULTI_QUERY_FIXED_VARIANTS:
+        return base[:MULTI_QUERY_FIXED_VARIANTS], False
+
+    completed = _dedupe_keep_order(
+        [*base, *_rule_based_multi_query_candidates(original_query)]
+    )
+    if len(completed) < MULTI_QUERY_FIXED_VARIANTS:
+        for idx in range(len(completed), MULTI_QUERY_FIXED_VARIANTS):
+            completed.append(f"{_normalize_whitespace(original_query)} 变体{idx + 1}")
+    return completed[:MULTI_QUERY_FIXED_VARIANTS], True
 
 
 def build_query_items(
@@ -572,9 +603,8 @@ class QueryRewriteService:
         query: str,
         *,
         enabled: bool | None = None,
-        max_variants: int | None = None,
     ) -> QueryListResult:
-        """Generate multi-query variants (LLM-first with safe fallback)."""
+        """Generate exactly 3 multi-query variants (LLM-first with safe fallback)."""
         start = time.perf_counter()
         enabled_flag = (
             bool(self._settings.kb_chat_multi_query_enabled)
@@ -592,54 +622,62 @@ class QueryRewriteService:
                 queries=[], success=False, reason="empty", latency_ms=0
             )
 
-        max_n = int(max_variants or self._settings.kb_chat_multi_query_max_variants)
-        max_n = max(max_n, 1)
-
         structured_result = await self._call_prompt_structured(
             "kb_chat/multi_query",
             schema=MultiQueryDecision,
             timeout_seconds=None,
             max_tokens=256,
             question=q,
-            max_variants=max_n,
         )
         if (
             structured_result.success
             and isinstance(structured_result.payload, MultiQueryDecision)
         ):
-            deduped = _dedupe_keep_order(structured_result.payload.queries)[:max_n]
-            if deduped:
-                latency_ms = int((time.perf_counter() - start) * 1000)
-                return QueryListResult(
-                    queries=deduped,
-                    success=True,
-                    reason="llm_structured",
-                    latency_ms=latency_ms,
-                )
+            fixed_variants, completed = _coerce_fixed_multi_query_variants(
+                structured_result.payload.queries,
+                original_query=q,
+            )
+            latency_ms = int((time.perf_counter() - start) * 1000)
+            return QueryListResult(
+                queries=fixed_variants,
+                success=True,
+                reason=(
+                    "llm_structured_with_rule_completion"
+                    if completed
+                    else "llm_structured"
+                ),
+                latency_ms=latency_ms,
+            )
 
         text_result = await self._call_prompt_text(
             "kb_chat/multi_query",
             timeout_seconds=None,
             max_tokens=256,
             question=q,
-            max_variants=max_n,
         )
         if text_result.success:
-            deduped = _extract_query_list_from_text(text_result.text)[:max_n]
-            if deduped:
-                latency_ms = int((time.perf_counter() - start) * 1000)
-                return QueryListResult(
-                    queries=deduped,
-                    success=True,
-                    reason="llm_text_fallback",
-                    latency_ms=latency_ms,
-                )
+            fixed_variants, completed = _coerce_fixed_multi_query_variants(
+                _extract_query_list_from_text(text_result.text),
+                original_query=q,
+            )
+            latency_ms = int((time.perf_counter() - start) * 1000)
+            return QueryListResult(
+                queries=fixed_variants,
+                success=True,
+                reason=(
+                    "llm_text_with_rule_completion"
+                    if completed
+                    else "llm_text_fallback"
+                ),
+                latency_ms=latency_ms,
+            )
 
         latency_ms = int((time.perf_counter() - start) * 1000)
+        fixed_variants, _ = _coerce_fixed_multi_query_variants([], original_query=q)
         return QueryListResult(
-            queries=[q],
+            queries=fixed_variants,
             success=False,
-            reason="llm_failed_fallback_original",
+            reason="llm_failed_rule_completion",
             latency_ms=latency_ms,
         )
 

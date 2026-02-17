@@ -68,7 +68,6 @@ export interface KbChatConfig {
   ambiguity_check_enabled: boolean;
   decomposition_enabled: boolean;
   multi_query_enabled: boolean;
-  multi_query_max_variants: number;
   hyde_enabled: boolean;
   hybrid_retrieval_enabled: boolean;
   rerank_enabled: boolean;
@@ -131,6 +130,10 @@ export interface EvidenceItem {
   chunk_id: string | null;
   locator: Record<string, unknown> | null;
   excerpt: string;
+  citation_id?: string | null;
+  citation_title?: string | null;
+  citation_page_hint?: string | null;
+  citation_source?: string | null;
 }
 
 export interface AgentRun {
@@ -365,7 +368,6 @@ export function toKbGraphSchemaQuery(config: Partial<KbChatConfig>): string {
     'ambiguity_check_enabled',
     'decomposition_enabled',
     'multi_query_enabled',
-    'multi_query_max_variants',
     'hyde_enabled',
     'hybrid_retrieval_enabled',
     'rerank_enabled',

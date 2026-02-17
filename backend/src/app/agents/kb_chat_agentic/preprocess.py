@@ -29,7 +29,6 @@ from .runtime_config import (
     ambiguity_check_enabled,
     decomposition_enabled,
     hyde_enabled,
-    multi_query_max_variants,
     multi_query_enabled,
     query_rewrite_enabled,
 )
@@ -372,7 +371,6 @@ async def generate_variants(state: dict, settings: Settings) -> dict[str, Any]:
         result = await svc.generate_variants(
             query,
             enabled=multi_query_enabled(state, settings),
-            max_variants=multi_query_max_variants(state, settings),
         )
         deduped = result.queries
         success = result.success

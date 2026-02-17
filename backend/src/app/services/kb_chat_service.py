@@ -39,6 +39,7 @@ from app.models.agent_run import AgentRun, AgentRunStatus, AgentRunType
 from app.models.chat_message import ChatMessage, MessageRole
 from app.models.chat_session import ChatSession
 from app.models.evidence import Evidence, EvidenceSourceKind
+from app.models.source_material import SourceMaterial
 from app.prompts import get_prompt_loader
 from app.schemas.chats import (
     AgentRunRead,
@@ -293,9 +294,6 @@ class KbChatService:
                 "ambiguity_check_enabled": bool(kb_chat_config.ambiguity_check_enabled),
                 "decomposition_enabled": bool(kb_chat_config.decomposition_enabled),
                 "multi_query_enabled": bool(kb_chat_config.multi_query_enabled),
-                "multi_query_max_variants": int(
-                    kb_chat_config.multi_query_max_variants
-                ),
                 "hyde_enabled": bool(kb_chat_config.hyde_enabled),
                 "hybrid_retrieval_enabled": bool(
                     kb_chat_config.hybrid_retrieval_enabled
@@ -1213,7 +1211,49 @@ class KbChatService:
         return 10_000_000, normalized
 
     @staticmethod
+    def _normalize_optional_text(value: Any) -> str | None:
+        if not isinstance(value, str):
+            return None
+        text = value.strip()
+        return text or None
+
+    @staticmethod
+    def _extract_locator_material_title(locator: dict[str, Any] | None) -> str | None:
+        if not isinstance(locator, dict):
+            return None
+        return KbChatService._normalize_optional_text(locator.get("material_title"))
+
+    @staticmethod
+    def _extract_filename_stem(locator: dict[str, Any] | None) -> str | None:
+        if not isinstance(locator, dict):
+            return None
+        filename = locator.get("filename")
+        if not isinstance(filename, str) or not filename.strip():
+            return None
+        base = filename.strip().replace("\\", "/").rsplit("/", 1)[-1]
+        stem = base.rsplit(".", 1)[0] if "." in base else base
+        normalized = normalize_citation_label(stem)
+        return normalized or None
+
+    @staticmethod
+    def _extract_citation_source(item: dict[str, Any]) -> str | None:
+        direct = KbChatService._normalize_optional_text(item.get("citation_source"))
+        if direct:
+            return direct
+        locator = item.get("locator")
+        if not isinstance(locator, dict):
+            return None
+        filename = KbChatService._normalize_optional_text(locator.get("filename"))
+        if filename:
+            return filename
+        return KbChatService._normalize_optional_text(locator.get("source"))
+
+    @staticmethod
     def _extract_citation_title(item: dict[str, Any], *, fallback_index: int) -> str:
+        material_title = KbChatService._normalize_optional_text(item.get("material_title"))
+        if material_title:
+            return material_title
+
         raw = item.get("citation_title")
         if isinstance(raw, str) and raw.strip():
             return raw.strip()
@@ -1223,19 +1263,33 @@ class KbChatService:
 
         locator = item.get("locator")
         if isinstance(locator, dict):
+            locator_material_title = KbChatService._extract_locator_material_title(locator)
+            if locator_material_title:
+                return locator_material_title
             label = locator.get("citation_label")
             if isinstance(label, str):
                 normalized = normalize_citation_label(label)
                 if normalized:
                     return normalized
-            filename = locator.get("filename")
-            if isinstance(filename, str) and filename.strip():
-                base = filename.strip().replace("\\", "/").rsplit("/", 1)[-1]
-                stem = base.rsplit(".", 1)[0] if "." in base else base
-                normalized = normalize_citation_label(stem)
-                if normalized:
-                    return normalized
+            filename_stem = KbChatService._extract_filename_stem(locator)
+            if filename_stem:
+                return filename_stem
         return f"资料{fallback_index}"
+
+    async def _load_material_title_map(
+        self, material_ids: set[uuid.UUID]
+    ) -> dict[str, str]:
+        if not material_ids:
+            return {}
+        stmt = select(SourceMaterial.id, SourceMaterial.title).where(
+            SourceMaterial.id.in_(list(material_ids))
+        )
+        result = await self._db.execute(stmt)
+        title_map: dict[str, str] = {}
+        for material_id, title in result.all():
+            if isinstance(title, str) and title.strip():
+                title_map[str(material_id)] = title.strip()
+        return title_map
 
     @staticmethod
     def _extract_citation_page_hint(locator: dict[str, Any] | None) -> str | None:
@@ -2061,6 +2115,7 @@ class KbChatService:
         evidence_items: list[EvidenceItem] = []
         seen_evidence_chunk_ids: set[uuid.UUID] = set()
         citation_catalog: dict[str, dict[str, Any]] = {}
+        citation_id_by_chunk_id: dict[str, str] = {}
         selected_evidence_draft_items = self._select_evidence_draft_items(
             evidence_draft_items_by_round=evidence_draft_items_by_round,
             preferred_round=preferred_evidence_round,
@@ -2109,6 +2164,9 @@ class KbChatService:
                 if is_stable_citation_id(citation_id):
                     citation_catalog[citation_id] = {
                         "citation_id": citation_id,
+                        "material_title": self._normalize_optional_text(
+                            it.get("material_title")
+                        ),
                         "citation_title": it.get("citation_title"),
                         "citation_source": it.get("citation_source"),
                         "locator": locator,
@@ -2116,6 +2174,8 @@ class KbChatService:
                         "material_id": str(material_id) if material_id else None,
                         "kb_id": str(kb_id) if kb_id else None,
                     }
+                    if chunk_id:
+                        citation_id_by_chunk_id[str(chunk_id)] = citation_id
 
                 self._db.add(
                     Evidence(
@@ -2136,12 +2196,20 @@ class KbChatService:
                         chunk_id=chunk_id,
                         locator=locator,
                         excerpt=excerpt,
+                        citation_id=citation_id if is_stable_citation_id(citation_id) else None,
+                        citation_title=self._normalize_optional_text(
+                            it.get("citation_title")
+                        ),
+                        citation_source=self._normalize_optional_text(
+                            it.get("citation_source")
+                        ),
                     )
                 )
                 if chunk_id:
                     seen_evidence_chunk_ids.add(chunk_id)
         elif should_fallback_to_retrieval_results:
             for idx, r in enumerate(retrieval_results, 1):
+                citation_id = f"S{idx}"
                 ev = Evidence(
                     run_id=run.id,
                     source_kind=EvidenceSourceKind.KB,
@@ -2160,12 +2228,13 @@ class KbChatService:
                         chunk_id=r.chunk.id,
                         locator=r.chunk.locator,
                         excerpt=r.chunk.content[:500],
+                        citation_id=citation_id,
                     )
                 )
-                citation_id = f"S{idx}"
                 locator = r.chunk.locator if isinstance(r.chunk.locator, dict) else None
                 citation_catalog[citation_id] = {
                     "citation_id": citation_id,
+                    "material_title": self._extract_locator_material_title(locator),
                     "citation_title": None,
                     "citation_source": None,
                     "locator": locator,
@@ -2173,6 +2242,60 @@ class KbChatService:
                     "material_id": str(r.chunk.material_id),
                     "kb_id": str(r.chunk.kb_id),
                 }
+                citation_id_by_chunk_id[str(r.chunk.id)] = citation_id
+
+        material_ids: set[uuid.UUID] = set()
+        for item in citation_catalog.values():
+            material_id = _parse_uuid(item.get("material_id"))
+            if material_id:
+                material_ids.add(material_id)
+        for item in evidence_items:
+            if item.material_id is not None:
+                material_ids.add(item.material_id)
+
+        material_title_map = await self._load_material_title_map(material_ids)
+
+        citation_meta_by_id: dict[str, dict[str, str | None]] = {}
+        ordered_citation_ids = sorted(citation_catalog, key=self._citation_sort_key)
+        for idx, citation_id in enumerate(ordered_citation_ids, 1):
+            item = citation_catalog[citation_id]
+            material_id_text = self._normalize_optional_text(item.get("material_id"))
+            if material_id_text:
+                material_title = material_title_map.get(material_id_text)
+                if material_title:
+                    item["material_title"] = material_title
+
+            locator = item.get("locator") if isinstance(item.get("locator"), dict) else None
+            if self._extract_locator_material_title(locator):
+                item["material_title"] = self._extract_locator_material_title(locator)
+
+            citation_title = self._extract_citation_title(item, fallback_index=idx)
+            citation_page_hint = self._extract_citation_page_hint(locator)
+            citation_source = self._extract_citation_source(item)
+
+            item["citation_title"] = citation_title
+            item["citation_page_hint"] = citation_page_hint
+            item["citation_source"] = citation_source
+            citation_meta_by_id[citation_id] = {
+                "citation_title": citation_title,
+                "citation_page_hint": citation_page_hint,
+                "citation_source": citation_source,
+            }
+
+        for item in evidence_items:
+            raw_citation_id = self._normalize_optional_text(item.citation_id)
+            citation_id = raw_citation_id.upper() if raw_citation_id else None
+            if not citation_id and item.chunk_id is not None:
+                citation_id = citation_id_by_chunk_id.get(str(item.chunk_id))
+            if not citation_id:
+                continue
+            meta = citation_meta_by_id.get(citation_id)
+            if meta is None:
+                continue
+            item.citation_id = citation_id
+            item.citation_title = meta.get("citation_title")
+            item.citation_page_hint = meta.get("citation_page_hint")
+            item.citation_source = meta.get("citation_source")
 
         def _label_from_locator(locator: dict | None) -> str | None:
             if not isinstance(locator, dict):

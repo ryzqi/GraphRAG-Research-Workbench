@@ -95,6 +95,20 @@ const MessageRow = memo(
     onAssistantSelect,
     normalizeInlineEvidenceSection,
   }: MessageRowProps) {
+    const [activeCitationId, setActiveCitationId] = useState<string | null>(null);
+
+    useEffect(() => {
+      setActiveCitationId(null);
+    }, [message.id]);
+
+    const handleCitationClick = useCallback((citationId: string) => {
+      setActiveCitationId(citationId);
+    }, []);
+
+    const handleCitationHandled = useCallback((citationId: string) => {
+      setActiveCitationId((current) => (current === citationId ? null : current));
+    }, []);
+
     const isEmptyStreamingAssistant =
       message.role === 'assistant' &&
       message.isStreaming &&
@@ -148,6 +162,7 @@ const MessageRow = memo(
           think={message.think}
           isStreaming={message.isStreaming}
           thinkStartTime={message.thinkStartTime}
+          onCitationClick={message.role === 'assistant' ? handleCitationClick : undefined}
         />
 
         {message.pendingToolApproval && onToolApprove && onToolReject && message.runId && (
@@ -174,7 +189,12 @@ const MessageRow = memo(
 
         {showEvidence && message.evidence && message.evidence.length > 0 && (
           <Box sx={{ mt: 2, ml: 7 }}>
-            <EvidenceList evidence={message.evidence} />
+            <EvidenceList
+              evidence={message.evidence}
+              activeCitationId={activeCitationId}
+              onCitationHandled={handleCitationHandled}
+              citationAnchorScopeId={message.id}
+            />
           </Box>
         )}
       </Box>

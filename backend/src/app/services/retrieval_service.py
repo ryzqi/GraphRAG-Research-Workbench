@@ -37,6 +37,8 @@ from app.services.query_rewrite_service import (
 
 logger = logging.getLogger(__name__)
 DIVERSITY_MMR_LAMBDA = 0.7
+QUERY_FANOUT_CONCURRENCY = 3
+DEDUP_EMBEDDING_SIMILARITY_THRESHOLD = 0.95
 
 
 @dataclass(slots=True)
@@ -560,6 +562,135 @@ class RetrievalService:
         return text[:1200]
 
     @classmethod
+    def _candidate_text_for_dedup(cls, result: RetrievalResult) -> str:
+        return cls._candidate_text_for_diversity(result)
+
+    @staticmethod
+    def _normalize_text_for_hash(text: str) -> str:
+        return " ".join(text.strip().lower().split())
+
+    @classmethod
+    def _content_hash_for_result(cls, result: RetrievalResult) -> str | None:
+        text = cls._candidate_text_for_dedup(result)
+        if not text:
+            return None
+        normalized = cls._normalize_text_for_hash(text)
+        if not normalized:
+            return None
+        return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+    def _dedupe_by_chunk_identity(
+        self,
+        candidates: list[RetrievalResult],
+    ) -> tuple[list[RetrievalResult], int]:
+        best_by_key: dict[tuple[str, str, str], RetrievalResult] = {}
+        order: list[tuple[str, str, str]] = []
+        for item in candidates:
+            key = self._candidate_key(item.chunk)
+            existing = best_by_key.get(key)
+            if existing is None:
+                best_by_key[key] = item
+                order.append(key)
+                continue
+            if float(item.score) > float(existing.score):
+                best_by_key[key] = item
+
+        deduped = [best_by_key[key] for key in order if key in best_by_key]
+        return deduped, max(0, len(candidates) - len(deduped))
+
+    def _dedupe_by_content_hash(
+        self,
+        candidates: list[RetrievalResult],
+    ) -> tuple[list[RetrievalResult], int]:
+        best_by_hash: dict[str, tuple[int, RetrievalResult]] = {}
+        passthrough: list[tuple[int, RetrievalResult]] = []
+
+        for idx, item in enumerate(candidates):
+            content_hash = self._content_hash_for_result(item)
+            if content_hash is None:
+                passthrough.append((idx, item))
+                continue
+            existing = best_by_hash.get(content_hash)
+            if existing is None:
+                best_by_hash[content_hash] = (idx, item)
+                continue
+            first_idx, existing_item = existing
+            if float(item.score) > float(existing_item.score):
+                best_by_hash[content_hash] = (first_idx, item)
+
+        ordered = [
+            *passthrough,
+            *[(first_idx, item) for first_idx, item in best_by_hash.values()],
+        ]
+        ordered.sort(key=lambda pair: pair[0])
+        deduped = [item for _, item in ordered]
+        return deduped, max(0, len(candidates) - len(deduped))
+
+    async def _dedupe_by_semantic_similarity(
+        self,
+        candidates: list[RetrievalResult],
+        *,
+        similarity_threshold: float,
+        timeout_seconds: float | None = None,
+    ) -> tuple[list[RetrievalResult], int, str]:
+        if len(candidates) <= 1:
+            return candidates, 0, "insufficient_candidates"
+
+        texts = [self._candidate_text_for_dedup(item) for item in candidates]
+        if not any(texts):
+            return candidates, 0, "empty_candidate_text"
+        embed_texts = [text if text else "content unavailable" for text in texts]
+
+        timeout_value = float(self._settings.embedding_timeout_seconds)
+        if timeout_seconds is not None:
+            timeout_value = min(timeout_value, float(timeout_seconds))
+        if timeout_value <= 0:
+            raise asyncio.TimeoutError()
+
+        vectors = await self._run_with_timeout(
+            self._embedding.embed(texts=embed_texts, timeout_seconds=timeout_value),
+            timeout_value,
+        )
+        if (
+            not isinstance(vectors, list)
+            or len(vectors) != len(candidates)
+            or not vectors
+        ):
+            return candidates, 0, "embedding_shape_mismatch"
+
+        kept: list[int] = []
+        ranked_indices = sorted(
+            range(len(candidates)),
+            key=lambda idx: (-float(candidates[idx].score), idx),
+        )
+        for idx in ranked_indices:
+            vector = vectors[idx]
+            if not isinstance(vector, list) or not vector:
+                continue
+            is_duplicate = False
+            for kept_idx in kept:
+                other_vector = vectors[kept_idx]
+                if not isinstance(other_vector, list) or not other_vector:
+                    continue
+                if (
+                    self._cosine_similarity(
+                        cast(list[float], vector), cast(list[float], other_vector)
+                    )
+                    > similarity_threshold
+                ):
+                    is_duplicate = True
+                    break
+            if not is_duplicate:
+                kept.append(idx)
+
+        deduped_indices = sorted(kept)
+        if not deduped_indices:
+            return candidates, 0, "embedding_invalid_vectors"
+        deduped = [candidates[idx] for idx in deduped_indices]
+        removed = max(0, len(candidates) - len(deduped))
+        return deduped, removed, "embedding_similarity"
+
+    @classmethod
     def _mmr_rank(
         cls,
         candidates: list[RetrievalResult],
@@ -969,30 +1100,40 @@ class RetrievalService:
         if not main_query:
             main_query = str(query_items[0].get("query") or "")
 
-        for item in query_items:
+        async def _process_query_item(
+            index: int,
+            item: QueryItem,
+        ) -> tuple[
+            int,
+            int,
+            int,
+            dict[tuple[str, str, str], RetrievedChunk],
+            dict[tuple[str, str, str], list[QueryHitSource]],
+            list[tuple[str, str, str]],
+        ]:
             q = (item.get("query") or "").strip()
             if not q:
-                continue
+                return index, 0, 0, {}, {}, []
+
             if deadline is not None:
                 remaining = self._remaining_seconds(deadline)
                 if remaining is not None and remaining <= 0:
-                    return _timeout_draft()
+                    raise asyncio.TimeoutError()
 
             use_dense = bool(item.get("use_dense", True))
             use_bm25 = bool(item.get("use_bm25", True)) and feature_flags.hybrid_enabled
-
             embedding: list[float] | None = None
             if use_dense:
                 try:
                     remaining = self._remaining_seconds(deadline)
                     if remaining is not None and remaining <= 0:
-                        return _timeout_draft()
+                        raise asyncio.TimeoutError()
                     embedding = await self._get_query_embedding(
                         q, timeout_seconds=remaining
                     )
                 except asyncio.TimeoutError:
                     if deadline is not None:
-                        return _timeout_draft()
+                        raise
                     logger.warning("Embedding 超时，跳过 dense", extra={"query": q[:50]})
                     embedding = None
                     use_dense = False
@@ -1005,10 +1146,10 @@ class RetrievalService:
                     embedding = None
                     use_dense = False
 
-            async def _safe_dense():
+            async def _safe_dense() -> list[dict]:
                 if not use_dense or embedding is None:
                     return []
-                hits = []
+                hits: list[dict] = []
                 try:
                     timeout_value = self._effective_timeout(
                         deadline=deadline, per_call_timeout=None
@@ -1055,10 +1196,10 @@ class RetrievalService:
                     )
                     return []
 
-            async def _safe_bm25():
+            async def _safe_bm25() -> list[dict]:
                 if not use_bm25:
                     return []
-                hits = []
+                hits: list[dict] = []
                 try:
                     timeout_value = self._effective_timeout(
                         deadline=deadline, per_call_timeout=None
@@ -1103,8 +1244,8 @@ class RetrievalService:
                     logger.warning("BM25 检索失败，降级为空", extra={"error": str(exc)})
                     return []
 
-            dense_hits = []
-            bm25_hits = []
+            dense_hits: list[dict] = []
+            bm25_hits: list[dict] = []
             if use_dense and use_bm25:
                 if deadline is None:
                     async with asyncio.TaskGroup() as tg:
@@ -1113,26 +1254,16 @@ class RetrievalService:
                     dense_hits = dense_task.result()
                     bm25_hits = bm25_task.result()
                 else:
-                    try:
-                        dense_hits = await _safe_dense()
-                        bm25_hits = await _safe_bm25()
-                    except asyncio.TimeoutError:
-                        return _timeout_draft()
-            elif use_dense:
-                try:
                     dense_hits = await _safe_dense()
-                except asyncio.TimeoutError:
-                    return _timeout_draft()
-            elif use_bm25:
-                try:
                     bm25_hits = await _safe_bm25()
-                except asyncio.TimeoutError:
-                    return _timeout_draft()
-
-            dense_hits_total += len(dense_hits)
-            bm25_hits_total += len(bm25_hits)
+            elif use_dense:
+                dense_hits = await _safe_dense()
+            elif use_bm25:
+                bm25_hits = await _safe_bm25()
 
             src = self._query_hit_source(item)
+            local_chunk_by_key: dict[tuple[str, str, str], RetrievedChunk] = {}
+            local_hits_by_key: dict[tuple[str, str, str], list[QueryHitSource]] = {}
             dense_keys: list[tuple[str, str, str]] = []
             bm25_keys: list[tuple[str, str, str]] = []
 
@@ -1141,9 +1272,9 @@ class RetrievalService:
                 if not chunk:
                     continue
                 key = self._candidate_key(chunk)
-                chunk_by_key.setdefault(key, chunk)
-                hits_by_key.setdefault(key, [])
-                self._add_hit_source(hits_by_key[key], src)
+                local_chunk_by_key.setdefault(key, chunk)
+                local_hits_by_key.setdefault(key, [])
+                self._add_hit_source(local_hits_by_key[key], src)
                 dense_keys.append(key)
 
             for hit in bm25_hits:
@@ -1151,12 +1282,11 @@ class RetrievalService:
                 if not chunk:
                     continue
                 key = self._candidate_key(chunk)
-                chunk_by_key.setdefault(key, chunk)
-                hits_by_key.setdefault(key, [])
-                self._add_hit_source(hits_by_key[key], src)
+                local_chunk_by_key.setdefault(key, chunk)
+                local_hits_by_key.setdefault(key, [])
+                self._add_hit_source(local_hits_by_key[key], src)
                 bm25_keys.append(key)
 
-            # Defensive dedupe: ranked lists must not contain duplicates for RRF.
             if dense_keys:
                 dense_keys = list(dict.fromkeys(dense_keys))
             if bm25_keys:
@@ -1167,11 +1297,16 @@ class RetrievalService:
                 ranked_lists.append(dense_keys)
             if bm25_keys:
                 ranked_lists.append(bm25_keys)
-
             if not ranked_lists:
-                continue
+                return (
+                    index,
+                    len(dense_hits),
+                    len(bm25_hits),
+                    local_chunk_by_key,
+                    local_hits_by_key,
+                    [],
+                )
 
-            # Per-query fusion (dense + BM25) -> per-query ranked list.
             if (
                 runtime_overrides.hybrid_ranker == "weighted"
                 and dense_keys
@@ -1186,7 +1321,68 @@ class RetrievalService:
                 )
             else:
                 per_keys, _ = self._rrf_rank(ranked_lists, k=rrf_k)
-            per_query_ranked.append(per_keys)
+
+            return (
+                index,
+                len(dense_hits),
+                len(bm25_hits),
+                local_chunk_by_key,
+                local_hits_by_key,
+                per_keys,
+            )
+
+        semaphore = asyncio.Semaphore(QUERY_FANOUT_CONCURRENCY)
+
+        async def _run_with_limit(
+            index: int, item: QueryItem
+        ) -> tuple[
+            int,
+            int,
+            int,
+            dict[tuple[str, str, str], RetrievedChunk],
+            dict[tuple[str, str, str], list[QueryHitSource]],
+            list[tuple[str, str, str]],
+        ]:
+            async with semaphore:
+                return await _process_query_item(index, item)
+
+        fanout_tasks = [
+            asyncio.create_task(_run_with_limit(index, item))
+            for index, item in enumerate(query_items)
+        ]
+        fanout_results = await asyncio.gather(*fanout_tasks, return_exceptions=True)
+        for result in fanout_results:
+            if isinstance(result, asyncio.TimeoutError):
+                return _timeout_draft()
+            if isinstance(result, asyncio.CancelledError):
+                raise result
+            if isinstance(result, Exception):
+                logger.warning(
+                    "Query fanout 检索失败，降级跳过该分支", extra={"error": str(result)}
+                )
+
+        for result in fanout_results:
+            if isinstance(result, Exception):
+                continue
+            (
+                _index,
+                dense_count,
+                bm25_count,
+                local_chunk_by_key,
+                local_hits_by_key,
+                per_keys,
+            ) = result
+            dense_hits_total += dense_count
+            bm25_hits_total += bm25_count
+
+            for key, chunk in local_chunk_by_key.items():
+                chunk_by_key.setdefault(key, chunk)
+                hits_by_key.setdefault(key, [])
+                for src in local_hits_by_key.get(key, []):
+                    self._add_hit_source(hits_by_key[key], src)
+
+            if per_keys:
+                per_query_ranked.append(per_keys)
 
         if not per_query_ranked:
             draft = RetrievalLayerDraft(
@@ -1273,6 +1469,37 @@ class RetrievalService:
 
         pre_min_score_count = len(rrf_results)
         rrf_results, filtered_count = self._apply_min_score(rrf_results)
+        pre_dedup_count = len(rrf_results)
+
+        rrf_results, dedup_exact_removed = self._dedupe_by_chunk_identity(rrf_results)
+        rrf_results, dedup_hash_removed = self._dedupe_by_content_hash(rrf_results)
+        dedup_similarity_removed = 0
+        dedup_similarity_reason = "insufficient_candidates"
+        if rrf_results:
+            try:
+                dedup_timeout = self._effective_timeout(
+                    deadline=deadline, per_call_timeout=None
+                )
+                (
+                    rrf_results,
+                    dedup_similarity_removed,
+                    dedup_similarity_reason,
+                ) = await self._dedupe_by_semantic_similarity(
+                    rrf_results,
+                    similarity_threshold=DEDUP_EMBEDDING_SIMILARITY_THRESHOLD,
+                    timeout_seconds=dedup_timeout,
+                )
+            except asyncio.TimeoutError:
+                logger.warning("语义去重超时，降级为哈希去重结果")
+                dedup_similarity_reason = "timeout"
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.warning(
+                    "语义去重失败，降级为哈希去重结果", extra={"error": str(exc)}
+                )
+                dedup_similarity_reason = "error"
+        post_dedup_count = len(rrf_results)
 
         candidates_for_rerank = rrf_results[:rerank_input_limit]
         diversity_applied = False
@@ -1406,9 +1633,17 @@ class RetrievalService:
                 "bm25_hits": bm25_hits_total,
                 "pre_min_score_candidates": pre_min_score_count,
                 "filtered_count": filtered_count,
+                "pre_dedup_candidates": pre_dedup_count,
+                "post_dedup_candidates": post_dedup_count,
+                "dedup_exact_removed": dedup_exact_removed,
+                "dedup_hash_removed": dedup_hash_removed,
+                "dedup_similarity_removed": dedup_similarity_removed,
+                "dedup_similarity_reason": dedup_similarity_reason,
+                "dedup_similarity_threshold": DEDUP_EMBEDDING_SIMILARITY_THRESHOLD,
                 "rrf_candidates": len(rrf_results),
                 "global_candidates_limit": global_candidates_limit,
                 "rerank_input_limit": rerank_input_limit,
+                "fanout_concurrency": QUERY_FANOUT_CONCURRENCY,
                 "diversity_applied": diversity_applied,
                 "diversity_reason": diversity_reason,
                 "diversity_lambda": DIVERSITY_MMR_LAMBDA,
