@@ -115,7 +115,6 @@ describe('normalizeChatStreamEvent', () => {
   it('builds kb graph schema query from toggles', () => {
     const query = toKbGraphSchemaQuery({
       decomposition_enabled: true,
-      decomposition_max_sub_questions: 4,
       multi_query_enabled: false,
       multi_query_max_variants: 3,
       hyde_enabled: true,
@@ -124,7 +123,6 @@ describe('normalizeChatStreamEvent', () => {
       retrieval_hybrid_sparse_weight: 0.4,
     });
     expect(query).toContain('decomposition_enabled=true');
-    expect(query).toContain('decomposition_max_sub_questions=4');
     expect(query).toContain('multi_query_enabled=false');
     expect(query).toContain('multi_query_max_variants=3');
     expect(query).toContain('hyde_enabled=true');

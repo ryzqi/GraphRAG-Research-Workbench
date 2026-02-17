@@ -307,9 +307,6 @@ class Settings(BaseSettings):
     kb_chat_decomposition_enabled: bool = Field(
         False, alias="KB_CHAT_DECOMPOSITION_ENABLED"
     )
-    kb_chat_decomposition_max_sub_questions: int = Field(
-        4, alias="KB_CHAT_DECOMPOSITION_MAX_SUB_QUESTIONS"
-    )
     kb_chat_multi_query_enabled: bool = Field(
         False, alias="KB_CHAT_MULTI_QUERY_ENABLED"
     )

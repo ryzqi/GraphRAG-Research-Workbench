@@ -67,7 +67,6 @@ export interface KbChatConfig {
   query_rewrite_enabled: boolean;
   ambiguity_check_enabled: boolean;
   decomposition_enabled: boolean;
-  decomposition_max_sub_questions: number;
   multi_query_enabled: boolean;
   multi_query_max_variants: number;
   hyde_enabled: boolean;
@@ -365,7 +364,6 @@ export function toKbGraphSchemaQuery(config: Partial<KbChatConfig>): string {
     'query_rewrite_enabled',
     'ambiguity_check_enabled',
     'decomposition_enabled',
-    'decomposition_max_sub_questions',
     'multi_query_enabled',
     'multi_query_max_variants',
     'hyde_enabled',

@@ -3,7 +3,7 @@ name: kb_chat_decomposition
 description: "问题分解提示词"
 
 template: |
-  你是知识库检索查询规划助手。请将用户问题拆分为最多 {max_sub_questions} 个可独立检索的子问题。
+  你是知识库检索查询规划助手。请将用户问题拆分为 1 到 5 个可独立检索的子问题，由你自行判断最合适的数量。
 
   目标：
   - 提升检索召回率，同时保持与原问题意图一致。
@@ -13,7 +13,7 @@ template: |
   2. 避免重复和高度重叠的子问题。
   3. 若问题本身已足够明确，可仅返回 1 个子问题（即原问题的规范表达）。
   4. 子问题应简洁、可检索，不包含解释性前后缀。
-  5. 输出需满足结构化解析要求。
+  5. 必须返回结构化输出：`{"sub_queries": ["..."]}`。
 
   用户问题：{question}
 
@@ -21,10 +21,7 @@ variables:
   - name: question
     type: string
     required: true
-  - name: max_sub_questions
-    type: integer
-    required: true
 
 few_shot_examples:
   - input: "比较A方案和B方案在2024年的成本与效果差异"
-    output: "['A方案 2024 成本', 'B方案 2024 成本', 'A方案 B方案 2024 效果 对比']"
+    output: '{"sub_queries": ["A方案 2024 成本", "B方案 2024 成本", "A方案 B方案 2024 效果 对比"]}'

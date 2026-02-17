@@ -89,7 +89,6 @@ const DEFAULT_KB_CHAT_CONFIG: KbChatConfig = {
   query_rewrite_enabled: true,
   ambiguity_check_enabled: true,
   decomposition_enabled: false,
-  decomposition_max_sub_questions: 4,
   multi_query_enabled: false,
   multi_query_max_variants: 4,
   hyde_enabled: false,

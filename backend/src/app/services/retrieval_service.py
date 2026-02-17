@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import math
 import time
 import uuid
 from dataclasses import dataclass
@@ -35,6 +36,7 @@ from app.services.query_rewrite_service import (
 )
 
 logger = logging.getLogger(__name__)
+DIVERSITY_MMR_LAMBDA = 0.7
 
 
 @dataclass(slots=True)
@@ -535,6 +537,121 @@ class RetrievalService:
             key=lambda key: (-scores[key], best_rank.get(key, 10**9), key),
         )
         return ordered, scores
+
+    @staticmethod
+    def _cosine_similarity(vec_a: list[float], vec_b: list[float]) -> float:
+        if not vec_a or not vec_b or len(vec_a) != len(vec_b):
+            return 0.0
+        dot_product = sum(a * b for a, b in zip(vec_a, vec_b, strict=False))
+        norm_a = math.sqrt(sum(a * a for a in vec_a))
+        norm_b = math.sqrt(sum(b * b for b in vec_b))
+        if norm_a <= 0 or norm_b <= 0:
+            return 0.0
+        return dot_product / (norm_a * norm_b)
+
+    @staticmethod
+    def _candidate_text_for_diversity(result: RetrievalResult) -> str:
+        text = (result.chunk.content or "").strip()
+        if not text:
+            text = (result.context_text or "").strip()
+        if not text:
+            return ""
+        # Keep cost bounded while preserving enough semantics for similarity scoring.
+        return text[:1200]
+
+    @classmethod
+    def _mmr_rank(
+        cls,
+        candidates: list[RetrievalResult],
+        *,
+        candidate_vectors: list[list[float]],
+        limit: int,
+        lambda_mult: float,
+    ) -> list[RetrievalResult]:
+        if not candidates or limit <= 0:
+            return []
+        if len(candidates) != len(candidate_vectors):
+            return candidates[:limit]
+
+        n = len(candidates)
+        limit = min(limit, n)
+        lambda_mult = max(0.0, min(1.0, float(lambda_mult)))
+
+        raw_relevance = [float(c.score) for c in candidates]
+        max_rel = max(raw_relevance)
+        min_rel = min(raw_relevance)
+        if max_rel - min_rel > 1e-9:
+            relevance = [(score - min_rel) / (max_rel - min_rel) for score in raw_relevance]
+        else:
+            relevance = [1.0 for _ in raw_relevance]
+
+        selected_indices: list[int] = []
+        remaining: set[int] = set(range(n))
+
+        while remaining and len(selected_indices) < limit:
+            best_idx: int | None = None
+            best_score = float("-inf")
+            for idx in sorted(remaining):
+                redundancy_penalty = 0.0
+                if selected_indices:
+                    redundancy_penalty = max(
+                        cls._cosine_similarity(candidate_vectors[idx], candidate_vectors[j])
+                        for j in selected_indices
+                    )
+                mmr_score = (
+                    lambda_mult * relevance[idx]
+                    - (1.0 - lambda_mult) * redundancy_penalty
+                )
+                if mmr_score > best_score:
+                    best_score = mmr_score
+                    best_idx = idx
+            if best_idx is None:  # pragma: no cover
+                break
+            selected_indices.append(best_idx)
+            remaining.remove(best_idx)
+
+        return [candidates[idx] for idx in selected_indices]
+
+    async def _apply_diversity_penalty(
+        self,
+        candidates: list[RetrievalResult],
+        *,
+        limit: int,
+        lambda_mult: float = DIVERSITY_MMR_LAMBDA,
+        timeout_seconds: float | None = None,
+    ) -> tuple[list[RetrievalResult], bool, str]:
+        if limit <= 0:
+            return [], False, "limit_non_positive"
+        if len(candidates) <= 1:
+            return candidates[:limit], False, "insufficient_candidates"
+
+        texts = [self._candidate_text_for_diversity(item) for item in candidates]
+        if not any(texts):
+            return candidates[:limit], False, "empty_candidate_text"
+        texts = [text if text else "content unavailable" for text in texts]
+
+        timeout_value = float(self._settings.embedding_timeout_seconds)
+        if timeout_seconds is not None:
+            timeout_value = min(timeout_value, float(timeout_seconds))
+        if timeout_value <= 0:
+            raise asyncio.TimeoutError()
+
+        vectors = await self._run_with_timeout(
+            self._embedding.embed(texts=texts, timeout_seconds=timeout_value),
+            timeout_value,
+        )
+        if not isinstance(vectors, list) or len(vectors) != len(candidates):
+            return candidates[:limit], False, "embedding_shape_mismatch"
+
+        ranked = self._mmr_rank(
+            candidates,
+            candidate_vectors=vectors,
+            limit=limit,
+            lambda_mult=lambda_mult,
+        )
+        if not ranked:
+            return candidates[:limit], False, "mmr_empty"
+        return ranked, True, "mmr"
 
     def _normalize_query(self, query: str) -> str:
         """规范化 query，用于缓存一致性。"""
@@ -1157,13 +1274,44 @@ class RetrievalService:
         pre_min_score_count = len(rrf_results)
         rrf_results, filtered_count = self._apply_min_score(rrf_results)
 
+        candidates_for_rerank = rrf_results[:rerank_input_limit]
+        diversity_applied = False
+        diversity_reason = "empty_candidates"
+        if candidates_for_rerank:
+            try:
+                diversity_timeout = self._effective_timeout(
+                    deadline=deadline, per_call_timeout=None
+                )
+                candidates_for_rerank, diversity_applied, diversity_reason = (
+                    await self._apply_diversity_penalty(
+                        candidates_for_rerank,
+                        limit=rerank_input_limit,
+                        lambda_mult=DIVERSITY_MMR_LAMBDA,
+                        timeout_seconds=diversity_timeout,
+                    )
+                )
+            except asyncio.TimeoutError:
+                # Diversity ranking is optional: degrade to RRF order.
+                logger.warning("MMR diversity 超时，降级为 RRF 顺序")
+                candidates_for_rerank = rrf_results[:rerank_input_limit]
+                diversity_applied = False
+                diversity_reason = "timeout"
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.warning(
+                    "MMR diversity 失败，降级为 RRF 顺序", extra={"error": str(exc)}
+                )
+                candidates_for_rerank = rrf_results[:rerank_input_limit]
+                diversity_applied = False
+                diversity_reason = "error"
+
         # Rerank: RRF -> rerank -> Top-N. Inputs are additionally capped.
         rerank_applied = False
         rerank_reason: str | None = "disabled"
         rerank_latency_ms: int | None = None
         final_results: list[RetrievalResult] = []
 
-        candidates_for_rerank = rrf_results[:rerank_input_limit]
         if candidates_for_rerank and feature_flags.rerank_enabled:
             try:
                 rerank_timeout = self._effective_timeout(
@@ -1261,6 +1409,11 @@ class RetrievalService:
                 "rrf_candidates": len(rrf_results),
                 "global_candidates_limit": global_candidates_limit,
                 "rerank_input_limit": rerank_input_limit,
+                "diversity_applied": diversity_applied,
+                "diversity_reason": diversity_reason,
+                "diversity_lambda": DIVERSITY_MMR_LAMBDA,
+                "diversity_candidates_in": min(len(rrf_results), rerank_input_limit),
+                "diversity_candidates_out": len(candidates_for_rerank),
                 "hybrid_enabled": feature_flags.hybrid_enabled,
                 "hybrid_ranker": runtime_overrides.hybrid_ranker,
                 "hybrid_dense_weight": runtime_overrides.hybrid_dense_weight,

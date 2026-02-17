@@ -292,9 +292,6 @@ class KbChatService:
                 "query_rewrite_enabled": bool(kb_chat_config.query_rewrite_enabled),
                 "ambiguity_check_enabled": bool(kb_chat_config.ambiguity_check_enabled),
                 "decomposition_enabled": bool(kb_chat_config.decomposition_enabled),
-                "decomposition_max_sub_questions": int(
-                    kb_chat_config.decomposition_max_sub_questions
-                ),
                 "multi_query_enabled": bool(kb_chat_config.multi_query_enabled),
                 "multi_query_max_variants": int(
                     kb_chat_config.multi_query_max_variants

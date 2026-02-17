@@ -77,20 +77,6 @@ def hyde_enabled(state: dict[str, Any], settings: Settings) -> bool:
     )
 
 
-def decomposition_max_sub_questions(state: dict[str, Any], settings: Settings) -> int:
-    return max(
-        2,
-        min(
-            4,
-            _state_int(
-                state,
-                key="decomposition_max_sub_questions",
-                default=int(settings.kb_chat_decomposition_max_sub_questions),
-            ),
-        ),
-    )
-
-
 def multi_query_max_variants(state: dict[str, Any], settings: Settings) -> int:
     return max(
         2,

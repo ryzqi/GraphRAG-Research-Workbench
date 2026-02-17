@@ -1,7 +1,6 @@
 import {
   Alert,
   Box,
-  Chip,
   FormControlLabel,
   Grid,
   MenuItem,
@@ -123,7 +122,7 @@ export function KbChatConfigPanel({ value, onChange, disabled = false }: KbChatC
   };
 
   const handleCountSelection = (
-    key: 'decomposition_max_sub_questions' | 'multi_query_max_variants',
+    key: 'multi_query_max_variants',
     nextCount: number | null
   ) => {
     if (nextCount == null) {
@@ -148,10 +147,6 @@ export function KbChatConfigPanel({ value, onChange, disabled = false }: KbChatC
     onChange({ ...value, [key]: parsed });
   };
 
-  const enabledCount =
-    FEATURE_TOGGLE_META.filter((item) => value[item.key]).length +
-    Number(value.decomposition_enabled) +
-    Number(value.multi_query_enabled);
   const errors = validateKbChatConfig(value);
 
   return (
@@ -175,16 +170,10 @@ export function KbChatConfigPanel({ value, onChange, disabled = false }: KbChatC
           <Typography variant='subtitle1' fontWeight={700}>
             问答检索参数面板
           </Typography>
-          <Chip
-            size='small'
-            color='primary'
-            variant='outlined'
-            label={`特性开关 ${enabledCount}/${FEATURE_TOGGLE_META.length + 2}`}
-          />
         </Stack>
 
         <Typography variant='body2' color='text.secondary'>
-          问题分解和多路查询可都关闭；若开启则两者互斥。对应数量由用户在 2~4 内选择。
+          问题分解和多路查询可都关闭；若开启则两者互斥。问题分解数量由模型自动决定（最多 5 个）。
         </Typography>
 
         {errors.length > 0 && (
@@ -230,24 +219,10 @@ export function KbChatConfigPanel({ value, onChange, disabled = false }: KbChatC
                             </Stack>
                           }
                         />
-                        <Typography variant='body2' fontWeight={700}>
-                          问题分解子问题数（2~4）
-                        </Typography>
-                        <ToggleButtonGroup
-                          exclusive
-                          size='small'
-                          value={value.decomposition_max_sub_questions}
-                          onChange={(_, next) =>
-                            handleCountSelection('decomposition_max_sub_questions', next as number | null)
-                          }
-                          disabled={disabled || !value.decomposition_enabled}
-                        >
-                          {STRATEGY_COUNT_OPTIONS.map((count) => (
-                            <ToggleButton key={count} value={count}>{`${count} 个`}</ToggleButton>
-                          ))}
-                        </ToggleButtonGroup>
                         <Typography variant='caption' color='text.secondary'>
-                          {value.decomposition_enabled ? '当前启用' : '未启用时保留预设值'}
+                          {value.decomposition_enabled
+                            ? '当前启用：分解数量由 LLM 自动决定（上限 5）'
+                            : '未启用'}
                         </Typography>
                       </Stack>
                     </Box>

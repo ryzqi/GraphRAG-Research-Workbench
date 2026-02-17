@@ -27,7 +27,6 @@ from .budget import (
 from .json_safety import ensure_json_safe
 from .runtime_config import (
     ambiguity_check_enabled,
-    decomposition_max_sub_questions,
     decomposition_enabled,
     hyde_enabled,
     multi_query_max_variants,
@@ -326,7 +325,6 @@ async def decomposition(state: dict, settings: Settings) -> dict[str, Any]:
         result = await svc.decompose(
             query,
             enabled=decomposition_enabled(state, settings),
-            max_sub_questions=decomposition_max_sub_questions(state, settings),
         )
         sub_queries = result.queries
         success = result.success

@@ -59,7 +59,6 @@ class KbChatConfig(BaseModel):
     hyde_enabled: bool = False
     hybrid_retrieval_enabled: bool = True
     rerank_enabled: bool = True
-    decomposition_max_sub_questions: int = Field(4, ge=2, le=4)
     multi_query_max_variants: int = Field(4, ge=2, le=4)
     retrieval_top_k: int = Field(5, ge=1, le=20)
     retrieval_rerank_top_k: int = Field(20, ge=1, le=20)
@@ -123,10 +122,6 @@ def default_kb_chat_config(*, settings: Settings | None = None) -> KbChatConfig:
         hyde_enabled=bool(cfg.kb_chat_hyde_enabled),
         hybrid_retrieval_enabled=bool(cfg.retrieval_hybrid_enabled),
         rerank_enabled=bool(cfg.retrieval_rerank_enabled),
-        decomposition_max_sub_questions=max(
-            2,
-            min(4, int(cfg.kb_chat_decomposition_max_sub_questions)),
-        ),
         multi_query_max_variants=max(
             2,
             min(4, int(cfg.kb_chat_multi_query_max_variants)),

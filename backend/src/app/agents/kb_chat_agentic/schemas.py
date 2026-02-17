@@ -74,7 +74,7 @@ class DecompositionDecision(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    sub_queries: list[str] = Field(default_factory=list)
+    sub_queries: list[str] = Field(default_factory=list, min_length=1, max_length=5)
 
 
 class MultiQueryDecision(BaseModel):

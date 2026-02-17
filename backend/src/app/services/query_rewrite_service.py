@@ -33,6 +33,8 @@ from app.schemas.query_enhancement import QueryItem
 
 logger = logging.getLogger(__name__)
 
+DECOMPOSITION_MAX_SUB_QUERIES = 5
+
 
 @dataclass(slots=True)
 class RewriteResult:
@@ -514,9 +516,8 @@ class QueryRewriteService:
         query: str,
         *,
         enabled: bool | None = None,
-        max_sub_questions: int | None = None,
     ) -> QueryListResult:
-        """Decompose query into sub-questions (LLM-first with safe fallback)."""
+        """Decompose query into sub-questions via structured LLM output only."""
         start = time.perf_counter()
         enabled_flag = (
             bool(self._settings.kb_chat_decomposition_enabled)
@@ -534,24 +535,20 @@ class QueryRewriteService:
                 queries=[], success=False, reason="empty", latency_ms=0
             )
 
-        max_n = int(
-            max_sub_questions or self._settings.kb_chat_decomposition_max_sub_questions
-        )
-        max_n = max(max_n, 1)
-
         structured_result = await self._call_prompt_structured(
             "kb_chat/decomposition",
             schema=DecompositionDecision,
             timeout_seconds=None,
             max_tokens=256,
             question=q,
-            max_sub_questions=max_n,
         )
         if (
             structured_result.success
             and isinstance(structured_result.payload, DecompositionDecision)
         ):
-            sub_queries = _dedupe_keep_order(structured_result.payload.sub_queries)[:max_n]
+            sub_queries = _dedupe_keep_order(
+                structured_result.payload.sub_queries
+            )[:DECOMPOSITION_MAX_SUB_QUERIES]
             if sub_queries:
                 latency_ms = int((time.perf_counter() - start) * 1000)
                 return QueryListResult(
@@ -561,29 +558,12 @@ class QueryRewriteService:
                     latency_ms=latency_ms,
                 )
 
-        text_result = await self._call_prompt_text(
-            "kb_chat/decomposition",
-            timeout_seconds=None,
-            max_tokens=256,
-            question=q,
-            max_sub_questions=max_n,
-        )
-        if text_result.success:
-            parsed = _extract_query_list_from_text(text_result.text)[:max_n]
-            if parsed:
-                latency_ms = int((time.perf_counter() - start) * 1000)
-                return QueryListResult(
-                    queries=parsed,
-                    success=True,
-                    reason="llm_text_fallback",
-                    latency_ms=latency_ms,
-                )
-
         latency_ms = int((time.perf_counter() - start) * 1000)
+        fallback_reason = structured_result.reason or "llm_structured_fallback_original"
         return QueryListResult(
             queries=[q],
             success=False,
-            reason="llm_failed_fallback_original",
+            reason=fallback_reason,
             latency_ms=latency_ms,
         )
 

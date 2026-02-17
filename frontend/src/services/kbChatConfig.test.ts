@@ -8,7 +8,6 @@ function createConfig(overrides: Partial<KbChatConfig> = {}): KbChatConfig {
     query_rewrite_enabled: true,
     ambiguity_check_enabled: true,
     decomposition_enabled: true,
-    decomposition_max_sub_questions: 3,
     multi_query_enabled: false,
     multi_query_max_variants: 3,
     hyde_enabled: false,
@@ -51,12 +50,8 @@ describe('validateKbChatConfig', () => {
     expect(errors).toContain('问题分解与多路查询不能同时开启。');
   });
 
-  it('enforces 2~4 range for decomposition and multi-query counts', () => {
-    const tooLow = validateKbChatConfig(
-      createConfig({ decomposition_max_sub_questions: 1, multi_query_max_variants: 5 })
-    );
-
-    expect(tooLow).toContain('问题分解数量需在 2~4。');
+  it('enforces 2~4 range for multi-query counts', () => {
+    const tooLow = validateKbChatConfig(createConfig({ multi_query_max_variants: 5 }));
     expect(tooLow).toContain('多路查询数量需在 2~4。');
   });
 
