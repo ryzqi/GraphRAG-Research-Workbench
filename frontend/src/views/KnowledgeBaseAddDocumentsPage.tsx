@@ -51,7 +51,12 @@ import type {
   DocStatus,
   ManifestSourceType
 } from '../services/ingestionBatches';
+import { getLatestIngestionBatch } from '../services/ingestionBatches';
 import { formatIngestionEntryError } from '../services/ingestionEntryErrors';
+import {
+  resolveRecoverableBatchId,
+  shouldRecoverAfterSubmitError
+} from '../services/ingestionBatchRecovery';
 import { HttpError } from '../services/http';
 
 const MAX_PARALLEL_UPLOADS = 4;
@@ -640,6 +645,23 @@ export default function KnowledgeBaseAddDocumentsPage() {
       const backendErrors = extractEntryErrors(error);
       if (backendErrors.length > 0) {
         setServerEntryErrors(mapEntryErrors(backendErrors));
+      }
+      if (kbId && shouldRecoverAfterSubmitError(error)) {
+        try {
+          const latestBatch = await getLatestIngestionBatch(kbId);
+          const recoveredBatchId = resolveRecoverableBatchId(latestBatch);
+          if (recoveredBatchId) {
+            setPreferredBatchId(recoveredBatchId);
+            setPendingSubmittedBatch(null);
+            router.replace(`/knowledge-bases/${kbId}/documents/new?batch=${recoveredBatchId}`, {
+              scroll: false
+            });
+            setLocalError('提交请求超时，已自动恢复到服务端处理中批次。');
+            return;
+          }
+        } catch {
+          // Keep original error message when latest batch recovery also fails.
+        }
       }
       setLocalError(getErrorMessage(error));
     }

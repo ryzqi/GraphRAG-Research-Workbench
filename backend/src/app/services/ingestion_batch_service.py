@@ -32,6 +32,10 @@ from app.models.ingestion_batch import (
     IngestionEvent,
     IngestionSourceType,
 )
+from app.models.ingestion_task_outbox import (
+    IngestionTaskOutbox,
+    IngestionTaskOutboxStatus,
+)
 from app.models.kb_config_snapshot import KBConfigSnapshot
 from app.models.knowledge_base import KnowledgeBase, KnowledgeBaseReadiness
 from app.models.source_material import SourceMaterial, SourceType
@@ -60,6 +64,7 @@ ALLOWED_FILE_EXTENSIONS = {".pdf", ".md", ".txt", ".docx"}
 AUTO_RETRY_DELAYS = (30, 120)
 MAX_DOC_ATTEMPTS = 5
 DOC_CANCELED_ERROR_CODE = "DOC_CANCELED"
+INGESTION_DOC_TASK_NAME = "app.worker.tasks.ingestion_batches.run_ingestion_batch_doc"
 
 _DEFAULT_URL_TIMEOUT_SECONDS = 25
 _DEFAULT_URL_REDIRECTS = 3
@@ -153,7 +158,13 @@ class IngestionBatchService:
         if batch is None:
             raise ingestion_error("KB_BOOTSTRAP_CONFLICT")
 
-        self._enqueue_docs([doc.id for doc in docs])
+        try:
+            self._trigger_outbox_dispatch()
+        except Exception as exc:  # pragma: no cover - defensive guard
+            logger.warning(
+                "Failed to trigger ingestion outbox dispatcher after submit",
+                extra={"error": str(exc)},
+            )
 
         return IngestionBatchSubmitResponse(
             batch_id=batch.id,
@@ -330,9 +341,19 @@ class IngestionBatchService:
         if not requeued_doc_ids:
             raise ingestion_error("DOC_RETRY_NOT_ALLOWED")
 
+        await self._ensure_outbox_for_docs(
+            doc_ids=requeued_doc_ids,
+            batch_id=batch.id,
+        )
         await self._recalculate_batch(batch, reason="manual_retry")
         await self._db.commit()
-        self._enqueue_docs(requeued_doc_ids)
+        try:
+            self._trigger_outbox_dispatch()
+        except Exception as exc:  # pragma: no cover - defensive guard
+            logger.warning(
+                "Failed to trigger ingestion outbox dispatcher after retry",
+                extra={"error": str(exc)},
+            )
 
         return IngestionBatchRetryResponse(
             batch_id=batch.id,
@@ -511,6 +532,21 @@ class IngestionBatchService:
             docs.append(doc)
 
         await self._db.flush()
+        for doc in docs:
+            self._db.add(
+                IngestionTaskOutbox(
+                    doc_id=doc.id,
+                    batch_id=batch.id,
+                    task_name=INGESTION_DOC_TASK_NAME,
+                    payload={"doc_id": str(doc.id)},
+                    status=IngestionTaskOutboxStatus.PENDING,
+                    attempts=0,
+                    max_attempts=20,
+                    next_retry_at=None,
+                    dispatched_at=None,
+                    last_error=None,
+                )
+            )
         await self._append_event(
             batch_id=batch.id,
             doc_id=None,
@@ -779,14 +815,71 @@ class IngestionBatchService:
         await self._db.flush()
         return snapshot
 
-    def _enqueue_docs(self, doc_ids: list[uuid.UUID]) -> None:
+    async def _ensure_outbox_for_docs(
+        self,
+        *,
+        doc_ids: list[uuid.UUID],
+        batch_id: uuid.UUID,
+    ) -> None:
         if not doc_ids:
             return
 
-        from app.worker.tasks.ingestion_batches import run_ingestion_batch_doc
+        stmt = (
+            select(IngestionTaskOutbox)
+            .where(
+                IngestionTaskOutbox.doc_id.in_(doc_ids),
+                IngestionTaskOutbox.task_name == INGESTION_DOC_TASK_NAME,
+            )
+            .with_for_update()
+        )
+        existing = list((await self._db.execute(stmt)).scalars().all())
+        existing_by_doc_id = {row.doc_id: row for row in existing}
 
         for doc_id in doc_ids:
-            run_ingestion_batch_doc.delay(str(doc_id))
+            row = existing_by_doc_id.get(doc_id)
+            if row is None:
+                self._db.add(
+                    IngestionTaskOutbox(
+                        doc_id=doc_id,
+                        batch_id=batch_id,
+                        task_name=INGESTION_DOC_TASK_NAME,
+                        payload={"doc_id": str(doc_id)},
+                        status=IngestionTaskOutboxStatus.PENDING,
+                        attempts=0,
+                        max_attempts=20,
+                        next_retry_at=None,
+                        dispatched_at=None,
+                        last_error=None,
+                    )
+                )
+                continue
+
+            row.batch_id = batch_id
+            row.payload = {"doc_id": str(doc_id)}
+            row.status = IngestionTaskOutboxStatus.PENDING
+            row.attempts = 0
+            row.next_retry_at = None
+            row.dispatched_at = None
+            row.last_error = None
+
+    def _trigger_outbox_dispatch(self) -> None:
+        try:
+            from app.worker.tasks.ingestion_outbox_dispatcher import (
+                dispatch_ingestion_outbox,
+            )
+
+            dispatch_ingestion_outbox.delay()
+        except Exception as exc:  # pragma: no cover - defensive guard
+            logger.warning(
+                "Failed to trigger ingestion outbox dispatcher",
+                extra={"error": str(exc)},
+            )
+
+    # Backward-compatible alias: callers should migrate to outbox triggering semantics.
+    def _enqueue_docs(self, doc_ids: list[uuid.UUID]) -> None:
+        if not doc_ids:
+            return
+        self._trigger_outbox_dispatch()
 
     async def _get_batch_or_raise(
         self,

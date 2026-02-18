@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import timedelta
+
 from celery import Celery
 
 from app.core.settings import get_settings
@@ -13,6 +15,7 @@ celery_app = Celery(
     include=[
         "app.worker.tasks.export",
         "app.worker.tasks.ingestion_batches",
+        "app.worker.tasks.ingestion_outbox_dispatcher",
         "app.worker.tasks.index_rebuild",
         "app.worker.tasks.kb_bootstrap_jobs",
         "app.worker.tasks.research",
@@ -31,4 +34,11 @@ celery_app.conf.update(
     timezone="Asia/Shanghai",
     task_soft_time_limit=60 * 60,
     task_time_limit=65 * 60,
+    beat_schedule={
+        "ingestion-outbox-dispatcher": {
+            "task": "app.worker.tasks.ingestion_outbox_dispatcher.dispatch_ingestion_outbox",
+            "schedule": timedelta(seconds=15),
+            "kwargs": {"limit": 50},
+        }
+    },
 )

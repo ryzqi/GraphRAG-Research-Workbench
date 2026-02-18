@@ -20,6 +20,7 @@ def import_all_models() -> None:
         export_job,
         index_rebuild_job,
         ingestion_batch,
+        ingestion_task_outbox,
         kb_bootstrap_job,
         kb_config_snapshot,
         knowledge_base,
