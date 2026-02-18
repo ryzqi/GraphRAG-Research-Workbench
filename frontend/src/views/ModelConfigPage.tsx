@@ -108,6 +108,7 @@ export function ModelConfigPage() {
   const [activeProviderDraft, setActiveProviderDraft] = useState<ModelProvider>('openai');
   const [activeModelDraft, setActiveModelDraft] = useState('');
   const [pageError, setPageError] = useState<string | null>(null);
+  const [savingProvider, setSavingProvider] = useState<ModelProvider | null>(null);
 
   const providerById = useMemo(() => providerMap(configQuery.data), [configQuery.data]);
 
@@ -153,10 +154,26 @@ export function ModelConfigPage() {
     }
   };
 
-  const enabledProviders = useMemo(
-    () => (configQuery.data?.providers ?? []).filter((item) => item.enabled),
-    [configQuery.data]
+  const enabledProviderIds = useMemo(
+    () =>
+      (['openai', 'ollama', 'nvidia'] as const).filter((provider) => {
+        const localEnabled = forms[provider]?.enabled;
+        if (typeof localEnabled === 'boolean') {
+          return localEnabled;
+        }
+        return providerById[provider]?.enabled ?? false;
+      }),
+    [forms, providerById]
   );
+
+  useEffect(() => {
+    if (enabledProviderIds.length === 0) {
+      return;
+    }
+    if (!enabledProviderIds.includes(activeProviderDraft)) {
+      setActiveProviderDraft(enabledProviderIds[0]);
+    }
+  }, [activeProviderDraft, enabledProviderIds]);
 
   const updateForm = <K extends keyof ProviderFormState>(
     provider: ModelProvider,
@@ -190,27 +207,32 @@ export function ModelConfigPage() {
       payload.api_key = '';
     }
 
-    updateProviderMutation.mutate(
-      { provider, payload },
-      {
-        onSuccess: () => {
-          setForms((prev) => ({
-            ...prev,
-            [provider]: {
-              ...prev[provider],
-              apiKey: '',
-              clearApiKey: false,
-            },
-          }));
-        },
-      }
-    );
+    setSavingProvider(provider);
+    void updateProviderMutation
+      .mutateAsync({ provider, payload })
+      .then(() => {
+        setForms((prev) => ({
+          ...prev,
+          [provider]: {
+            ...prev[provider],
+            apiKey: '',
+            clearApiKey: false,
+          },
+        }));
+      })
+      .finally(() => {
+        setSavingProvider((prev) => (prev === provider ? null : prev));
+      });
   };
 
   const handleApplyActiveModel = () => {
     const model = toOptionalText(activeModelDraft);
     if (!model) {
       setPageError('请填写全局生效模型名');
+      return;
+    }
+    if (!enabledProviderIds.includes(activeProviderDraft)) {
+      setPageError('当前供应商未启用，请先启用后再应用全局模型');
       return;
     }
     updateActiveMutation.mutate({
@@ -240,9 +262,9 @@ export function ModelConfigPage() {
                 value={activeProviderDraft}
                 onChange={(e) => setActiveProviderDraft(e.target.value as ModelProvider)}
               >
-                {enabledProviders.map((item) => (
-                  <MenuItem key={item.provider} value={item.provider}>
-                    {PROVIDER_LABEL[item.provider]}
+                {enabledProviderIds.map((provider) => (
+                  <MenuItem key={provider} value={provider}>
+                    {PROVIDER_LABEL[provider]}
                   </MenuItem>
                 ))}
               </Select>
@@ -257,7 +279,7 @@ export function ModelConfigPage() {
             <Button
               variant='contained'
               startIcon={<SettingsSuggestIcon />}
-              disabled={enabledProviders.length === 0}
+              disabled={enabledProviderIds.length === 0}
               loading={updateActiveMutation.isPending}
               onClick={handleApplyActiveModel}
               sx={{ minWidth: 180 }}
@@ -276,7 +298,7 @@ export function ModelConfigPage() {
               />
             </Stack>
           )}
-          {enabledProviders.length === 0 && (
+          {enabledProviderIds.length === 0 && (
             <Alert severity='warning'>当前无启用供应商，请先在下方启用至少一个供应商。</Alert>
           )}
         </Stack>
@@ -287,6 +309,8 @@ export function ModelConfigPage() {
           const row = providerById[provider];
           const form = forms[provider];
           const isActive = configQuery.data?.active_provider === provider;
+          const isSavingThisProvider =
+            updateProviderMutation.isPending && savingProvider === provider;
           return (
             <Grid key={provider} size={{ xs: 12, lg: 4 }}>
               <Paper variant='outlined' sx={{ p: 2, height: '100%' }}>
@@ -378,7 +402,8 @@ export function ModelConfigPage() {
                   <Button
                     variant='contained'
                     startIcon={<SaveIcon />}
-                    loading={updateProviderMutation.isPending}
+                    loading={isSavingThisProvider}
+                    disabled={updateProviderMutation.isPending && !isSavingThisProvider}
                     onClick={() => handleSaveProvider(provider)}
                   >
                     保存 {PROVIDER_LABEL[provider]}

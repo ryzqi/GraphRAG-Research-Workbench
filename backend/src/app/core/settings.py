@@ -45,6 +45,13 @@ _DEFAULT_INGESTION_METADATA_BLOCKLIST = [
     "169.254.169.254",
 ]
 
+_DEFAULT_DATABASE_URL = "postgresql+asyncpg://mkb:mkb_password@localhost:5432/mkb"
+_DEFAULT_REDIS_URL = "redis://localhost:6379/0"
+_DEFAULT_CELERY_BROKER_URL = "redis://localhost:6379/0"
+_DEFAULT_CELERY_RESULT_BACKEND = "redis://localhost:6379/1"
+_DEFAULT_MINIO_ACCESS_KEY = "minioadmin"
+_DEFAULT_MINIO_SECRET_KEY = "minioadmin"
+
 
 def _dedupe_keep_order(values: list[str]) -> list[str]:
     seen: set[str] = set()
@@ -150,14 +157,14 @@ class Settings(BaseSettings):
     )
 
     database_url: str = Field(
-        "postgresql+asyncpg://mkb:mkb_password@localhost:5432/mkb",
+        _DEFAULT_DATABASE_URL,
         alias="DATABASE_URL",
     )
     db_pool_size: int = Field(5, alias="DB_POOL_SIZE")
     db_max_overflow: int = Field(10, alias="DB_MAX_OVERFLOW")
     db_pool_recycle_seconds: int = Field(1800, alias="DB_POOL_RECYCLE_SECONDS")
 
-    redis_url: str = Field("redis://localhost:6379/0", alias="REDIS_URL")
+    redis_url: str = Field(_DEFAULT_REDIS_URL, alias="REDIS_URL")
     redis_socket_timeout_seconds: float = Field(
         1.0, alias="REDIS_SOCKET_TIMEOUT_SECONDS"
     )
@@ -165,10 +172,10 @@ class Settings(BaseSettings):
         1.0, alias="REDIS_SOCKET_CONNECT_TIMEOUT_SECONDS"
     )
     celery_broker_url: str = Field(
-        "redis://localhost:6379/0", alias="CELERY_BROKER_URL"
+        _DEFAULT_CELERY_BROKER_URL, alias="CELERY_BROKER_URL"
     )
     celery_result_backend: str = Field(
-        "redis://localhost:6379/1", alias="CELERY_RESULT_BACKEND"
+        _DEFAULT_CELERY_RESULT_BACKEND, alias="CELERY_RESULT_BACKEND"
     )
 
     http_timeout_connect_seconds: float = Field(
@@ -209,8 +216,8 @@ class Settings(BaseSettings):
     embedding_dim: int | None = Field(None, alias="EMBEDDING_DIM")
 
     minio_endpoint: str = Field("localhost:9000", alias="MINIO_ENDPOINT")
-    minio_access_key: str = Field("minioadmin", alias="MINIO_ACCESS_KEY")
-    minio_secret_key: str = Field("minioadmin", alias="MINIO_SECRET_KEY")
+    minio_access_key: str = Field(_DEFAULT_MINIO_ACCESS_KEY, alias="MINIO_ACCESS_KEY")
+    minio_secret_key: str = Field(_DEFAULT_MINIO_SECRET_KEY, alias="MINIO_SECRET_KEY")
     minio_secure: bool = Field(False, alias="MINIO_SECURE")
     minio_bucket_uploads: str = Field("mkb-uploads", alias="MINIO_BUCKET_UPLOADS")
     minio_bucket_exports: str = Field("mkb-exports", alias="MINIO_BUCKET_EXPORTS")
@@ -590,6 +597,10 @@ def _is_dev_env(app_env: str) -> bool:
     return app_env.strip().lower() in {"dev", "development", "local", "test"}
 
 
+def _normalize_url_for_compare(value: str) -> str:
+    return _prefer_ipv4_loopback_url(value.strip())
+
+
 def validate_startup_settings(settings: Settings) -> None:
     """启动期安全校验：避免危险默认配置进入非开发环境。"""
     if _is_dev_env(settings.app_env):
@@ -608,6 +619,32 @@ def validate_startup_settings(settings: Settings) -> None:
     model_config_kms_key = (settings.model_config_kms_key or "").strip()
     if not model_config_kms_key:
         problems.append("MODEL_CONFIG_KMS_KEY 为空")
+
+    if _normalize_url_for_compare(settings.database_url) == _normalize_url_for_compare(
+        _DEFAULT_DATABASE_URL
+    ):
+        problems.append("DATABASE_URL 使用默认示例凭据（mkb/mkb_password）")
+
+    if _normalize_url_for_compare(settings.redis_url) == _normalize_url_for_compare(
+        _DEFAULT_REDIS_URL
+    ):
+        problems.append("REDIS_URL 使用默认示例配置")
+
+    if _normalize_url_for_compare(settings.celery_broker_url) == _normalize_url_for_compare(
+        _DEFAULT_CELERY_BROKER_URL
+    ):
+        problems.append("CELERY_BROKER_URL 使用默认示例配置")
+
+    if _normalize_url_for_compare(
+        settings.celery_result_backend
+    ) == _normalize_url_for_compare(_DEFAULT_CELERY_RESULT_BACKEND):
+        problems.append("CELERY_RESULT_BACKEND 使用默认示例配置")
+
+    if (settings.minio_access_key or "").strip() == _DEFAULT_MINIO_ACCESS_KEY:
+        problems.append("MINIO_ACCESS_KEY 使用默认值（minioadmin）")
+
+    if (settings.minio_secret_key or "").strip() == _DEFAULT_MINIO_SECRET_KEY:
+        problems.append("MINIO_SECRET_KEY 使用默认值（minioadmin）")
 
     if problems:
         raise RuntimeError(

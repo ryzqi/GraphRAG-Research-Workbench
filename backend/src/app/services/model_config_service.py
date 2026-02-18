@@ -36,6 +36,34 @@ _PROVIDER_ORDER = [
 ]
 
 
+def _provider_candidates_after(
+    provider: ModelProviderORM,
+) -> list[ModelProviderORM]:
+    try:
+        idx = _PROVIDER_ORDER.index(provider)
+    except ValueError:
+        return list(_PROVIDER_ORDER)
+    return [*_PROVIDER_ORDER[idx + 1 :], *_PROVIDER_ORDER[:idx]]
+
+
+def _pick_next_enabled_provider(
+    *,
+    by_provider: dict[ModelProviderORM, ModelProviderConfig],
+    current_provider: ModelProviderORM,
+) -> ModelProviderConfig | None:
+    candidates = _provider_candidates_after(current_provider)
+    for candidate in candidates:
+        row = by_provider.get(candidate)
+        if row is not None and row.enabled and (row.model or "").strip():
+            return row
+
+    for candidate in candidates:
+        row = by_provider.get(candidate)
+        if row is not None and row.enabled:
+            return row
+    return None
+
+
 def _as_schema_provider(provider: ModelProviderORM) -> ModelProvider:
     return ModelProvider(provider.value)
 
@@ -115,7 +143,33 @@ class ModelConfigService:
             )
 
         selection = await self._get_selection()
-        if selection.active_provider == row.provider:
+        if (
+            "enabled" in updates
+            and not row.enabled
+            and selection.active_provider == row.provider
+        ):
+            provider_rows = await self._list_provider_rows()
+            by_provider = {item.provider: item for item in provider_rows}
+            next_provider = _pick_next_enabled_provider(
+                by_provider=by_provider,
+                current_provider=row.provider,
+            )
+            if next_provider is None:
+                raise AppError(
+                    code="NO_ENABLED_MODEL_PROVIDER",
+                    message="至少保留一个启用的模型供应商",
+                    status_code=422,
+                )
+            next_model = self._resolve_active_model(next_provider)
+            if not next_model:
+                raise AppError(
+                    code="NO_ENABLED_MODEL_PROVIDER",
+                    message="无可切换的已启用供应商（缺少模型名）",
+                    status_code=422,
+                )
+            selection.active_provider = next_provider.provider
+            selection.active_model = next_model
+        elif selection.active_provider == row.provider:
             selection.active_model = row.model
 
         await self._db.commit()
@@ -212,6 +266,21 @@ class ModelConfigService:
             self._db.add(selection)
             await self._db.commit()
         return selection
+
+    def _resolve_active_model(self, row: ModelProviderConfig) -> str | None:
+        model_name = (row.model or "").strip()
+        if model_name:
+            return model_name
+
+        default_model = _default_model(row.provider, self._settings)
+        if default_model:
+            return default_model
+
+        if row.provider == ModelProviderORM.OPENAI:
+            fallback_model = self._settings.llm_model.strip()
+            if fallback_model:
+                return fallback_model
+        return None
 
     def _to_config_read(
         self,

@@ -10,15 +10,42 @@ from app.integrations.model_runtime_config import ModelRuntimeConfigManager
 from app.models.model_config import ModelProvider
 
 
+def _supports_ollama_reasoning_level(model_name: str) -> bool:
+    normalized = model_name.strip().lower()
+    return "gpt-oss" in normalized
+
+
+def _resolve_model_name(
+    *,
+    provider: ModelProvider,
+    snapshot_model: str | None,
+    provider_model: str | None,
+    fallback_openai_model: str,
+) -> str:
+    candidate = (snapshot_model or provider_model or "").strip()
+    if candidate:
+        return candidate
+
+    if provider == ModelProvider.OPENAI:
+        openai_model = fallback_openai_model.strip()
+        if openai_model:
+            return openai_model
+
+    raise RuntimeError(f"No model configured for provider: {provider.value}")
+
+
 def get_active_model_identity(settings: Settings | None = None) -> tuple[str, str]:
     cfg = settings or get_settings()
     snapshot = ModelRuntimeConfigManager.get_snapshot(settings=cfg)
     provider_cfg = snapshot.active_provider_config()
-    model_name = (
-        snapshot.active_model
-        or provider_cfg.model
-        or cfg.llm_model
+    model_name = _resolve_model_name(
+        provider=provider_cfg.provider,
+        snapshot_model=snapshot.active_model,
+        provider_model=provider_cfg.model,
+        fallback_openai_model=cfg.llm_model,
     )
+    if not provider_cfg.enabled:
+        raise RuntimeError(f"Active model provider is disabled: {provider_cfg.provider.value}")
     return provider_cfg.provider.value, model_name
 
 
@@ -26,7 +53,14 @@ def create_chat_model(*, settings: Settings | None = None) -> Any:
     cfg = settings or get_settings()
     snapshot = ModelRuntimeConfigManager.get_snapshot(settings=cfg)
     provider_cfg = snapshot.active_provider_config()
-    model_name = snapshot.active_model or provider_cfg.model or cfg.llm_model
+    if not provider_cfg.enabled:
+        raise RuntimeError(f"Active model provider is disabled: {provider_cfg.provider.value}")
+    model_name = _resolve_model_name(
+        provider=provider_cfg.provider,
+        snapshot_model=snapshot.active_model,
+        provider_model=provider_cfg.model,
+        fallback_openai_model=cfg.llm_model,
+    )
 
     if provider_cfg.provider == ModelProvider.OPENAI:
         from langchain_openai import ChatOpenAI
@@ -61,7 +95,10 @@ def create_chat_model(*, settings: Settings | None = None) -> Any:
             "base_url": provider_cfg.base_url or "http://127.0.0.1:11434",
         }
         if provider_cfg.thinking_enabled:
-            kwargs["reasoning"] = provider_cfg.thinking_level or "high"
+            if _supports_ollama_reasoning_level(model_name):
+                kwargs["reasoning"] = provider_cfg.thinking_level or "high"
+            else:
+                kwargs["reasoning"] = True
         else:
             kwargs["reasoning"] = False
         return ChatOllama(**kwargs)

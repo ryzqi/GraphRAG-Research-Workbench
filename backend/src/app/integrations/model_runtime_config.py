@@ -21,6 +21,49 @@ from app.models.model_config import (
 
 logger = logging.getLogger(__name__)
 
+_PROVIDER_PRIORITY: tuple[ModelProvider, ...] = (
+    ModelProvider.OPENAI,
+    ModelProvider.OLLAMA,
+    ModelProvider.NVIDIA,
+)
+
+
+def _provider_priority(provider: ModelProvider) -> int:
+    try:
+        return _PROVIDER_PRIORITY.index(provider)
+    except ValueError:
+        return len(_PROVIDER_PRIORITY)
+
+
+def _ordered_provider_configs(
+    providers: dict[ModelProvider, "RuntimeProviderConfig"],
+) -> list["RuntimeProviderConfig"]:
+    ordered = sorted(providers.values(), key=lambda item: _provider_priority(item.provider))
+    return ordered
+
+
+def _resolve_active_provider(
+    *,
+    providers: dict[ModelProvider, "RuntimeProviderConfig"],
+    requested_provider: ModelProvider | None,
+) -> ModelProvider:
+    if requested_provider is not None:
+        preferred = providers.get(requested_provider)
+        if preferred is not None and preferred.enabled:
+            return requested_provider
+
+    for cfg in _ordered_provider_configs(providers):
+        if cfg.enabled:
+            return cfg.provider
+
+    if requested_provider is not None and requested_provider in providers:
+        return requested_provider
+
+    ordered = _ordered_provider_configs(providers)
+    if ordered:
+        return ordered[0].provider
+    raise RuntimeError("No model provider configuration rows found")
+
 
 @dataclass(frozen=True, slots=True)
 class RuntimeProviderConfig:
@@ -42,10 +85,12 @@ class RuntimeModelSnapshot:
 
     def active_provider_config(self) -> RuntimeProviderConfig:
         cfg = self.providers.get(self.active_provider)
-        if cfg is not None:
+        if cfg is not None and cfg.enabled:
             return cfg
-        # Defensive fallback (should not happen if defaults are initialized).
-        return next(iter(self.providers.values()))
+        for candidate in _ordered_provider_configs(self.providers):
+            if candidate.enabled:
+                return candidate
+        raise RuntimeError("No enabled model provider configured")
 
 
 class ModelRuntimeConfigManager:
@@ -115,6 +160,7 @@ class ModelRuntimeConfigManager:
         rows = list(result.scalars().all())
         if not rows:
             return cls._build_fallback_snapshot(settings)
+        rows.sort(key=lambda row: _provider_priority(row.provider))
 
         providers: dict[ModelProvider, RuntimeProviderConfig] = {}
         for row in rows:
@@ -143,22 +189,31 @@ class ModelRuntimeConfigManager:
             )
 
         selection = await db.get(ModelRuntimeSelection, 1)
-        active_provider = (
-            selection.active_provider
-            if selection is not None and selection.active_provider in providers
-            else ModelProvider.OPENAI
+        active_provider = _resolve_active_provider(
+            providers=providers,
+            requested_provider=selection.active_provider if selection is not None else None,
         )
-        if active_provider not in providers:
-            active_provider = next(iter(providers.keys()))
 
         provider_cfg = providers[active_provider]
+        selection_matches_active = (
+            selection is not None and selection.active_provider == active_provider
+        )
         active_model = (
             selection.active_model.strip()
-            if selection and isinstance(selection.active_model, str)
+            if (
+                selection_matches_active
+                and isinstance(selection.active_model, str)
+            )
             else None
         )
         if not active_model:
-            active_model = provider_cfg.model or settings.llm_model.strip() or None
+            provider_model = (provider_cfg.model or "").strip()
+            if provider_model:
+                active_model = provider_model
+            elif active_provider == ModelProvider.OPENAI:
+                active_model = settings.llm_model.strip() or None
+            else:
+                active_model = None
 
         return RuntimeModelSnapshot(
             providers=providers,
