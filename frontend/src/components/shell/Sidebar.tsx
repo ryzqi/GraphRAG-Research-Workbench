@@ -28,6 +28,7 @@ import ChatIcon from '@mui/icons-material/Chat';
 import StorageIcon from '@mui/icons-material/Storage';
 import SearchIcon from '@mui/icons-material/Search';
 import ExtensionIcon from '@mui/icons-material/Extension';
+import SettingsSuggestIcon from '@mui/icons-material/SettingsSuggest';
 import Brightness4Icon from '@mui/icons-material/Brightness4';
 import Brightness7Icon from '@mui/icons-material/Brightness7';
 import HistoryIcon from '@mui/icons-material/History';
@@ -61,6 +62,7 @@ const navItems = [
   { path: '/knowledge-bases', label: '知识库管理', icon: StorageIcon },
   { path: '/research', label: '深度研究', icon: SearchIcon },
   { path: '/extensions', label: 'MCP扩展', icon: ExtensionIcon },
+  { path: '/model-config', label: '模型配置', icon: SettingsSuggestIcon },
 ];
 
 export interface SidebarProps {

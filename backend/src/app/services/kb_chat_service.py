@@ -14,7 +14,6 @@ from datetime import datetime, timezone
 from typing import Any
 
 from langchain.messages import AIMessage, HumanMessage, SystemMessage
-from langchain_openai import ChatOpenAI
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -29,7 +28,7 @@ from app.core.logging import set_run_id
 from app.core.memory_store import StoreManager
 from app.core.settings import get_settings
 from app.integrations.embedding_client import EmbeddingClient
-from app.integrations.langchain_profiles import build_chat_model_profile
+from app.integrations.chat_model_factory import create_chat_model
 from app.integrations.llm_client import ChatMessage as LLMMessage
 from app.integrations.llm_client import LLMClient
 from app.integrations.milvus_client import MilvusClient
@@ -109,7 +108,7 @@ class KbChatService:
     def _build_graph(
         self,
         *,
-        chat_model: ChatOpenAI,
+        chat_model: Any,
         tools: list,
         tool_meta_by_name: dict,
         kb_chat_config: KbChatConfig,
@@ -250,12 +249,7 @@ class KbChatService:
             include_web_search=False,
             include_mcp=False,
         )
-        chat_model = ChatOpenAI(
-            model=self._settings.llm_model,
-            api_key=self._settings.llm_api_key,
-            base_url=self._settings.llm_base_url.rstrip("/"),
-            profile=build_chat_model_profile(self._settings),
-        )
+        chat_model = create_chat_model(settings=self._settings)
         graph = self._build_graph(
             chat_model=chat_model,
             tools=tools,
@@ -540,12 +534,7 @@ class KbChatService:
             include_mcp=include_mcp,
         )
 
-        chat_model = ChatOpenAI(
-            model=self._settings.llm_model,
-            api_key=self._settings.llm_api_key,
-            base_url=self._settings.llm_base_url.rstrip("/"),
-            profile=build_chat_model_profile(self._settings),
-        )
+        chat_model = create_chat_model(settings=self._settings)
 
         system_prompt = self._prompts.render("kb_chat/system")
         context_metrics = self._context_builder.build_metrics(

@@ -15,7 +15,6 @@ from typing import Any, Annotated, TypedDict, cast
 
 import httpx
 from langchain.messages import AIMessage, AnyMessage, HumanMessage, SystemMessage
-from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph.message import add_messages
 
@@ -26,7 +25,7 @@ from app.agents.tools.report_generate import build_report_generate_tool
 from app.agents.tools.research_plan import build_research_plan_tool
 from app.agents.tools.system_time import build_system_time_tool
 from app.core.settings import get_settings
-from app.integrations.langchain_profiles import build_chat_model_profile
+from app.integrations.chat_model_factory import create_chat_model
 from app.integrations.llm_client import LLMClient
 from app.integrations.redis_client import RedisClient
 from app.models.tool_extension import ToolExtension
@@ -106,11 +105,7 @@ class ResearchGraph:
             on_results=_on_results,
         )
 
-        llm_client = LLMClient(
-            base_url=self._settings.llm_base_url,
-            api_key=self._settings.llm_api_key,
-            model=self._settings.llm_model,
-        )
+        llm_client = LLMClient()
         internal_tools = [
             kb_tool,
             build_system_time_tool(),
@@ -128,12 +123,7 @@ class ResearchGraph:
             http_client=http_client,
         )
 
-        chat_model = ChatOpenAI(
-            model=self._settings.llm_model,
-            api_key=self._settings.llm_api_key,
-            base_url=self._settings.llm_base_url.rstrip("/"),
-            profile=build_chat_model_profile(self._settings),
-        )
+        chat_model = create_chat_model(settings=self._settings)
 
         system_prompt = self._prompts.render("research/deep_agent_system", question=question)
         state: ResearchState = {

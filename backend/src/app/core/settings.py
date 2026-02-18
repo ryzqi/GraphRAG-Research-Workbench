@@ -198,6 +198,7 @@ class Settings(BaseSettings):
     llm_model: str = Field("gpt-4o-mini", alias="LLM_MODEL")
     llm_timeout_seconds: float = Field(30.0, alias="LLM_TIMEOUT_SECONDS")
     llm_max_input_tokens: int | None = Field(None, alias="LLM_MAX_INPUT_TOKENS")
+    model_config_kms_key: str | None = Field(None, alias="MODEL_CONFIG_KMS_KEY")
 
     embedding_base_url: str = Field(
         "https://api.openai.com/v1", alias="EMBEDDING_BASE_URL"
@@ -603,6 +604,10 @@ def validate_startup_settings(settings: Settings) -> None:
     embedding_key = settings.embedding_api_key.strip()
     if not embedding_key or embedding_key == "REPLACE_ME":
         problems.append("EMBEDDING_API_KEY 为空或为占位值（REPLACE_ME）")
+
+    model_config_kms_key = (settings.model_config_kms_key or "").strip()
+    if not model_config_kms_key:
+        problems.append("MODEL_CONFIG_KMS_KEY 为空")
 
     if problems:
         raise RuntimeError(

@@ -17,7 +17,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.settings import Settings, get_settings
-from app.integrations.langchain_profiles import build_chat_model_profile
+from app.integrations.chat_model_factory import create_chat_model
 from app.integrations.llm_client import ChatMessage as LLMMessage
 from app.models.chat_message import ChatMessage, MessageRole
 from app.utils.token_counter import count_tokens_approximately
@@ -152,15 +152,9 @@ class ConversationSummaryService:
         self, messages: list[LLMMessage], previous_summary: str | None
     ) -> str | None:
         from langchain.messages import AIMessage, HumanMessage, SystemMessage
-        from langchain_openai import ChatOpenAI
         from langmem.short_term import RunningSummary, summarize_messages
 
-        model = ChatOpenAI(
-            model=self._settings.llm_model,
-            base_url=self._settings.llm_base_url,
-            api_key=self._settings.llm_api_key,
-            profile=build_chat_model_profile(self._settings),
-        )
+        model = create_chat_model(settings=self._settings)
         summary_model = model.bind(max_tokens=self._settings.summary_max_tokens)
         token_counter = getattr(model, "get_num_tokens_from_messages", None)
         if token_counter is None:

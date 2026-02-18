@@ -58,3 +58,10 @@ export {
   useIndexRebuildJob,
   indexRebuildKeys,
 } from './useIndexRebuilds';
+
+export {
+  useModelConfig,
+  useUpdateProviderConfig,
+  useUpdateActiveModel,
+  modelConfigKeys,
+} from './useModelConfig';

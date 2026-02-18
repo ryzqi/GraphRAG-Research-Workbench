@@ -10,7 +10,6 @@ import httpx
 
 from deepagents import create_deep_agent
 from langchain.tools import BaseTool, tool as lc_tool
-from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
 
 from app.agents.deepagents_io import build_user_messages, extract_last_message_text
@@ -26,7 +25,7 @@ from app.agents.tools.web_search import (
     build_web_search_tool,
 )
 from app.core.settings import get_settings
-from app.integrations.langchain_profiles import build_chat_model_profile
+from app.integrations.chat_model_factory import create_chat_model
 from app.integrations.llm_client import LLMClient
 from app.integrations.redis_client import RedisClient
 from app.models.tool_extension import ToolExtension
@@ -67,12 +66,7 @@ class DeepResearchAgent:
         self._retrieval = retrieval
         self._extensions = extensions
         self._prompts = get_prompt_loader()
-        self._model = ChatOpenAI(
-            model=self._settings.llm_model,
-            api_key=self._settings.llm_api_key,
-            base_url=self._settings.llm_base_url.rstrip("/"),
-            profile=build_chat_model_profile(self._settings),
-        )
+        self._model = create_chat_model(settings=self._settings)
         self._retrieval_results: list[RetrievalResult] = []
         self._stage_summaries: dict[str, object] = {}
         self._redis = redis
@@ -148,11 +142,7 @@ class DeepResearchAgent:
 
     def _build_llm_client(self) -> LLMClient:
         """构建 LLM 客户端用于工具。"""
-        return LLMClient(
-            base_url=self._settings.llm_base_url,
-            api_key=self._settings.llm_api_key,
-            model=self._settings.llm_model,
-        )
+        return LLMClient()
 
     async def run(
         self,

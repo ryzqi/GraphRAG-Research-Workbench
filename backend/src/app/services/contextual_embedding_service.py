@@ -8,7 +8,7 @@ import time
 from dataclasses import dataclass
 
 from app.core.settings import Settings, get_settings
-from app.integrations.langchain_profiles import build_chat_model_profile
+from app.integrations.chat_model_factory import create_chat_model
 from app.prompts import get_prompt_loader
 
 logger = logging.getLogger(__name__)
@@ -123,16 +123,10 @@ class ContextualEmbeddingService:
 
     async def _call_llm(self, prompt: str) -> _LLMCallOutput:
         from langchain.messages import HumanMessage
-        from langchain_openai import ChatOpenAI
 
         from app.services.streaming import extract_answer_text
 
-        model = ChatOpenAI(
-            model=self._settings.llm_model,
-            api_key=self._settings.llm_api_key,
-            base_url=self._settings.llm_base_url.rstrip("/"),
-            profile=build_chat_model_profile(self._settings),
-        )
+        model = create_chat_model(settings=self._settings)
 
         def _run() -> object:
             return model.invoke([HumanMessage(content=prompt)])

@@ -24,6 +24,7 @@ def import_all_models() -> None:
         kb_config_snapshot,
         knowledge_base,
         knowledge_update_proposal,
+        model_config,
         research_artifact,
         research_event,
         research_session,

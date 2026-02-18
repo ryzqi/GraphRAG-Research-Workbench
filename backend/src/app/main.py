@@ -20,6 +20,7 @@ from app.db.session import get_engine, get_sessionmaker
 from app.integrations.embedding_client import EmbeddingClient
 from app.integrations.http_client import close_http_client, create_http_client
 from app.integrations.llm_client import LLMClient
+from app.integrations.model_runtime_config import ModelRuntimeConfigManager
 from app.integrations.milvus_client import create_milvus_client
 from app.integrations.redis_client import close_redis_client, create_redis_client
 from app.integrations.rerank_client import RerankClient
@@ -35,6 +36,10 @@ async def lifespan(app: FastAPI):
     validate_startup_settings(settings)
     app.state.engine = get_engine()
     await ensure_ingestion_schema_ready(app.state.engine)
+    await ModelRuntimeConfigManager.initialize(
+        sessionmaker=get_sessionmaker(),
+        settings=settings,
+    )
     await CheckpointManager.initialize()
     await StoreManager.initialize()
     DeepAgentsStoreManager.initialize()
@@ -66,6 +71,10 @@ async def lifespan(app: FastAPI):
         get_sessionmaker.cache_clear()
     except Exception as exc:  # pragma: no cover - best effort
         logger.warning("清理 DB 缓存失败", extra={"error": str(exc)})
+    try:
+        await ModelRuntimeConfigManager.shutdown()
+    except Exception as exc:  # pragma: no cover - best effort
+        logger.warning("模型运行时配置关闭失败", extra={"error": str(exc)})
     DeepAgentsStoreManager.shutdown()
     await StoreManager.shutdown()
     await CheckpointManager.shutdown()

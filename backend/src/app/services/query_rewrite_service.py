@@ -28,7 +28,7 @@ from app.agents.kb_chat_agentic.schemas import (
     TransformQueryDecision,
 )
 from app.core.settings import Settings, get_settings
-from app.integrations.langchain_profiles import build_chat_model_profile
+from app.integrations.chat_model_factory import create_chat_model
 from app.prompts import get_prompt_loader
 from app.schemas.query_enhancement import QueryItem
 
@@ -1033,14 +1033,8 @@ class QueryRewriteService:
         max_tokens: int,
     ) -> BaseModel | dict[str, object]:
         from langchain.messages import HumanMessage
-        from langchain_openai import ChatOpenAI
 
-        model = ChatOpenAI(
-            model=self._settings.llm_model,
-            api_key=self._settings.llm_api_key,
-            base_url=self._settings.llm_base_url.rstrip("/"),
-            profile=build_chat_model_profile(self._settings),
-        )
+        model = create_chat_model(settings=self._settings)
         model = model.bind(temperature=0, max_tokens=max_tokens)
         model = model.with_structured_output(schema)
 
@@ -1054,14 +1048,8 @@ class QueryRewriteService:
 
     async def _call_llm(self, prompt: str, *, max_tokens: int) -> str:
         from langchain.messages import HumanMessage
-        from langchain_openai import ChatOpenAI
 
-        model = ChatOpenAI(
-            model=self._settings.llm_model,
-            api_key=self._settings.llm_api_key,
-            base_url=self._settings.llm_base_url.rstrip("/"),
-            profile=build_chat_model_profile(self._settings),
-        )
+        model = create_chat_model(settings=self._settings)
         model = model.bind(max_tokens=max_tokens)
 
         def _run() -> object:

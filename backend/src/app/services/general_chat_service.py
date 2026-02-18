@@ -12,7 +12,6 @@ from typing import Any
 
 import httpx
 from langchain.messages import AIMessage, HumanMessage, SystemMessage
-from langchain_openai import ChatOpenAI
 from langgraph.types import Command
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -30,7 +29,7 @@ from app.core.checkpoint import CheckpointManager
 from app.core.errors import AppError
 from app.core.logging import set_run_id
 from app.core.settings import get_settings
-from app.integrations.langchain_profiles import build_chat_model_profile
+from app.integrations.chat_model_factory import create_chat_model
 from app.integrations.llm_client import ChatMessage as LLMMessage
 from app.integrations.llm_client import LLMClient
 from app.integrations.redis_client import RedisClient
@@ -333,13 +332,7 @@ class GeneralChatService:
                 http_client=self._http_client,
             )
 
-            # 绑定工具的模型（OpenAI-compatible base_url）
-            chat_model = ChatOpenAI(
-                model=self._settings.llm_model,
-                api_key=self._settings.llm_api_key,
-                base_url=self._settings.llm_base_url.rstrip("/"),
-                profile=build_chat_model_profile(self._settings),
-            )
+            chat_model = create_chat_model(settings=self._settings)
 
             # 构造初始 messages（历史 + 用户问题）
             system_prompt = self._prompts.render("general_chat/system")
@@ -503,13 +496,7 @@ class GeneralChatService:
                 http_client=self._http_client,
             )
 
-            # 绑定工具的模型（OpenAI-compatible base_url）
-            chat_model = ChatOpenAI(
-                model=self._settings.llm_model,
-                api_key=self._settings.llm_api_key,
-                base_url=self._settings.llm_base_url.rstrip("/"),
-                profile=build_chat_model_profile(self._settings),
-            )
+            chat_model = create_chat_model(settings=self._settings)
 
             # 构造初始 messages（历史 + 用户问题）
             system_prompt = self._prompts.render("general_chat/system")
@@ -743,12 +730,7 @@ class GeneralChatService:
         )
         await self._ensure_extensions_connected(pending_tool_calls)
 
-        chat_model = ChatOpenAI(
-            model=self._settings.llm_model,
-            api_key=self._settings.llm_api_key,
-            base_url=self._settings.llm_base_url.rstrip("/"),
-            profile=build_chat_model_profile(self._settings),
-        )
+        chat_model = create_chat_model(settings=self._settings)
 
         system_prompt = self._prompts.render("general_chat/system")
         agent = build_general_chat_agent(
@@ -885,12 +867,7 @@ class GeneralChatService:
         )
         await self._ensure_extensions_connected(pending_tool_calls)
 
-        chat_model = ChatOpenAI(
-            model=self._settings.llm_model,
-            api_key=self._settings.llm_api_key,
-            base_url=self._settings.llm_base_url.rstrip("/"),
-            profile=build_chat_model_profile(self._settings),
-        )
+        chat_model = create_chat_model(settings=self._settings)
 
         system_prompt = self._prompts.render("general_chat/system")
         agent = build_general_chat_agent(
