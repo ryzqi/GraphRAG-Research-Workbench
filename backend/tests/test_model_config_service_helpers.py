@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 from app.models.model_config import ModelProvider
 from app.services.model_config_service import (
+    _normalize_model_names,
     _pick_next_enabled_provider,
     _provider_candidates_after,
 )
@@ -13,7 +14,7 @@ from app.services.model_config_service import (
 class _ProviderRow:
     provider: ModelProvider
     enabled: bool
-    model: str | None = None
+    models: list[str] | None = None
 
 
 def test_provider_candidates_after_wraps_in_defined_order() -> None:
@@ -44,11 +45,11 @@ def test_pick_next_enabled_provider_selects_first_enabled_after_current() -> Non
 def test_pick_next_enabled_provider_prefers_enabled_provider_with_model() -> None:
     rows = {
         ModelProvider.OPENAI: _ProviderRow(provider=ModelProvider.OPENAI, enabled=False),
-        ModelProvider.OLLAMA: _ProviderRow(provider=ModelProvider.OLLAMA, enabled=True, model=None),
+        ModelProvider.OLLAMA: _ProviderRow(provider=ModelProvider.OLLAMA, enabled=True, models=None),
         ModelProvider.NVIDIA: _ProviderRow(
             provider=ModelProvider.NVIDIA,
             enabled=True,
-            model="nvidia/llama-3.1-nemotron-nano-8b-v1",
+            models=["nvidia/llama-3.1-nemotron-nano-8b-v1"],
         ),
     }
 
@@ -71,3 +72,8 @@ def test_pick_next_enabled_provider_returns_none_when_no_enabled_provider() -> N
         current_provider=ModelProvider.OPENAI,
     )
     assert selected is None
+
+
+def test_normalize_model_names_deduplicates_and_trims() -> None:
+    normalized = _normalize_model_names([" gpt-4o-mini ", "", "gpt-4o-mini", "o4-mini"])
+    assert normalized == ["gpt-4o-mini", "o4-mini"]

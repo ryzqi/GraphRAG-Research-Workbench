@@ -1,4 +1,4 @@
-"""Celery task that dispatches ingestion doc tasks from transactional outbox."""
+"""Celery task that dispatches index rebuild jobs from transactional outbox."""
 
 from __future__ import annotations
 
@@ -9,10 +9,10 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import or_, select
 
 from app.core.settings import get_settings
-from app.models.ingestion_batch import IngestionBatchDoc, IngestionDocStatus
-from app.models.ingestion_task_outbox import (
-    IngestionTaskOutbox,
-    IngestionTaskOutboxStatus,
+from app.models.index_rebuild_job import IndexRebuildJob, IndexRebuildStatus
+from app.models.index_rebuild_task_outbox import (
+    IndexRebuildTaskOutbox,
+    IndexRebuildTaskOutboxStatus,
 )
 from app.worker.celery_app import celery_app
 from app.worker.task_resources import managed_task_resources
@@ -46,69 +46,66 @@ async def _recover_stale_dispatched_rows(
     current_time = now or datetime.now(timezone.utc)
     stale_before = current_time - timedelta(seconds=STALE_DISPATCHED_SECONDS)
     stmt = (
-        select(IngestionTaskOutbox)
-        .join(IngestionBatchDoc, IngestionBatchDoc.id == IngestionTaskOutbox.doc_id)
+        select(IndexRebuildTaskOutbox)
+        .join(IndexRebuildJob, IndexRebuildJob.id == IndexRebuildTaskOutbox.job_id)
         .where(
-            IngestionTaskOutbox.status == IngestionTaskOutboxStatus.DISPATCHED,
-            IngestionTaskOutbox.dispatched_at.is_not(None),
-            IngestionTaskOutbox.dispatched_at <= stale_before,
-            IngestionTaskOutbox.attempts < IngestionTaskOutbox.max_attempts,
-            IngestionBatchDoc.status == IngestionDocStatus.PROCESSING,
+            IndexRebuildTaskOutbox.status == IndexRebuildTaskOutboxStatus.DISPATCHED,
+            IndexRebuildTaskOutbox.dispatched_at.is_not(None),
+            IndexRebuildTaskOutbox.dispatched_at <= stale_before,
+            IndexRebuildTaskOutbox.attempts < IndexRebuildTaskOutbox.max_attempts,
+            IndexRebuildJob.status.in_([IndexRebuildStatus.QUEUED, IndexRebuildStatus.RUNNING]),
         )
-        .order_by(IngestionTaskOutbox.dispatched_at.asc(), IngestionTaskOutbox.id.asc())
+        .order_by(IndexRebuildTaskOutbox.dispatched_at.asc(), IndexRebuildTaskOutbox.id.asc())
         .limit(limit)
         .with_for_update(skip_locked=True)
     )
     rows = list((await session.execute(stmt)).scalars().all())
     for row in rows:
-        row.status = IngestionTaskOutboxStatus.FAILED
+        row.status = IndexRebuildTaskOutboxStatus.FAILED
         row.dispatched_at = None
         row.next_retry_at = current_time
         row.last_error = STALE_RECOVERY_MESSAGE
         logger.warning(
-            "Recovered stale dispatched ingestion outbox row",
-            extra={
-                "outbox_id": str(row.id),
-                "batch_id": str(row.batch_id),
-                "doc_id": str(row.doc_id),
-                "attempts": row.attempts,
-            },
+            "Recovered stale dispatched index rebuild outbox row",
+            extra={"outbox_id": str(row.id), "job_id": str(row.job_id), "attempts": row.attempts},
         )
     return len(rows)
 
 
-async def _claim_due_outbox_rows(*, session, limit: int) -> list[IngestionTaskOutbox]:  # noqa: ANN001
+async def _claim_due_outbox_rows(*, session, limit: int) -> list[IndexRebuildTaskOutbox]:  # noqa: ANN001
     now = datetime.now(timezone.utc)
     stmt = (
-        select(IngestionTaskOutbox)
+        select(IndexRebuildTaskOutbox)
+        .join(IndexRebuildJob, IndexRebuildJob.id == IndexRebuildTaskOutbox.job_id)
         .where(
-            IngestionTaskOutbox.status.in_(
-                [IngestionTaskOutboxStatus.PENDING, IngestionTaskOutboxStatus.FAILED]
+            IndexRebuildTaskOutbox.status.in_(
+                [IndexRebuildTaskOutboxStatus.PENDING, IndexRebuildTaskOutboxStatus.FAILED]
             ),
             or_(
-                IngestionTaskOutbox.next_retry_at.is_(None),
-                IngestionTaskOutbox.next_retry_at <= now,
+                IndexRebuildTaskOutbox.next_retry_at.is_(None),
+                IndexRebuildTaskOutbox.next_retry_at <= now,
             ),
-            IngestionTaskOutbox.attempts < IngestionTaskOutbox.max_attempts,
+            IndexRebuildTaskOutbox.attempts < IndexRebuildTaskOutbox.max_attempts,
+            IndexRebuildJob.status.in_([IndexRebuildStatus.QUEUED, IndexRebuildStatus.RUNNING]),
         )
-        .order_by(IngestionTaskOutbox.created_at.asc(), IngestionTaskOutbox.id.asc())
+        .order_by(IndexRebuildTaskOutbox.created_at.asc(), IndexRebuildTaskOutbox.id.asc())
         .limit(limit)
         .with_for_update(skip_locked=True)
     )
     rows = list((await session.execute(stmt)).scalars().all())
     for row in rows:
-        row.status = IngestionTaskOutboxStatus.DISPATCHING
+        row.status = IndexRebuildTaskOutboxStatus.DISPATCHING
     return rows
 
 
 @celery_app.task(
-    name="app.worker.tasks.ingestion_outbox_dispatcher.dispatch_ingestion_outbox"
+    name="app.worker.tasks.index_rebuild_outbox_dispatcher.dispatch_index_rebuild_outbox"
 )
-def dispatch_ingestion_outbox(limit: int = DEFAULT_DISPATCH_BATCH_SIZE) -> None:
-    asyncio.run(_dispatch_ingestion_outbox(limit=limit))
+def dispatch_index_rebuild_outbox(limit: int = DEFAULT_DISPATCH_BATCH_SIZE) -> None:
+    asyncio.run(_dispatch_index_rebuild_outbox(limit=limit))
 
 
-async def _dispatch_ingestion_outbox(*, limit: int = DEFAULT_DISPATCH_BATCH_SIZE) -> int:
+async def _dispatch_index_rebuild_outbox(*, limit: int = DEFAULT_DISPATCH_BATCH_SIZE) -> int:
     settings = get_settings()
     safe_limit = max(int(limit or DEFAULT_DISPATCH_BATCH_SIZE), 1)
 
@@ -129,32 +126,31 @@ async def _dispatch_ingestion_outbox(*, limit: int = DEFAULT_DISPATCH_BATCH_SIZE
                     await session.rollback()
                     break
 
-                from app.worker.tasks.ingestion_batches import run_ingestion_batch_doc
+                from app.worker.tasks.index_rebuild import run_index_rebuild_job
 
                 for row in rows:
                     now = datetime.now(timezone.utc)
                     row.attempts += 1
                     try:
-                        run_ingestion_batch_doc.delay(str(row.doc_id))
+                        run_index_rebuild_job.delay(str(row.job_id))
                     except Exception as exc:  # pragma: no cover - depends on broker state
-                        row.status = IngestionTaskOutboxStatus.FAILED
+                        row.status = IndexRebuildTaskOutboxStatus.FAILED
                         row.dispatched_at = None
                         row.last_error = _format_error(exc)
                         row.next_retry_at = now + timedelta(
                             seconds=_compute_retry_delay_seconds(attempts=row.attempts)
                         )
                         logger.warning(
-                            "Dispatch ingestion outbox row failed",
+                            "Dispatch index rebuild outbox row failed",
                             extra={
                                 "outbox_id": str(row.id),
-                                "batch_id": str(row.batch_id),
-                                "doc_id": str(row.doc_id),
+                                "job_id": str(row.job_id),
                                 "attempts": row.attempts,
                                 "error": row.last_error,
                             },
                         )
                     else:
-                        row.status = IngestionTaskOutboxStatus.DISPATCHED
+                        row.status = IndexRebuildTaskOutboxStatus.DISPATCHED
                         row.dispatched_at = now
                         row.last_error = None
                         row.next_retry_at = None

@@ -23,7 +23,7 @@ def test_resolve_model_name_uses_openai_fallback_only_for_openai() -> None:
     openai_model = _resolve_model_name(
         provider=ModelProvider.OPENAI,
         snapshot_model=None,
-        provider_model=None,
+        provider_models=[],
         fallback_openai_model="gpt-4o-mini",
     )
     assert openai_model == "gpt-4o-mini"
@@ -32,6 +32,16 @@ def test_resolve_model_name_uses_openai_fallback_only_for_openai() -> None:
         _resolve_model_name(
             provider=ModelProvider.OLLAMA,
             snapshot_model=None,
-            provider_model=None,
+            provider_models=[],
             fallback_openai_model="gpt-4o-mini",
         )
+
+
+def test_resolve_model_name_prefers_provider_model_list_when_snapshot_empty() -> None:
+    model_name = _resolve_model_name(
+        provider=ModelProvider.OLLAMA,
+        snapshot_model=None,
+        provider_models=["qwen2.5:14b", "qwen2.5:7b"],
+        fallback_openai_model="gpt-4o-mini",
+    )
+    assert model_name == "qwen2.5:14b"

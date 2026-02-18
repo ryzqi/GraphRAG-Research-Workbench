@@ -25,6 +25,7 @@ def upgrade() -> None:
         "ollama",
         "nvidia",
         name="model_provider",
+        create_type=False,
     )
     provider_enum.create(bind, checkfirst=True)
 

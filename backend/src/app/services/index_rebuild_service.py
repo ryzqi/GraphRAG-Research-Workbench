@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import uuid
 from datetime import datetime, timezone
 
@@ -9,8 +10,15 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.index_rebuild_job import IndexRebuildJob, IndexRebuildStatus
+from app.models.index_rebuild_task_outbox import (
+    IndexRebuildTaskOutbox,
+    IndexRebuildTaskOutboxStatus,
+)
 from app.models.kb_config_snapshot import KBConfigSnapshot
 from app.models.knowledge_base import KnowledgeBase
+
+logger = logging.getLogger(__name__)
+INDEX_REBUILD_TASK_NAME = "app.worker.tasks.index_rebuild.run_index_rebuild_job"
 
 
 class IndexRebuildService:
@@ -73,12 +81,40 @@ class IndexRebuildService:
         )
         self._db.add(snapshot)
 
-        job = IndexRebuildJob(kb_id=kb.id, status=IndexRebuildStatus.QUEUED)
+        job = IndexRebuildJob(
+            id=uuid.uuid4(),
+            kb_id=kb.id,
+            status=IndexRebuildStatus.QUEUED,
+        )
         self._db.add(job)
+        self._db.add(
+            IndexRebuildTaskOutbox(
+                job_id=job.id,
+                task_name=INDEX_REBUILD_TASK_NAME,
+                payload={"job_id": str(job.id)},
+                status=IndexRebuildTaskOutboxStatus.PENDING,
+                attempts=0,
+                max_attempts=20,
+                next_retry_at=None,
+                dispatched_at=None,
+                last_error=None,
+            )
+        )
         await self._db.commit()
         await self._db.refresh(job)
 
-        from app.worker.tasks.index_rebuild import run_index_rebuild_job
-
-        run_index_rebuild_job.delay(str(job.id))
+        self._trigger_outbox_dispatch()
         return job
+
+    def _trigger_outbox_dispatch(self) -> None:
+        try:
+            from app.worker.tasks.index_rebuild_outbox_dispatcher import (
+                dispatch_index_rebuild_outbox,
+            )
+
+            dispatch_index_rebuild_outbox.delay()
+        except Exception as exc:  # pragma: no cover - defensive guard
+            logger.warning(
+                "Failed to trigger index rebuild outbox dispatcher",
+                extra={"error": str(exc)},
+            )

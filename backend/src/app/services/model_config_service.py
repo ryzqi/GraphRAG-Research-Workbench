@@ -36,6 +36,21 @@ _PROVIDER_ORDER = [
 ]
 
 
+def _normalize_model_names(values: Iterable[str] | None) -> list[str]:
+    if not values:
+        return []
+
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for raw_value in values:
+        value = str(raw_value).strip()
+        if not value or value in seen:
+            continue
+        normalized.append(value)
+        seen.add(value)
+    return normalized
+
+
 def _provider_candidates_after(
     provider: ModelProviderORM,
 ) -> list[ModelProviderORM]:
@@ -54,7 +69,7 @@ def _pick_next_enabled_provider(
     candidates = _provider_candidates_after(current_provider)
     for candidate in candidates:
         row = by_provider.get(candidate)
-        if row is not None and row.enabled and (row.model or "").strip():
+        if row is not None and row.enabled and _normalize_model_names(row.models):
             return row
 
     for candidate in candidates:
@@ -86,10 +101,11 @@ def _default_thinking_level(provider: ModelProviderORM) -> str | None:
     return None
 
 
-def _default_model(provider: ModelProviderORM, settings: Settings) -> str | None:
+def _default_models(provider: ModelProviderORM, settings: Settings) -> list[str]:
     if provider == ModelProviderORM.OPENAI:
-        return settings.llm_model.strip() or None
-    return None
+        model_name = settings.llm_model.strip()
+        return [model_name] if model_name else []
+    return []
 
 
 class ModelConfigService:
@@ -125,8 +141,8 @@ class ModelConfigService:
             row.enabled = bool(updates["enabled"])
         if "base_url" in updates:
             row.base_url = updates["base_url"]
-        if "model" in updates:
-            row.model = updates["model"]
+        if "models" in updates:
+            row.models = _normalize_model_names(updates["models"])
         if "thinking_enabled" in updates:
             row.thinking_enabled = bool(updates["thinking_enabled"])
         if "thinking_level" in updates:
@@ -170,7 +186,36 @@ class ModelConfigService:
             selection.active_provider = next_provider.provider
             selection.active_model = next_model
         elif selection.active_provider == row.provider:
-            selection.active_model = row.model
+            available_models = _normalize_model_names(row.models)
+            active_model = (selection.active_model or "").strip()
+            if active_model and active_model in available_models:
+                selection.active_model = active_model
+            else:
+                next_model = self._resolve_active_model(row)
+                if next_model:
+                    selection.active_model = next_model
+                else:
+                    provider_rows = await self._list_provider_rows()
+                    by_provider = {item.provider: item for item in provider_rows}
+                    next_provider = _pick_next_enabled_provider(
+                        by_provider=by_provider,
+                        current_provider=row.provider,
+                    )
+                    if next_provider is None:
+                        raise AppError(
+                            code="NO_ENABLED_MODEL_PROVIDER",
+                            message="至少保留一个启用的模型供应商",
+                            status_code=422,
+                        )
+                    next_provider_model = self._resolve_active_model(next_provider)
+                    if not next_provider_model:
+                        raise AppError(
+                            code="NO_ENABLED_MODEL_PROVIDER",
+                            message="无可切换的已启用供应商（缺少模型名）",
+                            status_code=422,
+                        )
+                    selection.active_provider = next_provider.provider
+                    selection.active_model = next_provider_model
 
         await self._db.commit()
         await ModelRuntimeConfigManager.refresh(db=self._db, settings=self._settings)
@@ -193,7 +238,16 @@ class ModelConfigService:
                 status_code=422,
             )
 
-        selected_model = (payload.model or row.model or "").strip()
+        provider_models = _normalize_model_names(row.models)
+        requested_model = (payload.model or "").strip()
+        if requested_model and requested_model not in provider_models:
+            raise AppError(
+                code="MODEL_NOT_CONFIGURED",
+                message="请从该供应商已配置模型中选择",
+                status_code=422,
+            )
+
+        selected_model = requested_model or self._resolve_active_model(row)
         if not selected_model:
             raise AppError(
                 code="MODEL_NOT_CONFIGURED",
@@ -201,7 +255,6 @@ class ModelConfigService:
                 status_code=422,
             )
 
-        row.model = selected_model
         selection = await self._get_selection()
         selection.active_provider = row.provider
         selection.active_model = selected_model
@@ -228,7 +281,7 @@ class ModelConfigService:
                 enabled=True,
                 base_url=_default_base_url(provider, self._settings),
                 api_key_encrypted=api_key_encrypted,
-                model=_default_model(provider, self._settings),
+                models=_default_models(provider, self._settings),
                 thinking_enabled=True,
                 thinking_level=_default_thinking_level(provider),
             )
@@ -236,13 +289,20 @@ class ModelConfigService:
             by_provider[provider] = row
             dirty = True
 
+        for row in by_provider.values():
+            current_models = row.models or []
+            normalized_models = _normalize_model_names(current_models)
+            if normalized_models != list(current_models):
+                row.models = normalized_models
+                dirty = True
+
         selection = await self._db.get(ModelRuntimeSelection, 1)
         if selection is None:
             openai_row = by_provider[ModelProviderORM.OPENAI]
             selection = ModelRuntimeSelection(
                 id=1,
                 active_provider=ModelProviderORM.OPENAI,
-                active_model=openai_row.model or self._settings.llm_model.strip() or None,
+                active_model=self._resolve_active_model(openai_row),
             )
             self._db.add(selection)
             dirty = True
@@ -268,13 +328,13 @@ class ModelConfigService:
         return selection
 
     def _resolve_active_model(self, row: ModelProviderConfig) -> str | None:
-        model_name = (row.model or "").strip()
-        if model_name:
-            return model_name
+        normalized_models = _normalize_model_names(row.models)
+        if normalized_models:
+            return normalized_models[0]
 
-        default_model = _default_model(row.provider, self._settings)
-        if default_model:
-            return default_model
+        default_models = _default_models(row.provider, self._settings)
+        if default_models:
+            return default_models[0]
 
         if row.provider == ModelProviderORM.OPENAI:
             fallback_model = self._settings.llm_model.strip()
@@ -311,7 +371,7 @@ class ModelConfigService:
                     provider=_as_schema_provider(row.provider),
                     enabled=row.enabled,
                     base_url=row.base_url,
-                    model=row.model,
+                    models=_normalize_model_names(row.models),
                     thinking_enabled=row.thinking_enabled,
                     thinking_level=row.thinking_level,
                     api_key_set=api_key_set,

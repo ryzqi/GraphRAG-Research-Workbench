@@ -19,12 +19,17 @@ def _resolve_model_name(
     *,
     provider: ModelProvider,
     snapshot_model: str | None,
-    provider_model: str | None,
+    provider_models: list[str],
     fallback_openai_model: str,
 ) -> str:
-    candidate = (snapshot_model or provider_model or "").strip()
-    if candidate:
-        return candidate
+    snapshot_candidate = (snapshot_model or "").strip()
+    if snapshot_candidate:
+        return snapshot_candidate
+
+    for provider_model in provider_models:
+        candidate = provider_model.strip()
+        if candidate:
+            return candidate
 
     if provider == ModelProvider.OPENAI:
         openai_model = fallback_openai_model.strip()
@@ -41,7 +46,7 @@ def get_active_model_identity(settings: Settings | None = None) -> tuple[str, st
     model_name = _resolve_model_name(
         provider=provider_cfg.provider,
         snapshot_model=snapshot.active_model,
-        provider_model=provider_cfg.model,
+        provider_models=provider_cfg.models,
         fallback_openai_model=cfg.llm_model,
     )
     if not provider_cfg.enabled:
@@ -58,7 +63,7 @@ def create_chat_model(*, settings: Settings | None = None) -> Any:
     model_name = _resolve_model_name(
         provider=provider_cfg.provider,
         snapshot_model=snapshot.active_model,
-        provider_model=provider_cfg.model,
+        provider_models=provider_cfg.models,
         fallback_openai_model=cfg.llm_model,
     )
 

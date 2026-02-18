@@ -177,33 +177,63 @@ function Wait-BackendReady {
     return $false
 }
 
+function Get-EnvVarValue {
+    param([Parameter(Mandatory = $true)][string]$Name)
+
+    $value = [Environment]::GetEnvironmentVariable($Name)
+    if ($null -eq $value) { return "" }
+    $trimmed = $value.Trim()
+    if ($trimmed.Length -eq 0) { return "" }
+    return $trimmed
+}
+
 function Get-CeleryWorkerCommand {
-    $explicitPool = if ($env:CELERY_WORKER_POOL) { $env:CELERY_WORKER_POOL.Trim().ToLowerInvariant() } else { "" }
+    param(
+        [Parameter(Mandatory = $true)][string]$Queues,
+        [string]$PoolEnvVar = "CELERY_WORKER_POOL",
+        [string]$ConcurrencyEnvVar = "CELERY_WORKER_CONCURRENCY",
+        [string]$DefaultPool = "threads",
+        [string]$DefaultConcurrency = ""
+    )
+
+    $explicitPool = (Get-EnvVarValue -Name $PoolEnvVar).ToLowerInvariant()
+    if (-not $explicitPool) {
+        $explicitPool = (Get-EnvVarValue -Name "CELERY_WORKER_POOL").ToLowerInvariant()
+    }
 
     $pool = if ($explicitPool) {
         $explicitPool
     }
     else {
-        "threads"
+        $DefaultPool
     }
 
-    $concurrency = if ($env:CELERY_WORKER_CONCURRENCY) {
-        $env:CELERY_WORKER_CONCURRENCY
+    $concurrency = Get-EnvVarValue -Name $ConcurrencyEnvVar
+    if (-not $concurrency) {
+        $concurrency = Get-EnvVarValue -Name "CELERY_WORKER_CONCURRENCY"
     }
-    elseif ($pool -eq "threads") {
-        $cpuCount = [Environment]::ProcessorCount
-        if ($cpuCount -lt 1) { $cpuCount = 1 }
-        [Math]::Min($cpuCount, 8).ToString()
-    }
-    else {
-        "1"
+    if (-not $concurrency) {
+        if ($DefaultConcurrency) {
+            $concurrency = $DefaultConcurrency
+        }
+        elseif ($pool -eq "threads") {
+            $cpuCount = [Environment]::ProcessorCount
+            if ($cpuCount -lt 1) { $cpuCount = 1 }
+            $concurrency = [Math]::Min($cpuCount, 8).ToString()
+        }
+        else {
+            $concurrency = "1"
+        }
     }
 
     if ($Verbose) {
-        Write-Host "Celery Worker 参数：--pool=$pool --concurrency=$concurrency" -ForegroundColor DarkGray
+        Write-Host "Celery Worker 参数：--pool=$pool --concurrency=$concurrency -Q $Queues" -ForegroundColor DarkGray
     }
 
-    return "uv run celery -A app.worker.celery_app worker --loglevel=INFO --pool=$pool --concurrency=$concurrency"
+    return "uv run celery -A app.worker.celery_app worker --loglevel=INFO --pool=$pool --concurrency=$concurrency -Q $Queues"
+}
+function Get-CeleryBeatCommand {
+    return "uv run celery -A app.worker.celery_app beat --loglevel=INFO"
 }
 function Get-BackendApiCommand {
     $command = "uv run uvicorn app.main:app --host 127.0.0.1 --port 8000 --loop asyncio:SelectorEventLoop"
@@ -282,8 +312,17 @@ if (-not $SkipBackend) {
 }
 
 if (-not $SkipWorker) {
-    $workerCommand = Get-CeleryWorkerCommand
-    Start-Terminal -Title "celery-worker" -WorkingDirectory $backendDir -Command $workerCommand
+    $beatCommand = Get-CeleryBeatCommand
+    Start-Terminal -Title "celery-beat" -WorkingDirectory $backendDir -Command $beatCommand
+
+    $dispatchWorkerCommand = Get-CeleryWorkerCommand -Queues "dispatch" -PoolEnvVar "CELERY_DISPATCH_WORKER_POOL" -ConcurrencyEnvVar "CELERY_DISPATCH_WORKER_CONCURRENCY" -DefaultConcurrency "2"
+    Start-Terminal -Title "celery-worker-dispatch" -WorkingDirectory $backendDir -Command $dispatchWorkerCommand
+
+    $coreWorkerCommand = Get-CeleryWorkerCommand -Queues "ingestion,rebuild,default" -PoolEnvVar "CELERY_CORE_WORKER_POOL" -ConcurrencyEnvVar "CELERY_CORE_WORKER_CONCURRENCY"
+    Start-Terminal -Title "celery-worker-core" -WorkingDirectory $backendDir -Command $coreWorkerCommand
+
+    $nonCoreWorkerCommand = Get-CeleryWorkerCommand -Queues "research,export" -PoolEnvVar "CELERY_NONCORE_WORKER_POOL" -ConcurrencyEnvVar "CELERY_NONCORE_WORKER_CONCURRENCY" -DefaultConcurrency "2"
+    Start-Terminal -Title "celery-worker-noncore" -WorkingDirectory $backendDir -Command $nonCoreWorkerCommand
 }
 
 if ($RunSeed) {
@@ -343,7 +382,12 @@ Write-Host ""
 Write-Host "一键启动流程已完成，以下服务已启动（或启动中）:" -ForegroundColor Cyan
 if (-not $SkipInfra) { Write-Host " - 基础依赖：Podman compose (infra/up.ps1)" -ForegroundColor Cyan }
 if (-not $SkipBackend) { Write-Host " - 后端 API：uvicorn 生产参数监听 8000（Windows 使用 SelectorEventLoop）" -ForegroundColor Cyan }
-if (-not $SkipWorker) { Write-Host " - Celery Worker：threads 池（默认并发 min(逻辑 CPU 核数, 8)）" -ForegroundColor Cyan }
+if (-not $SkipWorker) {
+    Write-Host " - Celery Beat：独立进程（周期补偿调度）" -ForegroundColor Cyan
+    Write-Host " - Celery Worker(dispatch)：队列 dispatch（默认并发 2）" -ForegroundColor Cyan
+    Write-Host " - Celery Worker(core)：队列 ingestion,rebuild,default（默认并发 min(逻辑 CPU 核数, 8)）" -ForegroundColor Cyan
+    Write-Host " - Celery Worker(noncore)：队列 research,export（默认并发 2）" -ForegroundColor Cyan
+}
 if (-not $SkipFrontend) { Write-Host " - 前端：Next.js 生产服务监听 3000" -ForegroundColor Cyan }
 if ($RunSeed) { Write-Host " - 演示数据：已执行 seed_demo_kb.py" -ForegroundColor Cyan }
 

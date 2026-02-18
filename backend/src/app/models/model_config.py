@@ -6,6 +6,7 @@ from datetime import datetime
 from enum import Enum
 
 import sqlalchemy as sa
+from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -33,7 +34,12 @@ class ModelProviderConfig(Base):
     )
     base_url: Mapped[str | None] = mapped_column(sa.String(2048), nullable=True)
     api_key_encrypted: Mapped[str | None] = mapped_column(sa.Text, nullable=True)
-    model: Mapped[str | None] = mapped_column(sa.String(256), nullable=True)
+    models: Mapped[list[str]] = mapped_column(
+        ARRAY(sa.String(256)),
+        nullable=False,
+        default=list,
+        server_default=sa.text("'{}'::character varying[]"),
+    )
     thinking_enabled: Mapped[bool] = mapped_column(
         sa.Boolean,
         nullable=False,

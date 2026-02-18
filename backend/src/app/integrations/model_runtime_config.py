@@ -28,6 +28,21 @@ _PROVIDER_PRIORITY: tuple[ModelProvider, ...] = (
 )
 
 
+def _normalize_model_names(values: list[str] | None) -> list[str]:
+    if not values:
+        return []
+
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for raw_value in values:
+        value = str(raw_value).strip()
+        if not value or value in seen:
+            continue
+        normalized.append(value)
+        seen.add(value)
+    return normalized
+
+
 def _provider_priority(provider: ModelProvider) -> int:
     try:
         return _PROVIDER_PRIORITY.index(provider)
@@ -71,7 +86,7 @@ class RuntimeProviderConfig:
     enabled: bool
     base_url: str | None
     api_key: str | None
-    model: str | None
+    models: list[str]
     thinking_enabled: bool
     thinking_level: str | None
 
@@ -183,7 +198,7 @@ class ModelRuntimeConfigManager:
                 enabled=row.enabled,
                 base_url=row.base_url,
                 api_key=api_key,
-                model=row.model,
+                models=_normalize_model_names(row.models),
                 thinking_enabled=row.thinking_enabled,
                 thinking_level=thinking_level,
             )
@@ -203,13 +218,13 @@ class ModelRuntimeConfigManager:
             if (
                 selection_matches_active
                 and isinstance(selection.active_model, str)
+                and selection.active_model.strip() in provider_cfg.models
             )
             else None
         )
         if not active_model:
-            provider_model = (provider_cfg.model or "").strip()
-            if provider_model:
-                active_model = provider_model
+            if provider_cfg.models:
+                active_model = provider_cfg.models[0]
             elif active_provider == ModelProvider.OPENAI:
                 active_model = settings.llm_model.strip() or None
             else:
@@ -229,13 +244,13 @@ class ModelRuntimeConfigManager:
             enabled=True,
             base_url=settings.llm_base_url.rstrip("/"),
             api_key=settings.llm_api_key,
-            model=settings.llm_model,
+            models=_normalize_model_names([settings.llm_model]),
             thinking_enabled=True,
             thinking_level="high",
         )
         return RuntimeModelSnapshot(
             providers={ModelProvider.OPENAI: provider_cfg},
             active_provider=ModelProvider.OPENAI,
-            active_model=settings.llm_model,
+            active_model=provider_cfg.models[0] if provider_cfg.models else None,
             updated_at=None,
         )

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import uuid
 from datetime import datetime, timezone
 
@@ -27,11 +28,37 @@ from app.worker.task_resources import managed_task_resources
 from app.worker.tasks.contextual_retry import generate_contexts_for_chunks
 from app.worker.tasks.embedding_inputs import build_embedding_inputs
 
+logger = logging.getLogger(__name__)
+
 
 @celery_app.task(name="app.worker.tasks.index_rebuild.run_index_rebuild_job")
 def run_index_rebuild_job(job_id: str) -> None:
     """Celery entrypoint for index rebuild."""
     asyncio.run(_run_index_rebuild_job(job_id))
+
+
+def _raise_on_index_rebuild_embedding_count_mismatch(
+    *,
+    expected_count: int,
+    actual_count: int,
+    job_id: str,
+    material_id: str,
+) -> None:
+    if expected_count == actual_count:
+        return
+    logger.error(
+        "Index rebuild embedding count mismatch",
+        extra={
+            "job_id": job_id,
+            "material_id": material_id,
+            "embedding_input_count": expected_count,
+            "embedding_output_count": actual_count,
+        },
+    )
+    raise RuntimeError(
+        "EMBEDDING_COUNT_MISMATCH: "
+        f"expected={expected_count}, actual={actual_count}"
+    )
 
 
 def _records_for_window(
@@ -306,6 +333,12 @@ async def _run_index_rebuild_job(job_id: str) -> None:
                     for start in range(0, len(embedding_inputs), batch_size):
                         batch = embedding_inputs[start : start + batch_size]
                         embeddings.extend(await embedding_client.embed(texts=batch))
+                    _raise_on_index_rebuild_embedding_count_mismatch(
+                        expected_count=len(embedding_inputs),
+                        actual_count=len(embeddings),
+                        job_id=str(job.id),
+                        material_id=str(material.id),
+                    )
 
                     if embedding_dim is None and embeddings:
                         embedding_dim = len(embeddings[0])
@@ -336,7 +369,7 @@ async def _run_index_rebuild_job(job_id: str) -> None:
 
                         milvus_records: list[dict] = []
                         for idx, (chunk_item, emb) in enumerate(
-                            zip(chunk_items, embeddings, strict=False)
+                            zip(chunk_items, embeddings, strict=True)
                         ):
                             parent_chunk_id = ""
                             if chunk_item.chunk_role == "child" and chunk_item.parent_ref is not None:

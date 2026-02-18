@@ -18,10 +18,15 @@ def _provider_config(provider: ModelProvider, *, enabled: bool) -> RuntimeProvid
         enabled=enabled,
         base_url=None,
         api_key=None,
-        model=f"{provider.value}-model",
+        models=[f"{provider.value}-model"],
         thinking_enabled=True,
         thinking_level="high",
     )
+
+
+def test_provider_config_keeps_models_list() -> None:
+    provider = _provider_config(ModelProvider.OPENAI, enabled=True)
+    assert provider.models == ["openai-model"]
 
 
 def test_active_provider_config_falls_back_to_enabled_provider() -> None:

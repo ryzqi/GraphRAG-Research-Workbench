@@ -18,7 +18,7 @@ class ProviderConfigRead(BaseModel):
     provider: ModelProvider
     enabled: bool
     base_url: str | None = None
-    model: str | None = None
+    models: list[str] = Field(default_factory=list)
     thinking_enabled: bool = True
     thinking_level: str | None = None
     api_key_set: bool = False
@@ -39,7 +39,7 @@ class ProviderConfigUpdate(BaseModel):
     enabled: bool | None = None
     base_url: str | None = None
     api_key: str | None = None
-    model: str | None = Field(None, max_length=256)
+    models: list[str] | None = None
     thinking_enabled: bool | None = None
     thinking_level: str | None = Field(None, max_length=32)
 
@@ -53,7 +53,27 @@ class ProviderConfigUpdate(BaseModel):
             return None
         return raw.rstrip("/")
 
-    @field_validator("model", "thinking_level", mode="before")
+    @field_validator("models", mode="before")
+    @classmethod
+    def _normalize_models(cls, value: object) -> object:
+        if value is None:
+            return None
+        if not isinstance(value, list):
+            raise ValueError("models must be a list")
+
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for raw_item in value:
+            raw = str(raw_item).strip()
+            if not raw or raw in seen:
+                continue
+            if len(raw) > 256:
+                raise ValueError("model name must be at most 256 characters")
+            normalized.append(raw)
+            seen.add(raw)
+        return normalized
+
+    @field_validator("thinking_level", mode="before")
     @classmethod
     def _normalize_optional_text(cls, value: object) -> object:
         if value is None:

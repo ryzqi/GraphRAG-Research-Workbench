@@ -72,12 +72,21 @@ uv run uvicorn app.main:app --host 127.0.0.1 --port 8000 --loop asyncio:Selector
 - 文档：`http://localhost:8000/docs`
 - 健康检查：`GET http://localhost:8000/api/v1/health`
 
-### 3) 启动 Worker（Celery，生产并发）
+### 3) 启动 Worker + Beat（Celery，生产并发）
 
 ```powershell
 cd backend
-# Windows 默认池策略：threads（脚本默认并发 = min(逻辑 CPU 核数, 8)）
-uv run celery -A app.worker.celery_app worker --loglevel=INFO --pool=threads --concurrency=8
+# 独立 beat（周期补偿）
+uv run celery -A app.worker.celery_app beat --loglevel=INFO
+
+# dispatch worker（短任务，负责 outbox 派发）
+uv run celery -A app.worker.celery_app worker --loglevel=INFO --pool=threads --concurrency=2 -Q dispatch
+
+# core worker（ingestion/rebuild/default）
+uv run celery -A app.worker.celery_app worker --loglevel=INFO --pool=threads --concurrency=8 -Q ingestion,rebuild,default
+
+# noncore worker（research/export）
+uv run celery -A app.worker.celery_app worker --loglevel=INFO --pool=threads --concurrency=2 -Q research,export
 ```
 
 ### 4) 启动前端（Next.js 生产模式）

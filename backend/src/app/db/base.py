@@ -18,6 +18,7 @@ def import_all_models() -> None:
         evidence,
         export_job,
         index_rebuild_job,
+        index_rebuild_task_outbox,
         ingestion_batch,
         ingestion_task_outbox,
         kb_bootstrap_job,

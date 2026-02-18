@@ -6,7 +6,7 @@ export interface ProviderConfigRead {
   provider: ModelProvider;
   enabled: boolean;
   base_url: string | null;
-  model: string | null;
+  models: string[];
   thinking_enabled: boolean;
   thinking_level: string | null;
   api_key_set: boolean;
@@ -25,7 +25,7 @@ export interface ProviderConfigUpdate {
   enabled?: boolean;
   base_url?: string | null;
   api_key?: string | null;
-  model?: string | null;
+  models?: string[];
   thinking_enabled?: boolean;
   thinking_level?: string | null;
 }

@@ -46,6 +46,50 @@ class _DocProcessOutcome:
     semantic_fallback_chunks: int
 
 
+def _raise_on_embedding_count_mismatch(
+    *,
+    expected_count: int,
+    actual_count: int,
+    doc_id: str,
+    material_id: str,
+) -> None:
+    if expected_count == actual_count:
+        return
+    logger.error(
+        "Ingestion embedding count mismatch",
+        extra={
+            "doc_id": doc_id,
+            "material_id": material_id,
+            "embedding_input_count": expected_count,
+            "embedding_output_count": actual_count,
+        },
+    )
+    raise _ProcessingFailure(
+        code="EMBEDDING_COUNT_MISMATCH",
+        message=(
+            "Embedding 返回数量与输入数量不一致: "
+            f"expected={expected_count}, actual={actual_count}"
+        ),
+        retryable=True,
+    )
+
+
+def _build_parent_id_by_ref(*, chunk_items: list, chunk_ids: list[uuid.UUID]) -> dict[int, str]:
+    parent_id_by_ref: dict[int, str] = {}
+    parent_index = 0
+    for idx, chunk_item in enumerate(chunk_items):
+        if chunk_item.chunk_role == "parent":
+            parent_id_by_ref[parent_index] = str(chunk_ids[idx])
+            parent_index += 1
+    return parent_id_by_ref
+
+
+def _resolve_parent_chunk_id(*, chunk_item, parent_id_by_ref: dict[int, str]) -> str:
+    if chunk_item.chunk_role == "child" and chunk_item.parent_ref is not None:
+        return parent_id_by_ref.get(chunk_item.parent_ref, "")
+    return ""
+
+
 def _records_for_window(
     records: list[dict],
     *,
@@ -377,6 +421,12 @@ async def _process_doc(*, doc, resources) -> _DocProcessOutcome:
         for start in range(0, len(embedding_inputs), batch_size):
             payload = embedding_inputs[start : start + batch_size]
             embeddings.extend(await embedding_client.embed(texts=payload))
+        _raise_on_embedding_count_mismatch(
+            expected_count=len(embedding_inputs),
+            actual_count=len(embeddings),
+            doc_id=str(doc.id),
+            material_id=str(material.id),
+        )
 
         milvus = resources.milvus
         if milvus is None:
@@ -406,9 +456,13 @@ async def _process_doc(*, doc, resources) -> _DocProcessOutcome:
                 context_errors=[item.error for item in context_results],
                 context_attempts=[item.attempts for item in context_results],
             )
+            parent_id_by_ref = _build_parent_id_by_ref(
+                chunk_items=chunk_items,
+                chunk_ids=chunk_ids,
+            )
 
             records: list[dict] = []
-            for idx, (chunk_item, emb) in enumerate(zip(chunk_items, embeddings, strict=False)):
+            for idx, (chunk_item, emb) in enumerate(zip(chunk_items, embeddings, strict=True)):
                 chunk_meta = chunk_item.metadata if isinstance(chunk_item.metadata, dict) else {}
                 records.append(
                     {
@@ -416,7 +470,10 @@ async def _process_doc(*, doc, resources) -> _DocProcessOutcome:
                         "kb_id": str(material.kb_id),
                         "material_id": str(material.id),
                         "chunk_role": chunk_item.chunk_role,
-                        "parent_chunk_id": "",
+                        "parent_chunk_id": _resolve_parent_chunk_id(
+                            chunk_item=chunk_item,
+                            parent_id_by_ref=parent_id_by_ref,
+                        ),
                         "child_seq": chunk_item.child_seq or 0,
                         "content": chunk_item.content,
                         "context": contexts[idx] if contexts else "",
