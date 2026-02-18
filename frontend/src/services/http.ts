@@ -37,6 +37,8 @@ const API_BASE_URL = (() => {
   return normalizeApiBaseUrl(raw);
 })();
 
+const DEFAULT_API_TIMEOUT_MS = 30_000;
+
 export function getApiBaseUrl(): string {
   return API_BASE_URL;
 }
@@ -46,28 +48,116 @@ function newRequestId(): string {
   return uuid ?? `req_${Date.now()}_${Math.random().toString(16).slice(2)}`;
 }
 
-export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
-  const requestId = newRequestId();
+function mergeSignals(
+  signalA: AbortSignal | null | undefined,
+  signalB: AbortSignal
+): AbortSignal {
+  if (!signalA) {
+    return signalB;
+  }
+  if (signalA.aborted) {
+    return signalA;
+  }
+  if (typeof AbortSignal.any === 'function') {
+    return AbortSignal.any([signalA, signalB]);
+  }
 
+  const controller = new AbortController();
+  const forwardAbort = () => controller.abort();
+  signalA.addEventListener('abort', forwardAbort, { once: true });
+  signalB.addEventListener('abort', forwardAbort, { once: true });
+  return controller.signal;
+}
+
+interface FetchWithTimeoutOptions extends RequestInit {
+  timeoutMs?: number;
+  requestId?: string;
+}
+
+export async function fetchWithTimeout(
+  input: string,
+  options?: FetchWithTimeoutOptions
+): Promise<{ response: Response; requestId: string }> {
+  const requestId = options?.requestId ?? newRequestId();
+  const timeoutMs = Math.max(0, options?.timeoutMs ?? DEFAULT_API_TIMEOUT_MS);
+
+  const timeoutController = new AbortController();
+  const signal = mergeSignals(options?.signal, timeoutController.signal);
+
+  let timeoutTriggered = false;
+  let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
+  if (timeoutMs > 0) {
+    timeoutHandle = setTimeout(() => {
+      timeoutTriggered = true;
+      timeoutController.abort();
+    }, timeoutMs);
+  }
+
+  try {
+    const response = await fetch(input, {
+      ...options,
+      signal,
+    });
+    return { response, requestId };
+  } catch (err) {
+    if (timeoutTriggered) {
+      throw new HttpError(`请求超时（${timeoutMs}ms）`, 408, { requestId });
+    }
+    if ((err as { name?: string } | undefined)?.name === 'AbortError') {
+      throw new HttpError('请求已取消', 499, { requestId });
+    }
+    throw new HttpError('请求失败，无法连接到目标服务', 0, {
+      requestId,
+      body: err instanceof Error ? err.message : err,
+    });
+  } finally {
+    if (timeoutHandle !== null) {
+      clearTimeout(timeoutHandle);
+    }
+  }
+}
+
+interface ApiFetchOptions extends RequestInit {
+  timeoutMs?: number;
+}
+
+function buildBackendConnectivityHint(url: string): string {
+  return `无法连接到后端服务（${API_BASE_URL}）。请确认后端已启动并可访问：${url}，或在 frontend/.env.local 配置 NEXT_PUBLIC_API_BASE_URL。`;
+}
+
+export async function apiFetch<T>(path: string, init?: ApiFetchOptions): Promise<T> {
+  const requestId = newRequestId();
   const headers = new Headers(init?.headers ?? {});
-  headers.set('Content-Type', 'application/json');
+  if (!headers.has('Content-Type') && !(init?.body instanceof FormData)) {
+    headers.set('Content-Type', 'application/json');
+  }
   headers.set('X-Request-Id', requestId);
 
   const url = `${API_BASE_URL}${path}`;
 
-  let res: Response;
+  let response: Response;
   try {
-    res = await fetch(url, {
+    const result = await fetchWithTimeout(url, {
       ...init,
       headers,
+      requestId,
+      timeoutMs: init?.timeoutMs,
     });
+    response = result.response;
   } catch (err) {
-    const hint = `无法连接到后端服务（${API_BASE_URL}）。请确认后端已启动并可访问：${url}，或在 frontend/.env.local 配置 NEXT_PUBLIC_API_BASE_URL。`;
+    if (err instanceof HttpError) {
+      if (err.status === 0 || err.status === 408 || err.status === 499) {
+        const hint = buildBackendConnectivityHint(url);
+        throw new HttpError(hint, err.status, { requestId, body: err.body });
+      }
+      throw err;
+    }
+    const hint = buildBackendConnectivityHint(url);
     throw new HttpError(hint, 0, { requestId, body: err instanceof Error ? err.message : err });
   }
 
-  const responseRequestId = res.headers.get('x-request-id') ?? undefined;
-  const text = await res.text();
+  const responseRequestId = response.headers.get('x-request-id') ?? undefined;
+  const text = await response.text();
   let body: unknown = undefined;
   try {
     body = text ? (JSON.parse(text) as unknown) : undefined;
@@ -75,11 +165,10 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
     body = text;
   }
 
-  if (!res.ok) {
-    const message = (body as any)?.error?.message ?? `请求失败（${res.status}）`;
-    throw new HttpError(message, res.status, { requestId: responseRequestId ?? requestId, body });
+  if (!response.ok) {
+    const message = (body as any)?.error?.message ?? `请求失败（${response.status}）`;
+    throw new HttpError(message, response.status, { requestId: responseRequestId ?? requestId, body });
   }
 
   return body as T;
 }
-

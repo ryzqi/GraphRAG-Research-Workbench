@@ -2,7 +2,7 @@
 /**
  * Add documents page for an existing knowledge base.
  */
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import {
   Alert,
@@ -26,9 +26,23 @@ import {
   useIngestionBatchLive,
   useRetryIngestionBatch
 } from '../hooks/queries/useIngestionBatches';
+import {
+  useBootstrapSubmission,
+  useFinalizeBootstrapSubmission,
+} from '../hooks/queries/useBootstrapSubmissions';
 import { useKnowledgeBase } from '../hooks/queries/useKnowledgeBases';
 import { getErrorMessage } from '../lib/errorHandler';
+import { splitDirectIngestionManifestEntries } from '../lib/manifestBuilders';
 import { runWithConcurrency } from '../lib/runWithConcurrency';
+import {
+  uploadBootstrapSubmissionFile,
+  type BootstrapSubmissionStatus,
+  type BootstrapUploadTarget,
+} from '../services/bootstrapSubmissions';
+import {
+  clearBootstrapPendingUploadSession,
+  getBootstrapPendingUploadSession,
+} from '../services/bootstrapUploadSession';
 import { uploadMaterial } from '../services/materials';
 import type {
   EntryError,
@@ -46,6 +60,22 @@ interface PendingSubmittedBatch {
   batchId: string;
   submittedDocTitles: string[];
 }
+
+interface BootstrapUploadState {
+  stage: 'idle' | 'uploading' | 'finalizing' | 'done' | 'failed' | 'missing_files';
+  totalFiles: number;
+  uploadedFiles: number;
+  failedFiles: number;
+  message: string | null;
+}
+
+const INITIAL_BOOTSTRAP_UPLOAD_STATE: BootstrapUploadState = {
+  stage: 'idle',
+  totalFiles: 0,
+  uploadedFiles: 0,
+  failedFiles: 0,
+  message: null,
+};
 
 function mapEntryErrors(errors: EntryError[]): Record<string, string[]> {
   const mapped: Record<string, string[]> = {};
@@ -132,6 +162,42 @@ function batchStatusColor(status: BatchStatus): 'default' | 'warning' | 'success
   }
 }
 
+function bootstrapStatusLabel(status: BootstrapSubmissionStatus): string {
+  switch (status) {
+    case 'queued_upload':
+      return '等待上传';
+    case 'queued':
+      return '排队中';
+    case 'running':
+      return '处理中';
+    case 'completed':
+      return '已完成';
+    case 'failed':
+      return '失败';
+    default:
+      return status;
+  }
+}
+
+function bootstrapStatusColor(
+  status: BootstrapSubmissionStatus
+): 'default' | 'info' | 'warning' | 'success' | 'error' {
+  switch (status) {
+    case 'queued_upload':
+      return 'info';
+    case 'queued':
+      return 'default';
+    case 'running':
+      return 'warning';
+    case 'completed':
+      return 'success';
+    case 'failed':
+      return 'error';
+    default:
+      return 'default';
+  }
+}
+
 function manifestEntryDisplayTitle(entry: ManifestEntry, index: number): string {
   const title = entry.title?.trim();
   if (title) {
@@ -143,17 +209,29 @@ function manifestEntryDisplayTitle(entry: ManifestEntry, index: number): string 
   return `未命名文档 ${index + 1}`;
 }
 
+function resolveUploadTargets(
+  primary: BootstrapUploadTarget[],
+  fallback: BootstrapUploadTarget[]
+): BootstrapUploadTarget[] {
+  if (primary.length > 0) {
+    return primary;
+  }
+  return fallback;
+}
+
 export default function KnowledgeBaseAddDocumentsPage() {
   const router = useRouter();
   const params = useParams<{ kbId: string }>();
   const searchParams = useSearchParams();
   const kbId = Array.isArray(params.kbId) ? params.kbId[0] : params.kbId;
   const initialBatchId = searchParams.get('batch') ?? undefined;
+  const jobId = searchParams.get('job') ?? undefined;
 
   const kbQuery = useKnowledgeBase(kbId ?? '');
   const createBatchMutation = useCreateIngestionBatch({
     invalidateMode: 'background'
   });
+  const finalizeBootstrapMutation = useFinalizeBootstrapSubmission();
   const retryBatchMutation = useRetryIngestionBatch();
   const cancelBatchMutation = useCancelIngestionBatch();
 
@@ -166,6 +244,9 @@ export default function KnowledgeBaseAddDocumentsPage() {
   const [uploadingFiles, setUploadingFiles] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
   const [showSlowLoading, setShowSlowLoading] = useState(false);
+  const [bootstrapUploadState, setBootstrapUploadState] =
+    useState<BootstrapUploadState>(INITIAL_BOOTSTRAP_UPLOAD_STATE);
+  const bootstrapUploadStartedRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (initialBatchId) {
@@ -186,14 +267,168 @@ export default function KnowledgeBaseAddDocumentsPage() {
     };
   }, [kbQuery.isPending]);
 
+  const bootstrapJobQuery = useBootstrapSubmission(jobId);
+
+  useEffect(() => {
+    if (bootstrapJobQuery.data?.batch_id) {
+      setPreferredBatchId(bootstrapJobQuery.data.batch_id);
+    }
+  }, [bootstrapJobQuery.data?.batch_id]);
+
   const liveBatchQuery = useIngestionBatchLive({
     kbId: kbId ?? undefined,
     batchId: preferredBatchId
   });
 
   const kb = kbQuery.data ?? null;
+  const bootstrapJob = bootstrapJobQuery.data;
   const currentBatch = liveBatchQuery.data;
   const activeBatchId = liveBatchQuery.resolvedBatchId ?? preferredBatchId ?? null;
+
+  useEffect(() => {
+    if (!bootstrapJob || !kbId) {
+      return;
+    }
+    if (bootstrapJob.status !== 'queued_upload') {
+      return;
+    }
+    if (bootstrapUploadStartedRef.current === bootstrapJob.id) {
+      return;
+    }
+
+    const pendingSession = getBootstrapPendingUploadSession(bootstrapJob.id);
+    const uploadTargets = resolveUploadTargets(
+      bootstrapJob.upload_targets ?? [],
+      pendingSession?.uploadTargets ?? []
+    );
+
+    if (!pendingSession || pendingSession.files.length === 0 || uploadTargets.length === 0) {
+      setBootstrapUploadState({
+        stage: 'missing_files',
+        totalFiles: uploadTargets.length,
+        uploadedFiles: 0,
+        failedFiles: 0,
+        message: '当前会话缺少待上传文件，请返回“新建知识库”页面重新提交。',
+      });
+      return;
+    }
+
+    bootstrapUploadStartedRef.current = bootstrapJob.id;
+    const filesByEntryId = new Map(pendingSession.files.map((item) => [item.entry_id, item]));
+    const totalFiles = uploadTargets.length;
+
+    let cancelled = false;
+    let uploadedFiles = 0;
+    let failedFiles = 0;
+
+    setBootstrapUploadState({
+      stage: 'uploading',
+      totalFiles,
+      uploadedFiles: 0,
+      failedFiles: 0,
+      message: '正在上传文件…',
+    });
+    setLocalError(null);
+
+    void runWithConcurrency(uploadTargets, MAX_PARALLEL_UPLOADS, async (target) => {
+      if (cancelled) {
+        return;
+      }
+
+      const pendingFile = filesByEntryId.get(target.entry_id);
+      if (!pendingFile) {
+        failedFiles += 1;
+        setBootstrapUploadState((prev) => ({
+          ...prev,
+          stage: 'failed',
+          uploadedFiles,
+          failedFiles,
+          message: '存在缺失文件，请返回上一步重新提交。',
+        }));
+        return;
+      }
+
+      try {
+        await uploadBootstrapSubmissionFile(target, pendingFile.file);
+        uploadedFiles += 1;
+        setBootstrapUploadState((prev) => ({
+          ...prev,
+          stage: 'uploading',
+          uploadedFiles,
+          failedFiles,
+          message: `已上传 ${uploadedFiles}/${totalFiles}`,
+        }));
+      } catch (error) {
+        failedFiles += 1;
+        setBootstrapUploadState((prev) => ({
+          ...prev,
+          stage: 'failed',
+          uploadedFiles,
+          failedFiles,
+          message: getErrorMessage(error),
+        }));
+      }
+    })
+      .then(async () => {
+        if (cancelled) {
+          return;
+        }
+        if (failedFiles > 0) {
+          setLocalError('部分文件上传失败，请重试上传。');
+          return;
+        }
+
+        setBootstrapUploadState((prev) => ({
+          ...prev,
+          stage: 'finalizing',
+          message: '文件上传完成，正在提交任务…',
+        }));
+        await finalizeBootstrapMutation.mutateAsync(bootstrapJob.id);
+        clearBootstrapPendingUploadSession(bootstrapJob.id);
+
+        setBootstrapUploadState((prev) => ({
+          ...prev,
+          stage: 'done',
+          uploadedFiles: totalFiles,
+          failedFiles: 0,
+          message: '文件上传完成，任务已进入处理队列。',
+        }));
+        await bootstrapJobQuery.refetch();
+      })
+      .catch((error) => {
+        if (cancelled) {
+          return;
+        }
+        setBootstrapUploadState((prev) => ({
+          ...prev,
+          stage: 'failed',
+          message: getErrorMessage(error),
+        }));
+        setLocalError(getErrorMessage(error));
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    bootstrapJob,
+    bootstrapJobQuery,
+    finalizeBootstrapMutation,
+    kbId,
+  ]);
+
+  useEffect(() => {
+    if (!jobId) {
+      bootstrapUploadStartedRef.current = null;
+      setBootstrapUploadState(INITIAL_BOOTSTRAP_UPLOAD_STATE);
+      return;
+    }
+    if (!bootstrapJob || bootstrapJob.status === 'queued_upload') {
+      return;
+    }
+    bootstrapUploadStartedRef.current = null;
+    setBootstrapUploadState(INITIAL_BOOTSTRAP_UPLOAD_STATE);
+  }, [bootstrapJob, jobId]);
 
   const displayedBatch = useMemo(() => {
     if (!currentBatch) {
@@ -208,6 +443,11 @@ export default function KnowledgeBaseAddDocumentsPage() {
   const waitingSubmittedBatch =
     pendingSubmittedBatch !== null &&
     (!displayedBatch || displayedBatch.id !== pendingSubmittedBatch.batchId);
+  const waitingBootstrapBatch =
+    bootstrapJob !== undefined &&
+    bootstrapJob.status !== 'failed' &&
+    bootstrapJob.status !== 'queued_upload' &&
+    !bootstrapJob.batch_id;
 
   useEffect(() => {
     if (pendingSubmittedBatch && displayedBatch?.id === pendingSubmittedBatch.batchId) {
@@ -224,7 +464,40 @@ export default function KnowledgeBaseAddDocumentsPage() {
     [entries, markdownOnly]
   );
 
-  const submitPending = createBatchMutation.isPending || uploadingFiles;
+  const bootstrapUploadActive =
+    bootstrapJob?.status === 'queued_upload' &&
+    (bootstrapUploadState.stage === 'uploading' || bootstrapUploadState.stage === 'finalizing');
+  const bootstrapQueuedUploadMessage = useMemo(() => {
+    if (!bootstrapJob || bootstrapJob.status !== 'queued_upload') {
+      return null;
+    }
+    if (bootstrapUploadState.message) {
+      return bootstrapUploadState.message;
+    }
+    if (bootstrapJob.upload_progress.total_files > 0) {
+      return (
+        '上传进度：' +
+        bootstrapJob.upload_progress.uploaded_files +
+        '/' +
+        bootstrapJob.upload_progress.total_files +
+        '，失败 ' +
+        bootstrapJob.upload_progress.failed_files
+      );
+    }
+    return bootstrapJob.progress_message ?? '正在等待文件上传完成…';
+  }, [bootstrapJob, bootstrapUploadState.message]);
+  const showLocalBootstrapMessage =
+    bootstrapJob?.status === 'queued_upload' &&
+    (bootstrapUploadState.stage === 'uploading' ||
+      bootstrapUploadState.stage === 'finalizing' ||
+      bootstrapUploadState.stage === 'failed' ||
+      bootstrapUploadState.stage === 'missing_files') &&
+    Boolean(bootstrapUploadState.message);
+  const submitPending =
+    createBatchMutation.isPending ||
+    uploadingFiles ||
+    finalizeBootstrapMutation.isPending ||
+    bootstrapUploadActive;
   const batchRunning = displayedBatch?.status === 'processing';
   const hasRetryableFailedDocs =
     displayedBatch?.docs.some((doc) => isDocFailed(doc) && doc.retryable) ?? false;
@@ -248,8 +521,10 @@ export default function KnowledgeBaseAddDocumentsPage() {
   const mergedError =
     localError ??
     (createBatchMutation.error ? getErrorMessage(createBatchMutation.error) : null) ??
+    (finalizeBootstrapMutation.error ? getErrorMessage(finalizeBootstrapMutation.error) : null) ??
     (retryBatchMutation.error ? getErrorMessage(retryBatchMutation.error) : null) ??
     (cancelBatchMutation.error ? getErrorMessage(cancelBatchMutation.error) : null) ??
+    (bootstrapJobQuery.error ? getErrorMessage(bootstrapJobQuery.error) : null) ??
     (liveBatchQuery.error ? getErrorMessage(liveBatchQuery.error) : null) ??
     (kbQuery.error ? getErrorMessage(kbQuery.error) : null);
 
@@ -261,11 +536,10 @@ export default function KnowledgeBaseAddDocumentsPage() {
       };
     }
 
-    const manifestEntries: ManifestEntry[] = [];
-    const uploadErrors: Record<string, string[]> = {};
-    const fileEntries = validation.normalizedValidEntries.filter(
-      (entry) => entry.sourceType === 'file'
+    const { manifestEntries, fileEntries } = splitDirectIngestionManifestEntries(
+      validation.normalizedValidEntries
     );
+    const uploadErrors: Record<string, string[]> = {};
 
     setUploadingFiles(true);
     try {
@@ -292,27 +566,7 @@ export default function KnowledgeBaseAddDocumentsPage() {
 
       const fileResultById = new Map(fileUploadResults.map((item) => [item.entryId, item]));
 
-      for (const entry of validation.normalizedValidEntries) {
-        if (entry.sourceType === 'text') {
-          manifestEntries.push({
-            source_type: 'text',
-            entry_id: entry.id,
-            title: entry.title,
-            text: entry.text
-          });
-          continue;
-        }
-
-        if (entry.sourceType === 'url') {
-          manifestEntries.push({
-            source_type: 'url',
-            entry_id: entry.id,
-            title: entry.title,
-            url: entry.url
-          });
-          continue;
-        }
-
+      for (const entry of fileEntries) {
         const uploadResult = fileResultById.get(entry.id);
         if (!uploadResult) {
           uploadErrors[entry.id] = ['未获取上传结果'];
@@ -382,6 +636,16 @@ export default function KnowledgeBaseAddDocumentsPage() {
       }
       setLocalError(getErrorMessage(error));
     }
+  };
+
+  const retryBootstrapUpload = async () => {
+    if (!bootstrapJob || bootstrapJob.status !== 'queued_upload') {
+      return;
+    }
+    bootstrapUploadStartedRef.current = null;
+    setBootstrapUploadState(INITIAL_BOOTSTRAP_UPLOAD_STATE);
+    setLocalError(null);
+    await bootstrapJobQuery.refetch();
   };
 
   const retryFailedDocs = async () => {
@@ -497,6 +761,60 @@ export default function KnowledgeBaseAddDocumentsPage() {
         <Stack spacing={1.5}>
           <Typography variant='h6'>实时状态</Typography>
 
+          {bootstrapJob && (
+            <Paper variant='outlined' sx={{ p: 1.5, bgcolor: 'background.default' }}>
+              <Stack spacing={1}>
+                <Stack direction='row' spacing={1} flexWrap='wrap' useFlexGap>
+                  <Chip label={'提交任务：' + bootstrapJob.id} variant='outlined' />
+                  <Chip
+                    label={bootstrapStatusLabel(bootstrapJob.status)}
+                    color={bootstrapStatusColor(bootstrapJob.status)}
+                  />
+                  {bootstrapJob.batch_id && <Chip label={'批次：' + bootstrapJob.batch_id} variant='outlined' />}
+                </Stack>
+                {bootstrapJob.upload_progress.total_files > 0 && (
+                  <Typography variant='body2' color='text.secondary'>
+                    {'上传进度：' +
+                      bootstrapJob.upload_progress.uploaded_files +
+                      '/' +
+                      bootstrapJob.upload_progress.total_files +
+                      '，失败 ' +
+                      bootstrapJob.upload_progress.failed_files}
+                  </Typography>
+                )}
+                {showLocalBootstrapMessage && bootstrapUploadState.message && (
+                  <Typography
+                    variant='body2'
+                    color={bootstrapUploadState.stage === 'failed' ? 'error.main' : 'text.secondary'}
+                  >
+                    {bootstrapUploadState.message}
+                  </Typography>
+                )}
+                {bootstrapJob.progress_message && (
+                  <Typography variant='body2' color='text.secondary'>
+                    {bootstrapJob.progress_message}
+                  </Typography>
+                )}
+                {bootstrapJob.error_message && (
+                  <Typography variant='body2' color='error.main'>
+                    {bootstrapJob.error_message}
+                  </Typography>
+                )}
+                {bootstrapJob.entry_errors.length > 0 && (
+                  <Typography variant='caption' color='text.secondary'>
+                    {'条目失败：' + bootstrapJob.entry_errors.length + '，可在下方查看并重试。'}
+                  </Typography>
+                )}
+                {(bootstrapUploadState.stage === 'failed' || bootstrapUploadState.stage === 'missing_files') &&
+                  bootstrapJob.status === 'queued_upload' && (
+                    <Button variant='outlined' onClick={() => void retryBootstrapUpload()}>
+                      重试上传
+                    </Button>
+                  )}
+              </Stack>
+            </Paper>
+          )}
+
           {!waitingSubmittedBatch && streamHint && (
             <Alert
               severity={liveBatchQuery.streamStatus === 'fallback_polling' ? 'warning' : 'info'}
@@ -543,6 +861,18 @@ export default function KnowledgeBaseAddDocumentsPage() {
                 </Stack>
               </Paper>
             </>
+          ) : bootstrapJob?.status === 'queued_upload' ? (
+            <Alert
+              severity={
+                bootstrapUploadState.stage === 'failed' || bootstrapUploadState.stage === 'missing_files'
+                  ? 'warning'
+                  : 'info'
+              }
+            >
+              {bootstrapQueuedUploadMessage ?? '正在等待文件上传完成…'}
+            </Alert>
+          ) : waitingBootstrapBatch ? (
+            <Alert severity='info'>创建任务正在处理中，等待批次生成…</Alert>
           ) : !displayedBatch ? (
             <Alert severity='info'>
               当前暂无导入批次。提交文档后，这里会展示实时处理状态与文档级结果。

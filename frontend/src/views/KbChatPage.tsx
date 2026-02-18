@@ -73,12 +73,13 @@ import { hasSelectedParentChildKnowledgeBase } from '../services/kbChatStrategyA
 import { getErrorMessage } from '../lib/errorHandler';
 import { parseSseJson } from '../lib/sse';
 import {
-  applyDelta,
   completeMessageState,
   createMessageState,
-  parseDelta,
-  type MessageState,
 } from '../lib/deltaParser';
+import {
+  applyMessagesEventToState,
+  createMessageStateBatcher,
+} from '../services/chatStreamDeltas';
 
 const MessageList = dynamic(
   () => import('../components/chat/MessageList').then((mod) => mod.MessageList),
@@ -304,16 +305,6 @@ function buildProgressFromActivePath(
   return { completed, total, percent };
 }
 
-function parseMessagesDeltas(data: Record<string, unknown>): Record<string, unknown>[] {
-  const deltas = data.deltas;
-  if (!Array.isArray(deltas)) {
-    return [];
-  }
-  return deltas.filter(
-    (item): item is Record<string, unknown> => asRecord(item) !== null
-  );
-}
-
 function parseUpdatesChunk(data: Record<string, unknown>): Record<string, unknown> | null {
   const nested = asRecord(data.chunk);
   if (nested) {
@@ -526,47 +517,6 @@ function isPendingClarificationResponse(
   response: ChatMessageResponse
 ): response is Extract<ChatMessageResponse, { status: 'pending_user_clarification' }> {
   return response.status === 'pending_user_clarification';
-}
-
-function createMessageStateBatcher(onFlush: (nextState: MessageState) => void) {
-  let pendingState: MessageState | null = null;
-  let rafId: number | null = null;
-
-  const flush = () => {
-    if (rafId !== null && typeof window !== 'undefined') {
-      window.cancelAnimationFrame(rafId);
-      rafId = null;
-    }
-    if (!pendingState) {
-      return;
-    }
-    const snapshot = pendingState;
-    pendingState = null;
-    onFlush(snapshot);
-  };
-
-  const push = (nextState: MessageState) => {
-    pendingState = nextState;
-    if (typeof window === 'undefined') {
-      flush();
-      return;
-    }
-    if (rafId !== null) {
-      return;
-    }
-
-    rafId = window.requestAnimationFrame(() => {
-      rafId = null;
-      if (!pendingState) {
-        return;
-      }
-      const snapshot = pendingState;
-      pendingState = null;
-      onFlush(snapshot);
-    });
-  };
-
-  return { push, flush };
 }
 
 export function KbChatPage() {
@@ -1242,23 +1192,8 @@ export function KbChatPage() {
 
         if (event.event === 'messages') {
           const data = parseSseJson<Record<string, unknown>>(event.data);
-          const deltas = parseMessagesDeltas(data);
-          for (const rawDelta of deltas) {
-            const delta = parseDelta(rawDelta);
-            if (!delta) {
-              continue;
-            }
-            msgState = applyDelta(msgState, delta);
-            deltaBatcher.push(msgState);
-          }
-        }
-        if (event.event === 'delta') {
-          const data = parseSseJson<Record<string, unknown>>(event.data);
-          const delta = parseDelta(data);
-          if (delta) {
-            msgState = applyDelta(msgState, delta);
-            deltaBatcher.push(msgState);
-          }
+          msgState = applyMessagesEventToState(msgState, data);
+          deltaBatcher.push(msgState);
         }
         if (event.event === 'node_io') {
           applyNodeIoEvent(assistantId, parseSseJson<Record<string, unknown>>(event.data));
@@ -1530,23 +1465,8 @@ export function KbChatPage() {
 
           if (event.event === 'messages') {
             const data = parseSseJson<Record<string, unknown>>(event.data);
-            const deltas = parseMessagesDeltas(data);
-            for (const rawDelta of deltas) {
-              const delta = parseDelta(rawDelta);
-              if (!delta) {
-                continue;
-              }
-              msgState = applyDelta(msgState, delta);
-              deltaBatcher.push(msgState);
-            }
-          }
-          if (event.event === 'delta') {
-            const data = parseSseJson<Record<string, unknown>>(event.data);
-            const delta = parseDelta(data);
-            if (delta) {
-              msgState = applyDelta(msgState, delta);
-              deltaBatcher.push(msgState);
-            }
+            msgState = applyMessagesEventToState(msgState, data);
+            deltaBatcher.push(msgState);
           }
           if (event.event === 'node_io') {
             applyNodeIoEvent(messageId, parseSseJson<Record<string, unknown>>(event.data));

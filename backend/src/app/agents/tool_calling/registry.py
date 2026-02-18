@@ -38,7 +38,6 @@ class ToolMeta:
     extension_name: str | None
     is_builtin: bool
     is_external: bool
-    confirmation_required: bool
 
 
 def _stringify_output(output: object) -> str:
@@ -116,7 +115,6 @@ async def build_tool_registry(
                 extension_name="内置工具",
                 is_builtin=True,
                 is_external=False,
-                confirmation_required=False,
             ),
         )
 
@@ -140,7 +138,6 @@ async def build_tool_registry(
                 extension_name="内置工具",
                 is_builtin=True,
                 is_external=True,
-                confirmation_required=True,
             ),
         )
 
@@ -181,11 +178,6 @@ async def build_tool_registry(
             tool_name = make_mcp_tool_name(str(ext.id), raw_tool_name)
             description = getattr(base_tool, "description", None) or "MCP 工具"
             args_schema = getattr(base_tool, "args_schema", None)
-            security = ext.security_config if isinstance(ext.security_config, dict) else {}
-            confirmation_required = bool(
-                settings.mcp_confirmation_required
-                and security.get("confirmation_required", True)
-            )
 
             async def _call_mcp_tool(
                 _tool: BaseTool = base_tool,
@@ -234,7 +226,6 @@ async def build_tool_registry(
                     extension_name=ext.name,
                     is_builtin=False,
                     is_external=True,
-                    confirmation_required=confirmation_required,
                 ),
             )
 

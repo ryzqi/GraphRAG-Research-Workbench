@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import timedelta
+from functools import partial
+from typing import Any, Callable
 
 import asyncio
 import anyio
@@ -55,6 +57,15 @@ class ObjectStorage:
             secure=settings.minio_secure,
         )
 
+    async def _run_client_call(
+        self,
+        func: Callable[..., Any],
+        /,
+        *args: object,
+        **kwargs: object,
+    ) -> Any:
+        return await anyio.to_thread.run_sync(partial(func, *args, **kwargs))
+
     async def ensure_buckets(self) -> None:
         def _ensure(bucket: str) -> None:
             exists = self._client.bucket_exists(bucket)
@@ -76,8 +87,26 @@ class ObjectStorage:
 
     async def presign_get(self, ref: ObjectRef) -> str:
         expires = timedelta(seconds=self._settings.exports_presign_expire_seconds)
-        return await anyio.to_thread.run_sync(
+        return await self._run_client_call(
             self._client.presigned_get_object,
+            ref.bucket,
+            ref.object_name,
+            expires=expires,
+        )
+
+    async def presign_put(
+        self,
+        ref: ObjectRef,
+        *,
+        expires_seconds: int | None = None,
+    ) -> str:
+        expires = timedelta(
+            seconds=expires_seconds
+            if expires_seconds is not None
+            else self._settings.exports_presign_expire_seconds
+        )
+        return await self._run_client_call(
+            self._client.presigned_put_object,
             ref.bucket,
             ref.object_name,
             expires=expires,
@@ -136,6 +165,20 @@ class ObjectStorage:
             return int(getattr(stat, "size", 0) or 0)
 
         return await anyio.to_thread.run_sync(_stat)
+
+    async def exists(self, ref: ObjectRef) -> bool:
+        """判断对象是否存在。"""
+
+        def _exists() -> bool:
+            self._client.stat_object(ref.bucket, ref.object_name)
+            return True
+
+        try:
+            return await anyio.to_thread.run_sync(_exists)
+        except S3Error as exc:
+            if _is_not_found_error(exc):
+                return False
+            raise
 
     async def remove_object(self, ref: ObjectRef, *, ignore_missing: bool = True) -> None:
         """删除单个对象。"""

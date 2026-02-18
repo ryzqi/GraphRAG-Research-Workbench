@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from langchain.agents import create_agent
-from langchain.agents.middleware import HumanInTheLoopMiddleware, SummarizationMiddleware
+from langchain.agents.middleware import SummarizationMiddleware
 from langchain_openai import ChatOpenAI
 
 from app.core.checkpoint import CheckpointManager
@@ -14,18 +14,6 @@ SUMMARY_TRIGGER_FRACTION = 0.7
 SUMMARY_TRIGGER = ("fraction", SUMMARY_TRIGGER_FRACTION)
 SUMMARY_KEEP = ("messages", 20)
 HITL_REJECT_MESSAGE = "用户拒绝执行外部工具调用。"
-
-
-def build_interrupt_on(tool_meta_by_name: dict[str, Any]) -> dict[str, object]:
-    interrupt_on: dict[str, object] = {}
-    for name, meta in tool_meta_by_name.items():
-        requires_confirmation = bool(getattr(meta, "confirmation_required", False))
-        interrupt_on[name] = (
-            {"allowed_decisions": ["approve", "reject"]}
-            if requires_confirmation
-            else False
-        )
-    return interrupt_on
 
 
 def build_pending_tool_calls(
@@ -82,29 +70,19 @@ def build_general_chat_agent(
     *,
     chat_model: ChatOpenAI,
     tools: list[Any],
-    tool_meta_by_name: dict[str, Any],
-    require_confirmation: bool,
     system_prompt: str,
     summary_trigger: tuple[str, int] | tuple[str, float],
 ):
-    middlewares = [
-        SummarizationMiddleware(
-            model=chat_model,
-            trigger=summary_trigger,
-            keep=SUMMARY_KEEP,
-        )
-    ]
-    if require_confirmation:
-        middlewares.append(
-            HumanInTheLoopMiddleware(
-                interrupt_on=build_interrupt_on(tool_meta_by_name)
-            )
-        )
-
     return create_agent(
         model=chat_model,
         tools=tools,
         system_prompt=system_prompt,
         checkpointer=CheckpointManager.get_checkpointer(),
-        middleware=middlewares,
+        middleware=[
+            SummarizationMiddleware(
+                model=chat_model,
+                trigger=summary_trigger,
+                keep=SUMMARY_KEEP,
+            )
+        ],
     )

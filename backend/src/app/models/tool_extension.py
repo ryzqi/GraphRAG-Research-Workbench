@@ -13,6 +13,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.db.base import Base
 from app.db.enums import enum_values
 
+
 class ExtensionTransport(str, Enum):
     STDIO = "stdio"
     HTTP = "http"
@@ -36,16 +37,11 @@ class ToolExtension(Base):
     status: Mapped[ExtensionStatus] = mapped_column(
         enum_values(ExtensionStatus, name="extension_status"),
         nullable=False,
-        default=ExtensionStatus.DISABLED,
+        default=ExtensionStatus.ENABLED,
+        server_default=sa.text("'enabled'::extension_status"),
     )
     http_config: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     stdio_config: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
-    security_config: Mapped[dict] = mapped_column(
-        JSONB,
-        nullable=False,
-        default=dict,
-        server_default=sa.text("'{}'::jsonb"),
-    )
     observability_config: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()

@@ -349,10 +349,6 @@ class GeneralChatService:
             agent = build_general_chat_agent(
                 chat_model=chat_model,
                 tools=tools,
-                tool_meta_by_name=tool_meta_by_name,
-                require_confirmation=bool(
-                    include_mcp and self._settings.mcp_confirmation_required
-                ),
                 system_prompt=system_prompt,
                 summary_trigger=self._build_summary_trigger(),
             )
@@ -523,10 +519,6 @@ class GeneralChatService:
             agent = build_general_chat_agent(
                 chat_model=chat_model,
                 tools=tools,
-                tool_meta_by_name=tool_meta_by_name,
-                require_confirmation=bool(
-                    include_mcp and self._settings.mcp_confirmation_required
-                ),
                 system_prompt=system_prompt,
                 summary_trigger=self._build_summary_trigger(),
             )
@@ -580,8 +572,19 @@ class GeneralChatService:
                         _meta if isinstance(_meta, dict) else None,
                         legacy_think_parser=legacy_think_parser,
                     )
-                    for delta in deltas:
-                        yield "delta", delta.to_dict()
+                    if deltas:
+                        node_name = (
+                            _meta.get("langgraph_node")
+                            if isinstance(_meta, dict)
+                            and isinstance(_meta.get("langgraph_node"), str)
+                            else None
+                        )
+                        yield "messages", {
+                            "run_id": str(run.id),
+                            "node": node_name,
+                            "deltas": [delta.to_dict() for delta in deltas],
+                            "ts": datetime.now(timezone.utc).isoformat(),
+                        }
                     continue
 
                 if mode == "updates" and isinstance(chunk, dict):
@@ -633,8 +636,13 @@ class GeneralChatService:
                         yield "interrupt", response.model_dump(mode="json")
                         return
 
-            for delta in legacy_think_parser.flush():
-                yield "delta", delta.to_dict()
+            flushed_deltas = legacy_think_parser.flush()
+            if flushed_deltas:
+                yield "messages", {
+                    "run_id": str(run.id),
+                    "deltas": [delta.to_dict() for delta in flushed_deltas],
+                    "ts": datetime.now(timezone.utc).isoformat(),
+                }
 
             result = {
                 "messages": stream_state.messages,
@@ -746,10 +754,6 @@ class GeneralChatService:
         agent = build_general_chat_agent(
             chat_model=chat_model,
             tools=tools,
-            tool_meta_by_name=tool_meta_by_name,
-            require_confirmation=bool(
-                include_mcp and self._settings.mcp_confirmation_required
-            ),
             system_prompt=system_prompt,
             summary_trigger=self._build_summary_trigger(),
         )
@@ -892,10 +896,6 @@ class GeneralChatService:
         agent = build_general_chat_agent(
             chat_model=chat_model,
             tools=tools,
-            tool_meta_by_name=tool_meta_by_name,
-            require_confirmation=bool(
-                include_mcp and self._settings.mcp_confirmation_required
-            ),
             system_prompt=system_prompt,
             summary_trigger=self._build_summary_trigger(),
         )
@@ -944,8 +944,19 @@ class GeneralChatService:
                         _meta if isinstance(_meta, dict) else None,
                         legacy_think_parser=legacy_think_parser,
                     )
-                    for delta in deltas:
-                        yield "delta", delta.to_dict()
+                    if deltas:
+                        node_name = (
+                            _meta.get("langgraph_node")
+                            if isinstance(_meta, dict)
+                            and isinstance(_meta.get("langgraph_node"), str)
+                            else None
+                        )
+                        yield "messages", {
+                            "run_id": str(run.id),
+                            "node": node_name,
+                            "deltas": [delta.to_dict() for delta in deltas],
+                            "ts": datetime.now(timezone.utc).isoformat(),
+                        }
                     continue
 
                 if mode == "updates" and isinstance(chunk, dict):
@@ -997,8 +1008,13 @@ class GeneralChatService:
                         yield "interrupt", response.model_dump(mode="json")
                         return
 
-            for delta in legacy_think_parser.flush():
-                yield "delta", delta.to_dict()
+            flushed_deltas = legacy_think_parser.flush()
+            if flushed_deltas:
+                yield "messages", {
+                    "run_id": str(run.id),
+                    "deltas": [delta.to_dict() for delta in flushed_deltas],
+                    "ts": datetime.now(timezone.utc).isoformat(),
+                }
 
             started_at = run.started_at or datetime.now(timezone.utc)
             result = {

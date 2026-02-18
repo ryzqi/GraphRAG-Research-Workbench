@@ -191,7 +191,6 @@ export type ChatStreamEventName =
   | 'messages'
   | 'updates'
   | 'custom'
-  | 'delta'
   | 'step'
   | 'state'
   | 'ui_event'

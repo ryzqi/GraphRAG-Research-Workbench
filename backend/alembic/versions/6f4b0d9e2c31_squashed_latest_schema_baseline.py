@@ -1,9 +1,8 @@
-"""baseline schema
+"""squashed latest schema baseline.
 
-Revision ID: 27894051a580
-Revises: 
-Create Date: 2026-02-11 00:00:48.322621
-
+Revision ID: 6f4b0d9e2c31
+Revises:
+Create Date: 2026-02-18 15:02:27.798551
 """
 from typing import Sequence, Union
 
@@ -12,7 +11,7 @@ import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
-revision: str = '27894051a580'
+revision: str = '6f4b0d9e2c31'
 down_revision: Union[str, Sequence[str], None] = None
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
@@ -27,6 +26,7 @@ def upgrade() -> None:
     sa.Column('selected_kb_ids', postgresql.ARRAY(sa.Uuid()), nullable=True),
     sa.Column('allow_external', sa.Boolean(), nullable=False),
     sa.Column('mode', sa.Enum('single_agent', 'multi_agent', name='agent_mode'), nullable=False),
+    sa.Column('kb_chat_config', postgresql.JSONB(astext_type=sa.Text()), nullable=True),
     sa.Column('title', sa.String(length=256), nullable=True),
     sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
     sa.Column('updated_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
@@ -48,12 +48,15 @@ def upgrade() -> None:
     op.create_table('export_jobs',
     sa.Column('id', sa.Uuid(), nullable=False),
     sa.Column('run_id', sa.Uuid(), nullable=True),
+    sa.Column('session_id', sa.Uuid(), nullable=True),
     sa.Column('status', sa.Enum('queued', 'running', 'succeeded', 'failed', name='export_status'), nullable=False),
     sa.Column('download_url', sa.Text(), nullable=True),
+    sa.Column('error_code', sa.String(length=64), nullable=True),
     sa.Column('error_message', sa.Text(), nullable=True),
     sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
     sa.PrimaryKeyConstraint('id')
     )
+    op.create_index(op.f('ix_export_jobs_session_id'), 'export_jobs', ['session_id'], unique=False)
     op.create_table('knowledge_bases',
     sa.Column('id', sa.Uuid(), nullable=False),
     sa.Column('name', sa.String(length=64), nullable=False),
@@ -69,13 +72,40 @@ def upgrade() -> None:
     sa.PrimaryKeyConstraint('id'),
     sa.UniqueConstraint('name')
     )
+    op.create_table('research_sessions',
+    sa.Column('id', sa.Uuid(), nullable=False),
+    sa.Column('thread_id', sa.String(length=128), nullable=False),
+    sa.Column('question', sa.Text(), nullable=False),
+    sa.Column('selected_kb_ids', postgresql.ARRAY(sa.Uuid()), nullable=True),
+    sa.Column('allow_external', sa.Boolean(), nullable=False),
+    sa.Column('mode', sa.Enum('single_agent', 'multi_agent', name='agent_mode'), nullable=False),
+    sa.Column('status', sa.Enum('created', 'queued', 'running', 'interrupted', 'resumed', 'final', 'failed', 'canceled', 'timed_out', name='research_session_status'), nullable=False),
+    sa.Column('stage_summaries', postgresql.JSONB(astext_type=sa.Text()), nullable=True),
+    sa.Column('metrics', postgresql.JSONB(astext_type=sa.Text()), nullable=True),
+    sa.Column('final_output', sa.Text(), nullable=True),
+    sa.Column('error_message', sa.Text(), nullable=True),
+    sa.Column('trace_id', sa.String(length=128), nullable=True),
+    sa.Column('last_event_sequence', sa.Integer(), server_default='0', nullable=False),
+    sa.Column('last_resume_idempotency_key', sa.String(length=128), nullable=True),
+    sa.Column('last_resume_response', postgresql.JSONB(astext_type=sa.Text()), nullable=True),
+    sa.Column('legacy_run_id', sa.Uuid(), nullable=True),
+    sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
+    sa.Column('started_at', sa.DateTime(timezone=True), nullable=True),
+    sa.Column('finished_at', sa.DateTime(timezone=True), nullable=True),
+    sa.Column('updated_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
+    sa.PrimaryKeyConstraint('id'),
+    sa.UniqueConstraint('thread_id')
+    )
+    op.create_index(op.f('ix_research_sessions_legacy_run_id'), 'research_sessions', ['legacy_run_id'], unique=True)
+    op.create_index(op.f('ix_research_sessions_trace_id'), 'research_sessions', ['trace_id'], unique=False)
     op.create_table('tool_extensions',
     sa.Column('id', sa.Uuid(), nullable=False),
     sa.Column('name', sa.String(length=128), nullable=False),
     sa.Column('transport', sa.Enum('stdio', 'http', name='extension_transport'), nullable=False),
-    sa.Column('endpoint', sa.Text(), nullable=False),
-    sa.Column('status', sa.Enum('enabled', 'disabled', name='extension_status'), nullable=False),
-    sa.Column('scope', postgresql.JSONB(astext_type=sa.Text()), nullable=True),
+    sa.Column('status', sa.Enum('enabled', 'disabled', name='extension_status'), server_default=sa.text("'enabled'::extension_status"), nullable=False),
+    sa.Column('http_config', postgresql.JSONB(astext_type=sa.Text()), nullable=True),
+    sa.Column('stdio_config', postgresql.JSONB(astext_type=sa.Text()), nullable=True),
+    sa.Column('observability_config', postgresql.JSONB(astext_type=sa.Text()), nullable=True),
     sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
     sa.Column('updated_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
     sa.PrimaryKeyConstraint('id'),
@@ -138,6 +168,36 @@ def upgrade() -> None:
     )
     op.create_index(op.f('ix_kb_config_snapshots_kb_id'), 'kb_config_snapshots', ['kb_id'], unique=False)
     op.create_index('uq_kb_config_snapshots_active', 'kb_config_snapshots', ['kb_id'], unique=True, postgresql_where=sa.text('is_active = true'))
+    op.create_table('research_artifacts',
+    sa.Column('id', sa.Uuid(), nullable=False),
+    sa.Column('session_id', sa.Uuid(), nullable=False),
+    sa.Column('artifact_key', sa.String(length=64), nullable=False),
+    sa.Column('content_text', sa.Text(), nullable=True),
+    sa.Column('content_json', postgresql.JSONB(astext_type=sa.Text()), nullable=True),
+    sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
+    sa.Column('updated_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
+    sa.ForeignKeyConstraint(['session_id'], ['research_sessions.id'], ondelete='CASCADE'),
+    sa.PrimaryKeyConstraint('id'),
+    sa.UniqueConstraint('session_id', 'artifact_key', name='uq_research_artifacts_session_key')
+    )
+    op.create_index(op.f('ix_research_artifacts_session_id'), 'research_artifacts', ['session_id'], unique=False)
+    op.create_table('research_events',
+    sa.Column('id', sa.Uuid(), nullable=False),
+    sa.Column('session_id', sa.Uuid(), nullable=False),
+    sa.Column('event_id', sa.String(length=128), nullable=False),
+    sa.Column('sequence', sa.Integer(), nullable=False),
+    sa.Column('event_type', sa.String(length=64), nullable=False),
+    sa.Column('payload', postgresql.JSONB(astext_type=sa.Text()), nullable=False),
+    sa.Column('trace_id', sa.String(length=128), nullable=True),
+    sa.Column('idempotency_key', sa.String(length=128), nullable=True),
+    sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
+    sa.ForeignKeyConstraint(['session_id'], ['research_sessions.id'], ondelete='CASCADE'),
+    sa.PrimaryKeyConstraint('id'),
+    sa.UniqueConstraint('session_id', 'event_id', name='uq_research_events_session_event_id'),
+    sa.UniqueConstraint('session_id', 'sequence', name='uq_research_events_session_sequence')
+    )
+    op.create_index(op.f('ix_research_events_session_id'), 'research_events', ['session_id'], unique=False)
+    op.create_index(op.f('ix_research_events_trace_id'), 'research_events', ['trace_id'], unique=False)
     op.create_table('source_materials',
     sa.Column('id', sa.Uuid(), nullable=False),
     sa.Column('kb_id', sa.Uuid(), nullable=False),
@@ -165,6 +225,17 @@ def upgrade() -> None:
     sa.Column('context_status', sa.String(length=24), server_default='not_enabled', nullable=False),
     sa.Column('context_error', sa.Text(), nullable=True),
     sa.Column('context_attempts', sa.Integer(), server_default=sa.text('0'), nullable=False),
+    sa.Column('chunking_strategy', sa.String(length=32), server_default='unknown', nullable=False),
+    sa.Column('heading_path', sa.Text(), nullable=True),
+    sa.Column('global_chunk_order', sa.Integer(), server_default=sa.text('0'), nullable=False),
+    sa.Column('window_id', sa.Integer(), nullable=True),
+    sa.Column('window_size_tokens', sa.Integer(), nullable=True),
+    sa.Column('window_overlap_tokens', sa.Integer(), nullable=True),
+    sa.Column('token_start', sa.Integer(), nullable=True),
+    sa.Column('token_end', sa.Integer(), nullable=True),
+    sa.Column('source_kind', sa.String(length=24), nullable=True),
+    sa.Column('source_page_start', sa.Integer(), nullable=True),
+    sa.Column('source_page_end', sa.Integer(), nullable=True),
     sa.Column('locator', postgresql.JSONB(astext_type=sa.Text()), nullable=True),
     sa.Column('content_hash', sa.String(length=64), nullable=True),
     sa.Column('token_count', sa.Integer(), nullable=True),
@@ -174,7 +245,9 @@ def upgrade() -> None:
     sa.PrimaryKeyConstraint('id')
     )
     op.create_index(op.f('ix_document_chunks_kb_id'), 'document_chunks', ['kb_id'], unique=False)
+    op.create_index('ix_document_chunks_kb_material_global_order', 'document_chunks', ['kb_id', 'material_id', 'global_chunk_order'], unique=False)
     op.create_index('ix_document_chunks_kb_material_idx', 'document_chunks', ['kb_id', 'material_id', 'chunk_index'], unique=False)
+    op.create_index('ix_document_chunks_kb_material_window_token', 'document_chunks', ['kb_id', 'material_id', 'window_id', 'token_start'], unique=False)
     op.create_index(op.f('ix_document_chunks_material_id'), 'document_chunks', ['material_id'], unique=False)
     op.create_table('evidence',
     sa.Column('id', sa.Uuid(), nullable=False),
@@ -196,13 +269,12 @@ def upgrade() -> None:
     sa.Column('config_snapshot_id', sa.Uuid(), nullable=False),
     sa.Column('config_version', sa.Integer(), nullable=False),
     sa.Column('is_bootstrap', sa.Boolean(), server_default=sa.text('false'), nullable=False),
-    sa.Column('status', sa.Enum('queued', 'running', 'succeeded', 'partial_failed', 'failed', 'canceled', name='ingestion_batch_status'), nullable=False),
+    sa.Column('status', sa.Enum('processing', 'completed', name='ingestion_batch_status'), nullable=False),
     sa.Column('total_docs', sa.Integer(), server_default=sa.text('0'), nullable=False),
     sa.Column('succeeded_docs', sa.Integer(), server_default=sa.text('0'), nullable=False),
     sa.Column('failed_docs', sa.Integer(), server_default=sa.text('0'), nullable=False),
     sa.Column('canceled_docs', sa.Integer(), server_default=sa.text('0'), nullable=False),
     sa.Column('succeeded_chunks', sa.Integer(), server_default=sa.text('0'), nullable=False),
-    sa.Column('progress_percent', sa.Integer(), server_default=sa.text('0'), nullable=False),
     sa.Column('error_summary', postgresql.JSONB(astext_type=sa.Text()), nullable=True),
     sa.Column('requested_by', sa.String(length=128), nullable=True),
     sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
@@ -251,7 +323,7 @@ def upgrade() -> None:
     sa.Column('source_ref', sa.Text(), nullable=True),
     sa.Column('title', sa.Text(), nullable=True),
     sa.Column('fingerprint', sa.String(length=128), nullable=False),
-    sa.Column('status', sa.Enum('pending', 'running', 'succeeded', 'failed', 'canceled', name='ingestion_doc_status'), nullable=False),
+    sa.Column('status', sa.Enum('processing', 'completed', name='ingestion_doc_status'), nullable=False),
     sa.Column('error_code', sa.String(length=64), nullable=True),
     sa.Column('error_message', sa.Text(), nullable=True),
     sa.Column('retry_count', sa.Integer(), server_default=sa.text('0'), nullable=False),
@@ -268,6 +340,33 @@ def upgrade() -> None:
     )
     op.create_index(op.f('ix_ingestion_batch_docs_batch_id'), 'ingestion_batch_docs', ['batch_id'], unique=False)
     op.create_index(op.f('ix_ingestion_batch_docs_kb_id'), 'ingestion_batch_docs', ['kb_id'], unique=False)
+    op.create_table('kb_bootstrap_jobs',
+    sa.Column('id', sa.Uuid(), nullable=False),
+    sa.Column('kb_id', sa.Uuid(), nullable=False),
+    sa.Column('batch_id', sa.Uuid(), nullable=True),
+    sa.Column('request_id', sa.String(length=128), nullable=True),
+    sa.Column('requested_by', sa.String(length=128), nullable=True),
+    sa.Column('status', sa.Enum('queued_upload', 'queued', 'running', 'completed', 'failed', name='kb_bootstrap_job_status'), nullable=False),
+    sa.Column('total_entries', sa.Integer(), server_default=sa.text('0'), nullable=False),
+    sa.Column('accepted_entries', sa.Integer(), server_default=sa.text('0'), nullable=False),
+    sa.Column('failed_entries', sa.Integer(), server_default=sa.text('0'), nullable=False),
+    sa.Column('payload_entries', postgresql.JSONB(astext_type=sa.Text()), server_default=sa.text("'[]'::jsonb"), nullable=False),
+    sa.Column('upload_manifest', postgresql.JSONB(astext_type=sa.Text()), server_default=sa.text("'[]'::jsonb"), nullable=False),
+    sa.Column('entry_errors', postgresql.JSONB(astext_type=sa.Text()), nullable=True),
+    sa.Column('progress_message', sa.Text(), nullable=True),
+    sa.Column('error_code', sa.String(length=64), nullable=True),
+    sa.Column('error_message', sa.Text(), nullable=True),
+    sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
+    sa.Column('updated_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
+    sa.Column('started_at', sa.DateTime(timezone=True), nullable=True),
+    sa.Column('finished_at', sa.DateTime(timezone=True), nullable=True),
+    sa.ForeignKeyConstraint(['batch_id'], ['ingestion_batches.id'], ondelete='SET NULL'),
+    sa.ForeignKeyConstraint(['kb_id'], ['knowledge_bases.id'], ondelete='CASCADE'),
+    sa.PrimaryKeyConstraint('id'),
+    sa.UniqueConstraint('request_id', name='uq_kb_bootstrap_jobs_request_id')
+    )
+    op.create_index(op.f('ix_kb_bootstrap_jobs_batch_id'), 'kb_bootstrap_jobs', ['batch_id'], unique=False)
+    op.create_index(op.f('ix_kb_bootstrap_jobs_kb_id'), 'kb_bootstrap_jobs', ['kb_id'], unique=False)
     op.create_table('ingestion_events',
     sa.Column('id', sa.Uuid(), nullable=False),
     sa.Column('batch_id', sa.Uuid(), nullable=False),
@@ -291,6 +390,9 @@ def downgrade() -> None:
     op.drop_index(op.f('ix_ingestion_events_doc_id'), table_name='ingestion_events')
     op.drop_index(op.f('ix_ingestion_events_batch_id'), table_name='ingestion_events')
     op.drop_table('ingestion_events')
+    op.drop_index(op.f('ix_kb_bootstrap_jobs_kb_id'), table_name='kb_bootstrap_jobs')
+    op.drop_index(op.f('ix_kb_bootstrap_jobs_batch_id'), table_name='kb_bootstrap_jobs')
+    op.drop_table('kb_bootstrap_jobs')
     op.drop_index(op.f('ix_ingestion_batch_docs_kb_id'), table_name='ingestion_batch_docs')
     op.drop_index(op.f('ix_ingestion_batch_docs_batch_id'), table_name='ingestion_batch_docs')
     op.drop_table('ingestion_batch_docs')
@@ -305,12 +407,19 @@ def downgrade() -> None:
     op.drop_index(op.f('ix_evidence_run_id'), table_name='evidence')
     op.drop_table('evidence')
     op.drop_index(op.f('ix_document_chunks_material_id'), table_name='document_chunks')
+    op.drop_index('ix_document_chunks_kb_material_window_token', table_name='document_chunks')
     op.drop_index('ix_document_chunks_kb_material_idx', table_name='document_chunks')
+    op.drop_index('ix_document_chunks_kb_material_global_order', table_name='document_chunks')
     op.drop_index(op.f('ix_document_chunks_kb_id'), table_name='document_chunks')
     op.drop_table('document_chunks')
     op.drop_index(op.f('ix_source_materials_kb_id'), table_name='source_materials')
     op.drop_index('ix_source_materials_kb_hash', table_name='source_materials')
     op.drop_table('source_materials')
+    op.drop_index(op.f('ix_research_events_trace_id'), table_name='research_events')
+    op.drop_index(op.f('ix_research_events_session_id'), table_name='research_events')
+    op.drop_table('research_events')
+    op.drop_index(op.f('ix_research_artifacts_session_id'), table_name='research_artifacts')
+    op.drop_table('research_artifacts')
     op.drop_index('uq_kb_config_snapshots_active', table_name='kb_config_snapshots', postgresql_where=sa.text('is_active = true'))
     op.drop_index(op.f('ix_kb_config_snapshots_kb_id'), table_name='kb_config_snapshots')
     op.drop_table('kb_config_snapshots')
@@ -321,7 +430,11 @@ def downgrade() -> None:
     op.drop_index(op.f('ix_agent_runs_session_id'), table_name='agent_runs')
     op.drop_table('agent_runs')
     op.drop_table('tool_extensions')
+    op.drop_index(op.f('ix_research_sessions_trace_id'), table_name='research_sessions')
+    op.drop_index(op.f('ix_research_sessions_legacy_run_id'), table_name='research_sessions')
+    op.drop_table('research_sessions')
     op.drop_table('knowledge_bases')
+    op.drop_index(op.f('ix_export_jobs_session_id'), table_name='export_jobs')
     op.drop_table('export_jobs')
     op.drop_table('evaluation_runs')
     op.drop_table('chat_sessions')

@@ -14,6 +14,7 @@ celery_app = Celery(
         "app.worker.tasks.export",
         "app.worker.tasks.ingestion_batches",
         "app.worker.tasks.index_rebuild",
+        "app.worker.tasks.kb_bootstrap_jobs",
         "app.worker.tasks.research",
         "app.worker.tasks.evaluation",
     ],

@@ -37,7 +37,7 @@ pwsh -ExecutionPolicy Bypass -File .\scripts\start_all.ps1
 - 可选参数：`-SkipInfra`（跳过 Podman 依赖）、`-NoDetachInfra`（前台启动依赖）、`-SkipBackend`、`-SkipWorker`、`-SkipFrontend`、`-RunMigrate`（显式执行数据库迁移）、`-SkipMigrate`（兼容保留）、`-RunSeed`（导入演示数据）、`-Verbose`。
 - **唯一启动入口**：请仅使用 `scripts/start_all.ps1`；下文 1-4 为脚本内部流程说明（排障时参考）。
 - 默认跳过数据库迁移；如需执行迁移请添加 `-RunMigrate`。
-- **迁移基线已重建（2026-02-11）**：若你的本地数据库仍来自旧迁移链，请先重置 `public` schema，再执行 `cd backend; uv run alembic upgrade head`。
+- **迁移已整合为单一基线（2026-02-18）**：若你的本地数据库仍来自旧迁移链/旧结构，请先重置 `public` schema，再执行 `cd backend; uv run alembic upgrade head`。
 - 脚本默认按**Windows 生产模式**启动：
   - 前端会先执行 `npm run build` 再启动 `next start`。
   - 后端使用无 `--reload` 的 uvicorn 参数，并固定 `--loop asyncio:SelectorEventLoop`（兼容 psycopg 异步连接）。

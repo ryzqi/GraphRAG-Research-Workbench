@@ -56,9 +56,6 @@ type EditorMode = 'create' | 'edit';
 interface ExtensionFormState {
   name: string;
   transport: ExtensionTransport;
-  status: ExtensionStatus;
-  allowlistText: string;
-  confirmationRequired: boolean;
   emitMetrics: boolean;
   logLevelOverride: '' | 'DEBUG' | 'INFO' | 'WARNING' | 'ERROR';
 
@@ -72,14 +69,6 @@ interface ExtensionFormState {
   stdioArgsText: string;
   stdioEnvJson: string;
   stdioTimeoutSeconds: string;
-}
-
-function parseAllowlist(text: string): string[] {
-  const parts = text
-    .split(/[\n,]/g)
-    .map((item) => item.trim())
-    .filter(Boolean);
-  return [...new Set(parts)];
 }
 
 function toOptionalNumber(value: string): number | undefined {
@@ -132,9 +121,6 @@ function buildDefaultForm(templateId: string | null): ExtensionFormState {
   return {
     name: '',
     transport: 'http',
-    status: 'disabled',
-    allowlistText: '',
-    confirmationRequired: true,
     emitMetrics: true,
     logLevelOverride: '',
 
@@ -155,9 +141,6 @@ function buildFormFromExtension(ext: ToolExtension): ExtensionFormState {
   return {
     name: ext.name,
     transport: ext.transport,
-    status: ext.status,
-    allowlistText: ext.security_config.allowlist_tools.join('\n'),
-    confirmationRequired: ext.security_config.confirmation_required,
     emitMetrics: ext.observability_config?.emit_metrics ?? true,
     logLevelOverride: ext.observability_config?.log_level_override ?? '',
 
@@ -183,19 +166,9 @@ function buildFormFromExtension(ext: ToolExtension): ExtensionFormState {
 }
 
 function buildPayloadFromForm(form: ExtensionFormState): ToolExtensionCreate {
-  const allowlist = parseAllowlist(form.allowlistText);
-  if (allowlist.length === 0) {
-    throw new Error('请至少配置一个 allowlist 工具');
-  }
-
   const payload: ToolExtensionCreate = {
     name: form.name.trim(),
     transport: form.transport,
-    status: form.status,
-    security_config: {
-      allowlist_tools: allowlist,
-      confirmation_required: form.confirmationRequired,
-    },
     observability_config: {
       emit_metrics: form.emitMetrics,
       ...(form.logLevelOverride
@@ -403,7 +376,7 @@ export function ExtensionsPage() {
     <Box sx={{ px: { xs: 2, md: 3 }, py: 3 }}>
       <PageHeader
         title='MCP 扩展控制台'
-        subtitle='统一管理 streamable HTTP / STDIO 扩展，默认最小权限配置。'
+        subtitle='统一管理 streamable HTTP / STDIO 扩展，创建后默认启用。'
         action={
           <Button variant='contained' startIcon={<AddIcon />} onClick={openCreateDrawer}>
             新建扩展
@@ -486,9 +459,6 @@ export function ExtensionsPage() {
                             size='small'
                             color={ext.status === 'enabled' ? 'success' : 'default'}
                           />
-                          <Typography variant='caption' color='text.secondary'>
-                            allowlist {ext.security_config.allowlist_tools.length} 项
-                          </Typography>
                         </Stack>
                       </Stack>
                     </Paper>
@@ -586,13 +556,7 @@ export function ExtensionsPage() {
                           />
                         </Stack>
                         <Typography variant='body2' color='text.secondary'>
-                          allowlist: {selectedExtension.security_config.allowlist_tools.join(', ')}
-                        </Typography>
-                        <Typography variant='body2' color='text.secondary'>
-                          工具调用确认：
-                          {selectedExtension.security_config.confirmation_required
-                            ? '开启'
-                            : '关闭'}
+                          传输方式：{selectedExtension.transport.toUpperCase()}
                         </Typography>
                         {selectedExtension.transport === 'http' &&
                           selectedExtension.http_config && (
@@ -665,7 +629,7 @@ export function ExtensionsPage() {
                       </Typography>
                     ) : tools.length === 0 ? (
                       <Typography color='text.secondary' variant='body2'>
-                        当前无可用工具。请检查扩展状态、allowlist 与连接配置。
+                        当前无可用工具。请检查扩展状态与连接配置。
                       </Typography>
                     ) : (
                       <Stack spacing={1}>
@@ -729,50 +693,13 @@ export function ExtensionsPage() {
                   <MenuItem value='stdio'>STDIO</MenuItem>
                 </Select>
               </FormControl>
-              <FormControl sx={{ minWidth: 140 }}>
-                <InputLabel id='status-label'>状态</InputLabel>
-                <Select
-                  labelId='status-label'
-                  label='状态'
-                  value={formState.status}
-                  onChange={(e) =>
-                    setFormState((prev) => ({
-                      ...prev,
-                      status: e.target.value as ExtensionStatus,
-                    }))
-                  }
-                >
-                  <MenuItem value='disabled'>禁用</MenuItem>
-                  <MenuItem value='enabled'>启用</MenuItem>
-                </Select>
-              </FormControl>
             </Stack>
 
-            <TextField
-              label='allowlist 工具（逗号或换行分隔）'
-              value={formState.allowlistText}
-              onChange={(e) =>
-                setFormState((prev) => ({ ...prev, allowlistText: e.target.value }))
-              }
-              required
-              fullWidth
-              multiline
-              minRows={3}
-            />
-            <FormControlLabel
-              control={
-                <Switch
-                  checked={formState.confirmationRequired}
-                  onChange={(e) =>
-                    setFormState((prev) => ({
-                      ...prev,
-                      confirmationRequired: e.target.checked,
-                    }))
-                  }
-                />
-              }
-              label='开启工具调用确认'
-            />
+            {editorMode === 'create' && (
+              <Typography variant='body2' color='text.secondary'>
+                创建后默认状态为“已启用”，可在详情页随时禁用。
+              </Typography>
+            )}
 
             <Divider />
 

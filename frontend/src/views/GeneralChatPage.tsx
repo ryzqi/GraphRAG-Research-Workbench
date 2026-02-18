@@ -22,12 +22,13 @@ import { HttpError } from '../services/http';
 import { ErrorAlert } from '../components/ui/ErrorAlert';
 import { parseSseJson } from '../lib/sse';
 import {
-  applyDelta,
   completeMessageState,
   createMessageState,
-  parseDelta,
-  type MessageState,
 } from '../lib/deltaParser';
+import {
+  applyMessagesEventToState,
+  createMessageStateBatcher,
+} from '../services/chatStreamDeltas';
 
 import type { ChatMessage } from '../components/chat/MessageList';
 
@@ -51,47 +52,6 @@ function isPendingClarification(
   response: ChatMessageResponse
 ): response is Extract<ChatMessageResponse, { status: 'pending_user_clarification' }> {
   return response.status === 'pending_user_clarification';
-}
-
-function createMessageStateBatcher(onFlush: (nextState: MessageState) => void) {
-  let pendingState: MessageState | null = null;
-  let rafId: number | null = null;
-
-  const flush = () => {
-    if (rafId !== null && typeof window !== 'undefined') {
-      window.cancelAnimationFrame(rafId);
-      rafId = null;
-    }
-    if (!pendingState) {
-      return;
-    }
-    const snapshot = pendingState;
-    pendingState = null;
-    onFlush(snapshot);
-  };
-
-  const push = (nextState: MessageState) => {
-    pendingState = nextState;
-    if (typeof window === 'undefined') {
-      flush();
-      return;
-    }
-    if (rafId !== null) {
-      return;
-    }
-
-    rafId = window.requestAnimationFrame(() => {
-      rafId = null;
-      if (!pendingState) {
-        return;
-      }
-      const snapshot = pendingState;
-      pendingState = null;
-      onFlush(snapshot);
-    });
-  };
-
-  return { push, flush };
 }
 
 export function GeneralChatPage() {
@@ -325,13 +285,10 @@ export function GeneralChatPage() {
           }
         }
 
-        if (event.event === 'delta') {
+        if (event.event === 'messages') {
           const data = parseSseJson<Record<string, unknown>>(event.data);
-          const delta = parseDelta(data);
-          if (delta) {
-            msgState = applyDelta(msgState, delta);
-            deltaBatcher.push(msgState);
-          }
+          msgState = applyMessagesEventToState(msgState, data);
+          deltaBatcher.push(msgState);
         }
 
         if (event.event === 'interrupt') {
@@ -349,7 +306,6 @@ export function GeneralChatPage() {
                   extension_name: call.extension_name ?? undefined,
                 })),
               },
-              think: '',
               isStreaming: false,
             }));
             setLoading(false);
@@ -496,13 +452,10 @@ export function GeneralChatPage() {
             }
           }
 
-          if (event.event === 'delta') {
+          if (event.event === 'messages') {
             const data = parseSseJson<Record<string, unknown>>(event.data);
-            const delta = parseDelta(data);
-            if (delta) {
-              msgState = applyDelta(msgState, delta);
-              deltaBatcher.push(msgState);
-            }
+            msgState = applyMessagesEventToState(msgState, data);
+            deltaBatcher.push(msgState);
           }
 
           if (event.event === 'interrupt') {
@@ -520,7 +473,6 @@ export function GeneralChatPage() {
                     extension_name: call.extension_name ?? undefined,
                   })),
                 },
-                think: '',
                 isStreaming: false,
               }));
               setLoading(false);

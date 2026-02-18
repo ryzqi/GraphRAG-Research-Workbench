@@ -19,7 +19,6 @@ from app.models.tool_extension import ExtensionStatus, ExtensionTransport, ToolE
 from app.schemas.extensions import (
     ExtensionConnectionStatus,
     ExtensionHttpConfig,
-    ExtensionSecurityConfig,
     ExtensionStdioConfig,
     ToolDescriptor,
     ToolExtensionCreate,
@@ -90,11 +89,10 @@ class ExtensionService:
 
     async def create_extension(self, data: ToolExtensionCreate) -> ToolExtensionRead:
         """创建扩展。"""
-        http_config, stdio_config, security_config = self._resolve_transport_configs(
+        http_config, stdio_config = self._resolve_transport_configs(
             transport=ExtensionTransport(data.transport.value),
             http_config=data.http_config,
             stdio_config=data.stdio_config,
-            security_config=data.security_config,
         )
         ext = ToolExtension(
             name=data.name.strip(),
@@ -102,7 +100,6 @@ class ExtensionService:
             status=ExtensionStatus(data.status.value),
             http_config=http_config.model_dump(mode="json") if http_config else None,
             stdio_config=stdio_config.model_dump(mode="json") if stdio_config else None,
-            security_config=security_config.model_dump(mode="json"),
             observability_config=(
                 data.observability_config.model_dump(mode="json")
                 if data.observability_config
@@ -152,17 +149,11 @@ class ExtensionService:
             if "stdio_config" in update_data
             else ext.stdio_config
         )
-        target_security = (
-            update_data.get("security_config")
-            if "security_config" in update_data
-            else ext.security_config
-        )
 
-        http_config, stdio_config, security_config = self._resolve_transport_configs(
+        http_config, stdio_config = self._resolve_transport_configs(
             transport=target_transport,
             http_config=target_http,
             stdio_config=target_stdio,
-            security_config=target_security,
         )
 
         ext.transport = target_transport
@@ -172,7 +163,6 @@ class ExtensionService:
             ext.status = ExtensionStatus(update_data["status"].value)
         ext.http_config = http_config.model_dump(mode="json") if http_config else None
         ext.stdio_config = stdio_config.model_dump(mode="json") if stdio_config else None
-        ext.security_config = security_config.model_dump(mode="json")
         if "observability_config" in update_data:
             obs = update_data.get("observability_config")
             ext.observability_config = (
@@ -280,13 +270,11 @@ class ExtensionService:
         transport: ExtensionTransport,
         http_config: ExtensionHttpConfig | dict | None,
         stdio_config: ExtensionStdioConfig | dict | None,
-        security_config: ExtensionSecurityConfig | dict | None,
-    ) -> tuple[ExtensionHttpConfig | None, ExtensionStdioConfig | None, ExtensionSecurityConfig]:
+    ) -> tuple[ExtensionHttpConfig | None, ExtensionStdioConfig | None]:
         parsed_http = self._parse_http_config(http_config) if http_config is not None else None
         parsed_stdio = (
             self._parse_stdio_config(stdio_config) if stdio_config is not None else None
         )
-        parsed_security = self._parse_security_config(security_config)
 
         if transport == ExtensionTransport.HTTP and parsed_http is None:
             raise bad_request(
@@ -312,7 +300,7 @@ class ExtensionService:
         if transport == ExtensionTransport.STDIO:
             parsed_http = None
 
-        return parsed_http, parsed_stdio, parsed_security
+        return parsed_http, parsed_stdio
 
     @staticmethod
     def _parse_http_config(
@@ -329,16 +317,3 @@ class ExtensionService:
         if isinstance(value, ExtensionStdioConfig):
             return value
         return ExtensionStdioConfig.model_validate(value)
-
-    @staticmethod
-    def _parse_security_config(
-        value: ExtensionSecurityConfig | dict | None,
-    ) -> ExtensionSecurityConfig:
-        if isinstance(value, ExtensionSecurityConfig):
-            return value
-        if value is None:
-            raise bad_request(
-                code="SECURITY_CONFIG_REQUIRED",
-                message="security_config 为必填项",
-            )
-        return ExtensionSecurityConfig.model_validate(value)

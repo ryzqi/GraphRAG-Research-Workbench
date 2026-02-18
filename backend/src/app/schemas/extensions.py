@@ -78,28 +78,6 @@ class ExtensionStdioConfig(BaseModel):
     timeout_seconds: int | None = Field(None, ge=1, le=600)
 
 
-class ExtensionSecurityConfig(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    allowlist_tools: list[str] = Field(..., min_length=1, max_length=512)
-    confirmation_required: bool = True
-
-    @model_validator(mode="after")
-    def _normalize_allowlist(self) -> "ExtensionSecurityConfig":
-        normalized: list[str] = []
-        seen: set[str] = set()
-        for item in self.allowlist_tools:
-            name = item.strip()
-            if not name or name in seen:
-                continue
-            seen.add(name)
-            normalized.append(name)
-        if not normalized:
-            raise ValueError("security_config.allowlist_tools must not be empty")
-        self.allowlist_tools = normalized
-        return self
-
-
 class ExtensionObservabilityConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -120,10 +98,9 @@ class ExtensionObservabilityConfig(BaseModel):
 class ToolExtensionCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=128)
     transport: ExtensionTransport
-    status: ExtensionStatus = ExtensionStatus.DISABLED
+    status: ExtensionStatus = ExtensionStatus.ENABLED
     http_config: ExtensionHttpConfig | None = None
     stdio_config: ExtensionStdioConfig | None = None
-    security_config: ExtensionSecurityConfig
     observability_config: ExtensionObservabilityConfig | None = None
 
     @model_validator(mode="after")
@@ -145,7 +122,6 @@ class ToolExtensionUpdate(BaseModel):
     status: ExtensionStatus | None = None
     http_config: ExtensionHttpConfig | None = None
     stdio_config: ExtensionStdioConfig | None = None
-    security_config: ExtensionSecurityConfig | None = None
     observability_config: ExtensionObservabilityConfig | None = None
 
 
@@ -158,7 +134,6 @@ class ToolExtensionRead(BaseModel):
     status: ExtensionStatus
     http_config: ExtensionHttpConfig | None = None
     stdio_config: ExtensionStdioConfig | None = None
-    security_config: ExtensionSecurityConfig
     observability_config: ExtensionObservabilityConfig | None = None
     created_at: datetime
     updated_at: datetime

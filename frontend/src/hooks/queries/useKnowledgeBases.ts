@@ -31,6 +31,10 @@ const KEYS = {
   ingestionState: (id: string) => [...KEYS.all, 'ingestionState', id] as const,
 };
 
+interface UseCreateKnowledgeBaseOptions {
+  invalidateMode?: 'blocking' | 'background';
+}
+
 export function useKnowledgeBases(params?: {
   status?: KnowledgeBaseStatusFilter;
   readiness?: KnowledgeBaseReadinessFilter;
@@ -70,10 +74,16 @@ export function useKnowledgeBaseIngestionState(id: string) {
   );
 }
 
-export function useCreateKnowledgeBase() {
+export function useCreateKnowledgeBase(options?: UseCreateKnowledgeBaseOptions) {
+  const invalidateMode = options?.invalidateMode ?? 'blocking';
   return useApiMutation((data: KnowledgeBaseCreate) => createKnowledgeBase(data), {
     onSuccess: async (_, __, { invalidate }) => {
-      await invalidate([KEYS.all, KEYS.selectable()]);
+      const invalidatePromise = invalidate([KEYS.all, KEYS.selectable()]);
+      if (invalidateMode === 'blocking') {
+        await invalidatePromise;
+        return;
+      }
+      void invalidatePromise;
     },
   });
 }

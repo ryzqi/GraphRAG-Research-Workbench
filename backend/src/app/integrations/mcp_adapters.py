@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 import re
 import time
 from dataclasses import dataclass
@@ -21,17 +20,6 @@ from app.core.settings import Settings
 from app.models.tool_extension import ExtensionTransport, ToolExtension
 
 logger = get_logger(__name__)
-
-# MCP 命令白名单（仅允许执行这些命令）
-_ALLOWED_MCP_COMMANDS = frozenset(
-    {
-        "npx",
-        "node",
-        "python",
-        "python3",
-        "uvx",
-    }
-)
 
 # 危险字符检测模式
 _DANGEROUS_CHARS = re.compile(r"[;&|`$<>]")
@@ -69,23 +57,6 @@ def _format_audit_payload(
     if len(text) <= max_chars:
         return text
     return f"{text[:max_chars].rstrip()}…"
-
-
-def _normalize_allowlist(value: object) -> set[str] | None:
-    if value is None:
-        return None
-    if isinstance(value, str):
-        items = [v.strip() for v in value.split(",") if v.strip()]
-        return set(items) or None
-    if isinstance(value, list):
-        items = [str(v).strip() for v in value if str(v).strip()]
-        return set(items) or None
-    return None
-
-
-def _resolve_allowlist(extension: ToolExtension) -> set[str] | None:
-    security = extension.security_config if isinstance(extension.security_config, dict) else {}
-    return _normalize_allowlist(security.get("allowlist_tools"))
 
 
 def _validate_stdio_token(value: str, *, field: str) -> str:
@@ -153,9 +124,6 @@ def _resolve_stdio_template(
     command = str(template.get("command", "")).strip()
     if not command:
         raise ValueError(f"stdio 模板 {template_id} 缺少 command")
-    cmd_name = os.path.splitext(os.path.basename(command))[0].lower()
-    if cmd_name not in _ALLOWED_MCP_COMMANDS:
-        raise ValueError(f"不允许的 MCP 命令: {command}")
 
     template_args = template.get("args", [])
     if template_args is None:
@@ -218,9 +186,6 @@ class McpToolCallAuditInterceptor(ToolCallInterceptor):
         self._settings = settings
         self._allow_external = allow_external
         self._extensions_by_id = extensions_by_id
-        self._allowlist_by_server: dict[str, set[str] | None] = {
-            ext_id: _resolve_allowlist(ext) for ext_id, ext in extensions_by_id.items()
-        }
         self._timeout_by_server: dict[str, int] = {
             ext_id: _resolve_timeout_seconds(ext, settings)
             for ext_id, ext in extensions_by_id.items()
@@ -264,23 +229,6 @@ class McpToolCallAuditInterceptor(ToolCallInterceptor):
                         type="text",
                         text="外部工具调用已禁用（allow_external=false），已跳过 MCP 工具调用。",
                     )
-                ],
-                isError=False,
-            )
-
-        allowlist = self._allowlist_by_server.get(request.server_name)
-        if allowlist and request.name not in allowlist:
-            logger.warning(
-                "MCP tool blocked by allowlist",
-                extra={
-                    "extension_id": request.server_name,
-                    "extension_name": getattr(ext, "name", None),
-                    "tool_name": request.name,
-                },
-            )
-            return CallToolResult(
-                content=[
-                    TextContent(type="text", text="该 MCP 工具未在 allowlist 中，已跳过执行。")
                 ],
                 isError=False,
             )

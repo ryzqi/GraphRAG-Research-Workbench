@@ -204,6 +204,94 @@ def _should_stream_answer_content(node: str) -> bool:
     return node not in _NON_ANSWER_STREAM_NODES
 
 
+def _extract_summary_text(summary: object) -> str:
+    if not isinstance(summary, list):
+        return ""
+    parts: list[str] = []
+    for item in summary:
+        if not isinstance(item, dict):
+            continue
+        text = item.get("text")
+        if isinstance(text, str) and text:
+            parts.append(text)
+    return "".join(parts)
+
+
+def _extract_reasoning_from_block(block: object) -> list[str]:
+    if not isinstance(block, dict):
+        return []
+
+    item_type = block.get("type")
+    if not isinstance(item_type, str):
+        return []
+
+    candidates: list[str] = []
+    if item_type == "thinking":
+        thinking = block.get("thinking")
+        if isinstance(thinking, str) and thinking:
+            candidates.append(thinking)
+        text = block.get("text")
+        if isinstance(text, str) and text:
+            candidates.append(text)
+    elif item_type == "reasoning":
+        reasoning = block.get("reasoning")
+        if isinstance(reasoning, str) and reasoning:
+            candidates.append(reasoning)
+        summary_text = _extract_summary_text(block.get("summary"))
+        if summary_text:
+            candidates.append(summary_text)
+        text = block.get("text")
+        if isinstance(text, str) and text:
+            candidates.append(text)
+    return candidates
+
+
+def _extract_reasoning_contents(token: object) -> list[str]:
+    contents: list[str] = []
+
+    # 1) LangChain unified field: reasoning_content
+    reasoning_content = getattr(token, "reasoning_content", None)
+    if isinstance(reasoning_content, str) and reasoning_content:
+        contents.append(reasoning_content)
+
+    # 2) Provider-specific additional_kwargs.reasoning
+    additional_kwargs = getattr(token, "additional_kwargs", None)
+    if isinstance(additional_kwargs, dict):
+        reasoning = additional_kwargs.get("reasoning")
+        if isinstance(reasoning, dict):
+            reason_text = reasoning.get("reasoning")
+            if isinstance(reason_text, str) and reason_text:
+                contents.append(reason_text)
+            summary_text = _extract_summary_text(reasoning.get("summary"))
+            if summary_text:
+                contents.append(summary_text)
+
+    # 3) Standard content blocks (LangChain v1)
+    try:
+        content_blocks = getattr(token, "content_blocks", None)
+    except Exception:
+        content_blocks = None
+    if isinstance(content_blocks, list):
+        for block in content_blocks:
+            contents.extend(_extract_reasoning_from_block(block))
+
+    # 4) Raw content list fallback
+    content = getattr(token, "content", None)
+    if isinstance(content, list):
+        for item in content:
+            contents.extend(_extract_reasoning_from_block(item))
+
+    # De-duplicate while preserving order.
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for text in contents:
+        if text in seen:
+            continue
+        seen.add(text)
+        deduped.append(text)
+    return deduped
+
+
 def extract_stream_delta(
     token: object,
     meta: dict[str, Any] | None = None,
@@ -226,10 +314,9 @@ def extract_stream_delta(
     if getattr(token, "type", None) == "tool":
         return []
 
-    # 1. 提取思考内容（LangChain 1.2.6 统一字段）
-    reasoning_content = getattr(token, "reasoning_content", None)
-    if reasoning_content and isinstance(reasoning_content, str):
-        deltas.append(StreamDelta(kind=DeltaKind.THINKING, content=reasoning_content))
+    # 1. 提取思考内容（兼容 LangChain 标准块与 provider-specific 结构）
+    for reasoning_text in _extract_reasoning_contents(token):
+        deltas.append(StreamDelta(kind=DeltaKind.THINKING, content=reasoning_text))
 
     # 2. 检查工具调用
     tool_call_chunks = getattr(token, "tool_call_chunks", None)
@@ -272,13 +359,10 @@ def extract_stream_delta(
         for item in content:
             if not isinstance(item, dict):
                 continue
-            item_type = item.get("type")
-            text = item.get("text", "")
-            if not isinstance(text, str) or not text:
-                continue
-            if item_type in ("thinking", "reasoning"):
-                deltas.append(StreamDelta(kind=DeltaKind.THINKING, content=text))
-            elif item_type == "text" and allow_answer_content:
+            if item.get("type") == "text" and allow_answer_content:
+                text = item.get("text")
+                if not isinstance(text, str) or not text:
+                    continue
                 if legacy_think_parser is None:
                     deltas.append(StreamDelta(kind=DeltaKind.ANSWER, content=text))
                 else:

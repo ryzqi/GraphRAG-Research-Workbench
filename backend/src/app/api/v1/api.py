@@ -11,6 +11,7 @@ from app.api.v1.endpoints import (
     health,
     ingestion_batches,
     index_rebuilds,
+    kb_bootstrap_jobs,
     knowledge_bases,
     knowledge_updates,
     materials,
@@ -26,6 +27,7 @@ api_router.include_router(chats.router, prefix="/chats", tags=["Chats"])
 api_router.include_router(ingestion_batches.router, prefix="/ingestion-batches", tags=["IngestionBatches"])
 api_router.include_router(index_rebuilds.router, prefix="/index-rebuilds", tags=["IndexRebuilds"])
 api_router.include_router(materials.router, tags=["Materials"])
+api_router.include_router(kb_bootstrap_jobs.router, tags=["KBBootstrapJobs"])
 api_router.include_router(extensions.router, prefix="/extensions", tags=["Extensions"])
 api_router.include_router(research.router, prefix="/research", tags=["Research"])
 api_router.include_router(evaluations.router, prefix="/evaluations", tags=["Evaluations"])

@@ -213,12 +213,14 @@ class Settings(BaseSettings):
     minio_secure: bool = Field(False, alias="MINIO_SECURE")
     minio_bucket_uploads: str = Field("mkb-uploads", alias="MINIO_BUCKET_UPLOADS")
     minio_bucket_exports: str = Field("mkb-exports", alias="MINIO_BUCKET_EXPORTS")
+    bootstrap_upload_presign_expire_seconds: int = Field(
+        900, alias="BOOTSTRAP_UPLOAD_PRESIGN_EXPIRE_SECONDS"
+    )
     exports_presign_expire_seconds: int = Field(
         3600, alias="EXPORTS_PRESIGN_EXPIRE_SECONDS"
     )
 
     mcp_enabled: bool = Field(False, alias="MCP_ENABLED")
-    mcp_confirmation_required: bool = Field(True, alias="MCP_CONFIRMATION_REQUIRED")
     mcp_streamable_http: bool = Field(False, alias="MCP_STREAMABLE_HTTP")
     mcp_http_timeout_seconds: int = Field(30, alias="MCP_HTTP_TIMEOUT_SECONDS")
     mcp_stdio_timeout_seconds: int = Field(10, alias="MCP_STDIO_TIMEOUT_SECONDS")
@@ -601,9 +603,6 @@ def validate_startup_settings(settings: Settings) -> None:
     embedding_key = settings.embedding_api_key.strip()
     if not embedding_key or embedding_key == "REPLACE_ME":
         problems.append("EMBEDDING_API_KEY 为空或为占位值（REPLACE_ME）")
-
-    if settings.mcp_enabled and not settings.mcp_confirmation_required:
-        problems.append("启用 MCP 时必须开启人工确认（MCP_CONFIRMATION_REQUIRED=true）")
 
     if problems:
         raise RuntimeError(

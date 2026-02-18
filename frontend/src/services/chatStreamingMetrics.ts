@@ -15,7 +15,6 @@ const KNOWN_EVENTS = new Set([
   'messages',
   'updates',
   'custom',
-  'delta',
   'step',
   'state',
   'ui_event',
@@ -40,7 +39,7 @@ export function createChatStreamMetricsCollector() {
     if (!KNOWN_EVENTS.has(eventName)) {
       unknownEvents += 1;
     }
-    if ((eventName === 'messages' || eventName === 'delta') && firstTokenLatencyMs === null) {
+    if (eventName === 'messages' && firstTokenLatencyMs === null) {
       firstTokenLatencyMs = Date.now() - startedAt;
     }
     if (eventName === 'error') {
