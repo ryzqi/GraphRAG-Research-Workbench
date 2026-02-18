@@ -1,5 +1,6 @@
 import { apiFetch, fetchWithTimeout, HttpError } from './http';
 import type { EntryError } from './ingestionBatches';
+import type { KnowledgeBaseCreate } from './knowledgeBases';
 
 export type BootstrapSubmissionStatus =
   | 'queued_upload'
@@ -67,10 +68,30 @@ export interface BootstrapSubmissionCreateResponse {
   upload_progress: BootstrapUploadProgress;
 }
 
+export interface BootstrapCreateKnowledgeBaseRequest {
+  kb: KnowledgeBaseCreate;
+  entries: BootstrapManifestEntry[];
+}
+
+export interface BootstrapCreateKnowledgeBaseResponse {
+  kb_id: string;
+  job_id: string;
+  status: BootstrapSubmissionStatus;
+  monitor_url: string;
+}
+
 export interface BootstrapSubmissionFinalizeResponse {
   job_id: string;
   kb_id: string;
   status: BootstrapSubmissionStatus;
+  upload_progress: BootstrapUploadProgress;
+}
+
+export interface BootstrapUploadSessionResponse {
+  job_id: string;
+  kb_id: string;
+  status: BootstrapSubmissionStatus;
+  upload_targets: BootstrapUploadTarget[];
   upload_progress: BootstrapUploadProgress;
 }
 
@@ -87,7 +108,6 @@ export interface BootstrapSubmission {
   error_code: string | null;
   error_message: string | null;
   upload_progress: BootstrapUploadProgress;
-  upload_targets: BootstrapUploadTarget[];
   created_at: string;
   updated_at: string;
   started_at: string | null;
@@ -104,6 +124,19 @@ export async function createBootstrapSubmission(
   });
 }
 
+export async function createBootstrapKnowledgeBase(
+  data: BootstrapCreateKnowledgeBaseRequest
+): Promise<BootstrapCreateKnowledgeBaseResponse> {
+  return apiFetch<BootstrapCreateKnowledgeBaseResponse>(
+    '/api/v1/knowledge-bases/bootstrap-create',
+    {
+      method: 'POST',
+      body: JSON.stringify(data),
+      timeoutMs: 30_000,
+    }
+  );
+}
+
 export async function finalizeBootstrapSubmission(
   jobId: string
 ): Promise<BootstrapSubmissionFinalizeResponse> {
@@ -118,6 +151,18 @@ export async function finalizeBootstrapSubmission(
 
 export async function getBootstrapSubmission(jobId: string): Promise<BootstrapSubmission> {
   return apiFetch<BootstrapSubmission>(`/api/v1/knowledge-bases/bootstrap-submissions/${jobId}`);
+}
+
+export async function createBootstrapUploadSession(
+  jobId: string
+): Promise<BootstrapUploadSessionResponse> {
+  return apiFetch<BootstrapUploadSessionResponse>(
+    `/api/v1/knowledge-bases/bootstrap-submissions/${jobId}/upload-session`,
+    {
+      method: 'POST',
+      timeoutMs: 30_000,
+    }
+  );
 }
 
 export async function uploadBootstrapSubmissionFile(
@@ -142,4 +187,3 @@ export async function uploadBootstrapSubmissionFile(
     throw new HttpError(message, response.status, { body });
   }
 }
-

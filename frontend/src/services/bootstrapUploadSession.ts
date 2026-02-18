@@ -8,7 +8,7 @@ export interface BootstrapPendingUploadFile {
 
 export interface BootstrapPendingUploadSession {
   files: BootstrapPendingUploadFile[];
-  uploadTargets: BootstrapUploadTarget[];
+  uploadTargets?: BootstrapUploadTarget[];
   createdAt: number;
 }
 

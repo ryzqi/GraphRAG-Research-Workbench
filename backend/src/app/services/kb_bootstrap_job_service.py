@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import uuid
 from dataclasses import dataclass
@@ -27,7 +28,6 @@ from app.models.source_material import SourceMaterial, SourceType
 from app.schemas.ingestion_batches import ManifestFileEntry, ManifestSourceType
 from app.schemas.kb_bootstrap_jobs import (
     BootstrapManifestEntry,
-    BootstrapManifestFileEntry,
     BootstrapManifestTextEntry,
     BootstrapManifestUrlEntry,
     BootstrapSubmissionCreateRequest,
@@ -41,6 +41,13 @@ BOOTSTRAP_TASK_NAME = "app.worker.tasks.kb_bootstrap_jobs.run_kb_bootstrap_job"
 
 @dataclass(slots=True)
 class BootstrapSubmissionCreateResult:
+    job: KBBootstrapJob
+    upload_targets: list[BootstrapUploadTarget]
+    upload_progress: BootstrapSubmissionUploadProgress
+
+
+@dataclass(slots=True)
+class BootstrapUploadSessionResult:
     job: KBBootstrapJob
     upload_targets: list[BootstrapUploadTarget]
     upload_progress: BootstrapSubmissionUploadProgress
@@ -66,10 +73,9 @@ class KBBootstrapJobService:
         if normalized_request_id:
             existing = await self._get_by_request_id(normalized_request_id)
             if existing is not None:
-                upload_targets = await self._build_upload_targets(existing)
                 return BootstrapSubmissionCreateResult(
                     job=existing,
-                    upload_targets=upload_targets,
+                    upload_targets=[],
                     upload_progress=self.get_upload_progress(existing),
                 )
 
@@ -107,10 +113,9 @@ class KBBootstrapJobService:
             if normalized_request_id:
                 existing = await self._get_by_request_id(normalized_request_id)
                 if existing is not None:
-                    upload_targets = await self._build_upload_targets(existing)
                     return BootstrapSubmissionCreateResult(
                         job=existing,
-                        upload_targets=upload_targets,
+                        upload_targets=[],
                         upload_progress=self.get_upload_progress(existing),
                     )
             raise
@@ -120,8 +125,25 @@ class KBBootstrapJobService:
         if not has_pending_uploads:
             self._celery.send_task(BOOTSTRAP_TASK_NAME, args=[str(job.id)])
 
-        upload_targets = await self._build_upload_targets(job)
         return BootstrapSubmissionCreateResult(
+            job=job,
+            upload_targets=[],
+            upload_progress=self.get_upload_progress(job),
+        )
+
+    async def create_upload_session(self, *, job_id: uuid.UUID) -> BootstrapUploadSessionResult:
+        job = await self._db.get(KBBootstrapJob, job_id)
+        if job is None:
+            raise AppError(code="KB_BOOTSTRAP_JOB_NOT_FOUND", message="任务不存在", status_code=404)
+        if job.status != KBBootstrapJobStatus.QUEUED_UPLOAD:
+            raise AppError(
+                code="KB_BOOTSTRAP_UPLOAD_SESSION_NOT_ALLOWED",
+                message="当前任务状态不允许创建上传会话",
+                status_code=409,
+            )
+
+        upload_targets = await self._build_upload_targets(job)
+        return BootstrapUploadSessionResult(
             job=job,
             upload_targets=upload_targets,
             upload_progress=self.get_upload_progress(job),
@@ -235,26 +257,30 @@ class KBBootstrapJobService:
         upload_manifest: list[dict[str, Any]],
     ) -> tuple[list[dict[str, Any]], list[str]]:
         checked_manifest = [item.copy() for item in upload_manifest]
-        missing_entry_ids: list[str] = []
+        storage = self._get_storage()
 
-        for item in checked_manifest:
+        async def _check_item(item: dict[str, Any]) -> str | None:
             object_ref = ObjectRef(bucket=item["bucket"], object_name=item["object_key"])
-            exists = await self._get_storage().exists(object_ref)
+            exists = await storage.exists(object_ref)
             if not exists:
-                missing_entry_ids.append(item["entry_id"])
                 item["upload_status"] = "missing"
-                continue
+                return str(item["entry_id"])
 
             expected_size = int(item.get("size_bytes") or 0)
             if expected_size > 0:
-                actual_size = await self._get_storage().get_size(object_ref)
+                actual_size = await storage.get_size(object_ref)
                 if actual_size != expected_size:
-                    missing_entry_ids.append(item["entry_id"])
                     item["upload_status"] = "size_mismatch"
-                    continue
+                    return str(item["entry_id"])
 
             item["upload_status"] = "uploaded"
+            return None
 
+        missing_entry_ids = [
+            entry_id
+            for entry_id in await asyncio.gather(*(_check_item(item) for item in checked_manifest))
+            if entry_id is not None
+        ]
         return checked_manifest, missing_entry_ids
 
     async def _get_by_request_id(self, request_id: str) -> KBBootstrapJob | None:
@@ -276,9 +302,6 @@ class KBBootstrapJobService:
         normalized_entries: list[dict[str, Any]] = []
         upload_manifest: list[dict[str, Any]] = []
         used_entry_ids: set[str] = set()
-
-        if any(isinstance(entry, BootstrapManifestFileEntry) for entry in entries):
-            await self._get_storage().ensure_buckets()
 
         for index, entry in enumerate(entries):
             entry_id = self._ensure_unique_entry_id(
@@ -364,29 +387,29 @@ class KBBootstrapJobService:
         expires_seconds = max(int(self._settings.bootstrap_upload_presign_expire_seconds), 60)
         expires_at = datetime.now(timezone.utc) + timedelta(seconds=expires_seconds)
 
-        targets: list[BootstrapUploadTarget] = []
         storage = self._get_storage()
         await storage.ensure_buckets()
-        for item in pending_manifest:
+
+        async def _build_target(item: dict[str, Any]) -> BootstrapUploadTarget:
             ref = ObjectRef(bucket=item["bucket"], object_name=item["object_key"])
             upload_url = await storage.presign_put(ref, expires_seconds=expires_seconds)
             headers: dict[str, str] = {}
             content_type = str(item.get("content_type") or "").strip()
             if content_type:
                 headers["Content-Type"] = content_type
-            targets.append(
-                BootstrapUploadTarget(
-                    entry_id=item["entry_id"],
-                    material_id=uuid.UUID(item["material_id"]),
-                    filename=item["filename"],
-                    upload_url=upload_url,
-                    method="PUT",
-                    headers=headers,
-                    object_key=item["object_key"],
-                    expires_at=expires_at,
-                )
+            return BootstrapUploadTarget(
+                entry_id=item["entry_id"],
+                material_id=uuid.UUID(item["material_id"]),
+                filename=item["filename"],
+                upload_url=upload_url,
+                method="PUT",
+                headers=headers,
+                object_key=item["object_key"],
+                expires_at=expires_at,
             )
-        return targets
+
+        targets = await asyncio.gather(*(_build_target(item) for item in pending_manifest))
+        return list(targets)
 
     def _get_storage(self) -> ObjectStorage:
         if self._storage is None:

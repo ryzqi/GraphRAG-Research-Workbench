@@ -27,8 +27,9 @@ import {
   type NormalizedManifestDraftEntry,
 } from '../components/IngestionManifestEditor';
 import { IndexConfigForm } from '../components/IndexConfigForm';
-import { useCreateBootstrapSubmission } from '../hooks/queries/useBootstrapSubmissions';
-import { useCreateKnowledgeBase } from '../hooks/queries/useKnowledgeBases';
+import {
+  useCreateBootstrapKnowledgeBase,
+} from '../hooks/queries/useBootstrapSubmissions';
 import { getErrorMessage } from '../lib/errorHandler';
 import { validateIndexConfig } from '../lib/indexConfig';
 import { buildBootstrapSubmissionManifestEntries } from '../lib/manifestBuilders';
@@ -62,8 +63,7 @@ export default function KnowledgeBaseCreateWizardPage() {
   const [localError, setLocalError] = useState<string | null>(null);
   const [preparingSubmit, setPreparingSubmit] = useState(false);
 
-  const createKbMutation = useCreateKnowledgeBase({ invalidateMode: 'background' });
-  const createBootstrapMutation = useCreateBootstrapSubmission({ invalidateMode: 'background' });
+  const createBootstrapKbMutation = useCreateBootstrapKnowledgeBase({ invalidateMode: 'background' });
 
   const markdownOnly = indexConfig.chunking.general_strategy === 'markdown_heading';
   const validation = useMemo(
@@ -74,34 +74,11 @@ export default function KnowledgeBaseCreateWizardPage() {
   const canProceedStep1 = name.trim().length > 0 && configErrors.length === 0;
   const canProceedStep2 =
     validation.globalErrors.length === 0 && validation.normalizedValidEntries.length > 0;
-  const submitPending = createKbMutation.isPending || createBootstrapMutation.isPending || preparingSubmit;
+  const submitPending = createBootstrapKbMutation.isPending || preparingSubmit;
 
   const mergedError =
     localError ??
-    (createKbMutation.error ? getErrorMessage(createKbMutation.error) : null) ??
-    (createBootstrapMutation.error ? getErrorMessage(createBootstrapMutation.error) : null);
-
-  const ensureKnowledgeBaseCreated = async (): Promise<string> => {
-    if (createdKbId) {
-      return createdKbId;
-    }
-
-    const tags = tagsInput
-      .split(',')
-      .map((item) => item.trim())
-      .filter(Boolean);
-
-    const payload: KnowledgeBaseCreate = {
-      name: name.trim(),
-      description: description.trim() || undefined,
-      tags: tags.length > 0 ? tags : undefined,
-      index_config: indexConfig,
-    };
-
-    const created = await createKbMutation.mutateAsync(payload);
-    setCreatedKbId(created.id);
-    return created.id;
-  };
+    (createBootstrapKbMutation.error ? getErrorMessage(createBootstrapKbMutation.error) : null);
 
   const goToStep = async (nextStep: number) => {
     setLocalError(null);
@@ -142,7 +119,16 @@ export default function KnowledgeBaseCreateWizardPage() {
 
     setPreparingSubmit(true);
     try {
-      const kbId = await ensureKnowledgeBaseCreated();
+      const tags = tagsInput
+        .split(',')
+        .map((item) => item.trim())
+        .filter(Boolean);
+      const kbPayload: KnowledgeBaseCreate = {
+        name: name.trim(),
+        description: description.trim() || undefined,
+        tags: tags.length > 0 ? tags : undefined,
+        index_config: indexConfig,
+      };
       const { manifestEntries, pendingUploadFiles } = buildBootstrapSubmissionManifestEntries(
         validation.normalizedValidEntries
       );
@@ -151,19 +137,19 @@ export default function KnowledgeBaseCreateWizardPage() {
         return;
       }
 
-      const response = await createBootstrapMutation.mutateAsync({
-        kb_id: kbId,
+      const response = await createBootstrapKbMutation.mutateAsync({
+        kb: kbPayload,
         entries: manifestEntries,
       });
+      setCreatedKbId(response.kb_id);
 
-      if (pendingUploadFiles.length > 0 && response.upload_targets.length > 0) {
+      if (pendingUploadFiles.length > 0) {
         setBootstrapPendingUploadSession(response.job_id, {
           files: pendingUploadFiles,
-          uploadTargets: response.upload_targets,
         });
       }
 
-      router.push(`/knowledge-bases/${kbId}/documents/new?job=${response.job_id}`);
+      router.push(`/knowledge-bases/${response.kb_id}/documents/new?job=${response.job_id}`);
     } catch (error) {
       setLocalError(getErrorMessage(error));
     } finally {

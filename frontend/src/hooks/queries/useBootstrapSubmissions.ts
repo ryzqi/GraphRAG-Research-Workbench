@@ -1,9 +1,12 @@
 import { useApiMutation, useApiQuery } from '../../lib/swr';
 import {
+  createBootstrapKnowledgeBase,
   createBootstrapSubmission,
   finalizeBootstrapSubmission,
   getBootstrapSubmission,
   type BootstrapSubmission,
+  type BootstrapCreateKnowledgeBaseRequest,
+  type BootstrapCreateKnowledgeBaseResponse,
   type BootstrapSubmissionCreateRequest,
   type BootstrapSubmissionFinalizeResponse,
   type BootstrapSubmissionStatus,
@@ -54,6 +57,33 @@ export function useCreateBootstrapSubmission(options?: UseCreateBootstrapSubmiss
     (data: BootstrapSubmissionCreateRequest) => createBootstrapSubmission(data),
     {
       onSuccess: async (resp, __, { invalidate }) => {
+        const keysToInvalidate: Array<readonly unknown[]> = [
+          KEYS.all,
+          ['knowledgeBases'],
+          ['ingestionBatches'],
+        ];
+        if (resp.job_id) {
+          keysToInvalidate.push(KEYS.detail(resp.job_id));
+        }
+
+        const invalidatePromise = invalidate(keysToInvalidate);
+        if (invalidateMode === 'blocking') {
+          await invalidatePromise;
+          return;
+        }
+        void invalidatePromise;
+      },
+    }
+  );
+}
+
+export function useCreateBootstrapKnowledgeBase(options?: UseCreateBootstrapSubmissionOptions) {
+  const invalidateMode = options?.invalidateMode ?? 'background';
+
+  return useApiMutation(
+    (data: BootstrapCreateKnowledgeBaseRequest) => createBootstrapKnowledgeBase(data),
+    {
+      onSuccess: async (resp: BootstrapCreateKnowledgeBaseResponse, __, { invalidate }) => {
         const keysToInvalidate: Array<readonly unknown[]> = [
           KEYS.all,
           ['knowledgeBases'],

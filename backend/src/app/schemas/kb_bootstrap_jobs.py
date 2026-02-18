@@ -8,6 +8,7 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.schemas.ingestion_batches import EntryErrorRead, ManifestSourceType
+from app.schemas.knowledge_bases import KnowledgeBaseCreate
 
 
 class BootstrapSubmissionStatus(str, Enum):
@@ -55,6 +56,13 @@ class BootstrapSubmissionCreateRequest(BaseModel):
     entries: Annotated[list[BootstrapManifestEntry], Field(min_length=1)]
 
 
+class BootstrapCreateKnowledgeBaseRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    kb: KnowledgeBaseCreate
+    entries: Annotated[list[BootstrapManifestEntry], Field(min_length=1)]
+
+
 class BootstrapUploadTarget(BaseModel):
     entry_id: str
     material_id: uuid.UUID
@@ -91,6 +99,23 @@ class BootstrapSubmissionFinalizeResponse(BaseModel):
     )
 
 
+class BootstrapCreateKnowledgeBaseResponse(BaseModel):
+    kb_id: uuid.UUID
+    job_id: uuid.UUID
+    status: BootstrapSubmissionStatus
+    monitor_url: str
+
+
+class BootstrapUploadSessionResponse(BaseModel):
+    job_id: uuid.UUID
+    kb_id: uuid.UUID
+    status: BootstrapSubmissionStatus
+    upload_targets: list[BootstrapUploadTarget] = Field(default_factory=list)
+    upload_progress: BootstrapSubmissionUploadProgress = Field(
+        default_factory=BootstrapSubmissionUploadProgress
+    )
+
+
 class BootstrapSubmissionRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -108,9 +133,7 @@ class BootstrapSubmissionRead(BaseModel):
     upload_progress: BootstrapSubmissionUploadProgress = Field(
         default_factory=BootstrapSubmissionUploadProgress
     )
-    upload_targets: list[BootstrapUploadTarget] = Field(default_factory=list)
     created_at: datetime
     updated_at: datetime
     started_at: datetime | None = None
     finished_at: datetime | None = None
-

@@ -107,6 +107,7 @@ class KnowledgeBaseService:
         description: str | None = None,
         tags: list[str] | None = None,
         index_config: dict | None = None,
+        commit: bool = True,
     ) -> KnowledgeBase:
         """创建知识库并初始化 version=1 快照。"""
 
@@ -132,8 +133,9 @@ class KnowledgeBaseService:
         )
         self._db.add(snapshot)
 
-        await self._db.commit()
-        await self._db.refresh(kb)
+        if commit:
+            await self._db.commit()
+            await self._db.refresh(kb)
         return kb
 
     async def update(

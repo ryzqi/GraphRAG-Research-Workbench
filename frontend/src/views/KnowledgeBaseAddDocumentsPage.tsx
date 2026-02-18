@@ -35,9 +35,9 @@ import { getErrorMessage } from '../lib/errorHandler';
 import { splitDirectIngestionManifestEntries } from '../lib/manifestBuilders';
 import { runWithConcurrency } from '../lib/runWithConcurrency';
 import {
+  createBootstrapUploadSession,
   uploadBootstrapSubmissionFile,
   type BootstrapSubmissionStatus,
-  type BootstrapUploadTarget,
 } from '../services/bootstrapSubmissions';
 import {
   clearBootstrapPendingUploadSession,
@@ -209,16 +209,6 @@ function manifestEntryDisplayTitle(entry: ManifestEntry, index: number): string 
   return `未命名文档 ${index + 1}`;
 }
 
-function resolveUploadTargets(
-  primary: BootstrapUploadTarget[],
-  fallback: BootstrapUploadTarget[]
-): BootstrapUploadTarget[] {
-  if (primary.length > 0) {
-    return primary;
-  }
-  return fallback;
-}
-
 export default function KnowledgeBaseAddDocumentsPage() {
   const router = useRouter();
   const params = useParams<{ kbId: string }>();
@@ -297,15 +287,10 @@ export default function KnowledgeBaseAddDocumentsPage() {
     }
 
     const pendingSession = getBootstrapPendingUploadSession(bootstrapJob.id);
-    const uploadTargets = resolveUploadTargets(
-      bootstrapJob.upload_targets ?? [],
-      pendingSession?.uploadTargets ?? []
-    );
-
-    if (!pendingSession || pendingSession.files.length === 0 || uploadTargets.length === 0) {
+    if (!pendingSession || pendingSession.files.length === 0) {
       setBootstrapUploadState({
         stage: 'missing_files',
-        totalFiles: uploadTargets.length,
+        totalFiles: 0,
         uploadedFiles: 0,
         failedFiles: 0,
         message: '当前会话缺少待上传文件，请返回“新建知识库”页面重新提交。',
@@ -315,97 +300,119 @@ export default function KnowledgeBaseAddDocumentsPage() {
 
     bootstrapUploadStartedRef.current = bootstrapJob.id;
     const filesByEntryId = new Map(pendingSession.files.map((item) => [item.entry_id, item]));
-    const totalFiles = uploadTargets.length;
 
     let cancelled = false;
-    let uploadedFiles = 0;
-    let failedFiles = 0;
-
-    setBootstrapUploadState({
-      stage: 'uploading',
-      totalFiles,
-      uploadedFiles: 0,
-      failedFiles: 0,
-      message: '正在上传文件…',
-    });
     setLocalError(null);
 
-    void runWithConcurrency(uploadTargets, MAX_PARALLEL_UPLOADS, async (target) => {
+    const runBootstrapUpload = async () => {
+      const uploadSession = await createBootstrapUploadSession(bootstrapJob.id);
+      const uploadTargets = uploadSession.upload_targets ?? [];
+      const totalFiles = uploadTargets.length;
+
       if (cancelled) {
         return;
       }
-
-      const pendingFile = filesByEntryId.get(target.entry_id);
-      if (!pendingFile) {
-        failedFiles += 1;
-        setBootstrapUploadState((prev) => ({
-          ...prev,
-          stage: 'failed',
-          uploadedFiles,
-          failedFiles,
-          message: '存在缺失文件，请返回上一步重新提交。',
-        }));
+      if (totalFiles === 0) {
+        setBootstrapUploadState({
+          stage: 'missing_files',
+          totalFiles: 0,
+          uploadedFiles: 0,
+          failedFiles: 0,
+          message: '上传会话未返回可用目标，请稍后重试。',
+        });
         return;
       }
 
-      try {
-        await uploadBootstrapSubmissionFile(target, pendingFile.file);
-        uploadedFiles += 1;
-        setBootstrapUploadState((prev) => ({
-          ...prev,
-          stage: 'uploading',
-          uploadedFiles,
-          failedFiles,
-          message: `已上传 ${uploadedFiles}/${totalFiles}`,
-        }));
-      } catch (error) {
-        failedFiles += 1;
-        setBootstrapUploadState((prev) => ({
-          ...prev,
-          stage: 'failed',
-          uploadedFiles,
-          failedFiles,
-          message: getErrorMessage(error),
-        }));
-      }
-    })
-      .then(async () => {
-        if (cancelled) {
-          return;
-        }
-        if (failedFiles > 0) {
-          setLocalError('部分文件上传失败，请重试上传。');
-          return;
-        }
-
-        setBootstrapUploadState((prev) => ({
-          ...prev,
-          stage: 'finalizing',
-          message: '文件上传完成，正在提交任务…',
-        }));
-        await finalizeBootstrapMutation.mutateAsync(bootstrapJob.id);
-        clearBootstrapPendingUploadSession(bootstrapJob.id);
-
-        setBootstrapUploadState((prev) => ({
-          ...prev,
-          stage: 'done',
-          uploadedFiles: totalFiles,
-          failedFiles: 0,
-          message: '文件上传完成，任务已进入处理队列。',
-        }));
-        await bootstrapJobQuery.refetch();
-      })
-      .catch((error) => {
-        if (cancelled) {
-          return;
-        }
-        setBootstrapUploadState((prev) => ({
-          ...prev,
-          stage: 'failed',
-          message: getErrorMessage(error),
-        }));
-        setLocalError(getErrorMessage(error));
+      let uploadedFiles = 0;
+      let failedFiles = 0;
+      setBootstrapUploadState({
+        stage: 'uploading',
+        totalFiles,
+        uploadedFiles: 0,
+        failedFiles: 0,
+        message: '正在上传文件…',
       });
+
+      await runWithConcurrency(uploadTargets, MAX_PARALLEL_UPLOADS, async (target) => {
+        if (cancelled) {
+          return;
+        }
+
+        const pendingFile = filesByEntryId.get(target.entry_id);
+        if (!pendingFile) {
+          failedFiles += 1;
+          setBootstrapUploadState((prev) => ({
+            ...prev,
+            stage: 'failed',
+            uploadedFiles,
+            failedFiles,
+            message: '存在缺失文件，请返回上一步重新提交。',
+          }));
+          return;
+        }
+
+        try {
+          await uploadBootstrapSubmissionFile(target, pendingFile.file);
+          uploadedFiles += 1;
+          setBootstrapUploadState((prev) => ({
+            ...prev,
+            stage: 'uploading',
+            uploadedFiles,
+            failedFiles,
+            message: `已上传 ${uploadedFiles}/${totalFiles}`,
+          }));
+        } catch (error) {
+          failedFiles += 1;
+          setBootstrapUploadState((prev) => ({
+            ...prev,
+            stage: 'failed',
+            uploadedFiles,
+            failedFiles,
+            message: getErrorMessage(error),
+          }));
+        }
+      });
+
+      if (cancelled) {
+        return;
+      }
+      if (failedFiles > 0) {
+        setLocalError('部分文件上传失败，请重试上传。');
+        return;
+      }
+
+      setBootstrapUploadState((prev) => ({
+        ...prev,
+        stage: 'finalizing',
+        message: '文件上传完成，正在提交任务…',
+      }));
+      await finalizeBootstrapMutation.mutateAsync(bootstrapJob.id);
+      clearBootstrapPendingUploadSession(bootstrapJob.id);
+
+      if (cancelled) {
+        return;
+      }
+      setBootstrapUploadState((prev) => ({
+        ...prev,
+        stage: 'done',
+        uploadedFiles: totalFiles,
+        failedFiles: 0,
+        message: '文件上传完成，任务已进入处理队列。',
+      }));
+      await bootstrapJobQuery.refetch();
+    };
+
+    void runBootstrapUpload().catch((error) => {
+      if (cancelled) {
+        return;
+      }
+      setBootstrapUploadState((prev) => ({
+        ...prev,
+        stage: 'failed',
+        message: getErrorMessage(error),
+      }));
+      setLocalError(getErrorMessage(error));
+    });
 
     return () => {
       cancelled = true;
