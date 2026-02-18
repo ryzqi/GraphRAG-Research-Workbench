@@ -21,7 +21,6 @@ import SmartToyIcon from '@mui/icons-material/SmartToy';
 import SearchIcon from '@mui/icons-material/Search';
 import StorageIcon from '@mui/icons-material/Storage';
 import ExtensionIcon from '@mui/icons-material/Extension';
-import AssessmentIcon from '@mui/icons-material/Assessment';
 import Brightness4Icon from '@mui/icons-material/Brightness4';
 import Brightness7Icon from '@mui/icons-material/Brightness7';
 import { useThemeMode } from '../theme/ThemeProvider';
@@ -49,7 +48,6 @@ const navItems = [
   { href: '/knowledge-bases', label: '知识库管理', icon: StorageIcon },
   { href: '/research', label: '深度研究', icon: SearchIcon },
   { href: '/extensions', label: 'MCP扩展', icon: ExtensionIcon },
-  { href: '/evaluations', label: '对比评测', icon: AssessmentIcon },
 ];
 
 export function Nav() {

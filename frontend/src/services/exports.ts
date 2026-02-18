@@ -4,7 +4,7 @@
 
 import { apiFetch } from './http';
 
-export type ExportType = 'chat' | 'research' | 'evaluation';
+export type ExportType = 'chat' | 'research';
 export type ExportStatus = 'queued' | 'running' | 'succeeded' | 'failed';
 
 export interface ExportCreateRequest {

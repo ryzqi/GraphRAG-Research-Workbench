@@ -21,7 +21,7 @@ class ReportGenerateArgs(BaseModel):
 
     question: str = Field(..., description="研究问题")
     findings: list[str] = Field(..., description="研究发现列表")
-    evidence_summary: dict = Field(..., description="证据摘要（来自 evidence_compare）")
+    evidence_summary: dict = Field(..., description="证据摘要")
     citations: list[dict] = Field(default_factory=list, description="引用列表")
     report_format: Literal["standard", "brief", "detailed"] = Field(
         default="standard", description="报告格式"

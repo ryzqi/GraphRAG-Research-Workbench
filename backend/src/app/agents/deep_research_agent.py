@@ -15,7 +15,6 @@ from pydantic import BaseModel, Field
 
 from app.agents.deepagents_io import build_user_messages, extract_last_message_text
 from app.agents.memory_backend import MemoryBackendFactory
-from app.agents.tools.evidence_compare import build_evidence_compare_tool
 from app.agents.tools.report_generate import build_report_generate_tool
 from app.agents.tools.research_plan import build_research_plan_tool
 from app.agents.tools.subagent_coordinate import build_subagent_coordinate_tool
@@ -175,7 +174,6 @@ class DeepResearchAgent:
             self._build_retrieval_tool(kb_ids),
             build_system_time_tool(),
             build_research_plan_tool(llm_client, self._prompts),
-            build_evidence_compare_tool(llm_client, self._prompts),
             build_report_generate_tool(llm_client, self._prompts),
         ]
 

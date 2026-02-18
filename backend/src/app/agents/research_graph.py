@@ -1,7 +1,7 @@
 """研究链路 LangGraph 实现（ToolNode + 工具调用）。
 
 该图用于替换 DeepAgents 研究链路：
-- 复用研究工具（research_plan/evidence_compare/report_generate）
+- 复用研究工具（research_plan/report_generate）
 - 复用 kb_retrieve/web_search/MCP 扩展工具
 - 不触发人工审批（Worker 自动执行）
 """
@@ -21,7 +21,6 @@ from langgraph.graph.message import add_messages
 
 from app.agents.tool_calling.builder import ToolCallingGraphBuilder
 from app.agents.tool_calling.registry import build_tool_registry
-from app.agents.tools.evidence_compare import build_evidence_compare_tool
 from app.agents.tools.kb_retrieve import build_kb_retrieve_tool
 from app.agents.tools.report_generate import build_report_generate_tool
 from app.agents.tools.research_plan import build_research_plan_tool
@@ -116,7 +115,6 @@ class ResearchGraph:
             kb_tool,
             build_system_time_tool(),
             build_research_plan_tool(llm_client, self._prompts),
-            build_evidence_compare_tool(llm_client, self._prompts),
             build_report_generate_tool(llm_client, self._prompts),
         ]
 

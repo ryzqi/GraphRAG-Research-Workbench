@@ -10,7 +10,6 @@ from pydantic import BaseModel, ConfigDict
 class ExportType(str, Enum):
     CHAT = "chat"
     RESEARCH = "research"
-    EVALUATION = "evaluation"
 
 
 class ExportStatus(str, Enum):

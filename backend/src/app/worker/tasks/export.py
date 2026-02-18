@@ -7,7 +7,6 @@ from app.core.settings import get_settings
 from app.integrations.object_storage import ObjectRef, ObjectStorage
 from app.models.export_job import ExportJob, ExportStatus
 from app.services.exporters.chat_exporter import ChatExporter
-from app.services.exporters.evaluation_exporter import EvaluationExporter
 from app.services.exporters.research_exporter import ResearchExporter
 from app.worker.celery_app import celery_app
 from app.worker.task_resources import managed_task_resources
@@ -47,11 +46,6 @@ async def _run_export(*, export_id: str, export_type: str, run_id: str) -> None:
                     ext = "md"
                 elif export_type == "research":
                     exporter = ResearchExporter()
-                    content = await exporter.export(session, run_uuid)
-                    content_type = "text/markdown; charset=utf-8"
-                    ext = "md"
-                elif export_type == "evaluation":
-                    exporter = EvaluationExporter()
                     content = await exporter.export(session, run_uuid)
                     content_type = "text/markdown; charset=utf-8"
                     ext = "md"

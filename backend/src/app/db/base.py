@@ -15,7 +15,6 @@ def import_all_models() -> None:
         chat_message,
         chat_session,
         document_chunk,
-        evaluation_run,
         evidence,
         export_job,
         index_rebuild_job,

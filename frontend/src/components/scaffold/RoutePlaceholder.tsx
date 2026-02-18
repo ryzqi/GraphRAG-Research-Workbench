@@ -5,7 +5,7 @@ import Stack from '@mui/material/Stack';
 import Typography from '@mui/material/Typography';
 
 interface RoutePlaceholderProps {
-  group: 'chat' | 'knowledge-bases' | 'research' | 'extensions' | 'evaluations';
+  group: 'chat' | 'knowledge-bases' | 'research' | 'extensions';
   route: string;
   title: string;
 }

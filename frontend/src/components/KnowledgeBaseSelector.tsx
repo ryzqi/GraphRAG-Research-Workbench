@@ -1,6 +1,6 @@
 /**
  * 知识库选择器组件
- * 复用于 KbChatPage、ResearchPage、EvaluationsPage
+ * 复用于 KbChatPage、ResearchPage
  */
 import { useMemo } from 'react';
 import {

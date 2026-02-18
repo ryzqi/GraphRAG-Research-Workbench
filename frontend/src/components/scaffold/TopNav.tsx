@@ -16,7 +16,6 @@ const navItems = [
   { href: '/knowledge-bases', label: '知识库' },
   { href: '/research', label: 'Research' },
   { href: '/extensions', label: 'Extensions' },
-  { href: '/evaluations', label: 'Evaluations' },
 ];
 
 function isActive(pathname: string, href: string): boolean {

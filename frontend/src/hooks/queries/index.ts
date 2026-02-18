@@ -29,12 +29,6 @@ export {
 } from './useResearch';
 
 export {
-  useEvaluationRun,
-  useCreateEvaluationRun,
-  evaluationKeys,
-} from './useEvaluations';
-
-export {
   useExtensions,
   useExtensionTools,
   useStdioTemplates,

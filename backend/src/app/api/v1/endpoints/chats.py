@@ -17,7 +17,6 @@ from app.core.settings import get_settings
 from app.models.agent_run import AgentRun, AgentRunStatus, AgentRunType
 from app.models.chat_message import ChatMessage, MessageRole
 from app.models.chat_session import ChatSession, ChatSessionType
-from app.models.evaluation_run import EvaluationRun
 from app.models.export_job import ExportJob
 from app.models.knowledge_base import KnowledgeBaseReadiness, KnowledgeBaseStatus
 from app.schemas.chats import (
@@ -270,20 +269,8 @@ async def delete_chat_session(
     )
     run_ids = [row[0] for row in run_ids_result.all()]
 
-    eval_ids: list[uuid.UUID] = []
-    eval_ids_result = await db.execute(
-        select(EvaluationRun.id).where(
-            EvaluationRun.related_session_ids.any(session_id)
-        )
-    )
-    eval_ids = [row[0] for row in eval_ids_result.all()]
-
-    export_run_ids = list({*run_ids, *eval_ids})
-    if export_run_ids:
-        await db.execute(delete(ExportJob).where(ExportJob.run_id.in_(export_run_ids)))
-
-    if eval_ids:
-        await db.execute(delete(EvaluationRun).where(EvaluationRun.id.in_(eval_ids)))
+    if run_ids:
+        await db.execute(delete(ExportJob).where(ExportJob.run_id.in_(run_ids)))
 
     await db.execute(delete(AgentRun).where(AgentRun.session_id == session_id))
     await db.delete(session)

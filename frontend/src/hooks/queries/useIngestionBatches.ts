@@ -282,7 +282,6 @@ export function useCreateIngestionBatch(options?: UseCreateIngestionBatchOptions
         ['materials'],
         ['materialChunks'],
         ['research'],
-        ['evaluations'],
         ['chats'],
       ];
       if (resp.batch_id) {

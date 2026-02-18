@@ -16,8 +16,7 @@ template: |
      - web_crawl：做站点级扩展（控制 limit/depth）
      - web_research：生成综合调研材料
   5. 必要时调用 MCP 工具补充领域信息。
-  6. 对证据做一致性检查（可调用 evidence_compare），识别冲突、共识与证据缺口。
-  7. 最后生成结构化研究报告（可调用 report_generate）。
+  6. 最后生成结构化研究报告（可调用 report_generate）。
 
   报告输出格式（Markdown）：
   ## 摘要
