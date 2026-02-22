@@ -20,8 +20,10 @@ celery_app = Celery(
         "app.worker.tasks.export",
         "app.worker.tasks.ingestion_batches",
         "app.worker.tasks.ingestion_outbox_dispatcher",
+        "app.worker.tasks.ingestion_watchdog",
         "app.worker.tasks.index_rebuild",
         "app.worker.tasks.index_rebuild_outbox_dispatcher",
+        "app.worker.tasks.bootstrap_watchdog",
         "app.worker.tasks.kb_bootstrap_jobs",
         "app.worker.tasks.research",
     ],
@@ -69,6 +71,9 @@ def _build_celery_conf(cfg: Settings) -> dict[str, Any]:
             "app.worker.tasks.ingestion_batches.run_ingestion_batch_doc": {
                 "queue": "ingestion"
             },
+            "app.worker.tasks.ingestion_watchdog.fail_stale_processing_docs": {
+                "queue": "dispatch"
+            },
             "app.worker.tasks.index_rebuild.run_index_rebuild_job": {"queue": "rebuild"},
             "app.worker.tasks.research.run_research": {"queue": "research"},
             "app.worker.tasks.research.run_research_v2": {"queue": "research"},
@@ -76,12 +81,25 @@ def _build_celery_conf(cfg: Settings) -> dict[str, Any]:
             "app.worker.tasks.kb_bootstrap_jobs.run_kb_bootstrap_job": {
                 "queue": "default"
             },
+            "app.worker.tasks.bootstrap_watchdog.fail_stale_bootstrap_jobs": {
+                "queue": "dispatch"
+            },
         },
         "timezone": "Asia/Shanghai",
         "beat_schedule": {
+            "bootstrap-watchdog": {
+                "task": "app.worker.tasks.bootstrap_watchdog.fail_stale_bootstrap_jobs",
+                "schedule": timedelta(seconds=15),
+                "kwargs": {"limit": DEFAULT_DISPATCH_BATCH_SIZE},
+            },
             "ingestion-outbox-dispatcher": {
                 "task": "app.worker.tasks.ingestion_outbox_dispatcher.dispatch_ingestion_outbox",
                 "schedule": timedelta(seconds=15),
+                "kwargs": {"limit": DEFAULT_DISPATCH_BATCH_SIZE},
+            },
+            "ingestion-doc-watchdog": {
+                "task": "app.worker.tasks.ingestion_watchdog.fail_stale_processing_docs",
+                "schedule": timedelta(seconds=30),
                 "kwargs": {"limit": DEFAULT_DISPATCH_BATCH_SIZE},
             },
             "index-rebuild-outbox-dispatcher": {

@@ -16,6 +16,7 @@ from app.api.v1.endpoints import (
     materials,
     model_config,
     research,
+    system,
 )
 
 api_router = APIRouter()
@@ -33,3 +34,4 @@ api_router.include_router(model_config.router, prefix="/model-config", tags=["Mo
 api_router.include_router(research.router, prefix="/research", tags=["Research"])
 api_router.include_router(knowledge_updates.router, prefix="/knowledge-updates", tags=["KnowledgeUpdates"])
 api_router.include_router(checkpoints.router, tags=["Checkpoints"])
+api_router.include_router(system.router, tags=["System"])

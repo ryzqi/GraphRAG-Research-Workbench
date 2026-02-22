@@ -244,6 +244,9 @@ class Settings(BaseSettings):
     bootstrap_upload_presign_expire_seconds: int = Field(
         900, alias="BOOTSTRAP_UPLOAD_PRESIGN_EXPIRE_SECONDS"
     )
+    bootstrap_queued_timeout_seconds: int = Field(
+        180, ge=1, alias="BOOTSTRAP_QUEUED_TIMEOUT_SECONDS"
+    )
     exports_presign_expire_seconds: int = Field(
         3600, alias="EXPORTS_PRESIGN_EXPIRE_SECONDS"
     )
@@ -397,6 +400,12 @@ class Settings(BaseSettings):
     )
     ingestion_embedding_batch_size: int = Field(
         32, alias="INGESTION_EMBEDDING_BATCH_SIZE"
+    )
+    ingestion_doc_queue_timeout_seconds: int = Field(
+        600, ge=1, alias="INGESTION_DOC_QUEUE_TIMEOUT_SECONDS"
+    )
+    ingestion_outbox_stale_dispatched_seconds: int = Field(
+        300, ge=1, alias="INGESTION_OUTBOX_STALE_DISPATCHED_SECONDS"
     )
 
     # 导入：URL 抓取/正文抽取配置（最小安全基线）

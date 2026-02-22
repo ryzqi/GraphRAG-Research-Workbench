@@ -84,17 +84,25 @@ uv run uvicorn app.main:app --host 127.0.0.1 --port 8000 --loop asyncio:Selector
 ```powershell
 cd backend
 # 独立 beat（周期补偿）
-uv run celery -A app.worker.celery_app beat --loglevel=INFO
+uv run celery -A app.worker.celery_app beat --loglevel=INFO -n worker.beat@%h
 
 # dispatch worker（短任务，负责 outbox 派发）
-uv run celery -A app.worker.celery_app worker --loglevel=INFO --pool=threads --concurrency=2 --prefetch-multiplier=1 -Q dispatch
+uv run celery -A app.worker.celery_app worker --loglevel=INFO -n worker.dispatch@%h --pool=threads --concurrency=2 --prefetch-multiplier=1 -Q dispatch
 
 # core worker（ingestion/rebuild/default）
-uv run celery -A app.worker.celery_app worker --loglevel=INFO --pool=threads --concurrency=8 --prefetch-multiplier=1 -Q ingestion,rebuild,default
+uv run celery -A app.worker.celery_app worker --loglevel=INFO -n worker.core@%h --pool=threads --concurrency=8 --prefetch-multiplier=1 -Q ingestion,rebuild,default
 
 # noncore worker（research/export）
-uv run celery -A app.worker.celery_app worker --loglevel=INFO --pool=threads --concurrency=2 --prefetch-multiplier=1 -Q research,export
+uv run celery -A app.worker.celery_app worker --loglevel=INFO -n worker.noncore@%h --pool=threads --concurrency=2 --prefetch-multiplier=1 -Q research,export
 ```
+
+启动后建议立即执行（确认必需消费者在线）：
+
+```powershell
+uv run celery -A app.worker.celery_app inspect active_queues -t 5
+```
+
+至少应看到 `default`、`dispatch`、`ingestion` 三个队列存在消费者。
 
 ### Celery 运行参数（推荐默认值）
 

@@ -14,6 +14,7 @@ from app.models.ingestion_task_outbox import (
     IngestionTaskOutbox,
     IngestionTaskOutboxStatus,
 )
+from app.services.ingestion_batch_service import IngestionBatchService
 from app.worker.celery_app import celery_app
 from app.worker.task_resources import managed_task_resources
 
@@ -23,8 +24,14 @@ DEFAULT_DISPATCH_BATCH_SIZE = 50
 MAX_RETRY_BACKOFF_SECONDS = 600
 RETRY_BASE_SECONDS = 5
 MAX_ERROR_MESSAGE_LENGTH = 2000
-STALE_DISPATCHED_SECONDS = 60 * 60
+DEFAULT_STALE_DISPATCHED_SECONDS = 60 * 60
 STALE_RECOVERY_MESSAGE = "stale_dispatched_recovered"
+DISPATCH_EXHAUSTED_ERROR_CODE = "DOC_DISPATCH_EXHAUSTED"
+DISPATCH_EXHAUSTED_ERROR_MESSAGE = "文档调度重试已耗尽，已自动结束，请检查 dispatch/ingestion worker 状态"
+FINALIZABLE_EXHAUSTED_STATUSES = (
+    IngestionTaskOutboxStatus.PENDING,
+    IngestionTaskOutboxStatus.FAILED,
+)
 
 
 def _compute_retry_delay_seconds(*, attempts: int) -> int:
@@ -41,10 +48,11 @@ async def _recover_stale_dispatched_rows(
     *,
     session,  # noqa: ANN001
     limit: int,
+    stale_dispatched_seconds: int = DEFAULT_STALE_DISPATCHED_SECONDS,
     now: datetime | None = None,
 ) -> int:
     current_time = now or datetime.now(timezone.utc)
-    stale_before = current_time - timedelta(seconds=STALE_DISPATCHED_SECONDS)
+    stale_before = current_time - timedelta(seconds=max(stale_dispatched_seconds, 1))
     stmt = (
         select(IngestionTaskOutbox)
         .join(IngestionBatchDoc, IngestionBatchDoc.id == IngestionTaskOutbox.doc_id)
@@ -75,6 +83,47 @@ async def _recover_stale_dispatched_rows(
             },
         )
     return len(rows)
+
+
+async def _finalize_exhausted_outbox_rows(*, session, limit: int) -> int:  # noqa: ANN001
+    stmt = (
+        select(IngestionTaskOutbox)
+        .join(IngestionBatchDoc, IngestionBatchDoc.id == IngestionTaskOutbox.doc_id)
+        .where(
+            IngestionTaskOutbox.attempts >= IngestionTaskOutbox.max_attempts,
+            IngestionTaskOutbox.status.in_(FINALIZABLE_EXHAUSTED_STATUSES),
+            IngestionBatchDoc.status == IngestionDocStatus.PROCESSING,
+        )
+        .order_by(IngestionTaskOutbox.updated_at.asc(), IngestionTaskOutbox.id.asc())
+        .limit(limit)
+        .with_for_update(skip_locked=True)
+    )
+    rows = list((await session.execute(stmt)).scalars().all())
+    if not rows:
+        return 0
+
+    service = IngestionBatchService(session)
+    finalized = 0
+    for row in rows:
+        doc = await service.get_doc(doc_id=row.doc_id, for_update=True)
+        if doc is None or doc.status != IngestionDocStatus.PROCESSING:
+            continue
+        await service.mark_doc_failed(
+            doc=doc,
+            error_code=DISPATCH_EXHAUSTED_ERROR_CODE,
+            error_message=DISPATCH_EXHAUSTED_ERROR_MESSAGE,
+            retryable=False,
+        )
+        await service.recalculate_batch_for_doc(
+            doc=doc,
+            reason="dispatch_attempts_exhausted",
+        )
+        row.status = IngestionTaskOutboxStatus.FAILED
+        row.last_error = DISPATCH_EXHAUSTED_ERROR_CODE
+        row.next_retry_at = None
+        row.dispatched_at = None
+        finalized += 1
+    return finalized
 
 
 async def _claim_due_outbox_rows(*, session, limit: int) -> list[IngestionTaskOutbox]:  # noqa: ANN001
@@ -111,6 +160,10 @@ def dispatch_ingestion_outbox(limit: int = DEFAULT_DISPATCH_BATCH_SIZE) -> None:
 async def _dispatch_ingestion_outbox(*, limit: int = DEFAULT_DISPATCH_BATCH_SIZE) -> int:
     settings = get_settings()
     safe_limit = max(int(limit or DEFAULT_DISPATCH_BATCH_SIZE), 1)
+    stale_seconds = max(
+        int(getattr(settings, "ingestion_outbox_stale_dispatched_seconds", DEFAULT_STALE_DISPATCHED_SECONDS)),
+        1,
+    )
 
     async with managed_task_resources(settings=settings, with_engine=True) as resources:
         sessionmaker = resources.sessionmaker
@@ -123,10 +176,18 @@ async def _dispatch_ingestion_outbox(*, limit: int = DEFAULT_DISPATCH_BATCH_SIZE
                 await _recover_stale_dispatched_rows(
                     session=session,
                     limit=safe_limit,
+                    stale_dispatched_seconds=stale_seconds,
+                )
+                finalized_rows = await _finalize_exhausted_outbox_rows(
+                    session=session,
+                    limit=safe_limit,
                 )
                 rows = await _claim_due_outbox_rows(session=session, limit=safe_limit)
                 if not rows:
-                    await session.rollback()
+                    if finalized_rows > 0:
+                        await session.commit()
+                    else:
+                        await session.rollback()
                     break
 
                 from app.worker.tasks.ingestion_batches import run_ingestion_batch_doc

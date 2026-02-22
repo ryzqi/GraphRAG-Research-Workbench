@@ -43,6 +43,7 @@ import {
   useIngestionBatchLive,
   useRetryIngestionBatch
 } from '../hooks/queries/useIngestionBatches';
+import { useSystemQueueHealth } from '../hooks/queries/useSystemQueueHealth';
 import {
   useBootstrapSubmission,
   useFinalizeBootstrapSubmission,
@@ -71,8 +72,10 @@ import {
   shouldRecoverAfterSubmitError
 } from '../services/ingestionBatchRecovery';
 import { HttpError } from '../services/http';
+import { buildQueueHealthHint } from '../services/queueHealthDiagnostics';
 
 const MAX_PARALLEL_UPLOADS = 4;
+const QUEUE_HEALTH_TRIGGER_SECONDS = 30;
 
 interface PendingSubmittedBatch {
   batchId: string;
@@ -137,6 +140,17 @@ function manifestEntryDisplayTitle(entry: ManifestEntry, index: number): string 
     return entry.url;
   }
   return `未命名文档 ${index + 1}`;
+}
+
+function elapsedSeconds(timestamp: string | null | undefined): number | null {
+  if (!timestamp) {
+    return null;
+  }
+  const ms = Date.parse(timestamp);
+  if (Number.isNaN(ms)) {
+    return null;
+  }
+  return Math.max(0, Math.floor((Date.now() - ms) / 1000));
 }
 
 export default function KnowledgeBaseAddDocumentsPage() {
@@ -396,6 +410,35 @@ export default function KnowledgeBaseAddDocumentsPage() {
     bootstrapJob.status !== 'failed' &&
     bootstrapJob.status !== 'queued_upload' &&
     !bootstrapJob.batch_id;
+  const batchRunning = displayedBatch?.status === 'processing';
+  const bootstrapWaitingSeconds = elapsedSeconds(bootstrapJob?.updated_at ?? bootstrapJob?.created_at);
+  const batchProcessingSeconds = elapsedSeconds(
+    displayedBatch?.started_at ?? displayedBatch?.created_at
+  );
+  const queueHealthCheckEnabled =
+    (waitingBootstrapBatch &&
+      (bootstrapWaitingSeconds ?? 0) >= QUEUE_HEALTH_TRIGGER_SECONDS) ||
+    (batchRunning && (batchProcessingSeconds ?? 0) >= QUEUE_HEALTH_TRIGGER_SECONDS);
+  const queueHealthQuery = useSystemQueueHealth(queueHealthCheckEnabled);
+  const queueHealthHint = useMemo(() => {
+    if (!queueHealthCheckEnabled) {
+      return null;
+    }
+    if (queueHealthQuery.error) {
+      return '队列健康检查失败，请确认后端与 Redis 可访问。';
+    }
+    return buildQueueHealthHint({
+      snapshot: queueHealthQuery.data,
+      waitingBootstrapBatch,
+      batchProcessing: Boolean(batchRunning),
+    });
+  }, [
+    batchRunning,
+    queueHealthCheckEnabled,
+    queueHealthQuery.data,
+    queueHealthQuery.error,
+    waitingBootstrapBatch,
+  ]);
 
   useEffect(() => {
     if (pendingSubmittedBatch && displayedBatch?.id === pendingSubmittedBatch.batchId) {
@@ -446,7 +489,6 @@ export default function KnowledgeBaseAddDocumentsPage() {
     uploadingFiles ||
     finalizeBootstrapMutation.isPending ||
     bootstrapUploadActive;
-  const batchRunning = displayedBatch?.status === 'processing';
   const hasRetryableFailedDocs =
     displayedBatch?.docs.some((doc) => isDocFailed(doc) && doc.retryable) ?? false;
   const streamHint = useMemo(
@@ -801,6 +843,7 @@ export default function KnowledgeBaseAddDocumentsPage() {
       />
 
       {mergedError && <Alert severity='error'>{mergedError}</Alert>}
+      {queueHealthHint && <Alert severity='warning'>{queueHealthHint}</Alert>}
 
       <Box
         sx={{

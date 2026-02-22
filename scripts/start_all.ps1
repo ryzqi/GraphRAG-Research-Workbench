@@ -190,6 +190,7 @@ function Get-EnvVarValue {
 function Get-CeleryWorkerCommand {
     param(
         [Parameter(Mandatory = $true)][string]$Queues,
+        [string]$NodeName = "",
         [string]$PoolEnvVar = "CELERY_WORKER_POOL",
         [string]$ConcurrencyEnvVar = "CELERY_WORKER_CONCURRENCY",
         [string]$PrefetchEnvVar = "CELERY_WORKER_PREFETCH_MULTIPLIER",
@@ -240,16 +241,27 @@ function Get-CeleryWorkerCommand {
     if ($prefetchMultiplier) {
         $prefetchArgs = " --prefetch-multiplier=$prefetchMultiplier"
     }
+    $nodeArgs = ""
+    if ($NodeName) {
+        $nodeArgs = " -n $NodeName"
+    }
 
     if ($Verbose) {
         $resolvedPrefetch = if ($prefetchMultiplier) { $prefetchMultiplier } else { "celery-default" }
         Write-Host "Celery Worker 参数：--pool=$pool --concurrency=$concurrency --prefetch-multiplier=$resolvedPrefetch -Q $Queues" -ForegroundColor DarkGray
     }
 
-    return "uv run celery -A app.worker.celery_app worker --loglevel=INFO --pool=$pool --concurrency=$concurrency$prefetchArgs -Q $Queues"
+    return "uv run celery -A app.worker.celery_app worker --loglevel=INFO$nodeArgs --pool=$pool --concurrency=$concurrency$prefetchArgs -Q $Queues"
 }
 function Get-CeleryBeatCommand {
-    return "uv run celery -A app.worker.celery_app beat --loglevel=INFO"
+    param(
+        [string]$NodeName = ""
+    )
+    $nodeArgs = ""
+    if ($NodeName) {
+        $nodeArgs = " -n $NodeName"
+    }
+    return "uv run celery -A app.worker.celery_app beat --loglevel=INFO$nodeArgs"
 }
 function Get-BackendApiCommand {
     $command = "uv run uvicorn app.main:app --host 127.0.0.1 --port 8000 --loop asyncio:SelectorEventLoop"
@@ -257,6 +269,81 @@ function Get-BackendApiCommand {
         Write-Host "后端 API 参数：--loop asyncio:SelectorEventLoop（Windows + psycopg 兼容）" -ForegroundColor DarkGray
     }
     return $command
+}
+
+function Get-CeleryConsumerCounts {
+    $pyScript = @"
+import json
+from app.worker.celery_app import celery_app
+
+counts = {}
+try:
+    inspect = celery_app.control.inspect(timeout=1.0)
+    payload = inspect.active_queues() if inspect is not None else {}
+except Exception:
+    payload = {}
+
+if isinstance(payload, dict):
+    for queues in payload.values():
+        for item in queues or []:
+            queue_name = str((item or {}).get("name", "")).strip()
+            if not queue_name:
+                continue
+            counts[queue_name] = counts.get(queue_name, 0) + 1
+
+print(json.dumps(counts))
+"@
+
+    $raw = uv run python -c $pyScript 2>$null
+    if ($LASTEXITCODE -ne 0 -or -not $raw) {
+        return @{}
+    }
+
+    try {
+        $parsed = $raw | ConvertFrom-Json -AsHashtable
+        if ($parsed -is [hashtable]) {
+            return $parsed
+        }
+    }
+    catch { }
+
+    return @{}
+}
+
+function Wait-CeleryQueuesReady {
+    param(
+        [int]$TimeoutSeconds = 45,
+        [string[]]$RequiredQueues = @("default", "dispatch", "ingestion")
+    )
+
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    while ((Get-Date) -lt $deadline) {
+        $counts = Get-CeleryConsumerCounts
+        $missing = @()
+        foreach ($queueName in $RequiredQueues) {
+            $count = 0
+            if ($counts.ContainsKey($queueName)) {
+                $count = [int]$counts[$queueName]
+            }
+            if ($count -le 0) {
+                $missing += $queueName
+            }
+        }
+
+        if ($missing.Count -eq 0) {
+            if ($Verbose) {
+                Write-Host "Celery 队列消费者已就绪：$($RequiredQueues -join ', ')" -ForegroundColor DarkGray
+            }
+            return $true
+        }
+
+        if ($Verbose) {
+            Write-Host "等待 Celery 队列消费者就绪，缺失：$($missing -join ', ')" -ForegroundColor DarkGray
+        }
+        Start-Sleep -Milliseconds 1000
+    }
+
+    return $false
 }
 
 Write-Host "加载环境变量 (.env) ..." -ForegroundColor Cyan
@@ -328,17 +415,29 @@ if (-not $SkipBackend) {
 }
 
 if (-not $SkipWorker) {
-    $beatCommand = Get-CeleryBeatCommand
+    $beatCommand = Get-CeleryBeatCommand -NodeName "worker.beat@%h"
     Start-Terminal -Title "celery-beat" -WorkingDirectory $backendDir -Command $beatCommand
 
-    $dispatchWorkerCommand = Get-CeleryWorkerCommand -Queues "dispatch" -PoolEnvVar "CELERY_DISPATCH_WORKER_POOL" -ConcurrencyEnvVar "CELERY_DISPATCH_WORKER_CONCURRENCY" -PrefetchEnvVar "CELERY_DISPATCH_WORKER_PREFETCH_MULTIPLIER" -DefaultConcurrency "2" -DefaultPrefetchMultiplier "1"
+    $dispatchWorkerCommand = Get-CeleryWorkerCommand -Queues "dispatch" -NodeName "worker.dispatch@%h" -PoolEnvVar "CELERY_DISPATCH_WORKER_POOL" -ConcurrencyEnvVar "CELERY_DISPATCH_WORKER_CONCURRENCY" -PrefetchEnvVar "CELERY_DISPATCH_WORKER_PREFETCH_MULTIPLIER" -DefaultConcurrency "2" -DefaultPrefetchMultiplier "1"
     Start-Terminal -Title "celery-worker-dispatch" -WorkingDirectory $backendDir -Command $dispatchWorkerCommand
 
-    $coreWorkerCommand = Get-CeleryWorkerCommand -Queues "ingestion,rebuild,default" -PoolEnvVar "CELERY_CORE_WORKER_POOL" -ConcurrencyEnvVar "CELERY_CORE_WORKER_CONCURRENCY" -PrefetchEnvVar "CELERY_CORE_WORKER_PREFETCH_MULTIPLIER" -DefaultPrefetchMultiplier "1"
+    $coreWorkerCommand = Get-CeleryWorkerCommand -Queues "ingestion,rebuild,default" -NodeName "worker.core@%h" -PoolEnvVar "CELERY_CORE_WORKER_POOL" -ConcurrencyEnvVar "CELERY_CORE_WORKER_CONCURRENCY" -PrefetchEnvVar "CELERY_CORE_WORKER_PREFETCH_MULTIPLIER" -DefaultPrefetchMultiplier "1"
     Start-Terminal -Title "celery-worker-core" -WorkingDirectory $backendDir -Command $coreWorkerCommand
 
-    $nonCoreWorkerCommand = Get-CeleryWorkerCommand -Queues "research,export" -PoolEnvVar "CELERY_NONCORE_WORKER_POOL" -ConcurrencyEnvVar "CELERY_NONCORE_WORKER_CONCURRENCY" -PrefetchEnvVar "CELERY_NONCORE_WORKER_PREFETCH_MULTIPLIER" -DefaultConcurrency "2" -DefaultPrefetchMultiplier "1"
+    $nonCoreWorkerCommand = Get-CeleryWorkerCommand -Queues "research,export" -NodeName "worker.noncore@%h" -PoolEnvVar "CELERY_NONCORE_WORKER_POOL" -ConcurrencyEnvVar "CELERY_NONCORE_WORKER_CONCURRENCY" -PrefetchEnvVar "CELERY_NONCORE_WORKER_PREFETCH_MULTIPLIER" -DefaultConcurrency "2" -DefaultPrefetchMultiplier "1"
     Start-Terminal -Title "celery-worker-noncore" -WorkingDirectory $backendDir -Command $nonCoreWorkerCommand
+
+    Write-Host "等待 Celery 队列消费者就绪（default / dispatch / ingestion）..." -ForegroundColor Cyan
+    Push-Location $backendDir
+    try {
+        $celeryQueuesReady = Wait-CeleryQueuesReady -TimeoutSeconds 45
+        if (-not $celeryQueuesReady) {
+            throw "Celery 必需队列消费者未在 45 秒内就绪（default/dispatch/ingestion）。请检查 worker 窗口日志与 Redis 队列积压。"
+        }
+    }
+    finally {
+        Pop-Location
+    }
 }
 
 if ($RunSeed) {
