@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from app.core.settings import Settings, get_settings
 from app.db.session import create_engine, create_sessionmaker
 from app.integrations.http_client import close_http_client, create_http_client
+from app.integrations.model_runtime_config import ModelRuntimeConfigManager
 from app.integrations.milvus_client import MilvusClient, create_milvus_client
 from app.integrations.redis_client import RedisClient, close_redis_client, create_redis_client
 
@@ -45,6 +46,10 @@ async def managed_task_resources(
     if with_engine:
         engine = create_engine(cfg, use_null_pool=use_null_pool)
         sessionmaker = create_sessionmaker(engine=engine)
+        await ModelRuntimeConfigManager.initialize(
+            sessionmaker=sessionmaker,
+            settings=cfg,
+        )
     if with_http:
         http_client = create_http_client(cfg)
     if with_redis:

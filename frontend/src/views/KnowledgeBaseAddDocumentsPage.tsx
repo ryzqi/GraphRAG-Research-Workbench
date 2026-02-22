@@ -7,11 +7,28 @@ import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import {
   Alert,
   Box,
-  Chip,
   Paper,
   Stack,
   Typography
 } from '@mui/material';
+import {
+  IngestionDocumentResultPanel,
+  IngestionStatusOverviewCard,
+  batchStatusColor,
+  batchStatusLabel,
+  bootstrapStatusColor,
+  bootstrapStatusLabel,
+  buildBatchSummaryMetrics,
+  docPresentationColor,
+  docPresentationLabel,
+  docPresentationStatus,
+  formatIngestionSummaryText,
+  isDocFailed,
+  sourceTypeLabel,
+  streamHintSeverity,
+  streamHintText,
+  type IngestionChipColor
+} from '../components/ingestion';
 import { Button } from '../components/ui/Button';
 import {
   IngestionManifestEditor,
@@ -36,8 +53,7 @@ import { splitDirectIngestionManifestEntries } from '../lib/manifestBuilders';
 import { runWithConcurrency } from '../lib/runWithConcurrency';
 import {
   createBootstrapUploadSession,
-  uploadBootstrapSubmissionFile,
-  type BootstrapSubmissionStatus,
+  uploadBootstrapSubmissionFile
 } from '../services/bootstrapSubmissions';
 import {
   clearBootstrapPendingUploadSession,
@@ -46,10 +62,7 @@ import {
 import { uploadMaterial } from '../services/materials';
 import type {
   EntryError,
-  ManifestEntry,
-  BatchStatus,
-  DocStatus,
-  ManifestSourceType
+  ManifestEntry
 } from '../services/ingestionBatches';
 import { getLatestIngestionBatch } from '../services/ingestionBatches';
 import { formatIngestionEntryError } from '../services/ingestionEntryErrors';
@@ -113,94 +126,6 @@ function mergeEntryErrors(
     merged[key] = Array.from(new Set([...(merged[key] ?? []), ...extra[key]]));
   }
   return merged;
-}
-
-function batchStatusLabel(status: BatchStatus): string {
-  switch (status) {
-    case 'processing':
-      return '处理中';
-    case 'completed':
-      return '已完成';
-    default:
-      return status;
-  }
-}
-
-function docStatusLabel(status: DocStatus): string {
-  switch (status) {
-    case 'processing':
-      return '处理中';
-    case 'completed':
-      return '已完成';
-    default:
-      return status;
-  }
-}
-
-function isDocFailed(doc: { status: DocStatus; error_code: string | null }): boolean {
-  return doc.status === 'completed' && doc.error_code !== null && doc.error_code !== 'DOC_CANCELED';
-}
-
-function sourceTypeLabel(sourceType: ManifestSourceType | 'upload'): string {
-  switch (sourceType) {
-    case 'text':
-      return '文本';
-    case 'url':
-      return 'URL';
-    case 'file':
-      return '文件';
-    case 'upload':
-      return '上传文件';
-    default:
-      return sourceType;
-  }
-}
-
-function batchStatusColor(status: BatchStatus): 'default' | 'warning' | 'success' {
-  switch (status) {
-    case 'processing':
-      return 'warning';
-    case 'completed':
-      return 'success';
-    default:
-      return 'default';
-  }
-}
-
-function bootstrapStatusLabel(status: BootstrapSubmissionStatus): string {
-  switch (status) {
-    case 'queued_upload':
-      return '等待上传';
-    case 'queued':
-      return '排队中';
-    case 'running':
-      return '处理中';
-    case 'completed':
-      return '已完成';
-    case 'failed':
-      return '失败';
-    default:
-      return status;
-  }
-}
-
-function bootstrapStatusColor(
-  status: BootstrapSubmissionStatus
-): 'default' | 'info' | 'warning' | 'success' | 'error' {
-  switch (status) {
-    case 'queued_upload':
-      return 'info';
-    case 'queued':
-      return 'default';
-    case 'running':
-      return 'warning';
-    case 'completed':
-      return 'success';
-    case 'failed':
-      return 'error';
-    default:
-      return 'default';
-  }
 }
 
 function manifestEntryDisplayTitle(entry: ManifestEntry, index: number): string {
@@ -277,21 +202,33 @@ export default function KnowledgeBaseAddDocumentsPage() {
 
   const kb = kbQuery.data ?? null;
   const bootstrapJob = bootstrapJobQuery.data;
+  const bootstrapJobId = bootstrapJob?.id;
+  const bootstrapJobStatus = bootstrapJob?.status;
   const currentBatch = liveBatchQuery.data;
   const activeBatchId = liveBatchQuery.resolvedBatchId ?? preferredBatchId ?? null;
+  const finalizeBootstrapRef = useRef(finalizeBootstrapMutation.mutateAsync);
+  const refetchBootstrapJobRef = useRef(bootstrapJobQuery.refetch);
 
   useEffect(() => {
-    if (!bootstrapJob || !kbId) {
+    finalizeBootstrapRef.current = finalizeBootstrapMutation.mutateAsync;
+  }, [finalizeBootstrapMutation.mutateAsync]);
+
+  useEffect(() => {
+    refetchBootstrapJobRef.current = bootstrapJobQuery.refetch;
+  }, [bootstrapJobQuery.refetch]);
+
+  useEffect(() => {
+    if (!bootstrapJobId || !kbId) {
       return;
     }
-    if (bootstrapJob.status !== 'queued_upload') {
+    if (bootstrapJobStatus !== 'queued_upload') {
       return;
     }
-    if (bootstrapUploadStartedRef.current === bootstrapJob.id) {
+    if (bootstrapUploadStartedRef.current === bootstrapJobId) {
       return;
     }
 
-    const pendingSession = getBootstrapPendingUploadSession(bootstrapJob.id);
+    const pendingSession = getBootstrapPendingUploadSession(bootstrapJobId);
     if (!pendingSession || pendingSession.files.length === 0) {
       setBootstrapUploadState({
         stage: 'missing_files',
@@ -303,14 +240,14 @@ export default function KnowledgeBaseAddDocumentsPage() {
       return;
     }
 
-    bootstrapUploadStartedRef.current = bootstrapJob.id;
+    bootstrapUploadStartedRef.current = bootstrapJobId;
     const filesByEntryId = new Map(pendingSession.files.map((item) => [item.entry_id, item]));
 
     let cancelled = false;
     setLocalError(null);
 
     const runBootstrapUpload = async () => {
-      const uploadSession = await createBootstrapUploadSession(bootstrapJob.id);
+      const uploadSession = await createBootstrapUploadSession(bootstrapJobId);
       const uploadTargets = uploadSession.upload_targets ?? [];
       const totalFiles = uploadTargets.length;
 
@@ -391,8 +328,8 @@ export default function KnowledgeBaseAddDocumentsPage() {
         stage: 'finalizing',
         message: '文件上传完成，正在提交任务…',
       }));
-      await finalizeBootstrapMutation.mutateAsync(bootstrapJob.id);
-      clearBootstrapPendingUploadSession(bootstrapJob.id);
+      await finalizeBootstrapRef.current(bootstrapJobId);
+      clearBootstrapPendingUploadSession(bootstrapJobId);
 
       if (cancelled) {
         return;
@@ -404,7 +341,7 @@ export default function KnowledgeBaseAddDocumentsPage() {
         failedFiles: 0,
         message: '文件上传完成，任务已进入处理队列。',
       }));
-      await bootstrapJobQuery.refetch();
+      await refetchBootstrapJobRef.current();
     };
 
     void runBootstrapUpload().catch((error) => {
@@ -423,9 +360,8 @@ export default function KnowledgeBaseAddDocumentsPage() {
       cancelled = true;
     };
   }, [
-    bootstrapJob,
-    bootstrapJobQuery,
-    finalizeBootstrapMutation,
+    bootstrapJobId,
+    bootstrapJobStatus,
     kbId,
   ]);
 
@@ -435,12 +371,12 @@ export default function KnowledgeBaseAddDocumentsPage() {
       setBootstrapUploadState(INITIAL_BOOTSTRAP_UPLOAD_STATE);
       return;
     }
-    if (!bootstrapJob || bootstrapJob.status === 'queued_upload') {
+    if (!bootstrapJobStatus || bootstrapJobStatus === 'queued_upload') {
       return;
     }
     bootstrapUploadStartedRef.current = null;
     setBootstrapUploadState(INITIAL_BOOTSTRAP_UPLOAD_STATE);
-  }, [bootstrapJob, jobId]);
+  }, [bootstrapJobStatus, jobId]);
 
   const displayedBatch = useMemo(() => {
     if (!currentBatch) {
@@ -513,22 +449,92 @@ export default function KnowledgeBaseAddDocumentsPage() {
   const batchRunning = displayedBatch?.status === 'processing';
   const hasRetryableFailedDocs =
     displayedBatch?.docs.some((doc) => isDocFailed(doc) && doc.retryable) ?? false;
-
-  const streamHint = useMemo(() => {
-    if (!activeBatchId || !displayedBatch) {
+  const streamHint = useMemo(
+    () =>
+      streamHintText({
+        enabled: Boolean(activeBatchId && displayedBatch && !waitingSubmittedBatch),
+        streamStatus: liveBatchQuery.streamStatus,
+        fallbackIntervalMs: liveBatchQuery.fallbackIntervalMs
+      }),
+    [
+      activeBatchId,
+      displayedBatch,
+      liveBatchQuery.fallbackIntervalMs,
+      liveBatchQuery.streamStatus,
+      waitingSubmittedBatch
+    ]
+  );
+  const displayedBatchMetrics = useMemo(
+    () => (displayedBatch ? buildBatchSummaryMetrics(displayedBatch) : null),
+    [displayedBatch]
+  );
+  const pendingBatchMetrics = useMemo(() => {
+    if (!pendingSubmittedBatch) {
       return null;
     }
-    if (liveBatchQuery.streamStatus === 'connecting') {
-      return '正在建立实时状态连接…';
+    return {
+      succeededDocs: 0,
+      failedDocs: 0,
+      canceledDocs: 0,
+      processingDocs: pendingSubmittedBatch.submittedDocTitles.length,
+      succeededChunks: 0
+    };
+  }, [pendingSubmittedBatch]);
+  const bootstrapMetrics = useMemo(() => {
+    if (!bootstrapJob) {
+      return null;
     }
-    if (liveBatchQuery.streamStatus === 'live') {
-      return '实时状态已连接。';
+    const succeededDocs = bootstrapJob.accepted_entries;
+    const failedDocs = bootstrapJob.failed_entries;
+    return {
+      succeededDocs,
+      failedDocs,
+      canceledDocs: 0,
+      processingDocs: Math.max(bootstrapJob.total_entries - succeededDocs - failedDocs, 0),
+      succeededChunks: 0
+    };
+  }, [bootstrapJob]);
+  const documentRows = useMemo(() => {
+    if (waitingSubmittedBatch && pendingSubmittedBatch) {
+      return pendingSubmittedBatch.submittedDocTitles.map((title, index) => ({
+        id: pendingSubmittedBatch.batchId + '-' + index,
+        title,
+        sourceLabel: '待同步',
+        retryCount: 0,
+        contextFailedChunks: 0,
+        status: 'processing' as const,
+        statusLabel: docPresentationLabel('processing'),
+        statusColor: docPresentationColor('processing'),
+        errorMessage: null
+      }));
     }
-    if (liveBatchQuery.streamStatus === 'fallback_polling') {
-      return `实时连接中断，已切换轮询（每 ${Math.round(liveBatchQuery.fallbackIntervalMs / 1000)} 秒）。`;
+    if (!displayedBatch) {
+      return [];
     }
-    return '正在等待处理状态更新。';
-  }, [activeBatchId, displayedBatch, liveBatchQuery.fallbackIntervalMs, liveBatchQuery.streamStatus]);
+    return displayedBatch.docs.map((doc) => {
+      const status = docPresentationStatus(doc);
+      return {
+        id: doc.id,
+        title: doc.title || doc.id,
+        sourceLabel: sourceTypeLabel(doc.source_type),
+        retryCount: doc.retry_count,
+        contextFailedChunks: doc.context_failed_chunks?.length ?? 0,
+        status,
+        statusLabel: docPresentationLabel(status),
+        statusColor: docPresentationColor(status),
+        errorMessage: doc.error_message
+      };
+    });
+  }, [displayedBatch, pendingSubmittedBatch, waitingSubmittedBatch]);
+  const documentSummaryText = useMemo(() => {
+    if (waitingSubmittedBatch && pendingSubmittedBatch) {
+      return `文档：处理中 ${pendingSubmittedBatch.submittedDocTitles.length}（等待服务端首个状态快照）`;
+    }
+    if (displayedBatchMetrics) {
+      return formatIngestionSummaryText(displayedBatchMetrics);
+    }
+    return '文档处理明细将在提交后展示。';
+  }, [displayedBatchMetrics, pendingSubmittedBatch, waitingSubmittedBatch]);
 
   const mergedError =
     localError ??
@@ -729,6 +735,59 @@ export default function KnowledgeBaseAddDocumentsPage() {
     return <Alert severity='error'>{mergedError ?? '未找到知识库'}</Alert>;
   }
 
+  const bootstrapUploadProgressText =
+    bootstrapJob && bootstrapJob.upload_progress.total_files > 0
+      ? `上传进度：${bootstrapJob.upload_progress.uploaded_files}/${bootstrapJob.upload_progress.total_files}，失败 ${bootstrapJob.upload_progress.failed_files}`
+      : null;
+  const bootstrapProgressMessage =
+    (showLocalBootstrapMessage && bootstrapUploadState.message) ||
+    bootstrapJob?.progress_message ||
+    (bootstrapJob?.status === 'queued_upload' && !bootstrapUploadProgressText
+      ? bootstrapQueuedUploadMessage
+      : null);
+  const bootstrapErrorMessage =
+    bootstrapJob?.error_message ||
+    ((bootstrapUploadState.stage === 'failed' || bootstrapUploadState.stage === 'missing_files') &&
+    bootstrapJob?.status === 'queued_upload'
+      ? bootstrapUploadState.message
+      : null);
+  const shouldShowRetryBootstrapButton =
+    (bootstrapUploadState.stage === 'failed' || bootstrapUploadState.stage === 'missing_files') &&
+    bootstrapJob?.status === 'queued_upload';
+  const overviewMetrics =
+    (waitingSubmittedBatch && pendingBatchMetrics) ||
+    displayedBatchMetrics ||
+    bootstrapMetrics ||
+    null;
+  const overviewStatusLabel =
+    (waitingSubmittedBatch && pendingSubmittedBatch && '状态同步中') ||
+    (displayedBatch ? batchStatusLabel(displayedBatch.status) : null) ||
+    (bootstrapJob ? bootstrapStatusLabel(bootstrapJob.status) : null);
+  const overviewStatusColor: IngestionChipColor =
+    (waitingSubmittedBatch && pendingSubmittedBatch && 'info') ||
+    (displayedBatch ? batchStatusColor(displayedBatch.status) : null) ||
+    (bootstrapJob ? bootstrapStatusColor(bootstrapJob.status) : null) ||
+    'default';
+  const overviewDescription = waitingSubmittedBatch
+    ? '新批次已创建，正在等待服务端返回首个状态快照。'
+    : displayedBatch
+      ? '实时追踪批次处理进度，失败文档支持按需查看错误并重试。'
+      : bootstrapJob?.status === 'queued_upload'
+        ? '文件上传完成后会自动进入批次处理。'
+        : bootstrapJob
+          ? '任务已提交，正在同步批次信息。'
+          : null;
+  const overviewBatchId =
+    (waitingSubmittedBatch ? pendingSubmittedBatch?.batchId : null) ||
+    displayedBatch?.id ||
+    bootstrapJob?.batch_id ||
+    null;
+  const overviewFooterHint =
+    (displayedBatchMetrics && formatIngestionSummaryText(displayedBatchMetrics)) ||
+    (bootstrapJob && bootstrapJob.entry_errors.length > 0
+      ? `条目失败：${bootstrapJob.entry_errors.length}，可在下方查看并重试。`
+      : null);
+
   return (
     <Stack spacing={2}>
       <PageHeader
@@ -743,235 +802,111 @@ export default function KnowledgeBaseAddDocumentsPage() {
 
       {mergedError && <Alert severity='error'>{mergedError}</Alert>}
 
-      <Paper variant='outlined' sx={{ p: 2.5 }}>
-        <Stack spacing={2}>
-          <Typography variant='h6'>导入任务</Typography>
-          <Typography color='text.secondary' variant='body2'>
-            支持文本、URL、文件混合导入，提交后自动开始处理。
-          </Typography>
-          <IngestionManifestEditor
-            entries={entries}
-            onChange={setEntries}
-            validation={validation}
-            serverEntryErrors={serverEntryErrors}
-            markdownOnly={Boolean(markdownOnly)}
-            disabled={submitPending || batchRunning}
-          />
-          <Stack direction='row' spacing={1} flexWrap='wrap' useFlexGap>
-            <Button
-              variant='contained'
-              onClick={submitBatch}
-              loading={submitPending}
-              disabled={batchRunning}
-            >
-              提交批次
-            </Button>
-            <Button
-              variant='outlined'
-              onClick={retryFailedDocs}
-              disabled={!activeBatchId || !hasRetryableFailedDocs || retryBatchMutation.isPending}
-              loading={retryBatchMutation.isPending}
-            >
-              重试失败文档
-            </Button>
-            <Button
-              variant='outlined'
-              onClick={cancelBatch}
-              disabled={!activeBatchId || !batchRunning || cancelBatchMutation.isPending}
-              loading={cancelBatchMutation.isPending}
-            >
-              取消批次
-            </Button>
+      <Box
+        sx={{
+          display: 'grid',
+          gap: 2,
+          gridTemplateColumns: {
+            xs: '1fr',
+            xl: 'minmax(620px, 1.3fr) minmax(420px, 0.9fr)'
+          },
+          alignItems: 'start'
+        }}
+      >
+        <Paper variant='outlined' sx={{ p: 2.5, borderRadius: 3 }}>
+          <Stack spacing={2}>
+            <Typography variant='h6'>导入任务</Typography>
+            <Typography color='text.secondary' variant='body2'>
+              支持文本、URL、文件混合导入，提交后自动开始处理。
+            </Typography>
+            <IngestionManifestEditor
+              entries={entries}
+              onChange={setEntries}
+              validation={validation}
+              serverEntryErrors={serverEntryErrors}
+              markdownOnly={Boolean(markdownOnly)}
+              disabled={submitPending || batchRunning}
+            />
+            <Stack direction='row' spacing={1} flexWrap='wrap' useFlexGap>
+              <Button
+                variant='contained'
+                onClick={submitBatch}
+                loading={submitPending}
+                disabled={batchRunning}
+              >
+                提交批次
+              </Button>
+              <Button
+                variant='outlined'
+                onClick={retryFailedDocs}
+                disabled={!activeBatchId || !hasRetryableFailedDocs || retryBatchMutation.isPending}
+                loading={retryBatchMutation.isPending}
+              >
+                重试失败文档
+              </Button>
+              <Button
+                variant='outlined'
+                onClick={cancelBatch}
+                disabled={!activeBatchId || !batchRunning || cancelBatchMutation.isPending}
+                loading={cancelBatchMutation.isPending}
+              >
+                取消批次
+              </Button>
+            </Stack>
           </Stack>
-        </Stack>
-      </Paper>
+        </Paper>
 
-      <Paper variant='outlined' sx={{ p: 2.5 }}>
         <Stack spacing={1.5}>
           <Typography variant='h6'>实时状态</Typography>
 
-          {bootstrapJob && (
-            <Paper variant='outlined' sx={{ p: 1.5, bgcolor: 'background.default' }}>
-              <Stack spacing={1}>
-                <Stack direction='row' spacing={1} flexWrap='wrap' useFlexGap>
-                  <Chip label={'提交任务：' + bootstrapJob.id} variant='outlined' />
-                  <Chip
-                    label={bootstrapStatusLabel(bootstrapJob.status)}
-                    color={bootstrapStatusColor(bootstrapJob.status)}
-                  />
-                  {bootstrapJob.batch_id && <Chip label={'批次：' + bootstrapJob.batch_id} variant='outlined' />}
-                </Stack>
-                {bootstrapJob.upload_progress.total_files > 0 && (
-                  <Typography variant='body2' color='text.secondary'>
-                    {'上传进度：' +
-                      bootstrapJob.upload_progress.uploaded_files +
-                      '/' +
-                      bootstrapJob.upload_progress.total_files +
-                      '，失败 ' +
-                      bootstrapJob.upload_progress.failed_files}
-                  </Typography>
-                )}
-                {showLocalBootstrapMessage && bootstrapUploadState.message && (
-                  <Typography
-                    variant='body2'
-                    color={bootstrapUploadState.stage === 'failed' ? 'error.main' : 'text.secondary'}
-                  >
-                    {bootstrapUploadState.message}
-                  </Typography>
-                )}
-                {bootstrapJob.progress_message && (
-                  <Typography variant='body2' color='text.secondary'>
-                    {bootstrapJob.progress_message}
-                  </Typography>
-                )}
-                {bootstrapJob.error_message && (
-                  <Typography variant='body2' color='error.main'>
-                    {bootstrapJob.error_message}
-                  </Typography>
-                )}
-                {bootstrapJob.entry_errors.length > 0 && (
-                  <Typography variant='caption' color='text.secondary'>
-                    {'条目失败：' + bootstrapJob.entry_errors.length + '，可在下方查看并重试。'}
-                  </Typography>
-                )}
-                {(bootstrapUploadState.stage === 'failed' || bootstrapUploadState.stage === 'missing_files') &&
-                  bootstrapJob.status === 'queued_upload' && (
-                    <Button variant='outlined' onClick={() => void retryBootstrapUpload()}>
-                      重试上传
-                    </Button>
-                  )}
-              </Stack>
-            </Paper>
-          )}
-
-          {!waitingSubmittedBatch && streamHint && (
-            <Alert
-              severity={liveBatchQuery.streamStatus === 'fallback_polling' ? 'warning' : 'info'}
-            >
-              {streamHint}
+          {overviewMetrics ? (
+            <IngestionStatusOverviewCard
+              title='导入状态总览'
+              description={overviewDescription}
+              taskId={bootstrapJob?.id ?? null}
+              batchId={overviewBatchId}
+              statusLabel={overviewStatusLabel}
+              statusColor={overviewStatusColor}
+              streamHint={streamHint}
+              streamHintSeverity={streamHintSeverity(liveBatchQuery.streamStatus)}
+              metrics={overviewMetrics}
+              uploadProgressText={bootstrapUploadProgressText}
+              progressMessage={bootstrapProgressMessage}
+              errorMessage={bootstrapErrorMessage}
+              footerHint={overviewFooterHint}
+              actions={
+                shouldShowRetryBootstrapButton ? (
+                  <Button variant='outlined' onClick={() => void retryBootstrapUpload()}>
+                    重试上传
+                  </Button>
+                ) : null
+              }
+            />
+          ) : waitingBootstrapBatch ? (
+            <Alert severity='info'>创建任务正在处理中，等待批次生成…</Alert>
+          ) : (
+            <Alert severity='info'>
+              当前暂无导入批次。提交文档后，这里会展示实时处理状态与文档级结果。
             </Alert>
           )}
 
           {waitingSubmittedBatch && pendingSubmittedBatch ? (
-            <>
-              <Alert severity='info'>新批次已创建，正在等待文档处理明细。</Alert>
-              <Stack direction='row' spacing={1} flexWrap='wrap' useFlexGap>
-                <Chip label={'批次：' + pendingSubmittedBatch.batchId} variant='outlined' />
-                <Chip label='排队中' color='warning' />
-                <Chip label='状态同步中' variant='outlined' color='info' />
-              </Stack>
-              <Typography variant='body2' color='text.secondary'>
-                {'文档：处理中 ' + pendingSubmittedBatch.submittedDocTitles.length + '（等待服务端首个状态快照）'}
-              </Typography>
-              <Paper variant='outlined' sx={{ p: 1.5, maxHeight: 460, overflowY: 'auto' }}>
-                <Stack spacing={1}>
-                  {pendingSubmittedBatch.submittedDocTitles.map((title, index) => (
-                    <Stack
-                      key={pendingSubmittedBatch.batchId + '-' + index}
-                      direction={{ xs: 'column', sm: 'row' }}
-                      justifyContent='space-between'
-                      sx={{
-                        borderBottom: '1px solid',
-                        borderColor: 'divider',
-                        pb: 1
-                      }}
-                    >
-                      <Box sx={{ minWidth: 0 }}>
-                        <Typography variant='body2' fontWeight={600} noWrap>
-                          {title}
-                        </Typography>
-                        <Typography variant='caption' color='text.secondary'>
-                          等待服务端返回文档详情
-                        </Typography>
-                      </Box>
-                      <Chip label={docStatusLabel('processing')} size='small' variant='outlined' />
-                    </Stack>
-                  ))}
-                </Stack>
-              </Paper>
-            </>
-          ) : bootstrapJob?.status === 'queued_upload' ? (
-            <Alert
-              severity={
-                bootstrapUploadState.stage === 'failed' || bootstrapUploadState.stage === 'missing_files'
-                  ? 'warning'
-                  : 'info'
-              }
-            >
-              {bootstrapQueuedUploadMessage ?? '正在等待文件上传完成…'}
-            </Alert>
-          ) : waitingBootstrapBatch ? (
-            <Alert severity='info'>创建任务正在处理中，等待批次生成…</Alert>
-          ) : !displayedBatch ? (
-            <Alert severity='info'>
-              当前暂无导入批次。提交文档后，这里会展示实时处理状态与文档级结果。
-            </Alert>
-          ) : (
-            <>
-              <Stack direction='row' spacing={1} flexWrap='wrap' useFlexGap>
-                <Chip label={'批次：' + displayedBatch.id} variant='outlined' />
-                <Chip
-                  label={batchStatusLabel(displayedBatch.status)}
-                  color={batchStatusColor(displayedBatch.status)}
-                />
-              </Stack>
-              <Typography variant='body2' color='text.secondary'>
-                {'文档：成功 ' +
-                  displayedBatch.succeeded_docs +
-                  ' / 失败 ' +
-                  displayedBatch.failed_docs +
-                  ' / 取消 ' +
-                  displayedBatch.canceled_docs +
-                  ' / 分块 ' +
-                  displayedBatch.succeeded_chunks}
-              </Typography>
-              {displayedBatch.docs.length > 0 ? (
-                <Paper variant='outlined' sx={{ p: 1.5, maxHeight: 460, overflowY: 'auto' }}>
-                  <Stack spacing={1}>
-                    {displayedBatch.docs.map((doc) => (
-                      <Stack
-                        key={doc.id}
-                        direction={{ xs: 'column', sm: 'row' }}
-                        justifyContent='space-between'
-                        sx={{
-                          borderBottom: '1px solid',
-                          borderColor: 'divider',
-                          pb: 1
-                        }}
-                      >
-                        <Box sx={{ minWidth: 0 }}>
-                          <Typography variant='body2' fontWeight={600} noWrap>
-                            {doc.title || doc.id}
-                          </Typography>
-                          <Typography variant='caption' color='text.secondary'>
-                            {sourceTypeLabel(doc.source_type) +
-                              ' · 重试 ' +
-                              doc.retry_count +
-                              ' · 上下文降级 ' +
-                              (doc.context_failed_chunks?.length ?? 0)}
-                          </Typography>
-                        </Box>
-                        <Stack direction='row' spacing={1} alignItems='center'>
-                          <Chip label={docStatusLabel(doc.status)} size='small' variant='outlined' />
-                          {doc.error_message && (
-                            <Typography variant='caption' color='error.main' sx={{ maxWidth: 300 }}>
-                              {doc.error_message}
-                            </Typography>
-                          )}
-                        </Stack>
-                      </Stack>
-                    ))}
-                  </Stack>
-                </Paper>
-              ) : (
-                <Typography variant='body2' color='text.secondary'>
-                  批次已创建，正在等待文档处理明细。
-                </Typography>
-              )}
-            </>
-          )}
+            <IngestionDocumentResultPanel
+              summaryText={documentSummaryText}
+              docs={documentRows}
+              emptyMessage='正在等待服务端返回文档详情。'
+              defaultExpanded={false}
+            />
+          ) : displayedBatch ? (
+            <IngestionDocumentResultPanel
+              summaryText={documentSummaryText}
+              docs={documentRows}
+              emptyMessage='批次已创建，正在等待文档处理明细。'
+              defaultExpanded={false}
+            />
+          ) : null}
         </Stack>
-      </Paper>
+      </Box>
     </Stack>
   );
 }

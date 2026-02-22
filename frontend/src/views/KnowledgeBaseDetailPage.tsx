@@ -45,6 +45,15 @@ import { Button } from '../components/ui/Button';
 import { LoadingSpinner } from '../components/ui/LoadingSpinner';
 import { ListSkeleton } from '../components/ui/Skeleton';
 import {
+  IngestionStatusOverviewCard,
+  batchStatusColor,
+  batchStatusLabel,
+  buildBatchSummaryMetrics,
+  formatIngestionSummaryText,
+  streamHintSeverity,
+  streamHintText,
+} from '../components/ingestion';
+import {
   useMaterialChunkDetail,
   useMaterialChunks,
   useMaterialsWithChunkStats,
@@ -55,7 +64,7 @@ import {
 } from '../hooks/queries/useKnowledgeBases';
 import { useIngestionBatchLive } from '../hooks/queries/useIngestionBatches';
 import { getErrorMessage } from '../lib/errorHandler';
-import type { BatchStatus, IngestionBatch, ManifestSourceType } from '../services/ingestionBatches';
+import type { ManifestSourceType } from '../services/ingestionBatches';
 import type { DocumentChunk } from '../services/materialChunks';
 
 type MobilePanel = 'docs' | 'chunks' | 'content';
@@ -72,28 +81,6 @@ function sourceTypeLabel(sourceType: ManifestSourceType | 'upload'): string {
       return '上传文件';
     default:
       return sourceType;
-  }
-}
-
-function batchStatusLabel(status: BatchStatus): string {
-  switch (status) {
-    case 'processing':
-      return '处理中';
-    case 'completed':
-      return '已完成';
-    default:
-      return status;
-  }
-}
-
-function batchStatusColor(status: BatchStatus): 'default' | 'warning' | 'success' {
-  switch (status) {
-    case 'processing':
-      return 'warning';
-    case 'completed':
-      return 'success';
-    default:
-      return 'default';
   }
 }
 
@@ -258,125 +245,6 @@ function formatLocatorValue(value: unknown): string {
     return String(value);
   }
 }
-
-function IngestionStatusCard({
-  batch,
-  streamStatus,
-  fallbackIntervalMs,
-  isPending,
-  error,
-}: {
-  batch: IngestionBatch | null;
-  streamStatus: 'idle' | 'connecting' | 'live' | 'fallback_polling';
-  fallbackIntervalMs: number;
-  isPending: boolean;
-  error: string | null;
-}) {
-  const streamHint = useMemo(() => {
-    if (!batch) {
-      return null;
-    }
-    if (streamStatus === 'connecting') {
-      return '正在建立实时状态连接…';
-    }
-    if (streamStatus === 'live') {
-      return '实时状态已连接。';
-    }
-    if (streamStatus === 'fallback_polling') {
-      return `实时连接中断，已切换轮询（每 ${Math.round(fallbackIntervalMs / 1000)} 秒）。`;
-    }
-    return '正在等待处理状态更新。';
-  }, [batch, fallbackIntervalMs, streamStatus]);
-
-  if (isPending && !batch) {
-    return (
-      <Paper variant='outlined' sx={{ borderRadius: 3, p: 2.5 }}>
-        <Stack spacing={1.5}>
-          <Typography variant='h6'>导入状态总览</Typography>
-          <Typography variant='body2' color='text.secondary'>
-            正在获取最新批次状态…
-          </Typography>
-        </Stack>
-      </Paper>
-    );
-  }
-
-  if (error) {
-    return (
-      <Paper variant='outlined' sx={{ borderRadius: 3, p: 2.5 }}>
-        <Alert severity='error'>{error}</Alert>
-      </Paper>
-    );
-  }
-
-  if (!batch) {
-    return (
-      <Paper variant='outlined' sx={{ borderRadius: 3, p: 2.5 }}>
-        <Stack spacing={1}>
-          <Typography variant='h6'>导入状态总览</Typography>
-          <Alert severity='info'>当前暂无导入批次。添加文档后可在此查看实时处理状态。</Alert>
-        </Stack>
-      </Paper>
-    );
-  }
-
-  const processingDocs = batch.docs.filter((doc) => doc.status === 'processing').length;
-
-  return (
-    <Paper
-      variant='outlined'
-      sx={{
-        borderRadius: 3,
-        p: { xs: 2, md: 2.5 },
-        bgcolor: (theme) =>
-          theme.palette.mode === 'light'
-            ? alpha(theme.palette.info.light, 0.08)
-            : alpha(theme.palette.info.dark, 0.2),
-      }}
-    >
-      <Stack spacing={1.5}>
-        <Stack
-          direction={{ xs: 'column', md: 'row' }}
-          spacing={1}
-          justifyContent='space-between'
-          alignItems={{ xs: 'flex-start', md: 'center' }}
-        >
-          <Stack spacing={0.5}>
-            <Typography variant='h6'>导入状态总览</Typography>
-          </Stack>
-          <Stack direction='row' spacing={1} flexWrap='wrap' useFlexGap>
-            <Chip label={`批次 ${batch.id.slice(0, 8)}…`} variant='outlined' size='small' />
-            <Chip
-              label={batchStatusLabel(batch.status)}
-              color={batchStatusColor(batch.status)}
-              size='small'
-            />
-          </Stack>
-        </Stack>
-
-        {streamHint && (
-          <Alert severity={streamStatus === 'fallback_polling' ? 'warning' : 'info'}>
-            {streamHint}
-          </Alert>
-        )}
-
-        <Typography variant='body2' color='text.secondary'>
-          {'文档：成功 ' +
-            batch.succeeded_docs +
-            ' / 失败 ' +
-            batch.failed_docs +
-            ' / 取消 ' +
-            batch.canceled_docs +
-            ' / 处理中 ' +
-            processingDocs +
-            ' / 分块 ' +
-            batch.succeeded_chunks}
-        </Typography>
-      </Stack>
-    </Paper>
-  );
-}
-
 
 type ContextChipColor = ReturnType<typeof contextStatusColor>;
 
@@ -1192,6 +1060,12 @@ export default function KnowledgeBaseDetailPage() {
   }
 
   const progressError = liveBatchQuery.error ? getErrorMessage(liveBatchQuery.error) : null;
+  const summaryMetrics = activeBatch ? buildBatchSummaryMetrics(activeBatch) : null;
+  const liveStreamHint = streamHintText({
+    enabled: Boolean(activeBatch),
+    streamStatus: liveBatchQuery.streamStatus,
+    fallbackIntervalMs: liveBatchQuery.fallbackIntervalMs,
+  });
 
   return (
     <Stack spacing={2}>
@@ -1249,13 +1123,37 @@ export default function KnowledgeBaseDetailPage() {
         </Stack>
       </Paper>
 
-      <IngestionStatusCard
-        batch={activeBatch}
-        streamStatus={liveBatchQuery.streamStatus}
-        fallbackIntervalMs={liveBatchQuery.fallbackIntervalMs}
-        isPending={liveBatchQuery.isPending}
-        error={progressError}
-      />
+      {liveBatchQuery.isPending && !activeBatch ? (
+        <Paper variant='outlined' sx={{ borderRadius: 3, p: 2.5 }}>
+          <Stack spacing={1.5}>
+            <Typography variant='h6'>导入状态总览</Typography>
+            <Typography variant='body2' color='text.secondary'>
+              正在获取最新批次状态…
+            </Typography>
+          </Stack>
+        </Paper>
+      ) : progressError ? (
+        <Paper variant='outlined' sx={{ borderRadius: 3, p: 2.5 }}>
+          <Alert severity='error'>{progressError}</Alert>
+        </Paper>
+      ) : !activeBatch || !summaryMetrics ? (
+        <Paper variant='outlined' sx={{ borderRadius: 3, p: 2.5 }}>
+          <Stack spacing={1}>
+            <Typography variant='h6'>导入状态总览</Typography>
+            <Alert severity='info'>当前暂无导入批次。添加文档后可在此查看实时处理状态。</Alert>
+          </Stack>
+        </Paper>
+      ) : (
+        <IngestionStatusOverviewCard
+          batchId={activeBatch.id}
+          statusLabel={batchStatusLabel(activeBatch.status)}
+          statusColor={batchStatusColor(activeBatch.status)}
+          streamHint={liveStreamHint}
+          streamHintSeverity={streamHintSeverity(liveBatchQuery.streamStatus)}
+          metrics={summaryMetrics}
+          footerHint={formatIngestionSummaryText(summaryMetrics)}
+        />
+      )}
 
       {kbId && (
         <ChunkBrowserSection
