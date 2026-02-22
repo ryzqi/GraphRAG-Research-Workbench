@@ -84,7 +84,7 @@ uv run uvicorn app.main:app --host 127.0.0.1 --port 8000 --loop asyncio:Selector
 ```powershell
 cd backend
 # 独立 beat（周期补偿）
-uv run celery -A app.worker.celery_app beat --loglevel=INFO -n worker.beat@%h
+uv run celery -A app.worker.celery_app beat --loglevel=INFO
 
 # dispatch worker（短任务，负责 outbox 派发）
 uv run celery -A app.worker.celery_app worker --loglevel=INFO -n worker.dispatch@%h --pool=threads --concurrency=2 --prefetch-multiplier=1 -Q dispatch

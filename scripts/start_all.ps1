@@ -72,11 +72,25 @@ function Start-Terminal {
         [Parameter(Mandatory = $true)][string]$Command
     )
 
-    $psCommand = "`$Host.UI.RawUI.WindowTitle = '$Title'; Set-Location `"$WorkingDirectory`"; $Command"
-    if ($Verbose) {
-        $psCommand = "`$Host.UI.RawUI.WindowTitle = '$Title'; Set-Location `"$WorkingDirectory`"; Write-Host '执行:' -ForegroundColor Yellow; Write-Host $Command -ForegroundColor DarkYellow; $Command"
+    $terminalShell = "powershell"
+    if (Get-Command "pwsh" -ErrorAction SilentlyContinue) {
+        $terminalShell = "pwsh"
     }
-    Start-Process -FilePath "powershell" -ArgumentList "-NoExit", "-Command", $psCommand -WorkingDirectory $WorkingDirectory | Out-Null
+
+    $escapedTitle = $Title.Replace("'", "''")
+    $escapedCommandLiteral = $Command.Replace("'", "''")
+
+    $scriptLines = @(
+        "`$Host.UI.RawUI.WindowTitle = '$escapedTitle'"
+    )
+    if ($Verbose) {
+        $scriptLines += "Write-Host '执行:' -ForegroundColor Yellow"
+        $scriptLines += "Write-Host '$escapedCommandLiteral' -ForegroundColor DarkYellow"
+    }
+    $scriptLines += $Command
+
+    $psCommand = $scriptLines -join "; "
+    Start-Process -FilePath $terminalShell -ArgumentList "-NoProfile", "-NoExit", "-Command", $psCommand -WorkingDirectory $WorkingDirectory | Out-Null
 }
 
 function Normalize-ApiBaseUrl {
@@ -187,6 +201,20 @@ function Get-EnvVarValue {
     return $trimmed
 }
 
+function Resolve-CeleryNodeName {
+    param([Parameter(Mandatory = $true)][string]$Template)
+
+    $hostname = Get-EnvVarValue -Name "COMPUTERNAME"
+    if (-not $hostname) {
+        $hostname = [Environment]::MachineName
+    }
+    if (-not $hostname) {
+        $hostname = "localhost"
+    }
+
+    return $Template.Replace("%h", $hostname.ToLowerInvariant())
+}
+
 function Get-CeleryWorkerCommand {
     param(
         [Parameter(Mandatory = $true)][string]$Queues,
@@ -241,6 +269,13 @@ function Get-CeleryWorkerCommand {
     if ($prefetchMultiplier) {
         $prefetchArgs = " --prefetch-multiplier=$prefetchMultiplier"
     }
+
+    $startupFlags = Get-EnvVarValue -Name "CELERY_WORKER_STARTUP_FLAGS"
+    if (-not $startupFlags) {
+        # Celery on Windows is best-effort; disable mingle/gossip to reduce startup delay/noise.
+        $startupFlags = "--without-mingle --without-gossip"
+    }
+
     $nodeArgs = ""
     if ($NodeName) {
         $nodeArgs = " -n $NodeName"
@@ -248,20 +283,13 @@ function Get-CeleryWorkerCommand {
 
     if ($Verbose) {
         $resolvedPrefetch = if ($prefetchMultiplier) { $prefetchMultiplier } else { "celery-default" }
-        Write-Host "Celery Worker 参数：--pool=$pool --concurrency=$concurrency --prefetch-multiplier=$resolvedPrefetch -Q $Queues" -ForegroundColor DarkGray
+        Write-Host "Celery Worker 参数：--pool=$pool --concurrency=$concurrency --prefetch-multiplier=$resolvedPrefetch $startupFlags -Q $Queues" -ForegroundColor DarkGray
     }
 
-    return "uv run celery -A app.worker.celery_app worker --loglevel=INFO$nodeArgs --pool=$pool --concurrency=$concurrency$prefetchArgs -Q $Queues"
+    return "uv run celery -A app.worker.celery_app worker --loglevel=INFO$nodeArgs --pool=$pool --concurrency=$concurrency$prefetchArgs $startupFlags -Q $Queues"
 }
 function Get-CeleryBeatCommand {
-    param(
-        [string]$NodeName = ""
-    )
-    $nodeArgs = ""
-    if ($NodeName) {
-        $nodeArgs = " -n $NodeName"
-    }
-    return "uv run celery -A app.worker.celery_app beat --loglevel=INFO$nodeArgs"
+    return "uv run celery -A app.worker.celery_app beat --loglevel=INFO"
 }
 function Get-BackendApiCommand {
     $command = "uv run uvicorn app.main:app --host 127.0.0.1 --port 8000 --loop asyncio:SelectorEventLoop"
@@ -271,78 +299,70 @@ function Get-BackendApiCommand {
     return $command
 }
 
-function Get-CeleryConsumerCounts {
-    $pyScript = @"
-import json
-from app.worker.celery_app import celery_app
-
-counts = {}
-try:
-    inspect = celery_app.control.inspect(timeout=1.0)
-    payload = inspect.active_queues() if inspect is not None else {}
-except Exception:
-    payload = {}
-
-if isinstance(payload, dict):
-    for queues in payload.values():
-        for item in queues or []:
-            queue_name = str((item or {}).get("name", "")).strip()
-            if not queue_name:
-                continue
-            counts[queue_name] = counts.get(queue_name, 0) + 1
-
-print(json.dumps(counts))
-"@
-
-    $raw = uv run python -c $pyScript 2>$null
-    if ($LASTEXITCODE -ne 0 -or -not $raw) {
-        return @{}
-    }
-
-    try {
-        $parsed = $raw | ConvertFrom-Json -AsHashtable
-        if ($parsed -is [hashtable]) {
-            return $parsed
-        }
-    }
-    catch { }
-
-    return @{}
-}
-
-function Wait-CeleryQueuesReady {
+function Get-CeleryWorkerNodeOnlineMap {
     param(
-        [int]$TimeoutSeconds = 45,
-        [string[]]$RequiredQueues = @("default", "dispatch", "ingestion")
+        [string[]]$WorkerNodeNames = @()
     )
 
+    $onlineMap = @{}
+    foreach ($nodeName in $WorkerNodeNames) {
+        if (-not $nodeName) { continue }
+        $onlineMap[$nodeName] = $false
+    }
+    if ($onlineMap.Count -eq 0) {
+        return $onlineMap
+    }
+
+    $candidates = Get-CimInstance Win32_Process | Where-Object {
+        $_.CommandLine -and
+        $_.CommandLine.Contains(" worker ") -and
+        ($_.CommandLine.Contains("app.worker.celery_app") -or $_.CommandLine.Contains(" celery "))
+    }
+
+    foreach ($proc in $candidates) {
+        $commandLine = [string]$proc.CommandLine
+        foreach ($nodeName in @($onlineMap.Keys)) {
+            if ($onlineMap[$nodeName]) { continue }
+            if ($commandLine.Contains("-n $nodeName")) {
+                $onlineMap[$nodeName] = $true
+            }
+        }
+    }
+
+    return $onlineMap
+}
+
+function Wait-CeleryWorkersOnline {
+    param(
+        [int]$TimeoutSeconds = 60,
+        [string[]]$WorkerNodeNames = @()
+    )
+
+    if ($WorkerNodeNames.Count -eq 0) { return $true }
     $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
     while ((Get-Date) -lt $deadline) {
-        $counts = Get-CeleryConsumerCounts
-        $missing = @()
-        foreach ($queueName in $RequiredQueues) {
-            $count = 0
-            if ($counts.ContainsKey($queueName)) {
-                $count = [int]$counts[$queueName]
-            }
-            if ($count -le 0) {
-                $missing += $queueName
+        $onlineMap = Get-CeleryWorkerNodeOnlineMap -WorkerNodeNames $WorkerNodeNames
+        $offlineNodes = @()
+        foreach ($nodeName in $WorkerNodeNames) {
+            if (-not $nodeName) { continue }
+            if (-not $onlineMap.ContainsKey($nodeName) -or -not [bool]$onlineMap[$nodeName]) {
+                $offlineNodes += $nodeName
             }
         }
 
-        if ($missing.Count -eq 0) {
+        if ($offlineNodes.Count -eq 0) {
             if ($Verbose) {
-                Write-Host "Celery 队列消费者已就绪：$($RequiredQueues -join ', ')" -ForegroundColor DarkGray
+                Write-Host "Celery Worker 进程已就绪：$($WorkerNodeNames -join ', ')" -ForegroundColor DarkGray
             }
             return $true
         }
 
         if ($Verbose) {
-            Write-Host "等待 Celery 队列消费者就绪，缺失：$($missing -join ', ')" -ForegroundColor DarkGray
+            Write-Host "等待 Celery Worker 进程就绪，缺失节点：$($offlineNodes -join ', ')" -ForegroundColor DarkGray
         }
+
         Start-Sleep -Milliseconds 1000
     }
-
     return $false
 }
 
@@ -357,13 +377,9 @@ if (-not $env:NEXT_PUBLIC_API_BASE_URL -and $env:VITE_API_BASE_URL) {
 }
 
 $env:PYTHONUNBUFFERED = "1"
-$shouldRunMigrate = $RunMigrate
-if ($SkipMigrate) {
-    Write-Host "参数 -SkipMigrate 仅为兼容保留；默认已跳过迁移。请优先使用 -RunMigrate 显式开启迁移。" -ForegroundColor DarkYellow
-    if ($RunMigrate) {
-        Write-Host "检测到 -RunMigrate 与 -SkipMigrate 同时传入，按 -SkipMigrate 优先，跳过迁移。" -ForegroundColor Yellow
-    }
-    $shouldRunMigrate = $false
+$shouldRunMigrate = $RunMigrate -and (-not $SkipMigrate)
+if ($SkipMigrate -and $RunMigrate) {
+    Write-Host "检测到 -RunMigrate 与 -SkipMigrate 同时传入，按 -SkipMigrate 优先，跳过迁移。" -ForegroundColor Yellow
 }
 
 if (-not $SkipInfra) {
@@ -415,24 +431,28 @@ if (-not $SkipBackend) {
 }
 
 if (-not $SkipWorker) {
-    $beatCommand = Get-CeleryBeatCommand -NodeName "worker.beat@%h"
+    $beatCommand = Get-CeleryBeatCommand
     Start-Terminal -Title "celery-beat" -WorkingDirectory $backendDir -Command $beatCommand
 
-    $dispatchWorkerCommand = Get-CeleryWorkerCommand -Queues "dispatch" -NodeName "worker.dispatch@%h" -PoolEnvVar "CELERY_DISPATCH_WORKER_POOL" -ConcurrencyEnvVar "CELERY_DISPATCH_WORKER_CONCURRENCY" -PrefetchEnvVar "CELERY_DISPATCH_WORKER_PREFETCH_MULTIPLIER" -DefaultConcurrency "2" -DefaultPrefetchMultiplier "1"
+    $dispatchWorkerNodeName = Resolve-CeleryNodeName -Template "worker.dispatch@%h"
+    $coreWorkerNodeName = Resolve-CeleryNodeName -Template "worker.core@%h"
+    $nonCoreWorkerNodeName = Resolve-CeleryNodeName -Template "worker.noncore@%h"
+
+    $dispatchWorkerCommand = Get-CeleryWorkerCommand -Queues "dispatch" -NodeName $dispatchWorkerNodeName -PoolEnvVar "CELERY_DISPATCH_WORKER_POOL" -ConcurrencyEnvVar "CELERY_DISPATCH_WORKER_CONCURRENCY" -PrefetchEnvVar "CELERY_DISPATCH_WORKER_PREFETCH_MULTIPLIER" -DefaultConcurrency "2" -DefaultPrefetchMultiplier "1"
     Start-Terminal -Title "celery-worker-dispatch" -WorkingDirectory $backendDir -Command $dispatchWorkerCommand
 
-    $coreWorkerCommand = Get-CeleryWorkerCommand -Queues "ingestion,rebuild,default" -NodeName "worker.core@%h" -PoolEnvVar "CELERY_CORE_WORKER_POOL" -ConcurrencyEnvVar "CELERY_CORE_WORKER_CONCURRENCY" -PrefetchEnvVar "CELERY_CORE_WORKER_PREFETCH_MULTIPLIER" -DefaultPrefetchMultiplier "1"
+    $coreWorkerCommand = Get-CeleryWorkerCommand -Queues "ingestion,rebuild,default" -NodeName $coreWorkerNodeName -PoolEnvVar "CELERY_CORE_WORKER_POOL" -ConcurrencyEnvVar "CELERY_CORE_WORKER_CONCURRENCY" -PrefetchEnvVar "CELERY_CORE_WORKER_PREFETCH_MULTIPLIER" -DefaultPrefetchMultiplier "1"
     Start-Terminal -Title "celery-worker-core" -WorkingDirectory $backendDir -Command $coreWorkerCommand
 
-    $nonCoreWorkerCommand = Get-CeleryWorkerCommand -Queues "research,export" -NodeName "worker.noncore@%h" -PoolEnvVar "CELERY_NONCORE_WORKER_POOL" -ConcurrencyEnvVar "CELERY_NONCORE_WORKER_CONCURRENCY" -PrefetchEnvVar "CELERY_NONCORE_WORKER_PREFETCH_MULTIPLIER" -DefaultConcurrency "2" -DefaultPrefetchMultiplier "1"
+    $nonCoreWorkerCommand = Get-CeleryWorkerCommand -Queues "research,export" -NodeName $nonCoreWorkerNodeName -PoolEnvVar "CELERY_NONCORE_WORKER_POOL" -ConcurrencyEnvVar "CELERY_NONCORE_WORKER_CONCURRENCY" -PrefetchEnvVar "CELERY_NONCORE_WORKER_PREFETCH_MULTIPLIER" -DefaultConcurrency "2" -DefaultPrefetchMultiplier "1"
     Start-Terminal -Title "celery-worker-noncore" -WorkingDirectory $backendDir -Command $nonCoreWorkerCommand
 
-    Write-Host "等待 Celery 队列消费者就绪（default / dispatch / ingestion）..." -ForegroundColor Cyan
+    Write-Host "等待 Celery Worker 进程就绪（dispatch / core）..." -ForegroundColor Cyan
     Push-Location $backendDir
     try {
-        $celeryQueuesReady = Wait-CeleryQueuesReady -TimeoutSeconds 45
-        if (-not $celeryQueuesReady) {
-            throw "Celery 必需队列消费者未在 45 秒内就绪（default/dispatch/ingestion）。请检查 worker 窗口日志与 Redis 队列积压。"
+        $celeryWorkersReady = Wait-CeleryWorkersOnline -TimeoutSeconds 60 -WorkerNodeNames @($dispatchWorkerNodeName, $coreWorkerNodeName)
+        if (-not $celeryWorkersReady) {
+            throw "Celery Worker 进程未在 60 秒内就绪（dispatch/core）。请检查 worker 窗口日志。"
         }
     }
     finally {
