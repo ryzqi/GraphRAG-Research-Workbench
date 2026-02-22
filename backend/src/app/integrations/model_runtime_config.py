@@ -147,14 +147,14 @@ class ModelRuntimeConfigManager:
                 async with sessionmaker() as session:
                     cls._snapshot = await cls._load_snapshot(db=session, settings=cfg)
             except Exception as exc:
-                logger.warning("加载模型运行时配置失败，使用回退配置", extra={"error": str(exc)})
-                cls._snapshot = cls._build_fallback_snapshot(cfg)
+                logger.warning("加载模型运行时配置失败，使用空配置", extra={"error": str(exc)})
+                cls._snapshot = cls._build_fallback_snapshot()
 
     @classmethod
     def get_snapshot(cls, *, settings: Settings | None = None) -> RuntimeModelSnapshot:
         if cls._snapshot is not None:
             return cls._snapshot
-        return cls._build_fallback_snapshot(settings or get_settings())
+        return cls._build_fallback_snapshot()
 
     @classmethod
     async def shutdown(cls) -> None:
@@ -174,7 +174,7 @@ class ModelRuntimeConfigManager:
         result = await db.execute(select(ModelProviderConfig))
         rows = list(result.scalars().all())
         if not rows:
-            return cls._build_fallback_snapshot(settings)
+            return cls._build_fallback_snapshot()
         rows.sort(key=lambda row: _provider_priority(row.provider))
 
         providers: dict[ModelProvider, RuntimeProviderConfig] = {}
@@ -225,8 +225,6 @@ class ModelRuntimeConfigManager:
         if not active_model:
             if provider_cfg.models:
                 active_model = provider_cfg.models[0]
-            elif active_provider == ModelProvider.OPENAI:
-                active_model = settings.llm_model.strip() or None
             else:
                 active_model = None
 
@@ -238,19 +236,23 @@ class ModelRuntimeConfigManager:
         )
 
     @staticmethod
-    def _build_fallback_snapshot(settings: Settings) -> RuntimeModelSnapshot:
-        provider_cfg = RuntimeProviderConfig(
-            provider=ModelProvider.OPENAI,
-            enabled=True,
-            base_url=settings.llm_base_url.rstrip("/"),
-            api_key=settings.llm_api_key,
-            models=_normalize_model_names([settings.llm_model]),
-            thinking_enabled=True,
-            thinking_level="high",
-        )
+    def _build_fallback_snapshot() -> RuntimeModelSnapshot:
+        providers: dict[ModelProvider, RuntimeProviderConfig] = {}
+        for provider in _PROVIDER_PRIORITY:
+            providers[provider] = RuntimeProviderConfig(
+                provider=provider,
+                enabled=False,
+                base_url=None,
+                api_key=None,
+                models=[],
+                thinking_enabled=True,
+                thinking_level="high"
+                if provider in {ModelProvider.OPENAI, ModelProvider.OLLAMA}
+                else None,
+            )
         return RuntimeModelSnapshot(
-            providers={ModelProvider.OPENAI: provider_cfg},
+            providers=providers,
             active_provider=ModelProvider.OPENAI,
-            active_model=provider_cfg.models[0] if provider_cfg.models else None,
+            active_model=None,
             updated_at=None,
         )

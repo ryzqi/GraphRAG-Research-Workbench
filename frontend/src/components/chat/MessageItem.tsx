@@ -12,6 +12,7 @@ import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import { useTypewriterStream } from './useTypewriterStream';
 import { ThinkingContainer } from './ThinkingContainer';
 import { Button } from '../ui/Button';
+import type { ToolApprovalRequest } from '../../services/chats';
 
 // 实心圆点脉冲动画
 const cursorPulse = keyframes`
@@ -307,23 +308,67 @@ export const MessageItem = memo(
 );
 // 工具审批卡片
 interface ToolApprovalCardProps {
-  message?: string | null;
-  toolCalls: Array<{
-    tool_name: string;
-    extension_name?: string;
+  interrupts: Array<{
+    interrupt_id: string;
+    message?: string | null;
+    toolCalls: Array<{
+      tool_name: string;
+      extension_name?: string;
+    }>;
   }>;
   loading?: boolean;
-  onApprove: () => void;
-  onReject: () => void;
+  onSubmit: (approval: ToolApprovalRequest) => void;
 }
 
 export function ToolApprovalCard({
-  message,
-  toolCalls,
+  interrupts,
   loading,
-  onApprove,
-  onReject,
+  onSubmit,
 }: ToolApprovalCardProps) {
+  const [decisions, setDecisions] = useState<Record<string, 'approve' | 'reject'>>({});
+
+  const decisionKeys = interrupts.flatMap((interrupt) =>
+    interrupt.toolCalls.map((_, index) => `${interrupt.interrupt_id}:${index}`)
+  );
+  const allDecided =
+    decisionKeys.length > 0 &&
+    decisionKeys.every((key) => decisions[key] === 'approve' || decisions[key] === 'reject');
+
+  const setDecision = (key: string, value: 'approve' | 'reject') => {
+    setDecisions((prev) => ({ ...prev, [key]: value }));
+  };
+
+  const setAllDecisions = (value: 'approve' | 'reject') => {
+    const next: Record<string, 'approve' | 'reject'> = {};
+    for (const key of decisionKeys) {
+      next[key] = value;
+    }
+    setDecisions(next);
+  };
+
+  const handleSubmit = () => {
+    if (!allDecided || loading) {
+      return;
+    }
+    const approval: ToolApprovalRequest = {
+      interrupts: interrupts.map((interrupt) => ({
+        interrupt_id: interrupt.interrupt_id,
+        decisions: interrupt.toolCalls.map((_, index) => {
+          const key = `${interrupt.interrupt_id}:${index}`;
+          const decision = decisions[key];
+          if (decision === 'reject') {
+            return {
+              type: 'reject',
+              message: '用户拒绝执行该工具调用。',
+            };
+          }
+          return { type: 'approve' };
+        }),
+      })),
+    };
+    onSubmit(approval);
+  };
+
   return (
     <Paper
       variant="outlined"
@@ -339,31 +384,69 @@ export function ToolApprovalCard({
         <Typography variant="subtitle2" fontWeight={600}>
           需要审批工具调用
         </Typography>
-        {message && (
-          <Typography variant="body2" color="text.secondary">
-            {message}
-          </Typography>
-        )}
-        {toolCalls.length > 0 && (
-          <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
-            {toolCalls.map((t, idx) => (
-              <Chip
-                key={idx}
-                label={`${t.tool_name}${t.extension_name ? ` (${t.extension_name})` : ''}`}
-                size="small"
-                variant="outlined"
-              />
-            ))}
-          </Stack>
-        )}
         <Stack direction="row" spacing={1}>
-          <Button variant="contained" color="success" onClick={onApprove} loading={loading}>
-            允许执行
+          <Button variant="outlined" color="success" onClick={() => setAllDecisions('approve')} disabled={loading}>
+            全部允许
           </Button>
-          <Button variant="outlined" color="error" onClick={onReject} disabled={loading}>
-            拒绝执行
+          <Button variant="outlined" color="error" onClick={() => setAllDecisions('reject')} disabled={loading}>
+            全部拒绝
           </Button>
         </Stack>
+        {interrupts.map((interrupt) => (
+          <Paper key={interrupt.interrupt_id} variant="outlined" sx={{ p: 1.5, borderRadius: 2 }}>
+            <Stack spacing={1}>
+              <Typography variant="caption" color="text.secondary">
+                interrupt: {interrupt.interrupt_id}
+              </Typography>
+              {interrupt.message && (
+                <Typography variant="body2" color="text.secondary">
+                  {interrupt.message}
+                </Typography>
+              )}
+              {interrupt.toolCalls.map((toolCall, index) => {
+                const key = `${interrupt.interrupt_id}:${index}`;
+                const current = decisions[key];
+                return (
+                  <Stack
+                    key={key}
+                    direction={{ xs: 'column', sm: 'row' }}
+                    spacing={1}
+                    alignItems={{ xs: 'stretch', sm: 'center' }}
+                  >
+                    <Chip
+                      label={`${toolCall.tool_name}${toolCall.extension_name ? ` (${toolCall.extension_name})` : ''}`}
+                      size="small"
+                      variant="outlined"
+                    />
+                    <Stack direction="row" spacing={1}>
+                      <Button
+                        size="small"
+                        variant={current === 'approve' ? 'contained' : 'outlined'}
+                        color="success"
+                        onClick={() => setDecision(key, 'approve')}
+                        disabled={loading}
+                      >
+                        允许
+                      </Button>
+                      <Button
+                        size="small"
+                        variant={current === 'reject' ? 'contained' : 'outlined'}
+                        color="error"
+                        onClick={() => setDecision(key, 'reject')}
+                        disabled={loading}
+                      >
+                        拒绝
+                      </Button>
+                    </Stack>
+                  </Stack>
+                );
+              })}
+            </Stack>
+          </Paper>
+        ))}
+        <Button variant="contained" onClick={handleSubmit} loading={loading} disabled={!allDecided}>
+          提交审批并继续
+        </Button>
       </Stack>
     </Paper>
   );

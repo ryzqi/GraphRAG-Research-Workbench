@@ -255,10 +255,33 @@ class PendingToolCall(BaseModel):
     is_builtin: bool = False
 
 
+class ToolDecision(BaseModel):
+    """单个工具调用的审批决策。"""
+
+    type: Literal["approve", "reject", "edit"]
+    message: str | None = None
+    edited_action: dict[str, Any] | None = None
+
+
+class InterruptDecisionBatch(BaseModel):
+    """单个 interrupt 的审批决策集合。"""
+
+    interrupt_id: str = Field(..., min_length=1)
+    decisions: list[ToolDecision] = Field(default_factory=list, min_length=1)
+
+
 class ToolApprovalRequest(BaseModel):
     """工具审批请求。"""
 
-    approved: bool
+    interrupts: list[InterruptDecisionBatch] = Field(default_factory=list, min_length=1)
+
+
+class PendingInterruptApproval(BaseModel):
+    """单个 interrupt 对应的待审批信息。"""
+
+    interrupt_id: str
+    message: str | None = None
+    pending_tool_calls: list[PendingToolCall] = Field(default_factory=list)
 
 
 class ClarificationResumeRequest(BaseModel):
@@ -280,9 +303,7 @@ class ChatPendingToolApprovalResponse(BaseModel):
 
     status: Literal["pending_tool_approval"] = "pending_tool_approval"
     thread_id: str
-    interrupt_id: str | None = None
-    message: str | None = None
-    pending_tool_calls: list[PendingToolCall]
+    pending_interrupts: list[PendingInterruptApproval]
     run: AgentRunRead
 
 

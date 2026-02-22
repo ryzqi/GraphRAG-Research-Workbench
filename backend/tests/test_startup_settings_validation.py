@@ -18,7 +18,6 @@ from app.core.settings import (
 def _settings_stub(**overrides: object) -> SimpleNamespace:
     base = {
         "app_env": "dev",
-        "llm_api_key": "REPLACE_ME",
         "embedding_api_key": "REPLACE_ME",
         "model_config_kms_key": None,
         "database_url": _DEFAULT_DATABASE_URL,
@@ -40,7 +39,6 @@ def test_validate_startup_settings_skips_dev_environment() -> None:
 def test_validate_startup_settings_rejects_default_infra_credentials_in_non_dev() -> None:
     settings = _settings_stub(
         app_env="prod",
-        llm_api_key="test-llm-key",
         embedding_api_key="test-embedding-key",
         model_config_kms_key="test-kms-key",
     )
@@ -60,7 +58,6 @@ def test_validate_startup_settings_rejects_default_infra_credentials_in_non_dev(
 def test_validate_startup_settings_allows_non_default_infra_credentials_in_non_dev() -> None:
     settings = _settings_stub(
         app_env="staging",
-        llm_api_key="test-llm-key",
         embedding_api_key="test-embedding-key",
         model_config_kms_key="test-kms-key",
         database_url="postgresql+asyncpg://mkb:strong_pwd@db.example.com:5432/mkb",

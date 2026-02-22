@@ -5,6 +5,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, AsyncIterator, Awaitable, Callable
 
+from app.services.message_normalizer import extract_text_content
+
 
 _NON_ANSWER_STREAM_NODES = {
     # KB preprocess / retrieval / reflection nodes
@@ -359,7 +361,7 @@ def extract_stream_delta(
         for item in content:
             if not isinstance(item, dict):
                 continue
-            if item.get("type") == "text" and allow_answer_content:
+            if item.get("type") in {"text", "output_text"} and allow_answer_content:
                 text = item.get("text")
                 if not isinstance(text, str) or not text:
                     continue
@@ -420,20 +422,8 @@ def strip_legacy_think_tags(text: str) -> str:
 
 def extract_answer_text(content: object) -> str:
     """提取最终正文，剥离思考段与标签。"""
-    if isinstance(content, str):
-        return strip_legacy_think_tags(content)
-    if isinstance(content, list):
-        parts: list[str] = []
-        for item in content:
-            if not isinstance(item, dict):
-                continue
-            if item.get("type") != "text":
-                continue
-            text = item.get("text")
-            if isinstance(text, str):
-                parts.append(strip_legacy_think_tags(text))
-        return "".join(parts)
-    return ""
+    text = extract_text_content(content, include_output_text=True)
+    return strip_legacy_think_tags(text)
 
 
 def build_think_delta(messages: list[Any]) -> StreamDelta | None:
@@ -506,15 +496,7 @@ def extract_message_text(token: object) -> str:
     content = getattr(token, "content", None)
     if isinstance(content, str):
         return content
-    if isinstance(content, list):
-        parts: list[str] = []
-        for item in content:
-            if isinstance(item, dict) and item.get("type") == "text":
-                text = item.get("text")
-                if isinstance(text, str):
-                    parts.append(text)
-        return "".join(parts)
-    return ""
+    return extract_text_content(content, include_output_text=True)
 
 def apply_updates_chunk(state: StreamState, chunk: dict[str, Any]) -> list[Any]:
     """合并 updates chunk，返回 interrupt 列表。"""

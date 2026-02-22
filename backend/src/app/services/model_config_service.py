@@ -87,11 +87,7 @@ def _as_model_provider(provider: ModelProvider) -> ModelProviderORM:
     return ModelProviderORM(provider.value)
 
 
-def _default_base_url(provider: ModelProviderORM, settings: Settings) -> str | None:
-    if provider == ModelProviderORM.OPENAI:
-        return settings.llm_base_url.rstrip("/")
-    if provider == ModelProviderORM.OLLAMA:
-        return "http://127.0.0.1:11434"
+def _default_base_url(_provider: ModelProviderORM) -> str | None:
     return None
 
 
@@ -101,10 +97,7 @@ def _default_thinking_level(provider: ModelProviderORM) -> str | None:
     return None
 
 
-def _default_models(provider: ModelProviderORM, settings: Settings) -> list[str]:
-    if provider == ModelProviderORM.OPENAI:
-        model_name = settings.llm_model.strip()
-        return [model_name] if model_name else []
+def _default_models(_provider: ModelProviderORM) -> list[str]:
     return []
 
 
@@ -271,17 +264,12 @@ class ModelConfigService:
         for provider in _PROVIDER_ORDER:
             if provider in by_provider:
                 continue
-            api_key_encrypted = None
-            if provider == ModelProviderORM.OPENAI:
-                raw_key = self._settings.llm_api_key.strip()
-                if raw_key and raw_key != "REPLACE_ME":
-                    api_key_encrypted = encrypt_secret(raw_key, kms_key=self._kms_key)
             row = ModelProviderConfig(
                 provider=provider,
                 enabled=True,
-                base_url=_default_base_url(provider, self._settings),
-                api_key_encrypted=api_key_encrypted,
-                models=_default_models(provider, self._settings),
+                base_url=_default_base_url(provider),
+                api_key_encrypted=None,
+                models=_default_models(provider),
                 thinking_enabled=True,
                 thinking_level=_default_thinking_level(provider),
             )
@@ -321,10 +309,11 @@ class ModelConfigService:
             selection = ModelRuntimeSelection(
                 id=1,
                 active_provider=ModelProviderORM.OPENAI,
-                active_model=self._settings.llm_model.strip() or None,
+                active_model=None,
             )
             self._db.add(selection)
             await self._db.commit()
+        await self._db.refresh(selection)
         return selection
 
     def _resolve_active_model(self, row: ModelProviderConfig) -> str | None:
@@ -332,14 +321,9 @@ class ModelConfigService:
         if normalized_models:
             return normalized_models[0]
 
-        default_models = _default_models(row.provider, self._settings)
+        default_models = _default_models(row.provider)
         if default_models:
             return default_models[0]
-
-        if row.provider == ModelProviderORM.OPENAI:
-            fallback_model = self._settings.llm_model.strip()
-            if fallback_model:
-                return fallback_model
         return None
 
     def _to_config_read(

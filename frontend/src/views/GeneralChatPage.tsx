@@ -15,8 +15,10 @@ import {
   sendMessage,
   streamChatMessage,
   streamResumeToolApproval,
+  type ChatPendingToolApprovalResponse,
   type ChatMessageResponse,
   type ChatSession,
+  type ToolApprovalRequest,
 } from '../services/chats';
 import { HttpError } from '../services/http';
 import { ErrorAlert } from '../components/ui/ErrorAlert';
@@ -52,6 +54,27 @@ function isPendingClarification(
   response: ChatMessageResponse
 ): response is Extract<ChatMessageResponse, { status: 'pending_user_clarification' }> {
   return response.status === 'pending_user_clarification';
+}
+
+function isPendingToolApproval(
+  response: ChatMessageResponse
+): response is ChatPendingToolApprovalResponse {
+  return response.status === 'pending_tool_approval';
+}
+
+function toPendingToolApprovalState(
+  response: ChatPendingToolApprovalResponse
+): NonNullable<ChatMessage['pendingToolApproval']> {
+  return {
+    interrupts: response.pending_interrupts.map((interrupt) => ({
+      interrupt_id: interrupt.interrupt_id,
+      message: interrupt.message,
+      toolCalls: interrupt.pending_tool_calls.map((call) => ({
+        tool_name: call.tool_name,
+        extension_name: call.extension_name ?? undefined,
+      })),
+    })),
+  };
 }
 
 export function GeneralChatPage() {
@@ -231,18 +254,12 @@ export function GeneralChatPage() {
     const fallbackToJson = async () => {
       const response: ChatMessageResponse = await sendMessage(activeSession.id, content);
       touchRecent();
-      if (response.status === 'pending_tool_approval') {
+      if (isPendingToolApproval(response)) {
         updateMessage(assistantId, (msg) => ({
           ...msg,
-          content: response.message ?? '需要你确认将要执行的工具调用。',
+          content: response.pending_interrupts[0]?.message ?? '需要你确认将要执行的工具调用。',
           runId: response.run.id,
-          pendingToolApproval: {
-            message: response.message,
-            toolCalls: response.pending_tool_calls.map((call) => ({
-              tool_name: call.tool_name,
-              extension_name: call.extension_name ?? undefined,
-            })),
-          },
+          pendingToolApproval: toPendingToolApprovalState(response),
           think: '',
           isStreaming: false,
         }));
@@ -294,18 +311,12 @@ export function GeneralChatPage() {
         if (event.event === 'interrupt') {
           deltaBatcher.flush();
           const data = parseSseJson<ChatMessageResponse>(event.data);
-          if (data.status === 'pending_tool_approval') {
+          if (isPendingToolApproval(data)) {
             updateMessage(assistantId, (msg) => ({
               ...msg,
-              content: data.message ?? '需要你确认将要执行的工具调用。',
+              content: data.pending_interrupts[0]?.message ?? '需要你确认将要执行的工具调用。',
               runId: data.run.id,
-              pendingToolApproval: {
-                message: data.message,
-                toolCalls: data.pending_tool_calls.map((call) => ({
-                  tool_name: call.tool_name,
-                  extension_name: call.extension_name ?? undefined,
-                })),
-              },
+              pendingToolApproval: toPendingToolApprovalState(data),
               isStreaming: false,
             }));
             setLoading(false);
@@ -381,7 +392,7 @@ export function GeneralChatPage() {
   ]);
 
   const handleToolApproval = useCallback(
-    async (pendingMessageId: string, runId: string, approved: boolean) => {
+    async (pendingMessageId: string, runId: string, approval: ToolApprovalRequest) => {
       if (!session || loading) return;
       setLoading(true);
       setError(null);
@@ -398,19 +409,13 @@ export function GeneralChatPage() {
       }));
 
       const fallbackToJson = async () => {
-        const response: ChatMessageResponse = await resumeToolApproval(session.id, runId, approved);
-        if (response.status === 'pending_tool_approval') {
+        const response: ChatMessageResponse = await resumeToolApproval(session.id, runId, approval);
+        if (isPendingToolApproval(response)) {
           updateMessage(pendingMessageId, (msg) => ({
             ...msg,
-            content: response.message ?? '仍需要审批工具调用。',
+            content: response.pending_interrupts[0]?.message ?? '仍需要审批工具调用。',
             runId: response.run.id,
-            pendingToolApproval: {
-              message: response.message,
-              toolCalls: response.pending_tool_calls.map((call) => ({
-                tool_name: call.tool_name,
-                extension_name: call.extension_name ?? undefined,
-              })),
-            },
+            pendingToolApproval: toPendingToolApprovalState(response),
             think: '',
             isStreaming: false,
           }));
@@ -442,7 +447,7 @@ export function GeneralChatPage() {
       });
 
       try {
-        const stream = await streamResumeToolApproval(session.id, runId, approved);
+        const stream = await streamResumeToolApproval(session.id, runId, approval);
         for await (const event of stream) {
           hadStreamEvent = true;
           if (event.event === 'meta') {
@@ -461,18 +466,12 @@ export function GeneralChatPage() {
           if (event.event === 'interrupt') {
             deltaBatcher.flush();
             const data = parseSseJson<ChatMessageResponse>(event.data);
-            if (data.status === 'pending_tool_approval') {
+            if (isPendingToolApproval(data)) {
               updateMessage(pendingMessageId, (msg) => ({
                 ...msg,
-                content: data.message ?? '仍需要审批工具调用。',
+                content: data.pending_interrupts[0]?.message ?? '仍需要审批工具调用。',
                 runId: data.run.id,
-                pendingToolApproval: {
-                  message: data.message,
-                  toolCalls: data.pending_tool_calls.map((call) => ({
-                    tool_name: call.tool_name,
-                    extension_name: call.extension_name ?? undefined,
-                  })),
-                },
+                pendingToolApproval: toPendingToolApprovalState(data),
                 isStreaming: false,
               }));
               setLoading(false);
@@ -622,8 +621,7 @@ export function GeneralChatPage() {
         <MessageList
           messages={messages}
           loading={loading}
-          onToolApprove={(msgId, runId) => handleToolApproval(msgId, runId, true)}
-          onToolReject={(msgId, runId) => handleToolApproval(msgId, runId, false)}
+          onToolApprovalSubmit={handleToolApproval}
           approvalLoading={loading}
         />
       )}

@@ -165,12 +165,31 @@ export interface PendingToolCall {
   is_builtin: boolean;
 }
 
+export interface PendingInterruptApproval {
+  interrupt_id: string;
+  message: string | null;
+  pending_tool_calls: PendingToolCall[];
+}
+
+export interface ToolDecision {
+  type: 'approve' | 'reject' | 'edit';
+  message?: string;
+  edited_action?: Record<string, unknown>;
+}
+
+export interface InterruptDecisionBatch {
+  interrupt_id: string;
+  decisions: ToolDecision[];
+}
+
+export interface ToolApprovalRequest {
+  interrupts: InterruptDecisionBatch[];
+}
+
 export interface ChatPendingToolApprovalResponse {
   status: 'pending_tool_approval';
   thread_id: string;
-  interrupt_id: string | null;
-  message: string | null;
-  pending_tool_calls: PendingToolCall[];
+  pending_interrupts: PendingInterruptApproval[];
   run: AgentRun;
 }
 
@@ -456,11 +475,11 @@ export async function sendMessage(
 export async function resumeToolApproval(
   sessionId: string,
   runId: string,
-  approved: boolean
+  approval: ToolApprovalRequest
 ): Promise<ChatMessageResponse> {
   return apiFetch<ChatMessageResponse>(`/api/v1/chats/${sessionId}/runs/${runId}/resume`, {
     method: 'POST',
-    body: JSON.stringify({ approved }),
+    body: JSON.stringify(approval),
   });
 }
 
@@ -488,14 +507,14 @@ export async function streamChatMessage(
 export async function streamResumeToolApproval(
   sessionId: string,
   runId: string,
-  approved: boolean,
+  approval: ToolApprovalRequest,
   signal?: AbortSignal
 ): Promise<AsyncIterable<SseEvent>> {
   return openSseStream(
     `/api/v1/chats/${sessionId}/runs/${runId}/resume/stream`,
     {
       method: 'POST',
-      body: JSON.stringify({ approved }),
+      body: JSON.stringify(approval),
     },
     signal
   );

@@ -8,7 +8,12 @@ import { alpha } from '@mui/material/styles';
 import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
 import { ClarificationCard, MessageItem, ToolApprovalCard } from './MessageItem';
 import { SparkleLoading } from './SparkleLoading';
-import type { ChatNodeIoEvent, ChatRunStateEvent, EvidenceItem } from '../../services/chats';
+import type {
+  ChatNodeIoEvent,
+  ChatRunStateEvent,
+  EvidenceItem,
+  ToolApprovalRequest,
+} from '../../services/chats';
 import { EvidenceList } from '../EvidenceList';
 import { stripTrailingReferenceSection } from '../../lib/kbChatContent';
 import {
@@ -37,10 +42,13 @@ export interface ChatMessage {
   nodeTimeline?: PipelineTimelineEvent[];
   nodeIoEvents?: ChatNodeIoEvent[];
   pendingToolApproval?: {
-    message?: string | null;
-    toolCalls: Array<{
-      tool_name: string;
-      extension_name?: string;
+    interrupts: Array<{
+      interrupt_id: string;
+      message?: string | null;
+      toolCalls: Array<{
+        tool_name: string;
+        extension_name?: string;
+      }>;
     }>;
   };
   pendingClarification?: {
@@ -55,8 +63,11 @@ export interface ChatMessage {
 interface MessageListProps {
   messages: ChatMessage[];
   loading?: boolean;
-  onToolApprove?: (messageId: string, runId: string) => void;
-  onToolReject?: (messageId: string, runId: string) => void;
+  onToolApprovalSubmit?: (
+    messageId: string,
+    runId: string,
+    approval: ToolApprovalRequest
+  ) => void;
   onClarificationSubmit?: (messageId: string, runId: string, content: string) => void;
   approvalLoading?: boolean;
   bottomInset?: number;
@@ -71,8 +82,11 @@ interface MessageListProps {
 
 interface MessageRowProps {
   message: ChatMessage;
-  onToolApprove?: (messageId: string, runId: string) => void;
-  onToolReject?: (messageId: string, runId: string) => void;
+  onToolApprovalSubmit?: (
+    messageId: string,
+    runId: string,
+    approval: ToolApprovalRequest
+  ) => void;
   onClarificationSubmit?: (messageId: string, runId: string, content: string) => void;
   approvalLoading: boolean;
   showPipeline: boolean;
@@ -85,8 +99,7 @@ interface MessageRowProps {
 const MessageRow = memo(
   function MessageRow({
     message,
-    onToolApprove,
-    onToolReject,
+    onToolApprovalSubmit,
     onClarificationSubmit,
     approvalLoading,
     showPipeline,
@@ -165,14 +178,12 @@ const MessageRow = memo(
           onCitationClick={message.role === 'assistant' ? handleCitationClick : undefined}
         />
 
-        {message.pendingToolApproval && onToolApprove && onToolReject && message.runId && (
+        {message.pendingToolApproval && onToolApprovalSubmit && message.runId && (
           <Box sx={{ mt: 2, ml: 7 }}>
             <ToolApprovalCard
-              message={message.pendingToolApproval.message}
-              toolCalls={message.pendingToolApproval.toolCalls}
+              interrupts={message.pendingToolApproval.interrupts}
               loading={approvalLoading}
-              onApprove={() => onToolApprove(message.id, message.runId!)}
-              onReject={() => onToolReject(message.id, message.runId!)}
+              onSubmit={(approval) => onToolApprovalSubmit(message.id, message.runId!, approval)}
             />
           </Box>
         )}
@@ -202,8 +213,7 @@ const MessageRow = memo(
   },
   (prev, next) =>
     prev.message === next.message &&
-    prev.onToolApprove === next.onToolApprove &&
-    prev.onToolReject === next.onToolReject &&
+    prev.onToolApprovalSubmit === next.onToolApprovalSubmit &&
     prev.onClarificationSubmit === next.onClarificationSubmit &&
     prev.approvalLoading === next.approvalLoading &&
     prev.showPipeline === next.showPipeline &&
@@ -216,8 +226,7 @@ const MessageRow = memo(
 export function MessageList({
   messages,
   loading = false,
-  onToolApprove,
-  onToolReject,
+  onToolApprovalSubmit,
   onClarificationSubmit,
   approvalLoading = false,
   bottomInset = 220,
@@ -310,8 +319,7 @@ export function MessageList({
           <MessageRow
             key={message.id}
             message={message}
-            onToolApprove={onToolApprove}
-            onToolReject={onToolReject}
+            onToolApprovalSubmit={onToolApprovalSubmit}
             onClarificationSubmit={onClarificationSubmit}
             approvalLoading={approvalLoading}
             showPipeline={showPipeline}

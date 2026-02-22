@@ -200,11 +200,10 @@ class Settings(BaseSettings):
         default_factory=list, alias="MILVUS_TEXT_ANALYZER_FILTERS"
     )
 
-    llm_base_url: str = Field("https://api.openai.com/v1", alias="LLM_BASE_URL")
-    llm_api_key: str = Field("REPLACE_ME", alias="LLM_API_KEY")
-    llm_model: str = Field("gpt-4o-mini", alias="LLM_MODEL")
     llm_timeout_seconds: float = Field(30.0, alias="LLM_TIMEOUT_SECONDS")
     llm_max_input_tokens: int | None = Field(None, alias="LLM_MAX_INPUT_TOKENS")
+    llm_output_version: str = Field("responses/v1", alias="LLM_OUTPUT_VERSION")
+    general_chat_replay_mode: str = Field("auto", alias="GENERAL_CHAT_REPLAY_MODE")
     model_config_kms_key: str | None = Field(None, alias="MODEL_CONFIG_KMS_KEY")
 
     embedding_base_url: str = Field(
@@ -587,6 +586,28 @@ class Settings(BaseSettings):
             )
         return normalized
 
+    @field_validator("llm_output_version", mode="before")
+    @classmethod
+    def _normalize_llm_output_version(cls, v: object) -> str:
+        raw = "responses/v1" if v is None else str(v)
+        normalized = raw.strip().lower()
+        if normalized not in {"v0", "v1", "responses/v1"}:
+            raise ValueError(
+                "LLM_OUTPUT_VERSION must be one of: v0, v1, responses/v1"
+            )
+        return normalized
+
+    @field_validator("general_chat_replay_mode", mode="before")
+    @classmethod
+    def _normalize_general_chat_replay_mode(cls, v: object) -> str:
+        raw = "auto" if v is None else str(v)
+        normalized = raw.strip().lower()
+        if normalized not in {"auto", "response_id", "manual"}:
+            raise ValueError(
+                "GENERAL_CHAT_REPLAY_MODE must be one of: auto, response_id, manual"
+            )
+        return normalized
+
 
 @lru_cache
 def get_settings() -> Settings:
@@ -607,10 +628,6 @@ def validate_startup_settings(settings: Settings) -> None:
         return
 
     problems: list[str] = []
-
-    llm_key = settings.llm_api_key.strip()
-    if not llm_key or llm_key == "REPLACE_ME":
-        problems.append("LLM_API_KEY 为空或为占位值（REPLACE_ME）")
 
     embedding_key = settings.embedding_api_key.strip()
     if not embedding_key or embedding_key == "REPLACE_ME":

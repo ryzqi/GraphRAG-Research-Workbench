@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from langchain.agents import create_agent
-from langchain.agents.middleware import SummarizationMiddleware
+from langchain.agents.middleware import HumanInTheLoopMiddleware, SummarizationMiddleware
 from langchain_openai import ChatOpenAI
 
 from app.core.checkpoint import CheckpointManager
@@ -13,7 +13,6 @@ from app.core.checkpoint import CheckpointManager
 SUMMARY_TRIGGER_FRACTION = 0.7
 SUMMARY_TRIGGER = ("fraction", SUMMARY_TRIGGER_FRACTION)
 SUMMARY_KEEP = ("messages", 20)
-HITL_REJECT_MESSAGE = "用户拒绝执行外部工具调用。"
 
 
 def build_pending_tool_calls(
@@ -56,14 +55,16 @@ def build_pending_tool_calls(
     return pending
 
 
-def build_hitl_decisions(action_count: int, approved: bool) -> list[dict[str, Any]]:
-    if action_count <= 0:
-        return []
-    if approved:
-        return [{"type": "approve"} for _ in range(action_count)]
-    return [
-        {"type": "reject", "message": HITL_REJECT_MESSAGE} for _ in range(action_count)
-    ]
+def build_hitl_interrupt_on(
+    tool_meta_by_name: dict[str, Any],
+) -> dict[str, bool]:
+    """构建 HITL interrupt_on 配置：仅拦截 MCP 扩展工具。"""
+    interrupt_on: dict[str, bool] = {}
+    for tool_name, meta in tool_meta_by_name.items():
+        if bool(getattr(meta, "is_builtin", True)):
+            continue
+        interrupt_on[tool_name] = True
+    return interrupt_on
 
 
 def build_general_chat_agent(
@@ -72,17 +73,26 @@ def build_general_chat_agent(
     tools: list[Any],
     system_prompt: str,
     summary_trigger: tuple[str, int] | tuple[str, float],
+    hitl_interrupt_on: dict[str, bool | dict[str, Any]] | None = None,
 ):
+    middleware: list[Any] = [
+        SummarizationMiddleware(
+            model=chat_model,
+            trigger=summary_trigger,
+            keep=SUMMARY_KEEP,
+        )
+    ]
+    if hitl_interrupt_on:
+        middleware.append(
+            HumanInTheLoopMiddleware(
+                interrupt_on=hitl_interrupt_on,
+                description_prefix="外部工具调用待审批",
+            )
+        )
     return create_agent(
         model=chat_model,
         tools=tools,
         system_prompt=system_prompt,
         checkpointer=CheckpointManager.get_checkpointer(),
-        middleware=[
-            SummarizationMiddleware(
-                model=chat_model,
-                trigger=summary_trigger,
-                keep=SUMMARY_KEEP,
-            )
-        ],
+        middleware=middleware,
     )

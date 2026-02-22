@@ -12,6 +12,7 @@ from sqlalchemy.exc import DBAPIError, OperationalError, TimeoutError as SATimeo
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.core.logging import get_request_id
+from app.core.model_config_errors import ModelConfigIncompleteError
 from app.core.settings import get_settings
 
 logger = logging.getLogger(__name__)
@@ -129,6 +130,20 @@ def _apply_cors_headers(request: Request, response: JSONResponse) -> JSONRespons
 
 
 def register_exception_handlers(app: FastAPI) -> None:
+    @app.exception_handler(ModelConfigIncompleteError)
+    async def _handle_model_config_incomplete(
+        request: Request, exc: ModelConfigIncompleteError
+    ):
+        res = JSONResponse(
+            status_code=422,
+            content=build_error_response(
+                code="MODEL_CONFIG_INCOMPLETE",
+                message=str(exc),
+                request_id=get_request_id(),
+            ),
+        )
+        return _apply_cors_headers(request, res)
+
     @app.exception_handler(AppError)
     async def _handle_app_error(request: Request, exc: AppError):
         res = JSONResponse(

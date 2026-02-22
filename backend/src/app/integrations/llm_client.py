@@ -1,6 +1,6 @@
 """LLM 客户端。
 
-默认走全局模型配置（openai/ollama/nvidia），并保留 OpenAI 兼容直连模式。
+统一走模型配置页维护的全局模型配置（openai/ollama/nvidia）。
 """
 
 from __future__ import annotations
@@ -14,9 +14,9 @@ from typing import Any
 
 from langchain.messages import AIMessage, HumanMessage, SystemMessage
 
+from app.core.model_config_errors import ModelConfigIncompleteError
 from app.core.settings import get_settings
 from app.integrations.chat_model_factory import create_chat_model, get_active_model_identity
-from app.integrations.langchain_profiles import build_chat_model_profile
 from app.services.streaming import extract_answer_text
 
 logger = logging.getLogger(__name__)
@@ -28,6 +28,7 @@ class ChatMessage:
 
     role: str
     content: str
+    response_id: str | None = None
 
 
 @dataclass(slots=True)
@@ -46,22 +47,10 @@ class LLMClient:
     def __init__(
         self,
         http_client: object | None = None,
-        *,
-        base_url: str | None = None,
-        api_key: str | None = None,
-        model: str | None = None,
     ) -> None:
         settings = get_settings()
         self._settings = settings
         self._http_client = http_client
-        self._base_url = (
-            base_url if base_url is not None else settings.llm_base_url
-        ).rstrip("/")
-        self._api_key = api_key if api_key is not None else settings.llm_api_key
-        self._model = model if model is not None else settings.llm_model
-        self._has_explicit_overrides = any(
-            value is not None for value in (base_url, api_key, model)
-        )
 
     async def chat_with_metrics(
         self,
@@ -116,6 +105,8 @@ class LLMClient:
                         latency_ms=latency_ms,
                     )
                 except Exception as exc:  # pragma: no cover
+                    if isinstance(exc, ModelConfigIncompleteError):
+                        raise
                     last_exc = exc
                     logger.warning(f"LLM 调用失败 (attempt {attempt + 1}): {exc}")
                     if attempt < 1:
@@ -127,23 +118,7 @@ class LLMClient:
         return await _run()
 
     def _build_chat_model(self, *, timeout: float) -> tuple[Any, str, str]:
-        # 显式传入 base_url/api_key/model 时，走 OpenAI 兼容模式，保持历史行为。
-        if self._has_explicit_overrides:
-            from langchain_openai import ChatOpenAI
-
-            kwargs: dict[str, Any] = {
-                "model": self._model,
-                "api_key": self._api_key,
-                "base_url": self._base_url,
-                "timeout": timeout,
-                "max_retries": 2,
-            }
-            profile = build_chat_model_profile(self._settings)
-            if profile is not None:
-                kwargs["profile"] = profile
-            kwargs["reasoning"] = {"effort": "high", "summary": "auto"}
-            return ChatOpenAI(**kwargs), "openai", self._model
-
+        del timeout
         provider_name, model_name = get_active_model_identity(settings=self._settings)
         return create_chat_model(settings=self._settings), provider_name, model_name
 

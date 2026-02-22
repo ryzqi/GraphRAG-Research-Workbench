@@ -20,7 +20,7 @@ from app.agents.general_chat_agent import (
     SUMMARY_KEEP,
     SUMMARY_TRIGGER,
     build_general_chat_agent,
-    build_hitl_decisions,
+    build_hitl_interrupt_on,
     build_pending_tool_calls,
 )
 from app.agents.tool_calling.registry import build_tool_registry
@@ -32,6 +32,8 @@ from app.core.settings import get_settings
 from app.integrations.chat_model_factory import create_chat_model
 from app.integrations.llm_client import ChatMessage as LLMMessage
 from app.integrations.llm_client import LLMClient
+from app.integrations.mcp_adapters import load_mcp_tools_with_diagnostics
+from app.integrations.model_runtime_config import ModelRuntimeConfigManager
 from app.integrations.redis_client import RedisClient
 from app.prompts import get_prompt_loader
 from app.models.agent_run import AgentRun, AgentRunStatus, AgentRunType
@@ -43,9 +45,21 @@ from app.schemas.chats import (
     ChatAnswerResponse,
     ChatPendingToolApprovalResponse,
     ChatMessageRead,
+    PendingInterruptApproval,
     PendingToolCall,
+    ToolApprovalRequest,
 )
 from app.services.context_builder import ContextBuilder
+from app.services.chat_replay_policy import (
+    ReplayDecision,
+    ReplayMode,
+    decide_replay_mode,
+)
+from app.services.message_normalizer import (
+    checkpoint_messages_require_reset,
+    extract_response_id,
+    extract_text_content,
+)
 from app.services.streaming import (
     LegacyThinkParser,
     StreamState,
@@ -77,20 +91,78 @@ def _extract_interrupt_message(payload: object) -> str | None:
     return None
 
 
-def _extract_action_requests(interrupts: list[object]) -> list[dict[str, Any]]:
-    action_requests: list[dict[str, Any]] = []
+def _extract_interrupt_payload(interrupt: object) -> dict[str, Any] | None:
+    if isinstance(interrupt, dict):
+        value = interrupt.get("value")
+        if isinstance(value, dict):
+            return value
+        if "action_requests" in interrupt:
+            return interrupt
+        return None
+    value = getattr(interrupt, "value", None)
+    return value if isinstance(value, dict) else None
+
+
+def _extract_interrupt_id(interrupt: object) -> str | None:
+    if isinstance(interrupt, dict):
+        interrupt_id = interrupt.get("id")
+        if isinstance(interrupt_id, str) and interrupt_id.strip():
+            return interrupt_id
+        value = interrupt.get("value")
+        if isinstance(value, dict):
+            nested_id = value.get("id")
+            if isinstance(nested_id, str) and nested_id.strip():
+                return nested_id
+        return None
+    interrupt_id = getattr(interrupt, "id", None)
+    if isinstance(interrupt_id, str) and interrupt_id.strip():
+        return interrupt_id
+    payload = getattr(interrupt, "value", None)
+    if isinstance(payload, dict):
+        nested_id = payload.get("id")
+        if isinstance(nested_id, str) and nested_id.strip():
+            return nested_id
+    return None
+
+
+def _flatten_interrupts(interrupts: list[object]) -> list[object]:
+    flat: list[object] = []
     for interrupt in interrupts:
-        payload = interrupt if isinstance(interrupt, dict) else getattr(interrupt, "value", None)
+        if isinstance(interrupt, list):
+            flat.extend(interrupt)
+            continue
+        flat.append(interrupt)
+    return flat
+
+
+def _build_interrupt_entries(interrupts: list[object]) -> list[dict[str, Any]]:
+    entries: list[dict[str, Any]] = []
+    for index, interrupt in enumerate(_flatten_interrupts(interrupts)):
+        payload = _extract_interrupt_payload(interrupt)
         if not isinstance(payload, dict):
             continue
-        items = payload.get("action_requests")
-        if isinstance(items, list):
-            for item in items:
-                if isinstance(item, dict):
-                    action_requests.append(item)
+        raw_requests = payload.get("action_requests")
+        action_requests: list[dict[str, Any]] = []
+        if isinstance(raw_requests, list):
+            action_requests = [
+                item for item in raw_requests if isinstance(item, dict)
+            ]
+        interrupt_id = _extract_interrupt_id(interrupt) or f"interrupt_{index + 1}"
+        entries.append(
+            {
+                "interrupt_id": interrupt_id,
+                "message": _extract_interrupt_message(payload),
+                "action_requests": action_requests,
+            }
+        )
+    return entries
+
+
+def _extract_action_requests(interrupts: list[object]) -> list[dict[str, Any]]:
+    action_requests: list[dict[str, Any]] = []
+    for entry in _build_interrupt_entries(interrupts):
+        action_requests.extend(entry["action_requests"])
     return action_requests
-
-
 
 
 def _extract_pending_interrupts(pending_writes: object) -> list[object]:
@@ -108,8 +180,12 @@ def _extract_pending_interrupts(pending_writes: object) -> list[object]:
         else:
             channel = getattr(item, "channel", None)
             value = getattr(item, "value", None)
-        if channel == "__interrupt__" and value is not None:
-            interrupts.append(value)
+        if channel != "__interrupt__" or value is None:
+            continue
+        if isinstance(value, list):
+            interrupts.extend(value)
+            continue
+        interrupts.append(value)
     return interrupts
 
 
@@ -149,7 +225,18 @@ class GeneralChatService:
         if limit is not None and len(filtered) > limit:
             filtered = filtered[-limit:]
         return [
-            LLMMessage(role=msg.role.value, content=msg.content)
+            LLMMessage(
+                role=msg.role.value,
+                content=msg.content,
+                response_id=(
+                    str((msg.meta or {}).get("response_id")).strip()
+                    if msg.role == MessageRole.ASSISTANT
+                    and isinstance(msg.meta, dict)
+                    and isinstance((msg.meta or {}).get("response_id"), str)
+                    and str((msg.meta or {}).get("response_id")).strip()
+                    else None
+                ),
+            )
             for msg in filtered
         ]
 
@@ -159,6 +246,12 @@ class GeneralChatService:
         if role == "system":
             return SystemMessage(content=msg.content)
         if role == "assistant":
+            response_id = (msg.response_id or "").strip()
+            if response_id:
+                return AIMessage(
+                    content=msg.content,
+                    response_metadata={"id": response_id},
+                )
             return AIMessage(content=msg.content)
         return HumanMessage(content=msg.content)
 
@@ -193,10 +286,19 @@ class GeneralChatService:
             status_code = getattr(response, "status_code", None)
 
         if isinstance(status_code, int):
+            if status_code == 404 and GeneralChatService._is_previous_response_not_found_error(
+                exc
+            ):
+                return AppError(
+                    code="CHAT_REPLAY_STATE_EXPIRED",
+                    message="对话状态已过期，请重试当前问题",
+                    status_code=409,
+                    details={"upstream_status_code": status_code},
+                )
             if status_code in {401, 403}:
                 return AppError(
                     code="LLM_AUTH_ERROR",
-                    message="大模型服务鉴权失败，请检查 LLM_API_KEY / LLM_BASE_URL",
+                    message="大模型服务鉴权失败，请前往“模型配置”页面检查 API Key / Base URL 配置",
                     status_code=500,
                     details={"upstream_status_code": status_code},
                 )
@@ -230,19 +332,308 @@ class GeneralChatService:
         content = getattr(message, "content", None)
         if content is None and isinstance(message, dict):
             content = message.get("content")
+        text = extract_text_content(content, include_output_text=True)
+        if text:
+            return text
         if isinstance(content, str):
             return content
-        if isinstance(content, list):
-            parts: list[str] = []
-            for item in content:
-                if isinstance(item, dict) and item.get("type") == "text":
-                    text = item.get("text")
-                    if isinstance(text, str):
-                        parts.append(text)
-            return "".join(parts)
         if content is None:
             return ""
         return str(content)
+
+    def _resolve_replay_decision(self) -> ReplayDecision:
+        snapshot = ModelRuntimeConfigManager.get_snapshot(settings=self._settings)
+        provider_cfg = snapshot.active_provider_config()
+        return decide_replay_mode(
+            configured_mode=self._settings.general_chat_replay_mode,
+            provider=provider_cfg.provider,
+            thinking_enabled=provider_cfg.thinking_enabled,
+        )
+
+    def _requires_assistant_response_id_for_replay(self) -> bool:
+        return self._resolve_replay_decision().require_assistant_response_id
+
+    def _sanitize_history_for_replay(
+        self,
+        history: list[LLMMessage],
+        *,
+        require_assistant_response_id: bool,
+    ) -> list[LLMMessage]:
+        if not history or not require_assistant_response_id:
+            return history
+
+        dropped = 0
+        kept: list[LLMMessage] = []
+        for msg in history:
+            role = (msg.role or "").lower()
+            if role == "assistant" and not (msg.response_id or "").strip():
+                dropped += 1
+                continue
+            kept.append(msg)
+
+        if dropped:
+            logger.warning(
+                "Dropped assistant history without response_id for Responses replay safety",
+                extra={"dropped_messages": dropped},
+            )
+        return kept
+
+    @staticmethod
+    def _drop_trailing_user_message(
+        history: list[LLMMessage],
+        *,
+        user_content: str,
+    ) -> list[LLMMessage]:
+        if not history:
+            return history
+        last = history[-1]
+        if (last.role or "").lower() != "user":
+            return history
+        if last.content != user_content:
+            return history
+        return history[:-1]
+
+    @staticmethod
+    def _build_pending_interrupt_approvals(
+        interrupts: list[object],
+        tool_meta_by_name: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        approvals: list[dict[str, Any]] = []
+        for entry in _build_interrupt_entries(interrupts):
+            pending_tool_calls = build_pending_tool_calls(
+                entry["action_requests"],
+                tool_meta_by_name,
+            )
+            approvals.append(
+                {
+                    "interrupt_id": entry["interrupt_id"],
+                    "message": entry["message"],
+                    "pending_tool_calls": pending_tool_calls,
+                    "action_requests": entry["action_requests"],
+                }
+            )
+        return approvals
+
+    @staticmethod
+    def _build_interrupt_stage_summary(
+        pending_interrupts: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        interrupt_ids = [
+            str(item["interrupt_id"])
+            for item in pending_interrupts
+            if isinstance(item.get("interrupt_id"), str)
+        ]
+        tool_count = sum(
+            len(item.get("pending_tool_calls", []))
+            for item in pending_interrupts
+            if isinstance(item.get("pending_tool_calls"), list)
+        )
+        return {
+            "pending": True,
+            "tool_count": tool_count,
+            "interrupt_count": len(interrupt_ids),
+            "interrupt_ids": interrupt_ids,
+            "requested_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+    @staticmethod
+    def _build_resume_decisions_payload(
+        pending_interrupts: list[dict[str, Any]],
+        approval: ToolApprovalRequest,
+    ) -> dict[str, Any]:
+        pending_ids = [
+            item["interrupt_id"]
+            for item in pending_interrupts
+            if isinstance(item.get("interrupt_id"), str)
+        ]
+        requested_map = {item.interrupt_id: item for item in approval.interrupts}
+        if len(requested_map) != len(approval.interrupts):
+            raise AppError(
+                code="TOOL_APPROVAL_PAYLOAD_INVALID",
+                message="审批请求包含重复的 interrupt_id",
+                status_code=400,
+            )
+
+        missing = [interrupt_id for interrupt_id in pending_ids if interrupt_id not in requested_map]
+        pending_id_set = set(pending_ids)
+        extra = [interrupt_id for interrupt_id in requested_map if interrupt_id not in pending_id_set]
+        if missing or extra:
+            raise AppError(
+                code="TOOL_APPROVAL_PAYLOAD_INVALID",
+                message="审批请求与当前待审批中断不匹配",
+                status_code=400,
+                details={"missing_interrupt_ids": missing, "extra_interrupt_ids": extra},
+            )
+
+        decision_map: dict[str, dict[str, Any]] = {}
+        for item in pending_interrupts:
+            interrupt_id = item.get("interrupt_id")
+            if not isinstance(interrupt_id, str):
+                continue
+            action_requests = item.get("action_requests")
+            if not isinstance(action_requests, list):
+                action_requests = []
+            batch = requested_map.get(interrupt_id)
+            if batch is None:
+                raise AppError(
+                    code="TOOL_APPROVAL_PAYLOAD_INVALID",
+                    message="审批请求缺少待审批中断",
+                    status_code=400,
+                )
+            if len(batch.decisions) != len(action_requests):
+                raise AppError(
+                    code="TOOL_APPROVAL_PAYLOAD_INVALID",
+                    message="审批决策数量与工具调用数量不一致",
+                    status_code=400,
+                    details={
+                        "interrupt_id": interrupt_id,
+                        "expected": len(action_requests),
+                        "actual": len(batch.decisions),
+                    },
+                )
+            decision_map[interrupt_id] = {
+                "decisions": [
+                    decision.model_dump(mode="json", exclude_none=True)
+                    for decision in batch.decisions
+                ]
+            }
+
+        if len(decision_map) == 1:
+            only = next(iter(decision_map.values()))
+            return {"decisions": only["decisions"]}
+        return decision_map
+
+    async def _get_running_general_run(
+        self,
+        *,
+        session_id: uuid.UUID,
+        exclude_run_id: uuid.UUID | None = None,
+    ) -> AgentRun | None:
+        stmt = select(AgentRun).where(
+            AgentRun.session_id == session_id,
+            AgentRun.run_type == AgentRunType.GENERAL_ANSWER,
+            AgentRun.status == AgentRunStatus.RUNNING,
+        )
+        if exclude_run_id is not None:
+            stmt = stmt.where(AgentRun.id != exclude_run_id)
+        stmt = stmt.order_by(AgentRun.created_at.desc()).limit(1)
+        result = await self._db.execute(stmt)
+        return result.scalars().first()
+
+    async def _ensure_no_running_general_run(self, *, session_id: uuid.UUID) -> None:
+        await self._db.execute(
+            select(ChatSession.id)
+            .where(ChatSession.id == session_id)
+            .with_for_update()
+        )
+        running = await self._get_running_general_run(session_id=session_id)
+        if running is None:
+            return
+        raise AppError(
+            code="CHAT_RUN_CONFLICT",
+            message="当前会话已有运行中的普通代理任务，请先完成审批或等待结束",
+            status_code=409,
+            details={"run_id": str(running.id)},
+        )
+
+    async def _ensure_resume_target_valid(
+        self,
+        *,
+        session: ChatSession,
+        run: AgentRun,
+    ) -> None:
+        await self._db.execute(
+            select(ChatSession.id)
+            .where(ChatSession.id == session.id)
+            .with_for_update()
+        )
+        running = await self._get_running_general_run(
+            session_id=session.id,
+            exclude_run_id=None,
+        )
+        if running is None:
+            raise AppError(
+                code="CHAT_RUN_NOT_RUNNING",
+                message="运行记录已完成或已失败",
+                status_code=400,
+            )
+        if running.id != run.id:
+            raise AppError(
+                code="CHAT_RUN_CONFLICT",
+                message="当前会话已有其他运行中的普通代理任务",
+                status_code=409,
+                details={"run_id": str(running.id)},
+            )
+        stage_summaries = run.stage_summaries if isinstance(run.stage_summaries, dict) else {}
+        tool_approval = (
+            stage_summaries.get("tool_approval")
+            if isinstance(stage_summaries.get("tool_approval"), dict)
+            else {}
+        )
+        if tool_approval.get("pending") is not True:
+            raise AppError(
+                code="NO_PENDING_APPROVAL",
+                message="当前会话没有待审批的工具调用",
+                status_code=400,
+            )
+
+    @staticmethod
+    def _extract_upstream_error_message(exc: Exception) -> str:
+        message = str(exc)
+        body = getattr(exc, "body", None)
+        if isinstance(body, dict):
+            error_obj = body.get("error")
+            if isinstance(error_obj, dict):
+                error_message = error_obj.get("message")
+                if isinstance(error_message, str) and error_message.strip():
+                    return error_message.strip()
+        return message
+
+    @staticmethod
+    def _is_previous_response_not_found_error(exc: Exception) -> bool:
+        status_code = getattr(exc, "status_code", None)
+        if status_code is None:
+            response = getattr(exc, "response", None)
+            status_code = getattr(response, "status_code", None)
+        if status_code != 404:
+            return False
+        message = GeneralChatService._extract_upstream_error_message(exc).lower()
+        return "response with id" in message and "not found" in message
+
+    @classmethod
+    def _should_recover_from_response_not_found(
+        cls,
+        exc: Exception,
+        replay_decision: ReplayDecision,
+    ) -> bool:
+        return replay_decision.allow_recovery and cls._is_previous_response_not_found_error(
+            exc
+        )
+
+    @staticmethod
+    def _manual_replay_decision() -> ReplayDecision:
+        return ReplayDecision(
+            mode=ReplayMode.MANUAL,
+            use_previous_response_id=False,
+            require_assistant_response_id=False,
+            allow_recovery=False,
+        )
+
+    @staticmethod
+    def _build_replay_metrics(
+        replay_decision: ReplayDecision,
+        *,
+        recovered: bool = False,
+        recovery_reason: str | None = None,
+    ) -> dict[str, object]:
+        replay: dict[str, object] = {
+            "mode": replay_decision.mode.value,
+            "used_previous_response_id": replay_decision.use_previous_response_id,
+            "recovered": recovered,
+        }
+        if recovery_reason:
+            replay["recovery_reason"] = recovery_reason
+        return {"replay": replay}
 
     def _build_context_metrics(self, messages: list[object]) -> dict[str, dict]:
         total_tokens = 0
@@ -274,16 +665,34 @@ class GeneralChatService:
         user_content: str,
     ) -> ChatAnswerResponse | ChatPendingToolApprovalResponse:
         """处理用户问题并生成答案（使用 create_agent）。"""
+        await self._ensure_no_running_general_run(session_id=session.id)
         started_at = datetime.now(timezone.utc)
         thread_id = str(session.id)
+        replay_decision = self._resolve_replay_decision()
+        require_assistant_response_id = replay_decision.require_assistant_response_id
         checkpoint_tuple = await CheckpointManager.get_state(thread_id)
         history: list[LLMMessage] = []
         existing_messages = None
         if checkpoint_tuple is not None:
             checkpoint_values = (checkpoint_tuple.checkpoint or {}).get("channel_values", {})
             existing_messages = checkpoint_values.get("messages")
+            if checkpoint_messages_require_reset(
+                existing_messages,
+                require_assistant_response_id=require_assistant_response_id,
+            ):
+                logger.warning(
+                    "Resetting incompatible general chat checkpoint",
+                    extra={
+                        "thread_id": thread_id,
+                        "require_assistant_response_id": require_assistant_response_id,
+                    },
+                )
+                await CheckpointManager.delete_thread(thread_id)
+                checkpoint_tuple = None
+                existing_messages = None
         if checkpoint_tuple is None or not isinstance(existing_messages, list) or not existing_messages:
             history = await self._load_history(session.id, limit=None)
+        original_history = list(history)
 
         # 保存用户消息
         user_msg = ChatMessage(
@@ -331,49 +740,89 @@ class GeneralChatService:
                 redis=self._redis,
                 http_client=self._http_client,
             )
-
-            chat_model = create_chat_model(settings=self._settings)
+            hitl_interrupt_on = build_hitl_interrupt_on(tool_meta_by_name)
 
             # 构造初始 messages（历史 + 用户问题）
             system_prompt = self._prompts.render("general_chat/system")
-            messages = self._build_agent_messages(history, user_content)
-
-            # 创建普通代理（create_agent + middleware）
-            agent = build_general_chat_agent(
-                chat_model=chat_model,
-                tools=tools,
-                system_prompt=system_prompt,
-                summary_trigger=self._build_summary_trigger(),
+            first_history = self._sanitize_history_for_replay(
+                original_history,
+                require_assistant_response_id=require_assistant_response_id,
             )
-
-            # 使用 thread_id 执行
             config = CheckpointManager.make_config(thread_id)
-            result = await agent.ainvoke({"messages": messages}, config)
+            replay_metrics = self._build_replay_metrics(replay_decision)
+
+            try:
+                chat_model = create_chat_model(
+                    settings=self._settings,
+                    use_previous_response_id=replay_decision.use_previous_response_id,
+                )
+                messages = self._build_agent_messages(first_history, user_content)
+                agent = build_general_chat_agent(
+                    chat_model=chat_model,
+                    tools=tools,
+                    system_prompt=system_prompt,
+                    summary_trigger=self._build_summary_trigger(),
+                    hitl_interrupt_on=hitl_interrupt_on,
+                )
+                result = await agent.ainvoke({"messages": messages}, config)
+            except Exception as invoke_exc:
+                if not self._should_recover_from_response_not_found(
+                    invoke_exc, replay_decision
+                ):
+                    raise
+                logger.warning(
+                    "Recovering from previous_response_id 404 by resetting thread and replaying manually",
+                    extra={"thread_id": thread_id},
+                )
+                await CheckpointManager.delete_thread(thread_id)
+
+                recovery_decision = self._manual_replay_decision()
+                recovery_history = await self._load_history(session.id, limit=None)
+                recovery_history = self._drop_trailing_user_message(
+                    recovery_history,
+                    user_content=user_content,
+                )
+                recovery_model = create_chat_model(
+                    settings=self._settings,
+                    use_previous_response_id=recovery_decision.use_previous_response_id,
+                )
+                recovery_messages = self._build_agent_messages(
+                    recovery_history,
+                    user_content,
+                )
+                recovery_agent = build_general_chat_agent(
+                    chat_model=recovery_model,
+                    tools=tools,
+                    system_prompt=system_prompt,
+                    summary_trigger=self._build_summary_trigger(),
+                    hitl_interrupt_on=hitl_interrupt_on,
+                )
+                result = await recovery_agent.ainvoke(
+                    {"messages": recovery_messages},
+                    config,
+                )
+                replay_metrics = self._build_replay_metrics(
+                    recovery_decision,
+                    recovered=True,
+                    recovery_reason="previous_response_id_not_found",
+                )
 
             if not isinstance(result, dict):
                 raise RuntimeError("LangGraph 返回类型不符合预期")
 
             interrupts = result.get("__interrupt__")
             if isinstance(interrupts, list) and interrupts:
-                action_requests = _extract_action_requests(interrupts)
-                pending_tool_calls = build_pending_tool_calls(
-                    action_requests, tool_meta_by_name
+                pending_interrupts = self._build_pending_interrupt_approvals(
+                    interrupts, tool_meta_by_name
                 )
-                first = interrupts[0]
-                interrupt_id = getattr(first, "id", None)
-                payload = getattr(first, "value", None)
-                message = _extract_interrupt_message(payload)
                 context_metrics = self._build_context_metrics(
                     result.get("messages") if isinstance(result.get("messages"), list) else []
                 )
 
                 run.stage_summaries = {
-                    "tool_approval": {
-                        "pending": True,
-                        "tool_count": len(pending_tool_calls),
-                        "interrupt_id": interrupt_id,
-                        "requested_at": datetime.now(timezone.utc).isoformat(),
-                    },
+                    "tool_approval": self._build_interrupt_stage_summary(
+                        pending_interrupts
+                    ),
                 }
                 metrics = result.get("metrics")
                 if not isinstance(metrics, dict):
@@ -384,6 +833,7 @@ class GeneralChatService:
                         * 1000
                     ),
                     "context": context_metrics,
+                    **replay_metrics,
                     **metrics,
                 }
 
@@ -392,11 +842,17 @@ class GeneralChatService:
 
                 return ChatPendingToolApprovalResponse(
                     thread_id=thread_id,
-                    interrupt_id=interrupt_id if isinstance(interrupt_id, str) else None,
-                    message=str(message) if message is not None else None,
-                    pending_tool_calls=[
-                        PendingToolCall.model_validate(item)
-                        for item in pending_tool_calls
+                    pending_interrupts=[
+                        PendingInterruptApproval(
+                            interrupt_id=item["interrupt_id"],
+                            message=item.get("message"),
+                            pending_tool_calls=[
+                                PendingToolCall.model_validate(call)
+                                for call in item.get("pending_tool_calls", [])
+                                if isinstance(call, dict)
+                            ],
+                        )
+                        for item in pending_interrupts
                         if isinstance(item, dict)
                     ],
                     run=AgentRunRead.model_validate(run),
@@ -407,6 +863,7 @@ class GeneralChatService:
                 run=run,
                 started_at=started_at,
                 result=result,
+                replay_metrics=replay_metrics,
             )
 
         except Exception as e:
@@ -438,16 +895,34 @@ class GeneralChatService:
         request: object | None = None,
     ) -> Any:
         """处理用户问题并生成答案（流式 SSE）。"""
+        await self._ensure_no_running_general_run(session_id=session.id)
         started_at = datetime.now(timezone.utc)
         thread_id = str(session.id)
+        replay_decision = self._resolve_replay_decision()
+        require_assistant_response_id = replay_decision.require_assistant_response_id
         checkpoint_tuple = await CheckpointManager.get_state(thread_id)
         history: list[LLMMessage] = []
         existing_messages = None
         if checkpoint_tuple is not None:
             checkpoint_values = (checkpoint_tuple.checkpoint or {}).get("channel_values", {})
             existing_messages = checkpoint_values.get("messages")
+            if checkpoint_messages_require_reset(
+                existing_messages,
+                require_assistant_response_id=require_assistant_response_id,
+            ):
+                logger.warning(
+                    "Resetting incompatible general chat checkpoint",
+                    extra={
+                        "thread_id": thread_id,
+                        "require_assistant_response_id": require_assistant_response_id,
+                    },
+                )
+                await CheckpointManager.delete_thread(thread_id)
+                checkpoint_tuple = None
+                existing_messages = None
         if checkpoint_tuple is None or not isinstance(existing_messages, list) or not existing_messages:
             history = await self._load_history(session.id, limit=None)
+        original_history = list(history)
 
         # 保存用户消息
         user_msg = ChatMessage(
@@ -495,23 +970,11 @@ class GeneralChatService:
                 redis=self._redis,
                 http_client=self._http_client,
             )
+            hitl_interrupt_on = build_hitl_interrupt_on(tool_meta_by_name)
 
-            chat_model = create_chat_model(settings=self._settings)
-
-            # 构造初始 messages（历史 + 用户问题）
             system_prompt = self._prompts.render("general_chat/system")
-            messages = self._build_agent_messages(history, user_content)
-
-            # 创建普通代理（create_agent + middleware）
-            agent = build_general_chat_agent(
-                chat_model=chat_model,
-                tools=tools,
-                system_prompt=system_prompt,
-                summary_trigger=self._build_summary_trigger(),
-            )
-
-            # 使用 thread_id 执行
             config = CheckpointManager.make_config(thread_id)
+            replay_metrics = self._build_replay_metrics(replay_decision)
 
             # SSE: meta
             yield "meta", {
@@ -522,127 +985,188 @@ class GeneralChatService:
                 "mode": session.mode.value,
             }
 
-            existing_messages = []
-            if checkpoint_tuple is not None:
-                checkpoint_values = (checkpoint_tuple.checkpoint or {}).get(
-                    "channel_values", {}
+            current_decision = replay_decision
+            attempt = 0
+            while True:
+                attempt_history = self._sanitize_history_for_replay(
+                    original_history,
+                    require_assistant_response_id=current_decision.require_assistant_response_id,
                 )
-                stored_messages = checkpoint_values.get("messages")
-                if isinstance(stored_messages, list):
-                    existing_messages = list(stored_messages)
-
-            stream_state = StreamState(
-                messages=[*existing_messages, *list(messages)],
-                pending_tool_calls=[],
-                stage_summaries={},
-                metrics={},
-            )
-            legacy_think_parser = LegacyThinkParser()
-
-            async for mode, chunk in agent.astream(
-                {"messages": messages},
-                config,
-                stream_mode=["messages", "updates"],
-            ):
-                if request is not None:
-                    is_disconnected = getattr(request, "is_disconnected", None)
-                    if callable(is_disconnected) and await is_disconnected():
-                        run.status = AgentRunStatus.CANCELED
-                        run.finished_at = datetime.now(timezone.utc)
-                        await self._db.commit()
-                        return
-
-                if mode == "messages":
-                    token, _meta = chunk
-                    deltas = extract_stream_delta(
-                        token,
-                        _meta if isinstance(_meta, dict) else None,
-                        legacy_think_parser=legacy_think_parser,
+                attempt_messages = self._build_agent_messages(
+                    attempt_history,
+                    user_content,
+                )
+                attempt_checkpoint_messages: list[object] = []
+                if attempt == 0 and checkpoint_tuple is not None:
+                    checkpoint_values = (checkpoint_tuple.checkpoint or {}).get(
+                        "channel_values", {}
                     )
-                    if deltas:
-                        node_name = (
-                            _meta.get("langgraph_node")
-                            if isinstance(_meta, dict)
-                            and isinstance(_meta.get("langgraph_node"), str)
-                            else None
-                        )
+                    stored_messages = checkpoint_values.get("messages")
+                    if isinstance(stored_messages, list):
+                        attempt_checkpoint_messages = list(stored_messages)
+
+                chat_model = create_chat_model(
+                    settings=self._settings,
+                    use_previous_response_id=current_decision.use_previous_response_id,
+                )
+                agent = build_general_chat_agent(
+                    chat_model=chat_model,
+                    tools=tools,
+                    system_prompt=system_prompt,
+                    summary_trigger=self._build_summary_trigger(),
+                    hitl_interrupt_on=hitl_interrupt_on,
+                )
+                stream_state = StreamState(
+                    messages=[*attempt_checkpoint_messages, *list(attempt_messages)],
+                    pending_tool_calls=[],
+                    stage_summaries={},
+                    metrics={},
+                )
+                legacy_think_parser = LegacyThinkParser()
+                emitted_payload = False
+
+                try:
+                    async for mode, chunk in agent.astream(
+                        {"messages": attempt_messages},
+                        config,
+                        stream_mode=["messages", "updates"],
+                    ):
+                        if request is not None:
+                            is_disconnected = getattr(request, "is_disconnected", None)
+                            if callable(is_disconnected) and await is_disconnected():
+                                run.status = AgentRunStatus.CANCELED
+                                run.finished_at = datetime.now(timezone.utc)
+                                await self._db.commit()
+                                return
+
+                        if mode == "messages":
+                            token, _meta = chunk
+                            deltas = extract_stream_delta(
+                                token,
+                                _meta if isinstance(_meta, dict) else None,
+                                legacy_think_parser=legacy_think_parser,
+                            )
+                            if deltas:
+                                emitted_payload = True
+                                node_name = (
+                                    _meta.get("langgraph_node")
+                                    if isinstance(_meta, dict)
+                                    and isinstance(_meta.get("langgraph_node"), str)
+                                    else None
+                                )
+                                yield "messages", {
+                                    "run_id": str(run.id),
+                                    "node": node_name,
+                                    "deltas": [delta.to_dict() for delta in deltas],
+                                    "ts": datetime.now(timezone.utc).isoformat(),
+                                }
+                            continue
+
+                        if mode == "updates" and isinstance(chunk, dict):
+                            interrupts = apply_updates_chunk(stream_state, chunk)
+                            if interrupts:
+                                pending_interrupts = self._build_pending_interrupt_approvals(
+                                    interrupts,
+                                    tool_meta_by_name,
+                                )
+                                context_metrics = self._build_context_metrics(
+                                    stream_state.messages
+                                )
+
+                                run.stage_summaries = {
+                                    "tool_approval": self._build_interrupt_stage_summary(
+                                        pending_interrupts
+                                    ),
+                                }
+                                run.metrics = {
+                                    "latency_ms": int(
+                                        (datetime.now(timezone.utc) - started_at).total_seconds()
+                                        * 1000
+                                    ),
+                                    "context": context_metrics,
+                                    **replay_metrics,
+                                    **(
+                                        stream_state.metrics
+                                        if isinstance(stream_state.metrics, dict)
+                                        else {}
+                                    ),
+                                }
+                                await self._db.commit()
+                                await self._db.refresh(run)
+
+                                response = ChatPendingToolApprovalResponse(
+                                    thread_id=thread_id,
+                                    pending_interrupts=[
+                                        PendingInterruptApproval(
+                                            interrupt_id=item["interrupt_id"],
+                                            message=item.get("message"),
+                                            pending_tool_calls=[
+                                                PendingToolCall.model_validate(call)
+                                                for call in item.get("pending_tool_calls", [])
+                                                if isinstance(call, dict)
+                                            ],
+                                        )
+                                        for item in pending_interrupts
+                                        if isinstance(item, dict)
+                                    ],
+                                    run=AgentRunRead.model_validate(run),
+                                )
+                                emitted_payload = True
+                                yield "interrupt", response.model_dump(mode="json")
+                                return
+
+                    flushed_deltas = legacy_think_parser.flush()
+                    if flushed_deltas:
+                        emitted_payload = True
                         yield "messages", {
                             "run_id": str(run.id),
-                            "node": node_name,
-                            "deltas": [delta.to_dict() for delta in deltas],
+                            "deltas": [delta.to_dict() for delta in flushed_deltas],
                             "ts": datetime.now(timezone.utc).isoformat(),
                         }
-                    continue
 
-                if mode == "updates" and isinstance(chunk, dict):
-                    interrupts = apply_updates_chunk(stream_state, chunk)
-                    if interrupts:
-                        action_requests = _extract_action_requests(interrupts)
-                        pending_tool_calls = build_pending_tool_calls(
-                            action_requests, tool_meta_by_name
+                    result = {
+                        "messages": stream_state.messages,
+                        "stage_summaries": stream_state.stage_summaries,
+                        "metrics": stream_state.metrics,
+                    }
+                    final_response = await self._finalize_run(
+                        session=session,
+                        run=run,
+                        started_at=started_at,
+                        result=result,
+                        replay_metrics=replay_metrics,
+                    )
+                    emitted_payload = True
+                    yield "final", final_response.model_dump(mode="json")
+                    return
+                except Exception as stream_exc:
+                    if (
+                        attempt == 0
+                        and not emitted_payload
+                        and self._should_recover_from_response_not_found(
+                            stream_exc, current_decision
                         )
-                        first = interrupts[0]
-                        interrupt_id = getattr(first, "id", None)
-                        payload = getattr(first, "value", None)
-                        message = _extract_interrupt_message(payload)
-                        context_metrics = self._build_context_metrics(
-                            stream_state.messages
+                    ):
+                        logger.warning(
+                            "Recovering stream from previous_response_id 404 by resetting thread",
+                            extra={"thread_id": thread_id},
                         )
-
-                        run.stage_summaries = {
-                            "tool_approval": {
-                                "pending": True,
-                                "tool_count": len(pending_tool_calls),
-                                "interrupt_id": interrupt_id,
-                                "requested_at": datetime.now(timezone.utc).isoformat(),
-                            },
-                        }
-                        run.metrics = {
-                            "latency_ms": int(
-                                (datetime.now(timezone.utc) - started_at).total_seconds()
-                                * 1000
-                            ),
-                            "context": context_metrics,
-                            **(stream_state.metrics if isinstance(stream_state.metrics, dict) else {}),
-                        }
-
-                        await self._db.commit()
-                        await self._db.refresh(run)
-
-                        response = ChatPendingToolApprovalResponse(
-                            thread_id=thread_id,
-                            interrupt_id=interrupt_id if isinstance(interrupt_id, str) else None,
-                            message=str(message) if message is not None else None,
-                            pending_tool_calls=[
-                                PendingToolCall.model_validate(item)
-                                for item in pending_tool_calls
-                                if isinstance(item, dict)
-                            ],
-                            run=AgentRunRead.model_validate(run),
+                        await CheckpointManager.delete_thread(thread_id)
+                        current_decision = self._manual_replay_decision()
+                        replay_metrics = self._build_replay_metrics(
+                            current_decision,
+                            recovered=True,
+                            recovery_reason="previous_response_id_not_found",
                         )
-                        yield "interrupt", response.model_dump(mode="json")
-                        return
-
-            flushed_deltas = legacy_think_parser.flush()
-            if flushed_deltas:
-                yield "messages", {
-                    "run_id": str(run.id),
-                    "deltas": [delta.to_dict() for delta in flushed_deltas],
-                    "ts": datetime.now(timezone.utc).isoformat(),
-                }
-
-            result = {
-                "messages": stream_state.messages,
-                "stage_summaries": stream_state.stage_summaries,
-                "metrics": stream_state.metrics,
-            }
-            final_response = await self._finalize_run(
-                session=session,
-                run=run,
-                started_at=started_at,
-                result=result,
-            )
-            yield "final", final_response.model_dump(mode="json")
+                        recovery_history = await self._load_history(session.id, limit=None)
+                        original_history = self._drop_trailing_user_message(
+                            recovery_history,
+                            user_content=user_content,
+                        )
+                        checkpoint_tuple = None
+                        attempt += 1
+                        continue
+                    raise
 
         except Exception as e:
             run.status = AgentRunStatus.FAILED
@@ -678,133 +1202,143 @@ class GeneralChatService:
         *,
         session: ChatSession,
         run: AgentRun,
-        approved: bool,
+        approval: ToolApprovalRequest,
     ) -> ChatAnswerResponse | ChatPendingToolApprovalResponse:
         """两阶段交互第 2 阶段：提交审批结果并恢复执行。"""
         set_run_id(str(run.id))
-        thread_id = str(session.id)
-        checkpoint_tuple = await CheckpointManager.get_state(thread_id)
-        if checkpoint_tuple is None:
-            set_run_id(None)
-            raise AppError(
-                code="CHECKPOINT_NOT_FOUND",
-                message="检查点不存在，无法恢复执行",
-                status_code=404,
+        try:
+            await self._ensure_resume_target_valid(session=session, run=run)
+            thread_id = str(session.id)
+            checkpoint_tuple = await CheckpointManager.get_state(thread_id)
+            if checkpoint_tuple is None:
+                raise AppError(
+                    code="CHECKPOINT_NOT_FOUND",
+                    message="检查点不存在，无法恢复执行",
+                    status_code=404,
+                )
+
+            pending_interrupts_raw = _extract_pending_interrupts(
+                checkpoint_tuple.pending_writes
+            )
+            if not pending_interrupts_raw:
+                raise AppError(
+                    code="NO_PENDING_APPROVAL",
+                    message="当前会话没有待审批的工具调用",
+                    status_code=400,
+                )
+
+            # 为恢复执行重新构建 agent（状态由 checkpointer 提供）
+            include_mcp = bool(session.allow_external and self._settings.mcp_enabled)
+            include_web_search = bool(self._settings.web_search_api_key)
+            extensions: list[ToolExtension] = []
+            if include_mcp:
+                stmt = select(ToolExtension).where(
+                    ToolExtension.status == ExtensionStatus.ENABLED
+                )
+                ext_result = await self._db.execute(stmt)
+                extensions = list(ext_result.scalars().all())
+
+            tools, tool_meta_by_name = await build_tool_registry(
+                settings=self._settings,
+                extensions=extensions,
+                extra_tools=[build_system_time_tool()],
+                include_web_search=include_web_search,
+                include_mcp=include_mcp,
+                redis=self._redis,
+                http_client=self._http_client,
+            )
+            hitl_interrupt_on = build_hitl_interrupt_on(tool_meta_by_name)
+            pending_interrupts = self._build_pending_interrupt_approvals(
+                pending_interrupts_raw,
+                tool_meta_by_name,
+            )
+            await self._ensure_extensions_connected(pending_interrupts)
+            resume_payload = self._build_resume_decisions_payload(
+                pending_interrupts,
+                approval,
             )
 
-        pending_interrupts = _extract_pending_interrupts(
-            checkpoint_tuple.pending_writes
-        )
-        if not pending_interrupts:
-            set_run_id(None)
-            raise AppError(
-                code="NO_PENDING_APPROVAL",
-                message="当前会话没有待审批的工具调用",
-                status_code=400,
+            replay_decision = self._resolve_replay_decision()
+            replay_metrics = self._build_replay_metrics(replay_decision)
+            chat_model = create_chat_model(
+                settings=self._settings,
+                use_previous_response_id=replay_decision.use_previous_response_id,
             )
 
-        # 为恢复执行重新构建 agent（状态由 checkpointer 提供）
-        include_mcp = bool(session.allow_external and self._settings.mcp_enabled)
-        include_web_search = bool(self._settings.web_search_api_key)
-        extensions: list[ToolExtension] = []
-        if include_mcp:
-            stmt = select(ToolExtension).where(
-                ToolExtension.status == ExtensionStatus.ENABLED
+            system_prompt = self._prompts.render("general_chat/system")
+            agent = build_general_chat_agent(
+                chat_model=chat_model,
+                tools=tools,
+                system_prompt=system_prompt,
+                summary_trigger=self._build_summary_trigger(),
+                hitl_interrupt_on=hitl_interrupt_on,
             )
-            ext_result = await self._db.execute(stmt)
-            extensions = list(ext_result.scalars().all())
+            config = CheckpointManager.make_config(thread_id)
+            result = await agent.ainvoke(Command(resume=resume_payload), config)
 
-        tools, tool_meta_by_name = await build_tool_registry(
-            settings=self._settings,
-            extensions=extensions,
-            extra_tools=[build_system_time_tool()],
-            include_web_search=include_web_search,
-            include_mcp=include_mcp,
-            redis=self._redis,
-            http_client=self._http_client,
-        )
+            if not isinstance(result, dict):
+                raise RuntimeError("LangGraph 返回类型不符合预期")
 
-        action_requests = _extract_action_requests(pending_interrupts)
-        pending_tool_calls = build_pending_tool_calls(
-            action_requests, tool_meta_by_name
-        )
-        await self._ensure_extensions_connected(pending_tool_calls)
+            interrupts = result.get("__interrupt__")
+            if isinstance(interrupts, list) and interrupts:
+                next_pending_interrupts = self._build_pending_interrupt_approvals(
+                    interrupts,
+                    tool_meta_by_name,
+                )
+                context_metrics = self._build_context_metrics(
+                    result.get("messages")
+                    if isinstance(result.get("messages"), list)
+                    else []
+                )
 
-        chat_model = create_chat_model(settings=self._settings)
-
-        system_prompt = self._prompts.render("general_chat/system")
-        agent = build_general_chat_agent(
-            chat_model=chat_model,
-            tools=tools,
-            system_prompt=system_prompt,
-            summary_trigger=self._build_summary_trigger(),
-        )
-        config = CheckpointManager.make_config(thread_id)
-        decisions = build_hitl_decisions(len(action_requests), approved)
-        result = await agent.ainvoke(Command(resume={"decisions": decisions}), config)
-
-        if not isinstance(result, dict):
-            set_run_id(None)
-            raise RuntimeError("LangGraph 返回类型不符合预期")
-
-        interrupts = result.get("__interrupt__")
-        if isinstance(interrupts, list) and interrupts:
-            action_requests = _extract_action_requests(interrupts)
-            pending_tool_calls = build_pending_tool_calls(
-                action_requests, tool_meta_by_name
-            )
-            first = interrupts[0]
-            interrupt_id = getattr(first, "id", None)
-            payload = getattr(first, "value", None)
-            message = _extract_interrupt_message(payload)
-            context_metrics = self._build_context_metrics(
-                result.get("messages") if isinstance(result.get("messages"), list) else []
-            )
-
-            run.stage_summaries = {
-                "tool_approval": {
-                    "pending": True,
-                    "tool_count": len(pending_tool_calls),
-                    "interrupt_id": interrupt_id,
-                    "requested_at": datetime.now(timezone.utc).isoformat(),
-                },
-            }
-            metrics = result.get("metrics")
-            if not isinstance(metrics, dict):
-                metrics = {}
-            run.metrics = {
-                **(run.metrics if isinstance(run.metrics, dict) else {}),
-                "latency_ms": int(
-                    (datetime.now(timezone.utc) - (run.started_at or datetime.now(timezone.utc))).total_seconds()
-                    * 1000
-                ),
-                "context": context_metrics,
-                **metrics,
-            }
-            await self._db.commit()
-            await self._db.refresh(run)
-            try:
+                run.stage_summaries = {
+                    "tool_approval": self._build_interrupt_stage_summary(
+                        next_pending_interrupts
+                    ),
+                }
+                metrics = result.get("metrics")
+                if not isinstance(metrics, dict):
+                    metrics = {}
+                run.metrics = {
+                    **(run.metrics if isinstance(run.metrics, dict) else {}),
+                    "latency_ms": int(
+                        (
+                            datetime.now(timezone.utc)
+                            - (run.started_at or datetime.now(timezone.utc))
+                        ).total_seconds()
+                        * 1000
+                    ),
+                    "context": context_metrics,
+                    **replay_metrics,
+                    **metrics,
+                }
+                await self._db.commit()
+                await self._db.refresh(run)
                 return ChatPendingToolApprovalResponse(
                     thread_id=thread_id,
-                    interrupt_id=interrupt_id if isinstance(interrupt_id, str) else None,
-                    message=str(message) if message is not None else None,
-                    pending_tool_calls=[
-                        PendingToolCall.model_validate(item)
-                        for item in pending_tool_calls
+                    pending_interrupts=[
+                        PendingInterruptApproval(
+                            interrupt_id=item["interrupt_id"],
+                            message=item.get("message"),
+                            pending_tool_calls=[
+                                PendingToolCall.model_validate(call)
+                                for call in item.get("pending_tool_calls", [])
+                                if isinstance(call, dict)
+                            ],
+                        )
+                        for item in next_pending_interrupts
                         if isinstance(item, dict)
                     ],
                     run=AgentRunRead.model_validate(run),
                 )
-            finally:
-                set_run_id(None)
 
-        started_at = run.started_at or datetime.now(timezone.utc)
-        try:
+            started_at = run.started_at or datetime.now(timezone.utc)
             return await self._finalize_run(
                 session=session,
                 run=run,
                 started_at=started_at,
                 result=result,
+                replay_metrics=replay_metrics,
             )
         finally:
             set_run_id(None)
@@ -814,95 +1348,103 @@ class GeneralChatService:
         *,
         session: ChatSession,
         run: AgentRun,
-        approved: bool,
+        approval: ToolApprovalRequest,
         request: object | None = None,
     ) -> Any:
         """两阶段交互第 2 阶段：提交审批结果并恢复执行（流式 SSE）。"""
         set_run_id(str(run.id))
-        thread_id = str(session.id)
-        checkpoint_tuple = await CheckpointManager.get_state(thread_id)
-        if checkpoint_tuple is None:
-            yield "error", {
-                "code": "CHECKPOINT_NOT_FOUND",
-                "message": "检查点不存在，无法恢复执行",
-            }
-            set_run_id(None)
-            return
-
-        pending_interrupts = _extract_pending_interrupts(
-            checkpoint_tuple.pending_writes
-        )
-        if not pending_interrupts:
-            yield "error", {
-                "code": "NO_PENDING_APPROVAL",
-                "message": "当前会话没有待审批的工具调用",
-            }
-            set_run_id(None)
-            return
-
-        # 为恢复执行重新构建 agent（状态由 checkpointer 提供）
-        include_mcp = bool(session.allow_external and self._settings.mcp_enabled)
-        include_web_search = bool(self._settings.web_search_api_key)
-        extensions: list[ToolExtension] = []
-        if include_mcp:
-            stmt = select(ToolExtension).where(
-                ToolExtension.status == ExtensionStatus.ENABLED
-            )
-            ext_result = await self._db.execute(stmt)
-            extensions = list(ext_result.scalars().all())
-
-        tools, tool_meta_by_name = await build_tool_registry(
-            settings=self._settings,
-            extensions=extensions,
-            extra_tools=[build_system_time_tool()],
-            include_web_search=include_web_search,
-            include_mcp=include_mcp,
-            redis=self._redis,
-            http_client=self._http_client,
-        )
-
-        action_requests = _extract_action_requests(pending_interrupts)
-        pending_tool_calls = build_pending_tool_calls(
-            action_requests, tool_meta_by_name
-        )
-        await self._ensure_extensions_connected(pending_tool_calls)
-
-        chat_model = create_chat_model(settings=self._settings)
-
-        system_prompt = self._prompts.render("general_chat/system")
-        agent = build_general_chat_agent(
-            chat_model=chat_model,
-            tools=tools,
-            system_prompt=system_prompt,
-            summary_trigger=self._build_summary_trigger(),
-        )
-        config = CheckpointManager.make_config(thread_id)
-        decisions = build_hitl_decisions(len(action_requests), approved)
-
-        checkpoint_values = (checkpoint_tuple.checkpoint or {}).get("channel_values", {})
-        existing_messages = checkpoint_values.get("messages", [])
-        stream_state = StreamState(
-            messages=list(existing_messages)
-            if isinstance(existing_messages, list)
-            else [],
-            pending_tool_calls=[],
-            stage_summaries={},
-            metrics={},
-        )
-
-        yield "meta", {
-            "run_id": str(run.id),
-            "session_id": str(session.id),
-            "session_type": session.session_type.value,
-            "thread_id": thread_id,
-            "mode": session.mode.value,
-            "resumed": True,
-        }
-
         try:
+            await self._ensure_resume_target_valid(session=session, run=run)
+            thread_id = str(session.id)
+            checkpoint_tuple = await CheckpointManager.get_state(thread_id)
+            if checkpoint_tuple is None:
+                yield "error", {
+                    "code": "CHECKPOINT_NOT_FOUND",
+                    "message": "检查点不存在，无法恢复执行",
+                }
+                return
+
+            pending_interrupts_raw = _extract_pending_interrupts(
+                checkpoint_tuple.pending_writes
+            )
+            if not pending_interrupts_raw:
+                yield "error", {
+                    "code": "NO_PENDING_APPROVAL",
+                    "message": "当前会话没有待审批的工具调用",
+                }
+                return
+
+            # 为恢复执行重新构建 agent（状态由 checkpointer 提供）
+            include_mcp = bool(session.allow_external and self._settings.mcp_enabled)
+            include_web_search = bool(self._settings.web_search_api_key)
+            extensions: list[ToolExtension] = []
+            if include_mcp:
+                stmt = select(ToolExtension).where(
+                    ToolExtension.status == ExtensionStatus.ENABLED
+                )
+                ext_result = await self._db.execute(stmt)
+                extensions = list(ext_result.scalars().all())
+
+            tools, tool_meta_by_name = await build_tool_registry(
+                settings=self._settings,
+                extensions=extensions,
+                extra_tools=[build_system_time_tool()],
+                include_web_search=include_web_search,
+                include_mcp=include_mcp,
+                redis=self._redis,
+                http_client=self._http_client,
+            )
+            hitl_interrupt_on = build_hitl_interrupt_on(tool_meta_by_name)
+            pending_interrupts = self._build_pending_interrupt_approvals(
+                pending_interrupts_raw,
+                tool_meta_by_name,
+            )
+            await self._ensure_extensions_connected(pending_interrupts)
+            resume_payload = self._build_resume_decisions_payload(
+                pending_interrupts,
+                approval,
+            )
+
+            replay_decision = self._resolve_replay_decision()
+            replay_metrics = self._build_replay_metrics(replay_decision)
+            chat_model = create_chat_model(
+                settings=self._settings,
+                use_previous_response_id=replay_decision.use_previous_response_id,
+            )
+
+            system_prompt = self._prompts.render("general_chat/system")
+            agent = build_general_chat_agent(
+                chat_model=chat_model,
+                tools=tools,
+                system_prompt=system_prompt,
+                summary_trigger=self._build_summary_trigger(),
+                hitl_interrupt_on=hitl_interrupt_on,
+            )
+            config = CheckpointManager.make_config(thread_id)
+
+            checkpoint_values = (checkpoint_tuple.checkpoint or {}).get("channel_values", {})
+            existing_messages = checkpoint_values.get("messages", [])
+            stream_state = StreamState(
+                messages=list(existing_messages)
+                if isinstance(existing_messages, list)
+                else [],
+                pending_tool_calls=[],
+                stage_summaries={},
+                metrics={},
+            )
+
+            yield "meta", {
+                "run_id": str(run.id),
+                "session_id": str(session.id),
+                "session_type": session.session_type.value,
+                "thread_id": thread_id,
+                "mode": session.mode.value,
+                "resumed": True,
+            }
+
             legacy_think_parser = LegacyThinkParser()
             async for mode, chunk in agent.astream(
-                Command(resume={"decisions": decisions}),
+                Command(resume=resume_payload),
                 config,
                 stream_mode=["messages", "updates"],
             ):
@@ -939,25 +1481,18 @@ class GeneralChatService:
                 if mode == "updates" and isinstance(chunk, dict):
                     interrupts = apply_updates_chunk(stream_state, chunk)
                     if interrupts:
-                        action_requests = _extract_action_requests(interrupts)
-                        pending_tool_calls = build_pending_tool_calls(
-                            action_requests, tool_meta_by_name
+                        next_pending_interrupts = self._build_pending_interrupt_approvals(
+                            interrupts,
+                            tool_meta_by_name,
                         )
-                        first = interrupts[0]
-                        interrupt_id = getattr(first, "id", None)
-                        payload = getattr(first, "value", None)
-                        message = _extract_interrupt_message(payload)
                         context_metrics = self._build_context_metrics(
                             stream_state.messages
                         )
 
                         run.stage_summaries = {
-                            "tool_approval": {
-                                "pending": True,
-                                "tool_count": len(pending_tool_calls),
-                                "interrupt_id": interrupt_id,
-                                "requested_at": datetime.now(timezone.utc).isoformat(),
-                            },
+                            "tool_approval": self._build_interrupt_stage_summary(
+                                next_pending_interrupts
+                            ),
                         }
                         run.metrics = {
                             **(run.metrics if isinstance(run.metrics, dict) else {}),
@@ -966,6 +1501,7 @@ class GeneralChatService:
                                 * 1000
                             ),
                             "context": context_metrics,
+                            **replay_metrics,
                             **(stream_state.metrics if isinstance(stream_state.metrics, dict) else {}),
                         }
                         await self._db.commit()
@@ -973,11 +1509,17 @@ class GeneralChatService:
 
                         response = ChatPendingToolApprovalResponse(
                             thread_id=thread_id,
-                            interrupt_id=interrupt_id if isinstance(interrupt_id, str) else None,
-                            message=str(message) if message is not None else None,
-                            pending_tool_calls=[
-                                PendingToolCall.model_validate(item)
-                                for item in pending_tool_calls
+                            pending_interrupts=[
+                                PendingInterruptApproval(
+                                    interrupt_id=item["interrupt_id"],
+                                    message=item.get("message"),
+                                    pending_tool_calls=[
+                                        PendingToolCall.model_validate(call)
+                                        for call in item.get("pending_tool_calls", [])
+                                        if isinstance(call, dict)
+                                    ],
+                                )
+                                for item in next_pending_interrupts
                                 if isinstance(item, dict)
                             ],
                             run=AgentRunRead.model_validate(run),
@@ -1004,6 +1546,7 @@ class GeneralChatService:
                 run=run,
                 started_at=started_at,
                 result=result,
+                replay_metrics=replay_metrics,
             )
             yield "final", final_response.model_dump(mode="json")
 
@@ -1036,9 +1579,81 @@ class GeneralChatService:
         finally:
             set_run_id(None)
 
-    async def _ensure_extensions_connected(self, pending_tool_calls: object) -> None:
-        # MultiServerMCPClient 默认无状态，无需显式预连接。
-        return
+    async def _ensure_extensions_connected(self, pending_interrupts: object) -> None:
+        if not isinstance(pending_interrupts, list) or not pending_interrupts:
+            return
+
+        extension_ids: set[uuid.UUID] = set()
+        for interrupt in pending_interrupts:
+            if not isinstance(interrupt, dict):
+                continue
+            pending_tool_calls = interrupt.get("pending_tool_calls")
+            if not isinstance(pending_tool_calls, list):
+                continue
+            for call in pending_tool_calls:
+                if not isinstance(call, dict):
+                    continue
+                if bool(call.get("is_builtin")):
+                    continue
+                extension_id = call.get("extension_id")
+                if not isinstance(extension_id, str):
+                    continue
+                if extension_id == "unknown":
+                    raise AppError(
+                        code="TOOL_APPROVAL_PAYLOAD_INVALID",
+                        message="待审批工具缺少扩展标识，无法恢复执行",
+                        status_code=400,
+                    )
+                try:
+                    extension_ids.add(uuid.UUID(extension_id))
+                except ValueError:
+                    raise AppError(
+                        code="TOOL_APPROVAL_PAYLOAD_INVALID",
+                        message="待审批工具扩展标识非法，无法恢复执行",
+                        status_code=400,
+                        details={"extension_id": extension_id},
+                    )
+
+        if not extension_ids:
+            return
+
+        stmt = select(ToolExtension).where(
+            ToolExtension.status == ExtensionStatus.ENABLED,
+            ToolExtension.id.in_(list(extension_ids)),
+        )
+        result = await self._db.execute(stmt)
+        extensions = list(result.scalars().all())
+        found_ids = {ext.id for ext in extensions}
+        missing_ids = [str(ext_id) for ext_id in extension_ids if ext_id not in found_ids]
+        if missing_ids:
+            raise AppError(
+                code="MCP_EXTENSION_UNAVAILABLE",
+                message="存在不可用的 MCP 扩展，请检查扩展连接状态",
+                status_code=503,
+                details={"missing_extension_ids": missing_ids},
+            )
+
+        _, diagnostics = await load_mcp_tools_with_diagnostics(
+            settings=self._settings,
+            extensions=extensions,
+            allow_external=True,
+        )
+        unavailable = {
+            ext_id: {
+                "status": diag.status,
+                "last_error": diag.last_error,
+                "latency_ms": diag.latency_ms,
+            }
+            for ext_id, diag in diagnostics.items()
+            if diag.status != "ok"
+        }
+        if unavailable:
+            raise AppError(
+                code="MCP_EXTENSION_UNAVAILABLE",
+                message="存在不可用的 MCP 扩展，请检查扩展连接状态",
+                status_code=503,
+                details={"diagnostics": unavailable},
+            )
 
     async def _finalize_run(
         self,
@@ -1047,6 +1662,7 @@ class GeneralChatService:
         run: AgentRun,
         started_at: datetime,
         result: dict,
+        replay_metrics: dict[str, object] | None = None,
     ) -> ChatAnswerResponse:
         messages = result.get("messages") or []
         if not isinstance(messages, list):
@@ -1054,17 +1670,23 @@ class GeneralChatService:
 
         now = datetime.now(timezone.utc)
         answer = ""
+        response_id: str | None = None
         for msg in reversed(messages):
             if isinstance(msg, AIMessage):
                 # 提取纯文本回答（剥离思考段）
                 answer = extract_answer_text(msg.content)
+                response_id = extract_response_id(msg)
                 break
 
         # 保存助手消息
+        assistant_meta: dict[str, Any] | None = None
+        if response_id:
+            assistant_meta = {"response_id": response_id}
         assistant_msg = ChatMessage(
             session_id=session.id,
             role=MessageRole.ASSISTANT,
             content=answer,
+            meta=assistant_meta,
         )
         self._db.add(assistant_msg)
 
@@ -1084,6 +1706,7 @@ class GeneralChatService:
         run.metrics = {
             "latency_ms": int((now - started_at).total_seconds() * 1000),
             "context": context_metrics,
+            **(replay_metrics or {}),
             **metrics,
         }
 

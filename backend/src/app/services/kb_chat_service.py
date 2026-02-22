@@ -28,7 +28,7 @@ from app.core.logging import set_run_id
 from app.core.memory_store import StoreManager
 from app.core.settings import get_settings
 from app.integrations.embedding_client import EmbeddingClient
-from app.integrations.chat_model_factory import create_chat_model
+from app.integrations.chat_model_factory import create_chat_model, get_active_model_identity
 from app.integrations.llm_client import ChatMessage as LLMMessage
 from app.integrations.llm_client import LLMClient
 from app.integrations.milvus_client import MilvusClient
@@ -271,6 +271,12 @@ class KbChatService:
             prompt_version = self._prompts.get("kb_chat/system").version
         except Exception:
             prompt_version = None
+        llm_model_identity = None
+        try:
+            provider, model = get_active_model_identity(settings=self._settings)
+            llm_model_identity = f"{provider}/{model}"
+        except Exception:
+            llm_model_identity = None
 
         return {
             "config": {
@@ -321,7 +327,7 @@ class KbChatService:
                 ),
             },
             "versions": {
-                "llm_model": self._settings.llm_model,
+                "llm_model": llm_model_identity,
                 "embedding_model": self._settings.embedding_model,
                 "rerank_model": self._settings.retrieval_rerank_model,
                 "kb_chat_system_prompt": prompt_version,

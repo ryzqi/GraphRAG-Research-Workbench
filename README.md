@@ -15,6 +15,11 @@ preface exists mainly to keep the file ASCII-friendly for tooling and patching o
 - 根路径 `/` 默认进入普通代理。
 - 顶部导航顺序：普通代理 → 知识库问答 → 知识库管理 → 深度研究 → MCP扩展。
 
+## LLM 配置说明（重要）
+
+- LLM 主配置（供应商、Base URL、API Key、模型列表、全局生效模型）仅通过前端「模型配置」页面维护。
+- `.env` 中的 `LLM_BASE_URL / LLM_API_KEY / LLM_MODEL` 不再作为运行时主配置来源。
+
 ## 先决条件
 
 - **操作系统**：Windows 11（仅支持 Windows）

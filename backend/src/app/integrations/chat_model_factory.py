@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.core.model_config_errors import ModelConfigIncompleteError
 from app.core.settings import Settings, get_settings
 from app.integrations.langchain_profiles import build_chat_model_profile
 from app.integrations.model_runtime_config import ModelRuntimeConfigManager
@@ -20,7 +21,6 @@ def _resolve_model_name(
     provider: ModelProvider,
     snapshot_model: str | None,
     provider_models: list[str],
-    fallback_openai_model: str,
 ) -> str:
     snapshot_candidate = (snapshot_model or "").strip()
     if snapshot_candidate:
@@ -31,60 +31,88 @@ def _resolve_model_name(
         if candidate:
             return candidate
 
-    if provider == ModelProvider.OPENAI:
-        openai_model = fallback_openai_model.strip()
-        if openai_model:
-            return openai_model
-
-    raise RuntimeError(f"No model configured for provider: {provider.value}")
+    raise ModelConfigIncompleteError(
+        f"模型配置不完整：供应商 {provider.value} 缺少可用模型，请前往模型配置页面补全"
+    )
 
 
 def get_active_model_identity(settings: Settings | None = None) -> tuple[str, str]:
     cfg = settings or get_settings()
     snapshot = ModelRuntimeConfigManager.get_snapshot(settings=cfg)
-    provider_cfg = snapshot.active_provider_config()
+    try:
+        provider_cfg = snapshot.active_provider_config()
+    except RuntimeError as exc:
+        raise ModelConfigIncompleteError(
+            "模型配置不完整：没有可用的已启用供应商，请前往模型配置页面补全"
+        ) from exc
     model_name = _resolve_model_name(
         provider=provider_cfg.provider,
         snapshot_model=snapshot.active_model,
         provider_models=provider_cfg.models,
-        fallback_openai_model=cfg.llm_model,
     )
     if not provider_cfg.enabled:
         raise RuntimeError(f"Active model provider is disabled: {provider_cfg.provider.value}")
     return provider_cfg.provider.value, model_name
 
 
-def create_chat_model(*, settings: Settings | None = None) -> Any:
+def create_chat_model(
+    *,
+    settings: Settings | None = None,
+    use_previous_response_id: bool | None = None,
+) -> Any:
     cfg = settings or get_settings()
     snapshot = ModelRuntimeConfigManager.get_snapshot(settings=cfg)
-    provider_cfg = snapshot.active_provider_config()
+    try:
+        provider_cfg = snapshot.active_provider_config()
+    except RuntimeError as exc:
+        raise ModelConfigIncompleteError(
+            "模型配置不完整：没有可用的已启用供应商，请前往模型配置页面补全"
+        ) from exc
     if not provider_cfg.enabled:
         raise RuntimeError(f"Active model provider is disabled: {provider_cfg.provider.value}")
     model_name = _resolve_model_name(
         provider=provider_cfg.provider,
         snapshot_model=snapshot.active_model,
         provider_models=provider_cfg.models,
-        fallback_openai_model=cfg.llm_model,
     )
 
     if provider_cfg.provider == ModelProvider.OPENAI:
+        api_key = (provider_cfg.api_key or "").strip()
+        if not api_key:
+            raise ModelConfigIncompleteError(
+                "模型配置不完整：OpenAI API Key 未配置，请前往模型配置页面补全"
+            )
+        base_url = (provider_cfg.base_url or "").strip()
+        if not base_url:
+            raise ModelConfigIncompleteError(
+                "模型配置不完整：OpenAI Base URL 未配置，请前往模型配置页面补全"
+            )
         from langchain_openai import ChatOpenAI
 
         kwargs: dict[str, Any] = {
             "model": model_name,
-            "api_key": provider_cfg.api_key or cfg.llm_api_key,
-            "base_url": (provider_cfg.base_url or cfg.llm_base_url).rstrip("/"),
+            "api_key": api_key,
+            "base_url": base_url.rstrip("/"),
             "timeout": cfg.llm_timeout_seconds,
             "max_retries": 2,
+            "output_version": cfg.llm_output_version,
         }
         profile = build_chat_model_profile(cfg)
         if profile is not None:
             kwargs["profile"] = profile
+        resolved_use_previous_response_id = use_previous_response_id
         if provider_cfg.thinking_enabled:
+            kwargs["use_responses_api"] = True
             kwargs["reasoning"] = {
                 "effort": provider_cfg.thinking_level or "high",
                 "summary": "auto",
             }
+            if resolved_use_previous_response_id is None:
+                resolved_use_previous_response_id = True
+        if resolved_use_previous_response_id is not None:
+            kwargs["use_previous_response_id"] = bool(resolved_use_previous_response_id)
+            if resolved_use_previous_response_id:
+                kwargs["use_responses_api"] = True
         return ChatOpenAI(**kwargs)
 
     if provider_cfg.provider == ModelProvider.OLLAMA:

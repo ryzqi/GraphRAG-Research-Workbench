@@ -440,7 +440,7 @@ async def resume_general_chat(
         http_client=request.app.state.http_client,
     )
     result = await service.resume_after_tool_approval(
-        session=session, run=run, approved=body.approved
+        session=session, run=run, approval=body
     )
     if getattr(result, "status", None) == "pending_tool_approval":
         response.status_code = status.HTTP_202_ACCEPTED
@@ -598,7 +598,7 @@ async def resume_general_chat_stream(
     events = service.resume_after_tool_approval_stream(
         session=session,
         run=run,
-        approved=body.approved,
+        approval=body,
         request=request,
     )
 

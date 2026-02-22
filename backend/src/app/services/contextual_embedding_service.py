@@ -8,7 +8,7 @@ import time
 from dataclasses import dataclass
 
 from app.core.settings import Settings, get_settings
-from app.integrations.chat_model_factory import create_chat_model
+from app.integrations.chat_model_factory import create_chat_model, get_active_model_identity
 from app.prompts import get_prompt_loader
 
 logger = logging.getLogger(__name__)
@@ -86,10 +86,11 @@ class ContextualEmbeddingService:
         latency_ms = int((time.perf_counter() - start_time) * 1000)
         context = (llm_output.text or "").strip()
         if not context:
+            model_identity = self._resolve_model_identity()
             logger.warning(
                 "Context 生成为空",
                 extra={
-                    "model": self._settings.llm_model,
+                    "model": model_identity,
                     "finish_reason": llm_output.finish_reason,
                     "prompt_tokens": llm_output.prompt_tokens,
                     "completion_tokens": llm_output.completion_tokens,
@@ -109,6 +110,13 @@ class ContextualEmbeddingService:
             reason=None,
             latency_ms=latency_ms,
         )
+
+    def _resolve_model_identity(self) -> str | None:
+        try:
+            provider, model = get_active_model_identity(settings=self._settings)
+        except Exception:
+            return None
+        return f"{provider}/{model}"
 
     def _extract_source(self, full_text: str, chunk: str) -> str:
         if not full_text:
