@@ -29,6 +29,16 @@ from app.worker.celery_app import celery_app
 from app.worker.task_resources import managed_task_resources
 
 
+def _should_skip_run_status(status: AgentRunStatus) -> bool:
+    """Allow execution only while the run is actively running."""
+    return status is not AgentRunStatus.RUNNING
+
+
+def _should_skip_research_session_status(status: ResearchSessionStatus) -> bool:
+    """Skip only terminal sessions; resumed sessions may enter with RUNNING state."""
+    return status in TERMINAL_RESEARCH_SESSION_STATUSES
+
+
 @celery_app.task(name="app.worker.tasks.research.run_research")
 def run_research(
     run_id: str,
@@ -81,11 +91,30 @@ async def _run_research(
                 if run is None:
                     return
 
-                # 检查是否已取消
-                if run.status == AgentRunStatus.CANCELED:
+                if _should_skip_run_status(run.status):
+                    return
+
+                existing_report = (
+                    (
+                        await session.execute(
+                            select(ResearchReport).where(ResearchReport.run_id == run_uuid)
+                        )
+                    )
+                    .scalars()
+                    .first()
+                )
+                if existing_report is not None:
+                    run.status = AgentRunStatus.SUCCEEDED
+                    if run.finished_at is None:
+                        run.finished_at = datetime.now(timezone.utc)
+                    run.error_message = None
+                    if not run.final_output:
+                        run.final_output = existing_report.content_md[:1000]
+                    await session.commit()
                     return
 
                 run.started_at = datetime.now(timezone.utc)
+                run.error_message = None
                 await session.commit()
 
                 try:
@@ -184,12 +213,25 @@ async def _run_research(
                         session.add_all(evidence_records)
 
                     # 保存研究报告
-                    report = ResearchReport(
-                        run_id=run_uuid,
-                        content_md=result.report_md,
-                        citations=result.citations,
+                    report = (
+                        (
+                            await session.execute(
+                                select(ResearchReport).where(ResearchReport.run_id == run_uuid)
+                            )
+                        )
+                        .scalars()
+                        .first()
                     )
-                    session.add(report)
+                    if report is None:
+                        report = ResearchReport(
+                            run_id=run_uuid,
+                            content_md=result.report_md,
+                            citations=result.citations,
+                        )
+                        session.add(report)
+                    else:
+                        report.content_md = result.report_md
+                        report.citations = result.citations
 
                     # 更新运行状态
                     run.status = AgentRunStatus.SUCCEEDED
@@ -265,7 +307,7 @@ async def _run_research_v2(
                 run_session = await db.get(ResearchSession, session_uuid)
                 if run_session is None:
                     return
-                if run_session.status in TERMINAL_RESEARCH_SESSION_STATUSES:
+                if _should_skip_research_session_status(run_session.status):
                     return
 
                 event_store = ResearchEventStore(db)

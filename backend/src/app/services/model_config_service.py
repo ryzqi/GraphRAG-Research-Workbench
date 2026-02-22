@@ -109,6 +109,9 @@ class ModelConfigService:
 
     async def get_config(self) -> ModelConfigRead:
         await self._ensure_defaults()
+        # Keep in-memory runtime snapshot aligned with latest DB config
+        # even when users only visit/read the model-config page.
+        await ModelRuntimeConfigManager.refresh(db=self._db, settings=self._settings)
         provider_rows = await self._list_provider_rows()
         selection = await self._get_selection()
         return self._to_config_read(provider_rows=provider_rows, selection=selection)
@@ -211,7 +214,6 @@ class ModelConfigService:
                     selection.active_model = next_provider_model
 
         await self._db.commit()
-        await ModelRuntimeConfigManager.refresh(db=self._db, settings=self._settings)
         return await self.get_config()
 
     async def set_active_model(self, payload: ActiveModelUpdate) -> ModelConfigRead:
@@ -253,7 +255,6 @@ class ModelConfigService:
         selection.active_model = selected_model
 
         await self._db.commit()
-        await ModelRuntimeConfigManager.refresh(db=self._db, settings=self._settings)
         return await self.get_config()
 
     async def _ensure_defaults(self) -> None:

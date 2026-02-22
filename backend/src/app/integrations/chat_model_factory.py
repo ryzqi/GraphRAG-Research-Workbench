@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import Any
+import warnings
 
 from app.core.model_config_errors import ModelConfigIncompleteError
 from app.core.settings import Settings, get_settings
@@ -11,9 +12,40 @@ from app.integrations.model_runtime_config import ModelRuntimeConfigManager
 from app.models.model_config import ModelProvider
 
 
+_NVIDIA_KIMI_K2_5_MODEL = "moonshotai/kimi-k2.5"
+_NVIDIA_KIMI_K2_5_DEFAULTS: dict[str, Any] = {
+    "temperature": 1,
+    "top_p": 1,
+    "max_completion_tokens": 16384,
+}
+_NVIDIA_KIMI_K2_5_UNKNOWN_TYPE_WARNING = (
+    r"Found moonshotai/kimi-k2\.5 in available_models, but type is unknown and inference may fail\."
+)
+
+
 def _supports_ollama_reasoning_level(model_name: str) -> bool:
     normalized = model_name.strip().lower()
     return "gpt-oss" in normalized
+
+
+def _supports_nvidia_thinking_mode(model: Any) -> bool:
+    """Return True only when NVIDIA model metadata explicitly supports thinking mode."""
+    support = getattr(getattr(getattr(model, "_client", None), "model", None), "supports_thinking", None)
+    return support is True
+
+
+def _is_nvidia_kimi_k2_5(model_name: str) -> bool:
+    return model_name.strip().lower() == _NVIDIA_KIMI_K2_5_MODEL
+
+
+def _enable_kimi_runtime_capabilities(model: Any) -> None:
+    metadata = getattr(getattr(model, "_client", None), "model", None)
+    if metadata is None:
+        return
+    # Kimi k2.5 supports tools/structured output, but metadata can lag behind.
+    for key in ("supports_tools", "supports_structured_output"):
+        if getattr(metadata, key, None) is False:
+            setattr(metadata, key, True)
 
 
 def _resolve_model_name(
@@ -75,7 +107,6 @@ def create_chat_model(
         snapshot_model=snapshot.active_model,
         provider_models=provider_cfg.models,
     )
-
     if provider_cfg.provider == ModelProvider.OPENAI:
         api_key = (provider_cfg.api_key or "").strip()
         if not api_key:
@@ -151,8 +182,23 @@ def create_chat_model(
             kwargs["api_key"] = provider_cfg.api_key
         if provider_cfg.base_url:
             kwargs["base_url"] = provider_cfg.base_url
-        model = ChatNVIDIA(**kwargs)
+        if _is_nvidia_kimi_k2_5(model_name):
+            kwargs.update(_NVIDIA_KIMI_K2_5_DEFAULTS)
+            with warnings.catch_warnings():
+                warnings.filterwarnings(
+                    "ignore",
+                    message=_NVIDIA_KIMI_K2_5_UNKNOWN_TYPE_WARNING,
+                    category=UserWarning,
+                )
+                model = ChatNVIDIA(**kwargs)
+            _enable_kimi_runtime_capabilities(model)
+        else:
+            model = ChatNVIDIA(**kwargs)
+        if provider_cfg.thinking_enabled and _is_nvidia_kimi_k2_5(model_name):
+            return model.bind(chat_template_kwargs={"thinking": True})
         if provider_cfg.thinking_enabled and hasattr(model, "with_thinking_mode"):
+            if not _supports_nvidia_thinking_mode(model):
+                return model
             with_thinking_mode = getattr(model, "with_thinking_mode")
             try:
                 return with_thinking_mode(enabled=True)

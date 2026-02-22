@@ -12,6 +12,11 @@ from app.worker.celery_app import celery_app
 from app.worker.task_resources import managed_task_resources
 
 
+def _should_skip_export_job_status(status: ExportStatus) -> bool:
+    """Only queued jobs may transition into task execution."""
+    return status is not ExportStatus.QUEUED
+
+
 @celery_app.task(name="app.worker.tasks.export.run_export")
 def run_export(export_id: str, export_type: str, run_id: str) -> None:
     asyncio.run(_run_export(export_id=export_id, export_type=export_type, run_id=run_id))
@@ -30,8 +35,11 @@ async def _run_export(*, export_id: str, export_type: str, run_id: str) -> None:
             job = await session.get(ExportJob, export_uuid)
             if job is None:
                 return
+            if _should_skip_export_job_status(job.status):
+                return
 
             job.status = ExportStatus.RUNNING
+            job.error_message = None
             await session.commit()
 
             try:

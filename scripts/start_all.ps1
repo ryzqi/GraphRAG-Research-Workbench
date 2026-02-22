@@ -192,8 +192,10 @@ function Get-CeleryWorkerCommand {
         [Parameter(Mandatory = $true)][string]$Queues,
         [string]$PoolEnvVar = "CELERY_WORKER_POOL",
         [string]$ConcurrencyEnvVar = "CELERY_WORKER_CONCURRENCY",
+        [string]$PrefetchEnvVar = "CELERY_WORKER_PREFETCH_MULTIPLIER",
         [string]$DefaultPool = "threads",
-        [string]$DefaultConcurrency = ""
+        [string]$DefaultConcurrency = "",
+        [string]$DefaultPrefetchMultiplier = ""
     )
 
     $explicitPool = (Get-EnvVarValue -Name $PoolEnvVar).ToLowerInvariant()
@@ -226,11 +228,25 @@ function Get-CeleryWorkerCommand {
         }
     }
 
-    if ($Verbose) {
-        Write-Host "Celery Worker 参数：--pool=$pool --concurrency=$concurrency -Q $Queues" -ForegroundColor DarkGray
+    $prefetchMultiplier = Get-EnvVarValue -Name $PrefetchEnvVar
+    if (-not $prefetchMultiplier) {
+        $prefetchMultiplier = Get-EnvVarValue -Name "CELERY_WORKER_PREFETCH_MULTIPLIER"
+    }
+    if (-not $prefetchMultiplier -and $DefaultPrefetchMultiplier) {
+        $prefetchMultiplier = $DefaultPrefetchMultiplier
     }
 
-    return "uv run celery -A app.worker.celery_app worker --loglevel=INFO --pool=$pool --concurrency=$concurrency -Q $Queues"
+    $prefetchArgs = ""
+    if ($prefetchMultiplier) {
+        $prefetchArgs = " --prefetch-multiplier=$prefetchMultiplier"
+    }
+
+    if ($Verbose) {
+        $resolvedPrefetch = if ($prefetchMultiplier) { $prefetchMultiplier } else { "celery-default" }
+        Write-Host "Celery Worker 参数：--pool=$pool --concurrency=$concurrency --prefetch-multiplier=$resolvedPrefetch -Q $Queues" -ForegroundColor DarkGray
+    }
+
+    return "uv run celery -A app.worker.celery_app worker --loglevel=INFO --pool=$pool --concurrency=$concurrency$prefetchArgs -Q $Queues"
 }
 function Get-CeleryBeatCommand {
     return "uv run celery -A app.worker.celery_app beat --loglevel=INFO"
@@ -315,13 +331,13 @@ if (-not $SkipWorker) {
     $beatCommand = Get-CeleryBeatCommand
     Start-Terminal -Title "celery-beat" -WorkingDirectory $backendDir -Command $beatCommand
 
-    $dispatchWorkerCommand = Get-CeleryWorkerCommand -Queues "dispatch" -PoolEnvVar "CELERY_DISPATCH_WORKER_POOL" -ConcurrencyEnvVar "CELERY_DISPATCH_WORKER_CONCURRENCY" -DefaultConcurrency "2"
+    $dispatchWorkerCommand = Get-CeleryWorkerCommand -Queues "dispatch" -PoolEnvVar "CELERY_DISPATCH_WORKER_POOL" -ConcurrencyEnvVar "CELERY_DISPATCH_WORKER_CONCURRENCY" -PrefetchEnvVar "CELERY_DISPATCH_WORKER_PREFETCH_MULTIPLIER" -DefaultConcurrency "2" -DefaultPrefetchMultiplier "1"
     Start-Terminal -Title "celery-worker-dispatch" -WorkingDirectory $backendDir -Command $dispatchWorkerCommand
 
-    $coreWorkerCommand = Get-CeleryWorkerCommand -Queues "ingestion,rebuild,default" -PoolEnvVar "CELERY_CORE_WORKER_POOL" -ConcurrencyEnvVar "CELERY_CORE_WORKER_CONCURRENCY"
+    $coreWorkerCommand = Get-CeleryWorkerCommand -Queues "ingestion,rebuild,default" -PoolEnvVar "CELERY_CORE_WORKER_POOL" -ConcurrencyEnvVar "CELERY_CORE_WORKER_CONCURRENCY" -PrefetchEnvVar "CELERY_CORE_WORKER_PREFETCH_MULTIPLIER" -DefaultPrefetchMultiplier "1"
     Start-Terminal -Title "celery-worker-core" -WorkingDirectory $backendDir -Command $coreWorkerCommand
 
-    $nonCoreWorkerCommand = Get-CeleryWorkerCommand -Queues "research,export" -PoolEnvVar "CELERY_NONCORE_WORKER_POOL" -ConcurrencyEnvVar "CELERY_NONCORE_WORKER_CONCURRENCY" -DefaultConcurrency "2"
+    $nonCoreWorkerCommand = Get-CeleryWorkerCommand -Queues "research,export" -PoolEnvVar "CELERY_NONCORE_WORKER_POOL" -ConcurrencyEnvVar "CELERY_NONCORE_WORKER_CONCURRENCY" -PrefetchEnvVar "CELERY_NONCORE_WORKER_PREFETCH_MULTIPLIER" -DefaultConcurrency "2" -DefaultPrefetchMultiplier "1"
     Start-Terminal -Title "celery-worker-noncore" -WorkingDirectory $backendDir -Command $nonCoreWorkerCommand
 }
 

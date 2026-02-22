@@ -1,15 +1,15 @@
 from __future__ import annotations
 
 from datetime import timedelta
+from typing import Any
 
 from celery import Celery
 from kombu import Queue
 
-from app.core.settings import get_settings
+from app.core.settings import Settings, get_settings
 
 settings = get_settings()
 
-DEFAULT_VISIBILITY_TIMEOUT_SECONDS = 7_200
 DEFAULT_DISPATCH_BATCH_SIZE = 50
 
 celery_app = Celery(
@@ -27,60 +27,77 @@ celery_app = Celery(
     ],
 )
 
-celery_app.conf.update(
-    broker_connection_retry_on_startup=True,
-    broker_transport_options={"visibility_timeout": DEFAULT_VISIBILITY_TIMEOUT_SECONDS},
-    accept_content=["json"],
-    task_serializer="json",
-    result_serializer="json",
-    result_accept_content=["json"],
-    task_ignore_result=True,
-    task_track_started=True,
-    task_acks_late=True,
-    task_reject_on_worker_lost=True,
-    task_acks_on_failure_or_timeout=True,
-    worker_send_task_events=True,
-    task_send_sent_event=True,
-    task_default_queue="default",
-    task_queues=(
-        Queue("default"),
-        Queue("dispatch"),
-        Queue("ingestion"),
-        Queue("rebuild"),
-        Queue("research"),
-        Queue("export"),
-    ),
-    task_routes={
-        "app.worker.tasks.ingestion_outbox_dispatcher.dispatch_ingestion_outbox": {
-            "queue": "dispatch"
+def _resolve_optional_time_limit(seconds: int) -> int | None:
+    return seconds if seconds > 0 else None
+
+
+def _build_celery_conf(cfg: Settings) -> dict[str, Any]:
+    conf: dict[str, Any] = {
+        "broker_connection_retry_on_startup": True,
+        "broker_transport_options": {
+            "visibility_timeout": cfg.celery_broker_visibility_timeout_seconds
         },
-        "app.worker.tasks.index_rebuild_outbox_dispatcher.dispatch_index_rebuild_outbox": {
-            "queue": "dispatch"
+        "accept_content": ["json"],
+        "task_serializer": "json",
+        "result_serializer": "json",
+        "result_accept_content": ["json"],
+        "task_ignore_result": True,
+        "task_store_errors_even_if_ignored": cfg.celery_task_store_errors_even_if_ignored,
+        "task_track_started": True,
+        "task_acks_late": True,
+        "task_reject_on_worker_lost": True,
+        "task_acks_on_failure_or_timeout": True,
+        "worker_send_task_events": cfg.celery_worker_send_task_events,
+        "task_send_sent_event": cfg.celery_task_send_sent_event,
+        "worker_prefetch_multiplier": cfg.celery_worker_prefetch_multiplier,
+        "task_default_queue": "default",
+        "task_queues": (
+            Queue("default"),
+            Queue("dispatch"),
+            Queue("ingestion"),
+            Queue("rebuild"),
+            Queue("research"),
+            Queue("export"),
+        ),
+        "task_routes": {
+            "app.worker.tasks.ingestion_outbox_dispatcher.dispatch_ingestion_outbox": {
+                "queue": "dispatch"
+            },
+            "app.worker.tasks.index_rebuild_outbox_dispatcher.dispatch_index_rebuild_outbox": {
+                "queue": "dispatch"
+            },
+            "app.worker.tasks.ingestion_batches.run_ingestion_batch_doc": {
+                "queue": "ingestion"
+            },
+            "app.worker.tasks.index_rebuild.run_index_rebuild_job": {"queue": "rebuild"},
+            "app.worker.tasks.research.run_research": {"queue": "research"},
+            "app.worker.tasks.research.run_research_v2": {"queue": "research"},
+            "app.worker.tasks.export.run_export": {"queue": "export"},
+            "app.worker.tasks.kb_bootstrap_jobs.run_kb_bootstrap_job": {
+                "queue": "default"
+            },
         },
-        "app.worker.tasks.ingestion_batches.run_ingestion_batch_doc": {
-            "queue": "ingestion"
+        "timezone": "Asia/Shanghai",
+        "beat_schedule": {
+            "ingestion-outbox-dispatcher": {
+                "task": "app.worker.tasks.ingestion_outbox_dispatcher.dispatch_ingestion_outbox",
+                "schedule": timedelta(seconds=15),
+                "kwargs": {"limit": DEFAULT_DISPATCH_BATCH_SIZE},
+            },
+            "index-rebuild-outbox-dispatcher": {
+                "task": "app.worker.tasks.index_rebuild_outbox_dispatcher.dispatch_index_rebuild_outbox",
+                "schedule": timedelta(seconds=15),
+                "kwargs": {"limit": DEFAULT_DISPATCH_BATCH_SIZE},
+            },
         },
-        "app.worker.tasks.index_rebuild.run_index_rebuild_job": {"queue": "rebuild"},
-        "app.worker.tasks.research.run_research": {"queue": "research"},
-        "app.worker.tasks.research.run_research_v2": {"queue": "research"},
-        "app.worker.tasks.export.run_export": {"queue": "export"},
-        "app.worker.tasks.kb_bootstrap_jobs.run_kb_bootstrap_job": {
-            "queue": "default"
-        },
-    },
-    timezone="Asia/Shanghai",
-    task_soft_time_limit=60 * 60,
-    task_time_limit=65 * 60,
-    beat_schedule={
-        "ingestion-outbox-dispatcher": {
-            "task": "app.worker.tasks.ingestion_outbox_dispatcher.dispatch_ingestion_outbox",
-            "schedule": timedelta(seconds=15),
-            "kwargs": {"limit": DEFAULT_DISPATCH_BATCH_SIZE},
-        },
-        "index-rebuild-outbox-dispatcher": {
-            "task": "app.worker.tasks.index_rebuild_outbox_dispatcher.dispatch_index_rebuild_outbox",
-            "schedule": timedelta(seconds=15),
-            "kwargs": {"limit": DEFAULT_DISPATCH_BATCH_SIZE},
-        }
-    },
-)
+    }
+    soft_limit = _resolve_optional_time_limit(cfg.celery_task_soft_time_limit_seconds)
+    hard_limit = _resolve_optional_time_limit(cfg.celery_task_time_limit_seconds)
+    if soft_limit is not None:
+        conf["task_soft_time_limit"] = soft_limit
+    if hard_limit is not None:
+        conf["task_time_limit"] = hard_limit
+    return conf
+
+
+celery_app.conf.update(_build_celery_conf(settings))

@@ -177,6 +177,27 @@ class Settings(BaseSettings):
     celery_result_backend: str = Field(
         _DEFAULT_CELERY_RESULT_BACKEND, alias="CELERY_RESULT_BACKEND"
     )
+    celery_broker_visibility_timeout_seconds: int = Field(
+        7_200, ge=1, alias="CELERY_BROKER_VISIBILITY_TIMEOUT_SECONDS"
+    )
+    celery_task_soft_time_limit_seconds: int = Field(
+        0, ge=0, alias="CELERY_TASK_SOFT_TIME_LIMIT_SECONDS"
+    )
+    celery_task_time_limit_seconds: int = Field(
+        0, ge=0, alias="CELERY_TASK_TIME_LIMIT_SECONDS"
+    )
+    celery_task_store_errors_even_if_ignored: bool = Field(
+        True, alias="CELERY_TASK_STORE_ERRORS_EVEN_IF_IGNORED"
+    )
+    celery_worker_send_task_events: bool = Field(
+        False, alias="CELERY_WORKER_SEND_TASK_EVENTS"
+    )
+    celery_task_send_sent_event: bool = Field(
+        False, alias="CELERY_TASK_SEND_SENT_EVENT"
+    )
+    celery_worker_prefetch_multiplier: int = Field(
+        1, ge=1, alias="CELERY_WORKER_PREFETCH_MULTIPLIER"
+    )
 
     http_timeout_connect_seconds: float = Field(
         5.0, alias="HTTP_TIMEOUT_CONNECT_SECONDS"
@@ -498,6 +519,20 @@ class Settings(BaseSettings):
             ]
             self.app_cors_allow_origins = _dedupe_keep_order(
                 [*custom_origins, *_DEV_LOCAL_CORS_ORIGINS]
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_celery_time_limit_settings(self) -> "Settings":
+        if (
+            self.celery_task_soft_time_limit_seconds > 0
+            and self.celery_task_time_limit_seconds > 0
+            and self.celery_task_time_limit_seconds
+            < self.celery_task_soft_time_limit_seconds
+        ):
+            raise ValueError(
+                "CELERY_TASK_TIME_LIMIT_SECONDS must be >= "
+                "CELERY_TASK_SOFT_TIME_LIMIT_SECONDS"
             )
         return self
 

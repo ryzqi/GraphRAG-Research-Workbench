@@ -31,6 +31,11 @@ from app.worker.tasks.embedding_inputs import build_embedding_inputs
 logger = logging.getLogger(__name__)
 
 
+def _should_skip_index_rebuild_status(status: IndexRebuildStatus) -> bool:
+    """Only queued jobs may enter rebuild execution."""
+    return status is not IndexRebuildStatus.QUEUED
+
+
 @celery_app.task(name="app.worker.tasks.index_rebuild.run_index_rebuild_job")
 def run_index_rebuild_job(job_id: str) -> None:
     """Celery entrypoint for index rebuild."""
@@ -182,10 +187,11 @@ async def _run_index_rebuild_job(job_id: str) -> None:
             if not job:
                 return
 
-            if job.status == IndexRebuildStatus.CANCELED:
+            if _should_skip_index_rebuild_status(job.status):
                 return
 
             job.status = IndexRebuildStatus.RUNNING
+            job.error_message = None
             if job.started_at is None:
                 job.started_at = datetime.now(timezone.utc)
             await session.commit()

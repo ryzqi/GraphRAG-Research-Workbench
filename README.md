@@ -46,7 +46,9 @@ pwsh -ExecutionPolicy Bypass -File .\scripts\start_all.ps1
 - 脚本默认按**Windows 生产模式**启动：
   - 前端会先执行 `npm run build` 再启动 `next start`。
   - 后端使用无 `--reload` 的 uvicorn 参数，并固定 `--loop asyncio:SelectorEventLoop`（兼容 psycopg 异步连接）。
-  - Worker 默认 `--pool=threads`，并发默认 `min(逻辑 CPU 核数, 8)`；可通过 `CELERY_WORKER_POOL` / `CELERY_WORKER_CONCURRENCY` 覆盖。
+  - Worker 默认 `--pool=threads`，并发默认 `min(逻辑 CPU 核数, 8)`，`--prefetch-multiplier=1`；可通过 `CELERY_*_WORKER_POOL` / `CELERY_*_WORKER_CONCURRENCY` / `CELERY_*_WORKER_PREFETCH_MULTIPLIER` 覆盖。
+  - Celery 默认关闭事件发送（`CELERY_WORKER_SEND_TASK_EVENTS=false`、`CELERY_TASK_SEND_SENT_EVENT=false`）以降低常驻开销；排障时再临时开启。
+  - Windows + threads 默认不设置全局 soft/hard time limit（`CELERY_TASK_SOFT_TIME_LIMIT_SECONDS=0`、`CELERY_TASK_TIME_LIMIT_SECONDS=0`）；若迁移到 Linux prefork 再按需开启。
 
 ### 1) 启动基础依赖（Podman）
 
@@ -85,14 +87,24 @@ cd backend
 uv run celery -A app.worker.celery_app beat --loglevel=INFO
 
 # dispatch worker（短任务，负责 outbox 派发）
-uv run celery -A app.worker.celery_app worker --loglevel=INFO --pool=threads --concurrency=2 -Q dispatch
+uv run celery -A app.worker.celery_app worker --loglevel=INFO --pool=threads --concurrency=2 --prefetch-multiplier=1 -Q dispatch
 
 # core worker（ingestion/rebuild/default）
-uv run celery -A app.worker.celery_app worker --loglevel=INFO --pool=threads --concurrency=8 -Q ingestion,rebuild,default
+uv run celery -A app.worker.celery_app worker --loglevel=INFO --pool=threads --concurrency=8 --prefetch-multiplier=1 -Q ingestion,rebuild,default
 
 # noncore worker（research/export）
-uv run celery -A app.worker.celery_app worker --loglevel=INFO --pool=threads --concurrency=2 -Q research,export
+uv run celery -A app.worker.celery_app worker --loglevel=INFO --pool=threads --concurrency=2 --prefetch-multiplier=1 -Q research,export
 ```
+
+### Celery 运行参数（推荐默认值）
+
+- `CELERY_BROKER_VISIBILITY_TIMEOUT_SECONDS=7200`
+- `CELERY_WORKER_PREFETCH_MULTIPLIER=1`
+- `CELERY_TASK_STORE_ERRORS_EVEN_IF_IGNORED=true`
+- `CELERY_WORKER_SEND_TASK_EVENTS=false`
+- `CELERY_TASK_SEND_SENT_EVENT=false`
+- `CELERY_TASK_SOFT_TIME_LIMIT_SECONDS=0`
+- `CELERY_TASK_TIME_LIMIT_SECONDS=0`
 
 ### 4) 启动前端（Next.js 生产模式）
 

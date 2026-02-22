@@ -28,6 +28,7 @@ from app.agents.tools.system_time import build_system_time_tool
 from app.core.checkpoint import CheckpointManager
 from app.core.errors import AppError
 from app.core.logging import set_run_id
+from app.core.model_config_errors import ModelConfigIncompleteError
 from app.core.settings import get_settings
 from app.integrations.chat_model_factory import create_chat_model
 from app.integrations.llm_client import LLMClient
@@ -346,7 +347,12 @@ class GeneralChatService:
 
     def _resolve_replay_decision(self) -> ReplayDecision:
         snapshot = ModelRuntimeConfigManager.get_snapshot(settings=self._settings)
-        provider_cfg = snapshot.active_provider_config()
+        try:
+            provider_cfg = snapshot.active_provider_config()
+        except RuntimeError as exc:
+            raise ModelConfigIncompleteError(
+                "模型配置不完整：没有可用的已启用供应商，请前往模型配置页面补全"
+            ) from exc
         return decide_replay_mode(
             configured_mode=self._settings.general_chat_replay_mode,
             provider=provider_cfg.provider,
@@ -900,7 +906,14 @@ class GeneralChatService:
         await self._ensure_no_running_general_run(session_id=session.id)
         started_at = datetime.now(timezone.utc)
         thread_id = str(session.id)
-        replay_decision = self._resolve_replay_decision()
+        try:
+            replay_decision = self._resolve_replay_decision()
+        except ModelConfigIncompleteError as exc:
+            yield "error", {
+                "code": "MODEL_CONFIG_INCOMPLETE",
+                "message": str(exc),
+            }
+            return
         require_assistant_response_id = replay_decision.require_assistant_response_id
         checkpoint_tuple = await CheckpointManager.get_state(thread_id)
         history: list[AnyMessage] = []
@@ -1164,6 +1177,13 @@ class GeneralChatService:
             run.finished_at = datetime.now(timezone.utc)
             run.error_message = str(e)
             await self._db.commit()
+
+            if isinstance(e, ModelConfigIncompleteError):
+                yield "error", {
+                    "code": "MODEL_CONFIG_INCOMPLETE",
+                    "message": str(e),
+                }
+                return
 
             mapped = self._map_llm_exception(e)
             if mapped is not None:
@@ -1536,6 +1556,13 @@ class GeneralChatService:
             run.finished_at = datetime.now(timezone.utc)
             run.error_message = str(e)
             await self._db.commit()
+
+            if isinstance(e, ModelConfigIncompleteError):
+                yield "error", {
+                    "code": "MODEL_CONFIG_INCOMPLETE",
+                    "message": str(e),
+                }
+                return
 
             mapped = self._map_llm_exception(e)
             if mapped is not None:
