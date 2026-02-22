@@ -102,17 +102,19 @@ def create_chat_model(
             kwargs["profile"] = profile
         resolved_use_previous_response_id = use_previous_response_id
         if provider_cfg.thinking_enabled:
-            kwargs["use_responses_api"] = True
+            if resolved_use_previous_response_id is None:
+                resolved_use_previous_response_id = True
+        if resolved_use_previous_response_id is not None:
+            use_response_replay = bool(resolved_use_previous_response_id)
+            kwargs["use_previous_response_id"] = use_response_replay
+            # 显式禁用 response_id 重放时，强制走 chat.completions，
+            # 避免第三方兼容端把 assistant/output_text 历史判为非法输入。
+            kwargs["use_responses_api"] = use_response_replay
+        if provider_cfg.thinking_enabled and kwargs.get("use_responses_api", True):
             kwargs["reasoning"] = {
                 "effort": provider_cfg.thinking_level or "high",
                 "summary": "auto",
             }
-            if resolved_use_previous_response_id is None:
-                resolved_use_previous_response_id = True
-        if resolved_use_previous_response_id is not None:
-            kwargs["use_previous_response_id"] = bool(resolved_use_previous_response_id)
-            if resolved_use_previous_response_id:
-                kwargs["use_responses_api"] = True
         return ChatOpenAI(**kwargs)
 
     if provider_cfg.provider == ModelProvider.OLLAMA:

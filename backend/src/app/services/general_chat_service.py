@@ -11,8 +11,8 @@ from datetime import datetime, timezone
 from typing import Any
 
 import httpx
-from langchain.messages import AIMessage, HumanMessage, SystemMessage
-from langgraph.types import Command
+from langchain.messages import AIMessage, AnyMessage, HumanMessage, SystemMessage
+from langgraph.types import Command, Interrupt
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -30,7 +30,6 @@ from app.core.errors import AppError
 from app.core.logging import set_run_id
 from app.core.settings import get_settings
 from app.integrations.chat_model_factory import create_chat_model
-from app.integrations.llm_client import ChatMessage as LLMMessage
 from app.integrations.llm_client import LLMClient
 from app.integrations.mcp_adapters import load_mcp_tools_with_diagnostics
 from app.integrations.model_runtime_config import ModelRuntimeConfigManager
@@ -61,7 +60,6 @@ from app.services.message_normalizer import (
     extract_text_content,
 )
 from app.services.streaming import (
-    LegacyThinkParser,
     StreamState,
     apply_updates_chunk,
     extract_answer_text,
@@ -92,6 +90,8 @@ def _extract_interrupt_message(payload: object) -> str | None:
 
 
 def _extract_interrupt_payload(interrupt: object) -> dict[str, Any] | None:
+    if isinstance(interrupt, Interrupt):
+        return interrupt.value if isinstance(interrupt.value, dict) else None
     if isinstance(interrupt, dict):
         value = interrupt.get("value")
         if isinstance(value, dict):
@@ -104,6 +104,14 @@ def _extract_interrupt_payload(interrupt: object) -> dict[str, Any] | None:
 
 
 def _extract_interrupt_id(interrupt: object) -> str | None:
+    if isinstance(interrupt, Interrupt):
+        if isinstance(interrupt.id, str) and interrupt.id.strip():
+            return interrupt.id
+        if isinstance(interrupt.value, dict):
+            nested_id = interrupt.value.get("id")
+            if isinstance(nested_id, str) and nested_id.strip():
+                return nested_id
+        return None
     if isinstance(interrupt, dict):
         interrupt_id = interrupt.get("id")
         if isinstance(interrupt_id, str) and interrupt_id.strip():
@@ -210,7 +218,7 @@ class GeneralChatService:
 
     async def _load_history(
         self, session_id: uuid.UUID, limit: int | None
-    ) -> list[LLMMessage]:
+    ) -> list[AnyMessage]:
         stmt = (
             select(ChatMessage)
             .where(ChatMessage.session_id == session_id)
@@ -224,36 +232,31 @@ class GeneralChatService:
         filtered = [m for m in messages if not self._is_summary_message(m)]
         if limit is not None and len(filtered) > limit:
             filtered = filtered[-limit:]
-        return [
-            LLMMessage(
-                role=msg.role.value,
-                content=msg.content,
-                response_id=(
+        history: list[AnyMessage] = []
+        for msg in filtered:
+            if msg.role == MessageRole.SYSTEM:
+                history.append(SystemMessage(content=msg.content))
+                continue
+            if msg.role == MessageRole.ASSISTANT:
+                response_id = (
                     str((msg.meta or {}).get("response_id")).strip()
-                    if msg.role == MessageRole.ASSISTANT
-                    and isinstance(msg.meta, dict)
+                    if isinstance(msg.meta, dict)
                     and isinstance((msg.meta or {}).get("response_id"), str)
                     and str((msg.meta or {}).get("response_id")).strip()
-                    else None
-                ),
-            )
-            for msg in filtered
-        ]
-
-    @staticmethod
-    def _to_langchain_message(msg: LLMMessage) -> SystemMessage | HumanMessage | AIMessage:
-        role = (msg.role or "").lower()
-        if role == "system":
-            return SystemMessage(content=msg.content)
-        if role == "assistant":
-            response_id = (msg.response_id or "").strip()
-            if response_id:
-                return AIMessage(
-                    content=msg.content,
-                    response_metadata={"id": response_id},
+                    else ""
                 )
-            return AIMessage(content=msg.content)
-        return HumanMessage(content=msg.content)
+                if response_id:
+                    history.append(
+                        AIMessage(
+                            content=msg.content,
+                            response_metadata={"id": response_id},
+                        )
+                    )
+                else:
+                    history.append(AIMessage(content=msg.content))
+                continue
+            history.append(HumanMessage(content=msg.content))
+        return history
 
     @staticmethod
     def _is_summary_message(msg: ChatMessage) -> bool:
@@ -321,9 +324,9 @@ class GeneralChatService:
 
     @staticmethod
     def _build_agent_messages(
-        history: list[LLMMessage], user_content: str
-    ) -> list[SystemMessage | HumanMessage | AIMessage]:
-        messages = [GeneralChatService._to_langchain_message(m) for m in history]
+        history: list[AnyMessage], user_content: str
+    ) -> list[AnyMessage]:
+        messages = list(history)
         messages.append(HumanMessage(content=user_content))
         return messages
 
@@ -355,18 +358,17 @@ class GeneralChatService:
 
     def _sanitize_history_for_replay(
         self,
-        history: list[LLMMessage],
+        history: list[AnyMessage],
         *,
         require_assistant_response_id: bool,
-    ) -> list[LLMMessage]:
+    ) -> list[AnyMessage]:
         if not history or not require_assistant_response_id:
             return history
 
         dropped = 0
-        kept: list[LLMMessage] = []
+        kept: list[AnyMessage] = []
         for msg in history:
-            role = (msg.role or "").lower()
-            if role == "assistant" and not (msg.response_id or "").strip():
+            if isinstance(msg, AIMessage) and extract_response_id(msg) is None:
                 dropped += 1
                 continue
             kept.append(msg)
@@ -380,14 +382,14 @@ class GeneralChatService:
 
     @staticmethod
     def _drop_trailing_user_message(
-        history: list[LLMMessage],
+        history: list[AnyMessage],
         *,
         user_content: str,
-    ) -> list[LLMMessage]:
+    ) -> list[AnyMessage]:
         if not history:
             return history
         last = history[-1]
-        if (last.role or "").lower() != "user":
+        if not isinstance(last, HumanMessage):
             return history
         if last.content != user_content:
             return history
@@ -671,7 +673,7 @@ class GeneralChatService:
         replay_decision = self._resolve_replay_decision()
         require_assistant_response_id = replay_decision.require_assistant_response_id
         checkpoint_tuple = await CheckpointManager.get_state(thread_id)
-        history: list[LLMMessage] = []
+        history: list[AnyMessage] = []
         existing_messages = None
         if checkpoint_tuple is not None:
             checkpoint_values = (checkpoint_tuple.checkpoint or {}).get("channel_values", {})
@@ -901,7 +903,7 @@ class GeneralChatService:
         replay_decision = self._resolve_replay_decision()
         require_assistant_response_id = replay_decision.require_assistant_response_id
         checkpoint_tuple = await CheckpointManager.get_state(thread_id)
-        history: list[LLMMessage] = []
+        history: list[AnyMessage] = []
         existing_messages = None
         if checkpoint_tuple is not None:
             checkpoint_values = (checkpoint_tuple.checkpoint or {}).get("channel_values", {})
@@ -1022,7 +1024,6 @@ class GeneralChatService:
                     stage_summaries={},
                     metrics={},
                 )
-                legacy_think_parser = LegacyThinkParser()
                 emitted_payload = False
 
                 try:
@@ -1044,7 +1045,6 @@ class GeneralChatService:
                             deltas = extract_stream_delta(
                                 token,
                                 _meta if isinstance(_meta, dict) else None,
-                                legacy_think_parser=legacy_think_parser,
                             )
                             if deltas:
                                 emitted_payload = True
@@ -1114,15 +1114,6 @@ class GeneralChatService:
                                 emitted_payload = True
                                 yield "interrupt", response.model_dump(mode="json")
                                 return
-
-                    flushed_deltas = legacy_think_parser.flush()
-                    if flushed_deltas:
-                        emitted_payload = True
-                        yield "messages", {
-                            "run_id": str(run.id),
-                            "deltas": [delta.to_dict() for delta in flushed_deltas],
-                            "ts": datetime.now(timezone.utc).isoformat(),
-                        }
 
                     result = {
                         "messages": stream_state.messages,
@@ -1442,7 +1433,6 @@ class GeneralChatService:
                 "resumed": True,
             }
 
-            legacy_think_parser = LegacyThinkParser()
             async for mode, chunk in agent.astream(
                 Command(resume=resume_payload),
                 config,
@@ -1461,7 +1451,6 @@ class GeneralChatService:
                     deltas = extract_stream_delta(
                         token,
                         _meta if isinstance(_meta, dict) else None,
-                        legacy_think_parser=legacy_think_parser,
                     )
                     if deltas:
                         node_name = (
@@ -1526,14 +1515,6 @@ class GeneralChatService:
                         )
                         yield "interrupt", response.model_dump(mode="json")
                         return
-
-            flushed_deltas = legacy_think_parser.flush()
-            if flushed_deltas:
-                yield "messages", {
-                    "run_id": str(run.id),
-                    "deltas": [delta.to_dict() for delta in flushed_deltas],
-                    "ts": datetime.now(timezone.utc).isoformat(),
-                }
 
             started_at = run.started_at or datetime.now(timezone.utc)
             result = {

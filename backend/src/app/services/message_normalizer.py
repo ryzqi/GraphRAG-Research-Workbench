@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from langchain.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
+from langchain_core.messages import messages_from_dict
 
 _UNSAFE_RESPONSE_ITEM_TYPES = {
     "message",
@@ -65,24 +66,23 @@ def extract_response_id(message: object) -> str | None:
         return normalized
 
     response_metadata: object | None = None
+    message_id: object | None = None
     if isinstance(message, _LANGCHAIN_MESSAGE_TYPES):
         response_metadata = getattr(message, "response_metadata", None)
+        message_id = getattr(message, "id", None)
     elif isinstance(message, dict):
-        response_metadata = message.get("response_metadata")
+        payload = _message_payload_dict(message)
+        response_metadata = payload.get("response_metadata")
+        message_id = payload.get("id")
 
     if isinstance(response_metadata, dict):
         response_id = _normalize_response_id(response_metadata.get("id"))
         if response_id is not None:
             return response_id
 
-    if isinstance(message, _LANGCHAIN_MESSAGE_TYPES):
-        response_id = _normalize_response_id(getattr(message, "id", None))
-        if response_id is not None:
-            return response_id
-    elif isinstance(message, dict):
-        response_id = _normalize_response_id(message.get("id"))
-        if response_id is not None:
-            return response_id
+    response_id = _normalize_response_id(message_id)
+    if response_id is not None:
+        return response_id
     return None
 
 
@@ -93,6 +93,15 @@ def checkpoint_messages_require_reset(
 ) -> bool:
     if not isinstance(messages, list):
         return True
+    parsed_messages = _try_parse_langchain_message_dicts(messages)
+    if parsed_messages is not None:
+        for message in parsed_messages:
+            if _message_is_unreplayable(
+                message,
+                require_assistant_response_id=require_assistant_response_id,
+            ):
+                return True
+        return False
     for message in messages:
         if _message_is_unreplayable(
             message,
@@ -117,11 +126,12 @@ def _message_is_unreplayable(
     if not isinstance(message, dict):
         return True
 
-    message_type = str(message.get("type") or "").strip().lower()
+    payload = _message_payload_dict(message)
+    message_type = str(payload.get("type") or message.get("type") or "").strip().lower()
     if message_type in _UNSAFE_RESPONSE_ITEM_TYPES:
         return True
 
-    if _content_is_unreplayable(message.get("content")):
+    if _content_is_unreplayable(payload.get("content")):
         return True
 
     if require_assistant_response_id and _is_assistant_message_dict(message):
@@ -150,8 +160,30 @@ def _content_is_unreplayable(content: object) -> bool:
 
 
 def _is_assistant_message_dict(message: dict[str, Any]) -> bool:
-    role = str(message.get("role") or "").strip().lower()
+    payload = _message_payload_dict(message)
+    role = str(payload.get("role") or "").strip().lower()
     if role == "assistant":
         return True
-    message_type = str(message.get("type") or "").strip().lower()
+    message_type = str(payload.get("type") or message.get("type") or "").strip().lower()
     return message_type in {"ai", "assistant"}
+
+
+def _message_payload_dict(message: dict[str, Any]) -> dict[str, Any]:
+    """Normalize dict-shaped messages to a payload-style dict."""
+    data = message.get("data")
+    if isinstance(data, dict):
+        return data
+    return message
+
+
+def _try_parse_langchain_message_dicts(messages: list[object]) -> list[object] | None:
+    if not messages:
+        return []
+    if not all(isinstance(message, dict) for message in messages):
+        return None
+    message_dicts = [message for message in messages if isinstance(message, dict)]
+    try:
+        parsed = messages_from_dict(message_dicts)
+    except Exception:
+        return None
+    return parsed if len(parsed) == len(message_dicts) else None

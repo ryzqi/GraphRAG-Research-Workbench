@@ -59,7 +59,6 @@ from app.services.evidence_guardrails import (
 )
 from app.services.retrieval_service import RetrievalService
 from app.services.streaming import (
-    LegacyThinkParser,
     StreamState,
     apply_updates_chunk,
     extract_answer_text,
@@ -1662,7 +1661,6 @@ class KbChatService:
             metrics=dict(exec_ctx.state.get("metrics") or {}),
             loop_counts=dict(exec_ctx.state.get("loop_counts") or {}),
         )
-        legacy_think_parser = LegacyThinkParser()
 
         def _emit_enveloped(
             *,
@@ -1867,7 +1865,6 @@ class KbChatService:
                         deltas = extract_stream_delta(
                             token,
                             token_meta,
-                            legacy_think_parser=legacy_think_parser,
                         )
                         if deltas:
                             node_name = (
@@ -1949,18 +1946,6 @@ class KbChatService:
                     raise payload
                 if kind == "done":
                     break
-
-            flushed_deltas = legacy_think_parser.flush()
-            if flushed_deltas:
-                yield _emit_enveloped(
-                    event_type="messages",
-                    payload={
-                        "run_id": str(run.id),
-                        "node": None,
-                        "deltas": [delta.to_dict() for delta in flushed_deltas],
-                        "ts": datetime.now(timezone.utc).isoformat(),
-                    },
-                )
 
             self._ensure_no_pending_tool_approval(
                 pending_tool_calls=stream_state.pending_tool_calls,
