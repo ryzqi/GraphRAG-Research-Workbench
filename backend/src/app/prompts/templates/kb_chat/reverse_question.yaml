@@ -1,4 +1,4 @@
-version: "1.3"
+version: "1.4"
 name: kb_chat_reverse_question
 description: "歧义澄清问题提示词"
 
@@ -24,3 +24,6 @@ few_shot_examples:
     output: "请问你指的是哪个具体方案，以及希望用哪些指标评估效果？"
   - input: "帮我看下这个季度表现"
     output: "请问你要分析哪个业务对象、哪个季度，以及关注哪些表现指标？"
+  - input: "这个政策什么时候生效"
+    output: "请问你指的是哪一项政策，以及希望确认哪个地区或机构的生效时间？"
+

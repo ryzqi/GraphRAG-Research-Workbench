@@ -1,4 +1,4 @@
-version: "1.2"
+version: "1.3"
 name: tools_research_plan
 description: "研究计划工具提示词"
 
@@ -70,3 +70,12 @@ few_shot_examples:
       - 外部搜索: 未启用
       要求：最多 4 个子任务
     output: '{"original_question": "为什么近两季度用户留存下降？", "complexity": "complex", "research_type": "analytical", "subtasks": [{"id": "task_1", "description": "拆分留存下降的用户分层特征", "search_queries": ["用户留存 分层 渠道 版本"], "target_sources": "kb", "dependencies": [], "priority": 1}], "estimated_steps": 4, "suggested_approach": "先分层定位，再验证关键假设", "key_assumptions": ["埋点口径在对比周期内一致"], "success_criteria": ["定位到可验证的主要下滑因子"]}'
+  - input: |
+      研究问题：A 与 B 两种部署方式的成本与可靠性差异？
+      背景上下文：目标是季度预算优化
+      可用资源：
+      - 知识库: 2 个知识库可用
+      - 外部搜索: 已启用
+      要求：最多 5 个子任务
+    output: '{"original_question": "A 与 B 两种部署方式的成本与可靠性差异？", "complexity": "complex", "research_type": "comparative", "subtasks": [{"id": "task_1", "description": "收集 A 方案成本与可靠性指标", "search_queries": ["A 方案 成本 可用性 故障恢复"], "target_sources": "kb", "dependencies": [], "priority": 1}, {"id": "task_2", "description": "收集 B 方案成本与可靠性指标", "search_queries": ["B 方案 成本 可用性 故障恢复"], "target_sources": "kb", "dependencies": [], "priority": 1}, {"id": "task_3", "description": "对比差异并验证关键口径一致性", "search_queries": ["A B 方案 指标 口径 对齐"], "target_sources": "web", "dependencies": ["task_1", "task_2"], "priority": 2}], "estimated_steps": 5, "suggested_approach": "先并行取证，再统一口径后比较", "key_assumptions": ["A/B 指标口径可对齐"], "success_criteria": ["形成可复核的对比结论"]}'
+

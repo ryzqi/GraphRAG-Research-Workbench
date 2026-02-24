@@ -1,4 +1,4 @@
-version: "1.3"
+version: "1.4"
 name: kb_chat_transform_query
 description: "查询改写/扩检提示词"
 
@@ -7,15 +7,18 @@ template: |
 
   改写目标：在不改变问题真实意图的前提下，提高召回质量。
 
+  reason -> 策略映射：
+  - no_evidence / insufficient：适度扩词，补同义词与上位术语。
+  - not_relevant / too_broad / off_topic：强化限定词，去掉噪声表达。
+  - needs_clarification：优先吸收 hint 中给出的关键约束。
+  - 其他未知值：执行保守改写（仅去噪 + 术语规范化）。
+
   规则：
   1. 必须保留关键实体、时间范围、约束条件与问题口径。
   2. 可补充同义词、常见别名、中英文名称或缩写，但不得引入新事实。
-  3. 当原因为 no_evidence/insufficient：适度扩词并放宽表述。
-  4. 当原因为 not_relevant/too_broad/off_topic：强化限定词并去除噪声。
-  5. 当原因为 needs_clarification：优先补齐 hint 中给出的关键约束。
-  6. 若 hint 有效，应优先吸收；若 hint 为空或无效，可忽略。
-  7. 若 reason 不在已知类别，执行“保守改写”：仅做去噪与术语规范化。
-  8. 只输出一行查询文本（建议空格分隔关键词），禁止解释、代码块、编号。
+  3. 若 hint 有效，应优先吸收；若 hint 为空或无效，可忽略。
+  4. 只输出一行查询文本（建议空格分隔关键词），禁止解释、代码块、编号。
+  5. 输出前自检：改写后仍能映射回原问题核心意图。
 
   用户问题：{question}
   原因：{reason}
@@ -43,3 +46,9 @@ few_shot_examples:
       原因：not_relevant
       提示：请明确政策名称与影响对象
     output: "政策 名称 影响 对象 范围"
+  - input: |
+      用户问题：SDK 2.1 登录报错 E401 怎么处理
+      原因：unknown_reason
+      提示：
+    output: "SDK 2.1 登录 E401 报错 处理"
+

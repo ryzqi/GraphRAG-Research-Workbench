@@ -1,4 +1,4 @@
-version: "1.2"
+version: "1.3"
 name: tools_report_generate
 description: "研究报告生成工具提示词"
 
@@ -66,4 +66,17 @@ few_shot_examples:
       引用来源：
       [1] 实验报告...
       报告格式要求：标准模式
-    output: '{"report_md": "# 研究报告\n\n## 摘要\n...", "sections": [{"title": "摘要", "content": "..."}], "metadata": {"confidence_level": "partial", "evidence_count": 1, "has_conflicts": false, "generated_at": "2026-01-01T00:00:00Z"}}'
+    output: '{"report_md": "# 研究报告\\n\\n## 摘要\\n...", "sections": [{"title": "摘要", "content": "..."}], "metadata": {"confidence_level": "partial", "evidence_count": 1, "has_conflicts": false, "generated_at": "2026-01-01T00:00:00Z"}}'
+  - input: |
+      研究问题：A 方案是否优于 B 方案？
+      研究发现：
+      - 来源一支持 A
+      - 来源二支持 B
+      证据摘要：
+      {"confidence_level": "insufficient", "has_conflicts": true}
+      引用来源：
+      [1] 对照实验
+      [2] 线上观测
+      报告格式要求：标准模式
+    output: '{"report_md": "# 研究报告\\n\\n## 摘要\\n证据存在冲突...", "sections": [{"title": "摘要", "content": "证据存在冲突..."}], "metadata": {"confidence_level": "insufficient", "evidence_count": 2, "has_conflicts": true, "generated_at": "2026-01-01T00:00:00Z"}}'
+

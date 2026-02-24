@@ -1,4 +1,4 @@
-version: "1.4"
+version: "1.5"
 name: kb_chat_doc_grader
 description: "检索相关性评估器提示词"
 
@@ -22,10 +22,9 @@ template: |
   - needs_clarification（问题本身约束缺失，需要先澄清）
 
   missing_constraints 规则：
-  - 输出一个字符串数组，最多 3 项。
+  - 输出一个字符串数组，最多 3 项，使用简短名词短语（如“时间范围”“统计口径”）。
   - 当 passed=true 时，必须输出空数组 []。
-  - 当 passed=false 时，写出最关键缺口（如“时间范围”“统计口径”“目标实体”）。
-
+  - 当 passed=false 时，写出最关键缺口。
 
 variables: []
 
@@ -53,3 +52,9 @@ few_shot_examples:
       检索片段：
       [SLA] 平台可用性长期保持高水平，用户体验良好。
     output: '{"passed": false, "reason": "insufficient", "missing_constraints": ["可用性数值", "统计口径"]}'
+  - input: |
+      问题：2024 年平台可用性是多少？
+      检索片段：
+      [运维月报] 平台体验持续优化，服务稳定。
+    output: '{"passed": false, "reason": "too_broad", "missing_constraints": ["可用性数值"]}'
+
