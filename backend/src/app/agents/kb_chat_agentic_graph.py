@@ -533,6 +533,30 @@ def _build_node_output_display_items(
             label="是否使用记忆",
             value=summary.get("memory_included"),
         )
+        _append_display_item(
+            items,
+            key="summary_source",
+            label="摘要来源",
+            value=summary.get("summary_source"),
+        )
+        _append_display_item(
+            items,
+            key="compression_ratio",
+            label="压缩比",
+            value=summary.get("compression_ratio"),
+        )
+        _append_display_item(
+            items,
+            key="llm_resolve_used",
+            label="冲突消解",
+            value=summary.get("llm_resolve_used"),
+        )
+        _append_display_item(
+            items,
+            key="merge_fallback_used",
+            label="回退启发式",
+            value=summary.get("fallback_used"),
+        )
     elif node_name == "coref_rewrite":
         _append_display_item(
             items,

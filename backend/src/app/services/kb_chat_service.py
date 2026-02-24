@@ -973,6 +973,11 @@ class KbChatService:
                 "used_best_answer",
                 "review_passed",
                 "latency_ms",
+                "summary_source",
+                "compression_ratio",
+                "llm_resolve_used",
+                "llm_resolve_reason",
+                "fallback_used",
             ):
                 value = node_summary.get(key)
                 if value is not None:

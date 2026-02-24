@@ -470,6 +470,10 @@ function buildFallbackOutputItems(
         value: pickText(snapshot, 'display_context', 'merged_context'),
       });
       pushDisplayItem(items, { key: 'memory_included', label: '是否使用记忆', value: summary.memory_included });
+      pushDisplayItem(items, { key: 'summary_source', label: '摘要来源', value: summary.summary_source });
+      pushDisplayItem(items, { key: 'compression_ratio', label: '压缩比', value: summary.compression_ratio });
+      pushDisplayItem(items, { key: 'llm_resolve_used', label: '冲突消解', value: summary.llm_resolve_used });
+      pushDisplayItem(items, { key: 'merge_fallback_used', label: '回退启发式', value: summary.fallback_used });
     } else if (nodeId === 'coref_rewrite') {
       pushDisplayItem(items, { key: 'coref_query', label: '改写后问题', value: pickText(snapshot, 'coref_query') });
       pushDisplayItem(items, { key: 'rewritten', label: '是否改写', value: summary.rewritten });

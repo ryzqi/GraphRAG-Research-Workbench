@@ -79,9 +79,14 @@ class ContextFrame(TypedDict, total=False):
     """Structured context assembled before rewrite/retrieval."""
 
     summary_text: str
+    summary_source: Literal["persisted", "generated", "none"]
     recent_turns: list[ContextTurn]
+    selected_turns: list[ContextTurn]
     memory_snippet: str
     current_question: str
+    merge_strategy: Literal["builtin_summary_first"]
+    merge_fallback_used: bool
+    merge_notes: list[str]
 
 
 # -----------------------------

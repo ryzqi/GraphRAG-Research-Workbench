@@ -7,6 +7,8 @@ These nodes are intentionally minimal first:
 
 from __future__ import annotations
 
+import asyncio
+import re
 import time
 from typing import Any
 
@@ -18,11 +20,13 @@ from app.agents.kb_chat_memory import (
     render_kb_chat_memory_snippet,
 )
 from app.core.settings import Settings
+from app.integrations.chat_model_factory import create_chat_model
 from app.services.query_rewrite_service import (
     HYDE_NUM_HYPOTHESES,
     QueryRewriteService,
     build_query_items,
 )
+from app.utils.token_counter import count_tokens_approximately
 
 from .budget import (
     ensure_budget_initialized,
@@ -79,6 +83,13 @@ def _latest_summary_message(messages: list[Any]) -> str:
             if isinstance(content, str) and content.startswith("对话摘要："):
                 return content
     return ""
+
+
+def _strip_summary_prefix(summary: str) -> str:
+    text = summary.strip()
+    if text.startswith("对话摘要："):
+        text = text[len("对话摘要：") :].strip()
+    return text
 
 
 def _recent_dialogue(messages: list[Any], *, max_turns: int = 3) -> str:
@@ -161,6 +172,109 @@ def _render_display_context(
     return "\n\n".join(part for part in parts if part).strip()
 
 
+def _turns_to_langchain_messages(turns: list[dict[str, str]]) -> list[Any]:
+    lc_messages: list[Any] = []
+    for turn in turns:
+        text = (turn.get("text") or "").strip()
+        if not text:
+            continue
+        if turn.get("role") == "user":
+            lc_messages.append(HumanMessage(content=text))
+        elif turn.get("role") == "assistant":
+            lc_messages.append(AIMessage(content=text))
+    return lc_messages
+
+
+def _extract_summary_text(result: object) -> str:
+    running = getattr(result, "running_summary", None)
+    if running is not None:
+        text = getattr(running, "summary", None) or getattr(running, "text", None)
+        if isinstance(text, str) and text.strip():
+            return text.strip()
+
+    messages = getattr(result, "messages", None)
+    if isinstance(messages, list) and messages:
+        first = messages[0]
+        content = getattr(first, "content", None)
+        if isinstance(content, str) and content.strip():
+            return content.strip()
+    return ""
+
+
+async def _generate_summary_from_turns(
+    *, turns: list[dict[str, str]], settings: Settings
+) -> str:
+    if not turns:
+        return ""
+    lc_messages = _turns_to_langchain_messages(turns)[-12:]
+    if not lc_messages:
+        return ""
+    try:
+        from langmem.short_term import summarize_messages
+    except Exception:  # pragma: no cover
+        return ""
+
+    try:
+        model = create_chat_model(settings=settings)
+        summary_model = model.bind(max_tokens=settings.summary_max_tokens)
+        token_counter = getattr(model, "get_num_tokens_from_messages", None)
+        if token_counter is None:
+
+            def token_counter(msgs: list[object]) -> int:
+                return sum(
+                    count_tokens_approximately(getattr(m, "content", "") or "")
+                    for m in msgs
+                )
+    except Exception:  # pragma: no cover
+        return ""
+
+    def _run() -> object:
+        return summarize_messages(
+            lc_messages,
+            running_summary=None,
+            token_counter=token_counter,
+            model=summary_model,
+            max_tokens=settings.summary_max_tokens,
+            max_tokens_before_summary=0,
+            max_summary_tokens=settings.summary_max_tokens,
+        )
+
+    try:
+        result = await asyncio.to_thread(_run)
+    except Exception:  # pragma: no cover
+        return ""
+    return _extract_summary_text(result)
+
+
+def _select_turns_for_merge(
+    turns: list[dict[str, str]], *, question: str, has_summary: bool
+) -> list[dict[str, str]]:
+    if not turns:
+        return []
+    normalized_question = _normalize_for_compare(question)
+    selected: list[dict[str, str]] = []
+    for turn in turns:
+        role = turn.get("role")
+        text = (turn.get("text") or "").strip()
+        if not text:
+            continue
+        if role == "user" and _normalize_for_compare(text) == normalized_question:
+            continue
+        selected.append({"role": role or "assistant", "text": text})
+    if not selected:
+        return []
+    max_turns = 2 if has_summary else 4
+    return selected[-max_turns * 2 :]
+
+
+def _needs_conflict_resolution(*, summary_text: str, memory_snippet: str) -> bool:
+    if not summary_text or not memory_snippet:
+        return False
+    summary_numbers = set(re.findall(r"\d+", summary_text))
+    memory_numbers = set(re.findall(r"\d+", memory_snippet))
+    return bool(summary_numbers and memory_numbers and summary_numbers.isdisjoint(memory_numbers))
+
+
 async def merge_context(
     state: dict,
     runtime: Runtime[Any],
@@ -181,8 +295,15 @@ async def merge_context(
         messages = []
 
     user_input = _extract_user_input(state)
-    summary = _latest_summary_message(messages)
-    turns = [] if summary else _recent_turns(messages, max_turns=3)
+    persisted_summary = _latest_summary_message(messages)
+    summary_text = _strip_summary_prefix(persisted_summary)
+    summary_source = "persisted" if summary_text else "none"
+    turns = _recent_turns(messages, max_turns=6)
+    if not summary_text:
+        generated = await _generate_summary_from_turns(turns=turns, settings=settings)
+        if generated:
+            summary_text = generated
+            summary_source = "generated"
 
     memory_snippet = ""
     if settings.memory_enabled and runtime.store is not None:
@@ -208,30 +329,80 @@ async def merge_context(
             memory_snippet = ""
 
     question = user_input.strip()
+    selected_turns = _select_turns_for_merge(
+        turns,
+        question=question,
+        has_summary=bool(summary_text),
+    )
+    merge_notes: list[str] = []
+    llm_resolve_used = False
+    llm_resolve_reason: str | None = None
+    fallback_used = False
+    keep_memory = True
+    if _needs_conflict_resolution(summary_text=summary_text, memory_snippet=memory_snippet):
+        llm_resolve_used = True
+        try:
+            svc = QueryRewriteService(settings=settings)
+            resolve = await svc.resolve_merge_context_conflict(
+                question=question,
+                summary_text=summary_text,
+                memory_snippet=memory_snippet,
+            )
+            if resolve.success:
+                summary_text = resolve.summary_text or summary_text
+                keep_memory = bool(resolve.keep_memory)
+                merge_notes = resolve.notes
+            else:
+                fallback_used = True
+            llm_resolve_reason = resolve.reason
+        except Exception:  # pragma: no cover
+            fallback_used = True
+            llm_resolve_reason = "error"
+
+    memory_for_render = memory_snippet if keep_memory else ""
     display_context = _render_display_context(
-        summary=summary,
-        turns=turns,
-        memory_snippet=memory_snippet,
+        summary=f"对话摘要：\n{summary_text}" if summary_text else "",
+        turns=selected_turns,
+        memory_snippet=memory_for_render,
         question=question,
     )
     merged = display_context or question
     rewrite_input_query = question
     context_frame: dict[str, Any] = {
-        "summary_text": summary,
+        "summary_text": summary_text,
+        "summary_source": summary_source,
         "recent_turns": turns,
-        "memory_snippet": memory_snippet,
+        "selected_turns": selected_turns,
+        "memory_snippet": memory_for_render,
         "current_question": question,
+        "merge_strategy": "builtin_summary_first",
+        "merge_fallback_used": fallback_used,
+        "merge_notes": merge_notes,
     }
+    source_chars = (
+        len(summary_text)
+        + sum(len((turn.get("text") or "").strip()) for turn in turns)
+        + len(memory_snippet)
+        + len(question)
+    )
+    compression_ratio = round(len(merged) / source_chars, 4) if source_chars else 1.0
 
     stage_summaries = _merge_stage_summary(
         state,
         "merge_context",
         {
             "latency_ms": int((time.perf_counter() - start) * 1000),
-            "memory_included": bool(memory_snippet),
+            "memory_included": bool(memory_for_render),
             "input_source": "user_input",
             "input_chars": len(question),
             "output_chars": len(merged),
+            "summary_source": summary_source,
+            "turns_seen": len(turns),
+            "turns_selected": len(selected_turns),
+            "compression_ratio": compression_ratio,
+            "llm_resolve_used": llm_resolve_used,
+            "llm_resolve_reason": llm_resolve_reason,
+            "fallback_used": fallback_used,
             "completed_at": now_iso(),
         },
         settings=settings,

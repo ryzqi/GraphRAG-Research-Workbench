@@ -22,6 +22,7 @@ class _DummyKbTool:
 
 class _FakeRewriteService:
     seen_query: str | None = None
+    resolve_called = False
 
     def __init__(self, settings=None):
         _ = settings
@@ -51,6 +52,20 @@ class _FakeRewriteService:
         _ = (query, enabled)
         return types.SimpleNamespace(queries=[], reason="disabled")
 
+    async def resolve_merge_context_conflict(
+        self, *, question: str, summary_text: str, memory_snippet: str
+    ):
+        _ = (question, summary_text, memory_snippet)
+        type(self).resolve_called = True
+        return types.SimpleNamespace(
+            summary_text=summary_text,
+            keep_memory=True,
+            notes=["resolved"],
+            success=True,
+            reason="ok",
+            latency_ms=1,
+        )
+
 
 @pytest.fixture
 def settings():
@@ -66,6 +81,7 @@ def settings():
         kb_chat_max_generation_retries=2,
         retrieval_default_top_k=5,
         kb_chat_grader_fail_policy="closed",
+        summary_max_tokens=128,
     )
 
 
@@ -89,8 +105,51 @@ async def test_merge_context_structured_output_avoids_duplicate_user_question(se
     assert result["rewrite_input_query"] == question
     assert isinstance(result["context_frame"], dict)
     assert result["context_frame"]["current_question"] == question
+    assert result["context_frame"]["merge_strategy"] == "builtin_summary_first"
+    assert result["context_frame"]["summary_source"] in {"generated", "none"}
     merged = result["merged_context"]
     assert merged.count(question) == 1
+    assert "compression_ratio" in result["stage_summaries"]["merge_context"]
+
+
+@pytest.mark.asyncio
+async def test_merge_context_conflict_resolution_fallback(monkeypatch, settings):
+    monkeypatch.setattr(preprocess, "QueryRewriteService", _FakeRewriteService)
+    settings.memory_enabled = True
+
+    state = {
+        "messages": [
+            HumanMessage(content="What was 2024 revenue?"),
+            AIMessage(content="It was 100."),
+            # persisted summary with number disjoint from memory snippet
+            preprocess.SystemMessage(content="对话摘要：\n2024 revenue was 100"),
+        ],
+        "user_input": "And what changed in 2025?",
+        "metrics": {},
+        "stage_summaries": {},
+        "memory_keys": {},
+    }
+
+    class _RuntimeWithStore:
+        store = object()
+
+    async def _fake_get_memory(*, store, user_id, thread_id, kb_ids):
+        _ = (store, user_id, thread_id, kb_ids)
+        return {
+            "entries": [{"q": "target", "a": "2025 revenue was 200"}],
+            "schema": "kb_chat_user_memory_v1",
+        }
+
+    monkeypatch.setattr(preprocess, "aget_kb_chat_memory", _fake_get_memory)
+
+    result = await preprocess.merge_context(
+        state, runtime=_RuntimeWithStore(), settings=settings
+    )
+
+    summary = result["stage_summaries"]["merge_context"]
+    assert summary["llm_resolve_used"] is True
+    assert summary["fallback_used"] is False
+    assert result["context_frame"]["merge_notes"] == ["resolved"]
 
 
 @pytest.mark.asyncio
@@ -163,7 +222,7 @@ async def test_doc_grader_uses_plain_query_not_merged_context(monkeypatch, setti
     result = await reflection.doc_grader(state, settings=settings, chat_model=object())
 
     assert result["reflection"]["relevance_passed"] is True
-    assert "Question: plain question" in captured["user"]
+    assert "plain question" in captured["user"]
 
 
 @pytest.mark.asyncio

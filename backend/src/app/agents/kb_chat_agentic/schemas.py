@@ -69,6 +69,16 @@ class TransformQueryDecision(BaseModel):
     query: str = Field(..., min_length=1)
 
 
+class MergeContextResolutionDecision(BaseModel):
+    """Structured output for merge-context conflict resolution."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    summary_text: str = Field(default="", max_length=1200)
+    keep_memory: bool = True
+    notes: list[str] = Field(default_factory=list, max_length=4)
+
+
 ComplexityStrategy = Literal["direct", "decomposition", "multi_query"]
 
 

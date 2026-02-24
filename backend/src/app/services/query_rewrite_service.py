@@ -23,6 +23,7 @@ from app.agents.kb_chat_agentic.schemas import (
     ComplexityDecision,
     DecompositionDecision,
     HyDEBatchDecision,
+    MergeContextResolutionDecision,
     MultiQueryDecision,
     ReverseQuestionDecision,
     TransformQueryDecision,
@@ -85,6 +86,16 @@ class ComplexityRouteResult:
 class StructuredCallResult:
     payload: BaseModel | None = None
     success: bool = False
+    reason: str | None = None
+    latency_ms: int | None = None
+
+
+@dataclass(slots=True)
+class MergeContextResolutionResult:
+    summary_text: str
+    keep_memory: bool
+    notes: list[str]
+    success: bool
     reason: str | None = None
     latency_ms: int | None = None
 
@@ -581,6 +592,50 @@ class QueryRewriteService:
         if fallback.reason is None:
             fallback.reason = structured_result.reason or "fallback_rewrite"
         return fallback
+
+    async def resolve_merge_context_conflict(
+        self,
+        *,
+        question: str,
+        summary_text: str,
+        memory_snippet: str,
+    ) -> MergeContextResolutionResult:
+        """Resolve conflict between summary and memory content for context merge."""
+        structured_result = await self._call_prompt_structured(
+            "kb_chat/context_merge",
+            schema=MergeContextResolutionDecision,
+            timeout_seconds=0.8,
+            max_tokens=192,
+            question=_normalize_whitespace(question),
+            summary_text=_normalize_whitespace(summary_text),
+            memory_snippet=_normalize_whitespace(memory_snippet),
+        )
+        payload = structured_result.payload
+        if (
+            structured_result.success
+            and isinstance(payload, MergeContextResolutionDecision)
+        ):
+            summary = _normalize_whitespace(payload.summary_text)
+            notes = _dedupe_keep_order(
+                [_normalize_whitespace(str(note)) for note in payload.notes]
+            )[:4]
+            return MergeContextResolutionResult(
+                summary_text=summary,
+                keep_memory=bool(payload.keep_memory),
+                notes=notes,
+                success=True,
+                reason=structured_result.reason,
+                latency_ms=structured_result.latency_ms,
+            )
+
+        return MergeContextResolutionResult(
+            summary_text=_normalize_whitespace(summary_text),
+            keep_memory=True,
+            notes=[],
+            success=False,
+            reason=structured_result.reason or "fallback_keep_inputs",
+            latency_ms=structured_result.latency_ms,
+        )
 
     async def classify_complexity(
         self,

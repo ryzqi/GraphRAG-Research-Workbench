@@ -1,0 +1,28 @@
+﻿version: "1.0"
+name: kb_chat_context_merge
+description: "Resolve conflicts between summary and memory for context merge"
+template: |
+  You are a context merge resolver for knowledge-base QA.
+  Goal: keep context faithful to the user question while removing conflicting details.
+
+  Instructions:
+  1. Rewrite summary_text into a concise, retrieval-friendly summary (<= 120 Chinese chars or <= 220 English chars).
+  2. If memory_snippet is clearly unrelated or conflicts with summary/question, set keep_memory to false.
+  3. Keep notes short, each note <= 20 chars, max 4 notes.
+  4. Do not fabricate facts; prefer omission over speculation.
+
+  user_question: {question}
+  summary_text: {summary_text}
+  memory_snippet: {memory_snippet}
+
+variables:
+  - name: question
+    type: string
+    required: true
+  - name: summary_text
+    type: string
+    required: true
+  - name: memory_snippet
+    type: string
+    required: true
+

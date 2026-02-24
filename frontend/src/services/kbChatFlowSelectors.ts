@@ -21,7 +21,15 @@ const DETAIL_ITEM_LIMIT: Record<DetailSectionKind, number> = {
 const NODE_DETAIL_POLICY_MAP: Record<string, NodeDetailPolicy> = {
   merge_context: {
     input: ['user_input'],
-    output: ['current_question', 'recent_turns', 'merged_context', 'memory_included'],
+    output: [
+      'current_question',
+      'summary_source',
+      'compression_ratio',
+      'llm_resolve_used',
+      'merge_fallback_used',
+      'merged_context',
+      'memory_included',
+    ],
   },
   coref_rewrite: {
     input: ['query'],
