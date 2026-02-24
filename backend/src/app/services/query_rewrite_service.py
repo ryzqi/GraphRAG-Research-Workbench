@@ -16,7 +16,8 @@ import time
 from dataclasses import dataclass
 from typing import Iterable
 
-from pydantic import BaseModel
+from langchain.agents import create_agent
+from pydantic import BaseModel, ValidationError
 
 from app.agents.kb_chat_agentic.schemas import (
     ComplexityDecision,
@@ -30,10 +31,6 @@ from app.core.settings import Settings, get_settings
 from app.integrations.chat_model_factory import create_chat_model
 from app.prompts import get_prompt_loader
 from app.schemas.query_enhancement import QueryItem
-from app.services.tool_strategy_structured import (
-    create_tool_strategy_agent,
-    invoke_tool_strategy_structured,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -286,13 +283,65 @@ class QueryRewriteService:
         agent = self._structured_agents.get(schema)
         if agent is not None:
             return agent
-        agent = create_tool_strategy_agent(
-            chat_model=self._get_structured_chat_model(),
-            schema=schema,
+        agent = create_agent(
+            model=self._get_structured_chat_model(),
+            tools=[],
             system_prompt="",
+            response_format=schema,
         )
         self._structured_agents[schema] = agent
         return agent
+
+    @staticmethod
+    def _classify_structured_error(exc: Exception) -> str:
+        name = exc.__class__.__name__
+        if name == "StructuredOutputValidationError":
+            return "invalid_schema"
+        if name == "MultipleStructuredOutputsError":
+            return "multiple_structured_outputs"
+        return "error"
+
+    async def _invoke_structured(
+        self,
+        *,
+        agent: object,
+        schema: type[BaseModel],
+        user_prompt: str,
+        max_tokens: int,
+    ) -> StructuredCallResult:
+        _ = max_tokens
+        request = {"messages": [{"role": "user", "content": user_prompt}]}
+        try:
+            ainvoke = getattr(agent, "ainvoke", None)
+            if callable(ainvoke):
+                result = await ainvoke(request)
+            else:
+                result = await asyncio.to_thread(agent.invoke, request)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            return StructuredCallResult(
+                payload=None,
+                success=False,
+                reason=self._classify_structured_error(exc),
+            )
+
+        if not isinstance(result, dict):
+            return StructuredCallResult(
+                payload=None, success=False, reason="empty_structured_response"
+            )
+        structured_payload = result.get("structured_response")
+        if structured_payload is None:
+            return StructuredCallResult(
+                payload=None, success=False, reason="empty_structured_response"
+            )
+        if isinstance(structured_payload, schema):
+            return StructuredCallResult(payload=structured_payload, success=True)
+        try:
+            payload = schema.model_validate(structured_payload)
+        except ValidationError:
+            return StructuredCallResult(payload=None, success=False, reason="invalid_schema")
+        return StructuredCallResult(payload=payload, success=True)
 
     async def rewrite(
         self,
@@ -784,7 +833,7 @@ class QueryRewriteService:
         max_tokens: int,
         **kwargs: object,
     ) -> StructuredCallResult:
-        """Call prompt and parse structured output via ToolStrategy."""
+        """Call prompt and parse structured output via create_agent(response_format=Schema)."""
         try:
             prompt = self._prompts.render(prompt_key, **kwargs)
         except KeyError:
@@ -809,19 +858,17 @@ class QueryRewriteService:
         agent = self._get_structured_agent(schema)
         try:
             if timeout_value <= 0:
-                structured = await invoke_tool_strategy_structured(
+                structured = await self._invoke_structured(
                     agent=agent,
                     schema=schema,
-                    system_prompt="",
                     user_prompt=prompt,
                     max_tokens=max_tokens,
                 )
             else:
                 structured = await asyncio.wait_for(
-                    invoke_tool_strategy_structured(
+                    self._invoke_structured(
                         agent=agent,
                         schema=schema,
-                        system_prompt="",
                         user_prompt=prompt,
                         max_tokens=max_tokens,
                     ),
@@ -849,19 +896,17 @@ class QueryRewriteService:
             )
 
         latency_ms = int((time.perf_counter() - start_time) * 1000)
-        payload = structured.payload
-        reason = structured.reason
-        if payload is None:
+        if not structured.success or structured.payload is None:
             return StructuredCallResult(
                 payload=None,
                 success=False,
-                reason=reason or "invalid_schema",
+                reason=structured.reason or "invalid_schema",
                 latency_ms=latency_ms,
             )
         return StructuredCallResult(
-            payload=payload,
+            payload=structured.payload,
             success=True,
-            reason=reason,
+            reason=structured.reason,
             latency_ms=latency_ms,
         )
 

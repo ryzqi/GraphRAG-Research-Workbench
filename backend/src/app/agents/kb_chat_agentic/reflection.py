@@ -13,10 +13,11 @@ import re
 import time
 from typing import Any, TypeVar
 
+from langchain.agents import create_agent
 from langchain.messages import AIMessage, HumanMessage, SystemMessage
 from langchain.tools import BaseTool
 from langchain_openai import ChatOpenAI
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from app.core.settings import Settings, get_settings
 from app.prompts import get_prompt_loader
@@ -29,7 +30,6 @@ from app.services.query_rewrite_service import (
     QueryRewriteService,
     build_query_items,
 )
-from app.services.tool_strategy_structured import invoke_tool_strategy_structured
 
 from .budget import now_iso
 from .json_safety import ensure_json_safe
@@ -119,6 +119,15 @@ def _render_prompt_or_default(prompt_key: str, default: str) -> str:
 _StructuredT = TypeVar("_StructuredT", bound=BaseModel)
 
 
+def _classify_structured_error(exc: Exception) -> str:
+    name = exc.__class__.__name__
+    if name == "StructuredOutputValidationError":
+        return "invalid_schema"
+    if name == "MultipleStructuredOutputsError":
+        return "multiple_structured_outputs"
+    return "error"
+
+
 async def _judge_structured(
     *,
     chat_model: ChatOpenAI,
@@ -127,16 +136,32 @@ async def _judge_structured(
     user: str,
     max_tokens: int,
 ) -> tuple[_StructuredT | None, str | None]:
-    result = await invoke_tool_strategy_structured(
-        chat_model=chat_model,
-        schema=schema,
+    _ = max_tokens
+    agent = create_agent(
+        model=chat_model,
+        tools=[],
         system_prompt=system,
-        user_prompt=user,
-        max_tokens=max_tokens,
+        response_format=schema,
     )
-    if result.payload is None:
-        return None, result.reason or "invalid_schema"
-    return result.payload, result.reason
+    request = {"messages": [{"role": "user", "content": user}]}
+    try:
+        result = await agent.ainvoke(request)
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        return None, _classify_structured_error(exc)
+    if not isinstance(result, dict):
+        return None, "empty_structured_response"
+    structured_payload = result.get("structured_response")
+    if structured_payload is None:
+        return None, "empty_structured_response"
+    if isinstance(structured_payload, schema):
+        return structured_payload, None
+    try:
+        payload = schema.model_validate(structured_payload)
+    except ValidationError:
+        return None, "invalid_schema"
+    return payload, None
 
 
 def _merge_stage_summary(

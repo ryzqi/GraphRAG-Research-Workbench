@@ -50,7 +50,7 @@ class RerankClient:
         }
         headers = {"Authorization": f"Bearer {self._api_key}"} if self._api_key else {}
         timeout = timeout_seconds or self._settings.retrieval_rerank_timeout_seconds
-        url = f"{self._base_url}/v1/rerank"
+        url = f"{self._base_url}/rerank"
 
         async def _call(client: httpx.AsyncClient) -> dict:
             last_exc: Exception | None = None
