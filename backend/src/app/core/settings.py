@@ -314,8 +314,8 @@ class Settings(BaseSettings):
     )
 
     # 检索配置
-    retrieval_default_top_k: int = Field(8, alias="RETRIEVAL_DEFAULT_TOP_K")
-    retrieval_max_top_k: int = Field(50, alias="RETRIEVAL_MAX_TOP_K")
+    retrieval_default_top_k: int = Field(10, alias="RETRIEVAL_DEFAULT_TOP_K")
+    retrieval_max_top_k: int = Field(40, alias="RETRIEVAL_MAX_TOP_K")
     retrieval_cache_ttl_seconds: int = Field(300, alias="RETRIEVAL_CACHE_TTL_SECONDS")
     retrieval_cache_enabled: bool = Field(True, alias="RETRIEVAL_CACHE_ENABLED")
     retrieval_min_score: float | None = Field(None, alias="RETRIEVAL_MIN_SCORE")
@@ -323,10 +323,10 @@ class Settings(BaseSettings):
     retrieval_hybrid_enabled: bool = Field(True, alias="RETRIEVAL_HYBRID_ENABLED")
     retrieval_hybrid_ranker: str = Field("rrf", alias="RETRIEVAL_HYBRID_RANKER")
     retrieval_hybrid_dense_weight: float = Field(
-        0.7, alias="RETRIEVAL_HYBRID_DENSE_WEIGHT"
+        0.5, alias="RETRIEVAL_HYBRID_DENSE_WEIGHT"
     )
     retrieval_hybrid_sparse_weight: float = Field(
-        0.3, alias="RETRIEVAL_HYBRID_SPARSE_WEIGHT"
+        0.5, alias="RETRIEVAL_HYBRID_SPARSE_WEIGHT"
     )
     retrieval_hybrid_rrf_k: int = Field(60, alias="RETRIEVAL_HYBRID_RRF_K")
     retrieval_query_rewrite_enabled: bool = Field(

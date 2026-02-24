@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 
 /**
  * 知识库问答页面
@@ -26,7 +26,6 @@ import RestartAltIcon from '@mui/icons-material/RestartAlt';
 import InsightsIcon from '@mui/icons-material/Insights';
 import { Button } from '../components/ui/Button';
 import { ErrorAlert } from '../components/ui/ErrorAlert';
-import { KnowledgeBaseSelector } from '../components/KnowledgeBaseSelector';
 import { KbChatConfigPanel } from '../components/chat/KbChatConfigPanel';
 
 import type { ChatMessage } from '../components/chat/MessageList';
@@ -47,8 +46,6 @@ import {
   type ChatSession,
   createChatSession,
   getKbChatGraphSchema,
-  getChatMessages,
-  getChatSession,
   isUnexpectedStreamEnd,
   resumeClarification,
   resolveTerminalRunStatus,
@@ -56,33 +53,39 @@ import {
   streamChatMessage,
   streamResumeClarification,
 } from '../services/chats';
-import { HttpError } from '../services/http';
 import { useSelectableKnowledgeBases } from '../hooks/queries/useKnowledgeBases';
 import { useRecentHistory } from '../hooks/useRecentHistory';
 import { WelcomeScreen } from '../components/chat/WelcomeScreen';
-import { InputComposer } from '../components/chat/InputComposer';
-import { KbChatFlowPanel } from '../components/chat/KbChatFlowPanel';
-import { createChatStreamMetricsCollector } from '../services/chatStreamingMetrics';
-import {
-  resolveFinalizeNodeIds,
-  shouldRevealAnswerOnNodeEvent,
-} from '../services/kbChatAnswerReveal';
-import { resolveActiveAssistantId } from '../services/kbChatAssistantSelection';
-import { validateKbChatConfig } from '../services/kbChatConfig';
-import { hasSelectedParentChildKnowledgeBase } from '../services/kbChatStrategyAvailability';
+import { KbChatInputPanel } from '../components/chat/KbChatInputPanel';
 import { getErrorMessage } from '../lib/errorHandler';
-import { parseSseJson } from '../lib/sse';
-import {
-  completeMessageState,
-  createMessageState,
-} from '../lib/deltaParser';
+import { useKbChatSessionController } from '../hooks/useKbChatSessionController';
 import {
   applyMessagesEventToState,
+  completeMessageState,
+  createChatStreamMetricsCollector,
+  createMessageState,
   createMessageStateBatcher,
-} from '../services/chatStreamDeltas';
+  hasSelectedParentChildKnowledgeBase,
+  parseSseJson,
+  resolveActiveAssistantId,
+  resolveFinalizeNodeIds,
+  shouldRevealAnswerOnNodeEvent,
+  validateKbChatConfig,
+} from '../hooks/kbChatPageBoundary';
+import { resolveAssistantContentByRunStatus } from './kb-chat/streamingRuntime';
 
 const MessageList = dynamic(
   () => import('../components/chat/MessageList').then((mod) => mod.MessageList),
+  { ssr: false }
+);
+
+const KnowledgeBaseSelector = dynamic(
+  () => import('../components/KnowledgeBaseSelector').then((mod) => mod.KnowledgeBaseSelector),
+  { ssr: false }
+);
+
+const KbChatFlowPanel = dynamic(
+  () => import('../components/chat/KbChatFlowPanel').then((mod) => mod.KbChatFlowPanel),
   { ssr: false }
 );
 
@@ -94,17 +97,17 @@ const DEFAULT_KB_CHAT_CONFIG: KbChatConfig = {
   hyde_enabled: false,
   hybrid_retrieval_enabled: true,
   rerank_enabled: true,
-  retrieval_top_k: 8,
-  retrieval_rerank_top_k: 50,
+  retrieval_top_k: 10,
+  retrieval_rerank_top_k: 40,
   retrieval_hybrid_ranker: 'rrf',
-  retrieval_hybrid_dense_weight: 0.7,
-  retrieval_hybrid_sparse_weight: 0.3,
+  retrieval_hybrid_dense_weight: 0.5,
+  retrieval_hybrid_sparse_weight: 0.5,
   retrieval_hybrid_rrf_k: 60,
   retrieval_parent_max_parents: 6,
   retrieval_parent_max_children_per_parent: 2,
-  retrieval_multiscale_per_window_top_k: 30,
+  retrieval_multiscale_per_window_top_k: 20,
   retrieval_multiscale_rrf_k: 60,
-  retrieval_multiscale_max_documents: 8,
+  retrieval_multiscale_max_documents: 10,
   retrieval_multiscale_max_chunks_per_document: 2,
 };
 
@@ -496,23 +499,6 @@ function createTerminalRunState(
   };
 }
 
-function resolveAssistantContentByRunStatus(params: {
-  status: TerminalRunStatus;
-  serverContent: string;
-  lastGoodAnswer?: string | null;
-}): string {
-  const lastGoodAnswer =
-    typeof params.lastGoodAnswer === 'string' ? params.lastGoodAnswer : null;
-  if (
-    params.status === 'failed' &&
-    typeof lastGoodAnswer === 'string' &&
-    lastGoodAnswer.trim().length > 0
-  ) {
-    return lastGoodAnswer;
-  }
-  return params.serverContent;
-}
-
 function isPendingClarificationResponse(
   response: ChatMessageResponse
 ): response is Extract<ChatMessageResponse, { status: 'pending_user_clarification' }> {
@@ -535,6 +521,14 @@ export function KbChatPage() {
     },
     [pathname, router]
   );
+  const clearSessionIdFromUrl = useCallback(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+    const nextParams = new URLSearchParams(window.location.search);
+    nextParams.delete('sessionId');
+    replaceSearchParams(nextParams);
+  }, [replaceSearchParams]);
   const knowledgeBasesQuery = useSelectableKnowledgeBases();
   const knowledgeBases = knowledgeBasesQuery.data;
 
@@ -552,6 +546,19 @@ export function KbChatPage() {
   const composerRef = useRef<HTMLDivElement | null>(null);
   const [bottomInset, setBottomInset] = useState(180);
   const [mobileTraceOpen, setMobileTraceOpen] = useState(false);
+
+  useKbChatSessionController({
+    sessionId,
+    pathname,
+    clearSessionIdFromUrl,
+    setLoadingSession,
+    setError,
+    setSession,
+    setMessages,
+    setSelectedKbIds,
+    setKbChatConfig,
+    defaultConfig: DEFAULT_KB_CHAT_CONFIG,
+  });
 
   const { upsertSession } = useRecentHistory();
 
@@ -628,63 +635,6 @@ export function KbChatPage() {
       active = false;
     };
   }, [activeConfig, session]);
-
-  useEffect(() => {
-    if (!sessionId) {
-      return;
-    }
-    let active = true;
-    const loadSession = async () => {
-      setLoadingSession(true);
-      setError(null);
-      try {
-        const [loadedSession, history] = await Promise.all([
-          getChatSession(sessionId),
-          getChatMessages(sessionId),
-        ]);
-        if (!active) return;
-        setSession(loadedSession);
-        setSelectedKbIds(loadedSession.selected_kb_ids ?? []);
-        setKbChatConfig(loadedSession.kb_chat_config ?? DEFAULT_KB_CHAT_CONFIG);
-        setMessages(
-          history.map((msg) => ({
-            id: msg.id,
-            role: msg.role === 'assistant' ? 'assistant' : 'user',
-            content: msg.content,
-          }))
-        );
-      } catch (e) {
-        if (!active) return;
-        if (e instanceof HttpError && e.status === 404) {
-          setSession(null);
-          setMessages([]);
-          setSelectedKbIds([]);
-          setKbChatConfig(DEFAULT_KB_CHAT_CONFIG);
-          const nextParams = new URLSearchParams(searchParams.toString());
-          nextParams.delete('sessionId');
-          replaceSearchParams(nextParams);
-          return;
-        }
-        setError(getErrorMessage(e));
-      } finally {
-        if (active) {
-          setLoadingSession(false);
-        }
-      }
-    };
-    void loadSession();
-    return () => {
-      active = false;
-    };
-  }, [sessionId, searchParams, replaceSearchParams]);
-
-  useEffect(() => {
-    if (sessionId) return;
-    setSession(null);
-    setMessages([]);
-    setError(null);
-    setKbChatConfig(DEFAULT_KB_CHAT_CONFIG);
-  }, [sessionId]);
 
   useEffect(() => {
     if (!isTabletOrDown) {
@@ -954,7 +904,7 @@ export function KbChatPage() {
             id: `node-io-${event.node_id}-${event.phase}-${event.ts}`,
             source: 'ui',
             step_id: event.node_name,
-            label: `${event.node_name} · ${event.phase}`,
+            label: `${event.node_name} 路 ${event.phase}`,
             node: event.node_name,
             status:
               event.phase === 'start'
@@ -1950,35 +1900,15 @@ export function KbChatPage() {
               )}
             </Box>
 
-            <Box
-              ref={composerRef}
-              sx={{
-                position: 'sticky',
-                bottom: 0,
-                p: { xs: 1, md: 1.25 },
-                bgcolor: (theme) =>
-                  theme.palette.mode === 'light'
-                    ? alpha(theme.palette.background.paper, 0.88)
-                    : alpha(theme.palette.background.paper, 0.58),
-                borderTop: 1,
-                borderColor: (theme) => alpha(theme.palette.divider, 0.75),
-                backdropFilter: 'blur(10px)',
-                WebkitBackdropFilter: 'blur(10px)',
-                zIndex: 10,
-              }}
-            >
-              <Box sx={{ maxWidth: 900, mx: 'auto' }}>
-                <InputComposer
-                  value={input}
-                  onChange={setInput}
-                  onSend={handleSend}
-                  disabled={loading || loadingSession || hasPendingClarification}
-                  loading={loading || loadingSession}
-                  placeholder={hasPendingClarification ? '请先补充上方澄清信息...' : '输入你的问题...'}
-                  showShortcutHint={false}
-                />
-              </Box>
-            </Box>
+            <KbChatInputPanel
+              composerRef={composerRef}
+              value={input}
+              onChange={setInput}
+              onSend={handleSend}
+              disabled={loading || loadingSession || hasPendingClarification}
+              loading={loading || loadingSession}
+              hasPendingClarification={hasPendingClarification}
+            />
           </Paper>
 
           {!isTabletOrDown && (

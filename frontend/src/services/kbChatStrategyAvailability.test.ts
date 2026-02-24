@@ -17,7 +17,7 @@ function createKnowledgeBase(id: string, strategy: ChunkingStrategy): KnowledgeB
       chunking: {
         markdown_heading: {
           max_heading_level: 3,
-          chunk_size: 4000,
+          chunk_size: 1000,
           chunk_overlap: 200,
         },
         general_strategy: strategy,
@@ -25,17 +25,17 @@ function createKnowledgeBase(id: string, strategy: ChunkingStrategy): KnowledgeB
           windows: [{ chunk_size_tokens: 200, chunk_overlap_tokens: 40 }],
         },
         semantic: {
-          min_tokens: 80,
-          max_tokens: 256,
+          min_tokens: 100,
+          max_tokens: 400,
           threshold_mode: 'percentile',
           breakpoint_percentile: 25,
           similarity_threshold: 0.6,
-          overlap_chars: 64,
-          embedding_batch_size: 128,
+          overlap_chars: 80,
+          embedding_batch_size: 64,
         },
         parent_child: {
-          parent: { chunk_size: 2000, chunk_overlap: 200 },
-          child: { chunk_size: 400, chunk_overlap: 50 },
+          parent: { chunk_size: 1500, chunk_overlap: 150 },
+          child: { chunk_size: 300, chunk_overlap: 50 },
         },
       },
       contextual: {

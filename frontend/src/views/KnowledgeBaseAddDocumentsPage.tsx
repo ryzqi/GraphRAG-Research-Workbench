@@ -3,7 +3,7 @@
  * Add documents page for an existing knowledge base.
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useParams, useRouter, useSearchParams } from 'next/navigation';
+import { useRouter } from 'next/navigation';
 import {
   Alert,
   Box,
@@ -38,41 +38,28 @@ import {
 import { LoadingSpinner } from '../components/ui/LoadingSpinner';
 import { PageHeader } from '../components/ui/PageHeader';
 import {
-  useCancelIngestionBatch,
-  useCreateIngestionBatch,
   useIngestionBatchLive,
-  useRetryIngestionBatch
 } from '../hooks/queries/useIngestionBatches';
 import { useSystemQueueHealth } from '../hooks/queries/useSystemQueueHealth';
 import {
-  useBootstrapSubmission,
-  useFinalizeBootstrapSubmission,
-} from '../hooks/queries/useBootstrapSubmissions';
-import { useKnowledgeBase } from '../hooks/queries/useKnowledgeBases';
+  buildQueueHealthHint,
+  clearBootstrapPendingUploadSession,
+  createBootstrapUploadSession,
+  formatIngestionEntryError,
+  getBootstrapPendingUploadSession,
+  getLatestIngestionBatch,
+  HttpError,
+  resolveRecoverableBatchId,
+  shouldRecoverAfterSubmitError,
+  type EntryError,
+  type ManifestEntry,
+  uploadBootstrapSubmissionFile,
+  uploadMaterial,
+} from '../hooks/knowledgeBaseAddDocumentsBoundary';
+import { useKnowledgeBaseAddDocumentsData } from '../hooks/useKnowledgeBaseAddDocumentsData';
 import { getErrorMessage } from '../lib/errorHandler';
 import { splitDirectIngestionManifestEntries } from '../lib/manifestBuilders';
 import { runWithConcurrency } from '../lib/runWithConcurrency';
-import {
-  createBootstrapUploadSession,
-  uploadBootstrapSubmissionFile
-} from '../services/bootstrapSubmissions';
-import {
-  clearBootstrapPendingUploadSession,
-  getBootstrapPendingUploadSession,
-} from '../services/bootstrapUploadSession';
-import { uploadMaterial } from '../services/materials';
-import type {
-  EntryError,
-  ManifestEntry
-} from '../services/ingestionBatches';
-import { getLatestIngestionBatch } from '../services/ingestionBatches';
-import { formatIngestionEntryError } from '../services/ingestionEntryErrors';
-import {
-  resolveRecoverableBatchId,
-  shouldRecoverAfterSubmitError
-} from '../services/ingestionBatchRecovery';
-import { HttpError } from '../services/http';
-import { buildQueueHealthHint } from '../services/queueHealthDiagnostics';
 
 const MAX_PARALLEL_UPLOADS = 4;
 const QUEUE_HEALTH_TRIGGER_SECONDS = 30;
@@ -155,19 +142,17 @@ function elapsedSeconds(timestamp: string | null | undefined): number | null {
 
 export default function KnowledgeBaseAddDocumentsPage() {
   const router = useRouter();
-  const params = useParams<{ kbId: string }>();
-  const searchParams = useSearchParams();
-  const kbId = Array.isArray(params.kbId) ? params.kbId[0] : params.kbId;
-  const initialBatchId = searchParams.get('batch') ?? undefined;
-  const jobId = searchParams.get('job') ?? undefined;
-
-  const kbQuery = useKnowledgeBase(kbId ?? '');
-  const createBatchMutation = useCreateIngestionBatch({
-    invalidateMode: 'background'
-  });
-  const finalizeBootstrapMutation = useFinalizeBootstrapSubmission();
-  const retryBatchMutation = useRetryIngestionBatch();
-  const cancelBatchMutation = useCancelIngestionBatch();
+  const {
+    kbId,
+    initialBatchId,
+    jobId,
+    kbQuery,
+    createBatchMutation,
+    finalizeBootstrapMutation,
+    retryBatchMutation,
+    cancelBatchMutation,
+    bootstrapJobQuery,
+  } = useKnowledgeBaseAddDocumentsData();
 
   const [entries, setEntries] = useState<ManifestDraftEntry[]>([]);
   const [serverEntryErrors, setServerEntryErrors] = useState<Record<string, string[]>>({});
@@ -200,8 +185,6 @@ export default function KnowledgeBaseAddDocumentsPage() {
       clearTimeout(timer);
     };
   }, [kbQuery.isPending]);
-
-  const bootstrapJobQuery = useBootstrapSubmission(jobId);
 
   useEffect(() => {
     if (bootstrapJobQuery.data?.batch_id) {

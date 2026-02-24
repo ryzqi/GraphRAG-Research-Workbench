@@ -1,6 +1,6 @@
 /**
  * 消息列表组件
- * 管理消息滚动和布局
+ * 管理消息滚动、窗口化渲染与底部锚点语义
  */
 import { memo, useRef, useEffect, useCallback, useMemo, useState } from 'react';
 import { Box, Fade, IconButton, Paper, Stack, Tooltip } from '@mui/material';
@@ -16,11 +16,12 @@ import type {
 } from '../../services/chats';
 import { EvidenceList } from '../EvidenceList';
 import { stripTrailingReferenceSection } from '../../lib/kbChatContent';
-import {
-  PipelineProgress,
-  type PipelineStep,
-  type PipelineTimelineEvent,
-} from './PipelineProgress';
+import { calculateMessageListVirtualWindow } from '../../services/messageListVirtualization';
+import { PipelineProgress, type PipelineStep, type PipelineTimelineEvent } from './PipelineProgress';
+
+const VIRTUALIZATION_THRESHOLD = 60;
+const VIRTUAL_OVERSCAN = 4;
+const DEFAULT_ROW_HEIGHT = 220;
 
 export interface ChatMessage {
   id: string;
@@ -28,7 +29,6 @@ export interface ChatMessage {
   content: string;
   think?: string;
   isStreaming?: boolean;
-  /** 思考开始时间戳 */
   thinkStartTime?: number;
   evidence?: EvidenceItem[];
   toolSteps?: Array<{
@@ -160,13 +160,13 @@ const MessageRow = memo(
         {showPipeline &&
           message.role === 'assistant' &&
           ((message.nodeTimeline?.length ?? 0) > 0 || Boolean(message.runState)) && (
-          <Box sx={{ ml: 7, mb: 1.5 }}>
-            <PipelineProgress
-              timeline={message.nodeTimeline ?? []}
-              isStreaming={Boolean(message.isStreaming)}
-              runState={message.runState}
-            />
-          </Box>
+            <Box sx={{ ml: 7, mb: 1.5 }}>
+              <PipelineProgress
+                timeline={message.nodeTimeline ?? []}
+                isStreaming={Boolean(message.isStreaming)}
+                runState={message.runState}
+              />
+            </Box>
           )}
 
         <MessageItem
@@ -193,7 +193,9 @@ const MessageRow = memo(
             <ClarificationCard
               message={message.pendingClarification.message}
               loading={approvalLoading}
-              onSubmit={(content) => onClarificationSubmit(message.id, message.runId!, content)}
+              onSubmit={(contentText) =>
+                onClarificationSubmit(message.id, message.runId!, contentText)
+              }
             />
           </Box>
         )}
@@ -241,6 +243,9 @@ export function MessageList({
   const containerRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const [isAtBottom, setIsAtBottom] = useState(true);
+  const [scrollTop, setScrollTop] = useState(0);
+  const [viewportHeight, setViewportHeight] = useState(0);
+  const [rowHeights, setRowHeights] = useState<Record<string, number>>({});
 
   const hasStreaming = useMemo(() => messages.some((msg) => msg.isStreaming), [messages]);
   const hasStreamingContent = useMemo(
@@ -255,6 +260,34 @@ export function MessageList({
   const lastMessageContentSize =
     (lastMessage?.content?.length ?? 0) + (lastMessage?.think?.length ?? 0);
   const scrollButtonBottom = Math.max(20, bottomInset - 72);
+  const virtualizationEnabled = messages.length > VIRTUALIZATION_THRESHOLD;
+
+  const itemHeights = useMemo(
+    () => messages.map((msg) => rowHeights[msg.id] ?? DEFAULT_ROW_HEIGHT),
+    [messages, rowHeights]
+  );
+
+  const virtualWindow = useMemo(() => {
+    if (!virtualizationEnabled) {
+      return null;
+    }
+    return calculateMessageListVirtualWindow({
+      itemHeights,
+      scrollTop,
+      viewportHeight: viewportHeight || 1,
+      overscan: VIRTUAL_OVERSCAN,
+    });
+  }, [itemHeights, scrollTop, viewportHeight, virtualizationEnabled]);
+
+  const visibleMessages = useMemo(() => {
+    if (!virtualWindow) {
+      return messages;
+    }
+    return messages.slice(virtualWindow.startIndex, virtualWindow.endIndex + 1);
+  }, [messages, virtualWindow]);
+
+  const topSpacerHeight = virtualWindow ? virtualWindow.offsetTop : 0;
+  const bottomSpacerHeight = virtualWindow ? virtualWindow.offsetBottom : 0;
 
   const updateIsAtBottom = useCallback(() => {
     const container = containerRef.current;
@@ -264,8 +297,42 @@ export function MessageList({
     setIsAtBottom(atBottom);
   }, []);
 
+  const measureRow = useCallback((messageId: string, node: HTMLDivElement | null) => {
+    if (!node) {
+      return;
+    }
+    const measured = Math.max(1, Math.ceil(node.getBoundingClientRect().height));
+    setRowHeights((previous) => {
+      if (previous[messageId] === measured) {
+        return previous;
+      }
+      return {
+        ...previous,
+        [messageId]: measured,
+      };
+    });
+  }, []);
+
   const scrollToBottom = useCallback(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+  }, []);
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) {
+      return;
+    }
+    const syncViewport = () => {
+      setViewportHeight(container.clientHeight);
+      setScrollTop(container.scrollTop);
+    };
+    syncViewport();
+    if (typeof ResizeObserver === 'undefined') {
+      return;
+    }
+    const observer = new ResizeObserver(syncViewport);
+    observer.observe(container);
+    return () => observer.disconnect();
   }, []);
 
   useEffect(() => {
@@ -292,7 +359,11 @@ export function MessageList({
   return (
     <Box
       ref={containerRef}
-      onScroll={updateIsAtBottom}
+      onScroll={(event) => {
+        const nextScrollTop = event.currentTarget.scrollTop;
+        setScrollTop(nextScrollTop);
+        updateIsAtBottom();
+      }}
       onWheelCapture={(event) => {
         event.stopPropagation();
       }}
@@ -315,20 +386,39 @@ export function MessageList({
       }}
     >
       <Stack spacing={3} sx={{ maxWidth: 900, mx: 'auto' }}>
-        {messages.map((message) => (
-          <MessageRow
-            key={message.id}
-            message={message}
-            onToolApprovalSubmit={onToolApprovalSubmit}
-            onClarificationSubmit={onClarificationSubmit}
-            approvalLoading={approvalLoading}
-            showPipeline={showPipeline}
-            showEvidence={showEvidence}
-            selectedAssistantId={selectedAssistantId}
-            onAssistantSelect={onAssistantSelect}
-            normalizeInlineEvidenceSection={normalizeInlineEvidenceSection}
-          />
-        ))}
+        {topSpacerHeight > 0 && <Box sx={{ height: `${topSpacerHeight}px` }} />}
+
+        {visibleMessages.map((message) => {
+          const hasMeasuredHeight = rowHeights[message.id] !== undefined;
+          return (
+            <Box
+              key={message.id}
+              ref={(node: HTMLDivElement | null) => {
+                measureRow(message.id, node);
+              }}
+              sx={{
+                minHeight:
+                  virtualizationEnabled && !hasMeasuredHeight
+                    ? `${DEFAULT_ROW_HEIGHT}px`
+                    : undefined,
+              }}
+            >
+              <MessageRow
+                message={message}
+                onToolApprovalSubmit={onToolApprovalSubmit}
+                onClarificationSubmit={onClarificationSubmit}
+                approvalLoading={approvalLoading}
+                showPipeline={showPipeline}
+                showEvidence={showEvidence}
+                selectedAssistantId={selectedAssistantId}
+                onAssistantSelect={onAssistantSelect}
+                normalizeInlineEvidenceSection={normalizeInlineEvidenceSection}
+              />
+            </Box>
+          );
+        })}
+
+        {bottomSpacerHeight > 0 && <Box sx={{ height: `${bottomSpacerHeight}px` }} />}
 
         {showThinking && (
           <Box sx={{ ml: 7 }}>

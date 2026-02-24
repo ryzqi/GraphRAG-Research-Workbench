@@ -170,6 +170,7 @@ export function InputComposer({
               <IconButton
                 onClick={handleAttachClick}
                 disabled={isDisabled}
+                aria-label='添加附件'
                 sx={{ color: 'text.secondary' }}
               >
                 {uploading ? <CircularProgress size={20} /> : <AttachFileIcon />}
@@ -246,6 +247,7 @@ export function InputComposer({
             <IconButton
               onClick={handleSend}
               disabled={!canSend}
+              aria-label='发送消息'
               sx={{
                 bgcolor: canSend ? 'primary.main' : 'action.disabledBackground',
                 color: canSend ? 'primary.contrastText' : 'text.disabled',

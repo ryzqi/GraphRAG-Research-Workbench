@@ -1,12 +1,21 @@
-import dynamic from 'next/dynamic';
+﻿import dynamic from 'next/dynamic';
+import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
+import { RouteSWRFallbackProvider } from '@/components/providers/RouteSWRFallbackProvider';
+import { prefetchGeneralChatRouteData } from '@/services/serverFirstRoutePrefetch';
 
 const GeneralChatPage = dynamic(
   () => import('@/views/GeneralChatPage').then((mod) => mod.GeneralChatPage),
   {
-    loading: () => <div style={{ padding: 24 }}>加载中...</div>,
+    loading: () => <LoadingSpinner fullPage text='加载页面...' ariaLabel='页面加载中' />,
   }
 );
 
-export default function Page() {
-  return <GeneralChatPage />;
+export default async function Page() {
+  const fallback = await prefetchGeneralChatRouteData();
+
+  return (
+    <RouteSWRFallbackProvider fallback={fallback}>
+      <GeneralChatPage />
+    </RouteSWRFallbackProvider>
+  );
 }

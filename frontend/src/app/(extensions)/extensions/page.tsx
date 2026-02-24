@@ -1,9 +1,10 @@
-import dynamic from 'next/dynamic';
+﻿import dynamic from 'next/dynamic';
+import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
 
 const ExtensionsPage = dynamic(
   () => import('@/views/ExtensionsPage').then((mod) => mod.ExtensionsPage),
   {
-    loading: () => <div style={{ padding: 24 }}>加载中...</div>,
+    loading: () => <LoadingSpinner fullPage text='加载页面...' ariaLabel='页面加载中' />,
   }
 );
 

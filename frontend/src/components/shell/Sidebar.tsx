@@ -117,7 +117,8 @@ export function Sidebar({
             width: 40,
             height: 40,
             borderRadius: '50%',
-            background: 'linear-gradient(135deg, #4285f4 0%, #34a853 50%, #fbbc04 100%)',
+            background: (theme) =>
+              `linear-gradient(135deg, ${theme.palette.primary.main} 0%, ${theme.palette.success.main} 50%, ${theme.palette.warning.main} 100%)`,
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
@@ -261,6 +262,7 @@ export function Sidebar({
                   <IconButton
                     edge="end"
                     size="small"
+                    aria-label={`删除会话 ${session.title}`}
                     onClick={(e) => {
                       e.stopPropagation();
                       removeSession(session.sessionId);
@@ -334,7 +336,11 @@ export function Sidebar({
       {!isMobile && (
         <Box sx={{ p: 1, borderTop: 1, borderColor: 'divider' }}>
           <Tooltip title={expanded ? '收起侧边栏' : '展开侧边栏'} placement="right">
-            <IconButton onClick={onToggle} sx={{ width: '100%', borderRadius: 3 }}>
+            <IconButton
+              onClick={onToggle}
+              aria-label={expanded ? '收起侧边栏' : '展开侧边栏'}
+              sx={{ width: '100%', borderRadius: 3 }}
+            >
               {expanded ? <MenuOpenIcon /> : <MenuIcon />}
             </IconButton>
           </Tooltip>

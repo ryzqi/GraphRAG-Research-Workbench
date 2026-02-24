@@ -23,7 +23,7 @@ class MarkdownHeadingConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     max_heading_level: int = Field(3, ge=1, le=6)
-    chunk_size: int = Field(4000, ge=200, le=20000)
+    chunk_size: int = Field(1000, ge=200, le=20000)
     chunk_overlap: int = Field(200, ge=0, le=5000)
 
     @model_validator(mode="before")
@@ -50,8 +50,8 @@ class MarkdownHeadingConfig(BaseModel):
 class QueryDependentMultiscaleWindowConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    chunk_size_tokens: int = Field(100, ge=16, le=8000)
-    chunk_overlap_tokens: int = Field(20, ge=0, le=4000)
+    chunk_size_tokens: int = Field(200, ge=16, le=8000)
+    chunk_overlap_tokens: int = Field(40, ge=0, le=4000)
 
     @model_validator(mode="after")
     def _validate_overlap(self) -> "QueryDependentMultiscaleWindowConfig":
@@ -95,13 +95,13 @@ class SemanticThresholdMode(str, Enum):
 class SemanticConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    min_tokens: int = Field(80, ge=16, le=1024)
-    max_tokens: int = Field(256, ge=16, le=2048)
+    min_tokens: int = Field(100, ge=16, le=1024)
+    max_tokens: int = Field(400, ge=16, le=2048)
     threshold_mode: SemanticThresholdMode = SemanticThresholdMode.PERCENTILE
     breakpoint_percentile: int | None = Field(25, ge=1, le=99)
     similarity_threshold: float | None = Field(0.6, ge=0.0, le=1.0)
-    overlap_chars: int = Field(64, ge=0, le=2000)
-    embedding_batch_size: int = Field(128, ge=8, le=1024)
+    overlap_chars: int = Field(80, ge=0, le=2000)
+    embedding_batch_size: int = Field(64, ge=8, le=1024)
 
     @model_validator(mode="after")
     def _validate_range(self) -> "SemanticConfig":
@@ -126,8 +126,8 @@ class SemanticConfig(BaseModel):
 class ParentChunkConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    chunk_size: int = Field(2000, ge=512, le=20000)
-    chunk_overlap: int = Field(200, ge=0, le=5000)
+    chunk_size: int = Field(1500, ge=512, le=20000)
+    chunk_overlap: int = Field(150, ge=0, le=5000)
 
     @model_validator(mode="after")
     def _validate_overlap(self) -> "ParentChunkConfig":
@@ -139,7 +139,7 @@ class ParentChunkConfig(BaseModel):
 class ChildChunkConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    chunk_size: int = Field(400, ge=128, le=5000)
+    chunk_size: int = Field(300, ge=128, le=5000)
     chunk_overlap: int = Field(50, ge=0, le=2000)
 
     @model_validator(mode="after")

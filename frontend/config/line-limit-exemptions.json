@@ -1,0 +1,79 @@
+[
+  {
+    "path": "src/views/KbChatPage.tsx",
+    "maxLines": 2300,
+    "expiresOn": "2026-06-30",
+    "owner": "frontend",
+    "reason": "任务 4.2 拆分前临时豁免"
+  },
+  {
+    "path": "src/views/KnowledgeBaseDetailPage.tsx",
+    "maxLines": 1400,
+    "expiresOn": "2026-06-30",
+    "owner": "frontend",
+    "reason": "任务 4.3 拆分前临时豁免"
+  },
+  {
+    "path": "src/views/KnowledgeBaseAddDocumentsPage.tsx",
+    "maxLines": 1200,
+    "expiresOn": "2026-06-30",
+    "owner": "frontend",
+    "reason": "任务 4.3 拆分前临时豁免"
+  },
+  {
+    "path": "src/components/chat/KbChatFlowPanel.tsx",
+    "maxLines": 1200,
+    "expiresOn": "2026-06-30",
+    "owner": "frontend",
+    "reason": "任务 4.4 拆分前临时豁免"
+  },
+  {
+    "path": "src/views/GeneralChatPage.tsx",
+    "maxLines": 800,
+    "expiresOn": "2026-06-30",
+    "owner": "frontend",
+    "reason": "任务 4.1 拆分前临时豁免"
+  },
+  {
+    "path": "src/components/chat/MessageItem.tsx",
+    "maxLines": 700,
+    "expiresOn": "2026-06-30",
+    "owner": "frontend",
+    "reason": "消息组件拆分前临时豁免"
+  },
+  {
+    "path": "src/components/IndexConfigForm.tsx",
+    "maxLines": 900,
+    "expiresOn": "2026-06-30",
+    "owner": "frontend",
+    "reason": "配置表单拆分前临时豁免"
+  },
+  {
+    "path": "src/services/chats.ts",
+    "maxLines": 700,
+    "expiresOn": "2026-06-30",
+    "owner": "frontend",
+    "reason": "聊天服务模块拆分前临时豁免"
+  },
+  {
+    "path": "src/theme/index.ts",
+    "maxLines": 800,
+    "expiresOn": "2026-06-30",
+    "owner": "frontend",
+    "reason": "主题模块拆分前临时豁免"
+  },
+  {
+    "path": "src/views/ExtensionsPage.tsx",
+    "maxLines": 1100,
+    "expiresOn": "2026-06-30",
+    "owner": "frontend",
+    "reason": "扩展页拆分前临时豁免"
+  },
+  {
+    "path": "src/views/ModelConfigPage.tsx",
+    "maxLines": 900,
+    "expiresOn": "2026-06-30",
+    "owner": "frontend",
+    "reason": "模型配置页拆分前临时豁免"
+  }
+]

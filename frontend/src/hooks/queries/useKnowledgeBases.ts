@@ -51,13 +51,18 @@ export function useKnowledgeBases(params?: {
 export function useSelectableKnowledgeBases() {
   return useApiQuery(KEYS.selectable(), () =>
     listSelectableKnowledgeBases().then((res) => res.items)
-  );
+  , {
+    skipInitialFetchIfCached: true,
+  });
 }
 
 export function useKnowledgeBase(id: string) {
   return useApiQuery(
     id ? KEYS.detail(id) : null,
-    id ? () => getKnowledgeBase(id) : null
+    id ? () => getKnowledgeBase(id) : null,
+    {
+      skipInitialFetchIfCached: true,
+    }
   );
 }
 
@@ -66,6 +71,7 @@ export function useKnowledgeBaseIngestionState(id: string) {
     id ? KEYS.ingestionState(id) : null,
     id ? () => getKnowledgeBaseIngestionState(id) : null,
     {
+      skipInitialFetchIfCached: true,
       refreshInterval: (latestState) =>
         (latestState as KnowledgeBaseIngestionState | undefined)?.has_active_batch
           ? 2_000

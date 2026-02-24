@@ -16,6 +16,7 @@ import {
   IconButton,
   Tooltip,
 } from '@mui/material';
+import { alpha } from '@mui/material/styles';
 import ChatIcon from '@mui/icons-material/Chat';
 import SmartToyIcon from '@mui/icons-material/SmartToy';
 import SearchIcon from '@mui/icons-material/Search';
@@ -68,12 +69,9 @@ export function Nav() {
       sx={{
         // MD3 On-scroll 效果：滚动时背景填充
         bgcolor: scrolled
-          ? (theme) =>
-              theme.palette.mode === 'light'
-                ? '#e9e8ec' // surfaceContainerHigh
-                : '#292a2d'
+          ? 'background.paper'
           : 'transparent',
-        boxShadow: scrolled ? '0 1px 3px rgba(0,0,0,0.08)' : 'none',
+        boxShadow: scrolled ? 1 : 'none',
         borderBottom: scrolled ? 'none' : 1,
         borderColor: 'divider',
         transition: `background-color ${md3Duration.medium2}ms ${md3Easing.standard}, box-shadow ${md3Duration.medium2}ms ${md3Easing.standard}`,
@@ -113,10 +111,7 @@ export function Nav() {
                 sx={{
                   color: isActive ? 'primary.main' : 'text.secondary',
                   bgcolor: isActive
-                    ? (theme) =>
-                        theme.palette.mode === 'light'
-                          ? 'rgba(26, 115, 232, 0.12)'
-                          : 'rgba(201, 222, 255, 0.12)'
+                    ? (theme) => alpha(theme.palette.primary.main, theme.palette.mode === 'light' ? 0.12 : 0.2)
                     : 'transparent',
                   fontWeight: isActive ? 500 : 400,
                   whiteSpace: 'nowrap',
@@ -124,10 +119,7 @@ export function Nav() {
                   borderRadius: 5, // 全圆角 pill
                   '&:hover': {
                     bgcolor: isActive
-                      ? (theme) =>
-                          theme.palette.mode === 'light'
-                            ? 'rgba(26, 115, 232, 0.16)'
-                            : 'rgba(201, 222, 255, 0.16)'
+                      ? (theme) => alpha(theme.palette.primary.main, theme.palette.mode === 'light' ? 0.16 : 0.24)
                       : 'action.hover',
                   },
                 }}
@@ -142,6 +134,7 @@ export function Nav() {
         <Tooltip title={resolvedMode === 'light' ? '切换到深色模式' : '切换到浅色模式'}>
           <IconButton
             onClick={toggleMode}
+            aria-label={resolvedMode === 'light' ? '切换到深色模式' : '切换到浅色模式'}
             color="inherit"
             sx={{
               ml: 1,

@@ -1,0 +1,24 @@
+{
+  "routes": [
+    {
+      "route": "/general-chat",
+      "pageManifestDir": ["(chat)", "general-chat"],
+      "budgetBytes": 900000
+    },
+    {
+      "route": "/kb-chat",
+      "pageManifestDir": ["(chat)", "kb-chat"],
+      "budgetBytes": 1000000
+    },
+    {
+      "route": "/knowledge-bases/[kbId]",
+      "pageManifestDir": ["(knowledge-bases)", "knowledge-bases", "[kbId]"],
+      "budgetBytes": 1000000
+    },
+    {
+      "route": "/knowledge-bases/[kbId]/documents/new",
+      "pageManifestDir": ["(knowledge-bases)", "knowledge-bases", "[kbId]", "documents", "new"],
+      "budgetBytes": 1100000
+    }
+  ]
+}

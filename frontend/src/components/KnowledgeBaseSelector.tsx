@@ -1,18 +1,16 @@
 /**
  * 知识库选择器组件
- * 复用于 KbChatPage、ResearchPage
+ * 复用在 KbChatPage、ResearchPage
  */
-import { useMemo } from 'react';
-import {
-  Box,
-  Checkbox,
-  Chip,
-  Paper,
-  Stack,
-  Typography,
-} from '@mui/material';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Box, Button, Checkbox, Chip, Paper, Stack, Typography } from '@mui/material';
 import { alpha } from '@mui/material/styles';
 import type { KnowledgeBase } from '../services/knowledgeBases';
+import {
+  createKnowledgeBaseVisibleCount,
+  extendKnowledgeBaseVisibleCount,
+  syncKnowledgeBaseVisibleCount,
+} from '../services/knowledgeBaseSelectorRenderPlan';
 import { EmptyState } from './ui/EmptyState';
 import { LoadingSpinner } from './ui/LoadingSpinner';
 
@@ -34,6 +32,28 @@ export function KnowledgeBaseSelector({
   emptyDescription = '请先创建知识库并导入资料',
 }: KnowledgeBaseSelectorProps) {
   const selectedIdSet = useMemo(() => new Set(selectedIds), [selectedIds]);
+  const datasetKey = useMemo(() => knowledgeBases.map((kb) => kb.id).join('|'), [knowledgeBases]);
+  const previousDatasetKeyRef = useRef(datasetKey);
+  const [visibleCount, setVisibleCount] = useState(() =>
+    createKnowledgeBaseVisibleCount(knowledgeBases.length)
+  );
+
+  useEffect(() => {
+    setVisibleCount((current) =>
+      syncKnowledgeBaseVisibleCount({
+        currentVisibleCount: current,
+        totalCount: knowledgeBases.length,
+        previousDatasetKey: previousDatasetKeyRef.current,
+        nextDatasetKey: datasetKey,
+      })
+    );
+    previousDatasetKeyRef.current = datasetKey;
+  }, [datasetKey, knowledgeBases.length]);
+
+  const visibleKnowledgeBases = useMemo(
+    () => knowledgeBases.slice(0, visibleCount),
+    [knowledgeBases, visibleCount]
+  );
 
   if (loading && knowledgeBases.length === 0) {
     return <LoadingSpinner text="加载知识库..." />;
@@ -45,7 +65,7 @@ export function KnowledgeBaseSelector({
 
   return (
     <Stack spacing={1.25}>
-      {knowledgeBases.map((kb, index) => {
+      {visibleKnowledgeBases.map((kb, index) => {
         const isSelected = selectedIdSet.has(kb.id);
         return (
           <Paper
@@ -57,6 +77,8 @@ export function KnowledgeBaseSelector({
               p: 1.75,
               borderRadius: 3,
               cursor: loading ? 'not-allowed' : 'pointer',
+              contentVisibility: 'auto',
+              containIntrinsicSize: '1px 120px',
               bgcolor: (theme) =>
                 theme.palette.mode === 'light'
                   ? alpha(theme.palette.common.white, isSelected ? 0.86 : 0.72)
@@ -67,7 +89,8 @@ export function KnowledgeBaseSelector({
                   ? `0 0 0 1px ${alpha(theme.palette.primary.main, 0.32)}, 0 14px 40px ${alpha(theme.palette.primary.main, theme.palette.mode === 'light' ? 0.16 : 0.35)}`
                   : 'none',
               transform: isSelected ? 'translateY(-1px)' : 'translateY(0)',
-              transition: 'border-color 200ms ease, background-color 200ms ease, box-shadow 220ms ease, transform 220ms ease',
+              transition:
+                'border-color 200ms ease, background-color 200ms ease, box-shadow 220ms ease, transform 220ms ease',
               animation: 'kbCardEnter 380ms cubic-bezier(0.2, 0, 0, 1)',
               animationDelay: `${index * 35}ms`,
               animationFillMode: 'backwards',
@@ -107,10 +130,7 @@ export function KnowledgeBaseSelector({
                 disabled={loading}
                 onChange={() => !loading && onToggle(kb.id)}
                 onClick={(event) => event.stopPropagation()}
-                sx={{
-                  pt: 0,
-                  '& .MuiSvgIcon-root': { fontSize: 22 },
-                }}
+                sx={{ pt: 0, '& .MuiSvgIcon-root': { fontSize: 22 } }}
               />
               <Box sx={{ ml: 1, flex: 1, minWidth: 0 }}>
                 <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
@@ -136,6 +156,21 @@ export function KnowledgeBaseSelector({
           </Paper>
         );
       })}
+      {visibleCount < knowledgeBases.length && (
+        <Box sx={{ display: 'flex', justifyContent: 'center', pt: 0.5 }}>
+          <Button
+            size="small"
+            variant="outlined"
+            onClick={() =>
+              setVisibleCount((current) =>
+                extendKnowledgeBaseVisibleCount(current, knowledgeBases.length)
+              )
+            }
+          >
+            加载更多知识库
+          </Button>
+        </Box>
+      )}
     </Stack>
   );
 }

@@ -42,6 +42,7 @@ export function useBootstrapSubmission(jobId: string | undefined) {
     jobId ? KEYS.detail(jobId) : null,
     jobId ? () => getBootstrapSubmission(jobId) : null,
     {
+      skipInitialFetchIfCached: true,
       refreshInterval: (latest) =>
         shouldPollBootstrapSubmission(latest as BootstrapSubmission | undefined)
           ? DEFAULT_POLLING_INTERVAL_MS

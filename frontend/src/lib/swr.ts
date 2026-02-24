@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useState } from 'react';
 import type { Key, SWRConfiguration, SWRResponse } from 'swr';
-import useSWR, { useSWRConfig } from 'swr';
+import useSWR, { unstable_serialize, useSWRConfig } from 'swr';
 
 export const defaultSWRConfig: SWRConfiguration = {
   revalidateOnFocus: false,
@@ -22,9 +22,29 @@ export interface QueryResult<TData>
 export function useApiQuery<TData>(
   key: Key,
   fetcher: (() => Promise<TData>) | null,
-  config?: SWRConfiguration<TData, Error>
+  config?: (SWRConfiguration<TData, Error> & { skipInitialFetchIfCached?: boolean })
 ): QueryResult<TData> {
-  const swr = useSWR<TData, Error>(key, fetcher, config);
+  const { cache } = useSWRConfig();
+  const { skipInitialFetchIfCached, ...baseConfig } = config ?? {};
+  const hasCachedValue = useMemo(() => {
+    if (!skipInitialFetchIfCached || key === null) {
+      return false;
+    }
+    return cache.get(unstable_serialize(key)) !== undefined;
+  }, [cache, key, skipInitialFetchIfCached]);
+
+  const finalConfig = useMemo(() => {
+    if (!hasCachedValue) {
+      return baseConfig;
+    }
+    return {
+      ...baseConfig,
+      revalidateOnMount: false,
+      revalidateIfStale: false,
+    };
+  }, [baseConfig, hasCachedValue]);
+
+  const swr = useSWR<TData, Error>(key, fetcher, finalConfig);
 
   const refetch = useCallback(async () => {
     return swr.mutate();

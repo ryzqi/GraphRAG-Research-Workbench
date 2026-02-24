@@ -1,5 +1,5 @@
 /**
- * 加载指示器组件
+ * Loading indicator with optional full-page overlay and screen-reader semantics.
  */
 import { Box, CircularProgress, Typography } from '@mui/material';
 
@@ -7,11 +7,23 @@ interface LoadingSpinnerProps {
   text?: string;
   size?: number;
   fullPage?: boolean;
+  ariaLabel?: string;
 }
 
-export function LoadingSpinner({ text = '加载中...', size = 32, fullPage = false }: LoadingSpinnerProps) {
+export function LoadingSpinner({
+  text = '加载中...',
+  size = 32,
+  fullPage = false,
+  ariaLabel,
+}: LoadingSpinnerProps) {
+  const accessibleLabel = ariaLabel ?? text;
+
   const content = (
     <Box
+      role='status'
+      aria-live='polite'
+      aria-busy='true'
+      aria-label={accessibleLabel}
       sx={{
         display: 'flex',
         flexDirection: 'column',
@@ -21,9 +33,9 @@ export function LoadingSpinner({ text = '加载中...', size = 32, fullPage = fa
         py: fullPage ? 0 : 4,
       }}
     >
-      <CircularProgress size={size} />
+      <CircularProgress size={size} aria-hidden='true' />
       {text && (
-        <Typography variant="body2" color="text.secondary">
+        <Typography variant='body2' color='text.secondary'>
           {text}
         </Typography>
       )}

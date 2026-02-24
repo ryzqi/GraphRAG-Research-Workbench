@@ -108,7 +108,10 @@ export function useIngestionBatchLive(options: UseIngestionBatchLiveOptions): Us
 
   const latestBatchQuery = useApiQuery(
     kbId ? KEYS.latest(kbId) : null,
-    kbId ? () => getLatestIngestionBatch(kbId) : null
+    kbId ? () => getLatestIngestionBatch(kbId) : null,
+    {
+      skipInitialFetchIfCached: true,
+    }
   );
 
   const resolvedBatchId = preferredBatchId ?? latestBatchQuery.data?.id;

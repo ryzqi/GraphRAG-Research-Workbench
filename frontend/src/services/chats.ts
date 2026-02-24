@@ -421,8 +421,8 @@ export async function createChatSession(data: ChatSessionCreate): Promise<ChatSe
 /**
  * 获取会话详情
  */
-export async function getChatSession(sessionId: string): Promise<ChatSession> {
-  return apiFetch<ChatSession>(`/api/v1/chats/${sessionId}`);
+export async function getChatSession(sessionId: string, signal?: AbortSignal): Promise<ChatSession> {
+  return apiFetch<ChatSession>(`/api/v1/chats/${sessionId}`, { signal });
 }
 
 /**
@@ -444,8 +444,11 @@ export async function getRecentChats(limit = 20): Promise<RecentChatListResponse
 /**
  * 获取会话消息
  */
-export async function getChatMessages(sessionId: string): Promise<ChatMessage[]> {
-  return apiFetch<ChatMessage[]>(`/api/v1/chats/${sessionId}/messages`);
+export async function getChatMessages(
+  sessionId: string,
+  signal?: AbortSignal
+): Promise<ChatMessage[]> {
+  return apiFetch<ChatMessage[]>(`/api/v1/chats/${sessionId}/messages`, { signal });
 }
 
 export async function getKbChatGraphSchema(

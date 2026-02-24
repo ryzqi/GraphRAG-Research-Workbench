@@ -21,20 +21,36 @@ type RecentHistoryData = {
   webSearchAvailable: boolean;
 };
 
+export const recentHistoryQueryKey = RECENT_QUERY_KEY;
+
+export function toRecentHistoryData(input: {
+  items: Array<{
+    id: string;
+    title: string | null;
+    session_type: 'general_chat' | 'kb_chat';
+    updated_at: string;
+  }>;
+  web_search_available: boolean;
+}): RecentHistoryData {
+  return {
+    sessions: input.items.map((item) => ({
+      sessionId: item.id,
+      title: item.title ?? '',
+      type: item.session_type,
+      updatedAt: item.updated_at,
+    })),
+    webSearchAvailable: Boolean(input.web_search_available),
+  };
+}
+
 export function useRecentHistory() {
   const { mutate } = useSWRConfig();
 
   const recentQuery = useApiQuery<RecentHistoryData>(RECENT_QUERY_KEY, async () => {
     const data = await getRecentChats(MAX_RECENT);
-    return {
-      sessions: data.items.map((item) => ({
-        sessionId: item.id,
-        title: item.title ?? '',
-        type: item.session_type,
-        updatedAt: item.updated_at,
-      })),
-      webSearchAvailable: Boolean(data.web_search_available),
-    };
+    return toRecentHistoryData(data);
+  }, {
+    skipInitialFetchIfCached: true,
   });
 
   const upsertSession = useCallback(

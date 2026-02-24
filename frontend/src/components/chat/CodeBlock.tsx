@@ -108,6 +108,7 @@ export function CodeBlock({ language = 'text', children }: CodeBlockProps) {
           <IconButton
             size="small"
             onClick={handleCopy}
+            aria-label={copied ? '已复制代码' : '复制代码'}
             sx={{
               color: copied ? '#98c379' : '#abb2bf',
               '&:hover': {
