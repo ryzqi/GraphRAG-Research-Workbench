@@ -48,6 +48,7 @@ class RewriteResult:
     rewritten: bool
     reason: str | None = None
     latency_ms: int | None = None
+    meta: dict[str, object] | None = None
 
 
 @dataclass(slots=True)
@@ -116,6 +117,28 @@ def _sanitize_query_text(text: str) -> str:
     return _normalize_single_line(text).strip("`\"' ")
 
 
+_COREF_MARKERS_ZH = [
+    "这个",
+    "那个",
+    "这些",
+    "那些",
+    "它",
+    "他",
+    "她",
+    "它们",
+    "他们",
+    "她们",
+    "该",
+    "其",
+    "上述",
+    "前者",
+    "后者",
+]
+_COREF_MARKERS_EN = ["this", "that", "these", "those", "it", "they", "them"]
+_COREF_MARKERS = sorted([*_COREF_MARKERS_ZH, *_COREF_MARKERS_EN], key=len, reverse=True)
+_COREF_CONFIDENCE_THRESHOLD = 0.72
+
+
 def _sanitize_reverse_question(text: str) -> str:
     value = _normalize_single_line(text).strip("`\"' ")
     if not value:
@@ -141,6 +164,69 @@ def _dedupe_keep_order(items: Iterable[str]) -> list[str]:
         deduped.append(value)
         seen.add(value)
     return deduped
+
+
+def _contains_coref_marker(query: str) -> bool:
+    lowered = query.lower()
+    if any(marker in lowered for marker in _COREF_MARKERS_ZH):
+        return True
+    return any(
+        re.search(rf"\b{re.escape(marker)}\b", lowered) is not None
+        for marker in _COREF_MARKERS_EN
+    )
+
+
+def _extract_query_focus_terms(query: str) -> set[str]:
+    q = _normalize_whitespace(query)
+    if not q:
+        return set()
+    tokens = re.findall(r"[A-Za-z0-9_]{2,}|[\u4e00-\u9fff]{2,}", q)
+    focus: set[str] = set()
+    for token in tokens:
+        lowered = token.lower()
+        if lowered in _COREF_MARKERS_EN:
+            continue
+        if token in _COREF_MARKERS_ZH:
+            continue
+        focus.add(lowered)
+    return focus
+
+
+def _split_candidate_segments(text: str) -> list[str]:
+    raw_segments = re.split(r"[，。；、,.!?\n]+", _normalize_whitespace(text))
+    normalized: list[str] = []
+    for segment in raw_segments:
+        value = segment.strip(" \"'“”‘’()[]{}")
+        if not value:
+            continue
+        if len(value) < 2 or len(value) > 48:
+            continue
+        normalized.append(value)
+    return normalized
+
+
+def _apply_coref_candidate(query: str, candidate: str) -> tuple[str, str]:
+    q = _normalize_whitespace(query)
+    c = _normalize_whitespace(candidate)
+    rewritten = q
+    replaced = False
+    for marker in _COREF_MARKERS:
+        if marker in _COREF_MARKERS_EN:
+            pattern = re.compile(rf"\b{re.escape(marker)}\b", flags=re.IGNORECASE)
+        else:
+            pattern = re.compile(re.escape(marker), flags=re.IGNORECASE)
+        rewritten, count = pattern.subn(c, rewritten)
+        if count > 0:
+            replaced = True
+    rewritten = _sanitize_query_text(rewritten)
+    if replaced and rewritten:
+        return rewritten, "replace_marker"
+    # If marker exists but not replaced (or stripped away), prefix candidate context conservatively.
+    if c and c.lower() not in q.lower():
+        prefixed = _sanitize_query_text(f"{c} {q}")
+        if prefixed:
+            return prefixed, "prefix_candidate"
+    return q, "noop"
 
 
 def _rule_based_multi_query_candidates(query: str) -> list[str]:
@@ -434,13 +520,140 @@ class QueryRewriteService:
         *,
         enabled: bool = True,
         timeout_seconds: float | None = None,
+        recent_turns: list[dict[str, str]] | None = None,
+        summary_text: str | None = None,
+        memory_snippet: str | None = None,
     ) -> RewriteResult:
-        """Coreference rewrite (currently reuses generic retrieval rewrite)."""
+        """Coreference rewrite with context-aware, low-latency heuristics."""
+        _ = timeout_seconds
+        start = time.perf_counter()
+        q = _sanitize_query_text(query)
         if not enabled:
             return RewriteResult(
-                query=query, rewritten=False, reason="disabled", latency_ms=0
+                query=q,
+                rewritten=False,
+                reason="disabled",
+                latency_ms=0,
+                meta={
+                    "triggered": False,
+                    "confidence": 0.0,
+                    "candidate_count": 0,
+                    "selected_mention": "",
+                    "resolution_source": "none",
+                    "needs_clarification": False,
+                },
             )
-        return await self.rewrite(query, timeout_seconds=timeout_seconds)
+        if not q:
+            return RewriteResult(
+                query=q,
+                rewritten=False,
+                reason="empty",
+                latency_ms=0,
+                meta={
+                    "triggered": False,
+                    "confidence": 0.0,
+                    "candidate_count": 0,
+                    "selected_mention": "",
+                    "resolution_source": "none",
+                    "needs_clarification": False,
+                },
+            )
+
+        triggered = _contains_coref_marker(q) or len(q) <= 8
+        focus_terms = _extract_query_focus_terms(q)
+        candidates: list[tuple[float, str, str]] = []
+        seen: set[str] = set()
+
+        if isinstance(recent_turns, list):
+            normalized_turns = [
+                turn
+                for turn in recent_turns
+                if isinstance(turn, dict) and isinstance(turn.get("text"), str)
+            ]
+            total = len(normalized_turns)
+            for idx, turn in enumerate(reversed(normalized_turns)):
+                text = _normalize_whitespace(str(turn.get("text") or ""))
+                if not text:
+                    continue
+                role = str(turn.get("role") or "assistant").lower()
+                role_weight = 1.25 if role == "user" else 0.75
+                recency_weight = max(0.0, 1.0 - (idx / max(total, 1)) * 0.45)
+                for segment in _split_candidate_segments(text):
+                    lowered = segment.lower()
+                    if lowered in seen:
+                        continue
+                    overlap = 0.0
+                    if focus_terms and any(term in lowered for term in focus_terms):
+                        overlap = 0.3
+                    length_penalty = 0.2 if len(segment) > 24 else 0.0
+                    score = role_weight + recency_weight + overlap - length_penalty
+                    candidates.append((score, segment, f"recent_turns_{role}"))
+                    seen.add(lowered)
+
+        for source_name, source_text, source_weight in (
+            ("summary", summary_text, 0.65),
+            ("memory", memory_snippet, 0.55),
+        ):
+            text = _normalize_whitespace(str(source_text or ""))
+            if not text:
+                continue
+            for segment in _split_candidate_segments(text):
+                lowered = segment.lower()
+                if lowered in seen:
+                    continue
+                overlap = 0.0
+                if focus_terms and any(term in lowered for term in focus_terms):
+                    overlap = 0.2
+                score = source_weight + overlap
+                candidates.append((score, segment, source_name))
+                seen.add(lowered)
+
+        candidates.sort(key=lambda item: item[0], reverse=True)
+        candidate_count = len(candidates)
+        top_score, top_mention, source = (candidates[0] if candidates else (0.0, "", "none"))
+        confidence = round(max(0.0, min(1.0, top_score / 2.0)), 4)
+        needs_clarification = False
+        reason = "no_trigger"
+        rewritten_query = q
+        apply_strategy = "noop"
+
+        if not triggered:
+            reason = "no_trigger"
+        elif not top_mention:
+            reason = "no_candidate"
+            needs_clarification = True
+        elif confidence < _COREF_CONFIDENCE_THRESHOLD:
+            reason = "low_confidence"
+            needs_clarification = True
+        else:
+            rewritten_query, apply_strategy = _apply_coref_candidate(q, top_mention)
+            if rewritten_query != q:
+                reason = None
+            else:
+                reason = "unchanged_after_apply"
+                needs_clarification = True
+
+        latency_ms = int((time.perf_counter() - start) * 1000)
+        return RewriteResult(
+            query=rewritten_query,
+            rewritten=rewritten_query != q,
+            reason=reason,
+            latency_ms=latency_ms,
+            meta={
+                "triggered": triggered,
+                "confidence": confidence,
+                "candidate_count": candidate_count,
+                "selected_mention": top_mention,
+                "resolution_source": source,
+                "apply_strategy": apply_strategy,
+                "needs_clarification": needs_clarification,
+                "clarification_hint": (
+                    "请问你指的是哪一个具体对象？请补充明确名称或上下文。"
+                    if needs_clarification and triggered
+                    else ""
+                ),
+            },
+        )
 
     async def normalize_rewrite(self, query: str) -> RewriteResult:
         """Normalize query (fast, non-LLM by default)."""
@@ -858,26 +1071,11 @@ class QueryRewriteService:
             return True
         if len(q) <= 2:
             return True
-        # Very conservative heuristic for Chinese pronoun/coref.
-        ambiguous_markers = [
-            "这个",
-            "那个",
-            "这些",
-            "那些",
-            "它",
-            "他",
-            "她",
-            "他们",
-            "她们",
-            "它们",
-            "上面",
-            "前面",
-            "刚才",
-            "之前",
-        ]
         # Only trigger when the query is *short* and contains coref-like markers,
         # to avoid false positives for normal descriptive questions.
-        if len(q) <= 8 and any(m in q for m in ambiguous_markers):
+        if len(q) <= 10 and _contains_coref_marker(q):
+            return True
+        if len(q) <= 6 and ("怎么" in q or "咋" in q or "如何" in q):
             return True
         return False
 

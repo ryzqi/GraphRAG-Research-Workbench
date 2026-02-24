@@ -89,6 +89,17 @@ class ContextFrame(TypedDict, total=False):
     merge_notes: list[str]
 
 
+class CorefMeta(TypedDict, total=False):
+    triggered: bool
+    confidence: float
+    candidate_count: int
+    selected_mention: str
+    resolution_source: str
+    apply_strategy: str
+    needs_clarification: bool
+    clarification_hint: str
+
+
 # -----------------------------
 # Graph state schema
 # -----------------------------
@@ -121,7 +132,7 @@ class KbChatAgenticState(KbChatAgenticStateBase, total=False):
     Stage I/O (high-level, to keep implementation honest):
     - MergeContext: reads messages/user_input/memory_keys -> writes
       context_frame/rewrite_input_query/display_context/merged_context
-    - CorefRewrite: reads rewrite_input_query -> writes coref_query
+    - CorefRewrite: reads rewrite_input_query/context_frame -> writes coref_query/coref_meta
     - AmbiguityCheck: reads coref_query/normalized_query -> writes reflection/action (clarify)
     - NormalizeRewrite: reads coref_query -> writes normalized_query
     - ComplexityRouter: reads normalized_query -> writes query_strategy
@@ -140,6 +151,7 @@ class KbChatAgenticState(KbChatAgenticStateBase, total=False):
     merged_context: str
 
     coref_query: str
+    coref_meta: CorefMeta
     normalized_query: str
     query_strategy: Literal["direct", "decomposition", "multi_query"]
 

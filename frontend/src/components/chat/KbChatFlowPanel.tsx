@@ -476,8 +476,11 @@ function buildFallbackOutputItems(
       pushDisplayItem(items, { key: 'merge_fallback_used', label: '回退启发式', value: summary.fallback_used });
     } else if (nodeId === 'coref_rewrite') {
       pushDisplayItem(items, { key: 'coref_query', label: '改写后问题', value: pickText(snapshot, 'coref_query') });
+      pushDisplayItem(items, { key: 'confidence', label: '消解置信度', value: summary.confidence });
+      pushDisplayItem(items, { key: 'selected_mention', label: '选择候选', value: summary.selected_mention });
       pushDisplayItem(items, { key: 'rewritten', label: '是否改写', value: summary.rewritten });
       pushDisplayItem(items, { key: 'reason', label: '改写原因', value: summary.reason });
+      pushDisplayItem(items, { key: 'needs_clarification_hint', label: '建议先澄清', value: summary.needs_clarification_hint });
     } else if (nodeId === 'ambiguity_check') {
       pushDisplayItem(items, { key: 'ambiguous', label: '是否歧义', value: summary.ambiguous });
       pushDisplayItem(items, { key: 'reason', label: '判定原因', value: summary.reason });

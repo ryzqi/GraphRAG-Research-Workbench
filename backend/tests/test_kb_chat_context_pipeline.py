@@ -23,14 +23,36 @@ class _DummyKbTool:
 class _FakeRewriteService:
     seen_query: str | None = None
     resolve_called = False
+    seen_recent_turns: list[dict[str, str]] | None = None
 
     def __init__(self, settings=None):
         _ = settings
 
-    async def coref_rewrite(self, query: str, *, enabled: bool = True, timeout_seconds: float | None = None):
-        _ = (enabled, timeout_seconds)
+    async def coref_rewrite(
+        self,
+        query: str,
+        *,
+        enabled: bool = True,
+        timeout_seconds: float | None = None,
+        recent_turns: list[dict[str, str]] | None = None,
+        summary_text: str | None = None,
+        memory_snippet: str | None = None,
+    ):
+        _ = (enabled, timeout_seconds, summary_text, memory_snippet)
         type(self).seen_query = query
-        return types.SimpleNamespace(query=query, reason=None)
+        type(self).seen_recent_turns = recent_turns
+        return types.SimpleNamespace(
+            query=query,
+            reason=None,
+            meta={
+                "triggered": True,
+                "confidence": 0.92,
+                "candidate_count": 2,
+                "selected_mention": "target mention",
+                "resolution_source": "recent_turns_user",
+                "needs_clarification": False,
+            },
+        )
 
     async def normalize_rewrite(self, query: str):
         return types.SimpleNamespace(query=query, rewritten=False)
@@ -167,6 +189,30 @@ async def test_coref_rewrite_reads_rewrite_input_query_not_merged_context(monkey
 
     assert _FakeRewriteService.seen_query == "plain query"
     assert result["coref_query"] == "plain query"
+    assert result["coref_meta"]["confidence"] == 0.92
+    assert result["stage_summaries"]["coref_rewrite"]["confidence"] == 0.92
+
+
+@pytest.mark.asyncio
+async def test_ambiguity_check_uses_coref_low_confidence_hint(settings):
+    state = {
+        "coref_query": "这个怎么配",
+        "coref_meta": {
+            "needs_clarification": True,
+            "clarification_hint": "请问你指的是哪个具体对象？",
+        },
+        "stage_summaries": {},
+    }
+
+    result = await preprocess.ambiguity_check(state, settings=settings)
+
+    assert result["reflection"]["action"] == "clarify"
+    assert result["reflection"]["reason"] == "ambiguous_query"
+    assert result["final_answer"] == "请问你指的是哪个具体对象？"
+    assert (
+        result["stage_summaries"]["ambiguity_check"]["reason"]
+        == "coref_low_confidence"
+    )
 
 
 @pytest.mark.asyncio

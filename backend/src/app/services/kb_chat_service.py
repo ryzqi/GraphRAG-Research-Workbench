@@ -978,6 +978,12 @@ class KbChatService:
                 "llm_resolve_used",
                 "llm_resolve_reason",
                 "fallback_used",
+                "triggered",
+                "confidence",
+                "candidate_count",
+                "selected_mention",
+                "resolution_source",
+                "needs_clarification_hint",
             ):
                 value = node_summary.get(key)
                 if value is not None:

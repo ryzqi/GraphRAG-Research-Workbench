@@ -430,6 +430,24 @@ async def coref_rewrite(state: dict, settings: Settings) -> dict[str, Any]:
 
     rewritten = query
     reason: str | None = None
+    meta: dict[str, Any] = {}
+    context_frame = state.get("context_frame")
+    context_data = context_frame if isinstance(context_frame, dict) else {}
+    selected_turns = (
+        context_data.get("selected_turns")
+        if isinstance(context_data.get("selected_turns"), list)
+        else []
+    )
+    summary_text = (
+        str(context_data.get("summary_text"))
+        if isinstance(context_data.get("summary_text"), str)
+        else ""
+    )
+    memory_snippet = (
+        str(context_data.get("memory_snippet"))
+        if isinstance(context_data.get("memory_snippet"), str)
+        else ""
+    )
     rewrite_enabled = query_rewrite_enabled(state, settings)
     if not rewrite_enabled:
         rewritten = query
@@ -441,13 +459,32 @@ async def coref_rewrite(state: dict, settings: Settings) -> dict[str, Any]:
                 query,
                 enabled=rewrite_enabled,
                 timeout_seconds=0,
+                recent_turns=[
+                    item
+                    for item in selected_turns
+                    if isinstance(item, dict)
+                    and isinstance(item.get("role"), str)
+                    and isinstance(item.get("text"), str)
+                ],
+                summary_text=summary_text,
+                memory_snippet=memory_snippet,
             )
             rewritten = result.query
             reason = result.reason
+            if isinstance(result.meta, dict):
+                meta = result.meta
         except Exception:  # pragma: no cover
             # Absolute fallback: keep original query.
             rewritten = query
             reason = "error"
+            meta = {
+                "triggered": False,
+                "confidence": 0.0,
+                "candidate_count": 0,
+                "selected_mention": "",
+                "resolution_source": "none",
+                "needs_clarification": False,
+            }
 
     stage_summaries = _merge_stage_summary(
         state,
@@ -463,13 +500,23 @@ async def coref_rewrite(state: dict, settings: Settings) -> dict[str, Any]:
                 if query.strip()
                 else 0.0
             ),
+            "triggered": bool(meta.get("triggered")),
+            "confidence": float(meta.get("confidence") or 0.0),
+            "candidate_count": int(meta.get("candidate_count") or 0),
+            "selected_mention": str(meta.get("selected_mention") or ""),
+            "resolution_source": str(meta.get("resolution_source") or "none"),
+            "needs_clarification_hint": bool(meta.get("needs_clarification")),
             "latency_ms": int((time.perf_counter() - start) * 1000),
             "completed_at": now_iso(),
         },
         settings=settings,
     )
 
-    return {"coref_query": rewritten, "stage_summaries": stage_summaries}
+    return {
+        "coref_query": rewritten,
+        "coref_meta": meta,
+        "stage_summaries": stage_summaries,
+    }
 
 
 async def ambiguity_check(state: dict, settings: Settings) -> dict[str, Any]:
@@ -487,16 +534,25 @@ async def ambiguity_check(state: dict, settings: Settings) -> dict[str, Any]:
     reverse_question = ""
     reason: str | None = None
     if ambiguity_check_enabled(state, settings):
-        try:
-            svc = QueryRewriteService(settings=settings)
-            result = await svc.ambiguity_check(query, timeout_seconds=0)
-            ambiguous = result.ambiguous
-            reverse_question = result.reverse_question or ""
-            reason = result.reason
-        except Exception:  # pragma: no cover
-            ambiguous = False
-            reverse_question = ""
-            reason = "error"
+        coref_meta = state.get("coref_meta")
+        if isinstance(coref_meta, dict) and bool(coref_meta.get("needs_clarification")):
+            ambiguous = True
+            reverse_question = str(
+                coref_meta.get("clarification_hint")
+                or "为了更准确地回答，你指的是哪个对象/范围？请补充具体指代或上下文。"
+            )
+            reason = "coref_low_confidence"
+        else:
+            try:
+                svc = QueryRewriteService(settings=settings)
+                result = await svc.ambiguity_check(query, timeout_seconds=0)
+                ambiguous = result.ambiguous
+                reverse_question = result.reverse_question or ""
+                reason = result.reason
+            except Exception:  # pragma: no cover
+                ambiguous = False
+                reverse_question = ""
+                reason = "error"
 
     stage_summaries = _merge_stage_summary(
         state,

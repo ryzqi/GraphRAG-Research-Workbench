@@ -566,6 +566,18 @@ def _build_node_output_display_items(
         )
         _append_display_item(
             items,
+            key="confidence",
+            label="消解置信度",
+            value=summary.get("confidence"),
+        )
+        _append_display_item(
+            items,
+            key="selected_mention",
+            label="选择候选",
+            value=summary.get("selected_mention"),
+        )
+        _append_display_item(
+            items,
             key="rewritten",
             label="是否改写",
             value=summary.get("rewritten"),
@@ -575,6 +587,12 @@ def _build_node_output_display_items(
             key="reason",
             label="改写原因",
             value=summary.get("reason"),
+        )
+        _append_display_item(
+            items,
+            key="needs_clarification_hint",
+            label="建议先澄清",
+            value=summary.get("needs_clarification_hint"),
         )
     elif node_name == "ambiguity_check":
         _append_display_item(
