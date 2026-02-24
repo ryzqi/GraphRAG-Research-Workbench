@@ -58,6 +58,10 @@ class KbChatRuntimeConfig(TypedDict, total=False):
     normalize_alias_max: int
     normalize_timeout_seconds: float
     hyde_enabled: bool
+    parallel_retrieval_enabled: bool
+    parallel_retrieval_min_queries: int
+    parallel_retrieval_max_branches: int
+    parallel_retrieval_include_main: bool
     hybrid_retrieval_enabled: bool
     rerank_enabled: bool
     retrieval_top_k: int

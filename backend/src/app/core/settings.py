@@ -404,6 +404,18 @@ class Settings(BaseSettings):
     kb_chat_complexity_cache_ttl_seconds: int = Field(
         120, ge=0, alias="KB_CHAT_COMPLEXITY_CACHE_TTL_SECONDS"
     )
+    kb_chat_parallel_retrieval_enabled: bool = Field(
+        True, alias="KB_CHAT_PARALLEL_RETRIEVAL_ENABLED"
+    )
+    kb_chat_parallel_retrieval_min_queries: int = Field(
+        2, ge=1, le=8, alias="KB_CHAT_PARALLEL_RETRIEVAL_MIN_QUERIES"
+    )
+    kb_chat_parallel_retrieval_max_branches: int = Field(
+        6, ge=1, le=12, alias="KB_CHAT_PARALLEL_RETRIEVAL_MAX_BRANCHES"
+    )
+    kb_chat_parallel_retrieval_include_main: bool = Field(
+        True, alias="KB_CHAT_PARALLEL_RETRIEVAL_INCLUDE_MAIN"
+    )
 
     kb_chat_trace_enabled: bool = Field(True, alias="KB_CHAT_TRACE_ENABLED")
 

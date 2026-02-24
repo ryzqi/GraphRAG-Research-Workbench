@@ -298,6 +298,18 @@ class KbChatService:
                     kb_chat_config.normalize_timeout_seconds
                 ),
                 "hyde_enabled": bool(kb_chat_config.hyde_enabled),
+                "parallel_retrieval_enabled": bool(
+                    kb_chat_config.parallel_retrieval_enabled
+                ),
+                "parallel_retrieval_min_queries": int(
+                    kb_chat_config.parallel_retrieval_min_queries
+                ),
+                "parallel_retrieval_max_branches": int(
+                    kb_chat_config.parallel_retrieval_max_branches
+                ),
+                "parallel_retrieval_include_main": bool(
+                    kb_chat_config.parallel_retrieval_include_main
+                ),
                 "complexity_model_timeout_seconds": float(
                     self._settings.kb_chat_complexity_model_timeout_seconds
                 ),

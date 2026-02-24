@@ -117,3 +117,53 @@ def retrieval_top_k(state: dict[str, Any], settings: Settings) -> int:
             default=int(settings.retrieval_default_top_k),
         ),
     )
+
+
+def parallel_retrieval_enabled(state: dict[str, Any], settings: Settings) -> bool:
+    return _state_flag(
+        state,
+        key="parallel_retrieval_enabled",
+        default=bool(getattr(settings, "kb_chat_parallel_retrieval_enabled", True)),
+    )
+
+
+def parallel_retrieval_min_queries(state: dict[str, Any], settings: Settings) -> int:
+    return max(
+        1,
+        min(
+            8,
+            _state_int(
+                state,
+                key="parallel_retrieval_min_queries",
+                default=int(
+                    getattr(settings, "kb_chat_parallel_retrieval_min_queries", 2)
+                ),
+            ),
+        ),
+    )
+
+
+def parallel_retrieval_max_branches(state: dict[str, Any], settings: Settings) -> int:
+    return max(
+        1,
+        min(
+            12,
+            _state_int(
+                state,
+                key="parallel_retrieval_max_branches",
+                default=int(
+                    getattr(settings, "kb_chat_parallel_retrieval_max_branches", 6)
+                ),
+            ),
+        ),
+    )
+
+
+def parallel_retrieval_include_main(state: dict[str, Any], settings: Settings) -> bool:
+    return _state_flag(
+        state,
+        key="parallel_retrieval_include_main",
+        default=bool(
+            getattr(settings, "kb_chat_parallel_retrieval_include_main", True)
+        ),
+    )

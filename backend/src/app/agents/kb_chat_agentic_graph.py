@@ -39,13 +39,13 @@ from app.agents.kb_chat_agentic.preprocess import (
 from app.agents.kb_chat_agentic.tool_loop import force_exit_node
 from app.agents.kb_chat_agentic.reflection import (
     answer_review,
+    dispatch_subqueries,
     doc_grader,
     finalize_answer,
     generate_draft,
     kb_retrieve_context,
     merge_subquery_context,
     retrieve_subquery_context,
-    route_after_subquery_dispatch,
     route_after_answer_review,
     route_after_doc_grader,
     transform_query_for_retry,
@@ -461,6 +461,42 @@ def _build_node_input_display_items(
                 label="HyDE 文档数量",
                 value=len(hyde_docs),
             )
+    elif node_name == "dispatch_subqueries":
+        _append_display_item(
+            items,
+            key="query_strategy",
+            label="查询策略",
+            value=snapshot.get("query_strategy"),
+        )
+        _append_display_item(
+            items,
+            key="query_items",
+            label="查询项",
+            value=_format_query_items(snapshot.get("query_items")),
+        )
+    elif node_name == "retrieve_subquery":
+        task = _as_dict(snapshot.get("subquery_task")) or {}
+        _append_display_item(
+            items,
+            key="query",
+            label="分支查询",
+            value=_non_empty_text(task.get("query")),
+        )
+        _append_display_item(
+            items,
+            key="kind",
+            label="分支类型",
+            value=_non_empty_text(task.get("kind")),
+        )
+    elif node_name == "merge_subquery_context":
+        _append_display_item(
+            items,
+            key="subquery_runs_count",
+            label="分支结果数",
+            value=len(snapshot.get("subquery_runs"))
+            if isinstance(snapshot.get("subquery_runs"), list)
+            else None,
+        )
     elif node_name == "retrieve":
         query_items = _format_query_items(snapshot.get("query_items"))
         if query_items:
@@ -831,6 +867,66 @@ def _build_node_output_display_items(
             value=summary.get("query_items_count")
             if summary.get("query_items_count") is not None
             else len(query_items),
+        )
+    elif node_name == "dispatch_subqueries":
+        _append_display_item(
+            items,
+            key="mode",
+            label="检索编排模式",
+            value=summary.get("mode"),
+        )
+        _append_display_item(
+            items,
+            key="branch_count",
+            label="并行分支数",
+            value=summary.get("branch_count"),
+        )
+        _append_display_item(
+            items,
+            key="reason",
+            label="编排原因",
+            value=summary.get("reason"),
+        )
+    elif node_name == "retrieve_subquery":
+        runs = snapshot.get("subquery_runs")
+        first = runs[0] if isinstance(runs, list) and runs else {}
+        run = first if isinstance(first, dict) else {}
+        _append_display_item(
+            items,
+            key="query",
+            label="分支查询",
+            value=run.get("query"),
+        )
+        _append_display_item(
+            items,
+            key="kind",
+            label="分支类型",
+            value=run.get("kind"),
+        )
+        _append_display_item(
+            items,
+            key="success",
+            label="检索是否成功",
+            value=run.get("success"),
+        )
+    elif node_name == "merge_subquery_context":
+        _append_display_item(
+            items,
+            key="mode",
+            label="聚合模式",
+            value=summary.get("mode"),
+        )
+        _append_display_item(
+            items,
+            key="branch_count",
+            label="分支总数",
+            value=summary.get("branch_count"),
+        )
+        _append_display_item(
+            items,
+            key="evidence_count",
+            label="证据数量",
+            value=summary.get("evidence_count"),
         )
     elif node_name == "retrieve":
         _append_display_item(
@@ -1228,6 +1324,15 @@ class KbChatAgenticGraph:
             ),
             metadata=_NODE_METADATA["prepare_messages"],
         )
+        graph.add_node(
+            "dispatch_subqueries",
+            _wrap_node_with_io(
+                "dispatch_subqueries",
+                partial(dispatch_subqueries, settings=settings),
+            ),
+            metadata=_NODE_METADATA["dispatch_subqueries"],
+            destinations=("retrieve_subquery", "retrieve"),
+        )
 
         # -----------------
         # Retrieval/Reflection
@@ -1334,10 +1439,7 @@ class KbChatAgenticGraph:
             graph.add_edge("decomposition", "prepare_messages")
             graph.add_edge("entity_expand", "prepare_messages")
 
-        graph.add_conditional_edges(
-            "prepare_messages",
-            lambda s: route_after_subquery_dispatch(s, settings),
-        )
+        graph.add_edge("prepare_messages", "dispatch_subqueries")
         graph.add_edge("retrieve_subquery", "merge_subquery_context")
         graph.add_edge("merge_subquery_context", "doc_grader")
         graph.add_edge("retrieve", "doc_grader")

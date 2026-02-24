@@ -77,6 +77,18 @@ const NODE_DETAIL_POLICY_MAP: Record<string, NodeDetailPolicy> = {
     input: ['normalized_query'],
     output: ['query_items_count', 'query_items'],
   },
+  dispatch_subqueries: {
+    input: ['query_strategy', 'query_items'],
+    output: ['mode', 'branch_count', 'reason'],
+  },
+  retrieve_subquery: {
+    input: ['query', 'kind'],
+    output: ['query', 'kind', 'success'],
+  },
+  merge_subquery_context: {
+    input: ['subquery_runs_count'],
+    output: ['mode', 'branch_count', 'evidence_count'],
+  },
   retrieve: {
     input: ['query_items', 'normalized_query'],
     output: ['evidence_count', 'attempted'],

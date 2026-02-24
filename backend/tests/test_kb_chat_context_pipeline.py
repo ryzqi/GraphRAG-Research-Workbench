@@ -227,6 +227,10 @@ def settings():
         retrieval_default_top_k=5,
         kb_chat_grader_fail_policy="closed",
         summary_max_tokens=128,
+        kb_chat_parallel_retrieval_enabled=True,
+        kb_chat_parallel_retrieval_min_queries=2,
+        kb_chat_parallel_retrieval_max_branches=6,
+        kb_chat_parallel_retrieval_include_main=True,
     )
 
 
@@ -532,6 +536,97 @@ def test_route_after_subquery_dispatch_returns_send_tasks(settings):
     assert len(result) == 2
     assert all(isinstance(item, Send) for item in result)
     assert result[0].node == "retrieve_subquery"
+
+
+def test_route_after_subquery_dispatch_supports_multi_query_fanout(settings):
+    state = {
+        "query_strategy": "multi_query",
+        "query_items": [
+            {"kind": "main", "query": "main question", "use_dense": True, "use_bm25": True},
+            {"kind": "variant", "query": "variant A", "index": 0, "use_dense": True, "use_bm25": True},
+            {"kind": "variant", "query": "variant B", "index": 1, "use_dense": True, "use_bm25": True},
+        ],
+    }
+
+    result = reflection.route_after_subquery_dispatch(state, settings)
+
+    assert isinstance(result, list)
+    assert len(result) == 3
+    assert all(isinstance(item, Send) for item in result)
+    assert result[0].arg["subquery_task"]["query_item"]["kind"] == "main"
+    assert result[1].arg["subquery_task"]["query_item"]["kind"] == "variant"
+
+
+def test_route_after_subquery_dispatch_respects_max_branches(settings):
+    state = {
+        "query_strategy": "multi_query",
+        "runtime_config": {"parallel_retrieval_max_branches": 2},
+        "query_items": [
+            {"kind": "main", "query": "main question", "use_dense": True, "use_bm25": True},
+            {"kind": "variant", "query": "variant A", "index": 0, "use_dense": True, "use_bm25": True},
+            {"kind": "variant", "query": "variant B", "index": 1, "use_dense": True, "use_bm25": True},
+            {"kind": "variant", "query": "variant C", "index": 2, "use_dense": True, "use_bm25": True},
+        ],
+    }
+
+    result = reflection.route_after_subquery_dispatch(state, settings)
+
+    assert isinstance(result, list)
+    assert len(result) == 2
+
+
+@pytest.mark.asyncio
+async def test_dispatch_subqueries_returns_command_for_parallel_fanout(settings):
+    state = {
+        "query_strategy": "multi_query",
+        "query_items": [
+            {"kind": "main", "query": "main question", "use_dense": True, "use_bm25": True},
+            {"kind": "variant", "query": "variant A", "index": 0, "use_dense": True, "use_bm25": True},
+            {"kind": "variant", "query": "variant B", "index": 1, "use_dense": True, "use_bm25": True},
+        ],
+        "stage_summaries": {},
+    }
+
+    result = await reflection.dispatch_subqueries(state, settings=settings)
+
+    assert isinstance(result, Command)
+    assert isinstance(result.goto, list)
+    assert len(result.goto) == 3
+    assert result.update["stage_summaries"]["dispatch_subqueries"]["mode"] == "parallel_fanout"
+
+
+@pytest.mark.asyncio
+async def test_retrieve_subquery_context_uses_query_item_bundle(settings):
+    kb_tool = _DummyKbTool()
+    state = {
+        "loop_counts": {"total_rounds": 0, "retrieval_retries": 0, "generation_retries": 0},
+        "memory_keys": {"kb_ids": ["kb1"]},
+        "runtime_config": {},
+        "subquery_task": {
+            "subquery_id": "sq_1",
+            "index": 0,
+            "query": "fallback query",
+            "query_item": {
+                "kind": "hyde",
+                "query": "hyde query",
+                "use_dense": True,
+                "use_bm25": False,
+                "hyde_queries": ["hyde query", "hyde variant"],
+                "hyde_aggregation": "mean_embedding",
+            },
+        },
+    }
+
+    result = await reflection.retrieve_subquery_context(
+        state,
+        settings=settings,
+        kb_tool=kb_tool,
+    )
+
+    assert kb_tool.payloads
+    assert kb_tool.payloads[0]["query"] == "hyde query"
+    assert kb_tool.payloads[0]["query_items"][0]["kind"] == "hyde"
+    assert result["subquery_runs"][0]["kind"] == "hyde"
 
 
 @pytest.mark.asyncio

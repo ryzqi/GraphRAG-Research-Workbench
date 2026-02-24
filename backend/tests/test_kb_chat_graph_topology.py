@@ -27,6 +27,22 @@ def _collect_complexity_targets(graph_json: dict) -> set[str]:
     return targets
 
 
+def _collect_dispatch_targets(graph_json: dict) -> set[str]:
+    edges = graph_json.get("edges")
+    if not isinstance(edges, list):
+        return set()
+    targets: set[str] = set()
+    for edge in edges:
+        if not isinstance(edge, dict):
+            continue
+        if edge.get("source") != "dispatch_subqueries":
+            continue
+        target = edge.get("target")
+        if isinstance(target, str) and target:
+            targets.add(target)
+    return targets
+
+
 def test_complexity_router_destinations_without_hyde():
     graph = KbChatAgenticGraph(
         chat_model=object(),  # not used during topology construction
@@ -39,6 +55,8 @@ def test_complexity_router_destinations_without_hyde():
     targets = _collect_complexity_targets(graph_json)
 
     assert targets == {"decomposition", "generate_variants", "prepare_messages"}
+    dispatch_targets = _collect_dispatch_targets(graph_json)
+    assert dispatch_targets == {"retrieve_subquery", "retrieve"}
 
 
 def test_complexity_router_destinations_with_hyde():
@@ -53,3 +71,5 @@ def test_complexity_router_destinations_with_hyde():
     targets = _collect_complexity_targets(graph_json)
 
     assert targets == {"decomposition", "generate_variants", "hyde"}
+    dispatch_targets = _collect_dispatch_targets(graph_json)
+    assert dispatch_targets == {"retrieve_subquery", "retrieve"}

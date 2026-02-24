@@ -57,6 +57,10 @@ class KbChatConfig(BaseModel):
     normalize_alias_max: int = Field(4, ge=1, le=8)
     normalize_timeout_seconds: float = Field(0.8, ge=0.0, le=5.0)
     hyde_enabled: bool = False
+    parallel_retrieval_enabled: bool = True
+    parallel_retrieval_min_queries: int = Field(2, ge=1, le=8)
+    parallel_retrieval_max_branches: int = Field(6, ge=1, le=12)
+    parallel_retrieval_include_main: bool = True
     hybrid_retrieval_enabled: bool = True
     rerank_enabled: bool = True
     retrieval_top_k: int = Field(12, ge=1, le=20)
@@ -118,6 +122,10 @@ def default_kb_chat_config(*, settings: Settings | None = None) -> KbChatConfig:
         normalize_alias_max=int(cfg.kb_chat_normalize_alias_max),
         normalize_timeout_seconds=float(cfg.kb_chat_normalize_timeout_seconds),
         hyde_enabled=bool(cfg.kb_chat_hyde_enabled),
+        parallel_retrieval_enabled=bool(cfg.kb_chat_parallel_retrieval_enabled),
+        parallel_retrieval_min_queries=int(cfg.kb_chat_parallel_retrieval_min_queries),
+        parallel_retrieval_max_branches=int(cfg.kb_chat_parallel_retrieval_max_branches),
+        parallel_retrieval_include_main=bool(cfg.kb_chat_parallel_retrieval_include_main),
         hybrid_retrieval_enabled=bool(cfg.retrieval_hybrid_enabled),
         rerank_enabled=bool(cfg.retrieval_rerank_enabled),
         retrieval_top_k=int(cfg.retrieval_default_top_k),
