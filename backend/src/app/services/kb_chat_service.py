@@ -541,7 +541,7 @@ class KbChatService:
 
         chat_model = create_chat_model(settings=self._settings)
 
-        system_prompt = self._prompts.render("kb_chat/system")
+        system_prompt = self._prompts.render_with_few_shot("kb_chat/system")
         context_metrics = self._context_builder.build_metrics(
             history_usage=history_usage,
             history_truncation=history_truncation,

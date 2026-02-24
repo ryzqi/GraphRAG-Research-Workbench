@@ -1,6 +1,6 @@
-version: "1.4"
+version: “1.5”
 name: kb_chat_transform_query
-description: "查询改写/扩检提示词"
+description: “查询改写/扩检提示词”
 
 template: |
   你是检索查询改写助手。请根据失败原因，把用户问题改写为一条更适合检索的短查询。
@@ -19,6 +19,7 @@ template: |
   3. 若 hint 有效，应优先吸收；若 hint 为空或无效，可忽略。
   4. 只输出一行查询文本（建议空格分隔关键词），禁止解释、代码块、编号。
   5. 输出前自检：改写后仍能映射回原问题核心意图。
+  6. 改写后的查询长度应在 4-16 个关键词之间。
 
   用户问题：{question}
   原因：{reason}
@@ -39,16 +40,21 @@ few_shot_examples:
   - input: |
       用户问题：公司今年的营收目标是多少？
       原因：no_evidence
-      提示：如果可行，扩展为“财务/预算/目标”等相关词
-    output: "公司 今年 营收 目标 财务 预算"
+      提示：如果可行，扩展为”财务/预算/目标”等相关词
+    output: “公司 今年 营收 目标 财务 预算”
   - input: |
       用户问题：帮我查一下这个政策影响
       原因：not_relevant
       提示：请明确政策名称与影响对象
-    output: "政策 名称 影响 对象 范围"
+    output: “政策 名称 影响 对象 范围”
   - input: |
       用户问题：SDK 2.1 登录报错 E401 怎么处理
       原因：unknown_reason
       提示：
-    output: "SDK 2.1 登录 E401 报错 处理"
+    output: “SDK 2.1 登录 E401 报错 处理”
+  - input: |
+      用户问题：平台可用性是多少
+      原因：insufficient
+      提示：时间范围
+    output: “平台 可用性 SLA 2024 年度 月均”
 

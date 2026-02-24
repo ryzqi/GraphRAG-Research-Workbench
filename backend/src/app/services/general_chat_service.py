@@ -751,7 +751,7 @@ class GeneralChatService:
             hitl_interrupt_on = build_hitl_interrupt_on(tool_meta_by_name)
 
             # 构造初始 messages（历史 + 用户问题）
-            system_prompt = self._prompts.render("general_chat/system")
+            system_prompt = self._prompts.render_with_few_shot("general_chat/system")
             first_history = self._sanitize_history_for_replay(
                 original_history,
                 require_assistant_response_id=require_assistant_response_id,
@@ -987,7 +987,7 @@ class GeneralChatService:
             )
             hitl_interrupt_on = build_hitl_interrupt_on(tool_meta_by_name)
 
-            system_prompt = self._prompts.render("general_chat/system")
+            system_prompt = self._prompts.render_with_few_shot("general_chat/system")
             config = CheckpointManager.make_config(thread_id)
             replay_metrics = self._build_replay_metrics(replay_decision)
 
@@ -1276,7 +1276,7 @@ class GeneralChatService:
                 use_previous_response_id=replay_decision.use_previous_response_id,
             )
 
-            system_prompt = self._prompts.render("general_chat/system")
+            system_prompt = self._prompts.render_with_few_shot("general_chat/system")
             agent = build_general_chat_agent(
                 chat_model=chat_model,
                 tools=tools,
@@ -1423,7 +1423,7 @@ class GeneralChatService:
                 use_previous_response_id=replay_decision.use_previous_response_id,
             )
 
-            system_prompt = self._prompts.render("general_chat/system")
+            system_prompt = self._prompts.render_with_few_shot("general_chat/system")
             agent = build_general_chat_agent(
                 chat_model=chat_model,
                 tools=tools,

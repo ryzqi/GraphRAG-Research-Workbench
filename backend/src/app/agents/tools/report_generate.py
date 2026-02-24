@@ -288,7 +288,7 @@ def build_report_generate_tool(
         confidence_level = str(evidence_summary.get("confidence_level") or "partial")
 
         if prompts:
-            prompt = prompts.render(
+            prompt = prompts.render_with_few_shot(
                 "tools/report_generate",
                 question=question,
                 findings=findings_text,

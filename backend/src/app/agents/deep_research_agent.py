@@ -155,7 +155,7 @@ class DeepResearchAgent:
     ) -> DeepResearchOutput:
         """执行深度研究流程。"""
         self._reset_run_state()
-        system_prompt = self._prompts.render(
+        system_prompt = self._prompts.render_with_few_shot(
             "research/deep_agent_system", question=question
         )
 

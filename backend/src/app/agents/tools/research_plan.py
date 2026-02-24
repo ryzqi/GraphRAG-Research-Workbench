@@ -252,7 +252,7 @@ def build_research_plan_tool(
         bounded_subtasks = max(1, min(int(max_subtasks), 10))
 
         if prompts:
-            prompt = prompts.render(
+            prompt = prompts.render_with_few_shot(
                 "tools/research_plan",
                 question=question,
                 context=context or "无",

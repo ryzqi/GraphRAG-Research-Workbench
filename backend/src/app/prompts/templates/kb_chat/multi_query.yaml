@@ -1,4 +1,4 @@
-version: "1.1"
+version: "1.2"
 name: kb_chat_multi_query
 description: "多路查询扩展提示词"
 
@@ -18,6 +18,7 @@ template: |
   2. 查询之间必须实质差异化，禁止仅词序调整或轻微停用词变化。
   3. 每条查询尽量短且可直接用于检索，不要解释性句子。
   4. 必须输出 3 条；若有冲突，优先保证准确性与实体约束。
+  5. 若问题含中英文混合术语，查询中应同时保留中英文形式。
 
   用户问题：{question}
 
@@ -31,4 +32,6 @@ few_shot_examples:
     output: '["高铁 晚点 赔偿 标准", "铁路 客运 延误 赔偿 规定", "列车 正点率 旅客补偿 条款"]'
   - input: "数据库连接总是超时怎么排查"
     output: '["数据库 连接 超时 排查 方法", "连不上数据库 一直超时 怎么处理", "数据库 超时 连接池 网络 延迟 配置 检查"]'
+  - input: "Kubernetes Pod OOMKilled 怎么解决"
+    output: '["Kubernetes Pod OOMKilled 解决方案", "K8s 容器 内存溢出 OOM 排查", "Pod 内存限制 resources limits 调优"]'
 

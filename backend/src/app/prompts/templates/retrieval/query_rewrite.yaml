@@ -1,4 +1,4 @@
-version: "1.3"
+version: "1.4"
 name: retrieval_query_rewrite
 description: "检索查询重写提示词"
 
@@ -12,7 +12,8 @@ template: |
   4. 查询应同时兼顾关键词检索与语义检索，避免过长与过度口语化。
   5. 优先保留对检索分辨率贡献高的词：实体名、时间、指标、错误码、版本号、约束条件。
   6. 查询建议长度为 4-16 个关键词（按语义最小闭包保留）。
-  7. 只输出改写后的查询，不要解释、不要代码块。
+  7. 若用户问题已是简洁关键词形式且无冗余，直接输出原文。
+  8. 只输出改写后的查询，不要解释、不要代码块。
 
   用户问题：{question}
 
@@ -30,4 +31,6 @@ few_shot_examples:
     output: "用户 登录 报错 解决方案"
   - input: "2.4.1 版本支付接口一直报 E503，今天开始出现，怎么回事"
     output: "2.4.1 支付接口 E503 今日开始 报错 原因 排查"
+  - input: "我们项目用的Spring Boot加上Redis做cache，最近发现cache hit rate下降了，怎么排查"
+    output: "Spring Boot Redis cache hit rate 下降 排查"
 

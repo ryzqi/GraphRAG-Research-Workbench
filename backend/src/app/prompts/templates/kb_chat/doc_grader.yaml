@@ -1,9 +1,9 @@
-version: "1.5"
+version: “1.6”
 name: kb_chat_doc_grader
-description: "检索相关性评估器提示词"
+description: “检索相关性评估器提示词”
 
 template: |
-  你是严格的检索相关性评估器。输入包含“问题”和“检索片段”（片段以 [文档标签] 编号）。
+  你是严格的检索相关性评估器。输入包含”问题”和”检索片段”（片段以 [文档标签] 编号）。
 
   任务：判断这些检索片段是否与问题直接相关，且足以支撑后续回答关键点。
 
@@ -12,6 +12,10 @@ template: |
   - 即使未覆盖所有次要约束，只要能支撑主问题核心结论，也可判定 passed=true。
   - passed=false：无直接相关证据，或仅泛相关但不足以支撑作答。
   - 仅当缺失会导致主结论不可靠时，才判定 insufficient。
+
+  约束分类：
+  - 核心约束：问题的主语、限定条件、关键指标——缺失会导致主结论不可靠。
+  - 次要约束：补充背景、延展信息、附加说明——缺失不影响主结论成立。
 
   reason 允许值（必须从下列标签中选择一个）：
   - passed
@@ -22,7 +26,7 @@ template: |
   - needs_clarification（问题本身约束缺失，需要先澄清）
 
   missing_constraints 规则：
-  - 输出一个字符串数组，最多 3 项，使用简短名词短语（如“时间范围”“统计口径”）。
+  - 输出一个字符串数组，最多 3 项，使用简短名词短语（如”时间范围””统计口径”）。
   - 当 passed=true 时，必须输出空数组 []。
   - 当 passed=false 时，写出最关键缺口。
 
@@ -34,27 +38,32 @@ few_shot_examples:
       检索片段：
       [agent基础] Agent 是由模型、工具和记忆组成的系统。
       [agent进阶] 多代理协作可提升复杂任务处理能力。
-    output: '{"passed": false, "reason": "not_relevant", "missing_constraints": ["可用性指标", "时间范围"]}'
+    output: '{“passed”: false, “reason”: “not_relevant”, “missing_constraints”: [“可用性指标”, “时间范围”]}'
   - input: |
       问题：2024 年 Agent 平台的可用性指标是多少？
       检索片段：
       [平台SLA] 2024 年平台月均可用性为 99.95%，峰值为 99.99%。
       [平台运营] 2024 年故障恢复时间中位数为 4 分钟。
-    output: '{"passed": true, "reason": "passed", "missing_constraints": []}'
+    output: '{“passed”: true, “reason”: “passed”, “missing_constraints”: []}'
   - input: |
       问题：2024 年平台可用性是多少？请简述故障恢复情况。
       检索片段：
       [SLA] 2024 年平台月均可用性为 99.95%。
       [运行报告] 2024 年全年未发生超过 30 分钟的中断事故。
-    output: '{"passed": true, "reason": "passed", "missing_constraints": []}'
+    output: '{“passed”: true, “reason”: “passed”, “missing_constraints”: []}'
   - input: |
       问题：2024 年平台可用性是多少？请给出统计口径。
       检索片段：
       [SLA] 平台可用性长期保持高水平，用户体验良好。
-    output: '{"passed": false, "reason": "insufficient", "missing_constraints": ["可用性数值", "统计口径"]}'
+    output: '{“passed”: false, “reason”: “insufficient”, “missing_constraints”: [“可用性数值”, “统计口径”]}'
   - input: |
       问题：2024 年平台可用性是多少？
       检索片段：
       [运维月报] 平台体验持续优化，服务稳定。
-    output: '{"passed": false, "reason": "too_broad", "missing_constraints": ["可用性数值"]}'
+    output: '{“passed”: false, “reason”: “too_broad”, “missing_constraints”: [“可用性数值”]}'
+  - input: |
+      问题：2024 年 Q3 的客户投诉量是多少？
+      检索片段：
+      [客服报告] 2023 年 Q3 客户投诉量为 128 件，同比下降 15%。
+    output: '{“passed”: false, “reason”: “insufficient”, “missing_constraints”: [“2024年数据”]}'
 

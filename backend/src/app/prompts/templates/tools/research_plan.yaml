@@ -1,4 +1,4 @@
-version: "1.3"
+version: "1.4"
 name: tools_research_plan
 description: "研究计划工具提示词"
 
@@ -40,6 +40,7 @@ template: |
      - priority（1-5，1 为最高）
   4. subtasks 数量不得超过 {max_subtasks}。
   5. dependencies 只能引用已存在的任务 id，禁止循环依赖。
+  6. 若问题简单且单次检索即可回答，complexity 设为 simple，subtasks 仅包含 1 个任务。
 
   输出示例（仅示例格式）：
   {{"original_question": "...", "complexity": "moderate", "research_type": "analytical", "subtasks": [{{"id": "task_1", "description": "...", "search_queries": ["..."], "target_sources": "kb", "dependencies": [], "priority": 1}}], "estimated_steps": 3, "suggested_approach": "...", "key_assumptions": ["..."], "success_criteria": ["..."]}}
@@ -62,6 +63,14 @@ variables:
     required: true
 
 few_shot_examples:
+  - input: |
+      研究问题：公司年假天数是多少？
+      背景上下文：无
+      可用资源：
+      - 知识库: 2 个知识库可用
+      - 外部搜索: 未启用
+      要求：最多 3 个子任务
+    output: '{"original_question": "公司年假天数是多少？", "complexity": "simple", "research_type": "factual", "subtasks": [{"id": "task_1", "description": "检索公司年假制度相关文档", "search_queries": ["公司 年假 天数 规定"], "target_sources": "kb", "dependencies": [], "priority": 1}], "estimated_steps": 1, "suggested_approach": "直接检索知识库获取年假制度", "key_assumptions": ["知识库中包含人事制度文档"], "success_criteria": ["获取到明确的年假天数规定"]}'
   - input: |
       研究问题：为什么近两季度用户留存下降？
       背景上下文：移动端 DAU 稳定

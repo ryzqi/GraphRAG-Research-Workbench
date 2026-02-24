@@ -356,7 +356,7 @@ class QueryRewriteService:
             return RewriteResult(query=query, rewritten=False, reason="empty")
 
         try:
-            prompt = self._prompts.render(prompt_key, question=query)
+            prompt = self._prompts.render_with_few_shot(prompt_key, question=query)
         except KeyError:
             return RewriteResult(query=query, rewritten=False, reason="prompt_missing")
         start_time = time.perf_counter()
@@ -837,7 +837,7 @@ class QueryRewriteService:
     ) -> StructuredCallResult:
         """Call prompt and parse structured output via create_agent(response_format=Schema)."""
         try:
-            prompt = self._prompts.render(prompt_key, **kwargs)
+            prompt = self._prompts.render_with_few_shot(prompt_key, **kwargs)
         except KeyError:
             return StructuredCallResult(
                 payload=None, success=False, reason="prompt_missing", latency_ms=0

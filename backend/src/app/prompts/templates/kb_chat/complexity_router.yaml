@@ -73,6 +73,10 @@ template: |
   → reasoning: "两个并列目标（IT设备申领负责人、门禁卡办理负责人），满足规则1"
   → strategy: decomposition
 
+  问题："公司的考勤制度和请假流程是怎样的"
+  → reasoning: "看似两个话题，但'考勤制度'和'请假流程'通常在同一份制度文档中，单次检索即可覆盖"
+  → strategy: direct
+
   ## 规则
   1. 不要编造用户未提供的事实或约束。
   2. 若仍无法判断，默认输出 strategy=direct。

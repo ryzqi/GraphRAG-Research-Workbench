@@ -111,7 +111,7 @@ def _partition_citations(
 def _render_prompt_or_default(prompt_key: str, default: str) -> str:
     prompts = get_prompt_loader()
     try:
-        return prompts.render(prompt_key)
+        return prompts.render_with_few_shot(prompt_key)
     except KeyError:
         return default
 
@@ -309,7 +309,7 @@ async def doc_grader(
             chat_model=chat_model,
             schema=DocGraderDecision,
             system=system_prompt,
-            user=f"Question: {question}\n\nRetrieved snippets:\n{final_context[:4000]}",
+            user=f"问题：{question}\n\n检索片段：\n{final_context[:4000]}",
         )
         if judge is None:
             fallback_used = True
@@ -407,11 +407,7 @@ async def generate_draft(
     question = _resolve_query_text(state)
     final_context = _as_str(state.get("final_context")).strip()
     prompts = get_prompt_loader()
-    system_prompt = (
-        f"{prompts.render('kb_chat/system')}\n\n"
-        "请严格基于参考内容回答，不要添加任何参考内容中没有的信息；"
-        "每个关键事实都需要在句末给出 [S编号] 引用标签。"
-    )
+    system_prompt = prompts.render_with_few_shot('kb_chat/system')
 
     user = f"参考内容：\n{final_context}\n\n问题：{question}"
 

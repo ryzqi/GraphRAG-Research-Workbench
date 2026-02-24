@@ -125,7 +125,7 @@ class ResearchGraph:
 
         chat_model = create_chat_model(settings=self._settings)
 
-        system_prompt = self._prompts.render("research/deep_agent_system", question=question)
+        system_prompt = self._prompts.render_with_few_shot("research/deep_agent_system", question=question)
         state: ResearchState = {
             "messages": [SystemMessage(content=system_prompt), HumanMessage(content=question)],
             "pending_tool_calls": [],
