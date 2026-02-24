@@ -990,11 +990,6 @@ class KbChatService:
                 io_summary["query_count"] = len([v for v in values if isinstance(v, str)])
 
         if node == "hyde":
-            hyde_doc = update.get("hyde_doc")
-            if isinstance(hyde_doc, str) and hyde_doc.strip():
-                io_summary["hyde_preview"] = KbChatService._shorten_stream_text(
-                    hyde_doc, 160
-                )
             hyde_docs = update.get("hyde_docs")
             if isinstance(hyde_docs, list):
                 io_summary["hyde_docs_count"] = len(

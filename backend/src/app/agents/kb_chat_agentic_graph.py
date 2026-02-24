@@ -1,13 +1,4 @@
-"""KB Chat agentic LangGraph (preprocess → retrieval → reflection → answer).
-
-This graph follows the OpenSpec change `refactor-kb-agent-orchestration`:
-- Preprocess: MergeContext → Coref → Ambiguity → Normalize → ComplexityRouter → (Direct|Decomp|MultiQuery) → HyDE
-- RetrievalLayer: run kb_retrieve once per round (Top-N context)
-- ReflectionLayer: doc relevance → generation → answer review (with retrieval rewrites)
-
-Notes:
-- To keep streaming/service plumbing compatible, only the final answer is emitted as an AIMessage.
-"""
+"""KB Chat agentic LangGraph (preprocess -> retrieval -> reflection -> answer)."""
 
 from __future__ import annotations
 
@@ -410,12 +401,6 @@ def _build_node_input_display_items(
             label="多路查询",
             value=_pick_string_list(snapshot, "multi_queries"),
         )
-        _append_display_item(
-            items,
-            key="hyde_doc",
-            label="HyDE 内容",
-            value=_pick_text(snapshot, "hyde_doc"),
-        )
         hyde_docs = _pick_string_list(snapshot, "hyde_docs")
         if hyde_docs:
             _append_display_item(
@@ -663,12 +648,14 @@ def _build_node_output_display_items(
             label="是否启用 HyDE",
             value=summary.get("enabled"),
         )
-        _append_display_item(
-            items,
-            key="hyde_doc",
-            label="HyDE 生成内容",
-            value=_pick_text(snapshot, "hyde_doc"),
-        )
+        hyde_docs = _pick_string_list(snapshot, "hyde_docs")
+        if hyde_docs:
+            _append_display_item(
+                items,
+                key="hyde_docs_count",
+                label="HyDE 文档数量",
+                value=len(hyde_docs),
+            )
         _append_display_item(
             items,
             key="requested_count",
@@ -1182,7 +1169,6 @@ class KbChatAgenticGraph:
             lambda s: route_after_answer_review(s, settings),
             {
                 "finalize": "finalize",
-                "generate": "generate",
                 "transform_query": "transform_query",
                 "force_exit": "force_exit",
             },

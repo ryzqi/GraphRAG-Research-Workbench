@@ -77,6 +77,7 @@ class AmbiguityResult:
 class ComplexityRouteResult:
     strategy: str
     success: bool
+    reasoning: str | None = None
     latency_ms: int | None = None
 
 
@@ -599,7 +600,7 @@ class QueryRewriteService:
             "kb_chat/complexity_router",
             schema=ComplexityDecision,
             timeout_seconds=None,
-            max_tokens=160,
+            max_tokens=256,
             question=q,
         )
         if (
@@ -613,6 +614,7 @@ class QueryRewriteService:
             return ComplexityRouteResult(
                 strategy=strategy,
                 success=True,
+                reasoning=getattr(payload, "reasoning", None),
                 latency_ms=structured_result.latency_ms,
             )
 

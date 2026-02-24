@@ -1,16 +1,4 @@
-"""KB Chat agentic graph state (structured + checkpointer-friendly).
-
-This change introduces a structured, serializable state schema that the upcoming
-agentic KB Chat LangGraph will use.
-
-Persistence rules (LangGraph checkpointing/store):
-- Anything stored in the *graph state* must be serializable by LangGraph's default
-  serializer (JsonPlusSerializer) when a checkpointer is enabled.
-- Do NOT put runtime-only objects in state (DB sessions, HTTP clients, tools,
-  callbacks, dataclass instances like RetrievalResult, etc.). Keep them in node
-  closures / dependencies and write only primitives, dict/list, and LangChain/
-  LangGraph primitives (e.g. AnyMessage) to state.
-"""
+"""KB Chat agentic graph state (structured + checkpointer-friendly)."""
 
 from __future__ import annotations
 
@@ -20,53 +8,10 @@ from langchain.messages import AnyMessage
 from langgraph.graph.message import add_messages
 
 # -----------------------------
-# Retrieval provenance & evidence
+# Query bundle types
 # -----------------------------
 
-from app.schemas.query_enhancement import QueryHitSource, QueryItem
-
-
-RetrievalStage = Literal["dense", "bm25", "rrf", "rerank"]
-
-
-class RetrievalCandidate(TypedDict, total=False):
-    """A single retrieval candidate (serializable).
-
-    This is intentionally flat and JSON-friendly to ensure checkpointing works.
-    """
-
-    kb_id: str
-    material_id: str
-    chunk_id: str
-    score: float
-    stage: RetrievalStage
-
-    excerpt: str
-    locator: dict[str, Any] | None
-    metadata: dict[str, Any] | None
-    chunk_role: str | None
-    parent_chunk_id: str | None
-
-    # Provenance: which query(ies) hit this chunk.
-    hits: list[QueryHitSource]
-
-
-EvidenceSourceKind = Literal["kb", "external"]
-
-
-class GraphEvidenceItem(TypedDict, total=False):
-    """Chunk-level evidence item used by generation + auditing (serializable)."""
-
-    source_kind: EvidenceSourceKind
-    kb_id: str
-    material_id: str
-    chunk_id: str
-
-    locator: dict[str, Any] | None
-    excerpt: str
-    score: float
-
-    hits: list[QueryHitSource]
+from app.schemas.query_enhancement import QueryItem
 
 
 # -----------------------------
@@ -177,11 +122,11 @@ class KbChatAgenticState(KbChatAgenticStateBase, total=False):
     - ComplexityRouter: reads normalized_query -> writes query_strategy
     - Decomposition: reads normalized_query -> writes sub_queries
     - MultiQuery: reads normalized_query -> writes multi_queries
-    - HyDE: reads normalized_query -> writes hyde_doc/hyde_docs
+    - HyDE: reads normalized_query -> writes hyde_docs
     - QueryBundle: reads query family -> writes query_items (flattened, for retrieval)
-    - RetrievalLayer: reads query family -> writes retrieval_candidates (+ optional reranked_candidates)
-    - ReflectionLayer: reads candidates/evidence -> writes reflection (+ optional rewritten query)
-    - Generator: reads final_context/evidence -> writes draft_answer/final_answer
+    - RetrievalLayer: reads query family -> writes final_context/metrics
+    - ReflectionLayer: reads final_context -> writes reflection (+ optional rewritten query)
+    - Generator: reads final_context -> writes draft_answer/final_answer
     """
 
     context_frame: ContextFrame
@@ -195,13 +140,8 @@ class KbChatAgenticState(KbChatAgenticStateBase, total=False):
 
     sub_queries: list[str]
     multi_queries: list[str]
-    hyde_doc: str
     hyde_docs: list[str]
     query_items: list[QueryItem]
-
-    retrieval_candidates: list[RetrievalCandidate]
-    reranked_candidates: list[RetrievalCandidate]
-    evidence_items: list[GraphEvidenceItem]
 
     final_context: str
     draft_answer: str
@@ -239,7 +179,4 @@ def make_initial_state(
         "multi_queries": [],
         "hyde_docs": [],
         "query_items": [],
-        "retrieval_candidates": [],
-        "reranked_candidates": [],
-        "evidence_items": [],
     }

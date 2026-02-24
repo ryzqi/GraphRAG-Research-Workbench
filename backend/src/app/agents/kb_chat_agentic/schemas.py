@@ -73,10 +73,16 @@ ComplexityStrategy = Literal["direct", "decomposition", "multi_query"]
 
 
 class ComplexityDecision(BaseModel):
-    """Structured output for query complexity routing."""
+    """复杂度路由结构化输出。"""
 
     model_config = ConfigDict(extra="forbid")
 
+    reasoning: str = Field(
+        ...,
+        min_length=2,
+        max_length=200,
+        description="简要分析：目标数量、是否需分步推理、是否存在召回风险",
+    )
     strategy: ComplexityStrategy = "direct"
 
 

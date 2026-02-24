@@ -134,9 +134,7 @@ async def _judge_structured(
     schema: type[_StructuredT],
     system: str,
     user: str,
-    max_tokens: int,
 ) -> tuple[_StructuredT | None, str | None]:
-    _ = max_tokens
     agent = create_agent(
         model=chat_model,
         tools=[],
@@ -312,7 +310,6 @@ async def doc_grader(
             schema=DocGraderDecision,
             system=system_prompt,
             user=f"Question: {question}\n\nRetrieved snippets:\n{final_context[:4000]}",
-            max_tokens=128,
         )
         if judge is None:
             fallback_used = True
@@ -497,7 +494,6 @@ async def answer_review(
                 f"问题：{question}\n\n参考内容：\n{final_context[:4000]}"
                 f"\n\n回答：\n{draft[:2000]}"
             ),
-            max_tokens=128,
         )
         if judge is None:
             fallback_used = True
@@ -524,15 +520,7 @@ async def answer_review(
                 fallback_reason = "invalid_schema"
 
     loop_counts_updates = loop_counts
-    if not passed and reason in _CITATION_ONLY_FAILURE_REASONS:
-        loop_counts_updates = {
-            **loop_counts,
-            "generation_retries": loop_counts.get("generation_retries", 0) + 1,
-        }
-
     action = "none" if passed else "transform_query"
-    if not passed and reason in _CITATION_ONLY_FAILURE_REASONS:
-        action = "generate"
     best_answer_updates: dict[str, Any] = {}
     best_answer_meta: dict[str, Any] | None = None
     if passed:
@@ -626,7 +614,6 @@ async def transform_query_for_retry(
         new_query = current
 
     hyde_docs: list[str] = []
-    hyde_doc = ""
     hyde_reason: str | None = None
     hyde_should_regenerate = HYDE_REGENERATE_ON_RETRY and hyde_enabled(state, settings)
     if hyde_should_regenerate:
@@ -638,13 +625,11 @@ async def transform_query_for_retry(
                 for value in hyde_result.queries
                 if isinstance(value, str) and value.strip()
             ]
-            hyde_doc = hyde_docs[0] if hyde_docs else ""
             hyde_reason = hyde_result.reason
         except asyncio.CancelledError:
             raise
         except Exception:
             hyde_docs = []
-            hyde_doc = ""
             hyde_reason = "error"
 
     # Keep query bundle consistent: after transform, rebuild retrieval inputs.
@@ -660,7 +645,6 @@ async def transform_query_for_retry(
         "coref_query": new_query,
         "sub_queries": [],
         "multi_queries": [],
-        "hyde_doc": hyde_doc,
         "hyde_docs": hyde_docs,
         "query_items": query_items,
         **_merge_reflection(
@@ -703,7 +687,7 @@ def route_after_doc_grader(state: dict, settings: Settings) -> str:
 
 
 def route_after_answer_review(state: dict, settings: Settings) -> str:
-    """Route after AnswerReview: finalize vs generate vs transform_query vs force_exit."""
+    """Route after AnswerReview: finalize vs transform_query vs force_exit."""
     if _force_exit_requested(state):
         return "force_exit"
     loop_counts = _get_loop_counts(state)
@@ -717,11 +701,9 @@ def route_after_answer_review(state: dict, settings: Settings) -> str:
 
     reason = _as_str(reflection.get("reason")) if isinstance(reflection, dict) else ""
     if reason in _CITATION_ONLY_FAILURE_REASONS:
-        if loop_counts.get("generation_retries", 0) > int(
-            settings.kb_chat_max_generation_retries
-        ):
+        if loop_counts["retrieval_retries"] >= int(settings.kb_chat_max_retrieval_retries):
             return "force_exit"
-        return "generate"
+        return "transform_query"
 
     if loop_counts["retrieval_retries"] >= int(settings.kb_chat_max_retrieval_retries):
         return "force_exit"

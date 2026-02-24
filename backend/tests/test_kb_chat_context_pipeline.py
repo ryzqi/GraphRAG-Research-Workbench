@@ -140,8 +140,8 @@ async def test_doc_grader_uses_plain_query_not_merged_context(monkeypatch, setti
 
     captured: dict[str, str] = {}
 
-    async def _fake_judge_structured(*, chat_model, schema, system, user, max_tokens):
-        _ = (chat_model, schema, system, max_tokens)
+    async def _fake_judge_structured(*, chat_model, schema, system, user):
+        _ = (chat_model, schema, system)
         captured["user"] = user
         return DocGraderDecision(
             passed=True,
@@ -185,3 +185,51 @@ async def test_transform_query_retry_uses_rewrite_input_query_when_needed(monkey
 
     assert _FakeRewriteService.seen_query == "rewrite source"
     assert result["normalized_query"] == "rewrite source refined"
+
+
+@pytest.mark.asyncio
+async def test_answer_review_citation_failure_routes_to_transform_query(settings):
+    state = {
+        "loop_counts": {"total_rounds": 1, "retrieval_retries": 0, "generation_retries": 0},
+        "normalized_query": "question",
+        "final_context": "[S1] evidence body",
+        "draft_answer": "answer without citation",
+        "reflection": {},
+        "stage_summaries": {},
+    }
+
+    result = await reflection.answer_review(state, settings=settings, chat_model=object())
+
+    assert result["reflection"]["review_passed"] is False
+    assert result["reflection"]["reason"] == "missing_citations"
+    assert result["reflection"]["action"] == "transform_query"
+    assert result["loop_counts"]["generation_retries"] == 0
+
+
+def test_route_after_answer_review_citation_failure_prefers_transform_query(settings):
+    state = {
+        "loop_counts": {"total_rounds": 1, "retrieval_retries": 0, "generation_retries": 1},
+        "reflection": {"review_passed": False, "reason": "missing_citations"},
+    }
+
+    next_node = reflection.route_after_answer_review(state, settings)
+
+    assert next_node == "transform_query"
+
+
+@pytest.mark.asyncio
+async def test_prepare_messages_uses_hyde_docs_only(settings):
+    state = {
+        "normalized_query": "main question",
+        "sub_queries": [],
+        "multi_queries": [],
+        "hyde_docs": ["hypothesis A", "hypothesis B"],
+        "stage_summaries": {},
+    }
+
+    result = await preprocess.prepare_messages(state, settings=settings)
+    hyde_items = [item for item in result["query_items"] if item.get("kind") == "hyde"]
+
+    assert len(hyde_items) == 1
+    assert hyde_items[0]["query"] == "hypothesis A"
+    assert hyde_items[0]["hyde_queries"] == ["hypothesis A", "hypothesis B"]

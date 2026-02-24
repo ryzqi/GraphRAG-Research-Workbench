@@ -92,7 +92,6 @@ async def test_reflection_judge_structured_success_and_invalid(monkeypatch):
         schema=DemoSchema,
         system="sys",
         user="user",
-        max_tokens=16,
     )
     assert isinstance(payload, DemoSchema)
     assert payload.value == 3
@@ -108,7 +107,6 @@ async def test_reflection_judge_structured_success_and_invalid(monkeypatch):
         schema=DemoSchema,
         system="sys",
         user="user",
-        max_tokens=16,
     )
     assert payload is None
     assert reason == "invalid_schema"
@@ -127,7 +125,6 @@ async def test_reflection_judge_structured_error_reason(monkeypatch):
         schema=DemoSchema,
         system="sys",
         user="user",
-        max_tokens=16,
     )
     assert payload is None
     assert reason == "error"
