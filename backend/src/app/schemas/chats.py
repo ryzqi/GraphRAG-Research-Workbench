@@ -56,17 +56,17 @@ class KbChatConfig(BaseModel):
     hyde_enabled: bool = False
     hybrid_retrieval_enabled: bool = True
     rerank_enabled: bool = True
-    retrieval_top_k: int = Field(10, ge=1, le=20)
-    retrieval_rerank_top_k: int = Field(40, ge=1, le=50)
+    retrieval_top_k: int = Field(12, ge=1, le=20)
+    retrieval_rerank_top_k: int = Field(50, ge=1, le=50)
     retrieval_hybrid_ranker: Literal["rrf", "weighted"] = "rrf"
-    retrieval_hybrid_dense_weight: float = Field(0.5, ge=0.0, le=1.0)
-    retrieval_hybrid_sparse_weight: float = Field(0.5, ge=0.0, le=1.0)
+    retrieval_hybrid_dense_weight: float = Field(0.6, ge=0.0, le=1.0)
+    retrieval_hybrid_sparse_weight: float = Field(0.4, ge=0.0, le=1.0)
     retrieval_hybrid_rrf_k: int = Field(60, ge=1, le=200)
-    retrieval_parent_max_parents: int = Field(6, ge=1, le=20)
-    retrieval_parent_max_children_per_parent: int = Field(2, ge=1, le=10)
-    retrieval_multiscale_per_window_top_k: int = Field(20, ge=1, le=200)
+    retrieval_parent_max_parents: int = Field(8, ge=1, le=20)
+    retrieval_parent_max_children_per_parent: int = Field(3, ge=1, le=10)
+    retrieval_multiscale_per_window_top_k: int = Field(40, ge=1, le=200)
     retrieval_multiscale_rrf_k: int = Field(60, ge=1, le=200)
-    retrieval_multiscale_max_documents: int = Field(10, ge=1, le=100)
+    retrieval_multiscale_max_documents: int = Field(12, ge=1, le=100)
     retrieval_multiscale_max_chunks_per_document: int = Field(2, ge=1, le=20)
 
     @model_validator(mode="after")
@@ -123,11 +123,11 @@ def default_kb_chat_config(*, settings: Settings | None = None) -> KbChatConfig:
         retrieval_hybrid_dense_weight=float(cfg.retrieval_hybrid_dense_weight),
         retrieval_hybrid_sparse_weight=float(cfg.retrieval_hybrid_sparse_weight),
         retrieval_hybrid_rrf_k=int(cfg.retrieval_hybrid_rrf_k),
-        retrieval_parent_max_parents=6,
-        retrieval_parent_max_children_per_parent=2,
-        retrieval_multiscale_per_window_top_k=20,
+        retrieval_parent_max_parents=8,
+        retrieval_parent_max_children_per_parent=3,
+        retrieval_multiscale_per_window_top_k=40,
         retrieval_multiscale_rrf_k=60,
-        retrieval_multiscale_max_documents=10,
+        retrieval_multiscale_max_documents=12,
         retrieval_multiscale_max_chunks_per_document=2,
     )
 

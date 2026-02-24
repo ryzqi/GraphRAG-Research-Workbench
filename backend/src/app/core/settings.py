@@ -314,19 +314,19 @@ class Settings(BaseSettings):
     )
 
     # 检索配置
-    retrieval_default_top_k: int = Field(10, alias="RETRIEVAL_DEFAULT_TOP_K")
-    retrieval_max_top_k: int = Field(40, alias="RETRIEVAL_MAX_TOP_K")
+    retrieval_default_top_k: int = Field(12, alias="RETRIEVAL_DEFAULT_TOP_K")
+    retrieval_max_top_k: int = Field(50, alias="RETRIEVAL_MAX_TOP_K")
     retrieval_cache_ttl_seconds: int = Field(300, alias="RETRIEVAL_CACHE_TTL_SECONDS")
     retrieval_cache_enabled: bool = Field(True, alias="RETRIEVAL_CACHE_ENABLED")
-    retrieval_min_score: float | None = Field(None, alias="RETRIEVAL_MIN_SCORE")
+    retrieval_min_score: float | None = Field(0.2, alias="RETRIEVAL_MIN_SCORE")
     retrieval_query_lowercase: bool = Field(False, alias="RETRIEVAL_QUERY_LOWERCASE")
     retrieval_hybrid_enabled: bool = Field(True, alias="RETRIEVAL_HYBRID_ENABLED")
     retrieval_hybrid_ranker: str = Field("rrf", alias="RETRIEVAL_HYBRID_RANKER")
     retrieval_hybrid_dense_weight: float = Field(
-        0.5, alias="RETRIEVAL_HYBRID_DENSE_WEIGHT"
+        0.6, alias="RETRIEVAL_HYBRID_DENSE_WEIGHT"
     )
     retrieval_hybrid_sparse_weight: float = Field(
-        0.5, alias="RETRIEVAL_HYBRID_SPARSE_WEIGHT"
+        0.4, alias="RETRIEVAL_HYBRID_SPARSE_WEIGHT"
     )
     retrieval_hybrid_rrf_k: int = Field(60, alias="RETRIEVAL_HYBRID_RRF_K")
     retrieval_query_rewrite_enabled: bool = Field(
@@ -393,10 +393,10 @@ class Settings(BaseSettings):
         True, alias="INGESTION_CONTEXTUAL_ENABLED"
     )
     ingestion_contextual_max_tokens: int = Field(
-        128, alias="INGESTION_CONTEXTUAL_MAX_TOKENS"
+        192, alias="INGESTION_CONTEXTUAL_MAX_TOKENS"
     )
     ingestion_contextual_concurrency: int = Field(
-        3, alias="INGESTION_CONTEXTUAL_CONCURRENCY"
+        2, alias="INGESTION_CONTEXTUAL_CONCURRENCY"
     )
     ingestion_embedding_batch_size: int = Field(
         32, alias="INGESTION_EMBEDDING_BATCH_SIZE"
