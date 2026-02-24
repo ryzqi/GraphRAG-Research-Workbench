@@ -382,6 +382,15 @@ class Settings(BaseSettings):
     kb_chat_ambiguity_timeout_seconds: float = Field(
         0.5, alias="KB_CHAT_AMBIGUITY_TIMEOUT_SECONDS"
     )
+    kb_chat_normalize_llm_enabled: bool = Field(
+        True, alias="KB_CHAT_NORMALIZE_LLM_ENABLED"
+    )
+    kb_chat_normalize_alias_max: int = Field(
+        4, ge=1, le=8, alias="KB_CHAT_NORMALIZE_ALIAS_MAX"
+    )
+    kb_chat_normalize_timeout_seconds: float = Field(
+        0.8, ge=0.0, le=5.0, alias="KB_CHAT_NORMALIZE_TIMEOUT_SECONDS"
+    )
     kb_chat_max_clarification_rounds: int = Field(
         1, alias="KB_CHAT_MAX_CLARIFICATION_ROUNDS"
     )

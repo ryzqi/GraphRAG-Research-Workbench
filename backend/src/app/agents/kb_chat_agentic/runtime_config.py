@@ -37,6 +37,20 @@ def _state_int(
     return int(default)
 
 
+def _state_float(
+    state: dict[str, Any],
+    *,
+    key: str,
+    default: float,
+) -> float:
+    runtime = state.get("runtime_config")
+    if isinstance(runtime, dict):
+        value = runtime.get(key)
+        if isinstance(value, (int, float)):
+            return float(value)
+    return float(default)
+
+
 def query_rewrite_enabled(state: dict[str, Any], settings: Settings) -> bool:
     return _state_flag(
         state,
@@ -50,6 +64,39 @@ def ambiguity_check_enabled(state: dict[str, Any], settings: Settings) -> bool:
         state,
         key="ambiguity_check_enabled",
         default=bool(settings.kb_chat_ambiguity_check_enabled),
+    )
+
+
+def normalize_llm_enabled(state: dict[str, Any], settings: Settings) -> bool:
+    return _state_flag(
+        state,
+        key="normalize_llm_enabled",
+        default=bool(getattr(settings, "kb_chat_normalize_llm_enabled", True)),
+    )
+
+
+def normalize_alias_max(state: dict[str, Any], settings: Settings) -> int:
+    return max(
+        1,
+        min(
+            8,
+            _state_int(
+                state,
+                key="normalize_alias_max",
+                default=int(getattr(settings, "kb_chat_normalize_alias_max", 4)),
+            ),
+        ),
+    )
+
+
+def normalize_timeout_seconds(state: dict[str, Any], settings: Settings) -> float:
+    return max(
+        0.0,
+        _state_float(
+            state,
+            key="normalize_timeout_seconds",
+            default=float(getattr(settings, "kb_chat_normalize_timeout_seconds", 0.8)),
+        ),
     )
 
 

@@ -53,6 +53,9 @@ class KbChatConfig(BaseModel):
 
     query_rewrite_enabled: bool = True
     ambiguity_check_enabled: bool = True
+    normalize_llm_enabled: bool = True
+    normalize_alias_max: int = Field(4, ge=1, le=8)
+    normalize_timeout_seconds: float = Field(0.8, ge=0.0, le=5.0)
     hyde_enabled: bool = False
     hybrid_retrieval_enabled: bool = True
     rerank_enabled: bool = True
@@ -111,6 +114,9 @@ def default_kb_chat_config(*, settings: Settings | None = None) -> KbChatConfig:
     return KbChatConfig(
         query_rewrite_enabled=bool(cfg.retrieval_query_rewrite_enabled),
         ambiguity_check_enabled=bool(cfg.kb_chat_ambiguity_check_enabled),
+        normalize_llm_enabled=bool(cfg.kb_chat_normalize_llm_enabled),
+        normalize_alias_max=int(cfg.kb_chat_normalize_alias_max),
+        normalize_timeout_seconds=float(cfg.kb_chat_normalize_timeout_seconds),
         hyde_enabled=bool(cfg.kb_chat_hyde_enabled),
         hybrid_retrieval_enabled=bool(cfg.retrieval_hybrid_enabled),
         rerank_enabled=bool(cfg.retrieval_rerank_enabled),

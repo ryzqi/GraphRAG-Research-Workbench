@@ -33,7 +33,14 @@ from app.services.query_rewrite_service import (
 
 from .budget import now_iso
 from .json_safety import ensure_json_safe
-from .runtime_config import hyde_enabled, query_rewrite_enabled, retrieval_top_k
+from .runtime_config import (
+    hyde_enabled,
+    normalize_alias_max,
+    normalize_llm_enabled,
+    normalize_timeout_seconds,
+    query_rewrite_enabled,
+    retrieval_top_k,
+)
 from .schemas import AnswerReviewDecision, DocGraderDecision
 
 _EVIDENCE_LINE_RE = re.compile(r"^\[([^\[\]\n]{1,128})\]\s+", re.MULTILINE)
@@ -593,6 +600,7 @@ async def transform_query_for_retry(
     hint = reflection.get("hint") if isinstance(reflection, dict) else None
 
     new_query = current
+    normalized_meta: dict[str, Any] = {}
     try:
         svc = QueryRewriteService(settings=settings)
         result = await svc.transform_query(
@@ -608,6 +616,23 @@ async def transform_query_for_retry(
         raise
     except Exception:
         new_query = current
+
+    try:
+        svc = QueryRewriteService(settings=settings)
+        normalize_result = await svc.normalize_rewrite(
+            new_query,
+            llm_enabled=normalize_llm_enabled(state, settings),
+            alias_limit=normalize_alias_max(state, settings),
+            timeout_seconds=normalize_timeout_seconds(state, settings),
+        )
+        if normalize_result.query.strip():
+            new_query = normalize_result.query.strip()
+        if isinstance(normalize_result.meta, dict):
+            normalized_meta = normalize_result.meta
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        normalized_meta = {}
 
     hyde_docs: list[str] = []
     hyde_reason: str | None = None
@@ -629,8 +654,10 @@ async def transform_query_for_retry(
             hyde_reason = "error"
 
     # Keep query bundle consistent: after transform, rebuild retrieval inputs.
+    aliases = normalized_meta.get("aliases") if isinstance(normalized_meta.get("aliases"), list) else []
     query_items = build_query_items(
         main_query=new_query,
+        variants=[str(v) for v in aliases if isinstance(v, str)],
         hyde_docs=hyde_docs or None,
         hyde_note="retry_regenerated" if hyde_docs else None,
     )
@@ -638,6 +665,7 @@ async def transform_query_for_retry(
     return {
         "loop_counts": loop_counts,
         "normalized_query": new_query,
+        "normalized_meta": normalized_meta,
         "coref_query": new_query,
         "sub_queries": [],
         "multi_queries": [],
@@ -656,6 +684,8 @@ async def transform_query_for_retry(
             "transform_query",
             {
                 "rewritten": new_query != current,
+                "normalized_after_retry": True,
+                "normalization_source": str(normalized_meta.get("source") or ""),
                 "hyde_regenerated": bool(hyde_docs),
                 "hyde_docs_count": len(hyde_docs),
                 "hyde_reason": hyde_reason,

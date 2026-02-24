@@ -55,8 +55,29 @@ class _FakeRewriteService:
             },
         )
 
-    async def normalize_rewrite(self, query: str):
-        return types.SimpleNamespace(query=query, rewritten=False)
+    async def normalize_rewrite(
+        self,
+        query: str,
+        *,
+        llm_enabled: bool | None = None,
+        alias_limit: int | None = None,
+        timeout_seconds: float | None = None,
+    ):
+        _ = (llm_enabled, alias_limit, timeout_seconds)
+        return types.SimpleNamespace(
+            query=query,
+            rewritten=False,
+            meta={
+                "source": "rule_only",
+                "fallback_reason": "",
+                "aliases": ["query alias"],
+                "recall_risk": "high",
+                "constraint_preserved": True,
+                "drift_risk": False,
+                "has_multi_target": False,
+                "is_comparison": False,
+            },
+        )
 
     async def transform_query(
         self,
@@ -74,6 +95,19 @@ class _FakeRewriteService:
     async def hyde(self, query: str, *, enabled: bool):
         _ = (query, enabled)
         return types.SimpleNamespace(queries=[], reason="disabled")
+
+    async def classify_complexity(
+        self,
+        query: str,
+        *,
+        recall_risk: str | None = None,
+        has_multi_target: bool = False,
+        is_comparison: bool = False,
+    ):
+        _ = (query, recall_risk, has_multi_target, is_comparison)
+        return types.SimpleNamespace(
+            strategy="direct", success=True, reasoning="single-hop"
+        )
 
     async def ambiguity_check(
         self,
@@ -144,6 +178,9 @@ def settings():
         retrieval_query_rewrite_enabled=True,
         kb_chat_ambiguity_check_enabled=True,
         kb_chat_ambiguity_timeout_seconds=0.5,
+        kb_chat_normalize_llm_enabled=True,
+        kb_chat_normalize_alias_max=4,
+        kb_chat_normalize_timeout_seconds=0.8,
         kb_chat_hyde_enabled=False,
         kb_chat_max_total_rounds=3,
         kb_chat_max_retrieval_retries=2,
@@ -386,3 +423,31 @@ async def test_prepare_messages_uses_hyde_docs_only(settings):
     assert len(hyde_items) == 1
     assert hyde_items[0]["query"] == "hypothesis A"
     assert hyde_items[0]["hyde_queries"] == ["hypothesis A", "hypothesis B"]
+
+
+@pytest.mark.asyncio
+async def test_normalize_rewrite_persists_normalized_meta(monkeypatch, settings):
+    monkeypatch.setattr(preprocess, "QueryRewriteService", _FakeRewriteService)
+    state = {"coref_query": "original query", "stage_summaries": {}, "runtime_config": {}}
+
+    result = await preprocess.normalize_rewrite(state, settings=settings)
+
+    assert result["normalized_query"] == "original query"
+    assert isinstance(result["normalized_meta"], dict)
+    assert result["normalized_meta"]["source"] == "rule_only"
+    assert result["stage_summaries"]["normalize_rewrite"]["alias_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_complexity_router_biases_multi_query_for_high_recall_risk(monkeypatch, settings):
+    monkeypatch.setattr(preprocess, "QueryRewriteService", _FakeRewriteService)
+    state = {
+        "normalized_query": "short query",
+        "normalized_meta": {"recall_risk": "high", "has_multi_target": False, "is_comparison": False},
+        "stage_summaries": {},
+    }
+
+    result = await preprocess.complexity_router(state, settings=settings)
+
+    assert result["query_strategy"] == "multi_query"
+    assert result["stage_summaries"]["complexity_router"]["strategy_adjusted"] is True

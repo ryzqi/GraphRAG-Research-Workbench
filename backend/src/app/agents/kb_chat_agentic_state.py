@@ -53,6 +53,9 @@ class KbChatRuntimeConfig(TypedDict, total=False):
 
     query_rewrite_enabled: bool
     ambiguity_check_enabled: bool
+    normalize_llm_enabled: bool
+    normalize_alias_max: int
+    normalize_timeout_seconds: float
     hyde_enabled: bool
     hybrid_retrieval_enabled: bool
     rerank_enabled: bool
@@ -125,6 +128,20 @@ class ClarificationPayload(TypedDict, total=False):
     suggested_answers: list[str]
 
 
+class NormalizeMeta(TypedDict, total=False):
+    source: str
+    fallback_reason: str
+    aliases: list[str]
+    entities: list[str]
+    time_constraints: list[str]
+    metric_constraints: list[str]
+    scope_constraints: list[str]
+    recall_risk: Literal["low", "medium", "high"]
+    drift_risk: bool
+    reasoning: str
+    constraint_preserved: bool
+
+
 # -----------------------------
 # Graph state schema
 # -----------------------------
@@ -178,6 +195,7 @@ class KbChatAgenticState(KbChatAgenticStateBase, total=False):
     coref_query: str
     coref_meta: CorefMeta
     normalized_query: str
+    normalized_meta: NormalizeMeta
     query_strategy: Literal["direct", "decomposition", "multi_query"]
 
     sub_queries: list[str]

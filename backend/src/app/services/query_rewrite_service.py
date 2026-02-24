@@ -27,6 +27,7 @@ from app.agents.kb_chat_agentic.schemas import (
     HyDEBatchDecision,
     MergeContextResolutionDecision,
     MultiQueryDecision,
+    NormalizeDecision,
     ReverseQuestionDecision,
     TransformQueryDecision,
 )
@@ -154,6 +155,27 @@ _REASON_CODES = {
     "mixed",
 }
 
+_ACRONYM_ALIAS_MAP: dict[str, str] = {
+    "k8s": "kubernetes",
+    "oauth2": "oauth 2.0",
+    "oauth": "oauth 2.0",
+    "sla": "service level agreement",
+    "api": "application programming interface",
+    "sdk": "software development kit",
+}
+_COMPARE_KEYWORDS = (
+    "compare",
+    "difference",
+    "vs",
+    "which",
+    "better",
+    "优缺点",
+    "区别",
+    "对比",
+    "比较",
+)
+_MULTI_TARGET_SEPARATORS = (",", "，", " and ", " 与 ", " 和 ", "及")
+
 
 def _normalize_reason_code(value: object) -> str:
     if isinstance(value, str):
@@ -211,6 +233,144 @@ def _build_clarification_payload(
         "slots": payload_slots,
         "suggested_answers": _normalize_clarification_options(suggested_answers or []),
     }
+
+
+def _sanitize_aliases(aliases: Iterable[str], *, limit: int) -> list[str]:
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for alias in aliases:
+        value = _sanitize_query_text(str(alias or ""))
+        if not value:
+            continue
+        key = value.casefold()
+        if key in seen:
+            continue
+        deduped.append(value)
+        seen.add(key)
+        if len(deduped) >= limit:
+            break
+    return deduped
+
+
+def _extract_number_tokens(text: str) -> set[str]:
+    return set(re.findall(r"\d+(?:\.\d+)?", text))
+
+
+def _extract_time_constraints(text: str) -> list[str]:
+    patterns = (
+        r"\b\d{4}\b",
+        r"\b\d{4}[-/]\d{1,2}(?:[-/]\d{1,2})?\b",
+        r"\d{4}年(?:\d{1,2}月(?:\d{1,2}日)?)?",
+        r"(?:Q[1-4]|[1-4]季度)",
+    )
+    values: list[str] = []
+    for pattern in patterns:
+        values.extend(re.findall(pattern, text, flags=re.IGNORECASE))
+    return _sanitize_aliases(values, limit=6)
+
+
+def _extract_metric_constraints(text: str) -> list[str]:
+    metric_tokens = (
+        "SLA",
+        "latency",
+        "error rate",
+        "availability",
+        "throughput",
+        "p95",
+        "p99",
+        "可用性",
+        "错误率",
+        "延迟",
+        "吞吐",
+        "指标",
+    )
+    lowered = text.lower()
+    found = [token for token in metric_tokens if token.lower() in lowered]
+    return _sanitize_aliases(found, limit=6)
+
+
+def _extract_scope_constraints(text: str) -> list[str]:
+    scopes = (
+        "生产环境",
+        "测试环境",
+        "线上",
+        "离线",
+        "global",
+        "regional",
+        "国内",
+        "海外",
+    )
+    lowered = text.lower()
+    found = [token for token in scopes if token.lower() in lowered]
+    return _sanitize_aliases(found, limit=6)
+
+
+def _infer_recall_risk(*, query: str, alias_count: int) -> str:
+    lowered = query.lower()
+    has_mixed = bool(re.search(r"[A-Za-z]", query) and re.search(r"[\u4e00-\u9fff]", query))
+    acronym_hits = sum(1 for token in _ACRONYM_ALIAS_MAP if re.search(rf"\b{re.escape(token)}\b", lowered))
+    if alias_count >= 3 or has_mixed or acronym_hits >= 2:
+        return "high"
+    if alias_count >= 1 or acronym_hits >= 1:
+        return "medium"
+    return "low"
+
+
+def _looks_compare_or_multi_target(query: str) -> bool:
+    lowered = query.lower()
+    if any(keyword in lowered for keyword in _COMPARE_KEYWORDS):
+        return True
+    return any(separator in query for separator in _MULTI_TARGET_SEPARATORS)
+
+
+def _rule_normalize_query(query: str, *, alias_limit: int) -> tuple[str, dict[str, object]]:
+    text = _sanitize_query_text(query)
+    if not text:
+        return "", {
+            "aliases": [],
+            "entities": [],
+            "time_constraints": [],
+            "metric_constraints": [],
+            "scope_constraints": [],
+            "recall_risk": "low",
+            "drift_risk": False,
+            "constraint_preserved": True,
+            "has_multi_target": False,
+            "is_comparison": False,
+            "reasoning": "empty_input",
+        }
+
+    text = re.sub(r"[\u3000\t\r\n]+", " ", text)
+    text = re.sub(r"[，、;；|]+", " ", text)
+    text = _normalize_whitespace(text)
+
+    aliases: list[str] = []
+    lowered = f" {text.lower()} "
+    for acronym, expansion in _ACRONYM_ALIAS_MAP.items():
+        if f" {acronym} " in lowered:
+            aliases.append(expansion)
+
+    entities = _sanitize_aliases(sorted(_extract_query_focus_terms(text)), limit=8)
+    time_constraints = _extract_time_constraints(text)
+    metric_constraints = _extract_metric_constraints(text)
+    scope_constraints = _extract_scope_constraints(text)
+    aliases = _sanitize_aliases([*aliases, *entities[:2]], limit=alias_limit)
+
+    recall_risk = _infer_recall_risk(query=text, alias_count=len(aliases))
+    normalized_meta: dict[str, object] = {
+        "aliases": aliases,
+        "entities": entities,
+        "time_constraints": time_constraints,
+        "metric_constraints": metric_constraints,
+        "scope_constraints": scope_constraints,
+        "recall_risk": recall_risk,
+        "drift_risk": False,
+        "constraint_preserved": True,
+        "has_multi_target": _looks_compare_or_multi_target(text),
+        "is_comparison": any(keyword in text.lower() for keyword in _COMPARE_KEYWORDS),
+        "reasoning": "rule_based_normalization",
+    }
+    return text, normalized_meta
 
 
 def _sanitize_reverse_question(text: str) -> str:
@@ -729,29 +889,169 @@ class QueryRewriteService:
             },
         )
 
-    async def normalize_rewrite(self, query: str) -> RewriteResult:
-        """Normalize query (fast, non-LLM by default)."""
+    async def normalize_rewrite(
+        self,
+        query: str,
+        *,
+        llm_enabled: bool | None = None,
+        alias_limit: int | None = None,
+        timeout_seconds: float | None = None,
+    ) -> RewriteResult:
+        """Normalize query with rule-first logic and optional structured LLM refinement."""
         start = time.perf_counter()
         if not query.strip():
             return RewriteResult(
                 query=query, rewritten=False, reason="empty", latency_ms=0
             )
 
-        normalized = _normalize_whitespace(query)
-        latency_ms = int((time.perf_counter() - start) * 1000)
-        if not normalized:
+        alias_max = max(1, min(8, int(alias_limit or getattr(self._settings, "kb_chat_normalize_alias_max", 4))))
+        rule_query, rule_meta = _rule_normalize_query(query, alias_limit=alias_max)
+        if not rule_query:
+            latency_ms = int((time.perf_counter() - start) * 1000)
             return RewriteResult(
                 query=query,
                 rewritten=False,
                 reason="empty_output",
                 latency_ms=latency_ms,
+                meta={
+                    **rule_meta,
+                    "source": "rule_only",
+                    "fallback_reason": "empty_rule_output",
+                },
             )
 
+        enabled_flag = (
+            bool(getattr(self._settings, "kb_chat_normalize_llm_enabled", True))
+            if llm_enabled is None
+            else bool(llm_enabled)
+        )
+        if not enabled_flag:
+            latency_ms = int((time.perf_counter() - start) * 1000)
+            return RewriteResult(
+                query=rule_query,
+                rewritten=rule_query != query,
+                reason="llm_disabled",
+                latency_ms=latency_ms,
+                meta={**rule_meta, "source": "rule_only", "fallback_reason": "llm_disabled"},
+            )
+
+        llm_timeout = (
+            float(getattr(self._settings, "kb_chat_normalize_timeout_seconds", 0.8))
+            if timeout_seconds is None
+            else float(timeout_seconds)
+        )
+        structured_result = await self._call_prompt_structured(
+            "kb_chat/normalize_query",
+            schema=NormalizeDecision,
+            timeout_seconds=llm_timeout,
+            max_tokens=320,
+            question=query,
+            rule_normalized_query=rule_query,
+            alias_limit=alias_max,
+        )
+        fallback_reason = structured_result.reason
+        if structured_result.success and isinstance(structured_result.payload, NormalizeDecision):
+            payload = structured_result.payload
+            candidate_query = _sanitize_query_text(payload.canonical_query)
+            if candidate_query:
+                original_numbers = _extract_number_tokens(rule_query)
+                candidate_numbers = _extract_number_tokens(candidate_query)
+                constraint_preserved = original_numbers.issubset(candidate_numbers)
+                aliases = _sanitize_aliases(
+                    [
+                        *payload.aliases,
+                        *(
+                            rule_meta.get("aliases", [])
+                            if isinstance(rule_meta.get("aliases"), list)
+                            else []
+                        ),
+                    ],
+                    limit=alias_max,
+                )
+                entities = _sanitize_aliases(
+                    [
+                        *payload.entities,
+                        *(
+                            rule_meta.get("entities", [])
+                            if isinstance(rule_meta.get("entities"), list)
+                            else []
+                        ),
+                    ],
+                    limit=8,
+                )
+                time_constraints = _sanitize_aliases(
+                    [
+                        *payload.time_constraints,
+                        *(
+                            rule_meta.get("time_constraints", [])
+                            if isinstance(rule_meta.get("time_constraints"), list)
+                            else []
+                        ),
+                    ],
+                    limit=6,
+                )
+                metric_constraints = _sanitize_aliases(
+                    [
+                        *payload.metric_constraints,
+                        *(
+                            rule_meta.get("metric_constraints", [])
+                            if isinstance(rule_meta.get("metric_constraints"), list)
+                            else []
+                        ),
+                    ],
+                    limit=6,
+                )
+                scope_constraints = _sanitize_aliases(
+                    [
+                        *payload.scope_constraints,
+                        *(
+                            rule_meta.get("scope_constraints", [])
+                            if isinstance(rule_meta.get("scope_constraints"), list)
+                            else []
+                        ),
+                    ],
+                    limit=6,
+                )
+                recall_risk = payload.recall_risk
+                if recall_risk not in {"low", "medium", "high"}:
+                    recall_risk = str(rule_meta.get("recall_risk") or "medium")
+
+                if constraint_preserved:
+                    latency_ms = int((time.perf_counter() - start) * 1000)
+                    return RewriteResult(
+                        query=candidate_query,
+                        rewritten=candidate_query != query,
+                        reason="llm_structured",
+                        latency_ms=latency_ms,
+                        meta={
+                            "source": "llm_structured",
+                            "fallback_reason": "",
+                            "aliases": aliases,
+                            "entities": entities,
+                            "time_constraints": time_constraints,
+                            "metric_constraints": metric_constraints,
+                            "scope_constraints": scope_constraints,
+                            "recall_risk": recall_risk,
+                            "drift_risk": bool(payload.drift_risk),
+                            "constraint_preserved": True,
+                            "has_multi_target": bool(rule_meta.get("has_multi_target")),
+                            "is_comparison": bool(rule_meta.get("is_comparison")),
+                            "reasoning": _normalize_whitespace(payload.reasoning or ""),
+                        },
+                    )
+                fallback_reason = "constraint_not_preserved"
+
+        latency_ms = int((time.perf_counter() - start) * 1000)
         return RewriteResult(
-            query=normalized,
-            rewritten=normalized != query,
-            reason=None,
+            query=rule_query,
+            rewritten=rule_query != query,
+            reason="rule_fallback",
             latency_ms=latency_ms,
+            meta={
+                **rule_meta,
+                "source": "rule_fallback",
+                "fallback_reason": fallback_reason or "llm_unavailable",
+            },
         )
 
     async def ambiguity_check(
@@ -1015,6 +1315,10 @@ class QueryRewriteService:
     async def classify_complexity(
         self,
         query: str,
+        *,
+        recall_risk: str | None = None,
+        has_multi_target: bool = False,
+        is_comparison: bool = False,
     ) -> ComplexityRouteResult:
         """Decide preprocess routing strategy."""
         start = time.perf_counter()
@@ -1032,6 +1336,9 @@ class QueryRewriteService:
             timeout_seconds=None,
             max_tokens=256,
             question=q,
+            recall_risk=(recall_risk or "unknown"),
+            has_multi_target=bool(has_multi_target),
+            is_comparison=bool(is_comparison),
         )
         if (
             structured_result.success

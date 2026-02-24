@@ -36,6 +36,9 @@ from .json_safety import ensure_json_safe
 from .runtime_config import (
     ambiguity_check_enabled,
     hyde_enabled,
+    normalize_alias_max,
+    normalize_llm_enabled,
+    normalize_timeout_seconds,
     query_rewrite_enabled,
 )
 
@@ -60,6 +63,29 @@ def _extract_user_input(state: dict) -> str:
             if isinstance(content, str):
                 return content
     return ""
+
+
+def _normalize_meta_aliases(state: dict) -> list[str]:
+    meta = state.get("normalized_meta")
+    if not isinstance(meta, dict):
+        return []
+    aliases = meta.get("aliases")
+    if not isinstance(aliases, list):
+        return []
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for alias in aliases:
+        if not isinstance(alias, str):
+            continue
+        value = alias.strip()
+        if not value:
+            continue
+        key = value.casefold()
+        if key in seen:
+            continue
+        deduped.append(value)
+        seen.add(key)
+    return deduped
 
 
 def _merge_stage_summary(
@@ -606,7 +632,7 @@ async def ambiguity_check(state: dict, settings: Settings) -> dict[str, Any]:
 
 
 async def normalize_rewrite(state: dict, settings: Settings) -> dict[str, Any]:
-    """Normalize query (skeleton: currently pass-through from coref_query)."""
+    """Normalize query with rule+LLM strategy and retrieval-safe metadata."""
     start = time.perf_counter()
     input_source = "coref_query"
     query = state.get("coref_query")
@@ -616,20 +642,54 @@ async def normalize_rewrite(state: dict, settings: Settings) -> dict[str, Any]:
 
     rewritten = query
     rewritten_flag = False
+    normalization_source = "rule_fallback"
+    fallback_reason = "error"
+    normalized_meta: dict[str, Any] = {
+        "source": "rule_fallback",
+        "fallback_reason": "error",
+        "aliases": [],
+        "entities": [],
+        "time_constraints": [],
+        "metric_constraints": [],
+        "scope_constraints": [],
+        "recall_risk": "medium",
+        "drift_risk": False,
+        "constraint_preserved": True,
+        "reasoning": "",
+    }
     try:
         svc = QueryRewriteService(settings=settings)
-        result = await svc.normalize_rewrite(query)
+        result = await svc.normalize_rewrite(
+            query,
+            llm_enabled=normalize_llm_enabled(state, settings),
+            alias_limit=normalize_alias_max(state, settings),
+            timeout_seconds=normalize_timeout_seconds(state, settings),
+        )
         rewritten = result.query
         rewritten_flag = result.rewritten
+        if isinstance(result.meta, dict):
+            normalized_meta = {**normalized_meta, **result.meta}
+        normalization_source = str(normalized_meta.get("source") or "rule_fallback")
+        fallback_reason = str(normalized_meta.get("fallback_reason") or result.reason or "")
     except Exception:  # pragma: no cover
         rewritten = query
         rewritten_flag = False
+
+    normalized_aliases = (
+        normalized_meta.get("aliases") if isinstance(normalized_meta.get("aliases"), list) else []
+    )
 
     stage_summaries = _merge_stage_summary(
         state,
         "normalize_rewrite",
         {
             "rewritten": rewritten_flag,
+            "normalization_source": normalization_source,
+            "fallback_reason": fallback_reason,
+            "alias_count": len([a for a in normalized_aliases if isinstance(a, str) and a.strip()]),
+            "constraint_preserved": bool(normalized_meta.get("constraint_preserved", True)),
+            "drift_risk": bool(normalized_meta.get("drift_risk", False)),
+            "recall_risk": str(normalized_meta.get("recall_risk") or "medium"),
             "input_source": input_source,
             "input_chars": len(query.strip()),
             "output_chars": len(rewritten.strip()),
@@ -643,7 +703,11 @@ async def normalize_rewrite(state: dict, settings: Settings) -> dict[str, Any]:
         },
         settings=settings,
     )
-    return {"normalized_query": rewritten, "stage_summaries": stage_summaries}
+    return {
+        "normalized_query": rewritten,
+        "normalized_meta": normalized_meta,
+        "stage_summaries": stage_summaries,
+    }
 
 
 def route_after_complexity_router(state: dict, settings: Settings) -> str:
@@ -667,9 +731,21 @@ async def complexity_router(state: dict, settings: Settings) -> dict[str, Any]:
     strategy = "direct"
     success = False
     reasoning: str | None = None
+    strategy_adjusted = False
+    normalized_meta = state.get("normalized_meta")
+    if not isinstance(normalized_meta, dict):
+        normalized_meta = {}
+    recall_risk = str(normalized_meta.get("recall_risk") or "unknown")
+    has_multi_target = bool(normalized_meta.get("has_multi_target"))
+    is_comparison = bool(normalized_meta.get("is_comparison"))
     try:
         svc = QueryRewriteService(settings=settings)
-        decision = await svc.classify_complexity(query)
+        decision = await svc.classify_complexity(
+            query,
+            recall_risk=recall_risk,
+            has_multi_target=has_multi_target,
+            is_comparison=is_comparison,
+        )
         strategy = (
             decision.strategy
             if decision.strategy in {"direct", "decomposition", "multi_query"}
@@ -681,11 +757,20 @@ async def complexity_router(state: dict, settings: Settings) -> dict[str, Any]:
         strategy = "direct"
         success = False
 
+    if strategy == "direct" and recall_risk == "high":
+        strategy = "multi_query"
+        strategy_adjusted = True
+    if strategy == "multi_query" and (has_multi_target or is_comparison):
+        strategy = "decomposition"
+        strategy_adjusted = True
+
     stage_summaries = _merge_stage_summary(
         state,
         "complexity_router",
         {
             "strategy": strategy,
+            "strategy_adjusted": strategy_adjusted,
+            "recall_risk": recall_risk,
             "reasoning": reasoning,
             "success": success,
             "completed_at": now_iso(),
@@ -747,6 +832,7 @@ async def generate_variants(state: dict, settings: Settings) -> dict[str, Any]:
     if not isinstance(query, str) or not query.strip():
         query = _extract_user_input(state)
     deduped: list[str] = []
+    alias_candidates = _normalize_meta_aliases(state)
     success = False
     reason: str | None = None
     try:
@@ -759,6 +845,20 @@ async def generate_variants(state: dict, settings: Settings) -> dict[str, Any]:
         deduped = [query.strip()] if query.strip() else []
         success = False
         reason = "error"
+    if alias_candidates:
+        deduped = [*deduped, *alias_candidates]
+        # dedupe keep order
+        seen: set[str] = set()
+        merged_variants: list[str] = []
+        for item in deduped:
+            if not isinstance(item, str):
+                continue
+            value = item.strip()
+            if not value or value.casefold() in seen:
+                continue
+            merged_variants.append(value)
+            seen.add(value.casefold())
+        deduped = merged_variants
 
     stage_summaries = _merge_stage_summary(
         state,
@@ -766,6 +866,7 @@ async def generate_variants(state: dict, settings: Settings) -> dict[str, Any]:
         {
             "driver": "llm",
             "count": len(deduped),
+            "alias_count": len(alias_candidates),
             "success": success,
             "reason": reason,
             "completed_at": now_iso(),
@@ -784,6 +885,7 @@ async def entity_expand(state: dict, settings: Settings) -> dict[str, Any]:
         queries = []
 
     expanded = queries
+    alias_candidates = _normalize_meta_aliases(state)
     reason: str | None = None
     try:
         svc = QueryRewriteService(settings=settings)
@@ -793,11 +895,25 @@ async def entity_expand(state: dict, settings: Settings) -> dict[str, Any]:
     except Exception:  # pragma: no cover
         expanded = queries
         reason = "error"
+    if alias_candidates:
+        expanded = [*expanded, *alias_candidates]
+        deduped: list[str] = []
+        seen: set[str] = set()
+        for item in expanded:
+            if not isinstance(item, str):
+                continue
+            value = item.strip()
+            if not value or value.casefold() in seen:
+                continue
+            deduped.append(value)
+            seen.add(value.casefold())
+        expanded = deduped
     stage_summaries = _merge_stage_summary(
         state,
         "entity_expand",
         {
             "reason": reason,
+            "alias_count": len(alias_candidates),
             "completed_at": now_iso(),
             "latency_ms": int((time.perf_counter() - start) * 1000),
         },
@@ -873,6 +989,7 @@ async def prepare_messages(state: dict, settings: Settings) -> dict[str, Any]:
     multi_queries = state.get("multi_queries")
     if not isinstance(multi_queries, list):
         multi_queries = []
+    alias_variants = _normalize_meta_aliases(state)
     hyde_docs = state.get("hyde_docs")
     if not isinstance(hyde_docs, list):
         hyde_docs = []
@@ -881,7 +998,9 @@ async def prepare_messages(state: dict, settings: Settings) -> dict[str, Any]:
     query_items = build_query_items(
         main_query=normalized.strip(),
         sub_queries=[q for q in sub_queries if isinstance(q, str)],
-        variants=[q for q in multi_queries if isinstance(q, str)],
+        variants=[
+            q for q in (multi_queries or alias_variants) if isinstance(q, str)
+        ],
         hyde_docs=normalized_hyde_docs or None,
     )
 
@@ -891,6 +1010,7 @@ async def prepare_messages(state: dict, settings: Settings) -> dict[str, Any]:
         {
             "query_items_count": len(query_items),
             "hyde_docs_count": len(normalized_hyde_docs),
+            "alias_count": len(alias_variants),
             "completed_at": now_iso(),
             "latency_ms": int((time.perf_counter() - start) * 1000),
         },

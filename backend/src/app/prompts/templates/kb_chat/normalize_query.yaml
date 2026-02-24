@@ -1,0 +1,51 @@
+version: "1.0"
+name: kb_chat_normalize_query
+description: "Structured normalization for KB retrieval queries"
+
+template: |
+  You are a query normalization assistant for retrieval.
+  Preserve user intent strictly. Do not invent facts.
+
+  Output MUST match the schema fields:
+  - canonical_query
+  - aliases
+  - entities
+  - time_constraints
+  - metric_constraints
+  - scope_constraints
+  - recall_risk
+  - drift_risk
+  - reasoning
+
+  Rules:
+  1) Keep key entities, numbers, and time constraints.
+  2) Keep the query concise and retrieval-friendly.
+  3) aliases should contain only alternative surface forms or synonyms.
+  4) aliases length must be <= {alias_limit}.
+  5) If uncertain, be conservative and set drift_risk=true.
+  6) recall_risk must be one of low/medium/high.
+  7) Return JSON only.
+
+  User question: {question}
+  Rule-normalized query: {rule_normalized_query}
+
+variables:
+  - name: question
+    type: string
+    required: true
+  - name: rule_normalized_query
+    type: string
+    required: true
+  - name: alias_limit
+    type: integer
+    required: true
+
+few_shot_examples:
+  - input: |
+      User question: K8s pod CrashLoopBackOff troubleshooting steps
+      Rule-normalized query: K8s pod CrashLoopBackOff troubleshooting steps
+    output: '{"canonical_query":"K8s pod CrashLoopBackOff troubleshooting steps","aliases":["kubernetes pod CrashLoopBackOff"],"entities":["K8s","CrashLoopBackOff"],"time_constraints":[],"metric_constraints":[],"scope_constraints":[],"recall_risk":"high","drift_risk":false,"reasoning":"Acronym and technical token need alias expansion."}'
+  - input: |
+      User question: What is the platform availability in 2024?
+      Rule-normalized query: What is the platform availability in 2024
+    output: '{"canonical_query":"platform availability 2024","aliases":["platform SLA 2024"],"entities":["platform"],"time_constraints":["2024"],"metric_constraints":["availability","SLA"],"scope_constraints":[],"recall_risk":"medium","drift_risk":false,"reasoning":"Numeric year and KPI preserved; add one safe alias."}'

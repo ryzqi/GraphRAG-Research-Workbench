@@ -106,6 +106,25 @@ class TransformQueryDecision(BaseModel):
     query: str = Field(..., min_length=1)
 
 
+NormalizeRecallRisk = Literal["low", "medium", "high"]
+
+
+class NormalizeDecision(BaseModel):
+    """Structured output for query normalization."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    canonical_query: str = Field(..., min_length=1, max_length=256)
+    aliases: list[str] = Field(default_factory=list, max_length=8)
+    entities: list[str] = Field(default_factory=list, max_length=8)
+    time_constraints: list[str] = Field(default_factory=list, max_length=6)
+    metric_constraints: list[str] = Field(default_factory=list, max_length=6)
+    scope_constraints: list[str] = Field(default_factory=list, max_length=6)
+    recall_risk: NormalizeRecallRisk = "medium"
+    drift_risk: bool = False
+    reasoning: str = Field(default="", max_length=240)
+
+
 class MergeContextResolutionDecision(BaseModel):
     """Structured output for merge-context conflict resolution."""
 

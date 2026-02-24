@@ -3,6 +3,7 @@ import types
 import pytest
 
 from app.agents.kb_chat_agentic.schemas import AmbiguityDecision, ClarificationSlotDecision
+from app.agents.kb_chat_agentic.schemas import NormalizeDecision
 from app.services.query_rewrite_service import QueryRewriteService
 from app.services.query_rewrite_service import StructuredCallResult
 
@@ -13,6 +14,9 @@ def settings():
         retrieval_query_rewrite_timeout_seconds=15,
         retrieval_query_rewrite_max_tokens=64,
         kb_chat_ambiguity_check_enabled=True,
+        kb_chat_normalize_llm_enabled=True,
+        kb_chat_normalize_alias_max=4,
+        kb_chat_normalize_timeout_seconds=0.8,
         kb_chat_hyde_enabled=False,
     )
 
@@ -115,3 +119,61 @@ async def test_ambiguity_check_guardrail_fallback_when_model_fails(monkeypatch, 
     assert result.reason == "timeout"
     assert result.reason_code == "coref_uncertain"
     assert isinstance(result.clarification_payload, dict)
+
+
+@pytest.mark.asyncio
+async def test_normalize_rewrite_prefers_structured_output_when_constraints_preserved(monkeypatch, settings):
+    svc = QueryRewriteService(settings=settings)
+
+    async def _fake_structured(*args, **kwargs):  # noqa: ANN002, ANN003
+        _ = (args, kwargs)
+        payload = NormalizeDecision(
+            canonical_query="2024 platform availability SLA",
+            aliases=["platform SLA 2024", "availability target"],
+            entities=["platform"],
+            time_constraints=["2024"],
+            metric_constraints=["availability", "SLA"],
+            scope_constraints=[],
+            recall_risk="medium",
+            drift_risk=False,
+            reasoning="keep time and metric constraints",
+        )
+        return StructuredCallResult(payload=payload, success=True, reason="model_ok", latency_ms=7)
+
+    monkeypatch.setattr(svc, "_call_prompt_structured", _fake_structured)
+
+    result = await svc.normalize_rewrite("2024 platform availability")
+
+    assert result.query == "2024 platform availability SLA"
+    assert result.reason == "llm_structured"
+    assert result.meta["source"] == "llm_structured"
+    assert result.meta["constraint_preserved"] is True
+
+
+@pytest.mark.asyncio
+async def test_normalize_rewrite_falls_back_when_structured_query_drops_numeric_constraint(monkeypatch, settings):
+    svc = QueryRewriteService(settings=settings)
+
+    async def _fake_structured(*args, **kwargs):  # noqa: ANN002, ANN003
+        _ = (args, kwargs)
+        payload = NormalizeDecision(
+            canonical_query="platform availability",
+            aliases=["service uptime"],
+            entities=["platform"],
+            time_constraints=[],
+            metric_constraints=["availability"],
+            scope_constraints=[],
+            recall_risk="medium",
+            drift_risk=False,
+            reasoning="incorrectly dropped year",
+        )
+        return StructuredCallResult(payload=payload, success=True, reason="model_ok", latency_ms=7)
+
+    monkeypatch.setattr(svc, "_call_prompt_structured", _fake_structured)
+
+    result = await svc.normalize_rewrite("2024 platform availability")
+
+    assert result.query == "2024 platform availability"
+    assert result.reason == "rule_fallback"
+    assert result.meta["source"] == "rule_fallback"
+    assert result.meta["fallback_reason"] == "constraint_not_preserved"

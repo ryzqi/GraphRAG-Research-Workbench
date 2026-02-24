@@ -292,6 +292,11 @@ class KbChatService:
                 ),
                 "query_rewrite_enabled": bool(kb_chat_config.query_rewrite_enabled),
                 "ambiguity_check_enabled": bool(kb_chat_config.ambiguity_check_enabled),
+                "normalize_llm_enabled": bool(kb_chat_config.normalize_llm_enabled),
+                "normalize_alias_max": int(kb_chat_config.normalize_alias_max),
+                "normalize_timeout_seconds": float(
+                    kb_chat_config.normalize_timeout_seconds
+                ),
                 "hyde_enabled": bool(kb_chat_config.hyde_enabled),
                 "hybrid_retrieval_enabled": bool(
                     kb_chat_config.hybrid_retrieval_enabled
@@ -1002,6 +1007,7 @@ class KbChatService:
             for key in (
                 "rewritten",
                 "reason",
+                "normalization_source",
                 "count",
                 "query_items_count",
                 "hyde_docs_count",
@@ -1029,6 +1035,10 @@ class KbChatService:
                 "selected_mention",
                 "resolution_source",
                 "needs_clarification_hint",
+                "alias_count",
+                "constraint_preserved",
+                "drift_risk",
+                "recall_risk",
             ):
                 value = node_summary.get(key)
                 if value is not None:
