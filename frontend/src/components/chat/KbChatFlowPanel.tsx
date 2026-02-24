@@ -166,7 +166,7 @@ const NODE_BADGE_THEME_MAP: Record<string, NodeBadgeTheme> = {
 const NODE_DETAIL_POLICY_MAP: Record<string, NodeDetailPolicy> = {
   merge_context: {
     input: ['user_input'],
-    output: ['merged_context', 'memory_included'],
+    output: ['current_question', 'recent_turns', 'merged_context', 'memory_included'],
   },
   coref_rewrite: {
     input: ['query'],
@@ -378,6 +378,33 @@ function pickStringList(snapshot: Record<string, unknown>, ...keys: string[]): s
   return null;
 }
 
+function getContextFrame(snapshot: Record<string, unknown>): Record<string, unknown> | null {
+  return asRecord(snapshot.context_frame);
+}
+
+function pickContextFrameText(snapshot: Record<string, unknown>, key: string): string | null {
+  const frame = getContextFrame(snapshot);
+  if (!frame) return null;
+  return asNonEmptyText(frame[key]);
+}
+
+function pickContextFrameTurns(snapshot: Record<string, unknown>, key: string): string[] | null {
+  const frame = getContextFrame(snapshot);
+  const raw = frame?.[key];
+  if (!Array.isArray(raw)) return null;
+  const lines: string[] = [];
+  raw.forEach((item) => {
+    const record = asRecord(item);
+    if (!record) return;
+    const roleRaw = asNonEmptyText(record.role) ?? '';
+    const role = roleRaw === 'user' ? '用户' : roleRaw === 'assistant' ? '助手' : roleRaw;
+    const text = asNonEmptyText(record.text);
+    if (!text) return;
+    lines.push(role ? `${role}: ${text}` : text);
+  });
+  return lines.length > 0 ? lines : null;
+}
+
 function boolToZh(value: boolean): string {
   return value ? '是' : '否';
 }
@@ -471,11 +498,17 @@ function buildFallbackInputItems(
 
   if (nodeId === 'merge_context') {
     pushDisplayItem(items, { key: 'user_input', label: '用户问题', value: pickText(snapshot, 'user_input') });
-  } else if (['coref_rewrite', 'ambiguity_check', 'normalize_rewrite'].includes(nodeId)) {
+  } else if (nodeId === 'coref_rewrite') {
     pushDisplayItem(items, {
       key: 'query',
       label: '输入问题',
-      value: pickText(snapshot, 'coref_query', 'merged_context', 'user_input'),
+      value: pickText(snapshot, 'rewrite_input_query', 'user_input'),
+    });
+  } else if (['ambiguity_check', 'normalize_rewrite'].includes(nodeId)) {
+    pushDisplayItem(items, {
+      key: 'query',
+      label: '输入问题',
+      value: pickText(snapshot, 'coref_query', 'rewrite_input_query', 'user_input'),
     });
   } else if (['decomposition', 'generate_variants', 'entity_expand', 'hyde'].includes(nodeId)) {
     pushDisplayItem(items, {
@@ -570,7 +603,21 @@ function buildFallbackOutputItems(
 
   if (snapshot) {
     if (nodeId === 'merge_context') {
-      pushDisplayItem(items, { key: 'merged_context', label: '合并后上下文', value: pickText(snapshot, 'merged_context') });
+      pushDisplayItem(items, {
+        key: 'current_question',
+        label: '用户问题',
+        value: pickContextFrameText(snapshot, 'current_question') ?? pickText(snapshot, 'user_input'),
+      });
+      pushDisplayItem(items, {
+        key: 'recent_turns',
+        label: '最近对话',
+        value: pickContextFrameTurns(snapshot, 'recent_turns'),
+      });
+      pushDisplayItem(items, {
+        key: 'merged_context',
+        label: '合并后上下文',
+        value: pickText(snapshot, 'display_context', 'merged_context'),
+      });
       pushDisplayItem(items, { key: 'memory_included', label: '是否使用记忆', value: summary.memory_included });
     } else if (nodeId === 'coref_rewrite') {
       pushDisplayItem(items, { key: 'coref_query', label: '改写后问题', value: pickText(snapshot, 'coref_query') });

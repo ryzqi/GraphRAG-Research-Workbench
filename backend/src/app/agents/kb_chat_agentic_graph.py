@@ -223,6 +223,36 @@ def _pick_string_list(snapshot: dict[str, Any], *keys: str) -> list[str] | None:
     return None
 
 
+def _context_frame(snapshot: dict[str, Any]) -> dict[str, Any]:
+    value = snapshot.get("context_frame")
+    return _as_dict(value) or {}
+
+
+def _pick_context_frame_text(snapshot: dict[str, Any], key: str) -> str | None:
+    frame = _context_frame(snapshot)
+    return _non_empty_text(frame.get(key))
+
+
+def _pick_context_frame_turns(snapshot: dict[str, Any], key: str) -> list[str] | None:
+    frame = _context_frame(snapshot)
+    raw = frame.get(key)
+    if not isinstance(raw, list):
+        return None
+    lines: list[str] = []
+    for item in raw:
+        item_dict = _as_dict(item)
+        if not item_dict:
+            continue
+        role_raw = _non_empty_text(item_dict.get("role")) or ""
+        role = "用户" if role_raw == "user" else "助手" if role_raw == "assistant" else role_raw
+        text = _non_empty_text(item_dict.get("text"))
+        if not text:
+            continue
+        prefix = f"{role}: " if role else ""
+        lines.append(f"{prefix}{text}")
+    return lines or None
+
+
 def _format_query_items(value: Any) -> list[str]:
     if not isinstance(value, list):
         return []
@@ -322,12 +352,24 @@ def _build_node_input_display_items(
             label="用户问题",
             value=_pick_text(snapshot, "user_input"),
         )
-    elif node_name in {"coref_rewrite", "ambiguity_check", "normalize_rewrite"}:
+    elif node_name == "coref_rewrite":
         _append_display_item(
             items,
             key="query",
             label="输入问题",
-            value=_pick_text(snapshot, "coref_query", "merged_context", "user_input"),
+            value=_pick_text(snapshot, "rewrite_input_query", "user_input"),
+        )
+    elif node_name in {"ambiguity_check", "normalize_rewrite"}:
+        _append_display_item(
+            items,
+            key="query",
+            label="输入问题",
+            value=_pick_text(
+                snapshot,
+                "coref_query",
+                "rewrite_input_query",
+                "user_input",
+            ),
         )
     elif node_name in {
         "complexity_router",
@@ -483,9 +525,22 @@ def _build_node_output_display_items(
     if node_name == "merge_context":
         _append_display_item(
             items,
+            key="current_question",
+            label="用户问题",
+            value=_pick_context_frame_text(snapshot, "current_question")
+            or _pick_text(snapshot, "user_input"),
+        )
+        _append_display_item(
+            items,
+            key="recent_turns",
+            label="最近对话",
+            value=_pick_context_frame_turns(snapshot, "recent_turns"),
+        )
+        _append_display_item(
+            items,
             key="merged_context",
             label="合并后上下文",
-            value=_pick_text(snapshot, "merged_context"),
+            value=_pick_text(snapshot, "display_context", "merged_context"),
         )
         _append_display_item(
             items,

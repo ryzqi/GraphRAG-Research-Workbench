@@ -106,6 +106,61 @@ def _recent_dialogue(messages: list[Any], *, max_turns: int = 3) -> str:
     return "最近对话：\n" + "\n".join(lines)
 
 
+def _normalize_for_compare(text: str) -> str:
+    return " ".join(text.split()).strip()
+
+
+def _recent_turns(messages: list[Any], *, max_turns: int = 3) -> list[dict[str, str]]:
+    turns: list[dict[str, str]] = []
+    for msg in reversed(messages):
+        role = None
+        if isinstance(msg, HumanMessage):
+            role = "user"
+        elif isinstance(msg, AIMessage):
+            role = "assistant"
+        else:
+            continue
+        content = getattr(msg, "content", "")
+        text = content if isinstance(content, str) else str(content)
+        text = text.strip()
+        if not text:
+            continue
+        turns.append({"role": role, "text": text})
+        if len(turns) >= max_turns * 2:
+            break
+    turns.reverse()
+    return turns
+
+
+def _render_display_context(
+    *,
+    summary: str,
+    turns: list[dict[str, str]],
+    memory_snippet: str,
+    question: str,
+) -> str:
+    parts: list[str] = []
+    normalized_question = _normalize_for_compare(question)
+    if summary:
+        parts.append(summary)
+    elif turns:
+        lines: list[str] = []
+        for turn in turns:
+            role = "用户" if turn.get("role") == "user" else "助手"
+            text = turn.get("text", "").strip()
+            if text:
+                if role == "用户" and _normalize_for_compare(text) == normalized_question:
+                    continue
+                lines.append(f"{role}: {text}")
+        if lines:
+            parts.append("最近对话：\n" + "\n".join(lines))
+    if memory_snippet:
+        parts.append(memory_snippet)
+    if normalized_question:
+        parts.append(f"用户问题：{question.strip()}")
+    return "\n\n".join(part for part in parts if part).strip()
+
+
 async def merge_context(
     state: dict,
     runtime: Runtime[Any],
@@ -127,7 +182,7 @@ async def merge_context(
 
     user_input = _extract_user_input(state)
     summary = _latest_summary_message(messages)
-    dialogue = "" if summary else _recent_dialogue(messages, max_turns=3)
+    turns = [] if summary else _recent_turns(messages, max_turns=3)
 
     memory_snippet = ""
     if settings.memory_enabled and runtime.store is not None:
@@ -152,10 +207,21 @@ async def merge_context(
         except Exception:  # pragma: no cover
             memory_snippet = ""
 
-    merged = user_input.strip()
-    prefixes = [p for p in [summary, dialogue, memory_snippet] if p]
-    if prefixes:
-        merged = "\n\n".join([*prefixes, f"用户问题：{merged}"])
+    question = user_input.strip()
+    display_context = _render_display_context(
+        summary=summary,
+        turns=turns,
+        memory_snippet=memory_snippet,
+        question=question,
+    )
+    merged = display_context or question
+    rewrite_input_query = question
+    context_frame: dict[str, Any] = {
+        "summary_text": summary,
+        "recent_turns": turns,
+        "memory_snippet": memory_snippet,
+        "current_question": question,
+    }
 
     stage_summaries = _merge_stage_summary(
         state,
@@ -163,6 +229,9 @@ async def merge_context(
         {
             "latency_ms": int((time.perf_counter() - start) * 1000),
             "memory_included": bool(memory_snippet),
+            "input_source": "user_input",
+            "input_chars": len(question),
+            "output_chars": len(merged),
             "completed_at": now_iso(),
         },
         settings=settings,
@@ -171,6 +240,9 @@ async def merge_context(
     return {
         **updates,
         "user_input": user_input,
+        "context_frame": context_frame,
+        "rewrite_input_query": rewrite_input_query,
+        "display_context": merged,
         "merged_context": merged,
         "stage_summaries": stage_summaries,
     }
@@ -179,9 +251,11 @@ async def merge_context(
 async def coref_rewrite(state: dict, settings: Settings) -> dict[str, Any]:
     """Coreference resolution / rewrite (degrades to original query on failure)."""
     start = time.perf_counter()
-    query = state.get("merged_context")
+    input_source = "rewrite_input_query"
+    query = state.get("rewrite_input_query")
     if not isinstance(query, str) or not query.strip():
         query = _extract_user_input(state)
+        input_source = "user_input"
 
     rewritten = query
     reason: str | None = None
@@ -210,6 +284,14 @@ async def coref_rewrite(state: dict, settings: Settings) -> dict[str, Any]:
         {
             "rewritten": rewritten != query,
             "reason": reason,
+            "input_source": input_source,
+            "input_chars": len(query.strip()),
+            "output_chars": len(rewritten.strip()),
+            "changed_ratio": (
+                round(abs(len(rewritten.strip()) - len(query.strip())) / len(query.strip()), 4)
+                if query.strip()
+                else 0.0
+            ),
             "latency_ms": int((time.perf_counter() - start) * 1000),
             "completed_at": now_iso(),
         },
@@ -276,9 +358,11 @@ async def ambiguity_check(state: dict, settings: Settings) -> dict[str, Any]:
 async def normalize_rewrite(state: dict, settings: Settings) -> dict[str, Any]:
     """Normalize query (skeleton: currently pass-through from coref_query)."""
     start = time.perf_counter()
+    input_source = "coref_query"
     query = state.get("coref_query")
     if not isinstance(query, str) or not query.strip():
         query = _extract_user_input(state)
+        input_source = "user_input"
 
     rewritten = query
     rewritten_flag = False
@@ -296,6 +380,14 @@ async def normalize_rewrite(state: dict, settings: Settings) -> dict[str, Any]:
         "normalize_rewrite",
         {
             "rewritten": rewritten_flag,
+            "input_source": input_source,
+            "input_chars": len(query.strip()),
+            "output_chars": len(rewritten.strip()),
+            "changed_ratio": (
+                round(abs(len(rewritten.strip()) - len(query.strip())) / len(query.strip()), 4)
+                if query.strip()
+                else 0.0
+            ),
             "latency_ms": int((time.perf_counter() - start) * 1000),
             "completed_at": now_iso(),
         },

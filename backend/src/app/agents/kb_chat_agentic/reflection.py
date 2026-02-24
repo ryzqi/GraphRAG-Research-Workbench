@@ -201,6 +201,15 @@ def _force_exit_requested(state: dict) -> bool:
     return isinstance(reflection, dict) and reflection.get("action") == "force_exit"
 
 
+def _resolve_query_text(state: dict) -> str:
+    return _as_str(
+        state.get("normalized_query")
+        or state.get("coref_query")
+        or state.get("rewrite_input_query")
+        or state.get("user_input")
+    ).strip()
+
+
 async def kb_retrieve_context(
     state: dict,
     *,
@@ -212,12 +221,7 @@ async def kb_retrieve_context(
     loop_counts = _get_loop_counts(state)
     if _total_rounds_exceeded(loop_counts, settings):
         return _set_final_answer_for_exit(state, "", reason="max_total_rounds")
-    query = _as_str(
-        state.get("normalized_query")
-        or state.get("coref_query")
-        or state.get("merged_context")
-        or state.get("user_input")
-    ).strip()
+    query = _resolve_query_text(state)
     memory_keys = state.get("memory_keys")
     kb_ids = memory_keys.get("kb_ids") if isinstance(memory_keys, dict) else None
     if not isinstance(kb_ids, list):
@@ -283,7 +287,7 @@ async def doc_grader(
 ) -> dict[str, Any]:
     """Grade retrieval relevance; if failed, downstream routing may transform query + retry."""
     start = time.perf_counter()
-    question = _as_str(state.get("merged_context") or state.get("user_input")).strip()
+    question = _resolve_query_text(state)
     final_context = _as_str(state.get("final_context")).strip()
     evidence_labels = _extract_evidence_labels(final_context)
 
@@ -403,7 +407,7 @@ async def generate_draft(
             ),
         }
 
-    question = _as_str(state.get("merged_context") or state.get("user_input")).strip()
+    question = _resolve_query_text(state)
     final_context = _as_str(state.get("final_context")).strip()
     prompts = get_prompt_loader()
     system_prompt = (
@@ -453,7 +457,7 @@ async def answer_review(
     """Review draft answer in one pass: factual support + answerability + relevance."""
     start = time.perf_counter()
     loop_counts = _get_loop_counts(state)
-    question = _as_str(state.get("merged_context") or state.get("user_input")).strip()
+    question = _resolve_query_text(state)
     final_context = _as_str(state.get("final_context")).strip()
     draft = _as_str(state.get("draft_answer")).strip()
 
@@ -599,12 +603,7 @@ async def transform_query_for_retry(
             ),
         }
 
-    current = _as_str(
-        state.get("normalized_query")
-        or state.get("coref_query")
-        or state.get("merged_context")
-        or state.get("user_input")
-    ).strip()
+    current = _resolve_query_text(state)
     reflection = state.get("reflection")
     reason = reflection.get("reason") if isinstance(reflection, dict) else None
     hint = reflection.get("hint") if isinstance(reflection, dict) else None

@@ -123,6 +123,22 @@ class KbChatRuntimeConfig(TypedDict, total=False):
     retrieval_multiscale_max_chunks_per_document: int
 
 
+class ContextTurn(TypedDict):
+    """A recent dialogue turn for display/debugging."""
+
+    role: Literal["user", "assistant"]
+    text: str
+
+
+class ContextFrame(TypedDict, total=False):
+    """Structured context assembled before rewrite/retrieval."""
+
+    summary_text: str
+    recent_turns: list[ContextTurn]
+    memory_snippet: str
+    current_question: str
+
+
 # -----------------------------
 # Graph state schema
 # -----------------------------
@@ -153,8 +169,9 @@ class KbChatAgenticState(KbChatAgenticStateBase, total=False):
     """Optional fields populated across stages.
 
     Stage I/O (high-level, to keep implementation honest):
-    - MergeContext: reads messages/user_input/memory_keys -> writes merged_context
-    - CorefRewrite: reads merged_context -> writes coref_query
+    - MergeContext: reads messages/user_input/memory_keys -> writes
+      context_frame/rewrite_input_query/display_context/merged_context
+    - CorefRewrite: reads rewrite_input_query -> writes coref_query
     - AmbiguityCheck: reads coref_query/normalized_query -> writes reflection/action (clarify)
     - NormalizeRewrite: reads coref_query -> writes normalized_query
     - ComplexityRouter: reads normalized_query -> writes query_strategy
@@ -167,6 +184,9 @@ class KbChatAgenticState(KbChatAgenticStateBase, total=False):
     - Generator: reads final_context/evidence -> writes draft_answer/final_answer
     """
 
+    context_frame: ContextFrame
+    rewrite_input_query: str
+    display_context: str
     merged_context: str
 
     coref_query: str
