@@ -609,6 +609,24 @@ def _build_node_output_display_items(
         )
         _append_display_item(
             items,
+            key="reason_code",
+            label="原因编码",
+            value=summary.get("reason_code"),
+        )
+        _append_display_item(
+            items,
+            key="confidence",
+            label="歧义置信度",
+            value=summary.get("confidence"),
+        )
+        _append_display_item(
+            items,
+            key="fallback_used",
+            label="回退判定",
+            value=summary.get("fallback_used"),
+        )
+        _append_display_item(
+            items,
             key="action",
             label="后续动作",
             value=reflection.get("action"),

@@ -61,6 +61,43 @@ class ReverseQuestionDecision(BaseModel):
     question: str = Field(..., min_length=1)
 
 
+ClarificationReasonCode = Literal[
+    "missing_entity",
+    "missing_scope",
+    "missing_time",
+    "missing_metric",
+    "coref_uncertain",
+    "mixed",
+]
+
+
+class ClarificationSlotDecision(BaseModel):
+    """Structured slot required to disambiguate the question."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    key: str = Field(..., min_length=1, max_length=32)
+    label: str = Field(..., min_length=1, max_length=64)
+    required: bool = True
+    options: list[str] = Field(default_factory=list, max_length=6)
+
+
+class AmbiguityDecision(BaseModel):
+    """Structured output for model-driven ambiguity decision."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    ambiguous: bool
+    reason_code: ClarificationReasonCode = "mixed"
+    confidence: float = Field(..., ge=0.0, le=1.0)
+    reasoning: str = Field(default="", max_length=240)
+    clarifying_question: str = Field(default="", max_length=180)
+    missing_slots: list[ClarificationSlotDecision] = Field(
+        default_factory=list, max_length=6
+    )
+    suggested_answers: list[str] = Field(default_factory=list, max_length=4)
+
+
 class TransformQueryDecision(BaseModel):
     """Structured output for retry query transformation."""
 

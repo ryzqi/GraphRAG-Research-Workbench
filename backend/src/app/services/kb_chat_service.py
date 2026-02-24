@@ -47,6 +47,7 @@ from app.schemas.chats import (
     KbChatConfig,
     ChatPendingUserClarificationResponse,
     EvidenceItem,
+    PendingClarification,
     resolve_kb_chat_config,
 )
 from app.services.context_builder import ContextBuilder
@@ -779,11 +780,25 @@ class KbChatService:
         return HumanMessage(content=msg.content)
 
     @staticmethod
-    def _extract_clarification_message(
+    def _default_clarification_message() -> str:
+        return "为了更准确地回答，请补充对象、范围、时间或指标等关键信息。"
+
+    @staticmethod
+    def _coerce_pending_clarification(payload: Any) -> PendingClarification | None:
+        if not isinstance(payload, dict):
+            return None
+        try:
+            return PendingClarification.model_validate(payload)
+        except Exception:
+            return None
+
+    @classmethod
+    def _extract_clarification_pending(
+        cls,
         *,
         stage_summaries: dict[str, Any],
         answer: str,
-    ) -> str | None:
+    ) -> tuple[str | None, PendingClarification | None]:
         force_exit = (
             stage_summaries.get("force_exit")
             if isinstance(stage_summaries, dict)
@@ -791,11 +806,41 @@ class KbChatService:
         )
         reason = force_exit.get("reason") if isinstance(force_exit, dict) else None
         if reason != "clarify":
-            return None
+            return None, None
+
+        pending_clarification = None
+        if isinstance(force_exit, dict):
+            pending_clarification = cls._coerce_pending_clarification(
+                force_exit.get("clarification_payload")
+            )
+        if pending_clarification is None:
+            ambiguity_summary = (
+                stage_summaries.get("ambiguity_check")
+                if isinstance(stage_summaries, dict)
+                else None
+            )
+            if isinstance(ambiguity_summary, dict):
+                pending_clarification = cls._coerce_pending_clarification(
+                    ambiguity_summary.get("clarification_payload")
+                )
+
         text = extract_answer_text(answer).strip()
-        if text:
-            return text
-        return "为了更准确地回答，请补充必要信息后再提问。"
+        if not text and pending_clarification is not None:
+            text = pending_clarification.question
+        if not text:
+            text = cls._default_clarification_message()
+
+        if pending_clarification is None:
+            pending_clarification = PendingClarification(
+                question=text,
+                reason_code="mixed",
+                confidence=0.0,
+                model_reason=None,
+                slots=[],
+                suggested_answers=[],
+            )
+
+        return text, pending_clarification
 
     @staticmethod
     def _resolve_terminal_run_status(
@@ -1478,6 +1523,17 @@ class KbChatService:
 
         return None, None
 
+    @staticmethod
+    def _clarification_round_count(stage_summaries: dict[str, Any] | None) -> int:
+        if not isinstance(stage_summaries, dict):
+            return 0
+        entry = stage_summaries.get("clarification_pending")
+        if isinstance(entry, dict):
+            value = entry.get("round")
+            if isinstance(value, int) and value > 0:
+                return value
+        return 0
+
     async def _persist_clarification_pending(
         self,
         *,
@@ -1485,15 +1541,26 @@ class KbChatService:
         run: AgentRun,
         started_at: datetime,
         message: str,
+        pending_clarification: PendingClarification | None,
         stage_summaries: dict[str, Any],
         metrics: dict[str, Any],
     ) -> ChatPendingUserClarificationResponse:
         now = datetime.now(timezone.utc)
+        round_count = self._clarification_round_count(
+            run.stage_summaries if isinstance(run.stage_summaries, dict) else None
+        ) + 1
+        payload_dict = (
+            pending_clarification.model_dump(mode="json")
+            if isinstance(pending_clarification, PendingClarification)
+            else None
+        )
         stage_summaries = {
             **(stage_summaries if isinstance(stage_summaries, dict) else {}),
             "clarification_pending": {
                 "pending": True,
+                "round": round_count,
                 "message": message,
+                "pending_clarification": payload_dict,
                 "requested_at": now.isoformat(),
             },
         }
@@ -1515,6 +1582,8 @@ class KbChatService:
             **metrics,
             "latency_ms": int((now - started_at).total_seconds() * 1000),
             "clarification_pending": True,
+            "clarification_round": round_count,
+            "ambiguity_triggered": True,
         }
 
         await self._db.commit()
@@ -1522,6 +1591,7 @@ class KbChatService:
         return ChatPendingUserClarificationResponse(
             thread_id=str(session.id),
             message=message,
+            pending_clarification=pending_clarification,
             run=AgentRunRead.model_validate(run),
         )
 
@@ -1589,18 +1659,42 @@ class KbChatService:
                 else None,
             )
 
-            clarification_message = self._extract_clarification_message(
+            clarification_message, pending_clarification = self._extract_clarification_pending(
                 stage_summaries=stage_summaries,
                 answer=answer,
             )
             if clarification_message is not None:
-                return await self._persist_clarification_pending(
-                    session=session,
-                    run=run,
-                    started_at=exec_ctx.started_at,
-                    message=clarification_message,
-                    stage_summaries=stage_summaries,
-                    metrics=metrics,
+                max_rounds = max(
+                    0,
+                    int(getattr(self._settings, "kb_chat_max_clarification_rounds", 1)),
+                )
+                current_rounds = self._clarification_round_count(
+                    run.stage_summaries if isinstance(run.stage_summaries, dict) else None
+                )
+                if current_rounds < max_rounds:
+                    return await self._persist_clarification_pending(
+                        session=session,
+                        run=run,
+                        started_at=exec_ctx.started_at,
+                        message=clarification_message,
+                        pending_clarification=pending_clarification,
+                        stage_summaries=stage_summaries,
+                        metrics=metrics,
+                    )
+                stage_summaries = {
+                    **stage_summaries,
+                    "clarification_pending": {
+                        "pending": False,
+                        "round": current_rounds,
+                        "max_rounds": max_rounds,
+                        "max_rounds_reached": True,
+                        "message": clarification_message,
+                        "resolved_at": datetime.now(timezone.utc).isoformat(),
+                    },
+                }
+                answer = (
+                    "基于当前对话信息仍存在关键歧义，暂时无法给出可靠结论。"
+                    "请在下一次提问时明确对象、范围与时间。"
                 )
 
             terminal_status, terminal_message = self._resolve_terminal_run_status(
@@ -1981,7 +2075,7 @@ class KbChatService:
                 else None,
             )
 
-            clarification_message = self._extract_clarification_message(
+            clarification_message, pending_clarification = self._extract_clarification_pending(
                 stage_summaries=stage_summaries,
                 answer=answer,
             )
@@ -1995,22 +2089,46 @@ class KbChatService:
                 last_good_answer_source = candidate_source
 
             if clarification_message is not None:
-                if last_good_answer:
-                    yield _emit_ui_event(
-                        event_type="candidate_answer_updated",
-                        candidate_answer=last_good_answer,
-                        source_step_id=last_good_answer_source,
-                    )
-                pending_response = await self._persist_clarification_pending(
-                    session=session,
-                    run=run,
-                    started_at=exec_ctx.started_at,
-                    message=clarification_message,
-                    stage_summaries=stage_summaries,
-                    metrics=metrics,
+                max_rounds = max(
+                    0,
+                    int(getattr(self._settings, "kb_chat_max_clarification_rounds", 1)),
                 )
-                yield "interrupt", pending_response.model_dump(mode="json")
-                return
+                current_rounds = self._clarification_round_count(
+                    run.stage_summaries if isinstance(run.stage_summaries, dict) else None
+                )
+                if current_rounds < max_rounds:
+                    if last_good_answer:
+                        yield _emit_ui_event(
+                            event_type="candidate_answer_updated",
+                            candidate_answer=last_good_answer,
+                            source_step_id=last_good_answer_source,
+                        )
+                    pending_response = await self._persist_clarification_pending(
+                        session=session,
+                        run=run,
+                        started_at=exec_ctx.started_at,
+                        message=clarification_message,
+                        pending_clarification=pending_clarification,
+                        stage_summaries=stage_summaries,
+                        metrics=metrics,
+                    )
+                    yield "interrupt", pending_response.model_dump(mode="json")
+                    return
+                stage_summaries = {
+                    **stage_summaries,
+                    "clarification_pending": {
+                        "pending": False,
+                        "round": current_rounds,
+                        "max_rounds": max_rounds,
+                        "max_rounds_reached": True,
+                        "message": clarification_message,
+                        "resolved_at": datetime.now(timezone.utc).isoformat(),
+                    },
+                }
+                answer = (
+                    "基于当前对话信息仍存在关键歧义，暂时无法给出可靠结论。"
+                    "请在下一次提问时明确对象、范围与时间。"
+                )
 
             terminal_status, terminal_message = self._resolve_terminal_run_status(
                 stage_summaries=stage_summaries,

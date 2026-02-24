@@ -43,7 +43,7 @@ const NODE_DETAIL_POLICY_MAP: Record<string, NodeDetailPolicy> = {
   },
   ambiguity_check: {
     input: ['query'],
-    output: ['ambiguous', 'action', 'final_answer'],
+    output: ['ambiguous', 'reason_code', 'confidence', 'action', 'final_answer'],
   },
   normalize_rewrite: {
     input: ['query'],

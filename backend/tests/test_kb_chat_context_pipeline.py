@@ -24,6 +24,7 @@ class _FakeRewriteService:
     seen_query: str | None = None
     resolve_called = False
     seen_recent_turns: list[dict[str, str]] | None = None
+    seen_coref_meta: dict[str, object] | None = None
 
     def __init__(self, settings=None):
         _ = settings
@@ -74,6 +75,51 @@ class _FakeRewriteService:
         _ = (query, enabled)
         return types.SimpleNamespace(queries=[], reason="disabled")
 
+    async def ambiguity_check(
+        self,
+        query: str,
+        *,
+        enabled: bool | None = None,
+        timeout_seconds: float | None = None,
+        coref_meta: dict[str, object] | None = None,
+    ):
+        _ = (enabled, timeout_seconds)
+        type(self).seen_query = query
+        type(self).seen_coref_meta = coref_meta
+        needs_clarification = bool(
+            isinstance(coref_meta, dict) and coref_meta.get("needs_clarification")
+        )
+        if needs_clarification:
+            return types.SimpleNamespace(
+                ambiguous=True,
+                reverse_question="请确认你指的是哪个具体对象？",
+                reason="model_structured",
+                reason_code="coref_uncertain",
+                confidence=0.81,
+                model_reason="coref confidence low",
+                fallback_used=False,
+                clarification_payload={
+                    "question": "请确认你指的是哪个具体对象？",
+                    "reason_code": "coref_uncertain",
+                    "confidence": 0.81,
+                    "model_reason": "coref confidence low",
+                    "slots": [
+                        {"key": "entity", "label": "对象", "required": True, "options": []}
+                    ],
+                    "suggested_answers": ["对象A", "对象B"],
+                },
+            )
+        return types.SimpleNamespace(
+            ambiguous=False,
+            reverse_question=None,
+            reason="model_structured",
+            reason_code=None,
+            confidence=None,
+            model_reason=None,
+            fallback_used=False,
+            clarification_payload=None,
+        )
+
     async def resolve_merge_context_conflict(
         self, *, question: str, summary_text: str, memory_snippet: str
     ):
@@ -97,6 +143,7 @@ def settings():
         memory_enabled=False,
         retrieval_query_rewrite_enabled=True,
         kb_chat_ambiguity_check_enabled=True,
+        kb_chat_ambiguity_timeout_seconds=0.5,
         kb_chat_hyde_enabled=False,
         kb_chat_max_total_rounds=3,
         kb_chat_max_retrieval_retries=2,
@@ -194,12 +241,13 @@ async def test_coref_rewrite_reads_rewrite_input_query_not_merged_context(monkey
 
 
 @pytest.mark.asyncio
-async def test_ambiguity_check_uses_coref_low_confidence_hint(settings):
+async def test_ambiguity_check_uses_model_result_with_coref_meta(monkeypatch, settings):
+    monkeypatch.setattr(preprocess, "QueryRewriteService", _FakeRewriteService)
     state = {
-        "coref_query": "这个怎么配",
+        "coref_query": "这个怎么做",
         "coref_meta": {
             "needs_clarification": True,
-            "clarification_hint": "请问你指的是哪个具体对象？",
+            "clarification_hint": "请确认对象",
         },
         "stage_summaries": {},
     }
@@ -208,11 +256,11 @@ async def test_ambiguity_check_uses_coref_low_confidence_hint(settings):
 
     assert result["reflection"]["action"] == "clarify"
     assert result["reflection"]["reason"] == "ambiguous_query"
-    assert result["final_answer"] == "请问你指的是哪个具体对象？"
-    assert (
-        result["stage_summaries"]["ambiguity_check"]["reason"]
-        == "coref_low_confidence"
-    )
+    assert result["reflection"]["reason_code"] == "coref_uncertain"
+    assert result["final_answer"] == "请确认你指的是哪个具体对象？"
+    assert result["stage_summaries"]["ambiguity_check"]["reason"] == "model_structured"
+    assert result["stage_summaries"]["ambiguity_check"]["slot_count"] == 1
+    assert _FakeRewriteService.seen_coref_meta is not None
 
 
 @pytest.mark.asyncio

@@ -12,7 +12,7 @@ import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import { useTypewriterStream } from './useTypewriterStream';
 import { ThinkingContainer } from './ThinkingContainer';
 import { Button } from '../ui/Button';
-import type { ToolApprovalRequest } from '../../services/chats';
+import type { PendingClarification, ToolApprovalRequest } from '../../services/chats';
 
 // 实心圆点脉冲动画
 const cursorPulse = keyframes`
@@ -454,16 +454,24 @@ export function ToolApprovalCard({
 
 interface ClarificationCardProps {
   message: string;
+  pendingClarification?: PendingClarification | null;
   loading?: boolean;
   onSubmit: (content: string) => void;
 }
 
 export function ClarificationCard({
   message,
+  pendingClarification,
   loading,
   onSubmit,
 }: ClarificationCardProps) {
   const [content, setContent] = useState('');
+  const displayQuestion = pendingClarification?.question?.trim() || message;
+  const suggestedAnswers = pendingClarification?.suggested_answers ?? [];
+  const slotLabels =
+    pendingClarification?.slots
+      ?.map((slot) => slot.label.trim())
+      .filter((label) => label.length > 0) ?? [];
 
   const handleSubmit = () => {
     const value = content.trim();
@@ -490,21 +498,43 @@ export function ClarificationCard({
           需要补充信息
         </Typography>
         <Typography variant="body2" color="text.secondary">
-          {message}
+          {displayQuestion}
         </Typography>
+        {slotLabels.length > 0 && (
+          <Stack direction="row" spacing={1} useFlexGap sx={{ flexWrap: 'wrap' }}>
+            {slotLabels.map((label) => (
+              <Chip key={label} size="small" variant="outlined" label={label} />
+            ))}
+          </Stack>
+        )}
+        {suggestedAnswers.length > 0 && (
+          <Stack direction="row" spacing={1} useFlexGap sx={{ flexWrap: 'wrap' }}>
+            {suggestedAnswers.map((suggestion) => (
+              <Button
+                key={suggestion}
+                size="small"
+                variant="outlined"
+                disabled={loading}
+                onClick={() => setContent(suggestion)}
+              >
+                {suggestion}
+              </Button>
+            ))}
+          </Stack>
+        )}
         <TextField
           multiline
           minRows={2}
           maxRows={5}
           value={content}
           onChange={(event) => setContent(event.target.value)}
-          placeholder="补充必要信息后继续..."
+          placeholder="请输入补充信息..."
           size="small"
           disabled={loading}
         />
         <Box>
           <Button variant="contained" onClick={handleSubmit} loading={loading} disabled={!content.trim()}>
-            继续回答
+            提交补充信息
           </Button>
         </Box>
       </Stack>

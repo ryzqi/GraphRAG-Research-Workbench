@@ -926,7 +926,15 @@ export function KbChatPage() {
   );
 
   const markClarificationPending = useCallback(
-    (messageId: string, runId: string, message: string) => {
+    (
+      messageId: string,
+      runId: string,
+      message: string,
+      pendingClarification?: Extract<
+        ChatMessageResponse,
+        { status: 'pending_user_clarification' }
+      >['pending_clarification']
+    ) => {
       updateMessage(messageId, (msg) => {
         const nextSteps = upsertPipelineStep(msg.pipelineSteps, {
           step_id: clarificationStep.step_id,
@@ -949,7 +957,10 @@ export function KbChatPage() {
           answerRevealReady: false,
           think: '',
           runId,
-          pendingClarification: { message },
+          pendingClarification: {
+            message,
+            pendingClarification: pendingClarification ?? null,
+          },
           pipelineSteps: nextSteps,
           runState: nextRunState,
           isStreaming: false,
@@ -1050,7 +1061,12 @@ export function KbChatPage() {
       const response: ChatMessageResponse = await sendMessage(session.id, userContent);
       touchRecent();
       if (isPendingClarificationResponse(response)) {
-        markClarificationPending(assistantId, response.run.id, response.message);
+        markClarificationPending(
+          assistantId,
+          response.run.id,
+          response.message,
+          response.pending_clarification
+        );
         return;
       }
       if (response.status !== 'succeeded') {
@@ -1153,7 +1169,12 @@ export function KbChatPage() {
           deltaBatcher.flush();
           const data = parseSseJson<ChatMessageResponse>(event.data);
           if (isPendingClarificationResponse(data)) {
-            markClarificationPending(assistantId, data.run.id, data.message);
+            markClarificationPending(
+              assistantId,
+              data.run.id,
+              data.message,
+              data.pending_clarification
+            );
             setLoading(false);
             return;
           }
@@ -1325,7 +1346,12 @@ export function KbChatPage() {
       const fallbackToJson = async () => {
         const response = await resumeClarification(session.id, runId, content);
         if (isPendingClarificationResponse(response)) {
-          markClarificationPending(messageId, response.run.id, response.message);
+          markClarificationPending(
+            messageId,
+            response.run.id,
+            response.message,
+            response.pending_clarification
+          );
           return;
         }
         if (response.status !== 'succeeded') {
@@ -1426,7 +1452,12 @@ export function KbChatPage() {
             deltaBatcher.flush();
             const data = parseSseJson<ChatMessageResponse>(event.data);
             if (isPendingClarificationResponse(data)) {
-              markClarificationPending(messageId, data.run.id, data.message);
+              markClarificationPending(
+                messageId,
+                data.run.id,
+                data.message,
+                data.pending_clarification
+              );
               setLoading(false);
               console.info('kb-chat-stream-metrics', streamMetrics.finalize());
               return;

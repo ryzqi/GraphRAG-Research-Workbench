@@ -291,6 +291,36 @@ class ClarificationResumeRequest(BaseModel):
 
 
 # 问答响应（完成）
+ClarificationReasonCode = Literal[
+    "missing_entity",
+    "missing_scope",
+    "missing_time",
+    "missing_metric",
+    "coref_uncertain",
+    "mixed",
+]
+
+
+class ClarificationSlot(BaseModel):
+    """Structured slot the user can fill to remove ambiguity."""
+
+    key: str = Field(..., min_length=1, max_length=32)
+    label: str = Field(..., min_length=1, max_length=64)
+    required: bool = True
+    options: list[str] = Field(default_factory=list, max_length=6)
+
+
+class PendingClarification(BaseModel):
+    """Structured clarification payload for UI-guided disambiguation."""
+
+    question: str = Field(..., min_length=1)
+    reason_code: ClarificationReasonCode = "mixed"
+    confidence: float = Field(0.0, ge=0.0, le=1.0)
+    model_reason: str | None = None
+    slots: list[ClarificationSlot] = Field(default_factory=list)
+    suggested_answers: list[str] = Field(default_factory=list, max_length=4)
+
+
 class ChatAnswerResponse(BaseModel):
     status: Literal["succeeded"] = "succeeded"
     assistant_message: ChatMessageRead
@@ -313,4 +343,5 @@ class ChatPendingUserClarificationResponse(BaseModel):
     status: Literal["pending_user_clarification"] = "pending_user_clarification"
     thread_id: str
     message: str
+    pending_clarification: PendingClarification | None = None
     run: AgentRunRead

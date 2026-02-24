@@ -520,11 +520,7 @@ async def coref_rewrite(state: dict, settings: Settings) -> dict[str, Any]:
 
 
 async def ambiguity_check(state: dict, settings: Settings) -> dict[str, Any]:
-    """Ambiguity check (heuristic-first).
-
-    If ambiguous, set reflection.action=clarify and populate final_answer with a
-    reverse question. (Current KB chat API does not support interrupt/resume.)
-    """
+    """Ambiguity check with model-first decision and structured clarification payload."""
     start = time.perf_counter()
     query = state.get("coref_query")
     if not isinstance(query, str) or not query.strip():
@@ -533,26 +529,44 @@ async def ambiguity_check(state: dict, settings: Settings) -> dict[str, Any]:
     ambiguous = False
     reverse_question = ""
     reason: str | None = None
+    reason_code: str | None = None
+    confidence: float | None = None
+    model_reason: str | None = None
+    fallback_used = False
+    clarification_payload: dict[str, Any] | None = None
+
     if ambiguity_check_enabled(state, settings):
         coref_meta = state.get("coref_meta")
-        if isinstance(coref_meta, dict) and bool(coref_meta.get("needs_clarification")):
-            ambiguous = True
-            reverse_question = str(
-                coref_meta.get("clarification_hint")
-                or "为了更准确地回答，你指的是哪个对象/范围？请补充具体指代或上下文。"
+        try:
+            svc = QueryRewriteService(settings=settings)
+            timeout_seconds = float(
+                getattr(settings, "kb_chat_ambiguity_timeout_seconds", 0.5)
             )
-            reason = "coref_low_confidence"
-        else:
-            try:
-                svc = QueryRewriteService(settings=settings)
-                result = await svc.ambiguity_check(query, timeout_seconds=0)
-                ambiguous = result.ambiguous
-                reverse_question = result.reverse_question or ""
-                reason = result.reason
-            except Exception:  # pragma: no cover
-                ambiguous = False
-                reverse_question = ""
-                reason = "error"
+            result = await svc.ambiguity_check(
+                query,
+                timeout_seconds=timeout_seconds,
+                coref_meta=coref_meta if isinstance(coref_meta, dict) else None,
+            )
+            ambiguous = result.ambiguous
+            reverse_question = result.reverse_question or ""
+            reason = result.reason
+            reason_code = result.reason_code
+            confidence = result.confidence
+            model_reason = result.model_reason
+            fallback_used = bool(result.fallback_used)
+            if isinstance(result.clarification_payload, dict):
+                clarification_payload = result.clarification_payload
+        except Exception:  # pragma: no cover
+            ambiguous = False
+            reverse_question = ""
+            reason = "error"
+            fallback_used = True
+
+    slot_count = 0
+    if isinstance(clarification_payload, dict):
+        slots = clarification_payload.get("slots")
+        if isinstance(slots, list):
+            slot_count = len(slots)
 
     stage_summaries = _merge_stage_summary(
         state,
@@ -560,6 +574,12 @@ async def ambiguity_check(state: dict, settings: Settings) -> dict[str, Any]:
         {
             "ambiguous": ambiguous,
             "reason": reason,
+            "reason_code": reason_code,
+            "confidence": confidence,
+            "model_reason": model_reason,
+            "fallback_used": fallback_used,
+            "slot_count": slot_count,
+            "clarification_payload": clarification_payload,
             "latency_ms": int((time.perf_counter() - start) * 1000),
             "completed_at": now_iso(),
         },
@@ -576,8 +596,11 @@ async def ambiguity_check(state: dict, settings: Settings) -> dict[str, Any]:
         "reflection": {
             "action": "clarify",
             "reason": "ambiguous_query",
+            "reason_code": reason_code or "mixed",
+            "confidence": confidence,
         },
         "final_answer": reverse_question,
+        "clarification_payload": clarification_payload,
         "stage_summaries": stage_summaries,
     }
 

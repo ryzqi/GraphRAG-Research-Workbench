@@ -35,17 +35,26 @@ def force_exit_node(state: dict, settings: Settings) -> dict[str, Any]:
     draft_answer = state.get("draft_answer")
     best_answer = state.get("best_answer")
     best_answer_meta = state.get("best_answer_meta")
+    clarification_payload = (
+        state.get("clarification_payload")
+        if isinstance(state.get("clarification_payload"), dict)
+        else None
+    )
     used_best_answer = False
     if action == "clarify":
+        if clarification_payload and not isinstance(final_answer, str):
+            candidate_question = clarification_payload.get("question")
+            if isinstance(candidate_question, str) and candidate_question.strip():
+                final_answer = candidate_question
         if not isinstance(final_answer, str) or not final_answer.strip():
-            final_answer = "为了更准确地回答，请补充必要信息后再提问。"
+            final_answer = "为了更准确地回答，请补充关键约束信息后再继续。"
     else:
         if review_passed is True:
             if not isinstance(final_answer, str) or not final_answer.strip():
                 if isinstance(draft_answer, str) and draft_answer.strip():
                     final_answer = draft_answer
         else:
-            # Answer didn't pass guardrails; discard any prefilled final answer.
+            # Answer did not pass guardrails; discard any prefilled final answer.
             final_answer = None
         if (
             (not isinstance(final_answer, str) or not final_answer.strip())
@@ -55,7 +64,7 @@ def force_exit_node(state: dict, settings: Settings) -> dict[str, Any]:
             final_answer = best_answer
             used_best_answer = True
         if not isinstance(final_answer, str) or not final_answer.strip():
-            final_answer = "根据现有资料无法回答该问题（已停止重试）。"
+            final_answer = "基于当前信息仍无法稳定回答该问题（已停止重试）。"
 
     stage_summaries = state.get("stage_summaries")
     if not isinstance(stage_summaries, dict):
@@ -70,6 +79,8 @@ def force_exit_node(state: dict, settings: Settings) -> dict[str, Any]:
         force_exit_summary["best_answer"] = best_answer
     if used_best_answer and isinstance(best_answer_meta, dict):
         force_exit_summary["best_answer_meta"] = best_answer_meta
+    if action == "clarify" and isinstance(clarification_payload, dict):
+        force_exit_summary["clarification_payload"] = clarification_payload
     stage_summaries = {
         **stage_summaries,
         "force_exit": force_exit_summary,
@@ -78,5 +89,6 @@ def force_exit_node(state: dict, settings: Settings) -> dict[str, Any]:
     return {
         "messages": [AIMessage(content=final_answer)],
         "final_answer": final_answer,
+        "clarification_payload": clarification_payload,
         "stage_summaries": stage_summaries,
     }

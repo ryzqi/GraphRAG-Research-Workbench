@@ -20,6 +20,8 @@ from langchain.agents import create_agent
 from pydantic import BaseModel, ValidationError
 
 from app.agents.kb_chat_agentic.schemas import (
+    AmbiguityDecision,
+    ClarificationSlotDecision,
     ComplexityDecision,
     DecompositionDecision,
     HyDEBatchDecision,
@@ -73,6 +75,11 @@ class AmbiguityResult:
     reverse_question: str | None = None
     reason: str | None = None
     latency_ms: int | None = None
+    reason_code: str | None = None
+    confidence: float | None = None
+    model_reason: str | None = None
+    fallback_used: bool = False
+    clarification_payload: dict[str, object] | None = None
 
 
 @dataclass(slots=True)
@@ -125,18 +132,85 @@ _COREF_MARKERS_ZH = [
     "它",
     "他",
     "她",
-    "它们",
     "他们",
     "她们",
-    "该",
-    "其",
-    "上述",
-    "前者",
-    "后者",
+    "它们",
+    "上面",
+    "前面",
+    "刚才",
 ]
 _COREF_MARKERS_EN = ["this", "that", "these", "those", "it", "they", "them"]
 _COREF_MARKERS = sorted([*_COREF_MARKERS_ZH, *_COREF_MARKERS_EN], key=len, reverse=True)
 _COREF_CONFIDENCE_THRESHOLD = 0.72
+_DEFAULT_CLARIFICATION_QUESTION = (
+    "为了更准确地回答，请补充你指的是哪个对象、范围或时间？"
+)
+_REASON_CODES = {
+    "missing_entity",
+    "missing_scope",
+    "missing_time",
+    "missing_metric",
+    "coref_uncertain",
+    "mixed",
+}
+
+
+def _normalize_reason_code(value: object) -> str:
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in _REASON_CODES:
+            return normalized
+    return "mixed"
+
+
+def _normalize_clarification_options(values: Iterable[str]) -> list[str]:
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        text = _sanitize_query_text(str(value or ""))
+        if not text:
+            continue
+        key = text.casefold()
+        if key in seen:
+            continue
+        normalized.append(text)
+        seen.add(key)
+        if len(normalized) >= 6:
+            break
+    return normalized
+
+
+def _build_clarification_payload(
+    *,
+    question: str,
+    reason_code: str,
+    confidence: float,
+    model_reason: str | None,
+    slots: Iterable[ClarificationSlotDecision] | None = None,
+    suggested_answers: Iterable[str] | None = None,
+) -> dict[str, object]:
+    payload_slots: list[dict[str, object]] = []
+    for slot in slots or []:
+        key = _sanitize_query_text(slot.key)
+        label = _sanitize_query_text(slot.label)
+        if not key or not label:
+            continue
+        payload_slots.append(
+            {
+                "key": key,
+                "label": label,
+                "required": bool(slot.required),
+                "options": _normalize_clarification_options(slot.options),
+            }
+        )
+    return {
+        "question": question,
+        "reason_code": reason_code,
+        "confidence": round(max(0.0, min(1.0, confidence)), 4),
+        "model_reason": _normalize_whitespace(model_reason or ""),
+        "slots": payload_slots,
+        "suggested_answers": _normalize_clarification_options(suggested_answers or []),
+    }
 
 
 def _sanitize_reverse_question(text: str) -> str:
@@ -144,10 +218,11 @@ def _sanitize_reverse_question(text: str) -> str:
     if not value:
         return ""
     if value.endswith("?"):
-        return f"{value[:-1]}？"
+        value = value[:-1].rstrip()
     if value.endswith("？"):
         return value
-    return f"{value.rstrip('。.!！')}？"
+    return f"{value.rstrip('。.!?,，；;')}？"
+
 
 
 def _strip_list_prefix(text: str) -> str:
@@ -193,7 +268,7 @@ def _extract_query_focus_terms(query: str) -> set[str]:
 
 
 def _split_candidate_segments(text: str) -> list[str]:
-    raw_segments = re.split(r"[，。；、,.!?\n]+", _normalize_whitespace(text))
+    raw_segments = re.split(r"[，。；、,.!?;:\n]+", _normalize_whitespace(text))
     normalized: list[str] = []
     for segment in raw_segments:
         value = segment.strip(" \"'“”‘’()[]{}")
@@ -203,7 +278,6 @@ def _split_candidate_segments(text: str) -> list[str]:
             continue
         normalized.append(value)
     return normalized
-
 
 def _apply_coref_candidate(query: str, candidate: str) -> tuple[str, str]:
     q = _normalize_whitespace(query)
@@ -648,7 +722,7 @@ class QueryRewriteService:
                 "apply_strategy": apply_strategy,
                 "needs_clarification": needs_clarification,
                 "clarification_hint": (
-                    "请问你指的是哪一个具体对象？请补充明确名称或上下文。"
+                    _DEFAULT_CLARIFICATION_QUESTION
                     if needs_clarification and triggered
                     else ""
                 ),
@@ -686,8 +760,9 @@ class QueryRewriteService:
         *,
         enabled: bool | None = None,
         timeout_seconds: float | None = None,
+        coref_meta: dict[str, object] | None = None,
     ) -> AmbiguityResult:
-        """Ambiguity check with safe fallback (heuristic-first)."""
+        """Model-driven ambiguity decision with guardrail fallback."""
         start = time.perf_counter()
         enabled_flag = (
             bool(self._settings.kb_chat_ambiguity_check_enabled)
@@ -697,20 +772,104 @@ class QueryRewriteService:
         if not enabled_flag:
             return AmbiguityResult(ambiguous=False, reason="disabled", latency_ms=0)
 
-        ambiguous = self._is_ambiguous_heuristic(query)
-        reverse_question: str | None = None
-        reason: str | None = "heuristic"
-        if ambiguous:
-            rq = await self.generate_reverse_question(
-                query, timeout_seconds=timeout_seconds
+        q = _sanitize_query_text(query)
+        if not q:
+            payload = _build_clarification_payload(
+                question=_DEFAULT_CLARIFICATION_QUESTION,
+                reason_code="missing_entity",
+                confidence=1.0,
+                model_reason="empty_query_guardrail",
             )
-            reverse_question = rq.text or None
-            reason = rq.reason or reason
-            if not reverse_question:
-                reverse_question = (
-                    "为了更准确地回答，你指的是哪个对象/范围？请补充具体指代或上下文。"
+            latency_ms = int((time.perf_counter() - start) * 1000)
+            return AmbiguityResult(
+                ambiguous=True,
+                reverse_question=str(payload["question"]),
+                reason="guardrail_empty_query",
+                latency_ms=latency_ms,
+                reason_code="missing_entity",
+                confidence=1.0,
+                model_reason="empty_query_guardrail",
+                fallback_used=True,
+                clarification_payload=payload,
+            )
+
+        coref_confidence = 0.0
+        coref_hint = ""
+        coref_selected_mention = ""
+        coref_needs_clarification = False
+        if isinstance(coref_meta, dict):
+            confidence_value = coref_meta.get("confidence")
+            if isinstance(confidence_value, (int, float)):
+                coref_confidence = float(confidence_value)
+            hint_value = coref_meta.get("clarification_hint")
+            if isinstance(hint_value, str):
+                coref_hint = _normalize_whitespace(hint_value)
+            mention_value = coref_meta.get("selected_mention")
+            if isinstance(mention_value, str):
+                coref_selected_mention = _normalize_whitespace(mention_value)
+            coref_needs_clarification = bool(coref_meta.get("needs_clarification"))
+
+        structured_result = await self._call_prompt_structured(
+            "kb_chat/ambiguity_decision",
+            schema=AmbiguityDecision,
+            timeout_seconds=timeout_seconds,
+            max_tokens=320,
+            question=q,
+            coref_confidence=round(max(0.0, min(1.0, coref_confidence)), 4),
+            coref_hint=coref_hint,
+            coref_selected_mention=coref_selected_mention,
+            coref_needs_clarification=coref_needs_clarification,
+        )
+
+        fallback_used = False
+        ambiguous = False
+        reason = structured_result.reason or "model_structured"
+        reason_code = "mixed"
+        confidence = 0.0
+        model_reason = ""
+        reverse_question: str | None = None
+        clarification_payload: dict[str, object] | None = None
+
+        if structured_result.success and isinstance(
+            structured_result.payload, AmbiguityDecision
+        ):
+            payload = structured_result.payload
+            ambiguous = bool(payload.ambiguous)
+            reason_code = _normalize_reason_code(payload.reason_code)
+            confidence = round(max(0.0, min(1.0, float(payload.confidence))), 4)
+            model_reason = _normalize_whitespace(payload.reasoning or "")
+            if ambiguous:
+                question_text = _sanitize_reverse_question(
+                    payload.clarifying_question or ""
                 )
-                reason = "fallback_default_reverse_question"
+                if not question_text:
+                    question_text = _DEFAULT_CLARIFICATION_QUESTION
+                clarification_payload = _build_clarification_payload(
+                    question=question_text,
+                    reason_code=reason_code,
+                    confidence=confidence,
+                    model_reason=model_reason,
+                    slots=payload.missing_slots,
+                    suggested_answers=payload.suggested_answers,
+                )
+                reverse_question = str(clarification_payload.get("question") or "")
+        else:
+            fallback_used = True
+            ambiguous = self._is_ambiguous_heuristic(q)
+            if ambiguous:
+                reason_code = (
+                    "coref_uncertain" if coref_needs_clarification else "mixed"
+                )
+                confidence = 0.35
+                model_reason = "guardrail_fallback"
+                clarification_payload = _build_clarification_payload(
+                    question=_DEFAULT_CLARIFICATION_QUESTION,
+                    reason_code=reason_code,
+                    confidence=confidence,
+                    model_reason=model_reason,
+                )
+                reverse_question = str(clarification_payload.get("question") or "")
+            reason = structured_result.reason or "model_failed_guardrail_fallback"
 
         latency_ms = int((time.perf_counter() - start) * 1000)
         return AmbiguityResult(
@@ -718,6 +877,11 @@ class QueryRewriteService:
             reverse_question=reverse_question,
             reason=reason,
             latency_ms=latency_ms,
+            reason_code=reason_code if ambiguous else None,
+            confidence=confidence if ambiguous else None,
+            model_reason=model_reason or None,
+            fallback_used=fallback_used,
+            clarification_payload=clarification_payload if ambiguous else None,
         )
 
     async def generate_reverse_question(
@@ -740,9 +904,7 @@ class QueryRewriteService:
         ):
             text = _sanitize_reverse_question(structured_result.payload.question.strip())
             if not text:
-                text = (
-                    "为了更准确地回答，你指的是哪个对象/范围？请补充具体指代或上下文。"
-                )
+                text = _DEFAULT_CLARIFICATION_QUESTION
             return TextResult(
                 text=text,
                 success=True,
@@ -750,7 +912,7 @@ class QueryRewriteService:
                 latency_ms=structured_result.latency_ms,
             )
 
-        text = "为了更准确地回答，你指的是哪个对象/范围？请补充具体指代或上下文。"
+        text = _DEFAULT_CLARIFICATION_QUESTION
         latency_ms = int((time.perf_counter() - start) * 1000)
         return TextResult(
             text=text,
@@ -1071,11 +1233,8 @@ class QueryRewriteService:
             return True
         if len(q) <= 2:
             return True
-        # Only trigger when the query is *short* and contains coref-like markers,
-        # to avoid false positives for normal descriptive questions.
+        # Guardrail only: short query + coreference markers is likely ambiguous.
         if len(q) <= 10 and _contains_coref_marker(q):
-            return True
-        if len(q) <= 6 and ("怎么" in q or "咋" in q or "如何" in q):
             return True
         return False
 

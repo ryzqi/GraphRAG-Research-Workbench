@@ -193,10 +193,35 @@ export interface ChatPendingToolApprovalResponse {
   run: AgentRun;
 }
 
+export type ClarificationReasonCode =
+  | 'missing_entity'
+  | 'missing_scope'
+  | 'missing_time'
+  | 'missing_metric'
+  | 'coref_uncertain'
+  | 'mixed';
+
+export interface ClarificationSlot {
+  key: string;
+  label: string;
+  required: boolean;
+  options: string[];
+}
+
+export interface PendingClarification {
+  question: string;
+  reason_code: ClarificationReasonCode;
+  confidence: number;
+  model_reason?: string | null;
+  slots: ClarificationSlot[];
+  suggested_answers: string[];
+}
+
 export interface ChatPendingUserClarificationResponse {
   status: 'pending_user_clarification';
   thread_id: string;
   message: string;
+  pending_clarification?: PendingClarification | null;
   run: AgentRun;
 }
 

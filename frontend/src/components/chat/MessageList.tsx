@@ -12,6 +12,7 @@ import type {
   ChatNodeIoEvent,
   ChatRunStateEvent,
   EvidenceItem,
+  PendingClarification,
   ToolApprovalRequest,
 } from '../../services/chats';
 import { EvidenceList } from '../EvidenceList';
@@ -53,6 +54,7 @@ export interface ChatMessage {
   };
   pendingClarification?: {
     message: string;
+    pendingClarification?: PendingClarification | null;
   };
   runId?: string;
   runState?: ChatRunStateEvent;
@@ -192,6 +194,7 @@ const MessageRow = memo(
           <Box sx={{ mt: 2, ml: 7 }}>
             <ClarificationCard
               message={message.pendingClarification.message}
+              pendingClarification={message.pendingClarification.pendingClarification}
               loading={approvalLoading}
               onSubmit={(contentText) =>
                 onClarificationSubmit(message.id, message.runId!, contentText)

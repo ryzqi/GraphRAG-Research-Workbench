@@ -379,6 +379,12 @@ class Settings(BaseSettings):
     kb_chat_ambiguity_check_enabled: bool = Field(
         True, alias="KB_CHAT_AMBIGUITY_CHECK_ENABLED"
     )
+    kb_chat_ambiguity_timeout_seconds: float = Field(
+        0.5, alias="KB_CHAT_AMBIGUITY_TIMEOUT_SECONDS"
+    )
+    kb_chat_max_clarification_rounds: int = Field(
+        1, alias="KB_CHAT_MAX_CLARIFICATION_ROUNDS"
+    )
     kb_chat_hyde_enabled: bool = Field(False, alias="KB_CHAT_HYDE_ENABLED")
 
     kb_chat_trace_enabled: bool = Field(True, alias="KB_CHAT_TRACE_ENABLED")

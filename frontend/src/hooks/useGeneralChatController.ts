@@ -234,7 +234,10 @@ export function useGeneralChatController() {
             ...msg,
             content: response.message,
             isStreaming: false,
-            pendingClarification: { message: response.message },
+            pendingClarification: {
+              message: response.message,
+              pendingClarification: response.pending_clarification ?? null,
+            },
             runId: response.run.id,
           }));
           return;
@@ -272,12 +275,19 @@ export function useGeneralChatController() {
           }
           if (event.event === 'pending_user_clarification') {
             hadStreamEvent = true;
-            const data = parseSseJson<{ message?: string; run_id?: string }>(event.data);
+            const data = parseSseJson<
+              Partial<Extract<ChatMessageResponse, { status: 'pending_user_clarification' }>> & {
+                run_id?: string;
+              }
+            >(event.data);
             deltaBatcher.flush();
             updateMessage(assistantId, (msg) => ({
               ...msg,
               isStreaming: false,
-              pendingClarification: { message: data?.message ?? '' },
+              pendingClarification: {
+                message: data?.message ?? '',
+                pendingClarification: data?.pending_clarification ?? null,
+              },
               runId: data?.run_id ?? msg.runId,
             }));
             continue;

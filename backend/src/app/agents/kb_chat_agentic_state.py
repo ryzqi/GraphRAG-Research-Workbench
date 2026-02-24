@@ -28,6 +28,8 @@ class ReflectionResult(TypedDict, total=False):
     review_passed: bool
     action: ReflectionAction
     reason: str
+    reason_code: str
+    confidence: float
 
 
 class LoopCounts(TypedDict):
@@ -100,6 +102,29 @@ class CorefMeta(TypedDict, total=False):
     clarification_hint: str
 
 
+class ClarificationSlot(TypedDict, total=False):
+    key: str
+    label: str
+    required: bool
+    options: list[str]
+
+
+class ClarificationPayload(TypedDict, total=False):
+    question: str
+    reason_code: Literal[
+        "missing_entity",
+        "missing_scope",
+        "missing_time",
+        "missing_metric",
+        "coref_uncertain",
+        "mixed",
+    ]
+    confidence: float
+    model_reason: str
+    slots: list[ClarificationSlot]
+    suggested_answers: list[str]
+
+
 # -----------------------------
 # Graph state schema
 # -----------------------------
@@ -165,6 +190,7 @@ class KbChatAgenticState(KbChatAgenticStateBase, total=False):
     final_answer: str
     best_answer: str
     best_answer_meta: dict[str, Any]
+    clarification_payload: ClarificationPayload
 
     reflection: ReflectionResult
 
