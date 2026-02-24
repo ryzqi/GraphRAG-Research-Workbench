@@ -150,6 +150,23 @@ class ComplexityDecision(BaseModel):
         description="简要分析：目标数量、是否需分步推理、是否存在召回风险",
     )
     strategy: ComplexityStrategy = "direct"
+    confidence: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+        description="路由置信度，范围 [0,1]。",
+    )
+    risk_flags: list[str] = Field(
+        default_factory=list,
+        max_length=8,
+        description="路由关键风险信号，如 comparison/multi_target/recall_risk_high。",
+    )
+    decision_version: str = Field(
+        default="kb_chat_complexity_router_v4",
+        min_length=1,
+        max_length=64,
+        description="路由策略版本标识，便于可观测与回溯。",
+    )
 
 
 class DecompositionDecision(BaseModel):

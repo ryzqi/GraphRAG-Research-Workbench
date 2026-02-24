@@ -3,6 +3,7 @@ import types
 import pytest
 
 from app.agents.kb_chat_agentic.schemas import AmbiguityDecision, ClarificationSlotDecision
+from app.agents.kb_chat_agentic.schemas import ComplexityDecision
 from app.agents.kb_chat_agentic.schemas import NormalizeDecision
 from app.services.query_rewrite_service import QueryRewriteService
 from app.services.query_rewrite_service import StructuredCallResult
@@ -177,3 +178,61 @@ async def test_normalize_rewrite_falls_back_when_structured_query_drops_numeric_
     assert result.reason == "rule_fallback"
     assert result.meta["source"] == "rule_fallback"
     assert result.meta["fallback_reason"] == "constraint_not_preserved"
+
+
+@pytest.mark.asyncio
+async def test_classify_complexity_returns_confidence_and_signals(monkeypatch, settings):
+    svc = QueryRewriteService(settings=settings)
+
+    async def _fake_structured(*args, **kwargs):  # noqa: ANN002, ANN003
+        _ = (args, kwargs)
+        payload = ComplexityDecision(
+            reasoning="比较问题且多目标，需拆分汇总",
+            strategy="decomposition",
+            confidence=0.91,
+            risk_flags=["comparison", "multi_target", "constraint_heavy"],
+            decision_version="kb_chat_complexity_router_v4",
+        )
+        return StructuredCallResult(
+            payload=payload,
+            success=True,
+            reason="model_ok",
+            latency_ms=10,
+        )
+
+    monkeypatch.setattr(svc, "_call_prompt_structured", _fake_structured)
+
+    result = await svc.classify_complexity(
+        "A和B优缺点分别是什么",
+        recall_risk="medium",
+        has_multi_target=True,
+        is_comparison=True,
+        timeout_seconds=1.0,
+    )
+
+    assert result.success is True
+    assert result.strategy == "decomposition"
+    assert result.confidence == pytest.approx(0.91)
+    assert result.risk_flags == ["comparison", "multi_target", "constraint_heavy"]
+    assert result.decision_version == "kb_chat_complexity_router_v4"
+
+
+@pytest.mark.asyncio
+async def test_classify_complexity_falls_back_to_direct_when_model_fails(monkeypatch, settings):
+    svc = QueryRewriteService(settings=settings)
+
+    async def _fake_structured(*args, **kwargs):  # noqa: ANN002, ANN003
+        _ = (args, kwargs)
+        return StructuredCallResult(
+            payload=None, success=False, reason="timeout", latency_ms=12
+        )
+
+    monkeypatch.setattr(svc, "_call_prompt_structured", _fake_structured)
+
+    result = await svc.classify_complexity("SLA 是什么", timeout_seconds=1.0)
+
+    assert result.success is False
+    assert result.strategy == "direct"
+    assert result.confidence == 0.0
+    assert result.risk_flags == ["llm_failed_fallback_direct"]
+    assert result.decision_version == "kb_chat_complexity_router_v4"

@@ -177,7 +177,7 @@ class KbChatAgenticState(KbChatAgenticStateBase, total=False):
     - CorefRewrite: reads rewrite_input_query/context_frame -> writes coref_query/coref_meta
     - AmbiguityCheck: reads coref_query/normalized_query -> writes reflection/action (clarify)
     - NormalizeRewrite: reads coref_query -> writes normalized_query
-    - ComplexityRouter: reads normalized_query -> writes query_strategy
+    - ComplexityRouter: reads normalized_query -> writes query_strategy/confidence/signals
     - Decomposition: reads normalized_query -> writes sub_queries
     - MultiQuery: reads normalized_query -> writes multi_queries
     - HyDE: reads normalized_query -> writes hyde_docs
@@ -197,6 +197,8 @@ class KbChatAgenticState(KbChatAgenticStateBase, total=False):
     normalized_query: str
     normalized_meta: NormalizeMeta
     query_strategy: Literal["direct", "decomposition", "multi_query"]
+    query_strategy_confidence: float
+    query_strategy_signals: list[str]
 
     sub_queries: list[str]
     multi_queries: list[str]

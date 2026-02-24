@@ -14,6 +14,7 @@ from typing import Any
 
 from langchain.messages import AIMessage, HumanMessage, SystemMessage
 from langgraph.runtime import Runtime
+from langgraph.types import Command
 
 from app.agents.kb_chat_memory import (
     aget_kb_chat_memory,
@@ -710,18 +711,7 @@ async def normalize_rewrite(state: dict, settings: Settings) -> dict[str, Any]:
     }
 
 
-def route_after_complexity_router(state: dict, settings: Settings) -> str:
-    """Route by complexity router result."""
-    del settings
-    strategy = state.get("query_strategy")
-    if strategy == "decomposition":
-        return "decomposition"
-    if strategy == "multi_query":
-        return "multi_query"
-    return "direct"
-
-
-async def complexity_router(state: dict, settings: Settings) -> dict[str, Any]:
+async def complexity_router(state: dict, settings: Settings) -> Command[str]:
     """Decide preprocess strategy: direct / decomposition / multi-query."""
     start = time.perf_counter()
     query = state.get("normalized_query")
@@ -731,7 +721,9 @@ async def complexity_router(state: dict, settings: Settings) -> dict[str, Any]:
     strategy = "direct"
     success = False
     reasoning: str | None = None
-    strategy_adjusted = False
+    confidence = 0.0
+    risk_flags: list[str] = []
+    decision_version = "kb_chat_complexity_router_v4"
     normalized_meta = state.get("normalized_meta")
     if not isinstance(normalized_meta, dict):
         normalized_meta = {}
@@ -745,6 +737,9 @@ async def complexity_router(state: dict, settings: Settings) -> dict[str, Any]:
             recall_risk=recall_risk,
             has_multi_target=has_multi_target,
             is_comparison=is_comparison,
+            timeout_seconds=float(
+                getattr(settings, "kb_chat_complexity_model_timeout_seconds", 1.5)
+            ),
         )
         strategy = (
             decision.strategy
@@ -753,26 +748,47 @@ async def complexity_router(state: dict, settings: Settings) -> dict[str, Any]:
         )
         success = decision.success
         reasoning = decision.reasoning
+        confidence = round(max(0.0, min(1.0, float(decision.confidence or 0.0))), 4)
+        decision_version = str(
+            decision.decision_version or "kb_chat_complexity_router_v4"
+        ).strip()
+        if not decision_version:
+            decision_version = "kb_chat_complexity_router_v4"
+        raw_flags = (
+            decision.risk_flags
+            if isinstance(decision.risk_flags, list)
+            else []
+        )
+        risk_flags = [
+            str(flag).strip()
+            for flag in raw_flags
+            if isinstance(flag, str) and flag.strip()
+        ][:8]
     except Exception:  # pragma: no cover
         strategy = "direct"
         success = False
 
-    if strategy == "direct" and recall_risk == "high":
-        strategy = "multi_query"
-        strategy_adjusted = True
-    if strategy == "multi_query" and (has_multi_target or is_comparison):
-        strategy = "decomposition"
-        strategy_adjusted = True
+    route_map = {
+        "decomposition": "decomposition",
+        "multi_query": "generate_variants",
+        "direct": "hyde" if hyde_enabled(state, settings) else "prepare_messages",
+    }
+    goto = route_map.get(strategy, route_map["direct"])
 
     stage_summaries = _merge_stage_summary(
         state,
         "complexity_router",
         {
             "strategy": strategy,
-            "strategy_adjusted": strategy_adjusted,
+            "confidence": confidence,
+            "risk_flags": risk_flags,
+            "decision_version": decision_version,
             "recall_risk": recall_risk,
+            "has_multi_target": has_multi_target,
+            "is_comparison": is_comparison,
             "reasoning": reasoning,
             "success": success,
+            "goto": goto,
             "completed_at": now_iso(),
             "latency_ms": int((time.perf_counter() - start) * 1000),
         },
@@ -780,12 +796,15 @@ async def complexity_router(state: dict, settings: Settings) -> dict[str, Any]:
     )
 
     # Reset fan-out artifacts before entering the selected branch.
-    return {
+    updates: dict[str, Any] = {
         "query_strategy": strategy,
+        "query_strategy_confidence": confidence,
+        "query_strategy_signals": risk_flags,
         "sub_queries": [],
         "multi_queries": [],
         "stage_summaries": stage_summaries,
     }
+    return Command(update=updates, goto=goto)
 
 
 async def decomposition(state: dict, settings: Settings) -> dict[str, Any]:

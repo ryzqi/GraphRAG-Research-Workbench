@@ -88,6 +88,9 @@ class ComplexityRouteResult:
     strategy: str
     success: bool
     reasoning: str | None = None
+    confidence: float = 0.0
+    risk_flags: list[str] | None = None
+    decision_version: str | None = None
     latency_ms: int | None = None
 
 
@@ -250,6 +253,23 @@ def _sanitize_aliases(aliases: Iterable[str], *, limit: int) -> list[str]:
         if len(deduped) >= limit:
             break
     return deduped
+
+
+def _sanitize_risk_flags(values: Iterable[object], *, limit: int = 8) -> list[str]:
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        text = _normalize_whitespace(str(value or ""))
+        if not text:
+            continue
+        key = text.casefold()
+        if key in seen:
+            continue
+        normalized.append(text[:64])
+        seen.add(key)
+        if len(normalized) >= limit:
+            break
+    return normalized
 
 
 def _extract_number_tokens(text: str) -> set[str]:
@@ -1319,6 +1339,7 @@ class QueryRewriteService:
         recall_risk: str | None = None,
         has_multi_target: bool = False,
         is_comparison: bool = False,
+        timeout_seconds: float | None = None,
     ) -> ComplexityRouteResult:
         """Decide preprocess routing strategy."""
         start = time.perf_counter()
@@ -1327,13 +1348,16 @@ class QueryRewriteService:
             return ComplexityRouteResult(
                 strategy="direct",
                 success=False,
+                confidence=0.0,
+                risk_flags=[],
+                decision_version="kb_chat_complexity_router_v4",
                 latency_ms=0,
             )
 
         structured_result = await self._call_prompt_structured(
             "kb_chat/complexity_router",
             schema=ComplexityDecision,
-            timeout_seconds=None,
+            timeout_seconds=timeout_seconds,
             max_tokens=256,
             question=q,
             recall_risk=(recall_risk or "unknown"),
@@ -1348,10 +1372,18 @@ class QueryRewriteService:
             strategy = str(payload.strategy or "direct").strip().lower()
             if strategy not in {"direct", "decomposition", "multi_query"}:
                 strategy = "direct"
+            confidence = round(max(0.0, min(1.0, float(payload.confidence))), 4)
+            risk_flags = _sanitize_risk_flags(payload.risk_flags)
+            decision_version = _normalize_whitespace(payload.decision_version)
+            if not decision_version:
+                decision_version = "kb_chat_complexity_router_v4"
             return ComplexityRouteResult(
                 strategy=strategy,
                 success=True,
                 reasoning=getattr(payload, "reasoning", None),
+                confidence=confidence,
+                risk_flags=risk_flags,
+                decision_version=decision_version,
                 latency_ms=structured_result.latency_ms,
             )
 
@@ -1359,6 +1391,9 @@ class QueryRewriteService:
         return ComplexityRouteResult(
             strategy="direct",
             success=False,
+            confidence=0.0,
+            risk_flags=["llm_failed_fallback_direct"],
+            decision_version="kb_chat_complexity_router_v4",
             latency_ms=latency_ms,
         )
 

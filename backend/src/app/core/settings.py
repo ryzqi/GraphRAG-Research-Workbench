@@ -395,6 +395,15 @@ class Settings(BaseSettings):
         1, alias="KB_CHAT_MAX_CLARIFICATION_ROUNDS"
     )
     kb_chat_hyde_enabled: bool = Field(False, alias="KB_CHAT_HYDE_ENABLED")
+    kb_chat_complexity_model_timeout_seconds: float = Field(
+        1.5, ge=0.0, le=10.0, alias="KB_CHAT_COMPLEXITY_MODEL_TIMEOUT_SECONDS"
+    )
+    kb_chat_complexity_cache_enabled: bool = Field(
+        True, alias="KB_CHAT_COMPLEXITY_CACHE_ENABLED"
+    )
+    kb_chat_complexity_cache_ttl_seconds: int = Field(
+        120, ge=0, alias="KB_CHAT_COMPLEXITY_CACHE_TTL_SECONDS"
+    )
 
     kb_chat_trace_enabled: bool = Field(True, alias="KB_CHAT_TRACE_ENABLED")
 

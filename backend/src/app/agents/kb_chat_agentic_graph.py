@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from typing import Any, cast
+import hashlib
 import inspect
 import json
 
@@ -11,12 +12,13 @@ from functools import partial
 
 from langchain.tools import BaseTool
 from langchain_openai import ChatOpenAI
+from langgraph.cache.memory import InMemoryCache
 from langgraph.config import get_stream_writer
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, StateGraph
 from langgraph.runtime import Runtime
 from langgraph.store.base import BaseStore
-from langgraph.types import RetryPolicy
+from langgraph.types import CachePolicy, Command, RetryPolicy
 
 from app.agents.kb_chat_agentic_state import KbChatAgenticState
 from app.agents.tool_calling.registry import ToolMeta
@@ -32,7 +34,6 @@ from app.agents.kb_chat_agentic.preprocess import (
     merge_context,
     normalize_rewrite,
     prepare_messages,
-    route_after_complexity_router,
     coref_rewrite,
 )
 from app.agents.kb_chat_agentic.tool_loop import force_exit_node
@@ -68,6 +69,8 @@ _NODE_METADATA: dict[str, dict[str, Any]] = {
     "force_exit": {"label": "提前终止", "phase": "finalize", "order": 16},
 }
 
+_KB_CHAT_GRAPH_CACHE = InMemoryCache()
+
 
 def _resolve_flag(config: dict[str, Any], key: str, default: bool) -> bool:
     value = config.get(key)
@@ -91,6 +94,49 @@ def _resolve_topology_config(
         bool(settings.kb_chat_hyde_enabled),
     )
     return ambiguity, hyde_flag
+
+
+def _complexity_cache_key_factory(*, direct_target: str) -> Any:
+    def _key_func(*args: Any, **kwargs: Any) -> str:
+        state: dict[str, Any] = {}
+        if args and isinstance(args[0], dict):
+            state = args[0]
+        elif isinstance(kwargs.get("state"), dict):
+            state = cast(dict[str, Any], kwargs["state"])
+        stage_summaries = state.get("stage_summaries")
+        stage_fingerprint = "none"
+        if isinstance(stage_summaries, dict):
+            try:
+                stage_payload = json.dumps(
+                    stage_summaries,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    default=_json_default,
+                )
+                stage_fingerprint = hashlib.sha256(
+                    stage_payload.encode("utf-8")
+                ).hexdigest()
+            except Exception:
+                stage_fingerprint = "serialize_error"
+        normalized_meta = state.get("normalized_meta")
+        if not isinstance(normalized_meta, dict):
+            normalized_meta = {}
+        query = state.get("normalized_query")
+        if not isinstance(query, str) or not query.strip():
+            fallback_query = state.get("user_input")
+            query = fallback_query if isinstance(fallback_query, str) else ""
+        payload = {
+            "router_version": "kb_chat_complexity_router_v4",
+            "query": query.strip(),
+            "recall_risk": str(normalized_meta.get("recall_risk") or "unknown"),
+            "has_multi_target": bool(normalized_meta.get("has_multi_target")),
+            "is_comparison": bool(normalized_meta.get("is_comparison")),
+            "direct_target": direct_target,
+            "stage_fingerprint": stage_fingerprint,
+        }
+        return json.dumps(payload, ensure_ascii=False, sort_keys=True)
+
+    return _key_func
 
 
 def build_kb_chat_run_config(*, thread_id: str | None, recursion_limit: int) -> dict[str, Any]:
@@ -657,6 +703,30 @@ def _build_node_output_display_items(
             label="路由策略",
             value=snapshot.get("query_strategy"),
         )
+        _append_display_item(
+            items,
+            key="query_strategy_confidence",
+            label="路由置信度",
+            value=snapshot.get("query_strategy_confidence"),
+        )
+        _append_display_item(
+            items,
+            key="query_strategy_signals",
+            label="风险信号",
+            value=snapshot.get("query_strategy_signals"),
+        )
+        _append_display_item(
+            items,
+            key="decision_version",
+            label="判定版本",
+            value=summary.get("decision_version"),
+        )
+        _append_display_item(
+            items,
+            key="goto",
+            label="下一节点",
+            value=summary.get("goto"),
+        )
     elif node_name == "decomposition":
         sub_queries = _pick_string_list(snapshot, "sub_queries")
         _append_display_item(
@@ -909,7 +979,9 @@ def _wrap_node_with_io(node_name: str, node_callable: Any):
     signature = inspect.signature(node_callable)
     accepts_runtime = "runtime" in signature.parameters
 
-    async def _wrapped(state: dict[str, Any], runtime: Runtime[Any]) -> dict[str, Any]:
+    async def _wrapped(
+        state: dict[str, Any], runtime: Runtime[Any]
+    ) -> dict[str, Any] | Command[str]:
         writer = None
         try:
             writer = get_stream_writer()
@@ -946,12 +1018,29 @@ def _wrap_node_with_io(node_name: str, node_callable: Any):
                 else node_callable(state)
             )
             updates = await result if inspect.isawaitable(result) else result
-            safe_updates = (
-                updates
-                if isinstance(updates, dict)
-                else {"value": _to_json_compatible(updates)}
-            )
-            output_snapshot = _to_json_compatible(safe_updates)
+            if isinstance(updates, Command):
+                command_update = updates.update
+                if isinstance(command_update, dict):
+                    output_payload = {**command_update}
+                elif command_update is None:
+                    output_payload = {}
+                else:
+                    output_payload = {"value": _to_json_compatible(command_update)}
+                output_payload["__command__"] = {
+                    "goto": _to_json_compatible(updates.goto),
+                    "resume": _to_json_compatible(updates.resume),
+                    "graph": _to_json_compatible(updates.graph),
+                }
+                output_snapshot = _to_json_compatible(output_payload)
+                result_payload: dict[str, Any] | Command[str] = updates
+            else:
+                safe_updates = (
+                    updates
+                    if isinstance(updates, dict)
+                    else {"value": _to_json_compatible(updates)}
+                )
+                output_snapshot = _to_json_compatible(safe_updates)
+                result_payload = safe_updates
             output_summary = _build_snapshot_summary(output_snapshot)
             display_output_items = _build_node_output_display_items(
                 node_name=node_name,
@@ -981,7 +1070,7 @@ def _wrap_node_with_io(node_name: str, node_callable: Any):
                 writer(
                     payload
                 )
-            return safe_updates
+            return result_payload
         except Exception as exc:
             if callable(writer):
                 display_output_items = _build_node_output_display_items(
@@ -1035,6 +1124,22 @@ class KbChatAgenticGraph:
             kb_chat_config=kb_chat_config,
         )
         llm_preprocess_retry_policy = RetryPolicy(max_attempts=2)
+        direct_target = "hyde" if hyde_enabled else "prepare_messages"
+        complexity_cache_enabled = bool(
+            getattr(settings, "kb_chat_complexity_cache_enabled", True)
+        )
+        complexity_cache_ttl = int(
+            getattr(settings, "kb_chat_complexity_cache_ttl_seconds", 120)
+        )
+        complexity_cache_policy = (
+            CachePolicy(
+                key_func=_complexity_cache_key_factory(direct_target=direct_target),
+                ttl=complexity_cache_ttl,
+            )
+            if complexity_cache_enabled and complexity_cache_ttl > 0
+            else None
+        )
+        self._graph_cache = _KB_CHAT_GRAPH_CACHE if complexity_cache_policy else None
 
         graph = StateGraph(KbChatAgenticState)
 
@@ -1073,6 +1178,12 @@ class KbChatAgenticGraph:
             ),
             metadata=_NODE_METADATA["complexity_router"],
             retry_policy=llm_preprocess_retry_policy,
+            cache_policy=complexity_cache_policy,
+            destinations=(
+                "decomposition",
+                "generate_variants",
+                direct_target,
+            ),
         )
         graph.add_node(
             "decomposition",
@@ -1191,15 +1302,6 @@ class KbChatAgenticGraph:
             graph.add_edge("coref_rewrite", "normalize_rewrite")
 
         graph.add_edge("normalize_rewrite", "complexity_router")
-        graph.add_conditional_edges(
-            "complexity_router",
-            lambda s: route_after_complexity_router(s, settings),
-            {
-                "decomposition": "decomposition",
-                "multi_query": "generate_variants",
-                "direct": "hyde" if hyde_enabled else "prepare_messages",
-            },
-        )
         graph.add_edge("generate_variants", "entity_expand")
 
         if hyde_enabled:
@@ -1244,7 +1346,11 @@ class KbChatAgenticGraph:
         checkpointer: BaseCheckpointSaver | None = None,
         store: BaseStore | None = None,
     ):
-        return self._graph_builder.compile(checkpointer=checkpointer, store=store)
+        return self._graph_builder.compile(
+            checkpointer=checkpointer,
+            cache=self._graph_cache,
+            store=store,
+        )
 
     def make_run_config(self, thread_id: str | None = None) -> dict[str, Any]:
         return build_kb_chat_run_config(

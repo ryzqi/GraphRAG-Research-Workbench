@@ -298,6 +298,15 @@ class KbChatService:
                     kb_chat_config.normalize_timeout_seconds
                 ),
                 "hyde_enabled": bool(kb_chat_config.hyde_enabled),
+                "complexity_model_timeout_seconds": float(
+                    self._settings.kb_chat_complexity_model_timeout_seconds
+                ),
+                "complexity_cache_enabled": bool(
+                    self._settings.kb_chat_complexity_cache_enabled
+                ),
+                "complexity_cache_ttl_seconds": int(
+                    self._settings.kb_chat_complexity_cache_ttl_seconds
+                ),
                 "hybrid_retrieval_enabled": bool(
                     kb_chat_config.hybrid_retrieval_enabled
                 ),

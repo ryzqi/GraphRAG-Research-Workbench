@@ -2,6 +2,7 @@ import types
 
 import pytest
 from langchain.messages import AIMessage, HumanMessage
+from langgraph.types import Command
 
 from app.agents.kb_chat_agentic import preprocess, reflection
 from app.agents.kb_chat_agentic.schemas import DocGraderDecision
@@ -103,10 +104,16 @@ class _FakeRewriteService:
         recall_risk: str | None = None,
         has_multi_target: bool = False,
         is_comparison: bool = False,
+        timeout_seconds: float | None = None,
     ):
-        _ = (query, recall_risk, has_multi_target, is_comparison)
+        _ = (query, recall_risk, has_multi_target, is_comparison, timeout_seconds)
         return types.SimpleNamespace(
-            strategy="direct", success=True, reasoning="single-hop"
+            strategy="direct",
+            success=True,
+            reasoning="single-hop",
+            confidence=0.82,
+            risk_flags=["single_target", "single_hop"],
+            decision_version="kb_chat_complexity_router_v4",
         )
 
     async def ambiguity_check(
@@ -439,7 +446,7 @@ async def test_normalize_rewrite_persists_normalized_meta(monkeypatch, settings)
 
 
 @pytest.mark.asyncio
-async def test_complexity_router_biases_multi_query_for_high_recall_risk(monkeypatch, settings):
+async def test_complexity_router_returns_command_with_strategy_metadata(monkeypatch, settings):
     monkeypatch.setattr(preprocess, "QueryRewriteService", _FakeRewriteService)
     state = {
         "normalized_query": "short query",
@@ -449,5 +456,13 @@ async def test_complexity_router_biases_multi_query_for_high_recall_risk(monkeyp
 
     result = await preprocess.complexity_router(state, settings=settings)
 
-    assert result["query_strategy"] == "multi_query"
-    assert result["stage_summaries"]["complexity_router"]["strategy_adjusted"] is True
+    assert isinstance(result, Command)
+    assert isinstance(result.update, dict)
+    assert result.goto == "prepare_messages"
+    assert result.update["query_strategy"] == "direct"
+    assert result.update["query_strategy_confidence"] == pytest.approx(0.82)
+    assert result.update["query_strategy_signals"] == ["single_target", "single_hop"]
+    assert (
+        result.update["stage_summaries"]["complexity_router"]["decision_version"]
+        == "kb_chat_complexity_router_v4"
+    )
