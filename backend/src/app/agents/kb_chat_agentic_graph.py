@@ -43,6 +43,9 @@ from app.agents.kb_chat_agentic.reflection import (
     finalize_answer,
     generate_draft,
     kb_retrieve_context,
+    merge_subquery_context,
+    retrieve_subquery_context,
+    route_after_subquery_dispatch,
     route_after_answer_review,
     route_after_doc_grader,
     transform_query_for_retry,
@@ -50,23 +53,26 @@ from app.agents.kb_chat_agentic.reflection import (
 
 
 _NODE_METADATA: dict[str, dict[str, Any]] = {
-    "merge_context": {"label": "上下文合并", "phase": "preprocess", "order": 0},
-    "coref_rewrite": {"label": "指代消解", "phase": "preprocess", "order": 1},
-    "ambiguity_check": {"label": "歧义判断", "phase": "preprocess", "order": 2},
-    "normalize_rewrite": {"label": "问题规范化", "phase": "preprocess", "order": 3},
-    "complexity_router": {"label": "复杂度路由", "phase": "preprocess", "order": 4},
-    "decomposition": {"label": "问题分解", "phase": "preprocess", "order": 5},
-    "generate_variants": {"label": "多路查询扩展", "phase": "preprocess", "order": 6},
-    "entity_expand": {"label": "实体扩展", "phase": "preprocess", "order": 7},
-    "hyde": {"label": "HyDE 扩展", "phase": "preprocess", "order": 8},
-    "prepare_messages": {"label": "构建查询消息", "phase": "preprocess", "order": 9},
-    "retrieve": {"label": "知识检索", "phase": "retrieve", "order": 10},
-    "doc_grader": {"label": "文档相关性判断", "phase": "judge", "order": 11},
-    "transform_query": {"label": "查询改写重试", "phase": "retrieve", "order": 12},
-    "generate": {"label": "答案生成", "phase": "generate", "order": 13},
-    "answer_review": {"label": "答案审查", "phase": "verify", "order": 14},
-    "finalize": {"label": "答案整理", "phase": "finalize", "order": 15},
-    "force_exit": {"label": "提前终止", "phase": "finalize", "order": 16},
+    "merge_context": {"label": "merge_context", "phase": "preprocess", "order": 0},
+    "coref_rewrite": {"label": "coref_rewrite", "phase": "preprocess", "order": 1},
+    "ambiguity_check": {"label": "ambiguity_check", "phase": "preprocess", "order": 2},
+    "normalize_rewrite": {"label": "normalize_rewrite", "phase": "preprocess", "order": 3},
+    "complexity_router": {"label": "complexity_router", "phase": "preprocess", "order": 4},
+    "decomposition": {"label": "decomposition", "phase": "preprocess", "order": 5},
+    "generate_variants": {"label": "generate_variants", "phase": "preprocess", "order": 6},
+    "entity_expand": {"label": "entity_expand", "phase": "preprocess", "order": 7},
+    "hyde": {"label": "hyde", "phase": "preprocess", "order": 8},
+    "prepare_messages": {"label": "prepare_messages", "phase": "preprocess", "order": 9},
+    "dispatch_subqueries": {"label": "dispatch_subqueries", "phase": "retrieve", "order": 10},
+    "retrieve_subquery": {"label": "retrieve_subquery", "phase": "retrieve", "order": 11},
+    "merge_subquery_context": {"label": "merge_subquery_context", "phase": "retrieve", "order": 12},
+    "retrieve": {"label": "retrieve", "phase": "retrieve", "order": 13},
+    "doc_grader": {"label": "doc_grader", "phase": "judge", "order": 14},
+    "transform_query": {"label": "transform_query", "phase": "retrieve", "order": 15},
+    "generate": {"label": "generate", "phase": "generate", "order": 16},
+    "answer_review": {"label": "answer_review", "phase": "verify", "order": 17},
+    "finalize": {"label": "finalize", "phase": "finalize", "order": 18},
+    "force_exit": {"label": "force_exit", "phase": "finalize", "order": 19},
 }
 
 _KB_CHAT_GRAPH_CACHE = InMemoryCache()
@@ -1231,6 +1237,22 @@ class KbChatAgenticGraph:
             raise RuntimeError("kb_retrieve tool is required for agentic KB chat")
 
         graph.add_node(
+            "retrieve_subquery",
+            _wrap_node_with_io(
+                "retrieve_subquery",
+                partial(retrieve_subquery_context, settings=settings, kb_tool=kb_tool),
+            ),
+            metadata=_NODE_METADATA["retrieve_subquery"],
+        )
+        graph.add_node(
+            "merge_subquery_context",
+            _wrap_node_with_io(
+                "merge_subquery_context",
+                partial(merge_subquery_context, settings=settings),
+            ),
+            metadata=_NODE_METADATA["merge_subquery_context"],
+        )
+        graph.add_node(
             "retrieve",
             _wrap_node_with_io(
                 "retrieve", partial(kb_retrieve_context, settings=settings, kb_tool=kb_tool)
@@ -1312,7 +1334,12 @@ class KbChatAgenticGraph:
             graph.add_edge("decomposition", "prepare_messages")
             graph.add_edge("entity_expand", "prepare_messages")
 
-        graph.add_edge("prepare_messages", "retrieve")
+        graph.add_conditional_edges(
+            "prepare_messages",
+            lambda s: route_after_subquery_dispatch(s, settings),
+        )
+        graph.add_edge("retrieve_subquery", "merge_subquery_context")
+        graph.add_edge("merge_subquery_context", "doc_grader")
         graph.add_edge("retrieve", "doc_grader")
 
         # Doc relevance → Generate or TransformQuery

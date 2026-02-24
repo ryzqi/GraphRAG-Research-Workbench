@@ -68,6 +68,8 @@ class QueryListResult:
     success: bool
     reason: str | None = None
     latency_ms: int | None = None
+    plan: dict[str, object] | None = None
+    diagnostics: dict[str, object] | None = None
 
 
 @dataclass(slots=True)
@@ -533,6 +535,7 @@ def build_query_items(
     *,
     main_query: str,
     sub_queries: list[str] | None = None,
+    sub_query_specs: list[dict[str, object]] | None = None,
     variants: list[str] | None = None,
     hyde_doc: str | None = None,
     hyde_docs: list[str] | None = None,
@@ -559,14 +562,42 @@ def build_query_items(
     ]
 
     if sub_queries:
+        specs_by_query: dict[str, dict[str, object]] = {}
+        for spec in sub_query_specs or []:
+            if not isinstance(spec, dict):
+                continue
+            query_value = _normalize_whitespace(str(spec.get("query") or ""))
+            if not query_value:
+                continue
+            specs_by_query.setdefault(query_value.casefold(), spec)
         for idx, q in enumerate(sub_queries):
             qn = _normalize_whitespace(q)
             if qn:
+                spec = specs_by_query.get(qn.casefold()) or {}
+                raw_tags = (
+                    spec.get("coverage_tags")
+                    if isinstance(spec.get("coverage_tags"), list)
+                    else []
+                )
+                coverage_tags = [
+                    _normalize_whitespace(str(tag))
+                    for tag in raw_tags
+                    if _normalize_whitespace(str(tag))
+                ][:6]
+                priority = spec.get("priority")
+                if not isinstance(priority, int):
+                    priority = idx + 1
+                purpose = _normalize_whitespace(str(spec.get("purpose") or ""))
                 items.append(
                     {
                         "kind": "subquery",
                         "query": qn,
                         "index": idx,
+                        "origin": "decomposition",
+                        "subquery_id": f"sq_{idx + 1}",
+                        "priority": max(1, min(int(priority), 8)),
+                        "coverage_tags": coverage_tags,
+                        "purpose": purpose,
                         "use_dense": True,
                         "use_bm25": True,
                     }
@@ -1428,16 +1459,79 @@ class QueryRewriteService:
             structured_result.success
             and isinstance(structured_result.payload, DecompositionDecision)
         ):
+            payload = structured_result.payload
+            spec_queries = [
+                _normalize_whitespace(str(spec.get("query") or ""))
+                for spec in payload.sub_query_specs
+                if isinstance(spec, dict)
+            ]
             sub_queries = _dedupe_keep_order(
-                structured_result.payload.sub_queries
+                [*spec_queries, *payload.sub_queries]
             )[:DECOMPOSITION_MAX_SUB_QUERIES]
             if sub_queries:
                 latency_ms = int((time.perf_counter() - start) * 1000)
+                normalized_specs: list[dict[str, object]] = []
+                for idx, q in enumerate(sub_queries):
+                    matched = next(
+                        (
+                            spec
+                            for spec in payload.sub_query_specs
+                            if isinstance(spec, dict)
+                            and _normalize_whitespace(str(spec.get("query") or ""))
+                            == q
+                        ),
+                        None,
+                    )
+                    if isinstance(matched, dict):
+                        raw_tags = (
+                            matched.get("coverage_tags")
+                            if isinstance(matched.get("coverage_tags"), list)
+                            else []
+                        )
+                        tags = [
+                            _normalize_whitespace(str(tag))
+                            for tag in raw_tags
+                            if _normalize_whitespace(str(tag))
+                        ][:6]
+                        raw_priority = matched.get("priority")
+                        priority = (
+                            int(raw_priority)
+                            if isinstance(raw_priority, int)
+                            else idx + 1
+                        )
+                        purpose = _normalize_whitespace(
+                            str(matched.get("purpose") or "")
+                        )
+                    else:
+                        tags = []
+                        priority = idx + 1
+                        purpose = ""
+                    normalized_specs.append(
+                        {
+                            "query": q,
+                            "priority": max(1, min(priority, 8)),
+                            "coverage_tags": tags,
+                            "purpose": purpose,
+                        }
+                    )
+                plan: dict[str, object] = {
+                    "strategy": str(payload.strategy or "decomposition"),
+                    "version": _normalize_whitespace(payload.plan_version)
+                    or "kb_chat_decomposition_plan_v2",
+                    "sub_query_specs": normalized_specs,
+                    "risk_flags": _sanitize_risk_flags(payload.risk_flags),
+                    "reasoning": _normalize_whitespace(payload.reasoning),
+                }
                 return QueryListResult(
                     queries=sub_queries,
                     success=True,
                     reason="llm_structured",
                     latency_ms=latency_ms,
+                    plan=plan,
+                    diagnostics={
+                        "source": "llm_structured",
+                        "spec_count": len(normalized_specs),
+                    },
                 )
 
         latency_ms = int((time.perf_counter() - start) * 1000)
@@ -1447,6 +1541,21 @@ class QueryRewriteService:
             success=False,
             reason=fallback_reason,
             latency_ms=latency_ms,
+            plan={
+                "strategy": "direct",
+                "version": "kb_chat_decomposition_plan_v2",
+                "sub_query_specs": [
+                    {
+                        "query": q,
+                        "priority": 1,
+                        "coverage_tags": [],
+                        "purpose": "fallback_original_query",
+                    }
+                ],
+                "risk_flags": ["llm_fallback"],
+                "reasoning": fallback_reason,
+            },
+            diagnostics={"source": "fallback_original"},
         )
 
     async def generate_variants(

@@ -4,6 +4,7 @@ import pytest
 
 from app.agents.kb_chat_agentic.schemas import AmbiguityDecision, ClarificationSlotDecision
 from app.agents.kb_chat_agentic.schemas import ComplexityDecision
+from app.agents.kb_chat_agentic.schemas import DecompositionDecision
 from app.agents.kb_chat_agentic.schemas import NormalizeDecision
 from app.services.query_rewrite_service import QueryRewriteService
 from app.services.query_rewrite_service import StructuredCallResult
@@ -236,3 +237,49 @@ async def test_classify_complexity_falls_back_to_direct_when_model_fails(monkeyp
     assert result.confidence == 0.0
     assert result.risk_flags == ["llm_failed_fallback_direct"]
     assert result.decision_version == "kb_chat_complexity_router_v4"
+
+
+@pytest.mark.asyncio
+async def test_decompose_returns_structured_plan(monkeypatch, settings):
+    svc = QueryRewriteService(settings=settings)
+
+    async def _fake_structured(*args, **kwargs):  # noqa: ANN002, ANN003
+        _ = (args, kwargs)
+        payload = DecompositionDecision(
+            strategy="decomposition",
+            plan_version="kb_chat_decomposition_plan_v2",
+            sub_queries=["A 成本", "B 成本"],
+            sub_query_specs=[
+                {
+                    "query": "A 成本",
+                    "purpose": "提取A成本",
+                    "priority": 1,
+                    "coverage_tags": ["entity", "metric"],
+                },
+                {
+                    "query": "B 成本",
+                    "purpose": "提取B成本",
+                    "priority": 2,
+                    "coverage_tags": ["entity", "metric"],
+                },
+            ],
+            risk_flags=["comparison"],
+            reasoning="对比问题需要拆分",
+        )
+        return StructuredCallResult(
+            payload=payload,
+            success=True,
+            reason="model_ok",
+            latency_ms=8,
+        )
+
+    monkeypatch.setattr(svc, "_call_prompt_structured", _fake_structured)
+
+    result = await svc.decompose("比较 A 和 B 成本")
+
+    assert result.success is True
+    assert result.queries == ["A 成本", "B 成本"]
+    assert isinstance(result.plan, dict)
+    assert result.plan["version"] == "kb_chat_decomposition_plan_v2"
+    assert result.plan["sub_query_specs"][0]["query"] == "A 成本"
+    assert result.plan["risk_flags"] == ["comparison"]

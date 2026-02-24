@@ -17,6 +17,7 @@ from langchain.agents import create_agent
 from langchain.messages import AIMessage, HumanMessage, SystemMessage
 from langchain.tools import BaseTool
 from langchain_openai import ChatOpenAI
+from langgraph.types import Send
 from pydantic import BaseModel, ValidationError
 
 from app.core.settings import Settings, get_settings
@@ -96,6 +97,200 @@ def _extract_evidence_count(final_context: str) -> int:
     if not final_context:
         return 0
     return sum(1 for _ in _EVIDENCE_LINE_RE.finditer(final_context))
+
+
+def _resolve_subquery_specs(state: dict) -> list[dict[str, Any]]:
+    plan = state.get("decomposition_plan")
+    if not isinstance(plan, dict):
+        return []
+    specs = plan.get("sub_query_specs")
+    if not isinstance(specs, list):
+        return []
+    return [spec for spec in specs if isinstance(spec, dict)]
+
+
+def route_after_subquery_dispatch(
+    state: dict,
+    settings: Settings,
+) -> list[Send] | str:
+    """Route decomposition strategy to Send fanout or fallback retrieve."""
+    del settings
+    strategy = str(state.get("query_strategy") or "direct")
+    if strategy != "decomposition":
+        return "retrieve"
+
+    sub_queries = state.get("sub_queries")
+    if not isinstance(sub_queries, list):
+        return "retrieve"
+    normalized_sub_queries = [
+        str(value).strip() for value in sub_queries if isinstance(value, str) and value.strip()
+    ]
+    if len(normalized_sub_queries) <= 1:
+        return "retrieve"
+
+    spec_map: dict[str, dict[str, Any]] = {}
+    for spec in _resolve_subquery_specs(state):
+        query = str(spec.get("query") or "").strip()
+        if query:
+            spec_map[query.casefold()] = spec
+
+    send_tasks: list[Send] = []
+    for idx, query in enumerate(normalized_sub_queries):
+        spec = spec_map.get(query.casefold()) or {}
+        raw_priority = spec.get("priority")
+        priority = raw_priority if isinstance(raw_priority, int) else idx + 1
+        coverage_tags = spec.get("coverage_tags")
+        if not isinstance(coverage_tags, list):
+            coverage_tags = []
+        subquery_task = {
+            "subquery_id": f"sq_{idx + 1}",
+            "index": idx,
+            "query": query,
+            "priority": max(1, min(int(priority), 8)),
+            "purpose": str(spec.get("purpose") or "").strip(),
+            "coverage_tags": [
+                str(tag).strip()
+                for tag in coverage_tags
+                if isinstance(tag, str) and str(tag).strip()
+            ][:6],
+        }
+        send_tasks.append(
+            Send(
+                "retrieve_subquery",
+                {
+                    "subquery_task": subquery_task,
+                    "memory_keys": state.get("memory_keys"),
+                    "loop_counts": state.get("loop_counts"),
+                    "runtime_config": state.get("runtime_config"),
+                },
+            )
+        )
+    return send_tasks if send_tasks else "retrieve"
+
+
+async def retrieve_subquery_context(
+    state: dict,
+    *,
+    settings: Settings,
+    kb_tool: BaseTool,
+) -> dict[str, Any]:
+    """Run retrieval for a single subquery task (fanout branch)."""
+    task = state.get("subquery_task")
+    if not isinstance(task, dict):
+        return {"subquery_runs": []}
+
+    query = _as_str(task.get("query")).strip()
+    if not query:
+        return {"subquery_runs": []}
+
+    loop_counts = _get_loop_counts(state)
+    retrieval_round = max(loop_counts.get("retrieval_retries", 0), 0)
+    memory_keys = state.get("memory_keys")
+    kb_ids = memory_keys.get("kb_ids") if isinstance(memory_keys, dict) else None
+    if not isinstance(kb_ids, list):
+        kb_ids = None
+
+    retrieval_reason: str | None = None
+    try:
+        context = await kb_tool.ainvoke(
+            {
+                "query": query,
+                "kb_ids": kb_ids,
+                "top_k": retrieval_top_k(state, settings),
+                "retrieval_round": retrieval_round,
+            }
+        )
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        retrieval_reason = "exception"
+        context = "（未找到相关内容）"
+
+    return {
+        "subquery_runs": [
+            {
+                "subquery_id": _as_str(task.get("subquery_id")) or "sq_unknown",
+                "index": int(task.get("index") or 0),
+                "query": query,
+                "priority": int(task.get("priority") or 1),
+                "purpose": _as_str(task.get("purpose")),
+                "coverage_tags": task.get("coverage_tags")
+                if isinstance(task.get("coverage_tags"), list)
+                else [],
+                "context": _as_str(context).strip(),
+                "success": retrieval_reason is None,
+                "reason": retrieval_reason,
+            }
+        ]
+    }
+
+
+async def merge_subquery_context(state: dict, *, settings: Settings) -> dict[str, Any]:
+    """Aggregate fanout retrieval outputs into final_context + metrics."""
+    start = time.perf_counter()
+    raw_runs = state.get("subquery_runs")
+    if not isinstance(raw_runs, list):
+        raw_runs = []
+
+    runs = [run for run in raw_runs if isinstance(run, dict)]
+    runs = sorted(
+        runs,
+        key=lambda item: (
+            int(item.get("priority") or 99),
+            int(item.get("index") or 0),
+        ),
+    )
+
+    merged_parts: list[str] = []
+    seen_contexts: set[str] = set()
+    success_count = 0
+    for run in runs:
+        context = _as_str(run.get("context")).strip()
+        if not context:
+            continue
+        key = context.casefold()
+        if key in seen_contexts:
+            continue
+        seen_contexts.add(key)
+        merged_parts.append(context)
+        if bool(run.get("success")):
+            success_count += 1
+
+    final_context = "\n\n".join(merged_parts).strip() if merged_parts else "（未找到相关内容）"
+    evidence_count = _extract_evidence_count(final_context)
+
+    metrics = state.get("metrics")
+    if not isinstance(metrics, dict):
+        metrics = {}
+    metrics = {
+        **metrics,
+        "retrieval_layer": {
+            "evidence_count": evidence_count,
+            "attempted": True,
+            "mode": "subquery_fanout",
+            "subquery_count": len(runs),
+            "subquery_success_count": success_count,
+        },
+    }
+    metrics = ensure_json_safe(metrics, settings=settings, label="metrics")
+
+    return {
+        "final_context": final_context,
+        "metrics": metrics,
+        "subquery_runs": [],
+        **_merge_stage_summary(
+            state,
+            "retrieval_layer",
+            {
+                "mode": "subquery_fanout",
+                "subquery_count": len(runs),
+                "subquery_success_count": success_count,
+                "evidence_count": evidence_count,
+                "latency_ms": int((time.perf_counter() - start) * 1000),
+                "completed_at": now_iso(),
+            },
+        ),
+    }
 
 
 def _partition_citations(
@@ -671,6 +866,14 @@ async def transform_query_for_retry(
         "multi_queries": [],
         "hyde_docs": hyde_docs,
         "query_items": query_items,
+        "subquery_runs": [],
+        "decomposition_plan": {
+            "strategy": "direct",
+            "version": "kb_chat_decomposition_plan_v2",
+            "sub_query_specs": [],
+            "risk_flags": ["retry_rewrite"],
+            "reasoning": _as_str(reason) or "retry",
+        },
         **_merge_reflection(
             state,
             {

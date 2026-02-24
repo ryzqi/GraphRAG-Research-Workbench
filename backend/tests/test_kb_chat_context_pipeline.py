@@ -2,7 +2,7 @@ import types
 
 import pytest
 from langchain.messages import AIMessage, HumanMessage
-from langgraph.types import Command
+from langgraph.types import Command, Send
 
 from app.agents.kb_chat_agentic import preprocess, reflection
 from app.agents.kb_chat_agentic.schemas import DocGraderDecision
@@ -114,6 +114,38 @@ class _FakeRewriteService:
             confidence=0.82,
             risk_flags=["single_target", "single_hop"],
             decision_version="kb_chat_complexity_router_v4",
+        )
+
+    async def decompose(
+        self,
+        query: str,
+        *,
+        enabled: bool | None = None,
+    ):
+        _ = (query, enabled)
+        return types.SimpleNamespace(
+            queries=["sub query A", "sub query B"],
+            success=True,
+            reason="llm_structured",
+            plan={
+                "strategy": "decomposition",
+                "version": "kb_chat_decomposition_plan_v2",
+                "sub_query_specs": [
+                    {
+                        "query": "sub query A",
+                        "purpose": "find baseline",
+                        "priority": 1,
+                        "coverage_tags": ["baseline"],
+                    },
+                    {
+                        "query": "sub query B",
+                        "purpose": "find delta",
+                        "priority": 2,
+                        "coverage_tags": ["delta"],
+                    },
+                ],
+            },
+            diagnostics={"from": "fake"},
         )
 
     async def ambiguity_check(
@@ -466,3 +498,66 @@ async def test_complexity_router_returns_command_with_strategy_metadata(monkeypa
         result.update["stage_summaries"]["complexity_router"]["decision_version"]
         == "kb_chat_complexity_router_v4"
     )
+
+
+@pytest.mark.asyncio
+async def test_decomposition_persists_plan_metadata(monkeypatch, settings):
+    monkeypatch.setattr(preprocess, "QueryRewriteService", _FakeRewriteService)
+    state = {"normalized_query": "compare A and B", "stage_summaries": {}}
+
+    result = await preprocess.decomposition(state, settings=settings)
+
+    assert result["sub_queries"] == ["sub query A", "sub query B"]
+    assert isinstance(result.get("decomposition_plan"), dict)
+    assert result["decomposition_plan"]["strategy"] == "decomposition"
+    assert result["decomposition_plan"]["version"] == "kb_chat_decomposition_plan_v2"
+    assert result["decomposition_plan"]["sub_query_specs"][0]["purpose"] == "find baseline"
+
+
+def test_route_after_subquery_dispatch_returns_send_tasks(settings):
+    state = {
+        "query_strategy": "decomposition",
+        "sub_queries": ["sub query A", "sub query B"],
+        "decomposition_plan": {
+            "sub_query_specs": [
+                {"query": "sub query A", "priority": 1, "coverage_tags": ["baseline"]},
+                {"query": "sub query B", "priority": 2, "coverage_tags": ["delta"]},
+            ]
+        },
+    }
+
+    result = reflection.route_after_subquery_dispatch(state, settings)
+
+    assert isinstance(result, list)
+    assert len(result) == 2
+    assert all(isinstance(item, Send) for item in result)
+    assert result[0].node == "retrieve_subquery"
+
+
+@pytest.mark.asyncio
+async def test_merge_subquery_context_aggregates_parallel_runs(settings):
+    state = {
+        "subquery_runs": [
+            {
+                "query": "sub query A",
+                "priority": 2,
+                "context": "[S2] detail A",
+                "success": True,
+            },
+            {
+                "query": "sub query B",
+                "priority": 1,
+                "context": "[S1] detail B",
+                "success": True,
+            },
+        ],
+        "metrics": {},
+        "stage_summaries": {},
+    }
+
+    result = await reflection.merge_subquery_context(state, settings=settings)
+
+    assert "[S1] detail B" in result["final_context"]
+    assert "[S2] detail A" in result["final_context"]
+    assert result["metrics"]["retrieval_layer"]["attempted"] is True
+    assert result["metrics"]["retrieval_layer"]["evidence_count"] == 2

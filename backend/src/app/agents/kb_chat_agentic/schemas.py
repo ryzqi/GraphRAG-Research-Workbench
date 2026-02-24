@@ -175,6 +175,13 @@ class DecompositionDecision(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     sub_queries: list[str] = Field(default_factory=list, min_length=1, max_length=5)
+    strategy: Literal["direct", "decomposition", "multi_query", "hybrid"] = (
+        "decomposition"
+    )
+    plan_version: str = Field(default="kb_chat_decomposition_plan_v2", max_length=64)
+    sub_query_specs: list[dict[str, object]] = Field(default_factory=list, max_length=5)
+    risk_flags: list[str] = Field(default_factory=list, max_length=8)
+    reasoning: str = Field(default="", max_length=240)
 
 
 class MultiQueryDecision(BaseModel):

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from operator import add
 from typing import Annotated, Any, Literal, TypedDict
 
 from langchain.messages import AnyMessage
@@ -199,11 +200,14 @@ class KbChatAgenticState(KbChatAgenticStateBase, total=False):
     query_strategy: Literal["direct", "decomposition", "multi_query"]
     query_strategy_confidence: float
     query_strategy_signals: list[str]
+    decomposition_plan: dict[str, Any]
 
     sub_queries: list[str]
     multi_queries: list[str]
     hyde_docs: list[str]
     query_items: list[QueryItem]
+    subquery_runs: Annotated[list[dict[str, Any]], add]
+    subquery_task: dict[str, Any]
 
     final_context: str
     draft_answer: str
@@ -242,4 +246,12 @@ def make_initial_state(
         "multi_queries": [],
         "hyde_docs": [],
         "query_items": [],
+        "subquery_runs": [],
+        "decomposition_plan": {
+            "strategy": "direct",
+            "version": "kb_chat_decomposition_plan_v2",
+            "sub_query_specs": [],
+            "risk_flags": [],
+            "reasoning": "",
+        },
     }

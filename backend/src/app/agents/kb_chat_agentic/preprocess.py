@@ -802,6 +802,14 @@ async def complexity_router(state: dict, settings: Settings) -> Command[str]:
         "query_strategy_signals": risk_flags,
         "sub_queries": [],
         "multi_queries": [],
+        "subquery_runs": [],
+        "decomposition_plan": {
+            "strategy": "direct",
+            "version": "kb_chat_decomposition_plan_v2",
+            "sub_query_specs": [],
+            "risk_flags": [],
+            "reasoning": "",
+        },
         "stage_summaries": stage_summaries,
     }
     return Command(update=updates, goto=goto)
@@ -817,16 +825,44 @@ async def decomposition(state: dict, settings: Settings) -> dict[str, Any]:
     sub_queries: list[str] = []
     success = False
     reason: str | None = None
+    decomposition_plan: dict[str, Any] = {
+        "strategy": "direct",
+        "version": "kb_chat_decomposition_plan_v2",
+        "sub_query_specs": [],
+        "risk_flags": [],
+        "reasoning": "",
+    }
+    diagnostics: dict[str, Any] = {}
     try:
         svc = QueryRewriteService(settings=settings)
         result = await svc.decompose(query)
         sub_queries = result.queries
         success = result.success
         reason = result.reason
+        if isinstance(result.plan, dict):
+            decomposition_plan = result.plan
+        if isinstance(result.diagnostics, dict):
+            diagnostics = result.diagnostics
     except Exception:  # pragma: no cover
         sub_queries = [query.strip()] if query.strip() else []
         success = False
         reason = "error"
+        decomposition_plan = {
+            "strategy": "direct",
+            "version": "kb_chat_decomposition_plan_v2",
+            "sub_query_specs": [
+                {
+                    "query": query.strip(),
+                    "priority": 1,
+                    "coverage_tags": [],
+                    "purpose": "exception_fallback",
+                }
+            ]
+            if query.strip()
+            else [],
+            "risk_flags": ["error_fallback"],
+            "reasoning": "error",
+        }
 
     stage_summaries = _merge_stage_summary(
         state,
@@ -836,13 +872,21 @@ async def decomposition(state: dict, settings: Settings) -> dict[str, Any]:
             "count": len(sub_queries),
             "success": success,
             "reason": reason,
+            "strategy": decomposition_plan.get("strategy"),
+            "version": decomposition_plan.get("version"),
+            "risk_flags": decomposition_plan.get("risk_flags"),
+            "diagnostics": diagnostics,
             "completed_at": now_iso(),
             "latency_ms": int((time.perf_counter() - start) * 1000),
         },
         settings=settings,
     )
 
-    return {"sub_queries": sub_queries, "stage_summaries": stage_summaries}
+    return {
+        "sub_queries": sub_queries,
+        "decomposition_plan": decomposition_plan,
+        "stage_summaries": stage_summaries,
+    }
 
 async def generate_variants(state: dict, settings: Settings) -> dict[str, Any]:
     """Generate query variants (via QueryRewriteService; degrades safely)."""
@@ -1005,6 +1049,12 @@ async def prepare_messages(state: dict, settings: Settings) -> dict[str, Any]:
     sub_queries = state.get("sub_queries")
     if not isinstance(sub_queries, list):
         sub_queries = []
+    decomposition_plan = state.get("decomposition_plan")
+    if not isinstance(decomposition_plan, dict):
+        decomposition_plan = {}
+    sub_query_specs = decomposition_plan.get("sub_query_specs")
+    if not isinstance(sub_query_specs, list):
+        sub_query_specs = []
     multi_queries = state.get("multi_queries")
     if not isinstance(multi_queries, list):
         multi_queries = []
@@ -1017,6 +1067,7 @@ async def prepare_messages(state: dict, settings: Settings) -> dict[str, Any]:
     query_items = build_query_items(
         main_query=normalized.strip(),
         sub_queries=[q for q in sub_queries if isinstance(q, str)],
+        sub_query_specs=[spec for spec in sub_query_specs if isinstance(spec, dict)],
         variants=[
             q for q in (multi_queries or alias_variants) if isinstance(q, str)
         ],
