@@ -10,12 +10,13 @@ Keep outputs JSON-friendly so they can be safely stored in LangGraph state.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import logging
 import re
 import time
 from dataclasses import dataclass
-from typing import Iterable
+from typing import Any, Iterable
 
 from pydantic import BaseModel, ValidationError
 
@@ -150,6 +151,53 @@ def _extract_query_list_from_text(text: str) -> list[str]:
         return _dedupe_keep_order(candidates)
 
     return _dedupe_keep_order(part.strip() for part in re.split(r"[；;\n]+", raw))
+
+
+def _extract_ai_message_text(message: object) -> str:
+    content = getattr(message, "content", "")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for item in content:
+            if isinstance(item, str):
+                value = item.strip()
+            elif isinstance(item, dict):
+                value = str(item.get("text") or item.get("output_text") or "").strip()
+            else:
+                value = str(item).strip()
+            if value:
+                parts.append(value)
+        if parts:
+            return "\n".join(parts)
+
+    additional_kwargs = getattr(message, "additional_kwargs", {})
+    if isinstance(additional_kwargs, dict):
+        tool_calls = additional_kwargs.get("tool_calls")
+        if isinstance(tool_calls, list):
+            for tool_call in tool_calls:
+                if not isinstance(tool_call, dict):
+                    continue
+                function_payload = tool_call.get("function")
+                if not isinstance(function_payload, dict):
+                    continue
+                arguments = function_payload.get("arguments")
+                if isinstance(arguments, str) and arguments.strip():
+                    return arguments
+    return ""
+
+
+def _parse_json_payload_from_text(text: str) -> Any | None:
+    raw = (text or "").strip()
+    if not raw:
+        return None
+    fence_match = re.match(r"^```(?:json)?\s*(.*?)\s*```$", raw, flags=re.DOTALL)
+    if fence_match:
+        raw = fence_match.group(1).strip()
+    try:
+        return json.loads(raw)
+    except Exception:
+        return None
 
 
 def _dedupe_keep_order(items: Iterable[str]) -> list[str]:
@@ -928,6 +976,22 @@ class QueryRewriteService:
                 reason="invalid_schema",
                 latency_ms=latency_ms,
             )
+        except RuntimeError as exc:
+            latency_ms = int((time.perf_counter() - start_time) * 1000)
+            if str(exc) == "structured_output_unavailable":
+                return StructuredCallResult(
+                    payload=None,
+                    success=False,
+                    reason="structured_output_unavailable",
+                    latency_ms=latency_ms,
+                )
+            logger.warning(
+                "Prompt LLM structured 调用失败",
+                extra={"prompt_key": prompt_key, "error": str(exc)},
+            )
+            return StructuredCallResult(
+                payload=None, success=False, reason="error", latency_ms=latency_ms
+            )
         except Exception as exc:
             latency_ms = int((time.perf_counter() - start_time) * 1000)
             logger.warning(
@@ -1034,17 +1098,66 @@ class QueryRewriteService:
     ) -> BaseModel | dict[str, object]:
         from langchain.messages import HumanMessage
 
-        model = create_chat_model(settings=self._settings)
-        model = model.bind(temperature=0, max_tokens=max_tokens)
-        model = model.with_structured_output(schema)
+        model = create_chat_model(settings=self._settings).bind(
+            temperature=0, max_tokens=max_tokens
+        )
+        messages = [HumanMessage(content=prompt)]
+        with_structured_sig = inspect.signature(model.with_structured_output)
+        supports_method = "method" in with_structured_sig.parameters
 
-        def _run() -> object:
-            return model.invoke([HumanMessage(content=prompt)])
+        strategy_candidates: list[dict[str, str]] = (
+            [{"method": "json_schema"}, {"method": "function_calling"}, {"method": "json_mode"}]
+            if supports_method
+            else [{}]
+        )
+        last_error: Exception | None = None
+        for strategy in strategy_candidates:
+            try:
+                structured_model = model.with_structured_output(
+                    schema, include_raw=True, **strategy
+                )
+            except Exception as exc:
+                last_error = exc
+                continue
 
-        result = await asyncio.to_thread(_run)
-        if isinstance(result, schema):
-            return result
-        return schema.model_validate(result)
+            try:
+                ainvoke = getattr(structured_model, "ainvoke", None)
+                if callable(ainvoke):
+                    result = await ainvoke(messages)
+                else:
+                    result = await asyncio.to_thread(structured_model.invoke, messages)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                last_error = exc
+                continue
+
+            try:
+                if isinstance(result, schema):
+                    return result
+                if isinstance(result, dict) and "parsed" in result:
+                    parsed_payload = result.get("parsed")
+                    if parsed_payload is not None:
+                        return schema.model_validate(parsed_payload)
+                    raw_message = result.get("raw")
+                    if raw_message is not None:
+                        raw_payload = _parse_json_payload_from_text(
+                            _extract_ai_message_text(raw_message)
+                        )
+                        if raw_payload is not None:
+                            return schema.model_validate(raw_payload)
+                    parsing_error = result.get("parsing_error")
+                    if isinstance(parsing_error, Exception):
+                        last_error = parsing_error
+                    continue
+                return schema.model_validate(result)
+            except ValidationError as exc:
+                last_error = exc
+                continue
+
+        if last_error is not None:
+            raise last_error
+        raise RuntimeError("structured_output_unavailable")
 
     async def _call_llm(self, prompt: str, *, max_tokens: int) -> str:
         from langchain.messages import HumanMessage
