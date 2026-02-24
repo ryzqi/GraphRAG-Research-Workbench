@@ -20,15 +20,9 @@ template: |
   2. 否则若主目标单一但表达存在召回风险，选 multi_query。
   3. 其他情况选 direct。
 
-  输出要求（必须仅返回一个 JSON 对象）：
-  {{
-    "strategy": "direct|decomposition|multi_query"
-  }}
-
   规则：
-  1. 不得输出 JSON 以外的任何内容（禁止解释、前后缀、代码块）。
-  2. 不要编造用户未提供的事实或约束。
-  3. 若仍无法判断，默认输出 strategy=direct。
+  1. 不要编造用户未提供的事实或约束。
+  2. 若仍无法判断，默认输出 strategy=direct。
 
   用户问题：{question}
 

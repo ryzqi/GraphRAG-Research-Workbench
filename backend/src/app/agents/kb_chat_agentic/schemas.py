@@ -93,7 +93,7 @@ class MultiQueryDecision(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    queries: list[str] = Field(default_factory=list)
+    queries: list[str] = Field(default_factory=list, min_length=1, max_length=6)
 
 
 class HyDEDecision(BaseModel):

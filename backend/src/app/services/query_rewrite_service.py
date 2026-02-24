@@ -10,15 +10,13 @@ Keep outputs JSON-friendly so they can be safely stored in LangGraph state.
 from __future__ import annotations
 
 import asyncio
-import inspect
-import json
 import logging
 import re
 import time
 from dataclasses import dataclass
-from typing import Any, Iterable
+from typing import Iterable
 
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel
 
 from app.agents.kb_chat_agentic.schemas import (
     ComplexityDecision,
@@ -32,6 +30,10 @@ from app.core.settings import Settings, get_settings
 from app.integrations.chat_model_factory import create_chat_model
 from app.prompts import get_prompt_loader
 from app.schemas.query_enhancement import QueryItem
+from app.services.tool_strategy_structured import (
+    create_tool_strategy_agent,
+    invoke_tool_strategy_structured,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -118,86 +120,6 @@ def _sanitize_reverse_question(text: str) -> str:
 
 def _strip_list_prefix(text: str) -> str:
     return re.sub(r"^\s*(?:[-*]+|\d+[.)])\s*", "", text).strip()
-
-
-def _extract_query_list_from_text(text: str) -> list[str]:
-    raw = (text or "").strip()
-    if not raw:
-        return []
-
-    fence_match = re.match(r"^```(?:json)?\s*(.*?)\s*```$", raw, flags=re.DOTALL)
-    if fence_match:
-        raw = fence_match.group(1).strip()
-
-    try:
-        parsed = json.loads(raw)
-    except Exception:
-        parsed = None
-
-    if isinstance(parsed, list):
-        return _dedupe_keep_order(str(item) for item in parsed if str(item).strip())
-    if isinstance(parsed, dict):
-        for key in ("sub_queries", "queries", "items", "hypothetical_documents"):
-            value = parsed.get(key)
-            if isinstance(value, list):
-                return _dedupe_keep_order(str(item) for item in value if str(item).strip())
-
-    candidates: list[str] = []
-    for line in raw.splitlines():
-        stripped = _strip_list_prefix(line)
-        if stripped:
-            candidates.append(stripped)
-    if candidates:
-        return _dedupe_keep_order(candidates)
-
-    return _dedupe_keep_order(part.strip() for part in re.split(r"[；;\n]+", raw))
-
-
-def _extract_ai_message_text(message: object) -> str:
-    content = getattr(message, "content", "")
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        parts: list[str] = []
-        for item in content:
-            if isinstance(item, str):
-                value = item.strip()
-            elif isinstance(item, dict):
-                value = str(item.get("text") or item.get("output_text") or "").strip()
-            else:
-                value = str(item).strip()
-            if value:
-                parts.append(value)
-        if parts:
-            return "\n".join(parts)
-
-    additional_kwargs = getattr(message, "additional_kwargs", {})
-    if isinstance(additional_kwargs, dict):
-        tool_calls = additional_kwargs.get("tool_calls")
-        if isinstance(tool_calls, list):
-            for tool_call in tool_calls:
-                if not isinstance(tool_call, dict):
-                    continue
-                function_payload = tool_call.get("function")
-                if not isinstance(function_payload, dict):
-                    continue
-                arguments = function_payload.get("arguments")
-                if isinstance(arguments, str) and arguments.strip():
-                    return arguments
-    return ""
-
-
-def _parse_json_payload_from_text(text: str) -> Any | None:
-    raw = (text or "").strip()
-    if not raw:
-        return None
-    fence_match = re.match(r"^```(?:json)?\s*(.*?)\s*```$", raw, flags=re.DOTALL)
-    if fence_match:
-        raw = fence_match.group(1).strip()
-    try:
-        return json.loads(raw)
-    except Exception:
-        return None
 
 
 def _dedupe_keep_order(items: Iterable[str]) -> list[str]:
@@ -352,6 +274,25 @@ class QueryRewriteService:
     def __init__(self, settings: Settings | None = None) -> None:
         self._settings = settings if settings is not None else get_settings()
         self._prompts = get_prompt_loader()
+        self._structured_chat_model: object | None = None
+        self._structured_agents: dict[type[BaseModel], object] = {}
+
+    def _get_structured_chat_model(self) -> object:
+        if self._structured_chat_model is None:
+            self._structured_chat_model = create_chat_model(settings=self._settings)
+        return self._structured_chat_model
+
+    def _get_structured_agent(self, schema: type[BaseModel]) -> object:
+        agent = self._structured_agents.get(schema)
+        if agent is not None:
+            return agent
+        agent = create_tool_strategy_agent(
+            chat_model=self._get_structured_chat_model(),
+            schema=schema,
+            system_prompt="",
+        )
+        self._structured_agents[schema] = agent
+        return agent
 
     async def rewrite(
         self,
@@ -535,29 +476,12 @@ class QueryRewriteService:
                 latency_ms=structured_result.latency_ms,
             )
 
-        # Keep text fallback for compatibility with older prompt/template behaviors.
-        llm_result = await self._call_prompt_text(
-            "kb_chat/reverse_question",
-            timeout_seconds=timeout_seconds,
-            max_tokens=128,
-            question=query,
-        )
-        if llm_result.success and llm_result.text.strip():
-            text = _sanitize_reverse_question(llm_result.text)
-            if text:
-                return TextResult(
-                    text=text,
-                    success=True,
-                    reason=llm_result.reason,
-                    latency_ms=llm_result.latency_ms,
-                )
-
         text = "为了更准确地回答，你指的是哪个对象/范围？请补充具体指代或上下文。"
         latency_ms = int((time.perf_counter() - start) * 1000)
         return TextResult(
             text=text,
             success=True,
-            reason=llm_result.reason or "default_template",
+            reason=structured_result.reason or "default_template",
             latency_ms=latency_ms,
         )
 
@@ -579,7 +503,6 @@ class QueryRewriteService:
                 latency_ms=0,
             )
 
-        start = time.perf_counter()
         structured_result = await self._call_prompt_structured(
             "kb_chat/transform_query",
             schema=TransformQueryDecision,
@@ -602,29 +525,11 @@ class QueryRewriteService:
                 latency_ms=structured_result.latency_ms,
             )
 
-        llm_result = await self._call_prompt_text(
-            "kb_chat/transform_query",
-            timeout_seconds=timeout_seconds,
-            max_tokens=96,
-            question=query,
-            reason=reason,
-            hint=hint or "",
-        )
-        if llm_result.success and llm_result.text.strip():
-            latency_ms = int((time.perf_counter() - start) * 1000)
-            text = _sanitize_query_text(llm_result.text.strip())
-            return RewriteResult(
-                query=text,
-                rewritten=text != query,
-                reason=llm_result.reason,
-                latency_ms=latency_ms,
-            )
-
         # Reuse existing retrieval rewrite behavior as a low-risk fallback.
         fallback = await self.rewrite(query, timeout_seconds=timeout_seconds)
         # If fallback succeeded but didn't change, still keep transform surface explicit.
         if fallback.reason is None:
-            fallback.reason = llm_result.reason or "fallback_rewrite"
+            fallback.reason = structured_result.reason or "fallback_rewrite"
         return fallback
 
     async def classify_complexity(
@@ -768,29 +673,6 @@ class QueryRewriteService:
                 latency_ms=latency_ms,
             )
 
-        text_result = await self._call_prompt_text(
-            "kb_chat/multi_query",
-            timeout_seconds=None,
-            max_tokens=256,
-            question=q,
-        )
-        if text_result.success:
-            fixed_variants, completed = _coerce_fixed_multi_query_variants(
-                _extract_query_list_from_text(text_result.text),
-                original_query=q,
-            )
-            latency_ms = int((time.perf_counter() - start) * 1000)
-            return QueryListResult(
-                queries=fixed_variants,
-                success=True,
-                reason=(
-                    "llm_text_with_rule_completion"
-                    if completed
-                    else "llm_text_fallback"
-                ),
-                latency_ms=latency_ms,
-            )
-
         latency_ms = int((time.perf_counter() - start) * 1000)
         fixed_variants, _ = _coerce_fixed_multi_query_variants([], original_query=q)
         return QueryListResult(
@@ -856,27 +738,6 @@ class QueryRewriteService:
                     latency_ms=latency_ms,
                 )
 
-        text_result = await self._call_prompt_text(
-            "kb_chat/hyde",
-            timeout_seconds=None,
-            max_tokens=768,
-            question=q,
-            num_hypotheses=HYDE_NUM_HYPOTHESES,
-        )
-        if text_result.success:
-            docs = _normalize_hyde_documents(
-                _extract_query_list_from_text(text_result.text),
-                limit=HYDE_NUM_HYPOTHESES,
-            )
-            if docs:
-                latency_ms = int((time.perf_counter() - start) * 1000)
-                return QueryListResult(
-                    queries=docs,
-                    success=True,
-                    reason="llm_text_fallback",
-                    latency_ms=latency_ms,
-                )
-
         latency_ms = int((time.perf_counter() - start) * 1000)
         return QueryListResult(
             queries=[],
@@ -923,7 +784,7 @@ class QueryRewriteService:
         max_tokens: int,
         **kwargs: object,
     ) -> StructuredCallResult:
-        """Call prompt and parse structured output via model.with_structured_output()."""
+        """Call prompt and parse structured output via ToolStrategy."""
         try:
             prompt = self._prompts.render(prompt_key, **kwargs)
         except KeyError:
@@ -945,15 +806,24 @@ class QueryRewriteService:
             if timeout_seconds is None
             else float(timeout_seconds)
         )
+        agent = self._get_structured_agent(schema)
         try:
             if timeout_value <= 0:
-                payload = await self._call_llm_structured(
-                    prompt, schema=schema, max_tokens=max_tokens
+                structured = await invoke_tool_strategy_structured(
+                    agent=agent,
+                    schema=schema,
+                    system_prompt="",
+                    user_prompt=prompt,
+                    max_tokens=max_tokens,
                 )
             else:
-                payload = await asyncio.wait_for(
-                    self._call_llm_structured(
-                        prompt, schema=schema, max_tokens=max_tokens
+                structured = await asyncio.wait_for(
+                    invoke_tool_strategy_structured(
+                        agent=agent,
+                        schema=schema,
+                        system_prompt="",
+                        user_prompt=prompt,
+                        max_tokens=max_tokens,
                     ),
                     timeout=timeout_value,
                 )
@@ -968,196 +838,32 @@ class QueryRewriteService:
             )
         except asyncio.CancelledError:
             raise
-        except ValidationError:
+        except Exception as exc:
             latency_ms = int((time.perf_counter() - start_time) * 1000)
+            logger.warning(
+                "Prompt LLM structured 调用失败",
+                extra={"prompt_key": prompt_key, "error": str(exc)},
+            )
+            return StructuredCallResult(
+                payload=None, success=False, reason="error", latency_ms=latency_ms
+            )
+
+        latency_ms = int((time.perf_counter() - start_time) * 1000)
+        payload = structured.payload
+        reason = structured.reason
+        if payload is None:
             return StructuredCallResult(
                 payload=None,
                 success=False,
-                reason="invalid_schema",
+                reason=reason or "invalid_schema",
                 latency_ms=latency_ms,
             )
-        except RuntimeError as exc:
-            latency_ms = int((time.perf_counter() - start_time) * 1000)
-            if str(exc) == "structured_output_unavailable":
-                return StructuredCallResult(
-                    payload=None,
-                    success=False,
-                    reason="structured_output_unavailable",
-                    latency_ms=latency_ms,
-                )
-            logger.warning(
-                "Prompt LLM structured 调用失败",
-                extra={"prompt_key": prompt_key, "error": str(exc)},
-            )
-            return StructuredCallResult(
-                payload=None, success=False, reason="error", latency_ms=latency_ms
-            )
-        except Exception as exc:
-            latency_ms = int((time.perf_counter() - start_time) * 1000)
-            logger.warning(
-                "Prompt LLM structured 调用失败",
-                extra={"prompt_key": prompt_key, "error": str(exc)},
-            )
-            return StructuredCallResult(
-                payload=None, success=False, reason="error", latency_ms=latency_ms
-            )
-
-        latency_ms = int((time.perf_counter() - start_time) * 1000)
-        if not isinstance(payload, schema):
-            try:
-                payload = schema.model_validate(payload)
-            except ValidationError:
-                return StructuredCallResult(
-                    payload=None,
-                    success=False,
-                    reason="invalid_schema",
-                    latency_ms=latency_ms,
-                )
         return StructuredCallResult(
             payload=payload,
             success=True,
-            reason=None,
+            reason=reason,
             latency_ms=latency_ms,
         )
-
-    async def _call_prompt_text(
-        self,
-        prompt_key: str,
-        *,
-        timeout_seconds: float | None,
-        max_tokens: int,
-        **kwargs: object,
-    ) -> TextResult:
-        """Call an optional prompt template and return text (with timeout + degrade)."""
-        try:
-            prompt = self._prompts.render(prompt_key, **kwargs)
-        except KeyError:
-            return TextResult(
-                text="", success=False, reason="prompt_missing", latency_ms=0
-            )
-        except Exception as exc:  # pragma: no cover
-            logger.warning(
-                "Prompt render 失败",
-                extra={"prompt_key": prompt_key, "error": str(exc)},
-            )
-            return TextResult(
-                text="", success=False, reason="prompt_error", latency_ms=0
-            )
-
-        start_time = time.perf_counter()
-        timeout_value = (
-            float(self._settings.retrieval_query_rewrite_timeout_seconds)
-            if timeout_seconds is None
-            else float(timeout_seconds)
-        )
-        try:
-            if timeout_value <= 0:
-                text = await self._call_llm(prompt, max_tokens=max_tokens)
-            else:
-                text = await asyncio.wait_for(
-                    self._call_llm(prompt, max_tokens=max_tokens), timeout=timeout_value
-                )
-        except asyncio.TimeoutError:
-            latency_ms = int((time.perf_counter() - start_time) * 1000)
-            logger.warning(
-                "Prompt LLM 超时",
-                extra={"prompt_key": prompt_key, "timeout": timeout_value},
-            )
-            return TextResult(
-                text="", success=False, reason="timeout", latency_ms=latency_ms
-            )
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:
-            latency_ms = int((time.perf_counter() - start_time) * 1000)
-            logger.warning(
-                "Prompt LLM 调用失败",
-                extra={"prompt_key": prompt_key, "error": str(exc)},
-            )
-            return TextResult(
-                text="", success=False, reason="error", latency_ms=latency_ms
-            )
-
-        latency_ms = int((time.perf_counter() - start_time) * 1000)
-        text = (text or "").strip()
-        if not text:
-            return TextResult(
-                text="",
-                success=False,
-                reason="empty_output",
-                latency_ms=latency_ms,
-            )
-        return TextResult(text=text, success=True, reason=None, latency_ms=latency_ms)
-
-    async def _call_llm_structured(
-        self,
-        prompt: str,
-        *,
-        schema: type[BaseModel],
-        max_tokens: int,
-    ) -> BaseModel | dict[str, object]:
-        from langchain.messages import HumanMessage
-
-        model = create_chat_model(settings=self._settings).bind(
-            temperature=0, max_tokens=max_tokens
-        )
-        messages = [HumanMessage(content=prompt)]
-        with_structured_sig = inspect.signature(model.with_structured_output)
-        supports_method = "method" in with_structured_sig.parameters
-
-        strategy_candidates: list[dict[str, str]] = (
-            [{"method": "json_schema"}, {"method": "function_calling"}, {"method": "json_mode"}]
-            if supports_method
-            else [{}]
-        )
-        last_error: Exception | None = None
-        for strategy in strategy_candidates:
-            try:
-                structured_model = model.with_structured_output(
-                    schema, include_raw=True, **strategy
-                )
-            except Exception as exc:
-                last_error = exc
-                continue
-
-            try:
-                ainvoke = getattr(structured_model, "ainvoke", None)
-                if callable(ainvoke):
-                    result = await ainvoke(messages)
-                else:
-                    result = await asyncio.to_thread(structured_model.invoke, messages)
-            except asyncio.CancelledError:
-                raise
-            except Exception as exc:
-                last_error = exc
-                continue
-
-            try:
-                if isinstance(result, schema):
-                    return result
-                if isinstance(result, dict) and "parsed" in result:
-                    parsed_payload = result.get("parsed")
-                    if parsed_payload is not None:
-                        return schema.model_validate(parsed_payload)
-                    raw_message = result.get("raw")
-                    if raw_message is not None:
-                        raw_payload = _parse_json_payload_from_text(
-                            _extract_ai_message_text(raw_message)
-                        )
-                        if raw_payload is not None:
-                            return schema.model_validate(raw_payload)
-                    parsing_error = result.get("parsing_error")
-                    if isinstance(parsing_error, Exception):
-                        last_error = parsing_error
-                    continue
-                return schema.model_validate(result)
-            except ValidationError as exc:
-                last_error = exc
-                continue
-
-        if last_error is not None:
-            raise last_error
-        raise RuntimeError("structured_output_unavailable")
 
     async def _call_llm(self, prompt: str, *, max_tokens: int) -> str:
         from langchain.messages import HumanMessage

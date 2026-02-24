@@ -26,9 +26,6 @@ template: |
   - 当 passed=true 时，必须输出空数组 []。
   - 当 passed=false 时，写出最关键缺口（如“时间范围”“统计口径”“目标实体”）。
 
-  输出要求：
-  - 只输出一个 JSON 对象：{{"passed": true/false, "reason": "...", "missing_constraints": ["..."]}}
-  - 禁止输出代码块、解释文本或额外字段
 
 variables: []
 

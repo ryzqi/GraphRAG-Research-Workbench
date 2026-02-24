@@ -43,9 +43,6 @@ template: |
   - 输出字符串数组，最多 3 项，写“无法被证据支持的断言”短语。
   - 若 reason 不是 unsupported_claims，输出 []。
 
-  输出要求：
-  - 仅输出一个 JSON 对象：{{"passed": true/false, "reason": "...", "missing_citations": ["..."], "unsupported_claims": ["..."]}}
-  - 禁止输出代码块、解释文本或额外字段
 
 variables: []
 

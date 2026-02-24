@@ -9,8 +9,6 @@ These nodes are designed to be:
 from __future__ import annotations
 
 import asyncio
-import inspect
-import json
 import re
 import time
 from typing import Any, TypeVar
@@ -18,7 +16,7 @@ from typing import Any, TypeVar
 from langchain.messages import AIMessage, HumanMessage, SystemMessage
 from langchain.tools import BaseTool
 from langchain_openai import ChatOpenAI
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel
 
 from app.core.settings import Settings, get_settings
 from app.prompts import get_prompt_loader
@@ -31,6 +29,7 @@ from app.services.query_rewrite_service import (
     QueryRewriteService,
     build_query_items,
 )
+from app.services.tool_strategy_structured import invoke_tool_strategy_structured
 
 from .budget import now_iso
 from .json_safety import ensure_json_safe
@@ -128,79 +127,16 @@ async def _judge_structured(
     user: str,
     max_tokens: int,
 ) -> tuple[_StructuredT | None, str | None]:
-    model = chat_model.bind(temperature=0, max_tokens=max_tokens)
-    with_structured_sig = inspect.signature(model.with_structured_output)
-    supports_method = "method" in with_structured_sig.parameters
-    strategy_candidates: list[dict[str, str]] = (
-        [{"method": "json_schema"}, {"method": "function_calling"}, {"method": "json_mode"}]
-        if supports_method
-        else [{}]
+    result = await invoke_tool_strategy_structured(
+        chat_model=chat_model,
+        schema=schema,
+        system_prompt=system,
+        user_prompt=user,
+        max_tokens=max_tokens,
     )
-    messages = [SystemMessage(content=system), HumanMessage(content=user)]
-    last_reason: str = "structured_output_unsupported"
-
-    for strategy in strategy_candidates:
-        try:
-            structured_model = model.with_structured_output(
-                schema, include_raw=True, **strategy
-            )
-        except Exception:
-            continue
-        try:
-            payload = await structured_model.ainvoke(messages)
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            last_reason = "exception"
-            continue
-        try:
-            if isinstance(payload, schema):
-                return payload, None
-            if isinstance(payload, dict) and "parsed" in payload:
-                parsed_payload = payload.get("parsed")
-                if parsed_payload is not None:
-                    return schema.model_validate(parsed_payload), None
-                raw_message = payload.get("raw")
-                raw_text = ""
-                if raw_message is not None:
-                    raw_content = getattr(raw_message, "content", "")
-                    if isinstance(raw_content, str):
-                        raw_text = raw_content
-                    elif isinstance(raw_content, list):
-                        chunks: list[str] = []
-                        for item in raw_content:
-                            if isinstance(item, str):
-                                value = item.strip()
-                            elif isinstance(item, dict):
-                                value = str(item.get("text") or item.get("output_text") or "").strip()
-                            else:
-                                value = str(item).strip()
-                            if value:
-                                chunks.append(value)
-                        raw_text = "\n".join(chunks)
-                if raw_text:
-                    fence_match = re.match(
-                        r"^```(?:json)?\s*(.*?)\s*```$", raw_text.strip(), flags=re.DOTALL
-                    )
-                    candidate = (
-                        fence_match.group(1).strip() if fence_match else raw_text.strip()
-                    )
-                    try:
-                        parsed_json = json.loads(candidate)
-                    except Exception:
-                        parsed_json = None
-                    if parsed_json is not None:
-                        return schema.model_validate(parsed_json), None
-                last_reason = "invalid_schema"
-                continue
-            return schema.model_validate(payload), None
-        except ValidationError:
-            last_reason = "invalid_schema"
-            continue
-        except Exception:
-            last_reason = "invalid_schema"
-            continue
-    return None, last_reason
+    if result.payload is None:
+        return None, result.reason or "invalid_schema"
+    return result.payload, result.reason
 
 
 def _merge_stage_summary(
