@@ -18,39 +18,19 @@ from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, StateGraph
 from langgraph.runtime import Runtime
 from langgraph.store.base import BaseStore
-from langgraph.types import CachePolicy, Command, RetryPolicy
+from langgraph.types import Command
 
 from app.agents.kb_chat_agentic_state import KbChatAgenticState
 from app.agents.tool_calling.registry import ToolMeta
 from app.core.settings import get_settings
 
-from app.agents.kb_chat_agentic.preprocess import (
-    complexity_router,
-    decomposition,
-    entity_expand,
-    generate_variants,
-    hyde,
-    merge_context,
-    prepare_messages,
-    rewrite_plan,
-)
 from app.agents.answer_subgraph import build_answer_subgraph
 from app.agents.evidence_gate_subgraph import build_evidence_gate_subgraph
 from app.agents.preprocess_subgraph import build_preprocess_subgraph
 from app.agents.retrieval_subgraph import build_retrieval_subgraph
 from app.agents.kb_chat_agentic.tool_loop import force_exit_node
 from app.agents.kb_chat_agentic.reflection import (
-    doc_gate_precheck,
-    doc_gate_route,
-    doc_grader_llm,
-    dispatch_subqueries,
-    dispatch_rewrite_branches,
     finalize_answer,
-    kb_retrieve_context,
-    merge_subquery_context,
-    rewrite_branch_retrieve,
-    rewrite_fuse,
-    retrieve_subquery_context,
     route_after_doc_grader,
     route_after_answer_review,
     transform_query_for_retry,
@@ -1708,85 +1688,7 @@ class KbChatAgenticGraph:
         del tool_meta_by_name  # not used in this stage (no human review)
         settings = get_settings()
         self._settings = settings
-        (_, hyde_enabled) = _resolve_topology_config(
-            settings=settings,
-            kb_chat_config=kb_chat_config,
-        )
-        raw_config = kb_chat_config if isinstance(kb_chat_config, dict) else {}
-        graph_v3_enabled = _resolve_flag(
-            raw_config,
-            "kb_chat_graph_v3_enabled",
-            bool(getattr(settings, "kb_chat_graph_v3_enabled", False)),
-        )
-        llm_preprocess_retry_policy = RetryPolicy(max_attempts=2)
-        rewrite_retry_attempts = int(
-            max(1, min(4, getattr(settings, "kb_chat_rewrite_retry_attempts", 2)))
-        )
-        rewrite_retry_policy = RetryPolicy(max_attempts=rewrite_retry_attempts)
-        direct_target = "hyde" if hyde_enabled else "prepare_messages"
-        complexity_cache_enabled = bool(
-            getattr(settings, "kb_chat_complexity_cache_enabled", True)
-        )
-        complexity_cache_ttl = int(
-            getattr(settings, "kb_chat_complexity_cache_ttl_seconds", 120)
-        )
-        complexity_cache_policy = (
-            CachePolicy(
-                key_func=_complexity_cache_key_factory(direct_target=direct_target),
-                ttl=complexity_cache_ttl,
-            )
-            if complexity_cache_enabled and complexity_cache_ttl > 0
-            else None
-        )
-        entity_expand_cache_policy = (
-            CachePolicy(
-                key_func=_entity_expand_cache_key_factory(),
-                ttl=complexity_cache_ttl,
-            )
-            if complexity_cache_enabled and complexity_cache_ttl > 0
-            else None
-        )
-        prepare_messages_cache_policy = (
-            CachePolicy(
-                key_func=_prepare_messages_cache_key_factory(),
-                ttl=complexity_cache_ttl,
-            )
-            if complexity_cache_enabled and complexity_cache_ttl > 0
-            else None
-        )
-        rewrite_cache_ttl = int(
-            getattr(settings, "kb_chat_rewrite_cache_ttl_seconds", complexity_cache_ttl)
-        )
-        rewrite_plan_cache_policy = (
-            CachePolicy(
-                key_func=_rewrite_plan_cache_key_factory(),
-                ttl=rewrite_cache_ttl,
-            )
-            if complexity_cache_enabled and rewrite_cache_ttl > 0
-            else None
-        )
-        doc_gate_cache_ttl = int(
-            getattr(settings, "kb_chat_doc_gate_cache_ttl_seconds", 60)
-        )
-        doc_gate_cache_policy = (
-            CachePolicy(
-                key_func=_doc_gate_cache_key_factory(),
-                ttl=doc_gate_cache_ttl,
-            )
-            if complexity_cache_enabled and doc_gate_cache_ttl > 0
-            else None
-        )
-        self._graph_cache = (
-            _KB_CHAT_GRAPH_CACHE
-            if (
-                complexity_cache_policy
-                or rewrite_plan_cache_policy
-                or entity_expand_cache_policy
-                or prepare_messages_cache_policy
-                or doc_gate_cache_policy
-            )
-            else None
-        )
+        self._graph_cache = None
 
         graph = StateGraph(
             state_schema=KbChatAgenticState,
@@ -1797,253 +1699,34 @@ class KbChatAgenticGraph:
         if kb_tool is None:
             raise RuntimeError("kb_retrieve tool is required for agentic KB chat")
 
-        if graph_v3_enabled:
-            preprocess_subgraph = build_preprocess_subgraph(settings=settings)
-            retrieval_subgraph = build_retrieval_subgraph(
-                settings=settings,
-                kb_tool=kb_tool,
-            )
-            evidence_gate_subgraph = build_evidence_gate_subgraph(settings=settings)
-            answer_subgraph = build_answer_subgraph(settings=settings, chat_model=chat_model)
-            graph.add_node(
-                "preprocess_subgraph",
-                preprocess_subgraph,
-                metadata=_NODE_METADATA["preprocess_subgraph"],
-                destinations=("retrieval_subgraph", "force_exit"),
-            )
-            graph.add_node(
-                "retrieval_subgraph",
-                retrieval_subgraph,
-                metadata=_NODE_METADATA["retrieval_subgraph"],
-            )
-            graph.add_node(
-                "evidence_gate_subgraph",
-                evidence_gate_subgraph,
-                metadata=_NODE_METADATA["evidence_gate_subgraph"],
-                destinations=("answer_subgraph", "transform_query", "force_exit"),
-            )
-            graph.add_node(
-                "answer_subgraph",
-                answer_subgraph,
-                metadata=_NODE_METADATA["answer_subgraph"],
-            )
-            graph.add_node(
-                "transform_query",
-                _wrap_node_with_io(
-                    "transform_query", partial(transform_query_for_retry, settings=settings)
-                ),
-                metadata=_NODE_METADATA["transform_query"],
-            )
-            graph.add_node(
-                "finalize",
-                _wrap_node_with_io("finalize", finalize_answer),
-                metadata=_NODE_METADATA["finalize"],
-            )
-            graph.add_node(
-                "force_exit",
-                _wrap_node_with_io(
-                    "force_exit", partial(force_exit_node, settings=settings)
-                ),
-                metadata=_NODE_METADATA["force_exit"],
-            )
-            graph.set_entry_point("preprocess_subgraph")
-            graph.add_conditional_edges(
-                "preprocess_subgraph",
-                _route_after_preprocess_subgraph,
-                {
-                    "retrieval_subgraph": "retrieval_subgraph",
-                    "force_exit": "force_exit",
-                },
-            )
-            graph.add_edge("retrieval_subgraph", "evidence_gate_subgraph")
-            graph.add_conditional_edges(
-                "evidence_gate_subgraph",
-                lambda s: route_after_doc_grader(s, settings),
-                {
-                    "answer_subgraph": "answer_subgraph",
-                    "transform_query": "transform_query",
-                    "force_exit": "force_exit",
-                },
-            )
-            graph.add_edge("transform_query", "retrieval_subgraph")
-            graph.add_conditional_edges(
-                "answer_subgraph",
-                lambda s: route_after_answer_review(s, settings),
-                {
-                    "finalize": "finalize",
-                    "transform_query": "transform_query",
-                    "force_exit": "force_exit",
-                },
-            )
-            graph.add_edge("finalize", END)
-            graph.add_edge("force_exit", END)
-            self._graph_builder = graph
-            return
-
-        # -----------------
-        # Preprocess chain
-        # -----------------
+        preprocess_subgraph = build_preprocess_subgraph(settings=settings)
+        retrieval_subgraph = build_retrieval_subgraph(
+            settings=settings,
+            kb_tool=kb_tool,
+        )
+        evidence_gate_subgraph = build_evidence_gate_subgraph(settings=settings)
+        answer_subgraph = build_answer_subgraph(settings=settings, chat_model=chat_model)
         graph.add_node(
-            "merge_context",
-            _wrap_node_with_io("merge_context", partial(merge_context, settings=settings)),
-            metadata=_NODE_METADATA["merge_context"],
+            "preprocess_subgraph",
+            preprocess_subgraph,
+            metadata=_NODE_METADATA["preprocess_subgraph"],
+            destinations=("retrieval_subgraph", "force_exit"),
         )
         graph.add_node(
-            "rewrite_plan",
-            _wrap_node_with_io("rewrite_plan", partial(rewrite_plan, settings=settings)),
-            metadata=_NODE_METADATA["rewrite_plan"],
-            retry_policy=rewrite_retry_policy,
-            cache_policy=rewrite_plan_cache_policy,
-            destinations=("rewrite_dispatch", "complexity_router", "force_exit"),
+            "retrieval_subgraph",
+            retrieval_subgraph,
+            metadata=_NODE_METADATA["retrieval_subgraph"],
         )
         graph.add_node(
-            "rewrite_dispatch",
-            _wrap_node_with_io(
-                "rewrite_dispatch",
-                partial(dispatch_rewrite_branches, settings=settings),
-            ),
-            metadata=_NODE_METADATA["rewrite_dispatch"],
-            destinations=("rewrite_branch_retrieve", "complexity_router"),
-        )
-        graph.add_node(
-            "complexity_router",
-            _wrap_node_with_io(
-                "complexity_router", partial(complexity_router, settings=settings)
-            ),
-            metadata=_NODE_METADATA["complexity_router"],
-            retry_policy=llm_preprocess_retry_policy,
-            cache_policy=complexity_cache_policy,
-            destinations=(
-                "decomposition",
-                "generate_variants",
-                direct_target,
-            ),
-        )
-        graph.add_node(
-            "decomposition",
-            _wrap_node_with_io(
-                "decomposition", partial(decomposition, settings=settings)
-            ),
-            metadata=_NODE_METADATA["decomposition"],
-            retry_policy=llm_preprocess_retry_policy,
-        )
-        graph.add_node(
-            "generate_variants",
-            _wrap_node_with_io(
-                "generate_variants", partial(generate_variants, settings=settings)
-            ),
-            metadata=_NODE_METADATA["generate_variants"],
-            retry_policy=llm_preprocess_retry_policy,
-        )
-        graph.add_node(
-            "entity_expand",
-            _wrap_node_with_io(
-                "entity_expand", partial(entity_expand, settings=settings)
-            ),
-            metadata=_NODE_METADATA["entity_expand"],
-            retry_policy=llm_preprocess_retry_policy,
-            cache_policy=entity_expand_cache_policy,
-            destinations=("hyde", "prepare_messages")
-            if hyde_enabled
-            else ("prepare_messages",),
-        )
-        if hyde_enabled:
-            graph.add_node(
-                "hyde",
-                _wrap_node_with_io("hyde", partial(hyde, settings=settings)),
-                metadata=_NODE_METADATA["hyde"],
-                retry_policy=llm_preprocess_retry_policy,
-            )
-        graph.add_node(
-            "prepare_messages",
-            _wrap_node_with_io(
-                "prepare_messages", partial(prepare_messages, settings=settings)
-            ),
-            metadata=_NODE_METADATA["prepare_messages"],
-            input_schema=PrepareMessagesInput,
-            retry_policy=llm_preprocess_retry_policy,
-            cache_policy=prepare_messages_cache_policy,
-            destinations=("dispatch_subqueries", "transform_query"),
-        )
-        graph.add_node(
-            "dispatch_subqueries",
-            _wrap_node_with_io(
-                "dispatch_subqueries",
-                partial(dispatch_subqueries, settings=settings),
-            ),
-            metadata=_NODE_METADATA["dispatch_subqueries"],
-            destinations=("retrieve_subquery", "retrieve"),
-        )
-
-        # -----------------
-        # Retrieval/Reflection
-        # -----------------
-        graph.add_node(
-            "rewrite_branch_retrieve",
-            _wrap_node_with_io(
-                "rewrite_branch_retrieve",
-                partial(rewrite_branch_retrieve, settings=settings, kb_tool=kb_tool),
-            ),
-            metadata=_NODE_METADATA["rewrite_branch_retrieve"],
-        )
-        graph.add_node(
-            "rewrite_fuse",
-            _wrap_node_with_io(
-                "rewrite_fuse",
-                partial(rewrite_fuse, settings=settings),
-            ),
-            metadata=_NODE_METADATA["rewrite_fuse"],
-        )
-
-        graph.add_node(
-            "retrieve_subquery",
-            _wrap_node_with_io(
-                "retrieve_subquery",
-                partial(retrieve_subquery_context, settings=settings, kb_tool=kb_tool),
-            ),
-            metadata=_NODE_METADATA["retrieve_subquery"],
-        )
-        graph.add_node(
-            "merge_subquery_context",
-            _wrap_node_with_io(
-                "merge_subquery_context",
-                partial(merge_subquery_context, settings=settings),
-            ),
-            metadata=_NODE_METADATA["merge_subquery_context"],
-        )
-        graph.add_node(
-            "retrieve",
-            _wrap_node_with_io(
-                "retrieve", partial(kb_retrieve_context, settings=settings, kb_tool=kb_tool)
-            ),
-            metadata=_NODE_METADATA["retrieve"],
-        )
-        graph.add_node(
-            "doc_gate_precheck",
-            _wrap_node_with_io(
-                "doc_gate_precheck",
-                partial(doc_gate_precheck, settings=settings),
-            ),
-            metadata=_NODE_METADATA["doc_gate_precheck"],
-        )
-        graph.add_node(
-            "doc_grader_llm",
-            _wrap_node_with_io(
-                "doc_grader_llm",
-                partial(doc_grader_llm, settings=settings, chat_model=chat_model),
-            ),
-            metadata=_NODE_METADATA["doc_grader_llm"],
-            retry_policy=llm_preprocess_retry_policy,
-            cache_policy=doc_gate_cache_policy,
-        )
-        graph.add_node(
-            "doc_gate_route",
-            _wrap_node_with_io(
-                "doc_gate_route",
-                partial(doc_gate_route, settings=settings),
-            ),
-            metadata=_NODE_METADATA["doc_gate_route"],
+            "evidence_gate_subgraph",
+            evidence_gate_subgraph,
+            metadata=_NODE_METADATA["evidence_gate_subgraph"],
             destinations=("answer_subgraph", "transform_query", "force_exit"),
+        )
+        graph.add_node(
+            "answer_subgraph",
+            answer_subgraph,
+            metadata=_NODE_METADATA["answer_subgraph"],
         )
         graph.add_node(
             "transform_query",
@@ -2051,12 +1734,6 @@ class KbChatAgenticGraph:
                 "transform_query", partial(transform_query_for_retry, settings=settings)
             ),
             metadata=_NODE_METADATA["transform_query"],
-        )
-        answer_subgraph = build_answer_subgraph(settings=settings, chat_model=chat_model)
-        graph.add_node(
-            "answer_subgraph",
-            answer_subgraph,
-            metadata=_NODE_METADATA["answer_subgraph"],
         )
         graph.add_node(
             "finalize",
@@ -2070,31 +1747,26 @@ class KbChatAgenticGraph:
             ),
             metadata=_NODE_METADATA["force_exit"],
         )
-
-        # Entry
-        graph.set_entry_point("merge_context")
-        graph.add_edge("merge_context", "rewrite_plan")
-        graph.add_edge("rewrite_branch_retrieve", "rewrite_fuse")
-        graph.add_edge("generate_variants", "entity_expand")
-
-        if hyde_enabled:
-            graph.add_edge("decomposition", "hyde")
-            graph.add_edge("entity_expand", "hyde")
-            graph.add_edge("hyde", "prepare_messages")
-        else:
-            graph.add_edge("decomposition", "prepare_messages")
-            graph.add_edge("entity_expand", "prepare_messages")
-
-        graph.add_edge("prepare_messages", "dispatch_subqueries")
-        graph.add_edge("retrieve_subquery", "merge_subquery_context")
-        graph.add_edge("merge_subquery_context", "doc_gate_precheck")
-        graph.add_edge("retrieve", "doc_gate_precheck")
-        graph.add_edge("doc_gate_precheck", "doc_grader_llm")
-        graph.add_edge("doc_grader_llm", "doc_gate_route")
-
-        graph.add_edge("transform_query", "retrieve")
-
-        # Answer subgraph (draft -> review -> optional repair -> commit)
+        graph.set_entry_point("preprocess_subgraph")
+        graph.add_conditional_edges(
+            "preprocess_subgraph",
+            _route_after_preprocess_subgraph,
+            {
+                "retrieval_subgraph": "retrieval_subgraph",
+                "force_exit": "force_exit",
+            },
+        )
+        graph.add_edge("retrieval_subgraph", "evidence_gate_subgraph")
+        graph.add_conditional_edges(
+            "evidence_gate_subgraph",
+            lambda s: route_after_doc_grader(s, settings),
+            {
+                "answer_subgraph": "answer_subgraph",
+                "transform_query": "transform_query",
+                "force_exit": "force_exit",
+            },
+        )
+        graph.add_edge("transform_query", "retrieval_subgraph")
         graph.add_conditional_edges(
             "answer_subgraph",
             lambda s: route_after_answer_review(s, settings),
@@ -2104,10 +1776,8 @@ class KbChatAgenticGraph:
                 "force_exit": "force_exit",
             },
         )
-
         graph.add_edge("finalize", END)
         graph.add_edge("force_exit", END)
-
         self._graph_builder = graph
 
     def compile(

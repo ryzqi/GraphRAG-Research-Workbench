@@ -72,7 +72,6 @@ export interface KbChatConfig {
   entity_expand_max_variants: number;
   entity_expand_min_confidence: number;
   entity_expand_timeout_seconds: number;
-  kb_chat_graph_v3_enabled: boolean;
   hybrid_retrieval_enabled: boolean;
   doc_gate_rule_threshold: number;
   doc_gate_llm_confidence_floor: number;
@@ -375,7 +374,6 @@ export function toKbGraphSchemaQuery(config: Partial<KbChatConfig>): string {
     'entity_expand_max_variants',
     'entity_expand_min_confidence',
     'entity_expand_timeout_seconds',
-    'kb_chat_graph_v3_enabled',
     'doc_gate_rule_threshold',
     'doc_gate_llm_confidence_floor',
     'doc_gate_fallback_open_when_evidence_ok',

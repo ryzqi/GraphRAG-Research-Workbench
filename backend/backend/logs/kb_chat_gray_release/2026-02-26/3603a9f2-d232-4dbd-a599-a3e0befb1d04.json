@@ -1,0 +1,138 @@
+{
+  "run_id": "3603a9f2-d232-4dbd-a599-a3e0befb1d04",
+  "captured_at": "2026-02-26T13:16:43.009753+00:00",
+  "gate": {
+    "pass": false,
+    "violations": [
+      "final_state_consistency_rate"
+    ],
+    "thresholds": {
+      "route_consistency_rate": 99.5,
+      "final_state_consistency_rate": 99.0,
+      "clarification_consistency_rate": 99.0,
+      "p95_latency_increase_pct": 10.0,
+      "protocol_required_field_drift_rate": 0.0
+    },
+    "source_run_id": "3603a9f2-d232-4dbd-a599-a3e0befb1d04",
+    "evaluated_at": "2026-02-26T13:16:42.988835+00:00",
+    "trigger_rollback": true
+  },
+  "gray_release_indicators": {
+    "route_consistency_rate": 100.0,
+    "final_state_consistency_rate": 0.0,
+    "clarification_consistency_rate": 100.0,
+    "p95_latency_increase_pct": 0.0,
+    "protocol_required_field_drift_rate": 0.0
+  },
+  "stage_summaries": {
+    "merge_context": {
+      "latency_ms": 157,
+      "memory_included": false,
+      "input_source": "user_input",
+      "input_chars": 25,
+      "output_chars": 30,
+      "summary_source": "none",
+      "turns_seen": 1,
+      "turns_selected": 0,
+      "compression_ratio": 0.6,
+      "llm_resolve_used": false,
+      "llm_resolve_reason": null,
+      "fallback_used": false,
+      "completed_at": "2026-02-26T13:16:29.281225+00:00"
+    },
+    "retrieval_layer": {
+      "latency_ms": 47,
+      "evidence_count": 0,
+      "retrieval_count": 0,
+      "query_used": "我要了解CoT和ToT的区别 给我分别讲解一下他们",
+      "reason": "no_evidence",
+      "fallback_reason": "no_evidence",
+      "mode": "single_retrieve",
+      "kb_count": 1,
+      "completed_at": "2026-02-26T13:16:42.805083+00:00"
+    },
+    "doc_gate_precheck": {
+      "passed": false,
+      "reason": "no_evidence",
+      "missing_constraints": [
+        "相关证据"
+      ],
+      "confidence": 1.0,
+      "evidence_score": 0.0,
+      "risk_level": "high",
+      "retry_advice": "retry",
+      "decision_source": "rule",
+      "fallback_used": false,
+      "fallback_reason": null,
+      "llm_required": false,
+      "evidence_count": 0,
+      "threshold": 0.45,
+      "latency_ms": 0,
+      "completed_at": "2026-02-26T13:16:42.872645+00:00"
+    },
+    "transform_query": {
+      "rewritten": false,
+      "normalized_after_retry": true,
+      "normalization_source": "rule_fallback",
+      "hyde_regenerated": false,
+      "hyde_docs_count": 0,
+      "hyde_reason": null,
+      "latency_ms": 3298,
+      "completed_at": "2026-02-26T13:16:42.744214+00:00"
+    },
+    "force_exit": {
+      "reason": "max_retrieval_retries",
+      "review_passed": null,
+      "used_best_answer": false,
+      "completed_at": "2026-02-26T13:16:42.941731+00:00"
+    },
+    "retrieval": {
+      "count": 0,
+      "filtered_count": 0,
+      "min_score": null,
+      "dense_hits": 72,
+      "bm25_hits": 24,
+      "hyde_requested_count": 0,
+      "hyde_used_count": 0,
+      "hyde_aggregation": null,
+      "hyde_embedding_fallback": null,
+      "hyde_retry_regenerated": false,
+      "rrf_candidates": 0,
+      "rerank_applied": false,
+      "rerank_reason": "disabled",
+      "rerank_latency_ms": null,
+      "completed_at": "2026-02-26T13:16:42.988138+00:00"
+    },
+    "kb_scope": {
+      "allowed_count": 1,
+      "requested_count": 1,
+      "applied_count": 1,
+      "denied_count": 0,
+      "invalid_count": 0,
+      "fallback_to_allowed": false
+    },
+    "gray_release_indicators": {
+      "route_consistency_rate": null,
+      "final_state_consistency_rate": null,
+      "clarification_consistency_rate": null,
+      "p95_latency_increase_pct": null,
+      "protocol_required_field_drift_rate": 0.0
+    },
+    "gray_release_gate": {
+      "pass": false,
+      "violations": [
+        "final_state_consistency_rate"
+      ],
+      "thresholds": {
+        "route_consistency_rate": 99.5,
+        "final_state_consistency_rate": 99.0,
+        "clarification_consistency_rate": 99.0,
+        "p95_latency_increase_pct": 10.0,
+        "protocol_required_field_drift_rate": 0.0
+      },
+      "source_run_id": "3603a9f2-d232-4dbd-a599-a3e0befb1d04",
+      "evaluated_at": "2026-02-26T13:16:42.988835+00:00",
+      "trigger_rollback": true
+    }
+  }
+}

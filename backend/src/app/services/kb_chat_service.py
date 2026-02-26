@@ -383,9 +383,6 @@ class KbChatService:
                 "parallel_retrieval_include_main": bool(
                     kb_chat_config.parallel_retrieval_include_main
                 ),
-                "kb_chat_graph_v3_enabled": bool(
-                    getattr(kb_chat_config, "kb_chat_graph_v3_enabled", False)
-                ),
                 "doc_gate_rule_threshold": float(
                     kb_chat_config.doc_gate_rule_threshold
                 ),
@@ -550,7 +547,6 @@ class KbChatService:
         self,
         *,
         current_latency_ms: int,
-        current_is_v3: bool,
     ) -> float:
         window_size = int(getattr(self._settings, "kb_chat_gray_release_window_size", 200))
         stmt = (
@@ -563,39 +559,23 @@ class KbChatService:
             .limit(window_size)
         )
         rows = (await self._db.execute(stmt)).scalars().all()
-        v1_latencies: list[int] = []
-        v3_latencies: list[int] = []
+        latencies: list[int] = []
         for raw_metrics in rows:
             metrics = raw_metrics if isinstance(raw_metrics, dict) else {}
             latency_ms = self._extract_run_latency_ms(metrics)
             if latency_ms is None:
                 continue
-            trace_snapshot = (
-                metrics.get("trace_snapshot")
-                if isinstance(metrics.get("trace_snapshot"), dict)
-                else {}
-            )
-            config = (
-                trace_snapshot.get("config")
-                if isinstance(trace_snapshot.get("config"), dict)
-                else {}
-            )
-            is_v3 = bool(config.get("kb_chat_graph_v3_enabled"))
-            if is_v3:
-                v3_latencies.append(latency_ms)
-            else:
-                v1_latencies.append(latency_ms)
-        if current_is_v3:
-            v3_latencies.append(int(current_latency_ms))
-        else:
-            v1_latencies.append(int(current_latency_ms))
-        if not v1_latencies or not v3_latencies:
+            latencies.append(latency_ms)
+        latencies.append(int(current_latency_ms))
+        if len(latencies) < 2:
             return 0.0
-        p95_v1 = self._calc_percentile(v1_latencies, 0.95)
-        p95_v3 = self._calc_percentile(v3_latencies, 0.95)
-        if p95_v1 <= 0:
+        baseline = latencies[:-1]
+        current_window = latencies
+        p95_baseline = self._calc_percentile(baseline, 0.95)
+        p95_current = self._calc_percentile(current_window, 0.95)
+        if p95_baseline <= 0:
             return 0.0
-        return round(((p95_v3 - p95_v1) / p95_v1) * 100.0, 4)
+        return round(((p95_current - p95_baseline) / p95_baseline) * 100.0, 4)
 
     @staticmethod
     def _compute_route_consistency(stage_summaries: dict[str, Any]) -> float:
@@ -735,51 +715,6 @@ class KbChatService:
         *,
         kb_chat_config: KbChatConfig,
     ) -> tuple[KbChatConfig, dict[str, Any] | None]:
-        if not bool(
-            getattr(self._settings, "kb_chat_gray_release_auto_rollback_enabled", True)
-        ):
-            return kb_chat_config, None
-        cooldown_minutes = int(
-            getattr(
-                self._settings,
-                "kb_chat_gray_release_rollback_cooldown_minutes",
-                30,
-            )
-        )
-        window_size = int(getattr(self._settings, "kb_chat_gray_release_window_size", 200))
-        stmt = (
-            select(AgentRun.metrics, AgentRun.finished_at)
-            .where(
-                AgentRun.run_type == AgentRunType.KB_ANSWER,
-                AgentRun.status == AgentRunStatus.SUCCEEDED,
-            )
-            .order_by(AgentRun.finished_at.desc())
-            .limit(window_size)
-        )
-        rows = (await self._db.execute(stmt)).all()
-        now = datetime.now(timezone.utc)
-        for raw_metrics, finished_at in rows:
-            metrics = raw_metrics if isinstance(raw_metrics, dict) else {}
-            gate = metrics.get("gray_release_gate") if isinstance(metrics.get("gray_release_gate"), dict) else {}
-            if gate.get("trigger_rollback") is not True:
-                continue
-            if not isinstance(finished_at, datetime):
-                continue
-            age_minutes = (now - finished_at).total_seconds() / 60.0
-            if age_minutes > cooldown_minutes:
-                continue
-            rollback_note = {
-                "triggered_by_run_id": str(gate.get("source_run_id") or ""),
-                "violations": gate.get("violations") if isinstance(gate.get("violations"), list) else [],
-                "activated_at": now.isoformat(),
-                "cooldown_minutes": cooldown_minutes,
-            }
-            updated = kb_chat_config.model_copy(
-                update={
-                    "kb_chat_graph_v3_enabled": False,
-                }
-            )
-            return updated, rollback_note
         return kb_chat_config, None
 
     async def _prepare_kb_chat_execution(
@@ -3150,19 +3085,8 @@ class KbChatService:
         protocol_required_field_drift_rate = float(
             metrics.get("protocol_required_field_drift_rate") or 0.0
         )
-        trace_snapshot = (
-            metrics.get("trace_snapshot")
-            if isinstance(metrics.get("trace_snapshot"), dict)
-            else {}
-        )
-        trace_config = (
-            trace_snapshot.get("config")
-            if isinstance(trace_snapshot.get("config"), dict)
-            else {}
-        )
         p95_latency_increase_pct = await self._compute_p95_latency_increase_pct(
             current_latency_ms=latency_ms,
-            current_is_v3=bool(trace_config.get("kb_chat_graph_v3_enabled")),
         )
         metrics = {
             **metrics,

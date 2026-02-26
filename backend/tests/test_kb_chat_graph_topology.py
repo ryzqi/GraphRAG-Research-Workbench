@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-import json
-
 from app.agents.kb_chat_agentic_graph import KbChatAgenticGraph
+from app.services.kb_chat_service import KbChatService
 
 
 class _DummyKbRetrieveTool:
@@ -29,18 +28,6 @@ def _collect_targets(graph_json: dict, source: str) -> set[str]:
     return targets
 
 
-def _collect_complexity_targets(graph_json: dict) -> set[str]:
-    return _collect_targets(graph_json, "complexity_router")
-
-
-def _collect_dispatch_targets(graph_json: dict) -> set[str]:
-    return _collect_targets(graph_json, "dispatch_subqueries")
-
-
-def _collect_doc_gate_route_targets(graph_json: dict) -> set[str]:
-    return _collect_targets(graph_json, "doc_gate_route")
-
-
 def _collect_node_labels(graph_json: dict) -> dict[str, str]:
     nodes = graph_json.get("nodes")
     if not isinstance(nodes, list):
@@ -59,65 +46,43 @@ def _collect_node_labels(graph_json: dict) -> dict[str, str]:
     return labels
 
 
-def test_complexity_router_destinations_without_hyde():
+def test_main_graph_orchestrates_only_subgraphs():
     graph = KbChatAgenticGraph(
-        chat_model=object(),  # not used during topology construction
+        chat_model=object(),
         tools=[_DummyKbRetrieveTool()],
         tool_meta_by_name={},
         kb_chat_config={
             "ambiguity_check_enabled": False,
             "hyde_enabled": False,
-            "kb_chat_graph_v3_enabled": False,
         },
     )
 
-    graph_json = graph.compile().get_graph().to_json()
-    targets = _collect_complexity_targets(graph_json)
-
-    assert targets == {"decomposition", "generate_variants", "prepare_messages"}
-    dispatch_targets = _collect_dispatch_targets(graph_json)
-    assert dispatch_targets == {"retrieve_subquery", "retrieve"}
+    builder = graph._graph_builder
+    node_ids = set(builder.nodes.keys())
+    assert {"preprocess_subgraph", "retrieval_subgraph", "evidence_gate_subgraph"} <= node_ids
+    assert "merge_context" not in node_ids
+    assert ("retrieval_subgraph", "evidence_gate_subgraph") in builder.edges
+    assert ("transform_query", "retrieval_subgraph") in builder.edges
 
 
 def test_graph_node_labels_are_chinese():
     graph = KbChatAgenticGraph(
-        chat_model=object(),  # not used during topology construction
+        chat_model=object(),
         tools=[_DummyKbRetrieveTool()],
         tool_meta_by_name={},
         kb_chat_config={
             "ambiguity_check_enabled": False,
             "hyde_enabled": True,
-            "kb_chat_graph_v3_enabled": False,
         },
     )
 
-    graph_json = graph.compile().get_graph().to_json()
+    graph_json = KbChatService._build_drawable_graph_from_builder(graph)
     labels = _collect_node_labels(graph_json)
 
-    assert labels["merge_context"] == "\u4e0a\u4e0b\u6587\u5408\u5e76"
-    assert labels["complexity_router"] == "\u590d\u6742\u5ea6\u8def\u7531"
-    assert labels["retrieve"] == "\u77e5\u8bc6\u68c0\u7d22"
+    assert labels["preprocess_subgraph"] == "\u9884\u5904\u7406\u5b50\u56fe"
+    assert labels["retrieval_subgraph"] == "\u68c0\u7d22\u5b50\u56fe"
+    assert labels["evidence_gate_subgraph"] == "\u8bc1\u636e\u95e8\u63a7\u5b50\u56fe"
     assert labels["answer_subgraph"] == "\u7b54\u6848\u5b50\u56fe"
-
-
-def test_complexity_router_destinations_with_hyde():
-    graph = KbChatAgenticGraph(
-        chat_model=object(),  # not used during topology construction
-        tools=[_DummyKbRetrieveTool()],
-        tool_meta_by_name={},
-        kb_chat_config={
-            "ambiguity_check_enabled": False,
-            "hyde_enabled": True,
-            "kb_chat_graph_v3_enabled": False,
-        },
-    )
-
-    graph_json = graph.compile().get_graph().to_json()
-    targets = _collect_complexity_targets(graph_json)
-
-    assert targets == {"decomposition", "generate_variants", "hyde"}
-    dispatch_targets = _collect_dispatch_targets(graph_json)
-    assert dispatch_targets == {"retrieve_subquery", "retrieve"}
 
 
 def test_make_run_context_includes_message_budget():
@@ -128,7 +93,6 @@ def test_make_run_context_includes_message_budget():
         kb_chat_config={
             "ambiguity_check_enabled": False,
             "hyde_enabled": True,
-            "kb_chat_graph_v3_enabled": False,
         },
     )
 
@@ -152,7 +116,7 @@ def test_make_run_context_includes_message_budget():
     assert context["message_budget"]["include_main"] is False
 
 
-def test_doc_gate_route_destinations():
+def test_v3_route_targets_are_stable():
     graph = KbChatAgenticGraph(
         chat_model=object(),
         tools=[_DummyKbRetrieveTool()],
@@ -160,71 +124,21 @@ def test_doc_gate_route_destinations():
         kb_chat_config={
             "ambiguity_check_enabled": False,
             "hyde_enabled": False,
-            "kb_chat_graph_v3_enabled": False,
         },
     )
+    graph_json = KbChatService._build_drawable_graph_from_builder(graph)
 
-    graph_json = graph.compile().get_graph().to_json()
-    targets = _collect_doc_gate_route_targets(graph_json)
-
-    assert targets == {"answer_subgraph", "transform_query", "force_exit"}
-
-
-def test_v3_main_graph_orchestrates_only_subgraphs():
-    graph = KbChatAgenticGraph(
-        chat_model=object(),
-        tools=[_DummyKbRetrieveTool()],
-        tool_meta_by_name={},
-        kb_chat_config={
-            "ambiguity_check_enabled": False,
-            "hyde_enabled": False,
-            "kb_chat_graph_v3_enabled": True,
-        },
-    )
-
-    builder = graph._graph_builder
-    node_ids = set(builder.nodes.keys())
-    assert {"preprocess_subgraph", "retrieval_subgraph", "evidence_gate_subgraph"} <= node_ids
-    assert "merge_context" not in node_ids
-    assert ("retrieval_subgraph", "evidence_gate_subgraph") in builder.edges
-    assert ("transform_query", "retrieval_subgraph") in builder.edges
-
-
-def test_graph_topology_snapshot_stable_for_core_routes():
-    graph = KbChatAgenticGraph(
-        chat_model=object(),
-        tools=[_DummyKbRetrieveTool()],
-        tool_meta_by_name={},
-        kb_chat_config={
-            "ambiguity_check_enabled": False,
-            "hyde_enabled": False,
-            "kb_chat_graph_v3_enabled": False,
-        },
-    )
-
-    graph_json = graph.compile().get_graph().to_json()
-    snapshot = {
-        "node_count": len(graph_json.get("nodes") or []),
-        "edge_count": len(graph_json.get("edges") or []),
-        "core_routes": {
-            "complexity_router": sorted(_collect_complexity_targets(graph_json)),
-            "dispatch_subqueries": sorted(_collect_dispatch_targets(graph_json)),
-            "doc_gate_route": sorted(_collect_doc_gate_route_targets(graph_json)),
-            "answer_subgraph": sorted(_collect_targets(graph_json, "answer_subgraph")),
-        },
+    assert _collect_targets(graph_json, "preprocess_subgraph") == {
+        "retrieval_subgraph",
+        "force_exit",
     }
-    expected = {
-        "node_count": 23,
-        "edge_count": 33,
-        "core_routes": {
-            "complexity_router": [
-                "decomposition",
-                "generate_variants",
-                "prepare_messages",
-            ],
-            "dispatch_subqueries": ["retrieve", "retrieve_subquery"],
-            "doc_gate_route": ["answer_subgraph", "force_exit", "transform_query"],
-            "answer_subgraph": ["finalize", "force_exit", "transform_query"],
-        },
+    assert _collect_targets(graph_json, "evidence_gate_subgraph") == {
+        "answer_subgraph",
+        "transform_query",
+        "force_exit",
     }
-    assert json.dumps(snapshot, sort_keys=True) == json.dumps(expected, sort_keys=True)
+    assert _collect_targets(graph_json, "answer_subgraph") == {
+        "finalize",
+        "transform_query",
+        "force_exit",
+    }

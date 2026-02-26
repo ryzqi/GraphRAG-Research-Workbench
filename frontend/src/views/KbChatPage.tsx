@@ -106,7 +106,6 @@ const DEFAULT_KB_CHAT_CONFIG: KbChatConfig = {
   entity_expand_max_variants: 6,
   entity_expand_min_confidence: 0.55,
   entity_expand_timeout_seconds: 1.2,
-  kb_chat_graph_v3_enabled: true,
   doc_gate_rule_threshold: 0.45,
   doc_gate_llm_confidence_floor: 0.45,
   doc_gate_fallback_open_when_evidence_ok: true,

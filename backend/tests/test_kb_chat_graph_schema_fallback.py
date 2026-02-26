@@ -20,7 +20,6 @@ def test_build_drawable_graph_from_builder_supports_v3_topology() -> None:
         kb_chat_config={
             "ambiguity_check_enabled": False,
             "hyde_enabled": False,
-            "kb_chat_graph_v3_enabled": True,
         },
     )
 
