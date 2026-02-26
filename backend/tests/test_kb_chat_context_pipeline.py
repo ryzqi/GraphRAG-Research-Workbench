@@ -283,6 +283,10 @@ def settings():
         kb_chat_parallel_retrieval_min_queries=2,
         kb_chat_parallel_retrieval_max_branches=6,
         kb_chat_parallel_retrieval_include_main=True,
+        kb_chat_doc_gate_rule_threshold=0.45,
+        kb_chat_doc_gate_llm_confidence_floor=0.45,
+        kb_chat_doc_gate_fallback_open_when_evidence_ok=True,
+        kb_chat_doc_gate_cache_ttl_seconds=60,
     )
 
 
@@ -449,6 +453,56 @@ async def test_doc_grader_uses_plain_query_not_merged_context(monkeypatch, setti
 
     assert result["reflection"]["relevance_passed"] is True
     assert "plain question" in captured["user"]
+
+
+@pytest.mark.asyncio
+async def test_doc_grader_fallback_open_with_evidence_threshold(monkeypatch, settings):
+    monkeypatch.setattr(reflection, "get_settings", lambda: settings)
+
+    async def _fake_judge_structured(*, chat_model, schema, system, user):
+        _ = (chat_model, schema, system, user)
+        return None, "invalid_schema"
+
+    monkeypatch.setattr(reflection, "_judge_structured", _fake_judge_structured)
+
+    state = {
+        "normalized_query": "evidence body",
+        "user_input": "fallback",
+        "final_context": "[S1] evidence body",
+        "reflection": {},
+        "stage_summaries": {},
+        "runtime_config": {"doc_gate_rule_threshold": 0.3},
+    }
+
+    result = await reflection.doc_grader(state, settings=settings, chat_model=object())
+
+    assert result["reflection"]["relevance_passed"] is True
+    assert result["reflection"]["reason"] == "fallback_open"
+    assert result["stage_summaries"]["doc_grader"]["decision_source"] == "llm"
+
+
+@pytest.mark.asyncio
+async def test_doc_gate_route_force_exit_after_retry_budget(settings):
+    state = {
+        "doc_gate_state": {
+            "passed": False,
+            "reason": "insufficient",
+            "missing_constraints": ["统计口径"],
+            "confidence": 0.61,
+            "evidence_score": 0.48,
+            "risk_level": "medium",
+            "retry_advice": "retry",
+            "decision_source": "llm",
+        },
+        "loop_counts": {"total_rounds": 1, "retrieval_retries": 2, "generation_retries": 0},
+        "reflection": {},
+        "stage_summaries": {},
+    }
+
+    result = await reflection.doc_gate_route(state, settings=settings)
+
+    assert isinstance(result, Command)
+    assert result.goto == "force_exit"
 
 
 @pytest.mark.asyncio

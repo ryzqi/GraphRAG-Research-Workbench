@@ -31,6 +31,11 @@ class ReflectionResult(TypedDict, total=False):
     reason: str
     reason_code: str
     confidence: float
+    evidence_score: float
+    decision_source: str
+    risk_level: str
+    retry_advice: str
+    hint: str
 
 
 class LoopCounts(TypedDict):
@@ -67,6 +72,10 @@ class KbChatRuntimeConfig(TypedDict, total=False):
     parallel_retrieval_min_queries: int
     parallel_retrieval_max_branches: int
     parallel_retrieval_include_main: bool
+    doc_gate_rule_threshold: float
+    doc_gate_llm_confidence_floor: float
+    doc_gate_fallback_open_when_evidence_ok: bool
+    doc_gate_cache_ttl_seconds: int
     hybrid_retrieval_enabled: bool
     rerank_enabled: bool
     retrieval_top_k: int
@@ -284,6 +293,7 @@ class KbChatAgenticState(KbChatAgenticStateBase, total=False):
     best_answer_meta: dict[str, Any]
     clarification_payload: ClarificationPayload
 
+    doc_gate_state: dict[str, Any]
     reflection: ReflectionResult
 
 
@@ -340,4 +350,5 @@ def make_initial_state(
             "risk_flags": [],
             "reasoning": "",
         },
+        "doc_gate_state": {},
     }

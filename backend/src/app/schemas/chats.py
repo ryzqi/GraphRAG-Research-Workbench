@@ -66,6 +66,10 @@ class KbChatConfig(BaseModel):
     parallel_retrieval_min_queries: int = Field(2, ge=1, le=8)
     parallel_retrieval_max_branches: int = Field(6, ge=1, le=12)
     parallel_retrieval_include_main: bool = True
+    doc_gate_rule_threshold: float = Field(0.45, ge=0.0, le=1.0)
+    doc_gate_llm_confidence_floor: float = Field(0.45, ge=0.0, le=1.0)
+    doc_gate_fallback_open_when_evidence_ok: bool = True
+    doc_gate_cache_ttl_seconds: int = Field(60, ge=0, le=300)
     hybrid_retrieval_enabled: bool = True
     rerank_enabled: bool = True
     retrieval_top_k: int = Field(12, ge=1, le=20)
@@ -150,6 +154,14 @@ def default_kb_chat_config(*, settings: Settings | None = None) -> KbChatConfig:
         parallel_retrieval_min_queries=int(cfg.kb_chat_parallel_retrieval_min_queries),
         parallel_retrieval_max_branches=int(cfg.kb_chat_parallel_retrieval_max_branches),
         parallel_retrieval_include_main=bool(cfg.kb_chat_parallel_retrieval_include_main),
+        doc_gate_rule_threshold=float(cfg.kb_chat_doc_gate_rule_threshold),
+        doc_gate_llm_confidence_floor=float(
+            cfg.kb_chat_doc_gate_llm_confidence_floor
+        ),
+        doc_gate_fallback_open_when_evidence_ok=bool(
+            cfg.kb_chat_doc_gate_fallback_open_when_evidence_ok
+        ),
+        doc_gate_cache_ttl_seconds=int(cfg.kb_chat_doc_gate_cache_ttl_seconds),
         hybrid_retrieval_enabled=bool(cfg.retrieval_hybrid_enabled),
         rerank_enabled=bool(cfg.retrieval_rerank_enabled),
         retrieval_top_k=int(cfg.retrieval_default_top_k),

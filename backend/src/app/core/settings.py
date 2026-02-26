@@ -416,6 +416,18 @@ class Settings(BaseSettings):
     kb_chat_parallel_retrieval_include_main: bool = Field(
         True, alias="KB_CHAT_PARALLEL_RETRIEVAL_INCLUDE_MAIN"
     )
+    kb_chat_doc_gate_rule_threshold: float = Field(
+        0.45, ge=0.0, le=1.0, alias="KB_CHAT_DOC_GATE_RULE_THRESHOLD"
+    )
+    kb_chat_doc_gate_llm_confidence_floor: float = Field(
+        0.45, ge=0.0, le=1.0, alias="KB_CHAT_DOC_GATE_LLM_CONFIDENCE_FLOOR"
+    )
+    kb_chat_doc_gate_fallback_open_when_evidence_ok: bool = Field(
+        True, alias="KB_CHAT_DOC_GATE_FALLBACK_OPEN_WHEN_EVIDENCE_OK"
+    )
+    kb_chat_doc_gate_cache_ttl_seconds: int = Field(
+        60, ge=0, alias="KB_CHAT_DOC_GATE_CACHE_TTL_SECONDS"
+    )
 
     kb_chat_trace_enabled: bool = Field(True, alias="KB_CHAT_TRACE_ENABLED")
 

@@ -23,6 +23,10 @@ const NODE_DETAIL_LIMIT_OVERRIDES: Partial<
 > = {
   coref_rewrite: { output: 4 },
   prepare_messages: { output: 4 },
+  doc_gate_precheck: { output: 4 },
+  doc_grader_llm: { output: 4 },
+  doc_gate_route: { output: 5 },
+  doc_grader: { output: 5 },
 };
 
 const NODE_DETAIL_POLICY_MAP: Record<string, NodeDetailPolicy> = {
@@ -110,9 +114,21 @@ const NODE_DETAIL_POLICY_MAP: Record<string, NodeDetailPolicy> = {
     input: ['query_items', 'normalized_query'],
     output: ['evidence_count', 'attempted'],
   },
+  doc_gate_precheck: {
+    input: ['question'],
+    output: ['passed', 'reason', 'threshold', 'evidence_score'],
+  },
+  doc_grader_llm: {
+    input: ['question'],
+    output: ['skipped', 'passed', 'reason', 'confidence', 'fallback_reason'],
+  },
+  doc_gate_route: {
+    input: ['question'],
+    output: ['passed', 'decision_source', 'confidence', 'evidence_score', 'risk_level', 'action'],
+  },
   doc_grader: {
     input: ['question'],
-    output: ['passed', 'action'],
+    output: ['passed', 'decision_source', 'confidence', 'evidence_score', 'risk_level', 'action'],
   },
   transform_query: {
     input: ['normalized_query'],

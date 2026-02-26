@@ -147,6 +147,9 @@ const NODE_BADGE_THEME_MAP: Record<string, NodeBadgeTheme> = {
   hyde: { icon: AutoFixHighIcon, label: 'HyDE扩展', color: '#16A34A' },
   prepare_messages: { icon: TextSnippetIcon, label: '消息整理', color: '#65A30D' },
   retrieve: { icon: SearchIcon, label: '知识检索', color: '#CA8A04' },
+  doc_gate_precheck: { icon: FactCheckIcon, label: '文档预判', color: '#EA580C' },
+  doc_grader_llm: { icon: GavelIcon, label: '文档复核', color: '#EA580C' },
+  doc_gate_route: { icon: GavelIcon, label: '文档判定', color: '#EA580C' },
   doc_grader: { icon: GavelIcon, label: '文档判定', color: '#EA580C' },
   transform_query: { icon: SyncAltIcon, label: '查询改写', color: '#DC2626' },
   generate: { icon: AutoAwesomeIcon, label: '答案生成', color: '#C026D3' },
@@ -340,6 +343,7 @@ function formatQueryItems(value: unknown): string[] {
 function summaryKeyForNode(nodeId: string): string {
   if (nodeId === 'retrieve') return 'retrieval_layer';
   if (nodeId === 'generate') return 'generator';
+  if (nodeId === 'doc_gate_route') return 'doc_grader';
   return nodeId;
 }
 
@@ -425,7 +429,7 @@ function buildFallbackInputItems(
         value: pickText(snapshot, 'normalized_query', 'coref_query', 'user_input'),
       });
     }
-  } else if (nodeId === 'doc_grader') {
+  } else if (['doc_grader', 'doc_gate_precheck', 'doc_grader_llm', 'doc_gate_route'].includes(nodeId)) {
     pushDisplayItem(items, {
       key: 'question',
       label: '待判定问题',
@@ -643,10 +647,26 @@ function buildFallbackOutputItems(
         label: '分支失败原因',
         value: recordToLines(summary.failure_reasons),
       });
-    } else if (nodeId === 'doc_grader') {
+    } else if (nodeId === 'doc_gate_precheck') {
+      pushDisplayItem(items, { key: 'passed', label: '是否直接通过', value: summary.passed });
+      pushDisplayItem(items, { key: 'reason', label: '预判原因', value: summary.reason });
+      pushDisplayItem(items, { key: 'threshold', label: '规则阈值', value: summary.threshold });
+      pushDisplayItem(items, { key: 'evidence_score', label: '证据评分', value: summary.evidence_score });
+    } else if (nodeId === 'doc_grader_llm') {
+      pushDisplayItem(items, { key: 'skipped', label: '是否跳过', value: summary.skipped });
+      pushDisplayItem(items, { key: 'passed', label: '复核是否通过', value: summary.passed });
+      pushDisplayItem(items, { key: 'reason', label: '复核原因', value: summary.reason });
+      pushDisplayItem(items, { key: 'confidence', label: '复核置信度', value: summary.confidence });
+      pushDisplayItem(items, { key: 'fallback_reason', label: '回退原因', value: summary.fallback_reason });
+    } else if (['doc_grader', 'doc_gate_route'].includes(nodeId)) {
       pushDisplayItem(items, { key: 'passed', label: '相关性是否通过', value: summary.passed });
       pushDisplayItem(items, { key: 'action', label: '后续动作', value: reflection.action });
       pushDisplayItem(items, { key: 'reason', label: '判定原因', value: summary.reason });
+      pushDisplayItem(items, { key: 'decision_source', label: '判定来源', value: summary.decision_source });
+      pushDisplayItem(items, { key: 'confidence', label: '判定置信度', value: summary.confidence });
+      pushDisplayItem(items, { key: 'evidence_score', label: '证据评分', value: summary.evidence_score });
+      pushDisplayItem(items, { key: 'risk_level', label: '风险等级', value: summary.risk_level });
+      pushDisplayItem(items, { key: 'retry_advice', label: '重试建议', value: summary.retry_advice });
       pushDisplayItem(items, { key: 'fallback_reason', label: '回退原因', value: summary.fallback_reason });
     } else if (nodeId === 'transform_query') {
       pushDisplayItem(items, { key: 'normalized_query', label: '改写后问题', value: pickText(snapshot, 'normalized_query') });

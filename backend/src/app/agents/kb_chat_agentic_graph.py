@@ -39,15 +39,16 @@ from app.agents.kb_chat_agentic.preprocess import (
 from app.agents.kb_chat_agentic.tool_loop import force_exit_node
 from app.agents.kb_chat_agentic.reflection import (
     answer_review,
+    doc_gate_precheck,
+    doc_gate_route,
+    doc_grader_llm,
     dispatch_subqueries,
-    doc_grader,
     finalize_answer,
     generate_draft,
     kb_retrieve_context,
     merge_subquery_context,
     retrieve_subquery_context,
     route_after_answer_review,
-    route_after_doc_grader,
     transform_query_for_retry,
 )
 
@@ -67,12 +68,15 @@ _NODE_METADATA: dict[str, dict[str, Any]] = {
     "retrieve_subquery": {"label": "\u5b50\u67e5\u8be2\u68c0\u7d22", "phase": "retrieve", "order": 11},
     "merge_subquery_context": {"label": "\u5b50\u67e5\u8be2\u4e0a\u4e0b\u6587\u5408\u5e76", "phase": "retrieve", "order": 12},
     "retrieve": {"label": "\u77e5\u8bc6\u68c0\u7d22", "phase": "retrieve", "order": 13},
-    "doc_grader": {"label": "\u6587\u6863\u5224\u5b9a", "phase": "judge", "order": 14},
-    "transform_query": {"label": "\u67e5\u8be2\u6539\u5199", "phase": "retrieve", "order": 15},
-    "generate": {"label": "\u7b54\u6848\u751f\u6210", "phase": "generate", "order": 16},
-    "answer_review": {"label": "\u7b54\u6848\u5ba1\u67e5", "phase": "verify", "order": 17},
-    "finalize": {"label": "\u7b54\u6848\u6574\u7406", "phase": "finalize", "order": 18},
-    "force_exit": {"label": "\u63d0\u524d\u7ec8\u6b62", "phase": "finalize", "order": 19},
+    "doc_gate_precheck": {"label": "\u6587\u6863\u9884\u5224", "phase": "judge", "order": 14},
+    "doc_grader_llm": {"label": "\u6587\u6863\u590d\u6838", "phase": "judge", "order": 15},
+    "doc_gate_route": {"label": "\u6587\u6863\u5224\u5b9a", "phase": "judge", "order": 16},
+    "doc_grader": {"label": "\u6587\u6863\u5224\u5b9a", "phase": "judge", "order": 16},
+    "transform_query": {"label": "\u67e5\u8be2\u6539\u5199", "phase": "retrieve", "order": 17},
+    "generate": {"label": "\u7b54\u6848\u751f\u6210", "phase": "generate", "order": 18},
+    "answer_review": {"label": "\u7b54\u6848\u5ba1\u67e5", "phase": "verify", "order": 19},
+    "finalize": {"label": "\u7b54\u6848\u6574\u7406", "phase": "finalize", "order": 20},
+    "force_exit": {"label": "\u63d0\u524d\u7ec8\u6b62", "phase": "finalize", "order": 21},
 }
 
 _KB_CHAT_GRAPH_CACHE = InMemoryCache()
@@ -251,6 +255,43 @@ def _prepare_messages_cache_key_factory() -> Any:
             else {},
         }
         return json.dumps(payload, ensure_ascii=False, sort_keys=True, default=_json_default)
+
+    return _key_func
+
+
+def _doc_gate_cache_key_factory() -> Any:
+    def _key_func(*args: Any, **kwargs: Any) -> str:
+        state: dict[str, Any] = {}
+        if args and isinstance(args[0], dict):
+            state = args[0]
+        elif isinstance(kwargs.get("state"), dict):
+            state = cast(dict[str, Any], kwargs["state"])
+        question = str(
+            state.get("normalized_query")
+            or state.get("coref_query")
+            or state.get("rewrite_input_query")
+            or state.get("user_input")
+            or ""
+        ).strip()
+        final_context = str(state.get("final_context") or "").strip()
+        runtime_config = (
+            state.get("runtime_config")
+            if isinstance(state.get("runtime_config"), dict)
+            else {}
+        )
+        payload = {
+            "version": "kb_chat_doc_gate_v2",
+            "question": question,
+            "context_hash": hashlib.sha256(final_context.encode("utf-8")).hexdigest(),
+            "doc_gate_rule_threshold": runtime_config.get("doc_gate_rule_threshold"),
+            "doc_gate_llm_confidence_floor": runtime_config.get(
+                "doc_gate_llm_confidence_floor"
+            ),
+            "doc_gate_fallback_open_when_evidence_ok": runtime_config.get(
+                "doc_gate_fallback_open_when_evidence_ok"
+            ),
+        }
+        return json.dumps(payload, ensure_ascii=False, sort_keys=True)
 
     return _key_func
 
@@ -510,6 +551,7 @@ def _summary_key_for_node(node_name: str) -> str:
     return {
         "retrieve": "retrieval_layer",
         "generate": "generator",
+        "doc_gate_route": "doc_grader",
     }.get(node_name, node_name)
 
 
@@ -672,7 +714,7 @@ def _build_node_input_display_items(
                 label="检索问题",
                 value=_pick_text(snapshot, "normalized_query", "coref_query", "user_input"),
             )
-    elif node_name == "doc_grader":
+    elif node_name in {"doc_grader", "doc_gate_precheck", "doc_grader_llm", "doc_gate_route"}:
         _append_display_item(
             items,
             key="question",
@@ -1254,7 +1296,7 @@ def _build_node_output_display_items(
             label="检索查询",
             value=summary.get("query_used"),
         )
-    elif node_name == "doc_grader":
+    elif node_name in {"doc_grader", "doc_gate_route"}:
         _append_display_item(
             items,
             key="passed",
@@ -1272,6 +1314,98 @@ def _build_node_output_display_items(
             key="reason",
             label="判定原因",
             value=summary.get("reason"),
+        )
+        _append_display_item(
+            items,
+            key="fallback_reason",
+            label="回退原因",
+            value=summary.get("fallback_reason"),
+        )
+        _append_display_item(
+            items,
+            key="decision_source",
+            label="判定来源",
+            value=summary.get("decision_source"),
+        )
+        _append_display_item(
+            items,
+            key="confidence",
+            label="判定置信度",
+            value=summary.get("confidence"),
+        )
+        _append_display_item(
+            items,
+            key="evidence_score",
+            label="证据评分",
+            value=summary.get("evidence_score"),
+        )
+        _append_display_item(
+            items,
+            key="risk_level",
+            label="风险等级",
+            value=summary.get("risk_level"),
+        )
+        _append_display_item(
+            items,
+            key="retry_advice",
+            label="重试建议",
+            value=summary.get("retry_advice"),
+        )
+    elif node_name == "doc_gate_precheck":
+        _append_display_item(
+            items,
+            key="decision_source",
+            label="判定来源",
+            value=summary.get("decision_source"),
+        )
+        _append_display_item(
+            items,
+            key="passed",
+            label="是否直接通过",
+            value=summary.get("passed"),
+        )
+        _append_display_item(
+            items,
+            key="reason",
+            label="预判原因",
+            value=summary.get("reason"),
+        )
+        _append_display_item(
+            items,
+            key="threshold",
+            label="规则阈值",
+            value=summary.get("threshold"),
+        )
+        _append_display_item(
+            items,
+            key="evidence_score",
+            label="证据评分",
+            value=summary.get("evidence_score"),
+        )
+    elif node_name == "doc_grader_llm":
+        _append_display_item(
+            items,
+            key="skipped",
+            label="是否跳过",
+            value=summary.get("skipped"),
+        )
+        _append_display_item(
+            items,
+            key="passed",
+            label="复核是否通过",
+            value=summary.get("passed"),
+        )
+        _append_display_item(
+            items,
+            key="reason",
+            label="复核原因",
+            value=summary.get("reason"),
+        )
+        _append_display_item(
+            items,
+            key="confidence",
+            label="复核置信度",
+            value=summary.get("confidence"),
         )
         _append_display_item(
             items,
@@ -1560,12 +1694,24 @@ class KbChatAgenticGraph:
             if complexity_cache_enabled and complexity_cache_ttl > 0
             else None
         )
+        doc_gate_cache_ttl = int(
+            getattr(settings, "kb_chat_doc_gate_cache_ttl_seconds", 60)
+        )
+        doc_gate_cache_policy = (
+            CachePolicy(
+                key_func=_doc_gate_cache_key_factory(),
+                ttl=doc_gate_cache_ttl,
+            )
+            if complexity_cache_enabled and doc_gate_cache_ttl > 0
+            else None
+        )
         self._graph_cache = (
             _KB_CHAT_GRAPH_CACHE
             if (
                 complexity_cache_policy
                 or entity_expand_cache_policy
                 or prepare_messages_cache_policy
+                or doc_gate_cache_policy
             )
             else None
         )
@@ -1704,11 +1850,31 @@ class KbChatAgenticGraph:
             metadata=_NODE_METADATA["retrieve"],
         )
         graph.add_node(
-            "doc_grader",
+            "doc_gate_precheck",
             _wrap_node_with_io(
-                "doc_grader", partial(doc_grader, settings=settings, chat_model=chat_model)
+                "doc_gate_precheck",
+                partial(doc_gate_precheck, settings=settings),
             ),
-            metadata=_NODE_METADATA["doc_grader"],
+            metadata=_NODE_METADATA["doc_gate_precheck"],
+        )
+        graph.add_node(
+            "doc_grader_llm",
+            _wrap_node_with_io(
+                "doc_grader_llm",
+                partial(doc_grader_llm, settings=settings, chat_model=chat_model),
+            ),
+            metadata=_NODE_METADATA["doc_grader_llm"],
+            retry_policy=llm_preprocess_retry_policy,
+            cache_policy=doc_gate_cache_policy,
+        )
+        graph.add_node(
+            "doc_gate_route",
+            _wrap_node_with_io(
+                "doc_gate_route",
+                partial(doc_gate_route, settings=settings),
+            ),
+            metadata=_NODE_METADATA["doc_gate_route"],
+            destinations=("generate", "transform_query", "force_exit"),
         )
         graph.add_node(
             "transform_query",
@@ -1780,15 +1946,10 @@ class KbChatAgenticGraph:
 
         graph.add_edge("prepare_messages", "dispatch_subqueries")
         graph.add_edge("retrieve_subquery", "merge_subquery_context")
-        graph.add_edge("merge_subquery_context", "doc_grader")
-        graph.add_edge("retrieve", "doc_grader")
-
-        # Doc relevance → Generate or TransformQuery
-        graph.add_conditional_edges(
-            "doc_grader",
-            lambda s: route_after_doc_grader(s, settings),
-            {"generate": "generate", "transform_query": "transform_query", "force_exit": "force_exit"},
-        )
+        graph.add_edge("merge_subquery_context", "doc_gate_precheck")
+        graph.add_edge("retrieve", "doc_gate_precheck")
+        graph.add_edge("doc_gate_precheck", "doc_grader_llm")
+        graph.add_edge("doc_grader_llm", "doc_gate_route")
 
         graph.add_edge("transform_query", "retrieve")
 

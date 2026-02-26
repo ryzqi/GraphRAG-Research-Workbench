@@ -73,6 +73,10 @@ export interface KbChatConfig {
   entity_expand_min_confidence: number;
   entity_expand_timeout_seconds: number;
   hybrid_retrieval_enabled: boolean;
+  doc_gate_rule_threshold: number;
+  doc_gate_llm_confidence_floor: number;
+  doc_gate_fallback_open_when_evidence_ok: boolean;
+  doc_gate_cache_ttl_seconds: number;
   rerank_enabled: boolean;
   retrieval_top_k: number;
   retrieval_rerank_top_k: number;
@@ -418,6 +422,10 @@ export function toKbGraphSchemaQuery(config: Partial<KbChatConfig>): string {
     'entity_expand_max_variants',
     'entity_expand_min_confidence',
     'entity_expand_timeout_seconds',
+    'doc_gate_rule_threshold',
+    'doc_gate_llm_confidence_floor',
+    'doc_gate_fallback_open_when_evidence_ok',
+    'doc_gate_cache_ttl_seconds',
     'hybrid_retrieval_enabled',
     'rerank_enabled',
     'retrieval_top_k',

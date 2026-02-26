@@ -324,6 +324,18 @@ class KbChatService:
                 "parallel_retrieval_include_main": bool(
                     kb_chat_config.parallel_retrieval_include_main
                 ),
+                "doc_gate_rule_threshold": float(
+                    kb_chat_config.doc_gate_rule_threshold
+                ),
+                "doc_gate_llm_confidence_floor": float(
+                    kb_chat_config.doc_gate_llm_confidence_floor
+                ),
+                "doc_gate_fallback_open_when_evidence_ok": bool(
+                    kb_chat_config.doc_gate_fallback_open_when_evidence_ok
+                ),
+                "doc_gate_cache_ttl_seconds": int(
+                    kb_chat_config.doc_gate_cache_ttl_seconds
+                ),
                 "complexity_model_timeout_seconds": float(
                     self._settings.kb_chat_complexity_model_timeout_seconds
                 ),
@@ -956,6 +968,8 @@ class KbChatService:
             "hyde": "假设文档扩展",
             "prepare_messages": "检索准备",
             "retrieval": "检索融合",
+            "doc_gate_precheck": "文档预判",
+            "doc_grader_llm": "文档复核",
             "doc_grader": "相关性评估",
             "generator": "答案生成",
             "answer_review": "答案审查",

@@ -236,3 +236,58 @@ def parallel_retrieval_include_main(state: dict[str, Any], settings: Settings) -
             getattr(settings, "kb_chat_parallel_retrieval_include_main", True)
         ),
     )
+
+
+def doc_gate_rule_threshold(state: dict[str, Any], settings: Settings) -> float:
+    return max(
+        0.0,
+        min(
+            1.0,
+            _state_float(
+                state,
+                key="doc_gate_rule_threshold",
+                default=float(
+                    getattr(settings, "kb_chat_doc_gate_rule_threshold", 0.45)
+                ),
+            ),
+        ),
+    )
+
+
+def doc_gate_llm_confidence_floor(state: dict[str, Any], settings: Settings) -> float:
+    return max(
+        0.0,
+        min(
+            1.0,
+            _state_float(
+                state,
+                key="doc_gate_llm_confidence_floor",
+                default=float(
+                    getattr(settings, "kb_chat_doc_gate_llm_confidence_floor", 0.45)
+                ),
+            ),
+        ),
+    )
+
+
+def doc_gate_fallback_open_when_evidence_ok(
+    state: dict[str, Any], settings: Settings
+) -> bool:
+    return _state_flag(
+        state,
+        key="doc_gate_fallback_open_when_evidence_ok",
+        default=bool(
+            getattr(settings, "kb_chat_doc_gate_fallback_open_when_evidence_ok", True)
+        ),
+    )
+
+
+def doc_gate_cache_ttl_seconds(state: dict[str, Any], settings: Settings) -> int:
+    return max(
+        0,
+        _state_int(
+            state,
+            key="doc_gate_cache_ttl_seconds",
+            default=int(getattr(settings, "kb_chat_doc_gate_cache_ttl_seconds", 60)),
+        ),
+    )

@@ -14,7 +14,12 @@ DocGraderReason = Literal[
     "insufficient",
     "too_broad",
     "needs_clarification",
+    "fallback_open",
+    "fallback_closed",
 ]
+
+DocGraderRiskLevel = Literal["low", "medium", "high"]
+DocGraderRetryAdvice = Literal["none", "retry", "clarify"]
 
 
 class DocGraderDecision(BaseModel):
@@ -25,6 +30,10 @@ class DocGraderDecision(BaseModel):
     passed: bool
     reason: DocGraderReason
     missing_constraints: list[str] = Field(default_factory=list)
+    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+    evidence_score: float = Field(default=0.0, ge=0.0, le=1.0)
+    risk_level: DocGraderRiskLevel = "medium"
+    retry_advice: DocGraderRetryAdvice = "retry"
 
 
 AnswerReviewReason = Literal[

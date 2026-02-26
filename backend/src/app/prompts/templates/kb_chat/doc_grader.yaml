@@ -30,6 +30,12 @@ template: |
   - 当 passed=true 时，必须输出空数组 []。
   - 当 passed=false 时，写出最关键缺口。
 
+  置信与风险字段：
+  - confidence：0~1，表示本次判定置信度。
+  - evidence_score：0~1，表示证据充分度。
+  - risk_level：low/medium/high。
+  - retry_advice：none/retry/clarify（是否建议继续重写检索）。
+
 variables: []
 
 few_shot_examples:
@@ -38,32 +44,31 @@ few_shot_examples:
       检索片段：
       [agent基础] Agent 是由模型、工具和记忆组成的系统。
       [agent进阶] 多代理协作可提升复杂任务处理能力。
-    output: '{“passed”: false, “reason”: “not_relevant”, “missing_constraints”: [“可用性指标”, “时间范围”]}'
+    output: '{“passed”: false, “reason”: “not_relevant”, “missing_constraints”: [“可用性指标”, “时间范围”], “confidence”: 0.83, “evidence_score”: 0.18, “risk_level”: “high”, “retry_advice”: “retry”}'
   - input: |
       问题：2024 年 Agent 平台的可用性指标是多少？
       检索片段：
       [平台SLA] 2024 年平台月均可用性为 99.95%，峰值为 99.99%。
       [平台运营] 2024 年故障恢复时间中位数为 4 分钟。
-    output: '{“passed”: true, “reason”: “passed”, “missing_constraints”: []}'
+    output: '{“passed”: true, “reason”: “passed”, “missing_constraints”: [], “confidence”: 0.91, “evidence_score”: 0.88, “risk_level”: “low”, “retry_advice”: “none”}'
   - input: |
       问题：2024 年平台可用性是多少？请简述故障恢复情况。
       检索片段：
       [SLA] 2024 年平台月均可用性为 99.95%。
       [运行报告] 2024 年全年未发生超过 30 分钟的中断事故。
-    output: '{“passed”: true, “reason”: “passed”, “missing_constraints”: []}'
+    output: '{“passed”: true, “reason”: “passed”, “missing_constraints”: [], “confidence”: 0.84, “evidence_score”: 0.79, “risk_level”: “low”, “retry_advice”: “none”}'
   - input: |
       问题：2024 年平台可用性是多少？请给出统计口径。
       检索片段：
       [SLA] 平台可用性长期保持高水平，用户体验良好。
-    output: '{“passed”: false, “reason”: “insufficient”, “missing_constraints”: [“可用性数值”, “统计口径”]}'
+    output: '{“passed”: false, “reason”: “insufficient”, “missing_constraints”: [“可用性数值”, “统计口径”], “confidence”: 0.72, “evidence_score”: 0.41, “risk_level”: “medium”, “retry_advice”: “retry”}'
   - input: |
       问题：2024 年平台可用性是多少？
       检索片段：
       [运维月报] 平台体验持续优化，服务稳定。
-    output: '{“passed”: false, “reason”: “too_broad”, “missing_constraints”: [“可用性数值”]}'
+    output: '{“passed”: false, “reason”: “too_broad”, “missing_constraints”: [“可用性数值”], “confidence”: 0.76, “evidence_score”: 0.33, “risk_level”: “medium”, “retry_advice”: “retry”}'
   - input: |
       问题：2024 年 Q3 的客户投诉量是多少？
       检索片段：
       [客服报告] 2023 年 Q3 客户投诉量为 128 件，同比下降 15%。
-    output: '{“passed”: false, “reason”: “insufficient”, “missing_constraints”: [“2024年数据”]}'
-
+    output: '{“passed”: false, “reason”: “insufficient”, “missing_constraints”: [“2024年数据”], “confidence”: 0.81, “evidence_score”: 0.37, “risk_level”: “high”, “retry_advice”: “retry”}'

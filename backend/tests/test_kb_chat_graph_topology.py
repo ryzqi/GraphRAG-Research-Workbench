@@ -43,6 +43,22 @@ def _collect_dispatch_targets(graph_json: dict) -> set[str]:
     return targets
 
 
+def _collect_doc_gate_route_targets(graph_json: dict) -> set[str]:
+    edges = graph_json.get("edges")
+    if not isinstance(edges, list):
+        return set()
+    targets: set[str] = set()
+    for edge in edges:
+        if not isinstance(edge, dict):
+            continue
+        if edge.get("source") != "doc_gate_route":
+            continue
+        target = edge.get("target")
+        if isinstance(target, str) and target:
+            targets.add(target)
+    return targets
+
+
 def _collect_node_labels(graph_json: dict) -> dict[str, str]:
     nodes = graph_json.get("nodes")
     if not isinstance(nodes, list):
@@ -136,3 +152,17 @@ def test_make_run_context_includes_message_budget():
     assert context["message_budget"]["max_candidates"] == 4
     assert context["message_budget"]["min_queries"] == 2
     assert context["message_budget"]["include_main"] is False
+
+
+def test_doc_gate_route_destinations():
+    graph = KbChatAgenticGraph(
+        chat_model=object(),
+        tools=[_DummyKbRetrieveTool()],
+        tool_meta_by_name={},
+        kb_chat_config={"ambiguity_check_enabled": False, "hyde_enabled": False},
+    )
+
+    graph_json = graph.compile().get_graph().to_json()
+    targets = _collect_doc_gate_route_targets(graph_json)
+
+    assert targets == {"generate", "transform_query", "force_exit"}
