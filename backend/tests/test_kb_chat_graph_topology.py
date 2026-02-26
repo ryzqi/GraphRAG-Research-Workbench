@@ -108,3 +108,31 @@ def test_complexity_router_destinations_with_hyde():
     assert targets == {"decomposition", "generate_variants", "hyde"}
     dispatch_targets = _collect_dispatch_targets(graph_json)
     assert dispatch_targets == {"retrieve_subquery", "retrieve"}
+
+
+def test_make_run_context_includes_message_budget():
+    graph = KbChatAgenticGraph(
+        chat_model=object(),
+        tools=[_DummyKbRetrieveTool()],
+        tool_meta_by_name={},
+        kb_chat_config={"ambiguity_check_enabled": False, "hyde_enabled": True},
+    )
+
+    context = graph.make_run_context(
+        thread_id="thread-x",
+        state={
+            "memory_keys": {"user_id": "u1", "thread_id": "t1", "kb_ids": ["kb1"]},
+            "runtime_config": {
+                "parallel_retrieval_max_branches": 4,
+                "parallel_retrieval_min_queries": 2,
+                "parallel_retrieval_include_main": False,
+            },
+        },
+    )
+
+    assert context["thread_id"] == "thread-x"
+    assert context["user_id"] == "u1"
+    assert context["kb_ids"] == ["kb1"]
+    assert context["message_budget"]["max_candidates"] == 4
+    assert context["message_budget"]["min_queries"] == 2
+    assert context["message_budget"]["include_main"] is False

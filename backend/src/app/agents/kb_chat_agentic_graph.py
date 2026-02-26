@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Any, cast
+from typing import Any, TypedDict, cast
 import hashlib
 import inspect
 import json
@@ -76,6 +76,34 @@ _NODE_METADATA: dict[str, dict[str, Any]] = {
 }
 
 _KB_CHAT_GRAPH_CACHE = InMemoryCache()
+
+
+class KbChatGraphContext(TypedDict, total=False):
+    """Run-scoped immutable context passed via LangGraph context_schema."""
+
+    thread_id: str
+    user_id: str
+    kb_ids: list[str]
+    runtime_config: dict[str, Any]
+    message_budget: dict[str, Any]
+
+
+class PrepareMessagesInput(TypedDict, total=False):
+    """Narrowed input schema for prepare_messages node."""
+
+    user_input: str
+    coref_query: str
+    normalized_query: str
+    normalized_meta: dict[str, Any]
+    query_strategy: str
+    decomposition_plan: dict[str, Any]
+    sub_queries: list[str]
+    multi_queries: list[str]
+    hyde_docs: list[str]
+    query_items: list[dict[str, Any]]
+    stage_summaries: dict[str, Any]
+    runtime_config: dict[str, Any]
+    reflection: dict[str, Any]
 
 
 def _resolve_flag(config: dict[str, Any], key: str, default: bool) -> bool:
@@ -185,6 +213,48 @@ def _entity_expand_cache_key_factory() -> Any:
     return _key_func
 
 
+def _prepare_messages_cache_key_factory() -> Any:
+    def _key_func(*args: Any, **kwargs: Any) -> str:
+        state: dict[str, Any] = {}
+        if args and isinstance(args[0], dict):
+            state = args[0]
+        elif isinstance(kwargs.get("state"), dict):
+            state = cast(dict[str, Any], kwargs["state"])
+
+        decomposition_plan = state.get("decomposition_plan")
+        if not isinstance(decomposition_plan, dict):
+            decomposition_plan = {}
+        payload = {
+            "version": "kb_chat_prepare_messages_v1",
+            "strategy": str(state.get("query_strategy") or "direct"),
+            "normalized_query": str(state.get("normalized_query") or "").strip(),
+            "sub_queries": [
+                str(item).strip()
+                for item in (state.get("sub_queries") or [])
+                if isinstance(item, str) and str(item).strip()
+            ],
+            "multi_queries": [
+                str(item).strip()
+                for item in (state.get("multi_queries") or [])
+                if isinstance(item, str) and str(item).strip()
+            ],
+            "hyde_docs": [
+                str(item).strip()
+                for item in (state.get("hyde_docs") or [])
+                if isinstance(item, str) and str(item).strip()
+            ],
+            "sub_query_specs": decomposition_plan.get("sub_query_specs")
+            if isinstance(decomposition_plan.get("sub_query_specs"), list)
+            else [],
+            "runtime_config": state.get("runtime_config")
+            if isinstance(state.get("runtime_config"), dict)
+            else {},
+        }
+        return json.dumps(payload, ensure_ascii=False, sort_keys=True, default=_json_default)
+
+    return _key_func
+
+
 def build_kb_chat_run_config(*, thread_id: str | None, recursion_limit: int) -> dict[str, Any]:
     """Build LangGraph invocation config for KB chat.
 
@@ -194,6 +264,49 @@ def build_kb_chat_run_config(*, thread_id: str | None, recursion_limit: int) -> 
     if thread_id:
         config["configurable"] = {"thread_id": thread_id}
     return config
+
+
+def build_kb_chat_run_context(
+    *,
+    thread_id: str | None,
+    state: dict[str, Any] | None,
+    settings: Any,
+) -> KbChatGraphContext:
+    """Build run context for context_schema-backed node runtime data."""
+
+    state_obj = state if isinstance(state, dict) else {}
+    memory_keys = state_obj.get("memory_keys")
+    if not isinstance(memory_keys, dict):
+        memory_keys = {}
+    runtime_config = state_obj.get("runtime_config")
+    if not isinstance(runtime_config, dict):
+        runtime_config = {}
+    kb_ids = memory_keys.get("kb_ids")
+    if not isinstance(kb_ids, list):
+        kb_ids = []
+    return {
+        "thread_id": str(thread_id or memory_keys.get("thread_id") or ""),
+        "user_id": str(memory_keys.get("user_id") or "local"),
+        "kb_ids": [str(item) for item in kb_ids if isinstance(item, str) and item.strip()],
+        "runtime_config": runtime_config,
+        "message_budget": {
+            "max_candidates": int(
+                runtime_config.get("parallel_retrieval_max_branches")
+                if isinstance(runtime_config.get("parallel_retrieval_max_branches"), int)
+                else getattr(settings, "kb_chat_parallel_retrieval_max_branches", 6)
+            ),
+            "min_queries": int(
+                runtime_config.get("parallel_retrieval_min_queries")
+                if isinstance(runtime_config.get("parallel_retrieval_min_queries"), int)
+                else getattr(settings, "kb_chat_parallel_retrieval_min_queries", 2)
+            ),
+            "include_main": bool(
+                runtime_config.get("parallel_retrieval_include_main")
+                if isinstance(runtime_config.get("parallel_retrieval_include_main"), bool)
+                else getattr(settings, "kb_chat_parallel_retrieval_include_main", True)
+            ),
+        },
+    }
 
 
 def _to_iso_now() -> str:
@@ -480,6 +593,12 @@ def _build_node_input_display_items(
             key="normalized_query",
             label="主问题",
             value=_pick_text(snapshot, "normalized_query", "coref_query", "user_input"),
+        )
+        _append_display_item(
+            items,
+            key="query_strategy",
+            label="消息策略",
+            value=snapshot.get("query_strategy"),
         )
         _append_display_item(
             items,
@@ -949,6 +1068,10 @@ def _build_node_output_display_items(
             value=summary.get("reason"),
         )
     elif node_name == "prepare_messages":
+        message_plan = _as_dict(summary.get("message_plan")) or {}
+        query_bundle_summary = _as_dict(summary.get("query_bundle")) or {}
+        diagnostics = _as_dict(summary.get("diagnostics")) or {}
+        budget = _as_dict(message_plan.get("budget")) or {}
         query_items = _format_query_items(snapshot.get("query_items"))
         _append_display_item(
             items,
@@ -958,11 +1081,47 @@ def _build_node_output_display_items(
         )
         _append_display_item(
             items,
-            key="query_items_count",
-            label="查询项数量",
-            value=summary.get("query_items_count")
-            if summary.get("query_items_count") is not None
+            key="query_bundle_items_count",
+            label="入选查询数",
+            value=query_bundle_summary.get("items_count")
+            if query_bundle_summary.get("items_count") is not None
             else len(query_items),
+        )
+        _append_display_item(
+            items,
+            key="message_plan_candidate_count",
+            label="候选查询数",
+            value=message_plan.get("candidate_count"),
+        )
+        _append_display_item(
+            items,
+            key="message_plan_dropped_count",
+            label="丢弃查询数",
+            value=message_plan.get("dropped_count"),
+        )
+        _append_display_item(
+            items,
+            key="message_plan_strategy",
+            label="消息策略",
+            value=message_plan.get("strategy"),
+        )
+        _append_display_item(
+            items,
+            key="message_plan_max_candidates",
+            label="分支预算上限",
+            value=budget.get("max_candidates"),
+        )
+        _append_display_item(
+            items,
+            key="fallback_reason",
+            label="回退原因",
+            value=diagnostics.get("fallback_reason"),
+        )
+        _append_display_item(
+            items,
+            key="quality_signals",
+            label="质量信号",
+            value=diagnostics.get("quality_signals"),
         )
     elif node_name == "dispatch_subqueries":
         _append_display_item(
@@ -1345,13 +1504,28 @@ class KbChatAgenticGraph:
             if complexity_cache_enabled and complexity_cache_ttl > 0
             else None
         )
+        prepare_messages_cache_policy = (
+            CachePolicy(
+                key_func=_prepare_messages_cache_key_factory(),
+                ttl=complexity_cache_ttl,
+            )
+            if complexity_cache_enabled and complexity_cache_ttl > 0
+            else None
+        )
         self._graph_cache = (
             _KB_CHAT_GRAPH_CACHE
-            if complexity_cache_policy or entity_expand_cache_policy
+            if (
+                complexity_cache_policy
+                or entity_expand_cache_policy
+                or prepare_messages_cache_policy
+            )
             else None
         )
 
-        graph = StateGraph(KbChatAgenticState)
+        graph = StateGraph(
+            state_schema=KbChatAgenticState,
+            context_schema=KbChatGraphContext,
+        )
 
         # -----------------
         # Preprocess chain
@@ -1436,6 +1610,10 @@ class KbChatAgenticGraph:
                 "prepare_messages", partial(prepare_messages, settings=settings)
             ),
             metadata=_NODE_METADATA["prepare_messages"],
+            input_schema=PrepareMessagesInput,
+            retry_policy=llm_preprocess_retry_policy,
+            cache_policy=prepare_messages_cache_policy,
+            destinations=("dispatch_subqueries", "transform_query"),
         )
         graph.add_node(
             "dispatch_subqueries",
@@ -1600,14 +1778,28 @@ class KbChatAgenticGraph:
             recursion_limit=int(self._settings.kb_chat_graph_recursion_limit),
         )
 
+    def make_run_context(
+        self,
+        *,
+        thread_id: str | None = None,
+        state: dict[str, Any] | None = None,
+    ) -> KbChatGraphContext:
+        return build_kb_chat_run_context(
+            thread_id=thread_id,
+            state=state,
+            settings=self._settings,
+        )
+
     async def run(
         self,
         state: dict,
         thread_id: str | None = None,
         checkpointer: BaseCheckpointSaver | None = None,
         store: BaseStore | None = None,
+        run_context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         compiled = self.compile(checkpointer=checkpointer, store=store)
         config = self.make_run_config(thread_id=thread_id)
-        result = await compiled.ainvoke(state, config)
+        context = run_context or self.make_run_context(thread_id=thread_id, state=state)
+        result = await compiled.ainvoke(state, config, context=context)
         return cast(dict[str, Any], result)

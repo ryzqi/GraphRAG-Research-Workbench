@@ -204,9 +204,25 @@ function metricFromSummary(
     metrics.push({ label: '证据数', value: String(evidenceCount), tone: 'primary' });
   }
 
-  const queryCount = summary.query_count ?? summary.query_items_count;
+  const queryBundle = asRecord(summary.query_bundle);
+  const messagePlan = asRecord(summary.message_plan);
+  const queryCount =
+    summary.query_count ??
+    summary.query_bundle_items_count ??
+    queryBundle?.items_count ??
+    summary.query_items_count;
   if (typeof queryCount === 'number') {
     metrics.push({ label: '查询数', value: String(queryCount) });
+  }
+
+  const droppedCount =
+    summary.message_plan_dropped_count ?? messagePlan?.dropped_count;
+  if (typeof droppedCount === 'number') {
+    metrics.push({
+      label: '丢弃',
+      value: String(droppedCount),
+      tone: droppedCount > 0 ? 'warning' : 'success',
+    });
   }
 
   if (typeof summary.rerank_applied === 'boolean') {

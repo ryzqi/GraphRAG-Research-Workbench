@@ -83,6 +83,7 @@ class _KbChatExecution:
     retrieval_meta: dict[str, Any]
     graph: object
     state: dict[str, Any]
+    run_context: dict[str, Any] | None
 
 
 class KbChatService:
@@ -613,6 +614,12 @@ class KbChatService:
             runtime_config=kb_chat_config.model_dump(mode="json"),
         )
         state["metrics"] = {"context": context_metrics}
+        make_run_context = getattr(graph, "make_run_context", None)
+        run_context = (
+            make_run_context(thread_id=thread_id, state=state)
+            if callable(make_run_context)
+            else None
+        )
 
         return _KbChatExecution(
             started_at=started_at,
@@ -626,6 +633,7 @@ class KbChatService:
             retrieval_meta=retrieval_meta,
             graph=graph,
             state=state,
+            run_context=run_context,
         )
 
     def _build_observability(
@@ -1043,7 +1051,6 @@ class KbChatService:
                 "reason",
                 "normalization_source",
                 "count",
-                "query_items_count",
                 "hyde_docs_count",
                 "requested_count",
                 "generated_count",
@@ -1078,6 +1085,43 @@ class KbChatService:
                 if value is not None:
                     io_summary[key] = value
 
+        if node == "prepare_messages" and isinstance(node_summary, dict):
+            message_plan = (
+                node_summary.get("message_plan")
+                if isinstance(node_summary.get("message_plan"), dict)
+                else {}
+            )
+            query_bundle = (
+                node_summary.get("query_bundle")
+                if isinstance(node_summary.get("query_bundle"), dict)
+                else {}
+            )
+            diagnostics = (
+                node_summary.get("diagnostics")
+                if isinstance(node_summary.get("diagnostics"), dict)
+                else {}
+            )
+            budget = (
+                message_plan.get("budget")
+                if isinstance(message_plan.get("budget"), dict)
+                else {}
+            )
+            for key, value in (
+                ("message_plan_strategy", message_plan.get("strategy")),
+                ("message_plan_candidate_count", message_plan.get("candidate_count")),
+                ("message_plan_selected_count", message_plan.get("selected_count")),
+                ("message_plan_dropped_count", message_plan.get("dropped_count")),
+                ("message_plan_max_candidates", budget.get("max_candidates")),
+                ("message_plan_min_queries", budget.get("min_queries")),
+                ("query_bundle_items_count", query_bundle.get("items_count")),
+                ("query_bundle_kind_breakdown", query_bundle.get("kind_breakdown")),
+                ("query_bundle_dedup_stats", query_bundle.get("dedup_stats")),
+                ("fallback_reason", diagnostics.get("fallback_reason")),
+                ("quality_signals", diagnostics.get("quality_signals")),
+            ):
+                if value is not None:
+                    io_summary[key] = value
+
         if node in {"coref_rewrite", "normalize_rewrite", "transform_query"}:
             query = update.get("normalized_query") or update.get("coref_query")
             if isinstance(query, str) and query.strip():
@@ -1099,7 +1143,8 @@ class KbChatService:
         if node == "prepare_messages":
             query_items = update.get("query_items")
             if isinstance(query_items, list):
-                io_summary["query_items_count"] = len(query_items)
+                io_summary["query_bundle_items_count"] = len(query_items)
+                io_summary["query_count"] = len(query_items)
 
         if node == "retrieve":
             metrics = update.get("metrics")
@@ -1664,6 +1709,7 @@ class KbChatService:
                 thread_id=exec_ctx.thread_id,
                 checkpointer=CheckpointManager.get_checkpointer(),
                 store=store,
+                run_context=exec_ctx.run_context,
             )
 
             if not isinstance(result, dict):
@@ -1888,6 +1934,7 @@ class KbChatService:
             stream = compiled.astream(
                 exec_ctx.state,
                 config,
+                context=exec_ctx.run_context,
                 stream_mode=["messages", "updates", "custom"],
                 subgraphs=True,
             )

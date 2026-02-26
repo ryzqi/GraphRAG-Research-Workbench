@@ -45,6 +45,9 @@ from .runtime_config import (
     normalize_alias_max,
     normalize_llm_enabled,
     normalize_timeout_seconds,
+    parallel_retrieval_include_main,
+    parallel_retrieval_max_branches,
+    parallel_retrieval_min_queries,
     query_rewrite_enabled,
 )
 
@@ -107,6 +110,122 @@ def _dedupe_string_list(values: list[str]) -> list[str]:
         deduped.append(normalized)
         seen.add(key)
     return deduped
+
+
+def _as_dict(value: Any) -> dict[str, Any] | None:
+    if isinstance(value, dict):
+        return value
+    return None
+
+
+def _runtime_context(runtime: Runtime[Any]) -> dict[str, Any]:
+    context = getattr(runtime, "context", None)
+    if isinstance(context, dict):
+        return context
+    return {}
+
+
+def _safe_int(value: Any, *, default: int) -> int:
+    if isinstance(value, bool):
+        return default
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    return default
+
+
+def _safe_float(value: Any, *, default: float) -> float:
+    if isinstance(value, bool):
+        return default
+    if isinstance(value, (int, float)):
+        return float(value)
+    return default
+
+
+def _resolve_prepare_strategy(state: dict[str, Any]) -> str:
+    strategy_raw = state.get("query_strategy")
+    strategy = str(strategy_raw).strip() if isinstance(strategy_raw, str) else ""
+    if not strategy:
+        decomposition_plan = _as_dict(state.get("decomposition_plan")) or {}
+        strategy = str(decomposition_plan.get("strategy") or "").strip()
+    if strategy not in {"direct", "decomposition", "multi_query"}:
+        return "direct"
+    return strategy
+
+
+def _resolve_prepare_budget(
+    *,
+    state: dict[str, Any],
+    runtime: Runtime[Any],
+    settings: Settings,
+) -> dict[str, Any]:
+    context = _runtime_context(runtime)
+    context_budget = _as_dict(context.get("message_budget")) or {}
+    max_candidates = _safe_int(
+        context_budget.get("max_candidates"),
+        default=parallel_retrieval_max_branches(state, settings),
+    )
+    min_queries = _safe_int(
+        context_budget.get("min_queries"),
+        default=parallel_retrieval_min_queries(state, settings),
+    )
+    quality_threshold = _safe_float(
+        context_budget.get("quality_threshold"),
+        default=0.52,
+    )
+    include_main = context_budget.get("include_main")
+    if not isinstance(include_main, bool):
+        include_main = parallel_retrieval_include_main(state, settings)
+    return {
+        "max_candidates": max(1, min(max_candidates, 16)),
+        "min_queries": max(1, min(min_queries, 8)),
+        "quality_threshold": max(0.0, min(quality_threshold, 1.0)),
+        "include_main": include_main,
+    }
+
+
+def _prepare_quality_score(item: dict[str, Any], *, strategy: str) -> float:
+    kind = str(item.get("kind") or "other").strip() or "other"
+    query = str(item.get("query") or "").strip()
+    if not query:
+        return 0.0
+
+    base = {
+        "main": 1.0,
+        "subquery": 0.92,
+        "variant": 0.84,
+        "hyde": 0.74,
+        "rewrite": 0.78,
+        "other": 0.72,
+    }.get(kind, 0.68)
+
+    length = len(query)
+    if length < 4:
+        base -= 0.28
+    elif length < 8:
+        base -= 0.08
+    elif length > 180:
+        base -= 0.12
+
+    if strategy == "decomposition" and kind == "subquery":
+        base += 0.05
+    if strategy == "multi_query" and kind == "variant":
+        base += 0.04
+    if kind == "hyde":
+        hyde_queries = item.get("hyde_queries")
+        if isinstance(hyde_queries, list) and len(hyde_queries) > 1:
+            base += 0.02
+
+    if isinstance(item.get("purpose"), str) and str(item.get("purpose")).strip():
+        base += 0.02
+    raw_tags = item.get("coverage_tags")
+    if isinstance(raw_tags, list) and any(
+        isinstance(tag, str) and str(tag).strip() for tag in raw_tags
+    ):
+        base += 0.03
+
+    return round(max(0.0, min(base, 1.0)), 4)
 
 
 def _merge_stage_summary(
@@ -1144,56 +1263,316 @@ async def hyde(state: dict, settings: Settings) -> dict[str, Any]:
     return {"hyde_docs": hyde_docs, "stage_summaries": stage_summaries}
 
 
-async def prepare_messages(state: dict, settings: Settings) -> dict[str, Any]:
-    """Build query_items for downstream retrieval/reflection layers.
+async def prepare_messages(
+    state: dict,
+    runtime: Runtime[Any],
+    settings: Settings,
+) -> Command[str]:
+    """Assemble retrieval query bundle and route with Command.
 
-    Note: We intentionally do NOT inject extra SystemMessage hints into `messages` to avoid
-    leaking internal artifacts to clients via message streaming.
+    This node keeps message/query planning explicit for observability:
+    - message_plan: candidate scoring + budget decisions
+    - query_bundle: selected query_items + dedupe statistics
+    - prepare_diagnostics: quality signals + fallback reason
     """
+
     start = time.perf_counter()
     normalized = state.get("normalized_query")
     if not isinstance(normalized, str) or not normalized.strip():
         normalized = _extract_user_input(state)
 
-    sub_queries = state.get("sub_queries")
-    if not isinstance(sub_queries, list):
-        sub_queries = []
+    sub_queries_raw = state.get("sub_queries")
+    if not isinstance(sub_queries_raw, list):
+        sub_queries_raw = []
+    sub_queries = [q for q in sub_queries_raw if isinstance(q, str) and q.strip()]
+
     decomposition_plan = state.get("decomposition_plan")
     if not isinstance(decomposition_plan, dict):
         decomposition_plan = {}
-    sub_query_specs = decomposition_plan.get("sub_query_specs")
-    if not isinstance(sub_query_specs, list):
-        sub_query_specs = []
-    multi_queries = state.get("multi_queries")
-    if not isinstance(multi_queries, list):
-        multi_queries = []
-    alias_variants = _normalize_meta_aliases(state)
-    hyde_docs = state.get("hyde_docs")
-    if not isinstance(hyde_docs, list):
-        hyde_docs = []
-    normalized_hyde_docs = [doc for doc in hyde_docs if isinstance(doc, str) and doc.strip()]
+    sub_query_specs_raw = decomposition_plan.get("sub_query_specs")
+    if not isinstance(sub_query_specs_raw, list):
+        sub_query_specs_raw = []
+    sub_query_specs = [spec for spec in sub_query_specs_raw if isinstance(spec, dict)]
 
-    query_items = build_query_items(
+    multi_queries_raw = state.get("multi_queries")
+    if not isinstance(multi_queries_raw, list):
+        multi_queries_raw = []
+    multi_queries = [
+        query for query in multi_queries_raw if isinstance(query, str) and query.strip()
+    ]
+
+    alias_variants = _normalize_meta_aliases(state)
+    hyde_docs_raw = state.get("hyde_docs")
+    if not isinstance(hyde_docs_raw, list):
+        hyde_docs_raw = []
+    hyde_docs = [doc for doc in hyde_docs_raw if isinstance(doc, str) and doc.strip()]
+
+    strategy = _resolve_prepare_strategy(state)
+    budget = _resolve_prepare_budget(state=state, runtime=runtime, settings=settings)
+
+    raw_items = build_query_items(
         main_query=normalized.strip(),
-        sub_queries=[q for q in sub_queries if isinstance(q, str)],
-        sub_query_specs=[spec for spec in sub_query_specs if isinstance(spec, dict)],
-        variants=[
-            q for q in (multi_queries or alias_variants) if isinstance(q, str)
-        ],
-        hyde_docs=normalized_hyde_docs or None,
+        sub_queries=sub_queries,
+        sub_query_specs=sub_query_specs,
+        variants=[q for q in (multi_queries or alias_variants) if isinstance(q, str)],
+        hyde_docs=hyde_docs or None,
     )
+
+    scored_rows: list[dict[str, Any]] = []
+    for idx, raw_item in enumerate(raw_items):
+        item = _as_dict(raw_item) or {}
+        query = str(item.get("query") or "").strip()
+        if not query:
+            continue
+        kind = str(item.get("kind") or "other").strip() or "other"
+        priority = item.get("priority")
+        if not isinstance(priority, int):
+            if kind == "main":
+                priority = 1
+            elif kind == "hyde":
+                priority = 7
+            else:
+                priority = idx + 2
+        source = "build_query_items"
+        if kind == "subquery":
+            source = "decomposition"
+        elif kind == "variant":
+            source = "multi_query"
+        elif kind == "hyde":
+            source = "hyde"
+
+        scored_rows.append(
+            {
+                "index": idx,
+                "kind": kind,
+                "query": query,
+                "source": source,
+                "priority": max(1, min(int(priority), 8)),
+                "quality_score": _prepare_quality_score(item, strategy=strategy),
+                "item": item,
+            }
+        )
+
+    deduped_rows: list[dict[str, Any]] = []
+    dropped_rows: list[dict[str, Any]] = []
+    seen_keys: set[tuple[str, bool, bool]] = set()
+    for row in scored_rows:
+        item = _as_dict(row.get("item")) or {}
+        dedupe_key = (
+            str(row.get("query") or "").casefold(),
+            bool(item.get("use_dense", True)),
+            bool(item.get("use_bm25", True)),
+        )
+        if dedupe_key in seen_keys:
+            dropped_rows.append(
+                {
+                    "kind": row.get("kind"),
+                    "query": row.get("query"),
+                    "reason": "duplicate",
+                }
+            )
+            continue
+        seen_keys.add(dedupe_key)
+        deduped_rows.append(row)
+
+    quality_threshold = float(budget["quality_threshold"])
+    filtered_rows: list[dict[str, Any]] = []
+    for row in deduped_rows:
+        score = float(row.get("quality_score") or 0.0)
+        kind = str(row.get("kind") or "")
+        if score < quality_threshold and kind != "main":
+            dropped_rows.append(
+                {
+                    "kind": kind or "other",
+                    "query": row.get("query"),
+                    "reason": "low_quality",
+                    "quality_score": score,
+                }
+            )
+            continue
+        filtered_rows.append(row)
+
+    filtered_rows = sorted(
+        filtered_rows,
+        key=lambda row: (
+            0 if str(row.get("kind") or "") == "main" else 1,
+            int(row.get("priority") or 99),
+            -float(row.get("quality_score") or 0.0),
+            int(row.get("index") or 0),
+        ),
+    )
+
+    max_candidates = int(budget["max_candidates"])
+    selected_rows: list[dict[str, Any]] = []
+    for row in filtered_rows:
+        if len(selected_rows) >= max_candidates:
+            dropped_rows.append(
+                {
+                    "kind": row.get("kind"),
+                    "query": row.get("query"),
+                    "reason": "over_budget",
+                }
+            )
+            continue
+        selected_rows.append(row)
+
+    include_main = bool(budget["include_main"])
+    if include_main and not any(
+        str(row.get("kind") or "") == "main" for row in selected_rows
+    ):
+        main_row = next(
+            (
+                row
+                for row in filtered_rows
+                if str(row.get("kind") or "") == "main"
+            ),
+            None,
+        )
+        if main_row is not None:
+            if len(selected_rows) >= max_candidates and selected_rows:
+                removed = selected_rows.pop()
+                dropped_rows.append(
+                    {
+                        "kind": removed.get("kind"),
+                        "query": removed.get("query"),
+                        "reason": "replace_with_main",
+                    }
+                )
+            selected_rows.insert(0, main_row)
+
+    selected_items: list[dict[str, Any]] = []
+    for row in selected_rows:
+        item = _as_dict(row.get("item"))
+        if item:
+            selected_items.append(item)
+
+    kind_breakdown: dict[str, int] = {}
+    for item in selected_items:
+        kind = str(item.get("kind") or "other").strip() or "other"
+        kind_breakdown[kind] = int(kind_breakdown.get(kind, 0)) + 1
+
+    fallback_reason = "none"
+    if not selected_items:
+        fallback_reason = (
+            "all_filtered_low_quality" if deduped_rows else "empty_query_bundle"
+        )
+    elif strategy != "direct" and len(selected_items) < int(budget["min_queries"]):
+        fallback_reason = "below_min_queries"
+
+    quality_signals: list[str] = []
+    if any(str(row.get("kind")) == "subquery" for row in scored_rows):
+        quality_signals.append("has_subqueries")
+    if any(str(row.get("kind")) == "variant" for row in scored_rows):
+        quality_signals.append("has_variants")
+    if any(str(row.get("kind")) == "hyde" for row in scored_rows):
+        quality_signals.append("has_hyde")
+    if any(str(item.get("reason")) == "duplicate" for item in dropped_rows):
+        quality_signals.append("dedup_applied")
+    if any(str(item.get("reason")) == "low_quality" for item in dropped_rows):
+        quality_signals.append("quality_filtered")
+    if any(str(item.get("reason")) == "over_budget" for item in dropped_rows):
+        quality_signals.append("budget_trimmed")
+    if fallback_reason != "none":
+        quality_signals.append(f"fallback:{fallback_reason}")
+
+    message_plan = {
+        "strategy": strategy,
+        "candidates": [
+            {
+                "index": int(row.get("index") or 0),
+                "kind": str(row.get("kind") or "other"),
+                "query": str(row.get("query") or ""),
+                "source": str(row.get("source") or "unknown"),
+                "priority": int(row.get("priority") or 1),
+                "quality_score": float(row.get("quality_score") or 0.0),
+            }
+            for row in scored_rows
+        ],
+        "selected": [
+            {
+                "index": int(row.get("index") or 0),
+                "kind": str(row.get("kind") or "other"),
+                "query": str(row.get("query") or ""),
+                "source": str(row.get("source") or "unknown"),
+                "priority": int(row.get("priority") or 1),
+                "quality_score": float(row.get("quality_score") or 0.0),
+            }
+            for row in selected_rows
+        ],
+        "dropped": dropped_rows,
+        "budget": {
+            **budget,
+            "candidate_count": len(scored_rows),
+            "selected_count": len(selected_items),
+        },
+    }
+
+    query_bundle = {
+        "items": selected_items,
+        "kind_breakdown": kind_breakdown,
+        "dedup_stats": {
+            "raw_count": len(scored_rows),
+            "after_dedup_count": len(deduped_rows),
+            "selected_count": len(selected_items),
+            "dropped_count": len(dropped_rows),
+            "duplicate_dropped": sum(
+                1 for item in dropped_rows if str(item.get("reason")) == "duplicate"
+            ),
+            "low_quality_dropped": sum(
+                1 for item in dropped_rows if str(item.get("reason")) == "low_quality"
+            ),
+        },
+    }
+
+    latency_ms = int((time.perf_counter() - start) * 1000)
+    prepare_diagnostics = {
+        "quality_signals": quality_signals,
+        "fallback_reason": fallback_reason,
+        "timing": {"latency_ms": latency_ms},
+    }
 
     stage_summaries = _merge_stage_summary(
         state,
         "prepare_messages",
         {
-            "query_items_count": len(query_items),
-            "hyde_docs_count": len(normalized_hyde_docs),
-            "alias_count": len(alias_variants),
-            "completed_at": now_iso(),
-            "latency_ms": int((time.perf_counter() - start) * 1000),
+            "message_plan": {
+                "strategy": strategy,
+                "candidate_count": len(scored_rows),
+                "selected_count": len(selected_items),
+                "dropped_count": len(dropped_rows),
+                "budget": budget,
+            },
+            "query_bundle": {
+                "items_count": len(selected_items),
+                "kind_breakdown": kind_breakdown,
+                "dedup_stats": query_bundle["dedup_stats"],
+            },
+            "diagnostics": {
+                "quality_signals": quality_signals,
+                "fallback_reason": fallback_reason,
+                "latency_ms": latency_ms,
+                "completed_at": now_iso(),
+            },
         },
         settings=settings,
     )
 
-    return {"query_items": query_items, "stage_summaries": stage_summaries}
+    update: dict[str, Any] = {
+        "query_items": selected_items,
+        "query_bundle": query_bundle,
+        "message_plan": message_plan,
+        "prepare_diagnostics": prepare_diagnostics,
+        "stage_summaries": stage_summaries,
+    }
+
+    goto = "dispatch_subqueries"
+    if fallback_reason != "none":
+        goto = "transform_query"
+        reflection = _as_dict(state.get("reflection")) or {}
+        update["reflection"] = {
+            **reflection,
+            "action": "transform_query",
+            "reason": fallback_reason,
+        }
+
+    return Command(update=update, goto=goto)

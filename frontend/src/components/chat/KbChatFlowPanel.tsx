@@ -230,6 +230,26 @@ function pickStringList(snapshot: Record<string, unknown>, ...keys: string[]): s
   return null;
 }
 
+function recordToLines(value: unknown): string[] | null {
+  const record = asRecord(value);
+  if (!record) {
+    return null;
+  }
+  const lines = Object.entries(record)
+    .map(([key, item]) => {
+      if (typeof item === 'number' || typeof item === 'boolean') {
+        return `${key}: ${String(item)}`;
+      }
+      const text = asNonEmptyText(item);
+      if (text) {
+        return `${key}: ${text}`;
+      }
+      return null;
+    })
+    .filter((line): line is string => Boolean(line));
+  return lines.length > 0 ? lines : null;
+}
+
 function getContextFrame(snapshot: Record<string, unknown>): Record<string, unknown> | null {
   return asRecord(snapshot.context_frame);
 }
@@ -381,13 +401,19 @@ function buildFallbackInputItems(
       label: '主问题',
       value: pickText(snapshot, 'normalized_query', 'coref_query', 'user_input'),
     });
+    pushDisplayItem(items, {
+      key: 'query_strategy',
+      label: '消息策略',
+      value: asNonEmptyText(snapshot.query_strategy),
+    });
     pushDisplayItem(items, { key: 'sub_queries', label: '分解问题', value: pickStringList(snapshot, 'sub_queries') });
     pushDisplayItem(items, {
       key: 'multi_queries',
       label: '多路查询',
       value: pickStringList(snapshot, 'multi_queries'),
     });
-    pushDisplayItem(items, { key: 'hyde_doc', label: 'HyDE 内容', value: pickText(snapshot, 'hyde_doc') });
+    const hydeDocs = pickStringList(snapshot, 'hyde_docs');
+    pushDisplayItem(items, { key: 'hyde_docs_count', label: 'HyDE 数量', value: hydeDocs?.length });
   } else if (nodeId === 'retrieve') {
     const queryItems = formatQueryItems(snapshot.query_items);
     if (queryItems.length > 0) {
@@ -541,11 +567,30 @@ function buildFallbackOutputItems(
       pushDisplayItem(items, { key: 'reason', label: '处理原因', value: summary.reason });
     } else if (nodeId === 'prepare_messages') {
       const queryItems = formatQueryItems(snapshot.query_items);
+      const messagePlan = asRecord(summary.message_plan) ?? {};
+      const queryBundle = asRecord(summary.query_bundle) ?? {};
+      const diagnostics = asRecord(summary.diagnostics) ?? {};
+      const budget = asRecord(messagePlan.budget) ?? {};
       pushDisplayItem(items, { key: 'query_items', label: '查询项', value: queryItems });
       pushDisplayItem(items, {
-        key: 'query_items_count',
-        label: '查询项数量',
-        value: typeof summary.query_items_count === 'number' ? summary.query_items_count : queryItems.length,
+        key: 'query_bundle_items_count',
+        label: '入选数量',
+        value: typeof queryBundle.items_count === 'number' ? queryBundle.items_count : queryItems.length,
+      });
+      pushDisplayItem(items, { key: 'message_plan_candidate_count', label: '候选数量', value: messagePlan.candidate_count });
+      pushDisplayItem(items, { key: 'message_plan_dropped_count', label: '丢弃数量', value: messagePlan.dropped_count });
+      pushDisplayItem(items, { key: 'message_plan_strategy', label: '策略', value: messagePlan.strategy });
+      pushDisplayItem(items, { key: 'message_plan_max_candidates', label: '预算上限', value: budget.max_candidates });
+      pushDisplayItem(items, { key: 'fallback_reason', label: '回退原因', value: diagnostics.fallback_reason });
+      pushDisplayItem(items, {
+        key: 'quality_signals',
+        label: '质量信号',
+        value: Array.isArray(diagnostics.quality_signals) ? diagnostics.quality_signals : null,
+      });
+      pushDisplayItem(items, {
+        key: 'query_bundle_kind_breakdown',
+        label: '类型分布',
+        value: recordToLines(queryBundle.kind_breakdown),
       });
     } else if (nodeId === 'retrieve') {
       pushDisplayItem(items, {

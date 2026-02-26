@@ -152,6 +152,35 @@ class NormalizeMeta(TypedDict, total=False):
     constraint_preserved: bool
 
 
+class MessagePlanCandidate(TypedDict, total=False):
+    index: int
+    kind: str
+    query: str
+    source: str
+    priority: int
+    quality_score: float
+
+
+class MessagePlan(TypedDict, total=False):
+    strategy: Literal["direct", "decomposition", "multi_query"]
+    candidates: list[MessagePlanCandidate]
+    selected: list[MessagePlanCandidate]
+    dropped: list[dict[str, Any]]
+    budget: dict[str, Any]
+
+
+class QueryBundle(TypedDict, total=False):
+    items: list[QueryItem]
+    kind_breakdown: dict[str, int]
+    dedup_stats: dict[str, int]
+
+
+class PrepareDiagnostics(TypedDict, total=False):
+    quality_signals: list[str]
+    fallback_reason: str
+    timing: dict[str, Any]
+
+
 # -----------------------------
 # Graph state schema
 # -----------------------------
@@ -191,7 +220,8 @@ class KbChatAgenticState(KbChatAgenticStateBase, total=False):
     - Decomposition: reads normalized_query -> writes sub_queries
     - MultiQuery: reads normalized_query -> writes multi_queries
     - HyDE: reads normalized_query -> writes hyde_docs
-    - QueryBundle: reads query family -> writes query_items (flattened, for retrieval)
+    - QueryBundle: reads query family -> writes
+      message_plan/query_bundle/prepare_diagnostics/query_items
     - RetrievalLayer: reads query family -> writes final_context/metrics
     - ReflectionLayer: reads final_context -> writes reflection (+ optional rewritten query)
     - Generator: reads final_context -> writes draft_answer/final_answer
@@ -215,6 +245,9 @@ class KbChatAgenticState(KbChatAgenticStateBase, total=False):
     sub_queries: list[str]
     multi_queries: list[str]
     hyde_docs: list[str]
+    message_plan: MessagePlan
+    query_bundle: QueryBundle
+    prepare_diagnostics: PrepareDiagnostics
     query_items: list[QueryItem]
     subquery_runs: Annotated[list[dict[str, Any]], add]
     subquery_task: dict[str, Any]
@@ -256,6 +289,23 @@ def make_initial_state(
         "multi_queries": [],
         "hyde_docs": [],
         "entity_expand_meta": {},
+        "message_plan": {
+            "strategy": "direct",
+            "candidates": [],
+            "selected": [],
+            "dropped": [],
+            "budget": {},
+        },
+        "query_bundle": {
+            "items": [],
+            "kind_breakdown": {},
+            "dedup_stats": {},
+        },
+        "prepare_diagnostics": {
+            "quality_signals": [],
+            "fallback_reason": "none",
+            "timing": {},
+        },
         "query_items": [],
         "subquery_runs": [],
         "decomposition_plan": {

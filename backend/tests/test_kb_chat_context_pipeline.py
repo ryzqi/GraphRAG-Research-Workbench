@@ -510,14 +510,51 @@ async def test_prepare_messages_uses_hyde_docs_only(settings):
         "multi_queries": [],
         "hyde_docs": ["hypothesis A", "hypothesis B"],
         "stage_summaries": {},
+        "runtime_config": {},
     }
 
-    result = await preprocess.prepare_messages(state, settings=settings)
-    hyde_items = [item for item in result["query_items"] if item.get("kind") == "hyde"]
+    result = await preprocess.prepare_messages(state, runtime=_Runtime(), settings=settings)
+    assert isinstance(result, Command)
+    assert result.goto == "dispatch_subqueries"
+    assert isinstance(result.update, dict)
+    hyde_items = [
+        item
+        for item in result.update["query_items"]
+        if isinstance(item, dict) and item.get("kind") == "hyde"
+    ]
 
     assert len(hyde_items) == 1
     assert hyde_items[0]["query"] == "hypothesis A"
     assert hyde_items[0]["hyde_queries"] == ["hypothesis A", "hypothesis B"]
+    summary = result.update["stage_summaries"]["prepare_messages"]
+    assert summary["query_bundle"]["items_count"] == len(result.update["query_items"])
+    assert summary["diagnostics"]["fallback_reason"] == "none"
+
+
+@pytest.mark.asyncio
+async def test_prepare_messages_routes_transform_query_when_bundle_empty(settings):
+    state = {
+        "normalized_query": "ok",
+        "sub_queries": [],
+        "multi_queries": [],
+        "hyde_docs": [],
+        "query_strategy": "decomposition",
+        "stage_summaries": {},
+        "runtime_config": {
+            "parallel_retrieval_min_queries": 3,
+            "parallel_retrieval_max_branches": 3,
+            "parallel_retrieval_include_main": False,
+        },
+    }
+
+    result = await preprocess.prepare_messages(state, runtime=_Runtime(), settings=settings)
+
+    assert isinstance(result, Command)
+    assert result.goto == "transform_query"
+    assert isinstance(result.update, dict)
+    summary = result.update["stage_summaries"]["prepare_messages"]
+    assert summary["diagnostics"]["fallback_reason"] == "below_min_queries"
+    assert result.update["reflection"]["action"] == "transform_query"
 
 
 @pytest.mark.asyncio

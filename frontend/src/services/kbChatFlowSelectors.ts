@@ -22,6 +22,7 @@ const NODE_DETAIL_LIMIT_OVERRIDES: Partial<
   Record<string, Partial<Record<DetailSectionKind, number>>>
 > = {
   coref_rewrite: { output: 4 },
+  prepare_messages: { output: 4 },
 };
 
 const NODE_DETAIL_POLICY_MAP: Record<string, NodeDetailPolicy> = {
@@ -83,8 +84,15 @@ const NODE_DETAIL_POLICY_MAP: Record<string, NodeDetailPolicy> = {
     output: ['enabled', 'reason'],
   },
   prepare_messages: {
-    input: ['normalized_query'],
-    output: ['query_items_count', 'query_items'],
+    input: ['normalized_query', 'query_strategy'],
+    output: [
+      'query_bundle_items_count',
+      'message_plan_candidate_count',
+      'message_plan_dropped_count',
+      'fallback_reason',
+      'quality_signals',
+      'query_items',
+    ],
   },
   dispatch_subqueries: {
     input: ['query_strategy', 'query_items'],
