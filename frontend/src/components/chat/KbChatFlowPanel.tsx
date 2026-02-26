@@ -350,6 +350,14 @@ function summaryKeyForNode(nodeId: string): string {
   if (nodeId === 'generate') return 'generator';
   if (nodeId === 'draft_generate') return 'generator';
   if (nodeId === 'answer_self_check') return 'answer_review';
+  if (
+    nodeId === 'answer_review_citation' ||
+    nodeId === 'answer_review_factual' ||
+    nodeId === 'answer_review_answerability' ||
+    nodeId === 'answer_review_fuse'
+  ) {
+    return 'answer_review';
+  }
   if (nodeId === 'answer_commit') return 'answer_subgraph';
   if (nodeId === 'doc_gate_route') return 'doc_grader';
   return nodeId;
@@ -456,7 +464,14 @@ function buildFallbackInputItems(
       label: '待回答问题',
       value: pickText(snapshot, 'merged_context', 'user_input'),
     });
-  } else if (nodeId === 'answer_review' || nodeId === 'answer_self_check') {
+  } else if (
+    nodeId === 'answer_review' ||
+    nodeId === 'answer_self_check' ||
+    nodeId === 'answer_review_citation' ||
+    nodeId === 'answer_review_factual' ||
+    nodeId === 'answer_review_answerability' ||
+    nodeId === 'answer_review_fuse'
+  ) {
     pushDisplayItem(items, {
       key: 'question',
       label: '用户问题',
@@ -720,11 +735,29 @@ function buildFallbackOutputItems(
     } else if (nodeId === 'generate' || nodeId === 'draft_generate') {
       pushDisplayItem(items, { key: 'draft_answer', label: '生成草稿', value: pickText(snapshot, 'draft_answer') });
       pushDisplayItem(items, { key: 'final_answer', label: '候选答案', value: pickText(snapshot, 'final_answer') });
-    } else if (nodeId === 'answer_review' || nodeId === 'answer_self_check') {
+    } else if (
+      nodeId === 'answer_review' ||
+      nodeId === 'answer_self_check' ||
+      nodeId === 'answer_review_citation' ||
+      nodeId === 'answer_review_factual' ||
+      nodeId === 'answer_review_answerability' ||
+      nodeId === 'answer_review_fuse'
+    ) {
       pushDisplayItem(items, { key: 'passed', label: '答案审查是否通过', value: summary.passed });
       pushDisplayItem(items, { key: 'action', label: '后续动作', value: reflection.action });
       pushDisplayItem(items, { key: 'reason', label: '判定原因', value: summary.reason });
       pushDisplayItem(items, { key: 'fallback_reason', label: '回退原因', value: summary.fallback_reason });
+      pushDisplayItem(items, { key: 'review_risk_level', label: '审查风险等级', value: summary.review_risk_level });
+      pushDisplayItem(items, { key: 'review_confidence', label: '审查置信度', value: summary.review_confidence });
+      pushDisplayItem(items, { key: 'review_decision_source', label: '决策来源', value: summary.review_decision_source });
+      pushDisplayItem(items, {
+        key: 'review_breakdown',
+        label: '子审查结果',
+        value:
+          typeof summary.review_breakdown === 'object' && summary.review_breakdown !== null
+            ? JSON.stringify(summary.review_breakdown, null, 2)
+            : undefined,
+      });
       pushDisplayItem(items, { key: 'best_answer', label: '最佳答案', value: pickText(snapshot, 'best_answer') });
     } else if (nodeId === 'answer_repair') {
       pushDisplayItem(items, { key: 'repair_attempt', label: '修复轮次', value: summary.repair_attempt });

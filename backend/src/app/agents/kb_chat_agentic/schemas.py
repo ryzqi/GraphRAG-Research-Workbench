@@ -62,6 +62,18 @@ class AnswerReviewDecision(BaseModel):
     unsupported_claims: list[str] = Field(default_factory=list)
 
 
+class AnswerReviewSubDecision(BaseModel):
+    """Structured output for one answer-review sub-check."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    passed: bool
+    reason: AnswerReviewReason
+    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+    missing_citations: list[str] = Field(default_factory=list)
+    unsupported_claims: list[str] = Field(default_factory=list)
+
+
 class ReverseQuestionDecision(BaseModel):
     """Structured output for ambiguity clarification generation."""
 

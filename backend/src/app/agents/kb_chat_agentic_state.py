@@ -36,6 +36,10 @@ class ReflectionResult(TypedDict, total=False):
     risk_level: str
     retry_advice: str
     hint: str
+    review_breakdown: dict[str, Any]
+    review_risk_level: str
+    review_confidence: float
+    review_decision_source: str
 
 
 class LoopCounts(TypedDict):
@@ -338,6 +342,7 @@ class KbChatAgenticState(KbChatAgenticStateBase, total=False):
     clarification_payload: ClarificationPayload
 
     doc_gate_state: dict[str, Any]
+    answer_review_runs: Annotated[list[dict[str, Any]], add]
     reflection: ReflectionResult
 
 
@@ -420,4 +425,5 @@ def make_initial_state(
             "reasoning": "",
         },
         "doc_gate_state": {},
+        "answer_review_runs": [],
     }

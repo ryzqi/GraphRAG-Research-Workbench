@@ -1060,6 +1060,10 @@ class KbChatService:
                 "retrieve": "retrieval_layer",
                 "generate": "generator",
                 "answer_subgraph": "answer_subgraph",
+                "answer_review_citation": "answer_review",
+                "answer_review_factual": "answer_review",
+                "answer_review_answerability": "answer_review",
+                "answer_review_fuse": "answer_review",
             }.get(node, node)
             candidate = stage_summaries.get(summary_key)
             if isinstance(candidate, dict):
@@ -1099,6 +1103,10 @@ class KbChatService:
                 "fallback_used",
                 "triggered",
                 "confidence",
+                "review_confidence",
+                "review_risk_level",
+                "review_decision_source",
+                "review_breakdown",
                 "candidate_count",
                 "selected_mention",
                 "resolution_source",
@@ -1206,7 +1214,7 @@ class KbChatService:
                     final_answer, 180
                 )
 
-        if node == "answer_review":
+        if node in {"answer_review", "answer_review_fuse"}:
             best_answer = update.get("best_answer")
             if isinstance(best_answer, str) and best_answer.strip():
                 io_summary["best_answer_preview"] = KbChatService._shorten_stream_text(

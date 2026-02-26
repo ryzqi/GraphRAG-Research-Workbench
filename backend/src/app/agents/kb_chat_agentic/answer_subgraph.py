@@ -8,19 +8,24 @@ commit. It keeps the parent graph routing contract intact by writing
 from __future__ import annotations
 
 import asyncio
+import re
 import time
-from typing import Any, TypedDict
+from typing import Any, Literal, TypedDict
 
+from langchain.agents import create_agent
 from langchain.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
+from langgraph.config import get_stream_writer
 from langgraph.graph import END, StateGraph
 from langgraph.runtime import Runtime
+from langgraph.types import Command, Send
+from pydantic import ValidationError
 
 from app.agents.kb_chat_agentic.reflection import (
-    answer_review,
     generate_draft,
     route_after_answer_review,
 )
+from app.agents.kb_chat_agentic.schemas import AnswerReviewSubDecision
 from app.agents.kb_chat_agentic_state import KbChatAgenticState
 from app.core.settings import Settings
 from app.prompts import get_prompt_loader
@@ -32,6 +37,12 @@ _REPAIRABLE_FAILURE_REASONS = {
     "invalid_citations",
     "citation_mismatch",
 }
+_EVIDENCE_LINE_RE = re.compile(r"^\[([^\[\]\n]{1,128})\]\s+", re.MULTILINE)
+_REVIEW_CHECKS: tuple[Literal["citation", "factual", "answerability"], ...] = (
+    "citation",
+    "factual",
+    "answerability",
+)
 
 
 class KbChatAnswerSubgraphContext(TypedDict, total=False):
@@ -107,30 +118,418 @@ def _resolve_query_text(state: dict[str, Any]) -> str:
     ).strip()
 
 
-def _route_after_self_check(state: dict[str, Any], settings: Settings) -> str:
-    reflection = state.get("reflection")
-    passed = reflection.get("review_passed") if isinstance(reflection, dict) else None
-    if passed is True:
-        return "answer_commit"
+def _extract_evidence_labels(final_context: str) -> dict[str, str]:
+    labels: dict[str, str] = {}
+    if not final_context:
+        return labels
+    for match in _EVIDENCE_LINE_RE.finditer(final_context):
+        raw = _as_str(match.group(1)).strip()
+        if not raw:
+            continue
+        normalized = f"[{raw}]"
+        labels.setdefault(normalized.casefold(), normalized)
+    return labels
 
-    reason = _as_str(reflection.get("reason")) if isinstance(reflection, dict) else ""
-    if reason not in _REPAIRABLE_FAILURE_REASONS:
-        return "answer_commit"
 
-    loop_counts = _get_loop_counts(state)
-    max_generation_retries = int(settings.kb_chat_max_generation_retries)
-    if loop_counts["generation_retries"] >= max_generation_retries:
-        return "answer_commit"
+def _extract_citations(answer: str) -> list[str]:
+    if not answer:
+        return []
+    return [f"[{match.group(1).strip()}]" for match in re.finditer(r"\[([^\[\]\n]{1,128})\]", answer)]
 
-    subgraph_state = state.get("answer_subgraph_state")
-    repair_attempts = (
-        int(subgraph_state.get("repair_attempts") or 0)
-        if isinstance(subgraph_state, dict)
-        else 0
+
+def _partition_citations(
+    answer: str, *, allowed_labels: dict[str, str]
+) -> tuple[list[str], set[str], set[str]]:
+    if not answer:
+        return [], set(), set()
+    all_citations = _extract_citations(answer)
+    valid: set[str] = set()
+    invalid: set[str] = set()
+    for label in all_citations:
+        key = label.casefold()
+        if key in allowed_labels:
+            valid.add(allowed_labels[key])
+        else:
+            invalid.add(label)
+    return all_citations, valid, invalid
+
+
+def _classify_structured_error(exc: Exception) -> str:
+    name = exc.__class__.__name__
+    if name == "StructuredOutputValidationError":
+        return "invalid_schema"
+    if name == "MultipleStructuredOutputsError":
+        return "multiple_structured_outputs"
+    return "error"
+
+
+async def _judge_structured(
+    *,
+    chat_model: ChatOpenAI,
+    system: str,
+    user: str,
+) -> tuple[AnswerReviewSubDecision | None, str | None]:
+    agent = create_agent(
+        model=chat_model,
+        tools=[],
+        system_prompt=system,
+        response_format=AnswerReviewSubDecision,
     )
-    if repair_attempts >= max_generation_retries:
-        return "answer_commit"
-    return "answer_repair"
+    request = {"messages": [{"role": "user", "content": user}]}
+    try:
+        result = await agent.ainvoke(request)
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        return None, _classify_structured_error(exc)
+    if not isinstance(result, dict):
+        return None, "empty_structured_response"
+    structured_payload = result.get("structured_response")
+    if structured_payload is None:
+        return None, "empty_structured_response"
+    if isinstance(structured_payload, AnswerReviewSubDecision):
+        return structured_payload, None
+    try:
+        payload = AnswerReviewSubDecision.model_validate(structured_payload)
+    except ValidationError:
+        return None, "invalid_schema"
+    return payload, None
+
+
+def _resolve_subcheck(state: dict[str, Any], check: str) -> dict[str, Any] | None:
+    runs = state.get("answer_review_runs")
+    if not isinstance(runs, list):
+        return None
+    for run in runs:
+        if not isinstance(run, dict):
+            continue
+        if _as_str(run.get("check")) == check:
+            return run
+    return None
+
+
+async def _answer_review_dispatch(
+    state: dict[str, Any],
+    runtime: Runtime[KbChatAnswerSubgraphContext],
+    *,
+    settings: Settings,
+) -> Command[str]:
+    _ = runtime, settings
+    send_tasks: list[Send] = [
+        Send("answer_review_citation", {"answer_review_task": {"check": "citation"}}),
+        Send("answer_review_factual", {"answer_review_task": {"check": "factual"}}),
+        Send(
+            "answer_review_answerability",
+            {"answer_review_task": {"check": "answerability"}},
+        ),
+    ]
+    return Command(
+        update={
+            "answer_review_runs": [],
+            **_merge_subgraph_state(
+                state,
+                {"phase": "answer_review_dispatch", "last_updated_at": now_iso()},
+            ),
+            **_merge_stage_summary(
+                state,
+                "answer_review_dispatch",
+                {
+                    "check_count": len(send_tasks),
+                    "checks": list(_REVIEW_CHECKS),
+                    "latency_ms": 0,
+                    "completed_at": now_iso(),
+                },
+            ),
+        },
+        goto=send_tasks,
+    )
+
+
+def _emit_review_event(payload: dict[str, Any]) -> None:
+    writer = None
+    try:
+        writer = get_stream_writer()
+    except Exception:
+        writer = None
+    if callable(writer):
+        writer(payload)
+
+
+async def _answer_review_citation(
+    state: dict[str, Any],
+    runtime: Runtime[KbChatAnswerSubgraphContext],
+    *,
+    settings: Settings,
+) -> dict[str, Any]:
+    _ = runtime, settings
+    start = time.perf_counter()
+    draft = _as_str(state.get("draft_answer")).strip()
+    final_context = _as_str(state.get("final_context")).strip()
+    evidence_labels = _extract_evidence_labels(final_context)
+    all_citations, valid_citations, invalid_citations = _partition_citations(
+        draft, allowed_labels=evidence_labels
+    )
+    if not draft:
+        passed = False
+        reason = "non_answer"
+    elif not evidence_labels:
+        passed = False
+        reason = "no_evidence"
+    elif not all_citations:
+        passed = False
+        reason = "missing_citations"
+    elif invalid_citations:
+        passed = False
+        reason = "invalid_citations"
+    else:
+        passed = True
+        reason = "passed"
+    result = {
+        "check": "citation",
+        "passed": passed,
+        "reason": reason,
+        "confidence": 1.0 if passed else 0.9,
+        "fallback_reason": None,
+        "decision_source": "rule",
+        "citation_count": len(all_citations),
+        "valid_citation_count": len(valid_citations),
+        "invalid_citations": sorted(invalid_citations),
+        "latency_ms": int((time.perf_counter() - start) * 1000),
+    }
+    _emit_review_event(
+        {
+            "event_type": "answer_review_subcheck",
+            "check": "citation",
+            "passed": passed,
+            "reason": reason,
+            "ts": now_iso(),
+        }
+    )
+    return {"answer_review_runs": [result]}
+
+
+async def _answer_review_llm_check(
+    state: dict[str, Any],
+    *,
+    settings: Settings,
+    chat_model: ChatOpenAI,
+    check: Literal["factual", "answerability"],
+) -> dict[str, Any]:
+    start = time.perf_counter()
+    question = _resolve_query_text(state)
+    final_context = _as_str(state.get("final_context")).strip()
+    draft = _as_str(state.get("draft_answer")).strip()
+    fallback_reason: str | None = None
+    if check == "factual":
+        prompt_key = "kb_chat/answer_review"
+        default_system = (
+            "你是严格的知识库回答事实审查器。"
+            "仅判断回答是否被参考内容支持，重点检查无依据断言和引用一致性。"
+            '仅输出 JSON：{"passed": true/false, "reason": "...", "confidence": 0-1}。'
+        )
+    else:
+        prompt_key = "kb_chat/answer_review"
+        default_system = (
+            "你是严格的知识库回答有效性审查器。"
+            "仅判断回答是否直接回答问题，避免答非所问、空泛套话。"
+            '仅输出 JSON：{"passed": true/false, "reason": "...", "confidence": 0-1}。'
+        )
+    prompts = get_prompt_loader()
+    try:
+        system_prompt = prompts.render_with_few_shot(prompt_key)
+    except KeyError:
+        system_prompt = default_system
+    judge, fallback_reason = await _judge_structured(
+        chat_model=chat_model,
+        system=system_prompt,
+        user=(
+            f"问题：{question}\n\n参考内容：\n{final_context[:4000]}"
+            f"\n\n回答：\n{draft[:2000]}"
+        ),
+    )
+    if isinstance(judge, AnswerReviewSubDecision):
+        passed = bool(judge.passed)
+        reason = judge.reason
+        confidence = float(judge.confidence)
+        decision_source = "llm"
+    else:
+        passed = settings.kb_chat_grader_fail_policy == "open"
+        reason = "fallback_open" if passed else "fallback_closed"
+        confidence = 0.0
+        decision_source = "fallback"
+    result = {
+        "check": check,
+        "passed": passed,
+        "reason": reason,
+        "confidence": max(0.0, min(1.0, confidence)),
+        "fallback_reason": fallback_reason,
+        "decision_source": decision_source,
+        "latency_ms": int((time.perf_counter() - start) * 1000),
+    }
+    _emit_review_event(
+        {
+            "event_type": "answer_review_subcheck",
+            "check": check,
+            "passed": passed,
+            "reason": reason,
+            "fallback_reason": fallback_reason,
+            "ts": now_iso(),
+        }
+    )
+    return {"answer_review_runs": [result]}
+
+
+async def _answer_review_factual(
+    state: dict[str, Any],
+    runtime: Runtime[KbChatAnswerSubgraphContext],
+    *,
+    settings: Settings,
+    chat_model: ChatOpenAI,
+) -> dict[str, Any]:
+    _ = runtime
+    return await _answer_review_llm_check(
+        state, settings=settings, chat_model=chat_model, check="factual"
+    )
+
+
+async def _answer_review_answerability(
+    state: dict[str, Any],
+    runtime: Runtime[KbChatAnswerSubgraphContext],
+    *,
+    settings: Settings,
+    chat_model: ChatOpenAI,
+) -> dict[str, Any]:
+    _ = runtime
+    return await _answer_review_llm_check(
+        state, settings=settings, chat_model=chat_model, check="answerability"
+    )
+
+
+async def _answer_review_fuse(
+    state: dict[str, Any],
+    runtime: Runtime[KbChatAnswerSubgraphContext],
+    *,
+    settings: Settings,
+) -> Command[str]:
+    _ = runtime
+    start = time.perf_counter()
+    loop_counts = _get_loop_counts(state)
+    loop_counts_updates = {
+        **loop_counts,
+        "total_rounds": loop_counts.get("total_rounds", 0) + 1,
+    }
+    by_check = {
+        check: (_resolve_subcheck(state, check) or {"check": check, "passed": False, "reason": "fallback_closed"})
+        for check in _REVIEW_CHECKS
+    }
+    citation = by_check["citation"]
+    factual = by_check["factual"]
+    answerability = by_check["answerability"]
+    checks = [citation, factual, answerability]
+    passed = all(bool(item.get("passed")) for item in checks)
+    reason = "passed"
+    if not passed:
+        for key in ("citation", "factual", "answerability"):
+            current = by_check[key]
+            if not bool(current.get("passed")):
+                reason = _as_str(current.get("reason")).strip() or "fallback_closed"
+                break
+    avg_confidence = sum(float(item.get("confidence") or 0.0) for item in checks) / max(1, len(checks))
+    fallback_reason = next(
+        (
+            _as_str(item.get("fallback_reason")).strip()
+            for item in checks
+            if _as_str(item.get("fallback_reason")).strip()
+        ),
+        None,
+    )
+    decision_sources = {
+        _as_str(item.get("decision_source")).strip()
+        for item in checks
+        if _as_str(item.get("decision_source")).strip()
+    }
+    if not passed:
+        review_risk_level = "high"
+    elif avg_confidence >= 0.8:
+        review_risk_level = "low"
+    else:
+        review_risk_level = "medium"
+    action = "none" if passed else "transform_query"
+    draft = _as_str(state.get("draft_answer")).strip()
+    best_answer_updates: dict[str, Any] = {}
+    best_answer_meta: dict[str, Any] | None = None
+    if passed and draft:
+        best_answer_meta = {
+            "from_node": "answer_review_fuse",
+            "reason": reason,
+            "retrieval_round": max(loop_counts.get("retrieval_retries", 0), 0),
+            "total_rounds": loop_counts_updates.get("total_rounds", 0),
+            "completed_at": now_iso(),
+        }
+        best_answer_updates = {"best_answer": draft, "best_answer_meta": best_answer_meta}
+    stage_summary = {
+        "passed": passed,
+        "reason": reason,
+        "fallback_reason": fallback_reason,
+        "fallback_used": fallback_reason is not None,
+        "review_breakdown": by_check,
+        "review_risk_level": review_risk_level,
+        "review_confidence": round(max(0.0, min(1.0, avg_confidence)), 4),
+        "review_decision_source": "mixed" if len(decision_sources) > 1 else (next(iter(decision_sources)) if decision_sources else "unknown"),
+        "best_answer": draft if passed and draft else None,
+        "best_answer_meta": best_answer_meta,
+        "latency_ms": int((time.perf_counter() - start) * 1000),
+        "completed_at": now_iso(),
+    }
+    updates: dict[str, Any] = {
+        "loop_counts": loop_counts_updates,
+        **best_answer_updates,
+        "answer_review_runs": [],
+        "reflection": {
+            **(state.get("reflection") if isinstance(state.get("reflection"), dict) else {}),
+            "review_passed": passed,
+            "action": action,
+            "reason": reason,
+            "review_breakdown": by_check,
+            "review_risk_level": review_risk_level,
+            "review_confidence": stage_summary["review_confidence"],
+            "review_decision_source": stage_summary["review_decision_source"],
+        },
+    }
+    updates = {
+        **updates,
+        **_merge_stage_summary(state, "answer_review", stage_summary, updates=updates),
+    }
+    updates = {
+        **updates,
+        **_merge_stage_summary(state, "answer_review_fuse", stage_summary, updates=updates),
+    }
+    updates = {
+        **updates,
+        **_merge_subgraph_state(
+            state,
+            {
+                "phase": "answer_review_fuse",
+                "last_updated_at": now_iso(),
+            },
+            updates=updates,
+        ),
+    }
+    goto = "answer_commit" if passed else "answer_repair"
+    if not passed and _as_str(reason) not in _REPAIRABLE_FAILURE_REASONS:
+        goto = "answer_commit"
+    _emit_review_event(
+        {
+            "event_type": "answer_review_fused",
+            "passed": passed,
+            "reason": reason,
+            "goto": goto,
+            "risk_level": review_risk_level,
+            "fallback_reason": fallback_reason,
+            "ts": now_iso(),
+        }
+    )
+    return Command(update=updates, goto=goto)
 
 
 async def _draft_generate(
@@ -148,28 +547,6 @@ async def _draft_generate(
             state,
             {
                 "phase": "draft_generate",
-                "last_updated_at": now_iso(),
-            },
-            updates=updates,
-        ),
-    }
-
-
-async def _answer_self_check(
-    state: dict[str, Any],
-    runtime: Runtime[KbChatAnswerSubgraphContext],
-    *,
-    settings: Settings,
-    chat_model: ChatOpenAI,
-) -> dict[str, Any]:
-    _ = runtime
-    updates = await answer_review(state, settings=settings, chat_model=chat_model)
-    return {
-        **updates,
-        **_merge_subgraph_state(
-            state,
-            {
-                "phase": "answer_self_check",
                 "last_updated_at": now_iso(),
             },
             updates=updates,
@@ -374,16 +751,47 @@ def build_answer_subgraph(
         ),
     )
     graph.add_node(
-        "answer_self_check",
-        lambda s, runtime: _answer_self_check(
+        "answer_review_dispatch",
+        lambda s, runtime: _answer_review_dispatch(
+            s,
+            runtime,
+            settings=settings,
+        ),
+        destinations=(
+            "answer_review_citation",
+            "answer_review_factual",
+            "answer_review_answerability",
+            "answer_review_fuse",
+        ),
+    )
+    graph.add_node(
+        "answer_review_citation",
+        lambda s, runtime: _answer_review_citation(s, runtime, settings=settings),
+    )
+    graph.add_node(
+        "answer_review_factual",
+        lambda s, runtime: _answer_review_factual(
             s, runtime, settings=settings, chat_model=chat_model
         ),
     )
     graph.add_node(
-        "answer_repair",
-        lambda s, runtime: _answer_repair(
+        "answer_review_answerability",
+        lambda s, runtime: _answer_review_answerability(
             s, runtime, settings=settings, chat_model=chat_model
         ),
+    )
+    graph.add_node(
+        "answer_review_fuse",
+        lambda s, runtime: _answer_review_fuse(
+            s,
+            runtime,
+            settings=settings,
+        ),
+        destinations=("answer_commit", "answer_repair"),
+    )
+    graph.add_node(
+        "answer_repair",
+        lambda s, runtime: _answer_repair(s, runtime, settings=settings, chat_model=chat_model),
     )
     graph.add_node(
         "answer_commit",
@@ -392,15 +800,10 @@ def build_answer_subgraph(
     )
 
     graph.set_entry_point("draft_generate")
-    graph.add_edge("draft_generate", "answer_self_check")
-    graph.add_conditional_edges(
-        "answer_self_check",
-        lambda s: _route_after_self_check(s, settings),
-        {
-            "answer_commit": "answer_commit",
-            "answer_repair": "answer_repair",
-        },
-    )
-    graph.add_edge("answer_repair", "answer_self_check")
+    graph.add_edge("draft_generate", "answer_review_dispatch")
+    graph.add_edge("answer_review_citation", "answer_review_fuse")
+    graph.add_edge("answer_review_factual", "answer_review_fuse")
+    graph.add_edge("answer_review_answerability", "answer_review_fuse")
+    graph.add_edge("answer_repair", "answer_review_dispatch")
     graph.add_edge("answer_commit", END)
     return graph.compile(name="kb_chat_answer_subgraph")
