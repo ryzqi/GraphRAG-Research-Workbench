@@ -959,6 +959,10 @@ class KbChatService:
 
         stage_label_map = {
             "merge_context": "上下文合并",
+            "rewrite_plan": "改写规划",
+            "rewrite_dispatch": "改写并行派发",
+            "rewrite_branch_retrieve": "改写分支验证",
+            "rewrite_fuse": "改写结果融合",
             "coref_rewrite": "指代消解",
             "ambiguity_check": "歧义检测",
             "normalize_rewrite": "问题规范化",
@@ -1063,6 +1067,12 @@ class KbChatService:
             for key in (
                 "rewritten",
                 "reason",
+                "strategy",
+                "candidate_count",
+                "selected_candidate_id",
+                "selected_query",
+                "branch_count",
+                "best_retrieval_count",
                 "normalization_source",
                 "count",
                 "hyde_docs_count",
@@ -1136,7 +1146,13 @@ class KbChatService:
                 if value is not None:
                     io_summary[key] = value
 
-        if node in {"coref_rewrite", "normalize_rewrite", "transform_query"}:
+        if node in {
+            "rewrite_plan",
+            "rewrite_fuse",
+            "coref_rewrite",
+            "normalize_rewrite",
+            "transform_query",
+        }:
             query = update.get("normalized_query") or update.get("coref_query")
             if isinstance(query, str) and query.strip():
                 io_summary["query"] = KbChatService._shorten_stream_text(query, 160)

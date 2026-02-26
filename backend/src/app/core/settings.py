@@ -416,6 +416,21 @@ class Settings(BaseSettings):
     kb_chat_parallel_retrieval_include_main: bool = Field(
         True, alias="KB_CHAT_PARALLEL_RETRIEVAL_INCLUDE_MAIN"
     )
+    kb_chat_rewrite_branch_enabled: bool = Field(
+        True, alias="KB_CHAT_REWRITE_BRANCH_ENABLED"
+    )
+    kb_chat_rewrite_branch_max_candidates: int = Field(
+        4, ge=1, le=8, alias="KB_CHAT_REWRITE_BRANCH_MAX_CANDIDATES"
+    )
+    kb_chat_rewrite_min_confidence: float = Field(
+        0.55, ge=0.0, le=1.0, alias="KB_CHAT_REWRITE_MIN_CONFIDENCE"
+    )
+    kb_chat_rewrite_cache_ttl_seconds: int = Field(
+        120, ge=0, alias="KB_CHAT_REWRITE_CACHE_TTL_SECONDS"
+    )
+    kb_chat_rewrite_retry_attempts: int = Field(
+        2, ge=1, le=4, alias="KB_CHAT_REWRITE_RETRY_ATTEMPTS"
+    )
     kb_chat_doc_gate_rule_threshold: float = Field(
         0.45, ge=0.0, le=1.0, alias="KB_CHAT_DOC_GATE_RULE_THRESHOLD"
     )

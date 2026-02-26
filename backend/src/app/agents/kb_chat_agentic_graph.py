@@ -25,16 +25,14 @@ from app.agents.tool_calling.registry import ToolMeta
 from app.core.settings import get_settings
 
 from app.agents.kb_chat_agentic.preprocess import (
-    ambiguity_check,
     complexity_router,
     decomposition,
     entity_expand,
     generate_variants,
     hyde,
     merge_context,
-    normalize_rewrite,
     prepare_messages,
-    coref_rewrite,
+    rewrite_plan,
 )
 from app.agents.kb_chat_agentic.tool_loop import force_exit_node
 from app.agents.kb_chat_agentic.reflection import (
@@ -43,10 +41,13 @@ from app.agents.kb_chat_agentic.reflection import (
     doc_gate_route,
     doc_grader_llm,
     dispatch_subqueries,
+    dispatch_rewrite_branches,
     finalize_answer,
     generate_draft,
     kb_retrieve_context,
     merge_subquery_context,
+    rewrite_branch_retrieve,
+    rewrite_fuse,
     retrieve_subquery_context,
     route_after_answer_review,
     transform_query_for_retry,
@@ -55,15 +56,16 @@ from app.agents.kb_chat_agentic.reflection import (
 
 _NODE_METADATA: dict[str, dict[str, Any]] = {
     "merge_context": {"label": "\u4e0a\u4e0b\u6587\u5408\u5e76", "phase": "preprocess", "order": 0},
-    "coref_rewrite": {"label": "\u6307\u4ee3\u6d88\u89e3", "phase": "preprocess", "order": 1},
-    "ambiguity_check": {"label": "\u6b67\u4e49\u5224\u65ad", "phase": "preprocess", "order": 2},
-    "normalize_rewrite": {"label": "\u95ee\u9898\u89c4\u8303", "phase": "preprocess", "order": 3},
-    "complexity_router": {"label": "\u590d\u6742\u5ea6\u8def\u7531", "phase": "preprocess", "order": 4},
-    "decomposition": {"label": "\u95ee\u9898\u5206\u89e3", "phase": "preprocess", "order": 5},
-    "generate_variants": {"label": "\u591a\u8def\u6269\u5c55", "phase": "preprocess", "order": 6},
-    "entity_expand": {"label": "\u5b9e\u4f53\u6269\u5c55", "phase": "preprocess", "order": 7},
-    "hyde": {"label": "HyDE\u6269\u5c55", "phase": "preprocess", "order": 8},
-    "prepare_messages": {"label": "\u6d88\u606f\u6574\u7406", "phase": "preprocess", "order": 9},
+    "rewrite_plan": {"label": "\u6539\u5199\u89c4\u5212", "phase": "preprocess", "order": 1},
+    "rewrite_dispatch": {"label": "\u6539\u5199\u5e76\u884c\u6d3e\u53d1", "phase": "preprocess", "order": 2},
+    "rewrite_branch_retrieve": {"label": "\u6539\u5199\u5206\u652f\u9a8c\u8bc1", "phase": "preprocess", "order": 3},
+    "rewrite_fuse": {"label": "\u6539\u5199\u7ed3\u679c\u878d\u5408", "phase": "preprocess", "order": 4},
+    "complexity_router": {"label": "\u590d\u6742\u5ea6\u8def\u7531", "phase": "preprocess", "order": 5},
+    "decomposition": {"label": "\u95ee\u9898\u5206\u89e3", "phase": "preprocess", "order": 6},
+    "generate_variants": {"label": "\u591a\u8def\u6269\u5c55", "phase": "preprocess", "order": 7},
+    "entity_expand": {"label": "\u5b9e\u4f53\u6269\u5c55", "phase": "preprocess", "order": 8},
+    "hyde": {"label": "HyDE\u6269\u5c55", "phase": "preprocess", "order": 9},
+    "prepare_messages": {"label": "\u6d88\u606f\u6574\u7406", "phase": "preprocess", "order": 10},
     "dispatch_subqueries": {"label": "\u5b50\u67e5\u8be2\u6d3e\u53d1", "phase": "retrieve", "order": 10},
     "retrieve_subquery": {"label": "\u5b50\u67e5\u8be2\u68c0\u7d22", "phase": "retrieve", "order": 11},
     "merge_subquery_context": {"label": "\u5b50\u67e5\u8be2\u4e0a\u4e0b\u6587\u5408\u5e76", "phase": "retrieve", "order": 12},
@@ -249,6 +251,34 @@ def _prepare_messages_cache_key_factory() -> Any:
             ],
             "sub_query_specs": decomposition_plan.get("sub_query_specs")
             if isinstance(decomposition_plan.get("sub_query_specs"), list)
+            else [],
+            "runtime_config": state.get("runtime_config")
+            if isinstance(state.get("runtime_config"), dict)
+            else {},
+        }
+        return json.dumps(payload, ensure_ascii=False, sort_keys=True, default=_json_default)
+
+    return _key_func
+
+
+def _rewrite_plan_cache_key_factory() -> Any:
+    def _key_func(*args: Any, **kwargs: Any) -> str:
+        state: dict[str, Any] = {}
+        if args and isinstance(args[0], dict):
+            state = args[0]
+        elif isinstance(kwargs.get("state"), dict):
+            state = cast(dict[str, Any], kwargs["state"])
+        context_frame = state.get("context_frame")
+        if not isinstance(context_frame, dict):
+            context_frame = {}
+        payload = {
+            "version": "kb_chat_rewrite_plan_v1",
+            "rewrite_input_query": str(state.get("rewrite_input_query") or "").strip(),
+            "user_input": str(state.get("user_input") or "").strip(),
+            "summary_text": str(context_frame.get("summary_text") or "").strip(),
+            "memory_snippet": str(context_frame.get("memory_snippet") or "").strip(),
+            "selected_turns": context_frame.get("selected_turns")
+            if isinstance(context_frame.get("selected_turns"), list)
             else [],
             "runtime_config": state.get("runtime_config")
             if isinstance(state.get("runtime_config"), dict)
@@ -1658,11 +1688,15 @@ class KbChatAgenticGraph:
         del tool_meta_by_name  # not used in this stage (no human review)
         settings = get_settings()
         self._settings = settings
-        (ambiguity_enabled, hyde_enabled) = _resolve_topology_config(
+        (_, hyde_enabled) = _resolve_topology_config(
             settings=settings,
             kb_chat_config=kb_chat_config,
         )
         llm_preprocess_retry_policy = RetryPolicy(max_attempts=2)
+        rewrite_retry_attempts = int(
+            max(1, min(4, getattr(settings, "kb_chat_rewrite_retry_attempts", 2)))
+        )
+        rewrite_retry_policy = RetryPolicy(max_attempts=rewrite_retry_attempts)
         direct_target = "hyde" if hyde_enabled else "prepare_messages"
         complexity_cache_enabled = bool(
             getattr(settings, "kb_chat_complexity_cache_enabled", True)
@@ -1694,6 +1728,17 @@ class KbChatAgenticGraph:
             if complexity_cache_enabled and complexity_cache_ttl > 0
             else None
         )
+        rewrite_cache_ttl = int(
+            getattr(settings, "kb_chat_rewrite_cache_ttl_seconds", complexity_cache_ttl)
+        )
+        rewrite_plan_cache_policy = (
+            CachePolicy(
+                key_func=_rewrite_plan_cache_key_factory(),
+                ttl=rewrite_cache_ttl,
+            )
+            if complexity_cache_enabled and rewrite_cache_ttl > 0
+            else None
+        )
         doc_gate_cache_ttl = int(
             getattr(settings, "kb_chat_doc_gate_cache_ttl_seconds", 60)
         )
@@ -1709,6 +1754,7 @@ class KbChatAgenticGraph:
             _KB_CHAT_GRAPH_CACHE
             if (
                 complexity_cache_policy
+                or rewrite_plan_cache_policy
                 or entity_expand_cache_policy
                 or prepare_messages_cache_policy
                 or doc_gate_cache_policy
@@ -1730,24 +1776,21 @@ class KbChatAgenticGraph:
             metadata=_NODE_METADATA["merge_context"],
         )
         graph.add_node(
-            "coref_rewrite",
-            _wrap_node_with_io("coref_rewrite", partial(coref_rewrite, settings=settings)),
-            metadata=_NODE_METADATA["coref_rewrite"],
+            "rewrite_plan",
+            _wrap_node_with_io("rewrite_plan", partial(rewrite_plan, settings=settings)),
+            metadata=_NODE_METADATA["rewrite_plan"],
+            retry_policy=rewrite_retry_policy,
+            cache_policy=rewrite_plan_cache_policy,
+            destinations=("rewrite_dispatch", "complexity_router", "force_exit"),
         )
-        if ambiguity_enabled:
-            graph.add_node(
-                "ambiguity_check",
-                _wrap_node_with_io(
-                    "ambiguity_check", partial(ambiguity_check, settings=settings)
-                ),
-                metadata=_NODE_METADATA["ambiguity_check"],
-            )
         graph.add_node(
-            "normalize_rewrite",
+            "rewrite_dispatch",
             _wrap_node_with_io(
-                "normalize_rewrite", partial(normalize_rewrite, settings=settings)
+                "rewrite_dispatch",
+                partial(dispatch_rewrite_branches, settings=settings),
             ),
-            metadata=_NODE_METADATA["normalize_rewrite"],
+            metadata=_NODE_METADATA["rewrite_dispatch"],
+            destinations=("rewrite_branch_retrieve", "complexity_router"),
         )
         graph.add_node(
             "complexity_router",
@@ -1825,6 +1868,23 @@ class KbChatAgenticGraph:
         kb_tool = next((t for t in tools if getattr(t, "name", None) == "kb_retrieve"), None)
         if kb_tool is None:
             raise RuntimeError("kb_retrieve tool is required for agentic KB chat")
+
+        graph.add_node(
+            "rewrite_branch_retrieve",
+            _wrap_node_with_io(
+                "rewrite_branch_retrieve",
+                partial(rewrite_branch_retrieve, settings=settings, kb_tool=kb_tool),
+            ),
+            metadata=_NODE_METADATA["rewrite_branch_retrieve"],
+        )
+        graph.add_node(
+            "rewrite_fuse",
+            _wrap_node_with_io(
+                "rewrite_fuse",
+                partial(rewrite_fuse, settings=settings),
+            ),
+            metadata=_NODE_METADATA["rewrite_fuse"],
+        )
 
         graph.add_node(
             "retrieve_subquery",
@@ -1914,26 +1974,8 @@ class KbChatAgenticGraph:
 
         # Entry
         graph.set_entry_point("merge_context")
-        graph.add_edge("merge_context", "coref_rewrite")
-
-        if ambiguity_enabled:
-            graph.add_edge("coref_rewrite", "ambiguity_check")
-
-            # Ambiguity routing (clarify => ForceExit)
-            def _route_after_ambiguity(state: dict) -> str:
-                reflection = state.get("reflection")
-                action = reflection.get("action") if isinstance(reflection, dict) else None
-                return "force_exit" if action == "clarify" else "normalize_rewrite"
-
-            graph.add_conditional_edges(
-                "ambiguity_check",
-                _route_after_ambiguity,
-                {"force_exit": "force_exit", "normalize_rewrite": "normalize_rewrite"},
-            )
-        else:
-            graph.add_edge("coref_rewrite", "normalize_rewrite")
-
-        graph.add_edge("normalize_rewrite", "complexity_router")
+        graph.add_edge("merge_context", "rewrite_plan")
+        graph.add_edge("rewrite_branch_retrieve", "rewrite_fuse")
         graph.add_edge("generate_variants", "entity_expand")
 
         if hyde_enabled:

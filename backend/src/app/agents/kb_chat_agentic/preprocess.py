@@ -49,6 +49,9 @@ from .runtime_config import (
     parallel_retrieval_max_branches,
     parallel_retrieval_min_queries,
     query_rewrite_enabled,
+    rewrite_branch_enabled,
+    rewrite_branch_max_candidates,
+    rewrite_min_confidence,
 )
 
 
@@ -583,6 +586,217 @@ async def merge_context(
         "merged_context": merged,
         "stage_summaries": stage_summaries,
     }
+
+
+def _build_rewrite_candidates(
+    *,
+    original_query: str,
+    coref_query: str,
+    normalized_query: str,
+    normalized_meta: dict[str, Any],
+    max_candidates: int,
+) -> list[dict[str, Any]]:
+    aliases_raw = normalized_meta.get("aliases")
+    aliases = aliases_raw if isinstance(aliases_raw, list) else []
+    seed_rows: list[tuple[str, str, int]] = [
+        (normalized_query.strip(), "normalized", 1),
+        (coref_query.strip(), "coref", 2),
+        (original_query.strip(), "original", 3),
+    ]
+    for alias in aliases:
+        if not isinstance(alias, str) or not alias.strip():
+            continue
+        seed_rows.append((alias.strip(), "alias", 4))
+
+    deduped: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for query, source, priority in seed_rows:
+        key = query.casefold()
+        if not query or key in seen:
+            continue
+        seen.add(key)
+        deduped.append(
+            {
+                "candidate_id": f"rw_{len(deduped) + 1}",
+                "query": query,
+                "source": source,
+                "priority": priority,
+            }
+        )
+        if len(deduped) >= max_candidates:
+            break
+    return deduped
+
+
+async def rewrite_plan(state: dict, settings: Settings) -> Command[str]:
+    """Composite rewrite planner: coref + ambiguity + normalization + branch plan."""
+    start = time.perf_counter()
+    working_state = dict(state)
+
+    coref_updates = await coref_rewrite(working_state, settings)
+    working_state.update(coref_updates)
+
+    ambiguity_updates: dict[str, Any] = {}
+    if ambiguity_check_enabled(working_state, settings):
+        ambiguity_updates = await ambiguity_check(working_state, settings)
+        working_state.update(ambiguity_updates)
+        reflection = working_state.get("reflection")
+        action = reflection.get("action") if isinstance(reflection, dict) else None
+        if action == "clarify":
+            chosen_query = str(
+                working_state.get("coref_query")
+                or working_state.get("rewrite_input_query")
+                or _extract_user_input(working_state)
+                or ""
+            ).strip()
+            plan = {
+                "version": "kb_chat_rewrite_plan_v1",
+                "selected_query": chosen_query,
+                "selected_candidate_id": "rw_clarify",
+                "candidates": [
+                    {
+                        "candidate_id": "rw_clarify",
+                        "query": chosen_query,
+                        "source": "clarification_pending",
+                        "priority": 1,
+                    }
+                ]
+                if chosen_query
+                else [],
+                "strategy": "clarify",
+                "confidence": float(
+                    (_as_dict(working_state.get("coref_meta")) or {}).get("confidence")
+                    or 0.0
+                ),
+                "reason": "needs_clarification",
+                "fallback_reason": "clarification_pending",
+                "risk_flags": ["clarify_first"],
+            }
+            diagnostics = {
+                "decision_path": "coref->ambiguity->force_exit",
+                "fallback_reason": "clarification_pending",
+                "selected_candidate_id": plan["selected_candidate_id"],
+                "selected_query": chosen_query,
+                "branch_count": 0,
+                "confidence": plan["confidence"],
+                "min_confidence": rewrite_min_confidence(working_state, settings),
+                "retry_count": int(
+                    (_as_dict(working_state.get("loop_counts")) or {}).get(
+                        "retrieval_retries"
+                    )
+                    or 0
+                ),
+                "cache_hit": False,
+                "notes": ["rewrite_stopped_for_clarification"],
+            }
+            stage_summaries = _merge_stage_summary(
+                working_state,
+                "rewrite_plan",
+                {
+                    "decision_path": diagnostics["decision_path"],
+                    "strategy": plan["strategy"],
+                    "candidate_count": len(plan["candidates"]),
+                    "selected_candidate_id": plan["selected_candidate_id"],
+                    "selected_query": plan["selected_query"],
+                    "confidence": plan["confidence"],
+                    "fallback_reason": diagnostics["fallback_reason"],
+                    "branch_enabled": False,
+                    "latency_ms": int((time.perf_counter() - start) * 1000),
+                    "completed_at": now_iso(),
+                },
+                settings=settings,
+            )
+            updates = {
+                **coref_updates,
+                **ambiguity_updates,
+                "rewrite_plan": plan,
+                "rewrite_diagnostics": diagnostics,
+                "rewrite_branch_runs": [],
+                "stage_summaries": stage_summaries,
+            }
+            return Command(update=updates, goto="force_exit")
+
+    normalize_updates = await normalize_rewrite(working_state, settings)
+    working_state.update(normalize_updates)
+
+    original_query = str(
+        working_state.get("rewrite_input_query") or _extract_user_input(working_state) or ""
+    ).strip()
+    coref_query = str(working_state.get("coref_query") or original_query).strip()
+    normalized_query = str(working_state.get("normalized_query") or coref_query).strip()
+    normalized_meta = _as_dict(working_state.get("normalized_meta")) or {}
+    coref_meta = _as_dict(working_state.get("coref_meta")) or {}
+    min_conf = rewrite_min_confidence(working_state, settings)
+    candidates = _build_rewrite_candidates(
+        original_query=original_query,
+        coref_query=coref_query,
+        normalized_query=normalized_query,
+        normalized_meta=normalized_meta,
+        max_candidates=rewrite_branch_max_candidates(working_state, settings),
+    )
+    selected = candidates[0] if candidates else {"candidate_id": "", "query": normalized_query}
+    branch_enabled = rewrite_branch_enabled(working_state, settings) and len(candidates) > 1
+    fallback_reason = str(normalized_meta.get("fallback_reason") or "none").strip() or "none"
+    confidence = float(coref_meta.get("confidence") or 0.0)
+    risk_flags = []
+    if confidence < min_conf:
+        risk_flags.append("low_coref_confidence")
+    recall_risk = str(normalized_meta.get("recall_risk") or "").strip()
+    if recall_risk in {"high", "medium"}:
+        risk_flags.append(f"recall_risk:{recall_risk}")
+    plan = {
+        "version": "kb_chat_rewrite_plan_v1",
+        "selected_query": str(selected.get("query") or normalized_query),
+        "selected_candidate_id": str(selected.get("candidate_id") or ""),
+        "candidates": candidates,
+        "strategy": "parallel_rank" if branch_enabled else "single",
+        "confidence": round(confidence, 4),
+        "reason": "planner_selected",
+        "fallback_reason": fallback_reason,
+        "risk_flags": risk_flags,
+    }
+    diagnostics = {
+        "decision_path": "coref->ambiguity->normalize->rewrite_plan",
+        "fallback_reason": fallback_reason,
+        "selected_candidate_id": plan["selected_candidate_id"],
+        "selected_query": plan["selected_query"],
+        "branch_count": len(candidates) if branch_enabled else 0,
+        "confidence": round(confidence, 4),
+        "min_confidence": min_conf,
+        "retry_count": int(
+            (_as_dict(working_state.get("loop_counts")) or {}).get("retrieval_retries") or 0
+        ),
+        "cache_hit": False,
+        "notes": ["rewrite_plan_ready"],
+    }
+    stage_summaries = _merge_stage_summary(
+        working_state,
+        "rewrite_plan",
+        {
+            "decision_path": diagnostics["decision_path"],
+            "strategy": plan["strategy"],
+            "candidate_count": len(candidates),
+            "selected_candidate_id": plan["selected_candidate_id"],
+            "selected_query": plan["selected_query"],
+            "confidence": plan["confidence"],
+            "fallback_reason": diagnostics["fallback_reason"],
+            "branch_enabled": branch_enabled,
+            "latency_ms": int((time.perf_counter() - start) * 1000),
+            "completed_at": now_iso(),
+        },
+        settings=settings,
+    )
+    updates = {
+        **coref_updates,
+        **ambiguity_updates,
+        **normalize_updates,
+        "rewrite_plan": plan,
+        "rewrite_diagnostics": diagnostics,
+        "rewrite_branch_runs": [],
+        "stage_summaries": stage_summaries,
+    }
+    goto = "rewrite_dispatch" if branch_enabled else "complexity_router"
+    return Command(update=updates, goto=goto)
 
 
 async def coref_rewrite(state: dict, settings: Settings) -> dict[str, Any]:

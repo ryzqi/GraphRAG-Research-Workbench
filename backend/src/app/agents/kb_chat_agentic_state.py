@@ -72,6 +72,9 @@ class KbChatRuntimeConfig(TypedDict, total=False):
     parallel_retrieval_min_queries: int
     parallel_retrieval_max_branches: int
     parallel_retrieval_include_main: bool
+    rewrite_branch_enabled: bool
+    rewrite_branch_max_candidates: int
+    rewrite_min_confidence: float
     doc_gate_rule_threshold: float
     doc_gate_llm_confidence_floor: float
     doc_gate_fallback_open_when_evidence_ok: bool
@@ -214,6 +217,41 @@ class RetrievalPlan(TypedDict, total=False):
     reason: str
 
 
+class RewritePlan(TypedDict, total=False):
+    version: str
+    selected_query: str
+    selected_candidate_id: str
+    candidates: list[dict[str, Any]]
+    strategy: str
+    confidence: float
+    reason: str
+    fallback_reason: str
+    risk_flags: list[str]
+
+
+class RewriteBranchRun(TypedDict, total=False):
+    candidate_id: str
+    query: str
+    source: str
+    priority: int
+    retrieval_count: int
+    success: bool
+    reason: str | None
+
+
+class RewriteDiagnostics(TypedDict, total=False):
+    decision_path: str
+    fallback_reason: str
+    selected_candidate_id: str
+    selected_query: str
+    branch_count: int
+    confidence: float
+    min_confidence: float
+    retry_count: int
+    cache_hit: bool
+    notes: list[str]
+
+
 # -----------------------------
 # Graph state schema
 # -----------------------------
@@ -273,6 +311,9 @@ class KbChatAgenticState(KbChatAgenticStateBase, total=False):
     query_strategy: Literal["direct", "decomposition", "multi_query"]
     query_strategy_confidence: float
     query_strategy_signals: list[str]
+    rewrite_plan: RewritePlan
+    rewrite_diagnostics: RewriteDiagnostics
+    rewrite_branch_runs: Annotated[list[RewriteBranchRun], add]
     decomposition_plan: dict[str, Any]
 
     sub_queries: list[str]
@@ -341,7 +382,31 @@ def make_initial_state(
             "fallback_reason": "none",
             "timing": {},
         },
+        "rewrite_plan": {
+            "version": "kb_chat_rewrite_plan_v1",
+            "selected_query": "",
+            "selected_candidate_id": "",
+            "candidates": [],
+            "strategy": "single",
+            "confidence": 0.0,
+            "reason": "init",
+            "fallback_reason": "none",
+            "risk_flags": [],
+        },
+        "rewrite_diagnostics": {
+            "decision_path": "init",
+            "fallback_reason": "none",
+            "selected_candidate_id": "",
+            "selected_query": "",
+            "branch_count": 0,
+            "confidence": 0.0,
+            "min_confidence": 0.0,
+            "retry_count": 0,
+            "cache_hit": False,
+            "notes": [],
+        },
         "query_items": [],
+        "rewrite_branch_runs": [],
         "subquery_runs": [],
         "decomposition_plan": {
             "strategy": "direct",

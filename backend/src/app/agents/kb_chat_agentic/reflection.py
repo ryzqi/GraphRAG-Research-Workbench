@@ -49,6 +49,8 @@ from .runtime_config import (
     parallel_retrieval_max_branches,
     parallel_retrieval_min_queries,
     query_rewrite_enabled,
+    rewrite_branch_max_candidates,
+    rewrite_min_confidence,
     retrieval_top_k,
 )
 from .schemas import AnswerReviewDecision, DocGraderDecision
@@ -291,6 +293,239 @@ def _dispatch_quality_score(item: dict[str, Any], *, spec: dict[str, Any]) -> fl
     # Lower priority value means higher urgency; cap to keep score stable.
     priority_bonus = max(0, 8 - max(1, min(priority, 8))) * 0.12
     return round(kind_bonus + coverage_bonus + priority_bonus, 4)
+
+
+def _build_rewrite_dispatch_plan(
+    state: dict,
+    settings: Settings,
+) -> tuple[list[Send] | str, dict[str, Any]]:
+    rewrite_plan = state.get("rewrite_plan")
+    if not isinstance(rewrite_plan, dict):
+        return "complexity_router", {
+            "mode": "single_rewrite",
+            "reason": "missing_plan",
+            "branch_count": 0,
+        }
+    candidates = rewrite_plan.get("candidates")
+    if not isinstance(candidates, list):
+        candidates = []
+    valid_candidates = [item for item in candidates if isinstance(item, dict)]
+    if len(valid_candidates) <= 1:
+        return "complexity_router", {
+            "mode": "single_rewrite",
+            "reason": "single_candidate",
+            "branch_count": 0,
+            "selected_query": rewrite_plan.get("selected_query"),
+        }
+    max_candidates = rewrite_branch_max_candidates(state, settings)
+    send_tasks: list[Send] = []
+    for idx, candidate in enumerate(valid_candidates):
+        if len(send_tasks) >= max_candidates:
+            break
+        query = _as_str(candidate.get("query")).strip()
+        if not query:
+            continue
+        send_tasks.append(
+            Send(
+                "rewrite_branch_retrieve",
+                {
+                    "rewrite_candidate": {
+                        "candidate_id": _as_str(candidate.get("candidate_id"))
+                        or f"rw_{idx + 1}",
+                        "query": query,
+                        "source": _as_str(candidate.get("source")) or "unknown",
+                        "priority": int(candidate.get("priority") or (idx + 1)),
+                    },
+                    "memory_keys": state.get("memory_keys"),
+                    "runtime_config": state.get("runtime_config"),
+                    "loop_counts": state.get("loop_counts"),
+                },
+            )
+        )
+    if not send_tasks:
+        return "complexity_router", {
+            "mode": "single_rewrite",
+            "reason": "no_valid_candidates",
+            "branch_count": 0,
+            "selected_query": rewrite_plan.get("selected_query"),
+        }
+    return send_tasks, {
+        "mode": "parallel_rewrite_fanout",
+        "reason": "fanout",
+        "branch_count": len(send_tasks),
+        "candidate_count": len(valid_candidates),
+        "selected_query": rewrite_plan.get("selected_query"),
+    }
+
+
+async def dispatch_rewrite_branches(
+    state: dict,
+    *,
+    settings: Settings,
+    runtime: Runtime[Any] | None = None,
+) -> Command[str]:
+    _ = runtime
+    start = time.perf_counter()
+    goto, diagnostics = _build_rewrite_dispatch_plan(state, settings)
+    return Command(
+        update={
+            "rewrite_branch_runs": [],
+            "retrieval_plan": {
+                "mode": diagnostics.get("mode"),
+                "branch_count": diagnostics.get("branch_count"),
+                "reason": diagnostics.get("reason"),
+            },
+            **_merge_stage_summary(
+                state,
+                "rewrite_dispatch",
+                {
+                    **diagnostics,
+                    "latency_ms": int((time.perf_counter() - start) * 1000),
+                    "completed_at": now_iso(),
+                },
+            ),
+        },
+        goto=goto,
+    )
+
+
+async def rewrite_branch_retrieve(
+    state: dict,
+    *,
+    settings: Settings,
+    kb_tool: BaseTool,
+    runtime: Runtime[Any] | None = None,
+) -> dict[str, Any]:
+    """Retrieve evidence count for one rewrite candidate branch."""
+    candidate = state.get("rewrite_candidate")
+    if not isinstance(candidate, dict):
+        return {"rewrite_branch_runs": []}
+    query = _as_str(candidate.get("query")).strip()
+    if not query:
+        return {"rewrite_branch_runs": []}
+    kb_ids = _resolve_kb_ids(state, runtime)
+    retrieval_round = _get_loop_counts(state).get("retrieval_retries", 0)
+    reason: str | None = None
+    try:
+        payload = {
+            "query": query,
+            "kb_ids": kb_ids,
+            "top_k": retrieval_top_k(state, settings),
+            "retrieval_round": retrieval_round,
+            "query_items": [
+                {
+                    "query": query,
+                    "kind": "rewrite_branch",
+                    "source": candidate.get("source") or "rewrite_plan",
+                    "priority": int(candidate.get("priority") or 1),
+                }
+            ],
+        }
+        context = await kb_tool.ainvoke(payload)
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        reason = "exception"
+        context = ""
+    retrieval_count = _extract_evidence_count(_as_str(context))
+    return {
+        "rewrite_branch_runs": [
+            {
+                "candidate_id": _as_str(candidate.get("candidate_id")) or "rw_unknown",
+                "query": query,
+                "source": _as_str(candidate.get("source")) or "unknown",
+                "priority": int(candidate.get("priority") or 1),
+                "retrieval_count": retrieval_count,
+                "success": reason is None,
+                "reason": reason,
+            }
+        ]
+    }
+
+
+async def rewrite_fuse(
+    state: dict,
+    *,
+    settings: Settings,
+    runtime: Runtime[Any] | None = None,
+) -> Command[str]:
+    """Fuse rewrite branch results and update selected query for downstream routing."""
+    _ = runtime
+    start = time.perf_counter()
+    rewrite_plan = state.get("rewrite_plan")
+    if not isinstance(rewrite_plan, dict):
+        rewrite_plan = {}
+    raw_runs = state.get("rewrite_branch_runs")
+    if not isinstance(raw_runs, list):
+        raw_runs = []
+    runs = [run for run in raw_runs if isinstance(run, dict)]
+    runs = sorted(
+        runs,
+        key=lambda item: (
+            -int(item.get("retrieval_count") or 0),
+            int(item.get("priority") or 99),
+        ),
+    )
+    chosen_run = runs[0] if runs else {}
+    chosen_query = _as_str(chosen_run.get("query")).strip() or _as_str(
+        rewrite_plan.get("selected_query")
+    ).strip()
+    fallback_reason = "none"
+    if not runs:
+        fallback_reason = "rewrite_branch_empty"
+    elif int(chosen_run.get("retrieval_count") or 0) <= 0:
+        fallback_reason = "rewrite_branch_zero_evidence"
+    selected_candidate_id = _as_str(chosen_run.get("candidate_id")).strip() or _as_str(
+        rewrite_plan.get("selected_candidate_id")
+    ).strip()
+    diagnostics = state.get("rewrite_diagnostics")
+    if not isinstance(diagnostics, dict):
+        diagnostics = {}
+    min_confidence = rewrite_min_confidence(state, settings)
+    confidence = float(diagnostics.get("confidence") or rewrite_plan.get("confidence") or 0.0)
+    notes = [
+        str(note)
+        for note in (diagnostics.get("notes") or [])
+        if isinstance(note, str) and note.strip()
+    ]
+    diagnostics_update = {
+        **diagnostics,
+        "selected_candidate_id": selected_candidate_id,
+        "selected_query": chosen_query,
+        "fallback_reason": fallback_reason,
+        "branch_count": len(runs),
+        "min_confidence": min_confidence,
+        "notes": [*notes, "rewrite_branch_fused"],
+    }
+    plan_update = {
+        **rewrite_plan,
+        "selected_query": chosen_query,
+        "selected_candidate_id": selected_candidate_id,
+        "fallback_reason": fallback_reason,
+        "confidence": round(confidence, 4),
+    }
+    return Command(
+        update={
+            "coref_query": chosen_query or state.get("coref_query"),
+            "normalized_query": chosen_query or state.get("normalized_query"),
+            "rewrite_plan": plan_update,
+            "rewrite_diagnostics": diagnostics_update,
+            **_merge_stage_summary(
+                state,
+                "rewrite_fuse",
+                {
+                    "selected_candidate_id": selected_candidate_id,
+                    "selected_query": chosen_query,
+                    "branch_count": len(runs),
+                    "best_retrieval_count": int(chosen_run.get("retrieval_count") or 0),
+                    "fallback_reason": fallback_reason,
+                    "latency_ms": int((time.perf_counter() - start) * 1000),
+                    "completed_at": now_iso(),
+                },
+            ),
+        },
+        goto="complexity_router",
+    )
 
 
 def _build_subquery_dispatch_plan(

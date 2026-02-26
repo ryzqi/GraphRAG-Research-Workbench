@@ -238,6 +238,44 @@ def parallel_retrieval_include_main(state: dict[str, Any], settings: Settings) -
     )
 
 
+def rewrite_branch_enabled(state: dict[str, Any], settings: Settings) -> bool:
+    return _state_flag(
+        state,
+        key="rewrite_branch_enabled",
+        default=bool(getattr(settings, "kb_chat_rewrite_branch_enabled", True)),
+    )
+
+
+def rewrite_branch_max_candidates(state: dict[str, Any], settings: Settings) -> int:
+    return max(
+        1,
+        min(
+            8,
+            _state_int(
+                state,
+                key="rewrite_branch_max_candidates",
+                default=int(
+                    getattr(settings, "kb_chat_rewrite_branch_max_candidates", 4)
+                ),
+            ),
+        ),
+    )
+
+
+def rewrite_min_confidence(state: dict[str, Any], settings: Settings) -> float:
+    return max(
+        0.0,
+        min(
+            1.0,
+            _state_float(
+                state,
+                key="rewrite_min_confidence",
+                default=float(getattr(settings, "kb_chat_rewrite_min_confidence", 0.55)),
+            ),
+        ),
+    )
+
+
 def doc_gate_rule_threshold(state: dict[str, Any], settings: Settings) -> float:
     return max(
         0.0,

@@ -12,6 +12,10 @@ from app.services.message_normalizer import extract_text_content
 _NON_ANSWER_STREAM_NODES = {
     # KB preprocess / retrieval / reflection nodes
     "merge_context",
+    "rewrite_plan",
+    "rewrite_dispatch",
+    "rewrite_branch_retrieve",
+    "rewrite_fuse",
     "coref_rewrite",
     "ambiguity_check",
     "normalize_rewrite",

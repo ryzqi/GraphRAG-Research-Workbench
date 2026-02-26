@@ -512,6 +512,31 @@ function buildFallbackOutputItems(
       pushDisplayItem(items, { key: 'rewritten', label: '是否改写', value: summary.rewritten });
       pushDisplayItem(items, { key: 'reason', label: '改写原因', value: summary.reason });
       pushDisplayItem(items, { key: 'needs_clarification_hint', label: '建议先澄清', value: summary.needs_clarification_hint });
+    } else if (nodeId === 'rewrite_plan') {
+      const rewritePlan = asRecord(snapshot.rewrite_plan) ?? {};
+      pushDisplayItem(items, { key: 'selected_query', label: '选中查询', value: rewritePlan.selected_query ?? summary.selected_query });
+      pushDisplayItem(items, { key: 'selected_candidate_id', label: '选中候选', value: rewritePlan.selected_candidate_id ?? summary.selected_candidate_id });
+      pushDisplayItem(items, { key: 'candidate_count', label: '候选数', value: summary.candidate_count });
+      pushDisplayItem(items, { key: 'strategy', label: '规划策略', value: summary.strategy });
+      pushDisplayItem(items, { key: 'fallback_reason', label: '回退原因', value: summary.fallback_reason });
+    } else if (nodeId === 'rewrite_dispatch') {
+      pushDisplayItem(items, { key: 'mode', label: '编排模式', value: summary.mode });
+      pushDisplayItem(items, { key: 'branch_count', label: '分支数量', value: summary.branch_count });
+      pushDisplayItem(items, { key: 'candidate_count', label: '候选数量', value: summary.candidate_count });
+      pushDisplayItem(items, { key: 'reason', label: '派发原因', value: summary.reason });
+    } else if (nodeId === 'rewrite_branch_retrieve') {
+      const runs = Array.isArray(snapshot.rewrite_branch_runs) ? snapshot.rewrite_branch_runs : [];
+      const run = asRecord(runs[0]) ?? {};
+      pushDisplayItem(items, { key: 'query', label: '候选查询', value: run.query });
+      pushDisplayItem(items, { key: 'source', label: '候选来源', value: run.source });
+      pushDisplayItem(items, { key: 'retrieval_count', label: '证据数量', value: run.retrieval_count });
+      pushDisplayItem(items, { key: 'success', label: '验证成功', value: run.success });
+      pushDisplayItem(items, { key: 'reason', label: '失败原因', value: run.reason });
+    } else if (nodeId === 'rewrite_fuse') {
+      pushDisplayItem(items, { key: 'selected_candidate_id', label: '选中候选', value: summary.selected_candidate_id });
+      pushDisplayItem(items, { key: 'selected_query', label: '选中查询', value: summary.selected_query });
+      pushDisplayItem(items, { key: 'best_retrieval_count', label: '最佳证据数', value: summary.best_retrieval_count });
+      pushDisplayItem(items, { key: 'fallback_reason', label: '回退原因', value: summary.fallback_reason });
     } else if (nodeId === 'ambiguity_check') {
       pushDisplayItem(items, { key: 'ambiguous', label: '是否歧义', value: summary.ambiguous });
       pushDisplayItem(items, { key: 'reason', label: '判定原因', value: summary.reason });
