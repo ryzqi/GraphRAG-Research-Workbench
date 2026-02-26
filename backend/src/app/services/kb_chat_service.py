@@ -975,8 +975,10 @@ class KbChatService:
             "doc_gate_precheck": "文档预判",
             "doc_grader_llm": "文档复核",
             "doc_grader": "相关性评估",
+            "answer_subgraph": "答案子图",
             "generator": "答案生成",
             "answer_review": "答案审查",
+            "answer_repair": "答案修复",
             "transform_query": "重写检索问题",
             "force_exit": "提前终止",
             "service_guardrail": "服务保护",
@@ -1057,6 +1059,7 @@ class KbChatService:
             summary_key = {
                 "retrieve": "retrieval_layer",
                 "generate": "generator",
+                "answer_subgraph": "answer_subgraph",
             }.get(node, node)
             candidate = stage_summaries.get(summary_key)
             if isinstance(candidate, dict):
@@ -1210,6 +1213,19 @@ class KbChatService:
                     best_answer, 120
                 )
 
+        if node == "answer_subgraph":
+            answer_quality = update.get("answer_quality")
+            if isinstance(answer_quality, dict):
+                next_step = answer_quality.get("next_step")
+                reason = answer_quality.get("reason")
+                if isinstance(next_step, str) and next_step:
+                    io_summary["next_step"] = next_step
+                if isinstance(reason, str) and reason:
+                    io_summary["reason"] = reason
+            degrade_reason = update.get("degrade_reason")
+            if isinstance(degrade_reason, str) and degrade_reason.strip():
+                io_summary["degrade_reason"] = degrade_reason.strip()
+
         if not io_summary:
             return None
         return io_summary
@@ -1335,24 +1351,39 @@ class KbChatService:
             return None
 
     @staticmethod
-    def _normalize_graph_stream_event(event: Any) -> tuple[str, Any] | None:
+    def _normalize_graph_stream_event(
+        event: Any,
+    ) -> tuple[str, Any, list[str] | None] | None:
         """Normalize LangGraph stream tuple for both plain and subgraph modes."""
+        def _to_node_path(value: Any) -> list[str] | None:
+            if isinstance(value, tuple):
+                path = [str(item) for item in value if isinstance(item, str) and item]
+                return path or None
+            if isinstance(value, list):
+                path = [str(item) for item in value if isinstance(item, str) and item]
+                return path or None
+            return None
+
         if isinstance(event, tuple):
             if len(event) == 2:
                 mode, chunk = event
+                node_path = None
             elif len(event) == 3:
-                _, mode, chunk = event
-            else:
-                return None
-            return (mode, chunk) if isinstance(mode, str) else None
-        if isinstance(event, list):
-            if len(event) == 2:
-                mode, chunk = event[0], event[1]
-            elif len(event) == 3:
+                node_path = _to_node_path(event[0])
                 mode, chunk = event[1], event[2]
             else:
                 return None
-            return (mode, chunk) if isinstance(mode, str) else None
+            return (mode, chunk, node_path) if isinstance(mode, str) else None
+        if isinstance(event, list):
+            if len(event) == 2:
+                mode, chunk = event[0], event[1]
+                node_path = None
+            elif len(event) == 3:
+                node_path = _to_node_path(event[0])
+                mode, chunk = event[1], event[2]
+            else:
+                return None
+            return (mode, chunk, node_path) if isinstance(mode, str) else None
         return None
 
     @staticmethod
@@ -1629,6 +1660,16 @@ class KbChatService:
             best_answer = answer_review.get("best_answer")
             if isinstance(best_answer, str) and best_answer.strip():
                 return best_answer.strip(), "answer_review.best_answer"
+
+        answer_subgraph = (
+            stage_summaries.get("answer_subgraph")
+            if isinstance(stage_summaries, dict)
+            else None
+        )
+        if isinstance(answer_subgraph, dict):
+            best_answer = answer_subgraph.get("best_answer")
+            if isinstance(best_answer, str) and best_answer.strip():
+                return best_answer.strip(), "answer_subgraph.best_answer"
 
         generator = (
             stage_summaries.get("generator")
@@ -2067,7 +2108,7 @@ class KbChatService:
 
                 kind, payload = queue_task.result()
                 if kind == "event":
-                    mode, chunk = payload
+                    mode, chunk, node_path = payload
 
                     if mode == "messages":
                         token = None
@@ -2094,11 +2135,14 @@ class KbChatService:
                                 and isinstance(token_meta.get("langgraph_node"), str)
                                 else None
                             )
+                            if node_name is None and isinstance(node_path, list) and node_path:
+                                node_name = node_path[-1]
                             yield _emit_enveloped(
                                 event_type="messages",
                                 payload={
                                     "run_id": str(run.id),
                                     "node": node_name,
+                                    "node_path": node_path or [],
                                     "deltas": [delta.to_dict() for delta in deltas],
                                     "ts": datetime.now(timezone.utc).isoformat(),
                                 },
@@ -2115,6 +2159,8 @@ class KbChatService:
                             ),
                             None,
                         )
+                        if candidate_node is None and isinstance(node_path, list) and node_path:
+                            candidate_node = node_path[-1]
                         interrupts = apply_updates_chunk(stream_state, chunk)
                         candidate, candidate_source = self._extract_last_good_answer(
                             answer="",
@@ -2135,6 +2181,7 @@ class KbChatService:
                             payload={
                                 "run_id": str(run.id),
                                 "chunk": chunk,
+                                "node_path": node_path or [],
                                 "ts": datetime.now(timezone.utc).isoformat(),
                             },
                             node_name=candidate_node,
@@ -2151,6 +2198,7 @@ class KbChatService:
                             )
                             payload_dict = dict(safe_payload)
                             payload_dict.setdefault("run_id", str(run.id))
+                            payload_dict.setdefault("node_path", node_path or [])
                             payload_dict.setdefault(
                                 "ts", datetime.now(timezone.utc).isoformat()
                             )

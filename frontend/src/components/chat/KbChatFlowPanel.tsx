@@ -152,6 +152,11 @@ const NODE_BADGE_THEME_MAP: Record<string, NodeBadgeTheme> = {
   doc_gate_route: { icon: GavelIcon, label: '文档判定', color: '#EA580C' },
   doc_grader: { icon: GavelIcon, label: '文档判定', color: '#EA580C' },
   transform_query: { icon: SyncAltIcon, label: '查询改写', color: '#DC2626' },
+  answer_subgraph: { icon: AutoAwesomeIcon, label: '答案子图', color: '#C026D3' },
+  draft_generate: { icon: AutoAwesomeIcon, label: '草稿生成', color: '#C026D3' },
+  answer_self_check: { icon: RateReviewIcon, label: '答案自检', color: '#9333EA' },
+  answer_repair: { icon: AutoFixHighIcon, label: '答案修复', color: '#A855F7' },
+  answer_commit: { icon: TaskAltIcon, label: '答案提交', color: '#7C3AED' },
   generate: { icon: AutoAwesomeIcon, label: '答案生成', color: '#C026D3' },
   answer_review: { icon: RateReviewIcon, label: '答案审查', color: '#9333EA' },
   finalize: { icon: TaskAltIcon, label: '答案整理', color: '#0891B2' },
@@ -343,6 +348,9 @@ function formatQueryItems(value: unknown): string[] {
 function summaryKeyForNode(nodeId: string): string {
   if (nodeId === 'retrieve') return 'retrieval_layer';
   if (nodeId === 'generate') return 'generator';
+  if (nodeId === 'draft_generate') return 'generator';
+  if (nodeId === 'answer_self_check') return 'answer_review';
+  if (nodeId === 'answer_commit') return 'answer_subgraph';
   if (nodeId === 'doc_gate_route') return 'doc_grader';
   return nodeId;
 }
@@ -442,19 +450,25 @@ function buildFallbackInputItems(
       value: pickText(snapshot, 'normalized_query', 'coref_query', 'user_input'),
     });
     pushDisplayItem(items, { key: 'reason', label: '改写原因', value: reflection.reason });
-  } else if (nodeId === 'generate') {
+  } else if (nodeId === 'answer_subgraph' || nodeId === 'generate' || nodeId === 'draft_generate') {
     pushDisplayItem(items, {
       key: 'question',
       label: '待回答问题',
       value: pickText(snapshot, 'merged_context', 'user_input'),
     });
-  } else if (nodeId === 'answer_review') {
+  } else if (nodeId === 'answer_review' || nodeId === 'answer_self_check') {
     pushDisplayItem(items, {
       key: 'question',
       label: '用户问题',
       value: pickText(snapshot, 'merged_context', 'user_input'),
     });
     pushDisplayItem(items, { key: 'draft_answer', label: '待审查答案', value: pickText(snapshot, 'draft_answer') });
+  } else if (nodeId === 'answer_repair') {
+    pushDisplayItem(items, {
+      key: 'draft_answer',
+      label: '修复前答案',
+      value: pickText(snapshot, 'draft_answer'),
+    });
   } else if (nodeId === 'finalize') {
     pushDisplayItem(items, {
       key: 'draft_answer',
@@ -697,15 +711,25 @@ function buildFallbackOutputItems(
       pushDisplayItem(items, { key: 'normalized_query', label: '改写后问题', value: pickText(snapshot, 'normalized_query') });
       pushDisplayItem(items, { key: 'rewritten', label: '是否变化', value: summary.rewritten });
       pushDisplayItem(items, { key: 'query_items', label: '改写后查询项', value: formatQueryItems(snapshot.query_items) });
-    } else if (nodeId === 'generate') {
+    } else if (nodeId === 'answer_subgraph' || nodeId === 'answer_commit') {
+      pushDisplayItem(items, { key: 'next_step', label: '下一步', value: summary.next_step });
+      pushDisplayItem(items, { key: 'reason', label: '判定原因', value: summary.reason ?? reflection.reason });
+      pushDisplayItem(items, { key: 'degrade_reason', label: '降级原因', value: summary.degrade_reason });
+      pushDisplayItem(items, { key: 'repair_attempts', label: '修复次数', value: summary.repair_attempts });
+      pushDisplayItem(items, { key: 'best_answer', label: '候选答案', value: pickText(snapshot, 'best_answer', 'draft_answer') });
+    } else if (nodeId === 'generate' || nodeId === 'draft_generate') {
       pushDisplayItem(items, { key: 'draft_answer', label: '生成草稿', value: pickText(snapshot, 'draft_answer') });
       pushDisplayItem(items, { key: 'final_answer', label: '候选答案', value: pickText(snapshot, 'final_answer') });
-    } else if (nodeId === 'answer_review') {
+    } else if (nodeId === 'answer_review' || nodeId === 'answer_self_check') {
       pushDisplayItem(items, { key: 'passed', label: '答案审查是否通过', value: summary.passed });
       pushDisplayItem(items, { key: 'action', label: '后续动作', value: reflection.action });
       pushDisplayItem(items, { key: 'reason', label: '判定原因', value: summary.reason });
       pushDisplayItem(items, { key: 'fallback_reason', label: '回退原因', value: summary.fallback_reason });
       pushDisplayItem(items, { key: 'best_answer', label: '最佳答案', value: pickText(snapshot, 'best_answer') });
+    } else if (nodeId === 'answer_repair') {
+      pushDisplayItem(items, { key: 'repair_attempt', label: '修复轮次', value: summary.repair_attempt });
+      pushDisplayItem(items, { key: 'fallback_reason', label: '回退原因', value: summary.fallback_reason });
+      pushDisplayItem(items, { key: 'final_answer', label: '修复后答案', value: pickText(snapshot, 'final_answer') });
     } else if (nodeId === 'finalize') {
       pushDisplayItem(items, { key: 'final_answer', label: '最终答案', value: pickText(snapshot, 'final_answer') });
     } else if (nodeId === 'force_exit') {

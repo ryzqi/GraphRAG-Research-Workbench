@@ -34,16 +34,15 @@ from app.agents.kb_chat_agentic.preprocess import (
     prepare_messages,
     rewrite_plan,
 )
+from app.agents.kb_chat_agentic.answer_subgraph import build_answer_subgraph
 from app.agents.kb_chat_agentic.tool_loop import force_exit_node
 from app.agents.kb_chat_agentic.reflection import (
-    answer_review,
     doc_gate_precheck,
     doc_gate_route,
     doc_grader_llm,
     dispatch_subqueries,
     dispatch_rewrite_branches,
     finalize_answer,
-    generate_draft,
     kb_retrieve_context,
     merge_subquery_context,
     rewrite_branch_retrieve,
@@ -75,6 +74,7 @@ _NODE_METADATA: dict[str, dict[str, Any]] = {
     "doc_gate_route": {"label": "\u6587\u6863\u5224\u5b9a", "phase": "judge", "order": 16},
     "doc_grader": {"label": "\u6587\u6863\u5224\u5b9a", "phase": "judge", "order": 16},
     "transform_query": {"label": "\u67e5\u8be2\u6539\u5199", "phase": "retrieve", "order": 17},
+    "answer_subgraph": {"label": "\u7b54\u6848\u5b50\u56fe", "phase": "generate", "order": 18},
     "generate": {"label": "\u7b54\u6848\u751f\u6210", "phase": "generate", "order": 18},
     "answer_review": {"label": "\u7b54\u6848\u5ba1\u67e5", "phase": "verify", "order": 19},
     "finalize": {"label": "\u7b54\u6848\u6574\u7406", "phase": "finalize", "order": 20},
@@ -1934,7 +1934,7 @@ class KbChatAgenticGraph:
                 partial(doc_gate_route, settings=settings),
             ),
             metadata=_NODE_METADATA["doc_gate_route"],
-            destinations=("generate", "transform_query", "force_exit"),
+            destinations=("answer_subgraph", "transform_query", "force_exit"),
         )
         graph.add_node(
             "transform_query",
@@ -1943,21 +1943,11 @@ class KbChatAgenticGraph:
             ),
             metadata=_NODE_METADATA["transform_query"],
         )
+        answer_subgraph = build_answer_subgraph(settings=settings, chat_model=chat_model)
         graph.add_node(
-            "generate",
-            _wrap_node_with_io(
-                "generate",
-                partial(generate_draft, settings=settings, chat_model=chat_model),
-            ),
-            metadata=_NODE_METADATA["generate"],
-        )
-        graph.add_node(
-            "answer_review",
-            _wrap_node_with_io(
-                "answer_review",
-                partial(answer_review, settings=settings, chat_model=chat_model),
-            ),
-            metadata=_NODE_METADATA["answer_review"],
+            "answer_subgraph",
+            answer_subgraph,
+            metadata=_NODE_METADATA["answer_subgraph"],
         )
         graph.add_node(
             "finalize",
@@ -1995,10 +1985,9 @@ class KbChatAgenticGraph:
 
         graph.add_edge("transform_query", "retrieve")
 
-        # Draft generation → AnswerReview → Finalize/TransformQuery
-        graph.add_edge("generate", "answer_review")
+        # Answer subgraph (draft -> review -> optional repair -> commit)
         graph.add_conditional_edges(
-            "answer_review",
+            "answer_subgraph",
             lambda s: route_after_answer_review(s, settings),
             {
                 "finalize": "finalize",

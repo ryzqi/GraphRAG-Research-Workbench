@@ -27,6 +27,7 @@ const NODE_DETAIL_LIMIT_OVERRIDES: Partial<
   doc_grader_llm: { output: 4 },
   doc_gate_route: { output: 5 },
   doc_grader: { output: 5 },
+  answer_subgraph: { output: 5 },
 };
 
 const NODE_DETAIL_POLICY_MAP: Record<string, NodeDetailPolicy> = {
@@ -133,6 +134,26 @@ const NODE_DETAIL_POLICY_MAP: Record<string, NodeDetailPolicy> = {
   transform_query: {
     input: ['normalized_query'],
     output: ['normalized_query', 'rewritten'],
+  },
+  answer_subgraph: {
+    input: ['question'],
+    output: ['next_step', 'reason', 'degrade_reason', 'best_answer', 'repair_attempts'],
+  },
+  draft_generate: {
+    input: ['question'],
+    output: ['draft_answer', 'final_answer'],
+  },
+  answer_self_check: {
+    input: ['question'],
+    output: ['passed', 'reason', 'fallback_reason'],
+  },
+  answer_repair: {
+    input: ['draft_answer'],
+    output: ['repair_attempt', 'fallback_reason', 'final_answer'],
+  },
+  answer_commit: {
+    input: ['reason'],
+    output: ['next_step', 'reason', 'degrade_reason', 'best_answer'],
   },
   generate: {
     input: ['question'],

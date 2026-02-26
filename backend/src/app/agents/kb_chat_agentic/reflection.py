@@ -1426,7 +1426,7 @@ async def doc_gate_route(
     if _force_exit_requested(state):
         goto = "force_exit"
     elif passed:
-        goto = "generate"
+        goto = "answer_subgraph"
     else:
         loop_counts = _get_loop_counts(state)
         if retry_advice == "none":
@@ -1438,7 +1438,7 @@ async def doc_gate_route(
         else:
             goto = "transform_query"
 
-    action = "none" if passed and goto == "generate" else "transform_query"
+    action = "none" if passed and goto == "answer_subgraph" else "transform_query"
     if goto == "force_exit":
         action = "force_exit"
     updates: dict[str, Any] = {
@@ -1860,7 +1860,7 @@ async def transform_query_for_retry(
 
 
 def route_after_doc_grader(state: dict, settings: Settings) -> str:
-    """Route after DocGrader: generate vs transform_query vs force_exit."""
+    """Route after DocGrader: answer_subgraph vs transform_query vs force_exit."""
     if _force_exit_requested(state):
         return "force_exit"
     reflection = state.get("reflection")
@@ -1868,7 +1868,7 @@ def route_after_doc_grader(state: dict, settings: Settings) -> str:
         reflection.get("relevance_passed") if isinstance(reflection, dict) else None
     )
     if passed is True:
-        return "generate"
+        return "answer_subgraph"
     loop_counts = _get_loop_counts(state)
     if loop_counts["retrieval_retries"] >= int(settings.kb_chat_max_retrieval_retries):
         return "force_exit"

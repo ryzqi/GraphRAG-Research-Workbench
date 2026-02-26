@@ -295,7 +295,7 @@ class KbChatAgenticState(KbChatAgenticStateBase, total=False):
       message_plan/query_bundle/prepare_diagnostics/query_items
     - RetrievalLayer: reads query family -> writes final_context/metrics
     - ReflectionLayer: reads final_context -> writes reflection (+ optional rewritten query)
-    - Generator: reads final_context -> writes draft_answer/final_answer
+    - AnswerSubgraph: reads final_context -> writes draft_answer/final_answer/review
     """
 
     context_frame: ContextFrame
@@ -332,6 +332,9 @@ class KbChatAgenticState(KbChatAgenticStateBase, total=False):
     final_answer: str
     best_answer: str
     best_answer_meta: dict[str, Any]
+    answer_subgraph_state: dict[str, Any]
+    answer_quality: dict[str, Any]
+    degrade_reason: str
     clarification_payload: ClarificationPayload
 
     doc_gate_state: dict[str, Any]
@@ -408,6 +411,7 @@ def make_initial_state(
         "query_items": [],
         "rewrite_branch_runs": [],
         "subquery_runs": [],
+        "answer_subgraph_state": {},
         "decomposition_plan": {
             "strategy": "direct",
             "version": "kb_chat_decomposition_plan_v2",

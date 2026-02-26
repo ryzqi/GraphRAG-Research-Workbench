@@ -31,6 +31,9 @@ _NON_ANSWER_STREAM_NODES = {
     "doc_grader_llm",
     "doc_gate_route",
     "doc_grader",
+    "answer_self_check",
+    "answer_repair",
+    "answer_commit",
     "transform_query",
     "answer_review",
 }

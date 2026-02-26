@@ -506,6 +506,39 @@ async def test_doc_gate_route_force_exit_after_retry_budget(settings):
 
 
 @pytest.mark.asyncio
+async def test_doc_gate_route_passed_routes_to_answer_subgraph(settings):
+    state = {
+        "doc_gate_state": {
+            "passed": True,
+            "reason": "passed",
+            "missing_constraints": [],
+            "confidence": 0.93,
+            "evidence_score": 0.91,
+            "risk_level": "low",
+            "retry_advice": "none",
+            "decision_source": "rule",
+        },
+        "loop_counts": {"total_rounds": 1, "retrieval_retries": 0, "generation_retries": 0},
+        "reflection": {},
+        "stage_summaries": {},
+    }
+
+    result = await reflection.doc_gate_route(state, settings=settings)
+
+    assert isinstance(result, Command)
+    assert result.goto == "answer_subgraph"
+    assert result.update["reflection"]["action"] == "none"
+
+
+def test_route_after_doc_grader_passed_routes_to_answer_subgraph(settings):
+    state = {
+        "reflection": {"relevance_passed": True},
+        "loop_counts": {"total_rounds": 0, "retrieval_retries": 0, "generation_retries": 0},
+    }
+    assert reflection.route_after_doc_grader(state, settings) == "answer_subgraph"
+
+
+@pytest.mark.asyncio
 async def test_transform_query_retry_uses_rewrite_input_query_when_needed(monkeypatch, settings):
     monkeypatch.setattr(reflection, "get_settings", lambda: settings)
     monkeypatch.setattr(reflection, "QueryRewriteService", _FakeRewriteService)

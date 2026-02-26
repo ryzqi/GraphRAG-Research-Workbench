@@ -107,7 +107,7 @@ def test_graph_node_labels_are_chinese():
     assert labels["merge_context"] == "\u4e0a\u4e0b\u6587\u5408\u5e76"
     assert labels["complexity_router"] == "\u590d\u6742\u5ea6\u8def\u7531"
     assert labels["retrieve"] == "\u77e5\u8bc6\u68c0\u7d22"
-    assert labels["generate"] == "\u7b54\u6848\u751f\u6210"
+    assert labels["answer_subgraph"] == "\u7b54\u6848\u5b50\u56fe"
 
 
 def test_complexity_router_destinations_with_hyde():
@@ -165,4 +165,4 @@ def test_doc_gate_route_destinations():
     graph_json = graph.compile().get_graph().to_json()
     targets = _collect_doc_gate_route_targets(graph_json)
 
-    assert targets == {"generate", "transform_query", "force_exit"}
+    assert targets == {"answer_subgraph", "transform_query", "force_exit"}
