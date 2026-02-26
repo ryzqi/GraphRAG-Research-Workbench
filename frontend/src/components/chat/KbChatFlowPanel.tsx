@@ -610,6 +610,39 @@ function buildFallbackOutputItems(
             : summary.attempted,
       });
       pushDisplayItem(items, { key: 'reason', label: '检索说明', value: summary.reason });
+      pushDisplayItem(items, {
+        key: 'retrieval_count',
+        label: '检索命中数',
+        value:
+          typeof retrievalMetrics.retrieval_count === 'number'
+            ? retrievalMetrics.retrieval_count
+            : summary.retrieval_count,
+      });
+      pushDisplayItem(items, { key: 'query_used', label: '检索查询', value: summary.query_used });
+    } else if (nodeId === 'dispatch_subqueries') {
+      pushDisplayItem(items, { key: 'mode', label: '编排模式', value: summary.mode });
+      pushDisplayItem(items, { key: 'branch_count', label: '分支数量', value: summary.branch_count });
+      pushDisplayItem(items, { key: 'rank_strategy', label: '排序策略', value: summary.rank_strategy });
+      pushDisplayItem(items, { key: 'selected_queries', label: '分支查询', value: summary.selected_queries });
+      pushDisplayItem(items, { key: 'reason', label: '编排原因', value: summary.reason });
+    } else if (nodeId === 'retrieve_subquery') {
+      const runs = Array.isArray(snapshot.subquery_runs) ? snapshot.subquery_runs : [];
+      const run = asRecord(runs[0]) ?? {};
+      pushDisplayItem(items, { key: 'query', label: '分支查询', value: run.query });
+      pushDisplayItem(items, { key: 'kind', label: '分支类型', value: run.kind });
+      pushDisplayItem(items, { key: 'retrieval_count', label: '证据数量', value: run.retrieval_count });
+      pushDisplayItem(items, { key: 'success', label: '检索是否成功', value: run.success });
+      pushDisplayItem(items, { key: 'reason', label: '失败原因', value: run.reason });
+    } else if (nodeId === 'merge_subquery_context') {
+      pushDisplayItem(items, { key: 'mode', label: '聚合模式', value: summary.mode });
+      pushDisplayItem(items, { key: 'branch_count', label: '分支总数', value: summary.branch_count });
+      pushDisplayItem(items, { key: 'evidence_count', label: '证据数量', value: summary.evidence_count });
+      pushDisplayItem(items, { key: 'retrieval_count', label: '检索命中数', value: summary.retrieval_count });
+      pushDisplayItem(items, {
+        key: 'failure_reasons',
+        label: '分支失败原因',
+        value: recordToLines(summary.failure_reasons),
+      });
     } else if (nodeId === 'doc_grader') {
       pushDisplayItem(items, { key: 'passed', label: '相关性是否通过', value: summary.passed });
       pushDisplayItem(items, { key: 'action', label: '后续动作', value: reflection.action });

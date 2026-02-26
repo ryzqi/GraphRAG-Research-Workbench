@@ -709,6 +709,12 @@ async def test_dispatch_subqueries_returns_command_for_parallel_fanout(settings)
     assert isinstance(result.goto, list)
     assert len(result.goto) == 3
     assert result.update["stage_summaries"]["dispatch_subqueries"]["mode"] == "parallel_fanout"
+    assert result.update["stage_summaries"]["dispatch_subqueries"]["rank_strategy"] == "quality_first"
+    assert result.update["stage_summaries"]["dispatch_subqueries"]["selected_queries"] == [
+        "main question",
+        "variant A",
+        "variant B",
+    ]
 
 
 @pytest.mark.asyncio
@@ -743,6 +749,8 @@ async def test_retrieve_subquery_context_uses_query_item_bundle(settings):
     assert kb_tool.payloads[0]["query"] == "hyde query"
     assert kb_tool.payloads[0]["query_items"][0]["kind"] == "hyde"
     assert result["subquery_runs"][0]["kind"] == "hyde"
+    assert result["subquery_runs"][0]["query_used"] == "hyde query"
+    assert result["subquery_runs"][0]["retrieval_count"] == 1
 
 
 @pytest.mark.asyncio
@@ -753,13 +761,23 @@ async def test_merge_subquery_context_aggregates_parallel_runs(settings):
                 "query": "sub query A",
                 "priority": 2,
                 "context": "[S2] detail A",
+                "retrieval_count": 1,
                 "success": True,
             },
             {
                 "query": "sub query B",
                 "priority": 1,
                 "context": "[S1] detail B",
+                "retrieval_count": 1,
                 "success": True,
+            },
+            {
+                "query": "sub query C",
+                "priority": 3,
+                "context": "",
+                "retrieval_count": 0,
+                "success": False,
+                "reason": "exception",
             },
         ],
         "metrics": {},
@@ -772,3 +790,5 @@ async def test_merge_subquery_context_aggregates_parallel_runs(settings):
     assert "[S2] detail A" in result["final_context"]
     assert result["metrics"]["retrieval_layer"]["attempted"] is True
     assert result["metrics"]["retrieval_layer"]["evidence_count"] == 2
+    assert result["metrics"]["retrieval_layer"]["retrieval_count"] == 2
+    assert result["stage_summaries"]["retrieval_layer"]["failure_reasons"] == {"exception": 1}

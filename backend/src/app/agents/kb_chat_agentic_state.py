@@ -181,6 +181,30 @@ class PrepareDiagnostics(TypedDict, total=False):
     timing: dict[str, Any]
 
 
+class SubqueryRun(TypedDict, total=False):
+    subquery_id: str
+    index: int
+    query: str
+    query_used: str
+    kind: str
+    priority: int
+    purpose: str
+    coverage_tags: list[str]
+    context: str
+    used_query_item_bundle: bool
+    retrieval_count: int
+    success: bool
+    reason: str | None
+
+
+class RetrievalPlan(TypedDict, total=False):
+    mode: Literal["single_retrieve", "parallel_fanout"]
+    branch_count: int
+    rank_strategy: str
+    selected_queries: list[str]
+    reason: str
+
+
 # -----------------------------
 # Graph state schema
 # -----------------------------
@@ -248,8 +272,9 @@ class KbChatAgenticState(KbChatAgenticStateBase, total=False):
     message_plan: MessagePlan
     query_bundle: QueryBundle
     prepare_diagnostics: PrepareDiagnostics
+    retrieval_plan: RetrievalPlan
     query_items: list[QueryItem]
-    subquery_runs: Annotated[list[dict[str, Any]], add]
+    subquery_runs: Annotated[list[SubqueryRun], add]
     subquery_task: dict[str, Any]
 
     final_context: str

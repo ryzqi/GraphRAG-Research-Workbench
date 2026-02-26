@@ -1142,6 +1142,18 @@ def _build_node_output_display_items(
             label="编排原因",
             value=summary.get("reason"),
         )
+        _append_display_item(
+            items,
+            key="rank_strategy",
+            label="排序策略",
+            value=summary.get("rank_strategy"),
+        )
+        _append_display_item(
+            items,
+            key="selected_queries",
+            label="分支查询",
+            value=summary.get("selected_queries"),
+        )
     elif node_name == "retrieve_subquery":
         runs = snapshot.get("subquery_runs")
         first = runs[0] if isinstance(runs, list) and runs else {}
@@ -1164,6 +1176,18 @@ def _build_node_output_display_items(
             label="检索是否成功",
             value=run.get("success"),
         )
+        _append_display_item(
+            items,
+            key="retrieval_count",
+            label="证据数量",
+            value=run.get("retrieval_count"),
+        )
+        _append_display_item(
+            items,
+            key="reason",
+            label="失败原因",
+            value=run.get("reason"),
+        )
     elif node_name == "merge_subquery_context":
         _append_display_item(
             items,
@@ -1182,6 +1206,18 @@ def _build_node_output_display_items(
             key="evidence_count",
             label="证据数量",
             value=summary.get("evidence_count"),
+        )
+        _append_display_item(
+            items,
+            key="retrieval_count",
+            label="检索命中数",
+            value=summary.get("retrieval_count"),
+        )
+        _append_display_item(
+            items,
+            key="failure_reasons",
+            label="分支失败原因",
+            value=summary.get("failure_reasons"),
         )
     elif node_name == "retrieve":
         _append_display_item(
@@ -1205,6 +1241,18 @@ def _build_node_output_display_items(
             key="reason",
             label="检索说明",
             value=summary.get("reason"),
+        )
+        _append_display_item(
+            items,
+            key="retrieval_count",
+            label="检索命中数",
+            value=summary.get("retrieval_count"),
+        )
+        _append_display_item(
+            items,
+            key="query_used",
+            label="检索查询",
+            value=summary.get("query_used"),
         )
     elif node_name == "doc_grader":
         _append_display_item(

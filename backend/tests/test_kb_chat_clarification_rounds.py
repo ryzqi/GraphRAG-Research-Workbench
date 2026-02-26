@@ -30,6 +30,7 @@ def _build_service(*, max_rounds: int, graph_result: dict, run_stage_summaries: 
     exec_ctx = types.SimpleNamespace(
         started_at=datetime.now(timezone.utc),
         thread_id="thread-1",
+        run_context={},
         run=run,
         kb_chat_config=types.SimpleNamespace(),
         history_usage={},

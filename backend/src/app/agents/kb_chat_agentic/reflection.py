@@ -17,6 +17,7 @@ from langchain.agents import create_agent
 from langchain.messages import AIMessage, HumanMessage, SystemMessage
 from langchain.tools import BaseTool
 from langchain_openai import ChatOpenAI
+from langgraph.runtime import Runtime
 from langgraph.types import Command, Send
 from pydantic import BaseModel, ValidationError
 
@@ -160,6 +161,58 @@ def _normalize_query_item(item: object) -> dict[str, Any] | None:
     return normalized
 
 
+def _runtime_context(runtime: Runtime[Any] | None) -> dict[str, Any]:
+    if runtime is None:
+        return {}
+    context = getattr(runtime, "context", None)
+    return context if isinstance(context, dict) else {}
+
+
+def _resolve_kb_ids(state: dict[str, Any], runtime: Runtime[Any] | None) -> list[str] | None:
+    context = _runtime_context(runtime)
+    kb_ids_ctx = context.get("kb_ids")
+    if isinstance(kb_ids_ctx, list):
+        normalized = [str(item).strip() for item in kb_ids_ctx if str(item).strip()]
+        if normalized:
+            return normalized
+    memory_keys = state.get("memory_keys")
+    kb_ids = memory_keys.get("kb_ids") if isinstance(memory_keys, dict) else None
+    if isinstance(kb_ids, list):
+        normalized = [str(item).strip() for item in kb_ids if str(item).strip()]
+        if normalized:
+            return normalized
+    return None
+
+
+def _dispatch_quality_score(item: dict[str, Any], *, spec: dict[str, Any]) -> float:
+    kind = _as_str(item.get("kind")).strip() or "other"
+    priority = item.get("priority")
+    if not isinstance(priority, int):
+        priority = spec.get("priority")
+    if not isinstance(priority, int):
+        priority = 1 if kind == "main" else 4
+    tags = spec.get("coverage_tags")
+    if not isinstance(tags, list):
+        tags = item.get("coverage_tags")
+    if not isinstance(tags, list):
+        tags = []
+    unique_tags = {
+        _as_str(tag).strip().casefold()
+        for tag in tags
+        if _as_str(tag).strip()
+    }
+    kind_bonus = {
+        "subquery": 0.65,
+        "variant": 0.55,
+        "main": 0.45,
+        "hyde": 0.30,
+    }.get(kind, 0.20)
+    coverage_bonus = min(len(unique_tags), 4) * 0.1
+    # Lower priority value means higher urgency; cap to keep score stable.
+    priority_bonus = max(0, 8 - max(1, min(priority, 8))) * 0.12
+    return round(kind_bonus + coverage_bonus + priority_bonus, 4)
+
+
 def _build_subquery_dispatch_plan(
     state: dict,
     settings: Settings,
@@ -253,9 +306,34 @@ def _build_subquery_dispatch_plan(
         if query:
             spec_map[query.casefold()] = spec
 
-    selected_items = candidate_items[:max_branches]
+    ranked_candidates: list[dict[str, Any]] = []
+    for idx, item in enumerate(candidate_items):
+        query = _as_str(item.get("query")).strip()
+        if not query:
+            continue
+        spec = spec_map.get(query.casefold()) or {}
+        ranked_candidates.append(
+            {
+                "item": item,
+                "score": _dispatch_quality_score(item, spec=spec),
+                "index": idx,
+            }
+        )
+    ranked_candidates.sort(
+        key=lambda row: (
+            -float(row.get("score") or 0.0),
+            int((row.get("item") or {}).get("priority") or 99),
+            int(row.get("index") or 0),
+        )
+    )
+    selected_items = [
+        row.get("item")
+        for row in ranked_candidates[:max_branches]
+        if isinstance(row.get("item"), dict)
+    ]
     send_tasks: list[Send] = []
     branch_kinds: dict[str, int] = {}
+    selected_queries: list[str] = []
     for idx, item in enumerate(selected_items):
         query = _as_str(item.get("query")).strip()
         if not query:
@@ -309,6 +387,7 @@ def _build_subquery_dispatch_plan(
             "query_item": item,
         }
         branch_kinds[kind] = int(branch_kinds.get(kind, 0)) + 1
+        selected_queries.append(query)
         send_tasks.append(
             Send(
                 "retrieve_subquery",
@@ -340,6 +419,8 @@ def _build_subquery_dispatch_plan(
         "include_main": include_main,
         "branch_count": len(send_tasks),
         "branch_kinds": branch_kinds,
+        "selected_queries": selected_queries[:8],
+        "rank_strategy": "quality_first",
     }
 
 
@@ -355,17 +436,26 @@ async def dispatch_subqueries(
     state: dict,
     *,
     settings: Settings,
+    runtime: Runtime[Any] | None = None,
 ) -> Command[str]:
     start = time.perf_counter()
     goto, diagnostics = _build_subquery_dispatch_plan(state, settings)
     stage_summary = {
         **diagnostics,
+        "kb_count": len(_resolve_kb_ids(state, runtime) or []),
         "latency_ms": int((time.perf_counter() - start) * 1000),
         "completed_at": now_iso(),
     }
     return Command(
         update={
             "subquery_runs": [],
+            "retrieval_plan": {
+                "mode": diagnostics.get("mode"),
+                "branch_count": diagnostics.get("branch_count"),
+                "rank_strategy": diagnostics.get("rank_strategy"),
+                "selected_queries": diagnostics.get("selected_queries"),
+                "reason": diagnostics.get("reason"),
+            },
             **_merge_stage_summary(state, "dispatch_subqueries", stage_summary),
         },
         goto=goto,
@@ -377,6 +467,7 @@ async def retrieve_subquery_context(
     *,
     settings: Settings,
     kb_tool: BaseTool,
+    runtime: Runtime[Any] | None = None,
 ) -> dict[str, Any]:
     """Run retrieval for a single subquery task (fanout branch)."""
     task = state.get("subquery_task")
@@ -392,10 +483,7 @@ async def retrieve_subquery_context(
 
     loop_counts = _get_loop_counts(state)
     retrieval_round = max(loop_counts.get("retrieval_retries", 0), 0)
-    memory_keys = state.get("memory_keys")
-    kb_ids = memory_keys.get("kb_ids") if isinstance(memory_keys, dict) else None
-    if not isinstance(kb_ids, list):
-        kb_ids = None
+    kb_ids = _resolve_kb_ids(state, runtime)
 
     retrieval_reason: str | None = None
     try:
@@ -417,6 +505,8 @@ async def retrieve_subquery_context(
     kind = _as_str(task.get("kind")).strip() or "other"
     if isinstance(query_item, dict):
         kind = _as_str(query_item.get("kind")).strip() or kind
+    context_text = _as_str(context).strip()
+    retrieval_count = _extract_evidence_count(context_text)
 
     return {
         "subquery_runs": [
@@ -430,8 +520,10 @@ async def retrieve_subquery_context(
                 "coverage_tags": task.get("coverage_tags")
                 if isinstance(task.get("coverage_tags"), list)
                 else [],
-                "context": _as_str(context).strip(),
+                "query_used": query,
+                "context": context_text,
                 "used_query_item_bundle": isinstance(query_item, dict),
+                "retrieval_count": retrieval_count,
                 "success": retrieval_reason is None,
                 "reason": retrieval_reason,
             }
@@ -439,7 +531,12 @@ async def retrieve_subquery_context(
     }
 
 
-async def merge_subquery_context(state: dict, *, settings: Settings) -> dict[str, Any]:
+async def merge_subquery_context(
+    state: dict,
+    *,
+    settings: Settings,
+    runtime: Runtime[Any] | None = None,
+) -> dict[str, Any]:
     """Aggregate fanout retrieval outputs into final_context + metrics."""
     start = time.perf_counter()
     raw_runs = state.get("subquery_runs")
@@ -459,12 +556,18 @@ async def merge_subquery_context(state: dict, *, settings: Settings) -> dict[str
     seen_contexts: set[str] = set()
     success_count = 0
     branch_kinds: dict[str, int] = {}
+    failure_reasons: dict[str, int] = {}
+    retrieval_count = 0
     for run in runs:
         kind = _as_str(run.get("kind")).strip() or "other"
         branch_kinds[kind] = int(branch_kinds.get(kind, 0)) + 1
+        reason = _as_str(run.get("reason")).strip()
+        if reason:
+            failure_reasons[reason] = int(failure_reasons.get(reason, 0)) + 1
         context = _as_str(run.get("context")).strip()
         if not context:
             continue
+        retrieval_count += int(run.get("retrieval_count") or 0)
         key = context.casefold()
         if key in seen_contexts:
             continue
@@ -483,17 +586,31 @@ async def merge_subquery_context(state: dict, *, settings: Settings) -> dict[str
         **metrics,
         "retrieval_layer": {
             "evidence_count": evidence_count,
+            "retrieval_count": retrieval_count or evidence_count,
             "attempted": True,
             "mode": "parallel_fanout",
             "branch_count": len(runs),
             "branch_success_count": success_count,
             "branch_kinds": branch_kinds,
+            "failure_reasons": failure_reasons,
+            "kb_count": len(_resolve_kb_ids(state, runtime) or []),
         },
     }
     metrics = ensure_json_safe(metrics, settings=settings, label="metrics")
 
     return {
         "final_context": final_context,
+        "retrieval_plan": {
+            "mode": "parallel_fanout",
+            "branch_count": len(runs),
+            "rank_strategy": "quality_first",
+            "selected_queries": [
+                _as_str(run.get("query")).strip()
+                for run in runs
+                if _as_str(run.get("query")).strip()
+            ][:8],
+            "reason": "fanout",
+        },
         "metrics": metrics,
         "subquery_runs": [],
         **_merge_stage_summary(
@@ -506,6 +623,9 @@ async def merge_subquery_context(state: dict, *, settings: Settings) -> dict[str
                 "branch_failure_count": max(len(runs) - success_count, 0),
                 "branch_kinds": branch_kinds,
                 "evidence_count": evidence_count,
+                "retrieval_count": retrieval_count or evidence_count,
+                "failure_reasons": failure_reasons,
+                "kb_count": len(_resolve_kb_ids(state, runtime) or []),
                 "latency_ms": int((time.perf_counter() - start) * 1000),
                 "completed_at": now_iso(),
             },
@@ -635,6 +755,7 @@ async def kb_retrieve_context(
     *,
     settings: Settings,
     kb_tool: BaseTool,
+    runtime: Runtime[Any] | None = None,
 ) -> dict[str, Any]:
     """Run kb_retrieve once and store the resulting Top-N context into state.final_context."""
     start = time.perf_counter()
@@ -642,10 +763,7 @@ async def kb_retrieve_context(
     if _total_rounds_exceeded(loop_counts, settings):
         return _set_final_answer_for_exit(state, "", reason="max_total_rounds")
     query = _resolve_query_text(state)
-    memory_keys = state.get("memory_keys")
-    kb_ids = memory_keys.get("kb_ids") if isinstance(memory_keys, dict) else None
-    if not isinstance(kb_ids, list):
-        kb_ids = None
+    kb_ids = _resolve_kb_ids(state, runtime)
 
     retrieval_round = max(loop_counts.get("retrieval_retries", 0), 0)
     retrieval_reason: str | None = None
@@ -669,6 +787,8 @@ async def kb_retrieve_context(
 
     final_context = _as_str(context).strip()
     evidence_count = _extract_evidence_count(final_context)
+    if retrieval_reason is None and evidence_count <= 0:
+        retrieval_reason = "no_evidence"
 
     metrics = state.get("metrics")
     if not isinstance(metrics, dict):
@@ -677,13 +797,23 @@ async def kb_retrieve_context(
         **metrics,
         "retrieval_layer": {
             "evidence_count": evidence_count,
+            "retrieval_count": evidence_count,
             "attempted": True,
+            "mode": "single_retrieve",
+            "kb_count": len(kb_ids or []),
         },
     }
     metrics = ensure_json_safe(metrics, settings=settings, label="metrics")
 
     updates: dict[str, Any] = {
         "final_context": final_context,
+        "retrieval_plan": {
+            "mode": "single_retrieve",
+            "branch_count": 1,
+            "rank_strategy": "quality_first",
+            "selected_queries": [query] if query else [],
+            "reason": retrieval_reason or "ok",
+        },
         "metrics": metrics,
         **_merge_stage_summary(
             state,
@@ -691,7 +821,12 @@ async def kb_retrieve_context(
             {
                 "latency_ms": int((time.perf_counter() - start) * 1000),
                 "evidence_count": evidence_count,
+                "retrieval_count": evidence_count,
+                "query_used": query,
                 "reason": retrieval_reason,
+                "fallback_reason": retrieval_reason,
+                "mode": "single_retrieve",
+                "kb_count": len(kb_ids or []),
                 "completed_at": now_iso(),
             },
         ),
