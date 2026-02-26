@@ -5,6 +5,7 @@ import pytest
 from app.agents.kb_chat_agentic.schemas import AmbiguityDecision, ClarificationSlotDecision
 from app.agents.kb_chat_agentic.schemas import ComplexityDecision
 from app.agents.kb_chat_agentic.schemas import DecompositionDecision
+from app.agents.kb_chat_agentic.schemas import EntityExpandDecision, EntityExpansionCandidate
 from app.agents.kb_chat_agentic.schemas import NormalizeDecision
 from app.services.query_rewrite_service import QueryRewriteService
 from app.services.query_rewrite_service import StructuredCallResult
@@ -283,3 +284,97 @@ async def test_decompose_returns_structured_plan(monkeypatch, settings):
     assert result.plan["version"] == "kb_chat_decomposition_plan_v2"
     assert result.plan["sub_query_specs"][0]["query"] == "A 成本"
     assert result.plan["risk_flags"] == ["comparison"]
+
+
+@pytest.mark.asyncio
+async def test_entity_expand_accepts_high_confidence_candidates(monkeypatch, settings):
+    svc = QueryRewriteService(settings=settings)
+
+    async def _fake_structured(*args, **kwargs):  # noqa: ANN002, ANN003
+        _ = (args, kwargs)
+        payload = EntityExpandDecision(
+            candidates=[
+                EntityExpansionCandidate(
+                    query="k8s pod crashloopbackoff troubleshooting",
+                    confidence=0.91,
+                    reason="alias enrichment",
+                ),
+                EntityExpansionCandidate(
+                    query="kubernetes pod crashloopbackoff guide",
+                    confidence=0.82,
+                    reason="formal terminology",
+                ),
+            ],
+            dropped_queries=[],
+            reasoning="expand aliases for recall",
+        )
+        return StructuredCallResult(
+            payload=payload, success=True, reason="model_ok", latency_ms=12
+        )
+
+    monkeypatch.setattr(svc, "_call_prompt_structured", _fake_structured)
+
+    result = await svc.entity_expand(
+        ["k8s pod crashloopbackoff"],
+        normalized_query="k8s pod crashloopbackoff",
+        aliases=["kubernetes pod crashloopbackoff"],
+        entities=["k8s", "crashloopbackoff"],
+        enabled=True,
+        max_candidates=8,
+        max_variants=6,
+        min_confidence=0.55,
+        timeout_seconds=1.2,
+    )
+
+    assert result.success is True
+    assert result.reason == "llm_structured"
+    assert "kubernetes pod crashloopbackoff guide" in result.queries
+    assert isinstance(result.diagnostics, dict)
+    assert int(result.diagnostics.get("added_count") or 0) >= 1
+
+
+@pytest.mark.asyncio
+async def test_entity_expand_prunes_low_confidence_and_drift(monkeypatch, settings):
+    svc = QueryRewriteService(settings=settings)
+
+    async def _fake_structured(*args, **kwargs):  # noqa: ANN002, ANN003
+        _ = (args, kwargs)
+        payload = EntityExpandDecision(
+            candidates=[
+                EntityExpansionCandidate(
+                    query="railway compensation policy",
+                    confidence=0.24,
+                    reason="too low confidence",
+                ),
+                EntityExpansionCandidate(
+                    query="weather forecast tomorrow",
+                    confidence=0.92,
+                    reason="semantic drift",
+                ),
+            ],
+            dropped_queries=[],
+            reasoning="bad candidates",
+        )
+        return StructuredCallResult(
+            payload=payload, success=True, reason="model_ok", latency_ms=9
+        )
+
+    monkeypatch.setattr(svc, "_call_prompt_structured", _fake_structured)
+
+    result = await svc.entity_expand(
+        ["k8s pod crashloopbackoff"],
+        normalized_query="k8s pod crashloopbackoff",
+        aliases=["kubernetes pod crashloopbackoff"],
+        entities=["k8s", "crashloopbackoff"],
+        enabled=True,
+        max_candidates=8,
+        max_variants=6,
+        min_confidence=0.55,
+        timeout_seconds=1.2,
+    )
+
+    assert result.success is False
+    assert result.reason == "llm_structured_no_gain"
+    assert isinstance(result.diagnostics, dict)
+    assert int(result.diagnostics.get("pruned_low_confidence") or 0) == 1
+    assert int(result.diagnostics.get("pruned_drift") or 0) == 1

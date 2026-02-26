@@ -63,7 +63,16 @@ const NODE_DETAIL_POLICY_MAP: Record<string, NodeDetailPolicy> = {
   },
   entity_expand: {
     input: ['normalized_query'],
-    output: ['multi_queries', 'count'],
+    output: [
+      'multi_queries',
+      'input_count',
+      'expanded_count',
+      'added_count',
+      'pruned_count',
+      'min_confidence',
+      'drift_guardrail_triggered',
+      'fallback_reason',
+    ],
   },
   hyde: {
     input: ['normalized_query'],

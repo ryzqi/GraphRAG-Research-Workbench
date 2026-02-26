@@ -30,6 +30,7 @@ type ToggleKey =
   | 'query_rewrite_enabled'
   | 'ambiguity_check_enabled'
   | 'hyde_enabled'
+  | 'entity_expand_enabled'
   | 'hybrid_retrieval_enabled'
   | 'rerank_enabled';
 
@@ -52,6 +53,11 @@ const FEATURE_TOGGLE_META: ReadonlyArray<{
     key: 'hyde_enabled',
     label: 'HyDE',
     description: '生成假设文档并参与检索。',
+  },
+  {
+    key: 'entity_expand_enabled',
+    label: '实体扩展',
+    description: '在多路查询后做实体扩展和别名补全，优先提升召回。',
   },
   {
     key: 'hybrid_retrieval_enabled',
@@ -247,6 +253,54 @@ export function KbChatConfigPanel({
                   inputProps={{ min: value.retrieval_top_k, max: 50 }}
                   helperText={`控制进入重排序的候选量；调大可提升命中率但更耗时（范围 ${value.retrieval_top_k}~50）。`}
                   disabled={disabled}
+                  fullWidth
+                />
+                <TextField
+                  label='实体扩展候选上限'
+                  type='number'
+                  value={value.entity_expand_max_candidates}
+                  onChange={(event) =>
+                    handleIntField('entity_expand_max_candidates', event.target.value)
+                  }
+                  inputProps={{ min: 1, max: 12 }}
+                  helperText='控制实体扩展候选池大小，召回优先建议 6~10。'
+                  disabled={disabled || !value.entity_expand_enabled}
+                  fullWidth
+                />
+                <TextField
+                  label='实体扩展输出上限'
+                  type='number'
+                  value={value.entity_expand_max_variants}
+                  onChange={(event) =>
+                    handleIntField('entity_expand_max_variants', event.target.value)
+                  }
+                  inputProps={{ min: 1, max: 12 }}
+                  helperText='控制扩展后最终保留查询数，需小于等于候选上限。'
+                  disabled={disabled || !value.entity_expand_enabled}
+                  fullWidth
+                />
+                <TextField
+                  label='实体扩展最小置信度'
+                  type='number'
+                  value={value.entity_expand_min_confidence}
+                  onChange={(event) =>
+                    handleFloatField('entity_expand_min_confidence', event.target.value)
+                  }
+                  inputProps={{ min: 0, max: 1, step: 0.05 }}
+                  helperText='低于该置信度的扩展候选会被剪枝。'
+                  disabled={disabled || !value.entity_expand_enabled}
+                  fullWidth
+                />
+                <TextField
+                  label='实体扩展超时（秒）'
+                  type='number'
+                  value={value.entity_expand_timeout_seconds}
+                  onChange={(event) =>
+                    handleFloatField('entity_expand_timeout_seconds', event.target.value)
+                  }
+                  inputProps={{ min: 0, max: 5, step: 0.1 }}
+                  helperText='实体扩展节点的模型超时，超时后自动降级。'
+                  disabled={disabled || !value.entity_expand_enabled}
                   fullWidth
                 />
                 <TextField

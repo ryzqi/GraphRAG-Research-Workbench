@@ -145,6 +145,46 @@ def _complexity_cache_key_factory(*, direct_target: str) -> Any:
     return _key_func
 
 
+def _entity_expand_cache_key_factory() -> Any:
+    def _key_func(*args: Any, **kwargs: Any) -> str:
+        state: dict[str, Any] = {}
+        if args and isinstance(args[0], dict):
+            state = args[0]
+        elif isinstance(kwargs.get("state"), dict):
+            state = cast(dict[str, Any], kwargs["state"])
+        normalized_query = state.get("normalized_query")
+        if not isinstance(normalized_query, str):
+            normalized_query = ""
+        multi_queries = state.get("multi_queries")
+        if not isinstance(multi_queries, list):
+            multi_queries = []
+        normalized_meta = state.get("normalized_meta")
+        if not isinstance(normalized_meta, dict):
+            normalized_meta = {}
+        payload = {
+            "version": "kb_chat_entity_expand_v1",
+            "normalized_query": normalized_query.strip(),
+            "multi_queries": [
+                str(item).strip()
+                for item in multi_queries
+                if isinstance(item, str) and str(item).strip()
+            ],
+            "aliases": [
+                str(item).strip()
+                for item in (normalized_meta.get("aliases") or [])
+                if isinstance(item, str) and str(item).strip()
+            ],
+            "entities": [
+                str(item).strip()
+                for item in (normalized_meta.get("entities") or [])
+                if isinstance(item, str) and str(item).strip()
+            ],
+        }
+        return json.dumps(payload, ensure_ascii=False, sort_keys=True)
+
+    return _key_func
+
+
 def build_kb_chat_run_config(*, thread_id: str | None, recursion_limit: int) -> dict[str, Any]:
     """Build LangGraph invocation config for KB chat.
 
@@ -791,7 +831,7 @@ def _build_node_output_display_items(
             label="分解原因",
             value=summary.get("reason"),
         )
-    elif node_name in {"generate_variants", "entity_expand"}:
+    elif node_name == "generate_variants":
         multi_queries = _pick_string_list(snapshot, "multi_queries")
         _append_display_item(
             items,
@@ -811,6 +851,62 @@ def _build_node_output_display_items(
             items,
             key="reason",
             label="处理原因",
+            value=summary.get("reason"),
+        )
+    elif node_name == "entity_expand":
+        multi_queries = _pick_string_list(snapshot, "multi_queries")
+        _append_display_item(
+            items,
+            key="multi_queries",
+            label="澶氳矾鏌ヨ",
+            value=multi_queries,
+        )
+        _append_display_item(
+            items,
+            key="input_count",
+            label="杈撳叆鏁伴噺",
+            value=summary.get("input_count"),
+        )
+        _append_display_item(
+            items,
+            key="expanded_count",
+            label="鎵╁睍鍚庢暟閲?",
+            value=summary.get("expanded_count"),
+        )
+        _append_display_item(
+            items,
+            key="added_count",
+            label="鏂板鏁伴噺",
+            value=summary.get("added_count"),
+        )
+        _append_display_item(
+            items,
+            key="pruned_count",
+            label="鍓灊鏁伴噺",
+            value=summary.get("pruned_count"),
+        )
+        _append_display_item(
+            items,
+            key="min_confidence",
+            label="鏈€浣庣疆淇″害",
+            value=summary.get("min_confidence"),
+        )
+        _append_display_item(
+            items,
+            key="drift_guardrail_triggered",
+            label="鏄惁鍛戒腑婕傜Щ闃插",
+            value=summary.get("drift_guardrail_triggered"),
+        )
+        _append_display_item(
+            items,
+            key="fallback_reason",
+            label="闄嶇骇鍘熷洜",
+            value=summary.get("fallback_reason"),
+        )
+        _append_display_item(
+            items,
+            key="reason",
+            label="澶勭悊鍘熷洜",
             value=summary.get("reason"),
         )
     elif node_name == "hyde":
@@ -1241,7 +1337,19 @@ class KbChatAgenticGraph:
             if complexity_cache_enabled and complexity_cache_ttl > 0
             else None
         )
-        self._graph_cache = _KB_CHAT_GRAPH_CACHE if complexity_cache_policy else None
+        entity_expand_cache_policy = (
+            CachePolicy(
+                key_func=_entity_expand_cache_key_factory(),
+                ttl=complexity_cache_ttl,
+            )
+            if complexity_cache_enabled and complexity_cache_ttl > 0
+            else None
+        )
+        self._graph_cache = (
+            _KB_CHAT_GRAPH_CACHE
+            if complexity_cache_policy or entity_expand_cache_policy
+            else None
+        )
 
         graph = StateGraph(KbChatAgenticState)
 
@@ -1309,6 +1417,11 @@ class KbChatAgenticGraph:
                 "entity_expand", partial(entity_expand, settings=settings)
             ),
             metadata=_NODE_METADATA["entity_expand"],
+            retry_policy=llm_preprocess_retry_policy,
+            cache_policy=entity_expand_cache_policy,
+            destinations=("hyde", "prepare_messages")
+            if hyde_enabled
+            else ("prepare_messages",),
         )
         if hyde_enabled:
             graph.add_node(

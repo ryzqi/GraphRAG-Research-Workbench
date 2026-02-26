@@ -36,6 +36,11 @@ from .budget import (
 from .json_safety import ensure_json_safe
 from .runtime_config import (
     ambiguity_check_enabled,
+    entity_expand_enabled,
+    entity_expand_max_candidates,
+    entity_expand_max_variants,
+    entity_expand_min_confidence,
+    entity_expand_timeout_seconds,
     hyde_enabled,
     normalize_alias_max,
     normalize_llm_enabled,
@@ -85,6 +90,21 @@ def _normalize_meta_aliases(state: dict) -> list[str]:
         if key in seen:
             continue
         deduped.append(value)
+        seen.add(key)
+    return deduped
+
+
+def _dedupe_string_list(values: list[str]) -> list[str]:
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        normalized = value.strip()
+        if not normalized:
+            continue
+        key = normalized.casefold()
+        if key in seen:
+            continue
+        deduped.append(normalized)
         seen.add(key)
     return deduped
 
@@ -940,25 +960,62 @@ async def generate_variants(state: dict, settings: Settings) -> dict[str, Any]:
     return {"multi_queries": deduped, "stage_summaries": stage_summaries}
 
 
-async def entity_expand(state: dict, settings: Settings) -> dict[str, Any]:
-    """Entity expansion (placeholder; no-op for now)."""
+async def entity_expand(
+    state: dict,
+    runtime: Runtime[Any],
+    settings: Settings,
+) -> Command[str]:
+    """Entity expansion with confidence/drift guardrails and Command routing."""
     start = time.perf_counter()
+    _ = runtime
     queries = state.get("multi_queries")
     if not isinstance(queries, list):
         queries = []
-
-    expanded = queries
+    original = [q for q in queries if isinstance(q, str) and q.strip()]
     alias_candidates = _normalize_meta_aliases(state)
-    reason: str | None = None
+    normalized_query = state.get("normalized_query")
+    if not isinstance(normalized_query, str):
+        normalized_query = ""
+    normalized_meta = state.get("normalized_meta")
+    entities = []
+    if isinstance(normalized_meta, dict) and isinstance(normalized_meta.get("entities"), list):
+        entities = [item for item in normalized_meta["entities"] if isinstance(item, str)]
+
+    enabled = entity_expand_enabled(state, settings)
+    max_candidates = entity_expand_max_candidates(state, settings)
+    max_variants = entity_expand_max_variants(state, settings)
+    min_confidence = entity_expand_min_confidence(state, settings)
+    timeout_seconds = entity_expand_timeout_seconds(state, settings)
+
+    expanded = original
+    success = False
+    reason: str | None = "disabled"
+    diagnostics: dict[str, Any] = {}
     try:
         svc = QueryRewriteService(settings=settings)
-        result = await svc.entity_expand([q for q in queries if isinstance(q, str)])
+        result = await svc.entity_expand(
+            original,
+            normalized_query=normalized_query,
+            aliases=alias_candidates,
+            entities=entities,
+            enabled=enabled,
+            max_candidates=max_candidates,
+            max_variants=max_variants,
+            min_confidence=min_confidence,
+            timeout_seconds=timeout_seconds,
+        )
         expanded = result.queries
+        success = result.success
         reason = result.reason
+        diagnostics = (
+            result.diagnostics if isinstance(result.diagnostics, dict) else {}
+        )
     except Exception:  # pragma: no cover
-        expanded = queries
+        expanded = original
         reason = "error"
-    if alias_candidates:
+        success = False
+        diagnostics = {"fallback_reason": "exception"}
+    if alias_candidates and enabled:
         expanded = [*expanded, *alias_candidates]
         deduped: list[str] = []
         seen: set[str] = set()
@@ -971,18 +1028,70 @@ async def entity_expand(state: dict, settings: Settings) -> dict[str, Any]:
             deduped.append(value)
             seen.add(value.casefold())
         expanded = deduped
+    expanded = [value for value in expanded if isinstance(value, str) and value.strip()]
+    expanded = expanded[:max(1, max_variants)]
+    input_count = len(_dedupe_string_list(original))
+    expanded_count = len(_dedupe_string_list(expanded))
+    added_count = max(0, expanded_count - min(input_count, max(1, max_variants)))
+    pruned_count = int(diagnostics.get("pruned_count") or 0)
+    pruned_drift = int(diagnostics.get("pruned_drift") or 0)
+    fallback_reason = (
+        str(diagnostics.get("fallback_reason")).strip()
+        if isinstance(diagnostics.get("fallback_reason"), str)
+        else ""
+    )
+    entity_expand_meta = {
+        "enabled": enabled,
+        "input_count": input_count,
+        "expanded_count": expanded_count,
+        "added_count": added_count,
+        "pruned_count": pruned_count,
+        "pruned_drift": pruned_drift,
+        "pruned_low_confidence": int(diagnostics.get("pruned_low_confidence") or 0),
+        "min_confidence": min_confidence,
+        "max_candidates": max_candidates,
+        "max_variants": max_variants,
+        "reason": reason,
+        "fallback_reason": fallback_reason or reason,
+        "drift_guardrail_triggered": pruned_drift > 0,
+    }
     stage_summaries = _merge_stage_summary(
         state,
         "entity_expand",
         {
+            "success": success,
+            "enabled": enabled,
             "reason": reason,
+            "input_count": input_count,
+            "expanded_count": expanded_count,
+            "added_count": added_count,
+            "pruned_count": pruned_count,
+            "pruned_low_confidence": int(diagnostics.get("pruned_low_confidence") or 0),
+            "pruned_drift": pruned_drift,
+            "drift_guardrail_triggered": pruned_drift > 0,
+            "fallback_reason": fallback_reason or reason,
+            "count": expanded_count,
+            "min_confidence": min_confidence,
             "alias_count": len(alias_candidates),
             "completed_at": now_iso(),
             "latency_ms": int((time.perf_counter() - start) * 1000),
         },
         settings=settings,
     )
-    return {"multi_queries": expanded, "stage_summaries": stage_summaries}
+    if not enabled:
+        goto = "prepare_messages"
+    elif hyde_enabled(state, settings) and (not success and added_count == 0):
+        goto = "prepare_messages"
+    else:
+        goto = "hyde" if hyde_enabled(state, settings) else "prepare_messages"
+    return Command(
+        update={
+            "multi_queries": expanded,
+            "entity_expand_meta": entity_expand_meta,
+            "stage_summaries": stage_summaries,
+        },
+        goto=goto,
+    )
 
 
 def hyde_check_route(state: dict, settings: Settings) -> str:

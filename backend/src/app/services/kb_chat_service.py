@@ -298,6 +298,19 @@ class KbChatService:
                     kb_chat_config.normalize_timeout_seconds
                 ),
                 "hyde_enabled": bool(kb_chat_config.hyde_enabled),
+                "entity_expand_enabled": bool(kb_chat_config.entity_expand_enabled),
+                "entity_expand_max_candidates": int(
+                    kb_chat_config.entity_expand_max_candidates
+                ),
+                "entity_expand_max_variants": int(
+                    kb_chat_config.entity_expand_max_variants
+                ),
+                "entity_expand_min_confidence": float(
+                    kb_chat_config.entity_expand_min_confidence
+                ),
+                "entity_expand_timeout_seconds": float(
+                    kb_chat_config.entity_expand_timeout_seconds
+                ),
                 "parallel_retrieval_enabled": bool(
                     kb_chat_config.parallel_retrieval_enabled
                 ),

@@ -192,6 +192,28 @@ class MultiQueryDecision(BaseModel):
     queries: list[str] = Field(default_factory=list, min_length=1, max_length=6)
 
 
+class EntityExpansionCandidate(BaseModel):
+    """Single entity expansion candidate with confidence."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    query: str = Field(..., min_length=1, max_length=256)
+    confidence: float = Field(default=0.5, ge=0.0, le=1.0)
+    reason: str = Field(default="", max_length=120)
+
+
+class EntityExpandDecision(BaseModel):
+    """Structured output for entity expansion."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    candidates: list[EntityExpansionCandidate] = Field(
+        default_factory=list, max_length=12
+    )
+    dropped_queries: list[str] = Field(default_factory=list, max_length=12)
+    reasoning: str = Field(default="", max_length=240)
+
+
 class HyDEDecision(BaseModel):
     """Structured output for HyDE hypothetical document generation."""
 

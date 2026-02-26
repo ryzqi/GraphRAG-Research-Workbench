@@ -499,7 +499,7 @@ function buildFallbackOutputItems(
         value: typeof summary.count === 'number' ? summary.count : subQueries?.length,
       });
       pushDisplayItem(items, { key: 'reason', label: '分解原因', value: summary.reason });
-    } else if (nodeId === 'generate_variants' || nodeId === 'entity_expand') {
+    } else if (nodeId === 'generate_variants') {
       const multiQueries = pickStringList(snapshot, 'multi_queries');
       pushDisplayItem(items, { key: 'multi_queries', label: '多路查询', value: multiQueries });
       pushDisplayItem(items, {
@@ -508,6 +508,33 @@ function buildFallbackOutputItems(
         value: typeof summary.count === 'number' ? summary.count : multiQueries?.length,
       });
       pushDisplayItem(items, { key: 'reason', label: '处理原因', value: summary.reason });
+    } else if (nodeId === 'entity_expand') {
+      const multiQueries = pickStringList(snapshot, 'multi_queries');
+      pushDisplayItem(items, { key: 'multi_queries', label: '澶氳矾鏌ヨ', value: multiQueries });
+      pushDisplayItem(items, { key: 'input_count', label: '杈撳叆鏁伴噺', value: summary.input_count });
+      pushDisplayItem(items, {
+        key: 'expanded_count',
+        label: '鎵╁睍鍚庢暟閲?',
+        value: summary.expanded_count,
+      });
+      pushDisplayItem(items, { key: 'added_count', label: '鏂板鏁伴噺', value: summary.added_count });
+      pushDisplayItem(items, { key: 'pruned_count', label: '鍓灊鏁伴噺', value: summary.pruned_count });
+      pushDisplayItem(items, {
+        key: 'min_confidence',
+        label: '鏈€浣庣疆淇″害',
+        value: summary.min_confidence,
+      });
+      pushDisplayItem(items, {
+        key: 'drift_guardrail_triggered',
+        label: '婕傜Щ闃插',
+        value: summary.drift_guardrail_triggered,
+      });
+      pushDisplayItem(items, {
+        key: 'fallback_reason',
+        label: '闄嶇骇鍘熷洜',
+        value: summary.fallback_reason,
+      });
+      pushDisplayItem(items, { key: 'reason', label: '澶勭悊鍘熷洜', value: summary.reason });
     } else if (nodeId === 'hyde') {
       pushDisplayItem(items, { key: 'enabled', label: '是否启用 HyDE', value: summary.enabled });
       pushDisplayItem(items, { key: 'hyde_doc', label: 'HyDE 生成内容', value: pickText(snapshot, 'hyde_doc') });

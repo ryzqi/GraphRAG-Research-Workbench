@@ -67,6 +67,11 @@ export interface KbChatConfig {
   query_rewrite_enabled: boolean;
   ambiguity_check_enabled: boolean;
   hyde_enabled: boolean;
+  entity_expand_enabled: boolean;
+  entity_expand_max_candidates: number;
+  entity_expand_max_variants: number;
+  entity_expand_min_confidence: number;
+  entity_expand_timeout_seconds: number;
   hybrid_retrieval_enabled: boolean;
   rerank_enabled: boolean;
   retrieval_top_k: number;
@@ -408,6 +413,11 @@ export function toKbGraphSchemaQuery(config: Partial<KbChatConfig>): string {
     'query_rewrite_enabled',
     'ambiguity_check_enabled',
     'hyde_enabled',
+    'entity_expand_enabled',
+    'entity_expand_max_candidates',
+    'entity_expand_max_variants',
+    'entity_expand_min_confidence',
+    'entity_expand_timeout_seconds',
     'hybrid_retrieval_enabled',
     'rerank_enabled',
     'retrieval_top_k',

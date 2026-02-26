@@ -96,6 +96,11 @@ const DEFAULT_KB_CHAT_CONFIG: KbChatConfig = {
   query_rewrite_enabled: true,
   ambiguity_check_enabled: true,
   hyde_enabled: false,
+  entity_expand_enabled: true,
+  entity_expand_max_candidates: 8,
+  entity_expand_max_variants: 6,
+  entity_expand_min_confidence: 0.55,
+  entity_expand_timeout_seconds: 1.2,
   hybrid_retrieval_enabled: true,
   rerank_enabled: true,
   retrieval_top_k: 12,
@@ -116,6 +121,7 @@ const KB_CHAT_BOOLEAN_KEYS = [
   'query_rewrite_enabled',
   'ambiguity_check_enabled',
   'hyde_enabled',
+  'entity_expand_enabled',
   'hybrid_retrieval_enabled',
   'rerank_enabled',
 ] as const;
@@ -126,6 +132,7 @@ const KB_CHAT_CONFIG_LABELS: Record<KbChatBooleanKey, string> = {
   query_rewrite_enabled: '查询改写',
   ambiguity_check_enabled: '歧义检测',
   hyde_enabled: 'HyDE',
+  entity_expand_enabled: '实体扩展',
   hybrid_retrieval_enabled: '混合检索',
   rerank_enabled: '重排序',
 };

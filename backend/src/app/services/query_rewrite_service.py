@@ -24,6 +24,8 @@ from app.agents.kb_chat_agentic.schemas import (
     ClarificationSlotDecision,
     ComplexityDecision,
     DecompositionDecision,
+    EntityExpandDecision,
+    EntityExpansionCandidate,
     HyDEBatchDecision,
     MergeContextResolutionDecision,
     MultiQueryDecision,
@@ -513,6 +515,56 @@ def _coerce_fixed_multi_query_variants(
         for idx in range(len(completed), MULTI_QUERY_FIXED_VARIANTS):
             completed.append(f"{_normalize_whitespace(original_query)} 变体{idx + 1}")
     return completed[:MULTI_QUERY_FIXED_VARIANTS], True
+
+
+def _entity_seed_queries(
+    *,
+    normalized_query: str,
+    queries: Iterable[str],
+    aliases: Iterable[str],
+    entities: Iterable[str],
+    max_candidates: int,
+) -> list[str]:
+    return _dedupe_keep_order(
+        [
+            _normalize_whitespace(normalized_query),
+            *_sanitize_aliases(queries, limit=max_candidates),
+            *_sanitize_aliases(aliases, limit=max_candidates),
+            *_sanitize_aliases(entities, limit=max_candidates),
+        ]
+    )[: max(1, max_candidates)]
+
+
+def _entity_focus_overlap(query: str, *, focus_terms: set[str]) -> bool:
+    if not focus_terms:
+        return True
+    tokens = _extract_query_focus_terms(query)
+    return bool(tokens.intersection(focus_terms))
+
+
+def _normalize_entity_candidates(
+    candidates: Iterable[EntityExpansionCandidate], *, limit: int
+) -> list[EntityExpansionCandidate]:
+    deduped: list[EntityExpansionCandidate] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        query = _sanitize_query_text(candidate.query)
+        if not query:
+            continue
+        key = query.casefold()
+        if key in seen:
+            continue
+        deduped.append(
+            EntityExpansionCandidate(
+                query=query,
+                confidence=max(0.0, min(1.0, float(candidate.confidence))),
+                reason=_normalize_whitespace(candidate.reason),
+            )
+        )
+        seen.add(key)
+        if len(deduped) >= limit:
+            break
+    return deduped
 
 
 def _normalize_hyde_documents(
@@ -1614,16 +1666,141 @@ class QueryRewriteService:
             latency_ms=latency_ms,
         )
 
-    async def entity_expand(self, queries: list[str]) -> QueryListResult:
-        """Entity expansion (placeholder, safe no-op)."""
+    async def entity_expand(
+        self,
+        queries: list[str],
+        *,
+        normalized_query: str | None = None,
+        aliases: list[str] | None = None,
+        entities: list[str] | None = None,
+        enabled: bool | None = None,
+        max_candidates: int = 8,
+        max_variants: int = 6,
+        min_confidence: float = 0.55,
+        timeout_seconds: float | None = 1.2,
+    ) -> QueryListResult:
+        """Expand entity-oriented retrieval queries with structured outputs + guardrails."""
         start = time.perf_counter()
-        deduped = _dedupe_keep_order(queries)
+        enabled_flag = True if enabled is None else bool(enabled)
+        if not enabled_flag:
+            base = _dedupe_keep_order(queries)
+            latency_ms = int((time.perf_counter() - start) * 1000)
+            return QueryListResult(
+                queries=base[: max(1, max_variants)],
+                success=False,
+                reason="disabled",
+                latency_ms=latency_ms,
+                diagnostics={
+                    "input_count": len(base),
+                    "expanded_count": len(base[: max(1, max_variants)]),
+                    "added_count": 0,
+                    "pruned_count": 0,
+                    "pruned_low_confidence": 0,
+                    "pruned_drift": 0,
+                },
+            )
+
+        seed_query = _normalize_whitespace(normalized_query or "")
+        base_queries = _sanitize_aliases(queries, limit=max(1, max_candidates))
+        seed = _entity_seed_queries(
+            normalized_query=seed_query or (base_queries[0] if base_queries else ""),
+            queries=base_queries,
+            aliases=aliases or [],
+            entities=entities or [],
+            max_candidates=max(1, max_candidates),
+        )
+        if not seed:
+            latency_ms = int((time.perf_counter() - start) * 1000)
+            return QueryListResult(
+                queries=[],
+                success=False,
+                reason="empty",
+                latency_ms=latency_ms,
+                diagnostics={
+                    "input_count": 0,
+                    "expanded_count": 0,
+                    "added_count": 0,
+                    "pruned_count": 0,
+                    "pruned_low_confidence": 0,
+                    "pruned_drift": 0,
+                },
+            )
+
+        structured_result = await self._call_prompt_structured(
+            "kb_chat/entity_expand",
+            schema=EntityExpandDecision,
+            timeout_seconds=timeout_seconds,
+            max_tokens=384,
+            question=seed_query or seed[0],
+            seed_queries="\n".join(f"- {item}" for item in seed),
+            aliases=", ".join(_sanitize_aliases(aliases or [], limit=6)) or "none",
+            entities=", ".join(_sanitize_aliases(entities or [], limit=6)) or "none",
+            max_candidates=max(1, max_candidates),
+        )
+        focus_terms = _extract_query_focus_terms(seed_query or seed[0])
+        pruned_low_confidence = 0
+        pruned_drift = 0
+        accepted: list[str] = []
+
+        if (
+            structured_result.success
+            and isinstance(structured_result.payload, EntityExpandDecision)
+        ):
+            normalized_candidates = _normalize_entity_candidates(
+                structured_result.payload.candidates,
+                limit=max(1, max_candidates),
+            )
+            for candidate in normalized_candidates:
+                if candidate.confidence < float(min_confidence):
+                    pruned_low_confidence += 1
+                    continue
+                if not _entity_focus_overlap(candidate.query, focus_terms=focus_terms):
+                    pruned_drift += 1
+                    continue
+                accepted.append(candidate.query)
+            expanded = _dedupe_keep_order([*seed, *accepted])[: max(1, max_variants)]
+            added_count = max(0, len(expanded) - min(len(seed), max(1, max_variants)))
+            latency_ms = int((time.perf_counter() - start) * 1000)
+            return QueryListResult(
+                queries=expanded,
+                success=added_count > 0,
+                reason=(
+                    "llm_structured"
+                    if added_count > 0
+                    else "llm_structured_no_gain"
+                ),
+                latency_ms=latency_ms,
+                diagnostics={
+                    "input_count": len(seed),
+                    "expanded_count": len(expanded),
+                    "added_count": added_count,
+                    "pruned_count": pruned_low_confidence + pruned_drift,
+                    "pruned_low_confidence": pruned_low_confidence,
+                    "pruned_drift": pruned_drift,
+                    "reasoning": _normalize_whitespace(
+                        structured_result.payload.reasoning
+                    ),
+                    "min_confidence": float(min_confidence),
+                },
+            )
+
+        expanded = seed[: max(1, max_variants)]
         latency_ms = int((time.perf_counter() - start) * 1000)
         return QueryListResult(
-            queries=deduped,
+            queries=expanded,
             success=False,
-            reason="no_op",
+            reason="llm_failed_seed_only",
             latency_ms=latency_ms,
+            diagnostics={
+                "input_count": len(seed),
+                "expanded_count": len(expanded),
+                "added_count": max(0, len(expanded) - len(base_queries)),
+                "pruned_count": 0,
+                "pruned_low_confidence": 0,
+                "pruned_drift": 0,
+                "fallback_reason": structured_result.reason or "llm_failed_seed_only",
+                "min_confidence": float(min_confidence),
+            },
         )
 
     async def hyde(

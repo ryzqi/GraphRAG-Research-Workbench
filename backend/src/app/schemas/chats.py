@@ -57,6 +57,11 @@ class KbChatConfig(BaseModel):
     normalize_alias_max: int = Field(4, ge=1, le=8)
     normalize_timeout_seconds: float = Field(0.8, ge=0.0, le=5.0)
     hyde_enabled: bool = False
+    entity_expand_enabled: bool = True
+    entity_expand_max_candidates: int = Field(8, ge=1, le=12)
+    entity_expand_max_variants: int = Field(6, ge=1, le=12)
+    entity_expand_min_confidence: float = Field(0.55, ge=0.0, le=1.0)
+    entity_expand_timeout_seconds: float = Field(1.2, ge=0.0, le=5.0)
     parallel_retrieval_enabled: bool = True
     parallel_retrieval_min_queries: int = Field(2, ge=1, le=8)
     parallel_retrieval_max_branches: int = Field(6, ge=1, le=12)
@@ -78,6 +83,10 @@ class KbChatConfig(BaseModel):
 
     @model_validator(mode="after")
     def validate_constraints(self) -> "KbChatConfig":
+        if self.entity_expand_max_variants > self.entity_expand_max_candidates:
+            raise ValueError(
+                "entity_expand_max_variants 必须小于等于 entity_expand_max_candidates"
+            )
         if self.retrieval_rerank_top_k < self.retrieval_top_k:
             raise ValueError("retrieval_rerank_top_k 必须大于等于 retrieval_top_k")
         if self.retrieval_hybrid_ranker == "weighted":
@@ -122,6 +131,21 @@ def default_kb_chat_config(*, settings: Settings | None = None) -> KbChatConfig:
         normalize_alias_max=int(cfg.kb_chat_normalize_alias_max),
         normalize_timeout_seconds=float(cfg.kb_chat_normalize_timeout_seconds),
         hyde_enabled=bool(cfg.kb_chat_hyde_enabled),
+        entity_expand_enabled=bool(
+            getattr(cfg, "kb_chat_entity_expand_enabled", True)
+        ),
+        entity_expand_max_candidates=int(
+            getattr(cfg, "kb_chat_entity_expand_max_candidates", 8)
+        ),
+        entity_expand_max_variants=int(
+            getattr(cfg, "kb_chat_entity_expand_max_variants", 6)
+        ),
+        entity_expand_min_confidence=float(
+            getattr(cfg, "kb_chat_entity_expand_min_confidence", 0.55)
+        ),
+        entity_expand_timeout_seconds=float(
+            getattr(cfg, "kb_chat_entity_expand_timeout_seconds", 1.2)
+        ),
         parallel_retrieval_enabled=bool(cfg.kb_chat_parallel_retrieval_enabled),
         parallel_retrieval_min_queries=int(cfg.kb_chat_parallel_retrieval_min_queries),
         parallel_retrieval_max_branches=int(cfg.kb_chat_parallel_retrieval_max_branches),

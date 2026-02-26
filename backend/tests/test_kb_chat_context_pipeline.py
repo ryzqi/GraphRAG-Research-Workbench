@@ -97,6 +97,53 @@ class _FakeRewriteService:
         _ = (query, enabled)
         return types.SimpleNamespace(queries=[], reason="disabled")
 
+    async def entity_expand(
+        self,
+        queries: list[str],
+        *,
+        normalized_query: str | None = None,
+        aliases: list[str] | None = None,
+        entities: list[str] | None = None,
+        enabled: bool | None = None,
+        max_candidates: int = 8,
+        max_variants: int = 6,
+        min_confidence: float = 0.55,
+        timeout_seconds: float | None = 1.2,
+    ):
+        _ = (
+            normalized_query,
+            aliases,
+            entities,
+            enabled,
+            max_candidates,
+            max_variants,
+            min_confidence,
+            timeout_seconds,
+        )
+        deduped = []
+        seen: set[str] = set()
+        for item in [*queries, "expanded alias"]:
+            if not isinstance(item, str):
+                continue
+            value = item.strip()
+            if not value or value.casefold() in seen:
+                continue
+            deduped.append(value)
+            seen.add(value.casefold())
+        return types.SimpleNamespace(
+            queries=deduped,
+            success=True,
+            reason="llm_structured",
+            diagnostics={
+                "input_count": len(queries),
+                "expanded_count": len(deduped),
+                "added_count": max(0, len(deduped) - len(queries)),
+                "pruned_count": 0,
+                "pruned_low_confidence": 0,
+                "pruned_drift": 0,
+            },
+        )
+
     async def classify_complexity(
         self,
         query: str,
@@ -221,6 +268,11 @@ def settings():
         kb_chat_normalize_alias_max=4,
         kb_chat_normalize_timeout_seconds=0.8,
         kb_chat_hyde_enabled=False,
+        kb_chat_entity_expand_enabled=True,
+        kb_chat_entity_expand_max_candidates=8,
+        kb_chat_entity_expand_max_variants=6,
+        kb_chat_entity_expand_min_confidence=0.55,
+        kb_chat_entity_expand_timeout_seconds=1.2,
         kb_chat_max_total_rounds=3,
         kb_chat_max_retrieval_retries=2,
         kb_chat_max_generation_retries=2,
@@ -516,6 +568,33 @@ async def test_decomposition_persists_plan_metadata(monkeypatch, settings):
     assert result["decomposition_plan"]["strategy"] == "decomposition"
     assert result["decomposition_plan"]["version"] == "kb_chat_decomposition_plan_v2"
     assert result["decomposition_plan"]["sub_query_specs"][0]["purpose"] == "find baseline"
+
+
+@pytest.mark.asyncio
+async def test_entity_expand_returns_command_and_meta(monkeypatch, settings):
+    monkeypatch.setattr(preprocess, "QueryRewriteService", _FakeRewriteService)
+    state = {
+        "normalized_query": "main question",
+        "normalized_meta": {"aliases": ["query alias"], "entities": ["entity-a"]},
+        "multi_queries": ["main question", "variant A"],
+        "stage_summaries": {},
+        "runtime_config": {
+            "entity_expand_enabled": True,
+            "entity_expand_max_candidates": 8,
+            "entity_expand_max_variants": 6,
+            "entity_expand_min_confidence": 0.55,
+            "entity_expand_timeout_seconds": 1.2,
+        },
+    }
+
+    result = await preprocess.entity_expand(state, runtime=_Runtime(), settings=settings)
+
+    assert isinstance(result, Command)
+    assert result.goto == "prepare_messages"
+    assert isinstance(result.update, dict)
+    assert result.update["multi_queries"]
+    assert result.update["entity_expand_meta"]["expanded_count"] >= 1
+    assert result.update["stage_summaries"]["entity_expand"]["expanded_count"] >= 1
 
 
 def test_route_after_subquery_dispatch_returns_send_tasks(settings):

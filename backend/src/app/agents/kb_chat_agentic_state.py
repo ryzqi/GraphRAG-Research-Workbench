@@ -58,6 +58,11 @@ class KbChatRuntimeConfig(TypedDict, total=False):
     normalize_alias_max: int
     normalize_timeout_seconds: float
     hyde_enabled: bool
+    entity_expand_enabled: bool
+    entity_expand_max_candidates: int
+    entity_expand_max_variants: int
+    entity_expand_min_confidence: float
+    entity_expand_timeout_seconds: float
     parallel_retrieval_enabled: bool
     parallel_retrieval_min_queries: int
     parallel_retrieval_max_branches: int
@@ -201,6 +206,7 @@ class KbChatAgenticState(KbChatAgenticStateBase, total=False):
     coref_meta: CorefMeta
     normalized_query: str
     normalized_meta: NormalizeMeta
+    entity_expand_meta: dict[str, Any]
     query_strategy: Literal["direct", "decomposition", "multi_query"]
     query_strategy_confidence: float
     query_strategy_signals: list[str]
@@ -249,6 +255,7 @@ def make_initial_state(
         "sub_queries": [],
         "multi_queries": [],
         "hyde_docs": [],
+        "entity_expand_meta": {},
         "query_items": [],
         "subquery_runs": [],
         "decomposition_plan": {

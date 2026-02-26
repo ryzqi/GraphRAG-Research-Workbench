@@ -108,6 +108,75 @@ def hyde_enabled(state: dict[str, Any], settings: Settings) -> bool:
     )
 
 
+def entity_expand_enabled(state: dict[str, Any], settings: Settings) -> bool:
+    return _state_flag(
+        state,
+        key="entity_expand_enabled",
+        default=bool(getattr(settings, "kb_chat_entity_expand_enabled", True)),
+    )
+
+
+def entity_expand_max_candidates(state: dict[str, Any], settings: Settings) -> int:
+    return max(
+        1,
+        min(
+            12,
+            _state_int(
+                state,
+                key="entity_expand_max_candidates",
+                default=int(getattr(settings, "kb_chat_entity_expand_max_candidates", 8)),
+            ),
+        ),
+    )
+
+
+def entity_expand_max_variants(state: dict[str, Any], settings: Settings) -> int:
+    max_candidates = entity_expand_max_candidates(state, settings)
+    return max(
+        1,
+        min(
+            max_candidates,
+            _state_int(
+                state,
+                key="entity_expand_max_variants",
+                default=int(getattr(settings, "kb_chat_entity_expand_max_variants", 6)),
+            ),
+        ),
+    )
+
+
+def entity_expand_min_confidence(state: dict[str, Any], settings: Settings) -> float:
+    return max(
+        0.0,
+        min(
+            1.0,
+            _state_float(
+                state,
+                key="entity_expand_min_confidence",
+                default=float(
+                    getattr(settings, "kb_chat_entity_expand_min_confidence", 0.55)
+                ),
+            ),
+        ),
+    )
+
+
+def entity_expand_timeout_seconds(state: dict[str, Any], settings: Settings) -> float:
+    return max(
+        0.0,
+        min(
+            5.0,
+            _state_float(
+                state,
+                key="entity_expand_timeout_seconds",
+                default=float(
+                    getattr(settings, "kb_chat_entity_expand_timeout_seconds", 1.2)
+                ),
+            ),
+        ),
+    )
+
+
 def retrieval_top_k(state: dict[str, Any], settings: Settings) -> int:
     return max(
         1,

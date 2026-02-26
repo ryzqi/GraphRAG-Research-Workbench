@@ -1,0 +1,46 @@
+version: "1.0"
+name: kb_chat_entity_expand
+description: "Entity expansion for KB chat multi-query retrieval."
+
+template: |
+  你是知识库检索的实体扩展助手。请基于主问题和候选查询，补充可以提升召回的实体表达。
+
+  目标：
+  - 保持原始意图不漂移；
+  - 保留核心实体、约束与时间范围；
+  - 只输出可直接用于检索的短查询片段。
+
+  输入主问题：
+  {question}
+
+  当前候选查询：
+  {seed_queries}
+
+  已知 aliases：
+  {aliases}
+
+  已知 entities：
+  {entities}
+
+  约束：
+  1) candidates 总数不要超过 {max_candidates}。
+  2) 每个 candidate.query 必须可直接检索，不能是解释句。
+  3) confidence 取值 [0,1]，越高表示与主问题语义越一致。
+  4) 对明显漂移或重复的查询放入 dropped_queries。
+
+variables:
+  - name: question
+    type: string
+    required: true
+  - name: seed_queries
+    type: string
+    required: true
+  - name: aliases
+    type: string
+    required: true
+  - name: entities
+    type: string
+    required: true
+  - name: max_candidates
+    type: integer
+    required: true
