@@ -53,6 +53,7 @@ import {
   streamChatMessage,
   streamResumeClarification,
 } from '../services/chats';
+import { resolveKbNodeLabel } from '../services/kbNodeLabels';
 import { useSelectableKnowledgeBases } from '../hooks/queries/useKnowledgeBases';
 import { useRecentHistory } from '../hooks/useRecentHistory';
 import { WelcomeScreen } from '../components/chat/WelcomeScreen';
@@ -234,17 +235,6 @@ function asRecord(value: unknown): Record<string, unknown> | null {
     return null;
   }
   return value as Record<string, unknown>;
-}
-
-function resolveNodeLabel(
-  nodeId: string,
-  schema: KbGraphSchema | null | undefined
-): string {
-  const found = schema?.nodes.find((node) => node.id === nodeId);
-  if (!found) {
-    return nodeId;
-  }
-  return typeof found.label === 'string' && found.label.trim() ? found.label : nodeId;
 }
 
 function resolveGraphTotalNodes(schema: KbGraphSchema | null | undefined): number {
@@ -730,7 +720,7 @@ export function KbChatPage() {
         for (const nodeId of touchedNodes) {
           const step: PipelineStep = {
             step_id: nodeId,
-            label: resolveNodeLabel(nodeId, graphSchema),
+            label: resolveKbNodeLabel(nodeId, graphSchema),
             status: 'completed',
             node: nodeId,
             ts: new Date().toISOString(),
@@ -765,7 +755,7 @@ export function KbChatPage() {
           run_id: runId,
           run_status: nextRunStatus,
           current_step_id: currentNode,
-          current_step_label: resolveNodeLabel(currentNode, graphSchema),
+          current_step_label: resolveKbNodeLabel(currentNode, graphSchema),
           current_step_status: 'completed',
           current_node: currentNode,
           active_path: activePath,
@@ -857,7 +847,7 @@ export function KbChatPage() {
               : 'completed';
         const step: PipelineStep = {
           step_id: event.node_name,
-          label: resolveNodeLabel(event.node_name, graphSchema),
+          label: resolveKbNodeLabel(event.node_name, graphSchema),
           status: statusFromPhase,
           node: event.node_name,
           message: event.error_summary ?? undefined,
@@ -877,7 +867,7 @@ export function KbChatPage() {
                 ...baseRunState,
                 run_id: runId,
                 current_step_id: event.node_name,
-                current_step_label: resolveNodeLabel(event.node_name, graphSchema),
+                current_step_label: resolveKbNodeLabel(event.node_name, graphSchema),
                 current_step_status: statusFromPhase,
                 current_node: event.node_name,
                 active_path: activePath,
@@ -904,7 +894,7 @@ export function KbChatPage() {
             id: `node-io-${event.node_id}-${event.phase}-${event.ts}`,
             source: 'ui',
             step_id: event.node_name,
-            label: `${event.node_name} 路 ${event.phase}`,
+            label: resolveKbNodeLabel(event.node_name, graphSchema),
             node: event.node_name,
             status:
               event.phase === 'start'

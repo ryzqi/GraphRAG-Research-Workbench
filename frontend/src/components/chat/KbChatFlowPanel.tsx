@@ -44,6 +44,7 @@ import {
   buildTraceStages,
   type TraceStageStatus,
 } from '../../services/chatTraceStages';
+import { resolveKbNodeLabel } from '../../services/kbNodeLabels';
 import type { PipelineStep } from './PipelineProgress';
 
 interface KbChatFlowPanelProps {
@@ -819,9 +820,11 @@ export function KbChatFlowPanel({
                       <Typography variant='body2' fontWeight={700} noWrap>
                         {stage.title}
                       </Typography>
-                      <Typography variant='caption' color='text.secondary' noWrap>
-                        {stage.subtitle}
-                      </Typography>
+                      {stage.subtitle ? (
+                        <Typography variant='caption' color='text.secondary' noWrap>
+                          {stage.subtitle}
+                        </Typography>
+                      ) : null}
                     </Box>
                   </Stack>
 
@@ -883,7 +886,7 @@ export function KbChatFlowPanel({
                     )}
                     {stage.latestNodeEvent && (
                       <Typography variant='caption' color='text.secondary'>
-                        节点：{stage.latestNodeEvent.node_name} · 阶段 {stage.latestNodeEvent.phase}
+                        节点：{resolveKbNodeLabel(stage.latestNodeEvent.node_name, schema)}
                         {typeof stage.latestNodeEvent.attempt === 'number'
                           ? ` · 第 ${stage.latestNodeEvent.attempt} 次`
                           : ''}

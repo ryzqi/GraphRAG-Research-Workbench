@@ -1,4 +1,4 @@
-"""检索服务：Milvus 召回（Milvus-only）+ 可配置缓存。"""
+﻿"""妫€绱㈡湇鍔★細Milvus 鍙洖锛圡ilvus-only锛? 鍙厤缃紦瀛樸€?""
 
 from __future__ import annotations
 
@@ -255,7 +255,7 @@ class RetrievalService:
             if label:
                 return label
 
-        return "资料"
+        return "璧勬枡"
 
     async def _load_material_titles_by_id(
         self, material_ids: set[uuid.UUID]
@@ -327,18 +327,18 @@ class RetrievalService:
     def _cache_key(
         self, query: str, kb_ids: list[uuid.UUID], top_k: int, strategy: dict
     ) -> str:
-        """生成缓存键。"""
+        """鐢熸垚缂撳瓨閿€?""
         kb_str = ",".join(sorted(str(k) for k in kb_ids))
         fingerprint = json.dumps(strategy, sort_keys=True, ensure_ascii=False)
         raw = f"retrieval:{query}:{kb_str}:{top_k}:{fingerprint}"
         return f"retrieval:{hashlib.md5(raw.encode()).hexdigest()}"
 
     def _embedding_cache_key(self, query: str) -> str:
-        """生成 embedding 缓存键。"""
+        """鐢熸垚 embedding 缂撳瓨閿€?""
         return f"embedding:{hashlib.md5(query.encode()).hexdigest()}"
 
     def _rewrite_cache_key(self, query: str) -> str:
-        """生成 query rewrite 缓存键。"""
+        """鐢熸垚 query rewrite 缂撳瓨閿€?""
         return f"rewrite:{hashlib.md5(query.encode()).hexdigest()}"
 
     def _strategy_fingerprint(
@@ -349,7 +349,7 @@ class RetrievalService:
         runtime_overrides: RetrievalRuntimeOverrides,
         kb_fingerprint: dict[str, dict] | None = None,
     ) -> dict:
-        """生成策略指纹，避免配置变更误命中缓存。"""
+        """鐢熸垚绛栫暐鎸囩汗锛岄伩鍏嶉厤缃彉鏇磋鍛戒腑缂撳瓨銆?""
         fingerprint = {
             "top_k": top_k,
             "min_score": self._settings.retrieval_min_score,
@@ -787,7 +787,7 @@ class RetrievalService:
         return ranked, True, "mmr"
 
     def _normalize_query(self, query: str) -> str:
-        """规范化 query，用于缓存一致性。"""
+        """瑙勮寖鍖?query锛岀敤浜庣紦瀛樹竴鑷存€с€?""
         normalized = " ".join(query.strip().split())
         if self._settings.retrieval_query_lowercase:
             normalized = normalized.lower()
@@ -796,18 +796,18 @@ class RetrievalService:
     async def _get_query_embedding(
         self, query: str, *, timeout_seconds: float | None = None
     ) -> list[float]:
-        """获取查询向量（带缓存）。"""
+        """鑾峰彇鏌ヨ鍚戦噺锛堝甫缂撳瓨锛夈€?""
         if self._redis and self._settings.retrieval_cache_enabled:
             cache_key = self._embedding_cache_key(query)
             try:
                 cached = await self._redis.get(cache_key)
             except Exception as exc:  # pragma: no cover
                 logger.warning(
-                    "Embedding 缓存读取失败，跳过缓存", extra={"error": str(exc)}
+                    "Embedding 缂撳瓨璇诲彇澶辫触锛岃烦杩囩紦瀛?, extra={"error": str(exc)}
                 )
                 cached = None
             if cached:
-                logger.debug("Embedding 缓存命中", extra={"query": query[:50]})
+                logger.debug("Embedding 缂撳瓨鍛戒腑", extra={"query": query[:50]})
                 return json.loads(cached)
 
         timeout_value = float(self._settings.embedding_timeout_seconds)
@@ -823,11 +823,11 @@ class RetrievalService:
         latency_ms = int((time.perf_counter() - start_time) * 1000)
 
         logger.info(
-            "Embedding 生成完成",
+            "Embedding 鐢熸垚瀹屾垚",
             extra={"query": query[:50], "latency_ms": latency_ms},
         )
 
-        # 缓存 embedding（TTL 较长，因为相同文本的 embedding 不变）
+        # 缂撳瓨 embedding锛圱TL 杈冮暱锛屽洜涓虹浉鍚屾枃鏈殑 embedding 涓嶅彉锛?
         if self._redis and self._settings.retrieval_cache_enabled:
             try:
                 await self._redis.set(
@@ -837,7 +837,7 @@ class RetrievalService:
                 )
             except Exception as exc:  # pragma: no cover
                 logger.warning(
-                    "Embedding 缓存写入失败，跳过缓存", extra={"error": str(exc)}
+                    "Embedding 缂撳瓨鍐欏叆澶辫触锛岃烦杩囩紦瀛?, extra={"error": str(exc)}
                 )
 
         return embeddings[0]
@@ -927,7 +927,7 @@ class RetrievalService:
         timeout_seconds: float | None = None,
         enabled: bool | None = None,
     ) -> RewriteResult:
-        """可选查询重写，失败回退原 query。"""
+        """鍙€夋煡璇㈤噸鍐欙紝澶辫触鍥為€€鍘?query銆?""
         rewrite_enabled = (
             bool(self._settings.retrieval_query_rewrite_enabled)
             if enabled is None
@@ -954,7 +954,7 @@ class RetrievalService:
                 cached = await self._redis.get(cache_key)
             except Exception as exc:  # pragma: no cover
                 logger.warning(
-                    "Rewrite �����ȡʧ�ܣ���������", extra={"error": str(exc)}
+                    "Rewrite 缓存读取失败，继续执行改写", extra={"error": str(exc)}
                 )
                 cached = None
             if cached:
@@ -978,7 +978,7 @@ class RetrievalService:
                 )
             except Exception as exc:  # pragma: no cover
                 logger.warning(
-                    "Rewrite 缓存写入失败，跳过缓存", extra={"error": str(exc)}
+                    "Rewrite 缂撳瓨鍐欏叆澶辫触锛岃烦杩囩紦瀛?, extra={"error": str(exc)}
                 )
 
         return result
@@ -1234,14 +1234,14 @@ class RetrievalService:
                 except asyncio.TimeoutError:
                     if deadline is not None:
                         raise
-                    logger.warning("Embedding 超时，跳过 dense", extra={"query": q[:50]})
+                    logger.warning("Embedding 瓒呮椂锛岃烦杩?dense", extra={"query": q[:50]})
                     embedding = None
                     use_dense = False
                 except asyncio.CancelledError:
                     raise
                 except Exception as exc:  # pragma: no cover
                     logger.warning(
-                        "Embedding 生成失败，跳过 dense", extra={"error": str(exc)}
+                        "Embedding 鐢熸垚澶辫触锛岃烦杩?dense", extra={"error": str(exc)}
                     )
                     embedding = None
                     use_dense = False
@@ -1286,13 +1286,13 @@ class RetrievalService:
                 except asyncio.TimeoutError:
                     if deadline is not None:
                         raise
-                    logger.warning("Dense 检索超时，降级为空", extra={"query": q[:50]})
+                    logger.warning("Dense 妫€绱㈣秴鏃讹紝闄嶇骇涓虹┖", extra={"query": q[:50]})
                     return []
                 except asyncio.CancelledError:
                     raise
                 except Exception as exc:
                     logger.warning(
-                        "Dense 检索失败，降级为空", extra={"error": str(exc)}
+                        "Dense 妫€绱㈠け璐ワ紝闄嶇骇涓虹┖", extra={"error": str(exc)}
                     )
                     return []
 
@@ -1336,12 +1336,12 @@ class RetrievalService:
                 except asyncio.TimeoutError:
                     if deadline is not None:
                         raise
-                    logger.warning("BM25 检索超时，降级为空", extra={"query": q[:50]})
+                    logger.warning("BM25 妫€绱㈣秴鏃讹紝闄嶇骇涓虹┖", extra={"query": q[:50]})
                     return []
                 except asyncio.CancelledError:
                     raise
                 except Exception as exc:
-                    logger.warning("BM25 检索失败，降级为空", extra={"error": str(exc)})
+                    logger.warning("BM25 妫€绱㈠け璐ワ紝闄嶇骇涓虹┖", extra={"error": str(exc)})
                     return []
 
             dense_hits: list[dict] = []
@@ -1467,7 +1467,7 @@ class RetrievalService:
                 raise result
             if isinstance(result, Exception):
                 logger.warning(
-                    "Query fanout 检索失败，降级跳过该分支", extra={"error": str(result)}
+                    "Query fanout 妫€绱㈠け璐ワ紝闄嶇骇璺宠繃璇ュ垎鏀?, extra={"error": str(result)}
                 )
 
         for result in fanout_results:
@@ -1615,13 +1615,13 @@ class RetrievalService:
                     timeout_seconds=dedup_timeout,
                 )
             except asyncio.TimeoutError:
-                logger.warning("语义去重超时，降级为哈希去重结果")
+                logger.warning("璇箟鍘婚噸瓒呮椂锛岄檷绾т负鍝堝笇鍘婚噸缁撴灉")
                 dedup_similarity_reason = "timeout"
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
                 logger.warning(
-                    "语义去重失败，降级为哈希去重结果", extra={"error": str(exc)}
+                    "璇箟鍘婚噸澶辫触锛岄檷绾т负鍝堝笇鍘婚噸缁撴灉", extra={"error": str(exc)}
                 )
                 dedup_similarity_reason = "error"
         post_dedup_count = len(rrf_results)
@@ -1644,7 +1644,7 @@ class RetrievalService:
                 )
             except asyncio.TimeoutError:
                 # Diversity ranking is optional: degrade to RRF order.
-                logger.warning("MMR diversity 超时，降级为 RRF 顺序")
+                logger.warning("MMR diversity 瓒呮椂锛岄檷绾т负 RRF 椤哄簭")
                 candidates_for_rerank = rrf_results[:rerank_input_limit]
                 diversity_applied = False
                 diversity_reason = "timeout"
@@ -1652,7 +1652,7 @@ class RetrievalService:
                 raise
             except Exception as exc:
                 logger.warning(
-                    "MMR diversity 失败，降级为 RRF 顺序", extra={"error": str(exc)}
+                    "MMR diversity 澶辫触锛岄檷绾т负 RRF 椤哄簭", extra={"error": str(exc)}
                 )
                 candidates_for_rerank = rrf_results[:rerank_input_limit]
                 diversity_applied = False
@@ -1679,7 +1679,7 @@ class RetrievalService:
                 )
             except asyncio.TimeoutError:
                 # Rerank is optional: degrade to RRF order when timeout happens.
-                logger.warning("Rerank 超时，降级为 RRF 顺序")
+                logger.warning("Rerank 瓒呮椂锛岄檷绾т负 RRF 椤哄簭")
                 ordered, applied, reason, latency_ms = (
                     candidates_for_rerank,
                     False,
@@ -1805,7 +1805,7 @@ class RetrievalService:
         hard_timeout: bool = False,
         enabled: bool | None = None,
     ) -> tuple[list[RetrievalResult], bool, str | None, int | None]:
-        """可选 rerank，失败回退原排序。"""
+        """鍙€?rerank锛屽け璐ュ洖閫€鍘熸帓搴忋€?""
         rerank_enabled = (
             bool(self._settings.retrieval_rerank_enabled)
             if enabled is None
@@ -1840,12 +1840,12 @@ class RetrievalService:
         except asyncio.TimeoutError:
             if hard_timeout:
                 raise
-            logger.warning("Rerank 超时，降级为原顺序", extra={"timeout": timeout_value})
+            logger.warning("Rerank 瓒呮椂锛岄檷绾т负鍘熼『搴?, extra={"timeout": timeout_value})
             return results, False, "timeout", None
         except asyncio.CancelledError:
             raise
         except Exception as exc:
-            logger.warning("Rerank ����ʧ�ܣ�����ԭ����", extra={"error": str(exc)})
+            logger.warning("Rerank 执行失败，降级为原顺序", extra={"error": str(exc)})
             return results, False, "error", None
         latency_ms = int((time.perf_counter() - start_time) * 1000)
         if not rerank_results:
@@ -1859,7 +1859,7 @@ class RetrievalService:
                 )
                 used.add(item.index)
 
-        # 兜底保留未覆盖的候选
+        # 鍏滃簳淇濈暀鏈鐩栫殑鍊欓€?
         for idx, res in enumerate(results):
             if idx not in used:
                 ordered.append(res)
@@ -1883,7 +1883,7 @@ class RetrievalService:
                 configs[kb_id] = IndexConfig.model_validate(raw or {})
             except Exception as exc:  # pragma: no cover
                 logger.warning(
-                    "Snapshot IndexConfig 解析失败，回退 knowledge_bases",
+                    "Snapshot IndexConfig 瑙ｆ瀽澶辫触锛屽洖閫€ knowledge_bases",
                     extra={"kb_id": str(kb_id), "error": str(exc)},
                 )
 
@@ -1898,7 +1898,7 @@ class RetrievalService:
                     configs[kb_id] = IndexConfig.model_validate(raw or {})
                 except Exception as exc:  # pragma: no cover
                     logger.warning(
-                        "IndexConfig 解析失败，回退默认",
+                        "IndexConfig 瑙ｆ瀽澶辫触锛屽洖閫€榛樿",
                         extra={"kb_id": str(kb_id), "error": str(exc)},
                     )
         return configs
@@ -2196,7 +2196,7 @@ class RetrievalService:
         timeout_seconds: float | None = None,
         feature_overrides: dict[str, object] | None = None,
     ) -> list[RetrievalResult]:
-        """检索相关 chunk。"""
+        """妫€绱㈢浉鍏?chunk銆?""
         deadline = self._make_deadline(timeout_seconds)
         feature_flags = self._resolve_feature_flags(feature_overrides)
         runtime_overrides = self._resolve_runtime_overrides(feature_overrides)
@@ -2237,7 +2237,7 @@ class RetrievalService:
 
         normalized_query = self._normalize_query(query)
 
-        # 应用配置限制
+        # 搴旂敤閰嶇疆闄愬埗
         if top_k is None:
             top_k = runtime_overrides.retrieval_top_k
         top_k = min(top_k, self._settings.retrieval_max_top_k)
@@ -2318,7 +2318,7 @@ class RetrievalService:
             except asyncio.TimeoutError:
                 return _timeout_return()
             except Exception as exc:  # pragma: no cover
-                logger.warning("检索缓存读取失败，跳过缓存", extra={"error": str(exc)})
+                logger.warning("妫€绱㈢紦瀛樿鍙栧け璐ワ紝璺宠繃缂撳瓨", extra={"error": str(exc)})
                 cached = None
             if cached:
                 timeout_value = self._effective_timeout(
@@ -2489,7 +2489,7 @@ class RetrievalService:
             )
             return []
 
-        # 写入缓存
+        # 鍐欏叆缂撳瓨
         if self._redis and self._settings.retrieval_cache_enabled and results:
             cache_data = [
                 {"chunk_id": str(r.chunk.id), "score": r.score} for r in results
@@ -2501,7 +2501,7 @@ class RetrievalService:
                     ex=self._settings.retrieval_cache_ttl_seconds,
                 )
             except Exception as exc:  # pragma: no cover
-                logger.warning("检索缓存写入失败，跳过缓存", extra={"error": str(exc)})
+                logger.warning("妫€绱㈢紦瀛樺啓鍏ュけ璐ワ紝璺宠繃缂撳瓨", extra={"error": str(exc)})
 
         self._last_stats = RetrievalStats(
             query=query,
@@ -2533,7 +2533,7 @@ class RetrievalService:
         return results
 
     async def _load_from_cache(self, cached: str) -> list[RetrievalResult]:
-        """从缓存加载结果。"""
+        """浠庣紦瀛樺姞杞界粨鏋溿€?""
         data = json.loads(cached)
         chunk_ids = [str(item["chunk_id"]) for item in data]
         scores = {str(item["chunk_id"]): item["score"] for item in data}
@@ -2567,7 +2567,7 @@ class RetrievalService:
         return filtered, max(len(results) - len(filtered), 0)
 
     def to_evidence_items(self, results: list[RetrievalResult]) -> list[EvidenceItem]:
-        """将检索结果转换为证据条目。"""
+        """灏嗘绱㈢粨鏋滆浆鎹负璇佹嵁鏉＄洰銆?""
         items: list[EvidenceItem] = []
         for r in results:
             items.append(

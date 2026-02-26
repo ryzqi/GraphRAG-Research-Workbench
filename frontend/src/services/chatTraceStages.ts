@@ -1,5 +1,6 @@
 import type { ChatNodeIoEvent, ChatRunStateEvent, KbGraphSchema } from './chats';
 import type { PipelineStep } from '../components/chat/PipelineProgress';
+import { resolveKbNodeLabel } from './kbNodeLabels';
 
 export type TraceStageStatus =
   | 'idle'
@@ -74,25 +75,6 @@ function formatSeconds(value: number): string {
   return `${Math.max(0, value / 1000).toFixed(1)}s`;
 }
 
-function phaseLabel(phase: string | null): string {
-  switch (phase) {
-    case 'preprocess':
-      return '预处理阶段';
-    case 'retrieve':
-      return '检索阶段';
-    case 'judge':
-      return '评估阶段';
-    case 'generate':
-      return '生成阶段';
-    case 'verify':
-      return '校验阶段';
-    case 'finalize':
-      return '收尾阶段';
-    default:
-      return '节点执行';
-  }
-}
-
 function isTerminalStatus(status: TraceStageStatus): boolean {
   return status === 'completed' || status === 'failed' || status === 'waiting_user' || status === 'skipped';
 }
@@ -106,7 +88,7 @@ function resolveEnabledNodes(
     return schema.nodes
       .map((node) => ({
         id: node.id,
-        label: node.label || node.id,
+        label: resolveKbNodeLabel(node.id, schema),
         phase: node.phase ?? null,
         order: typeof node.order === 'number' ? node.order : Number.MAX_SAFE_INTEGER,
       }))
@@ -126,7 +108,7 @@ function resolveEnabledNodes(
     if (!inferred.has(step.step_id)) {
       inferred.set(step.step_id, {
         id: step.step_id,
-        label: step.label || step.step_id,
+        label: resolveKbNodeLabel(step.step_id, schema),
         phase: null,
         order: index,
       });
@@ -140,7 +122,7 @@ function resolveEnabledNodes(
     if (!inferred.has(event.node_name)) {
       inferred.set(event.node_name, {
         id: event.node_name,
-        label: event.node_name,
+        label: resolveKbNodeLabel(event.node_name, schema),
         phase: null,
         order: fallbackOrder,
       });
@@ -158,16 +140,12 @@ function statusFromNode(params: {
 }): TraceStageStatus {
   const { runState, nodeId, steps, events } = params;
   const latestEvent = latestByTs(events);
-  const activePath = new Set(
-    Array.isArray(runState?.active_path) ? runState?.active_path : []
-  );
+  const activePath = new Set(Array.isArray(runState?.active_path) ? runState?.active_path : []);
   const hasPathHit = activePath.has(nodeId);
   const hasFailedStep = steps.some((step) => step.status === 'failed');
   const hasWaitingStep = steps.some((step) => step.status === 'waiting_user');
   const hasStartedStep = steps.some((step) => step.status === 'started');
-  const hasCompletedStep = steps.some(
-    (step) => step.status === 'completed' || step.status === 'skipped'
-  );
+  const hasCompletedStep = steps.some((step) => step.status === 'completed' || step.status === 'skipped');
   const isCurrentNode = runState?.current_step_id === nodeId || runState?.current_node === nodeId;
 
   if (hasFailedStep || latestEvent?.phase === 'error') {
@@ -195,10 +173,7 @@ function statusFromNode(params: {
   if (runState?.run_status === 'succeeded' && (hasPathHit || steps.length > 0 || events.length > 0)) {
     return 'completed';
   }
-  if (
-    (runState?.run_status === 'failed' || runState?.run_status === 'waiting_user') &&
-    hasPathHit
-  ) {
+  if ((runState?.run_status === 'failed' || runState?.run_status === 'waiting_user') && hasPathHit) {
     return 'completed';
   }
   if (hasPathHit) {
@@ -319,7 +294,7 @@ export function buildTraceStages({
     return {
       id: node.id,
       title: node.label,
-      subtitle: phaseLabel(node.phase),
+      subtitle: '',
       phase: node.phase,
       status,
       isActive,
