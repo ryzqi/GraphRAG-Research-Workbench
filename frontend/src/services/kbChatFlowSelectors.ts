@@ -13,23 +13,6 @@ interface NodeDetailPolicy {
   output: string[];
 }
 
-const DETAIL_ITEM_LIMIT: Record<DetailSectionKind, number> = {
-  input: 2,
-  output: 2,
-};
-
-const NODE_DETAIL_LIMIT_OVERRIDES: Partial<
-  Record<string, Partial<Record<DetailSectionKind, number>>>
-> = {
-  coref_rewrite: { output: 4 },
-  prepare_messages: { output: 4 },
-  doc_gate_precheck: { output: 4 },
-  doc_grader_llm: { output: 4 },
-  doc_gate_route: { output: 5 },
-  doc_grader: { output: 5 },
-  answer_subgraph: { output: 5 },
-};
-
 const NODE_DETAIL_POLICY_MAP: Record<string, NodeDetailPolicy> = {
   merge_context: {
     input: ['user_input'],
@@ -205,9 +188,7 @@ export function selectKbChatFlowDetailItems(params: {
   const candidates = normalized.filter((item) => item.key !== 'error_summary');
   const selected: KbChatFlowDetailItem[] = [];
   const seen = new Set<string>();
-  const limit =
-    NODE_DETAIL_LIMIT_OVERRIDES[params.nodeId]?.[params.section] ??
-    DETAIL_ITEM_LIMIT[params.section];
+  const limit = Number.MAX_SAFE_INTEGER;
   const policyKeys = [...(NODE_DETAIL_POLICY_MAP[params.nodeId]?.[params.section] ?? [])];
 
   if (params.nodeId === 'ambiguity_check' && params.section === 'output') {

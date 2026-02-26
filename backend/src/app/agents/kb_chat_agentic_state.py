@@ -76,6 +76,7 @@ class KbChatRuntimeConfig(TypedDict, total=False):
     parallel_retrieval_min_queries: int
     parallel_retrieval_max_branches: int
     parallel_retrieval_include_main: bool
+    kb_chat_graph_v3_enabled: bool
     rewrite_branch_enabled: bool
     rewrite_branch_max_candidates: int
     rewrite_min_confidence: float

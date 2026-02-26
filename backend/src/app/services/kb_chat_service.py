@@ -7,10 +7,13 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import logging
+import math
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from langchain.messages import AIMessage, HumanMessage, SystemMessage
@@ -20,6 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.agents.kb_chat_agentic.json_safety import ensure_json_safe
 from app.agents.kb_chat_graph import build_kb_chat_graph
 from app.agents.kb_chat_memory import append_kb_chat_memory_entry
+from app.agents.kb_chat_state_adapter import normalize_checkpoint_state
 from app.agents.tool_calling.registry import build_tool_registry
 from app.agents.tools.kb_retrieve import build_kb_retrieve_tool
 from app.core.checkpoint import CheckpointManager
@@ -65,9 +69,14 @@ from app.services.streaming import (
     extract_answer_text,
     extract_stream_delta,
 )
+from app.agents.kb_chat_contracts import validate_event_envelope_v2
 
 logger = logging.getLogger(__name__)
 _STREAM_EVENT_VERSION = "2.0"
+_GRAY_ROUTE_THRESHOLD = 99.5
+_GRAY_FINAL_THRESHOLD = 99.0
+_GRAY_CLARIFICATION_THRESHOLD = 99.0
+_GRAY_P95_THRESHOLD = 10.0
 
 
 @dataclass
@@ -226,6 +235,50 @@ class KbChatService:
 
         return {"version": "1.0", "nodes": nodes, "edges": edges}
 
+    @staticmethod
+    def _build_drawable_graph_from_builder(graph: object) -> dict[str, Any]:
+        builder = getattr(graph, "_graph_builder", None)
+        if builder is None:
+            raise RuntimeError("KB Chat graph builder is unavailable")
+
+        nodes: list[dict[str, Any]] = []
+        for node_id, node_spec in getattr(builder, "nodes", {}).items():
+            metadata = getattr(node_spec, "metadata", None)
+            nodes.append(
+                {
+                    "id": node_id,
+                    "metadata": metadata if isinstance(metadata, dict) else {},
+                }
+            )
+
+        edges: list[dict[str, Any]] = []
+        for source, target in getattr(builder, "edges", set()):
+            edges.append(
+                {
+                    "source": source,
+                    "target": target,
+                    "conditional": False,
+                }
+            )
+
+        for source, branch_map in getattr(builder, "branches", {}).items():
+            if not isinstance(branch_map, dict):
+                continue
+            for branch_spec in branch_map.values():
+                ends = getattr(branch_spec, "ends", None)
+                if isinstance(ends, dict):
+                    for target in ends.values():
+                        if isinstance(target, str):
+                            edges.append(
+                                {
+                                    "source": source,
+                                    "target": target,
+                                    "conditional": True,
+                                }
+                            )
+
+        return {"nodes": nodes, "edges": edges}
+
     async def get_graph_schema(
         self,
         *,
@@ -257,7 +310,13 @@ class KbChatService:
             tool_meta_by_name=tool_meta_by_name,
             kb_chat_config=config,
         )
-        drawable_graph = graph.compile().get_graph().to_json()
+        try:
+            drawable_graph = graph.compile().get_graph().to_json()
+        except TypeError as exc:
+            logger.warning(
+                "LangGraph drawable export failed; fallback to builder topology: %s", exc
+            )
+            drawable_graph = self._build_drawable_graph_from_builder(graph)
         return self._build_graph_schema_payload(drawable_graph, config)
 
     def _build_trace_snapshot(
@@ -323,6 +382,9 @@ class KbChatService:
                 ),
                 "parallel_retrieval_include_main": bool(
                     kb_chat_config.parallel_retrieval_include_main
+                ),
+                "kb_chat_graph_v3_enabled": bool(
+                    getattr(kb_chat_config, "kb_chat_graph_v3_enabled", False)
                 ),
                 "doc_gate_rule_threshold": float(
                     kb_chat_config.doc_gate_rule_threshold
@@ -443,6 +505,283 @@ class KbChatService:
             summary["reason"] = reason
         return summary
 
+    @staticmethod
+    def _safe_percent(value: float | int | None) -> float | None:
+        if value is None:
+            return None
+        try:
+            normalized = float(value)
+        except (TypeError, ValueError):
+            return None
+        if normalized < 0:
+            return 0.0
+        if normalized <= 1.0:
+            return round(normalized * 100.0, 4)
+        return round(normalized, 4)
+
+    @staticmethod
+    def _safe_rate(value: float | int | None) -> float:
+        percent = KbChatService._safe_percent(value)
+        return 100.0 if percent is None else percent
+
+    @staticmethod
+    def _extract_run_latency_ms(metrics: dict[str, Any]) -> int | None:
+        value = metrics.get("latency_ms")
+        if isinstance(value, (int, float)) and value >= 0:
+            return int(value)
+        return None
+
+    @staticmethod
+    def _calc_percentile(values: list[int], p: float) -> float:
+        ordered = sorted(v for v in values if isinstance(v, int) and v >= 0)
+        if not ordered:
+            return 0.0
+        if len(ordered) == 1:
+            return float(ordered[0])
+        rank = max(0.0, min(1.0, p)) * (len(ordered) - 1)
+        low = math.floor(rank)
+        high = math.ceil(rank)
+        if low == high:
+            return float(ordered[low])
+        weight = rank - low
+        return float(ordered[low] * (1 - weight) + ordered[high] * weight)
+
+    async def _compute_p95_latency_increase_pct(
+        self,
+        *,
+        current_latency_ms: int,
+        current_is_v3: bool,
+    ) -> float:
+        window_size = int(getattr(self._settings, "kb_chat_gray_release_window_size", 200))
+        stmt = (
+            select(AgentRun.metrics)
+            .where(
+                AgentRun.run_type == AgentRunType.KB_ANSWER,
+                AgentRun.status == AgentRunStatus.SUCCEEDED,
+            )
+            .order_by(AgentRun.finished_at.desc())
+            .limit(window_size)
+        )
+        rows = (await self._db.execute(stmt)).scalars().all()
+        v1_latencies: list[int] = []
+        v3_latencies: list[int] = []
+        for raw_metrics in rows:
+            metrics = raw_metrics if isinstance(raw_metrics, dict) else {}
+            latency_ms = self._extract_run_latency_ms(metrics)
+            if latency_ms is None:
+                continue
+            trace_snapshot = (
+                metrics.get("trace_snapshot")
+                if isinstance(metrics.get("trace_snapshot"), dict)
+                else {}
+            )
+            config = (
+                trace_snapshot.get("config")
+                if isinstance(trace_snapshot.get("config"), dict)
+                else {}
+            )
+            is_v3 = bool(config.get("kb_chat_graph_v3_enabled"))
+            if is_v3:
+                v3_latencies.append(latency_ms)
+            else:
+                v1_latencies.append(latency_ms)
+        if current_is_v3:
+            v3_latencies.append(int(current_latency_ms))
+        else:
+            v1_latencies.append(int(current_latency_ms))
+        if not v1_latencies or not v3_latencies:
+            return 0.0
+        p95_v1 = self._calc_percentile(v1_latencies, 0.95)
+        p95_v3 = self._calc_percentile(v3_latencies, 0.95)
+        if p95_v1 <= 0:
+            return 0.0
+        return round(((p95_v3 - p95_v1) / p95_v1) * 100.0, 4)
+
+    @staticmethod
+    def _compute_route_consistency(stage_summaries: dict[str, Any]) -> float:
+        checks: list[bool] = []
+        complexity = (
+            stage_summaries.get("complexity_router")
+            if isinstance(stage_summaries.get("complexity_router"), dict)
+            else {}
+        )
+        if complexity:
+            checks.append(
+                str(complexity.get("goto") or "")
+                in {"decomposition", "generate_variants", "hyde", "prepare_messages"}
+            )
+        doc_grader = (
+            stage_summaries.get("doc_grader")
+            if isinstance(stage_summaries.get("doc_grader"), dict)
+            else {}
+        )
+        if doc_grader:
+            checks.append(
+                str(doc_grader.get("goto") or "")
+                in {"answer_subgraph", "transform_query", "force_exit"}
+            )
+        answer_subgraph = (
+            stage_summaries.get("answer_subgraph")
+            if isinstance(stage_summaries.get("answer_subgraph"), dict)
+            else {}
+        )
+        if answer_subgraph:
+            checks.append(
+                str(answer_subgraph.get("next_step") or "")
+                in {"finalize", "transform_query", "force_exit"}
+            )
+        if not checks:
+            return 100.0
+        return round((sum(1 for ok in checks if ok) / len(checks)) * 100.0, 4)
+
+    @staticmethod
+    def _compute_final_state_consistency(stage_summaries: dict[str, Any]) -> float:
+        answer_subgraph = (
+            stage_summaries.get("answer_subgraph")
+            if isinstance(stage_summaries.get("answer_subgraph"), dict)
+            else {}
+        )
+        force_exit = (
+            stage_summaries.get("force_exit")
+            if isinstance(stage_summaries.get("force_exit"), dict)
+            else {}
+        )
+        next_step = str(answer_subgraph.get("next_step") or "")
+        has_force_exit = bool(force_exit)
+        if not next_step and not has_force_exit:
+            return 100.0
+        if next_step == "finalize":
+            return 100.0 if not has_force_exit else 0.0
+        if next_step in {"transform_query", "force_exit"}:
+            return 100.0 if has_force_exit else 0.0
+        return 0.0
+
+    @staticmethod
+    def _compute_clarification_consistency(stage_summaries: dict[str, Any]) -> float:
+        pending = (
+            stage_summaries.get("clarification_pending")
+            if isinstance(stage_summaries.get("clarification_pending"), dict)
+            else {}
+        )
+        if not pending or pending.get("pending") is not True:
+            return 100.0
+        force_exit = (
+            stage_summaries.get("force_exit")
+            if isinstance(stage_summaries.get("force_exit"), dict)
+            else {}
+        )
+        is_clarify = str(force_exit.get("reason") or "").strip().lower() == "clarify"
+        has_payload = isinstance(force_exit.get("clarification_payload"), dict)
+        return 100.0 if is_clarify and has_payload else 0.0
+
+    @staticmethod
+    def _build_gray_release_gate(metrics: dict[str, Any]) -> dict[str, Any]:
+        route = KbChatService._safe_rate(metrics.get("route_consistency_rate"))
+        final = KbChatService._safe_rate(metrics.get("final_state_consistency_rate"))
+        clarification = KbChatService._safe_rate(metrics.get("clarification_consistency_rate"))
+        p95_increase = float(metrics.get("p95_latency_increase_pct") or 0.0)
+        drift_rate = float(metrics.get("protocol_required_field_drift_rate") or 0.0)
+        violations: list[str] = []
+        if route < _GRAY_ROUTE_THRESHOLD:
+            violations.append("route_consistency_rate")
+        if final < _GRAY_FINAL_THRESHOLD:
+            violations.append("final_state_consistency_rate")
+        if clarification < _GRAY_CLARIFICATION_THRESHOLD:
+            violations.append("clarification_consistency_rate")
+        if p95_increase > _GRAY_P95_THRESHOLD:
+            violations.append("p95_latency_increase_pct")
+        if drift_rate > 0.0:
+            violations.append("protocol_required_field_drift_rate")
+        return {
+            "pass": len(violations) == 0,
+            "violations": violations,
+            "thresholds": {
+                "route_consistency_rate": _GRAY_ROUTE_THRESHOLD,
+                "final_state_consistency_rate": _GRAY_FINAL_THRESHOLD,
+                "clarification_consistency_rate": _GRAY_CLARIFICATION_THRESHOLD,
+                "p95_latency_increase_pct": _GRAY_P95_THRESHOLD,
+                "protocol_required_field_drift_rate": 0.0,
+            },
+        }
+
+    def _persist_gray_release_anomaly_sample(
+        self,
+        *,
+        run_id: uuid.UUID,
+        gate: dict[str, Any],
+        metrics: dict[str, Any],
+        stage_summaries: dict[str, Any],
+    ) -> None:
+        if not isinstance(gate, dict) or gate.get("pass") is True:
+            return
+        base_dir = Path("backend/logs/kb_chat_gray_release")
+        day_dir = base_dir / datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        day_dir.mkdir(parents=True, exist_ok=True)
+        sample_path = day_dir / f"{run_id}.json"
+        sample = {
+            "run_id": str(run_id),
+            "captured_at": datetime.now(timezone.utc).isoformat(),
+            "gate": gate,
+            "gray_release_indicators": metrics.get("gray_release_indicators"),
+            "stage_summaries": stage_summaries,
+        }
+        sample_path.write_text(
+            json.dumps(sample, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
+    async def _apply_gray_release_rollback_policy(
+        self,
+        *,
+        kb_chat_config: KbChatConfig,
+    ) -> tuple[KbChatConfig, dict[str, Any] | None]:
+        if not bool(
+            getattr(self._settings, "kb_chat_gray_release_auto_rollback_enabled", True)
+        ):
+            return kb_chat_config, None
+        cooldown_minutes = int(
+            getattr(
+                self._settings,
+                "kb_chat_gray_release_rollback_cooldown_minutes",
+                30,
+            )
+        )
+        window_size = int(getattr(self._settings, "kb_chat_gray_release_window_size", 200))
+        stmt = (
+            select(AgentRun.metrics, AgentRun.finished_at)
+            .where(
+                AgentRun.run_type == AgentRunType.KB_ANSWER,
+                AgentRun.status == AgentRunStatus.SUCCEEDED,
+            )
+            .order_by(AgentRun.finished_at.desc())
+            .limit(window_size)
+        )
+        rows = (await self._db.execute(stmt)).all()
+        now = datetime.now(timezone.utc)
+        for raw_metrics, finished_at in rows:
+            metrics = raw_metrics if isinstance(raw_metrics, dict) else {}
+            gate = metrics.get("gray_release_gate") if isinstance(metrics.get("gray_release_gate"), dict) else {}
+            if gate.get("trigger_rollback") is not True:
+                continue
+            if not isinstance(finished_at, datetime):
+                continue
+            age_minutes = (now - finished_at).total_seconds() / 60.0
+            if age_minutes > cooldown_minutes:
+                continue
+            rollback_note = {
+                "triggered_by_run_id": str(gate.get("source_run_id") or ""),
+                "violations": gate.get("violations") if isinstance(gate.get("violations"), list) else [],
+                "activated_at": now.isoformat(),
+                "cooldown_minutes": cooldown_minutes,
+            }
+            updated = kb_chat_config.model_copy(
+                update={
+                    "kb_chat_graph_v3_enabled": False,
+                }
+            )
+            return updated, rollback_note
+        return kb_chat_config, None
+
     async def _prepare_kb_chat_execution(
         self,
         *,
@@ -453,10 +792,16 @@ class KbChatService:
         started_at = run.started_at if run and run.started_at else datetime.now(timezone.utc)
         thread_id = str(session.id)
         checkpoint_tuple = await CheckpointManager.get_state(thread_id)
+        checkpoint_values: dict[str, Any] = {}
         existing_messages = None
         if checkpoint_tuple is not None:
-            checkpoint_values = (checkpoint_tuple.checkpoint or {}).get(
+            raw_values = (checkpoint_tuple.checkpoint or {}).get(
                 "channel_values", {}
+            )
+            checkpoint_values = (
+                normalize_checkpoint_state(raw_values)
+                if isinstance(raw_values, dict)
+                else {}
             )
             existing_messages = checkpoint_values.get("messages")
 
@@ -521,6 +866,9 @@ class KbChatService:
         kb_ids = session.selected_kb_ids or []
         default_kb_ids = [uuid.UUID(str(kid)) for kid in kb_ids]
         kb_chat_config = self._resolve_session_kb_chat_config(session)
+        kb_chat_config, rollback_note = await self._apply_gray_release_rollback_policy(
+            kb_chat_config=kb_chat_config
+        )
         retrieval_overrides = self._to_retrieval_overrides(kb_chat_config)
 
         # kb_retrieve：通过回调收集检索结果（用于 Evidence 落库/指标）
@@ -625,6 +973,20 @@ class KbChatService:
             },
             runtime_config=kb_chat_config.model_dump(mode="json"),
         )
+        if checkpoint_values:
+            # Merge migrated checkpoint fields to keep resume semantics stable across versions.
+            state = {**state, **checkpoint_values}
+            state["memory_keys"] = {
+                "user_id": "local",
+                "thread_id": str(session.id),
+                "kb_ids": [str(kid) for kid in (session.selected_kb_ids or [])],
+            }
+            state["runtime_config"] = kb_chat_config.model_dump(mode="json")
+        if isinstance(rollback_note, dict):
+            state["stage_summaries"] = {
+                **(state.get("stage_summaries") if isinstance(state.get("stage_summaries"), dict) else {}),
+                "gray_release_auto_rollback": rollback_note,
+            }
         state["metrics"] = {"context": context_metrics}
         make_run_context = getattr(graph, "make_run_context", None)
         run_context = (
@@ -708,6 +1070,21 @@ class KbChatService:
                     kb_chat_config=kb_chat_config,
                 ),
             }
+
+        gray_release_indicators = {
+            "route_consistency_rate": metrics.get("route_consistency_rate"),
+            "final_state_consistency_rate": metrics.get("final_state_consistency_rate"),
+            "clarification_consistency_rate": metrics.get("clarification_consistency_rate"),
+            "p95_latency_increase_pct": metrics.get("p95_latency_increase_pct"),
+            "protocol_required_field_drift_rate": metrics.get(
+                "protocol_required_field_drift_rate"
+            ),
+        }
+        metrics = {**metrics, "gray_release_indicators": gray_release_indicators}
+        stage_summaries = {
+            **stage_summaries,
+            "gray_release_indicators": gray_release_indicators,
+        }
 
         metrics = ensure_json_safe(metrics, settings=self._settings, label="metrics")
         stage_summaries = ensure_json_safe(
@@ -1287,11 +1664,23 @@ class KbChatService:
         payload: dict[str, Any],
         node: dict[str, str] | None = None,
         tool: dict[str, Any] | None = None,
+        event_id: str | None = None,
+        seq: int | None = None,
+        attempt: int | None = None,
+        node_path: list[str] | None = None,
     ) -> dict[str, Any]:
+        ts = payload.get("ts")
+        if not isinstance(ts, str) or not ts:
+            ts = datetime.now(timezone.utc).isoformat()
         envelope: dict[str, Any] = {
             "type": event_type,
             "version": _STREAM_EVENT_VERSION,
+            "event_id": event_id or f"{run_id}:{seq if isinstance(seq, int) else 0}",
+            "seq": int(seq or 0),
+            "ts": ts,
             "run": {"id": str(run_id)},
+            "attempt": attempt,
+            "node_path": node_path or [],
         }
         if node:
             node_id = node.get("id")
@@ -1302,7 +1691,9 @@ class KbChatService:
             }
         if tool:
             envelope["tool"] = tool
-        return {**payload, **envelope}
+        merged = {**payload, **envelope}
+        validate_event_envelope_v2(merged)
+        return merged
 
     @staticmethod
     def _build_node_io_payload(
@@ -1807,15 +2198,24 @@ class KbChatService:
                         answer = str(msg.content or "")
                         break
 
+            base_metrics = (
+                result.get("metrics") if isinstance(result.get("metrics"), dict) else {}
+            )
+            if "protocol_required_field_drift_rate" not in base_metrics:
+                base_metrics = {
+                    **base_metrics,
+                    "protocol_emit_total": 0,
+                    "protocol_required_field_drift_count": 0,
+                    "protocol_required_field_drift_rate": 0.0,
+                }
+
             metrics, stage_summaries = self._build_observability(
                 kb_chat_config=exec_ctx.kb_chat_config,
                 history_usage=exec_ctx.history_usage,
                 history_truncation=exec_ctx.history_truncation,
                 retrieval_meta=exec_ctx.retrieval_meta,
                 retrieval_results=exec_ctx.retrieval_results,
-                base_metrics=result.get("metrics")
-                if isinstance(result.get("metrics"), dict)
-                else {},
+                base_metrics=base_metrics,
                 base_stage_summaries=result.get("stage_summaries")
                 if isinstance(result.get("stage_summaries"), dict)
                 else {},
@@ -1930,24 +2330,38 @@ class KbChatService:
             metrics=dict(exec_ctx.state.get("metrics") or {}),
             loop_counts=dict(exec_ctx.state.get("loop_counts") or {}),
         )
+        protocol_emit_total = 0
+        protocol_drift_total = 0
 
         def _emit_enveloped(
             *,
             event_type: str,
             payload: dict[str, Any],
             node_name: str | None = None,
+            node_path: list[str] | None = None,
+            attempt: int | None = None,
         ) -> tuple[str, dict[str, Any]]:
             node = None
             if isinstance(node_name, str) and node_name:
                 node = {"id": node_name, "name": node_name}
+            event_seq["value"] += 1
+            seq = event_seq["value"]
+            nonlocal protocol_emit_total
+            nonlocal protocol_drift_total
+            protocol_emit_total += 1
+            emitted_payload = self._build_protocol_event_payload(
+                event_type=event_type,
+                run_id=run.id,
+                payload=payload,
+                node=node,
+                event_id=f"{run.id}:{seq}",
+                seq=seq,
+                node_path=node_path,
+                attempt=attempt,
+            )
             return (
                 event_type,
-                self._build_protocol_event_payload(
-                    event_type=event_type,
-                    run_id=run.id,
-                    payload=payload,
-                    node=node,
-                ),
+                emitted_payload,
             )
 
         def _emit_ui_event(
@@ -1981,6 +2395,7 @@ class KbChatService:
                 await graph_task
 
         try:
+            event_seq = {"value": 0}
             yield (
                 "meta",
                 self._build_protocol_event_payload(
@@ -1993,6 +2408,8 @@ class KbChatService:
                         "thread_id": exec_ctx.thread_id,
                         "mode": session.mode.value,
                     },
+                    event_id=f"{run.id}:0",
+                    seq=0,
                 ),
             )
 
@@ -2150,11 +2567,11 @@ class KbChatService:
                                 payload={
                                     "run_id": str(run.id),
                                     "node": node_name,
-                                    "node_path": node_path or [],
                                     "deltas": [delta.to_dict() for delta in deltas],
                                     "ts": datetime.now(timezone.utc).isoformat(),
                                 },
                                 node_name=node_name,
+                                node_path=node_path or [],
                             )
                         continue
 
@@ -2189,10 +2606,10 @@ class KbChatService:
                             payload={
                                 "run_id": str(run.id),
                                 "chunk": chunk,
-                                "node_path": node_path or [],
                                 "ts": datetime.now(timezone.utc).isoformat(),
                             },
                             node_name=candidate_node,
+                            node_path=node_path or [],
                         )
                         continue
 
@@ -2206,14 +2623,28 @@ class KbChatService:
                             )
                             payload_dict = dict(safe_payload)
                             payload_dict.setdefault("run_id", str(run.id))
-                            payload_dict.setdefault("node_path", node_path or [])
                             payload_dict.setdefault(
                                 "ts", datetime.now(timezone.utc).isoformat()
                             )
+                            custom_event_type = (
+                                payload_dict.get("event_type")
+                                if isinstance(payload_dict.get("event_type"), str)
+                                else "custom"
+                            )
+                            emitted_event_type = (
+                                "node_io" if custom_event_type == "node_io" else "custom"
+                            )
+                            event_attempt = (
+                                payload_dict.get("attempt")
+                                if isinstance(payload_dict.get("attempt"), int)
+                                else None
+                            )
                             yield _emit_enveloped(
-                                event_type="custom",
+                                event_type=emitted_event_type,
                                 payload=payload_dict,
                                 node_name=node_name,
+                                node_path=node_path or [],
+                                attempt=event_attempt,
                             )
                         continue
 
@@ -2234,6 +2665,18 @@ class KbChatService:
                 if isinstance(msg, AIMessage):
                     answer = extract_answer_text(msg.content)
                     break
+
+            protocol_drift_rate = (
+                round((protocol_drift_total / protocol_emit_total) * 100.0, 4)
+                if protocol_emit_total > 0
+                else 0.0
+            )
+            stream_state.metrics = {
+                **(stream_state.metrics if isinstance(stream_state.metrics, dict) else {}),
+                "protocol_emit_total": protocol_emit_total,
+                "protocol_required_field_drift_count": protocol_drift_total,
+                "protocol_required_field_drift_rate": protocol_drift_rate,
+            }
 
             metrics, stage_summaries = self._build_observability(
                 kb_chat_config=exec_ctx.kb_chat_config,
@@ -2698,6 +3141,59 @@ class KbChatService:
         run.error_message = (
             None if status == AgentRunStatus.SUCCEEDED else (error_message or "")
         )
+        latency_ms = int((run.finished_at - started_at).total_seconds() * 1000)
+        route_consistency_rate = self._compute_route_consistency(stage_summaries)
+        final_state_consistency_rate = self._compute_final_state_consistency(stage_summaries)
+        clarification_consistency_rate = self._compute_clarification_consistency(
+            stage_summaries
+        )
+        protocol_required_field_drift_rate = float(
+            metrics.get("protocol_required_field_drift_rate") or 0.0
+        )
+        trace_snapshot = (
+            metrics.get("trace_snapshot")
+            if isinstance(metrics.get("trace_snapshot"), dict)
+            else {}
+        )
+        trace_config = (
+            trace_snapshot.get("config")
+            if isinstance(trace_snapshot.get("config"), dict)
+            else {}
+        )
+        p95_latency_increase_pct = await self._compute_p95_latency_increase_pct(
+            current_latency_ms=latency_ms,
+            current_is_v3=bool(trace_config.get("kb_chat_graph_v3_enabled")),
+        )
+        metrics = {
+            **metrics,
+            "route_consistency_rate": route_consistency_rate,
+            "final_state_consistency_rate": final_state_consistency_rate,
+            "clarification_consistency_rate": clarification_consistency_rate,
+            "p95_latency_increase_pct": p95_latency_increase_pct,
+            "protocol_required_field_drift_rate": protocol_required_field_drift_rate,
+            "gray_release_indicators": {
+                "route_consistency_rate": route_consistency_rate,
+                "final_state_consistency_rate": final_state_consistency_rate,
+                "clarification_consistency_rate": clarification_consistency_rate,
+                "p95_latency_increase_pct": p95_latency_increase_pct,
+                "protocol_required_field_drift_rate": protocol_required_field_drift_rate,
+            },
+        }
+        gray_release_gate = self._build_gray_release_gate(metrics)
+        gray_release_gate["source_run_id"] = str(run.id)
+        gray_release_gate["evaluated_at"] = run.finished_at.isoformat()
+        gray_release_gate["trigger_rollback"] = (
+            bool(getattr(self._settings, "kb_chat_gray_release_auto_rollback_enabled", True))
+            and gray_release_gate.get("pass") is False
+        )
+        metrics["gray_release_gate"] = gray_release_gate
+        stage_summaries = {**stage_summaries, "gray_release_gate": gray_release_gate}
+        self._persist_gray_release_anomaly_sample(
+            run_id=run.id,
+            gate=gray_release_gate,
+            metrics=metrics,
+            stage_summaries=stage_summaries,
+        )
         stage_summaries = ensure_json_safe(
             stage_summaries, settings=self._settings, label="stage_summaries"
         )
@@ -2711,7 +3207,7 @@ class KbChatService:
                 if item.chunk_id is not None
             ],
             "citation_ids": sorted(citation_catalog, key=self._citation_sort_key),
-            "latency_ms": int((run.finished_at - started_at).total_seconds() * 1000),
+            "latency_ms": latency_ms,
             **summary_metrics,
             **metrics,
         }

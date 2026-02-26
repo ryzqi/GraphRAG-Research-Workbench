@@ -34,7 +34,10 @@ from app.agents.kb_chat_agentic.preprocess import (
     prepare_messages,
     rewrite_plan,
 )
-from app.agents.kb_chat_agentic.answer_subgraph import build_answer_subgraph
+from app.agents.answer_subgraph import build_answer_subgraph
+from app.agents.evidence_gate_subgraph import build_evidence_gate_subgraph
+from app.agents.preprocess_subgraph import build_preprocess_subgraph
+from app.agents.retrieval_subgraph import build_retrieval_subgraph
 from app.agents.kb_chat_agentic.tool_loop import force_exit_node
 from app.agents.kb_chat_agentic.reflection import (
     doc_gate_precheck,
@@ -48,12 +51,16 @@ from app.agents.kb_chat_agentic.reflection import (
     rewrite_branch_retrieve,
     rewrite_fuse,
     retrieve_subquery_context,
+    route_after_doc_grader,
     route_after_answer_review,
     transform_query_for_retry,
 )
 
 
 _NODE_METADATA: dict[str, dict[str, Any]] = {
+    "preprocess_subgraph": {"label": "预处理子图", "phase": "preprocess", "order": 0},
+    "retrieval_subgraph": {"label": "检索子图", "phase": "retrieve", "order": 11},
+    "evidence_gate_subgraph": {"label": "证据门控子图", "phase": "judge", "order": 16},
     "merge_context": {"label": "\u4e0a\u4e0b\u6587\u5408\u5e76", "phase": "preprocess", "order": 0},
     "rewrite_plan": {"label": "\u6539\u5199\u89c4\u5212", "phase": "preprocess", "order": 1},
     "rewrite_dispatch": {"label": "\u6539\u5199\u5e76\u884c\u6d3e\u53d1", "phase": "preprocess", "order": 2},
@@ -134,6 +141,19 @@ def _resolve_topology_config(
         bool(settings.kb_chat_hyde_enabled),
     )
     return ambiguity, hyde_flag
+
+
+def _route_after_preprocess_subgraph(state: dict[str, Any]) -> str:
+    reflection = state.get("reflection")
+    action = ""
+    if isinstance(reflection, dict):
+        action = str(reflection.get("action") or "").strip().lower()
+    if action in {"clarify", "force_exit"}:
+        return "force_exit"
+    clarification_payload = state.get("clarification_payload")
+    if isinstance(clarification_payload, dict) and clarification_payload:
+        return "force_exit"
+    return "retrieval_subgraph"
 
 
 def _complexity_cache_key_factory(*, direct_target: str) -> Any:
@@ -1692,6 +1712,12 @@ class KbChatAgenticGraph:
             settings=settings,
             kb_chat_config=kb_chat_config,
         )
+        raw_config = kb_chat_config if isinstance(kb_chat_config, dict) else {}
+        graph_v3_enabled = _resolve_flag(
+            raw_config,
+            "kb_chat_graph_v3_enabled",
+            bool(getattr(settings, "kb_chat_graph_v3_enabled", False)),
+        )
         llm_preprocess_retry_policy = RetryPolicy(max_attempts=2)
         rewrite_retry_attempts = int(
             max(1, min(4, getattr(settings, "kb_chat_rewrite_retry_attempts", 2)))
@@ -1766,6 +1792,93 @@ class KbChatAgenticGraph:
             state_schema=KbChatAgenticState,
             context_schema=KbChatGraphContext,
         )
+
+        kb_tool = next((t for t in tools if getattr(t, "name", None) == "kb_retrieve"), None)
+        if kb_tool is None:
+            raise RuntimeError("kb_retrieve tool is required for agentic KB chat")
+
+        if graph_v3_enabled:
+            preprocess_subgraph = build_preprocess_subgraph(settings=settings)
+            retrieval_subgraph = build_retrieval_subgraph(
+                settings=settings,
+                kb_tool=kb_tool,
+            )
+            evidence_gate_subgraph = build_evidence_gate_subgraph(settings=settings)
+            answer_subgraph = build_answer_subgraph(settings=settings, chat_model=chat_model)
+            graph.add_node(
+                "preprocess_subgraph",
+                preprocess_subgraph,
+                metadata=_NODE_METADATA["preprocess_subgraph"],
+                destinations=("retrieval_subgraph", "force_exit"),
+            )
+            graph.add_node(
+                "retrieval_subgraph",
+                retrieval_subgraph,
+                metadata=_NODE_METADATA["retrieval_subgraph"],
+            )
+            graph.add_node(
+                "evidence_gate_subgraph",
+                evidence_gate_subgraph,
+                metadata=_NODE_METADATA["evidence_gate_subgraph"],
+                destinations=("answer_subgraph", "transform_query", "force_exit"),
+            )
+            graph.add_node(
+                "answer_subgraph",
+                answer_subgraph,
+                metadata=_NODE_METADATA["answer_subgraph"],
+            )
+            graph.add_node(
+                "transform_query",
+                _wrap_node_with_io(
+                    "transform_query", partial(transform_query_for_retry, settings=settings)
+                ),
+                metadata=_NODE_METADATA["transform_query"],
+            )
+            graph.add_node(
+                "finalize",
+                _wrap_node_with_io("finalize", finalize_answer),
+                metadata=_NODE_METADATA["finalize"],
+            )
+            graph.add_node(
+                "force_exit",
+                _wrap_node_with_io(
+                    "force_exit", partial(force_exit_node, settings=settings)
+                ),
+                metadata=_NODE_METADATA["force_exit"],
+            )
+            graph.set_entry_point("preprocess_subgraph")
+            graph.add_conditional_edges(
+                "preprocess_subgraph",
+                _route_after_preprocess_subgraph,
+                {
+                    "retrieval_subgraph": "retrieval_subgraph",
+                    "force_exit": "force_exit",
+                },
+            )
+            graph.add_edge("retrieval_subgraph", "evidence_gate_subgraph")
+            graph.add_conditional_edges(
+                "evidence_gate_subgraph",
+                lambda s: route_after_doc_grader(s, settings),
+                {
+                    "answer_subgraph": "answer_subgraph",
+                    "transform_query": "transform_query",
+                    "force_exit": "force_exit",
+                },
+            )
+            graph.add_edge("transform_query", "retrieval_subgraph")
+            graph.add_conditional_edges(
+                "answer_subgraph",
+                lambda s: route_after_answer_review(s, settings),
+                {
+                    "finalize": "finalize",
+                    "transform_query": "transform_query",
+                    "force_exit": "force_exit",
+                },
+            )
+            graph.add_edge("finalize", END)
+            graph.add_edge("force_exit", END)
+            self._graph_builder = graph
+            return
 
         # -----------------
         # Preprocess chain
@@ -1865,10 +1978,6 @@ class KbChatAgenticGraph:
         # -----------------
         # Retrieval/Reflection
         # -----------------
-        kb_tool = next((t for t in tools if getattr(t, "name", None) == "kb_retrieve"), None)
-        if kb_tool is None:
-            raise RuntimeError("kb_retrieve tool is required for agentic KB chat")
-
         graph.add_node(
             "rewrite_branch_retrieve",
             _wrap_node_with_io(

@@ -35,6 +35,12 @@ from app.services.query_rewrite_service import (
 )
 
 from .budget import now_iso
+from .dispatch_fuse import (
+    build_retrieval_payload,
+    make_send_task,
+    sort_by_priority_then_index,
+    sort_by_retrieval_then_priority,
+)
 from .json_safety import ensure_json_safe
 from .runtime_config import (
     doc_gate_fallback_open_when_evidence_ok,
@@ -326,7 +332,7 @@ def _build_rewrite_dispatch_plan(
         if not query:
             continue
         send_tasks.append(
-            Send(
+            make_send_task(
                 "rewrite_branch_retrieve",
                 {
                     "rewrite_candidate": {
@@ -335,11 +341,9 @@ def _build_rewrite_dispatch_plan(
                         "query": query,
                         "source": _as_str(candidate.get("source")) or "unknown",
                         "priority": int(candidate.get("priority") or (idx + 1)),
-                    },
-                    "memory_keys": state.get("memory_keys"),
-                    "runtime_config": state.get("runtime_config"),
-                    "loop_counts": state.get("loop_counts"),
+                    }
                 },
+                state,
             )
         )
     if not send_tasks:
@@ -407,12 +411,12 @@ async def rewrite_branch_retrieve(
     retrieval_round = _get_loop_counts(state).get("retrieval_retries", 0)
     reason: str | None = None
     try:
-        payload = {
-            "query": query,
-            "kb_ids": kb_ids,
-            "top_k": retrieval_top_k(state, settings),
-            "retrieval_round": retrieval_round,
-            "query_items": [
+        payload = build_retrieval_payload(
+            query=query,
+            kb_ids=kb_ids,
+            top_k=retrieval_top_k(state, settings),
+            retrieval_round=retrieval_round,
+            query_items=[
                 {
                     "query": query,
                     "kind": "rewrite_branch",
@@ -420,7 +424,7 @@ async def rewrite_branch_retrieve(
                     "priority": int(candidate.get("priority") or 1),
                 }
             ],
-        }
+        )
         context = await kb_tool.ainvoke(payload)
     except asyncio.CancelledError:
         raise
@@ -459,13 +463,7 @@ async def rewrite_fuse(
     if not isinstance(raw_runs, list):
         raw_runs = []
     runs = [run for run in raw_runs if isinstance(run, dict)]
-    runs = sorted(
-        runs,
-        key=lambda item: (
-            -int(item.get("retrieval_count") or 0),
-            int(item.get("priority") or 99),
-        ),
-    )
+    runs = sort_by_retrieval_then_priority(runs)
     chosen_run = runs[0] if runs else {}
     chosen_query = _as_str(chosen_run.get("query")).strip() or _as_str(
         rewrite_plan.get("selected_query")
@@ -703,17 +701,7 @@ def _build_subquery_dispatch_plan(
         }
         branch_kinds[kind] = int(branch_kinds.get(kind, 0)) + 1
         selected_queries.append(query)
-        send_tasks.append(
-            Send(
-                "retrieve_subquery",
-                {
-                    "subquery_task": subquery_task,
-                    "memory_keys": state.get("memory_keys"),
-                    "loop_counts": state.get("loop_counts"),
-                    "runtime_config": state.get("runtime_config"),
-                },
-            )
-        )
+        send_tasks.append(make_send_task("retrieve_subquery", {"subquery_task": subquery_task}, state))
     if not send_tasks:
         return "retrieve", {
             "mode": "single_retrieve",
@@ -802,14 +790,13 @@ async def retrieve_subquery_context(
 
     retrieval_reason: str | None = None
     try:
-        payload: dict[str, Any] = {
-            "query": query,
-            "kb_ids": kb_ids,
-            "top_k": retrieval_top_k(state, settings),
-            "retrieval_round": retrieval_round,
-        }
-        if isinstance(query_item, dict):
-            payload["query_items"] = [query_item]
+        payload = build_retrieval_payload(
+            query=query,
+            kb_ids=kb_ids,
+            top_k=retrieval_top_k(state, settings),
+            retrieval_round=retrieval_round,
+            query_items=[query_item] if isinstance(query_item, dict) else None,
+        )
         context = await kb_tool.ainvoke(payload)
     except asyncio.CancelledError:
         raise
@@ -859,13 +846,7 @@ async def merge_subquery_context(
         raw_runs = []
 
     runs = [run for run in raw_runs if isinstance(run, dict)]
-    runs = sorted(
-        runs,
-        key=lambda item: (
-            int(item.get("priority") or 99),
-            int(item.get("index") or 0),
-        ),
-    )
+    runs = sort_by_priority_then_index(runs)
 
     merged_parts: list[str] = []
     seen_contexts: set[str] = set()

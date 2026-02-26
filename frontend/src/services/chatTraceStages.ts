@@ -84,8 +84,28 @@ function resolveEnabledNodes(
   steps: PipelineStep[],
   events: ChatNodeIoEvent[]
 ): NodeDefinition[] {
+  const inferred = new Map<string, NodeDefinition>();
+  const registerInferredNode = (nodeId: string, order: number) => {
+    if (!nodeId || inferred.has(nodeId)) {
+      return;
+    }
+    inferred.set(nodeId, {
+      id: nodeId,
+      label: resolveKbNodeLabel(nodeId, schema),
+      phase: null,
+      order,
+    });
+  };
+
+  steps.forEach((step, index) => {
+    registerInferredNode(step.step_id, index);
+  });
+  events.forEach((event, index) => {
+    registerInferredNode(event.node_name, steps.length + index);
+  });
+
   if (schema && Array.isArray(schema.nodes) && schema.nodes.length > 0) {
-    return schema.nodes
+    const schemaNodes = schema.nodes
       .map((node) => ({
         id: node.id,
         label: resolveKbNodeLabel(node.id, schema),
@@ -98,36 +118,14 @@ function resolveEnabledNodes(
         }
         return a.id.localeCompare(b.id);
       });
-  }
 
-  const inferred = new Map<string, NodeDefinition>();
-  steps.forEach((step, index) => {
-    if (!step.step_id) {
-      return;
-    }
-    if (!inferred.has(step.step_id)) {
-      inferred.set(step.step_id, {
-        id: step.step_id,
-        label: resolveKbNodeLabel(step.step_id, schema),
-        phase: null,
-        order: index,
-      });
-    }
-  });
-  events.forEach((event, index) => {
-    const fallbackOrder = steps.length + index;
-    if (!event.node_name) {
-      return;
-    }
-    if (!inferred.has(event.node_name)) {
-      inferred.set(event.node_name, {
-        id: event.node_name,
-        label: resolveKbNodeLabel(event.node_name, schema),
-        phase: null,
-        order: fallbackOrder,
-      });
-    }
-  });
+    const schemaIds = new Set(schemaNodes.map((node) => node.id));
+    const offset = schemaNodes.length;
+    const inferredExtras = [...inferred.values()]
+      .filter((node) => !schemaIds.has(node.id))
+      .map((node, index) => ({ ...node, order: offset + index }));
+    return [...schemaNodes, ...inferredExtras];
+  }
 
   return [...inferred.values()].sort((a, b) => a.order - b.order);
 }

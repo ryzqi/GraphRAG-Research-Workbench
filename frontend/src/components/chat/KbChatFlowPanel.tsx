@@ -258,6 +258,18 @@ function recordToLines(value: unknown): string[] | null {
   return lines.length > 0 ? lines : null;
 }
 
+function toCompactJson(value: unknown): string | null {
+  if (!value || typeof value !== 'object') {
+    return null;
+  }
+  try {
+    const text = JSON.stringify(value, null, 2);
+    return text && text.trim().length > 0 ? text : null;
+  } catch {
+    return null;
+  }
+}
+
 function getContextFrame(snapshot: Record<string, unknown>): Record<string, unknown> | null {
   return asRecord(snapshot.context_frame);
 }
@@ -384,7 +396,13 @@ function buildFallbackInputItems(
   event: ChatNodeIoEvent | null | undefined
 ): NodeDetailItem[] {
   const snapshot = asRecord(event?.input_snapshot);
-  if (!snapshot) return [];
+  if (!snapshot) {
+    const summaryLines = recordToLines(event?.input_summary);
+    if (!summaryLines) {
+      return [];
+    }
+    return [{ key: 'input_summary', label: '输入摘要', value: summaryLines }];
+  }
   const reflection = getReflection(snapshot);
   const items: NodeDetailItem[] = [];
 
@@ -497,6 +515,19 @@ function buildFallbackInputItems(
       key: 'best_answer',
       label: '候选答案',
       value: pickText(snapshot, 'best_answer', 'draft_answer'),
+    });
+  }
+
+  if (items.length === 0) {
+    pushDisplayItem(items, {
+      key: 'input_summary',
+      label: '输入摘要',
+      value: recordToLines(event?.input_summary),
+    });
+    pushDisplayItem(items, {
+      key: 'input_snapshot',
+      label: '输入快照',
+      value: toCompactJson(snapshot),
     });
   }
   return items;
@@ -774,6 +805,19 @@ function buildFallbackOutputItems(
 
   if (event?.error_summary) {
     pushDisplayItem(items, { key: 'error_summary', label: '错误信息', value: event.error_summary });
+  }
+
+  if (items.length === 0) {
+    pushDisplayItem(items, {
+      key: 'output_summary',
+      label: '输出摘要',
+      value: recordToLines(event?.output_summary),
+    });
+    pushDisplayItem(items, {
+      key: 'output_snapshot',
+      label: '输出快照',
+      value: toCompactJson(snapshot),
+    });
   }
 
   return items;

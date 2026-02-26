@@ -72,6 +72,7 @@ export interface KbChatConfig {
   entity_expand_max_variants: number;
   entity_expand_min_confidence: number;
   entity_expand_timeout_seconds: number;
+  kb_chat_graph_v3_enabled: boolean;
   hybrid_retrieval_enabled: boolean;
   doc_gate_rule_threshold: number;
   doc_gate_llm_confidence_floor: number;
@@ -336,52 +337,6 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value as Record<string, unknown>;
 }
 
-function withLegacyFieldCompatibility(
-  fallbackEvent: string,
-  payload: Record<string, unknown>
-): Record<string, unknown> {
-  const next = { ...payload };
-  const run = asRecord(next.run);
-  const node = asRecord(next.node);
-  const tool = asRecord(next.tool);
-  const eventType = typeof next.type === 'string' ? next.type : fallbackEvent;
-
-  if (run && typeof run.id === 'string' && typeof next.run_id !== 'string') {
-    next.run_id = run.id;
-  }
-
-  if (node) {
-    if (typeof node.id === 'string' && typeof next.node_id !== 'string') {
-      next.node_id = node.id;
-    }
-    if (typeof node.name === 'string') {
-      if (typeof next.node !== 'string') {
-        next.node = node.name;
-      }
-      if (typeof next.node_name !== 'string') {
-        next.node_name = node.name;
-      }
-      if (typeof next.current_node !== 'string' && eventType === 'state') {
-        next.current_node = node.name;
-      }
-      if (typeof next.step_id !== 'string' && eventType === 'step') {
-        next.step_id = node.name;
-      }
-    }
-  }
-
-  if (tool) {
-    if (typeof tool.name === 'string' && typeof next.tool_name !== 'string') {
-      next.tool_name = tool.name;
-    }
-    if (typeof tool.call_index === 'number' && typeof next.call_index !== 'number') {
-      next.call_index = tool.call_index;
-    }
-  }
-
-  return next;
-}
-
 export function normalizeChatStreamEvent(event: SseEvent): NormalizedChatStreamEvent | null {
   const parsed = (() => {
     try {
@@ -400,14 +355,12 @@ export function normalizeChatStreamEvent(event: SseEvent): NormalizedChatStreamE
   const version =
     typeof record.version === 'string'
       ? record.version
-      : explicitType
-        ? '2.0'
-        : '1.0';
+      : '2.0';
 
   return {
     event: normalizedEvent,
     version,
-    payload: withLegacyFieldCompatibility(event.event, record),
+    payload: { ...record },
   };
 }
 
@@ -422,6 +375,7 @@ export function toKbGraphSchemaQuery(config: Partial<KbChatConfig>): string {
     'entity_expand_max_variants',
     'entity_expand_min_confidence',
     'entity_expand_timeout_seconds',
+    'kb_chat_graph_v3_enabled',
     'doc_gate_rule_threshold',
     'doc_gate_llm_confidence_floor',
     'doc_gate_fallback_open_when_evidence_ok',

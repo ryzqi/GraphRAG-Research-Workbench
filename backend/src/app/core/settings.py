@@ -443,6 +443,16 @@ class Settings(BaseSettings):
     kb_chat_doc_gate_cache_ttl_seconds: int = Field(
         60, ge=0, alias="KB_CHAT_DOC_GATE_CACHE_TTL_SECONDS"
     )
+    kb_chat_graph_v3_enabled: bool = Field(True, alias="KB_CHAT_GRAPH_V3_ENABLED")
+    kb_chat_gray_release_auto_rollback_enabled: bool = Field(
+        True, alias="KB_CHAT_GRAY_RELEASE_AUTO_ROLLBACK_ENABLED"
+    )
+    kb_chat_gray_release_window_size: int = Field(
+        200, ge=20, le=2000, alias="KB_CHAT_GRAY_RELEASE_WINDOW_SIZE"
+    )
+    kb_chat_gray_release_rollback_cooldown_minutes: int = Field(
+        30, ge=1, le=720, alias="KB_CHAT_GRAY_RELEASE_ROLLBACK_COOLDOWN_MINUTES"
+    )
 
     kb_chat_trace_enabled: bool = Field(True, alias="KB_CHAT_TRACE_ENABLED")
 

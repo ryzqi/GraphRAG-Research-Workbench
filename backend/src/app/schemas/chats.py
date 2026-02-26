@@ -66,6 +66,7 @@ class KbChatConfig(BaseModel):
     parallel_retrieval_min_queries: int = Field(2, ge=1, le=8)
     parallel_retrieval_max_branches: int = Field(6, ge=1, le=12)
     parallel_retrieval_include_main: bool = True
+    kb_chat_graph_v3_enabled: bool = True
     doc_gate_rule_threshold: float = Field(0.45, ge=0.0, le=1.0)
     doc_gate_llm_confidence_floor: float = Field(0.45, ge=0.0, le=1.0)
     doc_gate_fallback_open_when_evidence_ok: bool = True
@@ -154,6 +155,7 @@ def default_kb_chat_config(*, settings: Settings | None = None) -> KbChatConfig:
         parallel_retrieval_min_queries=int(cfg.kb_chat_parallel_retrieval_min_queries),
         parallel_retrieval_max_branches=int(cfg.kb_chat_parallel_retrieval_max_branches),
         parallel_retrieval_include_main=bool(cfg.kb_chat_parallel_retrieval_include_main),
+        kb_chat_graph_v3_enabled=bool(cfg.kb_chat_graph_v3_enabled),
         doc_gate_rule_threshold=float(cfg.kb_chat_doc_gate_rule_threshold),
         doc_gate_llm_confidence_floor=float(
             cfg.kb_chat_doc_gate_llm_confidence_floor

@@ -10,6 +10,11 @@ import {
 
 import { PipelineProgress, type PipelineTimelineEvent } from './PipelineProgress';
 import type { ChatRunStateEvent } from '../../services/chats';
+import {
+  selectFilteredTimeline,
+  selectTimelineItem,
+  type KbChatTraceFilterKey,
+} from '../../services/kbChatTraceSelectors';
 
 interface KbChatTracePanelProps {
   timeline: PipelineTimelineEvent[];
@@ -17,23 +22,16 @@ interface KbChatTracePanelProps {
   isStreaming: boolean;
 }
 
-type FilterKey = 'all' | 'started' | 'completed' | 'failed';
-
-function matchesFilter(item: PipelineTimelineEvent, filter: FilterKey): boolean {
-  if (filter === 'all') return true;
-  return item.status === filter;
-}
-
 export function KbChatTracePanel({ timeline, runState, isStreaming }: KbChatTracePanelProps) {
-  const [filter, setFilter] = useState<FilterKey>('all');
+  const [filter, setFilter] = useState<KbChatTraceFilterKey>('all');
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
   const filtered = useMemo(
-    () => timeline.filter((item) => matchesFilter(item, filter)),
+    () => selectFilteredTimeline(timeline, filter),
     [timeline, filter]
   );
   const selected = useMemo(
-    () => filtered.find((item) => item.id === selectedId) ?? null,
+    () => selectTimelineItem(filtered, selectedId),
     [filtered, selectedId]
   );
 
@@ -45,7 +43,7 @@ export function KbChatTracePanel({ timeline, runState, isStreaming }: KbChatTrac
             节点追踪
           </Typography>
           <Stack direction='row' spacing={0.5} useFlexGap flexWrap='wrap'>
-            {(['all', 'started', 'completed', 'failed'] as FilterKey[]).map((key) => (
+            {(['all', 'started', 'completed', 'failed'] as KbChatTraceFilterKey[]).map((key) => (
               <Chip
                 key={key}
                 size='small'
