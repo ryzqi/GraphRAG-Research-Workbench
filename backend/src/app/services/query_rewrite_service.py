@@ -595,7 +595,8 @@ def build_query_items(
 ) -> list[QueryItem]:
     """Build a unified query collection for retrieval + provenance.
 
-    - Decomposition and multi-query are mutually exclusive; caller should enforce.
+    - `main_query` is always retained as the first query item.
+    - Sub-queries and variants can coexist (complex path keeps both).
     - HyDE is included as a *dense-only* query item by default.
     - When `hyde_docs` has multiple candidates, retrieval may aggregate embeddings.
     """
@@ -654,7 +655,7 @@ def build_query_items(
                         "use_bm25": True,
                     }
                 )
-    elif variants:
+    if variants:
         for idx, q in enumerate(variants):
             qn = _normalize_whitespace(q)
             if qn:

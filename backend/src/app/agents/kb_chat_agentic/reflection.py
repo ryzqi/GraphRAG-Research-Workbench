@@ -66,8 +66,6 @@ _CITATION_ONLY_FAILURE_REASONS = {
     "missing_citations",
     "invalid_citations",
     "citation_mismatch",
-    # Backward compatibility for old checkpoints.
-    "missing_or_invalid_citations",
 }
 _DOC_GATE_RISK_LEVELS = {"low", "medium", "high"}
 _DOC_GATE_RETRY_ADVICES = {"none", "retry", "clarify"}
@@ -413,7 +411,7 @@ async def rewrite_branch_retrieve(
     try:
         payload = build_retrieval_payload(
             query=query,
-            kb_ids=kb_ids,
+            kb_ids=kb_ids or [],
             top_k=retrieval_top_k(state, settings),
             retrieval_round=retrieval_round,
             query_items=[
@@ -735,6 +733,91 @@ def route_after_subquery_dispatch(
     return route
 
 
+def _resolve_retrieval_timeout_seconds(state: dict[str, Any]) -> float | None:
+    runtime_config = state.get("runtime_config")
+    if not isinstance(runtime_config, dict):
+        return None
+    raw_timeout = runtime_config.get("retrieval_timeout_seconds")
+    if isinstance(raw_timeout, (int, float)) and float(raw_timeout) > 0:
+        return float(raw_timeout)
+    return None
+
+
+def _resolve_retrieval_budget_payload(
+    state: dict[str, Any], settings: Settings
+) -> dict[str, int]:
+    default_top_k = retrieval_top_k(state, settings)
+    budget = state.get("retrieval_budget")
+    if not isinstance(budget, dict):
+        budget = {}
+    per_query_top_k = int(budget.get("per_query_top_k") or default_top_k)
+    global_candidates_limit = int(
+        budget.get("global_candidates_limit") or max(default_top_k * 2, per_query_top_k)
+    )
+    rerank_input_limit = int(
+        budget.get("rerank_input_limit")
+        or max(default_top_k, per_query_top_k)
+    )
+    return {
+        "per_query_top_k": max(1, per_query_top_k),
+        "global_candidates_limit": max(1, global_candidates_limit),
+        "rerank_input_limit": max(1, rerank_input_limit),
+    }
+
+
+def _compute_retrieval_diagnostics(
+    *,
+    state: dict[str, Any],
+    final_context: str,
+    evidence_count: int,
+) -> dict[str, float]:
+    query_items = state.get("query_items")
+    if isinstance(query_items, list):
+        query_count = sum(
+            1
+            for item in query_items
+            if isinstance(item, dict) and _as_str(item.get("query")).strip()
+        )
+    else:
+        query_count = 0
+    query_count = max(1, query_count)
+    coverage = min(1.0, evidence_count / query_count)
+
+    metrics = state.get("metrics")
+    retrieval_metrics = (
+        metrics.get("retrieval_layer")
+        if isinstance(metrics, dict) and isinstance(metrics.get("retrieval_layer"), dict)
+        else {}
+    )
+    previous_evidence = int(retrieval_metrics.get("evidence_count") or 0)
+    if evidence_count <= 0:
+        novelty = 0.0
+    elif previous_evidence <= 0:
+        novelty = 1.0
+    else:
+        novelty = max(
+            0.0,
+            min(
+                1.0,
+                (evidence_count - previous_evidence) / max(evidence_count, previous_evidence),
+            ),
+        )
+
+    lower_ctx = final_context.lower()
+    conflict_markers = (
+        final_context.count("但是")
+        + final_context.count("然而")
+        + lower_ctx.count("however")
+        + lower_ctx.count("but ")
+    )
+    conflict = min(1.0, conflict_markers / max(1, evidence_count * 2))
+    return {
+        "coverage": round(coverage, 4),
+        "novelty": round(novelty, 4),
+        "conflict": round(conflict, 4),
+    }
+
+
 async def dispatch_subqueries(
     state: dict,
     *,
@@ -787,15 +870,21 @@ async def retrieve_subquery_context(
     loop_counts = _get_loop_counts(state)
     retrieval_round = max(loop_counts.get("retrieval_retries", 0), 0)
     kb_ids = _resolve_kb_ids(state, runtime)
+    retrieval_budget = _resolve_retrieval_budget_payload(state, settings)
+    timeout_seconds = _resolve_retrieval_timeout_seconds(state)
 
     retrieval_reason: str | None = None
     try:
         payload = build_retrieval_payload(
             query=query,
-            kb_ids=kb_ids,
+            kb_ids=kb_ids or [],
             top_k=retrieval_top_k(state, settings),
             retrieval_round=retrieval_round,
             query_items=[query_item] if isinstance(query_item, dict) else None,
+            per_query_top_k=retrieval_budget["per_query_top_k"],
+            global_candidates_limit=retrieval_budget["global_candidates_limit"],
+            rerank_input_limit=retrieval_budget["rerank_input_limit"],
+            timeout_seconds=timeout_seconds,
         )
         context = await kb_tool.ainvoke(payload)
     except asyncio.CancelledError:
@@ -874,6 +963,11 @@ async def merge_subquery_context(
 
     final_context = "\n\n".join(merged_parts).strip() if merged_parts else "（未找到相关内容）"
     evidence_count = _extract_evidence_count(final_context)
+    retrieval_diagnostics = _compute_retrieval_diagnostics(
+        state=state,
+        final_context=final_context,
+        evidence_count=evidence_count,
+    )
 
     metrics = state.get("metrics")
     if not isinstance(metrics, dict):
@@ -890,6 +984,7 @@ async def merge_subquery_context(
             "branch_kinds": branch_kinds,
             "failure_reasons": failure_reasons,
             "kb_count": len(_resolve_kb_ids(state, runtime) or []),
+            "diagnostics": retrieval_diagnostics,
         },
     }
     metrics = ensure_json_safe(metrics, settings=settings, label="metrics")
@@ -906,8 +1001,10 @@ async def merge_subquery_context(
                 if _as_str(run.get("query")).strip()
             ][:8],
             "reason": "fanout",
+            "diagnostics": retrieval_diagnostics,
         },
         "metrics": metrics,
+        "retrieval_diagnostics": retrieval_diagnostics,
         "subquery_runs": [],
         **_merge_stage_summary(
             state,
@@ -922,6 +1019,7 @@ async def merge_subquery_context(
                 "retrieval_count": retrieval_count or evidence_count,
                 "failure_reasons": failure_reasons,
                 "kb_count": len(_resolve_kb_ids(state, runtime) or []),
+                "diagnostics": retrieval_diagnostics,
                 "latency_ms": int((time.perf_counter() - start) * 1000),
                 "completed_at": now_iso(),
             },
@@ -1073,16 +1171,22 @@ async def kb_retrieve_context(
         return _set_final_answer_for_exit(state, "", reason="max_total_rounds")
     query = _resolve_query_text(state)
     kb_ids = _resolve_kb_ids(state, runtime)
+    retrieval_budget = _resolve_retrieval_budget_payload(state, settings)
+    timeout_seconds = _resolve_retrieval_timeout_seconds(state)
 
     retrieval_round = max(loop_counts.get("retrieval_retries", 0), 0)
     retrieval_reason: str | None = None
     try:
-        payload: dict[str, Any] = {
-            "query": query,
-            "kb_ids": kb_ids,
-            "top_k": retrieval_top_k(state, settings),
-            "retrieval_round": retrieval_round,
-        }
+        payload = build_retrieval_payload(
+            query=query,
+            kb_ids=kb_ids,
+            top_k=retrieval_top_k(state, settings),
+            retrieval_round=retrieval_round,
+            per_query_top_k=retrieval_budget["per_query_top_k"],
+            global_candidates_limit=retrieval_budget["global_candidates_limit"],
+            rerank_input_limit=retrieval_budget["rerank_input_limit"],
+            timeout_seconds=timeout_seconds,
+        )
         query_items = state.get("query_items")
         if isinstance(query_items, list) and query_items:
             # Pass fanout query bundle to kb_retrieve so RetrievalService.retrieve_layer() can do cross-query fusion.
@@ -1098,6 +1202,11 @@ async def kb_retrieve_context(
     evidence_count = _extract_evidence_count(final_context)
     if retrieval_reason is None and evidence_count <= 0:
         retrieval_reason = "no_evidence"
+    retrieval_diagnostics = _compute_retrieval_diagnostics(
+        state=state,
+        final_context=final_context,
+        evidence_count=evidence_count,
+    )
 
     metrics = state.get("metrics")
     if not isinstance(metrics, dict):
@@ -1110,6 +1219,7 @@ async def kb_retrieve_context(
             "attempted": True,
             "mode": "single_retrieve",
             "kb_count": len(kb_ids or []),
+            "diagnostics": retrieval_diagnostics,
         },
     }
     metrics = ensure_json_safe(metrics, settings=settings, label="metrics")
@@ -1122,8 +1232,10 @@ async def kb_retrieve_context(
             "rank_strategy": "quality_first",
             "selected_queries": [query] if query else [],
             "reason": retrieval_reason or "ok",
+            "diagnostics": retrieval_diagnostics,
         },
         "metrics": metrics,
+        "retrieval_diagnostics": retrieval_diagnostics,
         **_merge_stage_summary(
             state,
             "retrieval_layer",
@@ -1136,6 +1248,7 @@ async def kb_retrieve_context(
                 "fallback_reason": retrieval_reason,
                 "mode": "single_retrieve",
                 "kb_count": len(kb_ids or []),
+                "diagnostics": retrieval_diagnostics,
                 "completed_at": now_iso(),
             },
         ),
@@ -1454,7 +1567,7 @@ async def doc_gate_route(
         ),
         **_merge_stage_summary(
             state,
-            "doc_grader",
+            "doc_gate_route",
             {
                 "passed": passed,
                 "reason": reason,
@@ -1496,24 +1609,6 @@ async def doc_gate_route(
         )
 
     return Command(update=updates, goto=goto)
-
-
-async def doc_grader(
-    state: dict,
-    *,
-    settings: Settings,
-    chat_model: ChatOpenAI,
-) -> dict[str, Any]:
-    """Backward-compatible wrapper: run precheck + llm + route and return updates."""
-    precheck_updates = await doc_gate_precheck(state, settings=settings)
-    state_after_precheck = {**state, **precheck_updates}
-    llm_updates = await doc_grader_llm(
-        state_after_precheck, settings=settings, chat_model=chat_model
-    )
-    state_after_llm = {**state_after_precheck, **llm_updates}
-    route_result = await doc_gate_route(state_after_llm, settings=settings)
-    route_updates = route_result.update if isinstance(route_result.update, dict) else {}
-    return {**precheck_updates, **llm_updates, **route_updates}
 
 
 async def generate_draft(
@@ -1878,6 +1973,80 @@ def route_after_answer_review(state: dict, settings: Settings) -> str:
     if loop_counts["retrieval_retries"] >= int(settings.kb_chat_max_retrieval_retries):
         return "force_exit"
     return "transform_query"
+
+
+def confidence_calibrate(state: dict) -> dict[str, Any]:
+    """Calibrate final confidence from gate/review/citation signals."""
+    doc_gate_state = state.get("doc_gate_state")
+    gate_conf = (
+        float(doc_gate_state.get("confidence") or 0.0)
+        if isinstance(doc_gate_state, dict)
+        else 0.0
+    )
+    reflection = state.get("reflection")
+    review_conf = (
+        float(reflection.get("review_confidence") or 0.0)
+        if isinstance(reflection, dict)
+        else 0.0
+    )
+    cove_state = state.get("cove_state")
+    cove_passed = (
+        bool(cove_state.get("passed"))
+        if isinstance(cove_state, dict) and cove_state.get("passed") is not None
+        else True
+    )
+    claim_check_passed = (
+        bool(cove_state.get("claim_check_passed"))
+        if isinstance(cove_state, dict) and cove_state.get("claim_check_passed") is not None
+        else True
+    )
+    final_context = _as_str(state.get("final_context")).strip()
+    citation_count = len(_extract_evidence_labels(final_context))
+    citation_score = min(1.0, citation_count / 4.0)
+
+    base_score = (gate_conf * 0.35) + (review_conf * 0.35) + (citation_score * 0.30)
+    if not cove_passed:
+        base_score *= 0.7
+    if not claim_check_passed:
+        base_score *= 0.75
+    confidence_score = round(max(0.0, min(1.0, base_score)), 4)
+    if confidence_score >= 0.8:
+        confidence_level = "high"
+    elif confidence_score >= 0.5:
+        confidence_level = "medium"
+    else:
+        confidence_level = "low"
+
+    stage_summaries = state.get("stage_summaries")
+    if not isinstance(stage_summaries, dict):
+        stage_summaries = {}
+    stage_summaries = {
+        **stage_summaries,
+        "confidence_calibrate": {
+            "confidence_score": confidence_score,
+            "confidence_level": confidence_level,
+            "gate_confidence": round(gate_conf, 4),
+            "review_confidence": round(review_conf, 4),
+            "citation_score": round(citation_score, 4),
+            "cove_passed": cove_passed,
+            "claim_check_passed": claim_check_passed,
+            "completed_at": now_iso(),
+        },
+    }
+    metrics = state.get("metrics")
+    if not isinstance(metrics, dict):
+        metrics = {}
+    metrics = {
+        **metrics,
+        "confidence_score": confidence_score,
+        "confidence_level": confidence_level,
+    }
+    return {
+        "confidence_score": confidence_score,
+        "confidence_level": confidence_level,
+        "stage_summaries": stage_summaries,
+        "metrics": metrics,
+    }
 
 
 def finalize_answer(state: dict) -> dict[str, Any]:

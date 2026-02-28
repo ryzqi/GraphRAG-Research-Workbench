@@ -1127,16 +1127,18 @@ class RetrievalService:
         )
 
         query_count = max(1, len(query_items))
+        max_candidate_cap = max(
+            int(self._settings.retrieval_max_top_k),
+            int(self._settings.retrieval_max_top_k) * max(2, query_count * 2),
+        )
         if global_candidates_limit is None:
             # Worst-case: dense+BM25 per query -> 2*per_query_top_k per query.
             global_candidates_limit = min(
-                int(self._settings.retrieval_max_top_k),
+                max_candidate_cap,
                 per_query_top_k * 2 * query_count,
             )
         global_candidates_limit = max(int(global_candidates_limit), top_n)
-        global_candidates_limit = min(
-            global_candidates_limit, int(self._settings.retrieval_max_top_k)
-        )
+        global_candidates_limit = min(global_candidates_limit, max_candidate_cap)
 
         if rerank_input_limit is None:
             rerank_input_limit = runtime_overrides.retrieval_rerank_top_k

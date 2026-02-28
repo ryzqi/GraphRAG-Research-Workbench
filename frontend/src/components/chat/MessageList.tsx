@@ -3,7 +3,7 @@
  * 管理消息滚动、窗口化渲染与底部锚点语义
  */
 import { memo, useRef, useEffect, useCallback, useMemo, useState } from 'react';
-import { Box, Fade, IconButton, Paper, Stack, Tooltip } from '@mui/material';
+import { Box, Chip, Fade, IconButton, Paper, Stack, Tooltip, Typography } from '@mui/material';
 import { alpha } from '@mui/material/styles';
 import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
 import { ClarificationCard, MessageItem, ToolApprovalCard } from './MessageItem';
@@ -13,11 +13,16 @@ import type {
   ChatRunStateEvent,
   EvidenceItem,
   PendingClarification,
+  SemanticCacheMeta,
   ToolApprovalRequest,
 } from '../../services/chats';
 import { EvidenceList } from '../EvidenceList';
 import { stripTrailingReferenceSection } from '../../lib/kbChatContent';
 import { calculateMessageListVirtualWindow } from '../../services/messageListVirtualization';
+import {
+  resolveConfidenceChipMeta,
+  shouldRenderClarificationCard,
+} from '../../services/chatMessageDisplay';
 import { PipelineProgress, type PipelineStep, type PipelineTimelineEvent } from './PipelineProgress';
 
 const VIRTUALIZATION_THRESHOLD = 60;
@@ -60,6 +65,10 @@ export interface ChatMessage {
   runState?: ChatRunStateEvent;
   stagedContent?: string;
   answerRevealReady?: boolean;
+  confidenceScore?: number | null;
+  confidenceLevel?: 'high' | 'medium' | 'low' | null;
+  responseSource?: 'live' | 'cached' | null;
+  cacheMeta?: SemanticCacheMeta | null;
 }
 
 interface MessageListProps {
@@ -141,6 +150,12 @@ const MessageRow = memo(
       (message.evidence?.length ?? 0) > 0
         ? stripTrailingReferenceSection(message.content)
         : message.content;
+    const confidenceChipMeta = resolveConfidenceChipMeta(message.confidenceLevel);
+    const canRenderClarificationCard = shouldRenderClarificationCard({
+      pendingClarification: message.pendingClarification,
+      runId: message.runId,
+      hasSubmitHandler: Boolean(onClarificationSubmit),
+    });
 
     return (
       <Box
@@ -180,6 +195,39 @@ const MessageRow = memo(
           onCitationClick={message.role === 'assistant' ? handleCitationClick : undefined}
         />
 
+        {message.role === 'assistant' &&
+          (confidenceChipMeta ||
+            typeof message.confidenceScore === 'number' ||
+            message.responseSource === 'cached') && (
+            <Box sx={{ mt: 1, ml: 7 }}>
+              <Stack direction='row' spacing={0.75} alignItems='center' useFlexGap flexWrap='wrap'>
+                {confidenceChipMeta && (
+                  <Chip
+                    size='small'
+                    color={confidenceChipMeta.color}
+                    label={confidenceChipMeta.label}
+                  />
+                )}
+                {typeof message.confidenceScore === 'number' && (
+                  <Chip
+                    size='small'
+                    variant='outlined'
+                    color='info'
+                    label={`置信度 ${(message.confidenceScore * 100).toFixed(0)}%`}
+                  />
+                )}
+                {message.responseSource === 'cached' && (
+                  <Chip size='small' variant='outlined' color='secondary' label='语义缓存命中' />
+                )}
+                {message.responseSource === 'cached' && message.cacheMeta?.ttl_seconds ? (
+                  <Typography variant='caption' color='text.secondary'>
+                    缓存剩余约 {Math.max(1, Math.round(message.cacheMeta.ttl_seconds / 3600))} 小时
+                  </Typography>
+                ) : null}
+              </Stack>
+            </Box>
+          )}
+
         {message.pendingToolApproval && onToolApprovalSubmit && message.runId && (
           <Box sx={{ mt: 2, ml: 7 }}>
             <ToolApprovalCard
@@ -190,14 +238,14 @@ const MessageRow = memo(
           </Box>
         )}
 
-        {message.pendingClarification && onClarificationSubmit && message.runId && (
+        {canRenderClarificationCard && (
           <Box sx={{ mt: 2, ml: 7 }}>
             <ClarificationCard
-              message={message.pendingClarification.message}
-              pendingClarification={message.pendingClarification.pendingClarification}
+              message={message.pendingClarification!.message}
+              pendingClarification={message.pendingClarification!.pendingClarification}
               loading={approvalLoading}
               onSubmit={(contentText) =>
-                onClarificationSubmit(message.id, message.runId!, contentText)
+                onClarificationSubmit!(message.id, message.runId!, contentText)
               }
             />
           </Box>

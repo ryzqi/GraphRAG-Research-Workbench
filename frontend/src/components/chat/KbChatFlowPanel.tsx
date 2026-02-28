@@ -136,10 +136,19 @@ type DetailSectionKind = 'input' | 'output';
 
 const NODE_BADGE_THEME_MAP: Record<string, NodeBadgeTheme> = {
   merge_context: { icon: MergeTypeIcon, label: '上下文合并', color: '#0EA5E9' },
+  rewrite_plan: { icon: MergeTypeIcon, label: '改写规划', color: '#0EA5E9' },
+  rewrite_dispatch: { icon: AltRouteIcon, label: '改写派发', color: '#0EA5E9' },
+  rewrite_branch_retrieve: { icon: SearchIcon, label: '改写验证', color: '#0EA5E9' },
+  rewrite_fuse: { icon: MergeTypeIcon, label: '改写融合', color: '#0EA5E9' },
   coref_rewrite: { icon: AccountTreeIcon, label: '指代消解', color: '#2563EB' },
   ambiguity_check: { icon: HelpOutlineIcon, label: '歧义判断', color: '#7C3AED' },
   normalize_rewrite: { icon: TuneIcon, label: '问题规范', color: '#4F46E5' },
+  complexity_classify: { icon: FactCheckIcon, label: '复杂度分类', color: '#4F46E5' },
   decomposition: { icon: CallSplitIcon, label: '问题分解', color: '#0284C7' },
+  adaptive_routing: { icon: AltRouteIcon, label: '自适应路由', color: '#0284C7' },
+  simple_path: { icon: AltRouteIcon, label: '简单路径', color: '#0284C7' },
+  moderate_path: { icon: AltRouteIcon, label: '中等路径', color: '#0284C7' },
+  complex_path: { icon: AltRouteIcon, label: '复杂路径', color: '#0284C7' },
   multi_query_check: { icon: ChecklistIcon, label: '多路判断', color: '#0284C7' },
   generate_variants: { icon: AltRouteIcon, label: '多路扩展', color: '#0D9488' },
   entity_expand: { icon: HubIcon, label: '实体扩展', color: '#059669' },
@@ -147,19 +156,32 @@ const NODE_BADGE_THEME_MAP: Record<string, NodeBadgeTheme> = {
   hyde: { icon: AutoFixHighIcon, label: 'HyDE扩展', color: '#16A34A' },
   prepare_messages: { icon: TextSnippetIcon, label: '消息整理', color: '#65A30D' },
   retrieve: { icon: SearchIcon, label: '知识检索', color: '#CA8A04' },
+  context_compress: { icon: TuneIcon, label: '上下文压缩', color: '#CA8A04' },
   doc_gate_precheck: { icon: FactCheckIcon, label: '文档预判', color: '#EA580C' },
   doc_grader_llm: { icon: GavelIcon, label: '文档复核', color: '#EA580C' },
+  doc_gate_sufficiency: { icon: GavelIcon, label: '充分度评分', color: '#EA580C' },
+  doc_gate_answerability: { icon: GavelIcon, label: '可回答评分', color: '#EA580C' },
+  doc_gate_conflict: { icon: GavelIcon, label: '冲突检测', color: '#EA580C' },
+  doc_gate_fuse: { icon: GavelIcon, label: '门控融合', color: '#EA580C' },
   doc_gate_route: { icon: GavelIcon, label: '文档判定', color: '#EA580C' },
-  doc_grader: { icon: GavelIcon, label: '文档判定', color: '#EA580C' },
   transform_query: { icon: SyncAltIcon, label: '查询改写', color: '#DC2626' },
   answer_subgraph: { icon: AutoAwesomeIcon, label: '答案子图', color: '#C026D3' },
   draft_generate: { icon: AutoAwesomeIcon, label: '草稿生成', color: '#C026D3' },
+  answer_review_dispatch: { icon: RateReviewIcon, label: '审查分发', color: '#9333EA' },
+  answer_review_citation: { icon: RateReviewIcon, label: '引用审查', color: '#9333EA' },
+  answer_review_factual: { icon: RateReviewIcon, label: '事实审查', color: '#9333EA' },
+  answer_review_answerability: { icon: RateReviewIcon, label: '可回答审查', color: '#9333EA' },
+  answer_review_fuse: { icon: RateReviewIcon, label: '审查融合', color: '#9333EA' },
   answer_self_check: { icon: RateReviewIcon, label: '答案自检', color: '#9333EA' },
   answer_repair: { icon: AutoFixHighIcon, label: '答案修复', color: '#A855F7' },
+  cove_check: { icon: FactCheckIcon, label: 'CoVe触发', color: '#A855F7' },
+  chain_of_verification: { icon: FactCheckIcon, label: 'CoVe验证链', color: '#A855F7' },
+  claim_citation_check: { icon: FactCheckIcon, label: 'Claim引用校验', color: '#A855F7' },
   answer_commit: { icon: TaskAltIcon, label: '答案提交', color: '#7C3AED' },
   generate: { icon: AutoAwesomeIcon, label: '答案生成', color: '#C026D3' },
   answer_review: { icon: RateReviewIcon, label: '答案审查', color: '#9333EA' },
   finalize: { icon: TaskAltIcon, label: '答案整理', color: '#0891B2' },
+  confidence_calibrate: { icon: FactCheckIcon, label: '置信度校准', color: '#0891B2' },
   force_exit: { icon: BlockIcon, label: '提前终止', color: '#475569' },
 };
 
@@ -371,7 +393,6 @@ function summaryKeyForNode(nodeId: string): string {
     return 'answer_review';
   }
   if (nodeId === 'answer_commit') return 'answer_subgraph';
-  if (nodeId === 'doc_gate_route') return 'doc_grader';
   return nodeId;
 }
 
@@ -463,7 +484,7 @@ function buildFallbackInputItems(
         value: pickText(snapshot, 'normalized_query', 'coref_query', 'user_input'),
       });
     }
-  } else if (['doc_grader', 'doc_gate_precheck', 'doc_grader_llm', 'doc_gate_route'].includes(nodeId)) {
+  } else if (['doc_gate_precheck', 'doc_grader_llm', 'doc_gate_route'].includes(nodeId)) {
     pushDisplayItem(items, {
       key: 'question',
       label: '待判定问题',
@@ -743,7 +764,7 @@ function buildFallbackOutputItems(
       pushDisplayItem(items, { key: 'reason', label: '复核原因', value: summary.reason });
       pushDisplayItem(items, { key: 'confidence', label: '复核置信度', value: summary.confidence });
       pushDisplayItem(items, { key: 'fallback_reason', label: '回退原因', value: summary.fallback_reason });
-    } else if (['doc_grader', 'doc_gate_route'].includes(nodeId)) {
+    } else if (nodeId === 'doc_gate_route') {
       pushDisplayItem(items, { key: 'passed', label: '相关性是否通过', value: summary.passed });
       pushDisplayItem(items, { key: 'action', label: '后续动作', value: reflection.action });
       pushDisplayItem(items, { key: 'reason', label: '判定原因', value: summary.reason });
@@ -928,23 +949,24 @@ export function KbChatFlowPanel({
     () =>
       new Map(
         stages.map((stage) => {
+          const detailNodeId = stage.focusNodeId;
           const rawInputItems =
             stage.latestNodeEvent?.display_input_items ??
-            buildFallbackInputItems(stage.id, stage.latestNodeEvent);
+            buildFallbackInputItems(detailNodeId, stage.latestNodeEvent);
           const rawOutputItems =
             stage.latestNodeEvent?.display_output_items ??
-            buildFallbackOutputItems(stage.id, stage.latestNodeEvent);
+            buildFallbackOutputItems(detailNodeId, stage.latestNodeEvent);
           return [
             stage.id,
             {
               inputDetailItems: selectKeyDetailItems({
-                nodeId: stage.id,
+                nodeId: detailNodeId,
                 section: 'input',
                 items: rawInputItems,
                 event: stage.latestNodeEvent,
               }),
               outputDetailItems: selectKeyDetailItems({
-                nodeId: stage.id,
+                nodeId: detailNodeId,
                 section: 'output',
                 items: rawOutputItems,
                 event: stage.latestNodeEvent,
@@ -1063,10 +1085,10 @@ export function KbChatFlowPanel({
                 transition: 'border-color 180ms ease, background-color 180ms ease',
               }}
             >
-              <Stack spacing={1}>
-                <Stack direction='row' justifyContent='space-between' alignItems='center' spacing={1}>
-                  <Stack direction='row' spacing={0.75} alignItems='center' sx={{ minWidth: 0 }}>
-                    <NodeBadge nodeId={stage.id} />
+                <Stack spacing={1}>
+                  <Stack direction='row' justifyContent='space-between' alignItems='center' spacing={1}>
+                    <Stack direction='row' spacing={0.75} alignItems='center' sx={{ minWidth: 0 }}>
+                      <NodeBadge nodeId={stage.focusNodeId} />
                     <Box sx={{ minWidth: 0 }}>
                       <Typography variant='body2' fontWeight={700} noWrap>
                         {stage.title}

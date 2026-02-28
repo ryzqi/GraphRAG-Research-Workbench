@@ -1,15 +1,18 @@
-"""Evidence gate subgraph entrypoint for KB Chat v3 rollout."""
+"""Evidence gate subgraph for KB Chat flowchart Stage 5."""
 
 from __future__ import annotations
 
-from functools import partial
+import re
 from typing import Any, TypedDict
 
 from langgraph.graph import END, StateGraph
+from langgraph.types import Command, Send
 
-from app.agents.kb_chat_agentic.reflection import doc_gate_precheck
 from app.agents.kb_chat_agentic_state import KbChatAgenticState
 from app.core.settings import Settings
+from app.utils.token_counter import count_tokens_approximately
+
+_TERM_RE = re.compile(r"[\u4e00-\u9fffA-Za-z0-9_]{2,}")
 
 
 class KbChatGraphContext(TypedDict, total=False):
@@ -20,14 +23,281 @@ class KbChatGraphContext(TypedDict, total=False):
     message_budget: dict[str, Any]
 
 
-def build_evidence_gate_subgraph(*, settings: Settings):
-    """Compile an evidence-gate-only subgraph entrypoint."""
+def _resolve_query_text(state: dict[str, Any]) -> str:
+    for key in ("normalized_query", "coref_query", "rewrite_input_query", "user_input"):
+        value = state.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
 
+
+def _extract_terms(text: str) -> set[str]:
+    return {match.group(0).lower() for match in _TERM_RE.finditer(text or "")}
+
+
+def _emit_gate_result(
+    *,
+    gate: str,
+    round_id: int,
+    passed: bool,
+    score: float,
+    reason: str,
+    extra: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    return {
+        "doc_gate_runs": [
+            {
+                "gate": gate,
+                "round": round_id,
+                "passed": passed,
+                "score": round(max(0.0, min(1.0, score)), 4),
+                "reason": reason,
+                "extra": extra or {},
+            }
+        ]
+    }
+
+
+def _gate_stage_summary(run: dict[str, Any]) -> dict[str, Any]:
+    score_raw = run.get("score")
+    score = float(score_raw) if isinstance(score_raw, (int, float)) else 0.0
+    reason = run.get("reason")
+    summary: dict[str, Any] = {
+        "passed": bool(run.get("passed")),
+        "score": round(max(0.0, min(1.0, score)), 4),
+        "reason": str(reason) if isinstance(reason, str) else "unknown",
+    }
+    extra = run.get("extra")
+    if isinstance(extra, dict):
+        summary.update(extra)
+    return summary
+
+
+def _resolve_doc_gate_round(state: dict[str, Any]) -> int:
+    task = state.get("doc_gate_task")
+    if isinstance(task, dict):
+        raw = task.get("round")
+        if isinstance(raw, int) and raw > 0:
+            return raw
+    raw_round = state.get("doc_gate_round")
+    if isinstance(raw_round, int) and raw_round > 0:
+        return raw_round
+    return 0
+
+
+def _doc_gate_dispatch(state: dict[str, Any]) -> Command[str]:
+    next_round = _resolve_doc_gate_round(state) + 1
+    return Command(
+        update={"doc_gate_round": next_round},
+        goto=[
+            Send(
+                "doc_gate_sufficiency",
+                {"doc_gate_task": {"gate": "sufficiency", "round": next_round}},
+            ),
+            Send(
+                "doc_gate_answerability",
+                {"doc_gate_task": {"gate": "answerability", "round": next_round}},
+            ),
+            Send(
+                "doc_gate_conflict",
+                {"doc_gate_task": {"gate": "conflict", "round": next_round}},
+            ),
+        ],
+    )
+
+
+def _doc_gate_sufficiency(state: dict[str, Any]) -> dict[str, Any]:
+    round_id = _resolve_doc_gate_round(state) or 1
+    context = str(state.get("compressed_context") or state.get("final_context") or "")
+    tokens = count_tokens_approximately(context)
+    evidence_count = len(re.findall(r"\[[^\]]+\]", context))
+    passed = evidence_count >= 1 and tokens >= 48
+    score = min(1.0, (evidence_count * 0.2) + (tokens / 1200.0))
+    reason = "passed" if passed else ("too_short" if tokens < 48 else "missing_evidence")
+    return _emit_gate_result(
+        gate="sufficiency",
+        round_id=round_id,
+        passed=passed,
+        score=score,
+        reason=reason,
+        extra={"tokens": tokens, "evidence_count": evidence_count},
+    )
+
+
+def _doc_gate_answerability(state: dict[str, Any]) -> dict[str, Any]:
+    round_id = _resolve_doc_gate_round(state) or 1
+    query = _resolve_query_text(state)
+    context = str(state.get("compressed_context") or state.get("final_context") or "")
+    q_terms = _extract_terms(query)
+    c_terms = _extract_terms(context)
+    overlap = len(q_terms & c_terms)
+    denominator = max(len(q_terms), 1)
+    ratio = overlap / denominator
+    passed = ratio >= 0.2 or len(context.strip()) > 120
+    reason = "passed" if passed else "low_overlap"
+    return _emit_gate_result(
+        gate="answerability",
+        round_id=round_id,
+        passed=passed,
+        score=ratio,
+        reason=reason,
+        extra={"overlap": overlap, "query_terms": len(q_terms)},
+    )
+
+
+def _doc_gate_conflict(state: dict[str, Any]) -> dict[str, Any]:
+    round_id = _resolve_doc_gate_round(state) or 1
+    context = str(state.get("compressed_context") or state.get("final_context") or "")
+    conflict_markers = (
+        context.count("但是")
+        + context.count("然而")
+        + context.lower().count("however")
+        + context.lower().count("but ")
+    )
+    score = min(1.0, conflict_markers / 4.0)
+    passed = score < 0.6
+    reason = "passed" if passed else "high_conflict"
+    return _emit_gate_result(
+        gate="conflict",
+        round_id=round_id,
+        passed=passed,
+        score=1.0 - score,
+        reason=reason,
+        extra={"conflict_markers": conflict_markers},
+    )
+
+
+def _doc_gate_fuse(state: dict[str, Any]) -> dict[str, Any]:
+    active_round = _resolve_doc_gate_round(state) or 1
+    runs_raw = state.get("doc_gate_runs")
+    runs = [item for item in runs_raw if isinstance(item, dict)] if isinstance(runs_raw, list) else []
+    round_runs = [
+        item
+        for item in runs
+        if isinstance(item.get("round"), int) and int(item.get("round")) == active_round
+    ]
+    runs = round_runs
+    by_gate = {str(item.get("gate") or ""): item for item in runs}
+    suff = by_gate.get("sufficiency", {"passed": False, "score": 0.0, "reason": "missing"})
+    ans = by_gate.get("answerability", {"passed": False, "score": 0.0, "reason": "missing"})
+    conflict = by_gate.get("conflict", {"passed": False, "score": 0.0, "reason": "missing"})
+    missing_gates = [
+        gate for gate in ("sufficiency", "answerability", "conflict") if gate not in by_gate
+    ]
+    decision = "pass"
+    if missing_gates:
+        decision = "retry"
+    elif not bool(ans.get("passed")):
+        decision = "exit_unanswerable"
+    elif not bool(suff.get("passed")) or not bool(conflict.get("passed")):
+        decision = "retry"
+    score = (
+        float(suff.get("score") or 0.0)
+        + float(ans.get("score") or 0.0)
+        + float(conflict.get("score") or 0.0)
+    ) / 3.0
+    summary = {
+        "round": active_round,
+        "decision": decision,
+        "score": round(max(0.0, min(1.0, score)), 4),
+        "sufficiency": suff,
+        "answerability": ans,
+        "conflict": conflict,
+        "missing_gates": missing_gates,
+    }
+    stage_summaries = state.get("stage_summaries")
+    if not isinstance(stage_summaries, dict):
+        stage_summaries = {}
+    return {
+        "doc_gate_scores": summary,
+        "stage_summaries": {
+            **stage_summaries,
+            "doc_gate_sufficiency": _gate_stage_summary(suff),
+            "doc_gate_answerability": _gate_stage_summary(ans),
+            "doc_gate_conflict": _gate_stage_summary(conflict),
+            "doc_gate_fuse": summary,
+        },
+    }
+
+
+def _doc_gate_route(state: dict[str, Any]) -> dict[str, Any]:
+    gate_scores = state.get("doc_gate_scores")
+    scores = gate_scores if isinstance(gate_scores, dict) else {}
+    decision = str(scores.get("decision") or "retry")
+    score = float(scores.get("score") or 0.0)
+    if decision == "pass":
+        action = "none"
+        passed = True
+        reason = "passed"
+    elif decision == "exit_unanswerable":
+        action = "force_exit"
+        passed = False
+        reason = "exit_unanswerable"
+    else:
+        action = "transform_query"
+        passed = False
+        reason = "retry"
+    reflection = state.get("reflection")
+    reflection = reflection if isinstance(reflection, dict) else {}
+    stage_summaries = state.get("stage_summaries")
+    if not isinstance(stage_summaries, dict):
+        stage_summaries = {}
+    return {
+        "doc_gate_state": {
+            "passed": passed,
+            "reason": reason,
+            "confidence": round(score, 4),
+            "decision_source": "parallel_gate",
+            "retry_advice": "none" if decision == "pass" else ("exit" if decision == "exit_unanswerable" else "retry"),
+        },
+        "reflection": {
+            **reflection,
+            "relevance_passed": passed,
+            "action": action,
+            "reason": reason,
+            "confidence": round(score, 4),
+            "decision_source": "parallel_gate",
+        },
+        "stage_summaries": {
+            **stage_summaries,
+            "doc_gate_route": {
+                "decision": decision,
+                "action": action,
+                "passed": passed,
+                "reason": reason,
+                "score": round(score, 4),
+            },
+        },
+    }
+
+
+def build_evidence_gate_subgraph(*, settings: Settings):
+    """Compile evidence-gate subgraph aligned to flowchart Stage 5."""
+
+    del settings
     graph = StateGraph(
         state_schema=KbChatAgenticState,
         context_schema=KbChatGraphContext,
     )
-    graph.add_node("doc_gate_precheck", partial(doc_gate_precheck, settings=settings))
-    graph.set_entry_point("doc_gate_precheck")
-    graph.add_edge("doc_gate_precheck", END)
+    graph.add_node(
+        "doc_gate_dispatch",
+        _doc_gate_dispatch,
+        destinations=(
+            "doc_gate_sufficiency",
+            "doc_gate_answerability",
+            "doc_gate_conflict",
+        ),
+    )
+    graph.add_node("doc_gate_sufficiency", _doc_gate_sufficiency)
+    graph.add_node("doc_gate_answerability", _doc_gate_answerability)
+    graph.add_node("doc_gate_conflict", _doc_gate_conflict)
+    graph.add_node("doc_gate_fuse", _doc_gate_fuse)
+    graph.add_node("doc_gate_route", _doc_gate_route)
+
+    graph.set_entry_point("doc_gate_dispatch")
+    graph.add_edge("doc_gate_sufficiency", "doc_gate_fuse")
+    graph.add_edge("doc_gate_answerability", "doc_gate_fuse")
+    graph.add_edge("doc_gate_conflict", "doc_gate_fuse")
+    graph.add_edge("doc_gate_fuse", "doc_gate_route")
+    graph.add_edge("doc_gate_route", END)
     return graph.compile(name="kb_chat_evidence_gate_subgraph")

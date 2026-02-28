@@ -26,6 +26,22 @@ const NODE_DETAIL_POLICY_MAP: Record<string, NodeDetailPolicy> = {
       'memory_included',
     ],
   },
+  rewrite_plan: {
+    input: ['user_input'],
+    output: ['selected_query', 'selected_candidate_id', 'candidate_count', 'strategy', 'fallback_reason'],
+  },
+  rewrite_dispatch: {
+    input: ['selected_query'],
+    output: ['mode', 'branch_count', 'selected_queries', 'reason'],
+  },
+  rewrite_branch_retrieve: {
+    input: ['query'],
+    output: ['query', 'retrieval_count', 'success', 'reason'],
+  },
+  rewrite_fuse: {
+    input: ['rewrite_branch_runs'],
+    output: ['selected_query', 'selected_candidate_id', 'candidate_count', 'fallback_reason'],
+  },
   coref_rewrite: {
     input: ['query'],
     output: ['coref_query', 'confidence', 'selected_mention', 'reason', 'needs_clarification_hint', 'rewritten'],
@@ -37,6 +53,26 @@ const NODE_DETAIL_POLICY_MAP: Record<string, NodeDetailPolicy> = {
   normalize_rewrite: {
     input: ['query'],
     output: ['normalized_query', 'rewritten'],
+  },
+  complexity_classify: {
+    input: ['normalized_query'],
+    output: ['complexity', 'signals', 'confidence'],
+  },
+  adaptive_routing: {
+    input: ['complexity'],
+    output: ['route', 'reason', 'strategy'],
+  },
+  simple_path: {
+    input: ['normalized_query'],
+    output: ['route', 'reason'],
+  },
+  moderate_path: {
+    input: ['normalized_query'],
+    output: ['route', 'reason', 'variants_enabled'],
+  },
+  complex_path: {
+    input: ['normalized_query'],
+    output: ['route', 'reason', 'decomposition_enabled', 'hyde_enabled'],
   },
   decomposition: {
     input: ['normalized_query'],
@@ -86,6 +122,10 @@ const NODE_DETAIL_POLICY_MAP: Record<string, NodeDetailPolicy> = {
     input: ['query_strategy', 'query_items'],
     output: ['mode', 'branch_count', 'reason'],
   },
+  retrieval_budget_plan: {
+    input: ['complexity', 'failure_reasons'],
+    output: ['per_query_top_k', 'global_candidates_limit', 'rerank_input_limit'],
+  },
   retrieve_subquery: {
     input: ['query', 'kind'],
     output: ['query', 'kind', 'success'],
@@ -97,6 +137,10 @@ const NODE_DETAIL_POLICY_MAP: Record<string, NodeDetailPolicy> = {
   retrieve: {
     input: ['query_items', 'normalized_query'],
     output: ['evidence_count', 'attempted'],
+  },
+  context_compress: {
+    input: ['final_context'],
+    output: ['token_limit', 'input_tokens', 'output_tokens', 'truncated'],
   },
   doc_gate_precheck: {
     input: ['question'],
@@ -110,9 +154,21 @@ const NODE_DETAIL_POLICY_MAP: Record<string, NodeDetailPolicy> = {
     input: ['question'],
     output: ['passed', 'decision_source', 'confidence', 'evidence_score', 'risk_level', 'action'],
   },
-  doc_grader: {
-    input: ['question'],
-    output: ['passed', 'decision_source', 'confidence', 'evidence_score', 'risk_level', 'action'],
+  doc_gate_sufficiency: {
+    input: ['final_context'],
+    output: ['passed', 'confidence', 'reason'],
+  },
+  doc_gate_answerability: {
+    input: ['final_context'],
+    output: ['passed', 'confidence', 'reason'],
+  },
+  doc_gate_conflict: {
+    input: ['final_context'],
+    output: ['passed', 'confidence', 'reason'],
+  },
+  doc_gate_fuse: {
+    input: ['gate_scores'],
+    output: ['action', 'reason', 'confidence'],
   },
   transform_query: {
     input: ['normalized_query'],
@@ -146,6 +202,42 @@ const NODE_DETAIL_POLICY_MAP: Record<string, NodeDetailPolicy> = {
     input: ['question'],
     output: ['passed', 'best_answer', 'action'],
   },
+  answer_review_dispatch: {
+    input: ['draft_answer'],
+    output: ['branch_count', 'dispatch_reason'],
+  },
+  answer_review_citation: {
+    input: ['draft_answer'],
+    output: ['passed', 'reason', 'coverage_ratio'],
+  },
+  answer_review_factual: {
+    input: ['draft_answer'],
+    output: ['passed', 'reason', 'factual_risk'],
+  },
+  answer_review_answerability: {
+    input: ['draft_answer'],
+    output: ['passed', 'reason'],
+  },
+  answer_review_fuse: {
+    input: ['review_breakdown'],
+    output: ['passed', 'action', 'reason', 'review_confidence'],
+  },
+  cove_check: {
+    input: ['query_risk_level'],
+    output: ['enabled', 'reason', 'risk_level'],
+  },
+  chain_of_verification: {
+    input: ['draft_answer'],
+    output: ['verification_rounds', 'failed_claims', 'repair_action'],
+  },
+  claim_citation_check: {
+    input: ['draft_answer'],
+    output: ['passed', 'missing_claims', 'invalid_citations'],
+  },
+  confidence_calibrate: {
+    input: ['final_answer'],
+    output: ['confidence_score', 'confidence_level', 'signals', 'reason'],
+  },
   finalize: {
     input: ['draft_answer'],
     output: ['final_answer'],
@@ -171,6 +263,36 @@ function normalizeDetailItems(
     label: item.label,
     value: item.value,
   }));
+}
+
+function asText(value: string | string[]): string {
+  return Array.isArray(value) ? value.join('\n') : value;
+}
+
+function inferRiskHint(
+  section: DetailSectionKind,
+  items: KbChatFlowDetailItem[]
+): string | null {
+  if (section !== 'output') {
+    return null;
+  }
+  const byKey = new Map(items.map((item) => [item.key, asText(item.value)]));
+  const confidenceLevel = (byKey.get('confidence_level') ?? '').toLowerCase();
+  const riskLevel = (byKey.get('risk_level') ?? byKey.get('review_risk_level') ?? '').toLowerCase();
+  const action = (byKey.get('action') ?? '').toLowerCase();
+  const confidenceScoreRaw = byKey.get('confidence_score');
+  const confidenceScore = confidenceScoreRaw ? Number.parseFloat(confidenceScoreRaw) : Number.NaN;
+
+  if (confidenceLevel === 'low' || (!Number.isNaN(confidenceScore) && confidenceScore < 0.5)) {
+    return '当前结论置信度较低，建议补充约束或交叉验证来源。';
+  }
+  if (riskLevel.includes('high') || riskLevel.includes('冲突')) {
+    return '检测到高风险或证据冲突，请优先核对关键引用。';
+  }
+  if (action.includes('retry') || action.includes('重试')) {
+    return '该节点建议重试路径，关注改写后的查询与证据覆盖。';
+  }
+  return null;
 }
 
 export function selectKbChatFlowDetailItems(params: {
@@ -227,5 +349,10 @@ export function selectKbChatFlowDetailItems(params: {
     }
   }
 
-  return [...selected, ...errorItems];
+  const result = [...selected, ...errorItems];
+  const riskHint = inferRiskHint(params.section, result);
+  if (riskHint) {
+    result.push({ key: 'risk_hint', label: '风险提示', value: riskHint });
+  }
+  return result;
 }

@@ -1494,6 +1494,14 @@ async def prepare_messages(
     normalized = state.get("normalized_query")
     if not isinstance(normalized, str) or not normalized.strip():
         normalized = _extract_user_input(state)
+    normalized = normalized.strip()
+
+    original_query = state.get("coref_query")
+    if not isinstance(original_query, str) or not original_query.strip():
+        original_query = state.get("rewrite_input_query")
+    if not isinstance(original_query, str) or not original_query.strip():
+        original_query = _extract_user_input(state)
+    original_query = original_query.strip() or normalized
 
     sub_queries_raw = state.get("sub_queries")
     if not isinstance(sub_queries_raw, list):
@@ -1524,11 +1532,23 @@ async def prepare_messages(
     strategy = _resolve_prepare_strategy(state)
     budget = _resolve_prepare_budget(state=state, runtime=runtime, settings=settings)
 
+    variant_seed = [
+        query
+        for query in (multi_queries or alias_variants)
+        if isinstance(query, str) and query.strip()
+    ]
+    # O3: always keep original query as main item, then append normalized query.
+    variant_candidates: list[str] = []
+    if normalized and normalized.casefold() != original_query.casefold():
+        variant_candidates.append(normalized)
+    variant_candidates.extend(variant_seed)
+    variant_candidates = _dedupe_string_list(variant_candidates)
+
     raw_items = build_query_items(
-        main_query=normalized.strip(),
+        main_query=original_query,
         sub_queries=sub_queries,
         sub_query_specs=sub_query_specs,
-        variants=[q for q in (multi_queries or alias_variants) if isinstance(q, str)],
+        variants=variant_candidates,
         hyde_docs=hyde_docs or None,
     )
 
@@ -1754,6 +1774,8 @@ async def prepare_messages(
                 "candidate_count": len(scored_rows),
                 "selected_count": len(selected_items),
                 "dropped_count": len(dropped_rows),
+                "original_query": original_query,
+                "normalized_query": normalized,
                 "budget": budget,
             },
             "query_bundle": {
@@ -1789,4 +1811,5 @@ async def prepare_messages(
             "reason": fallback_reason,
         }
 
+    update["preprocess_next"] = goto
     return Command(update=update, goto=goto)

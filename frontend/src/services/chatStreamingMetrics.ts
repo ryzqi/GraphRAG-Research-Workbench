@@ -21,6 +21,7 @@ const KNOWN_EVENTS = new Set([
   'node_io',
   'node_trace',
   'tool_trace',
+  'stream_end',
   'interrupt',
   'final',
   'error',

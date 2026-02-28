@@ -371,10 +371,23 @@ class PendingClarification(BaseModel):
     suggested_answers: list[str] = Field(default_factory=list, max_length=4)
 
 
+class SemanticCacheMeta(BaseModel):
+    hit: bool = False
+    score: float | None = Field(default=None, ge=0.0, le=1.0)
+    threshold: float | None = Field(default=None, ge=0.0, le=1.0)
+    ttl_seconds: int | None = Field(default=None, ge=0)
+
+
 class ChatAnswerResponse(BaseModel):
     status: Literal["succeeded"] = "succeeded"
     assistant_message: ChatMessageRead
     evidence: list[EvidenceItem]
+    confidence_score: float | None = Field(default=None, ge=0.0, le=1.0)
+    confidence_level: Literal["high", "medium", "low"] | None = None
+    source: Literal["live", "cached"] = "live"
+    cache: SemanticCacheMeta | None = None
+    stage_summaries: dict | None = None
+    metrics: dict | None = None
     run: AgentRunRead
 
 
@@ -394,4 +407,12 @@ class ChatPendingUserClarificationResponse(BaseModel):
     thread_id: str
     message: str
     pending_clarification: PendingClarification | None = None
+    assistant_message: ChatMessageRead | None = None
+    evidence: list[EvidenceItem] = Field(default_factory=list)
+    confidence_score: float | None = Field(default=None, ge=0.0, le=1.0)
+    confidence_level: Literal["high", "medium", "low"] | None = None
+    source: Literal["live", "cached"] = "live"
+    cache: SemanticCacheMeta | None = None
+    stage_summaries: dict | None = None
+    metrics: dict | None = None
     run: AgentRunRead

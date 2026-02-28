@@ -20,6 +20,8 @@ from app.schemas.query_enhancement import QueryItem
 # -----------------------------
 
 ReflectionAction = Literal["none", "clarify", "transform_query", "generate", "force_exit"]
+ComplexityLevel = Literal["simple", "moderate", "complex"]
+ConfidenceLevel = Literal["high", "medium", "low"]
 
 
 class ReflectionResult(TypedDict, total=False):
@@ -313,6 +315,8 @@ class KbChatAgenticState(KbChatAgenticStateBase, total=False):
     normalized_meta: NormalizeMeta
     entity_expand_meta: dict[str, Any]
     query_strategy: Literal["direct", "decomposition", "multi_query"]
+    complexity_level: ComplexityLevel
+    adaptive_route: Literal["simple_path", "moderate_path", "complex_path"]
     query_strategy_confidence: float
     query_strategy_signals: list[str]
     rewrite_plan: RewritePlan
@@ -326,12 +330,17 @@ class KbChatAgenticState(KbChatAgenticStateBase, total=False):
     message_plan: MessagePlan
     query_bundle: QueryBundle
     prepare_diagnostics: PrepareDiagnostics
+    preprocess_next: str
     retrieval_plan: RetrievalPlan
+    retrieval_budget: dict[str, Any]
+    retrieval_diagnostics: dict[str, float]
     query_items: list[QueryItem]
     subquery_runs: Annotated[list[SubqueryRun], add]
     subquery_task: dict[str, Any]
 
     final_context: str
+    compressed_context: str
+    compression_stats: dict[str, Any]
     draft_answer: str
     final_answer: str
     best_answer: str
@@ -342,7 +351,13 @@ class KbChatAgenticState(KbChatAgenticStateBase, total=False):
     clarification_payload: ClarificationPayload
 
     doc_gate_state: dict[str, Any]
+    doc_gate_round: int
+    doc_gate_runs: Annotated[list[dict[str, Any]], add]
+    doc_gate_scores: dict[str, Any]
     answer_review_runs: Annotated[list[dict[str, Any]], add]
+    cove_state: dict[str, Any]
+    confidence_score: float
+    confidence_level: ConfidenceLevel
     reflection: ReflectionResult
 
 
@@ -414,9 +429,22 @@ def make_initial_state(
             "notes": [],
         },
         "query_items": [],
+        "preprocess_next": "",
         "rewrite_branch_runs": [],
         "subquery_runs": [],
+        "complexity_level": "moderate",
+        "adaptive_route": "moderate_path",
+        "retrieval_budget": {},
+        "retrieval_diagnostics": {},
+        "compressed_context": "",
+        "compression_stats": {},
         "answer_subgraph_state": {},
+        "doc_gate_scores": {},
+        "doc_gate_round": 0,
+        "doc_gate_runs": [],
+        "cove_state": {},
+        "confidence_score": 0.0,
+        "confidence_level": "low",
         "decomposition_plan": {
             "strategy": "direct",
             "version": "kb_chat_decomposition_plan_v2",

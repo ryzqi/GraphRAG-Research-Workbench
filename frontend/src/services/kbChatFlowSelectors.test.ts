@@ -21,4 +21,18 @@ describe('kbChatFlowSelectors', () => {
     expect(result).toHaveLength(6);
     expect(result[result.length - 1]?.key).toBe('extra_signal');
   });
+
+  it('adds risk hint when confidence level is low', () => {
+    const result = selectKbChatFlowDetailItems({
+      nodeId: 'confidence_calibrate',
+      section: 'output',
+      items: [
+        { key: 'confidence_score', label: '置信度分数', value: '0.32' },
+        { key: 'confidence_level', label: '置信度等级', value: 'low' },
+      ],
+      event: null,
+    });
+
+    expect(result.some((item) => item.key === 'risk_hint')).toBe(true);
+  });
 });

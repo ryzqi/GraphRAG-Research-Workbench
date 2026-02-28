@@ -6,8 +6,6 @@ from dataclasses import dataclass
 from typing import Any, Literal, Mapping, TypedDict
 
 EVENT_ENVELOPE_V2 = "event_envelope_v2"
-STATE_SCHEMA_V1 = "kb_chat_state_v1"
-STATE_SCHEMA_V2 = "kb_chat_state_v2"
 STATE_SCHEMA_V3 = "kb_chat_state_v3"
 
 NodeScopedEventType = Literal[
@@ -172,15 +170,6 @@ ROUTING_TRUTH_TABLE: tuple[RouteTruthRow, ...] = (
         side_effects=("fallback_to_best_candidate",),
     ),
 )
-
-
-def detect_state_schema_version(state: Mapping[str, Any]) -> str:
-    explicit = state.get("schema_version")
-    if isinstance(explicit, str) and explicit:
-        return explicit
-    if "query_bundle" in state or "decomposition_plan" in state:
-        return STATE_SCHEMA_V2
-    return STATE_SCHEMA_V1
 
 
 def detect_event_protocol_version(event: Mapping[str, Any]) -> str:

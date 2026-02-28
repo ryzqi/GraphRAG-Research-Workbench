@@ -163,7 +163,20 @@ export interface ChatAnswerResponse {
   status: 'succeeded';
   assistant_message: ChatMessage;
   evidence: EvidenceItem[];
+  confidence_score?: number | null;
+  confidence_level?: 'high' | 'medium' | 'low' | null;
+  source?: 'live' | 'cached';
+  cache?: SemanticCacheMeta | null;
+  stage_summaries?: Record<string, unknown> | null;
+  metrics?: Record<string, unknown> | null;
   run: AgentRun;
+}
+
+export interface SemanticCacheMeta {
+  hit: boolean;
+  score?: number | null;
+  threshold?: number | null;
+  ttl_seconds?: number | null;
 }
 
 export interface PendingToolCall {
@@ -231,6 +244,14 @@ export interface ChatPendingUserClarificationResponse {
   thread_id: string;
   message: string;
   pending_clarification?: PendingClarification | null;
+  assistant_message?: ChatMessage | null;
+  evidence?: EvidenceItem[] | null;
+  confidence_score?: number | null;
+  confidence_level?: 'high' | 'medium' | 'low' | null;
+  source?: 'live' | 'cached';
+  cache?: SemanticCacheMeta | null;
+  stage_summaries?: Record<string, unknown> | null;
+  metrics?: Record<string, unknown> | null;
   run: AgentRun;
 }
 
@@ -250,6 +271,7 @@ export type ChatStreamEventName =
   | 'node_io'
   | 'node_trace'
   | 'tool_trace'
+  | 'stream_end'
   | 'interrupt'
   | 'final'
   | 'error';

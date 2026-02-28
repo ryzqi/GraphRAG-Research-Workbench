@@ -839,16 +839,16 @@ const applyNodeIoEvent = useCallback(
     [finalizeNodeIds, graphSchema, updateMessage]
   );
 
-const markClarificationPending = useCallback(
+  const markClarificationPending = useCallback(
     (
       messageId: string,
-      runId: string,
-      message: string,
-      pendingClarification?: Extract<
+      response: Extract<
         ChatMessageResponse,
         { status: 'pending_user_clarification' }
-      >['pending_clarification']
+      >
     ) => {
+      const runId = response.run.id;
+      const message = response.message;
       updateMessage(messageId, (msg) => {
         const nextSteps = upsertPipelineStep(msg.pipelineSteps, {
           step_id: clarificationStep.step_id,
@@ -873,8 +873,13 @@ const markClarificationPending = useCallback(
           runId,
           pendingClarification: {
             message,
-            pendingClarification: pendingClarification ?? null,
+            pendingClarification: response.pending_clarification ?? null,
           },
+          evidence: response.evidence ?? msg.evidence,
+          confidenceScore: response.confidence_score ?? null,
+          confidenceLevel: response.confidence_level ?? null,
+          responseSource: response.source ?? 'live',
+          cacheMeta: response.cache ?? null,
           pipelineSteps: nextSteps,
           runState: nextRunState,
           isStreaming: false,
@@ -975,12 +980,7 @@ const markClarificationPending = useCallback(
       const response: ChatMessageResponse = await sendMessage(session.id, userContent);
       touchRecent();
       if (isPendingClarificationResponse(response)) {
-        markClarificationPending(
-          assistantId,
-          response.run.id,
-          response.message,
-          response.pending_clarification
-        );
+        markClarificationPending(assistantId, response);
         return;
       }
       if (response.status !== 'succeeded') {
@@ -1003,6 +1003,10 @@ const markClarificationPending = useCallback(
           stagedContent: response.assistant_message.content,
           answerRevealReady: true,
           evidence: response.evidence,
+          confidenceScore: response.confidence_score ?? null,
+          confidenceLevel: response.confidence_level ?? null,
+          responseSource: response.source ?? 'live',
+          cacheMeta: response.cache ?? null,
           runId: response.run.id,
           pipelineSteps: nextSteps,
           runState: nextRunState,
@@ -1071,17 +1075,32 @@ const markClarificationPending = useCallback(
         if (event.event === 'node_io') {
           applyNodeIoEvent(assistantId, parseSseJson<Record<string, unknown>>(event.data));
         }
+        if (event.event === 'stream_end') {
+          const data = parseSseJson<Record<string, unknown>>(event.data);
+          const terminalCandidate =
+            typeof data.terminal_candidate === 'string' ? data.terminal_candidate : null;
+          if (terminalCandidate) {
+            updateMessage(assistantId, (msg) => ({
+              ...msg,
+              runState: msg.runState
+                ? {
+                    ...msg.runState,
+                    message: `终态候选: ${terminalCandidate}`,
+                    ts:
+                      typeof data.ts === 'string'
+                        ? data.ts
+                        : msg.runState.ts ?? new Date().toISOString(),
+                  }
+                : msg.runState,
+            }));
+          }
+        }
 
         if (event.event === 'interrupt') {
           deltaBatcher.flush();
           const data = parseSseJson<ChatMessageResponse>(event.data);
           if (isPendingClarificationResponse(data)) {
-            markClarificationPending(
-              assistantId,
-              data.run.id,
-              data.message,
-              data.pending_clarification
-            );
+            markClarificationPending(assistantId, data);
             setLoading(false);
             return;
           }
@@ -1117,6 +1136,10 @@ const markClarificationPending = useCallback(
                 stagedContent: finalContent,
                 answerRevealReady: true,
                 evidence: data.evidence,
+                confidenceScore: data.confidence_score ?? null,
+                confidenceLevel: data.confidence_level ?? null,
+                responseSource: data.source ?? 'live',
+                cacheMeta: data.cache ?? null,
                 runId: data.run.id,
                 pipelineSteps: nextSteps,
                 runState: nextRunState,
@@ -1253,12 +1276,7 @@ const markClarificationPending = useCallback(
       const fallbackToJson = async () => {
         const response = await resumeClarification(session.id, runId, content);
         if (isPendingClarificationResponse(response)) {
-          markClarificationPending(
-            messageId,
-            response.run.id,
-            response.message,
-            response.pending_clarification
-          );
+          markClarificationPending(messageId, response);
           return;
         }
         if (response.status !== 'succeeded') {
@@ -1280,6 +1298,10 @@ const markClarificationPending = useCallback(
             stagedContent: response.assistant_message.content,
             answerRevealReady: true,
             evidence: response.evidence,
+            confidenceScore: response.confidence_score ?? null,
+            confidenceLevel: response.confidence_level ?? null,
+            responseSource: response.source ?? 'live',
+            cacheMeta: response.cache ?? null,
             runId: response.run.id,
             pendingClarification: undefined,
             pipelineSteps: nextSteps,
@@ -1347,17 +1369,32 @@ const markClarificationPending = useCallback(
           if (event.event === 'node_io') {
             applyNodeIoEvent(messageId, parseSseJson<Record<string, unknown>>(event.data));
           }
+          if (event.event === 'stream_end') {
+            const data = parseSseJson<Record<string, unknown>>(event.data);
+            const terminalCandidate =
+              typeof data.terminal_candidate === 'string' ? data.terminal_candidate : null;
+            if (terminalCandidate) {
+              updateMessage(messageId, (msg) => ({
+                ...msg,
+                runState: msg.runState
+                  ? {
+                      ...msg.runState,
+                      message: `终态候选: ${terminalCandidate}`,
+                      ts:
+                        typeof data.ts === 'string'
+                          ? data.ts
+                          : msg.runState.ts ?? new Date().toISOString(),
+                    }
+                  : msg.runState,
+              }));
+            }
+          }
 
           if (event.event === 'interrupt') {
             deltaBatcher.flush();
             const data = parseSseJson<ChatMessageResponse>(event.data);
             if (isPendingClarificationResponse(data)) {
-              markClarificationPending(
-                messageId,
-                data.run.id,
-                data.message,
-                data.pending_clarification
-              );
+              markClarificationPending(messageId, data);
               setLoading(false);
               console.info('kb-chat-stream-metrics', streamMetrics.finalize());
               return;
@@ -1394,6 +1431,10 @@ const markClarificationPending = useCallback(
                   stagedContent: finalContent,
                   answerRevealReady: true,
                   evidence: data.evidence,
+                  confidenceScore: data.confidence_score ?? null,
+                  confidenceLevel: data.confidence_level ?? null,
+                  responseSource: data.source ?? 'live',
+                  cacheMeta: data.cache ?? null,
                   runId: data.run.id,
                   pendingClarification: undefined,
                   pipelineSteps: nextSteps,

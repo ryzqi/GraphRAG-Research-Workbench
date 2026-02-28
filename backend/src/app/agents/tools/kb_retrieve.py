@@ -40,6 +40,24 @@ class KbRetrieveArgs(BaseModel):
         default=None,
         description="可选：统一检索层 QueryItem 列表（用于多路/分解/HyDE fanout 融合）。提供时将优先使用该列表进行融合检索。",
     )
+    per_query_top_k: int | None = Field(
+        default=None,
+        ge=1,
+        le=200,
+        description="可选：每个查询项的候选召回上限。",
+    )
+    global_candidates_limit: int | None = Field(
+        default=None,
+        ge=1,
+        le=500,
+        description="可选：全局候选池上限（RRF 后）。",
+    )
+    rerank_input_limit: int | None = Field(
+        default=None,
+        ge=1,
+        le=500,
+        description="可选：送入重排器的候选上限。",
+    )
     retrieval_round: int | None = Field(
         default=None,
         ge=0,
@@ -84,6 +102,57 @@ def _citation_source_from_result(result: RetrievalResult) -> str | None:
     return None
 
 
+def _normalize_query_items(
+    *,
+    query: str,
+    query_items: list[dict[str, Any]] | None,
+) -> list[dict[str, Any]]:
+    main_query = query.strip()
+    if not main_query:
+        return []
+
+    normalized: list[dict[str, Any]] = []
+    if isinstance(query_items, list):
+        for raw in query_items:
+            if not isinstance(raw, dict):
+                continue
+            candidate_query = str(raw.get("query") or "").strip()
+            if not candidate_query:
+                continue
+            item = {**raw}
+            item["query"] = candidate_query
+            item["kind"] = str(raw.get("kind") or "variant").strip() or "variant"
+            item["use_dense"] = bool(raw.get("use_dense", True))
+            item["use_bm25"] = bool(raw.get("use_bm25", True))
+            normalized.append(item)
+
+    # K2 contract: always preserve the original query as the first query item.
+    items = [
+        {
+            "kind": "main",
+            "query": main_query,
+            "use_dense": True,
+            "use_bm25": True,
+        },
+        *normalized,
+    ]
+
+    deduped: list[dict[str, Any]] = []
+    seen: set[tuple[str, bool, bool]] = set()
+    for item in items:
+        query_value = str(item.get("query") or "").strip()
+        if not query_value:
+            continue
+        use_dense = bool(item.get("use_dense", True))
+        use_bm25 = bool(item.get("use_bm25", True))
+        key = (query_value.casefold(), use_dense, use_bm25)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(item)
+    return deduped
+
+
 def build_kb_retrieve_tool(
     *,
     retrieval: RetrievalService,
@@ -101,6 +170,9 @@ def build_kb_retrieve_tool(
         top_k: int | None = None,
         timeout_seconds: float | None = None,
         query_items: list[dict[str, Any]] | None = None,
+        per_query_top_k: int | None = None,
+        global_candidates_limit: int | None = None,
+        rerank_input_limit: int | None = None,
         retrieval_round: int | None = None,
     ) -> str:
         allowed_kb_ids = list(default_kb_ids)
@@ -140,7 +212,11 @@ def build_kb_retrieve_tool(
             "fallback_to_allowed": fallback_to_allowed,
         }
 
-        if isinstance(query_items, list) and query_items:
+        normalized_query_items = _normalize_query_items(
+            query=query,
+            query_items=query_items,
+        )
+        if isinstance(query_items, list):
             # Agentic KB chat passes a fanout query bundle (sub-queries/variants/HyDE).
             # Use the unified RetrievalLayer so cross-query fusion (RRF/rerank/Top-N) actually takes effect.
             settings = get_settings()
@@ -158,12 +234,23 @@ def build_kb_retrieve_tool(
                 if top_k is not None
                 else int(configured_top_k or settings.retrieval_default_top_k)
             )
-            rerank_top_k = int(configured_rerank_top_k or settings.retrieval_max_top_k)
+            rerank_top_k = (
+                int(rerank_input_limit)
+                if rerank_input_limit is not None
+                else int(configured_rerank_top_k or settings.retrieval_max_top_k)
+            )
             layer = await retrieval.retrieve_layer(
-                query_items=query_items,
+                query_items=normalized_query_items,
                 kb_ids=resolved,
                 top_n=top_n,
-                per_query_top_k=top_n,
+                per_query_top_k=(
+                    int(per_query_top_k) if per_query_top_k is not None else top_n
+                ),
+                global_candidates_limit=(
+                    int(global_candidates_limit)
+                    if global_candidates_limit is not None
+                    else None
+                ),
                 rerank_input_limit=rerank_top_k,
                 timeout_seconds=timeout_seconds,
                 feature_overrides=retrieval_overrides,

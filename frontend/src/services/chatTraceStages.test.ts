@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { buildTraceStages } from './chatTraceStages';
 
 describe('chatTraceStages', () => {
-  it('includes runtime nodes that are missing from schema', () => {
+  it('aggregates runtime nodes into seven flowchart stages', () => {
     const stages = buildTraceStages({
       schema: {
         version: '1.0',
@@ -21,9 +21,17 @@ describe('chatTraceStages', () => {
       ],
     });
 
+    expect(stages).toHaveLength(7);
     expect(stages.map((stage) => stage.id)).toEqual([
-      'prepare_messages',
-      'rewrite_branch_retrieve',
+      'stage_1_preprocess',
+      'stage_2_route',
+      'stage_3_enhance',
+      'stage_4_retrieve',
+      'stage_5_gate',
+      'stage_6_answer',
+      'stage_7_finalize',
     ]);
+    expect(stages[0]?.status).toBe('completed');
+    expect(stages[2]?.status).toBe('idle');
   });
 });

@@ -43,6 +43,17 @@ _REVIEW_CHECKS: tuple[Literal["citation", "factual", "answerability"], ...] = (
     "factual",
     "answerability",
 )
+_HIGH_RISK_HINTS: tuple[str, ...] = (
+    "安全",
+    "法律",
+    "合规",
+    "医疗",
+    "药",
+    "财务",
+    "合同",
+    "赔偿",
+    "处罚",
+)
 
 
 class KbChatAnswerSubgraphContext(TypedDict, total=False):
@@ -515,7 +526,7 @@ async def _answer_review_fuse(
             updates=updates,
         ),
     }
-    goto = "answer_commit" if passed else "answer_repair"
+    goto = "cove_check" if passed else "answer_repair"
     if not passed and _as_str(reason) not in _REPAIRABLE_FAILURE_REASONS:
         goto = "answer_commit"
     _emit_review_event(
@@ -530,6 +541,124 @@ async def _answer_review_fuse(
         }
     )
     return Command(update=updates, goto=goto)
+
+
+def _is_high_risk_query(state: dict[str, Any]) -> bool:
+    query = _resolve_query_text(state)
+    lowered = query.lower()
+    return any(hint in query for hint in _HIGH_RISK_HINTS) or "risk" in lowered
+
+
+def _cove_check(state: dict[str, Any]) -> Command[str]:
+    high_risk = _is_high_risk_query(state)
+    stage = _merge_stage_summary(
+        state,
+        "cove_check",
+        {
+            "high_risk": high_risk,
+            "enabled": high_risk,
+            "completed_at": now_iso(),
+        },
+    )
+    updates = {
+        "cove_state": {
+            "enabled": high_risk,
+            "triggered": high_risk,
+            "passed": None,
+            "reason": "pending" if high_risk else "skipped_low_risk",
+        },
+        **stage,
+    }
+    return Command(
+        update=updates,
+        goto="chain_of_verification" if high_risk else "claim_citation_check",
+    )
+
+
+def _chain_of_verification(state: dict[str, Any]) -> dict[str, Any]:
+    draft = _as_str(state.get("draft_answer")).strip()
+    final_context = _as_str(state.get("final_context")).strip()
+    citations = _extract_citations(draft)
+    passed = bool(draft and final_context and citations)
+    reason = "passed" if passed else "insufficient_verification_signal"
+    stage = _merge_stage_summary(
+        state,
+        "chain_of_verification",
+        {
+            "passed": passed,
+            "reason": reason,
+            "citation_count": len(citations),
+            "completed_at": now_iso(),
+        },
+    )
+    return {
+        "cove_state": {
+            "enabled": True,
+            "triggered": True,
+            "passed": passed,
+            "reason": reason,
+            "citation_count": len(citations),
+        },
+        **stage,
+    }
+
+
+def _claim_citation_check(state: dict[str, Any]) -> Command[str]:
+    draft = _as_str(state.get("draft_answer")).strip()
+    labels = _extract_evidence_labels(_as_str(state.get("final_context")).strip())
+    _, valid_citations, invalid_citations = _partition_citations(
+        draft, allowed_labels=labels
+    )
+    cove_state = state.get("cove_state")
+    cove_passed = (
+        cove_state.get("passed")
+        if isinstance(cove_state, dict) and cove_state.get("passed") is not None
+        else True
+    )
+    citation_passed = bool(draft) and bool(valid_citations) and not invalid_citations
+    passed = bool(cove_passed) and citation_passed
+    reason = "passed"
+    if not cove_passed:
+        reason = "cove_failed"
+    elif invalid_citations:
+        reason = "invalid_citations"
+    elif not valid_citations:
+        reason = "missing_citations"
+
+    reflection = state.get("reflection")
+    reflection_obj = reflection if isinstance(reflection, dict) else {}
+    reflection_patch: dict[str, Any] = {}
+    if not passed:
+        reflection_patch = {
+            "review_passed": False,
+            "action": "transform_query",
+            "reason": reason,
+        }
+
+    stage = _merge_stage_summary(
+        state,
+        "claim_citation_check",
+        {
+            "passed": passed,
+            "reason": reason,
+            "valid_citation_count": len(valid_citations),
+            "invalid_citations": sorted(invalid_citations),
+            "completed_at": now_iso(),
+        },
+        updates={"reflection": {**reflection_obj, **reflection_patch}},
+    )
+    return Command(
+        update={
+            "cove_state": {
+                **(cove_state if isinstance(cove_state, dict) else {}),
+                "claim_check_passed": passed,
+                "claim_check_reason": reason,
+            },
+            "reflection": {**reflection_obj, **reflection_patch},
+            **stage,
+        },
+        goto="answer_commit" if passed else "answer_repair",
+    )
 
 
 async def _draft_generate(
@@ -787,6 +916,13 @@ def build_answer_subgraph(
             runtime,
             settings=settings,
         ),
+        destinations=("cove_check", "answer_commit", "answer_repair"),
+    )
+    graph.add_node("cove_check", _cove_check, destinations=("chain_of_verification", "claim_citation_check"))
+    graph.add_node("chain_of_verification", _chain_of_verification)
+    graph.add_node(
+        "claim_citation_check",
+        _claim_citation_check,
         destinations=("answer_commit", "answer_repair"),
     )
     graph.add_node(
@@ -804,6 +940,7 @@ def build_answer_subgraph(
     graph.add_edge("answer_review_citation", "answer_review_fuse")
     graph.add_edge("answer_review_factual", "answer_review_fuse")
     graph.add_edge("answer_review_answerability", "answer_review_fuse")
+    graph.add_edge("chain_of_verification", "claim_citation_check")
     graph.add_edge("answer_repair", "answer_review_dispatch")
     graph.add_edge("answer_commit", END)
     return graph.compile(name="kb_chat_answer_subgraph")

@@ -30,6 +30,7 @@ from app.agents.preprocess_subgraph import build_preprocess_subgraph
 from app.agents.retrieval_subgraph import build_retrieval_subgraph
 from app.agents.kb_chat_agentic.tool_loop import force_exit_node
 from app.agents.kb_chat_agentic.reflection import (
+    confidence_calibrate,
     finalize_answer,
     route_after_doc_grader,
     route_after_answer_review,
@@ -59,13 +60,13 @@ _NODE_METADATA: dict[str, dict[str, Any]] = {
     "doc_gate_precheck": {"label": "\u6587\u6863\u9884\u5224", "phase": "judge", "order": 14},
     "doc_grader_llm": {"label": "\u6587\u6863\u590d\u6838", "phase": "judge", "order": 15},
     "doc_gate_route": {"label": "\u6587\u6863\u5224\u5b9a", "phase": "judge", "order": 16},
-    "doc_grader": {"label": "\u6587\u6863\u5224\u5b9a", "phase": "judge", "order": 16},
     "transform_query": {"label": "\u67e5\u8be2\u6539\u5199", "phase": "retrieve", "order": 17},
     "answer_subgraph": {"label": "\u7b54\u6848\u5b50\u56fe", "phase": "generate", "order": 18},
     "generate": {"label": "\u7b54\u6848\u751f\u6210", "phase": "generate", "order": 18},
     "answer_review": {"label": "\u7b54\u6848\u5ba1\u67e5", "phase": "verify", "order": 19},
     "finalize": {"label": "\u7b54\u6848\u6574\u7406", "phase": "finalize", "order": 20},
     "force_exit": {"label": "\u63d0\u524d\u7ec8\u6b62", "phase": "finalize", "order": 21},
+    "confidence_calibrate": {"label": "\u7f6e\u4fe1\u5ea6\u6821\u51c6", "phase": "finalize", "order": 22},
 }
 
 _KB_CHAT_GRAPH_CACHE = InMemoryCache()
@@ -130,9 +131,18 @@ def _route_after_preprocess_subgraph(state: dict[str, Any]) -> str:
         action = str(reflection.get("action") or "").strip().lower()
     if action in {"clarify", "force_exit"}:
         return "force_exit"
+    if action == "transform_query":
+        return "transform_query"
     clarification_payload = state.get("clarification_payload")
     if isinstance(clarification_payload, dict) and clarification_payload:
         return "force_exit"
+    preprocess_next = state.get("preprocess_next")
+    if isinstance(preprocess_next, str):
+        next_node = preprocess_next.strip().lower()
+        if next_node == "transform_query":
+            return "transform_query"
+        if next_node == "force_exit":
+            return "force_exit"
     return "retrieval_subgraph"
 
 
@@ -581,7 +591,6 @@ def _summary_key_for_node(node_name: str) -> str:
     return {
         "retrieve": "retrieval_layer",
         "generate": "generator",
-        "doc_gate_route": "doc_grader",
     }.get(node_name, node_name)
 
 
@@ -744,7 +753,7 @@ def _build_node_input_display_items(
                 label="检索问题",
                 value=_pick_text(snapshot, "normalized_query", "coref_query", "user_input"),
             )
-    elif node_name in {"doc_grader", "doc_gate_precheck", "doc_grader_llm", "doc_gate_route"}:
+    elif node_name in {"doc_gate_precheck", "doc_grader_llm", "doc_gate_route"}:
         _append_display_item(
             items,
             key="question",
@@ -1326,7 +1335,7 @@ def _build_node_output_display_items(
             label="检索查询",
             value=summary.get("query_used"),
         )
-    elif node_name in {"doc_grader", "doc_gate_route"}:
+    elif node_name == "doc_gate_route":
         _append_display_item(
             items,
             key="passed",
@@ -1710,7 +1719,7 @@ class KbChatAgenticGraph:
             "preprocess_subgraph",
             preprocess_subgraph,
             metadata=_NODE_METADATA["preprocess_subgraph"],
-            destinations=("retrieval_subgraph", "force_exit"),
+            destinations=("retrieval_subgraph", "transform_query", "force_exit"),
         )
         graph.add_node(
             "retrieval_subgraph",
@@ -1747,12 +1756,18 @@ class KbChatAgenticGraph:
             ),
             metadata=_NODE_METADATA["force_exit"],
         )
+        graph.add_node(
+            "confidence_calibrate",
+            _wrap_node_with_io("confidence_calibrate", confidence_calibrate),
+            metadata=_NODE_METADATA["confidence_calibrate"],
+        )
         graph.set_entry_point("preprocess_subgraph")
         graph.add_conditional_edges(
             "preprocess_subgraph",
             _route_after_preprocess_subgraph,
             {
                 "retrieval_subgraph": "retrieval_subgraph",
+                "transform_query": "transform_query",
                 "force_exit": "force_exit",
             },
         )
@@ -1776,8 +1791,9 @@ class KbChatAgenticGraph:
                 "force_exit": "force_exit",
             },
         )
-        graph.add_edge("finalize", END)
-        graph.add_edge("force_exit", END)
+        graph.add_edge("finalize", "confidence_calibrate")
+        graph.add_edge("force_exit", "confidence_calibrate")
+        graph.add_edge("confidence_calibrate", END)
         self._graph_builder = graph
 
     def compile(
