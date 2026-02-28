@@ -375,7 +375,8 @@ export function Sidebar({
       sx={{
         width: expanded ? SIDEBAR_WIDTH_EXPANDED : SIDEBAR_WIDTH_COLLAPSED,
         flexShrink: 0,
-        height: '100vh',
+        minHeight: '100vh',
+        height: '100dvh',
         position: 'sticky',
         top: 0,
         overflow: 'hidden',

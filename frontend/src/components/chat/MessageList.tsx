@@ -19,6 +19,7 @@ import type {
 import { EvidenceList } from '../EvidenceList';
 import { stripTrailingReferenceSection } from '../../lib/kbChatContent';
 import { calculateMessageListVirtualWindow } from '../../services/messageListVirtualization';
+import { shouldContainWheelScroll } from '../../services/chatScrollBehavior';
 import {
   resolveConfidenceChipMeta,
   shouldRenderClarificationCard,
@@ -89,6 +90,7 @@ interface MessageListProps {
   normalizeInlineEvidenceSection?: boolean;
   scrollButtonAlign?: 'center' | 'right';
   showScrollToBottom?: boolean;
+  wheelContainment?: 'auto' | 'off';
 }
 
 interface MessageRowProps {
@@ -290,6 +292,7 @@ export function MessageList({
   normalizeInlineEvidenceSection = false,
   scrollButtonAlign = 'center',
   showScrollToBottom = true,
+  wheelContainment = 'auto',
 }: MessageListProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -416,7 +419,23 @@ export function MessageList({
         updateIsAtBottom();
       }}
       onWheelCapture={(event) => {
-        event.stopPropagation();
+        if (wheelContainment === 'off') {
+          return;
+        }
+        const container = containerRef.current;
+        if (!container) {
+          return;
+        }
+        if (
+          shouldContainWheelScroll({
+            scrollTop: container.scrollTop,
+            clientHeight: container.clientHeight,
+            scrollHeight: container.scrollHeight,
+            deltaY: event.deltaY,
+          })
+        ) {
+          event.stopPropagation();
+        }
       }}
       onTouchMoveCapture={(event) => {
         event.stopPropagation();

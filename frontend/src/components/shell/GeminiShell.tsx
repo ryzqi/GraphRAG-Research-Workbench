@@ -79,6 +79,8 @@ export function GeminiShell({ children }: GeminiShellProps) {
       sx={{
         display: 'flex',
         minHeight: '100vh',
+        height: isChatPage ? '100dvh' : 'auto',
+        overflow: isChatPage ? 'hidden' : 'visible',
         bgcolor: 'background.default',
       }}
     >
@@ -122,6 +124,7 @@ export function GeminiShell({ children }: GeminiShellProps) {
           width: '100%',
           maxWidth: '100%',
           position: 'relative',
+          overflow: isChatPage ? 'hidden' : 'auto',
           backgroundImage: isChatPage
             ? (t) =>
                 t.palette.mode === 'light'
@@ -164,6 +167,7 @@ export function GeminiShell({ children }: GeminiShellProps) {
             display: 'flex',
             flexDirection: 'column',
             minHeight: 0,
+            overflow: isChatPage ? 'hidden' : 'visible',
             px: isChatPage
               ? 0
               : isKnowledgeWorkspacePage

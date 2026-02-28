@@ -1,8 +1,11 @@
 import dynamic from 'next/dynamic';
 import { Box, Chip, FormControlLabel, Switch, Typography } from '@mui/material';
+import { alpha } from '@mui/material/styles';
 import { ErrorAlert } from '../ui/ErrorAlert';
 import { WelcomeScreen } from './WelcomeScreen';
 import { InputComposer } from './InputComposer';
+import { ChatInputDock } from './ChatInputDock';
+import { ChatViewport } from './ChatViewport';
 import type { ChatSession, ToolApprovalRequest } from '../../services/chats';
 import type { ChatMessage } from './MessageList';
 
@@ -67,100 +70,110 @@ export function GeneralChatView({
   const webSearchBadgeLabel = webSearchAvailable ? '联网可用' : '联网不可用';
 
   return (
-    <Box
-      sx={{
-        display: 'flex',
-        flexDirection: 'column',
-        height: '100%',
-        minHeight: 'calc(100vh - 64px)',
-      }}
-    >
-      <Box
-        sx={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'flex-end',
-          gap: 2,
-          px: { xs: 2, md: 4 },
-          py: 1.5,
-          position: 'sticky',
-          top: 0,
-          zIndex: 5,
-          bgcolor: (theme) =>
-            theme.palette.mode === 'light'
-              ? 'rgba(240, 244, 249, 0.72)'
-              : 'rgba(30, 31, 32, 0.72)',
-          backdropFilter: 'blur(18px)',
-          WebkitBackdropFilter: 'blur(18px)',
-          borderBottom: 1,
-          borderColor: 'divider',
-        }}
-      >
-        <FormControlLabel
-          control={
-            <Switch
-              size="small"
-              checked={allowExternal}
-              onChange={(event) => setAllowExternal(event.target.checked)}
-              disabled={Boolean(session)}
-            />
-          }
-          label={
-            <Typography variant="body2" color="text.secondary">
-              MCP 扩展
-            </Typography>
-          }
-        />
-        <Chip
-          label={webSearchBadgeLabel}
-          size="small"
-          variant="outlined"
-          color={webSearchAvailable ? 'success' : 'default'}
-        />
-        <Chip label={sessionBadgeLabel} size="small" variant="outlined" />
-      </Box>
-
-      {messages.length === 0 ? (
-        <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
-          <WelcomeScreen
-            title="你好，需要我为你做些什么？"
-            suggestions={quickPrompts}
-            onSuggestionClick={onSuggestionClick}
-            disabled={isInputDisabled}
+    <ChatViewport
+      lockPageScrollOnDesktop
+      minBottomInset={140}
+      header={
+        <Box
+          sx={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'flex-end',
+            gap: 2,
+            px: { xs: 2, md: 4 },
+            py: 1.5,
+            position: 'relative',
+            zIndex: 5,
+            bgcolor: (theme) =>
+              theme.palette.mode === 'light'
+                ? alpha(theme.palette.background.paper, 0.72)
+                : alpha(theme.palette.background.paper, 0.58),
+            backdropFilter: 'blur(18px)',
+            WebkitBackdropFilter: 'blur(18px)',
+            borderBottom: 1,
+            borderColor: 'divider',
+          }}
+        >
+          <FormControlLabel
+            control={
+              <Switch
+                size='small'
+                checked={allowExternal}
+                onChange={(event) => setAllowExternal(event.target.checked)}
+                disabled={Boolean(session)}
+              />
+            }
+            label={
+              <Typography variant='body2' color='text.secondary'>
+                MCP 扩展
+              </Typography>
+            }
           />
+          <Chip
+            label={webSearchBadgeLabel}
+            size='small'
+            variant='outlined'
+            color={webSearchAvailable ? 'success' : 'default'}
+          />
+          <Chip label={sessionBadgeLabel} size='small' variant='outlined' />
         </Box>
-      ) : (
-        <MessageList
-          messages={messages}
-          loading={loading}
-          onToolApprovalSubmit={onToolApprovalSubmit}
-          approvalLoading={loading}
-        />
-      )}
-
-      <ErrorAlert error={error} onClose={() => setError(null)} />
-
-      <Box
-        sx={{
-          position: 'sticky',
-          bottom: 0,
-          p: { xs: 2, md: 3 },
-          zIndex: 10,
-          background: (theme) =>
-            `linear-gradient(to top, ${theme.palette.background.default} 0%, rgba(0,0,0,0) 110%)`,
-        }}
-      >
-        <Box sx={{ maxWidth: 800, mx: 'auto' }}>
-          <InputComposer
-            value={input}
-            onChange={setInput}
-            onSend={onSend}
-            disabled={isInputDisabled}
+      }
+      renderMessages={({ bottomInset }) =>
+        messages.length === 0 ? (
+          <Box
+            sx={{
+              flex: 1,
+              minHeight: 0,
+              overflowY: 'auto',
+              px: { xs: 2, md: 3 },
+              pt: 3,
+              pb: `${bottomInset}px`,
+            }}
+          >
+            <Box
+              sx={{
+                minHeight: '100%',
+                display: 'flex',
+                flexDirection: 'column',
+                justifyContent: 'center',
+              }}
+            >
+              <WelcomeScreen
+                title='你好，需要我为你做些什么？'
+                suggestions={quickPrompts}
+                onSuggestionClick={onSuggestionClick}
+                disabled={isInputDisabled}
+              />
+            </Box>
+          </Box>
+        ) : (
+          <MessageList
+            messages={messages}
             loading={loading}
-            placeholder={hasPendingApproval ? '等待工具审批完成...' : '输入消息...'}
+            onToolApprovalSubmit={onToolApprovalSubmit}
+            approvalLoading={loading}
+            bottomInset={bottomInset}
+            scrollButtonAlign='right'
+            wheelContainment='off'
           />
+        )
+      }
+      renderComposer={({ composerRef }) => (
+        <Box>
+          <ErrorAlert error={error} onClose={() => setError(null)} />
+          <ChatInputDock composerRef={composerRef} variant='general' maxWidth={800}>
+            <InputComposer
+              value={input}
+              onChange={setInput}
+              onSend={onSend}
+              disabled={isInputDisabled}
+              loading={loading}
+              placeholder={hasPendingApproval ? '等待工具审批完成...' : '输入消息...'}
+              showShortcutHint={false}
+            />
+          </ChatInputDock>
         </Box>
-      </Box>
-    </Box>
+      )}
+    />
   );
 }

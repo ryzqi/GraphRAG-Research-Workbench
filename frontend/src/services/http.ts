@@ -125,6 +125,10 @@ function buildBackendConnectivityHint(url: string): string {
   return `无法连接到后端服务（${API_BASE_URL}）。请确认后端已启动并可访问：${url}，或在 frontend/.env.local 配置 NEXT_PUBLIC_API_BASE_URL。`;
 }
 
+function buildBackendTimeoutHint(url: string): string {
+  return `请求超时（后端慢/依赖慢）。请稍后重试并检查后端依赖状态：${url}`;
+}
+
 export async function apiFetch<T>(path: string, init?: ApiFetchOptions): Promise<T> {
   const requestId = newRequestId();
   const headers = new Headers(init?.headers ?? {});
@@ -146,7 +150,11 @@ export async function apiFetch<T>(path: string, init?: ApiFetchOptions): Promise
     response = result.response;
   } catch (err) {
     if (err instanceof HttpError) {
-      if (err.status === 0 || err.status === 408 || err.status === 499) {
+      if (err.status === 408) {
+        const hint = buildBackendTimeoutHint(url);
+        throw new HttpError(hint, err.status, { requestId, body: err.body });
+      }
+      if (err.status === 0 || err.status === 499) {
         const hint = buildBackendConnectivityHint(url);
         throw new HttpError(hint, err.status, { requestId, body: err.body });
       }

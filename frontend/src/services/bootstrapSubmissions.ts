@@ -144,7 +144,7 @@ export async function finalizeBootstrapSubmission(
     `/api/v1/knowledge-bases/bootstrap-submissions/${jobId}/finalize`,
     {
       method: 'POST',
-      timeoutMs: 30_000,
+      timeoutMs: 300_000,
     }
   );
 }

@@ -77,6 +77,18 @@ function MessageItemComponent({
   const showCursor = !isUser && (isStreaming || cursorFading) && displayContent.length > 0;
   const hasAnswerContent = !isUser && content.trim().length > 0;
   const isThinking = !isUser && isStreaming && !hasAnswerContent;
+  const assistantRevealSx = !isUser
+    ? {
+        opacity: hasAnswerContent ? 1 : 0.72,
+        transform: hasAnswerContent ? 'translateY(0)' : 'translateY(4px)',
+        transition: 'opacity 220ms cubic-bezier(0.2, 0, 0, 1), transform 220ms cubic-bezier(0.2, 0, 0, 1)',
+        '@media (prefers-reduced-motion: reduce)': {
+          transition: 'none',
+          transform: 'none',
+          opacity: hasAnswerContent ? 1 : 0.82,
+        },
+      }
+    : undefined;
 
   // 检测流式结束，触发淡出动画
   useEffect(() => {
@@ -253,7 +265,7 @@ function MessageItemComponent({
             </Paper>
           ) : (
             // 助手消息：透明背景直接显示
-            <Box sx={{ py: 1 }}>
+            <Box sx={{ py: 1, ...assistantRevealSx }}>
               {think && (
                 <ThinkingContainer
                   content={think}

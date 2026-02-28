@@ -6,7 +6,7 @@
  * - LangGraph 步骤实时可视化
  * - 澄清补充交互（pending_user_clarification）
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import dynamic from 'next/dynamic';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import {
@@ -63,6 +63,7 @@ import { useSelectableKnowledgeBases } from '../hooks/queries/useKnowledgeBases'
 import { useRecentHistory } from '../hooks/useRecentHistory';
 import { WelcomeScreen } from '../components/chat/WelcomeScreen';
 import { KbChatInputPanel } from '../components/chat/KbChatInputPanel';
+import { ChatViewport } from '../components/chat/ChatViewport';
 import { getErrorMessage } from '../lib/errorHandler';
 import { useKbChatSessionController } from '../hooks/useKbChatSessionController';
 import {
@@ -549,8 +550,6 @@ export function KbChatPage() {
   const [loading, setLoading] = useState(false);
   const [loadingSession, setLoadingSession] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const composerRef = useRef<HTMLDivElement | null>(null);
-  const [bottomInset, setBottomInset] = useState(180);
   const [mobileTraceOpen, setMobileTraceOpen] = useState(false);
 
   useKbChatSessionController({
@@ -647,47 +646,6 @@ export function KbChatPage() {
       setMobileTraceOpen(false);
     }
   }, [isTabletOrDown]);
-
-  useEffect(() => {
-    if (isTabletOrDown || typeof document === 'undefined') {
-      return;
-    }
-
-    const { documentElement, body } = document;
-    const prevHtmlOverflow = documentElement.style.overflow;
-    const prevBodyOverflow = body.style.overflow;
-    const prevBodyOverscrollY = body.style.overscrollBehaviorY;
-
-    documentElement.style.overflow = 'hidden';
-    body.style.overflow = 'hidden';
-    body.style.overscrollBehaviorY = 'none';
-
-    return () => {
-      documentElement.style.overflow = prevHtmlOverflow;
-      body.style.overflow = prevBodyOverflow;
-      body.style.overscrollBehaviorY = prevBodyOverscrollY;
-    };
-  }, [isTabletOrDown]);
-
-  useEffect(() => {
-    const element = composerRef.current;
-    if (!element) {
-      return;
-    }
-
-    const updateInset = () => {
-      const next = Math.max(140, Math.ceil(element.getBoundingClientRect().height) + 16);
-      setBottomInset(next);
-    };
-
-    updateInset();
-    if (typeof ResizeObserver === 'undefined') {
-      return;
-    }
-    const observer = new ResizeObserver(updateInset);
-    observer.observe(element);
-    return () => observer.disconnect();
-  }, [session, hasPendingClarification]);
 
   const updateMessage = useCallback(
     (id: string, updater: (msg: ChatMessage) => ChatMessage) => {
@@ -1832,54 +1790,50 @@ const applyNodeIoEvent = useCallback(
               </Typography>
             </Box>
 
-            <Box
-              sx={{
-                flex: 1,
-                minHeight: 0,
-                mt: 0.5,
-                display: 'flex',
-                flexDirection: 'column',
-                overflow: 'hidden',
-              }}
-            >
-              {messages.length === 0 ? (
-                <Stack
-                  spacing={1.5}
-                  sx={{
-                    height: '100%',
-                    px: { xs: 2, md: 2.5 },
-                    py: { xs: 2, md: 3 },
-                    justifyContent: 'center',
-                  }}
-                >
-                  <WelcomeScreen title='开始提问吧' suggestions={[]} />
-                </Stack>
-              ) : (
-                <MessageList
-                  messages={messages}
+            <ChatViewport
+              lockPageScrollOnDesktop
+              messagesSx={{ mt: 0.5 }}
+              renderMessages={({ bottomInset }) =>
+                messages.length === 0 ? (
+                  <Stack
+                    spacing={1.5}
+                    sx={{
+                      height: '100%',
+                      px: { xs: 2, md: 2.5 },
+                      py: { xs: 2, md: 3 },
+                      justifyContent: 'center',
+                    }}
+                  >
+                    <WelcomeScreen title='开始提问吧' suggestions={[]} />
+                  </Stack>
+                ) : (
+                  <MessageList
+                    messages={messages}
+                    loading={loading || loadingSession}
+                    onClarificationSubmit={handleClarificationSubmit}
+                    approvalLoading={loading || loadingSession}
+                    bottomInset={bottomInset}
+                    showPipeline={false}
+                    showEvidence
+                    normalizeInlineEvidenceSection
+                    scrollButtonAlign='right'
+                    showScrollToBottom={false}
+                    selectedAssistantId={activeAssistantMessage?.id ?? null}
+                    onAssistantSelect={setActiveAssistantId}
+                  />
+                )
+              }
+              renderComposer={({ composerRef }) => (
+                <KbChatInputPanel
+                  composerRef={composerRef}
+                  value={input}
+                  onChange={setInput}
+                  onSend={handleSend}
+                  disabled={loading || loadingSession || hasPendingClarification}
                   loading={loading || loadingSession}
-                  onClarificationSubmit={handleClarificationSubmit}
-                  approvalLoading={loading || loadingSession}
-                  bottomInset={bottomInset}
-                  showPipeline={false}
-                  showEvidence
-                  normalizeInlineEvidenceSection
-                  scrollButtonAlign='right'
-                  showScrollToBottom={false}
-                  selectedAssistantId={activeAssistantMessage?.id ?? null}
-                  onAssistantSelect={setActiveAssistantId}
+                  hasPendingClarification={hasPendingClarification}
                 />
               )}
-            </Box>
-
-            <KbChatInputPanel
-              composerRef={composerRef}
-              value={input}
-              onChange={setInput}
-              onSend={handleSend}
-              disabled={loading || loadingSession || hasPendingClarification}
-              loading={loading || loadingSession}
-              hasPendingClarification={hasPendingClarification}
             />
           </Paper>
 
