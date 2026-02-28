@@ -113,8 +113,19 @@ class ModelRuntimeConfigManager:
 
     _snapshot: RuntimeModelSnapshot | None = None
     _initialized: bool = False
-    _lock = asyncio.Lock()
+    _lock: asyncio.Lock | None = None
+    _lock_loop: asyncio.AbstractEventLoop | None = None
     _sessionmaker: async_sessionmaker[AsyncSession] | None = None
+
+    @classmethod
+    def _get_lock(cls) -> asyncio.Lock:
+        loop = asyncio.get_running_loop()
+        # Celery thread pools create a new event loop per asyncio.run call.
+        # Re-create the lock when the running loop changes to avoid cross-loop errors.
+        if cls._lock is None or cls._lock_loop is not loop:
+            cls._lock = asyncio.Lock()
+            cls._lock_loop = loop
+        return cls._lock
 
     @classmethod
     async def initialize(
@@ -137,7 +148,8 @@ class ModelRuntimeConfigManager:
         settings: Settings | None = None,
     ) -> None:
         cfg = settings or get_settings()
-        async with cls._lock:
+        lock = cls._get_lock()
+        async with lock:
             try:
                 if db is not None:
                     cls._snapshot = await cls._load_snapshot(db=db, settings=cfg)
@@ -158,10 +170,13 @@ class ModelRuntimeConfigManager:
 
     @classmethod
     async def shutdown(cls) -> None:
-        async with cls._lock:
+        lock = cls._get_lock()
+        async with lock:
             cls._snapshot = None
             cls._initialized = False
             cls._sessionmaker = None
+            cls._lock = None
+            cls._lock_loop = None
 
     @classmethod
     async def _load_snapshot(
