@@ -9,6 +9,7 @@ from langchain.agents.middleware import HumanInTheLoopMiddleware, SummarizationM
 from langchain_core.language_models.chat_models import BaseChatModel
 
 from app.core.checkpoint import CheckpointManager
+from app.agents.tool_calling.utils import parse_mcp_tool_name
 
 SUMMARY_TRIGGER_FRACTION = 0.7
 SUMMARY_TRIGGER = ("fraction", SUMMARY_TRIGGER_FRACTION)
@@ -32,6 +33,19 @@ def build_pending_tool_calls(
 
         meta = tool_meta_by_name.get(name)
         if meta is None:
+            parsed = parse_mcp_tool_name(name)
+            if parsed is not None:
+                extension_id, raw_tool_name = parsed
+                pending.append(
+                    {
+                        "extension_id": extension_id,
+                        "extension_name": None,
+                        "tool_name": raw_tool_name,
+                        "args": args,
+                        "is_builtin": False,
+                    }
+                )
+                continue
             pending.append(
                 {
                     "extension_id": "unknown",

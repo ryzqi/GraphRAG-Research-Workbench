@@ -6,12 +6,17 @@ import {
   createMessageStateBatcher,
 } from '../services/chatStreamDeltas';
 import {
+  buildGeneralChatRecentTitle,
+  shouldSkipGeneralChatHydration,
+} from '../services/generalChatSessionBehavior';
+import {
   buildChatSessionRequestKey,
   ChatSessionRequestControl,
 } from '../services/chatSessionRequestControl';
 import {
   createChatSession,
   getChatMessages,
+  getPendingGeneralRun,
   getChatSession,
   resumeToolApproval,
   sendMessage,
@@ -49,6 +54,13 @@ function isAbortLikeError(error: unknown): boolean {
   return false;
 }
 
+function createClientRequestId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return `req_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+}
+
 function toPendingToolApprovalState(
   response: ChatPendingToolApprovalResponse
 ): NonNullable<ChatMessage['pendingToolApproval']> {
@@ -74,6 +86,7 @@ export function useGeneralChatController() {
     [pathname, sessionId]
   );
   const requestControlRef = useRef(new ChatSessionRequestControl());
+  const pendingBootstrapSessionIdRef = useRef<string | null>(null);
   const streamAbortRef = useRef<AbortController | null>(null);
 
   const abortActiveStream = useCallback(() => {
@@ -117,26 +130,45 @@ export function useGeneralChatController() {
     if (!sessionId || !sessionRequestKey) {
       return;
     }
+    if (shouldSkipGeneralChatHydration(pendingBootstrapSessionIdRef.current, sessionId)) {
+      pendingBootstrapSessionIdRef.current = null;
+      return;
+    }
     const requestControl = requestControlRef.current;
     const request = requestControl.start(sessionRequestKey);
     const loadSession = async () => {
       setLoadingSession(true);
       setError(null);
       try {
-        const [loadedSession, history] = await Promise.all([
+        const [loadedSession, history, pendingApproval] = await Promise.all([
           getChatSession(sessionId, request.signal),
           getChatMessages(sessionId, request.signal),
+          getPendingGeneralRun(sessionId, request.signal).catch(() => null),
         ]);
         if (!requestControl.isLatest(request.id, sessionRequestKey)) return;
         setSession(loadedSession);
         setAllowExternal(loadedSession.allow_external);
-        setMessages(
-          history.map((msg) => ({
+        const nextMessages: ChatMessage[] = history.map((msg) => ({
             id: msg.id,
             role: msg.role === 'assistant' ? 'assistant' : 'user',
             content: msg.content,
-          }))
-        );
+          }));
+        if (pendingApproval) {
+          const hasRun = nextMessages.some((msg) => msg.runId === pendingApproval.run.id);
+          if (!hasRun) {
+            nextMessages.push({
+              id: `assistant-pending-${pendingApproval.run.id}`,
+              role: 'assistant',
+              content:
+                pendingApproval.pending_interrupts.find((item) => Boolean(item.message))?.message ??
+                '检测到待审批工具调用，请先审批后继续。',
+              pendingToolApproval: toPendingToolApprovalState(pendingApproval),
+              runId: pendingApproval.run.id,
+              isStreaming: false,
+            });
+          }
+        }
+        setMessages(nextMessages);
       } catch (e) {
         if (!requestControl.isLatest(request.id, sessionRequestKey)) return;
         if (request.signal.aborted) return;
@@ -226,21 +258,32 @@ export function useGeneralChatController() {
     setInput('');
     setLoading(true);
     setError(null);
+    const clientRequestId = createClientRequestId();
 
     try {
+      const shouldMarkBootstrapSession = !session;
       const currentSession = session ?? (await createSession());
-      upsertSession({
-        sessionId: currentSession.id,
-        title: '普通对话',
-        type: currentSession.session_type,
-        updatedAt: currentSession.updated_at,
-      });
+      if (shouldMarkBootstrapSession) {
+        pendingBootstrapSessionIdRef.current = currentSession.id;
+      }
 
       if (!sessionId || currentSession.id !== sessionId) {
         const nextParams = new URLSearchParams(searchParams.toString());
         nextParams.set('sessionId', currentSession.id);
         replaceSearchParams(nextParams);
       }
+
+      let recentTouched = false;
+      const touchRecent = () => {
+        if (recentTouched) return;
+        recentTouched = true;
+        upsertSession({
+          sessionId: currentSession.id,
+          title: buildGeneralChatRecentTitle(content),
+          type: currentSession.session_type,
+          updatedAt: new Date().toISOString(),
+        });
+      };
 
       let hadStreamEvent = false;
       const deltaBatcher = createMessageStateBatcher((nextState) => {
@@ -254,7 +297,8 @@ export function useGeneralChatController() {
       });
 
       const fallbackToJson = async () => {
-        const response = await sendMessage(currentSession.id, content);
+        const response = await sendMessage(currentSession.id, content, clientRequestId);
+        touchRecent();
         if (isPendingClarification(response)) {
           updateMessage(assistantId, (msg) => ({
             ...msg,
@@ -297,11 +341,16 @@ export function useGeneralChatController() {
         const stream = await streamChatMessage(
           currentSession.id,
           content,
+          clientRequestId,
           streamAbortController.signal
         );
         for await (const event of stream) {
-          if (event.event === 'meta') {
+          const markStreamEvent = () => {
             hadStreamEvent = true;
+            touchRecent();
+          };
+          if (event.event === 'meta') {
+            markStreamEvent();
             const data = parseSseJson<{ run_id?: string }>(event.data);
             if (data?.run_id) {
               updateMessage(assistantId, (msg) => ({ ...msg, runId: data.run_id }));
@@ -309,14 +358,14 @@ export function useGeneralChatController() {
             continue;
           }
           if (event.event === 'delta' || event.event === 'messages') {
-            hadStreamEvent = true;
+            markStreamEvent();
             const data = parseSseJson<Record<string, unknown>>(event.data);
             msgState = applyMessagesEventToState(msgState, data);
             deltaBatcher.push(msgState);
             continue;
           }
           if (event.event === 'pending_user_clarification') {
-            hadStreamEvent = true;
+            markStreamEvent();
             const data = parseSseJson<
               Partial<Extract<ChatMessageResponse, { status: 'pending_user_clarification' }>> & {
                 run_id?: string;
@@ -335,7 +384,7 @@ export function useGeneralChatController() {
             continue;
           }
           if (event.event === 'pending_tool_approval' || event.event === 'interrupt') {
-            hadStreamEvent = true;
+            markStreamEvent();
             const data = parseSseJson<ChatMessageResponse>(event.data);
             if (!isPendingToolApproval(data)) {
               throw new Error('工具审批事件格式无效');
@@ -350,7 +399,7 @@ export function useGeneralChatController() {
             continue;
           }
           if (event.event === 'final') {
-            hadStreamEvent = true;
+            markStreamEvent();
             sawFinalEvent = true;
             deltaBatcher.flush();
             const data = parseSseJson<ChatMessageResponse>(event.data);

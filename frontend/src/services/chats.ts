@@ -481,11 +481,15 @@ export async function getKbChatGraphSchema(
  */
 export async function sendMessage(
   sessionId: string,
-  content: string
+  content: string,
+  clientRequestId?: string
 ): Promise<ChatMessageResponse> {
   return apiFetch<ChatMessageResponse>(`/api/v1/chats/${sessionId}/messages`, {
     method: 'POST',
-    body: JSON.stringify({ content }),
+    body: JSON.stringify({
+      content,
+      client_request_id: clientRequestId,
+    }),
   });
 }
 
@@ -509,15 +513,29 @@ export async function resumeToolApproval(
 export async function streamChatMessage(
   sessionId: string,
   content: string,
+  clientRequestId?: string,
   signal?: AbortSignal
 ): Promise<AsyncIterable<SseEvent>> {
   return openSseStream(
     `/api/v1/chats/${sessionId}/messages/stream`,
     {
       method: 'POST',
-      body: JSON.stringify({ content }),
+      body: JSON.stringify({
+        content,
+        client_request_id: clientRequestId,
+      }),
     },
     signal
+  );
+}
+
+export async function getPendingGeneralRun(
+  sessionId: string,
+  signal?: AbortSignal
+): Promise<ChatPendingToolApprovalResponse | null> {
+  return apiFetch<ChatPendingToolApprovalResponse | null>(
+    `/api/v1/chats/${sessionId}/runs/pending-general`,
+    { signal }
   );
 }
 

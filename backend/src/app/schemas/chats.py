@@ -248,6 +248,19 @@ class ChatRecentListResponse(BaseModel):
 # 消息相关
 class ChatMessageCreate(BaseModel):
     content: str = Field(..., min_length=1)
+    client_request_id: str | None = Field(default=None, min_length=1, max_length=128)
+
+    @field_validator("client_request_id", mode="before")
+    @classmethod
+    def _normalize_client_request_id(cls, value: Any) -> Any:
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            raise TypeError("client_request_id 必须是字符串")
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("client_request_id 不能为空")
+        return normalized
 
 
 class ChatMessageRead(BaseModel):

@@ -367,7 +367,11 @@ async def create_chat_message(
             redis=request.app.state.redis,
             http_client=request.app.state.http_client,
         )
-        result = await service.answer(session=session, user_content=body.content)
+        result = await service.answer(
+            session=session,
+            user_content=body.content,
+            client_request_id=body.client_request_id,
+        )
     else:
         raise bad_request(code="CHAT_UNSUPPORTED_SESSION_TYPE", message="不支持的会话类型")
 
@@ -417,6 +421,7 @@ async def create_chat_message_stream(
             session=session,
             user_content=body.content,
             request=request,
+            client_request_id=body.client_request_id,
         )
     else:
         raise bad_request(code="CHAT_UNSUPPORTED_SESSION_TYPE", message="不支持的会话类型")
@@ -426,6 +431,31 @@ async def create_chat_message_stream(
         media_type="text/event-stream",
         headers=SSE_HEADERS,
     )
+
+
+@router.get(
+    "/{session_id}/runs/pending-general",
+    response_model=ChatPendingToolApprovalResponse | None,
+)
+async def get_pending_general_chat_run(
+    db: AsyncSessionDep,
+    request: Request,
+    session_id: uuid.UUID,
+) -> ChatPendingToolApprovalResponse | None:
+    """获取普通代理当前待审批运行（用于刷新恢复）。"""
+    session = await db.get(ChatSession, session_id)
+    if not session:
+        raise not_found("会话不存在", code="CHAT_SESSION_NOT_FOUND")
+    if session.session_type != ChatSessionType.GENERAL_CHAT:
+        raise bad_request(code="CHAT_NOT_GENERAL_CHAT", message="仅普通代理支持该接口")
+
+    service = GeneralChatService(
+        db,
+        request.app.state.llm_client,
+        redis=request.app.state.redis,
+        http_client=request.app.state.http_client,
+    )
+    return await service.get_pending_tool_approval(session=session)
 
 
 @router.post(

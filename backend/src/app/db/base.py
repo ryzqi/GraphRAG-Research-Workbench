@@ -13,6 +13,7 @@ def import_all_models() -> None:
     from app.models import (  # noqa: F401
         agent_run,
         chat_message,
+        chat_request_dedup,
         chat_session,
         document_chunk,
         evidence,
