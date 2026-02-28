@@ -11,7 +11,7 @@ import json
 from functools import partial
 
 from langchain.tools import BaseTool
-from langchain_openai import ChatOpenAI
+from langchain_core.language_models.chat_models import BaseChatModel
 from langgraph.cache.memory import InMemoryCache
 from langgraph.config import get_stream_writer
 from langgraph.checkpoint.base import BaseCheckpointSaver
@@ -1689,7 +1689,7 @@ class KbChatAgenticGraph:
     def __init__(
         self,
         *,
-        chat_model: ChatOpenAI,
+        chat_model: BaseChatModel,
         tools: list[BaseTool],
         tool_meta_by_name: dict[str, ToolMeta],  # kept for signature compatibility
         kb_chat_config: dict[str, Any] | None = None,

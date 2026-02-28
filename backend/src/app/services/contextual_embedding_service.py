@@ -38,6 +38,17 @@ class ContextualEmbeddingService:
         self._settings = settings if settings is not None else get_settings()
         self._prompts = get_prompt_loader()
 
+    @staticmethod
+    def _error_reason(exc: Exception) -> str:
+        exc_type = type(exc).__name__ or "error"
+        message = str(exc).strip()
+        if not message:
+            return exc_type
+        compact = " ".join(message.split())
+        if len(compact) > 200:
+            compact = compact[:197] + "..."
+        return f"{exc_type}: {compact}"
+
     async def generate(
         self,
         *,
@@ -75,11 +86,12 @@ class ContextualEmbeddingService:
             llm_output = await self._call_llm(prompt)
         except Exception as exc:
             latency_ms = int((time.perf_counter() - start_time) * 1000)
-            logger.warning("Context 生成失败", extra={"error": str(exc)})
+            reason = self._error_reason(exc)
+            logger.warning("Context 生成失败", extra={"error": reason})
             return ContextResult(
                 context="",
                 success=False,
-                reason="error",
+                reason=reason,
                 latency_ms=latency_ms,
             )
 

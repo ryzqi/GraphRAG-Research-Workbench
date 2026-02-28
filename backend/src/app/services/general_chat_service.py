@@ -9,6 +9,7 @@ import logging
 import uuid
 from datetime import datetime, timezone
 from typing import Any
+from urllib.parse import urlparse
 
 import httpx
 from langchain.messages import AIMessage, AnyMessage, HumanMessage, SystemMessage
@@ -39,6 +40,7 @@ from app.prompts import get_prompt_loader
 from app.models.agent_run import AgentRun, AgentRunStatus, AgentRunType
 from app.models.chat_message import ChatMessage, MessageRole
 from app.models.chat_session import ChatSession
+from app.models.model_config import ModelProvider
 from app.models.tool_extension import ExtensionStatus, ToolExtension
 from app.schemas.chats import (
     AgentRunRead,
@@ -353,11 +355,41 @@ class GeneralChatService:
             raise ModelConfigIncompleteError(
                 "模型配置不完整：没有可用的已启用供应商，请前往模型配置页面补全"
             ) from exc
-        return decide_replay_mode(
+        configured_mode = self._settings.general_chat_replay_mode
+        decision = decide_replay_mode(
             configured_mode=self._settings.general_chat_replay_mode,
             provider=provider_cfg.provider,
             thinking_enabled=provider_cfg.thinking_enabled,
         )
+        if (
+            configured_mode == ReplayMode.AUTO.value
+            and decision.mode == ReplayMode.RESPONSE_ID
+            and provider_cfg.provider == ModelProvider.OPENAI
+            and not self._supports_openai_response_replay(provider_cfg.base_url)
+        ):
+            logger.info(
+                "General chat replay auto-downgraded to manual for non-OpenAI-compatible base_url",
+                extra={"base_url": provider_cfg.base_url},
+            )
+            return self._manual_replay_decision()
+        return decision
+
+    @staticmethod
+    def _supports_openai_response_replay(base_url: str | None) -> bool:
+        if not isinstance(base_url, str) or not base_url.strip():
+            return False
+        try:
+            parsed = urlparse(base_url.strip())
+        except ValueError:
+            return False
+        hostname = (parsed.hostname or "").lower()
+        if not hostname:
+            return False
+        if hostname == "api.openai.com":
+            return True
+        if hostname.endswith(".openai.azure.com"):
+            return True
+        return False
 
     def _requires_assistant_response_id_for_replay(self) -> bool:
         return self._resolve_replay_decision().require_assistant_response_id

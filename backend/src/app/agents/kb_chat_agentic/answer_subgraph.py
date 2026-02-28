@@ -14,7 +14,7 @@ from typing import Any, Literal, TypedDict
 
 from langchain.agents import create_agent
 from langchain.messages import HumanMessage, SystemMessage
-from langchain_openai import ChatOpenAI
+from langchain_core.language_models.chat_models import BaseChatModel
 from langgraph.config import get_stream_writer
 from langgraph.graph import END, StateGraph
 from langgraph.runtime import Runtime
@@ -176,7 +176,7 @@ def _classify_structured_error(exc: Exception) -> str:
 
 async def _judge_structured(
     *,
-    chat_model: ChatOpenAI,
+    chat_model: BaseChatModel,
     system: str,
     user: str,
 ) -> tuple[AnswerReviewSubDecision | None, str | None]:
@@ -323,7 +323,7 @@ async def _answer_review_llm_check(
     state: dict[str, Any],
     *,
     settings: Settings,
-    chat_model: ChatOpenAI,
+    chat_model: BaseChatModel,
     check: Literal["factual", "answerability"],
 ) -> dict[str, Any]:
     start = time.perf_counter()
@@ -395,7 +395,7 @@ async def _answer_review_factual(
     runtime: Runtime[KbChatAnswerSubgraphContext],
     *,
     settings: Settings,
-    chat_model: ChatOpenAI,
+    chat_model: BaseChatModel,
 ) -> dict[str, Any]:
     _ = runtime
     return await _answer_review_llm_check(
@@ -408,7 +408,7 @@ async def _answer_review_answerability(
     runtime: Runtime[KbChatAnswerSubgraphContext],
     *,
     settings: Settings,
-    chat_model: ChatOpenAI,
+    chat_model: BaseChatModel,
 ) -> dict[str, Any]:
     _ = runtime
     return await _answer_review_llm_check(
@@ -666,7 +666,7 @@ async def _draft_generate(
     runtime: Runtime[KbChatAnswerSubgraphContext],
     *,
     settings: Settings,
-    chat_model: ChatOpenAI,
+    chat_model: BaseChatModel,
 ) -> dict[str, Any]:
     _ = runtime
     updates = await generate_draft(state, settings=settings, chat_model=chat_model)
@@ -688,7 +688,7 @@ async def _answer_repair(
     runtime: Runtime[KbChatAnswerSubgraphContext],
     *,
     settings: Settings,
-    chat_model: ChatOpenAI,
+    chat_model: BaseChatModel,
 ) -> dict[str, Any]:
     _ = runtime
     start = time.perf_counter()
@@ -865,7 +865,7 @@ async def _answer_commit(
 def build_answer_subgraph(
     *,
     settings: Settings,
-    chat_model: ChatOpenAI,
+    chat_model: BaseChatModel,
 ):
     """Build compiled answer subgraph for parent KB chat graph."""
 

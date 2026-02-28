@@ -39,6 +39,16 @@ function isPendingToolApproval(
   return response.status === 'pending_tool_approval';
 }
 
+function isAbortLikeError(error: unknown): boolean {
+  if (error instanceof HttpError && error.status === 499) {
+    return true;
+  }
+  if ((error as { name?: string } | undefined)?.name === 'AbortError') {
+    return true;
+  }
+  return false;
+}
+
 function toPendingToolApprovalState(
   response: ChatPendingToolApprovalResponse
 ): NonNullable<ChatMessage['pendingToolApproval']> {
@@ -64,6 +74,14 @@ export function useGeneralChatController() {
     [pathname, sessionId]
   );
   const requestControlRef = useRef(new ChatSessionRequestControl());
+  const streamAbortRef = useRef<AbortController | null>(null);
+
+  const abortActiveStream = useCallback(() => {
+    if (streamAbortRef.current) {
+      streamAbortRef.current.abort();
+      streamAbortRef.current = null;
+    }
+  }, []);
 
   const replaceSearchParams = useCallback(
     (next: URLSearchParams) => {
@@ -140,15 +158,19 @@ export function useGeneralChatController() {
     void loadSession();
     return () => {
       requestControl.cancelActive();
+      abortActiveStream();
     };
-  }, [sessionId, sessionRequestKey, clearSessionIdFromUrl]);
+  }, [sessionId, sessionRequestKey, clearSessionIdFromUrl, abortActiveStream]);
 
   useEffect(() => {
     if (sessionId) return;
+    abortActiveStream();
     setSession(null);
     setMessages([]);
+    setLoading(false);
+    setLoadingSession(false);
     setError(null);
-  }, [sessionId]);
+  }, [sessionId, abortActiveStream]);
 
   const updateMessage = useCallback((id: string, updater: (msg: ChatMessage) => ChatMessage) => {
     setMessages((prev) => {
@@ -179,10 +201,14 @@ export function useGeneralChatController() {
   }, [allowExternal]);
 
   const handleNewChat = useCallback(() => {
+    abortActiveStream();
     setSession(null);
     setMessages([]);
+    setInput('');
+    setLoading(false);
+    setLoadingSession(false);
     setError(null);
-  }, []);
+  }, [abortActiveStream]);
 
   const handleSend = useCallback(async () => {
     const content = input.trim();
@@ -263,10 +289,26 @@ export function useGeneralChatController() {
         }));
       };
 
+      let sawFinalEvent = false;
+      let streamAbortController: AbortController | null = null;
       try {
-        const stream = await streamChatMessage(currentSession.id, content);
+        streamAbortController = new AbortController();
+        streamAbortRef.current = streamAbortController;
+        const stream = await streamChatMessage(
+          currentSession.id,
+          content,
+          streamAbortController.signal
+        );
         for await (const event of stream) {
-          if (event.event === 'delta') {
+          if (event.event === 'meta') {
+            hadStreamEvent = true;
+            const data = parseSseJson<{ run_id?: string }>(event.data);
+            if (data?.run_id) {
+              updateMessage(assistantId, (msg) => ({ ...msg, runId: data.run_id }));
+            }
+            continue;
+          }
+          if (event.event === 'delta' || event.event === 'messages') {
             hadStreamEvent = true;
             const data = parseSseJson<Record<string, unknown>>(event.data);
             msgState = applyMessagesEventToState(msgState, data);
@@ -292,10 +334,10 @@ export function useGeneralChatController() {
             }));
             continue;
           }
-          if (event.event === 'pending_tool_approval') {
+          if (event.event === 'pending_tool_approval' || event.event === 'interrupt') {
             hadStreamEvent = true;
-            const data = parseSseJson<ChatPendingToolApprovalResponse>(event.data);
-            if (!data) {
+            const data = parseSseJson<ChatMessageResponse>(event.data);
+            if (!isPendingToolApproval(data)) {
               throw new Error('工具审批事件格式无效');
             }
             deltaBatcher.flush();
@@ -307,6 +349,37 @@ export function useGeneralChatController() {
             }));
             continue;
           }
+          if (event.event === 'final') {
+            hadStreamEvent = true;
+            sawFinalEvent = true;
+            deltaBatcher.flush();
+            const data = parseSseJson<ChatMessageResponse>(event.data);
+            if (isPendingToolApproval(data)) {
+              updateMessage(assistantId, (msg) => ({
+                ...msg,
+                isStreaming: false,
+                pendingToolApproval: toPendingToolApprovalState(data),
+                runId: data.run.id,
+              }));
+              continue;
+            }
+            if (data.status !== 'succeeded') {
+              throw new Error('发送消息返回了不支持的状态');
+            }
+            const mergedContent = msgState.final_content.trim()
+              ? msgState.final_content
+              : data.assistant_message.content;
+            updateMessage(assistantId, (msg) => ({
+              ...msg,
+              content: mergedContent,
+              think: msgState.thought_log,
+              toolSteps: msgState.tool_steps,
+              isStreaming: false,
+              runId: data.run.id,
+              evidence: data.evidence,
+            }));
+            continue;
+          }
           if (event.event === 'error') {
             deltaBatcher.flush();
             const err = parseSseJson<{ message?: string }>(event.data);
@@ -314,26 +387,35 @@ export function useGeneralChatController() {
           }
         }
         deltaBatcher.flush();
-        msgState = completeMessageState(msgState);
-        updateMessage(assistantId, (msg) => ({
-          ...msg,
-          content: msgState.final_content,
-          think: msgState.thought_log,
-          toolSteps: msgState.tool_steps,
-          isStreaming: false,
-        }));
+        if (!sawFinalEvent) {
+          msgState = completeMessageState(msgState);
+          updateMessage(assistantId, (msg) => ({
+            ...msg,
+            content: msgState.final_content,
+            think: msgState.thought_log,
+            toolSteps: msgState.tool_steps,
+            isStreaming: false,
+          }));
+        }
       } catch (e) {
         if (hadStreamEvent) {
-          setError(e instanceof Error ? e.message : '发送消息失败');
+          if (!isAbortLikeError(e)) {
+            setError(e instanceof Error ? e.message : '发送消息失败');
+          }
           setLoading(false);
           return;
         }
         await fallbackToJson();
       } finally {
+        if (streamAbortRef.current === streamAbortController) {
+          streamAbortRef.current = null;
+        }
         deltaBatcher.flush();
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : '发送消息失败');
+      if (!isAbortLikeError(e)) {
+        setError(e instanceof Error ? e.message : '发送消息失败');
+      }
       updateMessage(assistantId, (msg) => ({ ...msg, isStreaming: false }));
     } finally {
       setLoading(false);
@@ -385,25 +467,42 @@ export function useGeneralChatController() {
       };
 
       let hadStreamEvent = false;
+      let sawFinalEvent = false;
+      let streamAbortController: AbortController | null = null;
       try {
         updateMessage(pendingMessageId, (msg) => ({
           ...msg,
           pendingToolApproval: undefined,
           isStreaming: true,
         }));
-        const stream = await streamResumeToolApproval(session.id, runId, approval);
+        streamAbortController = new AbortController();
+        streamAbortRef.current = streamAbortController;
+        const stream = await streamResumeToolApproval(
+          session.id,
+          runId,
+          approval,
+          streamAbortController.signal
+        );
         for await (const event of stream) {
-          if (event.event === 'delta') {
+          if (event.event === 'meta') {
+            hadStreamEvent = true;
+            const data = parseSseJson<{ run_id?: string }>(event.data);
+            if (data?.run_id) {
+              updateMessage(pendingMessageId, (msg) => ({ ...msg, runId: data.run_id }));
+            }
+            continue;
+          }
+          if (event.event === 'delta' || event.event === 'messages') {
             hadStreamEvent = true;
             const data = parseSseJson<Record<string, unknown>>(event.data);
             msgState = applyMessagesEventToState(msgState, data);
             deltaBatcher.push(msgState);
             continue;
           }
-          if (event.event === 'pending_tool_approval') {
+          if (event.event === 'pending_tool_approval' || event.event === 'interrupt') {
             hadStreamEvent = true;
-            const data = parseSseJson<ChatPendingToolApprovalResponse>(event.data);
-            if (!data) {
+            const data = parseSseJson<ChatMessageResponse>(event.data);
+            if (!isPendingToolApproval(data)) {
               throw new Error('工具审批事件格式无效');
             }
             deltaBatcher.flush();
@@ -415,6 +514,38 @@ export function useGeneralChatController() {
             }));
             continue;
           }
+          if (event.event === 'final') {
+            hadStreamEvent = true;
+            sawFinalEvent = true;
+            deltaBatcher.flush();
+            const data = parseSseJson<ChatMessageResponse>(event.data);
+            if (isPendingToolApproval(data)) {
+              updateMessage(pendingMessageId, (msg) => ({
+                ...msg,
+                isStreaming: false,
+                pendingToolApproval: toPendingToolApprovalState(data),
+                runId: data.run.id,
+              }));
+              continue;
+            }
+            if (data.status !== 'succeeded') {
+              throw new Error('恢复执行返回了不支持的状态');
+            }
+            const mergedContent = msgState.final_content.trim()
+              ? msgState.final_content
+              : data.assistant_message.content;
+            updateMessage(pendingMessageId, (msg) => ({
+              ...msg,
+              content: mergedContent,
+              think: msgState.thought_log,
+              toolSteps: msgState.tool_steps,
+              pendingToolApproval: undefined,
+              runId: data.run.id,
+              isStreaming: false,
+              evidence: data.evidence,
+            }));
+            continue;
+          }
           if (event.event === 'error') {
             deltaBatcher.flush();
             const err = parseSseJson<{ message?: string }>(event.data);
@@ -423,17 +554,21 @@ export function useGeneralChatController() {
         }
 
         deltaBatcher.flush();
-        msgState = completeMessageState(msgState);
-        updateMessage(pendingMessageId, (msg) => ({
-          ...msg,
-          content: msgState.final_content,
-          think: msgState.thought_log,
-          toolSteps: msgState.tool_steps,
-          isStreaming: false,
-        }));
+        if (!sawFinalEvent) {
+          msgState = completeMessageState(msgState);
+          updateMessage(pendingMessageId, (msg) => ({
+            ...msg,
+            content: msgState.final_content,
+            think: msgState.thought_log,
+            toolSteps: msgState.tool_steps,
+            isStreaming: false,
+          }));
+        }
       } catch (e) {
         if (hadStreamEvent) {
-          setError(e instanceof Error ? e.message : '恢复执行失败');
+          if (!isAbortLikeError(e)) {
+            setError(e instanceof Error ? e.message : '恢复执行失败');
+          }
           setLoading(false);
           return;
         }
@@ -443,6 +578,9 @@ export function useGeneralChatController() {
           setError(fallbackError instanceof Error ? fallbackError.message : '恢复执行失败');
         }
       } finally {
+        if (streamAbortRef.current === streamAbortController) {
+          streamAbortRef.current = null;
+        }
         deltaBatcher.flush();
         setLoading(false);
       }

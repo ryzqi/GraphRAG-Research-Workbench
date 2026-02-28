@@ -9,7 +9,7 @@ from __future__ import annotations
 from typing import Any
 
 from langchain.tools import BaseTool
-from langchain_openai import ChatOpenAI
+from langchain_core.language_models.chat_models import BaseChatModel
 
 from app.agents.kb_chat_agentic_graph import KbChatAgenticGraph
 from app.agents.tool_calling.registry import ToolMeta
@@ -17,7 +17,7 @@ from app.agents.tool_calling.registry import ToolMeta
 
 def build_kb_chat_graph(
     *,
-    chat_model: ChatOpenAI,
+    chat_model: BaseChatModel,
     tools: list[BaseTool],
     tool_meta_by_name: dict[str, ToolMeta],
     kb_chat_config: dict[str, Any] | None = None,

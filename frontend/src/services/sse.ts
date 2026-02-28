@@ -22,6 +22,9 @@ export async function openSseStream(
       signal,
     });
   } catch (err) {
+    if (signal?.aborted || (err as { name?: string } | undefined)?.name === 'AbortError') {
+      throw new HttpError('请求已取消', 499, { body: err instanceof Error ? err.message : err });
+    }
     const baseUrl = getApiBaseUrl();
     const message = baseUrl
       ? `无法连接到后端服务（${baseUrl}）。请确认后端已启动并可访问：${url}，或在 frontend/.env.local 配置 NEXT_PUBLIC_API_BASE_URL。`

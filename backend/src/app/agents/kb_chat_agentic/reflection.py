@@ -16,7 +16,7 @@ from typing import Any, TypeVar
 from langchain.agents import create_agent
 from langchain.messages import AIMessage, HumanMessage, SystemMessage
 from langchain.tools import BaseTool
-from langchain_openai import ChatOpenAI
+from langchain_core.language_models.chat_models import BaseChatModel
 from langgraph.config import get_stream_writer
 from langgraph.runtime import Runtime
 from langgraph.types import Command, Send
@@ -1066,7 +1066,7 @@ def _classify_structured_error(exc: Exception) -> str:
 
 async def _judge_structured(
     *,
-    chat_model: ChatOpenAI,
+    chat_model: BaseChatModel,
     schema: type[_StructuredT],
     system: str,
     user: str,
@@ -1344,7 +1344,7 @@ async def doc_grader_llm(
     state: dict,
     *,
     settings: Settings,
-    chat_model: ChatOpenAI,
+    chat_model: BaseChatModel,
     runtime: Runtime[Any] | None = None,
 ) -> dict[str, Any]:
     """LLM grading for boundary samples after rule precheck."""
@@ -1615,7 +1615,7 @@ async def generate_draft(
     state: dict,
     *,
     settings: Settings,
-    chat_model: ChatOpenAI,
+    chat_model: BaseChatModel,
 ) -> dict[str, Any]:
     """Generate a draft answer using ONLY Top-N final_context; do not append to messages."""
     start = time.perf_counter()
@@ -1683,7 +1683,7 @@ async def answer_review(
     state: dict,
     *,
     settings: Settings,
-    chat_model: ChatOpenAI,
+    chat_model: BaseChatModel,
 ) -> dict[str, Any]:
     """Review draft answer in one pass: factual support + answerability + relevance."""
     start = time.perf_counter()

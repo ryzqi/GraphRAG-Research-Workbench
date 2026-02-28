@@ -1,7 +1,7 @@
 """ToolNode/工具调用统一循环图构建器。
 
 该构建器用于生成标准的：model -> (human_review?) -> tools -> model 循环图。
-- model 节点：调用绑定工具的 ChatOpenAI，产生回答或 tool_calls。
+- model 节点：调用绑定工具的聊天模型，产生回答或 tool_calls。
 - tools 节点：ToolNode 执行工具，追加 ToolMessage。
 - human_review 节点：仅在 GENERAL_CHAT 中使用 interrupt 提供两阶段审批。
 """
@@ -14,7 +14,7 @@ from typing import Any, Sequence
 
 from langchain.messages import AIMessage, SystemMessage, ToolMessage
 from langchain.tools import BaseTool
-from langchain_openai import ChatOpenAI
+from langchain_core.language_models.chat_models import BaseChatModel
 from langgraph.graph import END, StateGraph
 from langgraph.prebuilt import ToolNode
 from langgraph.types import interrupt
@@ -30,7 +30,7 @@ class ToolCallingGraphBuilder:
         self,
         *,
         state_schema: type,
-        chat_model: ChatOpenAI,
+        chat_model: BaseChatModel,
         tools: Sequence[BaseTool],
         tool_meta_by_name: dict[str, ToolMeta],
         require_human_review: bool = False,

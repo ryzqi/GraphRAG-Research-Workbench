@@ -50,6 +50,13 @@ async def managed_task_resources(
             sessionmaker=sessionmaker,
             settings=cfg,
         )
+        # Worker processes are long-lived; refresh every task so runtime model
+        # config updates from the admin page take effect without restarts.
+        async with sessionmaker() as model_config_session:
+            await ModelRuntimeConfigManager.refresh(
+                db=model_config_session,
+                settings=cfg,
+            )
     if with_http:
         http_client = create_http_client(cfg)
     if with_redis:

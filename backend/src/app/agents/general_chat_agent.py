@@ -6,7 +6,7 @@ from typing import Any
 
 from langchain.agents import create_agent
 from langchain.agents.middleware import HumanInTheLoopMiddleware, SummarizationMiddleware
-from langchain_openai import ChatOpenAI
+from langchain_core.language_models.chat_models import BaseChatModel
 
 from app.core.checkpoint import CheckpointManager
 
@@ -69,7 +69,7 @@ def build_hitl_interrupt_on(
 
 def build_general_chat_agent(
     *,
-    chat_model: ChatOpenAI,
+    chat_model: BaseChatModel,
     tools: list[Any],
     system_prompt: str,
     summary_trigger: tuple[str, int] | tuple[str, float],
