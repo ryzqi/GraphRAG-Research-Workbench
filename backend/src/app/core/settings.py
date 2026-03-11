@@ -320,7 +320,6 @@ class Settings(BaseSettings):
     retrieval_cache_enabled: bool = Field(True, alias="RETRIEVAL_CACHE_ENABLED")
     retrieval_min_score: float | None = Field(0.2, alias="RETRIEVAL_MIN_SCORE")
     retrieval_query_lowercase: bool = Field(False, alias="RETRIEVAL_QUERY_LOWERCASE")
-    retrieval_hybrid_enabled: bool = Field(True, alias="RETRIEVAL_HYBRID_ENABLED")
     retrieval_hybrid_ranker: str = Field("rrf", alias="RETRIEVAL_HYBRID_RANKER")
     retrieval_hybrid_dense_weight: float = Field(
         0.6, alias="RETRIEVAL_HYBRID_DENSE_WEIGHT"
@@ -329,16 +328,12 @@ class Settings(BaseSettings):
         0.4, alias="RETRIEVAL_HYBRID_SPARSE_WEIGHT"
     )
     retrieval_hybrid_rrf_k: int = Field(60, alias="RETRIEVAL_HYBRID_RRF_K")
-    retrieval_query_rewrite_enabled: bool = Field(
-        True, alias="RETRIEVAL_QUERY_REWRITE_ENABLED"
-    )
     retrieval_query_rewrite_timeout_seconds: int = Field(
         15, alias="RETRIEVAL_QUERY_REWRITE_TIMEOUT_SECONDS"
     )
     retrieval_query_rewrite_max_tokens: int = Field(
         64, alias="RETRIEVAL_QUERY_REWRITE_MAX_TOKENS"
     )
-    retrieval_rerank_enabled: bool = Field(True, alias="RETRIEVAL_RERANK_ENABLED")
     retrieval_rerank_base_url: str = Field(
         "https://api.openai.com", alias="RETRIEVAL_RERANK_BASE_URL"
     )
@@ -376,14 +371,8 @@ class Settings(BaseSettings):
     )
     kb_chat_json_safe_policy: str = Field("stringify", alias="KB_CHAT_JSON_SAFE_POLICY")
 
-    kb_chat_ambiguity_check_enabled: bool = Field(
-        True, alias="KB_CHAT_AMBIGUITY_CHECK_ENABLED"
-    )
     kb_chat_ambiguity_timeout_seconds: float = Field(
         0.5, alias="KB_CHAT_AMBIGUITY_TIMEOUT_SECONDS"
-    )
-    kb_chat_normalize_llm_enabled: bool = Field(
-        True, alias="KB_CHAT_NORMALIZE_LLM_ENABLED"
     )
     kb_chat_normalize_alias_max: int = Field(
         4, ge=1, le=8, alias="KB_CHAT_NORMALIZE_ALIAS_MAX"
@@ -394,7 +383,6 @@ class Settings(BaseSettings):
     kb_chat_max_clarification_rounds: int = Field(
         1, alias="KB_CHAT_MAX_CLARIFICATION_ROUNDS"
     )
-    kb_chat_hyde_enabled: bool = Field(False, alias="KB_CHAT_HYDE_ENABLED")
     kb_chat_complexity_model_timeout_seconds: float = Field(
         1.5, ge=0.0, le=10.0, alias="KB_CHAT_COMPLEXITY_MODEL_TIMEOUT_SECONDS"
     )
@@ -404,9 +392,6 @@ class Settings(BaseSettings):
     kb_chat_complexity_cache_ttl_seconds: int = Field(
         120, ge=0, alias="KB_CHAT_COMPLEXITY_CACHE_TTL_SECONDS"
     )
-    kb_chat_parallel_retrieval_enabled: bool = Field(
-        True, alias="KB_CHAT_PARALLEL_RETRIEVAL_ENABLED"
-    )
     kb_chat_parallel_retrieval_min_queries: int = Field(
         2, ge=1, le=8, alias="KB_CHAT_PARALLEL_RETRIEVAL_MIN_QUERIES"
     )
@@ -415,33 +400,6 @@ class Settings(BaseSettings):
     )
     kb_chat_parallel_retrieval_include_main: bool = Field(
         True, alias="KB_CHAT_PARALLEL_RETRIEVAL_INCLUDE_MAIN"
-    )
-    kb_chat_rewrite_branch_enabled: bool = Field(
-        True, alias="KB_CHAT_REWRITE_BRANCH_ENABLED"
-    )
-    kb_chat_rewrite_branch_max_candidates: int = Field(
-        4, ge=1, le=8, alias="KB_CHAT_REWRITE_BRANCH_MAX_CANDIDATES"
-    )
-    kb_chat_rewrite_min_confidence: float = Field(
-        0.55, ge=0.0, le=1.0, alias="KB_CHAT_REWRITE_MIN_CONFIDENCE"
-    )
-    kb_chat_rewrite_cache_ttl_seconds: int = Field(
-        120, ge=0, alias="KB_CHAT_REWRITE_CACHE_TTL_SECONDS"
-    )
-    kb_chat_rewrite_retry_attempts: int = Field(
-        2, ge=1, le=4, alias="KB_CHAT_REWRITE_RETRY_ATTEMPTS"
-    )
-    kb_chat_doc_gate_rule_threshold: float = Field(
-        0.45, ge=0.0, le=1.0, alias="KB_CHAT_DOC_GATE_RULE_THRESHOLD"
-    )
-    kb_chat_doc_gate_llm_confidence_floor: float = Field(
-        0.45, ge=0.0, le=1.0, alias="KB_CHAT_DOC_GATE_LLM_CONFIDENCE_FLOOR"
-    )
-    kb_chat_doc_gate_fallback_open_when_evidence_ok: bool = Field(
-        True, alias="KB_CHAT_DOC_GATE_FALLBACK_OPEN_WHEN_EVIDENCE_OK"
-    )
-    kb_chat_doc_gate_cache_ttl_seconds: int = Field(
-        60, ge=0, alias="KB_CHAT_DOC_GATE_CACHE_TTL_SECONDS"
     )
     kb_chat_gray_release_auto_rollback_enabled: bool = Field(
         True, alias="KB_CHAT_GRAY_RELEASE_AUTO_ROLLBACK_ENABLED"

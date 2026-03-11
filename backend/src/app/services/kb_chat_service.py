@@ -171,9 +171,6 @@ class KbChatService:
     @staticmethod
     def _to_retrieval_overrides(config: KbChatConfig) -> dict[str, Any]:
         return {
-            "query_rewrite_enabled": bool(config.query_rewrite_enabled),
-            "hybrid_retrieval_enabled": bool(config.hybrid_retrieval_enabled),
-            "rerank_enabled": bool(config.rerank_enabled),
             "retrieval_top_k": int(config.retrieval_top_k),
             "retrieval_rerank_top_k": int(config.retrieval_rerank_top_k),
             "hybrid_ranker": str(config.retrieval_hybrid_ranker),
@@ -640,15 +637,6 @@ class KbChatService:
                 "max_generation_retries": int(
                     self._settings.kb_chat_max_generation_retries
                 ),
-                "query_rewrite_enabled": bool(kb_chat_config.query_rewrite_enabled),
-                "ambiguity_check_enabled": bool(kb_chat_config.ambiguity_check_enabled),
-                "normalize_llm_enabled": bool(kb_chat_config.normalize_llm_enabled),
-                "normalize_alias_max": int(kb_chat_config.normalize_alias_max),
-                "normalize_timeout_seconds": float(
-                    kb_chat_config.normalize_timeout_seconds
-                ),
-                "hyde_enabled": bool(kb_chat_config.hyde_enabled),
-                "entity_expand_enabled": bool(kb_chat_config.entity_expand_enabled),
                 "entity_expand_max_candidates": int(
                     kb_chat_config.entity_expand_max_candidates
                 ),
@@ -661,30 +649,6 @@ class KbChatService:
                 "entity_expand_timeout_seconds": float(
                     kb_chat_config.entity_expand_timeout_seconds
                 ),
-                "parallel_retrieval_enabled": bool(
-                    kb_chat_config.parallel_retrieval_enabled
-                ),
-                "parallel_retrieval_min_queries": int(
-                    kb_chat_config.parallel_retrieval_min_queries
-                ),
-                "parallel_retrieval_max_branches": int(
-                    kb_chat_config.parallel_retrieval_max_branches
-                ),
-                "parallel_retrieval_include_main": bool(
-                    kb_chat_config.parallel_retrieval_include_main
-                ),
-                "doc_gate_rule_threshold": float(
-                    kb_chat_config.doc_gate_rule_threshold
-                ),
-                "doc_gate_llm_confidence_floor": float(
-                    kb_chat_config.doc_gate_llm_confidence_floor
-                ),
-                "doc_gate_fallback_open_when_evidence_ok": bool(
-                    kb_chat_config.doc_gate_fallback_open_when_evidence_ok
-                ),
-                "doc_gate_cache_ttl_seconds": int(
-                    kb_chat_config.doc_gate_cache_ttl_seconds
-                ),
                 "complexity_model_timeout_seconds": float(
                     self._settings.kb_chat_complexity_model_timeout_seconds
                 ),
@@ -694,10 +658,6 @@ class KbChatService:
                 "complexity_cache_ttl_seconds": int(
                     self._settings.kb_chat_complexity_cache_ttl_seconds
                 ),
-                "hybrid_retrieval_enabled": bool(
-                    kb_chat_config.hybrid_retrieval_enabled
-                ),
-                "rerank_enabled": bool(kb_chat_config.rerank_enabled),
                 "retrieval_top_k": int(kb_chat_config.retrieval_top_k),
                 "retrieval_rerank_top_k": int(kb_chat_config.retrieval_rerank_top_k),
                 "retrieval_hybrid_ranker": str(kb_chat_config.retrieval_hybrid_ranker),
@@ -871,8 +831,8 @@ class KbChatService:
     def _compute_route_consistency(stage_summaries: dict[str, Any]) -> float:
         checks: list[bool] = []
         complexity = (
-            stage_summaries.get("complexity_router")
-            if isinstance(stage_summaries.get("complexity_router"), dict)
+            stage_summaries.get("complexity_classify")
+            if isinstance(stage_summaries.get("complexity_classify"), dict)
             else {}
         )
         if complexity:
@@ -1604,21 +1564,17 @@ class KbChatService:
 
         stage_label_map = {
             "merge_context": "上下文合并",
-            "rewrite_plan": "改写规划",
-            "rewrite_dispatch": "改写并行派发",
-            "rewrite_branch_retrieve": "改写分支验证",
-            "rewrite_fuse": "改写结果融合",
             "coref_rewrite": "指代消解",
             "ambiguity_check": "歧义检测",
             "normalize_rewrite": "问题规范化",
+            "complexity_classify": "复杂度分类",
+            "adaptive_routing": "自适应路由",
             "decomposition": "问题拆解",
             "generate_variants": "多路查询扩展",
             "entity_expand": "实体扩展",
             "hyde": "假设文档扩展",
             "prepare_messages": "检索准备",
             "retrieval": "检索融合",
-            "doc_gate_precheck": "文档预判",
-            "doc_grader_llm": "文档复核",
             "doc_gate_route": "相关性评估",
             "answer_subgraph": "答案子图",
             "generator": "答案生成",
@@ -1802,13 +1758,7 @@ class KbChatService:
                 if value is not None:
                     io_summary[key] = value
 
-        if node in {
-            "rewrite_plan",
-            "rewrite_fuse",
-            "coref_rewrite",
-            "normalize_rewrite",
-            "transform_query",
-        }:
+        if node in {"coref_rewrite", "normalize_rewrite", "transform_query"}:
             query = update.get("normalized_query") or update.get("coref_query")
             if isinstance(query, str) and query.strip():
                 io_summary["query"] = KbChatService._shorten_stream_text(query, 160)
@@ -2551,171 +2501,6 @@ class KbChatService:
             metrics=run.metrics if isinstance(run.metrics, dict) else None,
             run=AgentRunRead.model_validate(run),
         )
-
-    async def answer(
-        self,
-        *,
-        session: ChatSession,
-        user_content: str,
-        run: AgentRun | None = None,
-    ) -> ChatAnswerResponse | ChatPendingUserClarificationResponse:
-        "处理用户问题并生成答案（使用 LangGraph）。"
-        if run is None:
-            cache_hit = await self._semantic_cache_lookup(
-                session=session,
-                question=user_content,
-            )
-            if cache_hit is not None:
-                return await self._persist_semantic_cache_hit(
-                    session=session,
-                    user_content=user_content,
-                    cache_hit=cache_hit,
-                )
-
-        exec_ctx = await self._prepare_kb_chat_execution(
-            session=session, user_content=user_content, run=run
-        )
-        run = exec_ctx.run
-
-        try:
-            store = None
-            try:
-                store = StoreManager.get_store()
-            except Exception:
-                store = None
-
-            result = await exec_ctx.graph.run(
-                exec_ctx.state,
-                thread_id=exec_ctx.thread_id,
-                checkpointer=CheckpointManager.get_checkpointer(),
-                store=store,
-                run_context=exec_ctx.run_context,
-            )
-
-            if not isinstance(result, dict):
-                raise RuntimeError("LangGraph 返回类型不符合预期")
-
-            self._ensure_no_pending_tool_approval(
-                pending_tool_calls=result.get("pending_tool_calls"),
-                interrupts=result.get("__interrupt__"),
-            )
-
-            answer = ""
-            result_messages = result.get("messages")
-            if isinstance(result_messages, list):
-                for msg in reversed(result_messages):
-                    if isinstance(msg, AIMessage):
-                        answer = str(msg.content or "")
-                        break
-
-            base_metrics = (
-                result.get("metrics") if isinstance(result.get("metrics"), dict) else {}
-            )
-            if "protocol_required_field_drift_rate" not in base_metrics:
-                base_metrics = {
-                    **base_metrics,
-                    "protocol_emit_total": 0,
-                    "protocol_required_field_drift_count": 0,
-                    "protocol_required_field_drift_rate": 0.0,
-                }
-
-            metrics, stage_summaries = self._build_observability(
-                kb_chat_config=exec_ctx.kb_chat_config,
-                history_usage=exec_ctx.history_usage,
-                history_truncation=exec_ctx.history_truncation,
-                retrieval_meta=exec_ctx.retrieval_meta,
-                retrieval_results=exec_ctx.retrieval_results,
-                base_metrics=base_metrics,
-                base_stage_summaries=result.get("stage_summaries")
-                if isinstance(result.get("stage_summaries"), dict)
-                else {},
-            )
-            metrics = self._apply_guardrail_metrics(
-                metrics=metrics,
-                stage_summaries=stage_summaries,
-                kb_scope=exec_ctx.retrieval_meta.get("kb_scope")
-                if isinstance(exec_ctx.retrieval_meta, dict)
-                else None,
-            )
-
-            clarification_message, pending_clarification = self._extract_clarification_pending(
-                stage_summaries=stage_summaries,
-                answer=answer,
-            )
-            if clarification_message is not None:
-                max_rounds = max(
-                    0,
-                    int(getattr(self._settings, "kb_chat_max_clarification_rounds", 1)),
-                )
-                current_rounds = self._clarification_round_count(
-                    run.stage_summaries if isinstance(run.stage_summaries, dict) else None
-                )
-                if current_rounds < max_rounds:
-                    return await self._persist_clarification_pending(
-                        session=session,
-                        run=run,
-                        started_at=exec_ctx.started_at,
-                        message=clarification_message,
-                        pending_clarification=pending_clarification,
-                        stage_summaries=stage_summaries,
-                        metrics=metrics,
-                    )
-                stage_summaries = {
-                    **stage_summaries,
-                    "clarification_pending": {
-                        "pending": False,
-                        "round": current_rounds,
-                        "max_rounds": max_rounds,
-                        "max_rounds_reached": True,
-                        "message": clarification_message,
-                        "resolved_at": datetime.now(timezone.utc).isoformat(),
-                    },
-                }
-                answer = (
-                    "基于当前对话信息仍存在关键歧义，暂时无法给出可靠结论。"
-                    "请在下一次提问时明确对象、范围与时间。"
-                )
-
-            terminal_status, terminal_message = self._resolve_terminal_run_status(
-                stage_summaries=stage_summaries,
-                answer=answer,
-            )
-            preferred_evidence_round = self._resolve_preferred_evidence_round(
-                stage_summaries=stage_summaries,
-                loop_counts=result.get("loop_counts")
-                if isinstance(result.get("loop_counts"), dict)
-                else None,
-            )
-            return await self._finalize_run(
-                session=session,
-                run=run,
-                started_at=exec_ctx.started_at,
-                answer=answer,
-                retrieval_results=exec_ctx.retrieval_results,
-                evidence_draft_items_by_round=exec_ctx.evidence_draft_items_by_round,
-                preferred_evidence_round=preferred_evidence_round,
-                stage_summaries=stage_summaries,
-                metrics=metrics,
-                status=terminal_status,
-                error_message=terminal_message,
-            )
-
-        except asyncio.CancelledError:
-            await self._persist_guardrail_run(
-                exec_ctx=exec_ctx,
-                run=run,
-                status=AgentRunStatus.CANCELED,
-                reason="canceled",
-            )
-            raise
-        except Exception as e:
-            run.status = AgentRunStatus.FAILED
-            run.finished_at = datetime.now(timezone.utc)
-            run.error_message = str(e)
-            await self._db.commit()
-            raise
-        finally:
-            set_run_id(None)
 
     async def answer_stream(
         self,

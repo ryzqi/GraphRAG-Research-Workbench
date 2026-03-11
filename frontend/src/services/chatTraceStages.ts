@@ -74,16 +74,11 @@ const STAGE_DEFINITIONS: StageDefinition[] = [
 const NODE_TO_STAGE_ID: Record<string, StageDefinition['id']> = {
   preprocess_subgraph: 'stage_1_preprocess',
   merge_context: 'stage_1_preprocess',
-  rewrite_plan: 'stage_1_preprocess',
-  rewrite_dispatch: 'stage_1_preprocess',
-  rewrite_branch_retrieve: 'stage_1_preprocess',
-  rewrite_fuse: 'stage_1_preprocess',
   coref_rewrite: 'stage_1_preprocess',
   ambiguity_check: 'stage_1_preprocess',
   normalize_rewrite: 'stage_1_preprocess',
 
   complexity_classify: 'stage_2_route',
-  complexity_router: 'stage_2_route',
   adaptive_routing: 'stage_2_route',
   simple_path: 'stage_2_route',
   moderate_path: 'stage_2_route',
@@ -111,8 +106,6 @@ const NODE_TO_STAGE_ID: Record<string, StageDefinition['id']> = {
   transform_query: 'stage_4_retrieve',
 
   evidence_gate_subgraph: 'stage_5_gate',
-  doc_gate_precheck: 'stage_5_gate',
-  doc_grader_llm: 'stage_5_gate',
   doc_gate_sufficiency: 'stage_5_gate',
   doc_gate_answerability: 'stage_5_gate',
   doc_gate_conflict: 'stage_5_gate',

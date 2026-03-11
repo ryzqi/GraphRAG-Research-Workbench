@@ -43,11 +43,7 @@ _NODE_METADATA: dict[str, dict[str, Any]] = {
     "retrieval_subgraph": {"label": "检索子图", "phase": "retrieve", "order": 11},
     "evidence_gate_subgraph": {"label": "证据门控子图", "phase": "judge", "order": 16},
     "merge_context": {"label": "\u4e0a\u4e0b\u6587\u5408\u5e76", "phase": "preprocess", "order": 0},
-    "rewrite_plan": {"label": "\u6539\u5199\u89c4\u5212", "phase": "preprocess", "order": 1},
-    "rewrite_dispatch": {"label": "\u6539\u5199\u5e76\u884c\u6d3e\u53d1", "phase": "preprocess", "order": 2},
-    "rewrite_branch_retrieve": {"label": "\u6539\u5199\u5206\u652f\u9a8c\u8bc1", "phase": "preprocess", "order": 3},
-    "rewrite_fuse": {"label": "\u6539\u5199\u7ed3\u679c\u878d\u5408", "phase": "preprocess", "order": 4},
-    "complexity_router": {"label": "\u590d\u6742\u5ea6\u8def\u7531", "phase": "preprocess", "order": 5},
+    "complexity_classify": {"label": "\u590d\u6742\u5ea6\u5206\u7c7b", "phase": "preprocess", "order": 5},
     "decomposition": {"label": "\u95ee\u9898\u5206\u89e3", "phase": "preprocess", "order": 6},
     "generate_variants": {"label": "\u591a\u8def\u6269\u5c55", "phase": "preprocess", "order": 7},
     "entity_expand": {"label": "\u5b9e\u4f53\u6269\u5c55", "phase": "preprocess", "order": 8},
@@ -57,8 +53,6 @@ _NODE_METADATA: dict[str, dict[str, Any]] = {
     "retrieve_subquery": {"label": "\u5b50\u67e5\u8be2\u68c0\u7d22", "phase": "retrieve", "order": 11},
     "merge_subquery_context": {"label": "\u5b50\u67e5\u8be2\u4e0a\u4e0b\u6587\u5408\u5e76", "phase": "retrieve", "order": 12},
     "retrieve": {"label": "\u77e5\u8bc6\u68c0\u7d22", "phase": "retrieve", "order": 13},
-    "doc_gate_precheck": {"label": "\u6587\u6863\u9884\u5224", "phase": "judge", "order": 14},
-    "doc_grader_llm": {"label": "\u6587\u6863\u590d\u6838", "phase": "judge", "order": 15},
     "doc_gate_route": {"label": "\u6587\u6863\u5224\u5b9a", "phase": "judge", "order": 16},
     "transform_query": {"label": "\u67e5\u8be2\u6539\u5199", "phase": "retrieve", "order": 17},
     "answer_subgraph": {"label": "\u7b54\u6848\u5b50\u56fe", "phase": "generate", "order": 18},
@@ -100,30 +94,6 @@ class PrepareMessagesInput(TypedDict, total=False):
     reflection: dict[str, Any]
 
 
-def _resolve_flag(config: dict[str, Any], key: str, default: bool) -> bool:
-    value = config.get(key)
-    return value if isinstance(value, bool) else default
-
-
-def _resolve_topology_config(
-    *,
-    settings: Any,
-    kb_chat_config: dict[str, Any] | None,
-) -> tuple[bool, bool]:
-    raw = kb_chat_config if isinstance(kb_chat_config, dict) else {}
-    ambiguity = _resolve_flag(
-        raw,
-        "ambiguity_check_enabled",
-        bool(settings.kb_chat_ambiguity_check_enabled),
-    )
-    hyde_flag = _resolve_flag(
-        raw,
-        "hyde_enabled",
-        bool(settings.kb_chat_hyde_enabled),
-    )
-    return ambiguity, hyde_flag
-
-
 def _route_after_preprocess_subgraph(state: dict[str, Any]) -> str:
     reflection = state.get("reflection")
     action = ""
@@ -146,7 +116,7 @@ def _route_after_preprocess_subgraph(state: dict[str, Any]) -> str:
     return "retrieval_subgraph"
 
 
-def _complexity_cache_key_factory(*, direct_target: str) -> Any:
+def _complexity_classify_cache_key_factory(*, direct_target: str) -> Any:
     def _key_func(*args: Any, **kwargs: Any) -> str:
         state: dict[str, Any] = {}
         if args and isinstance(args[0], dict):
@@ -176,7 +146,7 @@ def _complexity_cache_key_factory(*, direct_target: str) -> Any:
             fallback_query = state.get("user_input")
             query = fallback_query if isinstance(fallback_query, str) else ""
         payload = {
-            "router_version": "kb_chat_complexity_router_v4",
+            "classify_version": "kb_chat_complexity_classify_v4",
             "query": query.strip(),
             "recall_risk": str(normalized_meta.get("recall_risk") or "unknown"),
             "has_multi_target": bool(normalized_meta.get("has_multi_target")),
@@ -267,71 +237,6 @@ def _prepare_messages_cache_key_factory() -> Any:
             else {},
         }
         return json.dumps(payload, ensure_ascii=False, sort_keys=True, default=_json_default)
-
-    return _key_func
-
-
-def _rewrite_plan_cache_key_factory() -> Any:
-    def _key_func(*args: Any, **kwargs: Any) -> str:
-        state: dict[str, Any] = {}
-        if args and isinstance(args[0], dict):
-            state = args[0]
-        elif isinstance(kwargs.get("state"), dict):
-            state = cast(dict[str, Any], kwargs["state"])
-        context_frame = state.get("context_frame")
-        if not isinstance(context_frame, dict):
-            context_frame = {}
-        payload = {
-            "version": "kb_chat_rewrite_plan_v1",
-            "rewrite_input_query": str(state.get("rewrite_input_query") or "").strip(),
-            "user_input": str(state.get("user_input") or "").strip(),
-            "summary_text": str(context_frame.get("summary_text") or "").strip(),
-            "memory_snippet": str(context_frame.get("memory_snippet") or "").strip(),
-            "selected_turns": context_frame.get("selected_turns")
-            if isinstance(context_frame.get("selected_turns"), list)
-            else [],
-            "runtime_config": state.get("runtime_config")
-            if isinstance(state.get("runtime_config"), dict)
-            else {},
-        }
-        return json.dumps(payload, ensure_ascii=False, sort_keys=True, default=_json_default)
-
-    return _key_func
-
-
-def _doc_gate_cache_key_factory() -> Any:
-    def _key_func(*args: Any, **kwargs: Any) -> str:
-        state: dict[str, Any] = {}
-        if args and isinstance(args[0], dict):
-            state = args[0]
-        elif isinstance(kwargs.get("state"), dict):
-            state = cast(dict[str, Any], kwargs["state"])
-        question = str(
-            state.get("normalized_query")
-            or state.get("coref_query")
-            or state.get("rewrite_input_query")
-            or state.get("user_input")
-            or ""
-        ).strip()
-        final_context = str(state.get("final_context") or "").strip()
-        runtime_config = (
-            state.get("runtime_config")
-            if isinstance(state.get("runtime_config"), dict)
-            else {}
-        )
-        payload = {
-            "version": "kb_chat_doc_gate_v2",
-            "question": question,
-            "context_hash": hashlib.sha256(final_context.encode("utf-8")).hexdigest(),
-            "doc_gate_rule_threshold": runtime_config.get("doc_gate_rule_threshold"),
-            "doc_gate_llm_confidence_floor": runtime_config.get(
-                "doc_gate_llm_confidence_floor"
-            ),
-            "doc_gate_fallback_open_when_evidence_ok": runtime_config.get(
-                "doc_gate_fallback_open_when_evidence_ok"
-            ),
-        }
-        return json.dumps(payload, ensure_ascii=False, sort_keys=True)
 
     return _key_func
 
@@ -649,7 +554,7 @@ def _build_node_input_display_items(
             ),
         )
     elif node_name in {
-        "complexity_router",
+        "complexity_classify",
         "decomposition",
         "generate_variants",
         "entity_expand",
@@ -753,7 +658,7 @@ def _build_node_input_display_items(
                 label="检索问题",
                 value=_pick_text(snapshot, "normalized_query", "coref_query", "user_input"),
             )
-    elif node_name in {"doc_gate_precheck", "doc_grader_llm", "doc_gate_route"}:
+    elif node_name == "doc_gate_route":
         _append_display_item(
             items,
             key="question",
@@ -978,7 +883,7 @@ def _build_node_output_display_items(
             label="是否变化",
             value=summary.get("rewritten"),
         )
-    elif node_name == "complexity_router":
+    elif node_name == "complexity_classify":
         _append_display_item(
             items,
             key="query_strategy",
@@ -1389,68 +1294,6 @@ def _build_node_output_display_items(
             key="retry_advice",
             label="重试建议",
             value=summary.get("retry_advice"),
-        )
-    elif node_name == "doc_gate_precheck":
-        _append_display_item(
-            items,
-            key="decision_source",
-            label="判定来源",
-            value=summary.get("decision_source"),
-        )
-        _append_display_item(
-            items,
-            key="passed",
-            label="是否直接通过",
-            value=summary.get("passed"),
-        )
-        _append_display_item(
-            items,
-            key="reason",
-            label="预判原因",
-            value=summary.get("reason"),
-        )
-        _append_display_item(
-            items,
-            key="threshold",
-            label="规则阈值",
-            value=summary.get("threshold"),
-        )
-        _append_display_item(
-            items,
-            key="evidence_score",
-            label="证据评分",
-            value=summary.get("evidence_score"),
-        )
-    elif node_name == "doc_grader_llm":
-        _append_display_item(
-            items,
-            key="skipped",
-            label="是否跳过",
-            value=summary.get("skipped"),
-        )
-        _append_display_item(
-            items,
-            key="passed",
-            label="复核是否通过",
-            value=summary.get("passed"),
-        )
-        _append_display_item(
-            items,
-            key="reason",
-            label="复核原因",
-            value=summary.get("reason"),
-        )
-        _append_display_item(
-            items,
-            key="confidence",
-            label="复核置信度",
-            value=summary.get("confidence"),
-        )
-        _append_display_item(
-            items,
-            key="fallback_reason",
-            label="回退原因",
-            value=summary.get("fallback_reason"),
         )
     elif node_name == "transform_query":
         _append_display_item(

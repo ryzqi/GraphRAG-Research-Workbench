@@ -45,22 +45,10 @@ router = APIRouter()
 async def get_kb_chat_graph_schema(
     db: AsyncSessionDep,
     request: Request,
-    query_rewrite_enabled: bool | None = Query(None),
-    ambiguity_check_enabled: bool | None = Query(None),
-    normalize_llm_enabled: bool | None = Query(None),
-    normalize_alias_max: int | None = Query(None, ge=1, le=8),
-    normalize_timeout_seconds: float | None = Query(None, ge=0.0, le=5.0),
-    hyde_enabled: bool | None = Query(None),
-    parallel_retrieval_enabled: bool | None = Query(None),
-    parallel_retrieval_min_queries: int | None = Query(None, ge=1, le=8),
-    parallel_retrieval_max_branches: int | None = Query(None, ge=1, le=12),
-    parallel_retrieval_include_main: bool | None = Query(None),
-    doc_gate_rule_threshold: float | None = Query(None, ge=0.0, le=1.0),
-    doc_gate_llm_confidence_floor: float | None = Query(None, ge=0.0, le=1.0),
-    doc_gate_fallback_open_when_evidence_ok: bool | None = Query(None),
-    doc_gate_cache_ttl_seconds: int | None = Query(None, ge=0, le=300),
-    hybrid_retrieval_enabled: bool | None = Query(None),
-    rerank_enabled: bool | None = Query(None),
+    entity_expand_max_candidates: int | None = Query(None, ge=1, le=12),
+    entity_expand_max_variants: int | None = Query(None, ge=1, le=12),
+    entity_expand_min_confidence: float | None = Query(None, ge=0.0, le=1.0),
+    entity_expand_timeout_seconds: float | None = Query(None, ge=0.0, le=5.0),
     retrieval_top_k: int | None = Query(None, ge=1, le=20),
     retrieval_rerank_top_k: int | None = Query(None, ge=1, le=50),
     retrieval_hybrid_ranker: str | None = Query(None, pattern="^(rrf|weighted)$"),
@@ -78,22 +66,10 @@ async def get_kb_chat_graph_schema(
     raw_config = {
         key: value
         for key, value in {
-            "query_rewrite_enabled": query_rewrite_enabled,
-            "ambiguity_check_enabled": ambiguity_check_enabled,
-            "normalize_llm_enabled": normalize_llm_enabled,
-            "normalize_alias_max": normalize_alias_max,
-            "normalize_timeout_seconds": normalize_timeout_seconds,
-            "hyde_enabled": hyde_enabled,
-            "parallel_retrieval_enabled": parallel_retrieval_enabled,
-            "parallel_retrieval_min_queries": parallel_retrieval_min_queries,
-            "parallel_retrieval_max_branches": parallel_retrieval_max_branches,
-            "parallel_retrieval_include_main": parallel_retrieval_include_main,
-            "doc_gate_rule_threshold": doc_gate_rule_threshold,
-            "doc_gate_llm_confidence_floor": doc_gate_llm_confidence_floor,
-            "doc_gate_fallback_open_when_evidence_ok": doc_gate_fallback_open_when_evidence_ok,
-            "doc_gate_cache_ttl_seconds": doc_gate_cache_ttl_seconds,
-            "hybrid_retrieval_enabled": hybrid_retrieval_enabled,
-            "rerank_enabled": rerank_enabled,
+            "entity_expand_max_candidates": entity_expand_max_candidates,
+            "entity_expand_max_variants": entity_expand_max_variants,
+            "entity_expand_min_confidence": entity_expand_min_confidence,
+            "entity_expand_timeout_seconds": entity_expand_timeout_seconds,
             "retrieval_top_k": retrieval_top_k,
             "retrieval_rerank_top_k": retrieval_rerank_top_k,
             "retrieval_hybrid_ranker": retrieval_hybrid_ranker,
@@ -347,19 +323,15 @@ async def create_chat_message(
     if not session:
         raise not_found("会话不存在", code="CHAT_SESSION_NOT_FOUND")
 
+    if session.session_type == ChatSessionType.KB_CHAT:
+        raise bad_request(
+            code="CHAT_KB_CHAT_STREAM_ONLY",
+            message="知识库问答仅支持流式接口，请使用 /messages/stream",
+        )
+
     llm = request.app.state.llm_client
 
-    if session.session_type == ChatSessionType.KB_CHAT:
-        # 知识库问答
-        milvus = request.app.state.milvus_client
-        embedding = request.app.state.embedding_client
-        reranker = request.app.state.rerank_client
-        redis = request.app.state.redis
-        service = KbChatService(
-            db, llm, milvus, embedding, reranker=reranker, redis=redis
-        )
-        result = await service.answer(session=session, user_content=body.content)
-    elif session.session_type == ChatSessionType.GENERAL_CHAT:
+    if session.session_type == ChatSessionType.GENERAL_CHAT:
         # 普通代理
         service = GeneralChatService(
             db,
@@ -495,65 +467,6 @@ async def resume_general_chat(
         session=session, run=run, approval=body
     )
     if getattr(result, "status", None) == "pending_tool_approval":
-        response.status_code = status.HTTP_202_ACCEPTED
-    return result
-
-
-@router.post(
-    "/{session_id}/runs/{run_id}/clarification",
-    response_model=ChatAnswerResponse | ChatPendingUserClarificationResponse,
-)
-async def resume_kb_chat_after_clarification(
-    db: AsyncSessionDep,
-    request: Request,
-    response: Response,
-    session_id: uuid.UUID,
-    run_id: uuid.UUID,
-    body: ClarificationResumeRequest,
-) -> ChatAnswerResponse | ChatPendingUserClarificationResponse:
-    """提交澄清信息并恢复 KB Chat 执行。"""
-    session = await db.get(ChatSession, session_id)
-    if not session:
-        raise not_found("会话不存在", code="CHAT_SESSION_NOT_FOUND")
-    if session.session_type != ChatSessionType.KB_CHAT:
-        raise bad_request(code="CHAT_NOT_KB_CHAT", message="仅知识库会话支持该恢复接口")
-
-    run = await db.get(AgentRun, run_id)
-    if not run or run.session_id != session.id:
-        raise not_found("运行记录不存在", code="CHAT_RUN_NOT_FOUND")
-    if run.run_type != AgentRunType.KB_ANSWER:
-        raise bad_request(code="CHAT_RUN_TYPE_MISMATCH", message="运行记录类型不匹配")
-    if run.status != AgentRunStatus.RUNNING:
-        raise bad_request(code="CHAT_RUN_NOT_RUNNING", message="运行记录已完成或已失败")
-    clarification_pending = (
-        run.stage_summaries.get("clarification_pending")
-        if isinstance(run.stage_summaries, dict)
-        else None
-    )
-    if not (
-        isinstance(clarification_pending, dict)
-        and clarification_pending.get("pending") is True
-    ):
-        raise bad_request(
-            code="CHAT_NO_PENDING_CLARIFICATION",
-            message="当前运行没有待补充澄清信息",
-        )
-
-    llm = request.app.state.llm_client
-    service = KbChatService(
-        db,
-        llm,
-        request.app.state.milvus_client,
-        request.app.state.embedding_client,
-        reranker=request.app.state.rerank_client,
-        redis=request.app.state.redis,
-    )
-    result = await service.answer(
-        session=session,
-        user_content=body.content,
-        run=run,
-    )
-    if getattr(result, "status", None) == "pending_user_clarification":
         response.status_code = status.HTTP_202_ACCEPTED
     return result
 

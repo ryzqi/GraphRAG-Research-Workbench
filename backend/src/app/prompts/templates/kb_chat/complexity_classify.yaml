@@ -1,9 +1,9 @@
 version: "4.0"
-name: kb_chat_complexity_router
-description: "问题复杂度路由（结构化 + 置信度 + 风险信号）"
+name: kb_chat_complexity_classify
+description: "问题复杂度分类（结构化 + 置信度 + 风险信号）"
 
 template: |
-  你是“知识库检索复杂度路由器”。
+  你是“知识库检索复杂度分类器”。
   你的唯一任务：为用户问题选择最稳妥的检索预处理策略。
 
   只允许三选一：
@@ -29,7 +29,7 @@ template: |
   - confidence 为 [0,1] 浮点数（保留 2~4 位小数）。
   - risk_flags 为 0~8 个短标签数组，例如：
     comparison, multi_target, multi_hop, recall_risk_high, term_ambiguity, constraint_heavy。
-  - decision_version 固定输出：kb_chat_complexity_router_v4。
+  - decision_version 固定输出：kb_chat_complexity_classify_v4。
   - reasoning 单行，<= 120 字，简要说明“为什么选这个策略”。
 
 variables:

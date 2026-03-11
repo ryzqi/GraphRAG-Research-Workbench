@@ -1024,11 +1024,7 @@ class QueryRewriteService:
                 },
             )
 
-        enabled_flag = (
-            bool(getattr(self._settings, "kb_chat_normalize_llm_enabled", True))
-            if llm_enabled is None
-            else bool(llm_enabled)
-        )
+        enabled_flag = True if llm_enabled is None else bool(llm_enabled)
         if not enabled_flag:
             latency_ms = int((time.perf_counter() - start) * 1000)
             return RewriteResult(
@@ -1168,11 +1164,7 @@ class QueryRewriteService:
     ) -> AmbiguityResult:
         """Model-driven ambiguity decision with guardrail fallback."""
         start = time.perf_counter()
-        enabled_flag = (
-            bool(self._settings.kb_chat_ambiguity_check_enabled)
-            if enabled is None
-            else bool(enabled)
-        )
+        enabled_flag = True if enabled is None else bool(enabled)
         if not enabled_flag:
             return AmbiguityResult(ambiguous=False, reason="disabled", latency_ms=0)
 
@@ -1434,12 +1426,12 @@ class QueryRewriteService:
                 success=False,
                 confidence=0.0,
                 risk_flags=[],
-                decision_version="kb_chat_complexity_router_v4",
+                decision_version="kb_chat_complexity_classify_v4",
                 latency_ms=0,
             )
 
         structured_result = await self._call_prompt_structured(
-            "kb_chat/complexity_router",
+            "kb_chat/complexity_classify",
             schema=ComplexityDecision,
             timeout_seconds=timeout_seconds,
             max_tokens=256,
@@ -1460,7 +1452,7 @@ class QueryRewriteService:
             risk_flags = _sanitize_risk_flags(payload.risk_flags)
             decision_version = _normalize_whitespace(payload.decision_version)
             if not decision_version:
-                decision_version = "kb_chat_complexity_router_v4"
+                decision_version = "kb_chat_complexity_classify_v4"
             return ComplexityRouteResult(
                 strategy=strategy,
                 success=True,
@@ -1477,7 +1469,7 @@ class QueryRewriteService:
             success=False,
             confidence=0.0,
             risk_flags=["llm_failed_fallback_direct"],
-            decision_version="kb_chat_complexity_router_v4",
+            decision_version="kb_chat_complexity_classify_v4",
             latency_ms=latency_ms,
         )
 
@@ -1812,11 +1804,7 @@ class QueryRewriteService:
     ) -> QueryListResult:
         """HyDE generator (LLM-first with safe fallback)."""
         start = time.perf_counter()
-        enabled_flag = (
-            bool(self._settings.kb_chat_hyde_enabled)
-            if enabled is None
-            else bool(enabled)
-        )
+        enabled_flag = True if enabled is None else bool(enabled)
         if not enabled_flag:
             return QueryListResult(queries=[], success=False, reason="disabled", latency_ms=0)
 

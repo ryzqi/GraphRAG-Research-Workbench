@@ -37,15 +37,6 @@ export function validateKbChatConfig(value: KbChatConfig): string[] {
   if (value.entity_expand_timeout_seconds < 0 || value.entity_expand_timeout_seconds > 5) {
     errors.push('实体扩展超时需在 0~5 秒。');
   }
-  if (value.doc_gate_rule_threshold < 0 || value.doc_gate_rule_threshold > 1) {
-    errors.push('文档判定规则阈值需在 0~1。');
-  }
-  if (value.doc_gate_llm_confidence_floor < 0 || value.doc_gate_llm_confidence_floor > 1) {
-    errors.push('文档判定置信度阈值需在 0~1。');
-  }
-  if (value.doc_gate_cache_ttl_seconds < 0 || value.doc_gate_cache_ttl_seconds > 300) {
-    errors.push('文档判定缓存 TTL 需在 0~300 秒。');
-  }
 
   return errors;
 }

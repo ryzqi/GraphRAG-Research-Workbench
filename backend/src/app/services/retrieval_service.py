@@ -378,29 +378,10 @@ class RetrievalService:
         self,
         feature_overrides: dict[str, object] | None,
     ) -> RetrievalFeatureFlags:
-        query_rewrite_enabled = bool(self._settings.retrieval_query_rewrite_enabled)
-        hybrid_enabled = bool(self._settings.retrieval_hybrid_enabled)
-        rerank_enabled = bool(self._settings.retrieval_rerank_enabled)
-
-        if isinstance(feature_overrides, dict):
-            override_rewrite = feature_overrides.get("query_rewrite_enabled")
-            if isinstance(override_rewrite, bool):
-                query_rewrite_enabled = override_rewrite
-
-            override_hybrid = feature_overrides.get("hybrid_retrieval_enabled")
-            if not isinstance(override_hybrid, bool):
-                override_hybrid = feature_overrides.get("hybrid_enabled")
-            if isinstance(override_hybrid, bool):
-                hybrid_enabled = override_hybrid
-
-            override_rerank = feature_overrides.get("rerank_enabled")
-            if isinstance(override_rerank, bool):
-                rerank_enabled = override_rerank
-
         return RetrievalFeatureFlags(
-            query_rewrite_enabled=query_rewrite_enabled,
-            hybrid_enabled=hybrid_enabled,
-            rerank_enabled=rerank_enabled,
+            query_rewrite_enabled=True,
+            hybrid_enabled=True,
+            rerank_enabled=True,
         )
 
     def _resolve_runtime_overrides(
@@ -928,11 +909,7 @@ class RetrievalService:
         enabled: bool | None = None,
     ) -> RewriteResult:
         """Optionally rewrite query, preserving timeout behavior."""
-        rewrite_enabled = (
-            bool(self._settings.retrieval_query_rewrite_enabled)
-            if enabled is None
-            else bool(enabled)
-        )
+        rewrite_enabled = True if enabled is None else bool(enabled)
         if not rewrite_enabled:
             return RewriteResult(
                 query=query,
@@ -1807,11 +1784,7 @@ class RetrievalService:
         enabled: bool | None = None,
     ) -> tuple[list[RetrievalResult], bool, str | None, int | None]:
         """Optionally rerank candidates and gracefully degrade on failures."""
-        rerank_enabled = (
-            bool(self._settings.retrieval_rerank_enabled)
-            if enabled is None
-            else bool(enabled)
-        )
+        rerank_enabled = True if enabled is None else bool(enabled)
         if not rerank_enabled:
             return results, False, "disabled", None
 

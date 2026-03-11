@@ -47,9 +47,7 @@ import {
   createChatSession,
   getKbChatGraphSchema,
   isUnexpectedStreamEnd,
-  resumeClarification,
   resolveTerminalRunStatus,
-  sendMessage,
   streamChatMessage,
   streamResumeClarification,
 } from '../services/chats';
@@ -99,20 +97,10 @@ const KbChatFlowPanel = dynamic(
 type TerminalRunStatus = 'succeeded' | 'failed' | 'canceled' | 'waiting_user';
 
 const DEFAULT_KB_CHAT_CONFIG: KbChatConfig = {
-  query_rewrite_enabled: true,
-  ambiguity_check_enabled: true,
-  hyde_enabled: false,
-  entity_expand_enabled: true,
   entity_expand_max_candidates: 8,
   entity_expand_max_variants: 6,
   entity_expand_min_confidence: 0.55,
   entity_expand_timeout_seconds: 1.2,
-  doc_gate_rule_threshold: 0.45,
-  doc_gate_llm_confidence_floor: 0.45,
-  doc_gate_fallback_open_when_evidence_ok: true,
-  doc_gate_cache_ttl_seconds: 60,
-  hybrid_retrieval_enabled: true,
-  rerank_enabled: true,
   retrieval_top_k: 12,
   retrieval_rerank_top_k: 50,
   retrieval_hybrid_ranker: 'rrf',
@@ -125,26 +113,6 @@ const DEFAULT_KB_CHAT_CONFIG: KbChatConfig = {
   retrieval_multiscale_rrf_k: 60,
   retrieval_multiscale_max_documents: 12,
   retrieval_multiscale_max_chunks_per_document: 2,
-};
-
-const KB_CHAT_BOOLEAN_KEYS = [
-  'query_rewrite_enabled',
-  'ambiguity_check_enabled',
-  'hyde_enabled',
-  'entity_expand_enabled',
-  'hybrid_retrieval_enabled',
-  'rerank_enabled',
-] as const;
-
-type KbChatBooleanKey = (typeof KB_CHAT_BOOLEAN_KEYS)[number];
-
-const KB_CHAT_CONFIG_LABELS: Record<KbChatBooleanKey, string> = {
-  query_rewrite_enabled: '查询改写',
-  ambiguity_check_enabled: '歧义检测',
-  hyde_enabled: 'HyDE',
-  entity_expand_enabled: '实体扩展',
-  hybrid_retrieval_enabled: '混合检索',
-  rerank_enabled: '重排序',
 };
 
 function sortPipelineSteps(steps: PipelineStep[]): PipelineStep[] {
@@ -575,13 +543,6 @@ export function KbChatPage() {
   }, [knowledgeBases, selectedKbIds]);
 
   const activeConfig = session?.kb_chat_config ?? kbChatConfig;
-  const enabledConfigLabels = useMemo(
-    () =>
-      (KB_CHAT_BOOLEAN_KEYS as readonly KbChatBooleanKey[])
-        .filter((key) => Boolean(activeConfig[key]))
-        .map((key) => KB_CHAT_CONFIG_LABELS[key]),
-    [activeConfig]
-  );
   const initialConfigErrors = useMemo(() => validateKbChatConfig(kbChatConfig), [kbChatConfig]);
   const parentChildLimitsEnabled = useMemo(
     () => hasSelectedParentChildKnowledgeBase(selectedKbIds, knowledgeBases),
@@ -934,46 +895,6 @@ const applyNodeIoEvent = useCallback(
       });
     };
 
-    const fallbackToJson = async () => {
-      const response: ChatMessageResponse = await sendMessage(session.id, userContent);
-      touchRecent();
-      if (isPendingClarificationResponse(response)) {
-        markClarificationPending(assistantId, response);
-        return;
-      }
-      if (response.status !== 'succeeded') {
-        throw new Error('知识库对话返回了不支持的中间状态');
-      }
-      updateMessage(assistantId, (msg) => {
-        const nextSteps = finalizePipelineSteps(msg.pipelineSteps);
-        const nextRunState = createTerminalRunState(
-          response.run.id,
-          resolveTerminalRunStatus(response.run.status),
-          nextSteps,
-          undefined,
-          msg.runState
-        );
-        return {
-          ...msg,
-          id: response.assistant_message.id,
-          role: 'assistant',
-          content: response.assistant_message.content,
-          stagedContent: response.assistant_message.content,
-          answerRevealReady: true,
-          evidence: response.evidence,
-          confidenceScore: response.confidence_score ?? null,
-          confidenceLevel: response.confidence_level ?? null,
-          responseSource: response.source ?? 'live',
-          cacheMeta: response.cache ?? null,
-          runId: response.run.id,
-          pipelineSteps: nextSteps,
-          runState: nextRunState,
-          pendingClarification: undefined,
-          isStreaming: false,
-        };
-      });
-    };
-
     let hadStreamEvent = false;
     let sawFinalEvent = false;
     let sawErrorEvent = false;
@@ -1171,11 +1092,8 @@ const applyNodeIoEvent = useCallback(
         console.info('kb-chat-stream-metrics', streamMetrics.finalize());
         return;
       }
-      try {
-        await fallbackToJson();
-      } catch (fallbackError) {
-        setError(getErrorMessage(fallbackError));
-      }
+      setError(getErrorMessage(e));
+      streamMetrics.onFailure();
     } finally {
       deltaBatcher.flush();
       console.info('kb-chat-stream-metrics', streamMetrics.finalize());
@@ -1230,44 +1148,6 @@ const applyNodeIoEvent = useCallback(
           thinkStartTime: Date.now(),
         };
       });
-
-      const fallbackToJson = async () => {
-        const response = await resumeClarification(session.id, runId, content);
-        if (isPendingClarificationResponse(response)) {
-          markClarificationPending(messageId, response);
-          return;
-        }
-        if (response.status !== 'succeeded') {
-          throw new Error('恢复执行返回了不支持的状态');
-        }
-        updateMessage(messageId, (msg) => {
-          const nextSteps = finalizePipelineSteps(msg.pipelineSteps);
-          const nextRunState = createTerminalRunState(
-            response.run.id,
-            resolveTerminalRunStatus(response.run.status),
-            nextSteps,
-            undefined,
-            msg.runState
-          );
-          return {
-            ...msg,
-            id: response.assistant_message.id,
-            content: response.assistant_message.content,
-            stagedContent: response.assistant_message.content,
-            answerRevealReady: true,
-            evidence: response.evidence,
-            confidenceScore: response.confidence_score ?? null,
-            confidenceLevel: response.confidence_level ?? null,
-            responseSource: response.source ?? 'live',
-            cacheMeta: response.cache ?? null,
-            runId: response.run.id,
-            pendingClarification: undefined,
-            pipelineSteps: nextSteps,
-            runState: nextRunState,
-            isStreaming: false,
-          };
-        });
-      };
 
       let hadStreamEvent = false;
       let sawFinalEvent = false;
@@ -1466,11 +1346,8 @@ const applyNodeIoEvent = useCallback(
           console.info('kb-chat-stream-metrics', streamMetrics.finalize());
           return;
         }
-        try {
-          await fallbackToJson();
-        } catch (fallbackError) {
-          setError(getErrorMessage(fallbackError));
-        }
+        setError(getErrorMessage(e));
+        streamMetrics.onFailure();
       } finally {
         deltaBatcher.flush();
         console.info('kb-chat-stream-metrics', streamMetrics.finalize());
@@ -1724,12 +1601,6 @@ const applyNodeIoEvent = useCallback(
               <Chip size='small' variant='outlined' label={`+${selectedKbNames.length - 4}`} />
             )}
             {hasPendingClarification && <Chip size='small' color='warning' label='等待补充信息' />}
-            {enabledConfigLabels.slice(0, 6).map((label) => (
-              <Chip key={label} size='small' variant='outlined' label={label} />
-            ))}
-            {enabledConfigLabels.length > 6 && (
-              <Chip size='small' variant='outlined' label={`+${enabledConfigLabels.length - 6}`} />
-            )}
           </Stack>
         </Stack>
       </Paper>

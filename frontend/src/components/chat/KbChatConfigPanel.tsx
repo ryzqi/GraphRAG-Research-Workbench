@@ -1,18 +1,15 @@
 import {
   Alert,
   Box,
-  FormControlLabel,
   Grid,
   MenuItem,
   Paper,
   Stack,
-  Switch,
   TextField,
   Typography,
 } from '@mui/material';
 import SettingsSuggestIcon from '@mui/icons-material/SettingsSuggest';
 import PrecisionManufacturingIcon from '@mui/icons-material/PrecisionManufacturing';
-import FilterAltIcon from '@mui/icons-material/FilterAlt';
 import { alpha } from '@mui/material/styles';
 import type { Theme } from '@mui/material/styles';
 
@@ -25,51 +22,6 @@ interface KbChatConfigPanelProps {
   disabled?: boolean;
   parentChildLimitsEnabled?: boolean;
 }
-
-type ToggleKey =
-  | 'query_rewrite_enabled'
-  | 'ambiguity_check_enabled'
-  | 'hyde_enabled'
-  | 'entity_expand_enabled'
-  | 'hybrid_retrieval_enabled'
-  | 'rerank_enabled';
-
-const FEATURE_TOGGLE_META: ReadonlyArray<{
-  key: ToggleKey;
-  label: string;
-  description: string;
-}> = [
-  {
-    key: 'query_rewrite_enabled',
-    label: '查询改写',
-    description: '检索前先做问题规范化与改写。',
-  },
-  {
-    key: 'ambiguity_check_enabled',
-    label: '歧义检测',
-    description: '先判断问题是否缺信息，再决定是否澄清。',
-  },
-  {
-    key: 'hyde_enabled',
-    label: 'HyDE',
-    description: '生成假设文档并参与检索。',
-  },
-  {
-    key: 'entity_expand_enabled',
-    label: '实体扩展',
-    description: '在多路查询后做实体扩展和别名补全，优先提升召回。',
-  },
-  {
-    key: 'hybrid_retrieval_enabled',
-    label: '混合检索',
-    description: '融合 Dense 与 BM25 召回。',
-  },
-  {
-    key: 'rerank_enabled',
-    label: '重排序',
-    description: '对候选结果语义重排，提升前排质量。',
-  },
-];
 
 const SECTION_SX = {
   p: 1.5,
@@ -104,10 +56,6 @@ export function KbChatConfigPanel({
   disabled = false,
   parentChildLimitsEnabled = true,
 }: KbChatConfigPanelProps) {
-  const handleFeatureToggle = (key: ToggleKey, checked: boolean) => {
-    onChange({ ...value, [key]: checked });
-  };
-
   const handleIntField = (key: keyof KbChatConfig, raw: string) => {
     const parsed = toInt(raw);
     if (parsed === null) {
@@ -166,10 +114,6 @@ export function KbChatConfigPanel({
           </Typography>
         </Stack>
 
-        <Typography variant='body2' color='text.secondary'>
-          系统会自动判断问题复杂度，并在原查询、问题分解、多路查询之间动态路由。
-        </Typography>
-
         {errors.length > 0 && (
           <Alert severity='warning' variant='outlined'>
             {errors.join('；')}
@@ -177,62 +121,13 @@ export function KbChatConfigPanel({
         )}
 
         <Grid container spacing={1.5}>
-          <Grid size={{ xs: 12 }}>
-            <Box sx={SECTION_SX}>
-              <Stack spacing={1}>
-                <Stack direction='row' spacing={1} alignItems='center'>
-                  <FilterAltIcon fontSize='small' color='primary' />
-                  <Typography variant='subtitle2' fontWeight={700}>
-                    流程能力开关
-                  </Typography>
-                </Stack>
-                <Grid container spacing={1}>
-                  {FEATURE_TOGGLE_META.map((item) => (
-                    <Grid key={item.key} size={{ xs: 12, md: 6 }}>
-                      <Box
-                        sx={{
-                          px: 1.1,
-                          py: 0.9,
-                          borderRadius: 1.5,
-                          border: 1,
-                          borderColor: (theme) => alpha(theme.palette.primary.main, 0.14),
-                        }}
-                      >
-                        <FormControlLabel
-                          sx={{ m: 0, width: '100%', alignItems: 'flex-start' }}
-                          control={
-                            <Switch
-                              checked={value[item.key]}
-                              disabled={disabled}
-                              onChange={(_, checked) => handleFeatureToggle(item.key, checked)}
-                            />
-                          }
-                          label={
-                            <Stack spacing={0.2} sx={{ mt: 0.3 }}>
-                              <Typography variant='body2' fontWeight={600}>
-                                {item.label}
-                              </Typography>
-                              <Typography variant='caption' color='text.secondary'>
-                                {item.description}
-                              </Typography>
-                            </Stack>
-                          }
-                        />
-                      </Box>
-                    </Grid>
-                  ))}
-                </Grid>
-              </Stack>
-            </Box>
-          </Grid>
-
           <Grid size={{ xs: 12, md: 6 }}>
             <Box sx={SECTION_SX}>
               <Stack spacing={1.2}>
                 <Stack direction='row' spacing={1} alignItems='center'>
                   <PrecisionManufacturingIcon fontSize='small' color='primary' />
                   <Typography variant='subtitle2' fontWeight={700}>
-                    检索核心参数
+                    检索与扩展参数
                   </Typography>
                 </Stack>
                 <TextField
@@ -263,8 +158,8 @@ export function KbChatConfigPanel({
                     handleIntField('entity_expand_max_candidates', event.target.value)
                   }
                   inputProps={{ min: 1, max: 12 }}
-                  helperText='控制实体扩展候选池大小，召回优先建议 6~10。'
-                  disabled={disabled || !value.entity_expand_enabled}
+                  helperText='实体扩展节点按需触发时使用该候选池大小，召回优先建议 6~10。'
+                  disabled={disabled}
                   fullWidth
                 />
                 <TextField
@@ -275,8 +170,8 @@ export function KbChatConfigPanel({
                     handleIntField('entity_expand_max_variants', event.target.value)
                   }
                   inputProps={{ min: 1, max: 12 }}
-                  helperText='控制扩展后最终保留查询数，需小于等于候选上限。'
-                  disabled={disabled || !value.entity_expand_enabled}
+                  helperText='实体扩展节点按需触发时保留的最终查询数，需小于等于候选上限。'
+                  disabled={disabled}
                   fullWidth
                 />
                 <TextField
@@ -287,8 +182,8 @@ export function KbChatConfigPanel({
                     handleFloatField('entity_expand_min_confidence', event.target.value)
                   }
                   inputProps={{ min: 0, max: 1, step: 0.05 }}
-                  helperText='低于该置信度的扩展候选会被剪枝。'
-                  disabled={disabled || !value.entity_expand_enabled}
+                  helperText='实体扩展节点按需触发时，低于该置信度的候选会被剪枝。'
+                  disabled={disabled}
                   fullWidth
                 />
                 <TextField
@@ -299,8 +194,8 @@ export function KbChatConfigPanel({
                     handleFloatField('entity_expand_timeout_seconds', event.target.value)
                   }
                   inputProps={{ min: 0, max: 5, step: 0.1 }}
-                  helperText='实体扩展节点的模型超时，超时后自动降级。'
-                  disabled={disabled || !value.entity_expand_enabled}
+                  helperText='实体扩展节点按需触发时的模型超时，超时后自动降级。'
+                  disabled={disabled}
                   fullWidth
                 />
                 <TextField

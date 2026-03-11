@@ -18,7 +18,6 @@ import AccountTreeIcon from '@mui/icons-material/AccountTree';
 import HelpOutlineIcon from '@mui/icons-material/HelpOutline';
 import TuneIcon from '@mui/icons-material/Tune';
 import CallSplitIcon from '@mui/icons-material/CallSplit';
-import ChecklistIcon from '@mui/icons-material/Checklist';
 import AltRouteIcon from '@mui/icons-material/AltRoute';
 import HubIcon from '@mui/icons-material/Hub';
 import FactCheckIcon from '@mui/icons-material/FactCheck';
@@ -136,10 +135,6 @@ type DetailSectionKind = 'input' | 'output';
 
 const NODE_BADGE_THEME_MAP: Record<string, NodeBadgeTheme> = {
   merge_context: { icon: MergeTypeIcon, label: '上下文合并', color: '#0EA5E9' },
-  rewrite_plan: { icon: MergeTypeIcon, label: '改写规划', color: '#0EA5E9' },
-  rewrite_dispatch: { icon: AltRouteIcon, label: '改写派发', color: '#0EA5E9' },
-  rewrite_branch_retrieve: { icon: SearchIcon, label: '改写验证', color: '#0EA5E9' },
-  rewrite_fuse: { icon: MergeTypeIcon, label: '改写融合', color: '#0EA5E9' },
   coref_rewrite: { icon: AccountTreeIcon, label: '指代消解', color: '#2563EB' },
   ambiguity_check: { icon: HelpOutlineIcon, label: '歧义判断', color: '#7C3AED' },
   normalize_rewrite: { icon: TuneIcon, label: '问题规范', color: '#4F46E5' },
@@ -149,16 +144,12 @@ const NODE_BADGE_THEME_MAP: Record<string, NodeBadgeTheme> = {
   simple_path: { icon: AltRouteIcon, label: '简单路径', color: '#0284C7' },
   moderate_path: { icon: AltRouteIcon, label: '中等路径', color: '#0284C7' },
   complex_path: { icon: AltRouteIcon, label: '复杂路径', color: '#0284C7' },
-  multi_query_check: { icon: ChecklistIcon, label: '多路判断', color: '#0284C7' },
   generate_variants: { icon: AltRouteIcon, label: '多路扩展', color: '#0D9488' },
   entity_expand: { icon: HubIcon, label: '实体扩展', color: '#059669' },
-  hyde_check: { icon: FactCheckIcon, label: 'HyDE判断', color: '#16A34A' },
   hyde: { icon: AutoFixHighIcon, label: 'HyDE扩展', color: '#16A34A' },
   prepare_messages: { icon: TextSnippetIcon, label: '消息整理', color: '#65A30D' },
   retrieve: { icon: SearchIcon, label: '知识检索', color: '#CA8A04' },
   context_compress: { icon: TuneIcon, label: '上下文压缩', color: '#CA8A04' },
-  doc_gate_precheck: { icon: FactCheckIcon, label: '文档预判', color: '#EA580C' },
-  doc_grader_llm: { icon: GavelIcon, label: '文档复核', color: '#EA580C' },
   doc_gate_sufficiency: { icon: GavelIcon, label: '充分度评分', color: '#EA580C' },
   doc_gate_answerability: { icon: GavelIcon, label: '可回答评分', color: '#EA580C' },
   doc_gate_conflict: { icon: GavelIcon, label: '冲突检测', color: '#EA580C' },
@@ -172,7 +163,6 @@ const NODE_BADGE_THEME_MAP: Record<string, NodeBadgeTheme> = {
   answer_review_factual: { icon: RateReviewIcon, label: '事实审查', color: '#9333EA' },
   answer_review_answerability: { icon: RateReviewIcon, label: '可回答审查', color: '#9333EA' },
   answer_review_fuse: { icon: RateReviewIcon, label: '审查融合', color: '#9333EA' },
-  answer_self_check: { icon: RateReviewIcon, label: '答案自检', color: '#9333EA' },
   answer_repair: { icon: AutoFixHighIcon, label: '答案修复', color: '#A855F7' },
   cove_check: { icon: FactCheckIcon, label: 'CoVe触发', color: '#A855F7' },
   chain_of_verification: { icon: FactCheckIcon, label: 'CoVe验证链', color: '#A855F7' },
@@ -383,7 +373,6 @@ function summaryKeyForNode(nodeId: string): string {
   if (nodeId === 'retrieve') return 'retrieval_layer';
   if (nodeId === 'generate') return 'generator';
   if (nodeId === 'draft_generate') return 'generator';
-  if (nodeId === 'answer_self_check') return 'answer_review';
   if (
     nodeId === 'answer_review_citation' ||
     nodeId === 'answer_review_factual' ||
@@ -484,7 +473,7 @@ function buildFallbackInputItems(
         value: pickText(snapshot, 'normalized_query', 'coref_query', 'user_input'),
       });
     }
-  } else if (['doc_gate_precheck', 'doc_grader_llm', 'doc_gate_route'].includes(nodeId)) {
+  } else if (nodeId === 'doc_gate_route') {
     pushDisplayItem(items, {
       key: 'question',
       label: '待判定问题',
@@ -505,7 +494,6 @@ function buildFallbackInputItems(
     });
   } else if (
     nodeId === 'answer_review' ||
-    nodeId === 'answer_self_check' ||
     nodeId === 'answer_review_citation' ||
     nodeId === 'answer_review_factual' ||
     nodeId === 'answer_review_answerability' ||
@@ -593,31 +581,6 @@ function buildFallbackOutputItems(
       pushDisplayItem(items, { key: 'rewritten', label: '是否改写', value: summary.rewritten });
       pushDisplayItem(items, { key: 'reason', label: '改写原因', value: summary.reason });
       pushDisplayItem(items, { key: 'needs_clarification_hint', label: '建议先澄清', value: summary.needs_clarification_hint });
-    } else if (nodeId === 'rewrite_plan') {
-      const rewritePlan = asRecord(snapshot.rewrite_plan) ?? {};
-      pushDisplayItem(items, { key: 'selected_query', label: '选中查询', value: rewritePlan.selected_query ?? summary.selected_query });
-      pushDisplayItem(items, { key: 'selected_candidate_id', label: '选中候选', value: rewritePlan.selected_candidate_id ?? summary.selected_candidate_id });
-      pushDisplayItem(items, { key: 'candidate_count', label: '候选数', value: summary.candidate_count });
-      pushDisplayItem(items, { key: 'strategy', label: '规划策略', value: summary.strategy });
-      pushDisplayItem(items, { key: 'fallback_reason', label: '回退原因', value: summary.fallback_reason });
-    } else if (nodeId === 'rewrite_dispatch') {
-      pushDisplayItem(items, { key: 'mode', label: '编排模式', value: summary.mode });
-      pushDisplayItem(items, { key: 'branch_count', label: '分支数量', value: summary.branch_count });
-      pushDisplayItem(items, { key: 'candidate_count', label: '候选数量', value: summary.candidate_count });
-      pushDisplayItem(items, { key: 'reason', label: '派发原因', value: summary.reason });
-    } else if (nodeId === 'rewrite_branch_retrieve') {
-      const runs = Array.isArray(snapshot.rewrite_branch_runs) ? snapshot.rewrite_branch_runs : [];
-      const run = asRecord(runs[0]) ?? {};
-      pushDisplayItem(items, { key: 'query', label: '候选查询', value: run.query });
-      pushDisplayItem(items, { key: 'source', label: '候选来源', value: run.source });
-      pushDisplayItem(items, { key: 'retrieval_count', label: '证据数量', value: run.retrieval_count });
-      pushDisplayItem(items, { key: 'success', label: '验证成功', value: run.success });
-      pushDisplayItem(items, { key: 'reason', label: '失败原因', value: run.reason });
-    } else if (nodeId === 'rewrite_fuse') {
-      pushDisplayItem(items, { key: 'selected_candidate_id', label: '选中候选', value: summary.selected_candidate_id });
-      pushDisplayItem(items, { key: 'selected_query', label: '选中查询', value: summary.selected_query });
-      pushDisplayItem(items, { key: 'best_retrieval_count', label: '最佳证据数', value: summary.best_retrieval_count });
-      pushDisplayItem(items, { key: 'fallback_reason', label: '回退原因', value: summary.fallback_reason });
     } else if (nodeId === 'ambiguity_check') {
       pushDisplayItem(items, { key: 'ambiguous', label: '是否歧义', value: summary.ambiguous });
       pushDisplayItem(items, { key: 'reason', label: '判定原因', value: summary.reason });
@@ -753,17 +716,6 @@ function buildFallbackOutputItems(
         label: '分支失败原因',
         value: recordToLines(summary.failure_reasons),
       });
-    } else if (nodeId === 'doc_gate_precheck') {
-      pushDisplayItem(items, { key: 'passed', label: '是否直接通过', value: summary.passed });
-      pushDisplayItem(items, { key: 'reason', label: '预判原因', value: summary.reason });
-      pushDisplayItem(items, { key: 'threshold', label: '规则阈值', value: summary.threshold });
-      pushDisplayItem(items, { key: 'evidence_score', label: '证据评分', value: summary.evidence_score });
-    } else if (nodeId === 'doc_grader_llm') {
-      pushDisplayItem(items, { key: 'skipped', label: '是否跳过', value: summary.skipped });
-      pushDisplayItem(items, { key: 'passed', label: '复核是否通过', value: summary.passed });
-      pushDisplayItem(items, { key: 'reason', label: '复核原因', value: summary.reason });
-      pushDisplayItem(items, { key: 'confidence', label: '复核置信度', value: summary.confidence });
-      pushDisplayItem(items, { key: 'fallback_reason', label: '回退原因', value: summary.fallback_reason });
     } else if (nodeId === 'doc_gate_route') {
       pushDisplayItem(items, { key: 'passed', label: '相关性是否通过', value: summary.passed });
       pushDisplayItem(items, { key: 'action', label: '后续动作', value: reflection.action });
@@ -789,7 +741,6 @@ function buildFallbackOutputItems(
       pushDisplayItem(items, { key: 'final_answer', label: '候选答案', value: pickText(snapshot, 'final_answer') });
     } else if (
       nodeId === 'answer_review' ||
-      nodeId === 'answer_self_check' ||
       nodeId === 'answer_review_citation' ||
       nodeId === 'answer_review_factual' ||
       nodeId === 'answer_review_answerability' ||

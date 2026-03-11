@@ -51,8 +51,8 @@ describe('kbChatTraceStore', () => {
         type: 'node_io',
         raw: {
           run_id: 'run-1',
-          node_id: 'rewrite_branch_retrieve',
-          node_name: 'rewrite_branch_retrieve',
+          node_id: 'retrieve_subquery',
+          node_name: 'retrieve_subquery',
           phase: 'end',
           display_input_items: [{ key: 'query', label: '输入查询', value: '火车票退改签' }],
           display_output_items: [{ key: 'retrieval_count', label: '证据数', value: '4' }],

@@ -172,8 +172,7 @@ pwsh -ExecutionPolicy Bypass -File ./scripts/reset_data.ps1 -Force
   - `KB_CHAT_MAX_RETRIEVAL_RETRIES=2`
   - `KB_CHAT_MAX_GENERATION_RETRIES=1`
 - 查询增强：
-  - `KB_CHAT_AMBIGUITY_CHECK_ENABLED=true`
-  - `KB_CHAT_HYDE_ENABLED=false`
+  - 歧义检测、查询改写、HyDE、实体扩展默认可用，由 LangGraph/LLM 节点按需触发
 - 观测：
   - `KB_CHAT_TRACE_ENABLED=true`
 
@@ -186,10 +185,6 @@ KB_CHAT_GRAPH_RECURSION_LIMIT=30
 KB_CHAT_MAX_TOTAL_ROUNDS=3
 KB_CHAT_MAX_RETRIEVAL_RETRIES=2
 KB_CHAT_MAX_GENERATION_RETRIES=1
-
-# KB Chat query enhancement (optional)
-KB_CHAT_AMBIGUITY_CHECK_ENABLED=true
-KB_CHAT_HYDE_ENABLED=false
 
 # KB Chat observability
 KB_CHAT_TRACE_ENABLED=true

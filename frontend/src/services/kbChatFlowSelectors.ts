@@ -26,22 +26,6 @@ const NODE_DETAIL_POLICY_MAP: Record<string, NodeDetailPolicy> = {
       'memory_included',
     ],
   },
-  rewrite_plan: {
-    input: ['user_input'],
-    output: ['selected_query', 'selected_candidate_id', 'candidate_count', 'strategy', 'fallback_reason'],
-  },
-  rewrite_dispatch: {
-    input: ['selected_query'],
-    output: ['mode', 'branch_count', 'selected_queries', 'reason'],
-  },
-  rewrite_branch_retrieve: {
-    input: ['query'],
-    output: ['query', 'retrieval_count', 'success', 'reason'],
-  },
-  rewrite_fuse: {
-    input: ['rewrite_branch_runs'],
-    output: ['selected_query', 'selected_candidate_id', 'candidate_count', 'fallback_reason'],
-  },
   coref_rewrite: {
     input: ['query'],
     output: ['coref_query', 'confidence', 'selected_mention', 'reason', 'needs_clarification_hint', 'rewritten'],
@@ -78,10 +62,6 @@ const NODE_DETAIL_POLICY_MAP: Record<string, NodeDetailPolicy> = {
     input: ['normalized_query'],
     output: ['sub_queries', 'count'],
   },
-  multi_query_check: {
-    input: ['normalized_query'],
-    output: ['query_count', 'reason'],
-  },
   generate_variants: {
     input: ['normalized_query'],
     output: ['multi_queries', 'count'],
@@ -102,10 +82,6 @@ const NODE_DETAIL_POLICY_MAP: Record<string, NodeDetailPolicy> = {
   hyde: {
     input: ['normalized_query'],
     output: ['enabled', 'hyde_doc'],
-  },
-  hyde_check: {
-    input: ['normalized_query'],
-    output: ['enabled', 'reason'],
   },
   prepare_messages: {
     input: ['normalized_query', 'query_strategy'],
@@ -142,14 +118,6 @@ const NODE_DETAIL_POLICY_MAP: Record<string, NodeDetailPolicy> = {
     input: ['final_context'],
     output: ['token_limit', 'input_tokens', 'output_tokens', 'truncated'],
   },
-  doc_gate_precheck: {
-    input: ['question'],
-    output: ['passed', 'reason', 'threshold', 'evidence_score'],
-  },
-  doc_grader_llm: {
-    input: ['question'],
-    output: ['skipped', 'passed', 'reason', 'confidence', 'fallback_reason'],
-  },
   doc_gate_route: {
     input: ['question'],
     output: ['passed', 'decision_source', 'confidence', 'evidence_score', 'risk_level', 'action'],
@@ -181,10 +149,6 @@ const NODE_DETAIL_POLICY_MAP: Record<string, NodeDetailPolicy> = {
   draft_generate: {
     input: ['question'],
     output: ['draft_answer', 'final_answer'],
-  },
-  answer_self_check: {
-    input: ['question'],
-    output: ['passed', 'reason', 'fallback_reason'],
   },
   answer_repair: {
     input: ['draft_answer'],

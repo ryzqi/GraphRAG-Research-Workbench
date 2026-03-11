@@ -17,7 +17,6 @@ from langchain.agents import create_agent
 from langchain.messages import AIMessage, HumanMessage, SystemMessage
 from langchain.tools import BaseTool
 from langchain_core.language_models.chat_models import BaseChatModel
-from langgraph.config import get_stream_writer
 from langgraph.runtime import Runtime
 from langgraph.types import Command, Send
 from pydantic import BaseModel, ValidationError
@@ -39,27 +38,17 @@ from .dispatch_fuse import (
     build_retrieval_payload,
     make_send_task,
     sort_by_priority_then_index,
-    sort_by_retrieval_then_priority,
 )
 from .json_safety import ensure_json_safe
 from .runtime_config import (
-    doc_gate_fallback_open_when_evidence_ok,
-    doc_gate_llm_confidence_floor,
-    doc_gate_rule_threshold,
-    hyde_enabled,
     normalize_alias_max,
-    normalize_llm_enabled,
     normalize_timeout_seconds,
-    parallel_retrieval_enabled,
     parallel_retrieval_include_main,
     parallel_retrieval_max_branches,
     parallel_retrieval_min_queries,
-    query_rewrite_enabled,
-    rewrite_branch_max_candidates,
-    rewrite_min_confidence,
     retrieval_top_k,
 )
-from .schemas import AnswerReviewDecision, DocGraderDecision
+from .schemas import AnswerReviewDecision
 
 _EVIDENCE_LINE_RE = re.compile(r"^\[([^\[\]\n]{1,128})\]\s+", re.MULTILINE)
 _CITATION_ONLY_FAILURE_REASONS = {
@@ -67,8 +56,6 @@ _CITATION_ONLY_FAILURE_REASONS = {
     "invalid_citations",
     "citation_mismatch",
 }
-_DOC_GATE_RISK_LEVELS = {"low", "medium", "high"}
-_DOC_GATE_RETRY_ADVICES = {"none", "retry", "clarify"}
 
 
 def _as_str(value: object) -> str:
@@ -114,80 +101,6 @@ def _extract_evidence_count(final_context: str) -> int:
     if not final_context:
         return 0
     return sum(1 for _ in _EVIDENCE_LINE_RE.finditer(final_context))
-
-
-def _tokenize_query_terms(query: str) -> set[str]:
-    if not query:
-        return set()
-    lowered = query.lower()
-    terms = re.findall(r"[\w\u4e00-\u9fff]{2,}", lowered)
-    return {term for term in terms if len(term) >= 2}
-
-
-def _estimate_evidence_score(question: str, final_context: str) -> float:
-    labels = _extract_evidence_labels(final_context)
-    label_count = len(labels)
-    if label_count <= 0:
-        return 0.0
-    query_terms = _tokenize_query_terms(question)
-    lower_ctx = final_context.lower()
-    overlap = sum(1 for term in query_terms if term and term in lower_ctx)
-    overlap_ratio = (
-        min(1.0, overlap / max(1, min(len(query_terms), 6)))
-        if query_terms
-        else 0.0
-    )
-    label_score = min(1.0, label_count / 4)
-    score = 0.6 * label_score + 0.4 * overlap_ratio
-    return round(max(0.0, min(1.0, score)), 4)
-
-
-def _default_missing_constraints(reason: str) -> list[str]:
-    if reason == "insufficient":
-        return ["关键约束"]
-    if reason == "too_broad":
-        return ["限定条件"]
-    if reason == "needs_clarification":
-        return ["对象/范围/时间/口径"]
-    if reason in {"no_evidence", "not_relevant"}:
-        return ["相关证据"]
-    return []
-
-
-def _normalize_doc_gate_reason(reason: object, *, passed: bool) -> str:
-    value = _as_str(reason).strip()
-    allowed = {
-        "passed",
-        "no_evidence",
-        "not_relevant",
-        "insufficient",
-        "too_broad",
-        "needs_clarification",
-        "fallback_open",
-        "fallback_closed",
-    }
-    if value in allowed:
-        return value
-    return "passed" if passed else "insufficient"
-
-
-def _normalize_risk_level(value: object, *, passed: bool) -> str:
-    risk = _as_str(value).strip().lower()
-    if risk in _DOC_GATE_RISK_LEVELS:
-        return risk
-    return "low" if passed else "medium"
-
-
-def _normalize_retry_advice(value: object, *, passed: bool) -> str:
-    advice = _as_str(value).strip().lower()
-    if advice in _DOC_GATE_RETRY_ADVICES:
-        return advice
-    return "none" if passed else "retry"
-
-
-def _missing_constraints_hint(missing_constraints: list[str]) -> str:
-    cleaned = [_as_str(item).strip() for item in missing_constraints if _as_str(item).strip()]
-    return "、".join(cleaned[:3])
 
 
 def _resolve_subquery_specs(state: dict) -> list[dict[str, Any]]:
@@ -299,231 +212,6 @@ def _dispatch_quality_score(item: dict[str, Any], *, spec: dict[str, Any]) -> fl
     return round(kind_bonus + coverage_bonus + priority_bonus, 4)
 
 
-def _build_rewrite_dispatch_plan(
-    state: dict,
-    settings: Settings,
-) -> tuple[list[Send] | str, dict[str, Any]]:
-    rewrite_plan = state.get("rewrite_plan")
-    if not isinstance(rewrite_plan, dict):
-        return "complexity_router", {
-            "mode": "single_rewrite",
-            "reason": "missing_plan",
-            "branch_count": 0,
-        }
-    candidates = rewrite_plan.get("candidates")
-    if not isinstance(candidates, list):
-        candidates = []
-    valid_candidates = [item for item in candidates if isinstance(item, dict)]
-    if len(valid_candidates) <= 1:
-        return "complexity_router", {
-            "mode": "single_rewrite",
-            "reason": "single_candidate",
-            "branch_count": 0,
-            "selected_query": rewrite_plan.get("selected_query"),
-        }
-    max_candidates = rewrite_branch_max_candidates(state, settings)
-    send_tasks: list[Send] = []
-    for idx, candidate in enumerate(valid_candidates):
-        if len(send_tasks) >= max_candidates:
-            break
-        query = _as_str(candidate.get("query")).strip()
-        if not query:
-            continue
-        send_tasks.append(
-            make_send_task(
-                "rewrite_branch_retrieve",
-                {
-                    "rewrite_candidate": {
-                        "candidate_id": _as_str(candidate.get("candidate_id"))
-                        or f"rw_{idx + 1}",
-                        "query": query,
-                        "source": _as_str(candidate.get("source")) or "unknown",
-                        "priority": int(candidate.get("priority") or (idx + 1)),
-                    }
-                },
-                state,
-            )
-        )
-    if not send_tasks:
-        return "complexity_router", {
-            "mode": "single_rewrite",
-            "reason": "no_valid_candidates",
-            "branch_count": 0,
-            "selected_query": rewrite_plan.get("selected_query"),
-        }
-    return send_tasks, {
-        "mode": "parallel_rewrite_fanout",
-        "reason": "fanout",
-        "branch_count": len(send_tasks),
-        "candidate_count": len(valid_candidates),
-        "selected_query": rewrite_plan.get("selected_query"),
-    }
-
-
-async def dispatch_rewrite_branches(
-    state: dict,
-    *,
-    settings: Settings,
-    runtime: Runtime[Any] | None = None,
-) -> Command[str]:
-    _ = runtime
-    start = time.perf_counter()
-    goto, diagnostics = _build_rewrite_dispatch_plan(state, settings)
-    return Command(
-        update={
-            "rewrite_branch_runs": [],
-            "retrieval_plan": {
-                "mode": diagnostics.get("mode"),
-                "branch_count": diagnostics.get("branch_count"),
-                "reason": diagnostics.get("reason"),
-            },
-            **_merge_stage_summary(
-                state,
-                "rewrite_dispatch",
-                {
-                    **diagnostics,
-                    "latency_ms": int((time.perf_counter() - start) * 1000),
-                    "completed_at": now_iso(),
-                },
-            ),
-        },
-        goto=goto,
-    )
-
-
-async def rewrite_branch_retrieve(
-    state: dict,
-    *,
-    settings: Settings,
-    kb_tool: BaseTool,
-    runtime: Runtime[Any] | None = None,
-) -> dict[str, Any]:
-    """Retrieve evidence count for one rewrite candidate branch."""
-    candidate = state.get("rewrite_candidate")
-    if not isinstance(candidate, dict):
-        return {"rewrite_branch_runs": []}
-    query = _as_str(candidate.get("query")).strip()
-    if not query:
-        return {"rewrite_branch_runs": []}
-    kb_ids = _resolve_kb_ids(state, runtime)
-    retrieval_round = _get_loop_counts(state).get("retrieval_retries", 0)
-    reason: str | None = None
-    try:
-        payload = build_retrieval_payload(
-            query=query,
-            kb_ids=kb_ids or [],
-            top_k=retrieval_top_k(state, settings),
-            retrieval_round=retrieval_round,
-            query_items=[
-                {
-                    "query": query,
-                    "kind": "rewrite_branch",
-                    "source": candidate.get("source") or "rewrite_plan",
-                    "priority": int(candidate.get("priority") or 1),
-                }
-            ],
-        )
-        context = await kb_tool.ainvoke(payload)
-    except asyncio.CancelledError:
-        raise
-    except Exception:
-        reason = "exception"
-        context = ""
-    retrieval_count = _extract_evidence_count(_as_str(context))
-    return {
-        "rewrite_branch_runs": [
-            {
-                "candidate_id": _as_str(candidate.get("candidate_id")) or "rw_unknown",
-                "query": query,
-                "source": _as_str(candidate.get("source")) or "unknown",
-                "priority": int(candidate.get("priority") or 1),
-                "retrieval_count": retrieval_count,
-                "success": reason is None,
-                "reason": reason,
-            }
-        ]
-    }
-
-
-async def rewrite_fuse(
-    state: dict,
-    *,
-    settings: Settings,
-    runtime: Runtime[Any] | None = None,
-) -> Command[str]:
-    """Fuse rewrite branch results and update selected query for downstream routing."""
-    _ = runtime
-    start = time.perf_counter()
-    rewrite_plan = state.get("rewrite_plan")
-    if not isinstance(rewrite_plan, dict):
-        rewrite_plan = {}
-    raw_runs = state.get("rewrite_branch_runs")
-    if not isinstance(raw_runs, list):
-        raw_runs = []
-    runs = [run for run in raw_runs if isinstance(run, dict)]
-    runs = sort_by_retrieval_then_priority(runs)
-    chosen_run = runs[0] if runs else {}
-    chosen_query = _as_str(chosen_run.get("query")).strip() or _as_str(
-        rewrite_plan.get("selected_query")
-    ).strip()
-    fallback_reason = "none"
-    if not runs:
-        fallback_reason = "rewrite_branch_empty"
-    elif int(chosen_run.get("retrieval_count") or 0) <= 0:
-        fallback_reason = "rewrite_branch_zero_evidence"
-    selected_candidate_id = _as_str(chosen_run.get("candidate_id")).strip() or _as_str(
-        rewrite_plan.get("selected_candidate_id")
-    ).strip()
-    diagnostics = state.get("rewrite_diagnostics")
-    if not isinstance(diagnostics, dict):
-        diagnostics = {}
-    min_confidence = rewrite_min_confidence(state, settings)
-    confidence = float(diagnostics.get("confidence") or rewrite_plan.get("confidence") or 0.0)
-    notes = [
-        str(note)
-        for note in (diagnostics.get("notes") or [])
-        if isinstance(note, str) and note.strip()
-    ]
-    diagnostics_update = {
-        **diagnostics,
-        "selected_candidate_id": selected_candidate_id,
-        "selected_query": chosen_query,
-        "fallback_reason": fallback_reason,
-        "branch_count": len(runs),
-        "min_confidence": min_confidence,
-        "notes": [*notes, "rewrite_branch_fused"],
-    }
-    plan_update = {
-        **rewrite_plan,
-        "selected_query": chosen_query,
-        "selected_candidate_id": selected_candidate_id,
-        "fallback_reason": fallback_reason,
-        "confidence": round(confidence, 4),
-    }
-    return Command(
-        update={
-            "coref_query": chosen_query or state.get("coref_query"),
-            "normalized_query": chosen_query or state.get("normalized_query"),
-            "rewrite_plan": plan_update,
-            "rewrite_diagnostics": diagnostics_update,
-            **_merge_stage_summary(
-                state,
-                "rewrite_fuse",
-                {
-                    "selected_candidate_id": selected_candidate_id,
-                    "selected_query": chosen_query,
-                    "branch_count": len(runs),
-                    "best_retrieval_count": int(chosen_run.get("retrieval_count") or 0),
-                    "fallback_reason": fallback_reason,
-                    "latency_ms": int((time.perf_counter() - start) * 1000),
-                    "completed_at": now_iso(),
-                },
-            ),
-        },
-        goto="complexity_router",
-    )
-
-
 def _build_subquery_dispatch_plan(
     state: dict,
     settings: Settings,
@@ -533,17 +221,6 @@ def _build_subquery_dispatch_plan(
     min_queries = parallel_retrieval_min_queries(state, settings)
     max_branches = parallel_retrieval_max_branches(state, settings)
     include_main = parallel_retrieval_include_main(state, settings)
-    if not parallel_retrieval_enabled(state, settings):
-        return "retrieve", {
-            "mode": "single_retrieve",
-            "strategy": strategy,
-            "reason": "parallel_disabled",
-            "min_queries": min_queries,
-            "max_branches": max_branches,
-            "include_main": include_main,
-            "branch_count": 0,
-            "branch_kinds": {},
-        }
 
     raw_query_items = state.get("query_items")
     if not isinstance(raw_query_items, list):
@@ -1135,19 +812,6 @@ def _force_exit_requested(state: dict) -> bool:
     return isinstance(reflection, dict) and reflection.get("action") == "force_exit"
 
 
-def _doc_gate_state(state: dict[str, Any]) -> dict[str, Any]:
-    raw = state.get("doc_gate_state")
-    return raw if isinstance(raw, dict) else {}
-
-
-def _merge_doc_gate_state(
-    state: dict[str, Any],
-    patch: dict[str, Any],
-) -> dict[str, Any]:
-    merged = {**_doc_gate_state(state), **patch}
-    return {"doc_gate_state": merged}
-
-
 def _resolve_query_text(state: dict) -> str:
     return _as_str(
         state.get("normalized_query")
@@ -1189,7 +853,7 @@ async def kb_retrieve_context(
         )
         query_items = state.get("query_items")
         if isinstance(query_items, list) and query_items:
-            # Pass fanout query bundle to kb_retrieve so RetrievalService.retrieve_layer() can do cross-query fusion.
+            # Pass the query bundle through so retrieval can fuse multi-query evidence.
             payload["query_items"] = query_items
         context = await kb_tool.ainvoke(payload)
     except asyncio.CancelledError:
@@ -1224,7 +888,7 @@ async def kb_retrieve_context(
     }
     metrics = ensure_json_safe(metrics, settings=settings, label="metrics")
 
-    updates: dict[str, Any] = {
+    return {
         "final_context": final_context,
         "retrieval_plan": {
             "mode": "single_retrieve",
@@ -1253,362 +917,6 @@ async def kb_retrieve_context(
             },
         ),
     }
-    return updates
-
-
-async def doc_gate_precheck(
-    state: dict,
-    *,
-    settings: Settings,
-    runtime: Runtime[Any] | None = None,
-) -> dict[str, Any]:
-    """Fast rule gate before LLM grading to reduce unnecessary retries/cost."""
-    del runtime
-    start = time.perf_counter()
-    question = _resolve_query_text(state)
-    final_context = _as_str(state.get("final_context")).strip()
-    evidence_labels = _extract_evidence_labels(final_context)
-    evidence_count = len(evidence_labels)
-    evidence_score = _estimate_evidence_score(question, final_context)
-    threshold = doc_gate_rule_threshold(state, settings)
-
-    passed = False
-    reason = "insufficient"
-    missing_constraints: list[str] = []
-    confidence = 0.0
-    risk_level = "medium"
-    retry_advice = "retry"
-    decision_source = "rule"
-    llm_required = True
-
-    if evidence_count <= 0 or "未找到相关内容" in final_context:
-        passed = False
-        reason = "no_evidence"
-        missing_constraints = ["相关证据"]
-        confidence = 1.0
-        risk_level = "high"
-        retry_advice = "retry"
-        llm_required = False
-    elif evidence_score >= min(1.0, threshold + 0.2) and evidence_count >= 2:
-        passed = True
-        reason = "passed"
-        missing_constraints = []
-        confidence = max(0.65, evidence_score)
-        risk_level = "low"
-        retry_advice = "none"
-        llm_required = False
-    elif evidence_count >= 2 and evidence_score < max(0.12, threshold * 0.5):
-        passed = False
-        reason = "not_relevant"
-        missing_constraints = ["相关证据"]
-        confidence = max(0.55, 1.0 - evidence_score)
-        risk_level = "high"
-        retry_advice = "retry"
-        llm_required = False
-    else:
-        decision_source = "llm"
-        confidence = min(0.6, max(0.2, evidence_score))
-        risk_level = "medium" if evidence_score >= threshold else "high"
-        retry_advice = "retry"
-
-    patch = {
-        "passed": passed,
-        "reason": reason,
-        "missing_constraints": missing_constraints,
-        "confidence": round(max(0.0, min(1.0, confidence)), 4),
-        "evidence_score": round(max(0.0, min(1.0, evidence_score)), 4),
-        "risk_level": risk_level,
-        "retry_advice": retry_advice,
-        "decision_source": decision_source,
-        "fallback_used": False,
-        "fallback_reason": None,
-        "llm_required": llm_required,
-    }
-    return {
-        **_merge_doc_gate_state(state, patch),
-        **_merge_stage_summary(
-            state,
-            "doc_gate_precheck",
-            {
-                **patch,
-                "evidence_count": evidence_count,
-                "threshold": threshold,
-                "latency_ms": int((time.perf_counter() - start) * 1000),
-                "completed_at": now_iso(),
-            },
-        ),
-    }
-
-
-async def doc_grader_llm(
-    state: dict,
-    *,
-    settings: Settings,
-    chat_model: BaseChatModel,
-    runtime: Runtime[Any] | None = None,
-) -> dict[str, Any]:
-    """LLM grading for boundary samples after rule precheck."""
-    del runtime
-    start = time.perf_counter()
-    gate_state = _doc_gate_state(state)
-    if gate_state.get("llm_required") is False:
-        return {
-            **_merge_stage_summary(
-                state,
-                "doc_grader_llm",
-                {
-                    "skipped": True,
-                    "reason": "rule_decided",
-                    "latency_ms": int((time.perf_counter() - start) * 1000),
-                    "completed_at": now_iso(),
-                },
-            )
-        }
-
-    question = _resolve_query_text(state)
-    final_context = _as_str(state.get("final_context")).strip()
-    threshold = doc_gate_rule_threshold(state, settings)
-    confidence_floor = doc_gate_llm_confidence_floor(state, settings)
-    passed = bool(gate_state.get("passed"))
-    reason = _normalize_doc_gate_reason(gate_state.get("reason"), passed=passed)
-    missing_constraints = [
-        _as_str(item).strip()
-        for item in (gate_state.get("missing_constraints") or [])
-        if _as_str(item).strip()
-    ][:3]
-    confidence = float(gate_state.get("confidence") or 0.0)
-    evidence_score = float(
-        gate_state.get("evidence_score") or _estimate_evidence_score(question, final_context)
-    )
-    risk_level = _normalize_risk_level(gate_state.get("risk_level"), passed=passed)
-    retry_advice = _normalize_retry_advice(gate_state.get("retry_advice"), passed=passed)
-    fallback_used = False
-    fallback_reason: str | None = None
-
-    system_prompt = _render_prompt_or_default(
-        "kb_chat/doc_grader",
-        (
-            "You are a strict retrieval relevance grader. "
-            "Determine whether the retrieved snippets are directly relevant to the question "
-            "and sufficient to support the answer."
-            ' Output JSON only: {"passed": true/false, "reason": "..."}'
-        ),
-    )
-    judge: DocGraderDecision | None = None
-    judge, fallback_reason = await _judge_structured(
-        chat_model=chat_model,
-        schema=DocGraderDecision,
-        system=system_prompt,
-        user=f"问题：{question}\n\n检索片段：\n{final_context[:4000]}",
-    )
-    if isinstance(judge, DocGraderDecision):
-        passed = bool(judge.passed)
-        reason = _normalize_doc_gate_reason(judge.reason, passed=passed)
-        missing_constraints = [
-            _as_str(item).strip()
-            for item in (judge.missing_constraints or [])
-            if _as_str(item).strip()
-        ][:3]
-        raw_confidence = max(0.0, min(1.0, float(judge.confidence)))
-        confidence = raw_confidence
-        evidence_score = max(
-            evidence_score,
-            max(0.0, min(1.0, float(judge.evidence_score))),
-        )
-        if passed and raw_confidence <= 0.0:
-            confidence = max(confidence, evidence_score, 0.6)
-        risk_level = _normalize_risk_level(judge.risk_level, passed=passed)
-        retry_advice = _normalize_retry_advice(judge.retry_advice, passed=passed)
-    else:
-        fallback_used = True
-        policy = settings.kb_chat_grader_fail_policy
-        allow_open = bool(policy == "open")
-        if (
-            not allow_open
-            and doc_gate_fallback_open_when_evidence_ok(state, settings)
-            and evidence_score >= threshold
-        ):
-            allow_open = True
-        passed = allow_open
-        reason = "fallback_open" if passed else "fallback_closed"
-        if fallback_reason is None:
-            fallback_reason = "invalid_schema"
-        if passed:
-            retry_advice = "none"
-            risk_level = "medium"
-            missing_constraints = []
-        else:
-            retry_advice = "retry"
-            risk_level = "high"
-            missing_constraints = _default_missing_constraints(reason)
-        confidence = max(confidence, 0.35)
-
-    if passed and confidence < confidence_floor:
-        passed = False
-        reason = "insufficient"
-        retry_advice = "retry"
-        risk_level = "medium"
-        if not missing_constraints:
-            missing_constraints = ["关键约束"]
-
-    if not passed and not missing_constraints:
-        missing_constraints = _default_missing_constraints(reason)
-    if passed:
-        missing_constraints = []
-
-    patch = {
-        "passed": passed,
-        "reason": reason,
-        "missing_constraints": missing_constraints[:3],
-        "confidence": round(max(0.0, min(1.0, confidence)), 4),
-        "evidence_score": round(max(0.0, min(1.0, evidence_score)), 4),
-        "risk_level": _normalize_risk_level(risk_level, passed=passed),
-        "retry_advice": _normalize_retry_advice(retry_advice, passed=passed),
-        "decision_source": "llm",
-        "fallback_used": fallback_used,
-        "fallback_reason": fallback_reason,
-        "llm_required": False,
-    }
-    return {
-        **_merge_doc_gate_state(state, patch),
-        **_merge_stage_summary(
-            state,
-            "doc_grader_llm",
-            {
-                **patch,
-                "confidence_floor": confidence_floor,
-                "latency_ms": int((time.perf_counter() - start) * 1000),
-                "completed_at": now_iso(),
-            },
-        ),
-    }
-
-
-async def doc_gate_route(
-    state: dict,
-    *,
-    settings: Settings,
-    runtime: Runtime[Any] | None = None,
-) -> Command[str]:
-    """Finalize doc gate decision and route with Command."""
-    del runtime
-    start = time.perf_counter()
-    gate_state = _doc_gate_state(state)
-    passed = bool(gate_state.get("passed"))
-    reason = _normalize_doc_gate_reason(gate_state.get("reason"), passed=passed)
-    missing_constraints = [
-        _as_str(item).strip()
-        for item in (gate_state.get("missing_constraints") or [])
-        if _as_str(item).strip()
-    ][:3]
-    if not passed and not missing_constraints:
-        missing_constraints = _default_missing_constraints(reason)
-    hint = _missing_constraints_hint(missing_constraints)
-    confidence = round(max(0.0, min(1.0, float(gate_state.get("confidence") or 0.0))), 4)
-    evidence_score = round(
-        max(0.0, min(1.0, float(gate_state.get("evidence_score") or 0.0))),
-        4,
-    )
-    risk_level = _normalize_risk_level(gate_state.get("risk_level"), passed=passed)
-    retry_advice = _normalize_retry_advice(gate_state.get("retry_advice"), passed=passed)
-    decision_source = _as_str(gate_state.get("decision_source")).strip() or "rule"
-    fallback_used = bool(gate_state.get("fallback_used"))
-    fallback_reason = (
-        _as_str(gate_state.get("fallback_reason")).strip() or None
-    )
-
-    if _force_exit_requested(state):
-        goto = "force_exit"
-    elif passed:
-        goto = "answer_subgraph"
-    else:
-        loop_counts = _get_loop_counts(state)
-        if retry_advice == "none":
-            goto = "force_exit"
-        elif loop_counts["retrieval_retries"] >= int(settings.kb_chat_max_retrieval_retries):
-            goto = "force_exit"
-        elif retry_advice == "clarify" and loop_counts["retrieval_retries"] >= 1:
-            goto = "force_exit"
-        else:
-            goto = "transform_query"
-
-    action = "none" if passed and goto == "answer_subgraph" else "transform_query"
-    if goto == "force_exit":
-        action = "force_exit"
-    updates: dict[str, Any] = {
-        **_merge_doc_gate_state(
-            state,
-            {
-                "passed": passed,
-                "reason": reason,
-                "missing_constraints": missing_constraints,
-                "confidence": confidence,
-                "evidence_score": evidence_score,
-                "risk_level": risk_level,
-                "retry_advice": retry_advice,
-                "decision_source": decision_source,
-                "fallback_used": fallback_used,
-                "fallback_reason": fallback_reason,
-            },
-        ),
-        **_merge_reflection(
-            state,
-            {
-                "relevance_passed": passed,
-                "action": action,
-                "reason": reason,
-                "hint": hint,
-                "confidence": confidence,
-                "evidence_score": evidence_score,
-                "risk_level": risk_level,
-                "retry_advice": retry_advice,
-                "decision_source": decision_source,
-            },
-        ),
-        **_merge_stage_summary(
-            state,
-            "doc_gate_route",
-            {
-                "passed": passed,
-                "reason": reason,
-                "missing_constraints": missing_constraints,
-                "fallback_used": fallback_used,
-                "fallback_reason": fallback_reason,
-                "confidence": confidence,
-                "evidence_score": evidence_score,
-                "risk_level": risk_level,
-                "retry_advice": retry_advice,
-                "decision_source": decision_source,
-                "goto": goto,
-                "latency_ms": int((time.perf_counter() - start) * 1000),
-                "completed_at": now_iso(),
-            },
-        ),
-    }
-
-    writer = None
-    try:
-        writer = get_stream_writer()
-    except Exception:
-        writer = None
-    if callable(writer):
-        writer(
-            {
-                "event_type": "doc_gate_decision",
-                "passed": passed,
-                "reason": reason,
-                "goto": goto,
-                "confidence": confidence,
-                "evidence_score": evidence_score,
-                "risk_level": risk_level,
-                "decision_source": decision_source,
-                "retry_advice": retry_advice,
-                "fallback_reason": fallback_reason,
-                "ts": now_iso(),
-            }
-        )
-
-    return Command(update=updates, goto=goto)
 
 
 async def generate_draft(
@@ -1839,7 +1147,7 @@ async def transform_query_for_retry(
             reason=_as_str(reason) or "retry",
             hint=_as_str(hint) or None,
             timeout_seconds=0,
-            enabled=query_rewrite_enabled(state, settings),
+            enabled=True,
         )
         if result.query.strip():
             new_query = result.query.strip()
@@ -1852,7 +1160,7 @@ async def transform_query_for_retry(
         svc = QueryRewriteService(settings=settings)
         normalize_result = await svc.normalize_rewrite(
             new_query,
-            llm_enabled=normalize_llm_enabled(state, settings),
+            llm_enabled=True,
             alias_limit=normalize_alias_max(state, settings),
             timeout_seconds=normalize_timeout_seconds(state, settings),
         )
@@ -1867,7 +1175,7 @@ async def transform_query_for_retry(
 
     hyde_docs: list[str] = []
     hyde_reason: str | None = None
-    hyde_should_regenerate = HYDE_REGENERATE_ON_RETRY and hyde_enabled(state, settings)
+    hyde_should_regenerate = HYDE_REGENERATE_ON_RETRY
     if hyde_should_regenerate:
         try:
             svc = QueryRewriteService(settings=settings)
@@ -2060,3 +1368,4 @@ def finalize_answer(state: dict) -> dict[str, Any]:
         "final_answer": final_answer,
         "messages": [AIMessage(content=final_answer)],
     }
+

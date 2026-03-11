@@ -12,12 +12,11 @@ from langgraph.types import Command
 from app.agents.kb_chat_agentic.preprocess import (
     ambiguity_check,
     coref_rewrite,
-    complexity_router,
+    complexity_classify,
     decomposition,
     entity_expand,
     generate_variants,
     hyde,
-    hyde_enabled,
     merge_context,
     normalize_rewrite,
     prepare_messages,
@@ -34,20 +33,6 @@ class KbChatGraphContext(TypedDict, total=False):
     message_budget: dict[str, Any]
 
 
-def _resolve_runtime_flag(
-    state: dict[str, Any],
-    *,
-    runtime_key: str,
-    default: bool,
-) -> bool:
-    runtime_cfg = state.get("runtime_config")
-    if isinstance(runtime_cfg, dict):
-        raw = runtime_cfg.get(runtime_key)
-        if isinstance(raw, bool):
-            return raw
-    return default
-
-
 def _merge_stage_summary(
     state: dict[str, Any],
     updates: dict[str, Any],
@@ -60,11 +45,12 @@ def _merge_stage_summary(
     update_stage = updates.get("stage_summaries")
     if isinstance(update_stage, dict):
         stage = {**stage, **update_stage}
-    return {**stage, key: patch}
+    existing = stage.get(key) if isinstance(stage.get(key), dict) else {}
+    return {**stage, key: {**existing, **patch}}
 
 
 async def _complexity_classify(state: dict[str, Any], settings: Settings) -> dict[str, Any]:
-    result = await complexity_router(state, settings)
+    result = await complexity_classify(state, settings)
     updates = result.update if isinstance(result.update, dict) else {}
     goto = result.goto if isinstance(result.goto, str) else ""
     if goto == "decomposition":
@@ -137,13 +123,8 @@ def _adaptive_routing_node(state: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _ambiguity_check_enabled(state: dict[str, Any], settings: Settings) -> str:
-    enabled = _resolve_runtime_flag(
-        state,
-        runtime_key="ambiguity_check_enabled",
-        default=bool(settings.kb_chat_ambiguity_check_enabled),
-    )
-    return "ambiguity_check" if enabled else "normalize_rewrite"
+def _route_to_ambiguity_check(_: dict[str, Any], __: Settings) -> str:
+    return "ambiguity_check"
 
 
 def _noop(_: dict[str, Any]) -> dict[str, Any]:
@@ -162,40 +143,21 @@ def _complex_path(_: dict[str, Any]) -> Command[str]:
     return Command(goto="ENABLE_DECOMPOSITION")
 
 
-def _enable_multi_query_mod(state: dict[str, Any], settings: Settings) -> str:
-    enabled = _resolve_runtime_flag(
-        state,
-        runtime_key="enable_multi_query_mod",
-        default=bool(settings.kb_chat_parallel_retrieval_enabled),
-    )
-    return "generate_variants_mod" if enabled else "prepare_messages"
+def _route_to_generate_variants_mod(_: dict[str, Any], __: Settings) -> str:
+    return "generate_variants_mod"
 
 
-def _enable_decomposition(state: dict[str, Any], settings: Settings) -> str:
-    enabled = _resolve_runtime_flag(
-        state,
-        runtime_key="enable_decomposition",
-        default=True,
-    )
-    return "decomposition" if enabled else "ENABLE_MULTI_QUERY"
+def _route_to_decomposition(_: dict[str, Any], __: Settings) -> str:
+    return "decomposition"
 
 
-def _enable_multi_query(state: dict[str, Any], settings: Settings) -> str:
-    enabled = _resolve_runtime_flag(
-        state,
-        runtime_key="enable_multi_query",
-        default=bool(settings.kb_chat_parallel_retrieval_enabled),
-    )
-    return "generate_variants" if enabled else "entity_expand"
+def _route_to_generate_variants(_: dict[str, Any], __: Settings) -> str:
+    return "generate_variants"
 
 
-def _enable_hyde(state: dict[str, Any], settings: Settings) -> str:
-    enabled = _resolve_runtime_flag(
-        state,
-        runtime_key="enable_hyde",
-        default=hyde_enabled(state, settings),
-    )
-    return "hyde" if enabled else "prepare_messages"
+def _route_to_hyde(state: dict[str, Any], settings: Settings) -> str:
+    _ = (state, settings)
+    return "hyde"
 
 
 async def _prepare_messages_terminal(
@@ -253,7 +215,7 @@ def build_preprocess_subgraph(*, settings: Settings):
     graph.add_edge("coref_rewrite", "AMBIGUITY_CHECK_ENABLED")
     graph.add_conditional_edges(
         "AMBIGUITY_CHECK_ENABLED",
-        lambda state: _ambiguity_check_enabled(state, settings),
+        lambda state: _route_to_ambiguity_check(state, settings),
         {
             "ambiguity_check": "ambiguity_check",
             "normalize_rewrite": "normalize_rewrite",
@@ -282,7 +244,7 @@ def build_preprocess_subgraph(*, settings: Settings):
     graph.add_edge("moderate_path", "ENABLE_MULTI_QUERY_MOD")
     graph.add_conditional_edges(
         "ENABLE_MULTI_QUERY_MOD",
-        lambda state: _enable_multi_query_mod(state, settings),
+        lambda state: _route_to_generate_variants_mod(state, settings),
         {
             "generate_variants_mod": "generate_variants_mod",
             "prepare_messages": "prepare_messages",
@@ -292,7 +254,7 @@ def build_preprocess_subgraph(*, settings: Settings):
     graph.add_edge("complex_path", "ENABLE_DECOMPOSITION")
     graph.add_conditional_edges(
         "ENABLE_DECOMPOSITION",
-        lambda state: _enable_decomposition(state, settings),
+        lambda state: _route_to_decomposition(state, settings),
         {
             "decomposition": "decomposition",
             "ENABLE_MULTI_QUERY": "ENABLE_MULTI_QUERY",
@@ -301,7 +263,7 @@ def build_preprocess_subgraph(*, settings: Settings):
     graph.add_edge("decomposition", "ENABLE_MULTI_QUERY")
     graph.add_conditional_edges(
         "ENABLE_MULTI_QUERY",
-        lambda state: _enable_multi_query(state, settings),
+        lambda state: _route_to_generate_variants(state, settings),
         {
             "generate_variants": "generate_variants",
             "entity_expand": "entity_expand",
@@ -311,7 +273,7 @@ def build_preprocess_subgraph(*, settings: Settings):
     graph.add_edge("entity_expand", "ENABLE_HYDE")
     graph.add_conditional_edges(
         "ENABLE_HYDE",
-        lambda state: _enable_hyde(state, settings),
+        lambda state: _route_to_hyde(state, settings),
         {
             "hyde": "hyde",
             "prepare_messages": "prepare_messages",

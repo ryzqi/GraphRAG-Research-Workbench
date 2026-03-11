@@ -160,7 +160,7 @@ ComplexityStrategy = Literal["direct", "decomposition", "multi_query"]
 
 
 class ComplexityDecision(BaseModel):
-    """复杂度路由结构化输出。"""
+    """复杂度分类结构化输出。"""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -183,7 +183,7 @@ class ComplexityDecision(BaseModel):
         description="路由关键风险信号，如 comparison/multi_target/recall_risk_high。",
     )
     decision_version: str = Field(
-        default="kb_chat_complexity_router_v4",
+        default="kb_chat_complexity_classify_v4",
         min_length=1,
         max_length=64,
         description="路由策略版本标识，便于可观测与回溯。",

@@ -13,8 +13,8 @@ describe('chatTraceStages', () => {
       nodeIoEvents: [
         {
           run_id: 'run-1',
-          node_id: 'rewrite_branch_retrieve',
-          node_name: 'rewrite_branch_retrieve',
+          node_id: 'merge_context',
+          node_name: 'merge_context',
           phase: 'end',
           ts: '2026-01-01T00:00:00.000Z',
         },
