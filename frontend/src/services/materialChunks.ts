@@ -25,6 +25,15 @@ export interface DocumentChunk {
   context_attempts: number;
   chunking_strategy: string;
   heading_path: string | null;
+  global_chunk_order?: number;
+  window_id: number | null;
+  window_size_tokens: number | null;
+  window_overlap_tokens: number | null;
+  token_start: number | null;
+  token_end: number | null;
+  source_kind?: string | null;
+  source_page_start?: number | null;
+  source_page_end?: number | null;
   locator: Record<string, unknown> | null;
   token_count: number | null;
   created_at: string;

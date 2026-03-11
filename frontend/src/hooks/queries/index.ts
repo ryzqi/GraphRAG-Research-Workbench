@@ -49,6 +49,8 @@ export {
 
 export {
   useMaterialsWithChunkStats,
+  useAllMaterialsWithChunkStats,
+  useAllMaterialChunks,
   useMaterialChunks,
   useMaterialChunkDetail,
   materialChunkKeys,
