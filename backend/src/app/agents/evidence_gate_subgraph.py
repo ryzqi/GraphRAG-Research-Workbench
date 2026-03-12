@@ -8,6 +8,10 @@ from typing import Any, TypedDict
 from langgraph.graph import END, StateGraph
 from langgraph.types import Command, Send
 
+from app.agents.kb_chat_trace_nodes import (
+    KB_CHAT_NODE_METADATA,
+    wrap_kb_chat_node_with_io,
+)
 from app.agents.kb_chat_agentic_state import KbChatAgenticState
 from app.core.settings import Settings
 from app.utils.token_counter import count_tokens_approximately
@@ -279,7 +283,15 @@ def build_evidence_gate_subgraph(*, settings: Settings):
         state_schema=KbChatAgenticState,
         context_schema=KbChatGraphContext,
     )
-    graph.add_node(
+    def add_traced_node(node_id: str, node_callable: Any, **kwargs: Any) -> None:
+        graph.add_node(
+            node_id,
+            wrap_kb_chat_node_with_io(node_id, node_callable),
+            metadata=KB_CHAT_NODE_METADATA[node_id],
+            **kwargs,
+        )
+
+    add_traced_node(
         "doc_gate_dispatch",
         _doc_gate_dispatch,
         destinations=(
@@ -288,11 +300,11 @@ def build_evidence_gate_subgraph(*, settings: Settings):
             "doc_gate_conflict",
         ),
     )
-    graph.add_node("doc_gate_sufficiency", _doc_gate_sufficiency)
-    graph.add_node("doc_gate_answerability", _doc_gate_answerability)
-    graph.add_node("doc_gate_conflict", _doc_gate_conflict)
-    graph.add_node("doc_gate_fuse", _doc_gate_fuse)
-    graph.add_node("doc_gate_route", _doc_gate_route)
+    add_traced_node("doc_gate_sufficiency", _doc_gate_sufficiency)
+    add_traced_node("doc_gate_answerability", _doc_gate_answerability)
+    add_traced_node("doc_gate_conflict", _doc_gate_conflict)
+    add_traced_node("doc_gate_fuse", _doc_gate_fuse)
+    add_traced_node("doc_gate_route", _doc_gate_route)
 
     graph.set_entry_point("doc_gate_dispatch")
     graph.add_edge("doc_gate_sufficiency", "doc_gate_fuse")

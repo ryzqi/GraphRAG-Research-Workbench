@@ -60,7 +60,7 @@ pwsh -ExecutionPolicy Bypass -File .\scripts\start_all.ps1
 ```
 
 > **注意**：若 `up.ps1` 脚本报错，可直接运行：
->
+> 
 > ```powershell
 > cd infra
 > podman-compose up -d

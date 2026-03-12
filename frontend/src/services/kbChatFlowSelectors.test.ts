@@ -35,4 +35,25 @@ describe('kbChatFlowSelectors', () => {
 
     expect(result.some((item) => item.key === 'risk_hint')).toBe(true);
   });
+
+  it('keeps explicit display items for dispatch nodes while prioritizing key fields', () => {
+    const result = selectKbChatFlowDetailItems({
+      nodeId: 'answer_review_dispatch',
+      section: 'output',
+      items: [
+        { key: 'check_count', label: '审查数量', value: '3' },
+        { key: 'checks', label: '审查列表', value: ['citation', 'factual', 'answerability'] },
+        { key: 'dispatch_reason', label: '分发原因', value: '需要并行审查' },
+        { key: 'router_note', label: '路由备注', value: 'keep-me' },
+      ],
+      event: null,
+    });
+
+    expect(result.map((item) => item.key)).toEqual([
+      'check_count',
+      'checks',
+      'dispatch_reason',
+      'router_note',
+    ]);
+  });
 });

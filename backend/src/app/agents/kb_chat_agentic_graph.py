@@ -5,7 +5,6 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, TypedDict, cast
 import hashlib
-import inspect
 import json
 
 from functools import partial
@@ -13,12 +12,9 @@ from functools import partial
 from langchain.tools import BaseTool
 from langchain_core.language_models.chat_models import BaseChatModel
 from langgraph.cache.memory import InMemoryCache
-from langgraph.config import get_stream_writer
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, StateGraph
-from langgraph.runtime import Runtime
 from langgraph.store.base import BaseStore
-from langgraph.types import Command
 
 from app.agents.kb_chat_agentic_state import KbChatAgenticState
 from app.agents.tool_calling.registry import ToolMeta
@@ -26,6 +22,10 @@ from app.core.settings import get_settings
 
 from app.agents.answer_subgraph import build_answer_subgraph
 from app.agents.evidence_gate_subgraph import build_evidence_gate_subgraph
+from app.agents.kb_chat_trace_nodes import (
+    KB_CHAT_NODE_METADATA,
+    wrap_kb_chat_node_with_io as shared_wrap_node_with_io,
+)
 from app.agents.preprocess_subgraph import build_preprocess_subgraph
 from app.agents.retrieval_subgraph import build_retrieval_subgraph
 from app.agents.kb_chat_agentic.tool_loop import force_exit_node
@@ -38,30 +38,7 @@ from app.agents.kb_chat_agentic.reflection import (
 )
 
 
-_NODE_METADATA: dict[str, dict[str, Any]] = {
-    "preprocess_subgraph": {"label": "预处理子图", "phase": "preprocess", "order": 0},
-    "retrieval_subgraph": {"label": "检索子图", "phase": "retrieve", "order": 11},
-    "evidence_gate_subgraph": {"label": "证据门控子图", "phase": "judge", "order": 16},
-    "merge_context": {"label": "\u4e0a\u4e0b\u6587\u5408\u5e76", "phase": "preprocess", "order": 0},
-    "complexity_classify": {"label": "\u590d\u6742\u5ea6\u5206\u7c7b", "phase": "preprocess", "order": 5},
-    "decomposition": {"label": "\u95ee\u9898\u5206\u89e3", "phase": "preprocess", "order": 6},
-    "generate_variants": {"label": "\u591a\u8def\u6269\u5c55", "phase": "preprocess", "order": 7},
-    "entity_expand": {"label": "\u5b9e\u4f53\u6269\u5c55", "phase": "preprocess", "order": 8},
-    "hyde": {"label": "HyDE\u6269\u5c55", "phase": "preprocess", "order": 9},
-    "prepare_messages": {"label": "\u6d88\u606f\u6574\u7406", "phase": "preprocess", "order": 10},
-    "dispatch_subqueries": {"label": "\u5b50\u67e5\u8be2\u6d3e\u53d1", "phase": "retrieve", "order": 10},
-    "retrieve_subquery": {"label": "\u5b50\u67e5\u8be2\u68c0\u7d22", "phase": "retrieve", "order": 11},
-    "merge_subquery_context": {"label": "\u5b50\u67e5\u8be2\u4e0a\u4e0b\u6587\u5408\u5e76", "phase": "retrieve", "order": 12},
-    "retrieve": {"label": "\u77e5\u8bc6\u68c0\u7d22", "phase": "retrieve", "order": 13},
-    "doc_gate_route": {"label": "\u6587\u6863\u5224\u5b9a", "phase": "judge", "order": 16},
-    "transform_query": {"label": "\u67e5\u8be2\u6539\u5199", "phase": "retrieve", "order": 17},
-    "answer_subgraph": {"label": "\u7b54\u6848\u5b50\u56fe", "phase": "generate", "order": 18},
-    "generate": {"label": "\u7b54\u6848\u751f\u6210", "phase": "generate", "order": 18},
-    "answer_review": {"label": "\u7b54\u6848\u5ba1\u67e5", "phase": "verify", "order": 19},
-    "finalize": {"label": "\u7b54\u6848\u6574\u7406", "phase": "finalize", "order": 20},
-    "force_exit": {"label": "\u63d0\u524d\u7ec8\u6b62", "phase": "finalize", "order": 21},
-    "confidence_calibrate": {"label": "\u7f6e\u4fe1\u5ea6\u6821\u51c6", "phase": "finalize", "order": 22},
-}
+_NODE_METADATA: dict[str, dict[str, Any]] = KB_CHAT_NODE_METADATA
 
 _KB_CHAT_GRAPH_CACHE = InMemoryCache()
 
@@ -1397,134 +1374,7 @@ def _build_node_output_display_items(
 
 
 def _wrap_node_with_io(node_name: str, node_callable: Any):
-    signature = inspect.signature(node_callable)
-    accepts_runtime = "runtime" in signature.parameters
-
-    async def _wrapped(
-        state: dict[str, Any], runtime: Runtime[Any]
-    ) -> dict[str, Any] | Command[str]:
-        writer = None
-        try:
-            writer = get_stream_writer()
-        except Exception:
-            writer = None
-
-        input_snapshot = _to_json_compatible(state)
-        input_summary = _build_snapshot_summary(input_snapshot)
-        display_input_items = _build_node_input_display_items(
-            node_name=node_name,
-            input_snapshot=input_snapshot,
-        )
-        started_at = datetime.now(timezone.utc)
-
-        if callable(writer):
-            payload = {
-                "event_type": "node_io",
-                "node_name": node_name,
-                "phase": "start",
-                "input_summary": input_summary,
-                "input_snapshot": input_snapshot,
-                "ts": _to_iso_now(),
-            }
-            if display_input_items:
-                payload["display_input_items"] = display_input_items
-            writer(
-                payload
-            )
-
-        try:
-            result = (
-                node_callable(state, runtime=runtime)
-                if accepts_runtime
-                else node_callable(state)
-            )
-            updates = await result if inspect.isawaitable(result) else result
-            if isinstance(updates, Command):
-                command_update = updates.update
-                if isinstance(command_update, dict):
-                    output_payload = {**command_update}
-                elif command_update is None:
-                    output_payload = {}
-                else:
-                    output_payload = {"value": _to_json_compatible(command_update)}
-                output_payload["__command__"] = {
-                    "goto": _to_json_compatible(updates.goto),
-                    "resume": _to_json_compatible(updates.resume),
-                    "graph": _to_json_compatible(updates.graph),
-                }
-                output_snapshot = _to_json_compatible(output_payload)
-                result_payload: dict[str, Any] | Command[str] = updates
-            else:
-                safe_updates = (
-                    updates
-                    if isinstance(updates, dict)
-                    else {"value": _to_json_compatible(updates)}
-                )
-                output_snapshot = _to_json_compatible(safe_updates)
-                result_payload = safe_updates
-            output_summary = _build_snapshot_summary(output_snapshot)
-            display_output_items = _build_node_output_display_items(
-                node_name=node_name,
-                output_snapshot=output_snapshot,
-            )
-            if callable(writer):
-                payload = {
-                    "event_type": "node_io",
-                    "node_name": node_name,
-                    "phase": "end",
-                    "input_summary": input_summary,
-                    "output_summary": output_summary,
-                    "output_snapshot": output_snapshot,
-                    "latency_ms": max(
-                        0,
-                        int(
-                            (datetime.now(timezone.utc) - started_at).total_seconds()
-                            * 1000
-                        ),
-                    ),
-                    "ts": _to_iso_now(),
-                }
-                if display_input_items:
-                    payload["display_input_items"] = display_input_items
-                if display_output_items:
-                    payload["display_output_items"] = display_output_items
-                writer(
-                    payload
-                )
-            return result_payload
-        except Exception as exc:
-            if callable(writer):
-                display_output_items = _build_node_output_display_items(
-                    node_name=node_name,
-                    output_snapshot=None,
-                    error_summary=str(exc),
-                )
-                payload = {
-                    "event_type": "node_io",
-                    "node_name": node_name,
-                    "phase": "error",
-                    "input_summary": input_summary,
-                    "error_summary": str(exc),
-                    "latency_ms": max(
-                        0,
-                        int(
-                            (datetime.now(timezone.utc) - started_at).total_seconds()
-                            * 1000
-                        ),
-                    ),
-                    "ts": _to_iso_now(),
-                }
-                if display_input_items:
-                    payload["display_input_items"] = display_input_items
-                if display_output_items:
-                    payload["display_output_items"] = display_output_items
-                writer(
-                    payload
-                )
-            raise
-
-    return _wrapped
-
+    return shared_wrap_node_with_io(node_name, node_callable)
 
 class KbChatAgenticGraph:
     """Agentic KB chat graph (preprocess → retrieval → reflection → answer)."""
@@ -1560,24 +1410,24 @@ class KbChatAgenticGraph:
         answer_subgraph = build_answer_subgraph(settings=settings, chat_model=chat_model)
         graph.add_node(
             "preprocess_subgraph",
-            preprocess_subgraph,
+            _wrap_node_with_io("preprocess_subgraph", preprocess_subgraph),
             metadata=_NODE_METADATA["preprocess_subgraph"],
             destinations=("retrieval_subgraph", "transform_query", "force_exit"),
         )
         graph.add_node(
             "retrieval_subgraph",
-            retrieval_subgraph,
+            _wrap_node_with_io("retrieval_subgraph", retrieval_subgraph),
             metadata=_NODE_METADATA["retrieval_subgraph"],
         )
         graph.add_node(
             "evidence_gate_subgraph",
-            evidence_gate_subgraph,
+            _wrap_node_with_io("evidence_gate_subgraph", evidence_gate_subgraph),
             metadata=_NODE_METADATA["evidence_gate_subgraph"],
             destinations=("answer_subgraph", "transform_query", "force_exit"),
         )
         graph.add_node(
             "answer_subgraph",
-            answer_subgraph,
+            _wrap_node_with_io("answer_subgraph", answer_subgraph),
             metadata=_NODE_METADATA["answer_subgraph"],
         )
         graph.add_node(
@@ -1681,3 +1531,4 @@ class KbChatAgenticGraph:
         context = run_context or self.make_run_context(thread_id=thread_id, state=state)
         result = await compiled.ainvoke(state, config, context=context)
         return cast(dict[str, Any], result)
+

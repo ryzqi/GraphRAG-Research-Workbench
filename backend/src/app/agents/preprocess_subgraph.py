@@ -21,6 +21,10 @@ from app.agents.kb_chat_agentic.preprocess import (
     normalize_rewrite,
     prepare_messages,
 )
+from app.agents.kb_chat_trace_nodes import (
+    KB_CHAT_NODE_METADATA,
+    wrap_kb_chat_node_with_io,
+)
 from app.agents.kb_chat_agentic_state import KbChatAgenticState
 from app.core.settings import Settings
 
@@ -185,30 +189,35 @@ def build_preprocess_subgraph(*, settings: Settings):
         state_schema=KbChatAgenticState,
         context_schema=KbChatGraphContext,
     )
-    graph.add_node("merge_context", partial(merge_context, settings=settings))
-    graph.add_node("coref_rewrite", partial(coref_rewrite, settings=settings))
-    graph.add_node(
-        "AMBIGUITY_CHECK_ENABLED",
-        _noop,
-    )
-    graph.add_node("ambiguity_check", partial(ambiguity_check, settings=settings))
-    graph.add_node("normalize_rewrite", partial(normalize_rewrite, settings=settings))
-    graph.add_node("complexity_classify", partial(_complexity_classify, settings=settings))
-    graph.add_node("adaptive_routing", _adaptive_routing_node)
-    graph.add_node("simple_path", _simple_path)
-    graph.add_node("moderate_path", _moderate_path)
-    graph.add_node("complex_path", _complex_path)
-    graph.add_node("ENABLE_MULTI_QUERY_MOD", _noop)
-    graph.add_node("generate_variants_mod", partial(generate_variants, settings=settings))
-    graph.add_node("ENABLE_DECOMPOSITION", _noop)
-    graph.add_node("decomposition", partial(decomposition, settings=settings))
-    graph.add_node("ENABLE_MULTI_QUERY", _noop)
-    graph.add_node("generate_variants", partial(generate_variants, settings=settings))
-    graph.add_node("entity_expand", partial(entity_expand, settings=settings))
-    graph.add_node("ENABLE_HYDE", _noop)
-    graph.add_node("hyde", partial(hyde, settings=settings))
-    graph.add_node("prepare_messages", partial(_prepare_messages_terminal, settings=settings))
-    graph.add_node("preprocess_exit", _preprocess_exit)
+    def add_traced_node(node_id: str, node_callable: Any, **kwargs: Any) -> None:
+        graph.add_node(
+            node_id,
+            wrap_kb_chat_node_with_io(node_id, node_callable),
+            metadata=KB_CHAT_NODE_METADATA[node_id],
+            **kwargs,
+        )
+
+    add_traced_node("merge_context", partial(merge_context, settings=settings))
+    add_traced_node("coref_rewrite", partial(coref_rewrite, settings=settings))
+    add_traced_node("AMBIGUITY_CHECK_ENABLED", _noop)
+    add_traced_node("ambiguity_check", partial(ambiguity_check, settings=settings))
+    add_traced_node("normalize_rewrite", partial(normalize_rewrite, settings=settings))
+    add_traced_node("complexity_classify", partial(_complexity_classify, settings=settings))
+    add_traced_node("adaptive_routing", _adaptive_routing_node)
+    add_traced_node("simple_path", _simple_path)
+    add_traced_node("moderate_path", _moderate_path)
+    add_traced_node("complex_path", _complex_path)
+    add_traced_node("ENABLE_MULTI_QUERY_MOD", _noop)
+    add_traced_node("generate_variants_mod", partial(generate_variants, settings=settings))
+    add_traced_node("ENABLE_DECOMPOSITION", _noop)
+    add_traced_node("decomposition", partial(decomposition, settings=settings))
+    add_traced_node("ENABLE_MULTI_QUERY", _noop)
+    add_traced_node("generate_variants", partial(generate_variants, settings=settings))
+    add_traced_node("entity_expand", partial(entity_expand, settings=settings))
+    add_traced_node("ENABLE_HYDE", _noop)
+    add_traced_node("hyde", partial(hyde, settings=settings))
+    add_traced_node("prepare_messages", partial(_prepare_messages_terminal, settings=settings))
+    add_traced_node("preprocess_exit", _preprocess_exit)
 
     graph.set_entry_point("merge_context")
     graph.add_edge("merge_context", "coref_rewrite")

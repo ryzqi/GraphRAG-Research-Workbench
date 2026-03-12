@@ -13,4 +13,10 @@ describe('kbNodeLabels', () => {
     expect(resolveKbNodeLabel('complexity_classify', null)).toBe('复杂度分类');
     expect(resolveKbNodeLabel('doc_gate_sufficiency', null)).toBe('证据充分度');
   });
+
+  it('resolves labels for control and dispatch nodes from the shared catalog', () => {
+    expect(resolveKbNodeLabel('doc_gate_dispatch', null)).toBe('文档门控分发');
+    expect(resolveKbNodeLabel('answer_review_dispatch', null)).toBe('审查分发');
+    expect(resolveKbNodeLabel('preprocess_subgraph', null)).toBe('预处理子图');
+  });
 });

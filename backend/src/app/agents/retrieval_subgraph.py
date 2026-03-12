@@ -14,6 +14,10 @@ from app.agents.kb_chat_agentic.reflection import (
     merge_subquery_context,
     retrieve_subquery_context,
 )
+from app.agents.kb_chat_trace_nodes import (
+    KB_CHAT_NODE_METADATA,
+    wrap_kb_chat_node_with_io,
+)
 from app.agents.kb_chat_agentic_state import KbChatAgenticState
 from app.core.settings import Settings
 from app.utils.token_counter import count_tokens_approximately
@@ -170,28 +174,36 @@ def build_retrieval_subgraph(*, settings: Settings, kb_tool: BaseTool):
         state_schema=KbChatAgenticState,
         context_schema=KbChatGraphContext,
     )
-    graph.add_node(
+    def add_traced_node(node_id: str, node_callable: Any, **kwargs: Any) -> None:
+        graph.add_node(
+            node_id,
+            wrap_kb_chat_node_with_io(node_id, node_callable),
+            metadata=KB_CHAT_NODE_METADATA[node_id],
+            **kwargs,
+        )
+
+    add_traced_node(
         "retrieval_budget_plan",
         partial(_retrieval_budget_plan, settings=settings),
     )
-    graph.add_node(
+    add_traced_node(
         "dispatch_subqueries",
         partial(dispatch_subqueries, settings=settings),
         destinations=("retrieve_subquery", "retrieve"),
     )
-    graph.add_node(
+    add_traced_node(
         "retrieve_subquery",
         partial(retrieve_subquery_context, settings=settings, kb_tool=kb_tool),
     )
-    graph.add_node(
+    add_traced_node(
         "merge_subquery_context",
         partial(merge_subquery_context, settings=settings),
     )
-    graph.add_node(
+    add_traced_node(
         "retrieve",
         partial(kb_retrieve_context, settings=settings, kb_tool=kb_tool),
     )
-    graph.add_node("context_compress", _compress_context)
+    add_traced_node("context_compress", _compress_context)
 
     graph.set_entry_point("retrieval_budget_plan")
     graph.add_edge("retrieval_budget_plan", "dispatch_subqueries")

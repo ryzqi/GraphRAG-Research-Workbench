@@ -529,41 +529,66 @@ class KbChatService:
             raise RuntimeError("KB Chat graph builder is unavailable")
 
         nodes: list[dict[str, Any]] = []
-        for node_id, node_spec in getattr(builder, "nodes", {}).items():
-            metadata = getattr(node_spec, "metadata", None)
-            nodes.append(
-                {
-                    "id": node_id,
-                    "metadata": metadata if isinstance(metadata, dict) else {},
-                }
-            )
-
         edges: list[dict[str, Any]] = []
-        for source, target in getattr(builder, "edges", set()):
+        seen_nodes: set[str] = set()
+        seen_edges: set[tuple[str, str, bool]] = set()
+        seen_builders: set[int] = set()
+
+        def append_edge(source: Any, target: Any, *, conditional: bool) -> None:
+            if not isinstance(source, str) or not isinstance(target, str):
+                return
+            if source in {"__start__", "__end__"} or target in {"__start__", "__end__"}:
+                return
+            identity = (source, target, conditional)
+            if identity in seen_edges:
+                return
+            seen_edges.add(identity)
             edges.append(
                 {
                     "source": source,
                     "target": target,
-                    "conditional": False,
+                    "conditional": conditional,
                 }
             )
 
-        for source, branch_map in getattr(builder, "branches", {}).items():
-            if not isinstance(branch_map, dict):
-                continue
-            for branch_spec in branch_map.values():
-                ends = getattr(branch_spec, "ends", None)
-                if isinstance(ends, dict):
-                    for target in ends.values():
-                        if isinstance(target, str):
-                            edges.append(
-                                {
-                                    "source": source,
-                                    "target": target,
-                                    "conditional": True,
-                                }
-                            )
+        def collect_from_builder(current_builder: object) -> None:
+            builder_id = id(current_builder)
+            if builder_id in seen_builders:
+                return
+            seen_builders.add(builder_id)
 
+            for node_id, node_spec in getattr(current_builder, "nodes", {}).items():
+                if not isinstance(node_id, str) or node_id in {"__start__", "__end__"}:
+                    continue
+                if node_id not in seen_nodes:
+                    metadata = getattr(node_spec, "metadata", None)
+                    nodes.append(
+                        {
+                            "id": node_id,
+                            "metadata": metadata if isinstance(metadata, dict) else {},
+                        }
+                    )
+                    seen_nodes.add(node_id)
+
+            for source, target in getattr(current_builder, "edges", set()):
+                append_edge(source, target, conditional=False)
+
+            for source, branch_map in getattr(current_builder, "branches", {}).items():
+                if not isinstance(branch_map, dict):
+                    continue
+                for branch_spec in branch_map.values():
+                    ends = getattr(branch_spec, "ends", None)
+                    if isinstance(ends, dict):
+                        for target in ends.values():
+                            append_edge(source, target, conditional=True)
+
+            for node_spec in getattr(current_builder, "nodes", {}).values():
+                runnable = getattr(node_spec, "runnable", None)
+                nested_builder = getattr(runnable, "builder", None)
+                if nested_builder is not None:
+                    collect_from_builder(nested_builder)
+
+        collect_from_builder(builder)
         return {"nodes": nodes, "edges": edges}
 
     async def get_graph_schema(

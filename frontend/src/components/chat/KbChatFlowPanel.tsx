@@ -1,4 +1,4 @@
-import { useMemo, useState, type ElementType } from 'react';
+import { useMemo, useState } from 'react';
 import {
   Button,
   Box,
@@ -13,24 +13,6 @@ import {
 } from '@mui/material';
 import { alpha } from '@mui/material/styles';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
-import MergeTypeIcon from '@mui/icons-material/MergeType';
-import AccountTreeIcon from '@mui/icons-material/AccountTree';
-import HelpOutlineIcon from '@mui/icons-material/HelpOutline';
-import TuneIcon from '@mui/icons-material/Tune';
-import CallSplitIcon from '@mui/icons-material/CallSplit';
-import AltRouteIcon from '@mui/icons-material/AltRoute';
-import HubIcon from '@mui/icons-material/Hub';
-import FactCheckIcon from '@mui/icons-material/FactCheck';
-import AutoFixHighIcon from '@mui/icons-material/AutoFixHigh';
-import TextSnippetIcon from '@mui/icons-material/TextSnippet';
-import SearchIcon from '@mui/icons-material/Search';
-import GavelIcon from '@mui/icons-material/Gavel';
-import SyncAltIcon from '@mui/icons-material/SyncAlt';
-import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
-import RateReviewIcon from '@mui/icons-material/RateReview';
-import TaskAltIcon from '@mui/icons-material/TaskAlt';
-import BlockIcon from '@mui/icons-material/Block';
-import LensIcon from '@mui/icons-material/Lens';
 
 import type {
   ChatNodeDisplayItem,
@@ -40,9 +22,10 @@ import type {
 } from '../../services/chats';
 import { selectKbChatFlowDetailItems } from '../../services/kbChatFlowSelectors';
 import {
-  buildTraceStages,
+  buildTraceStageGroups,
   type TraceStageStatus,
-} from '../../services/chatTraceStages';
+} from '../../services/kbChatTraceNodes';
+import { resolveKbNodeTheme } from '../../services/kbNodeCatalog';
 import { resolveKbNodeLabel } from '../../services/kbNodeLabels';
 import type { PipelineStep } from './PipelineProgress';
 
@@ -125,55 +108,7 @@ interface NodeDetailItem {
   value: string | string[];
 }
 
-interface NodeBadgeTheme {
-  icon: ElementType;
-  label: string;
-  color: string;
-}
-
 type DetailSectionKind = 'input' | 'output';
-
-const NODE_BADGE_THEME_MAP: Record<string, NodeBadgeTheme> = {
-  merge_context: { icon: MergeTypeIcon, label: '上下文合并', color: '#0EA5E9' },
-  coref_rewrite: { icon: AccountTreeIcon, label: '指代消解', color: '#2563EB' },
-  ambiguity_check: { icon: HelpOutlineIcon, label: '歧义判断', color: '#7C3AED' },
-  normalize_rewrite: { icon: TuneIcon, label: '问题规范', color: '#4F46E5' },
-  complexity_classify: { icon: FactCheckIcon, label: '复杂度分类', color: '#4F46E5' },
-  decomposition: { icon: CallSplitIcon, label: '问题分解', color: '#0284C7' },
-  adaptive_routing: { icon: AltRouteIcon, label: '自适应路由', color: '#0284C7' },
-  simple_path: { icon: AltRouteIcon, label: '简单路径', color: '#0284C7' },
-  moderate_path: { icon: AltRouteIcon, label: '中等路径', color: '#0284C7' },
-  complex_path: { icon: AltRouteIcon, label: '复杂路径', color: '#0284C7' },
-  generate_variants: { icon: AltRouteIcon, label: '多路扩展', color: '#0D9488' },
-  entity_expand: { icon: HubIcon, label: '实体扩展', color: '#059669' },
-  hyde: { icon: AutoFixHighIcon, label: 'HyDE扩展', color: '#16A34A' },
-  prepare_messages: { icon: TextSnippetIcon, label: '消息整理', color: '#65A30D' },
-  retrieve: { icon: SearchIcon, label: '知识检索', color: '#CA8A04' },
-  context_compress: { icon: TuneIcon, label: '上下文压缩', color: '#CA8A04' },
-  doc_gate_sufficiency: { icon: GavelIcon, label: '充分度评分', color: '#EA580C' },
-  doc_gate_answerability: { icon: GavelIcon, label: '可回答评分', color: '#EA580C' },
-  doc_gate_conflict: { icon: GavelIcon, label: '冲突检测', color: '#EA580C' },
-  doc_gate_fuse: { icon: GavelIcon, label: '门控融合', color: '#EA580C' },
-  doc_gate_route: { icon: GavelIcon, label: '文档判定', color: '#EA580C' },
-  transform_query: { icon: SyncAltIcon, label: '查询改写', color: '#DC2626' },
-  answer_subgraph: { icon: AutoAwesomeIcon, label: '答案子图', color: '#C026D3' },
-  draft_generate: { icon: AutoAwesomeIcon, label: '草稿生成', color: '#C026D3' },
-  answer_review_dispatch: { icon: RateReviewIcon, label: '审查分发', color: '#9333EA' },
-  answer_review_citation: { icon: RateReviewIcon, label: '引用审查', color: '#9333EA' },
-  answer_review_factual: { icon: RateReviewIcon, label: '事实审查', color: '#9333EA' },
-  answer_review_answerability: { icon: RateReviewIcon, label: '可回答审查', color: '#9333EA' },
-  answer_review_fuse: { icon: RateReviewIcon, label: '审查融合', color: '#9333EA' },
-  answer_repair: { icon: AutoFixHighIcon, label: '答案修复', color: '#A855F7' },
-  cove_check: { icon: FactCheckIcon, label: 'CoVe触发', color: '#A855F7' },
-  chain_of_verification: { icon: FactCheckIcon, label: 'CoVe验证链', color: '#A855F7' },
-  claim_citation_check: { icon: FactCheckIcon, label: 'Claim引用校验', color: '#A855F7' },
-  answer_commit: { icon: TaskAltIcon, label: '答案提交', color: '#7C3AED' },
-  generate: { icon: AutoAwesomeIcon, label: '答案生成', color: '#C026D3' },
-  answer_review: { icon: RateReviewIcon, label: '答案审查', color: '#9333EA' },
-  finalize: { icon: TaskAltIcon, label: '答案整理', color: '#0891B2' },
-  confidence_calibrate: { icon: FactCheckIcon, label: '置信度校准', color: '#0891B2' },
-  force_exit: { icon: BlockIcon, label: '提前终止', color: '#475569' },
-};
 
 function selectKeyDetailItems(params: {
   nodeId: string;
@@ -184,12 +119,8 @@ function selectKeyDetailItems(params: {
   return selectKbChatFlowDetailItems(params);
 }
 
-function nodeBadgeTheme(nodeId: string): NodeBadgeTheme {
-  return NODE_BADGE_THEME_MAP[nodeId] ?? { icon: LensIcon, label: '节点', color: '#64748B' };
-}
-
 function NodeBadge({ nodeId }: { nodeId: string }) {
-  const theme = nodeBadgeTheme(nodeId);
+  const theme = resolveKbNodeTheme(nodeId);
   const Icon = theme.icon;
   return (
     <Box
@@ -416,7 +347,7 @@ function buildFallbackInputItems(
   const reflection = getReflection(snapshot);
   const items: NodeDetailItem[] = [];
 
-  if (nodeId === 'merge_context') {
+  if (nodeId === 'preprocess_subgraph' || nodeId === 'merge_context') {
     pushDisplayItem(items, { key: 'user_input', label: '用户问题', value: pickText(snapshot, 'user_input') });
   } else if (nodeId === 'coref_rewrite') {
     pushDisplayItem(items, {
@@ -424,17 +355,39 @@ function buildFallbackInputItems(
       label: '输入问题',
       value: pickText(snapshot, 'rewrite_input_query', 'user_input'),
     });
-  } else if (['ambiguity_check', 'normalize_rewrite'].includes(nodeId)) {
+  } else if (['AMBIGUITY_CHECK_ENABLED', 'ambiguity_check', 'normalize_rewrite'].includes(nodeId)) {
     pushDisplayItem(items, {
       key: 'query',
       label: '输入问题',
       value: pickText(snapshot, 'coref_query', 'rewrite_input_query', 'user_input'),
     });
-  } else if (['decomposition', 'generate_variants', 'entity_expand', 'hyde'].includes(nodeId)) {
+  } else if (
+    [
+      'complexity_classify',
+      'adaptive_routing',
+      'simple_path',
+      'moderate_path',
+      'complex_path',
+      'ENABLE_MULTI_QUERY_MOD',
+      'generate_variants_mod',
+      'ENABLE_DECOMPOSITION',
+      'decomposition',
+      'ENABLE_MULTI_QUERY',
+      'generate_variants',
+      'entity_expand',
+      'ENABLE_HYDE',
+      'hyde',
+    ].includes(nodeId)
+  ) {
     pushDisplayItem(items, {
       key: 'normalized_query',
       label: '规范化问题',
       value: pickText(snapshot, 'normalized_query', 'coref_query', 'user_input'),
+    });
+    pushDisplayItem(items, {
+      key: 'complexity_level',
+      label: '复杂度',
+      value: asNonEmptyText(snapshot.complexity_level),
     });
     if (nodeId === 'entity_expand') {
       pushDisplayItem(items, {
@@ -462,7 +415,7 @@ function buildFallbackInputItems(
     });
     const hydeDocs = pickStringList(snapshot, 'hyde_docs');
     pushDisplayItem(items, { key: 'hyde_docs_count', label: 'HyDE 数量', value: hydeDocs?.length });
-  } else if (nodeId === 'retrieve') {
+  } else if (nodeId === 'retrieval_subgraph' || nodeId === 'retrieve') {
     const queryItems = formatQueryItems(snapshot.query_items);
     if (queryItems.length > 0) {
       pushDisplayItem(items, { key: 'query_items', label: '检索查询项', value: queryItems });
@@ -473,11 +426,43 @@ function buildFallbackInputItems(
         value: pickText(snapshot, 'normalized_query', 'coref_query', 'user_input'),
       });
     }
-  } else if (nodeId === 'doc_gate_route') {
+  } else if (nodeId === 'retrieval_budget_plan') {
+    pushDisplayItem(items, {
+      key: 'complexity_level',
+      label: '复杂度',
+      value: asNonEmptyText(snapshot.complexity_level),
+    });
+    pushDisplayItem(items, {
+      key: 'query_items',
+      label: '查询项',
+      value: formatQueryItems(snapshot.query_items),
+    });
+    pushDisplayItem(items, { key: 'reason', label: '历史失败原因', value: reflection.reason });
+  } else if (nodeId === 'dispatch_subqueries') {
+    pushDisplayItem(items, { key: 'query_strategy', label: '查询策略', value: asNonEmptyText(snapshot.query_strategy) });
+    pushDisplayItem(items, { key: 'query_items', label: '查询项', value: formatQueryItems(snapshot.query_items) });
+  } else if (nodeId === 'retrieve_subquery') {
+    const task = asRecord(snapshot.subquery_task) ?? {};
+    pushDisplayItem(items, { key: 'query', label: '分支查询', value: asNonEmptyText(task.query) });
+    pushDisplayItem(items, { key: 'kind', label: '分支类型', value: asNonEmptyText(task.kind) });
+  } else if (nodeId === 'merge_subquery_context') {
+    pushDisplayItem(items, {
+      key: 'subquery_runs_count',
+      label: '分支结果数',
+      value: Array.isArray(snapshot.subquery_runs) ? snapshot.subquery_runs.length : undefined,
+    });
+  } else if (
+    ['evidence_gate_subgraph', 'doc_gate_dispatch', 'doc_gate_sufficiency', 'doc_gate_answerability', 'doc_gate_conflict', 'doc_gate_fuse', 'doc_gate_route'].includes(nodeId)
+  ) {
     pushDisplayItem(items, {
       key: 'question',
       label: '待判定问题',
-      value: pickText(snapshot, 'merged_context', 'user_input'),
+      value: pickText(snapshot, 'merged_context', 'normalized_query', 'user_input'),
+    });
+    pushDisplayItem(items, {
+      key: 'final_context',
+      label: '当前上下文',
+      value: pickText(snapshot, 'compressed_context', 'final_context'),
     });
   } else if (nodeId === 'transform_query') {
     pushDisplayItem(items, {
@@ -505,6 +490,14 @@ function buildFallbackInputItems(
       value: pickText(snapshot, 'merged_context', 'user_input'),
     });
     pushDisplayItem(items, { key: 'draft_answer', label: '待审查答案', value: pickText(snapshot, 'draft_answer') });
+  } else if (nodeId === 'answer_review_dispatch') {
+    pushDisplayItem(items, { key: 'draft_answer', label: '待审查答案', value: pickText(snapshot, 'draft_answer') });
+  } else if (['cove_check', 'chain_of_verification', 'claim_citation_check', 'answer_commit', 'confidence_calibrate'].includes(nodeId)) {
+    pushDisplayItem(items, {
+      key: 'draft_answer',
+      label: '答案草稿',
+      value: pickText(snapshot, 'draft_answer', 'final_answer'),
+    });
   } else if (nodeId === 'answer_repair') {
     pushDisplayItem(items, {
       key: 'draft_answer',
@@ -524,6 +517,12 @@ function buildFallbackInputItems(
       key: 'best_answer',
       label: '候选答案',
       value: pickText(snapshot, 'best_answer', 'draft_answer'),
+    });
+  } else if (nodeId === 'context_compress') {
+    pushDisplayItem(items, {
+      key: 'final_context',
+      label: '压缩前上下文',
+      value: pickText(snapshot, 'final_context'),
     });
   }
 
@@ -553,7 +552,11 @@ function buildFallbackOutputItems(
   const items: NodeDetailItem[] = [];
 
   if (snapshot) {
-    if (nodeId === 'merge_context') {
+    if (nodeId === 'preprocess_subgraph') {
+      pushDisplayItem(items, { key: 'preprocess_next', label: '子图出口', value: asNonEmptyText(snapshot.preprocess_next) });
+      pushDisplayItem(items, { key: 'normalized_query', label: '规范化结果', value: pickText(snapshot, 'normalized_query') });
+      pushDisplayItem(items, { key: 'action', label: '反思动作', value: asNonEmptyText(reflection.action) });
+    } else if (nodeId === 'merge_context') {
       pushDisplayItem(items, {
         key: 'current_question',
         label: '用户问题',
@@ -589,6 +592,19 @@ function buildFallbackOutputItems(
     } else if (nodeId === 'normalize_rewrite') {
       pushDisplayItem(items, { key: 'normalized_query', label: '规范化结果', value: pickText(snapshot, 'normalized_query') });
       pushDisplayItem(items, { key: 'rewritten', label: '是否变化', value: summary.rewritten });
+    } else if (nodeId === 'complexity_classify') {
+      pushDisplayItem(items, { key: 'complexity_level', label: '复杂度等级', value: asNonEmptyText(summary.complexity_level) ?? asNonEmptyText(snapshot.complexity_level) });
+      pushDisplayItem(items, { key: 'adaptive_route', label: '路由结果', value: asNonEmptyText(summary.adaptive_route) ?? asNonEmptyText(snapshot.adaptive_route) });
+      pushDisplayItem(items, { key: 'query_strategy', label: '查询策略', value: asNonEmptyText(snapshot.query_strategy) });
+      pushDisplayItem(items, { key: 'query_strategy_confidence', label: '策略置信度', value: snapshot.query_strategy_confidence });
+      pushDisplayItem(items, { key: 'query_strategy_signals', label: '风险信号', value: Array.isArray(snapshot.query_strategy_signals) ? snapshot.query_strategy_signals : null });
+    } else if (nodeId === 'adaptive_routing') {
+      pushDisplayItem(items, { key: 'adaptive_route', label: '路由结果', value: asNonEmptyText(summary.adaptive_route) });
+      pushDisplayItem(items, { key: 'complexity_level', label: '复杂度等级', value: asNonEmptyText(summary.complexity_level) });
+    } else if (['AMBIGUITY_CHECK_ENABLED', 'simple_path', 'moderate_path', 'complex_path', 'ENABLE_MULTI_QUERY_MOD', 'ENABLE_DECOMPOSITION', 'ENABLE_MULTI_QUERY', 'ENABLE_HYDE'].includes(nodeId)) {
+      const command = asRecord(snapshot.__command__) ?? {};
+      const goto = typeof command.goto === 'string' ? command.goto : null;
+      pushDisplayItem(items, { key: 'goto', label: '下一节点', value: goto });
     } else if (nodeId === 'decomposition') {
       const subQueries = pickStringList(snapshot, 'sub_queries');
       pushDisplayItem(items, { key: 'sub_queries', label: '分解问题', value: subQueries });
@@ -607,33 +623,41 @@ function buildFallbackOutputItems(
         value: typeof summary.count === 'number' ? summary.count : multiQueries?.length,
       });
       pushDisplayItem(items, { key: 'reason', label: '处理原因', value: summary.reason });
+    } else if (nodeId === 'generate_variants_mod') {
+      const multiQueries = pickStringList(snapshot, 'multi_queries');
+      pushDisplayItem(items, { key: 'multi_queries', label: '中等变体查询', value: multiQueries });
+      pushDisplayItem(items, {
+        key: 'count',
+        label: '查询数量',
+        value: typeof summary.count === 'number' ? summary.count : multiQueries?.length,
+      });
     } else if (nodeId === 'entity_expand') {
       const multiQueries = pickStringList(snapshot, 'multi_queries');
-      pushDisplayItem(items, { key: 'multi_queries', label: '澶氳矾鏌ヨ', value: multiQueries });
-      pushDisplayItem(items, { key: 'input_count', label: '杈撳叆鏁伴噺', value: summary.input_count });
+      pushDisplayItem(items, { key: 'multi_queries', label: '多路查询', value: multiQueries });
+      pushDisplayItem(items, { key: 'input_count', label: '输入数量', value: summary.input_count });
       pushDisplayItem(items, {
         key: 'expanded_count',
-        label: '鎵╁睍鍚庢暟閲?',
+        label: '扩展后数量',
         value: summary.expanded_count,
       });
-      pushDisplayItem(items, { key: 'added_count', label: '鏂板鏁伴噺', value: summary.added_count });
-      pushDisplayItem(items, { key: 'pruned_count', label: '鍓灊鏁伴噺', value: summary.pruned_count });
+      pushDisplayItem(items, { key: 'added_count', label: '新增数量', value: summary.added_count });
+      pushDisplayItem(items, { key: 'pruned_count', label: '剪枝数量', value: summary.pruned_count });
       pushDisplayItem(items, {
         key: 'min_confidence',
-        label: '鏈€浣庣疆淇″害',
+        label: '最低置信度',
         value: summary.min_confidence,
       });
       pushDisplayItem(items, {
         key: 'drift_guardrail_triggered',
-        label: '婕傜Щ闃插',
+        label: '漂移护栏',
         value: summary.drift_guardrail_triggered,
       });
       pushDisplayItem(items, {
         key: 'fallback_reason',
-        label: '闄嶇骇鍘熷洜',
+        label: '降级原因',
         value: summary.fallback_reason,
       });
-      pushDisplayItem(items, { key: 'reason', label: '澶勭悊鍘熷洜', value: summary.reason });
+      pushDisplayItem(items, { key: 'reason', label: '处理原因', value: summary.reason });
     } else if (nodeId === 'hyde') {
       pushDisplayItem(items, { key: 'enabled', label: '是否启用 HyDE', value: summary.enabled });
       pushDisplayItem(items, { key: 'hyde_doc', label: 'HyDE 生成内容', value: pickText(snapshot, 'hyde_doc') });
@@ -665,6 +689,18 @@ function buildFallbackOutputItems(
         label: '类型分布',
         value: recordToLines(queryBundle.kind_breakdown),
       });
+    } else if (nodeId === 'retrieval_subgraph') {
+      pushDisplayItem(items, { key: 'evidence_count', label: '证据数量', value: retrievalMetrics.evidence_count });
+      pushDisplayItem(items, { key: 'retrieval_count', label: '检索命中数', value: retrievalMetrics.retrieval_count });
+      const compressionStats = asRecord(snapshot.compression_stats) ?? {};
+      pushDisplayItem(items, { key: 'truncated', label: '是否压缩', value: compressionStats.truncated });
+    } else if (nodeId === 'retrieval_budget_plan') {
+      pushDisplayItem(items, { key: 'complexity', label: '复杂度', value: asNonEmptyText(summary.complexity) });
+      pushDisplayItem(items, { key: 'query_count', label: '查询数', value: summary.query_count });
+      pushDisplayItem(items, { key: 'per_query_top_k', label: '单查询 top_k', value: summary.per_query_top_k });
+      pushDisplayItem(items, { key: 'global_candidates_limit', label: '全局候选上限', value: summary.global_candidates_limit });
+      pushDisplayItem(items, { key: 'rerank_input_limit', label: '重排输入上限', value: summary.rerank_input_limit });
+      pushDisplayItem(items, { key: 'retry_count', label: '重试次数', value: summary.retry_count });
     } else if (nodeId === 'retrieve') {
       pushDisplayItem(items, {
         key: 'evidence_count',
@@ -716,6 +752,32 @@ function buildFallbackOutputItems(
         label: '分支失败原因',
         value: recordToLines(summary.failure_reasons),
       });
+    } else if (nodeId === 'context_compress') {
+      const compressionStats = asRecord(snapshot.compression_stats) ?? {};
+      pushDisplayItem(items, { key: 'token_limit', label: '压缩上限', value: compressionStats.token_limit });
+      pushDisplayItem(items, { key: 'input_tokens', label: '压缩前 token', value: compressionStats.input_tokens });
+      pushDisplayItem(items, { key: 'output_tokens', label: '压缩后 token', value: compressionStats.output_tokens });
+      pushDisplayItem(items, { key: 'truncated', label: '是否截断', value: compressionStats.truncated });
+    } else if (nodeId === 'evidence_gate_subgraph') {
+      const routeSummary = getStageSummary(snapshot, 'doc_gate_route');
+      pushDisplayItem(items, { key: 'action', label: '后续动作', value: asNonEmptyText(routeSummary.action) });
+      pushDisplayItem(items, { key: 'reason', label: '判定原因', value: asNonEmptyText(routeSummary.reason) });
+      pushDisplayItem(items, { key: 'score', label: '门控得分', value: routeSummary.score });
+    } else if (nodeId === 'doc_gate_dispatch') {
+      pushDisplayItem(items, { key: 'doc_gate_round', label: '门控轮次', value: snapshot.doc_gate_round });
+      pushDisplayItem(items, { key: 'gates', label: '派发门控', value: ['sufficiency', 'answerability', 'conflict'] });
+    } else if (['doc_gate_sufficiency', 'doc_gate_answerability', 'doc_gate_conflict'].includes(nodeId)) {
+      pushDisplayItem(items, { key: 'passed', label: '是否通过', value: summary.passed });
+      pushDisplayItem(items, { key: 'score', label: '评分', value: summary.score });
+      pushDisplayItem(items, { key: 'reason', label: '判定原因', value: asNonEmptyText(summary.reason) });
+      pushDisplayItem(items, { key: 'tokens', label: '上下文 token', value: summary.tokens });
+      pushDisplayItem(items, { key: 'evidence_count', label: '证据数量', value: summary.evidence_count });
+      pushDisplayItem(items, { key: 'overlap', label: '词项重叠数', value: summary.overlap });
+      pushDisplayItem(items, { key: 'conflict_markers', label: '冲突标记数', value: summary.conflict_markers });
+    } else if (nodeId === 'doc_gate_fuse') {
+      pushDisplayItem(items, { key: 'decision', label: '融合决策', value: asNonEmptyText(summary.decision) });
+      pushDisplayItem(items, { key: 'score', label: '融合得分', value: summary.score });
+      pushDisplayItem(items, { key: 'missing_gates', label: '缺失门控', value: Array.isArray(summary.missing_gates) ? summary.missing_gates : null });
     } else if (nodeId === 'doc_gate_route') {
       pushDisplayItem(items, { key: 'passed', label: '相关性是否通过', value: summary.passed });
       pushDisplayItem(items, { key: 'action', label: '后续动作', value: reflection.action });
@@ -739,6 +801,9 @@ function buildFallbackOutputItems(
     } else if (nodeId === 'generate' || nodeId === 'draft_generate') {
       pushDisplayItem(items, { key: 'draft_answer', label: '生成草稿', value: pickText(snapshot, 'draft_answer') });
       pushDisplayItem(items, { key: 'final_answer', label: '候选答案', value: pickText(snapshot, 'final_answer') });
+    } else if (nodeId === 'answer_review_dispatch') {
+      pushDisplayItem(items, { key: 'check_count', label: '审查数量', value: summary.check_count });
+      pushDisplayItem(items, { key: 'checks', label: '审查列表', value: Array.isArray(summary.checks) ? summary.checks : null });
     } else if (
       nodeId === 'answer_review' ||
       nodeId === 'answer_review_citation' ||
@@ -762,12 +827,30 @@ function buildFallbackOutputItems(
             : undefined,
       });
       pushDisplayItem(items, { key: 'best_answer', label: '最佳答案', value: pickText(snapshot, 'best_answer') });
+    } else if (nodeId === 'cove_check') {
+      pushDisplayItem(items, { key: 'enabled', label: '是否启用 CoVe', value: summary.enabled });
+      pushDisplayItem(items, { key: 'high_risk', label: '是否高风险', value: summary.high_risk });
+    } else if (nodeId === 'chain_of_verification') {
+      pushDisplayItem(items, { key: 'passed', label: '是否通过', value: summary.passed });
+      pushDisplayItem(items, { key: 'reason', label: '判定原因', value: summary.reason });
+      pushDisplayItem(items, { key: 'citation_count', label: '引用数', value: summary.citation_count });
+    } else if (nodeId === 'claim_citation_check') {
+      pushDisplayItem(items, { key: 'passed', label: '是否通过', value: summary.passed });
+      pushDisplayItem(items, { key: 'reason', label: '判定原因', value: summary.reason });
+      pushDisplayItem(items, { key: 'valid_citation_count', label: '有效引用数', value: summary.valid_citation_count });
+      pushDisplayItem(items, { key: 'invalid_citations', label: '无效引用', value: Array.isArray(summary.invalid_citations) ? summary.invalid_citations : null });
     } else if (nodeId === 'answer_repair') {
       pushDisplayItem(items, { key: 'repair_attempt', label: '修复轮次', value: summary.repair_attempt });
       pushDisplayItem(items, { key: 'fallback_reason', label: '回退原因', value: summary.fallback_reason });
       pushDisplayItem(items, { key: 'final_answer', label: '修复后答案', value: pickText(snapshot, 'final_answer') });
     } else if (nodeId === 'finalize') {
       pushDisplayItem(items, { key: 'final_answer', label: '最终答案', value: pickText(snapshot, 'final_answer') });
+    } else if (nodeId === 'confidence_calibrate') {
+      pushDisplayItem(items, { key: 'confidence_score', label: '置信度分数', value: summary.confidence_score ?? snapshot.confidence_score });
+      pushDisplayItem(items, { key: 'confidence_level', label: '置信度等级', value: summary.confidence_level ?? asNonEmptyText(snapshot.confidence_level) });
+      pushDisplayItem(items, { key: 'gate_confidence', label: '门控置信度', value: summary.gate_confidence });
+      pushDisplayItem(items, { key: 'review_confidence', label: '审查置信度', value: summary.review_confidence });
+      pushDisplayItem(items, { key: 'citation_score', label: '引用得分', value: summary.citation_score });
     } else if (nodeId === 'force_exit') {
       pushDisplayItem(items, { key: 'final_answer', label: '终止输出', value: pickText(snapshot, 'final_answer') });
       pushDisplayItem(items, { key: 'reason', label: '终止原因', value: summary.reason });
@@ -886,9 +969,9 @@ export function KbChatFlowPanel({
   nodeIoEvents,
 }: KbChatFlowPanelProps) {
   const [expandedId, setExpandedId] = useState<string | null>(null);
-  const stages = useMemo(
+  const stageGroups = useMemo(
     () =>
-      buildTraceStages({
+      buildTraceStageGroups({
         schema,
         runState,
         pipelineSteps,
@@ -896,38 +979,43 @@ export function KbChatFlowPanel({
       }),
     [nodeIoEvents, pipelineSteps, runState, schema]
   );
-  const stageDetails = useMemo(
+  const nodeDetails = useMemo(
     () =>
       new Map(
-        stages.map((stage) => {
-          const detailNodeId = stage.focusNodeId;
-          const rawInputItems =
-            stage.latestNodeEvent?.display_input_items ??
-            buildFallbackInputItems(detailNodeId, stage.latestNodeEvent);
-          const rawOutputItems =
-            stage.latestNodeEvent?.display_output_items ??
-            buildFallbackOutputItems(detailNodeId, stage.latestNodeEvent);
-          return [
-            stage.id,
-            {
-              inputDetailItems: selectKeyDetailItems({
-                nodeId: detailNodeId,
-                section: 'input',
-                items: rawInputItems,
-                event: stage.latestNodeEvent,
-              }),
-              outputDetailItems: selectKeyDetailItems({
-                nodeId: detailNodeId,
-                section: 'output',
-                items: rawOutputItems,
-                event: stage.latestNodeEvent,
-              }),
-            },
-          ] as const;
-        })
+        stageGroups.flatMap((stage) =>
+          stage.nodes.map((node) => {
+            const detailNodeId = node.focusNodeId;
+            const latestNodeEvent = node.latestNodeEvent;
+            const rawInputItems =
+              latestNodeEvent?.display_input_items ??
+              buildFallbackInputItems(detailNodeId, latestNodeEvent);
+            const rawOutputItems =
+              latestNodeEvent?.display_output_items ??
+              buildFallbackOutputItems(detailNodeId, latestNodeEvent);
+            return [
+              node.id,
+              {
+                inputDetailItems: selectKeyDetailItems({
+                  nodeId: detailNodeId,
+                  section: 'input',
+                  items: rawInputItems,
+                  event: latestNodeEvent,
+                }),
+                outputDetailItems: selectKeyDetailItems({
+                  nodeId: detailNodeId,
+                  section: 'output',
+                  items: rawOutputItems,
+                  event: latestNodeEvent,
+                }),
+              },
+            ] as const;
+          })
+        )
       ),
-    [stages]
+    [stageGroups]
   );
+
+  const visibleStageGroups = stageGroups.filter((stage) => stage.nodes.length > 0);
 
   return (
     <Paper
@@ -994,7 +1082,7 @@ export function KbChatFlowPanel({
           pr: 0.25,
         }}
       >
-        {stages.length === 0 && (
+        {visibleStageGroups.length === 0 && (
           <Paper
             variant='outlined'
             sx={{
@@ -1010,14 +1098,8 @@ export function KbChatFlowPanel({
           </Paper>
         )}
 
-        {stages.map((stage) => {
-          const expanded = expandedId === stage.id;
-          const chipColor = statusChipColor(stage.status);
-          const detail = stageDetails.get(stage.id) ?? {
-            inputDetailItems: [],
-            outputDetailItems: [],
-          };
-          const { inputDetailItems, outputDetailItems } = detail;
+        {visibleStageGroups.map((stage) => {
+          const stageChipColor = statusChipColor(stage.status);
           return (
             <Paper
               key={stage.id}
@@ -1029,51 +1111,31 @@ export function KbChatFlowPanel({
                 bgcolor: (theme) =>
                   stage.isActive
                     ? alpha(theme.palette.primary.main, theme.palette.mode === 'light' ? 0.08 : 0.2)
-                    : alpha(
-                        theme.palette.background.default,
-                        theme.palette.mode === 'light' ? 0.5 : 0.2
-                      ),
+                    : alpha(theme.palette.background.default, theme.palette.mode === 'light' ? 0.5 : 0.2),
                 transition: 'border-color 180ms ease, background-color 180ms ease',
               }}
             >
-                <Stack spacing={1}>
-                  <Stack direction='row' justifyContent='space-between' alignItems='center' spacing={1}>
-                    <Stack direction='row' spacing={0.75} alignItems='center' sx={{ minWidth: 0 }}>
-                      <NodeBadge nodeId={stage.focusNodeId} />
-                    <Box sx={{ minWidth: 0 }}>
-                      <Typography variant='body2' fontWeight={700} noWrap>
-                        {stage.title}
-                      </Typography>
-                      {stage.subtitle ? (
-                        <Typography variant='caption' color='text.secondary' noWrap>
-                          {stage.subtitle}
-                        </Typography>
-                      ) : null}
-                    </Box>
-                  </Stack>
-
-                  <Stack direction='row' spacing={0.5} alignItems='center'>
-                    <Chip size='small' color={chipColor} label={statusLabel(stage.status)} />
-                    <Tooltip title={expanded ? '收起详情' : '展开详情'}>
-                      <IconButton
-                        size='small'
-                        aria-label={expanded ? '收起详情' : '展开详情'}
-                        onClick={() => setExpandedId((prev) => (prev === stage.id ? null : stage.id))}
-                        sx={{
-                          transform: expanded ? 'rotate(180deg)' : 'none',
-                          transition: 'transform 180ms ease',
-                        }}
-                      >
-                        <ExpandMoreIcon fontSize='small' />
-                      </IconButton>
-                    </Tooltip>
-                  </Stack>
+              <Stack spacing={1}>
+                <Stack direction='row' justifyContent='space-between' alignItems='center' spacing={1}>
+                  <Box sx={{ minWidth: 0 }}>
+                    <Typography variant='body2' fontWeight={700} noWrap>
+                      {stage.title}
+                    </Typography>
+                    <Typography variant='caption' color='text.secondary' noWrap>
+                      {stage.subtitle}
+                    </Typography>
+                  </Box>
+                  <Chip
+                    size='small'
+                    color={stageChipColor}
+                    label={`${statusLabel(stage.status)} · ${stage.completed}/${stage.total}`}
+                  />
                 </Stack>
 
                 <Stack spacing={0.45}>
                   <Stack direction='row' justifyContent='space-between'>
                     <Typography variant='caption' color='text.secondary'>
-                      节点进度
+                      阶段进度
                     </Typography>
                     <Typography variant='caption' color='text.secondary'>
                       {formatProgressLabel(stage.status)}
@@ -1082,54 +1144,132 @@ export function KbChatFlowPanel({
                   <LinearProgress
                     variant='determinate'
                     value={Math.max(0, Math.min(100, stage.percent))}
-                    color={chipColor === 'default' ? 'primary' : chipColor}
+                    color={stageChipColor === 'default' ? 'primary' : stageChipColor}
                     sx={{ height: 4, borderRadius: 999 }}
                   />
                 </Stack>
 
-                {stage.metrics.length > 0 && (
-                  <Stack direction='row' spacing={0.5} useFlexGap flexWrap='wrap'>
-                    {stage.metrics.map((item) => (
-                      <Chip
-                        key={`${stage.id}-${item.label}`}
-                        size='small'
+                <Stack spacing={0.8}>
+                  {stage.nodes.map((node) => {
+                    const expanded = expandedId === node.id;
+                    const chipColor = statusChipColor(node.status);
+                    const detail = nodeDetails.get(node.id) ?? {
+                      inputDetailItems: [],
+                      outputDetailItems: [],
+                    };
+                    const { inputDetailItems, outputDetailItems } = detail;
+                    return (
+                      <Paper
+                        key={node.id}
                         variant='outlined'
-                        color={item.tone ?? 'default'}
-                        label={`${item.label}: ${item.value}`}
-                      />
-                    ))}
-                  </Stack>
-                )}
+                        sx={{
+                          p: 1.1,
+                          borderRadius: 2,
+                          borderColor: statusBorderColor(node.status),
+                          bgcolor: (theme) =>
+                            node.isActive
+                              ? alpha(theme.palette.primary.main, theme.palette.mode === 'light' ? 0.06 : 0.18)
+                              : alpha(theme.palette.background.paper, theme.palette.mode === 'light' ? 0.82 : 0.34),
+                        }}
+                      >
+                        <Stack spacing={1}>
+                          <Stack direction='row' justifyContent='space-between' alignItems='center' spacing={1}>
+                            <Stack direction='row' spacing={0.75} alignItems='center' sx={{ minWidth: 0 }}>
+                              <NodeBadge nodeId={node.focusNodeId} />
+                              <Box sx={{ minWidth: 0 }}>
+                                <Typography variant='body2' fontWeight={700} noWrap>
+                                  {node.title}
+                                </Typography>
+                                {node.subtitle ? (
+                                  <Typography variant='caption' color='text.secondary' noWrap>
+                                    {node.subtitle}
+                                  </Typography>
+                                ) : null}
+                              </Box>
+                            </Stack>
+                            <Stack direction='row' spacing={0.5} alignItems='center'>
+                              <Chip size='small' color={chipColor} label={statusLabel(node.status)} />
+                              <Tooltip title={expanded ? '收起详情' : '展开详情'}>
+                                <IconButton
+                                  size='small'
+                                  aria-label={expanded ? '收起详情' : '展开详情'}
+                                  onClick={() => setExpandedId((prev) => (prev === node.id ? null : node.id))}
+                                  sx={{
+                                    transform: expanded ? 'rotate(180deg)' : 'none',
+                                    transition: 'transform 180ms ease',
+                                  }}
+                                >
+                                  <ExpandMoreIcon fontSize='small' />
+                                </IconButton>
+                              </Tooltip>
+                            </Stack>
+                          </Stack>
 
-                <Collapse in={expanded}>
-                  <Stack spacing={1} sx={{ pt: 0.5 }}>
-                    {stage.latestStep && (
-                      <Typography variant='caption' color='text.secondary'>
-                        步骤：{stage.latestStep.label}（{stage.latestStep.status}）
-                      </Typography>
-                    )}
-                    {stage.latestNodeEvent && (
-                      <Typography variant='caption' color='text.secondary'>
-                        节点：{resolveKbNodeLabel(stage.latestNodeEvent.node_name, schema)}
-                        {typeof stage.latestNodeEvent.attempt === 'number'
-                          ? ` · 第 ${stage.latestNodeEvent.attempt} 次`
-                          : ''}
-                      </Typography>
-                    )}
-                    {stage.latestNodeEvent?.error_summary && (
-                      <Typography variant='caption' color='error.main'>
-                        {stage.latestNodeEvent.error_summary}
-                      </Typography>
-                    )}
-                    {stage.latestStep?.message && (
-                      <Typography variant='caption' color='text.secondary'>
-                        {stage.latestStep.message}
-                      </Typography>
-                    )}
-                    <DetailSection title='关键输入' items={inputDetailItems} />
-                    <DetailSection title='关键输出' items={outputDetailItems} />
-                  </Stack>
-                </Collapse>
+                          <Stack spacing={0.45}>
+                            <Stack direction='row' justifyContent='space-between'>
+                              <Typography variant='caption' color='text.secondary'>
+                                节点进度
+                              </Typography>
+                              <Typography variant='caption' color='text.secondary'>
+                                {formatProgressLabel(node.status)}
+                              </Typography>
+                            </Stack>
+                            <LinearProgress
+                              variant='determinate'
+                              value={Math.max(0, Math.min(100, node.percent))}
+                              color={chipColor === 'default' ? 'primary' : chipColor}
+                              sx={{ height: 4, borderRadius: 999 }}
+                            />
+                          </Stack>
+
+                          {node.metrics.length > 0 && (
+                            <Stack direction='row' spacing={0.5} useFlexGap flexWrap='wrap'>
+                              {node.metrics.map((item) => (
+                                <Chip
+                                  key={`${node.id}-${item.label}`}
+                                  size='small'
+                                  variant='outlined'
+                                  color={item.tone ?? 'default'}
+                                  label={`${item.label}: ${item.value}`}
+                                />
+                              ))}
+                            </Stack>
+                          )}
+
+                          <Collapse in={expanded}>
+                            <Stack spacing={1} sx={{ pt: 0.5 }}>
+                              {node.latestStep && (
+                                <Typography variant='caption' color='text.secondary'>
+                                  步骤：{node.latestStep.label}（{node.latestStep.status}）
+                                </Typography>
+                              )}
+                              {node.latestNodeEvent && (
+                                <Typography variant='caption' color='text.secondary'>
+                                  节点：{resolveKbNodeLabel(node.latestNodeEvent.node_name, schema)}
+                                  {typeof node.latestNodeEvent.attempt === 'number'
+                                    ? ` · 第 ${node.latestNodeEvent.attempt} 次`
+                                    : ''}
+                                </Typography>
+                              )}
+                              {node.latestNodeEvent?.error_summary && (
+                                <Typography variant='caption' color='error.main'>
+                                  {node.latestNodeEvent.error_summary}
+                                </Typography>
+                              )}
+                              {node.latestStep?.message && (
+                                <Typography variant='caption' color='text.secondary'>
+                                  {node.latestStep.message}
+                                </Typography>
+                              )}
+                              <DetailSection title='关键输入' items={inputDetailItems} />
+                              <DetailSection title='关键输出' items={outputDetailItems} />
+                            </Stack>
+                          </Collapse>
+                        </Stack>
+                      </Paper>
+                    );
+                  })}
+                </Stack>
               </Stack>
             </Paper>
           );

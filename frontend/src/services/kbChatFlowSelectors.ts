@@ -14,6 +14,10 @@ interface NodeDetailPolicy {
 }
 
 const NODE_DETAIL_POLICY_MAP: Record<string, NodeDetailPolicy> = {
+  preprocess_subgraph: {
+    input: ['user_input'],
+    output: ['preprocess_next', 'normalized_query', 'final_answer'],
+  },
   merge_context: {
     input: ['user_input'],
     output: [
@@ -30,6 +34,10 @@ const NODE_DETAIL_POLICY_MAP: Record<string, NodeDetailPolicy> = {
     input: ['query'],
     output: ['coref_query', 'confidence', 'selected_mention', 'reason', 'needs_clarification_hint', 'rewritten'],
   },
+  AMBIGUITY_CHECK_ENABLED: {
+    input: ['query'],
+    output: ['enabled', 'reason', 'preprocess_next'],
+  },
   ambiguity_check: {
     input: ['query'],
     output: ['ambiguous', 'reason_code', 'confidence', 'action', 'final_answer'],
@@ -40,11 +48,17 @@ const NODE_DETAIL_POLICY_MAP: Record<string, NodeDetailPolicy> = {
   },
   complexity_classify: {
     input: ['normalized_query'],
-    output: ['complexity', 'signals', 'confidence'],
+    output: [
+      'complexity_level',
+      'adaptive_route',
+      'query_strategy',
+      'query_strategy_confidence',
+      'query_strategy_signals',
+    ],
   },
   adaptive_routing: {
-    input: ['complexity'],
-    output: ['route', 'reason', 'strategy'],
+    input: ['complexity_level'],
+    output: ['adaptive_route', 'complexity_level', 'reason'],
   },
   simple_path: {
     input: ['normalized_query'],
@@ -57,6 +71,26 @@ const NODE_DETAIL_POLICY_MAP: Record<string, NodeDetailPolicy> = {
   complex_path: {
     input: ['normalized_query'],
     output: ['route', 'reason', 'decomposition_enabled', 'hyde_enabled'],
+  },
+  generate_variants_mod: {
+    input: ['normalized_query'],
+    output: ['multi_queries', 'count', 'reason'],
+  },
+  ENABLE_MULTI_QUERY_MOD: {
+    input: ['normalized_query'],
+    output: ['enabled', 'reason'],
+  },
+  ENABLE_DECOMPOSITION: {
+    input: ['normalized_query'],
+    output: ['enabled', 'reason'],
+  },
+  ENABLE_MULTI_QUERY: {
+    input: ['normalized_query'],
+    output: ['enabled', 'reason'],
+  },
+  ENABLE_HYDE: {
+    input: ['normalized_query'],
+    output: ['enabled', 'reason'],
   },
   decomposition: {
     input: ['normalized_query'],
@@ -94,12 +128,20 @@ const NODE_DETAIL_POLICY_MAP: Record<string, NodeDetailPolicy> = {
       'query_items',
     ],
   },
+  preprocess_exit: {
+    input: ['normalized_query'],
+    output: ['preprocess_next', 'normalized_query', 'final_answer'],
+  },
+  retrieval_subgraph: {
+    input: ['query_items', 'normalized_query'],
+    output: ['query_strategy', 'evidence_count', 'retrieval_count'],
+  },
   dispatch_subqueries: {
     input: ['query_strategy', 'query_items'],
     output: ['mode', 'branch_count', 'reason'],
   },
   retrieval_budget_plan: {
-    input: ['complexity', 'failure_reasons'],
+    input: ['complexity_level', 'query_items', 'reason'],
     output: ['per_query_top_k', 'global_candidates_limit', 'rerank_input_limit'],
   },
   retrieve_subquery: {
@@ -117,6 +159,14 @@ const NODE_DETAIL_POLICY_MAP: Record<string, NodeDetailPolicy> = {
   context_compress: {
     input: ['final_context'],
     output: ['token_limit', 'input_tokens', 'output_tokens', 'truncated'],
+  },
+  evidence_gate_subgraph: {
+    input: ['question', 'final_context'],
+    output: ['action', 'reason', 'passed', 'risk_level'],
+  },
+  doc_gate_dispatch: {
+    input: ['question', 'final_context'],
+    output: ['action', 'dispatch_reason', 'branch_count'],
   },
   doc_gate_route: {
     input: ['question'],
@@ -168,7 +218,7 @@ const NODE_DETAIL_POLICY_MAP: Record<string, NodeDetailPolicy> = {
   },
   answer_review_dispatch: {
     input: ['draft_answer'],
-    output: ['branch_count', 'dispatch_reason'],
+    output: ['check_count', 'checks', 'dispatch_reason', 'branch_count'],
   },
   answer_review_citation: {
     input: ['draft_answer'],
@@ -187,12 +237,12 @@ const NODE_DETAIL_POLICY_MAP: Record<string, NodeDetailPolicy> = {
     output: ['passed', 'action', 'reason', 'review_confidence'],
   },
   cove_check: {
-    input: ['query_risk_level'],
-    output: ['enabled', 'reason', 'risk_level'],
+    input: ['draft_answer'],
+    output: ['enabled', 'high_risk', 'reason', 'risk_level', 'action'],
   },
   chain_of_verification: {
     input: ['draft_answer'],
-    output: ['verification_rounds', 'failed_claims', 'repair_action'],
+    output: ['passed', 'reason', 'citation_count', 'verification_rounds', 'failed_claims', 'repair_action'],
   },
   claim_citation_check: {
     input: ['draft_answer'],

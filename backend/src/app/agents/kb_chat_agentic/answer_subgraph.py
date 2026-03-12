@@ -21,6 +21,10 @@ from langgraph.runtime import Runtime
 from langgraph.types import Command, Send
 from pydantic import ValidationError
 
+from app.agents.kb_chat_trace_nodes import (
+    KB_CHAT_NODE_METADATA,
+    wrap_kb_chat_node_with_io,
+)
 from app.agents.kb_chat_agentic.reflection import (
     generate_draft,
     route_after_answer_review,
@@ -873,13 +877,21 @@ def build_answer_subgraph(
         state_schema=KbChatAgenticState,
         context_schema=KbChatAnswerSubgraphContext,
     )
-    graph.add_node(
+    def add_traced_node(node_id: str, node_callable: Any, **kwargs: Any) -> None:
+        graph.add_node(
+            node_id,
+            wrap_kb_chat_node_with_io(node_id, node_callable),
+            metadata=KB_CHAT_NODE_METADATA[node_id],
+            **kwargs,
+        )
+
+    add_traced_node(
         "draft_generate",
         lambda s, runtime: _draft_generate(
             s, runtime, settings=settings, chat_model=chat_model
         ),
     )
-    graph.add_node(
+    add_traced_node(
         "answer_review_dispatch",
         lambda s, runtime: _answer_review_dispatch(
             s,
@@ -893,23 +905,23 @@ def build_answer_subgraph(
             "answer_review_fuse",
         ),
     )
-    graph.add_node(
+    add_traced_node(
         "answer_review_citation",
         lambda s, runtime: _answer_review_citation(s, runtime, settings=settings),
     )
-    graph.add_node(
+    add_traced_node(
         "answer_review_factual",
         lambda s, runtime: _answer_review_factual(
             s, runtime, settings=settings, chat_model=chat_model
         ),
     )
-    graph.add_node(
+    add_traced_node(
         "answer_review_answerability",
         lambda s, runtime: _answer_review_answerability(
             s, runtime, settings=settings, chat_model=chat_model
         ),
     )
-    graph.add_node(
+    add_traced_node(
         "answer_review_fuse",
         lambda s, runtime: _answer_review_fuse(
             s,
@@ -918,18 +930,18 @@ def build_answer_subgraph(
         ),
         destinations=("cove_check", "answer_commit", "answer_repair"),
     )
-    graph.add_node("cove_check", _cove_check, destinations=("chain_of_verification", "claim_citation_check"))
-    graph.add_node("chain_of_verification", _chain_of_verification)
-    graph.add_node(
+    add_traced_node("cove_check", _cove_check, destinations=("chain_of_verification", "claim_citation_check"))
+    add_traced_node("chain_of_verification", _chain_of_verification)
+    add_traced_node(
         "claim_citation_check",
         _claim_citation_check,
         destinations=("answer_commit", "answer_repair"),
     )
-    graph.add_node(
+    add_traced_node(
         "answer_repair",
         lambda s, runtime: _answer_repair(s, runtime, settings=settings, chat_model=chat_model),
     )
-    graph.add_node(
+    add_traced_node(
         "answer_commit",
         lambda s, runtime: _answer_commit(s, runtime, settings=settings),
         defer=True,
