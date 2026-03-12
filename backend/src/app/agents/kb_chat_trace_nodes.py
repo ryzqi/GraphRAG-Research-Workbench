@@ -719,11 +719,14 @@ def wrap_kb_chat_node_with_io(
 
     async def _wrapped(state: dict[str, Any], runtime: Runtime[Any]) -> Any:
         if not accepts_runtime:
-            executor = lambda: node_callable(state)
+            def executor() -> Any:
+                return node_callable(state)
         elif runtime_is_positional_only:
-            executor = lambda: node_callable(state, runtime)
+            def executor() -> Any:
+                return node_callable(state, runtime)
         else:
-            executor = lambda: node_callable(state, runtime=runtime)
+            def executor() -> Any:
+                return node_callable(state, runtime=runtime)
 
         return await _trace_async(
             node_name=node_name,
