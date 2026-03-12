@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from functools import partial
+import re
 from typing import Any, TypedDict
 
 from langchain.tools import BaseTool
@@ -21,6 +23,30 @@ from app.agents.kb_chat_trace_nodes import (
 from app.agents.kb_chat_agentic_state import KbChatAgenticState
 from app.core.settings import Settings
 from app.utils.token_counter import count_tokens_approximately
+
+_TERM_RE = re.compile(r"[\u4e00-\u9fffA-Za-z0-9_]{2,}")
+_EVIDENCE_BLOCK_RE = re.compile(
+    r"^\[([^\[\]\n]{1,128})\]\s*(.*?)(?=^\[[^\[\]\n]{1,128}\]\s|\Z)",
+    re.MULTILINE | re.DOTALL,
+)
+_SENTENCE_SPLIT_RE = re.compile(r"(?<=[。！？!?；;])")
+_GENERIC_QUERY_TERMS = {
+    "什么",
+    "为何",
+    "为啥",
+    "如何",
+    "怎样",
+    "怎么",
+    "是否",
+    "能否",
+    "可以",
+    "请问",
+    "有关",
+    "关于",
+    "多少",
+    "哪些",
+    "使用",
+}
 
 
 class KbChatGraphContext(TypedDict, total=False):
@@ -127,18 +153,224 @@ def _retrieval_budget_plan(state: dict[str, Any], settings: Settings) -> dict[st
     }
 
 
+def _resolve_query_text(state: dict[str, Any]) -> str:
+    for key in ("normalized_query", "coref_query", "rewrite_input_query", "user_input"):
+        value = state.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
+
+
+def _extract_terms(text: str, *, drop_generic: bool = False) -> set[str]:
+    terms: set[str] = set()
+    for match in _TERM_RE.finditer(text or ""):
+        token = match.group(0).strip().lower()
+        if len(token) < 2:
+            continue
+        if not (drop_generic and token in _GENERIC_QUERY_TERMS):
+            terms.add(token)
+        cjk_only = "".join(ch for ch in token if "\u4e00" <= ch <= "\u9fff")
+        if len(cjk_only) < 2:
+            continue
+        max_ngram = min(4, len(cjk_only))
+        for size in range(2, max_ngram + 1):
+            for start in range(0, len(cjk_only) - size + 1):
+                candidate = cjk_only[start : start + size]
+                if drop_generic and candidate in _GENERIC_QUERY_TERMS:
+                    continue
+                terms.add(candidate)
+    return terms
+
+
+def _split_evidence_blocks(context: str) -> list[dict[str, Any]]:
+    blocks: list[dict[str, Any]] = []
+    if not context:
+        return blocks
+    for index, match in enumerate(_EVIDENCE_BLOCK_RE.finditer(context.strip())):
+        label = str(match.group(1) or "").strip()
+        body = str(match.group(2) or "").strip()
+        if not label or not body:
+            continue
+        raw = f"[{label}] {body}".strip()
+        blocks.append(
+            {
+                "index": index,
+                "label": f"[{label}]",
+                "body": body,
+                "raw": raw,
+                "tokens": count_tokens_approximately(raw),
+            }
+        )
+    return blocks
+
+
+def _normalize_dedupe_key(text: str) -> str:
+    return " ".join((text or "").split()).casefold()
+
+
+def _sentence_score(sentence: str, query_terms: set[str]) -> int:
+    if not sentence.strip():
+        return 0
+    if not query_terms:
+        return 1
+    sentence_terms = _extract_terms(sentence)
+    return len(query_terms & sentence_terms)
+
+
+def _score_block_relevance(
+    *,
+    query_terms: set[str],
+    block_terms: set[str],
+    term_document_frequency: Counter[str],
+) -> float:
+    if not query_terms or not block_terms:
+        return 0.0
+    score = 0.0
+    for term in query_terms & block_terms:
+        score += min(4.0, float(len(term))) / float(max(1, term_document_frequency.get(term, 1)))
+    return round(score, 4)
+
+
+def _select_relevant_excerpt(body: str, query_terms: set[str], *, token_budget: int) -> str:
+    sentences = [
+        sentence.strip()
+        for sentence in _SENTENCE_SPLIT_RE.split(body)
+        if isinstance(sentence, str) and sentence.strip()
+    ]
+    if not sentences:
+        return body.strip()
+
+    ranked = sorted(
+        enumerate(sentences),
+        key=lambda row: (-_sentence_score(row[1], query_terms), row[0]),
+    )
+    selected_indices: list[int] = []
+    for idx, sentence in ranked:
+        if _sentence_score(sentence, query_terms) <= 0 and selected_indices:
+            continue
+        selected_indices.append(idx)
+        ordered = [sentences[item] for item in sorted(set(selected_indices))]
+        excerpt = " ".join(ordered).strip()
+        if count_tokens_approximately(excerpt) >= token_budget:
+            break
+
+    if not selected_indices:
+        selected_indices = [0]
+
+    ordered = [sentences[item] for item in sorted(set(selected_indices))]
+    excerpt = " ".join(ordered).strip()
+    if count_tokens_approximately(excerpt) <= token_budget:
+        return excerpt
+
+    trimmed = ordered[:1]
+    excerpt = trimmed[0]
+    while count_tokens_approximately(excerpt) > token_budget and len(excerpt) > 64:
+        excerpt = excerpt[: max(64, int(len(excerpt) * 0.85))].rstrip()
+    return excerpt
+
+
 def _compress_context(state: dict[str, Any]) -> dict[str, Any]:
     final_context = str(state.get("final_context") or "").strip()
     if not final_context:
         final_context = "（未找到相关内容）"
     token_limit = 2500
     token_count = count_tokens_approximately(final_context)
+    within_limit = token_count <= token_limit
+    query_text = _resolve_query_text(state)
+    query_terms = _extract_terms(query_text, drop_generic=True)
+    if not query_terms:
+        query_terms = _extract_terms(query_text)
     compressed = final_context
-    truncated = False
-    if token_count > token_limit:
-        keep_ratio = max(0.1, token_limit / max(token_count, 1))
-        keep_chars = max(512, int(len(final_context) * keep_ratio))
-        compressed = final_context[:keep_chars].rstrip() + "\n\n（上下文已压缩）"
+    deduped_block_count = 0
+    dropped_block_count = 0
+    retained_labels: list[str] = []
+
+    blocks = _split_evidence_blocks(final_context)
+    if blocks:
+        deduped_blocks: list[dict[str, Any]] = []
+        seen_bodies: set[str] = set()
+        scored_rows: list[dict[str, Any]] = []
+        block_term_sets: dict[int, set[str]] = {}
+        for block in blocks:
+            body_key = _normalize_dedupe_key(str(block.get("body") or ""))
+            if body_key in seen_bodies:
+                deduped_block_count += 1
+                continue
+            seen_bodies.add(body_key)
+            deduped_blocks.append(block)
+            block_index = int(block.get("index") or 0)
+            block_terms = _extract_terms(str(block.get("body") or ""))
+            block_term_sets[block_index] = block_terms
+            scored_rows.append(
+                {
+                    "block": block,
+                    "score": 0.0,
+                    "index": block_index,
+                }
+            )
+
+        term_document_frequency: Counter[str] = Counter()
+        for terms in block_term_sets.values():
+            for term in query_terms & terms:
+                term_document_frequency[term] += 1
+        for row in scored_rows:
+            block_index = int(row["index"])
+            row["score"] = _score_block_relevance(
+                query_terms=query_terms,
+                block_terms=block_term_sets.get(block_index, set()),
+                term_document_frequency=term_document_frequency,
+            )
+
+        scored_rows.sort(key=lambda row: (-float(row["score"]), int(row["index"])))
+        selected_parts: list[str] = []
+        selected_scores = [float(row["score"]) for row in scored_rows]
+        max_score = max(selected_scores, default=0.0)
+        has_relevant_block = max_score > 0
+        low_relevance_cutoff = max_score * 0.6 if has_relevant_block else 0.0
+        for row in scored_rows:
+            block = row["block"]
+            score = float(row["score"])
+            if has_relevant_block and score < low_relevance_cutoff:
+                dropped_block_count += 1
+                continue
+            if within_limit:
+                candidate = str(block["raw"]).strip()
+            else:
+                excerpt_budget = 480 if score > 0 else 220
+                excerpt = _select_relevant_excerpt(
+                    str(block.get("body") or ""),
+                    query_terms,
+                    token_budget=excerpt_budget,
+                )
+                candidate = f"{block['label']} {excerpt}".strip()
+            next_candidate = "\n\n".join([*selected_parts, candidate]).strip()
+            if (
+                selected_parts
+                and count_tokens_approximately(next_candidate) > token_limit
+            ):
+                dropped_block_count += 1
+                continue
+            selected_parts.append(candidate)
+            retained_labels.append(str(block["label"]))
+
+        if selected_parts:
+            if (
+                within_limit
+                and deduped_block_count == 0
+                and dropped_block_count == 0
+                and len(selected_parts) == len(blocks)
+            ):
+                compressed = final_context
+            else:
+                compressed = "\n\n".join(selected_parts).strip()
+        else:
+            compressed = deduped_blocks[0]["raw"] if deduped_blocks else final_context
+
+    truncated = count_tokens_approximately(compressed) < token_count
+    if count_tokens_approximately(compressed) > token_limit:
+        keep_ratio = max(0.1, token_limit / max(count_tokens_approximately(compressed), 1))
+        keep_chars = max(512, int(len(compressed) * keep_ratio))
+        compressed = compressed[:keep_chars].rstrip() + "\n\n（上下文已压缩）"
         truncated = True
     compressed_tokens = count_tokens_approximately(compressed)
     stage_summaries = state.get("stage_summaries")
@@ -151,6 +383,10 @@ def _compress_context(state: dict[str, Any]) -> dict[str, Any]:
             "input_tokens": token_count,
             "output_tokens": compressed_tokens,
             "truncated": truncated,
+            "deduped_block_count": deduped_block_count,
+            "dropped_block_count": dropped_block_count,
+            "retained_block_count": len(retained_labels),
+            "selected_labels": retained_labels[:12],
         },
     }
     return {
@@ -160,6 +396,10 @@ def _compress_context(state: dict[str, Any]) -> dict[str, Any]:
             "input_tokens": token_count,
             "output_tokens": compressed_tokens,
             "truncated": truncated,
+            "deduped_block_count": deduped_block_count,
+            "dropped_block_count": dropped_block_count,
+            "retained_block_count": len(retained_labels),
+            "selected_labels": retained_labels[:12],
         },
         # Keep downstream compatibility: current doc gate reads final_context.
         "final_context": compressed,

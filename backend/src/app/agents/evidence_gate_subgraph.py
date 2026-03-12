@@ -91,20 +91,30 @@ def _resolve_doc_gate_round(state: dict[str, Any]) -> int:
 
 def _doc_gate_dispatch(state: dict[str, Any]) -> Command[str]:
     next_round = _resolve_doc_gate_round(state) + 1
+    branch_state = {**state, "doc_gate_round": next_round}
     return Command(
         update={"doc_gate_round": next_round},
         goto=[
             Send(
                 "doc_gate_sufficiency",
-                {"doc_gate_task": {"gate": "sufficiency", "round": next_round}},
+                {
+                    **branch_state,
+                    "doc_gate_task": {"gate": "sufficiency", "round": next_round},
+                },
             ),
             Send(
                 "doc_gate_answerability",
-                {"doc_gate_task": {"gate": "answerability", "round": next_round}},
+                {
+                    **branch_state,
+                    "doc_gate_task": {"gate": "answerability", "round": next_round},
+                },
             ),
             Send(
                 "doc_gate_conflict",
-                {"doc_gate_task": {"gate": "conflict", "round": next_round}},
+                {
+                    **branch_state,
+                    "doc_gate_task": {"gate": "conflict", "round": next_round},
+                },
             ),
         ],
     )
@@ -158,16 +168,38 @@ def _doc_gate_conflict(state: dict[str, Any]) -> dict[str, Any]:
         + context.lower().count("however")
         + context.lower().count("but ")
     )
+    labels = re.findall(r"\[([^\[\]\n]{1,128})\]", context)
+    conflict_pairs = [
+        [labels[idx], labels[idx + 1]]
+        for idx in range(0, max(len(labels) - 1, 0))
+        if idx < len(labels) - 1
+    ][:4]
+    if conflict_markers >= 3:
+        conflict_level = "severe"
+    elif conflict_markers >= 1:
+        conflict_level = "light"
+    else:
+        conflict_level = "none"
     score = min(1.0, conflict_markers / 4.0)
-    passed = score < 0.6
-    reason = "passed" if passed else "high_conflict"
+    passed = conflict_level != "severe"
+    reason = (
+        "passed"
+        if conflict_level == "none"
+        else "light_conflict"
+        if conflict_level == "light"
+        else "severe_conflict"
+    )
     return _emit_gate_result(
         gate="conflict",
         round_id=round_id,
         passed=passed,
         score=1.0 - score,
         reason=reason,
-        extra={"conflict_markers": conflict_markers},
+        extra={
+            "conflict_markers": conflict_markers,
+            "conflict_level": conflict_level,
+            "conflict_pairs": conflict_pairs,
+        },
     )
 
 
@@ -185,6 +217,8 @@ def _doc_gate_fuse(state: dict[str, Any]) -> dict[str, Any]:
     suff = by_gate.get("sufficiency", {"passed": False, "score": 0.0, "reason": "missing"})
     ans = by_gate.get("answerability", {"passed": False, "score": 0.0, "reason": "missing"})
     conflict = by_gate.get("conflict", {"passed": False, "score": 0.0, "reason": "missing"})
+    conflict_extra = conflict.get("extra") if isinstance(conflict.get("extra"), dict) else {}
+    conflict_level = str(conflict_extra.get("conflict_level") or "none")
     missing_gates = [
         gate for gate in ("sufficiency", "answerability", "conflict") if gate not in by_gate
     ]
@@ -193,7 +227,11 @@ def _doc_gate_fuse(state: dict[str, Any]) -> dict[str, Any]:
         decision = "retry"
     elif not bool(ans.get("passed")):
         decision = "exit_unanswerable"
-    elif not bool(suff.get("passed")) or not bool(conflict.get("passed")):
+    elif not bool(suff.get("passed")):
+        decision = "retry"
+    elif conflict_level == "severe":
+        decision = "pass"
+    elif not bool(conflict.get("passed")):
         decision = "retry"
     score = (
         float(suff.get("score") or 0.0)
@@ -207,6 +245,8 @@ def _doc_gate_fuse(state: dict[str, Any]) -> dict[str, Any]:
         "sufficiency": suff,
         "answerability": ans,
         "conflict": conflict,
+        "conflict_level": conflict_level,
+        "conflict_flag": conflict_level == "severe",
         "missing_gates": missing_gates,
     }
     stage_summaries = state.get("stage_summaries")
@@ -231,14 +271,17 @@ def _doc_gate_route(state: dict[str, Any]) -> dict[str, Any]:
     score = float(scores.get("score") or 0.0)
     if decision == "pass":
         action = "none"
+        goto = "answer_subgraph"
         passed = True
         reason = "passed"
     elif decision == "exit_unanswerable":
         action = "force_exit"
+        goto = "force_exit"
         passed = False
         reason = "exit_unanswerable"
     else:
         action = "transform_query"
+        goto = "transform_query"
         passed = False
         reason = "retry"
     reflection = state.get("reflection")
@@ -267,6 +310,7 @@ def _doc_gate_route(state: dict[str, Any]) -> dict[str, Any]:
             "doc_gate_route": {
                 "decision": decision,
                 "action": action,
+                "goto": goto,
                 "passed": passed,
                 "reason": reason,
                 "score": round(score, 4),

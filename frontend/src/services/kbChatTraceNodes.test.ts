@@ -93,4 +93,122 @@ describe('kbChatTraceNodes', () => {
     expect(nodes.find((node) => node.id === 'merge_context')?.title).toBe('上下文合并');
     expect(nodes.find((node) => node.id === 'merge_context')?.subtitle).toBeNull();
   });
+
+  it('prefers terminal waiting_user and failed state for the current node over stale started steps', () => {
+    const waitingNodes = buildTraceNodes({
+      runState: {
+        run_id: 'run-1',
+        run_status: 'waiting_user',
+        current_step_id: 'merge_context',
+        current_step_label: '上下文合并',
+        current_step_status: 'waiting_user',
+        current_node: 'merge_context',
+        attempt: 1,
+        message: '请补充范围',
+        active_path: ['merge_context'],
+        progress: { completed: 1, total: 10, percent: 10 },
+        ts: '2026-01-01T00:00:02.000Z',
+      },
+      pipelineSteps: [
+        {
+          step_id: 'merge_context',
+          label: '上下文合并',
+          status: 'started',
+          ts: '2026-01-01T00:00:01.000Z',
+        },
+      ],
+    });
+
+    const failedNodes = buildTraceNodes({
+      runState: {
+        run_id: 'run-1',
+        run_status: 'failed',
+        current_step_id: 'merge_context',
+        current_step_label: '上下文合并',
+        current_step_status: 'failed',
+        current_node: 'merge_context',
+        attempt: 1,
+        message: '检索失败',
+        active_path: ['merge_context'],
+        progress: { completed: 1, total: 10, percent: 10 },
+        ts: '2026-01-01T00:00:03.000Z',
+      },
+      pipelineSteps: [
+        {
+          step_id: 'merge_context',
+          label: '上下文合并',
+          status: 'started',
+          ts: '2026-01-01T00:00:01.000Z',
+        },
+      ],
+    });
+
+    expect(waitingNodes.find((node) => node.id === 'merge_context')?.status).toBe('waiting_user');
+    expect(failedNodes.find((node) => node.id === 'merge_context')?.status).toBe('failed');
+  });
+
+  it('prefers current_step_status over stale pipeline step status for the active node', () => {
+    const nodes = buildTraceNodes({
+      runState: {
+        run_id: 'run-1',
+        run_status: 'running',
+        current_step_id: 'merge_context',
+        current_step_label: '上下文合并',
+        current_step_status: 'completed',
+        current_node: 'merge_context',
+        attempt: 1,
+        message: null,
+        active_path: ['merge_context'],
+        progress: { completed: 1, total: 10, percent: 10 },
+        ts: '2026-01-01T00:00:02.000Z',
+      },
+      pipelineSteps: [
+        {
+          step_id: 'merge_context',
+          label: '上下文合并',
+          status: 'started',
+          ts: '2026-01-01T00:00:01.000Z',
+        },
+      ],
+    });
+
+    expect(nodes.find((node) => node.id === 'merge_context')?.status).toBe('completed');
+  });
+
+  it('renders only schema nodes plus observed nodes when graph schema exists', () => {
+    const groups = buildTraceStageGroups({
+      schema: {
+        version: '2026-03-12',
+        nodes: [
+          { id: 'answer_subgraph', label: '答案子图', phase: 'generate', order: 37 },
+          { id: 'draft_generate', label: '草稿生成', phase: 'generate', order: 38 },
+          { id: 'answer_review_fuse', label: '审查结果融合', phase: 'verify', order: 43 },
+        ],
+        edges: [],
+      },
+      nodeIoEvents: [
+        {
+          run_id: 'run-1',
+          node_id: 'draft_generate',
+          node_name: 'draft_generate',
+          phase: 'end',
+          ts: '2026-01-01T00:00:01.000Z',
+        },
+        {
+          run_id: 'run-1',
+          node_id: 'answer_review_fuse',
+          node_name: 'answer_review_fuse',
+          phase: 'end',
+          ts: '2026-01-01T00:00:02.000Z',
+        },
+      ],
+    });
+
+    const nodeIds = groups.flatMap((stage) => stage.nodes.map((node) => node.id));
+
+    expect(nodeIds).toContain('draft_generate');
+    expect(nodeIds).toContain('answer_review_fuse');
+    expect(nodeIds).not.toContain('generate');
+    expect(nodeIds).not.toContain('answer_review');
+  });
 });

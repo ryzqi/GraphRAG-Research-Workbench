@@ -150,6 +150,14 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value as Record<string, unknown>;
 }
 
+export function extractTraceCommandGoto(snapshot: Record<string, unknown>): string | null {
+  const command =
+    asRecord(snapshot.__trace_command__) ??
+    asRecord(snapshot.__command__) ??
+    {};
+  return typeof command.goto === 'string' ? command.goto : null;
+}
+
 function asNonEmptyText(value: unknown): string | null {
   if (typeof value !== 'string') {
     return null;
@@ -242,6 +250,39 @@ function pickContextFrameTurns(snapshot: Record<string, unknown>, key: string): 
 
 function boolToZh(value: boolean): string {
   return value ? '是' : '否';
+}
+
+function formatNodePathSegment(nodeId: string): string {
+  const label = resolveKbNodeLabel(nodeId, null);
+  return label && label !== nodeId ? `${label}（${nodeId}）` : nodeId;
+}
+
+export function buildNodePathDetailItem(
+  event: ChatNodeIoEvent | null | undefined
+): { key: string; label: string; value: string | string[] } | null {
+  const nodePath = Array.isArray(event?.node_path)
+    ? event.node_path.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+    : [];
+  if (nodePath.length === 0) {
+    return null;
+  }
+  return {
+    key: 'node_path',
+    label: '执行路径',
+    value: nodePath.map((nodeId) => formatNodePathSegment(nodeId)),
+  };
+}
+
+function appendNodePathDetailItem(
+  items: ChatNodeDisplayItem[] | NodeDetailItem[] | null | undefined,
+  event: ChatNodeIoEvent | null | undefined
+): NodeDetailItem[] {
+  const nextItems = items ? [...items] : [];
+  const nodePathItem = buildNodePathDetailItem(event);
+  if (nodePathItem && !nextItems.some((item) => item.key === nodePathItem.key)) {
+    nextItems.push(nodePathItem);
+  }
+  return nextItems;
 }
 
 function pushDisplayItem(
@@ -602,9 +643,11 @@ function buildFallbackOutputItems(
       pushDisplayItem(items, { key: 'adaptive_route', label: '路由结果', value: asNonEmptyText(summary.adaptive_route) });
       pushDisplayItem(items, { key: 'complexity_level', label: '复杂度等级', value: asNonEmptyText(summary.complexity_level) });
     } else if (['AMBIGUITY_CHECK_ENABLED', 'simple_path', 'moderate_path', 'complex_path', 'ENABLE_MULTI_QUERY_MOD', 'ENABLE_DECOMPOSITION', 'ENABLE_MULTI_QUERY', 'ENABLE_HYDE'].includes(nodeId)) {
-      const command = asRecord(snapshot.__command__) ?? {};
-      const goto = typeof command.goto === 'string' ? command.goto : null;
-      pushDisplayItem(items, { key: 'goto', label: '下一节点', value: goto });
+      pushDisplayItem(items, {
+        key: 'goto',
+        label: '下一节点',
+        value: extractTraceCommandGoto(snapshot),
+      });
     } else if (nodeId === 'decomposition') {
       const subQueries = pickStringList(snapshot, 'sub_queries');
       pushDisplayItem(items, { key: 'sub_queries', label: '分解问题', value: subQueries });
@@ -992,6 +1035,7 @@ export function KbChatFlowPanel({
             const rawOutputItems =
               latestNodeEvent?.display_output_items ??
               buildFallbackOutputItems(detailNodeId, latestNodeEvent);
+            const outputItems = appendNodePathDetailItem(rawOutputItems, latestNodeEvent);
             return [
               node.id,
               {
@@ -1004,7 +1048,7 @@ export function KbChatFlowPanel({
                 outputDetailItems: selectKeyDetailItems({
                   nodeId: detailNodeId,
                   section: 'output',
-                  items: rawOutputItems,
+                  items: outputItems,
                   event: latestNodeEvent,
                 }),
               },

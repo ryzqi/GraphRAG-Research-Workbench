@@ -10,6 +10,11 @@ _CITATION_BLOCK_RE = re.compile(
 _CITATION_SPLIT_RE = re.compile(r"[,\uFF0C;\uFF1B\u3001]+")
 _MULTI_SPACE_RE = re.compile(r"[ \t]{2,}")
 _STABLE_CITATION_ID_RE = re.compile(r"^S[1-9]\d*$", re.IGNORECASE)
+_NO_ANSWER_PREFIXES = (
+    "根据现有资料无法回答该问题",
+    "基于当前信息仍无法稳定回答该问题",
+)
+_RETRY_EXHAUSTED_NO_ANSWER = "基于当前信息仍无法稳定回答该问题（已停止重试）。"
 
 
 def _collapse_spaces(text: str) -> str:
@@ -29,6 +34,27 @@ def normalize_citation_label(label: str) -> str:
 
 def is_stable_citation_id(label: str) -> bool:
     return bool(_STABLE_CITATION_ID_RE.fullmatch((label or "").strip()))
+
+
+def resolve_kb_refusal_answer(*, reason: str | None = None) -> str:
+    reason_key = (reason or "").strip().lower()
+    if reason_key == "clarify":
+        return "为了更准确地回答，请补充关键约束信息后再继续。"
+    if reason_key in {
+        "exit_unanswerable",
+        "no_evidence",
+        "insufficient",
+        "low_overlap",
+    }:
+        return "根据现有资料无法回答该问题。"
+    if reason_key == "fallback_closed":
+        return "根据现有资料无法回答该问题（未通过证据校验）。"
+    return _RETRY_EXHAUSTED_NO_ANSWER
+
+
+def is_kb_refusal_answer(answer: str) -> bool:
+    text = _collapse_spaces((answer or "").strip())
+    return any(text.startswith(prefix) for prefix in _NO_ANSWER_PREFIXES)
 
 
 def _iter_citation_parts(raw_block: str) -> list[str]:
@@ -57,7 +83,6 @@ def enforce_kb_answer_citation_guardrails(
     answer: str,
     *,
     allowed_labels: list[str] | tuple[str, ...] | set[str] | None = None,
-    evidence_count: int | None = None,
     allow_no_evidence: bool = False,
 ) -> str:
     """Enforce production guardrails for KB answers.
@@ -69,7 +94,7 @@ def enforce_kb_answer_citation_guardrails(
 
     text = (answer or "").strip()
 
-    if allow_no_evidence:
+    if allow_no_evidence or is_kb_refusal_answer(text):
         # Clarify questions may happen before retrieval. Still avoid citation-like markers.
         return _collapse_spaces(_CITATION_BLOCK_RE.sub("", text)) or text
 
@@ -81,12 +106,6 @@ def enforce_kb_answer_citation_guardrails(
         if not label:
             continue
         canonical_labels.setdefault(label.casefold(), label)
-
-    # Compatibility fallback for older callers that still pass evidence_count only.
-    if not canonical_labels and isinstance(evidence_count, int) and evidence_count > 0:
-        for idx in range(1, evidence_count + 1):
-            s = str(idx)
-            canonical_labels[s.casefold()] = s
 
     if not canonical_labels:
         # Hard constraint: do not answer without evidence.

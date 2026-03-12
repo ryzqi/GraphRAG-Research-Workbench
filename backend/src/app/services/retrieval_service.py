@@ -11,7 +11,7 @@ import time
 import uuid
 from dataclasses import dataclass
 from pathlib import PurePosixPath, PureWindowsPath
-from typing import cast
+from typing import Literal, cast
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -353,6 +353,9 @@ class RetrievalService:
         fingerprint = {
             "top_k": top_k,
             "min_score": self._settings.retrieval_min_score,
+            "raw_min_score": self._settings.retrieval_raw_min_score,
+            "rank_fusion_min_score": self._settings.retrieval_rank_fusion_min_score,
+            "rerank_min_score": self._settings.retrieval_rerank_min_score,
             "hybrid_enabled": feature_flags.hybrid_enabled,
             "hybrid_ranker": runtime_overrides.hybrid_ranker,
             "hybrid_dense_weight": runtime_overrides.hybrid_dense_weight,
@@ -1571,7 +1574,11 @@ class RetrievalService:
             return _timeout_draft()
 
         pre_min_score_count = len(rrf_results)
-        rrf_results, filtered_count = self._apply_min_score(rrf_results)
+        rrf_results, rank_fusion_filtered_count = self._apply_stage_score_cutoff(
+            rrf_results,
+            stage="rank_fusion",
+            ranker=runtime_overrides.hybrid_ranker,
+        )
         pre_dedup_count = len(rrf_results)
 
         rrf_results, dedup_exact_removed = self._dedupe_by_chunk_identity(rrf_results)
@@ -1640,6 +1647,7 @@ class RetrievalService:
         rerank_applied = False
         rerank_reason: str | None = "disabled"
         rerank_latency_ms: int | None = None
+        rerank_filtered_count = 0
         final_results: list[RetrievalResult] = []
 
         if candidates_for_rerank and feature_flags.rerank_enabled:
@@ -1667,7 +1675,13 @@ class RetrievalService:
             rerank_applied = applied
             rerank_reason = reason
             rerank_latency_ms = latency_ms
-            final_results = (ordered if applied else candidates_for_rerank)[:top_n]
+            candidate_results = (ordered if applied else candidates_for_rerank)[:top_n]
+            if applied:
+                candidate_results, rerank_filtered_count = self._apply_stage_score_cutoff(
+                    candidate_results,
+                    stage="rerank",
+                )
+            final_results = candidate_results
         else:
             final_results = candidates_for_rerank[:top_n]
 
@@ -1742,7 +1756,9 @@ class RetrievalService:
                 ),
                 "hyde_retry_regenerated": hyde_retry_regenerated,
                 "pre_min_score_candidates": pre_min_score_count,
-                "filtered_count": filtered_count,
+                "filtered_count": rank_fusion_filtered_count + rerank_filtered_count,
+                "rank_fusion_filtered_count": rank_fusion_filtered_count,
+                "rerank_filtered_count": rerank_filtered_count,
                 "pre_dedup_candidates": pre_dedup_count,
                 "post_dedup_candidates": post_dedup_count,
                 "dedup_exact_removed": dedup_exact_removed,
@@ -2331,7 +2347,6 @@ class RetrievalService:
                     )
                 except asyncio.TimeoutError:
                     return _timeout_return()
-                results, filtered_count = self._apply_min_score(results)
                 try:
                     timeout_value = self._effective_timeout(
                         deadline=deadline, per_call_timeout=None
@@ -2369,7 +2384,7 @@ class RetrievalService:
                     results=results,
                     stats={
                         "cache_hit": True,
-                        "filtered_count": filtered_count,
+                        "filtered_count": 0,
                     },
                 )
 
@@ -2379,8 +2394,8 @@ class RetrievalService:
                     effective_query=effective_query,
                     top_k=top_k,
                     min_score=self._settings.retrieval_min_score,
-                    total_hits=len(results) + filtered_count,
-                    filtered_count=filtered_count,
+                    total_hits=len(results),
+                    filtered_count=0,
                     returned_count=len(results),
                     cache_hit=True,
                     rewrite_enabled=feature_flags.query_rewrite_enabled,
@@ -2531,14 +2546,46 @@ class RetrievalService:
                 )
         return results
 
-    def _apply_min_score(
-        self, results: list[RetrievalResult]
+    def _resolve_stage_score_cutoff(
+        self,
+        *,
+        stage: Literal["raw", "rank_fusion", "rerank"],
+        ranker: str | None = None,
+    ) -> float | None:
+        if stage == "raw":
+            cutoff = self._settings.retrieval_raw_min_score
+            return cutoff if cutoff is not None else None
+
+        if stage == "rank_fusion":
+            cutoff = self._settings.retrieval_rank_fusion_min_score
+            if cutoff is not None:
+                return cutoff
+            # Rank-based fusion scores are not calibrated against raw/rerank scores.
+            # Keep legacy RETRIEVAL_MIN_SCORE from clearing RRF/weighted candidates.
+            return None
+
+        cutoff = self._settings.retrieval_rerank_min_score
+        if cutoff is not None:
+            return cutoff
+        return self._settings.retrieval_min_score
+
+    def _apply_stage_score_cutoff(
+        self,
+        results: list[RetrievalResult],
+        *,
+        stage: Literal["raw", "rank_fusion", "rerank"],
+        ranker: str | None = None,
     ) -> tuple[list[RetrievalResult], int]:
-        min_score = self._settings.retrieval_min_score
+        min_score = self._resolve_stage_score_cutoff(stage=stage, ranker=ranker)
         if min_score is None or min_score <= 0:
             return results, 0
         filtered = [r for r in results if r.score >= min_score]
         return filtered, max(len(results) - len(filtered), 0)
+
+    def _apply_min_score(
+        self, results: list[RetrievalResult]
+    ) -> tuple[list[RetrievalResult], int]:
+        return self._apply_stage_score_cutoff(results, stage="raw")
 
     def to_evidence_items(self, results: list[RetrievalResult]) -> list[EvidenceItem]:
         """Convert retrieval results to evidence items."""

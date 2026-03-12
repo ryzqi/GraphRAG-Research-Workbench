@@ -24,6 +24,7 @@ from app.integrations.model_runtime_config import ModelRuntimeConfigManager
 from app.integrations.milvus_client import create_milvus_client
 from app.integrations.redis_client import close_redis_client, create_redis_client
 from app.integrations.rerank_client import RerankClient
+from app.services.agent_run_recovery import recover_stale_interactive_agent_runs_on_startup
 
 settings = get_settings()
 configure_logging(settings.app_log_level)
@@ -34,10 +35,15 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     """应用生命周期管理。"""
     validate_startup_settings(settings)
+    sessionmaker = get_sessionmaker()
     app.state.engine = get_engine()
     await ensure_ingestion_schema_ready(app.state.engine)
     await ModelRuntimeConfigManager.initialize(
-        sessionmaker=get_sessionmaker(),
+        sessionmaker=sessionmaker,
+        settings=settings,
+    )
+    await recover_stale_interactive_agent_runs_on_startup(
+        sessionmaker=sessionmaker,
         settings=settings,
     )
     await CheckpointManager.initialize()

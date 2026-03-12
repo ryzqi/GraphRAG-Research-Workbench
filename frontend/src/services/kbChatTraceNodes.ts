@@ -103,6 +103,25 @@ function isTerminalStatus(status: TraceNodeStatus): boolean {
   return status === 'completed' || status === 'failed' || status === 'waiting_user' || status === 'skipped';
 }
 
+function normalizeTraceStatus(status: string | null | undefined): TraceNodeStatus | null {
+  switch (status) {
+    case 'running':
+    case 'started':
+      return 'running';
+    case 'succeeded':
+    case 'completed':
+      return 'completed';
+    case 'failed':
+      return 'failed';
+    case 'waiting_user':
+      return 'waiting_user';
+    case 'skipped':
+      return 'skipped';
+    default:
+      return null;
+  }
+}
+
 function resolveObservedNodeOrder(nodeId: string, fallbackOrder: number): number {
   const catalogOrder = resolveKbNodeOrder(nodeId);
   return catalogOrder === Number.MAX_SAFE_INTEGER ? fallbackOrder : catalogOrder;
@@ -114,6 +133,7 @@ function resolveEnabledNodes(
   events: ChatNodeIoEvent[]
 ): NodeDefinition[] {
   const nodes = new Map<string, NodeDefinition>();
+  const hasSchemaNodes = Array.isArray(schema?.nodes) && schema.nodes.length > 0;
 
   const registerNode = (nodeId: string, phase: string | null, order: number) => {
     if (!nodeId || nodes.has(nodeId)) {
@@ -127,17 +147,19 @@ function resolveEnabledNodes(
     });
   };
 
-  Object.entries(KB_NODE_CATALOG).forEach(([nodeId, meta]) => {
-    registerNode(nodeId, meta.phase ?? null, meta.order);
-  });
-
-  schema?.nodes.forEach((node) => {
-    registerNode(
-      node.id,
-      node.phase ?? null,
-      typeof node.order === 'number' ? node.order : resolveKbNodeOrder(node.id)
-    );
-  });
+  if (hasSchemaNodes) {
+    schema?.nodes.forEach((node) => {
+      registerNode(
+        node.id,
+        node.phase ?? null,
+        typeof node.order === 'number' ? node.order : resolveKbNodeOrder(node.id)
+      );
+    });
+  } else {
+    Object.entries(KB_NODE_CATALOG).forEach(([nodeId, meta]) => {
+      registerNode(nodeId, meta.phase ?? null, meta.order);
+    });
+  }
 
   steps.forEach((step, index) => {
     registerNode(step.step_id, null, resolveObservedNodeOrder(step.step_id, 10_000 + index));
@@ -176,6 +198,19 @@ function statusFromNode(params: {
     (step) => step.status === 'completed' || step.status === 'skipped'
   );
   const isCurrentNode = runState?.current_step_id === nodeId || runState?.current_node === nodeId;
+  const currentNodeStatus = isCurrentNode
+    ? normalizeTraceStatus(runState?.current_step_status)
+    : null;
+
+  if (currentNodeStatus === 'failed' || (runState?.run_status === 'failed' && isCurrentNode)) {
+    return 'failed';
+  }
+  if (currentNodeStatus === 'waiting_user' || (runState?.run_status === 'waiting_user' && isCurrentNode)) {
+    return 'waiting_user';
+  }
+  if (currentNodeStatus) {
+    return currentNodeStatus;
+  }
 
   if (hasFailedStep || latestEvent?.phase === 'error') {
     return 'failed';
@@ -188,12 +223,6 @@ function statusFromNode(params: {
   }
   if (hasCompletedStep || latestEvent?.phase === 'end') {
     return 'completed';
-  }
-  if (runState?.run_status === 'failed' && isCurrentNode) {
-    return 'failed';
-  }
-  if (runState?.run_status === 'waiting_user' && isCurrentNode) {
-    return 'waiting_user';
   }
   if (runState?.run_status === 'succeeded' && (hasPathHit || steps.length > 0 || events.length > 0)) {
     return 'completed';

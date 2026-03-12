@@ -225,6 +225,9 @@ class Settings(BaseSettings):
     llm_max_input_tokens: int | None = Field(None, alias="LLM_MAX_INPUT_TOKENS")
     llm_output_version: str = Field("responses/v1", alias="LLM_OUTPUT_VERSION")
     general_chat_replay_mode: str = Field("auto", alias="GENERAL_CHAT_REPLAY_MODE")
+    interactive_run_stale_timeout_seconds: int = Field(
+        300, ge=1, alias="INTERACTIVE_RUN_STALE_TIMEOUT_SECONDS"
+    )
     model_config_kms_key: str | None = Field(None, alias="MODEL_CONFIG_KMS_KEY")
 
     embedding_base_url: str = Field(
@@ -319,6 +322,15 @@ class Settings(BaseSettings):
     retrieval_cache_ttl_seconds: int = Field(300, alias="RETRIEVAL_CACHE_TTL_SECONDS")
     retrieval_cache_enabled: bool = Field(True, alias="RETRIEVAL_CACHE_ENABLED")
     retrieval_min_score: float | None = Field(0.2, alias="RETRIEVAL_MIN_SCORE")
+    retrieval_raw_min_score: float | None = Field(
+        None, alias="RETRIEVAL_RAW_MIN_SCORE"
+    )
+    retrieval_rank_fusion_min_score: float | None = Field(
+        None, alias="RETRIEVAL_RANK_FUSION_MIN_SCORE"
+    )
+    retrieval_rerank_min_score: float | None = Field(
+        None, alias="RETRIEVAL_RERANK_MIN_SCORE"
+    )
     retrieval_query_lowercase: bool = Field(False, alias="RETRIEVAL_QUERY_LOWERCASE")
     retrieval_hybrid_ranker: str = Field("rrf", alias="RETRIEVAL_HYBRID_RANKER")
     retrieval_hybrid_dense_weight: float = Field(
@@ -370,6 +382,20 @@ class Settings(BaseSettings):
         "closed", alias="KB_CHAT_GRADER_FAIL_POLICY"
     )
     kb_chat_json_safe_policy: str = Field("stringify", alias="KB_CHAT_JSON_SAFE_POLICY")
+
+    kb_chat_ambiguity_check_enabled: bool = Field(
+        True, alias="KB_CHAT_AMBIGUITY_CHECK_ENABLED"
+    )
+    kb_chat_multi_query_mod_enabled: bool = Field(
+        True, alias="KB_CHAT_MULTI_QUERY_MOD_ENABLED"
+    )
+    kb_chat_decomposition_enabled: bool = Field(
+        True, alias="KB_CHAT_DECOMPOSITION_ENABLED"
+    )
+    kb_chat_multi_query_enabled: bool = Field(
+        True, alias="KB_CHAT_MULTI_QUERY_ENABLED"
+    )
+    kb_chat_hyde_enabled: bool = Field(True, alias="KB_CHAT_HYDE_ENABLED")
 
     kb_chat_ambiguity_timeout_seconds: float = Field(
         0.5, alias="KB_CHAT_AMBIGUITY_TIMEOUT_SECONDS"

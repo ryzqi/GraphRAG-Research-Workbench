@@ -65,6 +65,28 @@ describe('kbChatTraceStore', () => {
     expect(next.nodeIoEvents?.[0]?.display_output_items?.[0]?.key).toBe('retrieval_count');
   });
 
+  it('preserves node_path from node_io payload for trace details', () => {
+    const next = reduceKbChatTraceState(
+      {},
+      {
+        type: 'node_io',
+        raw: {
+          run_id: 'run-1',
+          node_id: 'retrieve_subquery',
+          node_name: 'retrieve_subquery',
+          node_path: ['retrieval_subgraph', 'dispatch_subqueries', 'retrieve_subquery'],
+          phase: 'end',
+          ts: '2026-01-01T00:00:00.000Z',
+        },
+      },
+      ctx
+    );
+
+    expect(next.nodeIoEvents?.[0]).toMatchObject({
+      node_path: ['retrieval_subgraph', 'dispatch_subqueries', 'retrieve_subquery'],
+    });
+  });
+
   it('rebuilds step order by timestamp', () => {
     let state = reduceKbChatTraceState(
       {},
@@ -85,6 +107,70 @@ describe('kbChatTraceStore', () => {
       ctx
     );
     expect(state.pipelineSteps?.map((step) => step.step_id)).toEqual(['a_node', 'b_node']);
+  });
+
+  it('applies state events to run state, pipeline steps, and timeline', () => {
+    let state = reduceKbChatTraceState(
+      {},
+      {
+        type: 'updates',
+        raw: { run_id: 'run-1', chunk: { preprocess_subgraph: { ok: true } } },
+        ts: '2026-01-01T00:00:00.000Z',
+      },
+      ctx
+    );
+    state = reduceKbChatTraceState(
+      state,
+      {
+        type: 'node_io',
+        raw: {
+          run_id: 'run-1',
+          node_id: 'merge_context',
+          node_name: 'merge_context',
+          phase: 'start',
+          ts: '2026-01-01T00:00:01.000Z',
+        },
+      },
+      ctx
+    );
+
+    const next = reduceKbChatTraceState(
+      state,
+      {
+        type: 'state',
+        raw: {
+          run_id: 'run-1',
+          run_status: 'waiting_user',
+          current_step_id: 'merge_context',
+          current_step_label: '上下文合并',
+          current_step_status: 'waiting_user',
+          current_node: 'merge_context',
+          attempt: 2,
+          message: '需要补充信息',
+          state_version: 3,
+          active_path: ['merge_context'],
+          progress: { completed: 1, total: 20, percent: 5 },
+          ts: '2026-01-01T00:00:02.000Z',
+        },
+      },
+      ctx
+    );
+
+    expect(next.runState?.active_path).toEqual(['preprocess_subgraph', 'merge_context']);
+    expect(next.runState?.current_step_status).toBe('waiting_user');
+    expect(next.pipelineSteps?.find((step) => step.step_id === 'merge_context')).toMatchObject({
+      label: '上下文合并',
+      status: 'waiting_user',
+      node: 'merge_context',
+      message: '需要补充信息',
+    });
+    expect(next.nodeTimeline?.at(-1)).toMatchObject({
+      source: 'state',
+      step_id: 'merge_context',
+      status: 'waiting_user',
+      run_status: 'waiting_user',
+      message: '需要补充信息',
+    });
   });
 
   it('emits warning on node_io field drift', () => {

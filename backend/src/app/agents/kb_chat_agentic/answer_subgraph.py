@@ -33,6 +33,8 @@ from app.agents.kb_chat_agentic.schemas import AnswerReviewSubDecision
 from app.agents.kb_chat_agentic_state import KbChatAgenticState
 from app.core.settings import Settings
 from app.prompts import get_prompt_loader
+from app.services.evidence_guardrails import resolve_kb_refusal_answer
+from app.services.streaming import extract_answer_text
 
 from .budget import now_iso
 
@@ -42,6 +44,12 @@ _REPAIRABLE_FAILURE_REASONS = {
     "citation_mismatch",
 }
 _EVIDENCE_LINE_RE = re.compile(r"^\[([^\[\]\n]{1,128})\]\s+", re.MULTILINE)
+_EVIDENCE_BLOCK_RE = re.compile(
+    r"^\[([^\[\]\n]{1,128})\]\s*(.*?)(?=^\[[^\[\]\n]{1,128}\]\s|\Z)",
+    re.MULTILINE | re.DOTALL,
+)
+_CITATION_RE = re.compile(r"\[([^\[\]\n]{1,128})\]")
+_SENTENCE_SPLIT_RE = re.compile(r"(?<=[。！？!?；;\n])")
 _REVIEW_CHECKS: tuple[Literal["citation", "factual", "answerability"], ...] = (
     "citation",
     "factual",
@@ -149,7 +157,102 @@ def _extract_evidence_labels(final_context: str) -> dict[str, str]:
 def _extract_citations(answer: str) -> list[str]:
     if not answer:
         return []
-    return [f"[{match.group(1).strip()}]" for match in re.finditer(r"\[([^\[\]\n]{1,128})\]", answer)]
+    return [f"[{match.group(1).strip()}]" for match in _CITATION_RE.finditer(answer)]
+
+
+def _strip_citations(text: str) -> str:
+    return _CITATION_RE.sub("", text or "").strip()
+
+
+def _extract_terms(text: str) -> set[str]:
+    cleaned = _strip_citations(text)
+    english = {
+        match.group(0).lower()
+        for match in re.finditer(r"[A-Za-z0-9_]{2,}", cleaned)
+    }
+    chinese_chars = [char for char in cleaned if "\u4e00" <= char <= "\u9fff"]
+    grams: set[str] = set()
+    for size in (2, 3):
+        for index in range(0, max(len(chinese_chars) - size + 1, 0)):
+            grams.add("".join(chinese_chars[index : index + size]))
+    return {token for token in {*english, *grams} if token}
+
+
+def _split_claims(answer: str) -> list[str]:
+    segments = [
+        segment.strip()
+        for segment in _SENTENCE_SPLIT_RE.split(answer or "")
+        if isinstance(segment, str) and segment.strip()
+    ]
+    if segments:
+        merged_segments: list[str] = []
+        for segment in segments:
+            citations = _extract_citations(segment)
+            leading_citations: list[str] = []
+            remainder = segment
+            for citation in citations:
+                if remainder.startswith(citation):
+                    leading_citations.append(citation)
+                    remainder = remainder[len(citation) :].lstrip()
+                else:
+                    break
+            if leading_citations and merged_segments:
+                merged_segments[-1] = f"{merged_segments[-1]}{''.join(leading_citations)}"
+            if remainder:
+                merged_segments.append(remainder)
+        return merged_segments
+    normalized = (answer or "").strip()
+    return [normalized] if normalized else []
+
+
+def _parse_evidence_blocks(final_context: str) -> dict[str, str]:
+    blocks: dict[str, str] = {}
+    for match in _EVIDENCE_BLOCK_RE.finditer(final_context or ""):
+        label = _as_str(match.group(1)).strip()
+        body = _as_str(match.group(2)).strip()
+        if not label or not body:
+            continue
+        blocks[f"[{label}]"] = body
+    return blocks
+
+
+def _claim_support_metrics(claim: str, evidence_text: str) -> tuple[int, float]:
+    claim_terms = _extract_terms(claim)
+    evidence_terms = _extract_terms(evidence_text)
+    if not claim_terms or not evidence_terms:
+        return 0, 0.0
+    overlap = len(claim_terms & evidence_terms)
+    ratio = overlap / max(len(claim_terms), 1)
+    return overlap, ratio
+
+
+def _claim_is_supported(claim: str, evidence_text: str) -> bool:
+    overlap, ratio = _claim_support_metrics(claim, evidence_text)
+    return overlap >= 2 and ratio >= 0.15
+
+
+def _best_matching_label(claim: str, evidence_blocks: dict[str, str]) -> str | None:
+    best_label: str | None = None
+    best_overlap = 0
+    best_ratio = 0.0
+    for label, evidence_text in evidence_blocks.items():
+        overlap, ratio = _claim_support_metrics(claim, evidence_text)
+        if overlap > best_overlap or (overlap == best_overlap and ratio > best_ratio):
+            best_label = label
+            best_overlap = overlap
+            best_ratio = ratio
+    if best_label is None:
+        return None
+    return best_label if best_overlap >= 2 and best_ratio >= 0.15 else None
+
+
+def _attach_citation_to_claim(claim: str, citation: str) -> str:
+    stripped = _strip_citations(claim).strip()
+    if not stripped:
+        return citation
+    if stripped.endswith(("。", "！", "？", ";", "；", ".", "!", "?")):
+        return f"{stripped[:-1]}{citation}{stripped[-1]}"
+    return f"{stripped}{citation}"
 
 
 def _partition_citations(
@@ -230,12 +333,19 @@ async def _answer_review_dispatch(
     settings: Settings,
 ) -> Command[str]:
     _ = runtime, settings
+    branch_state = {**state, "answer_review_runs": []}
     send_tasks: list[Send] = [
-        Send("answer_review_citation", {"answer_review_task": {"check": "citation"}}),
-        Send("answer_review_factual", {"answer_review_task": {"check": "factual"}}),
+        Send(
+            "answer_review_citation",
+            {**branch_state, "answer_review_task": {"check": "citation"}},
+        ),
+        Send(
+            "answer_review_factual",
+            {**branch_state, "answer_review_task": {"check": "factual"}},
+        ),
         Send(
             "answer_review_answerability",
-            {"answer_review_task": {"check": "answerability"}},
+            {**branch_state, "answer_review_task": {"check": "answerability"}},
         ),
     ]
     return Command(
@@ -429,10 +539,7 @@ async def _answer_review_fuse(
     _ = runtime
     start = time.perf_counter()
     loop_counts = _get_loop_counts(state)
-    loop_counts_updates = {
-        **loop_counts,
-        "total_rounds": loop_counts.get("total_rounds", 0) + 1,
-    }
+    loop_counts_updates = {**loop_counts}
     by_check = {
         check: (_resolve_subcheck(state, check) or {"check": check, "passed": False, "reason": "fallback_closed"})
         for check in _REVIEW_CHECKS
@@ -471,7 +578,6 @@ async def _answer_review_fuse(
         review_risk_level = "medium"
     action = "none" if passed else "transform_query"
     draft = _as_str(state.get("draft_answer")).strip()
-    best_answer_updates: dict[str, Any] = {}
     best_answer_meta: dict[str, Any] | None = None
     if passed and draft:
         best_answer_meta = {
@@ -481,7 +587,6 @@ async def _answer_review_fuse(
             "total_rounds": loop_counts_updates.get("total_rounds", 0),
             "completed_at": now_iso(),
         }
-        best_answer_updates = {"best_answer": draft, "best_answer_meta": best_answer_meta}
     stage_summary = {
         "passed": passed,
         "reason": reason,
@@ -498,7 +603,6 @@ async def _answer_review_fuse(
     }
     updates: dict[str, Any] = {
         "loop_counts": loop_counts_updates,
-        **best_answer_updates,
         "answer_review_runs": [],
         "reflection": {
             **(state.get("reflection") if isinstance(state.get("reflection"), dict) else {}),
@@ -531,7 +635,15 @@ async def _answer_review_fuse(
         ),
     }
     goto = "cove_check" if passed else "answer_repair"
-    if not passed and _as_str(reason) not in _REPAIRABLE_FAILURE_REASONS:
+    generation_retries = int(loop_counts.get("generation_retries") or 0)
+    max_generation_retries = int(settings.kb_chat_max_generation_retries)
+    if (
+        not passed
+        and _as_str(reason) in _REPAIRABLE_FAILURE_REASONS
+        and generation_retries >= max_generation_retries
+    ):
+        goto = "answer_commit"
+    elif not passed and _as_str(reason) not in _REPAIRABLE_FAILURE_REASONS:
         goto = "answer_commit"
     _emit_review_event(
         {
@@ -582,26 +694,76 @@ def _cove_check(state: dict[str, Any]) -> Command[str]:
 def _chain_of_verification(state: dict[str, Any]) -> dict[str, Any]:
     draft = _as_str(state.get("draft_answer")).strip()
     final_context = _as_str(state.get("final_context")).strip()
-    citations = _extract_citations(draft)
-    passed = bool(draft and final_context and citations)
-    reason = "passed" if passed else "insufficient_verification_signal"
+    evidence_blocks = _parse_evidence_blocks(final_context)
+    claims = _split_claims(draft)
+    supported_claims: list[str] = []
+    unsupported_claims: list[str] = []
+    claim_reports: list[dict[str, Any]] = []
+    for claim in claims:
+        cited_labels = [
+            label for label in _extract_citations(claim) if label in evidence_blocks
+        ]
+        supported = False
+        if cited_labels:
+            supported = any(
+                _claim_is_supported(claim, evidence_blocks[label])
+                for label in cited_labels
+            )
+        else:
+            matched_label = _best_matching_label(claim, evidence_blocks)
+            supported = matched_label is not None
+        if supported:
+            supported_claims.append(claim)
+        else:
+            unsupported_claims.append(claim)
+        claim_reports.append(
+            {
+                "claim": claim,
+                "citations": _extract_citations(claim),
+                "supported": supported,
+            }
+        )
+
+    revised_answer = " ".join(supported_claims).strip()
+    revised_claim_count = max(len(claims) - len(supported_claims), 0)
+    passed = bool(revised_answer) if claims else bool(draft and final_context)
+    reason = (
+        "passed"
+        if revised_claim_count == 0 and passed
+        else "revised_claims"
+        if passed
+        else "insufficient_verification_signal"
+    )
     stage = _merge_stage_summary(
         state,
         "chain_of_verification",
         {
             "passed": passed,
             "reason": reason,
-            "citation_count": len(citations),
+            "claim_count": len(claims),
+            "supported_claim_count": len(supported_claims),
+            "revised_claim_count": revised_claim_count,
+            "unsupported_claims": unsupported_claims[:6],
+            "claim_reports": claim_reports[:12],
             "completed_at": now_iso(),
         },
     )
     return {
+        "draft_answer": revised_answer or draft,
         "cove_state": {
             "enabled": True,
             "triggered": True,
             "passed": passed,
             "reason": reason,
-            "citation_count": len(citations),
+            "claim_count": len(claims),
+            "supported_claim_count": len(supported_claims),
+            "revised_claim_count": revised_claim_count,
+            "supported_ratio": round(
+                len(supported_claims) / max(len(claims), 1),
+                4,
+            )
+            if claims
+            else 1.0,
         },
         **stage,
     }
@@ -609,9 +771,47 @@ def _chain_of_verification(state: dict[str, Any]) -> dict[str, Any]:
 
 def _claim_citation_check(state: dict[str, Any]) -> Command[str]:
     draft = _as_str(state.get("draft_answer")).strip()
-    labels = _extract_evidence_labels(_as_str(state.get("final_context")).strip())
+    final_context = _as_str(state.get("final_context")).strip()
+    labels = _extract_evidence_labels(final_context)
+    evidence_blocks = _parse_evidence_blocks(final_context)
+    claims = _split_claims(draft)
+    repaired_claims: list[str] = []
+    repair_suggestions: list[str] = []
+    unaligned_claims: list[str] = []
+    aligned_count = 0
+    for claim in claims:
+        citations = _extract_citations(claim)
+        valid_claim_citations = [
+            label for label in citations if label.casefold() in labels
+        ]
+        best_label = _best_matching_label(claim, evidence_blocks)
+        aligned = False
+        next_claim = claim
+        if valid_claim_citations:
+            aligned = any(
+                _claim_is_supported(
+                    claim,
+                    evidence_blocks.get(labels[label.casefold()], ""),
+                )
+                for label in valid_claim_citations
+            )
+        if not aligned and best_label is not None:
+            next_claim = _attach_citation_to_claim(claim, best_label)
+            aligned = True
+            if citations:
+                repair_suggestions.append(f"replace:{claim}->{best_label}")
+            else:
+                repair_suggestions.append(f"append:{claim}->{best_label}")
+        if aligned:
+            aligned_count += 1
+            repaired_claims.append(next_claim)
+        else:
+            unaligned_claims.append(_strip_citations(claim))
+            repaired_claims.append(_strip_citations(claim))
+
+    repaired_draft = " ".join(claim for claim in repaired_claims if claim.strip()).strip()
     _, valid_citations, invalid_citations = _partition_citations(
-        draft, allowed_labels=labels
+        repaired_draft, allowed_labels=labels
     )
     cove_state = state.get("cove_state")
     cove_passed = (
@@ -619,24 +819,44 @@ def _claim_citation_check(state: dict[str, Any]) -> Command[str]:
         if isinstance(cove_state, dict) and cove_state.get("passed") is not None
         else True
     )
-    citation_passed = bool(draft) and bool(valid_citations) and not invalid_citations
+    coverage = (
+        round(aligned_count / max(len(claims), 1), 4)
+        if claims
+        else 1.0
+    )
+    citation_passed = bool(repaired_draft or draft) and not unaligned_claims and not invalid_citations
     passed = bool(cove_passed) and citation_passed
     reason = "passed"
     if not cove_passed:
         reason = "cove_failed"
+    elif unaligned_claims:
+        reason = "citation_mismatch"
     elif invalid_citations:
         reason = "invalid_citations"
-    elif not valid_citations:
+    elif coverage < 1.0 or not valid_citations:
         reason = "missing_citations"
 
     reflection = state.get("reflection")
     reflection_obj = reflection if isinstance(reflection, dict) else {}
     reflection_patch: dict[str, Any] = {}
+    best_answer_updates: dict[str, Any] = {}
     if not passed:
         reflection_patch = {
             "review_passed": False,
             "action": "transform_query",
             "reason": reason,
+        }
+    elif repaired_draft or draft:
+        loop_counts = _get_loop_counts(state)
+        best_answer_updates = {
+            "best_answer": repaired_draft or draft,
+            "best_answer_meta": {
+                "from_node": "claim_citation_check",
+                "reason": reason,
+                "retrieval_round": max(loop_counts.get("retrieval_retries", 0), 0),
+                "total_rounds": loop_counts.get("total_rounds", 0),
+                "completed_at": now_iso(),
+            },
         }
 
     stage = _merge_stage_summary(
@@ -645,6 +865,11 @@ def _claim_citation_check(state: dict[str, Any]) -> Command[str]:
         {
             "passed": passed,
             "reason": reason,
+            "coverage": coverage,
+            "total_claim_count": len(claims),
+            "aligned_claim_count": aligned_count,
+            "repair_suggestions": repair_suggestions[:12],
+            "unaligned_claims": unaligned_claims[:6],
             "valid_citation_count": len(valid_citations),
             "invalid_citations": sorted(invalid_citations),
             "completed_at": now_iso(),
@@ -653,10 +878,13 @@ def _claim_citation_check(state: dict[str, Any]) -> Command[str]:
     )
     return Command(
         update={
+            "draft_answer": repaired_draft or draft,
+            **best_answer_updates,
             "cove_state": {
                 **(cove_state if isinstance(cove_state, dict) else {}),
                 "claim_check_passed": passed,
                 "claim_check_reason": reason,
+                "claim_coverage": coverage,
             },
             "reflection": {**reflection_obj, **reflection_patch},
             **stage,
@@ -699,7 +927,6 @@ async def _answer_repair(
     loop_counts = _get_loop_counts(state)
     loop_counts = {
         **loop_counts,
-        "total_rounds": loop_counts["total_rounds"] + 1,
         "generation_retries": loop_counts["generation_retries"] + 1,
     }
 
@@ -736,7 +963,7 @@ async def _answer_repair(
                     HumanMessage(content=repair_user),
                 ]
             )
-            candidate = _as_str(getattr(msg, "content", "")).strip()
+            candidate = extract_answer_text(getattr(msg, "content", "")).strip()
             if candidate:
                 repaired_answer = candidate
             else:
@@ -801,11 +1028,16 @@ async def _answer_commit(
         repair_attempts = int(subgraph_state.get("repair_attempts") or 0)
 
     next_step = route_after_answer_review(state, settings)
-    reason = _as_str(reflection_obj.get("reason")).strip()
+    reason = _as_str(reflection_obj.get("reason")).strip().lower()
+    review_passed = reflection_obj.get("review_passed") is True
     degrade_reason: str | None = None
     reflection_patch: dict[str, Any] = {}
 
-    if loop_counts["generation_retries"] >= int(settings.kb_chat_max_generation_retries):
+    if (
+        not review_passed
+        and loop_counts["generation_retries"]
+        >= int(settings.kb_chat_max_generation_retries)
+    ):
         next_step = "force_exit"
         degrade_reason = "max_generation_retries"
         reflection_patch = {
@@ -815,17 +1047,17 @@ async def _answer_commit(
         }
     elif next_step == "force_exit":
         degrade_reason = reason or "force_exit"
-        reflection_patch = {"action": "force_exit"}
+        reflection_patch = {"action": "force_exit", "reason": degrade_reason}
     elif next_step == "transform_query":
         degrade_reason = reason or "review_failed"
-        reflection_patch = {"action": "transform_query"}
+        reflection_patch = {"action": "transform_query", "reason": degrade_reason}
     else:
         reflection_patch = {"action": "none"}
 
     merged_reflection = {**reflection_obj, **reflection_patch}
     final_answer = _as_str(state.get("final_answer") or state.get("draft_answer")).strip()
     if not final_answer and next_step == "force_exit":
-        final_answer = "基于当前信息仍无法稳定回答该问题（已停止重试）。"
+        final_answer = resolve_kb_refusal_answer(reason=degrade_reason or reason)
 
     answer_quality = {
         "passed": merged_reflection.get("review_passed") is True,
@@ -835,7 +1067,7 @@ async def _answer_commit(
         "generation_retries": loop_counts.get("generation_retries", 0),
         "retrieval_retries": loop_counts.get("retrieval_retries", 0),
     }
-    best_answer = _as_str(state.get("best_answer") or state.get("draft_answer")).strip()
+    best_answer = _as_str(state.get("best_answer")).strip()
     summary = {
         **answer_quality,
         "best_answer": best_answer or None,

@@ -278,6 +278,7 @@ export interface ChatNodeIoEvent {
   run_id: string;
   node_name: string;
   node_id: string;
+  node_path?: string[] | null;
   phase: 'start' | 'end' | 'error';
   attempt?: number | null;
   latency_ms?: number | null;

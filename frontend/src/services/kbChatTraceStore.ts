@@ -18,6 +18,7 @@ export interface KbChatTraceStoreState {
 
 export type KbChatTraceAction =
   | { type: 'meta'; runId: string }
+  | { type: 'state'; raw: Record<string, unknown> }
   | { type: 'updates'; raw: Record<string, unknown>; ts?: string }
   | { type: 'ui_event'; raw: Record<string, unknown> }
   | { type: 'node_io'; raw: Record<string, unknown> };
@@ -137,6 +138,65 @@ function parseUpdatesChunk(data: Record<string, unknown>): Record<string, unknow
   return asRecord(data.chunk) ?? asRecord(data);
 }
 
+function parseState(data: Record<string, unknown>): ChatRunStateEvent | null {
+  const runId = typeof data.run_id === 'string' ? data.run_id : null;
+  const runStatus = typeof data.run_status === 'string' ? data.run_status : null;
+  if (!runId || !runStatus) {
+    return null;
+  }
+  const progressRaw = asRecord(data.progress) ?? {};
+  const next: ChatRunStateEvent = {
+    run_id: runId,
+    run_status: runStatus as ChatRunStateEvent['run_status'],
+    current_step_id: typeof data.current_step_id === 'string' ? data.current_step_id : null,
+    current_step_label:
+      typeof data.current_step_label === 'string' ? data.current_step_label : null,
+    current_step_status:
+      typeof data.current_step_status === 'string' ? data.current_step_status : null,
+    current_node: typeof data.current_node === 'string' ? data.current_node : null,
+    attempt: typeof data.attempt === 'number' ? data.attempt : null,
+    message: typeof data.message === 'string' ? data.message : null,
+    progress: {
+      completed: typeof progressRaw.completed === 'number' ? progressRaw.completed : 0,
+      total: typeof progressRaw.total === 'number' ? progressRaw.total : 1,
+      percent: typeof progressRaw.percent === 'number' ? progressRaw.percent : 0,
+    },
+    ts: typeof data.ts === 'string' ? data.ts : new Date().toISOString(),
+  };
+  if (typeof data.state_version === 'number') {
+    next.state_version = data.state_version;
+  }
+  if (Array.isArray(data.active_path)) {
+    next.active_path = data.active_path.filter((item): item is string => typeof item === 'string');
+  }
+  if (typeof data.last_good_answer === 'string' || data.last_good_answer === null) {
+    next.last_good_answer = data.last_good_answer;
+  }
+  if (typeof data.degrade_reason === 'string' || data.degrade_reason === null) {
+    next.degrade_reason = data.degrade_reason;
+  }
+  return next;
+}
+
+function normalizePipelineStatus(status: string | null | undefined): PipelineStep['status'] | null {
+  switch (status) {
+    case 'running':
+    case 'started':
+      return 'started';
+    case 'succeeded':
+    case 'completed':
+      return 'completed';
+    case 'failed':
+      return 'failed';
+    case 'waiting_user':
+      return 'waiting_user';
+    case 'skipped':
+      return 'skipped';
+    default:
+      return null;
+  }
+}
+
 function parseUiEvent(data: Record<string, unknown>): ChatRunUiEvent | null {
   const runId = typeof data.run_id === 'string' ? data.run_id : '';
   const eventType = typeof data.event_type === 'string' ? data.event_type : '';
@@ -215,6 +275,10 @@ function parseNodeIoEvent(data: Record<string, unknown>): ChatNodeIoEvent | null
         : nodeName;
   const phaseRaw = typeof data.phase === 'string' ? data.phase : null;
   const phase = phaseRaw === 'start' || phaseRaw === 'end' || phaseRaw === 'error' ? phaseRaw : null;
+  const nodePath =
+    Array.isArray(data.node_path) && data.node_path.length > 0
+      ? data.node_path.filter((item): item is string => typeof item === 'string' && item.length > 0)
+      : null;
   if (!runId || !nodeName || !nodeId || !phase) {
     return null;
   }
@@ -222,6 +286,7 @@ function parseNodeIoEvent(data: Record<string, unknown>): ChatNodeIoEvent | null
     run_id: runId,
     node_name: nodeName,
     node_id: nodeId,
+    node_path: nodePath && nodePath.length > 0 ? nodePath : null,
     phase,
     display_input_items: parseNodeDisplayItems(data.display_input_items),
     display_output_items: parseNodeDisplayItems(data.display_output_items),
@@ -320,6 +385,79 @@ export function reduceKbChatTraceState(
       runState: nextRunState,
       pipelineSteps: nextSteps,
       nodeTimeline: nextTimeline,
+    };
+  }
+
+  if (action.type === 'state') {
+    const stateEvent = parseState(action.raw);
+    if (!stateEvent) {
+      return prev;
+    }
+    const previousRunState =
+      prev.runState?.run_id === stateEvent.run_id ? prev.runState : undefined;
+    const touchedNodes = [
+      ...(stateEvent.active_path ?? []),
+      stateEvent.current_step_id,
+      stateEvent.current_node,
+    ].filter((nodeId): nodeId is string => typeof nodeId === 'string' && nodeId.length > 0);
+    const activePath = mergeActivePath(previousRunState?.active_path, touchedNodes);
+    const currentStepId = stateEvent.current_step_id ?? stateEvent.current_node;
+    const existingStep = currentStepId
+      ? (prev.pipelineSteps ?? []).find((step) => step.step_id === currentStepId)
+      : undefined;
+    const currentStepStatus = normalizePipelineStatus(
+      stateEvent.current_step_status ?? stateEvent.run_status
+    );
+    const nextSteps =
+      currentStepId && currentStepStatus
+        ? upsertPipelineStep(prev.pipelineSteps, {
+            step_id: currentStepId,
+            label:
+              stateEvent.current_step_label ??
+              existingStep?.label ??
+              ctx.resolveNodeLabel(currentStepId),
+            status: currentStepStatus,
+            node: stateEvent.current_node ?? existingStep?.node ?? currentStepId,
+            message: stateEvent.message ?? existingStep?.message,
+            ts: stateEvent.ts,
+            meta:
+              typeof stateEvent.attempt === 'number'
+                ? { ...(existingStep?.meta ?? {}), attempt: stateEvent.attempt }
+                : existingStep?.meta,
+          })
+        : prev.pipelineSteps;
+    return {
+      ...prev,
+      runId: stateEvent.run_id,
+      runState: {
+        ...(previousRunState ?? {}),
+        ...stateEvent,
+        active_path: activePath,
+        last_good_answer:
+          stateEvent.last_good_answer !== undefined
+            ? stateEvent.last_good_answer
+            : previousRunState?.last_good_answer,
+        degrade_reason:
+          stateEvent.degrade_reason !== undefined
+            ? stateEvent.degrade_reason
+            : previousRunState?.degrade_reason,
+      },
+      pipelineSteps: nextSteps,
+      nodeTimeline: appendTimelineEvent(prev.nodeTimeline, {
+        id: `state-${stateEvent.run_id}-${stateEvent.state_version ?? stateEvent.ts}`,
+        source: 'state',
+        step_id: currentStepId,
+        label:
+          stateEvent.current_step_label ??
+          (currentStepId ? ctx.resolveNodeLabel(currentStepId) : stateEvent.current_node) ??
+          '执行状态',
+        node: stateEvent.current_node ?? currentStepId,
+        status: stateEvent.current_step_status ?? stateEvent.run_status,
+        run_status: stateEvent.run_status,
+        attempt: stateEvent.attempt,
+        message: stateEvent.message,
+        ts: stateEvent.ts,
+      }),
     };
   }
 

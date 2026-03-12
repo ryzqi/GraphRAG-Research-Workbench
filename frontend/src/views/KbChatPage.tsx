@@ -249,6 +249,23 @@ function resolveClarificationStep(
   return { step_id: target.id, label };
 }
 
+function resolveClarificationAnchorStep(
+  runState: ChatRunStateEvent | undefined,
+  fallback: { step_id: string; label: string }
+): { step_id: string; label: string } {
+  const stepId =
+    typeof runState?.current_step_id === 'string' && runState.current_step_id.trim()
+      ? runState.current_step_id
+      : typeof runState?.current_node === 'string' && runState.current_node.trim()
+        ? runState.current_node
+        : fallback.step_id;
+  const label =
+    typeof runState?.current_step_label === 'string' && runState.current_step_label.trim()
+      ? runState.current_step_label
+      : fallback.label;
+  return { step_id: stepId, label };
+}
+
 function mergeActivePath(
   current: string[] | undefined,
   nodeIds: string[]
@@ -671,6 +688,42 @@ export function KbChatPage() {
     [finalizeNodeIds, graphSchema, updateMessage]
   );
 
+  const applyStateEvent = useCallback(
+    (messageId: string, raw: Record<string, unknown>) => {
+      const totalNodes = resolveGraphTotalNodes(graphSchema);
+      updateMessage(messageId, (msg) => {
+        const traceState: KbChatTraceStoreState = {
+          runId: msg.runId,
+          runState: msg.runState,
+          pipelineSteps: msg.pipelineSteps,
+          nodeTimeline: msg.nodeTimeline,
+          nodeIoEvents: msg.nodeIoEvents,
+          answerRevealReady: msg.answerRevealReady,
+        };
+        const nextTraceState = reduceKbChatTraceState(
+          traceState,
+          { type: 'state', raw },
+          {
+            totalNodes,
+            resolveNodeLabel: (nodeId) => resolveKbNodeLabel(nodeId, graphSchema),
+            shouldRevealAnswerOnNodeEvent: (event) =>
+              shouldRevealAnswerOnNodeEvent(event, finalizeNodeIds),
+          }
+        );
+        return {
+          ...msg,
+          runId: nextTraceState.runId ?? msg.runId,
+          runState: kbChatTraceSelectors.runState(nextTraceState),
+          pipelineSteps: kbChatTraceSelectors.pipelineSteps(nextTraceState),
+          nodeTimeline: kbChatTraceSelectors.nodeTimeline(nextTraceState),
+          nodeIoEvents: kbChatTraceSelectors.nodeIoEvents(nextTraceState),
+          answerRevealReady: nextTraceState.answerRevealReady ?? msg.answerRevealReady,
+        };
+      });
+    },
+    [finalizeNodeIds, graphSchema, updateMessage]
+  );
+
 const applyUiEvent = useCallback(
     (messageId: string, raw: Record<string, unknown>) => {
       const totalNodes = resolveGraphTotalNodes(graphSchema);
@@ -769,9 +822,10 @@ const applyNodeIoEvent = useCallback(
       const runId = response.run.id;
       const message = response.message;
       updateMessage(messageId, (msg) => {
+        const anchorStep = resolveClarificationAnchorStep(msg.runState, clarificationStep);
         const nextSteps = upsertPipelineStep(msg.pipelineSteps, {
-          step_id: clarificationStep.step_id,
-          label: clarificationStep.label,
+          step_id: anchorStep.step_id,
+          label: anchorStep.label,
           status: 'waiting_user',
           message,
           ts: new Date().toISOString(),
@@ -943,6 +997,10 @@ const applyNodeIoEvent = useCallback(
           applyUpdatesEvent(assistantId, parseSseJson<Record<string, unknown>>(event.data));
         }
 
+        if (event.event === 'state') {
+          applyStateEvent(assistantId, parseSseJson<Record<string, unknown>>(event.data));
+        }
+
         if (event.event === 'ui_event') {
           applyUiEvent(assistantId, parseSseJson<Record<string, unknown>>(event.data));
         }
@@ -1109,6 +1167,7 @@ const applyNodeIoEvent = useCallback(
     upsertSession,
     updateMessage,
     applyUpdatesEvent,
+    applyStateEvent,
     applyUiEvent,
     applyNodeIoEvent,
     markClarificationPending,
@@ -1122,14 +1181,15 @@ const applyNodeIoEvent = useCallback(
       setError(null);
       let msgState = createMessageState();
       updateMessage(messageId, (msg) => {
+        const anchorStep = resolveClarificationAnchorStep(msg.runState, clarificationStep);
         const nextSteps = upsertPipelineStep(msg.pipelineSteps, {
-          step_id: clarificationStep.step_id,
-          label: clarificationStep.label,
+          step_id: anchorStep.step_id,
+          label: anchorStep.label,
           status: 'started',
           message: '已收到补充信息，继续执行',
           ts: new Date().toISOString(),
         });
-        const startedStep = nextSteps.find((step) => step.step_id === clarificationStep.step_id);
+        const startedStep = nextSteps.find((step) => step.step_id === anchorStep.step_id);
         return {
           ...msg,
           content: '',
@@ -1194,6 +1254,10 @@ const applyNodeIoEvent = useCallback(
 
           if (event.event === 'updates') {
             applyUpdatesEvent(messageId, parseSseJson<Record<string, unknown>>(event.data));
+          }
+
+          if (event.event === 'state') {
+            applyStateEvent(messageId, parseSseJson<Record<string, unknown>>(event.data));
           }
 
           if (event.event === 'ui_event') {
@@ -1362,6 +1426,7 @@ const applyNodeIoEvent = useCallback(
       loadingSession,
       updateMessage,
       applyUpdatesEvent,
+      applyStateEvent,
       applyUiEvent,
       applyNodeIoEvent,
       markClarificationPending,

@@ -12,6 +12,7 @@ from typing import Any
 from langchain.messages import AIMessage
 
 from app.core.settings import Settings
+from app.services.evidence_guardrails import resolve_kb_refusal_answer
 
 from .budget import budget_exceeded, now_iso
 
@@ -29,7 +30,12 @@ def force_exit_node(state: dict, settings: Settings) -> dict[str, Any]:
         reason = "clarify"
     else:
         exceeded, why = budget_exceeded(state, settings)
-        reason = why if exceeded else "force_exit"
+        reflection_reason = (
+            str(reflection.get("reason") or "").strip().lower()
+            if isinstance(reflection, dict)
+            else ""
+        )
+        reason = why if exceeded else (reflection_reason or "force_exit")
 
     final_answer = state.get("final_answer")
     draft_answer = state.get("draft_answer")
@@ -64,7 +70,7 @@ def force_exit_node(state: dict, settings: Settings) -> dict[str, Any]:
             final_answer = best_answer
             used_best_answer = True
         if not isinstance(final_answer, str) or not final_answer.strip():
-            final_answer = "基于当前信息仍无法稳定回答该问题（已停止重试）。"
+            final_answer = resolve_kb_refusal_answer(reason=reason)
 
     stage_summaries = state.get("stage_summaries")
     if not isinstance(stage_summaries, dict):

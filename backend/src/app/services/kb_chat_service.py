@@ -60,8 +60,10 @@ from app.services.conversation_summary_service import ConversationSummaryService
 from app.services.evidence_guardrails import (
     enforce_kb_answer_citation_guardrails,
     extract_citation_labels,
+    is_kb_refusal_answer,
     is_stable_citation_id,
     normalize_citation_label,
+    resolve_kb_refusal_answer,
 )
 from app.services.retrieval_service import RetrievalService
 from app.services.streaming import (
@@ -81,6 +83,10 @@ _GRAY_P95_THRESHOLD = 10.0
 _SEMANTIC_CACHE_THRESHOLD = 0.88
 _SEMANTIC_CACHE_TTL_SECONDS = 24 * 60 * 60
 _SEMANTIC_CACHE_MAX_ITEMS = 128
+
+
+def _gray_release_log_dir() -> Path:
+    return Path(__file__).resolve().parents[3] / "logs" / "kb_chat_gray_release"
 
 
 @dataclass
@@ -124,6 +130,15 @@ class _KbChatExecution:
     compiled_graph: object | None
     state: dict[str, Any]
     run_context: dict[str, Any] | None
+
+
+@dataclass
+class _KbChatStreamRunState:
+    stage_status: dict[str, str]
+    stage_attempts: dict[str, int]
+    current_step_id: str | None = None
+    current_node: str | None = None
+    state_version: int = 0
 
 
 class KbChatService:
@@ -615,7 +630,10 @@ class KbChatService:
             include_web_search=False,
             include_mcp=False,
         )
-        chat_model = create_chat_model(settings=self._settings)
+        chat_model = create_chat_model(
+            settings=self._settings,
+            use_previous_response_id=False,
+        )
         graph = self._build_graph(
             chat_model=chat_model,
             tools=tools,
@@ -871,9 +889,15 @@ class KbChatService:
             else {}
         )
         if doc_gate_route:
+            doc_gate_next = str(doc_gate_route.get("goto") or "")
+            if not doc_gate_next:
+                legacy_action = str(doc_gate_route.get("action") or "")
+                if legacy_action == "none":
+                    doc_gate_next = "answer_subgraph"
+                elif legacy_action in {"transform_query", "force_exit"}:
+                    doc_gate_next = legacy_action
             checks.append(
-                str(doc_gate_route.get("goto") or "")
-                in {"answer_subgraph", "transform_query", "force_exit"}
+                doc_gate_next in {"answer_subgraph", "transform_query", "force_exit"}
             )
         answer_subgraph = (
             stage_summaries.get("answer_subgraph")
@@ -901,13 +925,27 @@ class KbChatService:
             if isinstance(stage_summaries.get("force_exit"), dict)
             else {}
         )
+        doc_gate_route = (
+            stage_summaries.get("doc_gate_route")
+            if isinstance(stage_summaries.get("doc_gate_route"), dict)
+            else {}
+        )
         next_step = str(answer_subgraph.get("next_step") or "")
         has_force_exit = bool(force_exit)
+        doc_gate_next = str(doc_gate_route.get("goto") or "")
+        if not doc_gate_next:
+            legacy_action = str(doc_gate_route.get("action") or "")
+            if legacy_action == "none":
+                doc_gate_next = "answer_subgraph"
+            elif legacy_action in {"transform_query", "force_exit"}:
+                doc_gate_next = legacy_action
         if not next_step and not has_force_exit:
             return 100.0
         if next_step == "finalize":
             return 100.0 if not has_force_exit else 0.0
         if next_step in {"transform_query", "force_exit"}:
+            return 100.0 if has_force_exit else 0.0
+        if doc_gate_next == "force_exit":
             return 100.0 if has_force_exit else 0.0
         return 0.0
 
@@ -969,7 +1007,7 @@ class KbChatService:
     ) -> None:
         if not isinstance(gate, dict) or gate.get("pass") is True:
             return
-        base_dir = Path("backend/logs/kb_chat_gray_release")
+        base_dir = _gray_release_log_dir()
         day_dir = base_dir / datetime.now(timezone.utc).strftime("%Y-%m-%d")
         day_dir.mkdir(parents=True, exist_ok=True)
         sample_path = day_dir / f"{run_id}.json"
@@ -1181,7 +1219,10 @@ class KbChatService:
             include_mcp=include_mcp,
         )
 
-        chat_model = create_chat_model(settings=self._settings)
+        chat_model = create_chat_model(
+            settings=self._settings,
+            use_previous_response_id=False,
+        )
 
         system_prompt = self._prompts.render_with_few_shot("kb_chat/system")
         context_metrics = self._context_builder.build_metrics(
@@ -1560,7 +1601,10 @@ class KbChatService:
         ):
             return AgentRunStatus.SUCCEEDED, None
 
-        message = "根据现有资料无法回答该问题（已停止重试）。"
+        if answer_text and is_kb_refusal_answer(answer_text):
+            return AgentRunStatus.FAILED, answer_text
+
+        message = resolve_kb_refusal_answer(reason=reason)
         return AgentRunStatus.FAILED, message
 
     @staticmethod
@@ -1872,9 +1916,13 @@ class KbChatService:
         last_good_answer: str | None = None,
         degrade_reason: str | None = None,
         message: str | None = None,
+        current_step_status_override: str | None = None,
     ) -> dict[str, Any]:
         current_step_status = (
-            stage_status.get(current_step_id) if current_step_id else None
+            current_step_status_override
+            if isinstance(current_step_status_override, str)
+            and current_step_status_override
+            else stage_status.get(current_step_id) if current_step_id else None
         )
         current_attempt = (
             stage_attempts.get(current_step_id) if current_step_id else None
@@ -2042,6 +2090,67 @@ class KbChatService:
         if current_step_id and current_step_id not in path:
             path.append(current_step_id)
         return path
+
+    @staticmethod
+    def _resolve_stream_state_node_name(
+        *,
+        payload: dict[str, Any],
+        node_path: list[str] | None = None,
+    ) -> str | None:
+        node_name = payload.get("node_name")
+        if isinstance(node_name, str) and node_name:
+            return node_name
+        node = payload.get("node")
+        if isinstance(node, dict):
+            node_id = node.get("id")
+            if isinstance(node_id, str) and node_id:
+                return node_id
+            node_name = node.get("name")
+            if isinstance(node_name, str) and node_name:
+                return node_name
+        if isinstance(node_path, list) and node_path:
+            candidate = node_path[-1]
+            if isinstance(candidate, str) and candidate:
+                return candidate
+        return None
+
+    @staticmethod
+    def _apply_stream_state_node_io(
+        *,
+        stream_state: _KbChatStreamRunState,
+        payload: dict[str, Any],
+        node_path: list[str] | None = None,
+    ) -> str | None:
+        node_name = KbChatService._resolve_stream_state_node_name(
+            payload=payload,
+            node_path=node_path,
+        )
+        phase = payload.get("phase")
+        if node_name is None or phase not in {"start", "end", "error"}:
+            return None
+
+        raw_attempt = KbChatService._safe_non_negative_int(payload.get("attempt"))
+        attempt = raw_attempt if isinstance(raw_attempt, int) and raw_attempt > 0 else None
+        previous_attempt = stream_state.stage_attempts.get(node_name, 0)
+        if phase == "start":
+            stream_state.stage_attempts[node_name] = (
+                attempt if attempt is not None else previous_attempt + 1
+            )
+            stream_state.stage_status[node_name] = "started"
+        elif phase == "end":
+            stream_state.stage_attempts[node_name] = (
+                attempt if attempt is not None else previous_attempt or 1
+            )
+            stream_state.stage_status[node_name] = "completed"
+        else:
+            stream_state.stage_attempts[node_name] = (
+                attempt if attempt is not None else previous_attempt or 1
+            )
+            stream_state.stage_status[node_name] = "failed"
+
+        stream_state.current_step_id = node_name
+        stream_state.current_node = node_name
+        return node_name
 
     @staticmethod
     def _safe_non_negative_int(value: Any) -> int | None:
@@ -2221,18 +2330,6 @@ class KbChatService:
                 if round_value is not None:
                     return round_value
 
-        answer_review = (
-            stage_summaries.get("answer_review")
-            if isinstance(stage_summaries, dict)
-            else None
-        )
-        if isinstance(answer_review, dict):
-            best_meta = answer_review.get("best_answer_meta")
-            if isinstance(best_meta, dict):
-                round_value = cls._safe_non_negative_int(best_meta.get("retrieval_round"))
-                if round_value is not None:
-                    return round_value
-
         if isinstance(loop_counts, dict):
             round_value = cls._safe_non_negative_int(loop_counts.get("retrieval_retries"))
             if round_value is not None:
@@ -2289,16 +2386,6 @@ class KbChatService:
             best_answer = force_exit.get("best_answer")
             if isinstance(best_answer, str) and best_answer.strip():
                 return best_answer.strip(), "force_exit.best_answer"
-
-        answer_review = (
-            stage_summaries.get("answer_review")
-            if isinstance(stage_summaries, dict)
-            else None
-        )
-        if isinstance(answer_review, dict):
-            best_answer = answer_review.get("best_answer")
-            if isinstance(best_answer, str) and best_answer.strip():
-                return best_answer.strip(), "answer_review.best_answer"
 
         answer_subgraph = (
             stage_summaries.get("answer_subgraph")
@@ -2547,6 +2634,8 @@ class KbChatService:
                     user_content=user_content,
                     cache_hit=cache_hit,
                 )
+                cached_stage_status: dict[str, str] = {}
+                cached_stage_attempts: dict[str, int] = {}
                 run_payload = cached_response.run.model_dump(mode="json")
                 yield (
                     "meta",
@@ -2566,6 +2655,29 @@ class KbChatService:
                     ),
                 )
                 yield (
+                    "state",
+                    self._build_protocol_event_payload(
+                        event_type="state",
+                        run_id=cached_response.run.id,
+                        payload=self._build_stream_state_payload(
+                            run_id=cached_response.run.id,
+                            run_status=AgentRunStatus.RUNNING.value,
+                            current_step_id=None,
+                            current_node=None,
+                            stage_status=cached_stage_status,
+                            stage_attempts=cached_stage_attempts,
+                            state_version=1,
+                            active_path=self._build_active_path(
+                                stage_status=cached_stage_status,
+                                current_step_id=None,
+                            ),
+                            message="知识库问答开始",
+                        ),
+                        event_id=f"{cached_response.run.id}:1",
+                        seq=1,
+                    ),
+                )
+                yield (
                     "stream_end",
                     self._build_protocol_event_payload(
                         event_type="stream_end",
@@ -2576,8 +2688,31 @@ class KbChatService:
                             "terminal_candidate": "out200",
                             "ts": datetime.now(timezone.utc).isoformat(),
                         },
-                        event_id=f"{cached_response.run.id}:1",
-                        seq=1,
+                        event_id=f"{cached_response.run.id}:2",
+                        seq=2,
+                    ),
+                )
+                yield (
+                    "state",
+                    self._build_protocol_event_payload(
+                        event_type="state",
+                        run_id=cached_response.run.id,
+                        payload=self._build_stream_state_payload(
+                            run_id=cached_response.run.id,
+                            run_status=AgentRunStatus.SUCCEEDED.value,
+                            current_step_id=None,
+                            current_node=None,
+                            stage_status=cached_stage_status,
+                            stage_attempts=cached_stage_attempts,
+                            state_version=2,
+                            active_path=self._build_active_path(
+                                stage_status=cached_stage_status,
+                                current_step_id=None,
+                            ),
+                            current_step_status_override=AgentRunStatus.SUCCEEDED.value,
+                        ),
+                        event_id=f"{cached_response.run.id}:3",
+                        seq=3,
                     ),
                 )
                 yield (
@@ -2627,6 +2762,9 @@ class KbChatService:
         )
         protocol_emit_total = 0
         protocol_drift_total = 0
+        stream_run_state = _KbChatStreamRunState(stage_status={}, stage_attempts={})
+        last_good_answer: str | None = None
+        last_good_answer_source: str | None = None
 
         def _emit_enveloped(
             *,
@@ -2657,6 +2795,42 @@ class KbChatService:
             return (
                 event_type,
                 emitted_payload,
+            )
+
+        def _emit_state(
+            *,
+            run_status: str,
+            message: str | None = None,
+            degrade_reason_value: str | None = None,
+            current_step_status_override: str | None = None,
+            node_path: list[str] | None = None,
+        ) -> tuple[str, dict[str, Any]]:
+            stream_run_state.state_version += 1
+            payload = self._build_stream_state_payload(
+                run_id=run.id,
+                run_status=run_status,
+                current_step_id=stream_run_state.current_step_id,
+                current_node=stream_run_state.current_node,
+                stage_status=stream_run_state.stage_status,
+                stage_attempts=stream_run_state.stage_attempts,
+                state_version=stream_run_state.state_version,
+                active_path=self._build_active_path(
+                    stage_status=stream_run_state.stage_status,
+                    current_step_id=stream_run_state.current_step_id,
+                ),
+                last_good_answer=last_good_answer,
+                degrade_reason=degrade_reason_value,
+                message=message,
+                current_step_status_override=current_step_status_override,
+            )
+            event_attempt = (
+                payload.get("attempt") if isinstance(payload.get("attempt"), int) else None
+            )
+            return _emit_enveloped(
+                event_type="state",
+                payload=payload,
+                node_path=node_path or [],
+                attempt=event_attempt,
             )
 
         def _emit_ui_event(
@@ -2706,6 +2880,10 @@ class KbChatService:
                     event_id=f"{run.id}:0",
                     seq=0,
                 ),
+            )
+            yield _emit_state(
+                run_status=AgentRunStatus.RUNNING.value,
+                message="知识库问答开始",
             )
 
             compiled = exec_ctx.compiled_graph
@@ -2770,9 +2948,6 @@ class KbChatService:
                 asyncio.create_task(_monitor_disconnect()) if request is not None else None
             )
 
-            last_good_answer: str | None = None
-            last_good_answer_source: str | None = None
-
             while True:
                 if disconnect_event.is_set():
                     await _cancel_graph()
@@ -2784,6 +2959,11 @@ class KbChatService:
                         stream_state=stream_state,
                     )
                     self._release_retrieval_buffer(exec_ctx)
+                    yield _emit_state(
+                        run_status=AgentRunStatus.FAILED.value,
+                        message="client disconnected before stream completed",
+                        current_step_status_override=AgentRunStatus.FAILED.value,
+                    )
                     yield (
                         "error",
                         {
@@ -2817,6 +2997,11 @@ class KbChatService:
                             stream_state=stream_state,
                         )
                         self._release_retrieval_buffer(exec_ctx)
+                        yield _emit_state(
+                            run_status=AgentRunStatus.FAILED.value,
+                            message="client disconnected before stream completed",
+                            current_step_status_override=AgentRunStatus.FAILED.value,
+                        )
                         yield (
                             "error",
                             {
@@ -2938,6 +3123,12 @@ class KbChatService:
                                 if isinstance(payload_dict.get("attempt"), int)
                                 else None
                             )
+                            if custom_event_type == "node_io":
+                                node_name = self._apply_stream_state_node_io(
+                                    stream_state=stream_run_state,
+                                    payload=payload_dict,
+                                    node_path=node_path,
+                                )
                             yield _emit_enveloped(
                                 event_type=emitted_event_type,
                                 payload=payload_dict,
@@ -2945,6 +3136,18 @@ class KbChatService:
                                 node_path=node_path or [],
                                 attempt=event_attempt,
                             )
+                            if custom_event_type == "node_io" and node_name is not None:
+                                error_message = (
+                                    payload_dict.get("error_summary")
+                                    if payload_dict.get("phase") == "error"
+                                    and isinstance(payload_dict.get("error_summary"), str)
+                                    else None
+                                )
+                                yield _emit_state(
+                                    run_status=AgentRunStatus.RUNNING.value,
+                                    message=error_message,
+                                    node_path=node_path or [],
+                                )
                         continue
 
                     continue
@@ -3045,6 +3248,11 @@ class KbChatService:
                         metrics=metrics,
                     )
                     run_payload = pending_response.run.model_dump(mode="json")
+                    yield _emit_state(
+                        run_status="waiting_user",
+                        message=pending_response.message,
+                        current_step_status_override="waiting_user",
+                    )
                     yield (
                         "interrupt",
                         self._build_terminal_event_payload(
@@ -3126,6 +3334,12 @@ class KbChatService:
                 error_message=terminal_message,
             )
             run_payload = final_response.run.model_dump(mode="json")
+            yield _emit_state(
+                run_status=final_response.status,
+                message=terminal_message,
+                degrade_reason_value=terminal_message,
+                current_step_status_override=final_response.status,
+            )
             yield (
                 "final",
                 self._build_terminal_event_payload(
@@ -3181,6 +3395,12 @@ class KbChatService:
             }
             await self._db.commit()
             self._release_retrieval_buffer(exec_ctx)
+            yield _emit_state(
+                run_status=AgentRunStatus.FAILED.value,
+                message=error_summary,
+                degrade_reason_value=error_summary,
+                current_step_status_override=AgentRunStatus.FAILED.value,
+            )
             if isinstance(e, AppError):
                 yield (
                     "error",

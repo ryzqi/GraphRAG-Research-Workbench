@@ -9,24 +9,20 @@ These nodes are designed to be:
 from __future__ import annotations
 
 import asyncio
+from decimal import Decimal, ROUND_HALF_UP
 import re
 import time
-from typing import Any, TypeVar
+from typing import Any
 
-from langchain.agents import create_agent
 from langchain.messages import AIMessage, HumanMessage, SystemMessage
 from langchain.tools import BaseTool
 from langchain_core.language_models.chat_models import BaseChatModel
 from langgraph.runtime import Runtime
 from langgraph.types import Command, Send
-from pydantic import BaseModel, ValidationError
 
 from app.core.settings import Settings, get_settings
 from app.prompts import get_prompt_loader
-from app.services.evidence_guardrails import (
-    extract_citation_labels,
-    normalize_citation_label,
-)
+from app.services.streaming import extract_answer_text
 from app.services.query_rewrite_service import (
     HYDE_REGENERATE_ON_RETRY,
     QueryRewriteService,
@@ -48,7 +44,6 @@ from .runtime_config import (
     parallel_retrieval_min_queries,
     retrieval_top_k,
 )
-from .schemas import AnswerReviewDecision
 
 _EVIDENCE_LINE_RE = re.compile(r"^\[([^\[\]\n]{1,128})\]\s+", re.MULTILINE)
 _CITATION_ONLY_FAILURE_REASONS = {
@@ -79,22 +74,6 @@ def _get_loop_counts(state: dict) -> dict[str, int]:
 
 def _total_rounds_exceeded(loop_counts: dict[str, int], settings: Settings) -> bool:
     return loop_counts.get("total_rounds", 0) >= int(settings.kb_chat_max_total_rounds)
-
-
-def _normalize_citation_label(value: str) -> str:
-    return normalize_citation_label(value)
-
-
-def _extract_evidence_labels(final_context: str) -> dict[str, str]:
-    if not final_context:
-        return {}
-    labels: dict[str, str] = {}
-    for match in _EVIDENCE_LINE_RE.finditer(final_context):
-        label = _normalize_citation_label(match.group(1))
-        if not label:
-            continue
-        labels.setdefault(label.casefold(), label)
-    return labels
 
 
 def _extract_evidence_count(final_context: str) -> int:
@@ -703,78 +682,6 @@ async def merge_subquery_context(
         ),
     }
 
-
-def _partition_citations(
-    answer: str, *, allowed_labels: dict[str, str]
-) -> tuple[list[str], set[str], set[str]]:
-    if not answer or not allowed_labels:
-        return [], set(), set()
-    all_citations = extract_citation_labels(answer)
-    valid_found: set[str] = set()
-    invalid_found: set[str] = set()
-    for label in all_citations:
-        key = label.casefold()
-        if key in allowed_labels:
-            valid_found.add(allowed_labels[key])
-        else:
-            invalid_found.add(label)
-    return all_citations, valid_found, invalid_found
-
-
-def _render_prompt_or_default(prompt_key: str, default: str) -> str:
-    prompts = get_prompt_loader()
-    try:
-        return prompts.render_with_few_shot(prompt_key)
-    except KeyError:
-        return default
-
-
-_StructuredT = TypeVar("_StructuredT", bound=BaseModel)
-
-
-def _classify_structured_error(exc: Exception) -> str:
-    name = exc.__class__.__name__
-    if name == "StructuredOutputValidationError":
-        return "invalid_schema"
-    if name == "MultipleStructuredOutputsError":
-        return "multiple_structured_outputs"
-    return "error"
-
-
-async def _judge_structured(
-    *,
-    chat_model: BaseChatModel,
-    schema: type[_StructuredT],
-    system: str,
-    user: str,
-) -> tuple[_StructuredT | None, str | None]:
-    agent = create_agent(
-        model=chat_model,
-        tools=[],
-        system_prompt=system,
-        response_format=schema,
-    )
-    request = {"messages": [{"role": "user", "content": user}]}
-    try:
-        result = await agent.ainvoke(request)
-    except asyncio.CancelledError:
-        raise
-    except Exception as exc:
-        return None, _classify_structured_error(exc)
-    if not isinstance(result, dict):
-        return None, "empty_structured_response"
-    structured_payload = result.get("structured_response")
-    if structured_payload is None:
-        return None, "empty_structured_response"
-    if isinstance(structured_payload, schema):
-        return structured_payload, None
-    try:
-        payload = schema.model_validate(structured_payload)
-    except ValidationError:
-        return None, "invalid_schema"
-    return payload, None
-
-
 def _merge_stage_summary(
     state: dict, key: str, summary: dict[str, Any]
 ) -> dict[str, Any]:
@@ -962,7 +869,7 @@ async def generate_draft(
         msg = await model.ainvoke(
             [SystemMessage(content=system_prompt), HumanMessage(content=user)]
         )
-        draft = _as_str(getattr(msg, "content", "")).strip()
+        draft = extract_answer_text(getattr(msg, "content", "")).strip()
     except asyncio.CancelledError:
         raise
     except Exception:
@@ -985,132 +892,6 @@ async def generate_draft(
             },
         ),
     }
-
-
-async def answer_review(
-    state: dict,
-    *,
-    settings: Settings,
-    chat_model: BaseChatModel,
-) -> dict[str, Any]:
-    """Review draft answer in one pass: factual support + answerability + relevance."""
-    start = time.perf_counter()
-    loop_counts = _get_loop_counts(state)
-    question = _resolve_query_text(state)
-    final_context = _as_str(state.get("final_context")).strip()
-    draft = _as_str(state.get("draft_answer")).strip()
-
-    passed = False
-    reason = "empty"
-    missing_citations: list[str] = []
-    unsupported_claims: list[str] = []
-    fallback_used = False
-    fallback_reason: str | None = None
-    evidence_labels = _extract_evidence_labels(final_context)
-    all_citations, valid_citations, invalid_citations = _partition_citations(
-        draft, allowed_labels=evidence_labels
-    )
-    if not draft:
-        reason = "empty"
-    elif not evidence_labels:
-        reason = "no_evidence"
-    elif not all_citations:
-        reason = "missing_citations"
-    elif invalid_citations:
-        reason = "invalid_citations"
-    else:
-        system_prompt = _render_prompt_or_default(
-            "kb_chat/answer_review",
-            (
-                "你是严格的知识库回答审查器。"
-                "请同时判断回答是否被参考内容支持且引用有效、并且是否直接回答问题。"
-                '仅输出 JSON：{"passed": true/false, "reason": "..."}。'
-            ),
-        )
-        judge: AnswerReviewDecision | None = None
-        judge, fallback_reason = await _judge_structured(
-            chat_model=chat_model,
-            schema=AnswerReviewDecision,
-            system=system_prompt,
-            user=(
-                f"问题：{question}\n\n参考内容：\n{final_context[:4000]}"
-                f"\n\n回答：\n{draft[:2000]}"
-            ),
-        )
-        if judge is None:
-            fallback_used = True
-        if isinstance(judge, AnswerReviewDecision):
-            passed = bool(judge.passed)
-            reason = judge.reason
-            missing_citations = [
-                _as_str(item).strip()
-                for item in (judge.missing_citations or [])
-                if _as_str(item).strip()
-            ][:3]
-            unsupported_claims = [
-                _as_str(item).strip()
-                for item in (judge.unsupported_claims or [])
-                if _as_str(item).strip()
-            ][:3]
-        else:
-            policy = settings.kb_chat_grader_fail_policy
-            passed = policy == "open"
-            reason = fallback_reason or (
-                "fallback_open" if passed else "fallback_closed"
-            )
-            if fallback_reason is None:
-                fallback_reason = "invalid_schema"
-
-    loop_counts_updates = loop_counts
-    action = "none" if passed else "transform_query"
-    best_answer_updates: dict[str, Any] = {}
-    best_answer_meta: dict[str, Any] | None = None
-    if passed:
-        if draft:
-            best_answer_meta = {
-                "from_node": "answer_review",
-                "reason": reason,
-                "retrieval_round": max(loop_counts.get("retrieval_retries", 0), 0),
-                "total_rounds": loop_counts.get("total_rounds", 0),
-                "completed_at": now_iso(),
-            }
-            best_answer_updates = {
-                "best_answer": draft,
-                "best_answer_meta": best_answer_meta,
-            }
-
-    return {
-        "loop_counts": loop_counts_updates,
-        **best_answer_updates,
-        **_merge_reflection(
-            state,
-            {
-                "review_passed": passed,
-                "action": action,
-                "reason": reason,
-            },
-        ),
-        **_merge_stage_summary(
-            state,
-            "answer_review",
-            {
-                "passed": passed,
-                "reason": reason,
-                "best_answer": draft if passed and draft else None,
-                "best_answer_meta": best_answer_meta,
-                "fallback_used": fallback_used,
-                "fallback_reason": fallback_reason,
-                "citation_count": len(all_citations),
-                "valid_citation_count": len(valid_citations),
-                "invalid_citations": sorted(invalid_citations),
-                "missing_citations": missing_citations,
-                "unsupported_claims": unsupported_claims,
-                "latency_ms": int((time.perf_counter() - start) * 1000),
-                "completed_at": now_iso(),
-            },
-        ),
-    }
-
 
 async def transform_query_for_retry(
     state: dict, *, settings: Settings
@@ -1263,14 +1044,14 @@ def route_after_answer_review(state: dict, settings: Settings) -> str:
     """Route after AnswerReview: finalize vs transform_query vs force_exit."""
     if _force_exit_requested(state):
         return "force_exit"
-    loop_counts = _get_loop_counts(state)
-    if _total_rounds_exceeded(loop_counts, settings):
-        return "force_exit"
-
     reflection = state.get("reflection")
     passed = reflection.get("review_passed") if isinstance(reflection, dict) else None
     if passed is True:
         return "finalize"
+
+    loop_counts = _get_loop_counts(state)
+    if _total_rounds_exceeded(loop_counts, settings):
+        return "force_exit"
 
     reason = _as_str(reflection.get("reason")) if isinstance(reflection, dict) else ""
     if reason in _CITATION_ONLY_FAILURE_REASONS:
@@ -1284,9 +1065,9 @@ def route_after_answer_review(state: dict, settings: Settings) -> str:
 
 
 def confidence_calibrate(state: dict) -> dict[str, Any]:
-    """Calibrate final confidence from gate/review/citation signals."""
+    """Calibrate final confidence from gate/review/citation/retrieval/CoVe signals."""
     doc_gate_state = state.get("doc_gate_state")
-    gate_conf = (
+    gate_signal = (
         float(doc_gate_state.get("confidence") or 0.0)
         if isinstance(doc_gate_state, dict)
         else 0.0
@@ -1308,16 +1089,78 @@ def confidence_calibrate(state: dict) -> dict[str, Any]:
         if isinstance(cove_state, dict) and cove_state.get("claim_check_passed") is not None
         else True
     )
-    final_context = _as_str(state.get("final_context")).strip()
-    citation_count = len(_extract_evidence_labels(final_context))
-    citation_score = min(1.0, citation_count / 4.0)
+    loop_counts = state.get("loop_counts")
+    retry_counts = loop_counts if isinstance(loop_counts, dict) else {}
+    total_retries = max(
+        0,
+        int(retry_counts.get("retrieval_retries") or 0)
+        + int(retry_counts.get("generation_retries") or 0),
+    )
+    review_signal = max(0.0, min(1.0, review_conf * max(0.0, 1.0 - (0.2 * total_retries))))
 
-    base_score = (gate_conf * 0.35) + (review_conf * 0.35) + (citation_score * 0.30)
-    if not cove_passed:
-        base_score *= 0.7
+    stage_summaries = state.get("stage_summaries")
+    if not isinstance(stage_summaries, dict):
+        stage_summaries = {}
+    claim_summary = (
+        stage_summaries.get("claim_citation_check")
+        if isinstance(stage_summaries.get("claim_citation_check"), dict)
+        else {}
+    )
+    citation_coverage = float(
+        claim_summary.get("coverage")
+        or (cove_state.get("claim_coverage") if isinstance(cove_state, dict) else 0.0)
+        or 0.0
+    )
+    citation_coverage = max(0.0, min(1.0, citation_coverage))
+
+    retrieval_diagnostics = state.get("retrieval_diagnostics")
+    retrieval_metrics = retrieval_diagnostics if isinstance(retrieval_diagnostics, dict) else {}
+    top1_score = retrieval_metrics.get("top1_score")
+    top2_score = retrieval_metrics.get("top2_score")
+    if isinstance(top1_score, (int, float)) and isinstance(top2_score, (int, float)):
+        retrieval_signal = max(0.0, min(1.0, float(top1_score) - float(top2_score)))
+    else:
+        coverage = max(0.0, min(1.0, float(retrieval_metrics.get("coverage") or 0.0)))
+        novelty = max(0.0, min(1.0, float(retrieval_metrics.get("novelty") or 0.0)))
+        conflict = max(0.0, min(1.0, float(retrieval_metrics.get("conflict") or 0.0)))
+        retrieval_signal = max(
+            0.0,
+            min(1.0, (coverage * 0.45) + (novelty * 0.30) + ((1.0 - conflict) * 0.25)),
+        )
+
+    if isinstance(cove_state, dict) and bool(cove_state.get("enabled")) and bool(cove_state.get("triggered")):
+        raw_cove_signal = cove_state.get("supported_ratio")
+        if raw_cove_signal is None:
+            raw_cove_signal = 1.0 if cove_passed else 0.0
+        cove_signal = max(0.0, min(1.0, float(raw_cove_signal or 0.0)))
+    else:
+        cove_signal = 1.0
+
     if not claim_check_passed:
-        base_score *= 0.75
-    confidence_score = round(max(0.0, min(1.0, base_score)), 4)
+        citation_coverage *= 0.8
+    if isinstance(doc_gate_state, dict) and str(doc_gate_state.get("reason") or "") == "retry":
+        gate_signal *= 0.85
+
+    weights = {
+        "gate_signal": Decimal("0.30"),
+        "review_signal": Decimal("0.20"),
+        "citation_coverage": Decimal("0.25"),
+        "retrieval_signal": Decimal("0.15"),
+        "cove_signal": Decimal("0.10"),
+    }
+    weighted_sum = (
+        Decimal(str(max(0.0, min(1.0, gate_signal)))) * weights["gate_signal"]
+        + Decimal(str(review_signal)) * weights["review_signal"]
+        + Decimal(str(citation_coverage)) * weights["citation_coverage"]
+        + Decimal(str(retrieval_signal)) * weights["retrieval_signal"]
+        + Decimal(str(cove_signal)) * weights["cove_signal"]
+    )
+    confidence_score = float(
+        max(Decimal("0.0"), min(Decimal("1.0"), weighted_sum)).quantize(
+            Decimal("0.0001"),
+            rounding=ROUND_HALF_UP,
+        )
+    )
     if confidence_score >= 0.8:
         confidence_level = "high"
     elif confidence_score >= 0.5:
@@ -1325,17 +1168,30 @@ def confidence_calibrate(state: dict) -> dict[str, Any]:
     else:
         confidence_level = "low"
 
-    stage_summaries = state.get("stage_summaries")
-    if not isinstance(stage_summaries, dict):
-        stage_summaries = {}
+    signal_breakdown = {
+        "gate_signal": round(max(0.0, min(1.0, gate_signal)), 4),
+        "review_signal": round(review_signal, 4),
+        "citation_coverage": round(citation_coverage, 4),
+        "retrieval_signal": round(retrieval_signal, 4),
+        "cove_signal": round(cove_signal, 4),
+        "total_retries": total_retries,
+    }
     stage_summaries = {
         **stage_summaries,
         "confidence_calibrate": {
             "confidence_score": confidence_score,
             "confidence_level": confidence_level,
-            "gate_confidence": round(gate_conf, 4),
+            "gate_confidence": round(gate_signal, 4),
             "review_confidence": round(review_conf, 4),
-            "citation_score": round(citation_score, 4),
+            "citation_coverage": round(citation_coverage, 4),
+            "retrieval_signal": round(retrieval_signal, 4),
+            "cove_signal": round(cove_signal, 4),
+            "signals": signal_breakdown,
+            "reason": (
+                "weighted_multi_signal"
+                if claim_check_passed and cove_passed
+                else "penalized_after_validation"
+            ),
             "cove_passed": cove_passed,
             "claim_check_passed": claim_check_passed,
             "completed_at": now_iso(),

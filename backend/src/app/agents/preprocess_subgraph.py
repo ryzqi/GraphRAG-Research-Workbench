@@ -37,6 +37,13 @@ class KbChatGraphContext(TypedDict, total=False):
     message_budget: dict[str, Any]
 
 
+class _SwitchDecision(TypedDict):
+    enabled: bool
+    goto: str
+    reason: str
+    source: str
+
+
 def _merge_stage_summary(
     state: dict[str, Any],
     updates: dict[str, Any],
@@ -127,12 +134,81 @@ def _adaptive_routing_node(state: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _route_to_ambiguity_check(_: dict[str, Any], __: Settings) -> str:
-    return "ambiguity_check"
+def _resolve_runtime_switch(state: dict[str, Any], *, key: str) -> bool | None:
+    runtime_config = state.get("runtime_config")
+    if not isinstance(runtime_config, dict):
+        return None
+    value = runtime_config.get(key)
+    return value if isinstance(value, bool) else None
 
 
-def _noop(_: dict[str, Any]) -> dict[str, Any]:
-    return {}
+def _resolve_switch_decision(
+    state: dict[str, Any],
+    settings: Settings,
+    *,
+    runtime_key: str,
+    settings_attr: str,
+    enabled_goto: str,
+    disabled_goto: str,
+) -> _SwitchDecision:
+    runtime_value = _resolve_runtime_switch(state, key=runtime_key)
+    if runtime_value is not None:
+        enabled = runtime_value
+        source = f"runtime_config.{runtime_key}"
+        reason = "runtime_override"
+    else:
+        enabled = bool(getattr(settings, settings_attr, True))
+        source = f"settings.{settings_attr}"
+        reason = "settings_default"
+    return {
+        "enabled": enabled,
+        "goto": enabled_goto if enabled else disabled_goto,
+        "reason": reason,
+        "source": source,
+    }
+
+
+def _switch_node(
+    state: dict[str, Any],
+    settings: Settings,
+    *,
+    summary_key: str,
+    runtime_key: str,
+    settings_attr: str,
+    enabled_goto: str,
+    disabled_goto: str,
+) -> dict[str, Any]:
+    decision = _resolve_switch_decision(
+        state,
+        settings,
+        runtime_key=runtime_key,
+        settings_attr=settings_attr,
+        enabled_goto=enabled_goto,
+        disabled_goto=disabled_goto,
+    )
+    return {
+        "stage_summaries": _merge_stage_summary(
+            state,
+            {},
+            summary_key,
+            dict(decision),
+        )
+    }
+
+
+def _ambiguity_check_enabled_node(
+    state: dict[str, Any],
+    settings: Settings,
+) -> dict[str, Any]:
+    return _switch_node(
+        state,
+        settings,
+        summary_key="AMBIGUITY_CHECK_ENABLED",
+        runtime_key="ambiguity_check_enabled",
+        settings_attr="kb_chat_ambiguity_check_enabled",
+        enabled_goto="ambiguity_check",
+        disabled_goto="normalize_rewrite",
+    )
 
 
 def _simple_path(_: dict[str, Any]) -> Command[str]:
@@ -147,21 +223,119 @@ def _complex_path(_: dict[str, Any]) -> Command[str]:
     return Command(goto="ENABLE_DECOMPOSITION")
 
 
-def _route_to_generate_variants_mod(_: dict[str, Any], __: Settings) -> str:
-    return "generate_variants_mod"
+def _route_to_ambiguity_check(state: dict[str, Any], settings: Settings) -> str:
+    return _resolve_switch_decision(
+        state,
+        settings,
+        runtime_key="ambiguity_check_enabled",
+        settings_attr="kb_chat_ambiguity_check_enabled",
+        enabled_goto="ambiguity_check",
+        disabled_goto="normalize_rewrite",
+    )["goto"]
 
 
-def _route_to_decomposition(_: dict[str, Any], __: Settings) -> str:
-    return "decomposition"
+def _multi_query_mod_enabled_node(
+    state: dict[str, Any],
+    settings: Settings,
+) -> dict[str, Any]:
+    return _switch_node(
+        state,
+        settings,
+        summary_key="ENABLE_MULTI_QUERY_MOD",
+        runtime_key="multi_query_mod_enabled",
+        settings_attr="kb_chat_multi_query_mod_enabled",
+        enabled_goto="generate_variants_mod",
+        disabled_goto="prepare_messages",
+    )
 
 
-def _route_to_generate_variants(_: dict[str, Any], __: Settings) -> str:
-    return "generate_variants"
+def _route_to_generate_variants_mod(state: dict[str, Any], settings: Settings) -> str:
+    return _resolve_switch_decision(
+        state,
+        settings,
+        runtime_key="multi_query_mod_enabled",
+        settings_attr="kb_chat_multi_query_mod_enabled",
+        enabled_goto="generate_variants_mod",
+        disabled_goto="prepare_messages",
+    )["goto"]
+
+
+def _decomposition_enabled_node(
+    state: dict[str, Any],
+    settings: Settings,
+) -> dict[str, Any]:
+    return _switch_node(
+        state,
+        settings,
+        summary_key="ENABLE_DECOMPOSITION",
+        runtime_key="decomposition_enabled",
+        settings_attr="kb_chat_decomposition_enabled",
+        enabled_goto="decomposition",
+        disabled_goto="ENABLE_MULTI_QUERY",
+    )
+
+
+def _route_to_decomposition(state: dict[str, Any], settings: Settings) -> str:
+    return _resolve_switch_decision(
+        state,
+        settings,
+        runtime_key="decomposition_enabled",
+        settings_attr="kb_chat_decomposition_enabled",
+        enabled_goto="decomposition",
+        disabled_goto="ENABLE_MULTI_QUERY",
+    )["goto"]
+
+
+def _multi_query_enabled_node(
+    state: dict[str, Any],
+    settings: Settings,
+) -> dict[str, Any]:
+    return _switch_node(
+        state,
+        settings,
+        summary_key="ENABLE_MULTI_QUERY",
+        runtime_key="multi_query_enabled",
+        settings_attr="kb_chat_multi_query_enabled",
+        enabled_goto="generate_variants",
+        disabled_goto="entity_expand",
+    )
+
+
+def _route_to_generate_variants(state: dict[str, Any], settings: Settings) -> str:
+    return _resolve_switch_decision(
+        state,
+        settings,
+        runtime_key="multi_query_enabled",
+        settings_attr="kb_chat_multi_query_enabled",
+        enabled_goto="generate_variants",
+        disabled_goto="entity_expand",
+    )["goto"]
+
+
+def _hyde_enabled_node(
+    state: dict[str, Any],
+    settings: Settings,
+) -> dict[str, Any]:
+    return _switch_node(
+        state,
+        settings,
+        summary_key="ENABLE_HYDE",
+        runtime_key="hyde_enabled",
+        settings_attr="kb_chat_hyde_enabled",
+        enabled_goto="hyde",
+        disabled_goto="prepare_messages",
+    )
 
 
 def _route_to_hyde(state: dict[str, Any], settings: Settings) -> str:
-    _ = (state, settings)
-    return "hyde"
+    return _resolve_switch_decision(
+        state,
+        settings,
+        runtime_key="hyde_enabled",
+        settings_attr="kb_chat_hyde_enabled",
+        enabled_goto="hyde",
+        disabled_goto="prepare_messages",
+    )["goto"]
 
 
 async def _prepare_messages_terminal(
@@ -199,7 +373,10 @@ def build_preprocess_subgraph(*, settings: Settings):
 
     add_traced_node("merge_context", partial(merge_context, settings=settings))
     add_traced_node("coref_rewrite", partial(coref_rewrite, settings=settings))
-    add_traced_node("AMBIGUITY_CHECK_ENABLED", _noop)
+    add_traced_node(
+        "AMBIGUITY_CHECK_ENABLED",
+        partial(_ambiguity_check_enabled_node, settings=settings),
+    )
     add_traced_node("ambiguity_check", partial(ambiguity_check, settings=settings))
     add_traced_node("normalize_rewrite", partial(normalize_rewrite, settings=settings))
     add_traced_node("complexity_classify", partial(_complexity_classify, settings=settings))
@@ -207,14 +384,23 @@ def build_preprocess_subgraph(*, settings: Settings):
     add_traced_node("simple_path", _simple_path)
     add_traced_node("moderate_path", _moderate_path)
     add_traced_node("complex_path", _complex_path)
-    add_traced_node("ENABLE_MULTI_QUERY_MOD", _noop)
+    add_traced_node(
+        "ENABLE_MULTI_QUERY_MOD",
+        partial(_multi_query_mod_enabled_node, settings=settings),
+    )
     add_traced_node("generate_variants_mod", partial(generate_variants, settings=settings))
-    add_traced_node("ENABLE_DECOMPOSITION", _noop)
+    add_traced_node(
+        "ENABLE_DECOMPOSITION",
+        partial(_decomposition_enabled_node, settings=settings),
+    )
     add_traced_node("decomposition", partial(decomposition, settings=settings))
-    add_traced_node("ENABLE_MULTI_QUERY", _noop)
+    add_traced_node(
+        "ENABLE_MULTI_QUERY",
+        partial(_multi_query_enabled_node, settings=settings),
+    )
     add_traced_node("generate_variants", partial(generate_variants, settings=settings))
     add_traced_node("entity_expand", partial(entity_expand, settings=settings))
-    add_traced_node("ENABLE_HYDE", _noop)
+    add_traced_node("ENABLE_HYDE", partial(_hyde_enabled_node, settings=settings))
     add_traced_node("hyde", partial(hyde, settings=settings))
     add_traced_node("prepare_messages", partial(_prepare_messages_terminal, settings=settings))
     add_traced_node("preprocess_exit", _preprocess_exit)
