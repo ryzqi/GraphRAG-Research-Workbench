@@ -21,6 +21,7 @@ from langgraph.types import Command
 from app.agents.kb_chat_memory import (
     aget_kb_chat_memory,
     render_kb_chat_memory_snippet,
+    resolve_kb_chat_store_user_id,
 )
 from app.core.settings import Settings
 from app.integrations.chat_model_factory import create_chat_model
@@ -30,6 +31,7 @@ from app.services.query_rewrite_service import (
     build_query_items,
 )
 from app.utils.token_counter import count_tokens_approximately
+from app.agents.kb_chat_agentic_state import merge_routing_decision
 
 from .budget import (
     ensure_budget_initialized,
@@ -82,11 +84,21 @@ def _cache_kb_scope(kb_ids: list[str]) -> str:
     return f"kb_{digest}"
 
 
-def _complexity_cache_namespace(state: dict) -> tuple[str, ...]:
+def _complexity_cache_namespace(
+    state: dict,
+    runtime: Runtime[Any] | None = None,
+) -> tuple[str, ...]:
+    context = _runtime_context(runtime) if runtime is not None else {}
     memory_keys = state.get("memory_keys")
     memory = memory_keys if isinstance(memory_keys, dict) else {}
-    user_id = str(memory.get("user_id") or "local").strip() or "local"
-    kb_ids_raw = memory.get("kb_ids")
+    thread_id = str(context.get("thread_id") or memory.get("thread_id") or "").strip()
+    user_id = resolve_kb_chat_store_user_id(
+        user_id=context.get("user_id") or memory.get("user_id"),
+        thread_id=thread_id,
+    )
+    kb_ids_raw = context.get("kb_ids")
+    if not isinstance(kb_ids_raw, list):
+        kb_ids_raw = memory.get("kb_ids")
     kb_ids = kb_ids_raw if isinstance(kb_ids_raw, list) else []
     kb_ids_str = [str(k).strip() for k in kb_ids if isinstance(k, str) and str(k).strip()]
     return ("kb_chat", "complexity_cache", user_id, _cache_kb_scope(kb_ids_str))
@@ -144,7 +156,7 @@ async def _read_complexity_cache(
 ) -> dict[str, Any] | None:
     if runtime is None or runtime.store is None:
         return None
-    item = await runtime.store.aget(_complexity_cache_namespace(state), cache_key)
+    item = await runtime.store.aget(_complexity_cache_namespace(state, runtime), cache_key)
     if item is None:
         return None
     value = getattr(item, "value", None)
@@ -163,7 +175,7 @@ async def _write_complexity_cache(
 ) -> None:
     if runtime is None or runtime.store is None:
         return
-    ns = _complexity_cache_namespace(state)
+    ns = _complexity_cache_namespace(state, runtime)
     wrapped = _wrap_cache_with_ttl(payload, ttl_seconds=ttl_seconds)
     if runtime.store.supports_ttl:
         await runtime.store.aput(ns, cache_key, wrapped, ttl=float(max(0, ttl_seconds)))
@@ -261,11 +273,11 @@ def _resolve_prepare_budget(
     context_budget = _as_dict(context.get("message_budget")) or {}
     max_candidates = _safe_int(
         context_budget.get("max_candidates"),
-        default=parallel_retrieval_max_branches(state, settings),
+        default=parallel_retrieval_max_branches(state, settings, runtime=runtime),
     )
     min_queries = _safe_int(
         context_budget.get("min_queries"),
-        default=parallel_retrieval_min_queries(state, settings),
+        default=parallel_retrieval_min_queries(state, settings, runtime=runtime),
     )
     quality_threshold = _safe_float(
         context_budget.get("quality_threshold"),
@@ -273,7 +285,7 @@ def _resolve_prepare_budget(
     )
     include_main = context_budget.get("include_main")
     if not isinstance(include_main, bool):
-        include_main = parallel_retrieval_include_main(state, settings)
+        include_main = parallel_retrieval_include_main(state, settings, runtime=runtime)
     return {
         "max_candidates": max(1, min(max_candidates, 16)),
         "min_queries": max(1, min(min_queries, 8)),
@@ -570,14 +582,20 @@ async def merge_context(
 
     memory_snippet = ""
     if settings.memory_enabled and runtime.store is not None:
+        context = _runtime_context(runtime)
         keys = (
             state.get("memory_keys")
             if isinstance(state.get("memory_keys"), dict)
             else {}
         )
-        user_id = str(keys.get("user_id") or "local")
-        thread_id = str(keys.get("thread_id") or "unknown_thread")
-        kb_ids_raw = keys.get("kb_ids") if isinstance(keys.get("kb_ids"), list) else []
+        thread_id = str(context.get("thread_id") or keys.get("thread_id") or "").strip()
+        user_id = resolve_kb_chat_store_user_id(
+            user_id=context.get("user_id") or keys.get("user_id"),
+            thread_id=thread_id,
+        )
+        kb_ids_raw = context.get("kb_ids")
+        if not isinstance(kb_ids_raw, list):
+            kb_ids_raw = keys.get("kb_ids") if isinstance(keys.get("kb_ids"), list) else []
         kb_ids = [str(k) for k in kb_ids_raw if isinstance(k, str) and k.strip()]
         try:
             mem = await aget_kb_chat_memory(
@@ -623,13 +641,13 @@ async def merge_context(
             llm_resolve_reason = "error"
 
     memory_for_render = memory_snippet if keep_memory else ""
-    display_context = _render_display_context(
+    merged_context = _render_display_context(
         summary=f"对话摘要：\n{summary_text}" if summary_text else "",
         turns=selected_turns,
         memory_snippet=memory_for_render,
         question=question,
     )
-    merged = display_context or question
+    merged = merged_context or question
     rewrite_input_query = question
     context_frame: dict[str, Any] = {
         "summary_text": summary_text,
@@ -676,7 +694,6 @@ async def merge_context(
         "user_input": user_input,
         "context_frame": context_frame,
         "rewrite_input_query": rewrite_input_query,
-        "display_context": merged,
         "merged_context": merged,
         "stage_summaries": stage_summaries,
     }
@@ -860,10 +877,27 @@ async def ambiguity_check(state: dict, settings: Settings) -> dict[str, Any]:
         "final_answer": reverse_question,
         "clarification_payload": clarification_payload,
         "stage_summaries": stage_summaries,
+        **merge_routing_decision(
+            state,
+            "preprocess",
+            {
+                "phase": "preprocess",
+                "next_node": "force_exit",
+                "action": "clarify",
+                "reason": "ambiguous_query",
+                "reason_code": reason_code or "mixed",
+                "decision_source": "ambiguity_check",
+                "completed_at": now_iso(),
+            },
+        ),
     }
 
 
-async def normalize_rewrite(state: dict, settings: Settings) -> dict[str, Any]:
+async def normalize_rewrite(
+    state: dict,
+    settings: Settings,
+    runtime: Runtime[Any] | None = None,
+) -> dict[str, Any]:
     """Normalize query with rule+LLM strategy and retrieval-safe metadata."""
     start = time.perf_counter()
     input_source = "coref_query"
@@ -894,8 +928,8 @@ async def normalize_rewrite(state: dict, settings: Settings) -> dict[str, Any]:
         result = await svc.normalize_rewrite(
             query,
             llm_enabled=True,
-            alias_limit=normalize_alias_max(state, settings),
-            timeout_seconds=normalize_timeout_seconds(state, settings),
+            alias_limit=normalize_alias_max(state, settings, runtime=runtime),
+            timeout_seconds=normalize_timeout_seconds(state, settings, runtime=runtime),
         )
         rewritten = result.query
         rewritten_flag = result.rewritten
@@ -1119,7 +1153,6 @@ async def complexity_classify(
         "query_strategy_signals": risk_flags,
         "sub_queries": [],
         "multi_queries": [],
-        "subquery_runs": [],
         "decomposition_plan": {
             "strategy": "direct",
             "version": "kb_chat_decomposition_plan_v2",
@@ -1278,10 +1311,10 @@ async def entity_expand(
     if isinstance(normalized_meta, dict) and isinstance(normalized_meta.get("entities"), list):
         entities = [item for item in normalized_meta["entities"] if isinstance(item, str)]
 
-    max_candidates = entity_expand_max_candidates(state, settings)
-    max_variants = entity_expand_max_variants(state, settings)
-    min_confidence = entity_expand_min_confidence(state, settings)
-    timeout_seconds = entity_expand_timeout_seconds(state, settings)
+    max_candidates = entity_expand_max_candidates(state, settings, runtime=runtime)
+    max_variants = entity_expand_max_variants(state, settings, runtime=runtime)
+    min_confidence = entity_expand_min_confidence(state, settings, runtime=runtime)
+    timeout_seconds = entity_expand_timeout_seconds(state, settings, runtime=runtime)
 
     expanded = original
     success = False
@@ -1761,5 +1794,22 @@ async def prepare_messages(
             "reason": fallback_reason,
         }
 
-    update["preprocess_next"] = goto
+    outer_next_node = "transform_query" if goto == "transform_query" else "retrieval_subgraph"
+    update = {
+        **update,
+        **merge_routing_decision(
+            state,
+            "preprocess",
+            {
+                "phase": "preprocess",
+                "next_node": outer_next_node,
+                "action": "transform_query" if goto == "transform_query" else "none",
+                "reason": fallback_reason if fallback_reason != "none" else "prepared",
+                "reason_code": fallback_reason if fallback_reason != "none" else "prepared",
+                "decision_source": "prepare_messages",
+                "completed_at": now_iso(),
+            },
+            updates=update,
+        ),
+    }
     return Command(update=update, goto=goto)

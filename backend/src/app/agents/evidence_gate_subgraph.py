@@ -13,7 +13,7 @@ from app.agents.kb_chat_trace_nodes import (
     KB_CHAT_NODE_METADATA,
     wrap_kb_chat_node_with_io,
 )
-from app.agents.kb_chat_agentic_state import KbChatAgenticState
+from app.agents.kb_chat_agentic_state import KbChatInternalState, merge_routing_decision
 from app.core.settings import Settings
 from app.utils.token_counter import count_tokens_approximately
 
@@ -123,7 +123,7 @@ def _doc_gate_dispatch(state: dict[str, Any]) -> Command[str]:
 
 def _doc_gate_sufficiency(state: dict[str, Any]) -> dict[str, Any]:
     round_id = _resolve_doc_gate_round(state) or 1
-    context = str(state.get("compressed_context") or state.get("final_context") or "")
+    context = str(state.get("final_context") or "")
     tokens = count_tokens_approximately(context)
     evidence_count = len(re.findall(r"\[[^\]]+\]", context))
     passed = evidence_count >= 1 and tokens >= 48
@@ -142,7 +142,7 @@ def _doc_gate_sufficiency(state: dict[str, Any]) -> dict[str, Any]:
 def _doc_gate_answerability(state: dict[str, Any]) -> dict[str, Any]:
     round_id = _resolve_doc_gate_round(state) or 1
     query = _resolve_query_text(state)
-    context = str(state.get("compressed_context") or state.get("final_context") or "")
+    context = str(state.get("final_context") or "")
     q_terms = _extract_terms(query)
     c_terms = _extract_terms(context)
     overlap = len(q_terms & c_terms)
@@ -162,7 +162,7 @@ def _doc_gate_answerability(state: dict[str, Any]) -> dict[str, Any]:
 
 def _doc_gate_conflict(state: dict[str, Any]) -> dict[str, Any]:
     round_id = _resolve_doc_gate_round(state) or 1
-    context = str(state.get("compressed_context") or state.get("final_context") or "")
+    context = str(state.get("final_context") or "")
     conflict_markers = (
         context.count("但是")
         + context.count("然而")
@@ -254,7 +254,6 @@ def _doc_gate_fuse(state: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(stage_summaries, dict):
         stage_summaries = {}
     return {
-        "doc_gate_scores": summary,
         "stage_summaries": {
             **stage_summaries,
             "doc_gate_sufficiency": _gate_stage_summary(suff),
@@ -266,10 +265,19 @@ def _doc_gate_fuse(state: dict[str, Any]) -> dict[str, Any]:
 
 
 def _doc_gate_route(state: dict[str, Any], settings: Settings) -> dict[str, Any]:
-    gate_scores = state.get("doc_gate_scores")
-    scores = gate_scores if isinstance(gate_scores, dict) else {}
+    stage_summaries = state.get("stage_summaries")
+    if not isinstance(stage_summaries, dict):
+        stage_summaries = {}
+    scores = stage_summaries.get("doc_gate_fuse")
+    scores = scores if isinstance(scores, dict) else {}
     decision = str(scores.get("decision") or "retry")
     score = float(scores.get("score") or 0.0)
+    loop_counts = state.get("loop_counts")
+    retrieval_retries = (
+        int(loop_counts.get("retrieval_retries") or 0)
+        if isinstance(loop_counts, dict)
+        else 0
+    )
     if decision == "pass":
         action = "none"
         goto = "answer_subgraph"
@@ -281,12 +289,6 @@ def _doc_gate_route(state: dict[str, Any], settings: Settings) -> dict[str, Any]
         passed = False
         reason = "exit_unanswerable"
     elif decision == "retry_conflict":
-        loop_counts = state.get("loop_counts")
-        retrieval_retries = (
-            int(loop_counts.get("retrieval_retries") or 0)
-            if isinstance(loop_counts, dict)
-            else 0
-        )
         max_retries = int(settings.kb_chat_max_retrieval_retries)
         if retrieval_retries >= max_retries:
             action = "force_exit"
@@ -305,26 +307,31 @@ def _doc_gate_route(state: dict[str, Any], settings: Settings) -> dict[str, Any]
         reason = "retry"
     reflection = state.get("reflection")
     reflection = reflection if isinstance(reflection, dict) else {}
-    stage_summaries = state.get("stage_summaries")
-    if not isinstance(stage_summaries, dict):
-        stage_summaries = {}
-    return {
-        "doc_gate_state": {
-            "passed": passed,
-            "reason": reason,
-            "confidence": round(score, 4),
-            "decision_source": "parallel_gate",
-            "retry_advice": (
-                "none"
-                if decision == "pass"
-                else (
-                    "exit"
-                    if decision in {"exit_unanswerable", "retry_conflict"}
-                    and reason == "conflict_retry_exhausted"
-                    else "retry"
-                )
-            ),
+    retry_advice = (
+        "none"
+        if decision == "pass"
+        else (
+            "exit"
+            if decision in {"exit_unanswerable", "retry_conflict"}
+            and reason == "conflict_retry_exhausted"
+            else "retry"
+        )
+    )
+    routing_decision = {
+        "phase": "doc_gate",
+        "next_node": goto,
+        "action": action,
+        "reason": reason,
+        "reason_code": decision,
+        "decision_source": "parallel_gate",
+        "retry_advice": retry_advice,
+        "retry_budget_snapshot": {
+            "retrieval_retries": retrieval_retries,
+            "max_retrieval_retries": int(settings.kb_chat_max_retrieval_retries),
         },
+        "round_id": _resolve_doc_gate_round(state) or 1,
+    }
+    return {
         "reflection": {
             **reflection,
             "relevance_passed": passed,
@@ -332,7 +339,9 @@ def _doc_gate_route(state: dict[str, Any], settings: Settings) -> dict[str, Any]
             "reason": reason,
             "confidence": round(score, 4),
             "decision_source": "parallel_gate",
+            "retry_advice": retry_advice,
         },
+        **merge_routing_decision(state, "doc_gate", routing_decision),
         "stage_summaries": {
             **stage_summaries,
             "doc_gate_route": {
@@ -342,6 +351,8 @@ def _doc_gate_route(state: dict[str, Any], settings: Settings) -> dict[str, Any]
                 "passed": passed,
                 "reason": reason,
                 "score": round(score, 4),
+                "retry_advice": retry_advice,
+                "decision_source": "parallel_gate",
             },
         },
     }
@@ -351,7 +362,7 @@ def build_evidence_gate_subgraph(*, settings: Settings):
     """Compile evidence-gate subgraph aligned to flowchart Stage 5."""
 
     graph = StateGraph(
-        state_schema=KbChatAgenticState,
+        state_schema=KbChatInternalState,
         context_schema=KbChatGraphContext,
     )
     def add_traced_node(node_id: str, node_callable: Any, **kwargs: Any) -> None:

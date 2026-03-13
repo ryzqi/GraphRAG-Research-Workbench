@@ -16,7 +16,13 @@ from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, StateGraph
 from langgraph.store.base import BaseStore
 
-from app.agents.kb_chat_agentic_state import KbChatAgenticState
+from app.agents.kb_chat_agentic_state import (
+    KbChatInternalState,
+    KbChatInputState,
+    KbChatOutputState,
+    resolve_routing_decision,
+)
+from app.agents.kb_chat_memory import resolve_kb_chat_store_user_id
 from app.agents.tool_calling.registry import ToolMeta
 from app.core.settings import get_settings
 
@@ -72,24 +78,10 @@ class PrepareMessagesInput(TypedDict, total=False):
 
 
 def _route_after_preprocess_subgraph(state: dict[str, Any]) -> str:
-    reflection = state.get("reflection")
-    action = ""
-    if isinstance(reflection, dict):
-        action = str(reflection.get("action") or "").strip().lower()
-    if action in {"clarify", "force_exit"}:
-        return "force_exit"
-    if action == "transform_query":
-        return "transform_query"
-    clarification_payload = state.get("clarification_payload")
-    if isinstance(clarification_payload, dict) and clarification_payload:
-        return "force_exit"
-    preprocess_next = state.get("preprocess_next")
-    if isinstance(preprocess_next, str):
-        next_node = preprocess_next.strip().lower()
-        if next_node == "transform_query":
-            return "transform_query"
-        if next_node == "force_exit":
-            return "force_exit"
+    decision = resolve_routing_decision(state, "preprocess")
+    next_node = str(decision.get("next_node") or "").strip().lower()
+    if next_node in {"retrieval_subgraph", "transform_query", "force_exit"}:
+        return next_node
     return "retrieval_subgraph"
 
 
@@ -233,6 +225,9 @@ def build_kb_chat_run_context(
     *,
     thread_id: str | None,
     state: dict[str, Any] | None,
+    user_id: str | None = None,
+    kb_ids: list[str] | None = None,
+    runtime_config: dict[str, Any] | None = None,
     settings: Any,
 ) -> KbChatGraphContext:
     """Build run context for context_schema-backed node runtime data."""
@@ -241,31 +236,40 @@ def build_kb_chat_run_context(
     memory_keys = state_obj.get("memory_keys")
     if not isinstance(memory_keys, dict):
         memory_keys = {}
-    runtime_config = state_obj.get("runtime_config")
-    if not isinstance(runtime_config, dict):
-        runtime_config = {}
-    kb_ids = memory_keys.get("kb_ids")
-    if not isinstance(kb_ids, list):
-        kb_ids = []
+    runtime_config_payload = (
+        runtime_config if isinstance(runtime_config, dict) else state_obj.get("runtime_config")
+    )
+    if not isinstance(runtime_config_payload, dict):
+        runtime_config_payload = {}
+    kb_ids_payload = kb_ids if isinstance(kb_ids, list) else memory_keys.get("kb_ids")
+    if not isinstance(kb_ids_payload, list):
+        kb_ids_payload = []
+    resolved_thread_id = str(thread_id or memory_keys.get("thread_id") or "")
+    resolved_user_id = resolve_kb_chat_store_user_id(
+        user_id=user_id if isinstance(user_id, str) else memory_keys.get("user_id"),
+        thread_id=resolved_thread_id,
+    )
     return {
-        "thread_id": str(thread_id or memory_keys.get("thread_id") or ""),
-        "user_id": str(memory_keys.get("user_id") or "local"),
-        "kb_ids": [str(item) for item in kb_ids if isinstance(item, str) and item.strip()],
-        "runtime_config": runtime_config,
+        "thread_id": resolved_thread_id,
+        "user_id": resolved_user_id,
+        "kb_ids": [
+            str(item) for item in kb_ids_payload if isinstance(item, str) and item.strip()
+        ],
+        "runtime_config": runtime_config_payload,
         "message_budget": {
             "max_candidates": int(
-                runtime_config.get("parallel_retrieval_max_branches")
-                if isinstance(runtime_config.get("parallel_retrieval_max_branches"), int)
+                runtime_config_payload.get("parallel_retrieval_max_branches")
+                if isinstance(runtime_config_payload.get("parallel_retrieval_max_branches"), int)
                 else getattr(settings, "kb_chat_parallel_retrieval_max_branches", 6)
             ),
             "min_queries": int(
-                runtime_config.get("parallel_retrieval_min_queries")
-                if isinstance(runtime_config.get("parallel_retrieval_min_queries"), int)
+                runtime_config_payload.get("parallel_retrieval_min_queries")
+                if isinstance(runtime_config_payload.get("parallel_retrieval_min_queries"), int)
                 else getattr(settings, "kb_chat_parallel_retrieval_min_queries", 2)
             ),
             "include_main": bool(
-                runtime_config.get("parallel_retrieval_include_main")
-                if isinstance(runtime_config.get("parallel_retrieval_include_main"), bool)
+                runtime_config_payload.get("parallel_retrieval_include_main")
+                if isinstance(runtime_config_payload.get("parallel_retrieval_include_main"), bool)
                 else getattr(settings, "kb_chat_parallel_retrieval_include_main", True)
             ),
         },
@@ -380,6 +384,41 @@ def _pick_string_list(snapshot: dict[str, Any], *keys: str) -> list[str] | None:
         if lines:
             return lines
     return None
+
+
+def _current_retrieval_round(snapshot: dict[str, Any]) -> int:
+    loop_counts = _as_dict(snapshot.get("loop_counts")) or {}
+    raw_round = loop_counts.get("retrieval_retries")
+    if isinstance(raw_round, int) and raw_round >= 0:
+        return raw_round
+    return 0
+
+
+def _current_subquery_runs(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
+    active_round = _current_retrieval_round(snapshot)
+    runs = snapshot.get("subquery_runs")
+    if not isinstance(runs, list):
+        return []
+    filtered: list[dict[str, Any]] = []
+    for run in runs:
+        run_obj = _as_dict(run)
+        if not run_obj:
+            continue
+        run_round = run_obj.get("retrieval_round")
+        if isinstance(run_round, int):
+            if run_round != active_round:
+                continue
+        elif active_round > 0:
+            continue
+        filtered.append(run_obj)
+    return filtered
+
+
+def _resolve_current_subquery_run(snapshot: dict[str, Any]) -> dict[str, Any]:
+    runs = _current_subquery_runs(snapshot)
+    if not runs:
+        return {}
+    return runs[-1]
 
 
 def _context_frame(snapshot: dict[str, Any]) -> dict[str, Any]:
@@ -611,13 +650,12 @@ def _build_node_input_display_items(
             value=_non_empty_text(task.get("kind")),
         )
     elif node_name == "merge_subquery_context":
+        current_runs = _current_subquery_runs(snapshot)
         _append_display_item(
             items,
             key="subquery_runs_count",
             label="分支结果数",
-            value=len(snapshot.get("subquery_runs"))
-            if isinstance(snapshot.get("subquery_runs"), list)
-            else None,
+            value=len(current_runs) if current_runs else None,
         )
     elif node_name == "retrieve":
         query_items = _format_query_items(snapshot.get("query_items"))
@@ -735,7 +773,7 @@ def _build_node_output_display_items(
             items,
             key="merged_context",
             label="合并后上下文",
-            value=_pick_text(snapshot, "display_context", "merged_context"),
+            value=_pick_text(snapshot, "merged_context"),
         )
         _append_display_item(
             items,
@@ -1118,9 +1156,7 @@ def _build_node_output_display_items(
             value=summary.get("selected_queries"),
         )
     elif node_name == "retrieve_subquery":
-        runs = snapshot.get("subquery_runs")
-        first = runs[0] if isinstance(runs, list) and runs else {}
-        run = first if isinstance(first, dict) else {}
+        run = _resolve_current_subquery_run(snapshot)
         _append_display_item(
             items,
             key="query",
@@ -1393,8 +1429,10 @@ class KbChatAgenticGraph:
         self._graph_cache = None
 
         graph = StateGraph(
-            state_schema=KbChatAgenticState,
+            state_schema=KbChatInternalState,
             context_schema=KbChatGraphContext,
+            input_schema=KbChatInputState,
+            output_schema=KbChatOutputState,
         )
 
         kb_tool = next((t for t in tools if getattr(t, "name", None) == "kb_retrieve"), None)
@@ -1511,10 +1549,16 @@ class KbChatAgenticGraph:
         *,
         thread_id: str | None = None,
         state: dict[str, Any] | None = None,
+        user_id: str | None = None,
+        kb_ids: list[str] | None = None,
+        runtime_config: dict[str, Any] | None = None,
     ) -> KbChatGraphContext:
         return build_kb_chat_run_context(
             thread_id=thread_id,
             state=state,
+            user_id=user_id,
+            kb_ids=kb_ids,
+            runtime_config=runtime_config,
             settings=self._settings,
         )
 

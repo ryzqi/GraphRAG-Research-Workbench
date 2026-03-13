@@ -63,6 +63,50 @@ class CheckpointManager:
         config = cls.make_config(thread_id)
         return await cls.get_checkpointer().aget_tuple(config)
 
+    @staticmethod
+    def summarize_channel_values(channel_values: Any) -> dict[str, Any]:
+        """Build a small, stable summary instead of exposing raw checkpoint state."""
+        if not isinstance(channel_values, dict):
+            return {}
+
+        stage_summaries = (
+            channel_values.get("stage_summaries")
+            if isinstance(channel_values.get("stage_summaries"), dict)
+            else {}
+        )
+        metrics = (
+            channel_values.get("metrics")
+            if isinstance(channel_values.get("metrics"), dict)
+            else {}
+        )
+        loop_counts = (
+            channel_values.get("loop_counts")
+            if isinstance(channel_values.get("loop_counts"), dict)
+            else {}
+        )
+        messages = channel_values.get("messages")
+        summary: dict[str, Any] = {
+            "schema_version": channel_values.get("schema_version"),
+            "field_count": len(channel_values),
+            "field_names": sorted(str(key) for key in channel_values.keys()),
+            "message_count": len(messages) if isinstance(messages, list) else 0,
+            "stage_summary_keys": sorted(str(key) for key in stage_summaries.keys()),
+            "metric_keys": sorted(str(key) for key in metrics.keys()),
+            "loop_counts": {
+                "total_rounds": int(loop_counts.get("total_rounds") or 0),
+                "retrieval_retries": int(loop_counts.get("retrieval_retries") or 0),
+                "generation_retries": int(loop_counts.get("generation_retries") or 0),
+            },
+        }
+        checkpoint_restore = (
+            stage_summaries.get("checkpoint_restore")
+            if isinstance(stage_summaries.get("checkpoint_restore"), dict)
+            else None
+        )
+        if checkpoint_restore is not None:
+            summary["checkpoint_restore"] = checkpoint_restore
+        return summary
+
     @classmethod
     async def list_history(cls, thread_id: str, limit: int = 10) -> list[Any]:
         """列出线程的检查点历史。"""

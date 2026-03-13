@@ -8,17 +8,16 @@ from langgraph.types import Send
 
 
 def make_send_task(node: str, payload: dict[str, Any], state: dict[str, Any]) -> Send:
-    """Attach shared runtime keys for fan-out branch execution."""
+    """Attach only branch-local state required for fan-out execution."""
 
-    return Send(
-        node,
-        {
-            **payload,
-            "memory_keys": state.get("memory_keys"),
-            "loop_counts": state.get("loop_counts"),
-            "runtime_config": state.get("runtime_config"),
-        },
-    )
+    branch_state = {**payload}
+    loop_counts = state.get("loop_counts")
+    if isinstance(loop_counts, dict):
+        branch_state["loop_counts"] = loop_counts
+    retrieval_budget = state.get("retrieval_budget")
+    if isinstance(retrieval_budget, dict) and retrieval_budget:
+        branch_state["retrieval_budget"] = retrieval_budget
+    return Send(node, branch_state)
 
 
 def sort_by_retrieval_then_priority(runs: list[dict[str, Any]]) -> list[dict[str, Any]]:

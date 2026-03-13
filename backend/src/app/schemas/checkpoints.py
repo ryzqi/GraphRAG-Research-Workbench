@@ -8,12 +8,25 @@ from typing import Any
 from pydantic import BaseModel
 
 
+class CheckpointStateSummary(BaseModel):
+    """Checkpoint state summary for debugging without exposing raw channel_values."""
+
+    schema_version: str | None = None
+    field_count: int = 0
+    field_names: list[str] = []
+    message_count: int = 0
+    stage_summary_keys: list[str] = []
+    metric_keys: list[str] = []
+    loop_counts: dict[str, int] | None = None
+    checkpoint_restore: dict[str, Any] | None = None
+
+
 class CheckpointStateResponse(BaseModel):
     """检查点状态响应。"""
 
     thread_id: str
     checkpoint_id: str | None = None
-    channel_values: dict[str, Any] | None = None
+    state_summary: CheckpointStateSummary | None = None
     created_at: datetime | None = None
 
 

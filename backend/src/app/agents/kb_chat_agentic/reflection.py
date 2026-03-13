@@ -28,6 +28,7 @@ from app.services.query_rewrite_service import (
     QueryRewriteService,
     build_query_items,
 )
+from app.agents.kb_chat_agentic_state import resolve_routing_decision
 
 from .budget import now_iso
 from .dispatch_fuse import (
@@ -70,6 +71,11 @@ def _get_loop_counts(state: dict) -> dict[str, int]:
         "retrieval_retries": int(raw.get("retrieval_retries") or 0),
         "generation_retries": int(raw.get("generation_retries") or 0),
     }
+
+
+def _current_retrieval_round(state: dict) -> int:
+    loop_counts = _get_loop_counts(state)
+    return max(int(loop_counts.get("retrieval_retries") or 0), 0)
 
 
 def _total_rounds_exceeded(loop_counts: dict[str, int], settings: Settings) -> bool:
@@ -194,12 +200,13 @@ def _dispatch_quality_score(item: dict[str, Any], *, spec: dict[str, Any]) -> fl
 def _build_subquery_dispatch_plan(
     state: dict,
     settings: Settings,
+    runtime: Runtime[Any] | None = None,
 ) -> tuple[list[Send] | str, dict[str, Any]]:
     """Build fanout tasks from query_items and return route + diagnostics."""
     strategy = str(state.get("query_strategy") or "direct")
-    min_queries = parallel_retrieval_min_queries(state, settings)
-    max_branches = parallel_retrieval_max_branches(state, settings)
-    include_main = parallel_retrieval_include_main(state, settings)
+    min_queries = parallel_retrieval_min_queries(state, settings, runtime=runtime)
+    max_branches = parallel_retrieval_max_branches(state, settings, runtime=runtime)
+    include_main = parallel_retrieval_include_main(state, settings, runtime=runtime)
 
     raw_query_items = state.get("query_items")
     if not isinstance(raw_query_items, list):
@@ -389,20 +396,30 @@ def route_after_subquery_dispatch(
     return route
 
 
-def _resolve_retrieval_timeout_seconds(state: dict[str, Any]) -> float | None:
-    runtime_config = state.get("runtime_config")
-    if not isinstance(runtime_config, dict):
-        return None
-    raw_timeout = runtime_config.get("retrieval_timeout_seconds")
-    if isinstance(raw_timeout, (int, float)) and float(raw_timeout) > 0:
-        return float(raw_timeout)
+def _resolve_retrieval_timeout_seconds(
+    state: dict[str, Any],
+    runtime: Runtime[Any] | None = None,
+) -> float | None:
+    context = _runtime_context(runtime)
+    runtime_config = context.get("runtime_config")
+    if isinstance(runtime_config, dict):
+        raw_timeout = runtime_config.get("retrieval_timeout_seconds")
+        if isinstance(raw_timeout, (int, float)) and float(raw_timeout) > 0:
+            return float(raw_timeout)
+    runtime_state = state.get("runtime_config")
+    if isinstance(runtime_state, dict):
+        raw_timeout = runtime_state.get("retrieval_timeout_seconds")
+        if isinstance(raw_timeout, (int, float)) and float(raw_timeout) > 0:
+            return float(raw_timeout)
     return None
 
 
 def _resolve_retrieval_budget_payload(
-    state: dict[str, Any], settings: Settings
+    state: dict[str, Any],
+    settings: Settings,
+    runtime: Runtime[Any] | None = None,
 ) -> dict[str, int]:
-    default_top_k = retrieval_top_k(state, settings)
+    default_top_k = retrieval_top_k(state, settings, runtime=runtime)
     budget = state.get("retrieval_budget")
     if not isinstance(budget, dict):
         budget = {}
@@ -481,7 +498,7 @@ async def dispatch_subqueries(
     runtime: Runtime[Any] | None = None,
 ) -> Command[str]:
     start = time.perf_counter()
-    goto, diagnostics = _build_subquery_dispatch_plan(state, settings)
+    goto, diagnostics = _build_subquery_dispatch_plan(state, settings, runtime=runtime)
     stage_summary = {
         **diagnostics,
         "kb_count": len(_resolve_kb_ids(state, runtime) or []),
@@ -490,7 +507,6 @@ async def dispatch_subqueries(
     }
     return Command(
         update={
-            "subquery_runs": [],
             "retrieval_plan": {
                 "mode": diagnostics.get("mode"),
                 "branch_count": diagnostics.get("branch_count"),
@@ -514,27 +530,30 @@ async def retrieve_subquery_context(
     """Run retrieval for a single subquery task (fanout branch)."""
     task = state.get("subquery_task")
     if not isinstance(task, dict):
-        return {"subquery_runs": []}
+        return {}
 
     query_item = _normalize_query_item(task.get("query_item"))
     query = _as_str(task.get("query")).strip()
     if isinstance(query_item, dict):
         query = _as_str(query_item.get("query")).strip() or query
     if not query:
-        return {"subquery_runs": []}
+        return {}
 
-    loop_counts = _get_loop_counts(state)
-    retrieval_round = max(loop_counts.get("retrieval_retries", 0), 0)
+    retrieval_round = _current_retrieval_round(state)
     kb_ids = _resolve_kb_ids(state, runtime)
-    retrieval_budget = _resolve_retrieval_budget_payload(state, settings)
-    timeout_seconds = _resolve_retrieval_timeout_seconds(state)
+    retrieval_budget = _resolve_retrieval_budget_payload(
+        state,
+        settings,
+        runtime=runtime,
+    )
+    timeout_seconds = _resolve_retrieval_timeout_seconds(state, runtime=runtime)
 
     retrieval_reason: str | None = None
     try:
         payload = build_retrieval_payload(
             query=query,
             kb_ids=kb_ids or [],
-            top_k=retrieval_top_k(state, settings),
+            top_k=retrieval_top_k(state, settings, runtime=runtime),
             retrieval_round=retrieval_round,
             query_items=[query_item] if isinstance(query_item, dict) else None,
             per_query_top_k=retrieval_budget["per_query_top_k"],
@@ -561,6 +580,7 @@ async def retrieve_subquery_context(
                 "subquery_id": _as_str(task.get("subquery_id")) or "sq_unknown",
                 "index": int(task.get("index") or 0),
                 "query": query,
+                "retrieval_round": retrieval_round,
                 "kind": kind,
                 "priority": int(task.get("priority") or 1),
                 "purpose": _as_str(task.get("purpose")),
@@ -586,11 +606,21 @@ async def merge_subquery_context(
 ) -> dict[str, Any]:
     """Aggregate fanout retrieval outputs into final_context + metrics."""
     start = time.perf_counter()
+    active_round = _current_retrieval_round(state)
     raw_runs = state.get("subquery_runs")
     if not isinstance(raw_runs, list):
         raw_runs = []
 
-    runs = [run for run in raw_runs if isinstance(run, dict)]
+    runs: list[dict[str, Any]] = []
+    for run in raw_runs:
+        if not isinstance(run, dict):
+            continue
+        run_round = run.get("retrieval_round")
+        if isinstance(run_round, int) and run_round != active_round:
+            continue
+        if run_round is None and active_round > 0:
+            continue
+        runs.append(run)
     runs = sort_by_priority_then_index(runs)
 
     merged_parts: list[str] = []
@@ -661,11 +691,11 @@ async def merge_subquery_context(
         },
         "metrics": metrics,
         "retrieval_diagnostics": retrieval_diagnostics,
-        "subquery_runs": [],
         **_merge_stage_summary(
             state,
             "retrieval_layer",
             {
+                "retrieval_round": active_round,
                 "mode": "parallel_fanout",
                 "branch_count": len(runs),
                 "branch_success_count": success_count,
@@ -712,13 +742,6 @@ def _set_final_answer_for_exit(
         "final_answer": answer,
         **_merge_reflection(state, {"action": "force_exit", "reason": reason}),
     }
-
-
-def _force_exit_requested(state: dict) -> bool:
-    reflection = state.get("reflection")
-    return isinstance(reflection, dict) and reflection.get("action") == "force_exit"
-
-
 def _resolve_query_text(state: dict) -> str:
     return _as_str(
         state.get("normalized_query")
@@ -742,16 +765,20 @@ async def kb_retrieve_context(
         return _set_final_answer_for_exit(state, "", reason="max_total_rounds")
     query = _resolve_query_text(state)
     kb_ids = _resolve_kb_ids(state, runtime)
-    retrieval_budget = _resolve_retrieval_budget_payload(state, settings)
-    timeout_seconds = _resolve_retrieval_timeout_seconds(state)
+    retrieval_budget = _resolve_retrieval_budget_payload(
+        state,
+        settings,
+        runtime=runtime,
+    )
+    timeout_seconds = _resolve_retrieval_timeout_seconds(state, runtime=runtime)
 
     retrieval_round = max(loop_counts.get("retrieval_retries", 0), 0)
     retrieval_reason: str | None = None
     try:
         payload = build_retrieval_payload(
             query=query,
-            kb_ids=kb_ids,
-            top_k=retrieval_top_k(state, settings),
+            kb_ids=kb_ids or [],
+            top_k=retrieval_top_k(state, settings, runtime=runtime),
             retrieval_round=retrieval_round,
             per_query_top_k=retrieval_budget["per_query_top_k"],
             global_candidates_limit=retrieval_budget["global_candidates_limit"],
@@ -894,7 +921,10 @@ async def generate_draft(
     }
 
 async def transform_query_for_retry(
-    state: dict, *, settings: Settings
+    state: dict,
+    *,
+    settings: Settings,
+    runtime: Runtime[Any] | None = None,
 ) -> dict[str, Any]:
     """Transform query and bump retrieval_retries (budget-aware)."""
     start = time.perf_counter()
@@ -942,8 +972,8 @@ async def transform_query_for_retry(
         normalize_result = await svc.normalize_rewrite(
             new_query,
             llm_enabled=True,
-            alias_limit=normalize_alias_max(state, settings),
-            timeout_seconds=normalize_timeout_seconds(state, settings),
+            alias_limit=normalize_alias_max(state, settings, runtime=runtime),
+            timeout_seconds=normalize_timeout_seconds(state, settings, runtime=runtime),
         )
         if normalize_result.query.strip():
             new_query = normalize_result.query.strip()
@@ -991,7 +1021,6 @@ async def transform_query_for_retry(
         "multi_queries": [],
         "hyde_docs": hyde_docs,
         "query_items": query_items,
-        "subquery_runs": [],
         "decomposition_plan": {
             "strategy": "direct",
             "version": "kb_chat_decomposition_plan_v2",
@@ -1026,53 +1055,53 @@ async def transform_query_for_retry(
 
 def route_after_doc_grader(state: dict, settings: Settings) -> str:
     """Route after DocGrader: answer_subgraph vs transform_query vs force_exit."""
-    if _force_exit_requested(state):
-        return "force_exit"
-    reflection = state.get("reflection")
-    passed = (
-        reflection.get("relevance_passed") if isinstance(reflection, dict) else None
-    )
-    if passed is True:
-        return "answer_subgraph"
+    routing = resolve_routing_decision(state, "doc_gate")
+    next_node = _as_str(routing.get("next_node")).strip()
+    if next_node in {"answer_subgraph", "transform_query", "force_exit"}:
+        return next_node
     loop_counts = _get_loop_counts(state)
-    if loop_counts["retrieval_retries"] >= int(settings.kb_chat_max_retrieval_retries):
+    if loop_counts["retrieval_retries"] >= int(
+        getattr(settings, "kb_chat_max_retrieval_retries", 2)
+    ):
         return "force_exit"
     return "transform_query"
 
 
 def route_after_answer_review(state: dict, settings: Settings) -> str:
     """Route after AnswerReview: finalize vs transform_query vs force_exit."""
-    if _force_exit_requested(state):
-        return "force_exit"
-    reflection = state.get("reflection")
-    passed = reflection.get("review_passed") if isinstance(reflection, dict) else None
-    if passed is True:
-        return "finalize"
-
+    routing = resolve_routing_decision(state, "answer_subgraph")
+    next_node = _as_str(routing.get("next_node")).strip()
+    if next_node in {"finalize", "transform_query", "force_exit"}:
+        return next_node
     loop_counts = _get_loop_counts(state)
-    if _total_rounds_exceeded(loop_counts, settings):
+    max_total_rounds = int(getattr(settings, "kb_chat_max_total_rounds", 3))
+    if loop_counts.get("total_rounds", 0) >= max_total_rounds:
         return "force_exit"
-
-    reason = _as_str(reflection.get("reason")) if isinstance(reflection, dict) else ""
-    if reason in _CITATION_ONLY_FAILURE_REASONS:
-        if loop_counts["retrieval_retries"] >= int(settings.kb_chat_max_retrieval_retries):
-            return "force_exit"
-        return "transform_query"
-
-    if loop_counts["retrieval_retries"] >= int(settings.kb_chat_max_retrieval_retries):
+    if loop_counts["retrieval_retries"] >= int(
+        getattr(settings, "kb_chat_max_retrieval_retries", 2)
+    ):
         return "force_exit"
     return "transform_query"
 
 
 def confidence_calibrate(state: dict) -> dict[str, Any]:
     """Calibrate final confidence from gate/review/citation/retrieval/CoVe signals."""
-    doc_gate_state = state.get("doc_gate_state")
-    gate_signal = (
-        float(doc_gate_state.get("confidence") or 0.0)
-        if isinstance(doc_gate_state, dict)
-        else 0.0
+    stage_summaries = state.get("stage_summaries")
+    if not isinstance(stage_summaries, dict):
+        stage_summaries = {}
+    doc_gate_route = (
+        stage_summaries.get("doc_gate_route")
+        if isinstance(stage_summaries.get("doc_gate_route"), dict)
+        else {}
     )
     reflection = state.get("reflection")
+    gate_signal = 0.0
+    if isinstance(doc_gate_route, dict):
+        gate_signal = float(doc_gate_route.get("score") or 0.0)
+    if gate_signal <= 0.0 and isinstance(reflection, dict):
+        gate_signal = float(reflection.get("confidence") or 0.0)
+    gate_signal = max(0.0, min(1.0, gate_signal))
+    gate_reason = _as_str(doc_gate_route.get("reason")) if isinstance(doc_gate_route, dict) else ""
     review_conf = (
         float(reflection.get("review_confidence") or 0.0)
         if isinstance(reflection, dict)
@@ -1098,9 +1127,6 @@ def confidence_calibrate(state: dict) -> dict[str, Any]:
     )
     review_signal = max(0.0, min(1.0, review_conf * max(0.0, 1.0 - (0.2 * total_retries))))
 
-    stage_summaries = state.get("stage_summaries")
-    if not isinstance(stage_summaries, dict):
-        stage_summaries = {}
     claim_summary = (
         stage_summaries.get("claim_citation_check")
         if isinstance(stage_summaries.get("claim_citation_check"), dict)
@@ -1138,7 +1164,7 @@ def confidence_calibrate(state: dict) -> dict[str, Any]:
 
     if not claim_check_passed:
         citation_coverage *= 0.8
-    if isinstance(doc_gate_state, dict) and str(doc_gate_state.get("reason") or "") == "retry":
+    if gate_reason == "retry":
         gate_signal *= 0.85
 
     weights = {

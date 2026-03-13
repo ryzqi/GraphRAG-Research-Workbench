@@ -257,14 +257,47 @@ def _resolve_doc_gate_run(snapshot: dict[str, Any], node_name: str) -> dict[str,
     return {}
 
 
+def _resolve_routing_decision(snapshot: dict[str, Any], phase: str) -> dict[str, Any]:
+    routing = _as_dict(snapshot.get("routing_decisions")) or {}
+    decision = routing.get(phase)
+    return _as_dict(decision) or {}
+
+
+def _resolve_answer_review_round(snapshot: dict[str, Any]) -> int | None:
+    task = _as_dict(snapshot.get("answer_review_task")) or {}
+    raw_round = task.get("review_round")
+    if isinstance(raw_round, int) and raw_round >= 0:
+        return raw_round
+
+    loop_counts = _as_dict(snapshot.get("loop_counts")) or {}
+    state_round = loop_counts.get("generation_retries")
+    if isinstance(state_round, int) and state_round >= 0:
+        return state_round
+
+    stage_summaries = _as_dict(snapshot.get("stage_summaries")) or {}
+    dispatch_summary = _as_dict(stage_summaries.get("answer_review_dispatch")) or {}
+    summary_round = dispatch_summary.get("review_round")
+    if isinstance(summary_round, int) and summary_round >= 0:
+        return summary_round
+    return None
+
+
 def _resolve_answer_review_run(snapshot: dict[str, Any], node_name: str) -> dict[str, Any]:
     check = _ANSWER_REVIEW_NODE_TO_CHECK.get(node_name)
     if not check:
         return {}
+    active_round = _resolve_answer_review_round(snapshot)
     runs = snapshot.get("answer_review_runs")
     candidates = [item for item in runs if isinstance(item, dict)] if isinstance(runs, list) else []
     for item in reversed(candidates):
-        if str(item.get("check") or "") == check:
+        if str(item.get("check") or "") != check:
+            continue
+        run_round = item.get("review_round")
+        if isinstance(run_round, int):
+            if active_round is None or run_round == active_round:
+                return item
+            continue
+        if active_round in {None, 0}:
             return item
     return {}
 
@@ -395,7 +428,7 @@ def _build_node_input_display_items(*, node_name: str, input_snapshot: Any) -> l
     query_items = _format_query_items(snapshot.get("query_items"))
     _append_if_missing(items, key="query_items", label="查询项", value=query_items)
     _append_if_missing(items, key="user_input", label="用户问题", value=snapshot.get("user_input"))
-    _append_if_missing(items, key="final_context", label="当前上下文", value=snapshot.get("compressed_context") or snapshot.get("final_context"))
+    _append_if_missing(items, key="final_context", label="当前上下文", value=snapshot.get("final_context"))
     _append_if_missing(items, key="draft_answer", label="当前答案草稿", value=snapshot.get("draft_answer"))
     if not items:
         _append_display_item(items, key="node_name", label="节点", value=node_name)
@@ -413,31 +446,62 @@ def _build_node_output_display_items(*, node_name: str, output_snapshot: Any, er
     _append_display_item(items, key="route_targets", label="派发目标", value=trace.get("goto_targets"))
 
     if node_name == "preprocess_subgraph":
+        preprocess_route = _resolve_routing_decision(snapshot, "preprocess")
         _append_display_item(items, key="query_strategy", label="查询策略", value=snapshot.get("query_strategy"))
-        _append_display_item(items, key="preprocess_next", label="预处理出口", value=snapshot.get("preprocess_next"))
+        _append_display_item(items, key="preprocess_next", label="预处理出口", value=preprocess_route.get("next_node"))
         _append_display_item(items, key="sub_queries", label="分解问题", value=snapshot.get("sub_queries"))
         _append_display_item(items, key="multi_queries", label="多路查询", value=snapshot.get("multi_queries"))
-        _append_display_item(items, key="action", label="后续动作", value=reflection.get("action"))
+        _append_display_item(items, key="action", label="后续动作", value=preprocess_route.get("action"))
+        _append_display_item(items, key="reason", label="判定原因", value=preprocess_route.get("reason"))
     elif node_name == "retrieval_subgraph":
         context_compress_summary = _as_dict((_as_dict(snapshot.get("stage_summaries")) or {}).get("context_compress")) or {}
         _append_display_item(items, key="evidence_count", label="证据数量", value=retrieval_metrics.get("evidence_count"))
         _append_display_item(items, key="retrieval_count", label="检索命中数", value=retrieval_metrics.get("retrieval_count"))
         _append_display_item(items, key="truncated", label="是否压缩截断", value=context_compress_summary.get("truncated"))
-        _append_display_item(items, key="compressed_context", label="压缩后上下文", value=snapshot.get("compressed_context") or snapshot.get("final_context"))
+        _append_display_item(items, key="final_context", label="压缩后上下文", value=snapshot.get("final_context"))
     elif node_name == "evidence_gate_subgraph":
-        gate_scores = _as_dict(snapshot.get("doc_gate_scores")) or {}
-        gate_state = _as_dict(snapshot.get("doc_gate_state")) or {}
-        _append_display_item(items, key="decision", label="门控决策", value=gate_scores.get("decision"))
-        _append_display_item(items, key="score", label="门控分数", value=gate_scores.get("score") or gate_state.get("confidence"))
-        _append_display_item(items, key="missing_gates", label="缺失门控", value=gate_scores.get("missing_gates"))
-        _append_display_item(items, key="action", label="后续动作", value=reflection.get("action"))
-        _append_display_item(items, key="reason", label="判定原因", value=gate_state.get("reason") or reflection.get("reason"))
+        routing = _resolve_routing_decision(snapshot, "doc_gate")
+        doc_gate_fuse = _as_dict((_as_dict(snapshot.get("stage_summaries")) or {}).get("doc_gate_fuse")) or {}
+        doc_gate_route = _as_dict((_as_dict(snapshot.get("stage_summaries")) or {}).get("doc_gate_route")) or {}
+        _append_display_item(
+            items,
+            key="decision",
+            label="门控决策",
+            value=doc_gate_route.get("decision") or doc_gate_fuse.get("decision"),
+        )
+        _append_display_item(
+            items,
+            key="score",
+            label="门控分数",
+            value=doc_gate_route.get("score") or doc_gate_fuse.get("score"),
+        )
+        _append_display_item(
+            items,
+            key="missing_gates",
+            label="缺失门控",
+            value=doc_gate_fuse.get("missing_gates"),
+        )
+        _append_display_item(
+            items,
+            key="action",
+            label="后续动作",
+            value=routing.get("action") or doc_gate_route.get("action"),
+        )
+        _append_display_item(
+            items,
+            key="reason",
+            label="判定原因",
+            value=routing.get("reason") or doc_gate_route.get("reason"),
+        )
     elif node_name == "answer_subgraph":
+        routing = _resolve_routing_decision(snapshot, "answer_subgraph")
         _append_display_item(items, key="draft_answer", label="答案草稿", value=snapshot.get("draft_answer"))
         _append_display_item(items, key="final_answer", label="候选答案", value=snapshot.get("final_answer"))
         _append_display_item(items, key="best_answer", label="最佳答案", value=snapshot.get("best_answer"))
         _append_display_item(items, key="review_passed", label="审查是否通过", value=reflection.get("review_passed"))
         _append_display_item(items, key="review_risk_level", label="审查风险等级", value=reflection.get("review_risk_level"))
+        _append_display_item(items, key="next_step", label="后续动作", value=routing.get("next_node"))
+        _append_display_item(items, key="reason", label="判定原因", value=routing.get("reason") or reflection.get("reason"))
     elif node_name == "retrieval_budget_plan":
         for key, label in (
             ("complexity", "复杂度等级"),
@@ -478,10 +542,12 @@ def _build_node_output_display_items(*, node_name: str, output_snapshot: Any, er
         _append_display_item(items, key="score", label="门控分数", value=summary.get("score") or summary.get("confidence"))
         _append_display_item(items, key="retry_advice", label="重试建议", value=summary.get("retry_advice"))
     elif node_name == "answer_review_dispatch":
+        _append_display_item(items, key="review_round", label="审查轮次", value=summary.get("review_round"))
         _append_display_item(items, key="check_count", label="审查项数量", value=summary.get("check_count"))
         _append_display_item(items, key="checks", label="审查项", value=summary.get("checks"))
     elif node_name in {"answer_review_citation", "answer_review_factual", "answer_review_answerability"}:
         run = _resolve_answer_review_run(snapshot, node_name)
+        _append_display_item(items, key="review_round", label="审查轮次", value=run.get("review_round"))
         _append_display_item(items, key="passed", label="是否通过", value=run.get("passed"))
         _append_display_item(items, key="reason", label="判定原因", value=run.get("reason"))
         _append_display_item(items, key="confidence", label="审查置信度", value=run.get("confidence"))
@@ -492,6 +558,7 @@ def _build_node_output_display_items(*, node_name: str, output_snapshot: Any, er
             _append_display_item(items, key="valid_citation_count", label="有效引用数量", value=run.get("valid_citation_count"))
             _append_display_item(items, key="invalid_citations", label="无效引用", value=run.get("invalid_citations"))
     elif node_name == "answer_review_fuse":
+        _append_display_item(items, key="review_round", label="审查轮次", value=summary.get("review_round"))
         _append_display_item(items, key="passed", label="审查是否通过", value=summary.get("passed"))
         _append_display_item(items, key="reason", label="判定原因", value=summary.get("reason"))
         _append_display_item(items, key="review_risk_level", label="审查风险等级", value=summary.get("review_risk_level"))
@@ -543,7 +610,6 @@ def _build_node_output_display_items(*, node_name: str, output_snapshot: Any, er
 
     for key, label in (
         ("doc_gate_round", "门控轮次"),
-        ("preprocess_next", "预处理出口"),
         ("normalized_query", "改写后问题"),
         ("final_answer", "最终答案"),
         ("draft_answer", "草稿答案"),

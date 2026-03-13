@@ -25,12 +25,9 @@ from app.agents.kb_chat_trace_nodes import (
     KB_CHAT_NODE_METADATA,
     wrap_kb_chat_node_with_io,
 )
-from app.agents.kb_chat_agentic.reflection import (
-    generate_draft,
-    route_after_answer_review,
-)
+from app.agents.kb_chat_agentic.reflection import generate_draft
 from app.agents.kb_chat_agentic.schemas import AnswerReviewSubDecision
-from app.agents.kb_chat_agentic_state import KbChatAgenticState
+from app.agents.kb_chat_agentic_state import KbChatInternalState, merge_routing_decision
 from app.core.settings import Settings
 from app.prompts import get_prompt_loader
 from app.services.evidence_guardrails import resolve_kb_refusal_answer
@@ -95,6 +92,31 @@ def _get_loop_counts(state: dict[str, Any]) -> dict[str, int]:
         "retrieval_retries": int(raw.get("retrieval_retries") or 0),
         "generation_retries": int(raw.get("generation_retries") or 0),
     }
+
+
+def _current_review_round(state: dict[str, Any]) -> int:
+    loop_counts = _get_loop_counts(state)
+    return max(int(loop_counts.get("generation_retries") or 0), 0)
+
+
+def _resolve_answer_subgraph_next_step(
+    state: dict[str, Any],
+    *,
+    settings: Settings,
+) -> str:
+    reflection = state.get("reflection")
+    reflection_obj = reflection if isinstance(reflection, dict) else {}
+    if reflection_obj.get("review_passed") is True:
+        return "finalize"
+
+    loop_counts = _get_loop_counts(state)
+    max_total_rounds = int(getattr(settings, "kb_chat_max_total_rounds", 3))
+    max_retrieval_retries = int(getattr(settings, "kb_chat_max_retrieval_retries", 2))
+    if loop_counts["total_rounds"] >= max_total_rounds:
+        return "force_exit"
+    if loop_counts["retrieval_retries"] >= max_retrieval_retries:
+        return "force_exit"
+    return "transform_query"
 
 
 def _merge_stage_summary(
@@ -315,13 +337,21 @@ async def _judge_structured(
 
 
 def _resolve_subcheck(state: dict[str, Any], check: str) -> dict[str, Any] | None:
+    active_round = _current_review_round(state)
     runs = state.get("answer_review_runs")
     if not isinstance(runs, list):
         return None
-    for run in runs:
+    for run in reversed(runs):
         if not isinstance(run, dict):
             continue
-        if _as_str(run.get("check")) == check:
+        if _as_str(run.get("check")) != check:
+            continue
+        run_round = run.get("review_round")
+        if isinstance(run_round, int):
+            if run_round == active_round:
+                return run
+            continue
+        if active_round == 0:
             return run
     return None
 
@@ -333,24 +363,41 @@ async def _answer_review_dispatch(
     settings: Settings,
 ) -> Command[str]:
     _ = runtime, settings
-    branch_state = {**state, "answer_review_runs": []}
+    review_round = _current_review_round(state)
     send_tasks: list[Send] = [
         Send(
             "answer_review_citation",
-            {**branch_state, "answer_review_task": {"check": "citation"}},
+            {
+                **state,
+                "answer_review_task": {
+                    "check": "citation",
+                    "review_round": review_round,
+                },
+            },
         ),
         Send(
             "answer_review_factual",
-            {**branch_state, "answer_review_task": {"check": "factual"}},
+            {
+                **state,
+                "answer_review_task": {
+                    "check": "factual",
+                    "review_round": review_round,
+                },
+            },
         ),
         Send(
             "answer_review_answerability",
-            {**branch_state, "answer_review_task": {"check": "answerability"}},
+            {
+                **state,
+                "answer_review_task": {
+                    "check": "answerability",
+                    "review_round": review_round,
+                },
+            },
         ),
     ]
     return Command(
         update={
-            "answer_review_runs": [],
             **_merge_subgraph_state(
                 state,
                 {"phase": "answer_review_dispatch", "last_updated_at": now_iso()},
@@ -359,6 +406,7 @@ async def _answer_review_dispatch(
                 state,
                 "answer_review_dispatch",
                 {
+                    "review_round": review_round,
                     "check_count": len(send_tasks),
                     "checks": list(_REVIEW_CHECKS),
                     "latency_ms": 0,
@@ -388,6 +436,7 @@ async def _answer_review_citation(
 ) -> dict[str, Any]:
     _ = runtime, settings
     start = time.perf_counter()
+    review_round = _current_review_round(state)
     draft = _as_str(state.get("draft_answer")).strip()
     final_context = _as_str(state.get("final_context")).strip()
     evidence_labels = _extract_evidence_labels(final_context)
@@ -410,6 +459,7 @@ async def _answer_review_citation(
         passed = True
         reason = "passed"
     result = {
+        "review_round": review_round,
         "check": "citation",
         "passed": passed,
         "reason": reason,
@@ -441,6 +491,7 @@ async def _answer_review_llm_check(
     check: Literal["factual", "answerability"],
 ) -> dict[str, Any]:
     start = time.perf_counter()
+    review_round = _current_review_round(state)
     question = _resolve_query_text(state)
     final_context = _as_str(state.get("final_context")).strip()
     draft = _as_str(state.get("draft_answer")).strip()
@@ -483,6 +534,7 @@ async def _answer_review_llm_check(
         confidence = 0.0
         decision_source = "fallback"
     result = {
+        "review_round": review_round,
         "check": check,
         "passed": passed,
         "reason": reason,
@@ -538,10 +590,19 @@ async def _answer_review_fuse(
 ) -> Command[str]:
     _ = runtime
     start = time.perf_counter()
+    review_round = _current_review_round(state)
     loop_counts = _get_loop_counts(state)
     loop_counts_updates = {**loop_counts}
     by_check = {
-        check: (_resolve_subcheck(state, check) or {"check": check, "passed": False, "reason": "fallback_closed"})
+        check: (
+            _resolve_subcheck(state, check)
+            or {
+                "review_round": review_round,
+                "check": check,
+                "passed": False,
+                "reason": "fallback_closed",
+            }
+        )
         for check in _REVIEW_CHECKS
     }
     citation = by_check["citation"]
@@ -588,6 +649,7 @@ async def _answer_review_fuse(
             "completed_at": now_iso(),
         }
     stage_summary = {
+        "review_round": review_round,
         "passed": passed,
         "reason": reason,
         "fallback_reason": fallback_reason,
@@ -603,7 +665,6 @@ async def _answer_review_fuse(
     }
     updates: dict[str, Any] = {
         "loop_counts": loop_counts_updates,
-        "answer_review_runs": [],
         "reflection": {
             **(state.get("reflection") if isinstance(state.get("reflection"), dict) else {}),
             "review_passed": passed,
@@ -1027,7 +1088,7 @@ async def _answer_commit(
     if isinstance(subgraph_state, dict):
         repair_attempts = int(subgraph_state.get("repair_attempts") or 0)
 
-    next_step = route_after_answer_review(state, settings)
+    next_step = _resolve_answer_subgraph_next_step(state, settings=settings)
     reason = _as_str(reflection_obj.get("reason")).strip().lower()
     review_passed = reflection_obj.get("review_passed") is True
     degrade_reason: str | None = None
@@ -1058,18 +1119,15 @@ async def _answer_commit(
     final_answer = _as_str(state.get("final_answer") or state.get("draft_answer")).strip()
     if not final_answer and next_step == "force_exit":
         final_answer = resolve_kb_refusal_answer(reason=degrade_reason or reason)
+    best_answer = _as_str(state.get("best_answer")).strip()
 
-    answer_quality = {
+    summary = {
         "passed": merged_reflection.get("review_passed") is True,
         "reason": _as_str(merged_reflection.get("reason")).strip(),
         "next_step": next_step,
         "repair_attempts": repair_attempts,
         "generation_retries": loop_counts.get("generation_retries", 0),
         "retrieval_retries": loop_counts.get("retrieval_retries", 0),
-    }
-    best_answer = _as_str(state.get("best_answer")).strip()
-    summary = {
-        **answer_quality,
         "best_answer": best_answer or None,
         "degrade_reason": degrade_reason,
         "completed_at": now_iso(),
@@ -1077,8 +1135,29 @@ async def _answer_commit(
 
     updates: dict[str, Any] = {
         "reflection": merged_reflection,
-        "answer_quality": answer_quality,
         "degrade_reason": degrade_reason,
+    }
+    updates = {
+        **updates,
+        **merge_routing_decision(
+            state,
+            "answer_subgraph",
+            {
+                "phase": "answer_subgraph",
+                "next_node": next_step,
+                "action": _as_str(merged_reflection.get("action")).strip() or "none",
+                "reason": _as_str(merged_reflection.get("reason")).strip(),
+                "reason_code": _as_str(merged_reflection.get("reason_code")).strip(),
+                "decision_source": "answer_commit",
+                "retry_budget_snapshot": {
+                    "generation_retries": int(loop_counts.get("generation_retries") or 0),
+                    "retrieval_retries": int(loop_counts.get("retrieval_retries") or 0),
+                },
+                "round_id": _current_review_round(state),
+                "completed_at": now_iso(),
+            },
+            updates=updates,
+        ),
     }
     if final_answer:
         updates["final_answer"] = final_answer
@@ -1106,7 +1185,7 @@ def build_answer_subgraph(
     """Build compiled answer subgraph for parent KB chat graph."""
 
     graph = StateGraph(
-        state_schema=KbChatAgenticState,
+        state_schema=KbChatInternalState,
         context_schema=KbChatAnswerSubgraphContext,
     )
     def add_traced_node(node_id: str, node_callable: Any, **kwargs: Any) -> None:

@@ -17,6 +17,7 @@ from langgraph.store.base import BaseStore
 
 KB_CHAT_MEMORY_SCHEMA = "kb_chat_user_memory_v1"
 KB_CHAT_MEMORY_KEY = "kb_chat_memory"
+KB_CHAT_ANONYMOUS_USER_PREFIX = "anonymous"
 
 # Conservative default: keep a small window and expire in a week.
 KB_CHAT_MEMORY_MAX_ENTRIES = 5
@@ -40,8 +41,27 @@ def _kb_scope(kb_ids: list[str]) -> str:
     return f"kb_{digest}"
 
 
-def kb_chat_user_namespace(*, user_id: str, kb_ids: list[str]) -> tuple[str, ...]:
-    uid = (user_id or "").strip() or "local"
+def resolve_kb_chat_store_user_id(
+    *,
+    user_id: str | None,
+    thread_id: str | None,
+) -> str:
+    uid = (user_id or "").strip()
+    if uid:
+        return uid
+    tid = (thread_id or "").strip()
+    if tid:
+        return f"{KB_CHAT_ANONYMOUS_USER_PREFIX}:{tid}"
+    return f"{KB_CHAT_ANONYMOUS_USER_PREFIX}:missing_thread"
+
+
+def kb_chat_user_namespace(
+    *,
+    user_id: str | None,
+    thread_id: str | None,
+    kb_ids: list[str],
+) -> tuple[str, ...]:
+    uid = resolve_kb_chat_store_user_id(user_id=user_id, thread_id=thread_id)
     return ("kb_chat", "user", uid, _kb_scope(kb_ids))
 
 
@@ -81,7 +101,7 @@ async def aget_kb_chat_memory(
     thread_id: str,
     kb_ids: list[str],
 ) -> dict[str, Any] | None:
-    ns = kb_chat_user_namespace(user_id=user_id, kb_ids=kb_ids)
+    ns = kb_chat_user_namespace(user_id=user_id, thread_id=thread_id, kb_ids=kb_ids)
     item = await store.aget(ns, kb_chat_thread_key(thread_id))
     if item is None:
         return None
@@ -103,7 +123,7 @@ async def aput_kb_chat_memory(
     memory: dict[str, Any],
     ttl_seconds: int,
 ) -> None:
-    ns = kb_chat_user_namespace(user_id=user_id, kb_ids=kb_ids)
+    ns = kb_chat_user_namespace(user_id=user_id, thread_id=thread_id, kb_ids=kb_ids)
     key = kb_chat_thread_key(thread_id)
     if store.supports_ttl:
         await store.aput(ns, key, memory, ttl=float(ttl_seconds))

@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import hashlib
+import inspect
 import json
 import logging
 import math
@@ -23,7 +24,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.kb_chat_agentic.json_safety import ensure_json_safe
 from app.agents.kb_chat_graph import build_kb_chat_graph
-from app.agents.kb_chat_memory import append_kb_chat_memory_entry
+from app.agents.kb_chat_memory import (
+    append_kb_chat_memory_entry,
+    resolve_kb_chat_store_user_id,
+)
 from app.agents.tool_calling.registry import build_tool_registry
 from app.agents.tools.kb_retrieve import build_kb_retrieve_tool
 from app.core.checkpoint import CheckpointManager
@@ -81,6 +85,57 @@ _GRAY_ROUTE_THRESHOLD = 99.5
 _GRAY_FINAL_THRESHOLD = 99.0
 _GRAY_CLARIFICATION_THRESHOLD = 99.0
 _GRAY_P95_THRESHOLD = 10.0
+_KB_CHAT_CHECKPOINT_RESET_FIELDS = (
+    "user_input",
+    "pending_tool_calls",
+    "context_frame",
+    "rewrite_input_query",
+    "merged_context",
+    "coref_query",
+    "coref_meta",
+    "normalized_query",
+    "normalized_meta",
+    "entity_expand_meta",
+    "query_strategy",
+    "complexity_level",
+    "adaptive_route",
+    "query_strategy_confidence",
+    "query_strategy_signals",
+    "decomposition_plan",
+    "sub_queries",
+    "multi_queries",
+    "hyde_docs",
+    "message_plan",
+    "query_bundle",
+    "prepare_diagnostics",
+    "preprocess_next",
+    "retrieval_plan",
+    "retrieval_budget",
+    "retrieval_diagnostics",
+    "query_items",
+    "subquery_runs",
+    "subquery_task",
+    "final_context",
+    "compression_stats",
+    "draft_answer",
+    "final_answer",
+    "best_answer",
+    "best_answer_meta",
+    "answer_subgraph_state",
+    "answer_quality",
+    "degrade_reason",
+    "clarification_payload",
+    "doc_gate_state",
+    "doc_gate_round",
+    "doc_gate_runs",
+    "doc_gate_scores",
+    "answer_review_runs",
+    "cove_state",
+    "confidence_score",
+    "confidence_level",
+    "reflection",
+    "routing_decisions",
+)
 
 
 def _gray_release_log_dir() -> Path:
@@ -110,6 +165,14 @@ class _SemanticCacheHit:
     score: float
     threshold: float
     ttl_seconds: int
+
+
+@dataclass(frozen=True)
+class _CheckpointRestorePlan:
+    messages: list[SystemMessage | HumanMessage | AIMessage]
+    reset_fields: list[str]
+    legacy_fields: list[str]
+    schema_supported: bool
 
 
 @dataclass
@@ -985,12 +1048,6 @@ class KbChatService:
         )
         if doc_gate_route:
             doc_gate_next = str(doc_gate_route.get("goto") or "")
-            if not doc_gate_next:
-                legacy_action = str(doc_gate_route.get("action") or "")
-                if legacy_action == "none":
-                    doc_gate_next = "answer_subgraph"
-                elif legacy_action in {"transform_query", "force_exit"}:
-                    doc_gate_next = legacy_action
             checks.append(
                 doc_gate_next in {"answer_subgraph", "transform_query", "force_exit"}
             )
@@ -1028,12 +1085,6 @@ class KbChatService:
         next_step = str(answer_subgraph.get("next_step") or "")
         has_force_exit = bool(force_exit)
         doc_gate_next = str(doc_gate_route.get("goto") or "")
-        if not doc_gate_next:
-            legacy_action = str(doc_gate_route.get("action") or "")
-            if legacy_action == "none":
-                doc_gate_next = "answer_subgraph"
-            elif legacy_action in {"transform_query", "force_exit"}:
-                doc_gate_next = legacy_action
         if not next_step and not has_force_exit:
             return 100.0
         if next_step == "finalize":
@@ -1126,34 +1177,140 @@ class KbChatService:
         return kb_chat_config, None
 
     @staticmethod
-    def _sanitize_checkpoint_state(state: Any) -> dict[str, Any]:
-        if not isinstance(state, dict):
-            return {}
+    def _sanitize_checkpoint_messages(
+        messages: Any,
+    ) -> list[SystemMessage | HumanMessage | AIMessage]:
+        if not isinstance(messages, list):
+            return []
 
-        loop_counts = state.get("loop_counts")
-        if not isinstance(loop_counts, dict):
-            loop_counts = {}
-        messages = state.get("messages")
-        pending_tool_calls = state.get("pending_tool_calls")
-        stage_summaries = state.get("stage_summaries")
-        metrics = state.get("metrics")
-
-        sanitized = dict(state)
-        sanitized["schema_version"] = STATE_SCHEMA_V3
-        sanitized["loop_counts"] = {
-            "total_rounds": int(loop_counts.get("total_rounds") or 0),
-            "retrieval_retries": int(loop_counts.get("retrieval_retries") or 0),
-            "generation_retries": int(loop_counts.get("generation_retries") or 0),
-        }
-        sanitized["messages"] = messages if isinstance(messages, list) else []
-        sanitized["pending_tool_calls"] = (
-            pending_tool_calls if isinstance(pending_tool_calls, list) else []
-        )
-        sanitized["stage_summaries"] = (
-            stage_summaries if isinstance(stage_summaries, dict) else {}
-        )
-        sanitized["metrics"] = metrics if isinstance(metrics, dict) else {}
+        sanitized: list[SystemMessage | HumanMessage | AIMessage] = []
+        for message in messages:
+            content = getattr(message, "content", None)
+            if not isinstance(content, str) or not content.strip():
+                continue
+            if isinstance(message, (SystemMessage, HumanMessage)):
+                sanitized.append(message)
+                continue
+            if not isinstance(message, AIMessage):
+                continue
+            tool_calls = getattr(message, "tool_calls", None)
+            additional_kwargs = getattr(message, "additional_kwargs", None)
+            if tool_calls:
+                continue
+            if isinstance(additional_kwargs, dict) and additional_kwargs.get("tool_calls"):
+                continue
+            sanitized.append(message)
         return sanitized
+
+    @classmethod
+    def _sanitize_checkpoint_state(cls, state: Any) -> _CheckpointRestorePlan:
+        if not isinstance(state, dict):
+            return _CheckpointRestorePlan(
+                messages=[],
+                reset_fields=[],
+                legacy_fields=[],
+                schema_supported=False,
+            )
+
+        sanitized_messages = cls._sanitize_checkpoint_messages(state.get("messages"))
+        legacy_fields: list[str] = []
+        schema_version = state.get("schema_version")
+        schema_supported = schema_version == STATE_SCHEMA_V3
+        if not schema_supported:
+            legacy_fields.append("schema_version")
+        raw_messages = state.get("messages")
+        if isinstance(raw_messages, list) and len(raw_messages) != len(sanitized_messages):
+            legacy_fields.append("messages_filtered")
+        reset_fields = sorted(field for field in _KB_CHAT_CHECKPOINT_RESET_FIELDS if field in state)
+        return _CheckpointRestorePlan(
+            messages=sanitized_messages,
+            reset_fields=reset_fields,
+            legacy_fields=sorted(set(legacy_fields)),
+            schema_supported=schema_supported,
+        )
+
+    @staticmethod
+    def _build_checkpoint_restore_audit(
+        *,
+        checkpoint_id: str | None,
+        applied: bool,
+        reset_fields: list[str],
+        legacy_fields: list[str],
+        schema_supported: bool,
+    ) -> dict[str, Any]:
+        return {
+            "checkpoint_restore_applied": bool(applied),
+            "checkpoint_restore_source_checkpoint_id": checkpoint_id,
+            "checkpoint_restore_reset_fields": sorted(set(reset_fields)),
+            "checkpoint_restore_legacy_fields": sorted(set(legacy_fields)),
+            "checkpoint_restore_schema_supported": bool(schema_supported),
+        }
+
+    @staticmethod
+    def _resolve_kb_chat_user_id(session: ChatSession) -> str:
+        return resolve_kb_chat_store_user_id(
+            user_id=getattr(session, "user_id", None),
+            thread_id=str(session.id),
+        )
+
+    async def _get_running_kb_chat_run(
+        self,
+        *,
+        session_id: uuid.UUID,
+        exclude_run_id: uuid.UUID | None = None,
+    ) -> AgentRun | None:
+        stmt = select(AgentRun).where(
+            AgentRun.session_id == session_id,
+            AgentRun.run_type == AgentRunType.KB_ANSWER,
+            AgentRun.status == AgentRunStatus.RUNNING,
+        )
+        if exclude_run_id is not None:
+            stmt = stmt.where(AgentRun.id != exclude_run_id)
+        stmt = stmt.order_by(AgentRun.created_at.desc()).limit(1)
+        result = await self._db.execute(stmt)
+        return result.scalars().first()
+
+    async def _ensure_no_running_kb_chat_run(self, *, session_id: uuid.UUID) -> None:
+        await self._db.execute(
+            select(ChatSession.id)
+            .where(ChatSession.id == session_id)
+            .with_for_update()
+        )
+        running = await self._get_running_kb_chat_run(session_id=session_id)
+        if running is None:
+            return
+        raise AppError(
+            code="CHAT_RUN_CONFLICT",
+            message="当前会话已有运行中的知识库问答任务，请先完成澄清或等待结束",
+            status_code=409,
+            details={"run_id": str(running.id)},
+        )
+
+    async def _ensure_kb_chat_resume_target_valid(
+        self,
+        *,
+        session: ChatSession,
+        run: AgentRun,
+    ) -> None:
+        await self._db.execute(
+            select(ChatSession.id)
+            .where(ChatSession.id == session.id)
+            .with_for_update()
+        )
+        running = await self._get_running_kb_chat_run(session_id=session.id)
+        if running is None:
+            raise AppError(
+                code="CHAT_RUN_NOT_RUNNING",
+                message="运行记录已完成或已失败",
+                status_code=400,
+            )
+        if running.id != run.id:
+            raise AppError(
+                code="CHAT_RUN_CONFLICT",
+                message="当前会话已有其他运行中的知识库问答任务",
+                status_code=409,
+                details={"run_id": str(running.id)},
+            )
 
     async def _prepare_kb_chat_execution(
         self,
@@ -1165,19 +1322,26 @@ class KbChatService:
         started_at = run.started_at if run and run.started_at else datetime.now(timezone.utc)
         thread_id = str(session.id)
         checkpoint_tuple = await CheckpointManager.get_state(thread_id)
-        checkpoint_values: dict[str, Any] = {}
-        existing_messages = None
+        checkpoint_restore = _CheckpointRestorePlan(
+            messages=[],
+            reset_fields=[],
+            legacy_fields=[],
+            schema_supported=False,
+        )
+        checkpoint_id: str | None = None
         if checkpoint_tuple is not None:
             raw_values = (checkpoint_tuple.checkpoint or {}).get(
                 "channel_values", {}
             )
-            checkpoint_values = self._sanitize_checkpoint_state(raw_values)
-            existing_messages = checkpoint_values.get("messages")
+            checkpoint_restore = self._sanitize_checkpoint_state(raw_values)
+            raw_checkpoint_id = (checkpoint_tuple.checkpoint or {}).get("id")
+            checkpoint_id = str(raw_checkpoint_id) if isinstance(raw_checkpoint_id, str) else None
 
         use_checkpoint_messages = (
-            checkpoint_tuple is not None
-            and isinstance(existing_messages, list)
-            and bool(existing_messages)
+            run is not None
+            and checkpoint_tuple is not None
+            and checkpoint_restore.schema_supported
+            and bool(checkpoint_restore.messages)
         )
 
         summary = None
@@ -1197,6 +1361,14 @@ class KbChatService:
                 )
             )
         else:
+            if checkpoint_tuple is not None and run is None:
+                logger.warning(
+                    "KB Chat fresh turn ignored checkpoint messages and rebuilt context from DB history",
+                    extra={
+                        "thread_id": thread_id,
+                        "checkpoint_id": checkpoint_id,
+                    },
+                )
             history_messages = []
 
         # 保存用户消息
@@ -1324,9 +1496,22 @@ class KbChatService:
             history_usage=history_usage,
             history_truncation=history_truncation,
         )
+        resolved_user_id = self._resolve_kb_chat_user_id(session)
+        reset_fields = list(checkpoint_restore.reset_fields)
+        if checkpoint_tuple is not None and not use_checkpoint_messages and checkpoint_restore.messages:
+            reset_fields.append("messages")
+        checkpoint_restore_audit = self._build_checkpoint_restore_audit(
+            checkpoint_id=checkpoint_id,
+            applied=use_checkpoint_messages,
+            reset_fields=reset_fields,
+            legacy_fields=checkpoint_restore.legacy_fields,
+            schema_supported=checkpoint_restore.schema_supported,
+        )
 
         messages: list[SystemMessage | HumanMessage | AIMessage] = []
-        if not use_checkpoint_messages:
+        if use_checkpoint_messages:
+            messages.extend(checkpoint_restore.messages)
+        else:
             messages.append(SystemMessage(content=system_prompt))
         if history_messages:
             messages.extend([self._to_langchain_message(m) for m in history_messages])
@@ -1340,39 +1525,43 @@ class KbChatService:
         )
         from app.agents.kb_chat_agentic_state import make_initial_state
 
+        runtime_config_payload = kb_chat_config.model_dump(mode="json")
+        selected_kb_ids = [str(kid) for kid in (session.selected_kb_ids or [])]
         state = make_initial_state(
             user_input=user_content,
             messages=messages,
-            memory_keys={
-                "user_id": "local",
-                "thread_id": str(session.id),
-                "kb_ids": [str(kid) for kid in (session.selected_kb_ids or [])],
-            },
-            runtime_config=kb_chat_config.model_dump(mode="json"),
         )
-        if checkpoint_values:
-            # Resume from checkpoint while keeping runtime/session-scoped fields authoritative.
-            state = {**state, **checkpoint_values}
-            state["memory_keys"] = {
-                "user_id": "local",
-                "thread_id": str(session.id),
-                "kb_ids": [str(kid) for kid in (session.selected_kb_ids or [])],
-            }
-            state["runtime_config"] = kb_chat_config.model_dump(mode="json")
-            # Always recompute preprocess routing for the new run; never reuse stale checkpoint route hints.
-            state["preprocess_next"] = ""
+        stage_summaries: dict[str, Any] = {}
+        if checkpoint_tuple is not None:
+            stage_summaries["checkpoint_restore"] = checkpoint_restore_audit
         if isinstance(rollback_note, dict):
-            state["stage_summaries"] = {
-                **(state.get("stage_summaries") if isinstance(state.get("stage_summaries"), dict) else {}),
-                "gray_release_auto_rollback": rollback_note,
-            }
-        state["metrics"] = {"context": context_metrics}
+            stage_summaries["gray_release_auto_rollback"] = rollback_note
+        state["stage_summaries"] = stage_summaries
+        state["metrics"] = {
+            "context": context_metrics,
+            "checkpoint_restore": checkpoint_restore_audit,
+        }
         make_run_context = getattr(graph, "make_run_context", None)
-        run_context = (
-            make_run_context(thread_id=thread_id, state=state)
-            if callable(make_run_context)
-            else None
-        )
+        run_context = None
+        if callable(make_run_context):
+            run_context_kwargs = {
+                "thread_id": thread_id,
+                "state": state,
+                "user_id": resolved_user_id,
+                "kb_ids": selected_kb_ids,
+                "runtime_config": runtime_config_payload,
+            }
+            try:
+                supported_keys = set(inspect.signature(make_run_context).parameters)
+            except (TypeError, ValueError):
+                supported_keys = {"thread_id", "state"}
+            run_context = make_run_context(
+                **{
+                    key: value
+                    for key, value in run_context_kwargs.items()
+                    if key in supported_keys
+                }
+            )
         try:
             store = StoreManager.get_store()
         except Exception:
@@ -2002,14 +2191,13 @@ class KbChatService:
                 )
 
         if node == "answer_subgraph":
-            answer_quality = update.get("answer_quality")
-            if isinstance(answer_quality, dict):
-                next_step = answer_quality.get("next_step")
-                reason = answer_quality.get("reason")
-                if isinstance(next_step, str) and next_step:
-                    io_summary["next_step"] = next_step
-                if isinstance(reason, str) and reason:
-                    io_summary["reason"] = reason
+            answer_summary = node_summary if isinstance(node_summary, dict) else {}
+            next_step = answer_summary.get("next_step")
+            reason = answer_summary.get("reason")
+            if isinstance(next_step, str) and next_step:
+                io_summary["next_step"] = next_step
+            if isinstance(reason, str) and reason:
+                io_summary["reason"] = reason
             degrade_reason = update.get("degrade_reason")
             if isinstance(degrade_reason, str) and degrade_reason.strip():
                 io_summary["degrade_reason"] = degrade_reason.strip()
@@ -2740,6 +2928,7 @@ class KbChatService:
     ) -> Any:
         """处理用户问题并返回流式 SSE（状态与节点事件基于 LangGraph 原生流）。"""
         if run is None:
+            await self._ensure_no_running_kb_chat_run(session_id=session.id)
             cache_config = self._resolve_session_kb_chat_config(session)
             cache_hit = await self._semantic_cache_lookup(
                 session=session,
@@ -2863,6 +3052,8 @@ class KbChatService:
                     ),
                 )
                 return
+        else:
+            await self._ensure_kb_chat_resume_target_valid(session=session, run=run)
 
         exec_ctx = await self._prepare_kb_chat_execution(
             session=session, user_content=user_content, run=run
@@ -3826,7 +4017,7 @@ class KbChatService:
             try:
                 await append_kb_chat_memory_entry(
                     store=StoreManager.get_store(),
-                    user_id="local",
+                    user_id=self._resolve_kb_chat_user_id(session),
                     thread_id=str(session.id),
                     kb_ids=[str(k) for k in (session.selected_kb_ids or [])],
                     question=str(run.question or "").strip(),

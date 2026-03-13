@@ -20,7 +20,7 @@ from app.agents.kb_chat_trace_nodes import (
     KB_CHAT_NODE_METADATA,
     wrap_kb_chat_node_with_io,
 )
-from app.agents.kb_chat_agentic_state import KbChatAgenticState
+from app.agents.kb_chat_agentic_state import KbChatInternalState
 from app.core.settings import Settings
 from app.utils.token_counter import count_tokens_approximately
 
@@ -120,17 +120,6 @@ def _retrieval_budget_plan(state: dict[str, Any], settings: Settings) -> dict[st
         min(global_candidates_limit, max_top_k * 6),
     )
 
-    runtime_config = state.get("runtime_config")
-    if not isinstance(runtime_config, dict):
-        runtime_config = {}
-    runtime_config = {
-        **runtime_config,
-        "retrieval_top_k": max(1, min(per_query_top_k, int(settings.retrieval_max_top_k))),
-        "retrieval_rerank_top_k": max(
-            1, min(rerank_input_limit, int(settings.retrieval_max_top_k))
-        ),
-    }
-
     stage_summaries = state.get("stage_summaries")
     if not isinstance(stage_summaries, dict):
         stage_summaries = {}
@@ -152,7 +141,6 @@ def _retrieval_budget_plan(state: dict[str, Any], settings: Settings) -> dict[st
             "global_candidates_limit": global_candidates_limit,
             "rerank_input_limit": rerank_input_limit,
         },
-        "runtime_config": runtime_config,
         "stage_summaries": stage_summaries,
     }
 
@@ -394,7 +382,6 @@ def _compress_context(state: dict[str, Any]) -> dict[str, Any]:
         },
     }
     return {
-        "compressed_context": compressed,
         "compression_stats": {
             "token_limit": token_limit,
             "input_tokens": token_count,
@@ -405,7 +392,6 @@ def _compress_context(state: dict[str, Any]) -> dict[str, Any]:
             "retained_block_count": len(retained_labels),
             "selected_labels": retained_labels[:12],
         },
-        # Keep downstream compatibility: current doc gate reads final_context.
         "final_context": compressed,
         "stage_summaries": stage_summaries,
     }
@@ -415,7 +401,7 @@ def build_retrieval_subgraph(*, settings: Settings, kb_tool: BaseTool):
     """Compile retrieval subgraph aligned to flowchart Stage 4."""
 
     graph = StateGraph(
-        state_schema=KbChatAgenticState,
+        state_schema=KbChatInternalState,
         context_schema=KbChatGraphContext,
     )
     def add_traced_node(node_id: str, node_callable: Any, **kwargs: Any) -> None:

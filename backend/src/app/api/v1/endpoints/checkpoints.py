@@ -13,6 +13,7 @@ from app.schemas.checkpoints import (
     CheckpointHistoryItem,
     CheckpointHistoryResponse,
     CheckpointStateResponse,
+    CheckpointStateSummary,
     ResumeRequest,
     ResumeResponse,
 )
@@ -31,7 +32,13 @@ async def get_checkpoint(thread_id: str) -> CheckpointStateResponse:
     return CheckpointStateResponse(
         thread_id=thread_id,
         checkpoint_id=checkpoint_tuple.checkpoint.get("id") if checkpoint_tuple.checkpoint else None,
-        channel_values=checkpoint_tuple.checkpoint.get("channel_values") if checkpoint_tuple.checkpoint else None,
+        state_summary=CheckpointStateSummary.model_validate(
+            CheckpointManager.summarize_channel_values(
+                checkpoint_tuple.checkpoint.get("channel_values")
+                if checkpoint_tuple.checkpoint
+                else None
+            )
+        ),
         created_at=None,
     )
 

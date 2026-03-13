@@ -25,7 +25,10 @@ from app.agents.kb_chat_trace_nodes import (
     KB_CHAT_NODE_METADATA,
     wrap_kb_chat_node_with_io,
 )
-from app.agents.kb_chat_agentic_state import KbChatAgenticState
+from app.agents.kb_chat_agentic_state import (
+    KbChatInternalState,
+    resolve_routing_decision,
+)
 from app.core.settings import Settings
 
 
@@ -95,13 +98,8 @@ async def _complexity_classify(
 
 
 def _route_after_ambiguity(state: dict[str, Any]) -> str:
-    reflection = state.get("reflection")
-    action = (
-        str(reflection.get("action") or "").strip().lower()
-        if isinstance(reflection, dict)
-        else ""
-    )
-    if action == "clarify":
+    decision = resolve_routing_decision(state, "preprocess")
+    if str(decision.get("next_node") or "").strip().lower() == "force_exit":
         return "preprocess_exit"
     return "normalize_rewrite"
 
@@ -324,8 +322,6 @@ async def _prepare_messages_terminal(
     result = await prepare_messages(state, runtime=runtime, settings=settings)
     if isinstance(result, Command):
         updates = result.update if isinstance(result.update, dict) else {}
-        if isinstance(result.goto, str) and result.goto.strip():
-            return {**updates, "preprocess_next": result.goto.strip()}
         return updates
     return result if isinstance(result, dict) else {}
 
@@ -338,7 +334,7 @@ def build_preprocess_subgraph(*, settings: Settings):
     """Compile preprocess subgraph aligned to flowchart Stage 1-3."""
 
     graph = StateGraph(
-        state_schema=KbChatAgenticState,
+        state_schema=KbChatInternalState,
         context_schema=KbChatGraphContext,
     )
     def add_traced_node(node_id: str, node_callable: Any, **kwargs: Any) -> None:

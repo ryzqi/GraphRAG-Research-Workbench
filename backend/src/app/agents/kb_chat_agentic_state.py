@@ -8,6 +8,8 @@ from typing import Annotated, Any, Literal, TypedDict
 from langchain.messages import AnyMessage
 from langgraph.graph.message import add_messages
 
+from app.agents.kb_chat_contracts import STATE_SCHEMA_V3
+
 # -----------------------------
 # Query bundle types
 # -----------------------------
@@ -44,41 +46,27 @@ class ReflectionResult(TypedDict, total=False):
     review_decision_source: str
 
 
+class RoutingDecision(TypedDict, total=False):
+    """Canonical routing record for cross-node / cross-subgraph decisions."""
+
+    phase: str
+    next_node: str
+    action: str
+    reason: str
+    reason_code: str
+    decision_source: str
+    retry_advice: str
+    retry_budget_snapshot: dict[str, int]
+    round_id: int
+    completed_at: str
+
+
 class LoopCounts(TypedDict):
     """Loop counters used for budget control."""
 
     total_rounds: int
     retrieval_retries: int
     generation_retries: int
-
-
-class MemoryKeys(TypedDict, total=False):
-    """Namespacing keys used by store/checkpointer (all strings for portability)."""
-
-    user_id: str
-    thread_id: str
-    kb_ids: list[str]
-
-
-class KbChatRuntimeConfig(TypedDict, total=False):
-    """Per-session runtime parameters for KB answer chain."""
-
-    entity_expand_max_candidates: int
-    entity_expand_max_variants: int
-    entity_expand_min_confidence: float
-    entity_expand_timeout_seconds: float
-    retrieval_top_k: int
-    retrieval_rerank_top_k: int
-    retrieval_hybrid_ranker: Literal["rrf", "weighted"]
-    retrieval_hybrid_dense_weight: float
-    retrieval_hybrid_sparse_weight: float
-    retrieval_hybrid_rrf_k: int
-    retrieval_parent_max_parents: int
-    retrieval_parent_max_children_per_parent: int
-    retrieval_multiscale_per_window_top_k: int
-    retrieval_multiscale_rrf_k: int
-    retrieval_multiscale_max_documents: int
-    retrieval_multiscale_max_chunks_per_document: int
 
 
 class ContextTurn(TypedDict):
@@ -180,6 +168,7 @@ class PrepareDiagnostics(TypedDict, total=False):
 
 
 class SubqueryRun(TypedDict, total=False):
+    retrieval_round: int
     subquery_id: str
     index: int
     query: str
@@ -203,18 +192,45 @@ class RetrievalPlan(TypedDict, total=False):
     reason: str
 
 
+class AnswerReviewRun(TypedDict, total=False):
+    review_round: int
+    check: str
+    passed: bool
+    reason: str
+    confidence: float
+    fallback_reason: str | None
+    decision_source: str
+    latency_ms: int
+
+
 # -----------------------------
 # Graph state schema
 # -----------------------------
 
-class KbChatAgenticStateBase(TypedDict):
-    """Required fields for agentic KB chat runs."""
+class KbChatInputState(TypedDict):
+    """Minimal public graph input for a KB chat turn."""
 
     # NOTE: LangGraph provides special reducers for message lists.
     messages: Annotated[list[AnyMessage], add_messages]
 
     # Raw user question (unmodified).
     user_input: str
+
+
+class KbChatOutputState(TypedDict, total=False):
+    """Minimal public graph output exposed to service consumers."""
+
+    final_answer: str
+    confidence_score: float
+    confidence_level: ConfidenceLevel
+    clarification_payload: ClarificationPayload
+    stage_summaries: dict[str, Any]
+
+
+class KbChatInternalStateBase(KbChatInputState):
+    """Required internal fields for agentic KB chat runs."""
+
+    schema_version: str
 
     # Keep compatibility with existing streaming/service plumbing.
     pending_tool_calls: list[dict]
@@ -224,17 +240,13 @@ class KbChatAgenticStateBase(TypedDict):
     stage_summaries: dict[str, Any]
     metrics: dict[str, Any]
 
-    # Store/checkpointer namespace (values are JSON-friendly).
-    memory_keys: MemoryKeys
-    runtime_config: KbChatRuntimeConfig
 
-
-class KbChatAgenticState(KbChatAgenticStateBase, total=False):
+class KbChatInternalState(KbChatInternalStateBase, total=False):
     """Optional fields populated across stages.
 
     Stage I/O (high-level, to keep implementation honest):
     - MergeContext: reads messages/user_input/memory_keys -> writes
-      context_frame/rewrite_input_query/display_context/merged_context
+      context_frame/rewrite_input_query/merged_context
     - CorefRewrite: reads rewrite_input_query/context_frame -> writes coref_query/coref_meta
     - AmbiguityCheck: reads coref_query/normalized_query -> writes reflection/action (clarify)
     - NormalizeRewrite: reads coref_query -> writes normalized_query
@@ -251,7 +263,6 @@ class KbChatAgenticState(KbChatAgenticStateBase, total=False):
 
     context_frame: ContextFrame
     rewrite_input_query: str
-    display_context: str
     merged_context: str
 
     coref_query: str
@@ -272,7 +283,6 @@ class KbChatAgenticState(KbChatAgenticStateBase, total=False):
     message_plan: MessagePlan
     query_bundle: QueryBundle
     prepare_diagnostics: PrepareDiagnostics
-    preprocess_next: str
     retrieval_plan: RetrievalPlan
     retrieval_budget: dict[str, Any]
     retrieval_diagnostics: dict[str, float]
@@ -281,40 +291,80 @@ class KbChatAgenticState(KbChatAgenticStateBase, total=False):
     subquery_task: dict[str, Any]
 
     final_context: str
-    compressed_context: str
     compression_stats: dict[str, Any]
     draft_answer: str
     final_answer: str
     best_answer: str
     best_answer_meta: dict[str, Any]
     answer_subgraph_state: dict[str, Any]
-    answer_quality: dict[str, Any]
     degrade_reason: str
     clarification_payload: ClarificationPayload
 
-    doc_gate_state: dict[str, Any]
     doc_gate_round: int
     doc_gate_runs: Annotated[list[dict[str, Any]], add]
-    doc_gate_scores: dict[str, Any]
-    answer_review_runs: Annotated[list[dict[str, Any]], add]
+    answer_review_runs: Annotated[list[AnswerReviewRun], add]
     cove_state: dict[str, Any]
     confidence_score: float
     confidence_level: ConfidenceLevel
     reflection: ReflectionResult
+    routing_decisions: dict[str, RoutingDecision]
+
+
+def merge_routing_decision(
+    state: dict[str, Any],
+    phase: str,
+    decision: RoutingDecision,
+    *,
+    updates: dict[str, Any] | None = None,
+) -> dict[str, dict[str, RoutingDecision]]:
+    """Merge a canonical routing record into state/update payloads."""
+
+    merged: dict[str, RoutingDecision] = {}
+    current = state.get("routing_decisions")
+    if isinstance(current, dict):
+        merged = {key: value for key, value in current.items() if isinstance(value, dict)}
+    if isinstance(updates, dict):
+        update_routing = updates.get("routing_decisions")
+        if isinstance(update_routing, dict):
+            merged = {
+                **merged,
+                **{
+                    key: value
+                    for key, value in update_routing.items()
+                    if isinstance(value, dict)
+                },
+            }
+    existing = merged.get(phase)
+    if isinstance(existing, dict):
+        merged[phase] = {**existing, **decision}
+    else:
+        merged[phase] = dict(decision)
+    return {"routing_decisions": merged}
+
+
+def resolve_routing_decision(state: dict[str, Any], phase: str) -> RoutingDecision:
+    """Read a canonical routing record from state."""
+
+    routing = state.get("routing_decisions")
+    if not isinstance(routing, dict):
+        return {}
+    decision = routing.get(phase)
+    if not isinstance(decision, dict):
+        return {}
+    return decision
 
 
 def make_initial_state(
     *,
     user_input: str,
     messages: list[AnyMessage] | None = None,
-    memory_keys: MemoryKeys | None = None,
-    runtime_config: KbChatRuntimeConfig | None = None,
-) -> KbChatAgenticState:
+) -> KbChatInternalState:
     """Create a minimal, serializable initial state for an agentic KB chat run."""
 
     return {
         "messages": messages or [],
         "user_input": user_input,
+        "schema_version": STATE_SCHEMA_V3,
         "pending_tool_calls": [],
         "loop_counts": {
             "total_rounds": 0,
@@ -323,8 +373,6 @@ def make_initial_state(
         },
         "stage_summaries": {},
         "metrics": {},
-        "memory_keys": memory_keys or {},
-        "runtime_config": runtime_config or {},
         # Pre-initialize list fields to reduce KeyError risk in early node work.
         "sub_queries": [],
         "multi_queries": [],
@@ -348,21 +396,20 @@ def make_initial_state(
             "timing": {},
         },
         "query_items": [],
-        "preprocess_next": "",
         "subquery_runs": [],
         "complexity_level": "moderate",
         "adaptive_route": "moderate_path",
         "retrieval_budget": {},
         "retrieval_diagnostics": {},
-        "compressed_context": "",
+        "final_context": "",
         "compression_stats": {},
         "answer_subgraph_state": {},
-        "doc_gate_scores": {},
         "doc_gate_round": 0,
         "doc_gate_runs": [],
         "cove_state": {},
         "confidence_score": 0.0,
         "confidence_level": "low",
+        "routing_decisions": {},
         "decomposition_plan": {
             "strategy": "direct",
             "version": "kb_chat_decomposition_plan_v2",
@@ -370,6 +417,5 @@ def make_initial_state(
             "risk_flags": [],
             "reasoning": "",
         },
-        "doc_gate_state": {},
         "answer_review_runs": [],
     }
