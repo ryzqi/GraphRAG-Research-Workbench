@@ -91,7 +91,11 @@ def _retrieval_budget_plan(state: dict[str, Any], settings: Settings) -> dict[st
         per_query_top_k += 2
         global_candidates_limit += 12
         rerank_input_limit += 8
-    elif failure_reason == "high_conflict":
+    elif failure_reason == "severe_conflict":
+        per_query_top_k += 1
+        global_candidates_limit += 16
+        rerank_input_limit += 12
+    elif failure_reason == "conflict_retry_exhausted":
         rerank_input_limit += 6
 
     loop_counts = state.get("loop_counts")

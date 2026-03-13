@@ -60,8 +60,12 @@ def _merge_stage_summary(
     return {**stage, key: {**existing, **patch}}
 
 
-async def _complexity_classify(state: dict[str, Any], settings: Settings) -> dict[str, Any]:
-    result = await complexity_classify(state, settings)
+async def _complexity_classify(
+    state: dict[str, Any],
+    runtime: Runtime[KbChatGraphContext],
+    settings: Settings,
+) -> dict[str, Any]:
+    result = await complexity_classify(state, settings, runtime=runtime)
     updates = result.update if isinstance(result.update, dict) else {}
     goto = result.goto if isinstance(result.goto, str) else ""
     if goto == "decomposition":
@@ -134,32 +138,18 @@ def _adaptive_routing_node(state: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _resolve_runtime_switch(state: dict[str, Any], *, key: str) -> bool | None:
-    runtime_config = state.get("runtime_config")
-    if not isinstance(runtime_config, dict):
-        return None
-    value = runtime_config.get(key)
-    return value if isinstance(value, bool) else None
-
-
 def _resolve_switch_decision(
     state: dict[str, Any],
     settings: Settings,
     *,
-    runtime_key: str,
     settings_attr: str,
     enabled_goto: str,
     disabled_goto: str,
 ) -> _SwitchDecision:
-    runtime_value = _resolve_runtime_switch(state, key=runtime_key)
-    if runtime_value is not None:
-        enabled = runtime_value
-        source = f"runtime_config.{runtime_key}"
-        reason = "runtime_override"
-    else:
-        enabled = bool(getattr(settings, settings_attr, True))
-        source = f"settings.{settings_attr}"
-        reason = "settings_default"
+    _ = state
+    enabled = bool(getattr(settings, settings_attr, True))
+    source = f"settings.{settings_attr}"
+    reason = "settings_default"
     return {
         "enabled": enabled,
         "goto": enabled_goto if enabled else disabled_goto,
@@ -173,7 +163,6 @@ def _switch_node(
     settings: Settings,
     *,
     summary_key: str,
-    runtime_key: str,
     settings_attr: str,
     enabled_goto: str,
     disabled_goto: str,
@@ -181,7 +170,6 @@ def _switch_node(
     decision = _resolve_switch_decision(
         state,
         settings,
-        runtime_key=runtime_key,
         settings_attr=settings_attr,
         enabled_goto=enabled_goto,
         disabled_goto=disabled_goto,
@@ -204,7 +192,6 @@ def _ambiguity_check_enabled_node(
         state,
         settings,
         summary_key="AMBIGUITY_CHECK_ENABLED",
-        runtime_key="ambiguity_check_enabled",
         settings_attr="kb_chat_ambiguity_check_enabled",
         enabled_goto="ambiguity_check",
         disabled_goto="normalize_rewrite",
@@ -227,7 +214,6 @@ def _route_to_ambiguity_check(state: dict[str, Any], settings: Settings) -> str:
     return _resolve_switch_decision(
         state,
         settings,
-        runtime_key="ambiguity_check_enabled",
         settings_attr="kb_chat_ambiguity_check_enabled",
         enabled_goto="ambiguity_check",
         disabled_goto="normalize_rewrite",
@@ -242,7 +228,6 @@ def _multi_query_mod_enabled_node(
         state,
         settings,
         summary_key="ENABLE_MULTI_QUERY_MOD",
-        runtime_key="multi_query_mod_enabled",
         settings_attr="kb_chat_multi_query_mod_enabled",
         enabled_goto="generate_variants_mod",
         disabled_goto="prepare_messages",
@@ -253,7 +238,6 @@ def _route_to_generate_variants_mod(state: dict[str, Any], settings: Settings) -
     return _resolve_switch_decision(
         state,
         settings,
-        runtime_key="multi_query_mod_enabled",
         settings_attr="kb_chat_multi_query_mod_enabled",
         enabled_goto="generate_variants_mod",
         disabled_goto="prepare_messages",
@@ -268,7 +252,6 @@ def _decomposition_enabled_node(
         state,
         settings,
         summary_key="ENABLE_DECOMPOSITION",
-        runtime_key="decomposition_enabled",
         settings_attr="kb_chat_decomposition_enabled",
         enabled_goto="decomposition",
         disabled_goto="ENABLE_MULTI_QUERY",
@@ -279,7 +262,6 @@ def _route_to_decomposition(state: dict[str, Any], settings: Settings) -> str:
     return _resolve_switch_decision(
         state,
         settings,
-        runtime_key="decomposition_enabled",
         settings_attr="kb_chat_decomposition_enabled",
         enabled_goto="decomposition",
         disabled_goto="ENABLE_MULTI_QUERY",
@@ -294,7 +276,6 @@ def _multi_query_enabled_node(
         state,
         settings,
         summary_key="ENABLE_MULTI_QUERY",
-        runtime_key="multi_query_enabled",
         settings_attr="kb_chat_multi_query_enabled",
         enabled_goto="generate_variants",
         disabled_goto="entity_expand",
@@ -305,7 +286,6 @@ def _route_to_generate_variants(state: dict[str, Any], settings: Settings) -> st
     return _resolve_switch_decision(
         state,
         settings,
-        runtime_key="multi_query_enabled",
         settings_attr="kb_chat_multi_query_enabled",
         enabled_goto="generate_variants",
         disabled_goto="entity_expand",
@@ -320,7 +300,6 @@ def _hyde_enabled_node(
         state,
         settings,
         summary_key="ENABLE_HYDE",
-        runtime_key="hyde_enabled",
         settings_attr="kb_chat_hyde_enabled",
         enabled_goto="hyde",
         disabled_goto="prepare_messages",
@@ -331,7 +310,6 @@ def _route_to_hyde(state: dict[str, Any], settings: Settings) -> str:
     return _resolve_switch_decision(
         state,
         settings,
-        runtime_key="hyde_enabled",
         settings_attr="kb_chat_hyde_enabled",
         enabled_goto="hyde",
         disabled_goto="prepare_messages",

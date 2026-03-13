@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from functools import partial
 import re
 from typing import Any, TypedDict
 
@@ -230,7 +231,7 @@ def _doc_gate_fuse(state: dict[str, Any]) -> dict[str, Any]:
     elif not bool(suff.get("passed")):
         decision = "retry"
     elif conflict_level == "severe":
-        decision = "pass"
+        decision = "retry_conflict"
     elif not bool(conflict.get("passed")):
         decision = "retry"
     score = (
@@ -264,7 +265,7 @@ def _doc_gate_fuse(state: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _doc_gate_route(state: dict[str, Any]) -> dict[str, Any]:
+def _doc_gate_route(state: dict[str, Any], settings: Settings) -> dict[str, Any]:
     gate_scores = state.get("doc_gate_scores")
     scores = gate_scores if isinstance(gate_scores, dict) else {}
     decision = str(scores.get("decision") or "retry")
@@ -279,6 +280,24 @@ def _doc_gate_route(state: dict[str, Any]) -> dict[str, Any]:
         goto = "force_exit"
         passed = False
         reason = "exit_unanswerable"
+    elif decision == "retry_conflict":
+        loop_counts = state.get("loop_counts")
+        retrieval_retries = (
+            int(loop_counts.get("retrieval_retries") or 0)
+            if isinstance(loop_counts, dict)
+            else 0
+        )
+        max_retries = int(settings.kb_chat_max_retrieval_retries)
+        if retrieval_retries >= max_retries:
+            action = "force_exit"
+            goto = "force_exit"
+            passed = False
+            reason = "conflict_retry_exhausted"
+        else:
+            action = "transform_query"
+            goto = "transform_query"
+            passed = False
+            reason = "severe_conflict"
     else:
         action = "transform_query"
         goto = "transform_query"
@@ -295,7 +314,16 @@ def _doc_gate_route(state: dict[str, Any]) -> dict[str, Any]:
             "reason": reason,
             "confidence": round(score, 4),
             "decision_source": "parallel_gate",
-            "retry_advice": "none" if decision == "pass" else ("exit" if decision == "exit_unanswerable" else "retry"),
+            "retry_advice": (
+                "none"
+                if decision == "pass"
+                else (
+                    "exit"
+                    if decision in {"exit_unanswerable", "retry_conflict"}
+                    and reason == "conflict_retry_exhausted"
+                    else "retry"
+                )
+            ),
         },
         "reflection": {
             **reflection,
@@ -322,7 +350,6 @@ def _doc_gate_route(state: dict[str, Any]) -> dict[str, Any]:
 def build_evidence_gate_subgraph(*, settings: Settings):
     """Compile evidence-gate subgraph aligned to flowchart Stage 5."""
 
-    del settings
     graph = StateGraph(
         state_schema=KbChatAgenticState,
         context_schema=KbChatGraphContext,
@@ -348,7 +375,7 @@ def build_evidence_gate_subgraph(*, settings: Settings):
     add_traced_node("doc_gate_answerability", _doc_gate_answerability)
     add_traced_node("doc_gate_conflict", _doc_gate_conflict)
     add_traced_node("doc_gate_fuse", _doc_gate_fuse)
-    add_traced_node("doc_gate_route", _doc_gate_route)
+    add_traced_node("doc_gate_route", partial(_doc_gate_route, settings=settings))
 
     graph.set_entry_point("doc_gate_dispatch")
     graph.add_edge("doc_gate_sufficiency", "doc_gate_fuse")

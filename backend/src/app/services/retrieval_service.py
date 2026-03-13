@@ -381,6 +381,7 @@ class RetrievalService:
         self,
         feature_overrides: dict[str, object] | None,
     ) -> RetrievalFeatureFlags:
+        del feature_overrides
         return RetrievalFeatureFlags(
             query_rewrite_enabled=True,
             hybrid_enabled=True,
@@ -400,11 +401,11 @@ class RetrievalService:
         retrieval_top_k = int(self._settings.retrieval_default_top_k)
         retrieval_rerank_top_k = int(self._settings.retrieval_max_top_k)
 
-        parent_max_parents = 6
-        parent_max_children_per_parent = 2
-        multiscale_per_window_top_k = 30
+        parent_max_parents = 8
+        parent_max_children_per_parent = 3
+        multiscale_per_window_top_k = 40
         multiscale_rrf_k = 60
-        multiscale_max_documents = 8
+        multiscale_max_documents = 12
         multiscale_max_chunks_per_document = 2
 
         if isinstance(feature_overrides, dict):

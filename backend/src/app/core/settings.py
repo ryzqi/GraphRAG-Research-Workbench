@@ -418,6 +418,18 @@ class Settings(BaseSettings):
     kb_chat_complexity_cache_ttl_seconds: int = Field(
         120, ge=0, alias="KB_CHAT_COMPLEXITY_CACHE_TTL_SECONDS"
     )
+    kb_chat_semantic_cache_enabled: bool = Field(
+        True, alias="KB_CHAT_SEMANTIC_CACHE_ENABLED"
+    )
+    kb_chat_semantic_cache_similarity_threshold: float = Field(
+        0.88, ge=0.0, le=1.0, alias="KB_CHAT_SEMANTIC_CACHE_SIMILARITY_THRESHOLD"
+    )
+    kb_chat_semantic_cache_ttl_seconds: int = Field(
+        24 * 60 * 60, ge=0, alias="KB_CHAT_SEMANTIC_CACHE_TTL_SECONDS"
+    )
+    kb_chat_semantic_cache_max_items: int = Field(
+        128, ge=1, alias="KB_CHAT_SEMANTIC_CACHE_MAX_ITEMS"
+    )
     kb_chat_parallel_retrieval_min_queries: int = Field(
         2, ge=1, le=8, alias="KB_CHAT_PARALLEL_RETRIEVAL_MIN_QUERIES"
     )

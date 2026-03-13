@@ -8,6 +8,8 @@ These nodes are intentionally minimal first:
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import re
 import time
 from typing import Any
@@ -46,6 +48,9 @@ from .runtime_config import (
     parallel_retrieval_min_queries,
 )
 
+_COMPLEXITY_CACHE_SCHEMA = "kb_chat_complexity_cache_v1"
+_COMPLEXITY_CACHE_KEY_PREFIX = "complexity"
+
 
 def _get_last_human(messages: list[Any]) -> HumanMessage | None:
     for msg in reversed(messages):
@@ -67,6 +72,103 @@ def _extract_user_input(state: dict) -> str:
             if isinstance(content, str):
                 return content
     return ""
+
+
+def _cache_kb_scope(kb_ids: list[str]) -> str:
+    normalized = sorted(str(k).strip() for k in kb_ids if isinstance(k, str) and str(k).strip())
+    if not normalized:
+        return "kb_all"
+    digest = hashlib.sha1(",".join(normalized).encode("utf-8")).hexdigest()[:12]
+    return f"kb_{digest}"
+
+
+def _complexity_cache_namespace(state: dict) -> tuple[str, ...]:
+    memory_keys = state.get("memory_keys")
+    memory = memory_keys if isinstance(memory_keys, dict) else {}
+    user_id = str(memory.get("user_id") or "local").strip() or "local"
+    kb_ids_raw = memory.get("kb_ids")
+    kb_ids = kb_ids_raw if isinstance(kb_ids_raw, list) else []
+    kb_ids_str = [str(k).strip() for k in kb_ids if isinstance(k, str) and str(k).strip()]
+    return ("kb_chat", "complexity_cache", user_id, _cache_kb_scope(kb_ids_str))
+
+
+def _complexity_cache_key(
+    *,
+    query: str,
+    recall_risk: str,
+    has_multi_target: bool,
+    is_comparison: bool,
+    decision_version: str,
+) -> str:
+    payload = {
+        "query": query.strip(),
+        "recall_risk": recall_risk.strip().lower(),
+        "has_multi_target": bool(has_multi_target),
+        "is_comparison": bool(is_comparison),
+        "decision_version": decision_version.strip() or "kb_chat_complexity_classify_v4",
+    }
+    raw = json.dumps(payload, ensure_ascii=False, sort_keys=True)
+    digest = hashlib.sha1(raw.encode("utf-8")).hexdigest()
+    return f"{_COMPLEXITY_CACHE_KEY_PREFIX}:{digest}"
+
+
+def _wrap_cache_with_ttl(payload: dict[str, Any], *, ttl_seconds: int) -> dict[str, Any]:
+    created_at = now_iso()
+    return {
+        "schema": _COMPLEXITY_CACHE_SCHEMA,
+        "created_at": created_at,
+        "ttl_seconds": int(ttl_seconds),
+        "expires_ts": int(time.time()) + int(ttl_seconds),
+        "payload": payload,
+    }
+
+
+def _unwrap_complexity_cache(raw: dict[str, Any]) -> dict[str, Any] | None:
+    if raw.get("schema") != _COMPLEXITY_CACHE_SCHEMA:
+        return None
+    expires_ts = raw.get("expires_ts")
+    if isinstance(expires_ts, (int, float)) and int(expires_ts) > 0:
+        if int(time.time()) >= int(expires_ts):
+            return None
+    payload = raw.get("payload")
+    if not isinstance(payload, dict):
+        return None
+    return payload
+
+
+async def _read_complexity_cache(
+    *,
+    state: dict,
+    runtime: Runtime[Any] | None,
+    cache_key: str,
+) -> dict[str, Any] | None:
+    if runtime is None or runtime.store is None:
+        return None
+    item = await runtime.store.aget(_complexity_cache_namespace(state), cache_key)
+    if item is None:
+        return None
+    value = getattr(item, "value", None)
+    if not isinstance(value, dict):
+        return None
+    return _unwrap_complexity_cache(value)
+
+
+async def _write_complexity_cache(
+    *,
+    state: dict,
+    runtime: Runtime[Any] | None,
+    cache_key: str,
+    ttl_seconds: int,
+    payload: dict[str, Any],
+) -> None:
+    if runtime is None or runtime.store is None:
+        return
+    ns = _complexity_cache_namespace(state)
+    wrapped = _wrap_cache_with_ttl(payload, ttl_seconds=ttl_seconds)
+    if runtime.store.supports_ttl:
+        await runtime.store.aput(ns, cache_key, wrapped, ttl=float(max(0, ttl_seconds)))
+    else:
+        await runtime.store.aput(ns, cache_key, wrapped)
 
 
 def _normalize_meta_aliases(state: dict) -> list[str]:
@@ -840,7 +942,11 @@ async def normalize_rewrite(state: dict, settings: Settings) -> dict[str, Any]:
     }
 
 
-async def complexity_classify(state: dict, settings: Settings) -> Command[str]:
+async def complexity_classify(
+    state: dict,
+    settings: Settings,
+    runtime: Runtime[Any] | None = None,
+) -> Command[str]:
     """Decide preprocess strategy: direct / decomposition / multi-query."""
     start = time.perf_counter()
     query = state.get("normalized_query")
@@ -853,49 +959,128 @@ async def complexity_classify(state: dict, settings: Settings) -> Command[str]:
     confidence = 0.0
     risk_flags: list[str] = []
     decision_version = "kb_chat_complexity_classify_v4"
+    cache_hit = False
+    cache_status = "disabled"
+    cache_key_version = "v1"
     normalized_meta = state.get("normalized_meta")
     if not isinstance(normalized_meta, dict):
         normalized_meta = {}
     recall_risk = str(normalized_meta.get("recall_risk") or "unknown")
     has_multi_target = bool(normalized_meta.get("has_multi_target"))
     is_comparison = bool(normalized_meta.get("is_comparison"))
-    try:
-        svc = QueryRewriteService(settings=settings)
-        decision = await svc.classify_complexity(
-            query,
-            recall_risk=recall_risk,
-            has_multi_target=has_multi_target,
-            is_comparison=is_comparison,
-            timeout_seconds=float(
-                getattr(settings, "kb_chat_complexity_model_timeout_seconds", 1.5)
-            ),
-        )
-        strategy = (
-            decision.strategy
-            if decision.strategy in {"direct", "decomposition", "multi_query"}
-            else "direct"
-        )
-        success = decision.success
-        reasoning = decision.reasoning
-        confidence = round(max(0.0, min(1.0, float(decision.confidence or 0.0))), 4)
-        decision_version = str(
-            decision.decision_version or "kb_chat_complexity_classify_v4"
-        ).strip()
-        if not decision_version:
-            decision_version = "kb_chat_complexity_classify_v4"
-        raw_flags = (
-            decision.risk_flags
-            if isinstance(decision.risk_flags, list)
-            else []
-        )
-        risk_flags = [
-            str(flag).strip()
-            for flag in raw_flags
-            if isinstance(flag, str) and flag.strip()
-        ][:8]
-    except Exception:  # pragma: no cover
-        strategy = "direct"
-        success = False
+    cache_enabled = bool(getattr(settings, "kb_chat_complexity_cache_enabled", True))
+    cache_key = _complexity_cache_key(
+        query=query,
+        recall_risk=recall_risk,
+        has_multi_target=has_multi_target,
+        is_comparison=is_comparison,
+        decision_version=decision_version,
+    )
+    if cache_enabled:
+        if runtime is None or runtime.store is None:
+            cache_status = "no_store"
+        else:
+            try:
+                cached = await _read_complexity_cache(
+                    state=state,
+                    runtime=runtime,
+                    cache_key=cache_key,
+                )
+            except Exception:  # pragma: no cover
+                cached = None
+                cache_status = "read_error"
+            if isinstance(cached, dict):
+                candidate_strategy = str(cached.get("strategy") or "direct").strip().lower()
+                strategy = (
+                    candidate_strategy
+                    if candidate_strategy in {"direct", "decomposition", "multi_query"}
+                    else "direct"
+                )
+                success = bool(cached.get("success"))
+                reasoning = str(cached.get("reasoning") or "").strip() or None
+                confidence = round(
+                    max(0.0, min(1.0, float(cached.get("confidence") or 0.0))),
+                    4,
+                )
+                decision_version = str(
+                    cached.get("decision_version") or "kb_chat_complexity_classify_v4"
+                ).strip() or "kb_chat_complexity_classify_v4"
+                raw_flags = (
+                    cached.get("risk_flags")
+                    if isinstance(cached.get("risk_flags"), list)
+                    else []
+                )
+                risk_flags = [
+                    str(flag).strip()
+                    for flag in raw_flags
+                    if isinstance(flag, str) and flag.strip()
+                ][:8]
+                cache_hit = True
+                cache_status = "hit"
+            elif cache_status not in {"read_error"}:
+                cache_status = "miss"
+
+    if not cache_hit:
+        try:
+            svc = QueryRewriteService(settings=settings)
+            decision = await svc.classify_complexity(
+                query,
+                recall_risk=recall_risk,
+                has_multi_target=has_multi_target,
+                is_comparison=is_comparison,
+                timeout_seconds=float(
+                    getattr(settings, "kb_chat_complexity_model_timeout_seconds", 1.5)
+                ),
+            )
+            strategy = (
+                decision.strategy
+                if decision.strategy in {"direct", "decomposition", "multi_query"}
+                else "direct"
+            )
+            success = decision.success
+            reasoning = decision.reasoning
+            confidence = round(max(0.0, min(1.0, float(decision.confidence or 0.0))), 4)
+            decision_version = str(
+                decision.decision_version or "kb_chat_complexity_classify_v4"
+            ).strip()
+            if not decision_version:
+                decision_version = "kb_chat_complexity_classify_v4"
+            raw_flags = (
+                decision.risk_flags
+                if isinstance(decision.risk_flags, list)
+                else []
+            )
+            risk_flags = [
+                str(flag).strip()
+                for flag in raw_flags
+                if isinstance(flag, str) and flag.strip()
+            ][:8]
+        except Exception:  # pragma: no cover
+            strategy = "direct"
+            success = False
+        if cache_enabled and success:
+            try:
+                await _write_complexity_cache(
+                    state=state,
+                    runtime=runtime,
+                    cache_key=cache_key,
+                    ttl_seconds=max(
+                        0, int(getattr(settings, "kb_chat_complexity_cache_ttl_seconds", 120))
+                    ),
+                    payload={
+                        "strategy": strategy,
+                        "success": success,
+                        "reasoning": reasoning,
+                        "confidence": confidence,
+                        "risk_flags": risk_flags,
+                        "decision_version": decision_version,
+                    },
+                )
+                if cache_status == "miss":
+                    cache_status = "write_through"
+            except Exception:  # pragma: no cover
+                if cache_status in {"miss", "no_store", "disabled"}:
+                    cache_status = "write_error"
 
     route_map = {
         "decomposition": "decomposition",
@@ -918,6 +1103,9 @@ async def complexity_classify(state: dict, settings: Settings) -> Command[str]:
             "reasoning": reasoning,
             "success": success,
             "goto": goto,
+            "cache_hit": cache_hit,
+            "complexity_cache_status": cache_status,
+            "cache_key_version": cache_key_version,
             "completed_at": now_iso(),
             "latency_ms": int((time.perf_counter() - start) * 1000),
         },

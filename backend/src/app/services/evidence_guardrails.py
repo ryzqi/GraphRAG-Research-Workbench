@@ -47,6 +47,8 @@ def resolve_kb_refusal_answer(*, reason: str | None = None) -> str:
         "low_overlap",
     }:
         return "根据现有资料无法回答该问题。"
+    if reason_key in {"severe_conflict", "conflict_retry_exhausted"}:
+        return "当前检索证据存在明显冲突，暂无法给出稳定结论。请补充时间范围或口径后重试。"
     if reason_key == "fallback_closed":
         return "根据现有资料无法回答该问题（未通过证据校验）。"
     return _RETRY_EXHAUSTED_NO_ANSWER
