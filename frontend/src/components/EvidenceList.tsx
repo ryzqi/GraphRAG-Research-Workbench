@@ -2,207 +2,34 @@
  * 证据清单组件
  */
 
-import { useCallback, useEffect, useMemo, useState, type SyntheticEvent } from 'react';
-import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
-import {
-  Accordion,
-  AccordionDetails,
-  AccordionSummary,
-  Chip,
-  Stack,
-  Typography,
-} from '@mui/material';
+import { useEffect, useMemo } from 'react';
+import { Box, Chip, Paper, Stack, Typography } from '@mui/material';
 import { alpha } from '@mui/material/styles';
 import type { EvidenceItem } from '../services/chats';
 import {
   buildCitationAnchorId,
   normalizeCitationId,
 } from '../services/kbChatCitationAnchors';
+import { resolveEvidenceCardItems } from '../services/kbChatEvidenceDisplay';
 
 interface EvidenceListProps {
   evidence: EvidenceItem[];
-  collapseByDefault?: boolean;
   activeCitationId?: string | null;
   onCitationHandled?: (citationId: string) => void;
   citationAnchorScopeId?: string;
-}
-
-/**
- * 从 locator 中安全读取 string 字段（避免 unknown 直接渲染到 JSX）
- */
-function getLocatorString(
-  locator: Record<string, unknown> | null | undefined,
-  key: string
-): string | null {
-  const value = locator?.[key];
-  return typeof value === 'string' ? value : null;
-}
-
-function normalizeText(value: string | null | undefined): string | null {
-  if (typeof value !== 'string') {
-    return null;
-  }
-  const text = value.trim();
-  return text || null;
-}
-
-function stripExtension(name: string): string {
-  const trimmed = name.trim();
-  if (!trimmed) {
-    return '';
-  }
-  const normalized = trimmed.replace(/\\/g, '/');
-  const base = normalized.split('/').pop() ?? normalized;
-  const dotIndex = base.lastIndexOf('.');
-  if (dotIndex <= 0) {
-    return base;
-  }
-  return base.slice(0, dotIndex);
-}
-
-function getCitationLabelFromLocator(item: EvidenceItem, index: number): string {
-  const explicit = getLocatorString(item.locator, 'citation_label');
-  if (explicit && explicit.trim()) {
-    return explicit.trim();
-  }
-  const filename = getLocatorString(item.locator, 'filename');
-  if (filename && filename.trim()) {
-    const stem = stripExtension(filename);
-    if (stem.trim()) {
-      return stem.trim();
-    }
-  }
-  return `资料${index + 1}`;
-}
-
-function getCitationId(item: EvidenceItem, index: number): string {
-  const explicit = normalizeCitationId(item.citation_id);
-  if (explicit) {
-    return explicit;
-  }
-  return `S${index + 1}`;
-}
-
-function getCitationChipLabel(item: EvidenceItem, index: number): string {
-  const citationId = normalizeCitationId(item.citation_id);
-  if (citationId) {
-    return `[${citationId}]`;
-  }
-  return getCitationLabelFromLocator(item, index);
 }
 
 function getCitationAnchorId(citationId: string, scopeId?: string): string {
   return buildCitationAnchorId(citationId, scopeId);
 }
 
-function getCitationPageHint(item: EvidenceItem): string | null {
-  const explicit = normalizeText(item.citation_page_hint);
-  if (explicit) {
-    return explicit;
-  }
-  const locator = item.locator;
-  if (!locator || typeof locator !== 'object') {
-    return null;
-  }
-  const pageStart = locator.page_start;
-  const pageEnd = locator.page_end;
-  if (typeof pageStart === 'number' && pageStart > 0) {
-    if (typeof pageEnd === 'number' && pageEnd > 0 && pageEnd !== pageStart) {
-      return `p.${pageStart}-${pageEnd}`;
-    }
-    return `p.${pageStart}`;
-  }
-  if (typeof pageEnd === 'number' && pageEnd > 0) {
-    return `p.${pageEnd}`;
-  }
-  return null;
-}
-
-function getSourceTitle(item: EvidenceItem, index: number): string {
-  const citationTitle = normalizeText(item.citation_title);
-  if (citationTitle) {
-    return citationTitle;
-  }
-
-  const locatorMaterialTitle = normalizeText(getLocatorString(item.locator, 'material_title'));
-  if (locatorMaterialTitle) {
-    return locatorMaterialTitle;
-  }
-
-  return getCitationLabelFromLocator(item, index);
-}
-
-/**
- * 生成证据项的唯一 key
- */
-function getEvidenceKey(item: EvidenceItem, index: number): string {
-  const citationId = normalizeCitationId(item.citation_id);
-  if (citationId) {
-    return `citation-${citationId}`;
-  }
-  // 优先使用 locator 中的 chunk_id
-  const chunkId = getLocatorString(item.locator, 'chunk_id');
-  if (chunkId) {
-    return `chunk-${chunkId}`;
-  }
-  // 其次使用 kb_id + material_id 组合
-  if (item.kb_id && item.material_id) {
-    return `kb-${item.kb_id}-mat-${item.material_id}-${index}`;
-  }
-  // 最后使用 excerpt 的 hash 作为 key
-  const excerptHash = item.excerpt.slice(0, 50).replace(/\s+/g, '-');
-  return `${item.source_kind}-${excerptHash}-${index}`;
-}
-
-interface EvidenceDisplayItem {
-  key: string;
-  item: EvidenceItem;
-  citationId: string;
-  citationChipLabel: string;
-  sourceTitle: string;
-  pageHint: string | null;
-}
-
-function createDefaultExpandedIds(
-  items: EvidenceDisplayItem[],
-  collapseByDefault: boolean
-): Set<string> {
-  if (collapseByDefault) {
-    return new Set();
-  }
-  return new Set(items.map((item) => item.citationId));
-}
-
 export function EvidenceList({
   evidence,
-  collapseByDefault = true,
   activeCitationId,
   onCitationHandled,
   citationAnchorScopeId,
 }: EvidenceListProps) {
-  const displayItems = useMemo<EvidenceDisplayItem[]>(
-    () =>
-      evidence.map((item, index) => {
-        const citationId = getCitationId(item, index);
-        return {
-          key: getEvidenceKey(item, index),
-          item,
-          citationId,
-          citationChipLabel: getCitationChipLabel(item, index),
-          sourceTitle: getSourceTitle(item, index),
-          pageHint: getCitationPageHint(item),
-        };
-      }),
-    [evidence]
-  );
-
-  const [expandedCitationIds, setExpandedCitationIds] = useState<Set<string>>(() =>
-    createDefaultExpandedIds(displayItems, collapseByDefault)
-  );
-
-  useEffect(() => {
-    setExpandedCitationIds(createDefaultExpandedIds(displayItems, collapseByDefault));
-  }, [collapseByDefault, displayItems]);
+  const displayItems = useMemo(() => resolveEvidenceCardItems(evidence), [evidence]);
 
   const normalizedActiveCitationId = useMemo(
     () => normalizeCitationId(activeCitationId),
@@ -218,41 +45,14 @@ export function EvidenceList({
       return;
     }
 
-    setExpandedCitationIds((prev) => {
-      if (prev.has(normalizedActiveCitationId)) {
-        return prev;
-      }
-      const next = new Set(prev);
-      next.add(normalizedActiveCitationId);
-      return next;
-    });
-
     if (typeof window !== 'undefined') {
       window.requestAnimationFrame(() => {
-        const element = document.getElementById(
-          getCitationAnchorId(normalizedActiveCitationId, citationAnchorScopeId)
-        );
+        const element = document.getElementById(getCitationAnchorId(target.citationId, citationAnchorScopeId));
         element?.scrollIntoView({ behavior: 'smooth', block: 'center' });
       });
     }
     onCitationHandled?.(normalizedActiveCitationId);
   }, [citationAnchorScopeId, displayItems, normalizedActiveCitationId, onCitationHandled]);
-
-  const handleAccordionChange = useCallback(
-    (citationId: string) =>
-      (_event: SyntheticEvent, expanded: boolean) => {
-        setExpandedCitationIds((prev) => {
-          const next = new Set(prev);
-          if (expanded) {
-            next.add(citationId);
-          } else {
-            next.delete(citationId);
-          }
-          return next;
-        });
-      },
-    []
-  );
 
   if (evidence.length === 0) {
     return (
@@ -263,82 +63,136 @@ export function EvidenceList({
   }
 
   return (
-    <Stack spacing={1}>
-      <Typography variant='body2' fontWeight={600} color='text.primary'>
-        参考来源 ({evidence.length})
-      </Typography>
-      {displayItems.map((entry) => (
-        <Accordion
-          id={getCitationAnchorId(entry.citationId, citationAnchorScopeId)}
-          disableGutters
-          elevation={0}
-          key={entry.key}
-          expanded={expandedCitationIds.has(entry.citationId)}
-          onChange={handleAccordionChange(entry.citationId)}
+    <Stack spacing={1.25}>
+      <Stack direction='row' spacing={0.75} alignItems='center' useFlexGap flexWrap='wrap'>
+        <Typography variant='body2' fontWeight={700} color='text.primary'>
+          参考来源
+        </Typography>
+        <Chip
+          size='small'
+          variant='outlined'
+          label={`${evidence.length}`}
           sx={{
-            borderRadius: 2,
-            border: 1,
-            borderColor: 'divider',
-            bgcolor: (theme) =>
-              theme.palette.mode === 'light'
-                ? alpha(theme.palette.background.paper, 0.86)
-                : alpha(theme.palette.background.paper, 0.56),
-            '&::before': { display: 'none' },
+            height: 22,
+            borderRadius: 999,
+            fontWeight: 700,
           }}
-        >
-          <AccordionSummary
-            expandIcon={<ExpandMoreIcon fontSize='small' />}
+        />
+      </Stack>
+      {displayItems.map((entry) => {
+        const anchorId = getCitationAnchorId(entry.citationId, citationAnchorScopeId);
+        const isActive = entry.citationId === normalizedActiveCitationId;
+
+        return (
+          <Paper
+            id={anchorId}
+            data-citation-card={entry.citationId}
+            data-citation-anchor={anchorId}
+            data-active={isActive ? 'true' : 'false'}
+            elevation={0}
+            key={entry.key}
+            variant='outlined'
             sx={{
-              px: 1.5,
-              py: 0.5,
-              minHeight: 'unset',
-              '& .MuiAccordionSummary-content': {
-                my: 0.25,
-                display: 'flex',
-                alignItems: 'center',
-                gap: 1,
-                flexWrap: 'wrap',
-              },
-              '& .MuiAccordionSummary-expandIconWrapper': {
-                color: 'text.secondary',
-              },
+              p: 1.5,
+              borderRadius: 3,
+              scrollMarginTop: 24,
+              borderColor: (theme) =>
+                isActive
+                  ? alpha(theme.palette.primary.main, theme.palette.mode === 'light' ? 0.42 : 0.62)
+                  : alpha(theme.palette.divider, 0.9),
+              bgcolor: (theme) =>
+                isActive
+                  ? alpha(theme.palette.primary.main, theme.palette.mode === 'light' ? 0.06 : 0.16)
+                  : alpha(theme.palette.background.paper, theme.palette.mode === 'light' ? 0.9 : 0.68),
+              boxShadow: (theme) =>
+                isActive
+                  ? `0 0 0 1px ${alpha(theme.palette.primary.main, 0.12)}, 0 14px 34px ${alpha(
+                      theme.palette.primary.main,
+                      theme.palette.mode === 'light' ? 0.12 : 0.24
+                    )}`
+                  : '0 8px 24px rgba(15, 23, 42, 0.05)',
+              transition: 'border-color 180ms ease, background-color 180ms ease, box-shadow 180ms ease',
             }}
           >
-            <Chip
-              size='small'
-              label={entry.citationChipLabel}
-              sx={{
-                borderRadius: 999,
-                bgcolor: (theme) =>
-                  theme.palette.mode === 'light'
-                    ? alpha(theme.palette.primary.main, 0.12)
-                    : alpha(theme.palette.primary.main, 0.28),
-                color: 'primary.main',
-                border: 1,
-                borderColor: (theme) => alpha(theme.palette.primary.main, 0.28),
-                fontWeight: 600,
-              }}
-            />
-            <Typography variant='caption' color='text.secondary'>
-              {entry.item.source_kind === 'kb' ? '知识库' : '外部来源'}
-              {entry.sourceTitle ? ` · ${entry.sourceTitle}` : null}
-              {entry.pageHint ? ` · ${entry.pageHint}` : null}
-            </Typography>
-          </AccordionSummary>
-          <AccordionDetails sx={{ px: 1.5, pt: 0, pb: 1.25 }}>
-            <Typography
-              variant='body2'
-              sx={{
-                color: 'text.primary',
-                lineHeight: 1.65,
-                whiteSpace: 'pre-wrap',
-              }}
-            >
-              {entry.item.excerpt}
-            </Typography>
-          </AccordionDetails>
-        </Accordion>
-      ))}
+            <Stack spacing={1.1}>
+              <Stack direction='row' justifyContent='space-between' alignItems='flex-start' gap={1.25}>
+                <Stack direction='row' spacing={0.75} useFlexGap flexWrap='wrap'>
+                  <Chip
+                    size='small'
+                    label={entry.citationChipLabel}
+                    sx={{
+                      borderRadius: 999,
+                      bgcolor: (theme) =>
+                        theme.palette.mode === 'light'
+                          ? alpha(theme.palette.primary.main, 0.12)
+                          : alpha(theme.palette.primary.main, 0.28),
+                      color: 'primary.main',
+                      border: 1,
+                      borderColor: (theme) => alpha(theme.palette.primary.main, 0.28),
+                      fontWeight: 700,
+                    }}
+                  />
+                  <Chip
+                    size='small'
+                    variant='outlined'
+                    label={entry.sourceTypeLabel}
+                    sx={{
+                      borderRadius: 999,
+                      fontWeight: 600,
+                    }}
+                  />
+                </Stack>
+                {entry.pageHint ? (
+                  <Typography variant='caption' color='text.secondary' sx={{ fontWeight: 700 }}>
+                    {entry.pageHint}
+                  </Typography>
+                ) : null}
+              </Stack>
+
+              <Stack spacing={0.25}>
+                <Typography variant='subtitle2' color='text.primary' sx={{ fontWeight: 700 }}>
+                  {entry.sourceTitle}
+                </Typography>
+                {entry.sourceDetail ? (
+                  <Typography
+                    variant='caption'
+                    color='text.secondary'
+                    sx={{ overflowWrap: 'anywhere' }}
+                  >
+                    {entry.sourceDetail}
+                  </Typography>
+                ) : null}
+              </Stack>
+
+              <Box
+                sx={{
+                  borderRadius: 2,
+                  px: 1.25,
+                  py: 1,
+                  border: 1,
+                  borderColor: (theme) =>
+                    alpha(theme.palette.divider, theme.palette.mode === 'light' ? 0.9 : 0.65),
+                  bgcolor: (theme) =>
+                    theme.palette.mode === 'light'
+                      ? alpha(theme.palette.common.black, 0.018)
+                      : alpha(theme.palette.common.white, 0.03),
+                }}
+              >
+                <Typography
+                  variant='body2'
+                  sx={{
+                    color: 'text.primary',
+                    lineHeight: 1.65,
+                    whiteSpace: 'pre-wrap',
+                  }}
+                >
+                  {entry.excerpt}
+                </Typography>
+              </Box>
+            </Stack>
+          </Paper>
+        );
+      })}
     </Stack>
   );
 }
