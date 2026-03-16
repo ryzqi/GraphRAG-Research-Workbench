@@ -659,6 +659,7 @@ export function KbChatPage() {
           nodeTimeline: msg.nodeTimeline,
           nodeIoEvents: msg.nodeIoEvents,
           answerRevealReady: msg.answerRevealReady,
+          traceWarnings: msg.traceWarnings,
         };
         const nextTraceState = reduceKbChatTraceState(
           traceState,
@@ -680,6 +681,7 @@ export function KbChatPage() {
           pipelineSteps: kbChatTraceSelectors.pipelineSteps(nextTraceState),
           nodeTimeline: kbChatTraceSelectors.nodeTimeline(nextTraceState),
           nodeIoEvents: kbChatTraceSelectors.nodeIoEvents(nextTraceState),
+          traceWarnings: kbChatTraceSelectors.warnings(nextTraceState),
           answerRevealReady,
           content: answerRevealReady ? msg.stagedContent ?? msg.content : msg.content,
         };
@@ -699,6 +701,7 @@ export function KbChatPage() {
           nodeTimeline: msg.nodeTimeline,
           nodeIoEvents: msg.nodeIoEvents,
           answerRevealReady: msg.answerRevealReady,
+          traceWarnings: msg.traceWarnings,
         };
         const nextTraceState = reduceKbChatTraceState(
           traceState,
@@ -717,6 +720,7 @@ export function KbChatPage() {
           pipelineSteps: kbChatTraceSelectors.pipelineSteps(nextTraceState),
           nodeTimeline: kbChatTraceSelectors.nodeTimeline(nextTraceState),
           nodeIoEvents: kbChatTraceSelectors.nodeIoEvents(nextTraceState),
+          traceWarnings: kbChatTraceSelectors.warnings(nextTraceState),
           answerRevealReady: nextTraceState.answerRevealReady ?? msg.answerRevealReady,
         };
       });
@@ -735,6 +739,7 @@ const applyUiEvent = useCallback(
           nodeTimeline: msg.nodeTimeline,
           nodeIoEvents: msg.nodeIoEvents,
           answerRevealReady: msg.answerRevealReady,
+          traceWarnings: msg.traceWarnings,
         };
         const nextTraceState = reduceKbChatTraceState(
           traceState,
@@ -761,6 +766,7 @@ const applyUiEvent = useCallback(
           pipelineSteps: kbChatTraceSelectors.pipelineSteps(nextTraceState),
           nodeTimeline: kbChatTraceSelectors.nodeTimeline(nextTraceState),
           nodeIoEvents: kbChatTraceSelectors.nodeIoEvents(nextTraceState),
+          traceWarnings: kbChatTraceSelectors.warnings(nextTraceState),
           answerRevealReady: nextTraceState.answerRevealReady ?? msg.answerRevealReady,
           content: shouldUseCandidateFallback
             ? nextRunState?.last_good_answer ?? msg.content
@@ -771,7 +777,7 @@ const applyUiEvent = useCallback(
     [finalizeNodeIds, graphSchema, updateMessage]
   );
 
-const applyNodeIoEvent = useCallback(
+  const applyNodeIoEvent = useCallback(
     (messageId: string, raw: Record<string, unknown>) => {
       const totalNodes = resolveGraphTotalNodes(graphSchema);
       updateMessage(messageId, (msg) => {
@@ -782,6 +788,7 @@ const applyNodeIoEvent = useCallback(
           nodeTimeline: msg.nodeTimeline,
           nodeIoEvents: msg.nodeIoEvents,
           answerRevealReady: msg.answerRevealReady,
+          traceWarnings: msg.traceWarnings,
         };
         const nextTraceState = reduceKbChatTraceState(
           traceState,
@@ -805,10 +812,65 @@ const applyNodeIoEvent = useCallback(
           pipelineSteps: kbChatTraceSelectors.pipelineSteps(nextTraceState),
           nodeIoEvents: kbChatTraceSelectors.nodeIoEvents(nextTraceState),
           nodeTimeline: kbChatTraceSelectors.nodeTimeline(nextTraceState),
+          traceWarnings: kbChatTraceSelectors.warnings(nextTraceState),
         };
       });
     },
     [finalizeNodeIds, graphSchema, updateMessage]
+  );
+
+  const applyCustomEvent = useCallback(
+    (messageId: string, raw: Record<string, unknown>) => {
+      const totalNodes = resolveGraphTotalNodes(graphSchema);
+      updateMessage(messageId, (msg) => {
+        const traceState: KbChatTraceStoreState = {
+          runId: msg.runId,
+          runState: msg.runState,
+          pipelineSteps: msg.pipelineSteps,
+          nodeTimeline: msg.nodeTimeline,
+          nodeIoEvents: msg.nodeIoEvents,
+          answerRevealReady: msg.answerRevealReady,
+          traceWarnings: msg.traceWarnings,
+        };
+        const nextTraceState = reduceKbChatTraceState(
+          traceState,
+          { type: 'custom', raw },
+          {
+            totalNodes,
+            resolveNodeLabel: (nodeId) => resolveKbNodeLabel(nodeId, graphSchema),
+            shouldRevealAnswerOnNodeEvent: (event) =>
+              shouldRevealAnswerOnNodeEvent(event, finalizeNodeIds),
+          }
+        );
+        return {
+          ...msg,
+          runId: nextTraceState.runId ?? msg.runId,
+          runState: kbChatTraceSelectors.runState(nextTraceState),
+          pipelineSteps: kbChatTraceSelectors.pipelineSteps(nextTraceState),
+          nodeTimeline: kbChatTraceSelectors.nodeTimeline(nextTraceState),
+          nodeIoEvents: kbChatTraceSelectors.nodeIoEvents(nextTraceState),
+          traceWarnings: kbChatTraceSelectors.warnings(nextTraceState),
+          answerRevealReady: nextTraceState.answerRevealReady ?? msg.answerRevealReady,
+        };
+      });
+    },
+    [finalizeNodeIds, graphSchema, updateMessage]
+  );
+
+  const applyHeartbeatEvent = useCallback(
+    (messageId: string, raw: Record<string, unknown>) => {
+      updateMessage(messageId, (msg) => ({
+        ...msg,
+        runState:
+          msg.runState && typeof raw.ts === 'string'
+            ? {
+                ...msg.runState,
+                ts: raw.ts,
+              }
+            : msg.runState,
+      }));
+    },
+    [updateMessage]
   );
 
   const markClarificationPending = useCallback(
@@ -855,6 +917,7 @@ const applyNodeIoEvent = useCallback(
           cacheMeta: response.cache ?? null,
           pipelineSteps: nextSteps,
           runState: nextRunState,
+          traceWarnings: msg.traceWarnings ?? [],
           isStreaming: false,
         };
       });
@@ -932,6 +995,7 @@ const applyNodeIoEvent = useCallback(
         pipelineSteps: [],
         nodeTimeline: [],
         nodeIoEvents: [],
+        traceWarnings: [],
         isStreaming: true,
         thinkStartTime: Date.now(),
       },
@@ -1011,6 +1075,12 @@ const applyNodeIoEvent = useCallback(
         }
         if (event.event === 'node_io') {
           applyNodeIoEvent(assistantId, parseSseJson<Record<string, unknown>>(event.data));
+        }
+        if (event.event === 'custom') {
+          applyCustomEvent(assistantId, parseSseJson<Record<string, unknown>>(event.data));
+        }
+        if (event.event === 'heartbeat') {
+          applyHeartbeatEvent(assistantId, parseSseJson<Record<string, unknown>>(event.data));
         }
         if (event.event === 'stream_end') {
           const data = parseSseJson<Record<string, unknown>>(event.data);
@@ -1170,6 +1240,8 @@ const applyNodeIoEvent = useCallback(
     applyStateEvent,
     applyUiEvent,
     applyNodeIoEvent,
+    applyCustomEvent,
+    applyHeartbeatEvent,
     markClarificationPending,
   ]);
 
@@ -1198,6 +1270,7 @@ const applyNodeIoEvent = useCallback(
           think: '',
           pendingClarification: undefined,
           pipelineSteps: nextSteps,
+          traceWarnings: [],
           nodeTimeline: startedStep
             ? appendTimelineEvent(
                 msg.nodeTimeline,
@@ -1270,6 +1343,12 @@ const applyNodeIoEvent = useCallback(
           }
           if (event.event === 'node_io') {
             applyNodeIoEvent(messageId, parseSseJson<Record<string, unknown>>(event.data));
+          }
+          if (event.event === 'custom') {
+            applyCustomEvent(messageId, parseSseJson<Record<string, unknown>>(event.data));
+          }
+          if (event.event === 'heartbeat') {
+            applyHeartbeatEvent(messageId, parseSseJson<Record<string, unknown>>(event.data));
           }
           if (event.event === 'stream_end') {
             const data = parseSseJson<Record<string, unknown>>(event.data);
@@ -1429,6 +1508,8 @@ const applyNodeIoEvent = useCallback(
       applyStateEvent,
       applyUiEvent,
       applyNodeIoEvent,
+      applyCustomEvent,
+      applyHeartbeatEvent,
       markClarificationPending,
     ]
   );
@@ -1788,6 +1869,7 @@ const applyNodeIoEvent = useCallback(
                 runState={activeAssistantMessage?.runState}
                 pipelineSteps={activeAssistantMessage?.pipelineSteps}
                 nodeIoEvents={activeAssistantMessage?.nodeIoEvents}
+                traceWarnings={activeAssistantMessage?.traceWarnings}
               />
             </Box>
           )}
@@ -1818,6 +1900,7 @@ const applyNodeIoEvent = useCallback(
           runState={activeAssistantMessage?.runState}
           pipelineSteps={activeAssistantMessage?.pipelineSteps}
           nodeIoEvents={activeAssistantMessage?.nodeIoEvents}
+          traceWarnings={activeAssistantMessage?.traceWarnings}
         />
       </Drawer>
 

@@ -19,19 +19,6 @@ def make_send_task(node: str, payload: dict[str, Any], state: dict[str, Any]) ->
         branch_state["retrieval_budget"] = retrieval_budget
     return Send(node, branch_state)
 
-
-def sort_by_retrieval_then_priority(runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Order branch runs by evidence quality then configured priority."""
-
-    return sorted(
-        runs,
-        key=lambda item: (
-            -int(item.get("retrieval_count") or 0),
-            int(item.get("priority") or 99),
-        ),
-    )
-
-
 def sort_by_priority_then_index(runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Order fan-out runs deterministically for stable merge output."""
 

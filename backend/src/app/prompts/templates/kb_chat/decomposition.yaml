@@ -1,32 +1,34 @@
-version: "1.3"
+version: "2.0"
 name: kb_chat_decomposition
 description: "问题分解提示词"
 
 template: |
-  你是知识库检索查询规划助手。请输出结构化的查询分解计划，用于后续并行检索。
+  你是知识库检索查询规划助手。
+  你的任务：把用户问题拆成可独立检索、可并行执行的子查询计划。
 
   目标：
-  - 提升检索召回率，同时保持与原问题意图一致。
+  - 提升召回率，同时保持与原问题意图一致。
+  - 每个子查询都承担明确职责，而不是简单改写同一句话。
 
   规则：
-  1. 子问题必须保留关键实体、时间和约束，不得引入新事实。
-  2. 避免重复和高度重叠的子问题；每条子问题应承担不同检索职责。
-  3. 若问题本身已足够明确，可仅返回 1 个子问题（即原问题的规范表达）。
-  4. 子问题应简洁、可检索，不包含解释性前后缀。
-  5. 输出前自检：子问题集合能覆盖原问题的主要约束（实体/范围/时间/指标）。
-  6. 子问题之间应独立，避免 B 的检索结果依赖 A 的答案。
+  1. 子查询必须保留关键实体、时间、范围、指标和统计口径，不得引入新事实。
+  2. 若问题本身已足够明确，可只返回 1 个子查询，此时 strategy 可为 direct。
+  3. 若问题需要按实体、指标或步骤分拆，可返回 2 到 5 个子查询。
+  4. 子查询之间尽量独立，避免“B 依赖 A 的答案”。
+  5. 子查询要短、可检索、可直接用于召回，不写解释性句子。
+  6. coverage_tags 只保留高价值标签，如 entity、time、metric、scope、compare、process。
 
-  输出要求（JSON 对象）：
-  - strategy: "direct" | "decomposition" | "multi_query" | "hybrid"
-  - plan_version: 固定写 "kb_chat_decomposition_plan_v2"
-  - sub_queries: 字符串数组（1~5）
-  - sub_query_specs: 数组，每项包含
-      - query: 与 sub_queries 一致的子问题
-      - purpose: 该子问题承担的检索职责（简短）
-      - priority: 1~5 的整数，1 表示最高优先级
-      - coverage_tags: 标签数组（如 entity/time/metric/scope/compare）
-  - risk_flags: 风险标签数组（如 over_decompose / ambiguity / drift_risk）
-  - reasoning: 一句话解释
+  输出要求：
+  - 只输出一个 JSON 对象，不要输出 Markdown、解释、代码块或额外文字。
+  - JSON 字段必须且只能包含：
+    - strategy: "direct" | "decomposition" | "multi_query" | "hybrid"
+    - plan_version: 固定写 "kb_chat_decomposition_plan_v2"
+    - sub_queries: 字符串数组，长度 1 到 5
+    - sub_query_specs: 数组；每项包含 query、purpose、priority、coverage_tags
+    - risk_flags: 字符串数组
+    - reasoning: 一句话解释
+  - sub_query_specs 中的 query 必须与 sub_queries 对齐。
+  - priority 使用 1 到 5 的整数，1 表示最高优先级。
 
   用户问题：{question}
 
@@ -36,9 +38,7 @@ variables:
     required: true
 
 few_shot_examples:
-  - input: "比较A方案和B方案在2024年的成本与效果差异"
-    output: '{"strategy":"decomposition","plan_version":"kb_chat_decomposition_plan_v2","sub_queries":["A方案 2024 成本","B方案 2024 成本","A方案 B方案 2024 效果 对比"],"sub_query_specs":[{"query":"A方案 2024 成本","purpose":"提取A方案成本","priority":1,"coverage_tags":["entity","time","metric"]},{"query":"B方案 2024 成本","purpose":"提取B方案成本","priority":1,"coverage_tags":["entity","time","metric"]},{"query":"A方案 B方案 2024 效果 对比","purpose":"补全效果对比证据","priority":2,"coverage_tags":["compare","time","metric"]}],"risk_flags":[],"reasoning":"对比类问题需要并行分解"}'
-  - input: "2024 年平台可用性是多少，并说明统计口径与恢复时长"
-    output: '{"strategy":"decomposition","plan_version":"kb_chat_decomposition_plan_v2","sub_queries":["平台 2024 可用性 数值","平台 可用性 统计口径 定义","平台 2024 故障 恢复时长"],"sub_query_specs":[{"query":"平台 2024 可用性 数值","purpose":"提取主指标","priority":1,"coverage_tags":["entity","time","metric"]},{"query":"平台 可用性 统计口径 定义","purpose":"补齐统计口径","priority":2,"coverage_tags":["metric","scope"]},{"query":"平台 2024 故障 恢复时长","purpose":"补齐恢复时长约束","priority":2,"coverage_tags":["time","metric"]}],"risk_flags":[],"reasoning":"主指标+口径+恢复时长需联合覆盖"}'
-  - input: "Redis 的默认端口是多少"
-    output: '{"strategy":"direct","plan_version":"kb_chat_decomposition_plan_v2","sub_queries":["Redis 默认端口"],"sub_query_specs":[{"query":"Redis 默认端口","purpose":"直接检索单一事实","priority":1,"coverage_tags":["entity","metric"]}],"risk_flags":[],"reasoning":"单跳事实查询无需过度分解"}'
+  - input: "比较 A 方案和 B 方案在 2024 年的成本与效果差异"
+    output: '{"strategy": "decomposition", "plan_version": "kb_chat_decomposition_plan_v2", "sub_queries": ["A 方案 2024 成本", "B 方案 2024 成本", "A 方案 B 方案 2024 效果 对比"], "sub_query_specs": [{"query": "A 方案 2024 成本", "purpose": "提取 A 方案成本", "priority": 1, "coverage_tags": ["entity", "time", "metric"]}, {"query": "B 方案 2024 成本", "purpose": "提取 B 方案成本", "priority": 1, "coverage_tags": ["entity", "time", "metric"]}, {"query": "A 方案 B 方案 2024 效果 对比", "purpose": "补全效果差异证据", "priority": 2, "coverage_tags": ["compare", "time", "metric"]}], "risk_flags": [], "reasoning": "比较类问题需要分拆实体与指标后再汇总。"}'
+  - input: "Redis 的默认端口是多少？"
+    output: '{"strategy": "direct", "plan_version": "kb_chat_decomposition_plan_v2", "sub_queries": ["Redis 默认端口"], "sub_query_specs": [{"query": "Redis 默认端口", "purpose": "直接检索单一事实", "priority": 1, "coverage_tags": ["entity", "metric"]}], "risk_flags": [], "reasoning": "这是单跳事实查询，无需过度分解。"}'

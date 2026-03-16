@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import {
+  Alert,
   Button,
   Box,
   Chip,
@@ -34,6 +35,7 @@ interface KbChatFlowPanelProps {
   runState?: ChatRunStateEvent;
   pipelineSteps?: PipelineStep[];
   nodeIoEvents?: ChatNodeIoEvent[];
+  traceWarnings?: string[];
 }
 
 function statusLabel(status: TraceStageStatus): string {
@@ -254,7 +256,7 @@ function boolToZh(value: boolean): string {
 
 function formatNodePathSegment(nodeId: string): string {
   const label = resolveKbNodeLabel(nodeId, null);
-  return label && label !== nodeId ? `${label}（${nodeId}）` : nodeId;
+  return label && label !== nodeId ? label : nodeId;
 }
 
 export function buildNodePathDetailItem(
@@ -365,6 +367,15 @@ function getStageSummary(snapshot: Record<string, unknown>, nodeId: string): Rec
 
 function getReflection(snapshot: Record<string, unknown>): Record<string, unknown> {
   return asRecord(snapshot.reflection) ?? {};
+}
+
+function getRoutingDecision(
+  snapshot: Record<string, unknown>,
+  phase: string
+): Record<string, unknown> {
+  const routing = asRecord(snapshot.routing_decisions);
+  if (!routing) return {};
+  return asRecord(routing[phase]) ?? {};
 }
 
 function getRetrievalMetrics(snapshot: Record<string, unknown>): Record<string, unknown> {
@@ -582,7 +593,7 @@ function buildFallbackInputItems(
   return items;
 }
 
-function buildFallbackOutputItems(
+export function buildFallbackOutputItems(
   nodeId: string,
   event: ChatNodeIoEvent | null | undefined
 ): NodeDetailItem[] {
@@ -594,9 +605,11 @@ function buildFallbackOutputItems(
 
   if (snapshot) {
     if (nodeId === 'preprocess_subgraph') {
-      pushDisplayItem(items, { key: 'preprocess_next', label: '子图出口', value: asNonEmptyText(snapshot.preprocess_next) });
+      const routing = getRoutingDecision(snapshot, 'preprocess');
+      pushDisplayItem(items, { key: 'next_node', label: '下一跳', value: asNonEmptyText(routing.next_node) });
       pushDisplayItem(items, { key: 'normalized_query', label: '规范化结果', value: pickText(snapshot, 'normalized_query') });
-      pushDisplayItem(items, { key: 'action', label: '反思动作', value: asNonEmptyText(reflection.action) });
+      pushDisplayItem(items, { key: 'action', label: '后续动作', value: asNonEmptyText(routing.action) });
+      pushDisplayItem(items, { key: 'reason', label: '判定原因', value: asNonEmptyText(routing.reason) });
     } else if (nodeId === 'merge_context') {
       pushDisplayItem(items, {
         key: 'current_question',
@@ -802,10 +815,12 @@ function buildFallbackOutputItems(
       pushDisplayItem(items, { key: 'output_tokens', label: '压缩后 token', value: compressionStats.output_tokens });
       pushDisplayItem(items, { key: 'truncated', label: '是否截断', value: compressionStats.truncated });
     } else if (nodeId === 'evidence_gate_subgraph') {
+      const routing = getRoutingDecision(snapshot, 'doc_gate');
       const routeSummary = getStageSummary(snapshot, 'doc_gate_route');
-      pushDisplayItem(items, { key: 'action', label: '后续动作', value: asNonEmptyText(routeSummary.action) });
-      pushDisplayItem(items, { key: 'reason', label: '判定原因', value: asNonEmptyText(routeSummary.reason) });
-      pushDisplayItem(items, { key: 'score', label: '门控得分', value: routeSummary.score });
+      pushDisplayItem(items, { key: 'next_node', label: '下一跳', value: asNonEmptyText(routing.next_node) });
+      pushDisplayItem(items, { key: 'action', label: '后续动作', value: asNonEmptyText(routing.action) });
+      pushDisplayItem(items, { key: 'reason', label: '判定原因', value: asNonEmptyText(routing.reason) });
+      pushDisplayItem(items, { key: 'score', label: '门控得分', value: routing.score ?? routeSummary.score });
     } else if (nodeId === 'doc_gate_dispatch') {
       pushDisplayItem(items, { key: 'doc_gate_round', label: '门控轮次', value: snapshot.doc_gate_round });
       pushDisplayItem(items, { key: 'gates', label: '派发门控', value: ['sufficiency', 'answerability', 'conflict'] });
@@ -822,9 +837,11 @@ function buildFallbackOutputItems(
       pushDisplayItem(items, { key: 'score', label: '融合得分', value: summary.score });
       pushDisplayItem(items, { key: 'missing_gates', label: '缺失门控', value: Array.isArray(summary.missing_gates) ? summary.missing_gates : null });
     } else if (nodeId === 'doc_gate_route') {
+      const routing = getRoutingDecision(snapshot, 'doc_gate');
       pushDisplayItem(items, { key: 'passed', label: '相关性是否通过', value: summary.passed });
-      pushDisplayItem(items, { key: 'action', label: '后续动作', value: reflection.action });
-      pushDisplayItem(items, { key: 'reason', label: '判定原因', value: summary.reason });
+      pushDisplayItem(items, { key: 'next_node', label: '下一跳', value: asNonEmptyText(routing.next_node) });
+      pushDisplayItem(items, { key: 'action', label: '后续动作', value: asNonEmptyText(routing.action) });
+      pushDisplayItem(items, { key: 'reason', label: '判定原因', value: asNonEmptyText(routing.reason) });
       pushDisplayItem(items, { key: 'decision_source', label: '判定来源', value: summary.decision_source });
       pushDisplayItem(items, { key: 'confidence', label: '判定置信度', value: summary.confidence });
       pushDisplayItem(items, { key: 'evidence_score', label: '证据评分', value: summary.evidence_score });
@@ -836,8 +853,10 @@ function buildFallbackOutputItems(
       pushDisplayItem(items, { key: 'rewritten', label: '是否变化', value: summary.rewritten });
       pushDisplayItem(items, { key: 'query_items', label: '改写后查询项', value: formatQueryItems(snapshot.query_items) });
     } else if (nodeId === 'answer_subgraph' || nodeId === 'answer_commit') {
-      pushDisplayItem(items, { key: 'next_step', label: '下一步', value: summary.next_step });
-      pushDisplayItem(items, { key: 'reason', label: '判定原因', value: summary.reason ?? reflection.reason });
+      const routing = getRoutingDecision(snapshot, 'answer_subgraph');
+      pushDisplayItem(items, { key: 'next_node', label: '下一跳', value: asNonEmptyText(routing.next_node) });
+      pushDisplayItem(items, { key: 'action', label: '后续动作', value: asNonEmptyText(routing.action) });
+      pushDisplayItem(items, { key: 'reason', label: '判定原因', value: asNonEmptyText(routing.reason) });
       pushDisplayItem(items, { key: 'degrade_reason', label: '降级原因', value: summary.degrade_reason });
       pushDisplayItem(items, { key: 'repair_attempts', label: '修复次数', value: summary.repair_attempts });
       pushDisplayItem(items, { key: 'best_answer', label: '候选答案', value: pickText(snapshot, 'best_answer', 'draft_answer') });
@@ -1010,6 +1029,7 @@ export function KbChatFlowPanel({
   runState,
   pipelineSteps,
   nodeIoEvents,
+  traceWarnings,
 }: KbChatFlowPanelProps) {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const stageGroups = useMemo(
@@ -1089,6 +1109,12 @@ export function KbChatFlowPanel({
           节点执行过程
         </Typography>
       </Box>
+
+      {Array.isArray(traceWarnings) && traceWarnings.length > 0 ? (
+        <Alert severity='warning' variant='outlined' sx={{ mb: 1.25 }}>
+          {traceWarnings.join('；')}
+        </Alert>
+      ) : null}
 
       <Stack
         spacing={1}

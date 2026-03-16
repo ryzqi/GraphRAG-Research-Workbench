@@ -7,7 +7,7 @@ from typing import Any, TypedDict
 
 from langgraph.graph import END, StateGraph
 from langgraph.runtime import Runtime
-from langgraph.types import Command
+from langgraph.types import Command, RetryPolicy
 
 from app.agents.kb_chat_agentic.preprocess import (
     ambiguity_check,
@@ -22,11 +22,15 @@ from app.agents.kb_chat_agentic.preprocess import (
     prepare_messages,
 )
 from app.agents.kb_chat_trace_nodes import (
-    KB_CHAT_NODE_METADATA,
+    extend_kb_chat_node_metadata,
     wrap_kb_chat_node_with_io,
 )
 from app.agents.kb_chat_agentic_state import (
+    ComplexityClassifyInput,
+    KbChatEmptyState,
     KbChatInternalState,
+    PrepareMessagesInput,
+    PreprocessRoutingInput,
     resolve_routing_decision,
 )
 from app.core.settings import Settings
@@ -38,13 +42,6 @@ class KbChatGraphContext(TypedDict, total=False):
     kb_ids: list[str]
     runtime_config: dict[str, Any]
     message_budget: dict[str, Any]
-
-
-class _SwitchDecision(TypedDict):
-    enabled: bool
-    goto: str
-    reason: str
-    source: str
 
 
 def _merge_stage_summary(
@@ -64,7 +61,7 @@ def _merge_stage_summary(
 
 
 async def _complexity_classify(
-    state: dict[str, Any],
+    state: ComplexityClassifyInput,
     runtime: Runtime[KbChatGraphContext],
     settings: Settings,
 ) -> dict[str, Any]:
@@ -80,6 +77,10 @@ async def _complexity_classify(
     else:
         complexity_level = "simple"
         adaptive_route = "simple_path"
+    next_node = _resolve_complexity_next_node(
+        adaptive_route=adaptive_route,
+        settings=settings,
+    )
     stage_summaries = _merge_stage_summary(
         state,
         updates,
@@ -87,6 +88,7 @@ async def _complexity_classify(
         {
             "complexity_level": complexity_level,
             "adaptive_route": adaptive_route,
+            "next_node": next_node,
         },
     )
     return {
@@ -97,225 +99,76 @@ async def _complexity_classify(
     }
 
 
-def _route_after_ambiguity(state: dict[str, Any]) -> str:
+def _route_after_ambiguity(state: PreprocessRoutingInput) -> str:
     decision = resolve_routing_decision(state, "preprocess")
     if str(decision.get("next_node") or "").strip().lower() == "force_exit":
         return "preprocess_exit"
     return "normalize_rewrite"
 
 
-def _route_after_adaptive_routing(state: dict[str, Any]) -> str:
+def _resolve_complexity_next_node(
+    *,
+    adaptive_route: str | None,
+    settings: Settings,
+) -> str:
+    if adaptive_route == "complex_path":
+        if bool(getattr(settings, "kb_chat_decomposition_enabled", True)):
+            return "decomposition"
+        if bool(getattr(settings, "kb_chat_multi_query_enabled", True)):
+            return "generate_variants"
+        return "entity_expand"
+    if adaptive_route == "moderate_path":
+        if bool(getattr(settings, "kb_chat_multi_query_mod_enabled", True)):
+            return "generate_variants_mod"
+        return "prepare_messages"
+    return "prepare_messages"
+
+
+def _route_after_complexity_classify(
+    state: dict[str, Any],
+    settings: Settings,
+) -> str:
     route = state.get("adaptive_route")
-    if isinstance(route, str) and route in {
-        "simple_path",
-        "moderate_path",
-        "complex_path",
-    }:
-        return route
-    level = state.get("complexity_level")
-    if level == "complex":
-        return "complex_path"
-    if level == "moderate":
-        return "moderate_path"
-    return "simple_path"
+    if not isinstance(route, str):
+        level = state.get("complexity_level")
+        if level == "complex":
+            route = "complex_path"
+        elif level == "moderate":
+            route = "moderate_path"
+        else:
+            route = "simple_path"
+    return _resolve_complexity_next_node(adaptive_route=route, settings=settings)
 
 
-def _adaptive_routing_node(state: dict[str, Any]) -> dict[str, Any]:
-    route = _route_after_adaptive_routing(state)
-    stage_summaries = state.get("stage_summaries")
-    if not isinstance(stage_summaries, dict):
-        stage_summaries = {}
-    return {
-        "stage_summaries": {
-            **stage_summaries,
-            "adaptive_routing": {
-                "adaptive_route": route,
-                "complexity_level": state.get("complexity_level"),
-            },
-        }
-    }
-
-
-def _resolve_switch_decision(
-    state: dict[str, Any],
+def _route_after_decomposition(
+    _: dict[str, Any],
     settings: Settings,
-    *,
-    settings_attr: str,
-    enabled_goto: str,
-    disabled_goto: str,
-) -> _SwitchDecision:
+) -> str:
+    if bool(getattr(settings, "kb_chat_multi_query_enabled", True)):
+        return "generate_variants"
+    return "entity_expand"
+
+
+def _route_to_ambiguity_check(state: KbChatEmptyState, settings: Settings) -> str:
     _ = state
-    enabled = bool(getattr(settings, settings_attr, True))
-    source = f"settings.{settings_attr}"
-    reason = "settings_default"
-    return {
-        "enabled": enabled,
-        "goto": enabled_goto if enabled else disabled_goto,
-        "reason": reason,
-        "source": source,
-    }
-
-
-def _switch_node(
-    state: dict[str, Any],
-    settings: Settings,
-    *,
-    summary_key: str,
-    settings_attr: str,
-    enabled_goto: str,
-    disabled_goto: str,
-) -> dict[str, Any]:
-    decision = _resolve_switch_decision(
-        state,
-        settings,
-        settings_attr=settings_attr,
-        enabled_goto=enabled_goto,
-        disabled_goto=disabled_goto,
-    )
-    return {
-        "stage_summaries": _merge_stage_summary(
-            state,
-            {},
-            summary_key,
-            dict(decision),
-        )
-    }
-
-
-def _ambiguity_check_enabled_node(
-    state: dict[str, Any],
-    settings: Settings,
-) -> dict[str, Any]:
-    return _switch_node(
-        state,
-        settings,
-        summary_key="AMBIGUITY_CHECK_ENABLED",
-        settings_attr="kb_chat_ambiguity_check_enabled",
-        enabled_goto="ambiguity_check",
-        disabled_goto="normalize_rewrite",
+    return (
+        "ambiguity_check"
+        if bool(getattr(settings, "kb_chat_ambiguity_check_enabled", True))
+        else "normalize_rewrite"
     )
 
 
-def _simple_path(_: dict[str, Any]) -> Command[str]:
-    return Command(goto="prepare_messages")
-
-
-def _moderate_path(_: dict[str, Any]) -> Command[str]:
-    return Command(goto="ENABLE_MULTI_QUERY_MOD")
-
-
-def _complex_path(_: dict[str, Any]) -> Command[str]:
-    return Command(goto="ENABLE_DECOMPOSITION")
-
-
-def _route_to_ambiguity_check(state: dict[str, Any], settings: Settings) -> str:
-    return _resolve_switch_decision(
-        state,
-        settings,
-        settings_attr="kb_chat_ambiguity_check_enabled",
-        enabled_goto="ambiguity_check",
-        disabled_goto="normalize_rewrite",
-    )["goto"]
-
-
-def _multi_query_mod_enabled_node(
-    state: dict[str, Any],
-    settings: Settings,
-) -> dict[str, Any]:
-    return _switch_node(
-        state,
-        settings,
-        summary_key="ENABLE_MULTI_QUERY_MOD",
-        settings_attr="kb_chat_multi_query_mod_enabled",
-        enabled_goto="generate_variants_mod",
-        disabled_goto="prepare_messages",
+def _route_to_hyde(state: KbChatEmptyState, settings: Settings) -> str:
+    _ = state
+    return (
+        "hyde"
+        if bool(getattr(settings, "kb_chat_hyde_enabled", True))
+        else "prepare_messages"
     )
-
-
-def _route_to_generate_variants_mod(state: dict[str, Any], settings: Settings) -> str:
-    return _resolve_switch_decision(
-        state,
-        settings,
-        settings_attr="kb_chat_multi_query_mod_enabled",
-        enabled_goto="generate_variants_mod",
-        disabled_goto="prepare_messages",
-    )["goto"]
-
-
-def _decomposition_enabled_node(
-    state: dict[str, Any],
-    settings: Settings,
-) -> dict[str, Any]:
-    return _switch_node(
-        state,
-        settings,
-        summary_key="ENABLE_DECOMPOSITION",
-        settings_attr="kb_chat_decomposition_enabled",
-        enabled_goto="decomposition",
-        disabled_goto="ENABLE_MULTI_QUERY",
-    )
-
-
-def _route_to_decomposition(state: dict[str, Any], settings: Settings) -> str:
-    return _resolve_switch_decision(
-        state,
-        settings,
-        settings_attr="kb_chat_decomposition_enabled",
-        enabled_goto="decomposition",
-        disabled_goto="ENABLE_MULTI_QUERY",
-    )["goto"]
-
-
-def _multi_query_enabled_node(
-    state: dict[str, Any],
-    settings: Settings,
-) -> dict[str, Any]:
-    return _switch_node(
-        state,
-        settings,
-        summary_key="ENABLE_MULTI_QUERY",
-        settings_attr="kb_chat_multi_query_enabled",
-        enabled_goto="generate_variants",
-        disabled_goto="entity_expand",
-    )
-
-
-def _route_to_generate_variants(state: dict[str, Any], settings: Settings) -> str:
-    return _resolve_switch_decision(
-        state,
-        settings,
-        settings_attr="kb_chat_multi_query_enabled",
-        enabled_goto="generate_variants",
-        disabled_goto="entity_expand",
-    )["goto"]
-
-
-def _hyde_enabled_node(
-    state: dict[str, Any],
-    settings: Settings,
-) -> dict[str, Any]:
-    return _switch_node(
-        state,
-        settings,
-        summary_key="ENABLE_HYDE",
-        settings_attr="kb_chat_hyde_enabled",
-        enabled_goto="hyde",
-        disabled_goto="prepare_messages",
-    )
-
-
-def _route_to_hyde(state: dict[str, Any], settings: Settings) -> str:
-    return _resolve_switch_decision(
-        state,
-        settings,
-        settings_attr="kb_chat_hyde_enabled",
-        enabled_goto="hyde",
-        disabled_goto="prepare_messages",
-    )["goto"]
 
 
 async def _prepare_messages_terminal(
-    state: dict[str, Any],
+    state: PrepareMessagesInput,
     runtime: Runtime[KbChatGraphContext],
     settings: Settings,
 ) -> dict[str, Any]:
@@ -326,7 +179,33 @@ async def _prepare_messages_terminal(
     return result if isinstance(result, dict) else {}
 
 
-def _preprocess_exit(_: dict[str, Any]) -> dict[str, Any]:
+async def _entity_expand_terminal(
+    state: dict[str, Any],
+    runtime: Runtime[KbChatGraphContext],
+    settings: Settings,
+) -> dict[str, Any]:
+    result = await entity_expand(state, runtime=runtime, settings=settings)
+    if isinstance(result, Command):
+        updates = result.update if isinstance(result.update, dict) else {}
+    else:
+        updates = result if isinstance(result, dict) else {}
+    next_node = _route_to_hyde(state, settings)
+    stage_summaries = _merge_stage_summary(
+        state,
+        updates,
+        "entity_expand",
+        {
+            "next_node": next_node,
+            "hyde_enabled": next_node == "hyde",
+        },
+    )
+    return {
+        **updates,
+        "stage_summaries": stage_summaries,
+    }
+
+
+def _preprocess_exit(_: KbChatEmptyState) -> dict[str, Any]:
     return {}
 
 
@@ -337,53 +216,104 @@ def build_preprocess_subgraph(*, settings: Settings):
         state_schema=KbChatInternalState,
         context_schema=KbChatGraphContext,
     )
-    def add_traced_node(node_id: str, node_callable: Any, **kwargs: Any) -> None:
+    llm_retry_policy = RetryPolicy(
+        max_attempts=max(2, int(getattr(settings, "kb_chat_max_generation_retries", 2)) + 1)
+    )
+
+    def add_traced_node(
+        node_id: str,
+        node_callable: Any,
+        *,
+        side_effect_type: str,
+        retry_policy: RetryPolicy | None = None,
+        retry_disabled_reason: str | None = None,
+        **kwargs: Any,
+    ) -> None:
+        metadata = extend_kb_chat_node_metadata(
+            node_id,
+            side_effect_type=side_effect_type,
+            retry_enabled=retry_policy is not None,
+        )
+        if retry_policy is None:
+            metadata["retry_disabled_reason"] = retry_disabled_reason or side_effect_type
         graph.add_node(
             node_id,
             wrap_kb_chat_node_with_io(node_id, node_callable),
-            metadata=KB_CHAT_NODE_METADATA[node_id],
+            metadata=metadata,
+            retry_policy=retry_policy,
             **kwargs,
         )
 
-    add_traced_node("merge_context", partial(merge_context, settings=settings))
-    add_traced_node("coref_rewrite", partial(coref_rewrite, settings=settings))
     add_traced_node(
-        "AMBIGUITY_CHECK_ENABLED",
-        partial(_ambiguity_check_enabled_node, settings=settings),
+        "merge_context",
+        partial(merge_context, settings=settings),
+        side_effect_type="context_read",
     )
-    add_traced_node("ambiguity_check", partial(ambiguity_check, settings=settings))
-    add_traced_node("normalize_rewrite", partial(normalize_rewrite, settings=settings))
-    add_traced_node("complexity_classify", partial(_complexity_classify, settings=settings))
-    add_traced_node("adaptive_routing", _adaptive_routing_node)
-    add_traced_node("simple_path", _simple_path)
-    add_traced_node("moderate_path", _moderate_path)
-    add_traced_node("complex_path", _complex_path)
     add_traced_node(
-        "ENABLE_MULTI_QUERY_MOD",
-        partial(_multi_query_mod_enabled_node, settings=settings),
+        "coref_rewrite",
+        partial(coref_rewrite, settings=settings),
+        side_effect_type="llm",
+        retry_policy=llm_retry_policy,
     )
-    add_traced_node("generate_variants_mod", partial(generate_variants, settings=settings))
     add_traced_node(
-        "ENABLE_DECOMPOSITION",
-        partial(_decomposition_enabled_node, settings=settings),
+        "ambiguity_check",
+        partial(ambiguity_check, settings=settings),
+        side_effect_type="llm",
+        retry_policy=llm_retry_policy,
     )
-    add_traced_node("decomposition", partial(decomposition, settings=settings))
     add_traced_node(
-        "ENABLE_MULTI_QUERY",
-        partial(_multi_query_enabled_node, settings=settings),
+        "normalize_rewrite",
+        partial(normalize_rewrite, settings=settings),
+        side_effect_type="llm",
+        retry_policy=llm_retry_policy,
     )
-    add_traced_node("generate_variants", partial(generate_variants, settings=settings))
-    add_traced_node("entity_expand", partial(entity_expand, settings=settings))
-    add_traced_node("ENABLE_HYDE", partial(_hyde_enabled_node, settings=settings))
-    add_traced_node("hyde", partial(hyde, settings=settings))
-    add_traced_node("prepare_messages", partial(_prepare_messages_terminal, settings=settings))
-    add_traced_node("preprocess_exit", _preprocess_exit)
+    add_traced_node(
+        "complexity_classify",
+        partial(_complexity_classify, settings=settings),
+        side_effect_type="llm",
+        retry_policy=llm_retry_policy,
+    )
+    add_traced_node(
+        "generate_variants_mod",
+        partial(generate_variants, settings=settings),
+        side_effect_type="llm",
+        retry_policy=llm_retry_policy,
+    )
+    add_traced_node(
+        "decomposition",
+        partial(decomposition, settings=settings),
+        side_effect_type="llm",
+        retry_policy=llm_retry_policy,
+    )
+    add_traced_node(
+        "generate_variants",
+        partial(generate_variants, settings=settings),
+        side_effect_type="llm",
+        retry_policy=llm_retry_policy,
+    )
+    add_traced_node(
+        "entity_expand",
+        partial(_entity_expand_terminal, settings=settings),
+        side_effect_type="llm",
+        retry_policy=llm_retry_policy,
+    )
+    add_traced_node(
+        "hyde",
+        partial(hyde, settings=settings),
+        side_effect_type="llm",
+        retry_policy=llm_retry_policy,
+    )
+    add_traced_node(
+        "prepare_messages",
+        partial(_prepare_messages_terminal, settings=settings),
+        side_effect_type="deterministic_rule",
+    )
+    add_traced_node("preprocess_exit", _preprocess_exit, side_effect_type="deterministic_rule")
 
     graph.set_entry_point("merge_context")
     graph.add_edge("merge_context", "coref_rewrite")
-    graph.add_edge("coref_rewrite", "AMBIGUITY_CHECK_ENABLED")
     graph.add_conditional_edges(
-        "AMBIGUITY_CHECK_ENABLED",
+        "coref_rewrite",
         lambda state: _route_to_ambiguity_check(state, settings),
         {
             "ambiguity_check": "ambiguity_check",
@@ -399,49 +329,29 @@ def build_preprocess_subgraph(*, settings: Settings):
         },
     )
     graph.add_edge("normalize_rewrite", "complexity_classify")
-    graph.add_edge("complexity_classify", "adaptive_routing")
     graph.add_conditional_edges(
-        "adaptive_routing",
-        _route_after_adaptive_routing,
+        "complexity_classify",
+        lambda state: _route_after_complexity_classify(state, settings),
         {
-            "simple_path": "simple_path",
-            "moderate_path": "moderate_path",
-            "complex_path": "complex_path",
-        },
-    )
-    graph.add_edge("simple_path", "prepare_messages")
-    graph.add_edge("moderate_path", "ENABLE_MULTI_QUERY_MOD")
-    graph.add_conditional_edges(
-        "ENABLE_MULTI_QUERY_MOD",
-        lambda state: _route_to_generate_variants_mod(state, settings),
-        {
-            "generate_variants_mod": "generate_variants_mod",
             "prepare_messages": "prepare_messages",
+            "generate_variants_mod": "generate_variants_mod",
+            "decomposition": "decomposition",
+            "generate_variants": "generate_variants",
+            "entity_expand": "entity_expand",
         },
     )
     graph.add_edge("generate_variants_mod", "prepare_messages")
-    graph.add_edge("complex_path", "ENABLE_DECOMPOSITION")
     graph.add_conditional_edges(
-        "ENABLE_DECOMPOSITION",
-        lambda state: _route_to_decomposition(state, settings),
-        {
-            "decomposition": "decomposition",
-            "ENABLE_MULTI_QUERY": "ENABLE_MULTI_QUERY",
-        },
-    )
-    graph.add_edge("decomposition", "ENABLE_MULTI_QUERY")
-    graph.add_conditional_edges(
-        "ENABLE_MULTI_QUERY",
-        lambda state: _route_to_generate_variants(state, settings),
+        "decomposition",
+        lambda state: _route_after_decomposition(state, settings),
         {
             "generate_variants": "generate_variants",
             "entity_expand": "entity_expand",
         },
     )
     graph.add_edge("generate_variants", "entity_expand")
-    graph.add_edge("entity_expand", "ENABLE_HYDE")
     graph.add_conditional_edges(
-        "ENABLE_HYDE",
+        "entity_expand",
         lambda state: _route_to_hyde(state, settings),
         {
             "hyde": "hyde",

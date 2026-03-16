@@ -28,7 +28,18 @@ from app.services.query_rewrite_service import (
     QueryRewriteService,
     build_query_items,
 )
-from app.agents.kb_chat_agentic_state import resolve_routing_decision
+from app.agents.kb_chat_agentic_state import (
+    AnswerRoutingDecisionInput,
+    ConfidenceCalibrateInput,
+    DispatchSubqueriesInput,
+    DocGateRoutingDecisionInput,
+    FinalizeAnswerInput,
+    MergeSubqueryContextInput,
+    RetrieveContextInput,
+    RetrieveSubqueryContextInput,
+    TransformQueryInput,
+    resolve_routing_decision,
+)
 
 from .budget import now_iso
 from .dispatch_fuse import (
@@ -198,7 +209,7 @@ def _dispatch_quality_score(item: dict[str, Any], *, spec: dict[str, Any]) -> fl
 
 
 def _build_subquery_dispatch_plan(
-    state: dict,
+    state: DispatchSubqueriesInput,
     settings: Settings,
     runtime: Runtime[Any] | None = None,
 ) -> tuple[list[Send] | str, dict[str, Any]]:
@@ -387,15 +398,6 @@ def _build_subquery_dispatch_plan(
         "rank_strategy": "quality_first",
     }
 
-
-def route_after_subquery_dispatch(
-    state: dict,
-    settings: Settings,
-) -> list[Send] | str:
-    route, _ = _build_subquery_dispatch_plan(state, settings)
-    return route
-
-
 def _resolve_retrieval_timeout_seconds(
     state: dict[str, Any],
     runtime: Runtime[Any] | None = None,
@@ -492,7 +494,7 @@ def _compute_retrieval_diagnostics(
 
 
 async def dispatch_subqueries(
-    state: dict,
+    state: DispatchSubqueriesInput,
     *,
     settings: Settings,
     runtime: Runtime[Any] | None = None,
@@ -520,8 +522,45 @@ async def dispatch_subqueries(
     )
 
 
+async def _invoke_kb_retrieve(
+    *,
+    state: dict[str, Any],
+    query: str,
+    settings: Settings,
+    kb_tool: BaseTool,
+    retrieval_round: int,
+    runtime: Runtime[Any] | None = None,
+    query_items: list[dict[str, Any]] | None = None,
+) -> tuple[str, str | None]:
+    kb_ids = _resolve_kb_ids(state, runtime)
+    retrieval_budget = _resolve_retrieval_budget_payload(
+        state,
+        settings,
+        runtime=runtime,
+    )
+    timeout_seconds = _resolve_retrieval_timeout_seconds(state, runtime=runtime)
+    try:
+        payload = build_retrieval_payload(
+            query=query,
+            kb_ids=kb_ids or [],
+            top_k=retrieval_top_k(state, settings, runtime=runtime),
+            retrieval_round=retrieval_round,
+            query_items=query_items,
+            per_query_top_k=retrieval_budget["per_query_top_k"],
+            global_candidates_limit=retrieval_budget["global_candidates_limit"],
+            rerank_input_limit=retrieval_budget["rerank_input_limit"],
+            timeout_seconds=timeout_seconds,
+        )
+        context = await kb_tool.ainvoke(payload)
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        return "（未找到相关内容）", "exception"
+    return _as_str(context).strip(), None
+
+
 async def retrieve_subquery_context(
-    state: dict,
+    state: RetrieveSubqueryContextInput,
     *,
     settings: Settings,
     kb_tool: BaseTool,
@@ -540,38 +579,19 @@ async def retrieve_subquery_context(
         return {}
 
     retrieval_round = _current_retrieval_round(state)
-    kb_ids = _resolve_kb_ids(state, runtime)
-    retrieval_budget = _resolve_retrieval_budget_payload(
-        state,
-        settings,
+    context_text, retrieval_reason = await _invoke_kb_retrieve(
+        state=state,
+        query=query,
+        settings=settings,
+        kb_tool=kb_tool,
+        retrieval_round=retrieval_round,
         runtime=runtime,
+        query_items=[query_item] if isinstance(query_item, dict) else None,
     )
-    timeout_seconds = _resolve_retrieval_timeout_seconds(state, runtime=runtime)
-
-    retrieval_reason: str | None = None
-    try:
-        payload = build_retrieval_payload(
-            query=query,
-            kb_ids=kb_ids or [],
-            top_k=retrieval_top_k(state, settings, runtime=runtime),
-            retrieval_round=retrieval_round,
-            query_items=[query_item] if isinstance(query_item, dict) else None,
-            per_query_top_k=retrieval_budget["per_query_top_k"],
-            global_candidates_limit=retrieval_budget["global_candidates_limit"],
-            rerank_input_limit=retrieval_budget["rerank_input_limit"],
-            timeout_seconds=timeout_seconds,
-        )
-        context = await kb_tool.ainvoke(payload)
-    except asyncio.CancelledError:
-        raise
-    except Exception:
-        retrieval_reason = "exception"
-        context = "（未找到相关内容）"
 
     kind = _as_str(task.get("kind")).strip() or "other"
     if isinstance(query_item, dict):
         kind = _as_str(query_item.get("kind")).strip() or kind
-    context_text = _as_str(context).strip()
     retrieval_count = _extract_evidence_count(context_text)
 
     return {
@@ -599,7 +619,7 @@ async def retrieve_subquery_context(
 
 
 async def merge_subquery_context(
-    state: dict,
+    state: MergeSubqueryContextInput,
     *,
     settings: Settings,
     runtime: Runtime[Any] | None = None,
@@ -752,7 +772,7 @@ def _resolve_query_text(state: dict) -> str:
 
 
 async def kb_retrieve_context(
-    state: dict,
+    state: RetrieveContextInput,
     *,
     settings: Settings,
     kb_tool: BaseTool,
@@ -764,39 +784,17 @@ async def kb_retrieve_context(
     if _total_rounds_exceeded(loop_counts, settings):
         return _set_final_answer_for_exit(state, "", reason="max_total_rounds")
     query = _resolve_query_text(state)
-    kb_ids = _resolve_kb_ids(state, runtime)
-    retrieval_budget = _resolve_retrieval_budget_payload(
-        state,
-        settings,
-        runtime=runtime,
-    )
-    timeout_seconds = _resolve_retrieval_timeout_seconds(state, runtime=runtime)
-
     retrieval_round = max(loop_counts.get("retrieval_retries", 0), 0)
-    retrieval_reason: str | None = None
-    try:
-        payload = build_retrieval_payload(
-            query=query,
-            kb_ids=kb_ids or [],
-            top_k=retrieval_top_k(state, settings, runtime=runtime),
-            retrieval_round=retrieval_round,
-            per_query_top_k=retrieval_budget["per_query_top_k"],
-            global_candidates_limit=retrieval_budget["global_candidates_limit"],
-            rerank_input_limit=retrieval_budget["rerank_input_limit"],
-            timeout_seconds=timeout_seconds,
-        )
-        query_items = state.get("query_items")
-        if isinstance(query_items, list) and query_items:
-            # Pass the query bundle through so retrieval can fuse multi-query evidence.
-            payload["query_items"] = query_items
-        context = await kb_tool.ainvoke(payload)
-    except asyncio.CancelledError:
-        raise
-    except Exception:
-        retrieval_reason = "exception"
-        context = "（未找到相关内容）"
-
-    final_context = _as_str(context).strip()
+    query_items = state.get("query_items")
+    final_context, retrieval_reason = await _invoke_kb_retrieve(
+        state=state,
+        query=query,
+        settings=settings,
+        kb_tool=kb_tool,
+        retrieval_round=retrieval_round,
+        runtime=runtime,
+        query_items=query_items if isinstance(query_items, list) and query_items else None,
+    )
     evidence_count = _extract_evidence_count(final_context)
     if retrieval_reason is None and evidence_count <= 0:
         retrieval_reason = "no_evidence"
@@ -816,7 +814,7 @@ async def kb_retrieve_context(
             "retrieval_count": evidence_count,
             "attempted": True,
             "mode": "single_retrieve",
-            "kb_count": len(kb_ids or []),
+            "kb_count": len(_resolve_kb_ids(state, runtime) or []),
             "diagnostics": retrieval_diagnostics,
         },
     }
@@ -829,9 +827,9 @@ async def kb_retrieve_context(
             "branch_count": 1,
             "rank_strategy": "quality_first",
             "selected_queries": [query] if query else [],
-            "reason": retrieval_reason or "ok",
-            "diagnostics": retrieval_diagnostics,
-        },
+                "reason": retrieval_reason or "ok",
+                "diagnostics": retrieval_diagnostics,
+            },
         "metrics": metrics,
         "retrieval_diagnostics": retrieval_diagnostics,
         **_merge_stage_summary(
@@ -845,7 +843,7 @@ async def kb_retrieve_context(
                 "reason": retrieval_reason,
                 "fallback_reason": retrieval_reason,
                 "mode": "single_retrieve",
-                "kb_count": len(kb_ids or []),
+                "kb_count": len(_resolve_kb_ids(state, runtime) or []),
                 "diagnostics": retrieval_diagnostics,
                 "completed_at": now_iso(),
             },
@@ -921,7 +919,7 @@ async def generate_draft(
     }
 
 async def transform_query_for_retry(
-    state: dict,
+    state: TransformQueryInput,
     *,
     settings: Settings,
     runtime: Runtime[Any] | None = None,
@@ -1053,7 +1051,7 @@ async def transform_query_for_retry(
     }
 
 
-def route_after_doc_grader(state: dict, settings: Settings) -> str:
+def route_after_doc_grader(state: DocGateRoutingDecisionInput, settings: Settings) -> str:
     """Route after DocGrader: answer_subgraph vs transform_query vs force_exit."""
     routing = resolve_routing_decision(state, "doc_gate")
     next_node = _as_str(routing.get("next_node")).strip()
@@ -1067,11 +1065,11 @@ def route_after_doc_grader(state: dict, settings: Settings) -> str:
     return "transform_query"
 
 
-def route_after_answer_review(state: dict, settings: Settings) -> str:
-    """Route after AnswerReview: finalize vs transform_query vs force_exit."""
+def route_after_answer_review(state: AnswerRoutingDecisionInput, settings: Settings) -> str:
+    """Route after AnswerReview: confidence_calibrate vs transform_query vs force_exit."""
     routing = resolve_routing_decision(state, "answer_subgraph")
     next_node = _as_str(routing.get("next_node")).strip()
-    if next_node in {"finalize", "transform_query", "force_exit"}:
+    if next_node in {"confidence_calibrate", "transform_query", "force_exit"}:
         return next_node
     loop_counts = _get_loop_counts(state)
     max_total_rounds = int(getattr(settings, "kb_chat_max_total_rounds", 3))
@@ -1084,16 +1082,12 @@ def route_after_answer_review(state: dict, settings: Settings) -> str:
     return "transform_query"
 
 
-def confidence_calibrate(state: dict) -> dict[str, Any]:
+def confidence_calibrate(state: ConfidenceCalibrateInput) -> dict[str, Any]:
     """Calibrate final confidence from gate/review/citation/retrieval/CoVe signals."""
     stage_summaries = state.get("stage_summaries")
     if not isinstance(stage_summaries, dict):
         stage_summaries = {}
-    doc_gate_route = (
-        stage_summaries.get("doc_gate_route")
-        if isinstance(stage_summaries.get("doc_gate_route"), dict)
-        else {}
-    )
+    doc_gate_route = resolve_routing_decision(state, "doc_gate")
     reflection = state.get("reflection")
     gate_signal = 0.0
     if isinstance(doc_gate_route, dict):
@@ -1127,14 +1121,8 @@ def confidence_calibrate(state: dict) -> dict[str, Any]:
     )
     review_signal = max(0.0, min(1.0, review_conf * max(0.0, 1.0 - (0.2 * total_retries))))
 
-    claim_summary = (
-        stage_summaries.get("claim_citation_check")
-        if isinstance(stage_summaries.get("claim_citation_check"), dict)
-        else {}
-    )
     citation_coverage = float(
-        claim_summary.get("coverage")
-        or (cove_state.get("claim_coverage") if isinstance(cove_state, dict) else 0.0)
+        (cove_state.get("claim_coverage") if isinstance(cove_state, dict) else 0.0)
         or 0.0
     )
     citation_coverage = max(0.0, min(1.0, citation_coverage))
@@ -1239,7 +1227,7 @@ def confidence_calibrate(state: dict) -> dict[str, Any]:
     }
 
 
-def finalize_answer(state: dict) -> dict[str, Any]:
+def finalize_answer(state: FinalizeAnswerInput) -> dict[str, Any]:
     """Emit final answer as an AIMessage (stream-visible)."""
     final_answer = _as_str(
         state.get("draft_answer") or state.get("final_answer")

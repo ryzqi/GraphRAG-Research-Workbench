@@ -16,7 +16,7 @@ interface NodeDetailPolicy {
 const NODE_DETAIL_POLICY_MAP: Record<string, NodeDetailPolicy> = {
   preprocess_subgraph: {
     input: ['user_input'],
-    output: ['preprocess_next', 'normalized_query', 'final_answer'],
+    output: ['next_node', 'action', 'reason', 'normalized_query', 'final_answer'],
   },
   merge_context: {
     input: ['user_input'],
@@ -130,7 +130,7 @@ const NODE_DETAIL_POLICY_MAP: Record<string, NodeDetailPolicy> = {
   },
   preprocess_exit: {
     input: ['normalized_query'],
-    output: ['preprocess_next', 'normalized_query', 'final_answer'],
+    output: ['next_node', 'normalized_query', 'final_answer'],
   },
   retrieval_subgraph: {
     input: ['query_items', 'normalized_query'],
@@ -162,7 +162,7 @@ const NODE_DETAIL_POLICY_MAP: Record<string, NodeDetailPolicy> = {
   },
   evidence_gate_subgraph: {
     input: ['question', 'final_context'],
-    output: ['action', 'reason', 'passed', 'risk_level'],
+    output: ['next_node', 'action', 'reason', 'passed', 'risk_level'],
   },
   doc_gate_dispatch: {
     input: ['question', 'final_context'],
@@ -170,7 +170,7 @@ const NODE_DETAIL_POLICY_MAP: Record<string, NodeDetailPolicy> = {
   },
   doc_gate_route: {
     input: ['question'],
-    output: ['passed', 'decision_source', 'confidence', 'evidence_score', 'risk_level', 'action'],
+    output: ['next_node', 'passed', 'decision_source', 'confidence', 'evidence_score', 'risk_level', 'action'],
   },
   doc_gate_sufficiency: {
     input: ['final_context'],
@@ -194,7 +194,7 @@ const NODE_DETAIL_POLICY_MAP: Record<string, NodeDetailPolicy> = {
   },
   answer_subgraph: {
     input: ['question'],
-    output: ['next_step', 'reason', 'degrade_reason', 'best_answer', 'repair_attempts'],
+    output: ['next_node', 'action', 'reason', 'degrade_reason', 'best_answer', 'repair_attempts'],
   },
   draft_generate: {
     input: ['question'],
@@ -206,7 +206,7 @@ const NODE_DETAIL_POLICY_MAP: Record<string, NodeDetailPolicy> = {
   },
   answer_commit: {
     input: ['reason'],
-    output: ['next_step', 'reason', 'degrade_reason', 'best_answer'],
+    output: ['next_node', 'reason', 'degrade_reason', 'best_answer'],
   },
   generate: {
     input: ['question'],

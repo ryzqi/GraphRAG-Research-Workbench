@@ -13,39 +13,50 @@ from langchain.messages import AIMessage
 
 from app.core.settings import Settings
 from app.services.evidence_guardrails import resolve_kb_refusal_answer
+from app.agents.kb_chat_agentic_state import (
+    ForceExitInput,
+    resolve_terminal_routing_decision,
+)
 
 from .budget import budget_exceeded, now_iso
 
 
-def force_exit_node(state: dict, settings: Settings) -> dict[str, Any]:
+def force_exit_node(state: ForceExitInput, settings: Settings) -> dict[str, Any]:
     """Produce a final assistant message when exiting due to clarify/budget."""
     reflection = state.get("reflection")
-    action = reflection.get("action") if isinstance(reflection, dict) else None
+    reflection_obj = reflection if isinstance(reflection, dict) else {}
+    _, terminal_route = resolve_terminal_routing_decision(
+        state,
+        next_nodes={"force_exit"},
+    )
+    route_action = str(terminal_route.get("action") or "").strip().lower()
+    route_reason = str(terminal_route.get("reason") or "").strip().lower()
+    action = route_action or str(reflection_obj.get("action") or "").strip().lower()
     review_passed = (
-        reflection.get("review_passed") if isinstance(reflection, dict) else None
+        reflection_obj.get("review_passed")
+        if terminal_route.get("next_node") != "force_exit"
+        else False
     )
 
     reason = ""
-    if action == "clarify":
-        reason = "clarify"
-    else:
-        exceeded, why = budget_exceeded(state, settings)
-        reflection_reason = (
-            str(reflection.get("reason") or "").strip().lower()
-            if isinstance(reflection, dict)
-            else ""
-        )
-        reason = why if exceeded else (reflection_reason or "force_exit")
-
-    final_answer = state.get("final_answer")
-    draft_answer = state.get("draft_answer")
-    best_answer = state.get("best_answer")
-    best_answer_meta = state.get("best_answer_meta")
     clarification_payload = (
         state.get("clarification_payload")
         if isinstance(state.get("clarification_payload"), dict)
         else None
     )
+    if clarification_payload is not None and action != "force_exit":
+        action = "clarify"
+    if action == "clarify":
+        reason = "clarify"
+    else:
+        exceeded, why = budget_exceeded(state, settings)
+        reflection_reason = str(reflection_obj.get("reason") or "").strip().lower()
+        reason = route_reason or (why if exceeded else (reflection_reason or "force_exit"))
+
+    final_answer = state.get("final_answer")
+    draft_answer = state.get("draft_answer")
+    best_answer = state.get("best_answer")
+    best_answer_meta = state.get("best_answer_meta")
     used_best_answer = False
     if action == "clarify":
         if clarification_payload and not isinstance(final_answer, str):
@@ -77,8 +88,10 @@ def force_exit_node(state: dict, settings: Settings) -> dict[str, Any]:
         stage_summaries = {}
     force_exit_summary: dict[str, Any] = {
         "reason": reason,
+        "action": action,
         "review_passed": review_passed,
         "used_best_answer": used_best_answer,
+        "decision_source": terminal_route.get("decision_source"),
         "completed_at": now_iso(),
     }
     if used_best_answer and isinstance(best_answer, str) and best_answer.strip():
@@ -91,10 +104,18 @@ def force_exit_node(state: dict, settings: Settings) -> dict[str, Any]:
         **stage_summaries,
         "force_exit": force_exit_summary,
     }
+    reflection_update = {
+        **reflection_obj,
+        "action": action,
+        "reason": reason,
+    }
+    if review_passed is not None:
+        reflection_update["review_passed"] = review_passed
 
     return {
         "messages": [AIMessage(content=final_answer)],
         "final_answer": final_answer,
         "clarification_payload": clarification_payload,
+        "reflection": reflection_update,
         "stage_summaries": stage_summaries,
     }

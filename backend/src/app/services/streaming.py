@@ -23,7 +23,6 @@ _NON_ANSWER_STREAM_NODES = {
     "retrieve",
     "doc_gate_route",
     "answer_repair",
-    "answer_commit",
     "transform_query",
     "answer_review",
 }
@@ -327,8 +326,17 @@ class StreamState:
     stage_summaries: dict[str, Any] = field(default_factory=dict)
     metrics: dict[str, Any] = field(default_factory=dict)
     loop_counts: dict[str, Any] = field(default_factory=dict)
+    query_strategy: str | None = None
+    draft_answer: str | None = None
+    final_answer: str | None = None
     best_answer: str | None = None
     best_answer_meta: dict[str, Any] | None = None
+    clarification_payload: dict[str, Any] | None = None
+    confidence_score: float | None = None
+    confidence_level: str | None = None
+    reflection: dict[str, Any] | None = None
+    degrade_reason: str | None = None
+    routing_decisions: dict[str, Any] = field(default_factory=dict)
     human_approved: bool | None = None
 
     def apply_update(self, update: dict[str, Any]) -> None:
@@ -350,12 +358,43 @@ class StreamState:
         loop_counts = update.get("loop_counts")
         if isinstance(loop_counts, dict):
             self.loop_counts = loop_counts
+        query_strategy = update.get("query_strategy")
+        if isinstance(query_strategy, str):
+            self.query_strategy = query_strategy
+        draft_answer = update.get("draft_answer")
+        if isinstance(draft_answer, str):
+            self.draft_answer = draft_answer
+        final_answer = update.get("final_answer")
+        if isinstance(final_answer, str):
+            self.final_answer = final_answer
         best_answer = update.get("best_answer")
         if isinstance(best_answer, str):
             self.best_answer = best_answer
         best_answer_meta = update.get("best_answer_meta")
         if isinstance(best_answer_meta, dict):
             self.best_answer_meta = best_answer_meta
+        clarification_payload = update.get("clarification_payload")
+        if isinstance(clarification_payload, dict):
+            self.clarification_payload = clarification_payload
+        elif "clarification_payload" in update and clarification_payload is None:
+            self.clarification_payload = None
+        confidence_score = update.get("confidence_score")
+        if isinstance(confidence_score, (int, float)):
+            self.confidence_score = float(confidence_score)
+        confidence_level = update.get("confidence_level")
+        if isinstance(confidence_level, str):
+            self.confidence_level = confidence_level
+        reflection = update.get("reflection")
+        if isinstance(reflection, dict):
+            self.reflection = reflection
+        degrade_reason = update.get("degrade_reason")
+        if isinstance(degrade_reason, str):
+            self.degrade_reason = degrade_reason
+        elif "degrade_reason" in update and degrade_reason is None:
+            self.degrade_reason = None
+        routing_decisions = update.get("routing_decisions")
+        if isinstance(routing_decisions, dict):
+            self.routing_decisions = routing_decisions
         if "human_approved" in update:
             self.human_approved = update.get("human_approved")
 

@@ -11,15 +11,17 @@ from functools import partial
 
 from langchain.tools import BaseTool
 from langchain_core.language_models.chat_models import BaseChatModel
-from langgraph.cache.memory import InMemoryCache
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, StateGraph
 from langgraph.store.base import BaseStore
+from langgraph.types import RetryPolicy
 
 from app.agents.kb_chat_agentic_state import (
+    build_graph_input_state,
     KbChatInternalState,
     KbChatInputState,
     KbChatOutputState,
+    PreprocessRoutingInput,
     resolve_routing_decision,
 )
 from app.agents.kb_chat_memory import resolve_kb_chat_store_user_id
@@ -29,6 +31,7 @@ from app.core.settings import get_settings
 from app.agents.answer_subgraph import build_answer_subgraph
 from app.agents.evidence_gate_subgraph import build_evidence_gate_subgraph
 from app.agents.kb_chat_trace_nodes import (
+    extend_kb_chat_node_metadata,
     KB_CHAT_NODE_METADATA,
     wrap_kb_chat_node_with_io as shared_wrap_node_with_io,
 )
@@ -37,7 +40,6 @@ from app.agents.retrieval_subgraph import build_retrieval_subgraph
 from app.agents.kb_chat_agentic.tool_loop import force_exit_node
 from app.agents.kb_chat_agentic.reflection import (
     confidence_calibrate,
-    finalize_answer,
     route_after_doc_grader,
     route_after_answer_review,
     transform_query_for_retry,
@@ -45,8 +47,6 @@ from app.agents.kb_chat_agentic.reflection import (
 
 
 _NODE_METADATA: dict[str, dict[str, Any]] = KB_CHAT_NODE_METADATA
-
-_KB_CHAT_GRAPH_CACHE = InMemoryCache()
 
 
 class KbChatGraphContext(TypedDict, total=False):
@@ -59,25 +59,7 @@ class KbChatGraphContext(TypedDict, total=False):
     message_budget: dict[str, Any]
 
 
-class PrepareMessagesInput(TypedDict, total=False):
-    """Narrowed input schema for prepare_messages node."""
-
-    user_input: str
-    coref_query: str
-    normalized_query: str
-    normalized_meta: dict[str, Any]
-    query_strategy: str
-    decomposition_plan: dict[str, Any]
-    sub_queries: list[str]
-    multi_queries: list[str]
-    hyde_docs: list[str]
-    query_items: list[dict[str, Any]]
-    stage_summaries: dict[str, Any]
-    runtime_config: dict[str, Any]
-    reflection: dict[str, Any]
-
-
-def _route_after_preprocess_subgraph(state: dict[str, Any]) -> str:
+def _route_after_preprocess_subgraph(state: PreprocessRoutingInput) -> str:
     decision = resolve_routing_decision(state, "preprocess")
     next_node = str(decision.get("next_node") or "").strip().lower()
     if next_node in {"retrieval_subgraph", "transform_query", "force_exit"}:
@@ -1426,7 +1408,25 @@ class KbChatAgenticGraph:
         del tool_meta_by_name  # not used in this stage (no human review)
         settings = get_settings()
         self._settings = settings
-        self._graph_cache = None
+        transform_retry_policy = RetryPolicy(
+            max_attempts=max(2, int(getattr(settings, "kb_chat_max_retrieval_retries", 2)) + 1)
+        )
+
+        def node_metadata(
+            node_id: str,
+            *,
+            side_effect_type: str,
+            retry_policy: RetryPolicy | None = None,
+            retry_disabled_reason: str | None = None,
+        ) -> dict[str, Any]:
+            metadata = extend_kb_chat_node_metadata(
+                node_id,
+                side_effect_type=side_effect_type,
+                retry_enabled=retry_policy is not None,
+            )
+            if retry_policy is None:
+                metadata["retry_disabled_reason"] = retry_disabled_reason or side_effect_type
+            return metadata
 
         graph = StateGraph(
             state_schema=KbChatInternalState,
@@ -1449,48 +1449,48 @@ class KbChatAgenticGraph:
         graph.add_node(
             "preprocess_subgraph",
             _wrap_node_with_io("preprocess_subgraph", preprocess_subgraph),
-            metadata=_NODE_METADATA["preprocess_subgraph"],
+            metadata=node_metadata("preprocess_subgraph", side_effect_type="subgraph"),
             destinations=("retrieval_subgraph", "transform_query", "force_exit"),
         )
         graph.add_node(
             "retrieval_subgraph",
             _wrap_node_with_io("retrieval_subgraph", retrieval_subgraph),
-            metadata=_NODE_METADATA["retrieval_subgraph"],
+            metadata=node_metadata("retrieval_subgraph", side_effect_type="subgraph"),
         )
         graph.add_node(
             "evidence_gate_subgraph",
             _wrap_node_with_io("evidence_gate_subgraph", evidence_gate_subgraph),
-            metadata=_NODE_METADATA["evidence_gate_subgraph"],
+            metadata=node_metadata("evidence_gate_subgraph", side_effect_type="subgraph"),
             destinations=("answer_subgraph", "transform_query", "force_exit"),
         )
         graph.add_node(
             "answer_subgraph",
             _wrap_node_with_io("answer_subgraph", answer_subgraph),
-            metadata=_NODE_METADATA["answer_subgraph"],
+            metadata=node_metadata("answer_subgraph", side_effect_type="subgraph"),
         )
         graph.add_node(
             "transform_query",
             _wrap_node_with_io(
                 "transform_query", partial(transform_query_for_retry, settings=settings)
             ),
-            metadata=_NODE_METADATA["transform_query"],
-        )
-        graph.add_node(
-            "finalize",
-            _wrap_node_with_io("finalize", finalize_answer),
-            metadata=_NODE_METADATA["finalize"],
+            metadata=node_metadata(
+                "transform_query",
+                side_effect_type="llm",
+                retry_policy=transform_retry_policy,
+            ),
+            retry_policy=transform_retry_policy,
         )
         graph.add_node(
             "force_exit",
             _wrap_node_with_io(
                 "force_exit", partial(force_exit_node, settings=settings)
             ),
-            metadata=_NODE_METADATA["force_exit"],
+            metadata=node_metadata("force_exit", side_effect_type="deterministic_rule"),
         )
         graph.add_node(
             "confidence_calibrate",
             _wrap_node_with_io("confidence_calibrate", confidence_calibrate),
-            metadata=_NODE_METADATA["confidence_calibrate"],
+            metadata=node_metadata("confidence_calibrate", side_effect_type="deterministic_rule"),
         )
         graph.set_entry_point("preprocess_subgraph")
         graph.add_conditional_edges(
@@ -1517,12 +1517,11 @@ class KbChatAgenticGraph:
             "answer_subgraph",
             lambda s: route_after_answer_review(s, settings),
             {
-                "finalize": "finalize",
+                "confidence_calibrate": "confidence_calibrate",
                 "transform_query": "transform_query",
                 "force_exit": "force_exit",
             },
         )
-        graph.add_edge("finalize", "confidence_calibrate")
         graph.add_edge("force_exit", "confidence_calibrate")
         graph.add_edge("confidence_calibrate", END)
         self._graph_builder = graph
@@ -1534,7 +1533,6 @@ class KbChatAgenticGraph:
     ):
         return self._graph_builder.compile(
             checkpointer=checkpointer,
-            cache=self._graph_cache,
             store=store,
         )
 
@@ -1573,6 +1571,10 @@ class KbChatAgenticGraph:
         compiled = self.compile(checkpointer=checkpointer, store=store)
         config = self.make_run_config(thread_id=thread_id)
         context = run_context or self.make_run_context(thread_id=thread_id, state=state)
-        result = await compiled.ainvoke(state, config, context=context)
+        result = await compiled.ainvoke(
+            build_graph_input_state(state),
+            config,
+            context=context,
+        )
         return cast(dict[str, Any], result)
 

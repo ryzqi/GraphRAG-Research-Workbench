@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterable, AsyncIterator
+from datetime import datetime, timezone
 import uuid
 
 from fastapi import APIRouter, Query, Request, Response, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy import and_, delete, func, select
 
-from app.api.sse import SSE_HEADERS, encode_sse
+from app.api.sse import SSE_HEADERS, SseHeartbeatStats, encode_sse
 
 from app.api.deps import AsyncSessionDep
 from app.core.checkpoint import CheckpointManager
@@ -39,6 +41,44 @@ from app.services.kb_chat_service import KbChatService
 from app.services.knowledge_base_service import KnowledgeBaseService
 
 router = APIRouter()
+_STREAM_HEARTBEAT_INTERVAL_SECONDS = 10.0
+
+
+def _stream_heartbeat_payload() -> dict[str, str]:
+    return {
+        "type": "heartbeat",
+        "ts": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def _has_pending_kb_clarification(run: AgentRun) -> bool:
+    metrics = run.metrics if isinstance(run.metrics, dict) else {}
+    return metrics.get("clarification_pending") is True
+
+
+async def _replay_stream_events(
+    first_item: tuple[str, object],
+    iterator: AsyncIterator[tuple[str, object]],
+) -> AsyncIterator[tuple[str, object]]:
+    yield first_item
+    async for item in iterator:
+        yield item
+
+
+async def _empty_stream_events() -> AsyncIterator[tuple[str, object]]:
+    if False:
+        yield ("", None)
+
+
+async def _prime_stream_events(
+    events: AsyncIterable[tuple[str, object]],
+) -> AsyncIterator[tuple[str, object]]:
+    iterator = aiter(events)
+    try:
+        first_item = await anext(iterator)
+    except StopAsyncIteration:
+        return _empty_stream_events()
+    return _replay_stream_events(first_item, iterator)
 
 
 @router.get("/kb-graph-schema", response_model=KbGraphSchemaResponse)
@@ -374,15 +414,20 @@ async def create_chat_message_stream(
         embedding = request.app.state.embedding_client
         reranker = request.app.state.rerank_client
         redis = request.app.state.redis
+        heartbeat_stats = SseHeartbeatStats()
         service = KbChatService(
             db, llm, milvus, embedding, reranker=reranker, redis=redis
         )
-        events = service.answer_stream(
-            session=session,
-            user_content=body.content,
-            request=request,
+        events = await _prime_stream_events(
+            service.answer_stream(
+                session=session,
+                user_content=body.content,
+                request=request,
+                sse_heartbeat_stats=heartbeat_stats,
+            )
         )
     elif session.session_type == ChatSessionType.GENERAL_CHAT:
+        heartbeat_stats = None
         service = GeneralChatService(
             db,
             llm,
@@ -399,7 +444,12 @@ async def create_chat_message_stream(
         raise bad_request(code="CHAT_UNSUPPORTED_SESSION_TYPE", message="不支持的会话类型")
 
     return StreamingResponse(
-        encode_sse(events),
+        encode_sse(
+            events,
+            heartbeat_interval=_STREAM_HEARTBEAT_INTERVAL_SECONDS,
+            heartbeat_factory=_stream_heartbeat_payload,
+            heartbeat_stats=heartbeat_stats,
+        ),
         media_type="text/event-stream",
         headers=SSE_HEADERS,
     )
@@ -493,15 +543,7 @@ async def resume_kb_chat_after_clarification_stream(
         raise bad_request(code="CHAT_RUN_TYPE_MISMATCH", message="运行记录类型不匹配")
     if run.status != AgentRunStatus.RUNNING:
         raise bad_request(code="CHAT_RUN_NOT_RUNNING", message="运行记录已完成或已失败")
-    clarification_pending = (
-        run.stage_summaries.get("clarification_pending")
-        if isinstance(run.stage_summaries, dict)
-        else None
-    )
-    if not (
-        isinstance(clarification_pending, dict)
-        and clarification_pending.get("pending") is True
-    ):
+    if not _has_pending_kb_clarification(run):
         raise bad_request(
             code="CHAT_NO_PENDING_CLARIFICATION",
             message="当前运行没有待补充澄清信息",
@@ -516,15 +558,24 @@ async def resume_kb_chat_after_clarification_stream(
         reranker=request.app.state.rerank_client,
         redis=request.app.state.redis,
     )
-    events = service.answer_stream(
-        session=session,
-        user_content=body.content,
-        request=request,
-        run=run,
+    heartbeat_stats = SseHeartbeatStats()
+    events = await _prime_stream_events(
+        service.answer_stream(
+            session=session,
+            user_content=body.content,
+            request=request,
+            run=run,
+            sse_heartbeat_stats=heartbeat_stats,
+        )
     )
 
     return StreamingResponse(
-        encode_sse(events),
+        encode_sse(
+            events,
+            heartbeat_interval=_STREAM_HEARTBEAT_INTERVAL_SECONDS,
+            heartbeat_factory=_stream_heartbeat_payload,
+            heartbeat_stats=heartbeat_stats,
+        ),
         media_type="text/event-stream",
         headers=SSE_HEADERS,
     )
@@ -568,7 +619,11 @@ async def resume_general_chat_stream(
     )
 
     return StreamingResponse(
-        encode_sse(events),
+        encode_sse(
+            events,
+            heartbeat_interval=_STREAM_HEARTBEAT_INTERVAL_SECONDS,
+            heartbeat_factory=_stream_heartbeat_payload,
+        ),
         media_type="text/event-stream",
         headers=SSE_HEADERS,
     )

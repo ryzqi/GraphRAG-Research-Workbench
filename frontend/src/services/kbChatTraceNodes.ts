@@ -122,8 +122,12 @@ function normalizeTraceStatus(status: string | null | undefined): TraceNodeStatu
   }
 }
 
-function resolveObservedNodeOrder(nodeId: string, fallbackOrder: number): number {
-  const catalogOrder = resolveKbNodeOrder(nodeId);
+function resolveObservedNodeOrder(
+  nodeId: string,
+  fallbackOrder: number,
+  schema: KbGraphSchema | null | undefined
+): number {
+  const catalogOrder = resolveKbNodeOrder({ nodeId, schema });
   return catalogOrder === Number.MAX_SAFE_INTEGER ? fallbackOrder : catalogOrder;
 }
 
@@ -152,7 +156,9 @@ function resolveEnabledNodes(
       registerNode(
         node.id,
         node.phase ?? null,
-        typeof node.order === 'number' ? node.order : resolveKbNodeOrder(node.id)
+        typeof node.order === 'number'
+          ? node.order
+          : resolveKbNodeOrder({ nodeId: node.id, schema })
       );
     });
   } else {
@@ -162,14 +168,18 @@ function resolveEnabledNodes(
   }
 
   steps.forEach((step, index) => {
-    registerNode(step.step_id, null, resolveObservedNodeOrder(step.step_id, 10_000 + index));
+    registerNode(
+      step.step_id,
+      null,
+      resolveObservedNodeOrder(step.step_id, 10_000 + index, schema)
+    );
   });
 
   events.forEach((event, index) => {
     registerNode(
       event.node_name,
       null,
-      resolveObservedNodeOrder(event.node_name, 20_000 + index)
+      resolveObservedNodeOrder(event.node_name, 20_000 + index, schema)
     );
   });
 
@@ -336,7 +346,7 @@ export function buildTraceStageGroups({
       steps: nodeSteps,
       events: nodeEvents,
     });
-    const stageId = resolveKbNodeStageId(node.id, node.phase);
+    const stageId = resolveKbNodeStageId({ nodeId: node.id, phase: node.phase, schema });
     const title = resolveKbNodeLabel(node.id, schema);
     return {
       id: node.id,

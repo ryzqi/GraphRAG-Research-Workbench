@@ -66,6 +66,7 @@ export interface ChatMessage {
   runState?: ChatRunStateEvent;
   stagedContent?: string;
   answerRevealReady?: boolean;
+  traceWarnings?: string[];
   confidenceScore?: number | null;
   confidenceLevel?: 'high' | 'medium' | 'low' | null;
   responseSource?: 'live' | 'cached' | null;

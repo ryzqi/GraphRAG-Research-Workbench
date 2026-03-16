@@ -1,27 +1,24 @@
 import { describe, expect, it } from 'vitest';
 
-import { KB_TRACE_STAGE_META, resolveKbNodeVisualMeta } from './kbNodeCatalog';
+import {
+  KB_TRACE_STAGE_META,
+  resolveKbNodeCatalogEntry,
+  resolveKbNodeOrder,
+  resolveKbNodeStageId,
+  resolveKbNodeVisualMeta,
+} from './kbNodeCatalog';
 
 const CURRENT_KB_CHAT_NODE_IDS = [
   'preprocess_subgraph',
   'merge_context',
   'coref_rewrite',
-  'AMBIGUITY_CHECK_ENABLED',
   'ambiguity_check',
   'normalize_rewrite',
   'complexity_classify',
-  'adaptive_routing',
-  'simple_path',
-  'moderate_path',
-  'complex_path',
-  'ENABLE_MULTI_QUERY_MOD',
   'generate_variants_mod',
-  'ENABLE_DECOMPOSITION',
   'decomposition',
-  'ENABLE_MULTI_QUERY',
   'generate_variants',
   'entity_expand',
-  'ENABLE_HYDE',
   'hyde',
   'prepare_messages',
   'preprocess_exit',
@@ -54,10 +51,56 @@ const CURRENT_KB_CHAT_NODE_IDS = [
   'claim_citation_check',
   'answer_repair',
   'answer_commit',
-  'finalize',
   'force_exit',
   'confidence_calibrate',
 ] as const;
+
+const EXPECTED_NODE_ORDERS: Record<(typeof CURRENT_KB_CHAT_NODE_IDS)[number], number> = {
+  preprocess_subgraph: 0,
+  merge_context: 1,
+  coref_rewrite: 2,
+  ambiguity_check: 3,
+  normalize_rewrite: 4,
+  complexity_classify: 5,
+  generate_variants_mod: 6,
+  decomposition: 7,
+  generate_variants: 8,
+  entity_expand: 9,
+  hyde: 10,
+  prepare_messages: 11,
+  preprocess_exit: 12,
+  retrieval_subgraph: 13,
+  retrieval_budget_plan: 14,
+  dispatch_subqueries: 15,
+  retrieve_subquery: 16,
+  merge_subquery_context: 17,
+  retrieve: 18,
+  context_compress: 19,
+  evidence_gate_subgraph: 20,
+  doc_gate_dispatch: 21,
+  doc_gate_sufficiency: 22,
+  doc_gate_answerability: 23,
+  doc_gate_conflict: 24,
+  doc_gate_fuse: 25,
+  doc_gate_route: 26,
+  transform_query: 27,
+  answer_subgraph: 28,
+  draft_generate: 29,
+  generate: 29,
+  answer_review_dispatch: 30,
+  answer_review_citation: 31,
+  answer_review_factual: 32,
+  answer_review_answerability: 33,
+  answer_review_fuse: 34,
+  answer_review: 34,
+  cove_check: 35,
+  chain_of_verification: 36,
+  claim_citation_check: 37,
+  answer_repair: 38,
+  answer_commit: 39,
+  force_exit: 40,
+  confidence_calibrate: 41,
+};
 
 describe('kbNodeCatalog', () => {
   it('defines label, stage and icon metadata for every current KB Chat node', () => {
@@ -69,6 +112,52 @@ describe('kbNodeCatalog', () => {
       expect(stageIds.has(meta.stageId)).toBe(true);
       expect(meta.icon).toBeTruthy();
       expect(meta.color).toMatch(/^#/);
+    });
+  });
+
+  it('prefers graph schema metadata for stage and order before local catalog fallback', () => {
+    const schema = {
+      version: '1.1',
+      hash: 'schema-hash',
+      nodes: [
+        {
+          id: 'merge_context',
+          label: '旧标签',
+          phase: 'preprocess',
+          order: 1,
+          metadata: {
+            label: '上下文整合',
+            phase: 'finalize',
+            order: 99,
+          },
+        },
+      ],
+      edges: [],
+    };
+
+    expect(resolveKbNodeStageId({ nodeId: 'merge_context', schema })).toBe('stage_7_finalize');
+    expect(resolveKbNodeOrder({ nodeId: 'merge_context', schema })).toBe(99);
+  });
+
+  it('keeps remaining fallback catalog node order aligned with backend metadata', () => {
+    CURRENT_KB_CHAT_NODE_IDS.forEach((nodeId) => {
+      expect(resolveKbNodeOrder(nodeId)).toBe(EXPECTED_NODE_ORDERS[nodeId]);
+    });
+  });
+
+  it('does not keep deprecated preprocess shell nodes in local catalog fallback', () => {
+    [
+      'AMBIGUITY_CHECK_ENABLED',
+      'adaptive_routing',
+      'simple_path',
+      'moderate_path',
+      'complex_path',
+      'ENABLE_MULTI_QUERY_MOD',
+      'ENABLE_DECOMPOSITION',
+      'ENABLE_MULTI_QUERY',
+      'ENABLE_HYDE',
+    ].forEach((nodeId) => {
+      expect(resolveKbNodeCatalogEntry(nodeId)).toBeNull();
     });
   });
 });

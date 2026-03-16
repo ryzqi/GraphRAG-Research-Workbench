@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
+import { KB_CHAT_CUSTOM_EVENT_TYPES } from './chats';
 import { reduceKbChatTraceState } from './kbChatTraceStore';
 
 const ctx = {
@@ -8,6 +9,16 @@ const ctx = {
 };
 
 describe('kbChatTraceStore', () => {
+  it('keeps an explicit kb chat custom event taxonomy', () => {
+    expect(KB_CHAT_CUSTOM_EVENT_TYPES).toEqual([
+      'node_io',
+      'answer_review_subcheck',
+      'answer_review_fused',
+      'guardrail_warning',
+      'heartbeat',
+    ]);
+  });
+
   it('keeps updates action idempotent for repeated event payload', () => {
     const base = {};
     const action = {
@@ -186,5 +197,62 @@ describe('kbChatTraceStore', () => {
       ctx
     );
     expect(next.traceWarnings?.[0]).toContain('field drift');
+  });
+
+  it('salvages custom review signals into timeline entries instead of dropping them silently', () => {
+    const next = reduceKbChatTraceState(
+      {},
+      {
+        type: 'custom',
+        raw: {
+          run_id: 'run-1',
+          event_type: 'answer_review_fused',
+          node_name: 'answer_review_fuse',
+          passed: false,
+          reason: 'citation_mismatch',
+          goto: 'answer_repair',
+          ts: '2026-01-01T00:00:00.000Z',
+        },
+      },
+      ctx
+    );
+
+    expect(next.nodeTimeline?.at(-1)).toMatchObject({
+      source: 'ui',
+      step_id: 'answer_review_fuse',
+      event_type: 'review_signal',
+      message: 'citation_mismatch',
+    });
+    expect(next.traceWarnings ?? []).toHaveLength(0);
+  });
+
+  it('keeps heartbeat custom events benign while warning on unhandled custom taxonomy', () => {
+    const heartbeat = reduceKbChatTraceState(
+      {},
+      {
+        type: 'custom',
+        raw: {
+          run_id: 'run-1',
+          event_type: 'heartbeat',
+          ts: '2026-01-01T00:00:00.000Z',
+        },
+      },
+      ctx
+    );
+    expect(heartbeat.traceWarnings ?? []).toHaveLength(0);
+
+    const unhandled = reduceKbChatTraceState(
+      heartbeat,
+      {
+        type: 'custom',
+        raw: {
+          run_id: 'run-1',
+          event_type: 'mystery_taxonomy',
+          ts: '2026-01-01T00:00:01.000Z',
+        },
+      },
+      ctx
+    );
+    expect(unhandled.traceWarnings?.at(-1)).toContain('unhandled custom event');
   });
 });

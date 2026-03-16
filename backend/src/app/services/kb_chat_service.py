@@ -60,6 +60,7 @@ from app.schemas.chats import (
     SemanticCacheMeta,
     resolve_kb_chat_config,
 )
+from app.api.sse import SseHeartbeatStats
 from app.services.context_builder import ContextBuilder
 from app.services.conversation_summary_service import ConversationSummaryService
 from app.services.evidence_guardrails import (
@@ -77,7 +78,15 @@ from app.services.streaming import (
     extract_answer_text,
     extract_stream_delta,
 )
-from app.agents.kb_chat_contracts import STATE_SCHEMA_V3, validate_event_envelope_v2
+from app.agents.kb_chat_contracts import (
+    KB_CHAT_CUSTOM_EVENT_TYPES,
+    STATE_SCHEMA_V3,
+    validate_event_envelope_v2,
+)
+from app.agents.kb_chat_agentic_state import (
+    build_graph_input_state,
+    resolve_terminal_routing_decision,
+)
 
 logger = logging.getLogger(__name__)
 _STREAM_EVENT_VERSION = "2.0"
@@ -191,6 +200,7 @@ class _KbChatExecution:
     compiled_graph: object | None
     state: dict[str, Any]
     run_context: dict[str, Any] | None
+    resume_checkpoint_id: str | None
 
 
 @dataclass
@@ -650,6 +660,7 @@ class KbChatService:
                     if isinstance(raw_node.get("metadata"), dict)
                     else {}
                 )
+                normalized_metadata = dict(metadata)
                 label = metadata.get("label")
                 phase = metadata.get("phase")
                 order = metadata.get("order")
@@ -659,10 +670,11 @@ class KbChatService:
                         "label": label if isinstance(label, str) and label.strip() else node_id,
                         "phase": phase if isinstance(phase, str) else None,
                         "order": order if isinstance(order, int) else None,
+                        "metadata": normalized_metadata,
                     }
                 )
 
-        nodes.sort(key=_node_order)
+        nodes.sort(key=lambda node: (_node_order(node), str(node.get("id") or "")))
 
         edges: list[dict[str, Any]] = []
         if isinstance(raw_edges, list):
@@ -690,10 +702,24 @@ class KbChatService:
             key=lambda edge: (
                 node_order_index.get(edge["source"], 10_000),
                 node_order_index.get(edge["target"], 10_000),
+                edge["source"],
+                edge["target"],
+                edge["conditional"],
             )
         )
 
-        return {"version": "1.0", "nodes": nodes, "edges": edges}
+        hash_source = {
+            "version": "1.1",
+            "nodes": nodes,
+            "edges": edges,
+        }
+        payload_hash = hashlib.sha256(
+            json.dumps(hash_source, ensure_ascii=False, sort_keys=True, default=str).encode(
+                "utf-8"
+            )
+        ).hexdigest()
+
+        return {"version": "1.1", "hash": payload_hash, "nodes": nodes, "edges": edges}
 
     @staticmethod
     def _build_drawable_graph_from_builder(graph: object) -> dict[str, Any]:
@@ -762,6 +788,27 @@ class KbChatService:
                     collect_from_builder(nested_builder)
 
         collect_from_builder(builder)
+        nodes.sort(
+            key=lambda node: (
+                int(node.get("metadata", {}).get("order"))
+                if isinstance(node.get("metadata"), dict)
+                and isinstance(node["metadata"].get("order"), int)
+                else 10_000,
+                str(node.get("id") or ""),
+            )
+        )
+        node_order_index = {
+            str(node.get("id")): index for index, node in enumerate(nodes) if isinstance(node.get("id"), str)
+        }
+        edges.sort(
+            key=lambda edge: (
+                node_order_index.get(edge["source"], 10_000),
+                node_order_index.get(edge["target"], 10_000),
+                edge["source"],
+                edge["target"],
+                edge["conditional"],
+            )
+        )
         return {"nodes": nodes, "edges": edges}
 
     async def get_graph_schema(
@@ -1029,88 +1076,77 @@ class KbChatService:
         return round(((p95_current - p95_baseline) / p95_baseline) * 100.0, 4)
 
     @staticmethod
-    def _compute_route_consistency(stage_summaries: dict[str, Any]) -> float:
+    def _compute_route_consistency(
+        *,
+        query_strategy: str | None,
+        routing_decisions: dict[str, Any] | None,
+    ) -> float:
         checks: list[bool] = []
-        complexity = (
-            stage_summaries.get("complexity_classify")
-            if isinstance(stage_summaries.get("complexity_classify"), dict)
-            else {}
-        )
-        if complexity:
-            checks.append(
-                str(complexity.get("goto") or "")
-                in {"decomposition", "generate_variants", "hyde", "prepare_messages"}
-            )
+        if isinstance(query_strategy, str) and query_strategy:
+            checks.append(query_strategy in {"direct", "decomposition", "multi_query"})
+        routing = routing_decisions if isinstance(routing_decisions, dict) else {}
         doc_gate_route = (
-            stage_summaries.get("doc_gate_route")
-            if isinstance(stage_summaries.get("doc_gate_route"), dict)
-            else {}
+            routing.get("doc_gate") if isinstance(routing.get("doc_gate"), dict) else {}
         )
         if doc_gate_route:
-            doc_gate_next = str(doc_gate_route.get("goto") or "")
+            doc_gate_next = str(doc_gate_route.get("next_node") or "")
             checks.append(
                 doc_gate_next in {"answer_subgraph", "transform_query", "force_exit"}
             )
         answer_subgraph = (
-            stage_summaries.get("answer_subgraph")
-            if isinstance(stage_summaries.get("answer_subgraph"), dict)
+            routing.get("answer_subgraph")
+            if isinstance(routing.get("answer_subgraph"), dict)
             else {}
         )
         if answer_subgraph:
             checks.append(
-                str(answer_subgraph.get("next_step") or "")
-                in {"finalize", "transform_query", "force_exit"}
+                str(answer_subgraph.get("next_node") or "")
+                in {"finalize", "confidence_calibrate", "transform_query", "force_exit"}
             )
         if not checks:
             return 100.0
         return round((sum(1 for ok in checks if ok) / len(checks)) * 100.0, 4)
 
     @staticmethod
-    def _compute_final_state_consistency(stage_summaries: dict[str, Any]) -> float:
+    def _compute_final_state_consistency(
+        *,
+        routing_decisions: dict[str, Any] | None,
+        terminal_reason: str | None,
+    ) -> float:
+        routing = routing_decisions if isinstance(routing_decisions, dict) else {}
         answer_subgraph = (
-            stage_summaries.get("answer_subgraph")
-            if isinstance(stage_summaries.get("answer_subgraph"), dict)
+            routing.get("answer_subgraph")
+            if isinstance(routing.get("answer_subgraph"), dict)
             else {}
         )
-        force_exit = (
-            stage_summaries.get("force_exit")
-            if isinstance(stage_summaries.get("force_exit"), dict)
-            else {}
+        terminal_phase, terminal_route = resolve_terminal_routing_decision(
+            {"routing_decisions": routing},
+            next_nodes={"force_exit"},
         )
-        doc_gate_route = (
-            stage_summaries.get("doc_gate_route")
-            if isinstance(stage_summaries.get("doc_gate_route"), dict)
-            else {}
-        )
-        next_step = str(answer_subgraph.get("next_step") or "")
-        has_force_exit = bool(force_exit)
-        doc_gate_next = str(doc_gate_route.get("goto") or "")
+        next_step = str(answer_subgraph.get("next_node") or "")
+        has_force_exit = isinstance(terminal_reason, str) and bool(terminal_reason.strip())
         if not next_step and not has_force_exit:
             return 100.0
-        if next_step == "finalize":
+        if next_step in {"finalize", "confidence_calibrate"}:
             return 100.0 if not has_force_exit else 0.0
         if next_step in {"transform_query", "force_exit"}:
             return 100.0 if has_force_exit else 0.0
-        if doc_gate_next == "force_exit":
+        if terminal_phase in {"doc_gate", "preprocess"} and terminal_route:
             return 100.0 if has_force_exit else 0.0
         return 0.0
 
     @staticmethod
-    def _compute_clarification_consistency(stage_summaries: dict[str, Any]) -> float:
-        pending = (
-            stage_summaries.get("clarification_pending")
-            if isinstance(stage_summaries.get("clarification_pending"), dict)
-            else {}
-        )
-        if not pending or pending.get("pending") is not True:
+    def _compute_clarification_consistency(
+        *,
+        metrics: dict[str, Any] | None,
+        clarification_payload: dict[str, Any] | None,
+        terminal_reason: str | None,
+    ) -> float:
+        metric_values = metrics if isinstance(metrics, dict) else {}
+        if metric_values.get("clarification_pending") is not True:
             return 100.0
-        force_exit = (
-            stage_summaries.get("force_exit")
-            if isinstance(stage_summaries.get("force_exit"), dict)
-            else {}
-        )
-        is_clarify = str(force_exit.get("reason") or "").strip().lower() == "clarify"
-        has_payload = isinstance(force_exit.get("clarification_payload"), dict)
+        is_clarify = str(terminal_reason or "").strip().lower() == "clarify"
+        has_payload = isinstance(clarification_payload, dict)
         return 100.0 if is_clarify and has_payload else 0.0
 
     @staticmethod
@@ -1142,6 +1178,51 @@ class KbChatService:
                 "protocol_required_field_drift_rate": 0.0,
             },
         }
+
+    async def _refresh_semantic_cache_hit_metrics(
+        self,
+        *,
+        stage_summaries: dict[str, Any] | None,
+        metrics: dict[str, Any] | None,
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        refreshed_stage_summaries = (
+            dict(stage_summaries) if isinstance(stage_summaries, dict) else {}
+        )
+        metric_values = dict(metrics) if isinstance(metrics, dict) else {}
+        route_consistency_rate = self._safe_rate(
+            metric_values.get("route_consistency_rate")
+        ) or 100.0
+        final_state_consistency_rate = 100.0
+        clarification_consistency_rate = self._compute_clarification_consistency(
+            metrics=metric_values,
+            clarification_payload=None,
+            terminal_reason=None,
+        )
+        protocol_required_field_drift_rate = float(
+            metric_values.get("protocol_required_field_drift_rate") or 0.0
+        )
+        p95_latency_increase_pct = await self._compute_p95_latency_increase_pct(
+            current_latency_ms=0,
+        )
+        refreshed_metrics = {
+            **metric_values,
+            "route_consistency_rate": route_consistency_rate,
+            "final_state_consistency_rate": final_state_consistency_rate,
+            "clarification_consistency_rate": clarification_consistency_rate,
+            "p95_latency_increase_pct": p95_latency_increase_pct,
+            "protocol_required_field_drift_rate": protocol_required_field_drift_rate,
+            "gray_release_indicators": {
+                "route_consistency_rate": route_consistency_rate,
+                "final_state_consistency_rate": final_state_consistency_rate,
+                "clarification_consistency_rate": clarification_consistency_rate,
+                "p95_latency_increase_pct": p95_latency_increase_pct,
+                "protocol_required_field_drift_rate": protocol_required_field_drift_rate,
+            },
+        }
+        gray_release_gate = self._build_gray_release_gate(refreshed_metrics)
+        refreshed_metrics["gray_release_gate"] = gray_release_gate
+        refreshed_stage_summaries["gray_release_gate"] = gray_release_gate
+        return refreshed_stage_summaries, refreshed_metrics
 
     def _persist_gray_release_anomaly_sample(
         self,
@@ -1319,6 +1400,7 @@ class KbChatService:
         user_content: str,
         run: AgentRun | None = None,
     ) -> _KbChatExecution:
+        resume_requested = run is not None
         started_at = run.started_at if run and run.started_at else datetime.now(timezone.utc)
         thread_id = str(session.id)
         checkpoint_tuple = await CheckpointManager.get_state(thread_id)
@@ -1586,6 +1668,11 @@ class KbChatService:
             compiled_graph=compiled_graph,
             state=state,
             run_context=run_context,
+            resume_checkpoint_id=(
+                str(run.id)
+                if resume_requested and getattr(run, "id", None) is not None
+                else None
+            ),
         )
 
     def _build_observability(
@@ -1598,8 +1685,10 @@ class KbChatService:
         retrieval_results: list,
         base_metrics: dict[str, Any] | None,
         base_stage_summaries: dict[str, Any] | None,
+        stage_attempts: dict[str, int] | None = None,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         metrics = base_metrics if isinstance(base_metrics, dict) else {}
+        retry_cache_metrics = self._build_retry_cache_metrics(stage_attempts)
         context_metrics = self._context_builder.build_metrics(
             history_usage=history_usage,
             history_truncation=history_truncation,
@@ -1608,6 +1697,7 @@ class KbChatService:
         )
         metrics = {
             **metrics,
+            **retry_cache_metrics,
             "context": context_metrics,
             "retrieval_usage": retrieval_meta.get("usage")
             or {"tokens": 0, "chars": 0, "items": 0},
@@ -1633,6 +1723,7 @@ class KbChatService:
                 retrieval_stats=retrieval_stats,
                 layer_stats=layer_stats,
             ),
+            "retry_cache": retry_cache_metrics,
         }
 
         kb_scope = retrieval_meta.get("kb_scope")
@@ -1669,6 +1760,71 @@ class KbChatService:
             stage_summaries, settings=self._settings, label="stage_summaries"
         )
         return metrics, stage_summaries
+
+    @staticmethod
+    def _build_retry_cache_metrics(
+        stage_attempts: dict[str, int] | None,
+    ) -> dict[str, Any]:
+        retry_node_breakdown: dict[str, int] = {}
+        retry_attempts_total = 0
+        if isinstance(stage_attempts, dict):
+            for node_name, raw_attempts in stage_attempts.items():
+                if not isinstance(node_name, str) or not node_name:
+                    continue
+                if not isinstance(raw_attempts, int):
+                    continue
+                retry_count = max(raw_attempts - 1, 0)
+                if retry_count <= 0:
+                    continue
+                retry_node_breakdown[node_name] = retry_count
+                retry_attempts_total += retry_count
+
+        return {
+            "retry_attempts_total": retry_attempts_total,
+            "retry_node_breakdown": retry_node_breakdown,
+            "graph_cache_hit_total": 0,
+            "graph_cache_miss_total": 0,
+            "cache_disabled_reason": "compile_cache_disabled",
+        }
+
+    @staticmethod
+    def _build_protocol_metrics(
+        *,
+        protocol_emit_total: int,
+        protocol_required_field_drift_count: int,
+        protocol_salvage_count: int,
+        node_io_snapshot_truncated_count: int,
+        custom_event_unhandled_count: int,
+        heartbeat_stats: SseHeartbeatStats | None = None,
+    ) -> dict[str, Any]:
+        emit_total = max(0, int(protocol_emit_total))
+        drift_count = max(0, int(protocol_required_field_drift_count))
+        salvage_count = max(0, int(protocol_salvage_count))
+        truncated_count = max(0, int(node_io_snapshot_truncated_count))
+        custom_unhandled = max(0, int(custom_event_unhandled_count))
+        heartbeat_sent_count = (
+            heartbeat_stats.sent_count if isinstance(heartbeat_stats, SseHeartbeatStats) else 0
+        )
+        heartbeat_gaps = (
+            heartbeat_stats.gap_ms_samples
+            if isinstance(heartbeat_stats, SseHeartbeatStats)
+            else []
+        )
+        heartbeat_gap_ms_p95 = round(
+            KbChatService._calc_percentile(heartbeat_gaps, 0.95),
+            4,
+        )
+        protocol_drift_rate = round((drift_count / emit_total) * 100.0, 4) if emit_total > 0 else 0.0
+        return {
+            "protocol_emit_total": emit_total,
+            "protocol_required_field_drift_count": drift_count,
+            "protocol_required_field_drift_rate": protocol_drift_rate,
+            "protocol_salvage_count": salvage_count,
+            "node_io_snapshot_truncated_count": truncated_count,
+            "custom_event_unhandled_count": custom_unhandled,
+            "sse_heartbeat_sent_count": heartbeat_sent_count,
+            "sse_heartbeat_gap_ms_p95": heartbeat_gap_ms_p95,
+        }
 
     @staticmethod
     def _apply_guardrail_metrics(
@@ -1806,37 +1962,60 @@ class KbChatService:
         except Exception:
             return None
 
+    @staticmethod
+    def _resolve_terminal_reason(
+        *,
+        clarification_payload: dict[str, Any] | None = None,
+        routing_decisions: dict[str, Any] | None = None,
+        reflection: dict[str, Any] | None = None,
+        degrade_reason: str | None = None,
+    ) -> str | None:
+        if isinstance(clarification_payload, dict):
+            return "clarify"
+        _, terminal_route = resolve_terminal_routing_decision(
+            {"routing_decisions": routing_decisions or {}},
+            next_nodes={"force_exit"},
+        )
+        if terminal_route:
+            action = str(terminal_route.get("action") or "").strip().lower()
+            if action == "clarify":
+                return "clarify"
+            reason = str(terminal_route.get("reason") or "").strip().lower()
+            if reason and reason not in {"passed", "none"}:
+                return reason
+            if str(terminal_route.get("next_node") or "").strip().lower() == "force_exit":
+                return "force_exit"
+        if isinstance(degrade_reason, str) and degrade_reason.strip():
+            return degrade_reason.strip().lower()
+        if isinstance(reflection, dict):
+            action = str(reflection.get("action") or "").strip().lower()
+            if action == "clarify":
+                return "clarify"
+            if action not in {"force_exit", "transform_query"}:
+                return None
+            reason = str(reflection.get("reason") or "").strip().lower()
+            if reason and reason not in {"passed", "none"}:
+                return reason
+            if action == "force_exit":
+                return "force_exit"
+        return None
+
     @classmethod
     def _extract_clarification_pending(
         cls,
         *,
-        stage_summaries: dict[str, Any],
+        clarification_payload: dict[str, Any] | None,
         answer: str,
+        reflection: dict[str, Any] | None = None,
     ) -> tuple[str | None, PendingClarification | None]:
-        force_exit = (
-            stage_summaries.get("force_exit")
-            if isinstance(stage_summaries, dict)
-            else None
+        reason = cls._resolve_terminal_reason(
+            clarification_payload=clarification_payload,
+            reflection=reflection,
         )
-        reason = force_exit.get("reason") if isinstance(force_exit, dict) else None
         if reason != "clarify":
             return None, None
 
-        pending_clarification = None
-        if isinstance(force_exit, dict):
-            pending_clarification = cls._coerce_pending_clarification(
-                force_exit.get("clarification_payload")
-            )
-        if pending_clarification is None:
-            ambiguity_summary = (
-                stage_summaries.get("ambiguity_check")
-                if isinstance(stage_summaries, dict)
-                else None
-            )
-            if isinstance(ambiguity_summary, dict):
-                pending_clarification = cls._coerce_pending_clarification(
-                    ambiguity_summary.get("clarification_payload")
-                )
+        pending_clarification = cls._coerce_pending_clarification(clarification_payload)
 
         text = extract_answer_text(answer).strip()
         if not text and pending_clarification is not None:
@@ -1859,30 +2038,46 @@ class KbChatService:
     @staticmethod
     def _resolve_terminal_run_status(
         *,
-        stage_summaries: dict[str, Any],
         answer: str,
+        clarification_payload: dict[str, Any] | None = None,
+        routing_decisions: dict[str, Any] | None = None,
+        reflection: dict[str, Any] | None = None,
+        best_answer: str | None = None,
     ) -> tuple[AgentRunStatus, str | None]:
-        """Resolve terminal run status from guardrail summaries + final answer."""
-        force_exit = (
-            stage_summaries.get("force_exit")
-            if isinstance(stage_summaries, dict)
-            else None
+        """Resolve terminal run status from canonical state + final answer."""
+        reason = KbChatService._resolve_terminal_reason(
+            clarification_payload=clarification_payload,
+            routing_decisions=routing_decisions,
+            reflection=reflection,
         )
-        if not isinstance(force_exit, dict):
-            return AgentRunStatus.SUCCEEDED, None
-
-        reason = str(force_exit.get("reason") or "").strip().lower()
         if reason == "clarify":
             return AgentRunStatus.SUCCEEDED, None
 
-        review_passed = force_exit.get("review_passed")
-        used_best_answer = force_exit.get("used_best_answer") is True
+        _, terminal_route = resolve_terminal_routing_decision(
+            {"routing_decisions": routing_decisions or {}},
+            next_nodes={"force_exit"},
+        )
+        terminal_force_exit = bool(terminal_route)
+        review_passed = (
+            reflection.get("review_passed")
+            if isinstance(reflection, dict) and not terminal_force_exit
+            else False if terminal_force_exit else None
+        )
         answer_text = extract_answer_text(answer).strip()
+        canonical_best_answer = extract_answer_text(best_answer).strip() if best_answer else ""
+        best_answer_matches = (
+            not terminal_force_exit
+            and bool(canonical_best_answer)
+            and answer_text == canonical_best_answer
+        )
         if (
-            (review_passed is True or used_best_answer)
+            (review_passed is True or best_answer_matches)
             and answer_text
             and "无法回答" not in answer_text
         ):
+            return AgentRunStatus.SUCCEEDED, None
+
+        if not reason:
             return AgentRunStatus.SUCCEEDED, None
 
         if answer_text and is_kb_refusal_answer(answer_text):
@@ -1894,17 +2089,11 @@ class KbChatService:
     @staticmethod
     def _build_no_evidence_response(
         *,
+        reason_code: str | None,
         stage_summaries: dict[str, Any],
         selected_kb_ids: list[uuid.UUID] | None,
     ) -> str:
-        reason_code = ""
-        force_exit = stage_summaries.get("force_exit")
-        if isinstance(force_exit, dict):
-            reason_code = str(force_exit.get("reason") or "").strip().lower()
-
-        retrieval_summary = stage_summaries.get("retrieval")
-        if not reason_code and isinstance(retrieval_summary, dict):
-            reason_code = str(retrieval_summary.get("reason") or "").strip().lower()
+        normalized_reason_code = str(reason_code or "").strip().lower()
 
         reason_text_map = {
             "clarify": "当前问题信息不足，需要先补充关键条件",
@@ -1915,7 +2104,9 @@ class KbChatService:
             "severe_conflict": "检索证据出现明显冲突，无法稳定作答",
             "conflict_retry_exhausted": "冲突证据重试后仍未收敛",
         }
-        reason_text = reason_text_map.get(reason_code, "未检索到可用于回答的证据片段")
+        reason_text = reason_text_map.get(
+            normalized_reason_code, "未检索到可用于回答的证据片段"
+        )
 
         stage_label_map = {
             "merge_context": "上下文合并",
@@ -1923,7 +2114,6 @@ class KbChatService:
             "ambiguity_check": "歧义检测",
             "normalize_rewrite": "问题规范化",
             "complexity_classify": "复杂度分类",
-            "adaptive_routing": "自适应路由",
             "decomposition": "问题拆解",
             "generate_variants": "多路查询扩展",
             "entity_expand": "实体扩展",
@@ -1952,7 +2142,7 @@ class KbChatService:
             "只保留最相关的 1-2 个知识库，避免检索范围过宽。",
             "若资料尚未入库，请先补充文档再提问。",
         ]
-        if reason_code == "clarify":
+        if normalized_reason_code == "clarify":
             suggestions[0] = "先补充缺失条件（对象、时间、范围）后继续提问。"
 
         return (
@@ -1969,18 +2159,20 @@ class KbChatService:
     @staticmethod
     def _semantic_cache_skip_reason(
         *,
-        stage_summaries: dict[str, Any],
+        clarification_payload: dict[str, Any] | None,
+        routing_decisions: dict[str, Any] | None,
+        reflection: dict[str, Any] | None,
+        degrade_reason: str | None,
         answer: str,
     ) -> str | None:
-        force_exit = (
-            stage_summaries.get("force_exit")
-            if isinstance(stage_summaries, dict)
-            else None
+        reason = KbChatService._resolve_terminal_reason(
+            clarification_payload=clarification_payload,
+            routing_decisions=routing_decisions,
+            reflection=reflection,
+            degrade_reason=degrade_reason,
         )
-        if isinstance(force_exit, dict):
-            reason = str(force_exit.get("reason") or "").strip().lower()
-            if reason in {"clarify", "severe_conflict", "conflict_retry_exhausted"}:
-                return reason
+        if reason in {"clarify", "severe_conflict", "conflict_retry_exhausted"}:
+            return reason
         if is_kb_refusal_answer(extract_answer_text(answer)):
             return "refusal_answer"
         return None
@@ -2176,7 +2368,7 @@ class KbChatService:
                     draft_answer, 180
                 )
 
-        if node in {"ambiguity_check", "finalize", "force_exit"}:
+        if node in {"ambiguity_check", "answer_subgraph", "force_exit"}:
             final_answer = update.get("final_answer")
             if isinstance(final_answer, str) and final_answer.strip():
                 io_summary["final_preview"] = KbChatService._shorten_stream_text(
@@ -2192,10 +2384,20 @@ class KbChatService:
 
         if node == "answer_subgraph":
             answer_summary = node_summary if isinstance(node_summary, dict) else {}
-            next_step = answer_summary.get("next_step")
-            reason = answer_summary.get("reason")
-            if isinstance(next_step, str) and next_step:
-                io_summary["next_step"] = next_step
+            routing = (
+                update.get("routing_decisions")
+                if isinstance(update.get("routing_decisions"), dict)
+                else {}
+            )
+            answer_route = (
+                routing.get("answer_subgraph")
+                if isinstance(routing.get("answer_subgraph"), dict)
+                else {}
+            )
+            next_node = answer_route.get("next_node")
+            reason = answer_route.get("reason") or answer_summary.get("reason")
+            if isinstance(next_node, str) and next_node:
+                io_summary["next_node"] = next_node
             if isinstance(reason, str) and reason:
                 io_summary["reason"] = reason
             degrade_reason = update.get("degrade_reason")
@@ -2619,20 +2821,13 @@ class KbChatService:
     def _resolve_preferred_evidence_round(
         cls,
         *,
-        stage_summaries: dict[str, Any],
+        best_answer_meta: dict[str, Any] | None,
         loop_counts: dict[str, Any] | None,
     ) -> int | None:
-        force_exit = (
-            stage_summaries.get("force_exit")
-            if isinstance(stage_summaries, dict)
-            else None
-        )
-        if isinstance(force_exit, dict):
-            best_meta = force_exit.get("best_answer_meta")
-            if isinstance(best_meta, dict):
-                round_value = cls._safe_non_negative_int(best_meta.get("retrieval_round"))
-                if round_value is not None:
-                    return round_value
+        if isinstance(best_answer_meta, dict):
+            round_value = cls._safe_non_negative_int(best_answer_meta.get("retrieval_round"))
+            if round_value is not None:
+                return round_value
 
         if isinstance(loop_counts, dict):
             round_value = cls._safe_non_negative_int(loop_counts.get("retrieval_retries"))
@@ -2664,12 +2859,19 @@ class KbChatService:
     def _extract_last_good_answer(
         *,
         answer: str,
-        stage_summaries: dict[str, Any],
         stream_state: StreamState,
     ) -> tuple[str | None, str | None]:
         answer_text = extract_answer_text(answer).strip()
         if answer_text:
             return answer_text, "final_answer"
+
+        final_answer = extract_answer_text(stream_state.final_answer).strip()
+        if final_answer:
+            return final_answer, "stream_state.final_answer"
+
+        draft_answer = extract_answer_text(stream_state.draft_answer).strip()
+        if draft_answer:
+            return draft_answer, "stream_state.draft_answer"
 
         for msg in reversed(stream_state.messages):
             if isinstance(msg, AIMessage):
@@ -2681,47 +2883,15 @@ class KbChatService:
         if isinstance(best_answer, str) and best_answer.strip():
             return best_answer.strip(), "stream_state.best_answer"
 
-        force_exit = (
-            stage_summaries.get("force_exit")
-            if isinstance(stage_summaries, dict)
-            else None
-        )
-        if isinstance(force_exit, dict):
-            best_answer = force_exit.get("best_answer")
-            if isinstance(best_answer, str) and best_answer.strip():
-                return best_answer.strip(), "force_exit.best_answer"
-
-        answer_subgraph = (
-            stage_summaries.get("answer_subgraph")
-            if isinstance(stage_summaries, dict)
-            else None
-        )
-        if isinstance(answer_subgraph, dict):
-            best_answer = answer_subgraph.get("best_answer")
-            if isinstance(best_answer, str) and best_answer.strip():
-                return best_answer.strip(), "answer_subgraph.best_answer"
-
-        generator = (
-            stage_summaries.get("generator")
-            if isinstance(stage_summaries, dict)
-            else None
-        )
-        if isinstance(generator, dict):
-            draft_answer = generator.get("draft_answer")
-            if isinstance(draft_answer, str) and draft_answer.strip():
-                return draft_answer.strip(), "generator.draft_answer"
-
         return None, None
 
     @staticmethod
-    def _clarification_round_count(stage_summaries: dict[str, Any] | None) -> int:
-        if not isinstance(stage_summaries, dict):
+    def _clarification_round_count(metrics: dict[str, Any] | None) -> int:
+        if not isinstance(metrics, dict):
             return 0
-        entry = stage_summaries.get("clarification_pending")
-        if isinstance(entry, dict):
-            value = entry.get("round")
-            if isinstance(value, int) and value > 0:
-                return value
+        value = metrics.get("clarification_round")
+        if isinstance(value, int) and value > 0:
+            return value
         return 0
 
     async def _persist_clarification_pending(
@@ -2737,7 +2907,7 @@ class KbChatService:
     ) -> ChatPendingUserClarificationResponse:
         now = datetime.now(timezone.utc)
         round_count = self._clarification_round_count(
-            run.stage_summaries if isinstance(run.stage_summaries, dict) else None
+            run.metrics if isinstance(run.metrics, dict) else None
         ) + 1
         payload_dict = (
             pending_clarification.model_dump(mode="json")
@@ -2864,6 +3034,7 @@ class KbChatService:
 
         stage_summaries = {
             **(cache_hit.stage_summaries if isinstance(cache_hit.stage_summaries, dict) else {}),
+            "retry_cache": self._build_retry_cache_metrics({}),
             "semantic_cache": {
                 "hit": True,
                 "score": cache_hit.score,
@@ -2873,6 +3044,7 @@ class KbChatService:
         }
         metrics = {
             **(cache_hit.metrics if isinstance(cache_hit.metrics, dict) else {}),
+            **self._build_retry_cache_metrics({}),
             "semantic_cache": {
                 "hit": True,
                 "score": cache_hit.score,
@@ -2881,6 +3053,30 @@ class KbChatService:
             },
             "latency_ms": 0,
         }
+        stage_summaries, metrics = await self._refresh_semantic_cache_hit_metrics(
+            stage_summaries=stage_summaries,
+            metrics=metrics,
+        )
+        gray_release_gate = (
+            metrics.get("gray_release_gate") if isinstance(metrics.get("gray_release_gate"), dict) else {}
+        )
+        gray_release_gate = {
+            **gray_release_gate,
+            "source_run_id": str(run.id),
+            "evaluated_at": run.finished_at.isoformat(),
+            "trigger_rollback": (
+                bool(
+                    getattr(
+                        self._settings,
+                        "kb_chat_gray_release_auto_rollback_enabled",
+                        True,
+                    )
+                )
+                and gray_release_gate.get("pass") is False
+            ),
+        }
+        metrics["gray_release_gate"] = gray_release_gate
+        stage_summaries["gray_release_gate"] = gray_release_gate
         run.stage_summaries = ensure_json_safe(
             stage_summaries,
             settings=self._settings,
@@ -2925,6 +3121,7 @@ class KbChatService:
         user_content: str,
         request: object | None = None,
         run: AgentRun | None = None,
+        sse_heartbeat_stats: SseHeartbeatStats | None = None,
     ) -> Any:
         """处理用户问题并返回流式 SSE（状态与节点事件基于 LangGraph 原生流）。"""
         if run is None:
@@ -3071,6 +3268,9 @@ class KbChatService:
         )
         protocol_emit_total = 0
         protocol_drift_total = 0
+        protocol_salvage_total = 0
+        node_io_snapshot_truncated_count = 0
+        custom_event_unhandled_count = 0
         stream_run_state = _KbChatStreamRunState(stage_status={}, stage_attempts={})
         last_good_answer: str | None = None
         last_good_answer_source: str | None = None
@@ -3083,14 +3283,29 @@ class KbChatService:
             node_path: list[str] | None = None,
             attempt: int | None = None,
         ) -> tuple[str, dict[str, Any]]:
-            node = None
-            if isinstance(node_name, str) and node_name:
-                node = {"id": node_name, "name": node_name}
             event_seq["value"] += 1
             seq = event_seq["value"]
             nonlocal protocol_emit_total
             nonlocal protocol_drift_total
+            nonlocal protocol_salvage_total
             protocol_emit_total += 1
+            resolved_node_name = node_name if isinstance(node_name, str) and node_name else None
+            drift_delta = 0
+            salvage_used = False
+            if event_type in {"messages", "updates", "node_io"}:
+                if resolved_node_name is None and isinstance(node_path, list) and node_path:
+                    resolved_node_name = node_path[-1]
+                    drift_delta += 1
+                    salvage_used = True
+            if not isinstance(payload.get("ts"), str) or not str(payload.get("ts") or "").strip():
+                drift_delta += 1
+                salvage_used = True
+            protocol_drift_total += drift_delta
+            if salvage_used:
+                protocol_salvage_total += 1
+            node = None
+            if resolved_node_name is not None:
+                node = {"id": resolved_node_name, "name": resolved_node_name}
             emitted_payload = self._build_protocol_event_payload(
                 event_type=event_type,
                 run_id=run.id,
@@ -3211,8 +3426,16 @@ class KbChatService:
                 config = make_run_config(thread_id=exec_ctx.thread_id)
             else:
                 config = CheckpointManager.make_config(exec_ctx.thread_id)
+            if exec_ctx.resume_checkpoint_id is not None:
+                configurable = (
+                    dict(config.get("configurable"))
+                    if isinstance(config.get("configurable"), dict)
+                    else {}
+                )
+                configurable["checkpoint_id"] = exec_ctx.resume_checkpoint_id
+                config = {**config, "configurable": configurable}
             stream = compiled.astream(
-                exec_ctx.state,
+                build_graph_input_state(exec_ctx.state),
                 config,
                 context=exec_ctx.run_context,
                 stream_mode=["messages", "updates", "custom"],
@@ -3382,9 +3605,6 @@ class KbChatService:
                         interrupts = apply_updates_chunk(stream_state, chunk)
                         candidate, candidate_source = self._extract_last_good_answer(
                             answer="",
-                            stage_summaries=stream_state.stage_summaries
-                            if isinstance(stream_state.stage_summaries, dict)
-                            else {},
                             stream_state=stream_state,
                         )
                         if candidate:
@@ -3424,6 +3644,8 @@ class KbChatService:
                                 if isinstance(payload_dict.get("event_type"), str)
                                 else "custom"
                             )
+                            if custom_event_type not in KB_CHAT_CUSTOM_EVENT_TYPES:
+                                custom_event_unhandled_count += 1
                             emitted_event_type = (
                                 "node_io" if custom_event_type == "node_io" else "custom"
                             )
@@ -3438,6 +3660,10 @@ class KbChatService:
                                     payload=payload_dict,
                                     node_path=node_path,
                                 )
+                                for meta_key in ("input_snapshot_meta", "output_snapshot_meta"):
+                                    meta = payload_dict.get(meta_key)
+                                    if isinstance(meta, dict) and meta.get("truncated") is True:
+                                        node_io_snapshot_truncated_count += 1
                             yield _emit_enveloped(
                                 event_type=emitted_event_type,
                                 payload=payload_dict,
@@ -3477,16 +3703,17 @@ class KbChatService:
                     answer = extract_answer_text(msg.content)
                     break
 
-            protocol_drift_rate = (
-                round((protocol_drift_total / protocol_emit_total) * 100.0, 4)
-                if protocol_emit_total > 0
-                else 0.0
+            protocol_metrics = self._build_protocol_metrics(
+                protocol_emit_total=protocol_emit_total,
+                protocol_required_field_drift_count=protocol_drift_total,
+                protocol_salvage_count=protocol_salvage_total,
+                node_io_snapshot_truncated_count=node_io_snapshot_truncated_count,
+                custom_event_unhandled_count=custom_event_unhandled_count,
+                heartbeat_stats=sse_heartbeat_stats,
             )
             stream_state.metrics = {
                 **(stream_state.metrics if isinstance(stream_state.metrics, dict) else {}),
-                "protocol_emit_total": protocol_emit_total,
-                "protocol_required_field_drift_count": protocol_drift_total,
-                "protocol_required_field_drift_rate": protocol_drift_rate,
+                **protocol_metrics,
             }
 
             metrics, stage_summaries = self._build_observability(
@@ -3497,6 +3724,7 @@ class KbChatService:
                 retrieval_results=exec_ctx.retrieval_results,
                 base_metrics=stream_state.metrics,
                 base_stage_summaries=stream_state.stage_summaries,
+                stage_attempts=stream_run_state.stage_attempts,
             )
             metrics = self._apply_guardrail_metrics(
                 metrics=metrics,
@@ -3507,12 +3735,12 @@ class KbChatService:
             )
 
             clarification_message, pending_clarification = self._extract_clarification_pending(
-                stage_summaries=stage_summaries,
+                clarification_payload=stream_state.clarification_payload,
                 answer=answer,
+                reflection=stream_state.reflection,
             )
             candidate, candidate_source = self._extract_last_good_answer(
                 answer=answer,
-                stage_summaries=stage_summaries,
                 stream_state=stream_state,
             )
             if candidate:
@@ -3538,7 +3766,7 @@ class KbChatService:
                     int(getattr(self._settings, "kb_chat_max_clarification_rounds", 1)),
                 )
                 current_rounds = self._clarification_round_count(
-                    run.stage_summaries if isinstance(run.stage_summaries, dict) else None
+                    run.metrics if isinstance(run.metrics, dict) else None
                 )
                 if current_rounds < max_rounds:
                     if last_good_answer:
@@ -3613,8 +3841,11 @@ class KbChatService:
                 )
 
             terminal_status, terminal_message = self._resolve_terminal_run_status(
-                stage_summaries=stage_summaries,
                 answer=answer,
+                clarification_payload=stream_state.clarification_payload,
+                routing_decisions=stream_state.routing_decisions,
+                reflection=stream_state.reflection,
+                best_answer=stream_state.best_answer,
             )
             if terminal_status == AgentRunStatus.FAILED and last_good_answer:
                 yield _emit_ui_event(
@@ -3626,7 +3857,7 @@ class KbChatService:
                 )
 
             preferred_evidence_round = self._resolve_preferred_evidence_round(
-                stage_summaries=stage_summaries,
+                best_answer_meta=stream_state.best_answer_meta,
                 loop_counts=stream_state.loop_counts,
             )
             final_response = await self._finalize_run(
@@ -3642,6 +3873,18 @@ class KbChatService:
                 metrics=metrics,
                 status=terminal_status,
                 error_message=terminal_message,
+                terminal_reason=self._resolve_terminal_reason(
+                    clarification_payload=stream_state.clarification_payload,
+                    routing_decisions=stream_state.routing_decisions,
+                    reflection=stream_state.reflection,
+                    degrade_reason=stream_state.degrade_reason,
+                ),
+                clarification_payload=stream_state.clarification_payload,
+                confidence_score=stream_state.confidence_score,
+                confidence_level=stream_state.confidence_level,
+                reflection=stream_state.reflection,
+                query_strategy=stream_state.query_strategy,
+                routing_decisions=stream_state.routing_decisions,
             )
             run_payload = final_response.run.model_dump(mode="json")
             yield _emit_state(
@@ -3751,6 +3994,13 @@ class KbChatService:
         metrics: dict[str, Any],
         status: AgentRunStatus = AgentRunStatus.SUCCEEDED,
         error_message: str | None = None,
+        terminal_reason: str | None = None,
+        clarification_payload: dict[str, Any] | None = None,
+        confidence_score: float | None = None,
+        confidence_level: str | None = None,
+        reflection: dict[str, Any] | None = None,
+        query_strategy: str | None = None,
+        routing_decisions: dict[str, Any] | None = None,
     ) -> ChatAnswerResponse:
         # answer 已经剥离思考段（<think>/thinking/reasoning_content）
 
@@ -3981,13 +4231,8 @@ class KbChatService:
                 allowed_labels.append(label)
 
         # 强约束：引用必须与证据标签一致；无证据（非澄清）时禁止输出看似引用标签。
-        force_exit = (
-            stage_summaries.get("force_exit")
-            if isinstance(stage_summaries, dict)
-            else None
-        )
-        allow_no_evidence = (
-            isinstance(force_exit, dict) and force_exit.get("reason") == "clarify"
+        allow_no_evidence = terminal_reason == "clarify" or isinstance(
+            clarification_payload, dict
         )
         answer = enforce_kb_answer_citation_guardrails(
             answer,
@@ -4006,6 +4251,7 @@ class KbChatService:
             and answer.strip() == no_evidence_answer
         ):
             answer = self._build_no_evidence_response(
+                reason_code=terminal_reason,
                 stage_summaries=stage_summaries
                 if isinstance(stage_summaries, dict)
                 else {},
@@ -4056,10 +4302,18 @@ class KbChatService:
             None if status == AgentRunStatus.SUCCEEDED else (error_message or "")
         )
         latency_ms = int((run.finished_at - started_at).total_seconds() * 1000)
-        route_consistency_rate = self._compute_route_consistency(stage_summaries)
-        final_state_consistency_rate = self._compute_final_state_consistency(stage_summaries)
+        route_consistency_rate = self._compute_route_consistency(
+            query_strategy=query_strategy,
+            routing_decisions=routing_decisions,
+        )
+        final_state_consistency_rate = self._compute_final_state_consistency(
+            routing_decisions=routing_decisions,
+            terminal_reason=terminal_reason,
+        )
         clarification_consistency_rate = self._compute_clarification_consistency(
-            stage_summaries
+            metrics=metrics,
+            clarification_payload=clarification_payload,
+            terminal_reason=terminal_reason,
         )
         protocol_required_field_drift_rate = float(
             metrics.get("protocol_required_field_drift_rate") or 0.0
@@ -4119,20 +4373,16 @@ class KbChatService:
         await self._db.refresh(assistant_msg)
         await self._db.refresh(run)
 
-        confidence_score: float | None = None
-        confidence_level: str | None = None
-        confidence_block = (
-            stage_summaries.get("confidence_calibrate")
-            if isinstance(stage_summaries, dict)
-            else None
-        )
-        if isinstance(confidence_block, dict):
-            raw_score = confidence_block.get("confidence_score")
-            if isinstance(raw_score, (int, float)):
-                confidence_score = max(0.0, min(1.0, float(raw_score)))
-            raw_level = confidence_block.get("confidence_level")
-            if isinstance(raw_level, str) and raw_level in {"high", "medium", "low"}:
-                confidence_level = raw_level
+        if isinstance(confidence_score, (int, float)):
+            confidence_score = max(0.0, min(1.0, float(confidence_score)))
+        else:
+            confidence_score = None
+        if not isinstance(confidence_level, str) or confidence_level not in {
+            "high",
+            "medium",
+            "low",
+        }:
+            confidence_level = None
         if confidence_level is None and confidence_score is not None:
             if confidence_score >= 0.8:
                 confidence_level = "high"
@@ -4142,9 +4392,10 @@ class KbChatService:
                 confidence_level = "low"
 
         semantic_cache_skip_reason = self._semantic_cache_skip_reason(
-            stage_summaries=stage_summaries
-            if isinstance(stage_summaries, dict)
-            else {},
+            clarification_payload=clarification_payload,
+            routing_decisions=routing_decisions,
+            reflection=reflection if isinstance(reflection, dict) else None,
+            degrade_reason=terminal_reason,
             answer=answer,
         )
         if status == AgentRunStatus.SUCCEEDED and semantic_cache_skip_reason is None:

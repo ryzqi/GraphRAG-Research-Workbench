@@ -13,21 +13,34 @@ import time
 from typing import Any, Literal, TypedDict
 
 from langchain.agents import create_agent
-from langchain.messages import HumanMessage, SystemMessage
+from langchain.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_core.language_models.chat_models import BaseChatModel
 from langgraph.config import get_stream_writer
 from langgraph.graph import END, StateGraph
 from langgraph.runtime import Runtime
-from langgraph.types import Command, Send
+from langgraph.types import Command, RetryPolicy, Send
 from pydantic import ValidationError
 
 from app.agents.kb_chat_trace_nodes import (
-    KB_CHAT_NODE_METADATA,
+    extend_kb_chat_node_metadata,
     wrap_kb_chat_node_with_io,
 )
 from app.agents.kb_chat_agentic.reflection import generate_draft
 from app.agents.kb_chat_agentic.schemas import AnswerReviewSubDecision
-from app.agents.kb_chat_agentic_state import KbChatInternalState, merge_routing_decision
+from app.agents.kb_chat_agentic_state import (
+    AnswerCommitInput,
+    AnswerRepairInput,
+    AnswerReviewCitationInput,
+    AnswerReviewDispatchInput,
+    AnswerReviewFuseInput,
+    AnswerReviewLLMInput,
+    ChainOfVerificationInput,
+    ClaimCitationCheckInput,
+    CoveCheckInput,
+    DraftGenerateInput,
+    KbChatInternalState,
+    merge_routing_decision,
+)
 from app.core.settings import Settings
 from app.prompts import get_prompt_loader
 from app.services.evidence_guardrails import resolve_kb_refusal_answer
@@ -100,14 +113,14 @@ def _current_review_round(state: dict[str, Any]) -> int:
 
 
 def _resolve_answer_subgraph_next_step(
-    state: dict[str, Any],
+    state: AnswerCommitInput,
     *,
     settings: Settings,
 ) -> str:
     reflection = state.get("reflection")
     reflection_obj = reflection if isinstance(reflection, dict) else {}
     if reflection_obj.get("review_passed") is True:
-        return "finalize"
+        return "confidence_calibrate"
 
     loop_counts = _get_loop_counts(state)
     max_total_rounds = int(getattr(settings, "kb_chat_max_total_rounds", 3))
@@ -336,7 +349,10 @@ async def _judge_structured(
     return payload, None
 
 
-def _resolve_subcheck(state: dict[str, Any], check: str) -> dict[str, Any] | None:
+def _resolve_subcheck(
+    state: AnswerReviewFuseInput,
+    check: str,
+) -> dict[str, Any] | None:
     active_round = _current_review_round(state)
     runs = state.get("answer_review_runs")
     if not isinstance(runs, list):
@@ -357,7 +373,7 @@ def _resolve_subcheck(state: dict[str, Any], check: str) -> dict[str, Any] | Non
 
 
 async def _answer_review_dispatch(
-    state: dict[str, Any],
+    state: AnswerReviewDispatchInput,
     runtime: Runtime[KbChatAnswerSubgraphContext],
     *,
     settings: Settings,
@@ -429,7 +445,7 @@ def _emit_review_event(payload: dict[str, Any]) -> None:
 
 
 async def _answer_review_citation(
-    state: dict[str, Any],
+    state: AnswerReviewCitationInput,
     runtime: Runtime[KbChatAnswerSubgraphContext],
     *,
     settings: Settings,
@@ -484,7 +500,7 @@ async def _answer_review_citation(
 
 
 async def _answer_review_llm_check(
-    state: dict[str, Any],
+    state: AnswerReviewLLMInput,
     *,
     settings: Settings,
     chat_model: BaseChatModel,
@@ -557,7 +573,7 @@ async def _answer_review_llm_check(
 
 
 async def _answer_review_factual(
-    state: dict[str, Any],
+    state: AnswerReviewLLMInput,
     runtime: Runtime[KbChatAnswerSubgraphContext],
     *,
     settings: Settings,
@@ -570,7 +586,7 @@ async def _answer_review_factual(
 
 
 async def _answer_review_answerability(
-    state: dict[str, Any],
+    state: AnswerReviewLLMInput,
     runtime: Runtime[KbChatAnswerSubgraphContext],
     *,
     settings: Settings,
@@ -583,7 +599,7 @@ async def _answer_review_answerability(
 
 
 async def _answer_review_fuse(
-    state: dict[str, Any],
+    state: AnswerReviewFuseInput,
     runtime: Runtime[KbChatAnswerSubgraphContext],
     *,
     settings: Settings,
@@ -720,13 +736,13 @@ async def _answer_review_fuse(
     return Command(update=updates, goto=goto)
 
 
-def _is_high_risk_query(state: dict[str, Any]) -> bool:
+def _is_high_risk_query(state: CoveCheckInput) -> bool:
     query = _resolve_query_text(state)
     lowered = query.lower()
     return any(hint in query for hint in _HIGH_RISK_HINTS) or "risk" in lowered
 
 
-def _cove_check(state: dict[str, Any]) -> Command[str]:
+def _cove_check(state: CoveCheckInput) -> Command[str]:
     high_risk = _is_high_risk_query(state)
     stage = _merge_stage_summary(
         state,
@@ -752,7 +768,7 @@ def _cove_check(state: dict[str, Any]) -> Command[str]:
     )
 
 
-def _chain_of_verification(state: dict[str, Any]) -> dict[str, Any]:
+def _chain_of_verification(state: ChainOfVerificationInput) -> dict[str, Any]:
     draft = _as_str(state.get("draft_answer")).strip()
     final_context = _as_str(state.get("final_context")).strip()
     evidence_blocks = _parse_evidence_blocks(final_context)
@@ -830,7 +846,7 @@ def _chain_of_verification(state: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _claim_citation_check(state: dict[str, Any]) -> Command[str]:
+def _claim_citation_check(state: ClaimCitationCheckInput) -> Command[str]:
     draft = _as_str(state.get("draft_answer")).strip()
     final_context = _as_str(state.get("final_context")).strip()
     labels = _extract_evidence_labels(final_context)
@@ -955,7 +971,7 @@ def _claim_citation_check(state: dict[str, Any]) -> Command[str]:
 
 
 async def _draft_generate(
-    state: dict[str, Any],
+    state: DraftGenerateInput,
     runtime: Runtime[KbChatAnswerSubgraphContext],
     *,
     settings: Settings,
@@ -977,7 +993,7 @@ async def _draft_generate(
 
 
 async def _answer_repair(
-    state: dict[str, Any],
+    state: AnswerRepairInput,
     runtime: Runtime[KbChatAnswerSubgraphContext],
     *,
     settings: Settings,
@@ -1074,7 +1090,7 @@ async def _answer_repair(
 
 
 async def _answer_commit(
-    state: dict[str, Any],
+    state: AnswerCommitInput,
     runtime: Runtime[KbChatAnswerSubgraphContext],
     *,
     settings: Settings,
@@ -1161,6 +1177,11 @@ async def _answer_commit(
     }
     if final_answer:
         updates["final_answer"] = final_answer
+    if next_step == "confidence_calibrate":
+        if not final_answer:
+            final_answer = "根据现有资料无法回答该问题（未生成答案）。"
+            updates["final_answer"] = final_answer
+        updates["messages"] = [AIMessage(content=final_answer)]
     return {
         **updates,
         **_merge_stage_summary(state, "answer_subgraph", summary, updates=updates),
@@ -1188,11 +1209,31 @@ def build_answer_subgraph(
         state_schema=KbChatInternalState,
         context_schema=KbChatAnswerSubgraphContext,
     )
-    def add_traced_node(node_id: str, node_callable: Any, **kwargs: Any) -> None:
+    generation_retry_policy = RetryPolicy(
+        max_attempts=max(2, int(getattr(settings, "kb_chat_max_generation_retries", 2)) + 1)
+    )
+
+    def add_traced_node(
+        node_id: str,
+        node_callable: Any,
+        *,
+        side_effect_type: str,
+        retry_policy: RetryPolicy | None = None,
+        retry_disabled_reason: str | None = None,
+        **kwargs: Any,
+    ) -> None:
+        metadata = extend_kb_chat_node_metadata(
+            node_id,
+            side_effect_type=side_effect_type,
+            retry_enabled=retry_policy is not None,
+        )
+        if retry_policy is None:
+            metadata["retry_disabled_reason"] = retry_disabled_reason or side_effect_type
         graph.add_node(
             node_id,
             wrap_kb_chat_node_with_io(node_id, node_callable),
-            metadata=KB_CHAT_NODE_METADATA[node_id],
+            metadata=metadata,
+            retry_policy=retry_policy,
             **kwargs,
         )
 
@@ -1201,6 +1242,8 @@ def build_answer_subgraph(
         lambda s, runtime: _draft_generate(
             s, runtime, settings=settings, chat_model=chat_model
         ),
+        side_effect_type="llm",
+        retry_policy=generation_retry_policy,
     )
     add_traced_node(
         "answer_review_dispatch",
@@ -1209,6 +1252,8 @@ def build_answer_subgraph(
             runtime,
             settings=settings,
         ),
+        side_effect_type="deterministic_rule",
+        retry_disabled_reason="parallel_fanout",
         destinations=(
             "answer_review_citation",
             "answer_review_factual",
@@ -1219,18 +1264,23 @@ def build_answer_subgraph(
     add_traced_node(
         "answer_review_citation",
         lambda s, runtime: _answer_review_citation(s, runtime, settings=settings),
+        side_effect_type="deterministic_rule",
     )
     add_traced_node(
         "answer_review_factual",
         lambda s, runtime: _answer_review_factual(
             s, runtime, settings=settings, chat_model=chat_model
         ),
+        side_effect_type="llm",
+        retry_policy=generation_retry_policy,
     )
     add_traced_node(
         "answer_review_answerability",
         lambda s, runtime: _answer_review_answerability(
             s, runtime, settings=settings, chat_model=chat_model
         ),
+        side_effect_type="llm",
+        retry_policy=generation_retry_policy,
     )
     add_traced_node(
         "answer_review_fuse",
@@ -1239,22 +1289,32 @@ def build_answer_subgraph(
             runtime,
             settings=settings,
         ),
+        side_effect_type="deterministic_rule",
         destinations=("cove_check", "answer_commit", "answer_repair"),
     )
-    add_traced_node("cove_check", _cove_check, destinations=("chain_of_verification", "claim_citation_check"))
-    add_traced_node("chain_of_verification", _chain_of_verification)
+    add_traced_node(
+        "cove_check",
+        _cove_check,
+        side_effect_type="deterministic_rule",
+        destinations=("chain_of_verification", "claim_citation_check"),
+    )
+    add_traced_node("chain_of_verification", _chain_of_verification, side_effect_type="deterministic_rule")
     add_traced_node(
         "claim_citation_check",
         _claim_citation_check,
+        side_effect_type="deterministic_rule",
         destinations=("answer_commit", "answer_repair"),
     )
     add_traced_node(
         "answer_repair",
         lambda s, runtime: _answer_repair(s, runtime, settings=settings, chat_model=chat_model),
+        side_effect_type="llm",
+        retry_policy=generation_retry_policy,
     )
     add_traced_node(
         "answer_commit",
         lambda s, runtime: _answer_commit(s, runtime, settings=settings),
+        side_effect_type="deterministic_rule",
         defer=True,
     )
 

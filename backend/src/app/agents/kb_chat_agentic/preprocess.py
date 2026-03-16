@@ -31,7 +31,19 @@ from app.services.query_rewrite_service import (
     build_query_items,
 )
 from app.utils.token_counter import count_tokens_approximately
-from app.agents.kb_chat_agentic_state import merge_routing_decision
+from app.agents.kb_chat_agentic_state import (
+    AmbiguityCheckInput,
+    ComplexityClassifyInput,
+    CorefRewriteInput,
+    DecompositionInput,
+    EntityExpandInput,
+    GenerateVariantsInput,
+    HydeInput,
+    MergeContextInput,
+    NormalizeRewriteInput,
+    PrepareMessagesInput,
+    merge_routing_decision,
+)
 
 from .budget import (
     ensure_budget_initialized,
@@ -551,7 +563,7 @@ def _needs_conflict_resolution(*, summary_text: str, memory_snippet: str) -> boo
 
 
 async def merge_context(
-    state: dict,
+    state: MergeContextInput,
     runtime: Runtime[Any],
     settings: Settings,
 ) -> dict[str, Any]:
@@ -699,7 +711,7 @@ async def merge_context(
     }
 
 
-async def coref_rewrite(state: dict, settings: Settings) -> dict[str, Any]:
+async def coref_rewrite(state: CorefRewriteInput, settings: Settings) -> dict[str, Any]:
     """Coreference resolution / rewrite (degrades to original query on failure)."""
     start = time.perf_counter()
     input_source = "rewrite_input_query"
@@ -794,7 +806,7 @@ async def coref_rewrite(state: dict, settings: Settings) -> dict[str, Any]:
     }
 
 
-async def ambiguity_check(state: dict, settings: Settings) -> dict[str, Any]:
+async def ambiguity_check(state: AmbiguityCheckInput, settings: Settings) -> dict[str, Any]:
     """Ambiguity check with model-first decision and structured clarification payload."""
     start = time.perf_counter()
     query = state.get("coref_query")
@@ -894,7 +906,7 @@ async def ambiguity_check(state: dict, settings: Settings) -> dict[str, Any]:
 
 
 async def normalize_rewrite(
-    state: dict,
+    state: NormalizeRewriteInput,
     settings: Settings,
     runtime: Runtime[Any] | None = None,
 ) -> dict[str, Any]:
@@ -977,7 +989,7 @@ async def normalize_rewrite(
 
 
 async def complexity_classify(
-    state: dict,
+    state: ComplexityClassifyInput,
     settings: Settings,
     runtime: Runtime[Any] | None = None,
 ) -> Command[str]:
@@ -1165,7 +1177,7 @@ async def complexity_classify(
     return Command(update=updates, goto=goto)
 
 
-async def decomposition(state: dict, settings: Settings) -> dict[str, Any]:
+async def decomposition(state: DecompositionInput, settings: Settings) -> dict[str, Any]:
     """Generate sub-queries (via QueryRewriteService; degrades safely)."""
     start = time.perf_counter()
     query = state.get("normalized_query")
@@ -1238,7 +1250,10 @@ async def decomposition(state: dict, settings: Settings) -> dict[str, Any]:
         "stage_summaries": stage_summaries,
     }
 
-async def generate_variants(state: dict, settings: Settings) -> dict[str, Any]:
+async def generate_variants(
+    state: GenerateVariantsInput,
+    settings: Settings,
+) -> dict[str, Any]:
     """Generate query variants (via QueryRewriteService; degrades safely)."""
     start = time.perf_counter()
     query = state.get("normalized_query")
@@ -1291,7 +1306,7 @@ async def generate_variants(state: dict, settings: Settings) -> dict[str, Any]:
 
 
 async def entity_expand(
-    state: dict,
+    state: EntityExpandInput,
     runtime: Runtime[Any],
     settings: Settings,
 ) -> Command[str]:
@@ -1417,7 +1432,7 @@ async def entity_expand(
     )
 
 
-async def hyde(state: dict, settings: Settings) -> dict[str, Any]:
+async def hyde(state: HydeInput, settings: Settings) -> dict[str, Any]:
     """HyDE node (LLM-driven with safe fallback)."""
     start = time.perf_counter()
     query = state.get("normalized_query")
@@ -1461,7 +1476,7 @@ async def hyde(state: dict, settings: Settings) -> dict[str, Any]:
 
 
 async def prepare_messages(
-    state: dict,
+    state: PrepareMessagesInput,
     runtime: Runtime[Any],
     settings: Settings,
 ) -> Command[str]:

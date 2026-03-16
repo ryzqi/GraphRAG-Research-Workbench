@@ -1,21 +1,34 @@
-version: "1.0"
+version: "2.0"
 name: kb_chat_ambiguity_decision
 description: "模型主导的歧义判定与结构化澄清输出"
 
 template: |
   你是知识库问答系统中的“歧义判定器”。
-  你的任务是判断用户问题是否需要先澄清，再继续检索与回答。
+  你的唯一任务：判断当前问题是否必须先澄清，才能继续检索与回答。
 
-  你必须遵守：
-  1. 若问题关键信息缺失（对象、范围、时间、指标）或指代不清，ambiguous=true。
-  2. 若问题已足够明确，ambiguous=false，并避免过度打断。
-  3. 当 ambiguous=true 时：
-     - 给出一个可直接提问的 clarifying_question（单句问句）。
-     - 输出最关键的 missing_slots（0~6 个）。
-     - 提供 suggested_answers（0~4 个可直接点击/填充的示例）。
-  4. confidence 表示你对“是否歧义”的置信度，范围 [0,1]。
-  5. reason_code 必须是：
-     - missing_entity / missing_scope / missing_time / missing_metric / coref_uncertain / mixed
+  决策原则：
+  1. 只有当缺失对象、范围、时间、指标、统计口径，或存在高风险指代不清时，才设置 ambiguous=true。
+  2. 如果现有问题已经足以发起稳定检索，就设置 ambiguous=false，避免过度打断用户。
+  3. 优先判断“缺什么会改变答案”，不要因为细枝末节而要求澄清。
+  4. 共指信号仅作为辅助：若 coref_needs_clarification=true 或共指置信度很低，应更保守。
+
+  输出要求：
+  - 只输出一个 JSON 对象，不要输出 Markdown、解释、代码块或额外文字。
+  - JSON 字段必须且只能包含：
+    - ambiguous: boolean
+    - reason_code: "missing_entity" | "missing_scope" | "missing_time" | "missing_metric" | "coref_uncertain" | "mixed"
+    - confidence: 0 到 1 的浮点数
+    - reasoning: 一句话说明判断依据，尽量简洁
+    - clarifying_question: 单句问句；若 ambiguous=false，输出空字符串
+    - missing_slots: 数组；每项是对象 {{"key": str, "label": str, "required": bool, "options": list[str]}}
+    - suggested_answers: 数组；给 0 到 4 个可直接点击或补全的示例答案
+  - 若 ambiguous=false：clarifying_question 必须为 ""，missing_slots 必须为 []，suggested_answers 必须为 []。
+  - 若 ambiguous=true：clarifying_question 必须只补最关键缺口；missing_slots 只保留最关键的 0 到 6 项。
+
+  澄清问题要求：
+  1. 只能提 1 个问题。
+  2. 问句必须具体，避免“这个/那个/它”这类模糊指代。
+  3. 不要回答原问题，不要给建议，不要引入新事实。
 
   输入信息：
   - 用户问题：{question}
@@ -40,3 +53,20 @@ variables:
   - name: coref_needs_clarification
     type: boolean
     required: true
+
+few_shot_examples:
+  - input: |
+      用户问题：这个方案效果怎么样？
+      共指置信度：0.21
+      共指候选：方案
+      共指澄清提示：缺少具体方案名与评估指标
+      共指是否提示需澄清：true
+    output: '{"ambiguous": true, "reason_code": "mixed", "confidence": 0.93, "reasoning": "缺少具体方案与评估口径，继续检索会高概率跑偏。", "clarifying_question": "请问你指的是哪个具体方案，以及希望用哪些指标评估效果？", "missing_slots": [{"key": "plan_name", "label": "具体方案", "required": true, "options": []}, {"key": "evaluation_metric", "label": "评估指标", "required": true, "options": ["成本", "效果", "时效"]}], "suggested_answers": ["方案A，关注成本和效果", "方案B，关注时效"]}'
+  - input: |
+      用户问题：2024 年平台可用性是多少？
+      共指置信度：0.99
+      共指候选：平台
+      共指澄清提示：
+      共指是否提示需澄清：false
+    output: '{"ambiguous": false, "reason_code": "missing_metric", "confidence": 0.9, "reasoning": "实体、时间与指标已足够明确，可直接检索。", "clarifying_question": "", "missing_slots": [], "suggested_answers": []}'
+

@@ -94,6 +94,47 @@ describe('kbChatTraceNodes', () => {
     expect(nodes.find((node) => node.id === 'merge_context')?.subtitle).toBeNull();
   });
 
+  it('keeps chinese fallback titles for legacy preprocess shell nodes that still arrive in trace events', () => {
+    const nodes = buildTraceNodes({
+      nodeIoEvents: [
+        {
+          run_id: 'run-1',
+          node_id: 'AMBIGUITY_CHECK_ENABLED',
+          node_name: 'AMBIGUITY_CHECK_ENABLED',
+          phase: 'end',
+          ts: '2026-01-01T00:00:01.000Z',
+        },
+        {
+          run_id: 'run-1',
+          node_id: 'adaptive_routing',
+          node_name: 'adaptive_routing',
+          phase: 'end',
+          ts: '2026-01-01T00:00:02.000Z',
+        },
+        {
+          run_id: 'run-1',
+          node_id: 'ENABLE_HYDE',
+          node_name: 'ENABLE_HYDE',
+          phase: 'end',
+          ts: '2026-01-01T00:00:03.000Z',
+        },
+      ],
+    });
+
+    expect(nodes.find((node) => node.id === 'AMBIGUITY_CHECK_ENABLED')).toMatchObject({
+      title: '歧义检查入口',
+      subtitle: null,
+    });
+    expect(nodes.find((node) => node.id === 'adaptive_routing')).toMatchObject({
+      title: '自适应路由',
+      subtitle: null,
+    });
+    expect(nodes.find((node) => node.id === 'ENABLE_HYDE')).toMatchObject({
+      title: 'HyDE开关',
+      subtitle: null,
+    });
+  });
+
   it('prefers terminal waiting_user and failed state for the current node over stale started steps', () => {
     const waitingNodes = buildTraceNodes({
       runState: {
@@ -179,6 +220,7 @@ describe('kbChatTraceNodes', () => {
     const groups = buildTraceStageGroups({
       schema: {
         version: '2026-03-12',
+        hash: 'schema-hash-legacy',
         nodes: [
           { id: 'answer_subgraph', label: '答案子图', phase: 'generate', order: 37 },
           { id: 'draft_generate', label: '草稿生成', phase: 'generate', order: 38 },
@@ -210,5 +252,58 @@ describe('kbChatTraceNodes', () => {
     expect(nodeIds).toContain('answer_review_fuse');
     expect(nodeIds).not.toContain('generate');
     expect(nodeIds).not.toContain('answer_review');
+  });
+
+  it('prefers backend schema phase and order over local catalog when building nodes', () => {
+    const nodes = buildTraceNodes({
+      schema: {
+        version: '1.1',
+        hash: 'schema-hash',
+        nodes: [
+          {
+            id: 'transform_query',
+            label: '重试改写',
+            phase: 'finalize',
+            order: 999,
+            metadata: { label: '重试改写', phase: 'finalize', order: 999 },
+          },
+        ],
+        edges: [],
+      },
+      nodeIoEvents: [
+        {
+          run_id: 'run-1',
+          node_id: 'transform_query',
+          node_name: 'transform_query',
+          phase: 'end',
+          ts: '2026-01-01T00:00:01.000Z',
+        },
+      ],
+    });
+
+    expect(nodes.find((node) => node.id === 'transform_query')).toMatchObject({
+      title: '重试改写',
+      stageId: 'stage_7_finalize',
+      order: 999,
+    });
+  });
+
+  it('does not include deprecated preprocess shell nodes in fallback trace view', () => {
+    const nodes = buildTraceNodes({});
+    const nodeIds = new Set(nodes.map((node) => node.id));
+
+    [
+      'AMBIGUITY_CHECK_ENABLED',
+      'adaptive_routing',
+      'simple_path',
+      'moderate_path',
+      'complex_path',
+      'ENABLE_MULTI_QUERY_MOD',
+      'ENABLE_DECOMPOSITION',
+      'ENABLE_MULTI_QUERY',
+      'ENABLE_HYDE',
+    ].forEach((nodeId) => {
+      expect(nodeIds.has(nodeId)).toBe(false);
+    });
   });
 });

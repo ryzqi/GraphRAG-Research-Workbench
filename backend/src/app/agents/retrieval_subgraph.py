@@ -9,6 +9,7 @@ from typing import Any, TypedDict
 
 from langchain.tools import BaseTool
 from langgraph.graph import END, StateGraph
+from langgraph.types import RetryPolicy
 
 from app.agents.kb_chat_agentic.reflection import (
     dispatch_subqueries,
@@ -17,10 +18,14 @@ from app.agents.kb_chat_agentic.reflection import (
     retrieve_subquery_context,
 )
 from app.agents.kb_chat_trace_nodes import (
-    KB_CHAT_NODE_METADATA,
+    extend_kb_chat_node_metadata,
     wrap_kb_chat_node_with_io,
 )
-from app.agents.kb_chat_agentic_state import KbChatInternalState
+from app.agents.kb_chat_agentic_state import (
+    CompressContextInput,
+    KbChatInternalState,
+    RetrievalBudgetPlanInput,
+)
 from app.core.settings import Settings
 from app.utils.token_counter import count_tokens_approximately
 
@@ -75,7 +80,10 @@ def _budget_by_complexity(complexity: str) -> tuple[int, int, int]:
     return 5, 20, 10
 
 
-def _retrieval_budget_plan(state: dict[str, Any], settings: Settings) -> dict[str, Any]:
+def _retrieval_budget_plan(
+    state: RetrievalBudgetPlanInput,
+    settings: Settings,
+) -> dict[str, Any]:
     complexity = str(state.get("complexity_level") or "simple")
     query_count = _resolve_query_count(state)
     per_query_top_k, global_candidates_limit, rerank_input_limit = _budget_by_complexity(
@@ -261,7 +269,7 @@ def _select_relevant_excerpt(body: str, query_terms: set[str], *, token_budget: 
     return excerpt
 
 
-def _compress_context(state: dict[str, Any]) -> dict[str, Any]:
+def _compress_context(state: CompressContextInput) -> dict[str, Any]:
     final_context = str(state.get("final_context") or "").strip()
     if not final_context:
         final_context = "（未找到相关内容）"
@@ -404,36 +412,63 @@ def build_retrieval_subgraph(*, settings: Settings, kb_tool: BaseTool):
         state_schema=KbChatInternalState,
         context_schema=KbChatGraphContext,
     )
-    def add_traced_node(node_id: str, node_callable: Any, **kwargs: Any) -> None:
+    retrieval_retry_policy = RetryPolicy(
+        max_attempts=max(2, int(getattr(settings, "kb_chat_max_retrieval_retries", 2)) + 1)
+    )
+
+    def add_traced_node(
+        node_id: str,
+        node_callable: Any,
+        *,
+        side_effect_type: str,
+        retry_policy: RetryPolicy | None = None,
+        retry_disabled_reason: str | None = None,
+        **kwargs: Any,
+    ) -> None:
+        metadata = extend_kb_chat_node_metadata(
+            node_id,
+            side_effect_type=side_effect_type,
+            retry_enabled=retry_policy is not None,
+        )
+        if retry_policy is None:
+            metadata["retry_disabled_reason"] = retry_disabled_reason or side_effect_type
         graph.add_node(
             node_id,
             wrap_kb_chat_node_with_io(node_id, node_callable),
-            metadata=KB_CHAT_NODE_METADATA[node_id],
+            metadata=metadata,
+            retry_policy=retry_policy,
             **kwargs,
         )
 
     add_traced_node(
         "retrieval_budget_plan",
         partial(_retrieval_budget_plan, settings=settings),
+        side_effect_type="deterministic_rule",
     )
     add_traced_node(
         "dispatch_subqueries",
         partial(dispatch_subqueries, settings=settings),
+        side_effect_type="deterministic_rule",
         destinations=("retrieve_subquery", "retrieve"),
     )
     add_traced_node(
         "retrieve_subquery",
         partial(retrieve_subquery_context, settings=settings, kb_tool=kb_tool),
+        side_effect_type="external_io",
+        retry_policy=retrieval_retry_policy,
     )
     add_traced_node(
         "merge_subquery_context",
         partial(merge_subquery_context, settings=settings),
+        side_effect_type="deterministic_rule",
     )
     add_traced_node(
         "retrieve",
         partial(kb_retrieve_context, settings=settings, kb_tool=kb_tool),
+        side_effect_type="external_io",
+        retry_policy=retrieval_retry_policy,
     )
-    add_traced_node("context_compress", _compress_context)
+    add_traced_node("context_compress", _compress_context, side_effect_type="deterministic_rule")
 
     graph.set_entry_point("retrieval_budget_plan")
     graph.add_edge("retrieval_budget_plan", "dispatch_subqueries")

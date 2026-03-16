@@ -10,10 +10,17 @@ from langgraph.graph import END, StateGraph
 from langgraph.types import Command, Send
 
 from app.agents.kb_chat_trace_nodes import (
-    KB_CHAT_NODE_METADATA,
+    extend_kb_chat_node_metadata,
     wrap_kb_chat_node_with_io,
 )
-from app.agents.kb_chat_agentic_state import KbChatInternalState, merge_routing_decision
+from app.agents.kb_chat_agentic_state import (
+    DocGateContextInput,
+    DocGateDispatchInput,
+    DocGateFuseInput,
+    DocGateRouteInput,
+    KbChatInternalState,
+    merge_routing_decision,
+)
 from app.core.settings import Settings
 from app.utils.token_counter import count_tokens_approximately
 
@@ -90,7 +97,58 @@ def _resolve_doc_gate_round(state: dict[str, Any]) -> int:
     return 0
 
 
-def _doc_gate_dispatch(state: dict[str, Any]) -> Command[str]:
+def _collect_doc_gate_round_runs(state: dict[str, Any]) -> tuple[int, dict[str, dict[str, Any]]]:
+    active_round = _resolve_doc_gate_round(state) or 1
+    runs_raw = state.get("doc_gate_runs")
+    runs = [item for item in runs_raw if isinstance(item, dict)] if isinstance(runs_raw, list) else []
+    round_runs = [
+        item
+        for item in runs
+        if isinstance(item.get("round"), int) and int(item.get("round")) == active_round
+    ]
+    return active_round, {str(item.get("gate") or ""): item for item in round_runs}
+
+
+def _build_doc_gate_fuse_summary(state: dict[str, Any]) -> dict[str, Any]:
+    active_round, by_gate = _collect_doc_gate_round_runs(state)
+    suff = by_gate.get("sufficiency", {"passed": False, "score": 0.0, "reason": "missing"})
+    ans = by_gate.get("answerability", {"passed": False, "score": 0.0, "reason": "missing"})
+    conflict = by_gate.get("conflict", {"passed": False, "score": 0.0, "reason": "missing"})
+    conflict_extra = conflict.get("extra") if isinstance(conflict.get("extra"), dict) else {}
+    conflict_level = str(conflict_extra.get("conflict_level") or "none")
+    missing_gates = [
+        gate for gate in ("sufficiency", "answerability", "conflict") if gate not in by_gate
+    ]
+    decision = "pass"
+    if missing_gates:
+        decision = "retry"
+    elif not bool(ans.get("passed")):
+        decision = "exit_unanswerable"
+    elif not bool(suff.get("passed")):
+        decision = "retry"
+    elif conflict_level == "severe":
+        decision = "retry_conflict"
+    elif not bool(conflict.get("passed")):
+        decision = "retry"
+    score = (
+        float(suff.get("score") or 0.0)
+        + float(ans.get("score") or 0.0)
+        + float(conflict.get("score") or 0.0)
+    ) / 3.0
+    return {
+        "round": active_round,
+        "decision": decision,
+        "score": round(max(0.0, min(1.0, score)), 4),
+        "sufficiency": suff,
+        "answerability": ans,
+        "conflict": conflict,
+        "conflict_level": conflict_level,
+        "conflict_flag": conflict_level == "severe",
+        "missing_gates": missing_gates,
+    }
+
+
+def _doc_gate_dispatch(state: DocGateDispatchInput) -> Command[str]:
     next_round = _resolve_doc_gate_round(state) + 1
     branch_state = {**state, "doc_gate_round": next_round}
     return Command(
@@ -121,7 +179,7 @@ def _doc_gate_dispatch(state: dict[str, Any]) -> Command[str]:
     )
 
 
-def _doc_gate_sufficiency(state: dict[str, Any]) -> dict[str, Any]:
+def _doc_gate_sufficiency(state: DocGateContextInput) -> dict[str, Any]:
     round_id = _resolve_doc_gate_round(state) or 1
     context = str(state.get("final_context") or "")
     tokens = count_tokens_approximately(context)
@@ -139,7 +197,7 @@ def _doc_gate_sufficiency(state: dict[str, Any]) -> dict[str, Any]:
     )
 
 
-def _doc_gate_answerability(state: dict[str, Any]) -> dict[str, Any]:
+def _doc_gate_answerability(state: DocGateContextInput) -> dict[str, Any]:
     round_id = _resolve_doc_gate_round(state) or 1
     query = _resolve_query_text(state)
     context = str(state.get("final_context") or "")
@@ -160,7 +218,7 @@ def _doc_gate_answerability(state: dict[str, Any]) -> dict[str, Any]:
     )
 
 
-def _doc_gate_conflict(state: dict[str, Any]) -> dict[str, Any]:
+def _doc_gate_conflict(state: DocGateContextInput) -> dict[str, Any]:
     round_id = _resolve_doc_gate_round(state) or 1
     context = str(state.get("final_context") or "")
     conflict_markers = (
@@ -204,52 +262,11 @@ def _doc_gate_conflict(state: dict[str, Any]) -> dict[str, Any]:
     )
 
 
-def _doc_gate_fuse(state: dict[str, Any]) -> dict[str, Any]:
-    active_round = _resolve_doc_gate_round(state) or 1
-    runs_raw = state.get("doc_gate_runs")
-    runs = [item for item in runs_raw if isinstance(item, dict)] if isinstance(runs_raw, list) else []
-    round_runs = [
-        item
-        for item in runs
-        if isinstance(item.get("round"), int) and int(item.get("round")) == active_round
-    ]
-    runs = round_runs
-    by_gate = {str(item.get("gate") or ""): item for item in runs}
-    suff = by_gate.get("sufficiency", {"passed": False, "score": 0.0, "reason": "missing"})
-    ans = by_gate.get("answerability", {"passed": False, "score": 0.0, "reason": "missing"})
-    conflict = by_gate.get("conflict", {"passed": False, "score": 0.0, "reason": "missing"})
-    conflict_extra = conflict.get("extra") if isinstance(conflict.get("extra"), dict) else {}
-    conflict_level = str(conflict_extra.get("conflict_level") or "none")
-    missing_gates = [
-        gate for gate in ("sufficiency", "answerability", "conflict") if gate not in by_gate
-    ]
-    decision = "pass"
-    if missing_gates:
-        decision = "retry"
-    elif not bool(ans.get("passed")):
-        decision = "exit_unanswerable"
-    elif not bool(suff.get("passed")):
-        decision = "retry"
-    elif conflict_level == "severe":
-        decision = "retry_conflict"
-    elif not bool(conflict.get("passed")):
-        decision = "retry"
-    score = (
-        float(suff.get("score") or 0.0)
-        + float(ans.get("score") or 0.0)
-        + float(conflict.get("score") or 0.0)
-    ) / 3.0
-    summary = {
-        "round": active_round,
-        "decision": decision,
-        "score": round(max(0.0, min(1.0, score)), 4),
-        "sufficiency": suff,
-        "answerability": ans,
-        "conflict": conflict,
-        "conflict_level": conflict_level,
-        "conflict_flag": conflict_level == "severe",
-        "missing_gates": missing_gates,
-    }
+def _doc_gate_fuse(state: DocGateFuseInput) -> dict[str, Any]:
+    summary = _build_doc_gate_fuse_summary(state)
+    suff = summary["sufficiency"]
+    ans = summary["answerability"]
+    conflict = summary["conflict"]
     stage_summaries = state.get("stage_summaries")
     if not isinstance(stage_summaries, dict):
         stage_summaries = {}
@@ -264,12 +281,11 @@ def _doc_gate_fuse(state: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _doc_gate_route(state: dict[str, Any], settings: Settings) -> dict[str, Any]:
+def _doc_gate_route(state: DocGateRouteInput, settings: Settings) -> dict[str, Any]:
     stage_summaries = state.get("stage_summaries")
     if not isinstance(stage_summaries, dict):
         stage_summaries = {}
-    scores = stage_summaries.get("doc_gate_fuse")
-    scores = scores if isinstance(scores, dict) else {}
+    scores = _build_doc_gate_fuse_summary(state)
     decision = str(scores.get("decision") or "retry")
     score = float(scores.get("score") or 0.0)
     loop_counts = state.get("loop_counts")
@@ -325,6 +341,7 @@ def _doc_gate_route(state: dict[str, Any], settings: Settings) -> dict[str, Any]
         "reason_code": decision,
         "decision_source": "parallel_gate",
         "retry_advice": retry_advice,
+        "score": round(score, 4),
         "retry_budget_snapshot": {
             "retrieval_retries": retrieval_retries,
             "max_retrieval_retries": int(settings.kb_chat_max_retrieval_retries),
@@ -365,28 +382,50 @@ def build_evidence_gate_subgraph(*, settings: Settings):
         state_schema=KbChatInternalState,
         context_schema=KbChatGraphContext,
     )
-    def add_traced_node(node_id: str, node_callable: Any, **kwargs: Any) -> None:
+    def add_traced_node(
+        node_id: str,
+        node_callable: Any,
+        *,
+        side_effect_type: str,
+        retry_disabled_reason: str | None = None,
+        **kwargs: Any,
+    ) -> None:
         graph.add_node(
             node_id,
             wrap_kb_chat_node_with_io(node_id, node_callable),
-            metadata=KB_CHAT_NODE_METADATA[node_id],
+            metadata=extend_kb_chat_node_metadata(
+                node_id,
+                side_effect_type=side_effect_type,
+                retry_enabled=False,
+                retry_disabled_reason=retry_disabled_reason or side_effect_type,
+            ),
             **kwargs,
         )
 
     add_traced_node(
         "doc_gate_dispatch",
         _doc_gate_dispatch,
+        side_effect_type="deterministic_rule",
+        retry_disabled_reason="parallel_fanout",
         destinations=(
             "doc_gate_sufficiency",
             "doc_gate_answerability",
             "doc_gate_conflict",
         ),
     )
-    add_traced_node("doc_gate_sufficiency", _doc_gate_sufficiency)
-    add_traced_node("doc_gate_answerability", _doc_gate_answerability)
-    add_traced_node("doc_gate_conflict", _doc_gate_conflict)
-    add_traced_node("doc_gate_fuse", _doc_gate_fuse)
-    add_traced_node("doc_gate_route", partial(_doc_gate_route, settings=settings))
+    add_traced_node("doc_gate_sufficiency", _doc_gate_sufficiency, side_effect_type="deterministic_rule")
+    add_traced_node(
+        "doc_gate_answerability",
+        _doc_gate_answerability,
+        side_effect_type="deterministic_rule",
+    )
+    add_traced_node("doc_gate_conflict", _doc_gate_conflict, side_effect_type="deterministic_rule")
+    add_traced_node("doc_gate_fuse", _doc_gate_fuse, side_effect_type="deterministic_rule")
+    add_traced_node(
+        "doc_gate_route",
+        partial(_doc_gate_route, settings=settings),
+        side_effect_type="deterministic_rule",
+    )
 
     graph.set_entry_point("doc_gate_dispatch")
     graph.add_edge("doc_gate_sufficiency", "doc_gate_fuse")

@@ -11,6 +11,7 @@ from app.agents.kb_chat_agentic.reflection import (
     route_after_answer_review,
     route_after_doc_grader,
 )
+from app.agents.kb_chat_agentic.tool_loop import force_exit_node
 from app.agents.kb_chat_agentic_graph import _route_after_preprocess_subgraph
 from app.agents.preprocess_subgraph import _route_after_ambiguity
 
@@ -97,6 +98,52 @@ def test_route_after_ambiguity_ignores_legacy_reflection_action_when_routing_mis
 def test_doc_gate_route_writes_doc_gate_routing_decision() -> None:
     routed = _doc_gate_route(
         {
+            "doc_gate_round": 1,
+            "doc_gate_runs": [
+                {
+                    "gate": "sufficiency",
+                    "round": 1,
+                    "passed": True,
+                    "score": 0.8,
+                    "reason": "passed",
+                    "extra": {"tokens": 120, "evidence_count": 2},
+                },
+                {
+                    "gate": "answerability",
+                    "round": 1,
+                    "passed": True,
+                    "score": 0.7,
+                    "reason": "passed",
+                    "extra": {"overlap": 2, "query_terms": 3},
+                },
+                {
+                    "gate": "conflict",
+                    "round": 1,
+                    "passed": True,
+                    "score": 1.0,
+                    "reason": "passed",
+                    "extra": {"conflict_level": "none", "conflict_pairs": []},
+                },
+            ],
+            "reflection": {},
+            "stage_summaries": {
+                "doc_gate_fuse": {
+                    "decision": "retry_conflict",
+                    "score": 0.2,
+                }
+            },
+        },
+        settings=_settings(),
+    )
+
+    assert routed["routing_decisions"]["doc_gate"]["next_node"] == "answer_subgraph"
+    assert routed["routing_decisions"]["doc_gate"]["decision_source"] == "parallel_gate"
+    assert routed["stage_summaries"]["doc_gate_route"]["decision"] == "pass"
+
+
+def test_doc_gate_route_ignores_stage_summary_as_control_plane_input() -> None:
+    routed = _doc_gate_route(
+        {
             "reflection": {},
             "stage_summaries": {
                 "doc_gate_fuse": {
@@ -108,8 +155,8 @@ def test_doc_gate_route_writes_doc_gate_routing_decision() -> None:
         settings=_settings(),
     )
 
-    assert routed["routing_decisions"]["doc_gate"]["next_node"] == "answer_subgraph"
-    assert routed["routing_decisions"]["doc_gate"]["decision_source"] == "parallel_gate"
+    assert routed["routing_decisions"]["doc_gate"]["next_node"] == "transform_query"
+    assert routed["routing_decisions"]["doc_gate"]["reason_code"] == "retry"
 
 
 def test_route_after_doc_grader_prefers_routing_decision() -> None:
@@ -157,7 +204,7 @@ async def test_answer_commit_writes_answer_subgraph_routing_decision() -> None:
         settings=_settings(),
     )
 
-    assert result["routing_decisions"]["answer_subgraph"]["next_node"] == "finalize"
+    assert result["routing_decisions"]["answer_subgraph"]["next_node"] == "confidence_calibrate"
     assert result["routing_decisions"]["answer_subgraph"]["decision_source"] == "answer_commit"
 
 
@@ -165,7 +212,7 @@ def test_route_after_answer_review_prefers_routing_decision() -> None:
     state = {
         "routing_decisions": {
             "answer_subgraph": {
-                "next_node": "finalize",
+                "next_node": "confidence_calibrate",
             }
         },
         "reflection": {
@@ -174,7 +221,7 @@ def test_route_after_answer_review_prefers_routing_decision() -> None:
         },
     }
 
-    assert route_after_answer_review(state, _settings()) == "finalize"
+    assert route_after_answer_review(state, _settings()) == "confidence_calibrate"
 
 
 def test_route_after_answer_review_ignores_legacy_reflection_when_routing_missing() -> None:
@@ -191,3 +238,56 @@ def test_route_after_answer_review_ignores_legacy_reflection_when_routing_missin
     }
 
     assert route_after_answer_review(state, _settings()) == "transform_query"
+
+
+def test_force_exit_node_prefers_canonical_routing_reason() -> None:
+    result = force_exit_node(
+        {
+            "routing_decisions": {
+                "answer_subgraph": {
+                    "next_node": "force_exit",
+                    "action": "force_exit",
+                    "reason": "severe_conflict",
+                    "decision_source": "answer_commit",
+                }
+            },
+            "reflection": {
+                "action": "none",
+                "reason": "passed",
+                "review_passed": True,
+            },
+            "final_answer": "stale answer",
+            "draft_answer": "stale answer",
+            "best_answer": "候选答案 [S1]",
+            "stage_summaries": {},
+        },
+        _settings(),
+    )
+
+    assert result["final_answer"] == "候选答案 [S1]"
+    assert result["reflection"]["reason"] == "severe_conflict"
+    assert result["stage_summaries"]["force_exit"]["reason"] == "severe_conflict"
+    assert result["stage_summaries"]["force_exit"]["review_passed"] is False
+
+
+def test_force_exit_node_uses_canonical_clarify_route() -> None:
+    result = force_exit_node(
+        {
+            "routing_decisions": {
+                "preprocess": {
+                    "next_node": "force_exit",
+                    "action": "clarify",
+                    "reason": "ambiguous_query",
+                    "decision_source": "ambiguity_check",
+                }
+            },
+            "reflection": {"action": "none", "reason": "passed"},
+            "clarification_payload": {"question": "请补充时间范围"},
+            "stage_summaries": {},
+        },
+        _settings(),
+    )
+
+    assert result["final_answer"] == "请补充时间范围"
+    assert result["reflection"]["action"] == "clarify"
+    assert result["stage_summaries"]["force_exit"]["reason"] == "clarify"

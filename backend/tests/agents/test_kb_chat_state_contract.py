@@ -3,6 +3,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import pytest
+from langchain.messages import AIMessage
 
 from app.agents.kb_chat_agentic.answer_subgraph import (
     _answer_commit,
@@ -191,6 +192,47 @@ def test_doc_gate_route_uses_stage_summary_instead_of_redundant_state_fields() -
     assert routed["stage_summaries"]["doc_gate_route"]["decision"] == "pass"
 
 
+def test_doc_gate_route_derives_decision_from_doc_gate_runs_without_stage_summary_source() -> None:
+    routed = _doc_gate_route(
+        {
+            "doc_gate_round": 1,
+            "doc_gate_runs": [
+                {
+                    "gate": "sufficiency",
+                    "round": 1,
+                    "passed": True,
+                    "score": 0.9,
+                    "reason": "passed",
+                    "extra": {"tokens": 120, "evidence_count": 2},
+                },
+                {
+                    "gate": "answerability",
+                    "round": 1,
+                    "passed": True,
+                    "score": 0.8,
+                    "reason": "passed",
+                    "extra": {"overlap": 2, "query_terms": 3},
+                },
+                {
+                    "gate": "conflict",
+                    "round": 1,
+                    "passed": True,
+                    "score": 1.0,
+                    "reason": "passed",
+                    "extra": {"conflict_level": "none", "conflict_pairs": []},
+                },
+            ],
+            "reflection": {},
+            "stage_summaries": {},
+        },
+        settings=_settings(kb_chat_max_retrieval_retries=2),
+    )
+
+    assert routed["routing_decisions"]["doc_gate"]["next_node"] == "answer_subgraph"
+    assert routed["routing_decisions"]["doc_gate"]["reason"] == "passed"
+    assert routed["reflection"]["relevance_passed"] is True
+
+
 @pytest.mark.asyncio
 async def test_answer_commit_uses_stage_summary_instead_of_answer_quality() -> None:
     result = await _answer_commit(
@@ -217,15 +259,20 @@ async def test_answer_commit_uses_stage_summary_instead_of_answer_quality() -> N
     assert "answer_quality" not in result
     assert result["reflection"]["action"] == "none"
     assert result["stage_summaries"]["answer_subgraph"]["passed"] is True
-    assert result["stage_summaries"]["answer_subgraph"]["next_step"] == "finalize"
+    assert result["stage_summaries"]["answer_subgraph"]["next_step"] == "confidence_calibrate"
+    assert isinstance(result["messages"][0], AIMessage)
+    assert result["messages"][0].content == "最终答案 [S1]"
 
 
-def test_confidence_calibrate_uses_doc_gate_route_summary_instead_of_redundant_state() -> None:
+def test_confidence_calibrate_uses_doc_gate_routing_record_instead_of_stage_summary() -> None:
     result = confidence_calibrate(
         {
-            "doc_gate_state": {
-                "confidence": 0.05,
-                "reason": "retry",
+            "routing_decisions": {
+                "doc_gate": {
+                    "next_node": "answer_subgraph",
+                    "reason": "passed",
+                    "score": 0.72,
+                }
             },
             "reflection": {
                 "review_confidence": 0.8,
@@ -235,12 +282,7 @@ def test_confidence_calibrate_uses_doc_gate_route_summary_instead_of_redundant_s
                 "novelty": 0.5,
                 "conflict": 0.1,
             },
-            "stage_summaries": {
-                "doc_gate_route": {
-                    "score": 0.72,
-                    "reason": "passed",
-                }
-            },
+            "stage_summaries": {},
         }
     )
 
@@ -253,7 +295,6 @@ def test_evidence_gate_trace_reads_stage_summaries_without_redundant_state_field
     items = _build_node_output_display_items(
         node_name="evidence_gate_subgraph",
         output_snapshot={
-            "reflection": {"action": "none"},
             "stage_summaries": {
                 "doc_gate_fuse": {
                     "decision": "pass",
@@ -261,6 +302,7 @@ def test_evidence_gate_trace_reads_stage_summaries_without_redundant_state_field
                     "missing_gates": [],
                 },
                 "doc_gate_route": {
+                    "action": "transform_query",
                     "reason": "passed",
                 },
             },
@@ -270,5 +312,57 @@ def test_evidence_gate_trace_reads_stage_summaries_without_redundant_state_field
     by_key = {item["key"]: item["value"] for item in items}
     assert by_key["decision"] == "pass"
     assert by_key["score"] == "0.83"
-    assert by_key["reason"] == "passed"
     assert "action" not in by_key
+    assert "reason" not in by_key
+
+
+def test_answer_subgraph_trace_uses_canonical_routing_record_keys() -> None:
+    items = _build_node_output_display_items(
+        node_name="answer_subgraph",
+        output_snapshot={
+            "routing_decisions": {
+                "answer_subgraph": {
+                    "next_node": "confidence_calibrate",
+                    "action": "none",
+                    "reason": "passed",
+                }
+            },
+            "stage_summaries": {
+                "answer_subgraph": {
+                    "next_step": "force_exit",
+                    "reason": "stale_stage_reason",
+                }
+            },
+            "reflection": {"reason": "stale_reason"},
+            "best_answer": "答案 [S1]",
+        },
+    )
+
+    by_key = {item["key"]: item["value"] for item in items}
+    assert by_key["next_node"] == "confidence_calibrate"
+    assert by_key["reason"] == "passed"
+    assert "next_step" not in by_key
+
+
+def test_preprocess_trace_uses_canonical_routing_record_keys() -> None:
+    items = _build_node_output_display_items(
+        node_name="preprocess_subgraph",
+        output_snapshot={
+            "routing_decisions": {
+                "preprocess": {
+                    "next_node": "retrieval_subgraph",
+                    "action": "dispatch_subqueries",
+                    "reason": "prepared_query_bundle",
+                }
+            },
+            "query_strategy": "direct",
+            "sub_queries": [],
+            "multi_queries": [],
+        },
+    )
+
+    by_key = {item["key"]: item["value"] for item in items}
+    assert by_key["next_node"] == "retrieval_subgraph"
+    assert by_key["action"] == "dispatch_subqueries"
+    assert by_key["reason"] == "prepared_query_bundle"
+    assert "preprocess_next" not in by_key

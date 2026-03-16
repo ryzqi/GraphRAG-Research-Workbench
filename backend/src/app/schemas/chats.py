@@ -92,6 +92,7 @@ class KbGraphNode(BaseModel):
     label: str
     phase: str | None = None
     order: int | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class KbGraphEdge(BaseModel):
@@ -102,6 +103,7 @@ class KbGraphEdge(BaseModel):
 
 class KbGraphSchemaResponse(BaseModel):
     version: str
+    hash: str
     nodes: list[KbGraphNode]
     edges: list[KbGraphEdge]
 

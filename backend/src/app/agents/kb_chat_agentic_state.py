@@ -56,6 +56,7 @@ class RoutingDecision(TypedDict, total=False):
     reason_code: str
     decision_source: str
     retry_advice: str
+    score: float
     retry_budget_snapshot: dict[str, int]
     round_id: int
     completed_at: str
@@ -310,6 +311,329 @@ class KbChatInternalState(KbChatInternalStateBase, total=False):
     routing_decisions: dict[str, RoutingDecision]
 
 
+class KbChatEmptyState(TypedDict, total=False):
+    """Explicit empty read-side schema for nodes that ignore graph state."""
+
+
+class StageSummaryInput(TypedDict, total=False):
+    stage_summaries: dict[str, Any]
+
+
+class MergeContextInput(TypedDict, total=False):
+    messages: Annotated[list[AnyMessage], add_messages]
+    user_input: str
+    memory_keys: dict[str, Any]
+    metrics: dict[str, Any]
+
+
+class CorefRewriteInput(TypedDict, total=False):
+    messages: Annotated[list[AnyMessage], add_messages]
+    user_input: str
+    rewrite_input_query: str
+    context_frame: ContextFrame
+    stage_summaries: dict[str, Any]
+
+
+class AmbiguityCheckInput(TypedDict, total=False):
+    messages: Annotated[list[AnyMessage], add_messages]
+    user_input: str
+    coref_query: str
+    coref_meta: CorefMeta
+    stage_summaries: dict[str, Any]
+
+
+class NormalizeRewriteInput(TypedDict, total=False):
+    messages: Annotated[list[AnyMessage], add_messages]
+    user_input: str
+    coref_query: str
+    runtime_config: dict[str, Any]
+    stage_summaries: dict[str, Any]
+
+
+class ComplexityClassifyInput(TypedDict, total=False):
+    messages: Annotated[list[AnyMessage], add_messages]
+    user_input: str
+    normalized_query: str
+    normalized_meta: NormalizeMeta
+    runtime_config: dict[str, Any]
+    stage_summaries: dict[str, Any]
+
+
+class PrepareMessagesInput(TypedDict, total=False):
+    user_input: str
+    rewrite_input_query: str
+    coref_query: str
+    normalized_query: str
+    normalized_meta: NormalizeMeta
+    query_strategy: Literal["direct", "decomposition", "multi_query"]
+    decomposition_plan: dict[str, Any]
+    sub_queries: list[str]
+    multi_queries: list[str]
+    hyde_docs: list[str]
+    reflection: ReflectionResult
+    runtime_config: dict[str, Any]
+    stage_summaries: dict[str, Any]
+
+
+class DecompositionInput(TypedDict, total=False):
+    messages: Annotated[list[AnyMessage], add_messages]
+    user_input: str
+    normalized_query: str
+    stage_summaries: dict[str, Any]
+
+
+class GenerateVariantsInput(TypedDict, total=False):
+    messages: Annotated[list[AnyMessage], add_messages]
+    user_input: str
+    normalized_query: str
+    normalized_meta: NormalizeMeta
+    stage_summaries: dict[str, Any]
+
+
+class EntityExpandInput(TypedDict, total=False):
+    multi_queries: list[str]
+    normalized_query: str
+    normalized_meta: NormalizeMeta
+    runtime_config: dict[str, Any]
+    stage_summaries: dict[str, Any]
+
+
+class HydeInput(TypedDict, total=False):
+    messages: Annotated[list[AnyMessage], add_messages]
+    user_input: str
+    normalized_query: str
+    loop_counts: LoopCounts
+    stage_summaries: dict[str, Any]
+
+
+class RetrievalBudgetPlanInput(TypedDict, total=False):
+    complexity_level: ComplexityLevel
+    query_items: list[QueryItem]
+    reflection: ReflectionResult
+    loop_counts: LoopCounts
+    stage_summaries: dict[str, Any]
+
+
+class DispatchSubqueriesInput(TypedDict, total=False):
+    query_strategy: Literal["direct", "decomposition", "multi_query"]
+    query_items: list[QueryItem]
+    sub_queries: list[str]
+    decomposition_plan: dict[str, Any]
+    memory_keys: dict[str, Any]
+    runtime_config: dict[str, Any]
+    stage_summaries: dict[str, Any]
+
+
+class RetrieveSubqueryContextInput(TypedDict, total=False):
+    subquery_task: dict[str, Any]
+    loop_counts: LoopCounts
+    retrieval_budget: dict[str, Any]
+    memory_keys: dict[str, Any]
+    runtime_config: dict[str, Any]
+
+
+class MergeSubqueryContextInput(TypedDict, total=False):
+    subquery_runs: list[SubqueryRun]
+    loop_counts: LoopCounts
+    metrics: dict[str, Any]
+    memory_keys: dict[str, Any]
+    stage_summaries: dict[str, Any]
+
+
+class RetrieveContextInput(TypedDict, total=False):
+    user_input: str
+    rewrite_input_query: str
+    coref_query: str
+    normalized_query: str
+    query_items: list[QueryItem]
+    loop_counts: LoopCounts
+    metrics: dict[str, Any]
+    retrieval_budget: dict[str, Any]
+    memory_keys: dict[str, Any]
+    runtime_config: dict[str, Any]
+    stage_summaries: dict[str, Any]
+
+
+class CompressContextInput(TypedDict, total=False):
+    user_input: str
+    rewrite_input_query: str
+    coref_query: str
+    normalized_query: str
+    final_context: str
+    stage_summaries: dict[str, Any]
+
+
+class DocGateDispatchInput(TypedDict, total=False):
+    doc_gate_round: int
+    doc_gate_task: dict[str, Any]
+
+
+class DocGateContextInput(TypedDict, total=False):
+    user_input: str
+    rewrite_input_query: str
+    coref_query: str
+    normalized_query: str
+    final_context: str
+    doc_gate_round: int
+    doc_gate_task: dict[str, Any]
+    doc_gate_runs: list[dict[str, Any]]
+
+
+class DocGateFuseInput(TypedDict, total=False):
+    doc_gate_round: int
+    doc_gate_task: dict[str, Any]
+    doc_gate_runs: list[dict[str, Any]]
+    stage_summaries: dict[str, Any]
+
+
+class DocGateRouteInput(TypedDict, total=False):
+    doc_gate_round: int
+    doc_gate_task: dict[str, Any]
+    doc_gate_runs: list[dict[str, Any]]
+    loop_counts: LoopCounts
+    reflection: ReflectionResult
+    stage_summaries: dict[str, Any]
+
+
+class TransformQueryInput(TypedDict, total=False):
+    user_input: str
+    rewrite_input_query: str
+    coref_query: str
+    normalized_query: str
+    draft_answer: str
+    reflection: ReflectionResult
+    loop_counts: LoopCounts
+    runtime_config: dict[str, Any]
+    stage_summaries: dict[str, Any]
+
+
+class PreprocessRoutingInput(TypedDict, total=False):
+    routing_decisions: dict[str, RoutingDecision]
+
+
+class DocGateRoutingDecisionInput(TypedDict, total=False):
+    routing_decisions: dict[str, RoutingDecision]
+    loop_counts: LoopCounts
+
+
+class AnswerRoutingDecisionInput(TypedDict, total=False):
+    routing_decisions: dict[str, RoutingDecision]
+    loop_counts: LoopCounts
+
+
+class AnswerReviewDispatchInput(TypedDict, total=False):
+    loop_counts: LoopCounts
+    stage_summaries: dict[str, Any]
+    answer_subgraph_state: dict[str, Any]
+
+
+class DraftGenerateInput(TypedDict, total=False):
+    user_input: str
+    rewrite_input_query: str
+    coref_query: str
+    normalized_query: str
+    final_context: str
+    loop_counts: LoopCounts
+    stage_summaries: dict[str, Any]
+
+
+class AnswerReviewCitationInput(TypedDict, total=False):
+    loop_counts: LoopCounts
+    draft_answer: str
+    final_context: str
+
+
+class AnswerReviewLLMInput(TypedDict, total=False):
+    user_input: str
+    rewrite_input_query: str
+    coref_query: str
+    normalized_query: str
+    loop_counts: LoopCounts
+    draft_answer: str
+    final_context: str
+
+
+class AnswerReviewFuseInput(TypedDict, total=False):
+    loop_counts: LoopCounts
+    answer_review_runs: list[AnswerReviewRun]
+    reflection: ReflectionResult
+    draft_answer: str
+    stage_summaries: dict[str, Any]
+
+
+class CoveCheckInput(TypedDict, total=False):
+    user_input: str
+    rewrite_input_query: str
+    coref_query: str
+    normalized_query: str
+    stage_summaries: dict[str, Any]
+
+
+class ChainOfVerificationInput(TypedDict, total=False):
+    draft_answer: str
+    final_context: str
+    stage_summaries: dict[str, Any]
+
+
+class ClaimCitationCheckInput(TypedDict, total=False):
+    draft_answer: str
+    final_context: str
+    cove_state: dict[str, Any]
+    reflection: ReflectionResult
+    loop_counts: LoopCounts
+    stage_summaries: dict[str, Any]
+
+
+class AnswerRepairInput(TypedDict, total=False):
+    user_input: str
+    rewrite_input_query: str
+    coref_query: str
+    normalized_query: str
+    loop_counts: LoopCounts
+    draft_answer: str
+    final_context: str
+    answer_subgraph_state: dict[str, Any]
+    stage_summaries: dict[str, Any]
+
+
+class AnswerCommitInput(TypedDict, total=False):
+    reflection: ReflectionResult
+    loop_counts: LoopCounts
+    answer_subgraph_state: dict[str, Any]
+    final_answer: str
+    draft_answer: str
+    best_answer: str
+    best_answer_meta: dict[str, Any]
+    stage_summaries: dict[str, Any]
+
+
+class ForceExitInput(TypedDict, total=False):
+    routing_decisions: dict[str, RoutingDecision]
+    reflection: ReflectionResult
+    loop_counts: LoopCounts
+    final_answer: str
+    draft_answer: str
+    best_answer: str
+    best_answer_meta: dict[str, Any]
+    clarification_payload: ClarificationPayload
+    stage_summaries: dict[str, Any]
+
+
+class ConfidenceCalibrateInput(TypedDict, total=False):
+    routing_decisions: dict[str, RoutingDecision]
+    reflection: ReflectionResult
+    retrieval_diagnostics: dict[str, float]
+    cove_state: dict[str, Any]
+    loop_counts: LoopCounts
+    metrics: dict[str, Any]
+    stage_summaries: dict[str, Any]
+
+
+class FinalizeAnswerInput(TypedDict, total=False):
+    draft_answer: str
+    final_answer: str
+
+
 def merge_routing_decision(
     state: dict[str, Any],
     phase: str,
@@ -354,6 +678,31 @@ def resolve_routing_decision(state: dict[str, Any], phase: str) -> RoutingDecisi
     return decision
 
 
+_TERMINAL_ROUTING_PHASE_ORDER: tuple[str, ...] = (
+    "answer_subgraph",
+    "doc_gate",
+    "preprocess",
+)
+
+
+def resolve_terminal_routing_decision(
+    state: dict[str, Any],
+    *,
+    next_nodes: set[str] | None = None,
+) -> tuple[str | None, RoutingDecision]:
+    """Resolve the latest canonical terminal-control routing record."""
+
+    for phase in _TERMINAL_ROUTING_PHASE_ORDER:
+        decision = resolve_routing_decision(state, phase)
+        next_node = str(decision.get("next_node") or "").strip()
+        if not next_node:
+            continue
+        if next_nodes is not None and next_node not in next_nodes:
+            continue
+        return phase, decision
+    return None, {}
+
+
 def make_initial_state(
     *,
     user_input: str,
@@ -373,49 +722,15 @@ def make_initial_state(
         },
         "stage_summaries": {},
         "metrics": {},
-        # Pre-initialize list fields to reduce KeyError risk in early node work.
-        "sub_queries": [],
-        "multi_queries": [],
-        "hyde_docs": [],
-        "entity_expand_meta": {},
-        "message_plan": {
-            "strategy": "direct",
-            "candidates": [],
-            "selected": [],
-            "dropped": [],
-            "budget": {},
-        },
-        "query_bundle": {
-            "items": [],
-            "kind_breakdown": {},
-            "dedup_stats": {},
-        },
-        "prepare_diagnostics": {
-            "quality_signals": [],
-            "fallback_reason": "none",
-            "timing": {},
-        },
-        "query_items": [],
-        "subquery_runs": [],
-        "complexity_level": "moderate",
-        "adaptive_route": "moderate_path",
-        "retrieval_budget": {},
-        "retrieval_diagnostics": {},
-        "final_context": "",
-        "compression_stats": {},
-        "answer_subgraph_state": {},
-        "doc_gate_round": 0,
-        "doc_gate_runs": [],
-        "cove_state": {},
-        "confidence_score": 0.0,
-        "confidence_level": "low",
-        "routing_decisions": {},
-        "decomposition_plan": {
-            "strategy": "direct",
-            "version": "kb_chat_decomposition_plan_v2",
-            "sub_query_specs": [],
-            "risk_flags": [],
-            "reasoning": "",
-        },
-        "answer_review_runs": [],
+    }
+
+
+def build_graph_input_state(state: dict[str, Any] | KbChatInputState) -> KbChatInputState:
+    """Project arbitrary/internal state down to the public graph input schema."""
+
+    messages = state.get("messages") if isinstance(state, dict) else None
+    user_input = state.get("user_input") if isinstance(state, dict) else None
+    return {
+        "messages": messages if isinstance(messages, list) else [],
+        "user_input": user_input if isinstance(user_input, str) else "",
     }

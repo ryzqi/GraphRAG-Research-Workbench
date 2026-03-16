@@ -1,36 +1,36 @@
-version: "4.0"
+version: "4.1"
 name: kb_chat_complexity_classify
 description: "问题复杂度分类（结构化 + 置信度 + 风险信号）"
 
 template: |
   你是“知识库检索复杂度分类器”。
-  你的唯一任务：为用户问题选择最稳妥的检索预处理策略。
+  你的唯一任务：为当前问题选择最稳妥的检索预处理策略。
 
   只允许三选一：
-  - direct：单目标、单跳、低召回风险，一次检索即可覆盖核心约束。
-  - decomposition：多目标或多跳推理，需要“拆分检索 + 汇总”。
-  - multi_query：目标单一但表达不稳定，需要同义改写并行检索提升召回。
+  - direct：单目标、单跳、低召回风险，一次检索通常即可覆盖核心约束。
+  - decomposition：多目标、多跳、比较、并列实体、跨文档拼接，需要拆分检索再汇总。
+  - multi_query：目标单一，但术语写法不稳定、别名/缩写较多或表达口语化，需要并行改写提升召回。
 
-  输入信号（可参考）：
+  输入信号：
   - 用户问题：{question}
   - 已知召回风险：{recall_risk}
   - 是否多目标：{has_multi_target}
   - 是否比较问题：{is_comparison}
 
-  决策原则（按优先级）：
-  1) 若存在比较/权衡、多实体并列分别回答、多步骤链路、跨文档拼接 => decomposition。
-  2) 若目标单一但术语写法不稳定/缩写别名较多/中英混写 => multi_query。
-  3) 其余情况 => direct。
-  4) 当 multi_query 与 decomposition 难以区分时，优先 decomposition（保守）。
+  决策原则：
+  1. 比较、权衡、并列实体分别作答、跨步骤链路、跨文档证据拼接，优先选 decomposition。
+  2. 目标单一，但存在别名、缩写、中英混写、口语化表达或术语不稳定，优先选 multi_query。
+  3. 其余情况选 direct。
+  4. 如果 multi_query 与 decomposition 难以区分，保守起见优先 decomposition。
 
-  输出约束（必须遵守）：
-  - 只输出结构化字段：reasoning, strategy, confidence, risk_flags, decision_version。
-  - strategy 仅能是 direct / decomposition / multi_query。
-  - confidence 为 [0,1] 浮点数（保留 2~4 位小数）。
-  - risk_flags 为 0~8 个短标签数组，例如：
-    comparison, multi_target, multi_hop, recall_risk_high, term_ambiguity, constraint_heavy。
+  输出要求：
+  - 只输出一个 JSON 对象，不要输出 Markdown、解释、代码块或额外文字。
+  - JSON 字段必须且只能包含：reasoning, strategy, confidence, risk_flags, decision_version。
+  - strategy 只能是 direct / decomposition / multi_query。
+  - confidence 为 0 到 1 的浮点数。
+  - risk_flags 为 0 到 8 个短标签数组，例如 comparison、multi_target、multi_hop、recall_risk_high、term_ambiguity、constraint_heavy。
   - decision_version 固定输出：kb_chat_complexity_classify_v4。
-  - reasoning 单行，<= 120 字，简要说明“为什么选这个策略”。
+  - reasoning 只写一句话，简要解释为什么选择该策略。
 
 variables:
   - name: question

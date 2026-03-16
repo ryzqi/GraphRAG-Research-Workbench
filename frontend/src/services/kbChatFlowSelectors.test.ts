@@ -8,7 +8,7 @@ describe('kbChatFlowSelectors', () => {
       nodeId: 'answer_subgraph',
       section: 'output',
       items: [
-        { key: 'next_step', label: '下一步', value: 'answer_commit' },
+        { key: 'next_node', label: '下一跳', value: 'answer_commit' },
         { key: 'reason', label: '原因', value: 'passed' },
         { key: 'degrade_reason', label: '降级原因', value: 'none' },
         { key: 'best_answer', label: '候选答案', value: 'ok' },
@@ -20,6 +20,22 @@ describe('kbChatFlowSelectors', () => {
 
     expect(result).toHaveLength(6);
     expect(result[result.length - 1]?.key).toBe('extra_signal');
+  });
+
+  it('prioritizes canonical next_node routing detail for answer_subgraph output', () => {
+    const result = selectKbChatFlowDetailItems({
+      nodeId: 'answer_subgraph',
+      section: 'output',
+      items: [
+        { key: 'reason', label: '原因', value: 'passed' },
+        { key: 'best_answer', label: '候选答案', value: 'ok' },
+        { key: 'next_node', label: '下一跳', value: 'confidence_calibrate' },
+      ],
+      event: null,
+    });
+
+    expect(result[0]?.key).toBe('next_node');
+    expect(result[1]?.key).toBe('reason');
   });
 
   it('adds risk hint when confidence level is low', () => {

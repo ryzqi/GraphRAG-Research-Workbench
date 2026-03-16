@@ -4,6 +4,7 @@ import type {
   ChatRunStateEvent,
   ChatRunUiEvent,
 } from './chats';
+import { KB_CHAT_CUSTOM_EVENT_TYPES } from './chats';
 import type { PipelineStep, PipelineTimelineEvent } from '../components/chat/PipelineProgress';
 
 export interface KbChatTraceStoreState {
@@ -21,6 +22,7 @@ export type KbChatTraceAction =
   | { type: 'state'; raw: Record<string, unknown> }
   | { type: 'updates'; raw: Record<string, unknown>; ts?: string }
   | { type: 'ui_event'; raw: Record<string, unknown> }
+  | { type: 'custom'; raw: Record<string, unknown> }
   | { type: 'node_io'; raw: Record<string, unknown> };
 
 export interface KbChatTraceReducerContext {
@@ -294,11 +296,70 @@ function parseNodeIoEvent(data: Record<string, unknown>): ChatNodeIoEvent | null
     latency_ms: typeof data.latency_ms === 'number' ? data.latency_ms : null,
     input_summary: asRecord(data.input_summary),
     output_summary: asRecord(data.output_summary),
+    input_snapshot_meta: asRecord(data.input_snapshot_meta),
+    output_snapshot_meta: asRecord(data.output_snapshot_meta),
     input_snapshot: asRecord(data.input_snapshot),
     output_snapshot: asRecord(data.output_snapshot),
     error_summary: typeof data.error_summary === 'string' ? data.error_summary : null,
     ts: typeof data.ts === 'string' ? data.ts : new Date().toISOString(),
   };
+}
+
+interface ParsedCustomEvent {
+  runId: string;
+  eventType: string;
+  nodeName: string | null;
+  ts: string;
+  message: string | null;
+  payload: Record<string, unknown>;
+}
+
+const KNOWN_CUSTOM_EVENT_TYPES = new Set<string>(KB_CHAT_CUSTOM_EVENT_TYPES);
+
+function parseCustomEvent(data: Record<string, unknown>): ParsedCustomEvent | null {
+  const run = asRecord(data.run);
+  const runId =
+    typeof data.run_id === 'string'
+      ? data.run_id
+      : typeof run?.id === 'string'
+        ? run.id
+        : null;
+  const eventType = typeof data.event_type === 'string' ? data.event_type : null;
+  if (!runId || !eventType) {
+    return null;
+  }
+  const node = asRecord(data.node);
+  const nodeName =
+    typeof data.node_name === 'string'
+      ? data.node_name
+      : typeof node?.name === 'string'
+        ? node.name
+        : typeof node?.id === 'string'
+          ? node.id
+          : null;
+  const message =
+    typeof data.reason === 'string'
+      ? data.reason
+      : typeof data.message === 'string'
+        ? data.message
+        : typeof data.fallback_reason === 'string'
+          ? data.fallback_reason
+          : null;
+  return {
+    runId,
+    eventType,
+    nodeName,
+    ts: typeof data.ts === 'string' ? data.ts : new Date().toISOString(),
+    message,
+    payload: data,
+  };
+}
+
+function appendTraceWarning(
+  warnings: string[] | undefined,
+  warning: string
+): string[] {
+  return [...(warnings ?? []), warning].slice(-20);
 }
 
 export function reduceKbChatTraceState(
@@ -494,14 +555,99 @@ export function reduceKbChatTraceState(
     };
   }
 
+  if (action.type === 'custom') {
+    const customEvent = parseCustomEvent(action.raw);
+    if (!customEvent) {
+      return {
+        ...prev,
+        traceWarnings: appendTraceWarning(
+          prev.traceWarnings,
+          'custom field drift detected: missing required fields'
+        ),
+      };
+    }
+
+    if (customEvent.eventType === 'heartbeat') {
+      return {
+        ...prev,
+        runId: customEvent.runId ?? prev.runId,
+        runState:
+          prev.runState && prev.runState.run_id === customEvent.runId
+            ? { ...prev.runState, ts: customEvent.ts }
+            : prev.runState,
+      };
+    }
+
+    if (
+      customEvent.eventType === 'answer_review_subcheck' ||
+      customEvent.eventType === 'answer_review_fused'
+    ) {
+      const stepId = customEvent.nodeName ?? customEvent.eventType;
+      const reviewStatus =
+        customEvent.payload.passed === false
+          ? 'failed'
+          : customEvent.payload.passed === true
+            ? 'completed'
+            : 'running';
+      return {
+        ...prev,
+        runId: customEvent.runId,
+        nodeTimeline: appendTimelineEvent(prev.nodeTimeline, {
+          id: `custom-${customEvent.runId}-${customEvent.eventType}-${customEvent.ts}`,
+          source: 'ui',
+          step_id: stepId,
+          label: ctx.resolveNodeLabel(stepId),
+          node: customEvent.nodeName,
+          status: reviewStatus,
+          run_status: null,
+          attempt: typeof customEvent.payload.attempt === 'number' ? customEvent.payload.attempt : null,
+          message: customEvent.message,
+          io_summary: {
+            ...customEvent.payload,
+            classification: 'review_signal',
+          },
+          event_type: 'review_signal',
+          ts: customEvent.ts,
+        }),
+      };
+    }
+
+    if (customEvent.eventType === 'guardrail_warning') {
+      return {
+        ...prev,
+        runId: customEvent.runId,
+        traceWarnings: appendTraceWarning(
+          prev.traceWarnings,
+          customEvent.message ? `guardrail warning: ${customEvent.message}` : 'guardrail warning'
+        ),
+      };
+    }
+
+    if (KNOWN_CUSTOM_EVENT_TYPES.has(customEvent.eventType)) {
+      return {
+        ...prev,
+        runId: customEvent.runId,
+      };
+    }
+
+    return {
+      ...prev,
+      runId: customEvent.runId,
+      traceWarnings: appendTraceWarning(
+        prev.traceWarnings,
+        `unhandled custom event: ${customEvent.eventType}`
+      ),
+    };
+  }
+
   const nodeEvent = parseNodeIoEvent(action.raw);
   if (!nodeEvent) {
     return {
       ...prev,
-      traceWarnings: [
-        ...(prev.traceWarnings ?? []),
-        'node_io field drift detected: missing required fields',
-      ].slice(-20),
+      traceWarnings: appendTraceWarning(
+        prev.traceWarnings,
+        'node_io field drift detected: missing required fields'
+      ),
     };
   }
   const statusFromPhase: PipelineStep['status'] =

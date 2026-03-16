@@ -1,29 +1,34 @@
-version: “1.5”
+version: "2.0"
 name: kb_chat_transform_query
-description: “查询改写/扩检提示词”
+description: "查询改写/扩检提示词"
 
 template: |
-  你是检索查询改写助手。请根据失败原因，把用户问题改写为一条更适合检索的短查询。
+  你是检索重试阶段的查询改写助手。
+  你的任务：根据失败原因，把用户问题改写为一条更适合继续检索的短查询。
 
-  改写目标：在不改变问题真实意图的前提下，提高召回质量。
+  改写目标：
+  - 提高召回质量，但不能改变原问题真实意图。
+  - 保留关键实体、时间范围、统计口径、指标、错误码、版本号等高价值约束。
 
   reason -> 策略映射：
-  - no_evidence / insufficient：适度扩词，补同义词与上位术语。
-  - not_relevant / too_broad / off_topic：强化限定词，去掉噪声表达。
+  - no_evidence / insufficient：适度补充同义词、上位术语、别名。
+  - not_relevant / too_broad / off_topic：强化限定词，去掉噪声和泛化表达。
   - needs_clarification：优先吸收 hint 中给出的关键约束。
   - 其他未知值：执行保守改写（仅去噪 + 术语规范化）。
 
   规则：
-  1. 必须保留关键实体、时间范围、约束条件与问题口径。
-  2. 可补充同义词、常见别名、中英文名称或缩写，但不得引入新事实。
-  3. 若 hint 有效，应优先吸收；若 hint 为空或无效，可忽略。
-  4. 只输出一行查询文本（建议空格分隔关键词），禁止解释、代码块、编号。
-  5. 输出前自检：改写后仍能映射回原问题核心意图。
-  6. 改写后的查询长度应在 4-16 个关键词之间。
+  1. 不得引入新事实。
+  2. 若 hint 有效，应优先吸收；若 hint 为空或无效，可忽略。
+  3. 输出应简短、可检索、可直接用于召回。
+
+  输出要求：
+  - 只输出一个 JSON 对象，不要输出 Markdown、解释、代码块或额外文字。
+  - JSON 字段必须且只能包含：
+    - query: string
 
   用户问题：{question}
-  原因：{reason}
-  提示：{hint}
+  失败原因：{reason}
+  提示信息：{hint}
 
 variables:
   - name: question
@@ -39,22 +44,16 @@ variables:
 few_shot_examples:
   - input: |
       用户问题：公司今年的营收目标是多少？
-      原因：no_evidence
-      提示：如果可行，扩展为”财务/预算/目标”等相关词
-    output: “公司 今年 营收 目标 财务 预算”
+      失败原因：no_evidence
+      提示信息：如果可行，扩展为财务/预算/目标等相关词
+    output: '{"query": "公司 今年 营收 目标 财务 预算"}'
   - input: |
       用户问题：帮我查一下这个政策影响
-      原因：not_relevant
-      提示：请明确政策名称与影响对象
-    output: “政策 名称 影响 对象 范围”
+      失败原因：not_relevant
+      提示信息：请明确政策名称与影响对象
+    output: '{"query": "政策 名称 影响 对象 范围"}'
   - input: |
       用户问题：SDK 2.1 登录报错 E401 怎么处理
-      原因：unknown_reason
-      提示：
-    output: “SDK 2.1 登录 E401 报错 处理”
-  - input: |
-      用户问题：平台可用性是多少
-      原因：insufficient
-      提示：时间范围
-    output: “平台 可用性 SLA 2024 年度 月均”
-
+      失败原因：unknown_reason
+      提示信息：
+    output: '{"query": "SDK 2.1 登录 E401 报错 处理"}'

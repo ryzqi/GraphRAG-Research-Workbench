@@ -14,60 +14,71 @@ from langgraph.runtime import Runtime
 from langgraph.types import Command, Send
 
 DisplayItemsBuilder = Callable[..., list[dict[str, Any]]]
+TRACE_SNAPSHOT_CHAR_LIMIT = 512
+TRACE_SNAPSHOT_ARRAY_LIMIT = 12
+TRACE_SNAPSHOT_OBJECT_KEY_LIMIT = 24
+TRACE_SNAPSHOT_PREVIEW_KEY_LIMIT = 16
+TRACE_DEBUG_SNAPSHOT_FLAGS: tuple[str, ...] = (
+    "__trace_debug__",
+    "trace_debug_snapshots",
+    "debug_trace_snapshots",
+)
+REDACTED_STREAM_VALUE = "[REDACTED]"
+_SENSITIVE_SNAPSHOT_KEYS = {
+    "api_key",
+    "apikey",
+    "authorization",
+    "cookie",
+    "password",
+    "secret",
+    "session",
+    "session_id",
+    "token",
+}
 
 KB_CHAT_NODE_METADATA: dict[str, dict[str, Any]] = {
     "preprocess_subgraph": {"label": "预处理子图", "phase": "preprocess", "order": 0},
     "merge_context": {"label": "上下文合并", "phase": "preprocess", "order": 1},
     "coref_rewrite": {"label": "指代消解", "phase": "preprocess", "order": 2},
-    "AMBIGUITY_CHECK_ENABLED": {"label": "歧义检查开关", "phase": "preprocess", "order": 3},
-    "ambiguity_check": {"label": "歧义判断", "phase": "preprocess", "order": 4},
-    "normalize_rewrite": {"label": "问题规范", "phase": "preprocess", "order": 5},
-    "complexity_classify": {"label": "复杂度分类", "phase": "route", "order": 6},
-    "adaptive_routing": {"label": "自适应路由", "phase": "route", "order": 7},
-    "simple_path": {"label": "简单路径", "phase": "route", "order": 8},
-    "moderate_path": {"label": "中等路径", "phase": "route", "order": 9},
-    "complex_path": {"label": "复杂路径", "phase": "route", "order": 10},
-    "ENABLE_MULTI_QUERY_MOD": {"label": "中等多路开关", "phase": "enhance", "order": 11},
-    "generate_variants_mod": {"label": "中等变体生成", "phase": "enhance", "order": 12},
-    "ENABLE_DECOMPOSITION": {"label": "拆解开关", "phase": "enhance", "order": 13},
-    "decomposition": {"label": "问题分解", "phase": "enhance", "order": 14},
-    "ENABLE_MULTI_QUERY": {"label": "多路开关", "phase": "enhance", "order": 15},
-    "generate_variants": {"label": "多路扩展", "phase": "enhance", "order": 16},
-    "entity_expand": {"label": "实体扩展", "phase": "enhance", "order": 17},
-    "ENABLE_HYDE": {"label": "HyDE开关", "phase": "enhance", "order": 18},
-    "hyde": {"label": "HyDE扩展", "phase": "enhance", "order": 19},
-    "prepare_messages": {"label": "消息整理", "phase": "enhance", "order": 20},
-    "preprocess_exit": {"label": "预处理出口", "phase": "enhance", "order": 21},
-    "retrieval_subgraph": {"label": "检索子图", "phase": "retrieve", "order": 22},
-    "retrieval_budget_plan": {"label": "检索预算规划", "phase": "retrieve", "order": 23},
-    "dispatch_subqueries": {"label": "子查询派发", "phase": "retrieve", "order": 24},
-    "retrieve_subquery": {"label": "子查询检索", "phase": "retrieve", "order": 25},
-    "merge_subquery_context": {"label": "子查询上下文合并", "phase": "retrieve", "order": 26},
-    "retrieve": {"label": "知识检索", "phase": "retrieve", "order": 27},
-    "context_compress": {"label": "上下文压缩", "phase": "retrieve", "order": 28},
-    "evidence_gate_subgraph": {"label": "证据门控子图", "phase": "judge", "order": 29},
-    "doc_gate_dispatch": {"label": "文档门控分发", "phase": "judge", "order": 30},
-    "doc_gate_sufficiency": {"label": "证据充分度", "phase": "judge", "order": 31},
-    "doc_gate_answerability": {"label": "可回答性", "phase": "judge", "order": 32},
-    "doc_gate_conflict": {"label": "证据冲突检测", "phase": "judge", "order": 33},
-    "doc_gate_fuse": {"label": "证据门控融合", "phase": "judge", "order": 34},
-    "doc_gate_route": {"label": "文档判定", "phase": "judge", "order": 35},
-    "transform_query": {"label": "查询改写", "phase": "retrieve", "order": 36},
-    "answer_subgraph": {"label": "答案子图", "phase": "generate", "order": 37},
-    "draft_generate": {"label": "草稿生成", "phase": "generate", "order": 38},
-    "answer_review_dispatch": {"label": "审查分发", "phase": "verify", "order": 39},
-    "answer_review_citation": {"label": "引用覆盖审查", "phase": "verify", "order": 40},
-    "answer_review_factual": {"label": "事实正确性审查", "phase": "verify", "order": 41},
-    "answer_review_answerability": {"label": "可回答性审查", "phase": "verify", "order": 42},
-    "answer_review_fuse": {"label": "审查结果融合", "phase": "verify", "order": 43},
-    "cove_check": {"label": "高风险验证判定", "phase": "verify", "order": 44},
-    "chain_of_verification": {"label": "验证链", "phase": "verify", "order": 45},
-    "claim_citation_check": {"label": "断言引用校验", "phase": "verify", "order": 46},
-    "answer_repair": {"label": "答案修复", "phase": "verify", "order": 47},
-    "answer_commit": {"label": "答案提交", "phase": "generate", "order": 48},
-    "finalize": {"label": "答案整理", "phase": "finalize", "order": 49},
-    "force_exit": {"label": "提前终止", "phase": "finalize", "order": 50},
-    "confidence_calibrate": {"label": "置信度校准", "phase": "finalize", "order": 51},
+    "ambiguity_check": {"label": "歧义判断", "phase": "preprocess", "order": 3},
+    "normalize_rewrite": {"label": "问题规范", "phase": "preprocess", "order": 4},
+    "complexity_classify": {"label": "复杂度分类", "phase": "route", "order": 5},
+    "generate_variants_mod": {"label": "中等变体生成", "phase": "enhance", "order": 6},
+    "decomposition": {"label": "问题分解", "phase": "enhance", "order": 7},
+    "generate_variants": {"label": "多路扩展", "phase": "enhance", "order": 8},
+    "entity_expand": {"label": "实体扩展", "phase": "enhance", "order": 9},
+    "hyde": {"label": "HyDE扩展", "phase": "enhance", "order": 10},
+    "prepare_messages": {"label": "消息整理", "phase": "enhance", "order": 11},
+    "preprocess_exit": {"label": "预处理出口", "phase": "enhance", "order": 12},
+    "retrieval_subgraph": {"label": "检索子图", "phase": "retrieve", "order": 13},
+    "retrieval_budget_plan": {"label": "检索预算规划", "phase": "retrieve", "order": 14},
+    "dispatch_subqueries": {"label": "子查询派发", "phase": "retrieve", "order": 15},
+    "retrieve_subquery": {"label": "子查询检索", "phase": "retrieve", "order": 16},
+    "merge_subquery_context": {"label": "子查询上下文合并", "phase": "retrieve", "order": 17},
+    "retrieve": {"label": "知识检索", "phase": "retrieve", "order": 18},
+    "context_compress": {"label": "上下文压缩", "phase": "retrieve", "order": 19},
+    "evidence_gate_subgraph": {"label": "证据门控子图", "phase": "judge", "order": 20},
+    "doc_gate_dispatch": {"label": "文档门控分发", "phase": "judge", "order": 21},
+    "doc_gate_sufficiency": {"label": "证据充分度", "phase": "judge", "order": 22},
+    "doc_gate_answerability": {"label": "可回答性", "phase": "judge", "order": 23},
+    "doc_gate_conflict": {"label": "证据冲突检测", "phase": "judge", "order": 24},
+    "doc_gate_fuse": {"label": "证据门控融合", "phase": "judge", "order": 25},
+    "doc_gate_route": {"label": "文档判定", "phase": "judge", "order": 26},
+    "transform_query": {"label": "查询改写", "phase": "retrieve", "order": 27},
+    "answer_subgraph": {"label": "答案子图", "phase": "generate", "order": 28},
+    "draft_generate": {"label": "草稿生成", "phase": "generate", "order": 29},
+    "answer_review_dispatch": {"label": "审查分发", "phase": "verify", "order": 30},
+    "answer_review_citation": {"label": "引用覆盖审查", "phase": "verify", "order": 31},
+    "answer_review_factual": {"label": "事实正确性审查", "phase": "verify", "order": 32},
+    "answer_review_answerability": {"label": "可回答性审查", "phase": "verify", "order": 33},
+    "answer_review_fuse": {"label": "审查结果融合", "phase": "verify", "order": 34},
+    "cove_check": {"label": "高风险验证判定", "phase": "verify", "order": 35},
+    "chain_of_verification": {"label": "验证链", "phase": "verify", "order": 36},
+    "claim_citation_check": {"label": "断言引用校验", "phase": "verify", "order": 37},
+    "answer_repair": {"label": "答案修复", "phase": "verify", "order": 38},
+    "answer_commit": {"label": "答案提交", "phase": "generate", "order": 39},
+    "force_exit": {"label": "提前终止", "phase": "finalize", "order": 40},
+    "confidence_calibrate": {"label": "置信度校准", "phase": "finalize", "order": 41},
 }
 
 # Backward-compatible aliases for callers migrated from local helpers.
@@ -98,6 +109,12 @@ def resolve_kb_chat_node_metadata(node_id: str) -> dict[str, Any]:
     if metadata:
         return dict(metadata)
     return {"label": node_id, "phase": None, "order": None}
+
+
+def extend_kb_chat_node_metadata(node_id: str, **extras: Any) -> dict[str, Any]:
+    metadata = resolve_kb_chat_node_metadata(node_id)
+    metadata.update(extras)
+    return metadata
 
 
 def _to_iso_now() -> str:
@@ -135,6 +152,49 @@ def _to_json_compatible(value: Any) -> Any:
         return str(value)
 
 
+def _truncate_preview(text: str) -> str:
+    if len(text) <= TRACE_SNAPSHOT_CHAR_LIMIT:
+        return text
+    overflow = len(text) - TRACE_SNAPSHOT_CHAR_LIMIT
+    return f"{text[:TRACE_SNAPSHOT_CHAR_LIMIT]}...(truncated +{overflow} chars)"
+
+
+def _sanitize_snapshot_value(value: Any, state: dict[str, bool]) -> Any:
+    if isinstance(value, dict):
+        sanitized: dict[str, Any] = {}
+        items = list(value.items())
+        if len(items) > TRACE_SNAPSHOT_OBJECT_KEY_LIMIT:
+            state["truncated"] = True
+            items = items[:TRACE_SNAPSHOT_OBJECT_KEY_LIMIT]
+        for key, item in items:
+            if not isinstance(key, str):
+                continue
+            if key.lower() in _SENSITIVE_SNAPSHOT_KEYS:
+                state["truncated"] = True
+                state["redacted"] = True
+                sanitized[key] = REDACTED_STREAM_VALUE
+                continue
+            sanitized[key] = _sanitize_snapshot_value(item, state)
+        if len(value) > len(sanitized):
+            sanitized["__truncated_keys__"] = len(value) - len(sanitized)
+        return sanitized
+    if isinstance(value, list):
+        sanitized_items = [
+            _sanitize_snapshot_value(item, state)
+            for item in value[:TRACE_SNAPSHOT_ARRAY_LIMIT]
+        ]
+        if len(value) > TRACE_SNAPSHOT_ARRAY_LIMIT:
+            state["truncated"] = True
+            sanitized_items.append(f"...(+{len(value) - TRACE_SNAPSHOT_ARRAY_LIMIT} items)")
+        return sanitized_items
+    if isinstance(value, str):
+        preview = _truncate_preview(value)
+        if preview != value:
+            state["truncated"] = True
+        return preview
+    return value
+
+
 def _as_dict(value: Any) -> dict[str, Any] | None:
     return value if isinstance(value, dict) else None
 
@@ -168,7 +228,12 @@ def _append_if_missing(items: list[dict[str, Any]], *, key: str, label: str, val
 
 def _build_snapshot_summary(snapshot: Any) -> dict[str, Any]:
     if isinstance(snapshot, dict):
-        summary: dict[str, Any] = {"kind": "object", "key_count": len(snapshot), "keys": list(snapshot.keys())[:16]}
+        summary: dict[str, Any] = {
+            "kind": "object",
+            "keys": len(snapshot),
+            "key_count": len(snapshot),
+            "preview_keys": list(snapshot.keys())[:TRACE_SNAPSHOT_PREVIEW_KEY_LIMIT],
+        }
         for text_key in ("user_input", "normalized_query", "draft_answer", "final_answer"):
             text = snapshot.get(text_key)
             if isinstance(text, str):
@@ -177,6 +242,29 @@ def _build_snapshot_summary(snapshot: Any) -> dict[str, Any]:
     if isinstance(snapshot, list):
         return {"kind": "array", "count": len(snapshot)}
     return {"kind": type(snapshot).__name__}
+
+
+def sanitize_snapshot_for_stream(
+    value: Any,
+    *,
+    include_snapshot: bool,
+) -> tuple[Any | None, dict[str, Any]]:
+    json_value = _to_json_compatible(value)
+    state = {"truncated": False, "redacted": False}
+    sanitized = _sanitize_snapshot_value(json_value, state)
+    meta = {
+        "included": include_snapshot,
+        "truncated": bool(state["truncated"] or state["redacted"]),
+        "redacted": bool(state["redacted"]),
+        "summary": _build_snapshot_summary(sanitized),
+    }
+    return (sanitized if include_snapshot else None), meta
+
+
+def _should_include_trace_snapshot(state: Any) -> bool:
+    if not isinstance(state, dict):
+        return False
+    return any(bool(state.get(flag)) for flag in TRACE_DEBUG_SNAPSHOT_FLAGS)
 
 
 def _summary_key_for_node(node_name: str) -> str:
@@ -448,7 +536,7 @@ def _build_node_output_display_items(*, node_name: str, output_snapshot: Any, er
     if node_name == "preprocess_subgraph":
         preprocess_route = _resolve_routing_decision(snapshot, "preprocess")
         _append_display_item(items, key="query_strategy", label="查询策略", value=snapshot.get("query_strategy"))
-        _append_display_item(items, key="preprocess_next", label="预处理出口", value=preprocess_route.get("next_node"))
+        _append_display_item(items, key="next_node", label="下一跳", value=preprocess_route.get("next_node"))
         _append_display_item(items, key="sub_queries", label="分解问题", value=snapshot.get("sub_queries"))
         _append_display_item(items, key="multi_queries", label="多路查询", value=snapshot.get("multi_queries"))
         _append_display_item(items, key="action", label="后续动作", value=preprocess_route.get("action"))
@@ -485,13 +573,14 @@ def _build_node_output_display_items(*, node_name: str, output_snapshot: Any, er
             items,
             key="action",
             label="后续动作",
-            value=routing.get("action") or doc_gate_route.get("action"),
+            value=routing.get("action"),
         )
+        _append_display_item(items, key="next_node", label="下一跳", value=routing.get("next_node"))
         _append_display_item(
             items,
             key="reason",
             label="判定原因",
-            value=routing.get("reason") or doc_gate_route.get("reason"),
+            value=routing.get("reason"),
         )
     elif node_name == "answer_subgraph":
         routing = _resolve_routing_decision(snapshot, "answer_subgraph")
@@ -500,8 +589,9 @@ def _build_node_output_display_items(*, node_name: str, output_snapshot: Any, er
         _append_display_item(items, key="best_answer", label="最佳答案", value=snapshot.get("best_answer"))
         _append_display_item(items, key="review_passed", label="审查是否通过", value=reflection.get("review_passed"))
         _append_display_item(items, key="review_risk_level", label="审查风险等级", value=reflection.get("review_risk_level"))
-        _append_display_item(items, key="next_step", label="后续动作", value=routing.get("next_node"))
-        _append_display_item(items, key="reason", label="判定原因", value=routing.get("reason") or reflection.get("reason"))
+        _append_display_item(items, key="next_node", label="下一跳", value=routing.get("next_node"))
+        _append_display_item(items, key="action", label="后续动作", value=routing.get("action"))
+        _append_display_item(items, key="reason", label="判定原因", value=routing.get("reason"))
     elif node_name == "retrieval_budget_plan":
         for key, label in (
             ("complexity", "复杂度等级"),
@@ -535,11 +625,13 @@ def _build_node_output_display_items(*, node_name: str, output_snapshot: Any, er
         _append_display_item(items, key="missing_gates", label="缺失门控", value=summary.get("missing_gates"))
         _append_display_item(items, key="gate_breakdown", label="门控明细", value=_format_gate_breakdown(summary))
     elif node_name == "doc_gate_route":
+        routing = _resolve_routing_decision(snapshot, "doc_gate")
         _append_display_item(items, key="decision", label="文档决策", value=summary.get("decision"))
         _append_display_item(items, key="passed", label="相关性是否通过", value=summary.get("passed"))
-        _append_display_item(items, key="action", label="后续动作", value=reflection.get("action"))
-        _append_display_item(items, key="reason", label="判定原因", value=summary.get("reason"))
-        _append_display_item(items, key="score", label="门控分数", value=summary.get("score") or summary.get("confidence"))
+        _append_display_item(items, key="action", label="后续动作", value=routing.get("action"))
+        _append_display_item(items, key="next_node", label="下一跳", value=routing.get("next_node"))
+        _append_display_item(items, key="reason", label="判定原因", value=routing.get("reason"))
+        _append_display_item(items, key="score", label="门控分数", value=routing.get("score") or summary.get("score") or summary.get("confidence"))
         _append_display_item(items, key="retry_advice", label="重试建议", value=summary.get("retry_advice"))
     elif node_name == "answer_review_dispatch":
         _append_display_item(items, key="review_round", label="审查轮次", value=summary.get("review_round"))
@@ -670,8 +762,13 @@ async def _trace_async(
     input_builder = _resolve_display_builder(build_input_display_items, _build_node_input_display_items)
     output_builder = _resolve_display_builder(build_output_display_items, _build_node_output_display_items)
 
+    include_snapshots = _should_include_trace_snapshot(state)
     input_snapshot = _to_json_compatible(state)
     input_summary = _build_snapshot_summary(input_snapshot)
+    input_snapshot_payload, input_snapshot_meta = sanitize_snapshot_for_stream(
+        input_snapshot,
+        include_snapshot=include_snapshots,
+    )
     display_input_items = input_builder(node_name=node_name, input_snapshot=input_snapshot)
     started_at = datetime.now(timezone.utc)
 
@@ -679,10 +776,13 @@ async def _trace_async(
         payload = {
             **_build_event_base_payload(node_name),
             "phase": "start",
+            "snapshot_policy": "summary_first",
             "input_summary": input_summary,
-            "input_snapshot": input_snapshot,
+            "input_snapshot_meta": input_snapshot_meta,
             "ts": _to_iso_now(),
         }
+        if input_snapshot_payload is not None:
+            payload["input_snapshot"] = input_snapshot_payload
         if display_input_items:
             payload["display_input_items"] = display_input_items
         writer(payload)
@@ -692,17 +792,27 @@ async def _trace_async(
         result = await maybe_result if inspect.isawaitable(maybe_result) else maybe_result
         merged_snapshot = _merge_result_snapshot(input_snapshot, result)
         output_summary = _build_snapshot_summary(merged_snapshot)
+        output_snapshot_payload, output_snapshot_meta = sanitize_snapshot_for_stream(
+            merged_snapshot,
+            include_snapshot=include_snapshots,
+        )
         display_output_items = output_builder(node_name=node_name, output_snapshot=merged_snapshot)
         if callable(writer):
             payload = {
                 **_build_event_base_payload(node_name),
                 "phase": "end",
+                "snapshot_policy": "summary_first",
                 "input_summary": input_summary,
                 "output_summary": output_summary,
-                "output_snapshot": merged_snapshot,
+                "input_snapshot_meta": input_snapshot_meta,
+                "output_snapshot_meta": output_snapshot_meta,
                 "latency_ms": max(0, int((datetime.now(timezone.utc) - started_at).total_seconds() * 1000)),
                 "ts": _to_iso_now(),
             }
+            if input_snapshot_payload is not None:
+                payload["input_snapshot"] = input_snapshot_payload
+            if output_snapshot_payload is not None:
+                payload["output_snapshot"] = output_snapshot_payload
             if display_input_items:
                 payload["display_input_items"] = display_input_items
             if display_output_items:
@@ -714,7 +824,9 @@ async def _trace_async(
             payload = {
                 **_build_event_base_payload(node_name),
                 "phase": "error",
+                "snapshot_policy": "summary_first",
                 "input_summary": input_summary,
+                "input_snapshot_meta": input_snapshot_meta,
                 "error_summary": str(exc),
                 "latency_ms": max(0, int((datetime.now(timezone.utc) - started_at).total_seconds() * 1000)),
                 "ts": _to_iso_now(),
@@ -724,6 +836,8 @@ async def _trace_async(
                     error_summary=str(exc),
                 ),
             }
+            if input_snapshot_payload is not None:
+                payload["input_snapshot"] = input_snapshot_payload
             if display_input_items:
                 payload["display_input_items"] = display_input_items
             writer(payload)

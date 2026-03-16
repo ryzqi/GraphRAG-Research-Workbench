@@ -1,9 +1,10 @@
-version: "1.4"
+version: "2.0"
 name: tools_report_generate
 description: "研究报告生成工具提示词"
 
 template: |
-  你是研究报告撰写专家。请根据研究发现、证据摘要和引用来源生成结构化报告。
+  你是研究报告撰写专家。
+  请根据研究发现、证据摘要和引用来源生成结构化报告。
 
   ## 研究问题
   {question}
@@ -22,27 +23,26 @@ template: |
 
   生成要求：
   1. 报告正文使用 Markdown。
-  2. 章节必须包含：摘要、研究发现、证据分析、结论与建议、参考来源。
-  3. 结论必须与证据摘要一致；若证据不足或冲突，需在报告中明确体现。
-  4. 摘要中必须明确结论适用范围；结论与建议必须区分"已证实事实"与"待验证推断"。
-  5. 同时返回结构化元数据，包含 confidence_level、evidence_count、has_conflicts、generated_at。
-  6. confidence_level 取值规则：
-     - high：核心结论有多条一致证据支撑
-     - partial：核心结论有证据但覆盖不完整
+  2. sections 至少包含：摘要、研究发现、证据分析、结论与建议、参考来源。
+  3. report_md 必须与 sections 保持一致，且能独立阅读。
+  4. 结论必须与证据摘要一致；若证据不足或冲突，必须在摘要与结论中明确体现。
+  5. 在“结论与建议”中区分“已证实事实”和“待验证推断”。
+  6. metadata 必须包含：confidence_level、evidence_count、has_conflicts、generated_at。
+  7. confidence_level 只能使用以下值：
+     - sufficient：核心结论有多条一致证据支撑
+     - partial：核心结论有证据，但覆盖不完整或存在明显限制
      - insufficient：证据不足以支撑可靠结论
+  8. evidence_count 应与可追溯引用数量一致或保守估计。
+  9. generated_at 使用 ISO 8601 时间字符串。
 
   输出要求（严格）：
-  - 只输出一个 JSON 对象，不要输出代码块或解释文字。
-  - JSON 顶层字段必须为：report_md, sections, metadata。
+  - 只输出一个 JSON 对象，不要输出 Markdown 之外的解释文字，不要输出代码块。
+  - JSON 顶层字段必须且只能包含：report_md, sections, metadata。
   - sections 中每项必须包含 title 与 content 字段。
-  - sections 必须至少包含：摘要、研究发现、证据分析、结论与建议、参考来源。
+  - metadata 中必须包含 confidence_level, evidence_count, has_conflicts, generated_at。
 
   JSON 结构示例（仅示例格式）：
-  {{
-    "report_md": "# 研究报告\n...",
-    "sections": [{{"title": "摘要", "content": "..."}}],
-    "metadata": {{"confidence_level": "partial", "evidence_count": 3, "has_conflicts": false, "generated_at": "2026-01-01T00:00:00Z"}}
-  }}
+  {{"report_md": "# 研究报告\n...", "sections": [{{"title": "摘要", "content": "..."}}], "metadata": {{"confidence_level": "partial", "evidence_count": 3, "has_conflicts": false, "generated_at": "2026-01-01T00:00:00Z"}}}}
 
 variables:
   - name: question
@@ -71,7 +71,7 @@ few_shot_examples:
       引用来源：
       [1] 实验报告...
       报告格式要求：标准模式
-    output: '{"report_md": "# 研究报告\\n\\n## 摘要\\n...", "sections": [{"title": "摘要", "content": "..."}], "metadata": {"confidence_level": "partial", "evidence_count": 1, "has_conflicts": false, "generated_at": "2026-01-01T00:00:00Z"}}'
+    output: '{"report_md": "# 研究报告\n\n## 摘要\n...", "sections": [{"title": "摘要", "content": "..."}], "metadata": {"confidence_level": "partial", "evidence_count": 1, "has_conflicts": false, "generated_at": "2026-01-01T00:00:00Z"}}'
   - input: |
       研究问题：A 方案是否优于 B 方案？
       研究发现：
@@ -83,17 +83,17 @@ few_shot_examples:
       [1] 对照实验
       [2] 线上观测
       报告格式要求：标准模式
-    output: '{"report_md": "# 研究报告\\n\\n## 摘要\\n证据存在冲突...", "sections": [{"title": "摘要", "content": "证据存在冲突..."}], "metadata": {"confidence_level": "insufficient", "evidence_count": 2, "has_conflicts": true, "generated_at": "2026-01-01T00:00:00Z"}}'
+    output: '{"report_md": "# 研究报告\n\n## 摘要\n证据存在冲突...", "sections": [{"title": "摘要", "content": "证据存在冲突..."}], "metadata": {"confidence_level": "insufficient", "evidence_count": 2, "has_conflicts": true, "generated_at": "2026-01-01T00:00:00Z"}}'
   - input: |
       研究问题：2024 年用户满意度趋势如何？
       研究发现：
       - Q1 满意度 92%，Q2 升至 94%，Q3 维持 94%，Q4 达 95%
       - 主要驱动因素为响应速度优化和功能迭代
       证据摘要：
-      {"confidence_level": "high", "has_conflicts": false}
+      {"confidence_level": "sufficient", "has_conflicts": false}
       引用来源：
       [1] 季度用户调研报告
       [2] 产品迭代日志
       [3] 客服工单分析
       报告格式要求：标准模式
-    output: '{"report_md": "# 研究报告\\n\\n## 摘要\\n2024年用户满意度呈稳步上升趋势...", "sections": [{"title": "摘要", "content": "2024年用户满意度从Q1的92%稳步上升至Q4的95%"}, {"title": "研究发现", "content": "..."}, {"title": "证据分析", "content": "..."}, {"title": "结论与建议", "content": "..."}, {"title": "参考来源", "content": "..."}], "metadata": {"confidence_level": "high", "evidence_count": 3, "has_conflicts": false, "generated_at": "2026-01-01T00:00:00Z"}}'
+    output: '{"report_md": "# 研究报告\n\n## 摘要\n2024 年用户满意度呈稳步上升趋势...", "sections": [{"title": "摘要", "content": "2024 年用户满意度从 Q1 的 92% 稳步上升至 Q4 的 95%。"}, {"title": "研究发现", "content": "..."}, {"title": "证据分析", "content": "..."}, {"title": "结论与建议", "content": "..."}, {"title": "参考来源", "content": "..."}], "metadata": {"confidence_level": "sufficient", "evidence_count": 3, "has_conflicts": false, "generated_at": "2026-01-01T00:00:00Z"}}'

@@ -1,32 +1,33 @@
-version: "1.0"
+version: "2.0"
 name: kb_chat_entity_expand
-description: "Entity expansion for KB chat multi-query retrieval."
+description: "实体导向查询扩展提示词"
 
 template: |
-  你是知识库检索的实体扩展助手。请基于主问题和候选查询，补充可以提升召回的实体表达。
+  你是知识库检索中的实体扩展助手。
+  你的任务：围绕核心实体、别名、缩写与口径，为检索生成高质量候选查询。
 
   目标：
-  - 保持原始意图不漂移；
-  - 保留核心实体、约束与时间范围；
-  - 只输出可直接用于检索的短查询片段。
+  - 扩展召回，但不能改变原问题意图。
+  - 保留关键实体、时间、范围、错误码、版本号和指标。
+  - 只输出可以直接用于检索的短查询。
 
-  输入主问题：
-  {question}
+  输出要求：
+  - 只输出一个 JSON 对象，不要输出 Markdown、解释、代码块或额外文字。
+  - JSON 字段必须且只能包含：
+    - candidates: 数组；每项是对象 {{"query": str, "confidence": float, "reason": str}}
+    - dropped_queries: 数组；写被你主动丢弃的重复、漂移或低价值查询
+    - reasoning: 一句话总结扩展策略
+  - candidates 最多输出 {max_candidates} 项。
+  - 每个 candidate.query 都必须简短、可检索、与原问题强相关。
+  - confidence 为 0 到 1 的浮点数；越高表示越接近原问题意图。
+  - 若没有安全扩展空间，可输出空 candidates，但 reasoning 仍需说明原因。
 
-  当前候选查询：
-  {seed_queries}
-
-  已知 aliases：
-  {aliases}
-
-  已知 entities：
-  {entities}
-
-  约束：
-  1) candidates 总数不要超过 {max_candidates}。
-  2) 每个 candidate.query 必须可直接检索，不能是解释句。
-  3) confidence 取值 [0,1]，越高表示与主问题语义越一致。
-  4) 对明显漂移或重复的查询放入 dropped_queries。
+  输入：
+  - 用户问题：{question}
+  - 种子查询：
+    {seed_queries}
+  - 可用别名：{aliases}
+  - 识别到的实体：{entities}
 
 variables:
   - name: question
@@ -44,3 +45,14 @@ variables:
   - name: max_candidates
     type: integer
     required: true
+
+few_shot_examples:
+  - input: |
+      用户问题：Kubernetes Pod OOMKilled 怎么解决？
+      种子查询：
+      - Kubernetes Pod OOMKilled 解决方案
+      - K8s Pod OOMKilled 排查
+      可用别名：K8s
+      识别到的实体：Kubernetes, Pod, OOMKilled
+    output: '{"candidates": [{"query": "Kubernetes Pod OOMKilled 排查", "confidence": 0.94, "reason": "保留核心实体并强化排查意图"}, {"query": "K8s Pod OOMKilled 内存限制 调优", "confidence": 0.88, "reason": "补充常见别名与高相关约束"}], "dropped_queries": ["容器故障怎么修"], "reasoning": "优先围绕实体别名与高分辨率约束扩展。"}'
+

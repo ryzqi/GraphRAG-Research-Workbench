@@ -252,6 +252,7 @@ export type ChatMessageResponse =
 
 export type ChatStreamEventName =
   | 'meta'
+  | 'heartbeat'
   | 'messages'
   | 'updates'
   | 'custom'
@@ -265,6 +266,16 @@ export type ChatStreamEventName =
   | 'interrupt'
   | 'final'
   | 'error';
+
+export const KB_CHAT_CUSTOM_EVENT_TYPES = [
+  'node_io',
+  'answer_review_subcheck',
+  'answer_review_fused',
+  'guardrail_warning',
+  'heartbeat',
+] as const;
+
+export type KbChatCustomEventType = (typeof KB_CHAT_CUSTOM_EVENT_TYPES)[number];
 
 export interface NormalizedChatStreamEvent {
   event: ChatStreamEventName;
@@ -284,6 +295,8 @@ export interface ChatNodeIoEvent {
   latency_ms?: number | null;
   input_summary?: Record<string, unknown> | null;
   output_summary?: Record<string, unknown> | null;
+  input_snapshot_meta?: Record<string, unknown> | null;
+  output_snapshot_meta?: Record<string, unknown> | null;
   input_snapshot?: Record<string, unknown> | null;
   output_snapshot?: Record<string, unknown> | null;
   error_summary?: string | null;
@@ -301,6 +314,7 @@ export interface KbGraphNode {
   label: string;
   phase: string | null;
   order: number | null;
+  metadata?: Record<string, unknown>;
 }
 
 export interface KbGraphEdge {
@@ -311,6 +325,7 @@ export interface KbGraphEdge {
 
 export interface KbGraphSchema {
   version: string;
+  hash: string;
   nodes: KbGraphNode[];
   edges: KbGraphEdge[];
 }
