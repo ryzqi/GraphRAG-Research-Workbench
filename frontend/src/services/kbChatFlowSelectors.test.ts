@@ -65,4 +65,61 @@ describe('kbChatFlowSelectors', () => {
 
     expect(result.map((item) => item.key)).toEqual(['checks']);
   });
+
+  it('does not append raw input fields for known nodes when a curated input policy exists', () => {
+    const result = selectKbChatFlowDetailItems({
+      nodeId: 'complexity_classify',
+      section: 'input',
+      items: [
+        { key: 'normalized_query', label: '规范化问题', value: '北京社保缴费基数是多少' },
+        { key: 'complexity_level', label: '复杂度', value: 'complex' },
+      ],
+      event: null,
+    });
+
+    expect(result.map((item) => item.key)).toEqual(['normalized_query']);
+  });
+
+  it('keeps a compact budget summary for retrieval_budget_plan instead of rendering no key output', () => {
+    const result = selectKbChatFlowDetailItems({
+      nodeId: 'retrieval_budget_plan',
+      section: 'output',
+      items: [
+        { key: 'query_count', label: '查询数量', value: '3' },
+        { key: 'per_query_top_k', label: '单查询 TopK', value: '8' },
+        { key: 'rerank_input_limit', label: '重排输入上限', value: '16' },
+      ],
+      event: null,
+    });
+
+    expect(result.map((item) => item.key)).toEqual(['query_count', 'per_query_top_k']);
+  });
+
+  it('shows dispatch targets for doc_gate_dispatch as the key output', () => {
+    const result = selectKbChatFlowDetailItems({
+      nodeId: 'doc_gate_dispatch',
+      section: 'output',
+      items: [
+        { key: 'route_targets', label: '派发目标', value: ['doc_gate_sufficiency', 'doc_gate_conflict'] },
+        { key: 'doc_gate_round', label: '门控轮次', value: '1' },
+      ],
+      event: null,
+    });
+
+    expect(result.map((item) => item.key)).toEqual(['route_targets', 'doc_gate_round']);
+  });
+
+  it('uses high risk verdict as the compact cove_check output', () => {
+    const result = selectKbChatFlowDetailItems({
+      nodeId: 'cove_check',
+      section: 'output',
+      items: [
+        { key: 'enabled', label: '是否启用验证链', value: '是' },
+        { key: 'high_risk', label: '是否高风险问题', value: '否' },
+      ],
+      event: null,
+    });
+
+    expect(result.map((item) => item.key)).toEqual(['high_risk']);
+  });
 });

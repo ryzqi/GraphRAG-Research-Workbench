@@ -116,4 +116,45 @@ describe('KbChatFlowPanel', () => {
     expect(keys).not.toContain('next_node');
     expect(keys).not.toContain('reason');
   });
+
+  it('renders expanded details without repeating node or step labels', () => {
+    const html = renderToStaticMarkup(
+      createElement(KbChatFlowPanel as never, {
+        schema: null,
+        defaultExpandedNodeId: 'merge_context',
+        pipelineSteps: [
+          {
+            step_id: 'merge_context',
+            label: '上下文合并',
+            status: 'completed',
+            message: '步骤消息：上下文已合并',
+            ts: '2026-01-01T00:00:02.000Z',
+          },
+        ],
+        nodeIoEvents: [
+          {
+            run_id: 'run-1',
+            node_id: 'merge_context',
+            node_name: 'merge_context',
+            phase: 'end',
+            ts: '2026-01-01T00:00:02.000Z',
+            input_snapshot: {
+              user_input: '北京社保缴费基数是多少？',
+            },
+            output_snapshot: {
+              user_input: '北京社保缴费基数是多少？',
+              merged_context: '已合并后的上下文',
+            },
+          },
+        ],
+      } as never)
+    );
+
+    expect(html).toContain('关键输入');
+    expect(html).toContain('关键输出');
+    expect(html).toContain('已合并后的上下文');
+    expect(html).not.toContain('节点：上下文合并');
+    expect(html).not.toContain('步骤：上下文合并');
+    expect(html).not.toContain('步骤消息：上下文已合并');
+  });
 });

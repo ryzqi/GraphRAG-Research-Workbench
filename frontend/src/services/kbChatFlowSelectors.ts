@@ -72,15 +72,15 @@ const NODE_DETAIL_POLICY_MAP: Record<string, NodeDetailPolicy> = {
   },
   dispatch_subqueries: {
     input: ['query_strategy', 'query_items'],
-    output: ['mode'],
+    output: ['mode', 'branch_count'],
   },
   retrieval_budget_plan: {
     input: ['complexity_level', 'query_items', 'reason'],
-    output: [],
+    output: ['query_count', 'per_query_top_k'],
   },
   retrieve_subquery: {
     input: ['query', 'kind'],
-    output: ['success'],
+    output: ['retrieval_count', 'success'],
   },
   merge_subquery_context: {
     input: ['subquery_runs_count'],
@@ -100,7 +100,7 @@ const NODE_DETAIL_POLICY_MAP: Record<string, NodeDetailPolicy> = {
   },
   doc_gate_dispatch: {
     input: ['question', 'final_context'],
-    output: ['action'],
+    output: ['route_targets', 'doc_gate_round'],
   },
   doc_gate_route: {
     input: ['question'],
@@ -164,11 +164,11 @@ const NODE_DETAIL_POLICY_MAP: Record<string, NodeDetailPolicy> = {
   },
   cove_check: {
     input: ['draft_answer'],
-    output: ['action', 'reason'],
+    output: ['high_risk'],
   },
   chain_of_verification: {
     input: ['draft_answer'],
-    output: ['passed', 'reason', 'repair_action'],
+    output: ['passed', 'reason'],
   },
   claim_citation_check: {
     input: ['draft_answer'],
@@ -176,7 +176,7 @@ const NODE_DETAIL_POLICY_MAP: Record<string, NodeDetailPolicy> = {
   },
   confidence_calibrate: {
     input: ['final_answer'],
-    output: ['confidence_level', 'reason'],
+    output: ['confidence_level'],
   },
   force_exit: {
     input: ['action', 'reason'],
@@ -238,18 +238,13 @@ export function selectKbChatFlowDetailItems(params: {
   event: ChatNodeIoEvent | null;
 }): KbChatFlowDetailItem[] {
   const normalized = normalizeDetailItems(params.items);
-  if (params.event?.error_summary && !normalized.some((item) => item.key === 'error_summary')) {
-    normalized.push({ key: 'error_summary', label: '错误信息', value: params.event.error_summary });
-  }
-
-  const errorItems = normalized.filter((item) => item.key === 'error_summary');
-  const candidates = normalized.filter((item) => item.key !== 'error_summary');
+  const candidates = normalized;
   const selected: KbChatFlowDetailItem[] = [];
   const seen = new Set<string>();
   const limit = Number.MAX_SAFE_INTEGER;
   const hasPolicy = Object.prototype.hasOwnProperty.call(NODE_DETAIL_POLICY_MAP, params.nodeId);
   const policyKeys = [...(NODE_DETAIL_POLICY_MAP[params.nodeId]?.[params.section] ?? [])];
-  const shouldAppendUncuratedItems = params.section === 'input' || !hasPolicy;
+  const shouldAppendUncuratedItems = !hasPolicy;
 
   if (params.nodeId === 'ambiguity_check' && params.section === 'output') {
     const action = candidates.find((item) => item.key === 'action');
@@ -287,7 +282,7 @@ export function selectKbChatFlowDetailItems(params: {
     }
   }
 
-  const result = [...selected, ...errorItems];
+  const result = [...selected];
   const riskHint = inferRiskHint(params.section, result);
   if (riskHint) {
     result.push({ key: 'risk_hint', label: '风险提示', value: riskHint });

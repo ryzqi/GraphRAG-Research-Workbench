@@ -27,7 +27,6 @@ import {
   type TraceStageStatus,
 } from '../../services/kbChatTraceNodes';
 import { resolveKbNodeTheme } from '../../services/kbNodeCatalog';
-import { resolveKbNodeLabel } from '../../services/kbNodeLabels';
 import type { PipelineStep } from './PipelineProgress';
 
 interface KbChatFlowPanelProps {
@@ -36,6 +35,7 @@ interface KbChatFlowPanelProps {
   pipelineSteps?: PipelineStep[];
   nodeIoEvents?: ChatNodeIoEvent[];
   traceWarnings?: string[];
+  defaultExpandedNodeId?: string | null;
 }
 
 function statusLabel(status: TraceStageStatus): string {
@@ -155,6 +155,10 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 export function extractTraceCommandGoto(snapshot: Record<string, unknown>): string | null {
   const command = asRecord(snapshot.__trace_command__) ?? {};
   return typeof command.goto === 'string' ? command.goto : null;
+}
+
+function getTraceCommand(snapshot: Record<string, unknown>): Record<string, unknown> {
+  return asRecord(snapshot.__trace_command__) ?? {};
 }
 
 function asNonEmptyText(value: unknown): string | null {
@@ -552,6 +556,18 @@ export function buildFallbackOutputItems(
   const items: NodeDetailItem[] = [];
 
   if (snapshot) {
+    const traceCommand = getTraceCommand(snapshot);
+    pushDisplayItem(items, { key: 'route_to', label: '下一跳', value: asNonEmptyText(traceCommand.goto) });
+    pushDisplayItem(items, {
+      key: 'route_targets',
+      label: '派发目标',
+      value: Array.isArray(traceCommand.goto_targets)
+        ? traceCommand.goto_targets.filter(
+            (item): item is string => typeof item === 'string' && item.trim().length > 0
+          )
+        : null,
+    });
+
     if (nodeId === 'preprocess_subgraph') {
       const routing = getRoutingDecision(snapshot, 'preprocess');
       pushDisplayItem(items, { key: 'next_node', label: '下一跳', value: asNonEmptyText(routing.next_node) });
@@ -966,8 +982,9 @@ export function KbChatFlowPanel({
   pipelineSteps,
   nodeIoEvents,
   traceWarnings,
+  defaultExpandedNodeId,
 }: KbChatFlowPanelProps) {
-  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [expandedId, setExpandedId] = useState<string | null>(defaultExpandedNodeId ?? null);
   const stageGroups = useMemo(
     () =>
       buildTraceStageGroups({
@@ -1226,27 +1243,9 @@ export function KbChatFlowPanel({
                           </Stack>
                           <Collapse in={expanded} unmountOnExit>
                             <Stack spacing={1} sx={{ pt: 0.5 }}>
-                              {node.latestStep && (
-                                <Typography variant='caption' color='text.secondary'>
-                                  步骤：{node.latestStep.label}（{node.latestStep.status}）
-                                </Typography>
-                              )}
-                              {node.latestNodeEvent && (
-                                <Typography variant='caption' color='text.secondary'>
-                                  节点：{resolveKbNodeLabel(node.latestNodeEvent.node_name, schema)}
-                                  {typeof node.latestNodeEvent.attempt === 'number'
-                                    ? ` · 第 ${node.latestNodeEvent.attempt} 次`
-                                    : ''}
-                                </Typography>
-                              )}
                               {node.latestNodeEvent?.error_summary && (
                                 <Typography variant='caption' color='error.main'>
                                   {node.latestNodeEvent.error_summary}
-                                </Typography>
-                              )}
-                              {node.latestStep?.message && (
-                                <Typography variant='caption' color='text.secondary'>
-                                  {node.latestStep.message}
                                 </Typography>
                               )}
                               <DetailSection title='关键输入' items={inputDetailItems} />
