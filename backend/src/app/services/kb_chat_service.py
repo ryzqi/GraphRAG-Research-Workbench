@@ -107,7 +107,6 @@ _KB_CHAT_CHECKPOINT_RESET_FIELDS = (
     "entity_expand_meta",
     "query_strategy",
     "complexity_level",
-    "adaptive_route",
     "query_strategy_confidence",
     "query_strategy_signals",
     "decomposition_plan",
@@ -1101,7 +1100,7 @@ class KbChatService:
         if answer_subgraph:
             checks.append(
                 str(answer_subgraph.get("next_node") or "")
-                in {"finalize", "confidence_calibrate", "transform_query", "force_exit"}
+                in {"confidence_calibrate", "transform_query", "force_exit"}
             )
         if not checks:
             return 100.0
@@ -1127,7 +1126,7 @@ class KbChatService:
         has_force_exit = isinstance(terminal_reason, str) and bool(terminal_reason.strip())
         if not next_step and not has_force_exit:
             return 100.0
-        if next_step in {"finalize", "confidence_calibrate"}:
+        if next_step == "confidence_calibrate":
             return 100.0 if not has_force_exit else 0.0
         if next_step in {"transform_query", "force_exit"}:
             return 100.0 if has_force_exit else 0.0
@@ -2225,7 +2224,7 @@ class KbChatService:
         if isinstance(stage_summaries, dict):
             summary_key = {
                 "retrieve": "retrieval_layer",
-                "generate": "generator",
+                "draft_generate": "generator",
                 "answer_subgraph": "answer_subgraph",
                 "answer_review_citation": "answer_review",
                 "answer_review_factual": "answer_review",
@@ -2361,7 +2360,7 @@ class KbChatService:
                 if isinstance(attempted, bool):
                     io_summary["attempted"] = attempted
 
-        if node == "generate":
+        if node == "draft_generate":
             draft_answer = update.get("draft_answer")
             if isinstance(draft_answer, str) and draft_answer.strip():
                 io_summary["draft_preview"] = KbChatService._shorten_stream_text(
@@ -2375,7 +2374,7 @@ class KbChatService:
                     final_answer, 180
                 )
 
-        if node in {"answer_review", "answer_review_fuse"}:
+        if node == "answer_review_fuse":
             best_answer = update.get("best_answer")
             if isinstance(best_answer, str) and best_answer.strip():
                 io_summary["best_answer_preview"] = KbChatService._shorten_stream_text(

@@ -153,10 +153,7 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 }
 
 export function extractTraceCommandGoto(snapshot: Record<string, unknown>): string | null {
-  const command =
-    asRecord(snapshot.__trace_command__) ??
-    asRecord(snapshot.__command__) ??
-    {};
+  const command = asRecord(snapshot.__trace_command__) ?? {};
   return typeof command.goto === 'string' ? command.goto : null;
 }
 
@@ -312,7 +309,6 @@ function formatQueryItems(value: unknown): string[] {
 
 function summaryKeyForNode(nodeId: string): string {
   if (nodeId === 'retrieve') return 'retrieval_layer';
-  if (nodeId === 'generate') return 'generator';
   if (nodeId === 'draft_generate') return 'generator';
   if (
     nodeId === 'answer_review_citation' ||
@@ -383,18 +379,10 @@ function buildFallbackInputItems(
   } else if (
     [
       'complexity_classify',
-      'adaptive_routing',
-      'simple_path',
-      'moderate_path',
-      'complex_path',
-      'ENABLE_MULTI_QUERY_MOD',
       'generate_variants_mod',
-      'ENABLE_DECOMPOSITION',
       'decomposition',
-      'ENABLE_MULTI_QUERY',
       'generate_variants',
       'entity_expand',
-      'ENABLE_HYDE',
       'hyde',
     ].includes(nodeId)
   ) {
@@ -490,14 +478,13 @@ function buildFallbackInputItems(
       value: pickText(snapshot, 'normalized_query', 'coref_query', 'user_input'),
     });
     pushDisplayItem(items, { key: 'reason', label: '改写原因', value: reflection.reason });
-  } else if (nodeId === 'answer_subgraph' || nodeId === 'generate' || nodeId === 'draft_generate') {
+  } else if (nodeId === 'answer_subgraph' || nodeId === 'draft_generate') {
     pushDisplayItem(items, {
       key: 'question',
       label: '待回答问题',
       value: pickText(snapshot, 'merged_context', 'user_input'),
     });
   } else if (
-    nodeId === 'answer_review' ||
     nodeId === 'answer_review_citation' ||
     nodeId === 'answer_review_factual' ||
     nodeId === 'answer_review_answerability' ||
@@ -522,12 +509,6 @@ function buildFallbackInputItems(
       key: 'draft_answer',
       label: '修复前答案',
       value: pickText(snapshot, 'draft_answer'),
-    });
-  } else if (nodeId === 'finalize') {
-    pushDisplayItem(items, {
-      key: 'draft_answer',
-      label: '答案草稿',
-      value: pickText(snapshot, 'draft_answer', 'final_answer'),
     });
   } else if (nodeId === 'force_exit') {
     pushDisplayItem(items, { key: 'action', label: '终止动作', value: reflection.action });
@@ -615,19 +596,10 @@ export function buildFallbackOutputItems(
       pushDisplayItem(items, { key: 'rewritten', label: '是否变化', value: summary.rewritten });
     } else if (nodeId === 'complexity_classify') {
       pushDisplayItem(items, { key: 'complexity_level', label: '复杂度等级', value: asNonEmptyText(summary.complexity_level) ?? asNonEmptyText(snapshot.complexity_level) });
-      pushDisplayItem(items, { key: 'adaptive_route', label: '路由结果', value: asNonEmptyText(summary.adaptive_route) ?? asNonEmptyText(snapshot.adaptive_route) });
+      pushDisplayItem(items, { key: 'next_node', label: '下一节点', value: asNonEmptyText(summary.next_node) });
       pushDisplayItem(items, { key: 'query_strategy', label: '查询策略', value: asNonEmptyText(snapshot.query_strategy) });
       pushDisplayItem(items, { key: 'query_strategy_confidence', label: '策略置信度', value: snapshot.query_strategy_confidence });
       pushDisplayItem(items, { key: 'query_strategy_signals', label: '风险信号', value: Array.isArray(snapshot.query_strategy_signals) ? snapshot.query_strategy_signals : null });
-    } else if (nodeId === 'adaptive_routing') {
-      pushDisplayItem(items, { key: 'adaptive_route', label: '路由结果', value: asNonEmptyText(summary.adaptive_route) });
-      pushDisplayItem(items, { key: 'complexity_level', label: '复杂度等级', value: asNonEmptyText(summary.complexity_level) });
-    } else if (['AMBIGUITY_CHECK_ENABLED', 'simple_path', 'moderate_path', 'complex_path', 'ENABLE_MULTI_QUERY_MOD', 'ENABLE_DECOMPOSITION', 'ENABLE_MULTI_QUERY', 'ENABLE_HYDE'].includes(nodeId)) {
-      pushDisplayItem(items, {
-        key: 'goto',
-        label: '下一节点',
-        value: extractTraceCommandGoto(snapshot),
-      });
     } else if (nodeId === 'decomposition') {
       const subQueries = pickStringList(snapshot, 'sub_queries');
       pushDisplayItem(items, { key: 'sub_queries', label: '分解问题', value: subQueries });
@@ -827,14 +799,13 @@ export function buildFallbackOutputItems(
       pushDisplayItem(items, { key: 'degrade_reason', label: '降级原因', value: summary.degrade_reason });
       pushDisplayItem(items, { key: 'repair_attempts', label: '修复次数', value: summary.repair_attempts });
       pushDisplayItem(items, { key: 'best_answer', label: '候选答案', value: pickText(snapshot, 'best_answer', 'draft_answer') });
-    } else if (nodeId === 'generate' || nodeId === 'draft_generate') {
+    } else if (nodeId === 'draft_generate') {
       pushDisplayItem(items, { key: 'draft_answer', label: '生成草稿', value: pickText(snapshot, 'draft_answer') });
       pushDisplayItem(items, { key: 'final_answer', label: '候选答案', value: pickText(snapshot, 'final_answer') });
     } else if (nodeId === 'answer_review_dispatch') {
       pushDisplayItem(items, { key: 'check_count', label: '审查数量', value: summary.check_count });
       pushDisplayItem(items, { key: 'checks', label: '审查列表', value: Array.isArray(summary.checks) ? summary.checks : null });
     } else if (
-      nodeId === 'answer_review' ||
       nodeId === 'answer_review_citation' ||
       nodeId === 'answer_review_factual' ||
       nodeId === 'answer_review_answerability' ||
@@ -872,8 +843,6 @@ export function buildFallbackOutputItems(
       pushDisplayItem(items, { key: 'repair_attempt', label: '修复轮次', value: summary.repair_attempt });
       pushDisplayItem(items, { key: 'fallback_reason', label: '回退原因', value: summary.fallback_reason });
       pushDisplayItem(items, { key: 'final_answer', label: '修复后答案', value: pickText(snapshot, 'final_answer') });
-    } else if (nodeId === 'finalize') {
-      pushDisplayItem(items, { key: 'final_answer', label: '最终答案', value: pickText(snapshot, 'final_answer') });
     } else if (nodeId === 'confidence_calibrate') {
       pushDisplayItem(items, { key: 'confidence_score', label: '置信度分数', value: summary.confidence_score ?? snapshot.confidence_score });
       pushDisplayItem(items, { key: 'confidence_level', label: '置信度等级', value: summary.confidence_level ?? asNonEmptyText(snapshot.confidence_level) });

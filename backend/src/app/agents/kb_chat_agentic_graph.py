@@ -493,7 +493,8 @@ def _append_display_item(
 def _summary_key_for_node(node_name: str) -> str:
     return {
         "retrieve": "retrieval_layer",
-        "generate": "generator",
+        "draft_generate": "generator",
+        "answer_review_fuse": "answer_review",
     }.get(node_name, node_name)
 
 
@@ -674,33 +675,6 @@ def _build_node_input_display_items(
             key="reason",
             label="改写原因",
             value=reflection.get("reason"),
-        )
-    elif node_name == "generate":
-        _append_display_item(
-            items,
-            key="question",
-            label="待回答问题",
-            value=_pick_text(snapshot, "merged_context", "user_input"),
-        )
-    elif node_name == "answer_review":
-        _append_display_item(
-            items,
-            key="question",
-            label="用户问题",
-            value=_pick_text(snapshot, "merged_context", "user_input"),
-        )
-        _append_display_item(
-            items,
-            key="draft_answer",
-            label="待评估答案",
-            value=_pick_text(snapshot, "draft_answer"),
-        )
-    elif node_name == "finalize":
-        _append_display_item(
-            items,
-            key="draft_answer",
-            label="答案草稿",
-            value=_pick_text(snapshot, "draft_answer", "final_answer"),
         )
     elif node_name == "force_exit":
         _append_display_item(
@@ -1309,7 +1283,7 @@ def _build_node_output_display_items(
             label="改写后查询项",
             value=_format_query_items(snapshot.get("query_items")),
         )
-    elif node_name == "generate":
+    elif node_name == "draft_generate":
         _append_display_item(
             items,
             key="draft_answer",
@@ -1322,7 +1296,7 @@ def _build_node_output_display_items(
             label="候选答案",
             value=_pick_text(snapshot, "final_answer"),
         )
-    elif node_name == "answer_review":
+    elif node_name == "answer_review_fuse":
         _append_display_item(
             items,
             key="passed",
@@ -1352,13 +1326,6 @@ def _build_node_output_display_items(
             key="best_answer",
             label="最佳答案",
             value=_pick_text(snapshot, "best_answer"),
-        )
-    elif node_name == "finalize":
-        _append_display_item(
-            items,
-            key="final_answer",
-            label="最终答案",
-            value=_pick_text(snapshot, "final_answer"),
         )
     elif node_name == "force_exit":
         _append_display_item(

@@ -277,13 +277,10 @@ function resolveSummarySource(
 function complexityLabel(value: unknown): string | null {
   switch (value) {
     case 'simple':
-    case 'simple_path':
       return '简单';
     case 'moderate':
-    case 'moderate_path':
       return '中等';
     case 'complex':
-    case 'complex_path':
       return '复杂';
     default:
       return null;
@@ -354,14 +351,12 @@ function buildSummaryTags(params: {
 
   const complexity =
     complexityLabel(summary.complexity_level) ??
-    complexityLabel(summary.adaptive_route) ??
     complexityLabel(snapshot.complexity_level);
   if (complexity) {
     pushSummaryTag(tags, { label: '复杂度', value: complexity, tone: 'primary' });
   }
 
   const route =
-    resolveRouteLabel(summary.adaptive_route) ??
     resolveRouteLabel(summary.next_node) ??
     resolveRouteLabel(extractRoutingDecision(snapshot, 'preprocess').next_node) ??
     resolveRouteLabel(extractRoutingDecision(snapshot, 'doc_gate').next_node) ??
@@ -446,7 +441,6 @@ function buildNodeSummaryText(params: {
   const { summary, snapshot } = resolveSummarySource(latestNodeEvent, latestStep);
   const complexity =
     complexityLabel(summary.complexity_level) ??
-    complexityLabel(summary.adaptive_route) ??
     complexityLabel(snapshot.complexity_level);
   const evidenceCount = resolveEvidenceCount(summary);
   const answerText =
@@ -524,11 +518,9 @@ function buildNodeSummaryText(params: {
       }
       return buildGenericSummaryText(params);
     case 'draft_generate':
-    case 'generate':
       return answerText ? '已生成候选答案' : buildGenericSummaryText(params);
     case 'answer_review_dispatch':
       return '已开始答案审查';
-    case 'answer_review':
     case 'answer_review_citation':
     case 'answer_review_factual':
     case 'answer_review_answerability':
@@ -548,8 +540,6 @@ function buildNodeSummaryText(params: {
     case 'answer_commit':
     case 'answer_subgraph':
       return answerText ? '已提交候选答案' : buildGenericSummaryText(params);
-    case 'finalize':
-      return answerText ? '已整理最终答案' : buildGenericSummaryText(params);
     case 'confidence_calibrate':
       return '已完成答案置信度校准';
     case 'force_exit':

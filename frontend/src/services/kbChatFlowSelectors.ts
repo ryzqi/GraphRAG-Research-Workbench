@@ -34,10 +34,6 @@ const NODE_DETAIL_POLICY_MAP: Record<string, NodeDetailPolicy> = {
     input: ['query'],
     output: ['coref_query', 'confidence', 'selected_mention', 'reason', 'needs_clarification_hint', 'rewritten'],
   },
-  AMBIGUITY_CHECK_ENABLED: {
-    input: ['query'],
-    output: ['enabled', 'reason', 'preprocess_next'],
-  },
   ambiguity_check: {
     input: ['query'],
     output: ['ambiguous', 'reason_code', 'confidence', 'action', 'final_answer'],
@@ -50,47 +46,15 @@ const NODE_DETAIL_POLICY_MAP: Record<string, NodeDetailPolicy> = {
     input: ['normalized_query'],
     output: [
       'complexity_level',
-      'adaptive_route',
+      'next_node',
       'query_strategy',
       'query_strategy_confidence',
       'query_strategy_signals',
     ],
   },
-  adaptive_routing: {
-    input: ['complexity_level'],
-    output: ['adaptive_route', 'complexity_level', 'reason'],
-  },
-  simple_path: {
-    input: ['normalized_query'],
-    output: ['route', 'reason'],
-  },
-  moderate_path: {
-    input: ['normalized_query'],
-    output: ['route', 'reason', 'variants_enabled'],
-  },
-  complex_path: {
-    input: ['normalized_query'],
-    output: ['route', 'reason', 'decomposition_enabled', 'hyde_enabled'],
-  },
   generate_variants_mod: {
     input: ['normalized_query'],
     output: ['multi_queries', 'count', 'reason'],
-  },
-  ENABLE_MULTI_QUERY_MOD: {
-    input: ['normalized_query'],
-    output: ['enabled', 'reason'],
-  },
-  ENABLE_DECOMPOSITION: {
-    input: ['normalized_query'],
-    output: ['enabled', 'reason'],
-  },
-  ENABLE_MULTI_QUERY: {
-    input: ['normalized_query'],
-    output: ['enabled', 'reason'],
-  },
-  ENABLE_HYDE: {
-    input: ['normalized_query'],
-    output: ['enabled', 'reason'],
   },
   decomposition: {
     input: ['normalized_query'],
@@ -208,14 +172,6 @@ const NODE_DETAIL_POLICY_MAP: Record<string, NodeDetailPolicy> = {
     input: ['reason'],
     output: ['next_node', 'reason', 'degrade_reason', 'best_answer'],
   },
-  generate: {
-    input: ['question'],
-    output: ['draft_answer', 'final_answer'],
-  },
-  answer_review: {
-    input: ['question'],
-    output: ['passed', 'best_answer', 'action'],
-  },
   answer_review_dispatch: {
     input: ['draft_answer'],
     output: ['check_count', 'checks', 'dispatch_reason', 'branch_count'],
@@ -251,10 +207,6 @@ const NODE_DETAIL_POLICY_MAP: Record<string, NodeDetailPolicy> = {
   confidence_calibrate: {
     input: ['final_answer'],
     output: ['confidence_score', 'confidence_level', 'signals', 'reason'],
-  },
-  finalize: {
-    input: ['draft_answer'],
-    output: ['final_answer'],
   },
   force_exit: {
     input: ['action', 'reason'],

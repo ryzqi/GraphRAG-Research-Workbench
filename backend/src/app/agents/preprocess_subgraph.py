@@ -67,18 +67,15 @@ async def _complexity_classify(
 ) -> dict[str, Any]:
     result = await complexity_classify(state, settings, runtime=runtime)
     updates = result.update if isinstance(result.update, dict) else {}
-    goto = result.goto if isinstance(result.goto, str) else ""
-    if goto == "decomposition":
+    query_strategy = updates.get("query_strategy")
+    if query_strategy == "decomposition":
         complexity_level = "complex"
-        adaptive_route = "complex_path"
-    elif goto == "generate_variants":
+    elif query_strategy == "multi_query":
         complexity_level = "moderate"
-        adaptive_route = "moderate_path"
     else:
         complexity_level = "simple"
-        adaptive_route = "simple_path"
     next_node = _resolve_complexity_next_node(
-        adaptive_route=adaptive_route,
+        query_strategy=query_strategy if isinstance(query_strategy, str) else None,
         settings=settings,
     )
     stage_summaries = _merge_stage_summary(
@@ -87,14 +84,12 @@ async def _complexity_classify(
         "complexity_classify",
         {
             "complexity_level": complexity_level,
-            "adaptive_route": adaptive_route,
             "next_node": next_node,
         },
     )
     return {
         **updates,
         "complexity_level": complexity_level,
-        "adaptive_route": adaptive_route,
         "stage_summaries": stage_summaries,
     }
 
@@ -108,16 +103,16 @@ def _route_after_ambiguity(state: PreprocessRoutingInput) -> str:
 
 def _resolve_complexity_next_node(
     *,
-    adaptive_route: str | None,
+    query_strategy: str | None,
     settings: Settings,
 ) -> str:
-    if adaptive_route == "complex_path":
+    if query_strategy == "decomposition":
         if bool(getattr(settings, "kb_chat_decomposition_enabled", True)):
             return "decomposition"
         if bool(getattr(settings, "kb_chat_multi_query_enabled", True)):
             return "generate_variants"
         return "entity_expand"
-    if adaptive_route == "moderate_path":
+    if query_strategy == "multi_query":
         if bool(getattr(settings, "kb_chat_multi_query_mod_enabled", True)):
             return "generate_variants_mod"
         return "prepare_messages"
@@ -128,16 +123,19 @@ def _route_after_complexity_classify(
     state: dict[str, Any],
     settings: Settings,
 ) -> str:
-    route = state.get("adaptive_route")
-    if not isinstance(route, str):
+    query_strategy = state.get("query_strategy")
+    if not isinstance(query_strategy, str):
         level = state.get("complexity_level")
         if level == "complex":
-            route = "complex_path"
+            query_strategy = "decomposition"
         elif level == "moderate":
-            route = "moderate_path"
+            query_strategy = "multi_query"
         else:
-            route = "simple_path"
-    return _resolve_complexity_next_node(adaptive_route=route, settings=settings)
+            query_strategy = "direct"
+    return _resolve_complexity_next_node(
+        query_strategy=query_strategy,
+        settings=settings,
+    )
 
 
 def _route_after_decomposition(

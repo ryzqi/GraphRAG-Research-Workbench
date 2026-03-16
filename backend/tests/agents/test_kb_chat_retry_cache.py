@@ -93,7 +93,7 @@ def test_retry_cache_metrics_publish_retry_breakdown_and_disabled_graph_cache() 
         {
             "retrieve": 3,
             "answer_repair": 2,
-            "finalize": 1,
+            "legacy_alias": 1,
             "bad": -1,
         }
     )
@@ -136,3 +136,26 @@ def test_build_observability_includes_retry_cache_metrics() -> None:
         "retrieve": 2,
         "answer_repair": 1,
     }
+
+
+def test_routing_contract_consistency_rejects_legacy_finalize_target() -> None:
+    score = KbChatService._compute_route_consistency(
+        query_strategy="direct",
+        routing_decisions={
+            "doc_gate": {"next_node": "answer_subgraph"},
+            "answer_subgraph": {"next_node": "finalize"},
+        },
+    )
+
+    assert score == round((2 / 3) * 100.0, 4)
+
+
+def test_final_state_consistency_rejects_legacy_finalize_terminal() -> None:
+    score = KbChatService._compute_final_state_consistency(
+        routing_decisions={
+            "answer_subgraph": {"next_node": "finalize"},
+        },
+        terminal_reason=None,
+    )
+
+    assert score == 0.0

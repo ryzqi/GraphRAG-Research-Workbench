@@ -7,6 +7,8 @@ describe('kbNodeLabels', () => {
     expect(resolveKbNodeLabel('rewrite_plan', null)).toBe('rewrite_plan');
     expect(resolveKbNodeLabel('doc_gate_precheck', null)).toBe('doc_gate_precheck');
     expect(resolveKbNodeLabel('answer_self_check', null)).toBe('answer_self_check');
+    expect(resolveKbNodeLabel('adaptive_routing', null)).toBe('adaptive_routing');
+    expect(resolveKbNodeLabel('finalize', null)).toBe('finalize');
   });
 
   it('keeps labels for nodes that still belong to the current flowchart', () => {

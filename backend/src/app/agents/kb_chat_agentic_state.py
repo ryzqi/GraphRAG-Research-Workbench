@@ -21,7 +21,7 @@ from app.schemas.query_enhancement import QueryItem
 # Reflection / budget / metrics
 # -----------------------------
 
-ReflectionAction = Literal["none", "clarify", "transform_query", "generate", "force_exit"]
+ReflectionAction = Literal["none", "clarify", "transform_query", "force_exit"]
 ComplexityLevel = Literal["simple", "moderate", "complex"]
 ConfidenceLevel = Literal["high", "medium", "low"]
 
@@ -273,7 +273,6 @@ class KbChatInternalState(KbChatInternalStateBase, total=False):
     entity_expand_meta: dict[str, Any]
     query_strategy: Literal["direct", "decomposition", "multi_query"]
     complexity_level: ComplexityLevel
-    adaptive_route: Literal["simple_path", "moderate_path", "complex_path"]
     query_strategy_confidence: float
     query_strategy_signals: list[str]
     decomposition_plan: dict[str, Any]
@@ -627,11 +626,6 @@ class ConfidenceCalibrateInput(TypedDict, total=False):
     loop_counts: LoopCounts
     metrics: dict[str, Any]
     stage_summaries: dict[str, Any]
-
-
-class FinalizeAnswerInput(TypedDict, total=False):
-    draft_answer: str
-    final_answer: str
 
 
 def merge_routing_decision(

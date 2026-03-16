@@ -9,7 +9,7 @@ import {
 } from './KbChatFlowPanel';
 
 describe('KbChatFlowPanel', () => {
-  it('prefers __trace_command__ over legacy __command__ for branch targets', () => {
+  it('reads branch targets only from __trace_command__', () => {
     expect(
       extractTraceCommandGoto({
         __trace_command__: { goto: 'draft_generate' },
@@ -21,7 +21,7 @@ describe('KbChatFlowPanel', () => {
       extractTraceCommandGoto({
         __command__: { goto: 'generate' },
       })
-    ).toBe('generate');
+    ).toBeNull();
 
     expect(extractTraceCommandGoto({})).toBeNull();
   });

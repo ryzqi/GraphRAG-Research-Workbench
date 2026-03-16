@@ -39,13 +39,11 @@ const CURRENT_KB_CHAT_NODE_IDS = [
   'transform_query',
   'answer_subgraph',
   'draft_generate',
-  'generate',
   'answer_review_dispatch',
   'answer_review_citation',
   'answer_review_factual',
   'answer_review_answerability',
   'answer_review_fuse',
-  'answer_review',
   'cove_check',
   'chain_of_verification',
   'claim_citation_check',
@@ -86,13 +84,11 @@ const EXPECTED_NODE_ORDERS: Record<(typeof CURRENT_KB_CHAT_NODE_IDS)[number], nu
   transform_query: 27,
   answer_subgraph: 28,
   draft_generate: 29,
-  generate: 29,
   answer_review_dispatch: 30,
   answer_review_citation: 31,
   answer_review_factual: 32,
   answer_review_answerability: 33,
   answer_review_fuse: 34,
-  answer_review: 34,
   cove_check: 35,
   chain_of_verification: 36,
   claim_citation_check: 37,
@@ -157,6 +153,12 @@ describe('kbNodeCatalog', () => {
       'ENABLE_MULTI_QUERY',
       'ENABLE_HYDE',
     ].forEach((nodeId) => {
+      expect(resolveKbNodeCatalogEntry(nodeId)).toBeNull();
+    });
+  });
+
+  it('does not keep deprecated answer aliases in local catalog fallback', () => {
+    ['generate', 'answer_review', 'finalize'].forEach((nodeId) => {
       expect(resolveKbNodeCatalogEntry(nodeId)).toBeNull();
     });
   });

@@ -14,7 +14,7 @@ import re
 import time
 from typing import Any
 
-from langchain.messages import AIMessage, HumanMessage, SystemMessage
+from langchain.messages import HumanMessage, SystemMessage
 from langchain.tools import BaseTool
 from langchain_core.language_models.chat_models import BaseChatModel
 from langgraph.runtime import Runtime
@@ -33,7 +33,6 @@ from app.agents.kb_chat_agentic_state import (
     ConfidenceCalibrateInput,
     DispatchSubqueriesInput,
     DocGateRoutingDecisionInput,
-    FinalizeAnswerInput,
     MergeSubqueryContextInput,
     RetrieveContextInput,
     RetrieveSubqueryContextInput,
@@ -1227,15 +1226,4 @@ def confidence_calibrate(state: ConfidenceCalibrateInput) -> dict[str, Any]:
     }
 
 
-def finalize_answer(state: FinalizeAnswerInput) -> dict[str, Any]:
-    """Emit final answer as an AIMessage (stream-visible)."""
-    final_answer = _as_str(
-        state.get("draft_answer") or state.get("final_answer")
-    ).strip()
-    if not final_answer:
-        final_answer = "根据现有资料无法回答该问题（未生成答案）。"
-    return {
-        "final_answer": final_answer,
-        "messages": [AIMessage(content=final_answer)],
-    }
 

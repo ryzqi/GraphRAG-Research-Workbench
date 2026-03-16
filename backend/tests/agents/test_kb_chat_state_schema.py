@@ -29,7 +29,6 @@ from app.agents.kb_chat_agentic.answer_subgraph import (
 from app.agents.kb_chat_agentic.reflection import (
     confidence_calibrate,
     dispatch_subqueries,
-    finalize_answer,
     kb_retrieve_context,
     merge_subquery_context,
     retrieve_subquery_context,
@@ -156,7 +155,6 @@ def test_kb_chat_nodes_use_narrow_read_side_state_schema_annotations() -> None:
         _answer_commit: "AnswerCommitInput",
         force_exit_node: "ForceExitInput",
         confidence_calibrate: "ConfidenceCalibrateInput",
-        finalize_answer: "FinalizeAnswerInput",
         _route_after_preprocess_subgraph: "PreprocessRoutingInput",
         route_after_doc_grader: "DocGateRoutingDecisionInput",
         route_after_answer_review: "AnswerRoutingDecisionInput",

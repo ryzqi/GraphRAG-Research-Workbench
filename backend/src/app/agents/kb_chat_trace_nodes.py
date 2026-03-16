@@ -81,9 +81,6 @@ KB_CHAT_NODE_METADATA: dict[str, dict[str, Any]] = {
     "confidence_calibrate": {"label": "置信度校准", "phase": "finalize", "order": 41},
 }
 
-# Backward-compatible aliases for callers migrated from local helpers.
-KB_NODE_METADATA = KB_CHAT_NODE_METADATA
-
 _NODE_SUMMARY_KEY_MAP: dict[str, str] = {
     "retrieve": "retrieval_layer",
     "draft_generate": "generator",
@@ -457,25 +454,16 @@ def _build_node_input_display_items(*, node_name: str, input_snapshot: Any) -> l
     elif node_name == "coref_rewrite":
         _append_display_item(items, key="query", label="输入问题", value=snapshot.get("rewrite_input_query") or snapshot.get("user_input"))
     elif node_name in {
-        "AMBIGUITY_CHECK_ENABLED",
         "ambiguity_check",
         "normalize_rewrite",
     }:
         _append_display_item(items, key="query", label="输入问题", value=snapshot.get("coref_query") or snapshot.get("rewrite_input_query") or snapshot.get("user_input"))
     elif node_name in {
         "complexity_classify",
-        "adaptive_routing",
-        "simple_path",
-        "moderate_path",
-        "complex_path",
-        "ENABLE_MULTI_QUERY_MOD",
         "generate_variants_mod",
-        "ENABLE_DECOMPOSITION",
         "decomposition",
-        "ENABLE_MULTI_QUERY",
         "generate_variants",
         "entity_expand",
-        "ENABLE_HYDE",
         "hyde",
         "prepare_messages",
         "preprocess_exit",
@@ -504,7 +492,6 @@ def _build_node_input_display_items(*, node_name: str, input_snapshot: Any) -> l
         "claim_citation_check",
         "answer_repair",
         "answer_commit",
-        "finalize",
         "confidence_calibrate",
     }:
         _append_display_item(items, key="normalized_query", label="规范化问题", value=snapshot.get("normalized_query") or snapshot.get("coref_query") or snapshot.get("user_input"))

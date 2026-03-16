@@ -94,7 +94,7 @@ describe('kbChatTraceNodes', () => {
     expect(nodes.find((node) => node.id === 'merge_context')?.subtitle).toBeNull();
   });
 
-  it('keeps chinese fallback titles for legacy preprocess shell nodes that still arrive in trace events', () => {
+  it('does not preserve chinese fallback titles for removed legacy preprocess shell nodes', () => {
     const nodes = buildTraceNodes({
       nodeIoEvents: [
         {
@@ -121,18 +121,13 @@ describe('kbChatTraceNodes', () => {
       ],
     });
 
-    expect(nodes.find((node) => node.id === 'AMBIGUITY_CHECK_ENABLED')).toMatchObject({
-      title: '歧义检查入口',
-      subtitle: null,
-    });
-    expect(nodes.find((node) => node.id === 'adaptive_routing')).toMatchObject({
-      title: '自适应路由',
-      subtitle: null,
-    });
-    expect(nodes.find((node) => node.id === 'ENABLE_HYDE')).toMatchObject({
-      title: 'HyDE开关',
-      subtitle: null,
-    });
+    expect(nodes.find((node) => node.id === 'AMBIGUITY_CHECK_ENABLED')?.title).toBe(
+      'AMBIGUITY_CHECK_ENABLED'
+    );
+    expect(nodes.find((node) => node.id === 'adaptive_routing')?.title).toBe(
+      'adaptive_routing'
+    );
+    expect(nodes.find((node) => node.id === 'ENABLE_HYDE')?.title).toBe('ENABLE_HYDE');
   });
 
   it('prefers terminal waiting_user and failed state for the current node over stale started steps', () => {
