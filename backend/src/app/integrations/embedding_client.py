@@ -8,6 +8,10 @@ import httpx
 from app.core.settings import get_settings
 
 
+class EmbeddingDimensionMismatchError(RuntimeError):
+    """Raised when the provider returns a vector size that does not match config."""
+
+
 class EmbeddingClient:
     def __init__(self, http_client: httpx.AsyncClient | None = None) -> None:
         settings = get_settings()
@@ -16,12 +20,28 @@ class EmbeddingClient:
         self._base_url = settings.embedding_base_url.rstrip("/")
         self._api_key = settings.embedding_api_key
         self._model = settings.embedding_model
+        self._expected_dim = settings.embedding_dim
+
+    def _validate_embedding_dimensions(self, embeddings: list[list[float]]) -> None:
+        expected_dim = self._expected_dim
+        if expected_dim is None:
+            return
+        for embedding in embeddings:
+            actual_dim = len(embedding)
+            if actual_dim != expected_dim:
+                raise EmbeddingDimensionMismatchError(
+                    "Embedding 维度与配置不一致: "
+                    f"model={self._model}, expected={expected_dim}, actual={actual_dim}. "
+                    "请检查 EMBEDDING_DIM、EMBEDDING_MODEL 与向量库 schema 是否一致。"
+                )
 
     async def embed(
         self, *, texts: list[str], timeout_seconds: float | None = None
     ) -> list[list[float]]:
         url = f"{self._base_url}/embeddings"
-        payload = {"model": self._model, "input": texts}
+        payload: dict[str, object] = {"model": self._model, "input": texts}
+        if self._expected_dim is not None:
+            payload["dimensions"] = self._expected_dim
         headers = {"Authorization": f"Bearer {self._api_key}"}
         timeout = (
             self._settings.embedding_timeout_seconds
@@ -38,7 +58,11 @@ class EmbeddingClient:
                     )
                     resp.raise_for_status()
                     data = resp.json()
-                    return [item["embedding"] for item in data["data"]]
+                    embeddings = [item["embedding"] for item in data["data"]]
+                    self._validate_embedding_dimensions(embeddings)
+                    return embeddings
+                except EmbeddingDimensionMismatchError:
+                    raise
                 except Exception as exc:  # pragma: no cover
                     last_exc = exc
                     if attempt < 1:
