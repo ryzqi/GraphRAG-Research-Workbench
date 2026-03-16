@@ -670,18 +670,25 @@ export function reduceKbChatTraceState(
   const baseRunState = runId
     ? prev.runState ?? createInitialRunState(runId, ctx.totalNodes)
     : prev.runState;
-  const activePath = mergeActivePath(baseRunState?.active_path, [nodeEvent.node_name]);
+  const hasAuthoritativeState = Boolean(baseRunState && typeof baseRunState.state_version === 'number');
+  const activePath = hasAuthoritativeState
+    ? baseRunState?.active_path
+    : mergeActivePath(baseRunState?.active_path, [nodeEvent.node_name]);
   const nextRunState =
     runId && baseRunState
       ? ({
           ...baseRunState,
           run_id: runId,
-          current_step_id: nodeEvent.node_name,
-          current_step_label: ctx.resolveNodeLabel(nodeEvent.node_name),
-          current_step_status: statusFromPhase,
-          current_node: nodeEvent.node_name,
+          current_step_id: hasAuthoritativeState ? baseRunState.current_step_id : nodeEvent.node_name,
+          current_step_label: hasAuthoritativeState
+            ? baseRunState.current_step_label
+            : ctx.resolveNodeLabel(nodeEvent.node_name),
+          current_step_status: hasAuthoritativeState ? baseRunState.current_step_status : statusFromPhase,
+          current_node: hasAuthoritativeState ? baseRunState.current_node : nodeEvent.node_name,
           active_path: activePath,
-          progress: buildProgressFromActivePath(activePath, ctx.totalNodes, baseRunState.run_status),
+          progress: hasAuthoritativeState
+            ? baseRunState.progress
+            : buildProgressFromActivePath(activePath, ctx.totalNodes, baseRunState.run_status),
           ts: nodeEvent.ts,
         } as ChatRunStateEvent)
       : baseRunState;

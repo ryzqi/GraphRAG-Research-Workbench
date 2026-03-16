@@ -184,6 +184,57 @@ describe('kbChatTraceStore', () => {
     });
   });
 
+  it('does not let later node_io events overwrite the active runState from state events', () => {
+    const fromState = reduceKbChatTraceState(
+      {},
+      {
+        type: 'state',
+        raw: {
+          run_id: 'run-1',
+          run_status: 'waiting_user',
+          current_step_id: 'merge_context',
+          current_step_label: '上下文合并',
+          current_step_status: 'waiting_user',
+          current_node: 'merge_context',
+          attempt: 2,
+          message: '需要补充信息',
+          state_version: 3,
+          active_path: ['preprocess_subgraph', 'merge_context'],
+          progress: { completed: 2, total: 20, percent: 10 },
+          ts: '2026-01-01T00:00:02.000Z',
+        },
+      },
+      ctx
+    );
+
+    const next = reduceKbChatTraceState(
+      fromState,
+      {
+        type: 'node_io',
+        raw: {
+          run_id: 'run-1',
+          node_id: 'normalize_rewrite',
+          node_name: 'normalize_rewrite',
+          phase: 'end',
+          ts: '2026-01-01T00:00:03.000Z',
+        },
+      },
+      ctx
+    );
+
+    expect(next.runState).toMatchObject({
+      current_step_id: 'merge_context',
+      current_step_status: 'waiting_user',
+      current_node: 'merge_context',
+      active_path: ['preprocess_subgraph', 'merge_context'],
+    });
+    expect(next.nodeIoEvents?.at(-1)?.node_name).toBe('normalize_rewrite');
+    expect(next.pipelineSteps?.find((step) => step.step_id === 'normalize_rewrite')).toMatchObject({
+      status: 'completed',
+      node: 'normalize_rewrite',
+    });
+  });
+
   it('emits warning on node_io field drift', () => {
     const next = reduceKbChatTraceState(
       {},

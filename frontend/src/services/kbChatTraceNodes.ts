@@ -28,6 +28,8 @@ export interface TraceNodeViewModel {
   id: string;
   title: string;
   subtitle: string | null;
+  summaryText: string;
+  summaryTags: TraceNodeMetric[];
   stageId: string;
   status: TraceNodeStatus;
   isActive: boolean;
@@ -36,13 +38,13 @@ export interface TraceNodeViewModel {
   latestNodeEvent: ChatNodeIoEvent | null;
   focusNodeId: string;
   order: number;
-  metrics: TraceNodeMetric[];
 }
 
 export interface TraceNodeStageGroup {
   id: string;
   title: string;
   subtitle: string;
+  summaryText: string;
   order: number;
   status: TraceNodeStatus;
   isActive: boolean;
@@ -93,6 +95,10 @@ function latestByTs<T extends { ts?: string }>(items: T[]): T | null {
 
 function boolToText(value: boolean): string {
   return value ? '是' : '否';
+}
+
+function asNonEmptyText(value: unknown): string | null {
+  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
 }
 
 function formatSeconds(value: number): string {
@@ -249,55 +255,354 @@ function statusFromNode(params: {
   return 'idle';
 }
 
-function metricFromSummary(
+interface TraceNodeSummarySource {
+  summary: Record<string, unknown>;
+  snapshot: Record<string, unknown>;
+}
+
+function resolveSummarySource(
   latestNodeEvent: ChatNodeIoEvent | null,
   latestStep: PipelineStep | null
-): TraceNodeMetric[] {
-  const metrics: TraceNodeMetric[] = [];
-  const output = asRecord(latestNodeEvent?.output_summary);
-  const input = asRecord(latestNodeEvent?.input_summary);
-  const fromStep = asRecord(latestStep?.meta);
-  const summary = output ?? fromStep ?? input ?? {};
+): TraceNodeSummarySource {
+  return {
+    summary:
+      asRecord(latestNodeEvent?.output_summary) ??
+      asRecord(latestStep?.meta) ??
+      asRecord(latestNodeEvent?.input_summary) ??
+      {},
+    snapshot: asRecord(latestNodeEvent?.output_snapshot) ?? {},
+  };
+}
 
-  if (typeof latestNodeEvent?.latency_ms === 'number') {
-    metrics.push({ label: '耗时', value: formatSeconds(latestNodeEvent.latency_ms), tone: 'info' });
+function complexityLabel(value: unknown): string | null {
+  switch (value) {
+    case 'simple':
+    case 'simple_path':
+      return '简单';
+    case 'moderate':
+    case 'moderate_path':
+      return '中等';
+    case 'complex':
+    case 'complex_path':
+      return '复杂';
+    default:
+      return null;
   }
+}
 
-  const evidenceCount =
+function summaryResultLabel(value: unknown): string | null {
+  if (typeof value !== 'boolean') {
+    return null;
+  }
+  return value ? '通过' : '未通过';
+}
+
+function resolveRouteLabel(value: unknown): string | null {
+  const route = asNonEmptyText(value);
+  if (!route) {
+    return null;
+  }
+  const complexity = complexityLabel(route);
+  if (complexity) {
+    return `${complexity}路径`;
+  }
+  return resolveKbNodeLabel(route, null);
+}
+
+function resolveEvidenceCount(summary: Record<string, unknown>): number | null {
+  const value =
     summary.evidence_count ??
     summary.retrieval_count ??
     summary.count ??
     summary.query_count ??
-    summary.query_items_count;
-  if (typeof evidenceCount === 'number') {
-    metrics.push({ label: '数量', value: String(evidenceCount), tone: 'primary' });
+    summary.query_items_count ??
+    summary.valid_citation_count ??
+    null;
+  return typeof value === 'number' ? value : null;
+}
+
+function extractRoutingDecision(
+  snapshot: Record<string, unknown>,
+  phase: string
+): Record<string, unknown> {
+  const routing = asRecord(snapshot.routing_decisions);
+  return asRecord(routing?.[phase]) ?? {};
+}
+
+function pushSummaryTag(
+  tags: TraceNodeMetric[],
+  metric: TraceNodeMetric | null | undefined
+): void {
+  if (!metric || !metric.value || tags.some((item) => item.label === metric.label)) {
+    return;
+  }
+  tags.push(metric);
+}
+
+function buildSummaryTags(params: {
+  nodeId: string;
+  latestNodeEvent: ChatNodeIoEvent | null;
+  latestStep: PipelineStep | null;
+}): TraceNodeMetric[] {
+  const { nodeId, latestNodeEvent, latestStep } = params;
+  const { summary, snapshot } = resolveSummarySource(latestNodeEvent, latestStep);
+  const tags: TraceNodeMetric[] = [];
+
+  if (typeof latestNodeEvent?.latency_ms === 'number') {
+    pushSummaryTag(tags, { label: '耗时', value: formatSeconds(latestNodeEvent.latency_ms), tone: 'info' });
   }
 
-  if (typeof summary.passed === 'boolean') {
-    metrics.push({
-      label: '通过',
-      value: boolToText(summary.passed),
-      tone: summary.passed ? 'success' : 'warning',
+  const complexity =
+    complexityLabel(summary.complexity_level) ??
+    complexityLabel(summary.adaptive_route) ??
+    complexityLabel(snapshot.complexity_level);
+  if (complexity) {
+    pushSummaryTag(tags, { label: '复杂度', value: complexity, tone: 'primary' });
+  }
+
+  const route =
+    resolveRouteLabel(summary.adaptive_route) ??
+    resolveRouteLabel(summary.next_node) ??
+    resolveRouteLabel(extractRoutingDecision(snapshot, 'preprocess').next_node) ??
+    resolveRouteLabel(extractRoutingDecision(snapshot, 'doc_gate').next_node) ??
+    resolveRouteLabel(extractRoutingDecision(snapshot, 'answer_subgraph').next_node);
+  if (route) {
+    pushSummaryTag(tags, { label: '路由', value: route, tone: 'secondary' });
+  }
+
+  const count = resolveEvidenceCount(summary);
+  if (typeof count === 'number') {
+    pushSummaryTag(tags, {
+      label:
+        nodeId.includes('retrieve') || nodeId.includes('query') || nodeId === 'dispatch_subqueries'
+          ? '命中'
+          : '数量',
+      value: String(count),
+      tone: 'primary',
     });
   }
 
-  if (typeof summary.attempted === 'boolean') {
-    metrics.push({
-      label: '已执行',
-      value: boolToText(summary.attempted),
-      tone: summary.attempted ? 'success' : 'warning',
+  const result =
+    summaryResultLabel(summary.passed) ??
+    summaryResultLabel(summary.ambiguous === false ? true : summary.ambiguous === true ? false : null);
+  if (result) {
+    pushSummaryTag(tags, {
+      label: summary.ambiguous !== undefined ? '判定' : '结果',
+      value: summary.ambiguous === false ? '明确' : summary.ambiguous === true ? '需澄清' : result,
+      tone: result === '通过' || result === '明确' ? 'success' : 'warning',
     });
   }
 
   if (typeof summary.truncated === 'boolean') {
-    metrics.push({
+    pushSummaryTag(tags, {
       label: '压缩',
       value: boolToText(summary.truncated),
       tone: summary.truncated ? 'warning' : 'success',
     });
   }
 
-  return metrics.slice(0, 4);
+  return tags.slice(0, 3);
+}
+
+function buildGenericSummaryText(params: {
+  title: string;
+  status: TraceNodeStatus;
+  latestNodeEvent: ChatNodeIoEvent | null;
+  latestStep: PipelineStep | null;
+  runState?: ChatRunStateEvent;
+}): string {
+  const { title, status, latestNodeEvent, latestStep, runState } = params;
+  if (status === 'failed') {
+    return (
+      asNonEmptyText(latestNodeEvent?.error_summary) ??
+      asNonEmptyText(latestStep?.message) ??
+      `${title}执行失败`
+    );
+  }
+  if (status === 'waiting_user') {
+    return asNonEmptyText(runState?.message) ?? asNonEmptyText(latestStep?.message) ?? '等待补充信息';
+  }
+  if (status === 'running') {
+    return `正在执行${title}`;
+  }
+  if (status === 'completed') {
+    return `已完成${title}`;
+  }
+  if (status === 'skipped') {
+    return `${title}已跳过`;
+  }
+  return `等待执行${title}`;
+}
+
+function buildNodeSummaryText(params: {
+  nodeId: string;
+  title: string;
+  status: TraceNodeStatus;
+  latestNodeEvent: ChatNodeIoEvent | null;
+  latestStep: PipelineStep | null;
+  runState?: ChatRunStateEvent;
+}): string {
+  const { nodeId, title, status, latestNodeEvent, latestStep, runState } = params;
+  const { summary, snapshot } = resolveSummarySource(latestNodeEvent, latestStep);
+  const complexity =
+    complexityLabel(summary.complexity_level) ??
+    complexityLabel(summary.adaptive_route) ??
+    complexityLabel(snapshot.complexity_level);
+  const evidenceCount = resolveEvidenceCount(summary);
+  const answerText =
+    asNonEmptyText(snapshot.final_answer) ??
+    asNonEmptyText(snapshot.best_answer) ??
+    asNonEmptyText(snapshot.draft_answer);
+  const docGateDecision = extractRoutingDecision(snapshot, 'doc_gate');
+
+  switch (nodeId) {
+    case 'merge_context':
+      return status === 'running' ? '正在整合对话上下文' : '已合并对话上下文';
+    case 'coref_rewrite':
+    case 'normalize_rewrite':
+    case 'transform_query':
+      if (summary.rewritten === true) {
+        return '已改写问题表述';
+      }
+      if (summary.rewritten === false) {
+        return '沿用原问题表述';
+      }
+      return buildGenericSummaryText(params);
+    case 'ambiguity_check':
+      if (summary.ambiguous === true) {
+        return '问题存在歧义，需要先澄清';
+      }
+      if (summary.ambiguous === false) {
+        return '问题语义明确，无需澄清';
+      }
+      return buildGenericSummaryText(params);
+    case 'complexity_classify':
+      if (complexity) {
+        return `已识别为${complexity}问题`;
+      }
+      return status === 'running' ? '正在判定问题复杂度' : '已完成复杂度判定';
+    case 'preprocess_subgraph':
+      return status === 'running' ? '正在执行预处理' : '预处理阶段已完成';
+    case 'retrieval_budget_plan':
+      return evidenceCount !== null ? `已规划 ${evidenceCount} 路检索任务` : buildGenericSummaryText(params);
+    case 'dispatch_subqueries':
+      return evidenceCount !== null ? `已派发 ${evidenceCount} 个子查询` : buildGenericSummaryText(params);
+    case 'retrieve_subquery':
+    case 'retrieve':
+      if (evidenceCount !== null) {
+        return evidenceCount > 0 ? `已检索到 ${evidenceCount} 条相关内容` : '未检索到有效内容';
+      }
+      return status === 'running' ? '正在检索知识库内容' : buildGenericSummaryText(params);
+    case 'merge_subquery_context':
+      return status === 'running' ? '正在汇总子查询结果' : '已汇总子查询结果';
+    case 'context_compress':
+      if (summary.truncated === true) {
+        return '已压缩检索上下文';
+      }
+      if (summary.truncated === false) {
+        return '检索上下文无需压缩';
+      }
+      return buildGenericSummaryText(params);
+    case 'doc_gate_sufficiency':
+    case 'doc_gate_answerability':
+    case 'doc_gate_conflict':
+    case 'doc_gate_fuse':
+    case 'doc_gate_route':
+      if (summary.passed === true) {
+        return '证据校验通过，继续生成答案';
+      }
+      if (summary.passed === false) {
+        const action = asNonEmptyText(summary.action) ?? asNonEmptyText(docGateDecision.action);
+        const nextNode = asNonEmptyText(summary.next_node) ?? asNonEmptyText(docGateDecision.next_node);
+        if (action?.includes('retry') || nextNode === 'transform_query') {
+          return '证据不足，进入重试';
+        }
+        if (action?.includes('exit') || nextNode === 'force_exit') {
+          return '证据不足，准备结束本轮';
+        }
+        return '证据校验未通过';
+      }
+      return buildGenericSummaryText(params);
+    case 'draft_generate':
+    case 'generate':
+      return answerText ? '已生成候选答案' : buildGenericSummaryText(params);
+    case 'answer_review_dispatch':
+      return '已开始答案审查';
+    case 'answer_review':
+    case 'answer_review_citation':
+    case 'answer_review_factual':
+    case 'answer_review_answerability':
+    case 'answer_review_fuse':
+    case 'cove_check':
+    case 'chain_of_verification':
+    case 'claim_citation_check':
+      if (summary.passed === true) {
+        return '答案审查已通过';
+      }
+      if (summary.passed === false) {
+        return '答案审查未通过，需要修复';
+      }
+      return buildGenericSummaryText(params);
+    case 'answer_repair':
+      return answerText ? '已完成答案修复' : buildGenericSummaryText(params);
+    case 'answer_commit':
+    case 'answer_subgraph':
+      return answerText ? '已提交候选答案' : buildGenericSummaryText(params);
+    case 'finalize':
+      return answerText ? '已整理最终答案' : buildGenericSummaryText(params);
+    case 'confidence_calibrate':
+      return '已完成答案置信度校准';
+    case 'force_exit':
+      return '已提前结束当前流程';
+    default:
+      return buildGenericSummaryText({
+        title,
+        status,
+        latestNodeEvent,
+        latestStep,
+        runState,
+      });
+  }
+}
+
+function buildStageSummaryText(params: {
+  stage: { title: string; subtitle: string };
+  status: TraceNodeStatus;
+  nodes: TraceNodeViewModel[];
+}): string {
+  const { stage, status, nodes } = params;
+  const activeNode = nodes.find((node) => node.isActive);
+  const latestNode =
+    [...nodes]
+      .filter((node) => node.status !== 'idle' && node.status !== 'skipped')
+      .sort((a, b) => {
+        const aTime = Math.max(eventTime(a.latestNodeEvent?.ts), eventTime(a.latestStep?.ts));
+        const bTime = Math.max(eventTime(b.latestNodeEvent?.ts), eventTime(b.latestStep?.ts));
+        return aTime - bTime;
+      })
+      .at(-1) ?? null;
+
+  if (activeNode?.summaryText) {
+    return activeNode.summaryText;
+  }
+  if (latestNode?.summaryText && status !== 'idle' && status !== 'skipped') {
+    return latestNode.summaryText;
+  }
+
+  switch (status) {
+    case 'running':
+      return `正在执行${stage.title.replace(/^阶段\d+\s*/, '')}`;
+    case 'completed':
+      return `已完成${stage.title.replace(/^阶段\d+\s*/, '')}`;
+    case 'failed':
+      return `${stage.title.replace(/^阶段\d+\s*/, '')}失败`;
+    case 'waiting_user':
+      return '等待用户补充信息';
+    case 'skipped':
+      return '本阶段未执行';
+    default:
+      return stage.subtitle;
+  }
 }
 
 function aggregateStageStatus(statuses: TraceNodeStatus[]): TraceNodeStatus {
@@ -348,10 +653,24 @@ export function buildTraceStageGroups({
     });
     const stageId = resolveKbNodeStageId({ nodeId: node.id, phase: node.phase, schema });
     const title = resolveKbNodeLabel(node.id, schema);
+    const summaryText = buildNodeSummaryText({
+      nodeId: node.id,
+      title,
+      status,
+      latestNodeEvent,
+      latestStep,
+      runState,
+    });
     return {
       id: node.id,
       title,
       subtitle: null,
+      summaryText,
+      summaryTags: buildSummaryTags({
+        nodeId: node.id,
+        latestNodeEvent,
+        latestStep,
+      }),
       stageId,
       status,
       isActive: status === 'running' || currentNodeId === node.id,
@@ -360,7 +679,6 @@ export function buildTraceStageGroups({
       latestNodeEvent,
       focusNodeId: latestNodeEvent?.node_name ?? latestStep?.step_id ?? node.id,
       order: node.order,
-      metrics: metricFromSummary(latestNodeEvent, latestStep),
     };
   });
 
@@ -381,6 +699,11 @@ export function buildTraceStageGroups({
       id: stage.id,
       title: stage.title,
       subtitle: stage.subtitle,
+      summaryText: buildStageSummaryText({
+        stage,
+        status,
+        nodes: stageNodes,
+      }),
       order: stage.order,
       status,
       isActive: stageNodes.some((node) => node.isActive),

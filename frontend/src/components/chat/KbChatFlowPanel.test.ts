@@ -1,8 +1,10 @@
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 
 import {
   buildFallbackOutputItems,
-  buildNodePathDetailItem,
+  KbChatFlowPanel,
   extractTraceCommandGoto,
 } from './KbChatFlowPanel';
 
@@ -24,21 +26,47 @@ describe('KbChatFlowPanel', () => {
     expect(extractTraceCommandGoto({})).toBeNull();
   });
 
-  it('formats node_path into a trace-friendly detail item', () => {
-    expect(
-      buildNodePathDetailItem({
-        run_id: 'run-1',
-        node_id: 'retrieve_subquery',
-        node_name: 'retrieve_subquery',
-        node_path: ['retrieval_subgraph', 'dispatch_subqueries', 'retrieve_subquery'],
-        phase: 'end',
-        ts: '2026-01-01T00:00:00.000Z',
+  it('renders compact summaries without exposing execution path or machine summary keys', () => {
+    const html = renderToStaticMarkup(
+      createElement(KbChatFlowPanel, {
+        schema: null,
+        runState: {
+          run_id: 'run-1',
+          run_status: 'running',
+          current_step_id: 'complexity_classify',
+          current_step_label: '复杂度分类',
+          current_step_status: 'completed',
+          current_node: 'complexity_classify',
+          attempt: 1,
+          message: null,
+          active_path: ['merge_context', 'complexity_classify'],
+          progress: { completed: 2, total: 10, percent: 20 },
+          ts: '2026-01-01T00:00:02.000Z',
+        },
+        nodeIoEvents: [
+          {
+            run_id: 'run-1',
+            node_id: 'complexity_classify',
+            node_name: 'complexity_classify',
+            node_path: ['preprocess_subgraph', 'complexity_classify'],
+            phase: 'end',
+            latency_ms: 321,
+            output_summary: {
+              complexity_level: 'complex',
+              fallback_used: true,
+              slot_count: 0,
+            },
+            ts: '2026-01-01T00:00:02.000Z',
+          },
+        ],
       })
-    ).toEqual({
-      key: 'node_path',
-      label: '执行路径',
-      value: ['检索子图', '子查询派发', '子查询检索'],
-    });
+    );
+
+    expect(html).toContain('已识别为复杂问题');
+    expect(html).toContain('复杂度: 复杂');
+    expect(html).not.toContain('执行路径');
+    expect(html).not.toContain('fallback_used');
+    expect(html).not.toContain('slot_count');
   });
 
   it('uses canonical routing record for answer_subgraph fallback output items', () => {

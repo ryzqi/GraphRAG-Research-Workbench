@@ -254,39 +254,6 @@ function boolToZh(value: boolean): string {
   return value ? '是' : '否';
 }
 
-function formatNodePathSegment(nodeId: string): string {
-  const label = resolveKbNodeLabel(nodeId, null);
-  return label && label !== nodeId ? label : nodeId;
-}
-
-export function buildNodePathDetailItem(
-  event: ChatNodeIoEvent | null | undefined
-): { key: string; label: string; value: string | string[] } | null {
-  const nodePath = Array.isArray(event?.node_path)
-    ? event.node_path.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
-    : [];
-  if (nodePath.length === 0) {
-    return null;
-  }
-  return {
-    key: 'node_path',
-    label: '执行路径',
-    value: nodePath.map((nodeId) => formatNodePathSegment(nodeId)),
-  };
-}
-
-function appendNodePathDetailItem(
-  items: ChatNodeDisplayItem[] | NodeDetailItem[] | null | undefined,
-  event: ChatNodeIoEvent | null | undefined
-): NodeDetailItem[] {
-  const nextItems = items ? [...items] : [];
-  const nodePathItem = buildNodePathDetailItem(event);
-  if (nodePathItem && !nextItems.some((item) => item.key === nodePathItem.key)) {
-    nextItems.push(nodePathItem);
-  }
-  return nextItems;
-}
-
 function pushDisplayItem(
   items: NodeDetailItem[],
   params: {
@@ -1055,7 +1022,6 @@ export function KbChatFlowPanel({
             const rawOutputItems =
               latestNodeEvent?.display_output_items ??
               buildFallbackOutputItems(detailNodeId, latestNodeEvent);
-            const outputItems = appendNodePathDetailItem(rawOutputItems, latestNodeEvent);
             return [
               node.id,
               {
@@ -1068,7 +1034,7 @@ export function KbChatFlowPanel({
                 outputDetailItems: selectKeyDetailItems({
                   nodeId: detailNodeId,
                   section: 'output',
-                  items: outputItems,
+                  items: rawOutputItems,
                   event: latestNodeEvent,
                 }),
               },
@@ -1192,7 +1158,7 @@ export function KbChatFlowPanel({
                       {stage.title}
                     </Typography>
                     <Typography variant='caption' color='text.secondary' noWrap>
-                      {stage.subtitle}
+                      {stage.summaryText}
                     </Typography>
                   </Box>
                   <Chip
@@ -1250,11 +1216,9 @@ export function KbChatFlowPanel({
                                 <Typography variant='body2' fontWeight={700} noWrap>
                                   {node.title}
                                 </Typography>
-                                {node.subtitle ? (
-                                  <Typography variant='caption' color='text.secondary' noWrap>
-                                    {node.subtitle}
-                                  </Typography>
-                                ) : null}
+                                <Typography variant='caption' color='text.secondary'>
+                                  {node.summaryText}
+                                </Typography>
                               </Box>
                             </Stack>
                             <Stack direction='row' spacing={0.5} alignItems='center'>
@@ -1292,9 +1256,9 @@ export function KbChatFlowPanel({
                             />
                           </Stack>
 
-                          {node.metrics.length > 0 && (
+                          {node.summaryTags.length > 0 && (
                             <Stack direction='row' spacing={0.5} useFlexGap flexWrap='wrap'>
-                              {node.metrics.map((item) => (
+                              {node.summaryTags.map((item) => (
                                 <Chip
                                   key={`${node.id}-${item.label}`}
                                   size='small'
@@ -1306,7 +1270,7 @@ export function KbChatFlowPanel({
                             </Stack>
                           )}
 
-                          <Collapse in={expanded}>
+                          <Collapse in={expanded} unmountOnExit>
                             <Stack spacing={1} sx={{ pt: 0.5 }}>
                               {node.latestStep && (
                                 <Typography variant='caption' color='text.secondary'>

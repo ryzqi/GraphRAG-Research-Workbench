@@ -216,6 +216,85 @@ describe('kbChatTraceNodes', () => {
     expect(nodes.find((node) => node.id === 'merge_context')?.status).toBe('completed');
   });
 
+  it('builds compact chinese summaries and tags instead of exposing machine summary fields', () => {
+    const nodes = buildTraceNodes({
+      runState: {
+        run_id: 'run-1',
+        run_status: 'running',
+        current_step_id: 'complexity_classify',
+        current_step_label: '复杂度分类',
+        current_step_status: 'completed',
+        current_node: 'complexity_classify',
+        attempt: 1,
+        message: null,
+        active_path: ['merge_context', 'complexity_classify'],
+        progress: { completed: 2, total: 10, percent: 20 },
+        ts: '2026-01-01T00:00:02.000Z',
+      },
+      nodeIoEvents: [
+        {
+          run_id: 'run-1',
+          node_id: 'complexity_classify',
+          node_name: 'complexity_classify',
+          phase: 'end',
+          latency_ms: 321,
+          output_summary: {
+            complexity_level: 'complex',
+            fallback_used: true,
+            slot_count: 0,
+            ambiguous: false,
+          },
+          ts: '2026-01-01T00:00:02.000Z',
+        },
+      ],
+    });
+
+    const node = nodes.find((item) => item.id === 'complexity_classify');
+    expect(node?.summaryText).toBe('已识别为复杂问题');
+    expect(node?.summaryTags).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ label: '耗时', value: '0.3s' }),
+        expect.objectContaining({ label: '复杂度', value: '复杂' }),
+      ])
+    );
+    expect(node?.summaryTags.some((tag) => tag.label.includes('fallback'))).toBe(false);
+    expect(node?.summaryTags.some((tag) => tag.label.includes('slot'))).toBe(false);
+  });
+
+  it('builds stage summary text from the most relevant node summary', () => {
+    const groups = buildTraceStageGroups({
+      runState: {
+        run_id: 'run-1',
+        run_status: 'running',
+        current_step_id: 'complexity_classify',
+        current_step_label: '复杂度分类',
+        current_step_status: 'completed',
+        current_node: 'complexity_classify',
+        attempt: 1,
+        message: null,
+        active_path: ['merge_context', 'complexity_classify'],
+        progress: { completed: 2, total: 10, percent: 20 },
+        ts: '2026-01-01T00:00:02.000Z',
+      },
+      nodeIoEvents: [
+        {
+          run_id: 'run-1',
+          node_id: 'complexity_classify',
+          node_name: 'complexity_classify',
+          phase: 'end',
+          output_summary: {
+            complexity_level: 'complex',
+          },
+          ts: '2026-01-01T00:00:02.000Z',
+        },
+      ],
+    });
+
+    expect(groups.find((stage) => stage.id === 'stage_2_route')?.summaryText).toBe(
+      '已识别为复杂问题'
+    );
+  });
+
   it('renders only schema nodes plus observed nodes when graph schema exists', () => {
     const groups = buildTraceStageGroups({
       schema: {
