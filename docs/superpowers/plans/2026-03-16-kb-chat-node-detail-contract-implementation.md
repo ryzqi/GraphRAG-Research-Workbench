@@ -54,11 +54,9 @@
 - Modify: `backend/tests/agents/test_kb_chat_state_contract.py`
 - Modify: `backend/tests/services/test_kb_chat_service_stream_protocol.py`
 
-- [ ] **Step 1: 为关键节点写失败测试，锁定 canonical key 与顺序**
-
 - [ ] **Step 1: 先把 spec Section 5 转成“全量节点合同矩阵”失败测试**
 
-至少逐个覆盖：
+必须逐个覆盖 spec Section 5 的全部 live 节点，并至少显式点名：
 - `merge_context`
 - `prepare_messages`
 - `retrieval_budget_plan`
@@ -71,6 +69,7 @@
 要求：
 - 每个节点都断言输入 key、输出 key、顺序
 - 例外节点（分发/规划/聚合/长文本/错误态）必须单独列出来，不允许只靠家族 heuristics
+
 - [ ] **Step 2: 再补代表性家族测试，保证格式化语义正确**
 
 覆盖至少四类节点：
@@ -82,13 +81,14 @@
 
 预期锁定：
 - 判定输出只有 `decision` / `reason` / `next_node_label`
+- `next_node_label` 的解析顺序固定为 `KB_CHAT_NODE_METADATA.label -> graph schema metadata.label -> business fallback`
 - `next_node_label` 走中文 label / 业务化兜底，不泄露内部 node id
 - 证据输入/输出使用统一 `文档名 + chunk 内容` 字符串数组
 - 长文本节点输出全文，且不降级为首条摘要
 - `gate_results` / `review_results` 为逐项字符串数组
+- `dispatch_targets` / `review_checks` 的 value 也必须是中文/业务化字符串，不允许保留内部 id
 - error-phase 自带 `display_input_items` 与 `error_summary`
 
-- [ ] **Step 2: 运行 backend 定向 pytest，确认现状失败**
 - [ ] **Step 3: 运行 backend 定向 pytest，确认现状失败**
 
 Run: `cd backend; uv run pytest tests/agents/test_kb_chat_state_contract.py tests/services/test_kb_chat_service_stream_protocol.py -q`
@@ -104,6 +104,7 @@ Expected:
 - `error_summary` 在 error-phase 保留
 - `node_path` / `node` 元数据继续存在，不影响新合同
 - `next_node_label` 中文化结果在 node_io payload 中已完成
+- `dispatch_targets` / `review_checks` 中文化结果在 node_io payload 中已完成
 
 - [ ] **Step 5: 提交测试护栏**
 
@@ -172,6 +173,7 @@ Expected: commit 成功，仅包含前端测试改动
 - review check id -> 中文 label
 - dispatch target id -> 中文 label
 - action/goto 业务化兜底文案
+- 严格遵循 `KB_CHAT_NODE_METADATA.label -> graph schema metadata.label -> business fallback` 的 next-hop label 解析顺序
 
 - [ ] **Step 3: 新增 evidence/current_evidence 格式化 helper**
 
@@ -419,11 +421,13 @@ Expected: 右侧详情关键字段不再被后端/前端任一层改写
 ### Task 9: 最终验证与收尾
 
 **Files:**
+- Create: `backend/src/app/agents/kb_chat_trace_display_contract.py`
 - Modify: `backend/src/app/agents/kb_chat_trace_nodes.py`
 - Modify: `backend/tests/agents/test_kb_chat_state_contract.py`
 - Modify: `backend/tests/services/test_kb_chat_service_stream_protocol.py`
 - Modify: `frontend/src/services/kbChatFlowSelectors.ts`
 - Modify: `frontend/src/services/kbChatFlowSelectors.test.ts`
+- Create: `frontend/src/components/chat/KbChatFlowNodeDetailSections.tsx`
 - Modify: `frontend/src/components/chat/KbChatFlowPanel.tsx`
 - Modify: `frontend/src/components/chat/KbChatFlowPanel.test.ts`
 
@@ -441,7 +445,7 @@ Expected: 全绿
 
 - [ ] **Step 3: 提交实现**
 
-Run: `git add backend/src/app/agents/kb_chat_trace_nodes.py backend/tests/agents/test_kb_chat_state_contract.py backend/tests/services/test_kb_chat_service_stream_protocol.py frontend/src/services/kbChatFlowSelectors.ts frontend/src/services/kbChatFlowSelectors.test.ts frontend/src/components/chat/KbChatFlowPanel.tsx frontend/src/components/chat/KbChatFlowPanel.test.ts && git commit -m "feat: tighten KB Chat node detail contract"`
+Run: `git add backend/src/app/agents/kb_chat_trace_display_contract.py backend/src/app/agents/kb_chat_trace_nodes.py backend/tests/agents/test_kb_chat_state_contract.py backend/tests/services/test_kb_chat_service_stream_protocol.py frontend/src/services/kbChatFlowSelectors.ts frontend/src/services/kbChatFlowSelectors.test.ts frontend/src/components/chat/KbChatFlowNodeDetailSections.tsx frontend/src/components/chat/KbChatFlowPanel.tsx frontend/src/components/chat/KbChatFlowPanel.test.ts && git commit -m "feat: tighten KB Chat node detail contract"`
 
 Expected: commit 成功，仅包含本特性的实现与测试
 
