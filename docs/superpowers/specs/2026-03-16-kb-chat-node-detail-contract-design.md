@@ -135,6 +135,19 @@ Chunk 内容：<chunk text>
 - 若 chunk 正文缺失，统一显示：`正文缺失`；
 - 无证据时使用明确业务文案，如“未检索到相关证据”。
 
+`current_evidence` 作为 judge / generate 节点的输入时，**完全复用** `retrieved_evidence` / `compressed_evidence` 的展示形态：
+
+- `value` 仍为 `string[]`
+- 每项仍采用：
+
+```text
+文档名：<document title>
+Chunk 内容：<chunk text>
+```
+
+- 不因节点家族不同改成其他输入格式
+- 不允许在 judge / generate 节点临时发明新的证据字符串拼装规则
+
 ### 4.3 列表值中文化规则
 
 以下列表值同样属于面向用户展示合同，必须在后端 emission 层完成中文化 / 业务化，不允许把内部 id 原样透传到 UI：
@@ -178,6 +191,9 @@ Chunk 内容：<chunk text>
 - 检索规划输出
   - `planned_query_count`
   - `planned_per_query_top_k`
+- 聚合判定输出
+  - `gate_results`
+  - `review_results`
 - 证据输出
   - `retrieved_evidence`
   - `compressed_evidence`
@@ -198,6 +214,22 @@ Chunk 内容：<chunk text>
   - `query_count` -> `planned_query_count`
   - `per_query_top_k` -> `planned_per_query_top_k`
   - `best_answer` -> `final_answer`
+  - `doc_gate_*` 判定结果集合 -> `gate_results`
+  - `answer_review_*` 判定结果集合 -> `review_results`
+
+`gate_results` / `review_results` 的序列化形态统一为 `string[]`，逐项完整展示。例如：
+
+```text
+证据充分度：通过｜原因：证据覆盖问题关键实体
+可回答性：通过｜原因：证据已覆盖比较维度
+证据冲突检测：未通过｜原因：两份材料给出相反结论
+```
+
+```text
+引用覆盖审查：通过｜原因：关键断言均有引用
+事实正确性审查：未通过｜原因：第二段与证据不一致
+可回答性审查：通过｜原因：已直接回答用户问题
+```
 
 ### 4.5 规范性示例 payload
 
@@ -445,6 +477,7 @@ Chunk 内容：<chunk text>
 
 状态映射固定为：
 
+- `idle` -> `待执行`
 - `running` -> `进行中`
 - `completed` -> `已完成`
 - `failed` -> `失败`
