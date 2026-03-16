@@ -9,6 +9,7 @@ const removedConfigKeys = [
   'normalize_llm_enabled',
   'hyde_enabled',
   'entity_expand_enabled',
+  'entity_expand_timeout_seconds',
   'parallel_retrieval_enabled',
   'doc_gate_rule_threshold',
   'doc_gate_llm_confidence_floor',
@@ -19,7 +20,7 @@ const removedConfigKeys = [
 ];
 
 describe('kbChatConfig contract cleanup', () => {
-  it('does not serialize removed capability toggles or doc gate leftovers', () => {
+  it('does not serialize removed capability toggles, entity expand timeout, or doc gate leftovers', () => {
     const legacyPayload = {
       retrieval_top_k: 9,
       retrieval_hybrid_ranker: 'weighted',
@@ -29,6 +30,7 @@ describe('kbChatConfig contract cleanup', () => {
       normalize_llm_enabled: false as never,
       hyde_enabled: false as never,
       entity_expand_enabled: false as never,
+      entity_expand_timeout_seconds: 1.2 as never,
       parallel_retrieval_enabled: false as never,
       doc_gate_rule_threshold: 0.2 as never,
       doc_gate_llm_confidence_floor: 0.3 as never,

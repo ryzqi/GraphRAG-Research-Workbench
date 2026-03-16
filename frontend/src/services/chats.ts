@@ -67,7 +67,6 @@ export interface KbChatConfig {
   entity_expand_max_candidates: number;
   entity_expand_max_variants: number;
   entity_expand_min_confidence: number;
-  entity_expand_timeout_seconds: number;
   retrieval_top_k: number;
   retrieval_rerank_top_k: number;
   retrieval_hybrid_ranker: 'rrf' | 'weighted';
@@ -397,7 +396,6 @@ export function toKbGraphSchemaQuery(config: Partial<KbChatConfig>): string {
     'entity_expand_max_candidates',
     'entity_expand_max_variants',
     'entity_expand_min_confidence',
-    'entity_expand_timeout_seconds',
     'retrieval_top_k',
     'retrieval_rerank_top_k',
     'retrieval_hybrid_ranker',

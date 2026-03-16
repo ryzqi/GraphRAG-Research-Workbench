@@ -33,9 +33,6 @@ class KbRetrieveArgs(BaseModel):
     query: str = Field(..., description="检索问题")
     kb_ids: list[str] | None = Field(default=None, description="知识库 ID 列表")
     top_k: int | None = Field(default=None, ge=1, le=50, description="返回条数")
-    timeout_seconds: float | None = Field(
-        default=None, description="可选：检索/重排超时（秒）。"
-    )
     query_items: list[dict[str, Any]] | None = Field(
         default=None,
         description="可选：统一检索层 QueryItem 列表（用于多路/分解/HyDE fanout 融合）。提供时将优先使用该列表进行融合检索。",
@@ -168,7 +165,6 @@ def build_kb_retrieve_tool(
         query: str,
         kb_ids: list[str] | None = None,
         top_k: int | None = None,
-        timeout_seconds: float | None = None,
         query_items: list[dict[str, Any]] | None = None,
         per_query_top_k: int | None = None,
         global_candidates_limit: int | None = None,
@@ -252,7 +248,6 @@ def build_kb_retrieve_tool(
                     else None
                 ),
                 rerank_input_limit=rerank_top_k,
-                timeout_seconds=timeout_seconds,
                 feature_overrides=retrieval_overrides,
             )
             results = layer.results
@@ -261,7 +256,6 @@ def build_kb_retrieve_tool(
                 query=query,
                 kb_ids=resolved,
                 top_k=top_k,
-                timeout_seconds=timeout_seconds,
                 feature_overrides=retrieval_overrides,
             )
 

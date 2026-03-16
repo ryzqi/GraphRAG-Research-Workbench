@@ -30,10 +30,6 @@ def ensure_budget_initialized(state: dict, settings: Settings) -> dict:
     if "started_at" not in budget:
         budget = {**budget, "started_at": now_iso()}
 
-    # Drop legacy timeout fields from old checkpoints.
-    budget.pop("total_timeout_seconds", None)
-    budget.pop("deadline_ts", None)
-
     metrics = {**metrics, "budget": budget}
     return {"metrics": metrics}
 

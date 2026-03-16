@@ -97,14 +97,14 @@ async def test_kb_retrieve_context_prefers_runtime_context_for_scope_and_runtime
         kb_tool=kb_tool,
         runtime=_runtime_context(
             kb_ids=["kb-live"],
-            runtime_config={"retrieval_top_k": 7, "retrieval_timeout_seconds": 3},
+            runtime_config={"retrieval_top_k": 7},
         ),
     )
 
     payload = kb_tool.ainvoke.await_args.args[0]
     assert payload["kb_ids"] == ["kb-live"]
     assert payload["top_k"] == 7
-    assert payload["timeout_seconds"] == 3.0
+    assert "timeout_seconds" not in payload
 
 
 @pytest.mark.asyncio

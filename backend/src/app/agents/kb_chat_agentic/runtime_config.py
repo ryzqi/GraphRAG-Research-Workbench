@@ -84,22 +84,6 @@ def normalize_alias_max(
     )
 
 
-def normalize_timeout_seconds(
-    state: dict[str, Any],
-    settings: Settings,
-    runtime: Runtime[Any] | None = None,
-) -> float:
-    return max(
-        0.0,
-        _state_float(
-            state,
-            key="normalize_timeout_seconds",
-            default=float(getattr(settings, "kb_chat_normalize_timeout_seconds", 0.8)),
-            runtime=runtime,
-        ),
-    )
-
-
 def entity_expand_max_candidates(
     state: dict[str, Any],
     settings: Settings,
@@ -153,27 +137,6 @@ def entity_expand_min_confidence(
                 key="entity_expand_min_confidence",
                 default=float(
                     getattr(settings, "kb_chat_entity_expand_min_confidence", 0.55)
-                ),
-                runtime=runtime,
-            ),
-        ),
-    )
-
-
-def entity_expand_timeout_seconds(
-    state: dict[str, Any],
-    settings: Settings,
-    runtime: Runtime[Any] | None = None,
-) -> float:
-    return max(
-        0.0,
-        min(
-            5.0,
-            _state_float(
-                state,
-                key="entity_expand_timeout_seconds",
-                default=float(
-                    getattr(settings, "kb_chat_entity_expand_timeout_seconds", 1.2)
                 ),
                 runtime=runtime,
             ),

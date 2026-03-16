@@ -49,7 +49,6 @@ from .dispatch_fuse import (
 from .json_safety import ensure_json_safe
 from .runtime_config import (
     normalize_alias_max,
-    normalize_timeout_seconds,
     parallel_retrieval_include_main,
     parallel_retrieval_max_branches,
     parallel_retrieval_min_queries,
@@ -397,24 +396,6 @@ def _build_subquery_dispatch_plan(
         "rank_strategy": "quality_first",
     }
 
-def _resolve_retrieval_timeout_seconds(
-    state: dict[str, Any],
-    runtime: Runtime[Any] | None = None,
-) -> float | None:
-    context = _runtime_context(runtime)
-    runtime_config = context.get("runtime_config")
-    if isinstance(runtime_config, dict):
-        raw_timeout = runtime_config.get("retrieval_timeout_seconds")
-        if isinstance(raw_timeout, (int, float)) and float(raw_timeout) > 0:
-            return float(raw_timeout)
-    runtime_state = state.get("runtime_config")
-    if isinstance(runtime_state, dict):
-        raw_timeout = runtime_state.get("retrieval_timeout_seconds")
-        if isinstance(raw_timeout, (int, float)) and float(raw_timeout) > 0:
-            return float(raw_timeout)
-    return None
-
-
 def _resolve_retrieval_budget_payload(
     state: dict[str, Any],
     settings: Settings,
@@ -537,7 +518,6 @@ async def _invoke_kb_retrieve(
         settings,
         runtime=runtime,
     )
-    timeout_seconds = _resolve_retrieval_timeout_seconds(state, runtime=runtime)
     try:
         payload = build_retrieval_payload(
             query=query,
@@ -548,7 +528,6 @@ async def _invoke_kb_retrieve(
             per_query_top_k=retrieval_budget["per_query_top_k"],
             global_candidates_limit=retrieval_budget["global_candidates_limit"],
             rerank_input_limit=retrieval_budget["rerank_input_limit"],
-            timeout_seconds=timeout_seconds,
         )
         context = await kb_tool.ainvoke(payload)
     except asyncio.CancelledError:
@@ -954,7 +933,6 @@ async def transform_query_for_retry(
             current,
             reason=_as_str(reason) or "retry",
             hint=_as_str(hint) or None,
-            timeout_seconds=0,
             enabled=True,
         )
         if result.query.strip():
@@ -970,7 +948,6 @@ async def transform_query_for_retry(
             new_query,
             llm_enabled=True,
             alias_limit=normalize_alias_max(state, settings, runtime=runtime),
-            timeout_seconds=normalize_timeout_seconds(state, settings, runtime=runtime),
         )
         if normalize_result.query.strip():
             new_query = normalize_result.query.strip()

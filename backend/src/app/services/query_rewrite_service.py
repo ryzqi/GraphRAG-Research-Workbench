@@ -783,7 +783,6 @@ class QueryRewriteService:
         self,
         query: str,
         *,
-        timeout_seconds: float | None = None,
         max_tokens: int | None = None,
         prompt_key: str = "retrieval/query_rewrite",
     ) -> RewriteResult:
@@ -796,33 +795,13 @@ class QueryRewriteService:
             return RewriteResult(query=query, rewritten=False, reason="prompt_missing")
         start_time = time.perf_counter()
 
-        timeout_value = (
-            float(self._settings.retrieval_query_rewrite_timeout_seconds)
-            if timeout_seconds is None
-            else float(timeout_seconds)
-        )
         max_tokens_value = (
             int(self._settings.retrieval_query_rewrite_max_tokens)
             if max_tokens is None
             else int(max_tokens)
         )
         try:
-            if timeout_value <= 0:
-                rewritten = await self._call_llm(prompt, max_tokens=max_tokens_value)
-            else:
-                rewritten = await asyncio.wait_for(
-                    self._call_llm(prompt, max_tokens=max_tokens_value),
-                    timeout=timeout_value,
-                )
-        except asyncio.TimeoutError:
-            latency_ms = int((time.perf_counter() - start_time) * 1000)
-            logger.warning("Query rewrite 超时", extra={"timeout": timeout_value})
-            return RewriteResult(
-                query=query,
-                rewritten=False,
-                reason="timeout",
-                latency_ms=latency_ms,
-            )
+            rewritten = await self._call_llm(prompt, max_tokens=max_tokens_value)
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -857,13 +836,11 @@ class QueryRewriteService:
         query: str,
         *,
         enabled: bool = True,
-        timeout_seconds: float | None = None,
         recent_turns: list[dict[str, str]] | None = None,
         summary_text: str | None = None,
         memory_snippet: str | None = None,
     ) -> RewriteResult:
         """Coreference rewrite with context-aware, low-latency heuristics."""
-        _ = timeout_seconds
         start = time.perf_counter()
         q = _sanitize_query_text(query)
         if not enabled:
@@ -999,7 +976,6 @@ class QueryRewriteService:
         *,
         llm_enabled: bool | None = None,
         alias_limit: int | None = None,
-        timeout_seconds: float | None = None,
     ) -> RewriteResult:
         """Normalize query with rule-first logic and optional structured LLM refinement."""
         start = time.perf_counter()
@@ -1035,15 +1011,9 @@ class QueryRewriteService:
                 meta={**rule_meta, "source": "rule_only", "fallback_reason": "llm_disabled"},
             )
 
-        llm_timeout = (
-            float(getattr(self._settings, "kb_chat_normalize_timeout_seconds", 0.8))
-            if timeout_seconds is None
-            else float(timeout_seconds)
-        )
         structured_result = await self._call_prompt_structured(
             "kb_chat/normalize_query",
             schema=NormalizeDecision,
-            timeout_seconds=llm_timeout,
             max_tokens=320,
             question=query,
             rule_normalized_query=rule_query,
@@ -1159,7 +1129,6 @@ class QueryRewriteService:
         query: str,
         *,
         enabled: bool | None = None,
-        timeout_seconds: float | None = None,
         coref_meta: dict[str, object] | None = None,
     ) -> AmbiguityResult:
         """Model-driven ambiguity decision with guardrail fallback."""
@@ -1208,7 +1177,6 @@ class QueryRewriteService:
         structured_result = await self._call_prompt_structured(
             "kb_chat/ambiguity_decision",
             schema=AmbiguityDecision,
-            timeout_seconds=timeout_seconds,
             max_tokens=320,
             question=q,
             coref_confidence=round(max(0.0, min(1.0, coref_confidence)), 4),
@@ -1280,16 +1248,13 @@ class QueryRewriteService:
             clarification_payload=clarification_payload if ambiguous else None,
         )
 
-    async def generate_reverse_question(
-        self, query: str, *, timeout_seconds: float | None = None
-    ) -> TextResult:
+    async def generate_reverse_question(self, query: str) -> TextResult:
         """Generate a clarifying question (degrades to a fixed safe template)."""
         start = time.perf_counter()
 
         structured_result = await self._call_prompt_structured(
             "kb_chat/reverse_question",
             schema=ReverseQuestionDecision,
-            timeout_seconds=timeout_seconds,
             max_tokens=128,
             question=query,
         )
@@ -1323,7 +1288,6 @@ class QueryRewriteService:
         *,
         reason: str,
         hint: str | None = None,
-        timeout_seconds: float | None = None,
         enabled: bool = True,
     ) -> RewriteResult:
         """Transform query for retry (rewrite/expand), with safe fallback."""
@@ -1338,7 +1302,6 @@ class QueryRewriteService:
         structured_result = await self._call_prompt_structured(
             "kb_chat/transform_query",
             schema=TransformQueryDecision,
-            timeout_seconds=timeout_seconds,
             max_tokens=96,
             question=query,
             reason=reason,
@@ -1358,7 +1321,7 @@ class QueryRewriteService:
             )
 
         # Reuse existing retrieval rewrite behavior as a low-risk fallback.
-        fallback = await self.rewrite(query, timeout_seconds=timeout_seconds)
+        fallback = await self.rewrite(query)
         # If fallback succeeded but didn't change, still keep transform surface explicit.
         if fallback.reason is None:
             fallback.reason = structured_result.reason or "fallback_rewrite"
@@ -1375,7 +1338,6 @@ class QueryRewriteService:
         structured_result = await self._call_prompt_structured(
             "kb_chat/context_merge",
             schema=MergeContextResolutionDecision,
-            timeout_seconds=0.8,
             max_tokens=192,
             question=_normalize_whitespace(question),
             summary_text=_normalize_whitespace(summary_text),
@@ -1415,7 +1377,6 @@ class QueryRewriteService:
         recall_risk: str | None = None,
         has_multi_target: bool = False,
         is_comparison: bool = False,
-        timeout_seconds: float | None = None,
     ) -> ComplexityRouteResult:
         """Decide preprocess routing strategy."""
         start = time.perf_counter()
@@ -1433,7 +1394,6 @@ class QueryRewriteService:
         structured_result = await self._call_prompt_structured(
             "kb_chat/complexity_classify",
             schema=ComplexityDecision,
-            timeout_seconds=timeout_seconds,
             max_tokens=256,
             question=q,
             recall_risk=(recall_risk or "unknown"),
@@ -1496,7 +1456,6 @@ class QueryRewriteService:
         structured_result = await self._call_prompt_structured(
             "kb_chat/decomposition",
             schema=DecompositionDecision,
-            timeout_seconds=None,
             max_tokens=256,
             question=q,
         )
@@ -1626,7 +1585,6 @@ class QueryRewriteService:
         structured_result = await self._call_prompt_structured(
             "kb_chat/multi_query",
             schema=MultiQueryDecision,
-            timeout_seconds=None,
             max_tokens=256,
             question=q,
         )
@@ -1670,7 +1628,6 @@ class QueryRewriteService:
         max_candidates: int = 8,
         max_variants: int = 6,
         min_confidence: float = 0.55,
-        timeout_seconds: float | None = 1.2,
     ) -> QueryListResult:
         """Expand entity-oriented retrieval queries with structured outputs + guardrails."""
         start = time.perf_counter()
@@ -1722,7 +1679,6 @@ class QueryRewriteService:
         structured_result = await self._call_prompt_structured(
             "kb_chat/entity_expand",
             schema=EntityExpandDecision,
-            timeout_seconds=timeout_seconds,
             max_tokens=384,
             question=seed_query or seed[0],
             seed_queries="\n".join(f"- {item}" for item in seed),
@@ -1815,7 +1771,6 @@ class QueryRewriteService:
         structured_result = await self._call_prompt_structured(
             "kb_chat/hyde",
             schema=HyDEBatchDecision,
-            timeout_seconds=None,
             max_tokens=768,
             question=q,
             num_hypotheses=HYDE_NUM_HYPOTHESES,
@@ -1860,7 +1815,6 @@ class QueryRewriteService:
         prompt_key: str,
         *,
         schema: type[BaseModel],
-        timeout_seconds: float | None,
         max_tokens: int,
         **kwargs: object,
     ) -> StructuredCallResult:
@@ -1881,38 +1835,13 @@ class QueryRewriteService:
             )
 
         start_time = time.perf_counter()
-        timeout_value = (
-            float(self._settings.retrieval_query_rewrite_timeout_seconds)
-            if timeout_seconds is None
-            else float(timeout_seconds)
-        )
         agent = self._get_structured_agent(schema)
         try:
-            if timeout_value <= 0:
-                structured = await self._invoke_structured(
-                    agent=agent,
-                    schema=schema,
-                    user_prompt=prompt,
-                    max_tokens=max_tokens,
-                )
-            else:
-                structured = await asyncio.wait_for(
-                    self._invoke_structured(
-                        agent=agent,
-                        schema=schema,
-                        user_prompt=prompt,
-                        max_tokens=max_tokens,
-                    ),
-                    timeout=timeout_value,
-                )
-        except asyncio.TimeoutError:
-            latency_ms = int((time.perf_counter() - start_time) * 1000)
-            logger.warning(
-                "Prompt LLM structured 超时",
-                extra={"prompt_key": prompt_key, "timeout": timeout_value},
-            )
-            return StructuredCallResult(
-                payload=None, success=False, reason="timeout", latency_ms=latency_ms
+            structured = await self._invoke_structured(
+                agent=agent,
+                schema=schema,
+                user_prompt=prompt,
+                max_tokens=max_tokens,
             )
         except asyncio.CancelledError:
             raise

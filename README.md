@@ -166,7 +166,6 @@ pwsh -ExecutionPolicy Bypass -File ./scripts/reset_data.ps1 -Force
 > 重要约束：KB Chat 仅支持内部工具（例如 `kb_retrieve`），不加载/不调用任何 MCP 外接工具（即使 `session.allow_external=true`）；同时 KB Chat 不支持“两阶段工具审批”（不会返回 `pending_tool_approval`），也不考虑终端/人工确认（Human-in-the-loop）。如需 MCP 工具/人工确认流程，请使用普通代理（General Chat）或 MCP 扩展页面。
 
 - 预算（默认保守）：
-  - `KB_CHAT_TOTAL_TIMEOUT_SECONDS=45`
   - `KB_CHAT_GRAPH_RECURSION_LIMIT=30`（LangGraph 底层 super-step 限制）
   - `KB_CHAT_MAX_TOTAL_ROUNDS=3`
   - `KB_CHAT_MAX_RETRIEVAL_RETRIES=2`
@@ -180,7 +179,6 @@ pwsh -ExecutionPolicy Bypass -File ./scripts/reset_data.ps1 -Force
 
 ```env
 # KB Chat budgets
-KB_CHAT_TOTAL_TIMEOUT_SECONDS=45
 KB_CHAT_GRAPH_RECURSION_LIMIT=30
 KB_CHAT_MAX_TOTAL_ROUNDS=3
 KB_CHAT_MAX_RETRIEVAL_RETRIES=2

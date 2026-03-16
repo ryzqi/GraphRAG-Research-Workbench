@@ -54,9 +54,7 @@ from .runtime_config import (
     entity_expand_max_candidates,
     entity_expand_max_variants,
     entity_expand_min_confidence,
-    entity_expand_timeout_seconds,
     normalize_alias_max,
-    normalize_timeout_seconds,
     parallel_retrieval_include_main,
     parallel_retrieval_max_branches,
     parallel_retrieval_min_queries,
@@ -745,7 +743,6 @@ async def coref_rewrite(state: CorefRewriteInput, settings: Settings) -> dict[st
         result = await svc.coref_rewrite(
             query,
             enabled=True,
-            timeout_seconds=0,
             recent_turns=[
                 item
                 for item in selected_turns
@@ -825,13 +822,9 @@ async def ambiguity_check(state: AmbiguityCheckInput, settings: Settings) -> dic
     coref_meta = state.get("coref_meta")
     try:
         svc = QueryRewriteService(settings=settings)
-        timeout_seconds = float(
-            getattr(settings, "kb_chat_ambiguity_timeout_seconds", 0.5)
-        )
         result = await svc.ambiguity_check(
             query,
             enabled=True,
-            timeout_seconds=timeout_seconds,
             coref_meta=coref_meta if isinstance(coref_meta, dict) else None,
         )
         ambiguous = result.ambiguous
@@ -941,7 +934,6 @@ async def normalize_rewrite(
             query,
             llm_enabled=True,
             alias_limit=normalize_alias_max(state, settings, runtime=runtime),
-            timeout_seconds=normalize_timeout_seconds(state, settings, runtime=runtime),
         )
         rewritten = result.query
         rewritten_flag = result.rewritten
@@ -1074,9 +1066,6 @@ async def complexity_classify(
                 recall_risk=recall_risk,
                 has_multi_target=has_multi_target,
                 is_comparison=is_comparison,
-                timeout_seconds=float(
-                    getattr(settings, "kb_chat_complexity_model_timeout_seconds", 1.5)
-                ),
             )
             strategy = (
                 decision.strategy
@@ -1329,7 +1318,6 @@ async def entity_expand(
     max_candidates = entity_expand_max_candidates(state, settings, runtime=runtime)
     max_variants = entity_expand_max_variants(state, settings, runtime=runtime)
     min_confidence = entity_expand_min_confidence(state, settings, runtime=runtime)
-    timeout_seconds = entity_expand_timeout_seconds(state, settings, runtime=runtime)
 
     expanded = original
     success = False
@@ -1346,7 +1334,6 @@ async def entity_expand(
             max_candidates=max_candidates,
             max_variants=max_variants,
             min_confidence=min_confidence,
-            timeout_seconds=timeout_seconds,
         )
         expanded = result.queries
         success = result.success

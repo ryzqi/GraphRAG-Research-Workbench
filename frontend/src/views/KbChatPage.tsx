@@ -100,7 +100,6 @@ const DEFAULT_KB_CHAT_CONFIG: KbChatConfig = {
   entity_expand_max_candidates: 8,
   entity_expand_max_variants: 6,
   entity_expand_min_confidence: 0.55,
-  entity_expand_timeout_seconds: 1.2,
   retrieval_top_k: 12,
   retrieval_rerank_top_k: 50,
   retrieval_hybrid_ranker: 'rrf',

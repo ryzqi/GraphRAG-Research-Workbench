@@ -340,9 +340,6 @@ class Settings(BaseSettings):
         0.4, alias="RETRIEVAL_HYBRID_SPARSE_WEIGHT"
     )
     retrieval_hybrid_rrf_k: int = Field(60, alias="RETRIEVAL_HYBRID_RRF_K")
-    retrieval_query_rewrite_timeout_seconds: int = Field(
-        15, alias="RETRIEVAL_QUERY_REWRITE_TIMEOUT_SECONDS"
-    )
     retrieval_query_rewrite_max_tokens: int = Field(
         64, alias="RETRIEVAL_QUERY_REWRITE_MAX_TOKENS"
     )
@@ -397,20 +394,11 @@ class Settings(BaseSettings):
     )
     kb_chat_hyde_enabled: bool = Field(True, alias="KB_CHAT_HYDE_ENABLED")
 
-    kb_chat_ambiguity_timeout_seconds: float = Field(
-        0.5, alias="KB_CHAT_AMBIGUITY_TIMEOUT_SECONDS"
-    )
     kb_chat_normalize_alias_max: int = Field(
         4, ge=1, le=8, alias="KB_CHAT_NORMALIZE_ALIAS_MAX"
     )
-    kb_chat_normalize_timeout_seconds: float = Field(
-        0.8, ge=0.0, le=5.0, alias="KB_CHAT_NORMALIZE_TIMEOUT_SECONDS"
-    )
     kb_chat_max_clarification_rounds: int = Field(
         1, alias="KB_CHAT_MAX_CLARIFICATION_ROUNDS"
-    )
-    kb_chat_complexity_model_timeout_seconds: float = Field(
-        1.5, ge=0.0, le=10.0, alias="KB_CHAT_COMPLEXITY_MODEL_TIMEOUT_SECONDS"
     )
     kb_chat_complexity_cache_enabled: bool = Field(
         True, alias="KB_CHAT_COMPLEXITY_CACHE_ENABLED"

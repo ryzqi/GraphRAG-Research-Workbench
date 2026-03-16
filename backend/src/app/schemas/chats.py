@@ -54,7 +54,6 @@ class KbChatConfig(BaseModel):
     entity_expand_max_candidates: int = Field(8, ge=1, le=12)
     entity_expand_max_variants: int = Field(6, ge=1, le=12)
     entity_expand_min_confidence: float = Field(0.55, ge=0.0, le=1.0)
-    entity_expand_timeout_seconds: float = Field(1.2, ge=0.0, le=5.0)
     retrieval_top_k: int = Field(12, ge=1, le=20)
     retrieval_rerank_top_k: int = Field(50, ge=1, le=50)
     retrieval_hybrid_ranker: Literal["rrf", "weighted"] = "rrf"
@@ -123,9 +122,6 @@ def default_kb_chat_config(*, settings: Settings | None = None) -> KbChatConfig:
         entity_expand_min_confidence=float(
             getattr(cfg, "kb_chat_entity_expand_min_confidence", 0.55)
         ),
-        entity_expand_timeout_seconds=float(
-            getattr(cfg, "kb_chat_entity_expand_timeout_seconds", 1.2)
-        ),
         retrieval_top_k=int(cfg.retrieval_default_top_k),
         retrieval_rerank_top_k=max(
             int(cfg.retrieval_default_top_k),
@@ -156,6 +152,9 @@ def resolve_kb_chat_config(
     if isinstance(raw, KbChatConfig):
         payload = raw.model_dump(mode="json")
     elif isinstance(raw, dict):
+        unknown_keys = set(raw.keys()) - allowed_keys
+        if unknown_keys:
+            KbChatConfig.model_validate(raw)
         payload = {key: value for key, value in raw.items() if key in allowed_keys}
     else:
         payload = defaults

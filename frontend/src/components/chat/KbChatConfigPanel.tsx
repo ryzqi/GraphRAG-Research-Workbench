@@ -187,18 +187,6 @@ export function KbChatConfigPanel({
                   fullWidth
                 />
                 <TextField
-                  label='实体扩展超时（秒）'
-                  type='number'
-                  value={value.entity_expand_timeout_seconds}
-                  onChange={(event) =>
-                    handleFloatField('entity_expand_timeout_seconds', event.target.value)
-                  }
-                  inputProps={{ min: 0, max: 5, step: 0.1 }}
-                  helperText='实体扩展节点按需触发时的模型超时，超时后自动降级。'
-                  disabled={disabled}
-                  fullWidth
-                />
-                <TextField
                   label='Hybrid Ranker'
                   select
                   value={value.retrieval_hybrid_ranker}

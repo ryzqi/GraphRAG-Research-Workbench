@@ -431,12 +431,8 @@ class KbChatService:
         if not isinstance(payload, list) or not payload:
             return None
 
-        timeout_value = float(getattr(self._settings, "embedding_timeout_seconds", 30.0))
         try:
-            query_embeddings = await self._embedding.embed(
-                texts=[normalized_question],
-                timeout_seconds=timeout_value,
-            )
+            query_embeddings = await self._embedding.embed(texts=[normalized_question])
         except Exception:
             return None
         if not isinstance(query_embeddings, list) or not query_embeddings:
@@ -520,12 +516,8 @@ class KbChatService:
         if not normalized_question or not normalized_answer:
             return
 
-        timeout_value = float(getattr(self._settings, "embedding_timeout_seconds", 30.0))
         try:
-            embeddings = await self._embedding.embed(
-                texts=[normalized_question],
-                timeout_seconds=timeout_value,
-            )
+            embeddings = await self._embedding.embed(texts=[normalized_question])
         except Exception:
             return
         if not isinstance(embeddings, list) or not embeddings:
@@ -892,12 +884,6 @@ class KbChatService:
                 ),
                 "entity_expand_min_confidence": float(
                     kb_chat_config.entity_expand_min_confidence
-                ),
-                "entity_expand_timeout_seconds": float(
-                    kb_chat_config.entity_expand_timeout_seconds
-                ),
-                "complexity_model_timeout_seconds": float(
-                    self._settings.kb_chat_complexity_model_timeout_seconds
                 ),
                 "complexity_cache_enabled": bool(
                     self._settings.kb_chat_complexity_cache_enabled

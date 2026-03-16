@@ -909,23 +909,15 @@ class RetrievalService:
         self,
         query: str,
         *,
-        timeout_seconds: float | None = None,
         enabled: bool | None = None,
     ) -> RewriteResult:
-        """Optionally rewrite query, preserving timeout behavior."""
+        """Optionally rewrite query."""
         rewrite_enabled = True if enabled is None else bool(enabled)
         if not rewrite_enabled:
             return RewriteResult(
                 query=query,
                 rewritten=False,
                 reason="disabled",
-                latency_ms=0,
-            )
-        if timeout_seconds is not None and float(timeout_seconds) <= 0:
-            return RewriteResult(
-                query=query,
-                rewritten=False,
-                reason="budget_exhausted",
                 latency_ms=0,
             )
 
@@ -947,7 +939,7 @@ class RetrievalService:
 
         rewriter = self._query_rewriter or QueryRewriteService(self._settings)
         self._query_rewriter = rewriter
-        result = await rewriter.rewrite(query, timeout_seconds=timeout_seconds)
+        result = await rewriter.rewrite(query)
 
         if self._redis and self._settings.retrieval_cache_enabled and result.query:
             try:
@@ -2276,7 +2268,6 @@ class RetrievalService:
             return _timeout_return()
         rewrite_result = await self._maybe_rewrite_query(
             normalized_query,
-            timeout_seconds=remaining,
             enabled=feature_flags.query_rewrite_enabled,
         )
         effective_query = rewrite_result.query or normalized_query
