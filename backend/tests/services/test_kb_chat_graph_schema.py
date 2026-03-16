@@ -50,3 +50,35 @@ def test_builder_fallback_collects_nested_and_conditional_edges() -> None:
     assert ("preprocess_subgraph", "retrieval_subgraph", True) in edge_set
     assert ("evidence_gate_subgraph", "answer_subgraph", True) in edge_set
     assert ("transform_query", "retrieval_subgraph", False) in edge_set
+
+
+def test_compiled_kb_chat_graph_drawable_export_handles_conditional_subgraph_routes() -> None:
+    graph = KbChatAgenticGraph(
+        chat_model=SimpleNamespace(),
+        tools=[SimpleNamespace(name="kb_retrieve")],
+        tool_meta_by_name={},
+    )
+
+    drawable = graph.compile().get_graph().to_json()
+    edge_set = {
+        (edge["source"], edge["target"], edge.get("conditional", False))
+        for edge in drawable["edges"]
+    }
+
+    assert ("preprocess_subgraph", "force_exit", True) in edge_set
+    assert ("evidence_gate_subgraph", "force_exit", True) in edge_set
+
+
+def test_schema_drawable_export_falls_back_to_builder_when_compiled_graph_is_truncated() -> None:
+    graph = KbChatAgenticGraph(
+        chat_model=SimpleNamespace(),
+        tools=[SimpleNamespace(name="kb_retrieve")],
+        tool_meta_by_name={},
+    )
+
+    drawable = KbChatService._build_schema_drawable_graph(graph)
+    node_ids = {node["id"] for node in drawable["nodes"]}
+
+    assert "hyde" in node_ids
+    assert "entity_expand" in node_ids
+    assert "merge_context" in node_ids

@@ -379,6 +379,66 @@ describe('kbChatTraceNodes', () => {
     });
   });
 
+  it('registers node_path nodes even when schema omits nested conditional nodes', () => {
+    const nodes = buildTraceNodes({
+      schema: {
+        version: '1.1',
+        hash: 'schema-hash',
+        nodes: [
+          { id: 'preprocess_subgraph', label: '预处理子图', phase: 'preprocess', order: 0 },
+          { id: 'retrieval_subgraph', label: '检索子图', phase: 'retrieve', order: 13 },
+        ],
+        edges: [],
+      },
+      nodeIoEvents: [
+        {
+          run_id: 'run-1',
+          node_id: 'preprocess_subgraph',
+          node_name: 'preprocess_subgraph',
+          node_path: ['preprocess_subgraph', 'entity_expand', 'hyde'],
+          phase: 'start',
+          ts: '2026-01-01T00:00:01.000Z',
+        },
+      ],
+    });
+
+    const nodeIds = new Set(nodes.map((node) => node.id));
+    expect(nodeIds.has('entity_expand')).toBe(true);
+    expect(nodeIds.has('hyde')).toBe(true);
+  });
+
+  it('registers active_path and current_node even when schema is truncated', () => {
+    const nodes = buildTraceNodes({
+      schema: {
+        version: '1.1',
+        hash: 'schema-hash',
+        nodes: [
+          { id: 'preprocess_subgraph', label: '预处理子图', phase: 'preprocess', order: 0 },
+          { id: 'retrieval_subgraph', label: '检索子图', phase: 'retrieve', order: 13 },
+        ],
+        edges: [],
+      },
+      runState: {
+        run_id: 'run-1',
+        run_status: 'running',
+        current_step_id: 'entity_expand',
+        current_step_label: '实体扩展',
+        current_step_status: 'started',
+        current_node: 'entity_expand',
+        active_path: ['preprocess_subgraph', 'entity_expand'],
+        attempt: 1,
+        message: null,
+        progress: { completed: 1, total: 10, percent: 10 },
+        ts: '2026-01-01T00:00:02.000Z',
+      },
+    });
+
+    expect(nodes.find((node) => node.id === 'entity_expand')).toMatchObject({
+      title: '实体扩展',
+      status: 'running',
+    });
+  });
+
   it('does not include deprecated preprocess shell nodes in fallback trace view', () => {
     const nodes = buildTraceNodes({});
     const nodeIds = new Set(nodes.map((node) => node.id));

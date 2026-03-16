@@ -1417,7 +1417,6 @@ class KbChatAgenticGraph:
             "preprocess_subgraph",
             _wrap_node_with_io("preprocess_subgraph", preprocess_subgraph),
             metadata=node_metadata("preprocess_subgraph", side_effect_type="subgraph"),
-            destinations=("retrieval_subgraph", "transform_query", "force_exit"),
         )
         graph.add_node(
             "retrieval_subgraph",
@@ -1428,7 +1427,6 @@ class KbChatAgenticGraph:
             "evidence_gate_subgraph",
             _wrap_node_with_io("evidence_gate_subgraph", evidence_gate_subgraph),
             metadata=node_metadata("evidence_gate_subgraph", side_effect_type="subgraph"),
-            destinations=("answer_subgraph", "transform_query", "force_exit"),
         )
         graph.add_node(
             "answer_subgraph",

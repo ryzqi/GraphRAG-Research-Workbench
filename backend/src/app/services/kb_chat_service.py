@@ -802,6 +802,48 @@ class KbChatService:
         )
         return {"nodes": nodes, "edges": edges}
 
+    @staticmethod
+    def _build_schema_drawable_graph(graph: object) -> dict[str, Any]:
+        builder_graph: dict[str, Any] | None = None
+        compiled_graph: dict[str, Any] | None = None
+        builder_error: Exception | None = None
+
+        try:
+            builder_graph = KbChatService._build_drawable_graph_from_builder(graph)
+        except Exception as exc:  # pragma: no cover - best effort fallback path
+            builder_error = exc
+
+        try:
+            compiled_graph = graph.compile().get_graph().to_json()
+        except TypeError as exc:
+            logger.warning(
+                "LangGraph drawable export failed; fallback to builder topology: %s", exc
+            )
+        except Exception as exc:  # pragma: no cover - defensive fallback
+            logger.warning(
+                "LangGraph drawable export errored; fallback to builder topology: %s", exc
+            )
+
+        if builder_graph and compiled_graph:
+            builder_node_count = len(builder_graph.get("nodes", []))
+            compiled_node_count = len(compiled_graph.get("nodes", []))
+            if builder_node_count > compiled_node_count:
+                logger.warning(
+                    "LangGraph drawable export is truncated for KB Chat schema; using builder topology instead (builder=%s compiled=%s)",
+                    builder_node_count,
+                    compiled_node_count,
+                )
+                return builder_graph
+            return compiled_graph
+
+        if builder_graph is not None:
+            return builder_graph
+        if compiled_graph is not None:
+            return compiled_graph
+        if builder_error is not None:
+            raise builder_error
+        raise RuntimeError("Unable to build KB Chat drawable graph schema")
+
     async def get_graph_schema(
         self,
         *,
@@ -836,13 +878,7 @@ class KbChatService:
             tool_meta_by_name=tool_meta_by_name,
             kb_chat_config=config,
         )
-        try:
-            drawable_graph = graph.compile().get_graph().to_json()
-        except TypeError as exc:
-            logger.warning(
-                "LangGraph drawable export failed; fallback to builder topology: %s", exc
-            )
-            drawable_graph = self._build_drawable_graph_from_builder(graph)
+        drawable_graph = self._build_schema_drawable_graph(graph)
         return self._build_graph_schema_payload(drawable_graph, config)
 
     def _build_trace_snapshot(
@@ -2489,9 +2525,12 @@ class KbChatService:
         output_summary: dict[str, Any] | None = None,
         input_snapshot: dict[str, Any] | None = None,
         output_snapshot: dict[str, Any] | None = None,
+        display_input_items: list[dict[str, Any]] | None = None,
+        display_output_items: list[dict[str, Any]] | None = None,
         error_summary: str | None = None,
         latency_ms: int | None = None,
         ts: datetime | None = None,
+        node_path: list[str] | None = None,
     ) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "run_id": str(run_id),
@@ -2509,6 +2548,10 @@ class KbChatService:
             payload["input_snapshot"] = input_snapshot
         if output_snapshot is not None:
             payload["output_snapshot"] = output_snapshot
+        if display_input_items is not None:
+            payload["display_input_items"] = display_input_items
+        if display_output_items is not None:
+            payload["display_output_items"] = display_output_items
         if error_summary is not None:
             payload["error_summary"] = error_summary
         if latency_ms is not None:
@@ -2518,6 +2561,7 @@ class KbChatService:
             run_id=run_id,
             payload=payload,
             node={"id": node_id, "name": node_name},
+            node_path=node_path,
         )
 
     @staticmethod

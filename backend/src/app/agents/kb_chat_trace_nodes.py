@@ -13,6 +13,11 @@ from langgraph.config import get_stream_writer
 from langgraph.runtime import Runtime
 from langgraph.types import Command, Send
 
+from app.agents.kb_chat_trace_display_contract import (
+    build_node_input_display_items as _build_contract_input_display_items,
+    build_node_output_display_items as _build_contract_output_display_items,
+)
+
 DisplayItemsBuilder = Callable[..., list[dict[str, Any]]]
 TRACE_SNAPSHOT_CHAR_LIMIT = 512
 TRACE_SNAPSHOT_ARRAY_LIMIT = 12
@@ -200,6 +205,82 @@ def _non_empty_text(value: Any) -> str | None:
     if isinstance(value, str) and value.strip():
         return value
     return None
+
+
+def _pick_text(snapshot: dict[str, Any], *keys: str) -> str | None:
+    for key in keys:
+        text = _non_empty_text(snapshot.get(key))
+        if text:
+            return text
+    return None
+
+
+def _pick_string_list(snapshot: dict[str, Any], *keys: str) -> list[str] | None:
+    for key in keys:
+        raw = snapshot.get(key)
+        if not isinstance(raw, list):
+            continue
+        items = [
+            item.strip()
+            for item in raw
+            if isinstance(item, str) and item.strip()
+        ]
+        if items:
+            return items
+    return None
+
+
+def _get_context_frame(snapshot: dict[str, Any]) -> dict[str, Any] | None:
+    return _as_dict(snapshot.get("context_frame"))
+
+
+def _pick_context_frame_text(snapshot: dict[str, Any], key: str) -> str | None:
+    frame = _get_context_frame(snapshot)
+    if not frame:
+        return None
+    return _non_empty_text(frame.get(key))
+
+
+def _pick_context_frame_turns(snapshot: dict[str, Any], key: str) -> list[str] | None:
+    frame = _get_context_frame(snapshot)
+    raw = frame.get(key) if frame else None
+    if not isinstance(raw, list):
+        return None
+    lines: list[str] = []
+    for item in raw:
+        record = _as_dict(item)
+        if not record:
+            continue
+        role_raw = _non_empty_text(record.get("role")) or ""
+        role = "用户" if role_raw == "user" else "助手" if role_raw == "assistant" else role_raw
+        text = _non_empty_text(record.get("text"))
+        if not text:
+            continue
+        lines.append(f"{role}: {text}" if role else text)
+    return lines or None
+
+
+def _resolve_current_subquery_run(snapshot: dict[str, Any]) -> dict[str, Any]:
+    runs = snapshot.get("subquery_runs")
+    candidates = [item for item in runs if isinstance(item, dict)] if isinstance(runs, list) else []
+    if not candidates:
+        return {}
+
+    task = _as_dict(snapshot.get("subquery_task")) or {}
+    task_id = _non_empty_text(task.get("subquery_id"))
+    task_index = task.get("index")
+
+    if task_id:
+        for item in reversed(candidates):
+            if _non_empty_text(item.get("subquery_id")) == task_id:
+                return item
+
+    if isinstance(task_index, int):
+        for item in reversed(candidates):
+            if item.get("index") == task_index:
+                return item
+
+    return candidates[-1]
 
 
 def _append_display_item(items: list[dict[str, Any]], *, key: str, label: str, value: Any) -> None:
@@ -528,6 +609,113 @@ def _build_node_output_display_items(*, node_name: str, output_snapshot: Any, er
         _append_display_item(items, key="multi_queries", label="多路查询", value=snapshot.get("multi_queries"))
         _append_display_item(items, key="action", label="后续动作", value=preprocess_route.get("action"))
         _append_display_item(items, key="reason", label="判定原因", value=preprocess_route.get("reason"))
+    elif node_name == "merge_context":
+        _append_display_item(
+            items,
+            key="current_question",
+            label="用户问题",
+            value=_pick_context_frame_text(snapshot, "current_question")
+            or _pick_text(snapshot, "user_input"),
+        )
+        _append_display_item(
+            items,
+            key="recent_turns",
+            label="最近对话",
+            value=_pick_context_frame_turns(snapshot, "recent_turns"),
+        )
+        _append_display_item(
+            items,
+            key="merged_context",
+            label="合并后上下文",
+            value=_pick_text(snapshot, "display_context", "merged_context"),
+        )
+        _append_display_item(items, key="memory_included", label="是否使用记忆", value=summary.get("memory_included"))
+        _append_display_item(items, key="summary_source", label="摘要来源", value=summary.get("summary_source"))
+        _append_display_item(items, key="compression_ratio", label="压缩比", value=summary.get("compression_ratio"))
+        _append_display_item(items, key="llm_resolve_used", label="冲突消解", value=summary.get("llm_resolve_used"))
+        _append_display_item(items, key="merge_fallback_used", label="回退启发式", value=summary.get("fallback_used"))
+    elif node_name == "coref_rewrite":
+        _append_display_item(items, key="coref_query", label="改写后问题", value=_pick_text(snapshot, "coref_query"))
+        _append_display_item(items, key="confidence", label="消解置信度", value=summary.get("confidence"))
+        _append_display_item(items, key="selected_mention", label="选择候选", value=summary.get("selected_mention"))
+        _append_display_item(items, key="rewritten", label="是否改写", value=summary.get("rewritten"))
+        _append_display_item(items, key="reason", label="改写原因", value=summary.get("reason"))
+        _append_display_item(
+            items,
+            key="needs_clarification_hint",
+            label="建议先澄清",
+            value=summary.get("needs_clarification_hint"),
+        )
+    elif node_name == "ambiguity_check":
+        _append_display_item(items, key="ambiguous", label="是否歧义", value=summary.get("ambiguous"))
+        _append_display_item(items, key="reason", label="判定原因", value=summary.get("reason"))
+        _append_display_item(items, key="action", label="后续动作", value=reflection.get("action"))
+        _append_display_item(items, key="final_answer", label="澄清提示", value=_pick_text(snapshot, "final_answer"))
+    elif node_name == "normalize_rewrite":
+        _append_display_item(items, key="normalized_query", label="规范化结果", value=_pick_text(snapshot, "normalized_query"))
+        _append_display_item(items, key="rewritten", label="是否变化", value=summary.get("rewritten"))
+    elif node_name == "complexity_classify":
+        _append_display_item(
+            items,
+            key="complexity_level",
+            label="复杂度等级",
+            value=summary.get("complexity_level") or snapshot.get("complexity_level"),
+        )
+        _append_display_item(items, key="query_strategy", label="路由策略", value=snapshot.get("query_strategy"))
+        _append_display_item(items, key="query_strategy_confidence", label="路由置信度", value=snapshot.get("query_strategy_confidence"))
+        _append_display_item(items, key="query_strategy_signals", label="风险信号", value=snapshot.get("query_strategy_signals"))
+        _append_display_item(items, key="decision_version", label="判定版本", value=summary.get("decision_version"))
+        _append_display_item(items, key="goto", label="下一节点", value=summary.get("goto"))
+    elif node_name == "decomposition":
+        sub_queries = _pick_string_list(snapshot, "sub_queries")
+        _append_display_item(items, key="sub_queries", label="分解问题", value=sub_queries)
+        _append_display_item(
+            items,
+            key="count",
+            label="分解数量",
+            value=summary.get("count") if summary.get("count") is not None else len(sub_queries or []),
+        )
+        _append_display_item(items, key="reason", label="分解原因", value=summary.get("reason"))
+    elif node_name in {"generate_variants_mod", "generate_variants"}:
+        multi_queries = _pick_string_list(snapshot, "multi_queries")
+        _append_display_item(items, key="multi_queries", label="多路查询", value=multi_queries)
+        _append_display_item(
+            items,
+            key="count",
+            label="查询数量",
+            value=summary.get("count") if summary.get("count") is not None else len(multi_queries or []),
+        )
+        _append_display_item(items, key="reason", label="处理原因", value=summary.get("reason"))
+    elif node_name == "hyde":
+        _append_display_item(items, key="enabled", label="是否启用 HyDE", value=summary.get("enabled"))
+        hyde_docs = _pick_string_list(snapshot, "hyde_docs")
+        hyde_doc = _pick_text(snapshot, "hyde_doc") or (hyde_docs[0] if hyde_docs else None)
+        _append_display_item(items, key="hyde_doc", label="HyDE 生成内容", value=hyde_doc)
+        if hyde_docs:
+            _append_display_item(items, key="hyde_docs_count", label="HyDE 文档数量", value=len(hyde_docs))
+        _append_display_item(items, key="requested_count", label="目标生成数量", value=summary.get("requested_count"))
+        _append_display_item(items, key="generated_count", label="实际生成数量", value=summary.get("generated_count"))
+        _append_display_item(items, key="retry_regenerated", label="是否重试重生", value=summary.get("retry_regenerated"))
+        _append_display_item(items, key="reason", label="处理原因", value=summary.get("reason"))
+    elif node_name == "prepare_messages":
+        message_plan = _as_dict(summary.get("message_plan")) or {}
+        query_bundle_summary = _as_dict(summary.get("query_bundle")) or {}
+        diagnostics = _as_dict(summary.get("diagnostics")) or {}
+        budget = _as_dict(message_plan.get("budget")) or {}
+        query_items = _format_query_items(snapshot.get("query_items"))
+        _append_display_item(items, key="query_items", label="查询项", value=query_items)
+        _append_display_item(
+            items,
+            key="query_bundle_items_count",
+            label="入选查询数",
+            value=query_bundle_summary.get("items_count") if query_bundle_summary.get("items_count") is not None else len(query_items),
+        )
+        _append_display_item(items, key="message_plan_candidate_count", label="候选查询数", value=message_plan.get("candidate_count"))
+        _append_display_item(items, key="message_plan_dropped_count", label="丢弃查询数", value=message_plan.get("dropped_count"))
+        _append_display_item(items, key="message_plan_strategy", label="消息策略", value=message_plan.get("strategy"))
+        _append_display_item(items, key="message_plan_max_candidates", label="分支预算上限", value=budget.get("max_candidates"))
+        _append_display_item(items, key="fallback_reason", label="回退原因", value=diagnostics.get("fallback_reason"))
+        _append_display_item(items, key="quality_signals", label="质量信号", value=diagnostics.get("quality_signals"))
     elif node_name == "retrieval_subgraph":
         context_compress_summary = _as_dict((_as_dict(snapshot.get("stage_summaries")) or {}).get("context_compress")) or {}
         _append_display_item(items, key="evidence_count", label="证据数量", value=retrieval_metrics.get("evidence_count"))
@@ -590,6 +778,47 @@ def _build_node_output_display_items(*, node_name: str, output_snapshot: Any, er
             ("retry_count", "重试次数"),
         ):
             _append_display_item(items, key=key, label=label, value=summary.get(key))
+    elif node_name == "dispatch_subqueries":
+        _append_display_item(items, key="mode", label="检索编排模式", value=summary.get("mode"))
+        _append_display_item(items, key="branch_count", label="并行分支数", value=summary.get("branch_count"))
+        _append_display_item(items, key="reason", label="编排原因", value=summary.get("reason"))
+        _append_display_item(items, key="rank_strategy", label="排序策略", value=summary.get("rank_strategy"))
+        _append_display_item(items, key="selected_queries", label="分支查询", value=summary.get("selected_queries"))
+    elif node_name == "retrieve_subquery":
+        run = _resolve_current_subquery_run(snapshot)
+        _append_display_item(items, key="query", label="分支查询", value=run.get("query"))
+        _append_display_item(items, key="kind", label="分支类型", value=run.get("kind"))
+        _append_display_item(items, key="success", label="检索是否成功", value=run.get("success"))
+        _append_display_item(items, key="retrieval_count", label="证据数量", value=run.get("retrieval_count"))
+        _append_display_item(items, key="reason", label="失败原因", value=run.get("reason"))
+    elif node_name == "merge_subquery_context":
+        _append_display_item(items, key="mode", label="聚合模式", value=summary.get("mode"))
+        _append_display_item(items, key="branch_count", label="分支总数", value=summary.get("branch_count"))
+        _append_display_item(items, key="evidence_count", label="证据数量", value=summary.get("evidence_count"))
+        _append_display_item(items, key="retrieval_count", label="检索命中数", value=summary.get("retrieval_count"))
+        _append_display_item(items, key="failure_reasons", label="分支失败原因", value=summary.get("failure_reasons"))
+    elif node_name == "retrieve":
+        _append_display_item(
+            items,
+            key="evidence_count",
+            label="证据数量",
+            value=retrieval_metrics.get("evidence_count") if retrieval_metrics.get("evidence_count") is not None else summary.get("evidence_count"),
+        )
+        _append_display_item(
+            items,
+            key="attempted",
+            label="是否执行检索",
+            value=retrieval_metrics.get("attempted") if retrieval_metrics.get("attempted") is not None else summary.get("attempted"),
+        )
+        _append_display_item(items, key="reason", label="检索说明", value=summary.get("reason"))
+        _append_display_item(items, key="retrieval_count", label="检索命中数", value=summary.get("retrieval_count"))
+        _append_display_item(items, key="query_used", label="检索查询", value=summary.get("query_used"))
+    elif node_name == "context_compress":
+        compression_stats = _as_dict(snapshot.get("compression_stats")) or {}
+        _append_display_item(items, key="token_limit", label="压缩上限", value=compression_stats.get("token_limit"))
+        _append_display_item(items, key="input_tokens", label="压缩前 token", value=compression_stats.get("input_tokens"))
+        _append_display_item(items, key="output_tokens", label="压缩后 token", value=compression_stats.get("output_tokens"))
+        _append_display_item(items, key="truncated", label="是否截断", value=compression_stats.get("truncated"))
     elif node_name == "doc_gate_dispatch":
         _append_display_item(items, key="doc_gate_round", label="门控轮次", value=_resolve_doc_gate_round(snapshot))
     elif node_name in {"doc_gate_sufficiency", "doc_gate_answerability", "doc_gate_conflict"}:
@@ -702,6 +931,38 @@ def _build_node_output_display_items(*, node_name: str, output_snapshot: Any, er
     if error_summary:
         _append_display_item(items, key="error_summary", label="错误信息", value=error_summary)
     return items
+
+
+def _resolve_node_label_for_display(node_name: str | None) -> str | None:
+    if not isinstance(node_name, str) or not node_name.strip():
+        return None
+    metadata = KB_CHAT_NODE_METADATA.get(node_name.strip())
+    if not isinstance(metadata, dict):
+        return None
+    label = metadata.get("label")
+    return label.strip() if isinstance(label, str) and label.strip() else None
+
+
+def _build_node_input_display_items(*, node_name: str, input_snapshot: Any) -> list[dict[str, Any]]:
+    return _build_contract_input_display_items(
+        node_name=node_name,
+        snapshot=input_snapshot,
+        node_label_resolver=_resolve_node_label_for_display,
+    )
+
+
+def _build_node_output_display_items(
+    *,
+    node_name: str,
+    output_snapshot: Any,
+    error_summary: str | None = None,
+) -> list[dict[str, Any]]:
+    return _build_contract_output_display_items(
+        node_name=node_name,
+        snapshot=output_snapshot,
+        error_summary=error_summary,
+        node_label_resolver=_resolve_node_label_for_display,
+    )
 
 
 def _build_event_base_payload(node_name: str) -> dict[str, Any]:

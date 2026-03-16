@@ -1,0 +1,1125 @@
+"""KB Chat trace node display contract helpers."""
+
+from __future__ import annotations
+
+from collections.abc import Callable, Mapping
+import re
+from typing import Any
+
+DisplayItem = dict[str, Any]
+NodeLabelResolver = Callable[[str | None], str | None]
+
+_EVIDENCE_BLOCK_RE = re.compile(
+    r"^\[([^\[\]\n]{1,128})\]\s*(.*?)(?=^\[[^\[\]\n]{1,128}\]\s|\Z)",
+    re.MULTILINE | re.DOTALL,
+)
+
+_NODE_SUMMARY_KEY_MAP: dict[str, str] = {
+    "retrieve": "retrieval_layer",
+    "draft_generate": "generator",
+    "generate_variants_mod": "generate_variants",
+    "answer_commit": "answer_subgraph",
+    "answer_review_citation": "answer_review",
+    "answer_review_factual": "answer_review",
+    "answer_review_answerability": "answer_review",
+}
+
+_DOC_GATE_NODE_TO_GATE: dict[str, str] = {
+    "doc_gate_sufficiency": "sufficiency",
+    "doc_gate_answerability": "answerability",
+    "doc_gate_conflict": "conflict",
+}
+
+_ANSWER_REVIEW_NODE_TO_CHECK: dict[str, str] = {
+    "answer_review_citation": "citation",
+    "answer_review_factual": "factual",
+    "answer_review_answerability": "answerability",
+}
+
+_GATE_LABELS: dict[str, str] = {
+    "sufficiency": "证据充分度",
+    "answerability": "可回答性",
+    "conflict": "证据冲突检测",
+}
+
+_REVIEW_CHECK_LABELS: dict[str, str] = {
+    "citation": "引用覆盖审查",
+    "factual": "事实正确性审查",
+    "answerability": "可回答性审查",
+}
+
+_BUSINESS_LABEL_FALLBACKS: dict[str, str] = {
+    "__end__": "结束",
+    "end": "结束",
+    "none": "结束",
+    "preprocess_subgraph": "预处理子图",
+    "merge_context": "上下文合并",
+    "coref_rewrite": "指代消解",
+    "ambiguity_check": "歧义判断",
+    "normalize_rewrite": "问题规范",
+    "complexity_classify": "复杂度分类",
+    "generate_variants_mod": "中等变体生成",
+    "decomposition": "问题分解",
+    "generate_variants": "多路扩展",
+    "entity_expand": "实体扩展",
+    "hyde": "HyDE扩展",
+    "prepare_messages": "消息整理",
+    "preprocess_exit": "预处理出口",
+    "retrieval_subgraph": "检索子图",
+    "retrieval_budget_plan": "检索预算规划",
+    "dispatch_subqueries": "子查询派发",
+    "retrieve_subquery": "子查询检索",
+    "merge_subquery_context": "子查询上下文合并",
+    "retrieve": "知识检索",
+    "context_compress": "上下文压缩",
+    "evidence_gate_subgraph": "证据门控子图",
+    "doc_gate_dispatch": "文档门控分发",
+    "doc_gate_sufficiency": "证据充分度",
+    "doc_gate_answerability": "可回答性",
+    "doc_gate_conflict": "证据冲突检测",
+    "doc_gate_fuse": "门控结果汇总",
+    "doc_gate_route": "文档判定",
+    "transform_query": "查询改写",
+    "answer_subgraph": "答案子图",
+    "draft_generate": "草稿生成",
+    "answer_review_dispatch": "审查分发",
+    "answer_review_citation": "引用覆盖审查",
+    "answer_review_factual": "事实正确性审查",
+    "answer_review_answerability": "可回答性审查",
+    "answer_review_fuse": "审查结果汇总",
+    "cove_check": "高风险验证判定",
+    "chain_of_verification": "验证链",
+    "claim_citation_check": "断言引用校验",
+    "answer_repair": "答案修复",
+    "answer_commit": "答案提交",
+    "force_exit": "结束",
+    "confidence_calibrate": "结束",
+    "retry": "继续检索",
+    "retry_conflict": "继续检索",
+    "transform_query_retry": "继续检索",
+    "clarify": "结束",
+    "confidence": "置信度校准",
+}
+
+_DISPLAY_LABELS: dict[str, str] = {
+    "user_input": "用户问题",
+    "recent_turns": "最近对话",
+    "merged_context": "合并上下文",
+    "normalized_query": "规范化问题",
+    "query_items": "检索查询项",
+    "draft_answer": "草稿答案",
+    "current_evidence": "当前证据",
+    "subquery": "分支查询",
+    "exit_action": "终止动作",
+    "candidate_answer": "候选答案",
+    "gate_results": "门控结果",
+    "review_results": "审查结果",
+    "decision": "结论",
+    "reason": "原因",
+    "next_node_label": "下一跳",
+    "clarification_prompt": "澄清提示",
+    "dispatch_targets": "派发目标",
+    "sub_queries": "分解问题",
+    "multi_queries": "多路查询",
+    "review_checks": "审查项",
+    "planned_query_count": "计划查询数",
+    "planned_per_query_top_k": "每路召回条数",
+    "retrieved_evidence": "检索证据",
+    "compressed_evidence": "压缩后证据",
+    "hyde_docs": "HyDE 文档",
+    "repaired_answer": "修复后答案",
+    "final_answer": "最终答案",
+    "error_summary": "错误信息",
+}
+
+_INPUT_CONTRACTS: dict[str, list[str]] = {
+    "preprocess_subgraph": ["user_input"],
+    "merge_context": ["user_input", "recent_turns"],
+    "coref_rewrite": ["user_input"],
+    "ambiguity_check": ["normalized_query"],
+    "normalize_rewrite": ["normalized_query"],
+    "complexity_classify": ["user_input"],
+    "generate_variants_mod": ["normalized_query"],
+    "decomposition": ["normalized_query"],
+    "generate_variants": ["normalized_query"],
+    "entity_expand": ["normalized_query"],
+    "hyde": ["normalized_query"],
+    "prepare_messages": ["normalized_query", "sub_queries", "multi_queries"],
+    "preprocess_exit": ["normalized_query"],
+    "retrieval_subgraph": ["query_items"],
+    "retrieval_budget_plan": ["normalized_query", "query_items"],
+    "dispatch_subqueries": ["query_items"],
+    "retrieve_subquery": ["subquery"],
+    "merge_subquery_context": ["retrieved_evidence"],
+    "retrieve": ["query_items"],
+    "context_compress": ["retrieved_evidence"],
+    "evidence_gate_subgraph": ["normalized_query", "current_evidence"],
+    "doc_gate_dispatch": ["normalized_query", "current_evidence"],
+    "doc_gate_sufficiency": ["current_evidence"],
+    "doc_gate_answerability": ["current_evidence"],
+    "doc_gate_conflict": ["current_evidence"],
+    "doc_gate_fuse": ["gate_results"],
+    "doc_gate_route": ["normalized_query", "gate_results"],
+    "transform_query": ["normalized_query"],
+    "answer_subgraph": ["normalized_query", "current_evidence"],
+    "draft_generate": ["normalized_query", "current_evidence"],
+    "answer_review_dispatch": ["draft_answer"],
+    "answer_review_citation": ["draft_answer"],
+    "answer_review_factual": ["draft_answer"],
+    "answer_review_answerability": ["draft_answer"],
+    "answer_review_fuse": ["review_results"],
+    "cove_check": ["draft_answer"],
+    "chain_of_verification": ["draft_answer"],
+    "claim_citation_check": ["draft_answer"],
+    "answer_repair": ["draft_answer"],
+    "answer_commit": ["candidate_answer"],
+    "force_exit": ["exit_action", "candidate_answer"],
+    "confidence_calibrate": ["final_answer"],
+}
+
+_OUTPUT_CONTRACTS: dict[str, list[str]] = {
+    "preprocess_subgraph": ["decision", "reason", "next_node_label"],
+    "merge_context": ["merged_context"],
+    "coref_rewrite": ["normalized_query"],
+    "ambiguity_check": ["decision", "reason", "clarification_prompt"],
+    "normalize_rewrite": ["normalized_query"],
+    "complexity_classify": ["decision", "reason", "next_node_label"],
+    "generate_variants_mod": ["multi_queries"],
+    "decomposition": ["sub_queries"],
+    "generate_variants": ["multi_queries"],
+    "entity_expand": ["multi_queries"],
+    "hyde": ["hyde_docs"],
+    "prepare_messages": ["query_items"],
+    "preprocess_exit": ["decision", "reason", "next_node_label", "final_answer"],
+    "retrieval_subgraph": ["decision", "reason", "next_node_label"],
+    "retrieval_budget_plan": ["planned_query_count", "planned_per_query_top_k"],
+    "dispatch_subqueries": ["dispatch_targets"],
+    "retrieve_subquery": ["retrieved_evidence"],
+    "merge_subquery_context": ["retrieved_evidence"],
+    "retrieve": ["retrieved_evidence"],
+    "context_compress": ["compressed_evidence"],
+    "evidence_gate_subgraph": ["decision", "reason", "next_node_label"],
+    "doc_gate_dispatch": ["dispatch_targets"],
+    "doc_gate_sufficiency": ["decision", "reason", "next_node_label"],
+    "doc_gate_answerability": ["decision", "reason", "next_node_label"],
+    "doc_gate_conflict": ["decision", "reason", "next_node_label"],
+    "doc_gate_fuse": ["decision", "reason", "next_node_label"],
+    "doc_gate_route": ["decision", "reason", "next_node_label"],
+    "transform_query": ["normalized_query"],
+    "answer_subgraph": ["decision", "reason", "next_node_label"],
+    "draft_generate": ["draft_answer"],
+    "answer_review_dispatch": ["review_checks"],
+    "answer_review_citation": ["decision", "reason", "next_node_label"],
+    "answer_review_factual": ["decision", "reason", "next_node_label"],
+    "answer_review_answerability": ["decision", "reason", "next_node_label"],
+    "answer_review_fuse": ["decision", "reason", "next_node_label"],
+    "cove_check": ["decision", "reason", "next_node_label"],
+    "chain_of_verification": ["decision", "reason", "next_node_label"],
+    "claim_citation_check": ["decision", "reason", "next_node_label"],
+    "answer_repair": ["repaired_answer"],
+    "answer_commit": ["final_answer"],
+    "force_exit": ["final_answer", "reason", "next_node_label"],
+    "confidence_calibrate": ["decision", "reason", "next_node_label"],
+}
+
+
+def build_node_input_display_items(
+    *,
+    node_name: str,
+    snapshot: Any,
+    node_label_resolver: NodeLabelResolver | None = None,
+) -> list[DisplayItem]:
+    state = _as_dict(snapshot) or {}
+    values = _build_input_value_map(
+        node_name=node_name,
+        snapshot=state,
+        node_label_resolver=node_label_resolver,
+    )
+    return _items_from_contract(_INPUT_CONTRACTS.get(node_name, []), values)
+
+
+def build_node_output_display_items(
+    *,
+    node_name: str,
+    snapshot: Any,
+    error_summary: str | None = None,
+    node_label_resolver: NodeLabelResolver | None = None,
+) -> list[DisplayItem]:
+    state = _as_dict(snapshot) or {}
+    values = _build_output_value_map(
+        node_name=node_name,
+        snapshot=state,
+        error_summary=error_summary,
+        node_label_resolver=node_label_resolver,
+    )
+    return _items_from_contract(_OUTPUT_CONTRACTS.get(node_name, []), values)
+
+
+def _as_dict(value: Any) -> dict[str, Any] | None:
+    return value if isinstance(value, dict) else None
+
+
+def _non_empty_text(value: Any) -> str | None:
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return None
+
+
+def _pick_text(snapshot: Mapping[str, Any], *keys: str) -> str | None:
+    for key in keys:
+        text = _non_empty_text(snapshot.get(key))
+        if text:
+            return text
+    return None
+
+
+def _pick_string_list(snapshot: Mapping[str, Any], *keys: str) -> list[str] | None:
+    for key in keys:
+        raw = snapshot.get(key)
+        if not isinstance(raw, list):
+            continue
+        items = [
+            item.strip()
+            for item in raw
+            if isinstance(item, str) and item.strip()
+        ]
+        if items:
+            return items
+    return None
+
+
+def _get_context_frame(snapshot: Mapping[str, Any]) -> dict[str, Any] | None:
+    return _as_dict(snapshot.get("context_frame"))
+
+
+def _pick_context_frame_turns(snapshot: Mapping[str, Any], key: str) -> list[str] | None:
+    frame = _get_context_frame(snapshot)
+    raw = frame.get(key) if frame else None
+    if not isinstance(raw, list):
+        return None
+    turns: list[str] = []
+    for item in raw:
+        record = _as_dict(item)
+        if not record:
+            continue
+        role_raw = _non_empty_text(record.get("role")) or ""
+        role = "用户" if role_raw == "user" else "助手" if role_raw == "assistant" else role_raw
+        text = _non_empty_text(record.get("text"))
+        if not text:
+            continue
+        turns.append(f"{role}: {text}" if role else text)
+    return turns or None
+
+
+def _summary_for_node(snapshot: Mapping[str, Any], node_name: str) -> dict[str, Any]:
+    stage_summaries = _as_dict(snapshot.get("stage_summaries")) or {}
+    return _as_dict(stage_summaries.get(_NODE_SUMMARY_KEY_MAP.get(node_name, node_name))) or {}
+
+
+def _resolve_trace_command(snapshot: Mapping[str, Any]) -> dict[str, Any]:
+    return _as_dict(snapshot.get("__trace_command__")) or {}
+
+
+def _resolve_routing_decision(snapshot: Mapping[str, Any], phase: str) -> dict[str, Any]:
+    routing = _as_dict(snapshot.get("routing_decisions")) or {}
+    return _as_dict(routing.get(phase)) or {}
+
+
+def _resolve_doc_gate_round(snapshot: Mapping[str, Any]) -> int | None:
+    task = _as_dict(snapshot.get("doc_gate_task")) or {}
+    raw_round = task.get("round")
+    if isinstance(raw_round, int) and raw_round > 0:
+        return raw_round
+    state_round = snapshot.get("doc_gate_round")
+    if isinstance(state_round, int) and state_round > 0:
+        return state_round
+    return None
+
+
+def _resolve_doc_gate_run(snapshot: Mapping[str, Any], node_name: str) -> dict[str, Any]:
+    gate = _DOC_GATE_NODE_TO_GATE.get(node_name)
+    if not gate:
+        return {}
+    active_round = _resolve_doc_gate_round(snapshot)
+    runs = snapshot.get("doc_gate_runs")
+    candidates = [item for item in runs if isinstance(item, dict)] if isinstance(runs, list) else []
+    for item in reversed(candidates):
+        if str(item.get("gate") or "") != gate:
+            continue
+        round_value = item.get("round")
+        if active_round is None or not isinstance(round_value, int) or round_value == active_round:
+            return item
+    return {}
+
+
+def _resolve_answer_review_round(snapshot: Mapping[str, Any]) -> int | None:
+    task = _as_dict(snapshot.get("answer_review_task")) or {}
+    raw_round = task.get("review_round")
+    if isinstance(raw_round, int) and raw_round >= 0:
+        return raw_round
+    loop_counts = _as_dict(snapshot.get("loop_counts")) or {}
+    state_round = loop_counts.get("generation_retries")
+    if isinstance(state_round, int) and state_round >= 0:
+        return state_round
+    dispatch_summary = _summary_for_node(snapshot, "answer_review_dispatch")
+    summary_round = dispatch_summary.get("review_round")
+    if isinstance(summary_round, int) and summary_round >= 0:
+        return summary_round
+    return None
+
+
+def _resolve_answer_review_run(snapshot: Mapping[str, Any], node_name: str) -> dict[str, Any]:
+    check = _ANSWER_REVIEW_NODE_TO_CHECK.get(node_name)
+    if not check:
+        return {}
+    active_round = _resolve_answer_review_round(snapshot)
+    runs = snapshot.get("answer_review_runs")
+    candidates = [item for item in runs if isinstance(item, dict)] if isinstance(runs, list) else []
+    for item in reversed(candidates):
+        if str(item.get("check") or "") != check:
+            continue
+        run_round = item.get("review_round")
+        if isinstance(run_round, int):
+            if active_round is None or run_round == active_round:
+                return item
+            continue
+        if active_round in {None, 0}:
+            return item
+    return {}
+
+
+def _resolve_current_subquery_run(snapshot: Mapping[str, Any]) -> dict[str, Any]:
+    runs = snapshot.get("subquery_runs")
+    candidates = [item for item in runs if isinstance(item, dict)] if isinstance(runs, list) else []
+    if not candidates:
+        return {}
+
+    task = _as_dict(snapshot.get("subquery_task")) or {}
+    task_id = _non_empty_text(task.get("subquery_id"))
+    task_index = task.get("index")
+    if task_id:
+        for item in reversed(candidates):
+            if _non_empty_text(item.get("subquery_id")) == task_id:
+                return item
+    if isinstance(task_index, int):
+        for item in reversed(candidates):
+            if item.get("index") == task_index:
+                return item
+    return candidates[-1]
+
+
+def _format_query_items(value: Any) -> list[str] | None:
+    if not isinstance(value, list):
+        return None
+    items: list[str] = []
+    for index, item in enumerate(value, start=1):
+        if isinstance(item, str) and item.strip():
+            items.append(f"{index}. {item.strip()}")
+            continue
+        record = _as_dict(item)
+        if not record:
+            continue
+        query = _non_empty_text(record.get("query"))
+        if not query:
+            continue
+        kind = _non_empty_text(record.get("kind"))
+        prefix = f"[{kind}] " if kind else ""
+        items.append(f"{index}. {prefix}{query}")
+    return items or None
+
+
+def _build_input_value_map(
+    *,
+    node_name: str,
+    snapshot: Mapping[str, Any],
+    node_label_resolver: NodeLabelResolver | None,
+) -> dict[str, Any]:
+    _ = node_label_resolver
+    current_subquery_run = _resolve_current_subquery_run(snapshot)
+    values: dict[str, Any] = {
+        "user_input": _pick_text(snapshot, "user_input"),
+        "recent_turns": _pick_context_frame_turns(snapshot, "recent_turns"),
+        "normalized_query": _pick_text(
+            snapshot,
+            "normalized_query",
+            "coref_query",
+            "rewrite_input_query",
+            "user_input",
+        ),
+        "query_items": _format_query_items(snapshot.get("query_items")),
+        "draft_answer": _pick_text(snapshot, "draft_answer", "final_answer"),
+        "current_evidence": _format_evidence_from_snapshot(snapshot),
+        "subquery": _pick_text(
+            _as_dict(snapshot.get("subquery_task")) or current_subquery_run,
+            "query",
+        ),
+        "exit_action": _resolve_exit_action(snapshot),
+        "candidate_answer": _pick_text(
+            snapshot,
+            "candidate_answer",
+            "best_answer",
+            "draft_answer",
+            "final_answer",
+        ),
+        "gate_results": _format_gate_results(snapshot),
+        "review_results": _format_review_results(snapshot),
+        "sub_queries": _pick_string_list(snapshot, "sub_queries"),
+        "multi_queries": _pick_string_list(snapshot, "multi_queries"),
+        "final_answer": _pick_text(snapshot, "final_answer"),
+        "retrieved_evidence": _format_evidence_for_node(node_name=node_name, snapshot=snapshot),
+    }
+    if node_name in {"merge_subquery_context", "context_compress"}:
+        values["retrieved_evidence"] = _format_evidence_from_snapshot(snapshot)
+    if node_name == "retrieve_subquery":
+        values["subquery"] = _pick_text(current_subquery_run, "query") or values["subquery"]
+    if node_name in {"doc_gate_fuse", "doc_gate_route"}:
+        values["gate_results"] = _format_gate_results(snapshot)
+    if node_name == "answer_review_fuse":
+        values["review_results"] = _format_review_results(snapshot)
+    return values
+
+
+def _build_output_value_map(
+    *,
+    node_name: str,
+    snapshot: Mapping[str, Any],
+    error_summary: str | None,
+    node_label_resolver: NodeLabelResolver | None,
+) -> dict[str, Any]:
+    summary = _summary_for_node(snapshot, node_name)
+    decision, reason, next_node_label = _resolve_decision_triplet(
+        node_name=node_name,
+        snapshot=snapshot,
+        summary=summary,
+        node_label_resolver=node_label_resolver,
+    )
+    values: dict[str, Any] = {
+        "decision": decision,
+        "reason": reason,
+        "next_node_label": next_node_label,
+        "merged_context": _resolve_merged_context_display(snapshot),
+        "normalized_query": _pick_text(
+            snapshot,
+            "normalized_query",
+            "coref_query",
+            "rewrite_input_query",
+            "user_input",
+        ),
+        "clarification_prompt": _pick_text(snapshot, "final_answer", "clarification_prompt"),
+        "multi_queries": _pick_string_list(snapshot, "multi_queries"),
+        "sub_queries": _pick_string_list(snapshot, "sub_queries"),
+        "hyde_docs": _pick_string_list(snapshot, "hyde_docs")
+        or _single_item_list(_pick_text(snapshot, "hyde_doc")),
+        "query_items": _format_query_items(snapshot.get("query_items")),
+        "planned_query_count": _resolve_planned_query_count(snapshot, summary),
+        "planned_per_query_top_k": _resolve_planned_top_k(summary),
+        "dispatch_targets": _resolve_dispatch_targets(
+            node_name=node_name,
+            snapshot=snapshot,
+            node_label_resolver=node_label_resolver,
+        ),
+        "retrieved_evidence": _format_evidence_for_node(node_name=node_name, snapshot=snapshot),
+        "compressed_evidence": _format_compressed_evidence(snapshot),
+        "review_checks": _format_review_checks(snapshot, node_label_resolver=node_label_resolver),
+        "draft_answer": _pick_text(snapshot, "draft_answer"),
+        "repaired_answer": _pick_text(snapshot, "repaired_answer", "final_answer"),
+        "final_answer": _pick_text(snapshot, "final_answer", "best_answer", "draft_answer"),
+        "error_summary": _non_empty_text(error_summary),
+    }
+    if node_name == "answer_commit":
+        values["final_answer"] = _pick_text(snapshot, "final_answer", "best_answer", "draft_answer")
+    if node_name in {"force_exit", "confidence_calibrate"}:
+        values["next_node_label"] = "结束"
+    return values
+
+
+def _items_from_contract(contract: list[str], values: Mapping[str, Any]) -> list[DisplayItem]:
+    items: list[DisplayItem] = []
+    for key in contract:
+        _append_display_item(items, key=key, value=values.get(key))
+    error_item = values.get("error_summary")
+    if error_item:
+        _append_display_item(items, key="error_summary", value=error_item)
+    return items
+
+
+def _append_display_item(items: list[DisplayItem], *, key: str, value: Any) -> None:
+    if isinstance(value, bool):
+        items.append(
+            {"key": key, "label": _DISPLAY_LABELS[key], "value": "是" if value else "否"}
+        )
+        return
+    if isinstance(value, (int, float)):
+        items.append({"key": key, "label": _DISPLAY_LABELS[key], "value": str(value)})
+        return
+    if isinstance(value, str):
+        text = _non_empty_text(value)
+        if text:
+            items.append({"key": key, "label": _DISPLAY_LABELS[key], "value": text})
+        return
+    if isinstance(value, list):
+        lines = [item for item in value if isinstance(item, str) and item.strip()]
+        if lines:
+            items.append({"key": key, "label": _DISPLAY_LABELS[key], "value": lines})
+
+
+def _resolve_exit_action(snapshot: Mapping[str, Any]) -> str | None:
+    reflection = _as_dict(snapshot.get("reflection")) or {}
+    return _pick_text(reflection, "action") or _pick_text(snapshot, "exit_action")
+
+
+def _resolve_planned_query_count(snapshot: Mapping[str, Any], summary: Mapping[str, Any]) -> int | None:
+    raw = summary.get("query_count")
+    if isinstance(raw, int):
+        return raw
+    query_items = snapshot.get("query_items")
+    if isinstance(query_items, list) and query_items:
+        return len(query_items)
+    return None
+
+
+def _resolve_planned_top_k(summary: Mapping[str, Any]) -> int | None:
+    raw = summary.get("per_query_top_k")
+    return raw if isinstance(raw, int) else None
+
+
+def _resolve_dispatch_targets(
+    *,
+    node_name: str,
+    snapshot: Mapping[str, Any],
+    node_label_resolver: NodeLabelResolver | None,
+) -> list[str] | None:
+    trace = _resolve_trace_command(snapshot)
+    raw_targets = trace.get("goto_targets")
+    if node_name == "dispatch_subqueries":
+        return _format_query_items(snapshot.get("query_items"))
+    if node_name == "doc_gate_dispatch":
+        if isinstance(raw_targets, list) and raw_targets:
+            targets = [
+                _resolve_node_label(str(target), node_label_resolver=node_label_resolver)
+                for target in raw_targets
+                if isinstance(target, str) and target.strip()
+            ]
+            return [target for target in targets if target]
+        return [
+            _GATE_LABELS["sufficiency"],
+            _GATE_LABELS["answerability"],
+            _GATE_LABELS["conflict"],
+        ]
+    return None
+
+
+def _format_review_checks(
+    snapshot: Mapping[str, Any],
+    *,
+    node_label_resolver: NodeLabelResolver | None,
+) -> list[str] | None:
+    summary = _summary_for_node(snapshot, "answer_review_dispatch")
+    checks = summary.get("checks")
+    if not isinstance(checks, list):
+        trace = _resolve_trace_command(snapshot)
+        checks = trace.get("goto_targets")
+    if not isinstance(checks, list):
+        return None
+    result: list[str] = []
+    for item in checks:
+        if not isinstance(item, str) or not item.strip():
+            continue
+        check_name = _ANSWER_REVIEW_NODE_TO_CHECK.get(item, item)
+        result.append(
+            _REVIEW_CHECK_LABELS.get(
+                check_name,
+                _resolve_node_label(item, node_label_resolver=node_label_resolver),
+            )
+        )
+    return result or None
+
+
+def _format_gate_results(snapshot: Mapping[str, Any]) -> list[str] | None:
+    runs = snapshot.get("doc_gate_runs")
+    if not isinstance(runs, list):
+        return None
+    active_round = _resolve_doc_gate_round(snapshot)
+    result: list[str] = []
+    for gate in ("sufficiency", "answerability", "conflict"):
+        match = None
+        for item in reversed(runs):
+            if not isinstance(item, dict) or str(item.get("gate") or "") != gate:
+                continue
+            round_value = item.get("round")
+            if active_round is None or not isinstance(round_value, int) or round_value == active_round:
+                match = item
+                break
+        if not match:
+            continue
+        passed = bool(match.get("passed"))
+        reason = _non_empty_text(match.get("reason")) or "未返回明确原因"
+        result.append(
+            f"{_GATE_LABELS.get(gate, gate)}：{'通过' if passed else '未通过'}｜原因：{reason}"
+        )
+    return result or None
+
+
+def _format_review_results(snapshot: Mapping[str, Any]) -> list[str] | None:
+    runs = snapshot.get("answer_review_runs")
+    if not isinstance(runs, list):
+        return None
+    active_round = _resolve_answer_review_round(snapshot)
+    result: list[str] = []
+    for check in ("citation", "factual", "answerability"):
+        match = None
+        for item in reversed(runs):
+            if not isinstance(item, dict) or str(item.get("check") or "") != check:
+                continue
+            round_value = item.get("review_round")
+            if active_round is None or not isinstance(round_value, int) or round_value == active_round:
+                match = item
+                break
+        if not match:
+            continue
+        passed = bool(match.get("passed"))
+        reason = _non_empty_text(match.get("reason")) or "未返回明确原因"
+        result.append(
+            f"{_REVIEW_CHECK_LABELS.get(check, check)}：{'通过' if passed else '未通过'}｜原因：{reason}"
+        )
+    return result or None
+
+
+def _format_evidence_for_node(*, node_name: str, snapshot: Mapping[str, Any]) -> list[str] | None:
+    if node_name == "retrieve_subquery":
+        run = _resolve_current_subquery_run(snapshot)
+        return _format_evidence_value(run.get("context"))
+    return _format_evidence_from_snapshot(snapshot)
+
+
+def _format_compressed_evidence(snapshot: Mapping[str, Any]) -> list[str] | None:
+    return _format_evidence_value(snapshot.get("final_context"))
+
+
+def _format_evidence_from_snapshot(snapshot: Mapping[str, Any]) -> list[str] | None:
+    for key in (
+        "current_evidence",
+        "retrieved_evidence",
+        "compressed_evidence",
+        "evidence_items",
+        "final_context",
+        "compressed_context",
+        "context",
+    ):
+        result = _format_evidence_value(snapshot.get(key))
+        if result:
+            return result
+    return None
+
+
+def _format_evidence_value(value: Any) -> list[str] | None:
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return None
+        blocks = _parse_evidence_blocks(text)
+        if blocks:
+            return [_format_evidence_entry(None, body) for body in blocks]
+        if text in {"（未找到相关内容）", "未检索到相关证据"}:
+            return ["未检索到相关证据"]
+        return [_format_evidence_entry(None, text)]
+    if isinstance(value, list):
+        if not value:
+            return ["未检索到相关证据"]
+        items: list[str] = []
+        for item in value:
+            if isinstance(item, str):
+                nested = _format_evidence_value(item)
+                if nested:
+                    items.extend(nested)
+                continue
+            record = _as_dict(item)
+            if not record:
+                continue
+            title = _pick_text(
+                record,
+                "citation_title",
+                "title",
+                "document_name",
+                "document_title",
+            )
+            body = _pick_text(record, "excerpt", "chunk_content", "content", "text", "body")
+            items.append(_format_evidence_entry(title, body))
+        return items or ["未检索到相关证据"]
+    record = _as_dict(value)
+    if record:
+        return _format_evidence_value([record])
+    return None
+
+
+def _parse_evidence_blocks(text: str) -> list[str]:
+    blocks: list[str] = []
+    for match in _EVIDENCE_BLOCK_RE.finditer(text.strip()):
+        body = _non_empty_text(match.group(2))
+        if body:
+            blocks.append(body)
+    return blocks
+
+
+def _format_evidence_entry(title: str | None, body: str | None) -> str:
+    return (
+        f"文档名：{title or '未命名文档'}\n"
+        f"Chunk 内容：{body or '正文缺失'}"
+    )
+
+
+def _single_item_list(value: str | None) -> list[str] | None:
+    return [value] if value else None
+
+
+def _resolve_merged_context_display(snapshot: Mapping[str, Any]) -> str | None:
+    direct = _pick_text(snapshot, "display_context", "merged_context")
+    if direct:
+        return direct
+    parts: list[str] = []
+    user_input = _pick_text(snapshot, "user_input")
+    if user_input:
+        parts.append(f"用户问题：{user_input}")
+    recent_turns = _pick_context_frame_turns(snapshot, "recent_turns") or []
+    parts.extend(recent_turns)
+    if parts:
+        return "\n".join(parts)
+    return None
+
+
+def _resolve_decision_triplet(
+    *,
+    node_name: str,
+    snapshot: Mapping[str, Any],
+    summary: Mapping[str, Any],
+    node_label_resolver: NodeLabelResolver | None,
+) -> tuple[str | None, str | None, str | None]:
+    trace = _resolve_trace_command(snapshot)
+    reflection = _as_dict(snapshot.get("reflection")) or {}
+    next_node_label = _resolve_next_node_label(
+        node_name=node_name,
+        snapshot=snapshot,
+        summary=summary,
+        node_label_resolver=node_label_resolver,
+    )
+    default_reason = "未返回明确原因"
+
+    if node_name == "ambiguity_check":
+        ambiguous = summary.get("ambiguous")
+        if ambiguous is None:
+            ambiguous = _pick_text(reflection, "action") == "clarify"
+        decision = "需要澄清" if bool(ambiguous) else "无需澄清"
+        reason = _pick_text(summary, "reason") or _pick_text(reflection, "reason") or default_reason
+        return decision, reason, next_node_label
+
+    if node_name == "complexity_classify":
+        decision = _complexity_decision_text(summary=summary, snapshot=snapshot)
+        reason = _pick_text(summary, "reasoning", "reason") or default_reason
+        return decision, reason, next_node_label or "下游节点未知"
+
+    if node_name == "preprocess_exit":
+        route = _resolve_routing_decision(snapshot, "preprocess")
+        raw_next = _pick_text(route, "next_node") or _pick_text(trace, "goto")
+        decision = "直接给出答案" if raw_next == "force_exit" else _humanize_decision(raw_next)
+        reason = _pick_text(route, "reason") or _pick_text(reflection, "reason") or default_reason
+        return decision or "结束当前流程", reason, next_node_label or "结束"
+
+    if node_name == "preprocess_subgraph":
+        route = _resolve_routing_decision(snapshot, "preprocess")
+        raw = _pick_text(route, "next_node", "action") or _pick_text(trace, "goto")
+        decision = _humanize_decision(raw) or (
+            f"进入{next_node_label}" if next_node_label and next_node_label != "结束" else "结束当前流程"
+        )
+        reason = _pick_text(route, "reason") or _pick_text(summary, "reason") or default_reason
+        return decision, reason, next_node_label or "下游节点未知"
+
+    if node_name == "retrieval_subgraph":
+        decision = _humanize_decision(_pick_text(trace, "goto")) or "完成检索流程"
+        reason = _pick_text(summary, "reason") or "已完成检索并进入证据判断"
+        return decision, reason, next_node_label or "下游节点未知"
+
+    if node_name in {"evidence_gate_subgraph", "doc_gate_fuse", "doc_gate_route"}:
+        routing = _resolve_routing_decision(snapshot, "doc_gate")
+        raw = (
+            _pick_text(summary, "decision")
+            or _pick_text(routing, "reason_code", "action", "next_node")
+            or _pick_text(trace, "goto")
+        )
+        decision = _route_decision_text(raw)
+        reason = _pick_text(routing, "reason") or _pick_text(summary, "reason") or default_reason
+        return decision, reason, next_node_label or "下游节点未知"
+
+    if node_name in {"doc_gate_sufficiency", "doc_gate_answerability", "doc_gate_conflict"}:
+        run = _resolve_doc_gate_run(snapshot, node_name)
+        passed = run.get("passed")
+        decision = "通过" if passed is True else "未通过" if passed is False else "未返回明确结论"
+        reason = _pick_text(run, "reason") or default_reason
+        return decision, reason, next_node_label or _resolve_node_label(
+            "doc_gate_fuse",
+            node_label_resolver=node_label_resolver,
+        ) or "下游节点未知"
+
+    if node_name == "answer_subgraph":
+        routing = _resolve_routing_decision(snapshot, "answer_subgraph")
+        raw = _pick_text(routing, "next_node", "action") or _pick_text(summary, "next_step") or _pick_text(trace, "goto")
+        decision = _answer_route_decision_text(raw)
+        reason = _pick_text(routing, "reason") or _pick_text(summary, "reason") or _pick_text(reflection, "reason") or default_reason
+        return decision, reason, next_node_label or "下游节点未知"
+
+    if node_name in {
+        "answer_review_citation",
+        "answer_review_factual",
+        "answer_review_answerability",
+    }:
+        run = _resolve_answer_review_run(snapshot, node_name)
+        passed = run.get("passed")
+        decision = "通过" if passed is True else "未通过" if passed is False else "未返回明确结论"
+        reason = _pick_text(run, "reason") or default_reason
+        return decision, reason, next_node_label or _resolve_node_label(
+            "answer_review_fuse",
+            node_label_resolver=node_label_resolver,
+        ) or "下游节点未知"
+
+    if node_name == "answer_review_fuse":
+        passed = summary.get("passed")
+        if passed is True:
+            decision = "审查通过"
+        elif passed is False:
+            decision = "审查未通过"
+        else:
+            raw = _pick_text(summary, "next_step") or _pick_text(trace, "goto")
+            decision = _answer_route_decision_text(raw)
+        reason = _pick_text(summary, "reason") or default_reason
+        return decision, reason, next_node_label or "下游节点未知"
+
+    if node_name == "cove_check":
+        enabled = summary.get("enabled")
+        if enabled is True:
+            decision = "需要验证链"
+            reason = "识别为高风险问题"
+        else:
+            decision = "跳过验证链"
+            reason = "低风险问题，无需验证链"
+        return decision, reason, next_node_label or "下游节点未知"
+
+    if node_name == "chain_of_verification":
+        passed = summary.get("passed")
+        decision = "验证通过" if passed is True else "验证未通过" if passed is False else "未返回明确结论"
+        reason = _pick_text(summary, "reason") or default_reason
+        return decision, reason, next_node_label or "下游节点未知"
+
+    if node_name == "claim_citation_check":
+        passed = summary.get("passed")
+        decision = "引用校验通过" if passed is True else "引用校验未通过" if passed is False else "未返回明确结论"
+        reason = _pick_text(summary, "reason") or default_reason
+        return decision, reason, next_node_label or "下游节点未知"
+
+    if node_name == "confidence_calibrate":
+        decision = _confidence_decision_text(summary=summary, snapshot=snapshot)
+        reason = _pick_text(summary, "reason") or default_reason
+        return decision, reason, "结束"
+
+    if node_name == "force_exit":
+        reason = _pick_text(summary, "reason") or _pick_text(reflection, "reason") or default_reason
+        return None, reason, "结束"
+
+    decision = _humanize_decision(
+        _pick_text(summary, "decision", "action", "goto")
+        or _pick_text(trace, "goto")
+    )
+    reason = _pick_text(summary, "reason") or _pick_text(reflection, "reason") or default_reason
+    return decision, reason, next_node_label
+
+
+def _resolve_next_node_label(
+    *,
+    node_name: str,
+    snapshot: Mapping[str, Any],
+    summary: Mapping[str, Any],
+    node_label_resolver: NodeLabelResolver | None,
+) -> str | None:
+    if node_name in {"force_exit", "confidence_calibrate"}:
+        return "结束"
+
+    trace = _resolve_trace_command(snapshot)
+    candidates: list[str | None] = []
+
+    phase_by_node = {
+        "preprocess_subgraph": "preprocess",
+        "preprocess_exit": "preprocess",
+        "evidence_gate_subgraph": "doc_gate",
+        "doc_gate_route": "doc_gate",
+        "answer_subgraph": "answer_subgraph",
+        "answer_commit": "answer_subgraph",
+    }
+    phase = phase_by_node.get(node_name)
+    if phase:
+        routing = _resolve_routing_decision(snapshot, phase)
+        candidates.extend(
+            [
+                _pick_text(routing, "next_node"),
+                _pick_text(routing, "action"),
+            ]
+        )
+
+    candidates.extend(
+        [
+            _pick_text(summary, "next_node", "next_step", "goto"),
+            _pick_text(trace, "goto"),
+        ]
+    )
+
+    if node_name in {"doc_gate_sufficiency", "doc_gate_answerability", "doc_gate_conflict"}:
+        candidates.append("doc_gate_fuse")
+    elif node_name == "doc_gate_fuse":
+        candidates.append("doc_gate_route")
+    elif node_name in {
+        "answer_review_citation",
+        "answer_review_factual",
+        "answer_review_answerability",
+    }:
+        candidates.append("answer_review_fuse")
+    elif node_name == "cove_check":
+        enabled = summary.get("enabled")
+        candidates.append("chain_of_verification" if enabled else "claim_citation_check")
+    elif node_name == "chain_of_verification":
+        candidates.append("claim_citation_check")
+    elif node_name == "claim_citation_check":
+        passed = summary.get("passed")
+        candidates.append("answer_commit" if passed is True else "answer_repair")
+
+    for candidate in candidates:
+        label = _resolve_node_label(candidate, node_label_resolver=node_label_resolver)
+        if label:
+            return label
+    return None
+
+
+def _resolve_node_label(
+    node_name: str | None,
+    *,
+    node_label_resolver: NodeLabelResolver | None,
+) -> str | None:
+    raw = _non_empty_text(node_name)
+    if not raw:
+        return None
+    key = raw.strip()
+    lowered = key.lower()
+    if callable(node_label_resolver):
+        resolved = _non_empty_text(node_label_resolver(key))
+        if resolved:
+            return resolved
+    if lowered in _BUSINESS_LABEL_FALLBACKS:
+        return _BUSINESS_LABEL_FALLBACKS[lowered]
+    if lowered in _GATE_LABELS:
+        return _GATE_LABELS[lowered]
+    if lowered in _REVIEW_CHECK_LABELS:
+        return _REVIEW_CHECK_LABELS[lowered]
+    if any("\u4e00" <= ch <= "\u9fff" for ch in key):
+        return key
+    return None
+
+
+def _complexity_decision_text(
+    *,
+    summary: Mapping[str, Any],
+    snapshot: Mapping[str, Any],
+) -> str:
+    raw = (
+        _pick_text(summary, "strategy")
+        or _pick_text(snapshot, "query_strategy")
+        or _pick_text(summary, "goto")
+    )
+    mapping = {
+        "simple": "简单问题",
+        "direct": "简单问题",
+        "moderate": "中等问题",
+        "multi_query": "中等问题",
+        "generate_variants_mod": "中等问题",
+        "generate_variants": "中等问题",
+        "complex": "复杂问题",
+        "decomposition": "复杂问题",
+    }
+    return mapping.get((raw or "").strip().lower(), "待判定问题")
+
+
+def _route_decision_text(raw: str | None) -> str:
+    mapping = {
+        "pass": "可以回答",
+        "passed": "可以回答",
+        "answer_subgraph": "可以回答",
+        "retry": "继续检索",
+        "retry_conflict": "继续检索",
+        "transform_query": "继续检索",
+        "severe_conflict": "继续检索",
+        "exit_unanswerable": "结束当前回答",
+        "force_exit": "结束当前回答",
+        "clarify": "结束当前回答",
+    }
+    return mapping.get((raw or "").strip().lower(), _humanize_decision(raw) or "继续处理")
+
+
+def _answer_route_decision_text(raw: str | None) -> str:
+    mapping = {
+        "confidence_calibrate": "审查通过",
+        "answer_commit": "审查通过",
+        "cove_check": "进入进一步验证",
+        "chain_of_verification": "进入进一步验证",
+        "claim_citation_check": "进入进一步验证",
+        "answer_review_fuse": "进入审查汇总",
+        "answer_repair": "需要修复答案",
+        "transform_query": "需要继续检索",
+        "force_exit": "结束当前回答",
+    }
+    return mapping.get((raw or "").strip().lower(), _humanize_decision(raw) or "继续处理")
+
+
+def _confidence_decision_text(
+    *,
+    summary: Mapping[str, Any],
+    snapshot: Mapping[str, Any],
+) -> str:
+    level = _pick_text(summary, "confidence_level") or _pick_text(snapshot, "confidence_level")
+    mapping = {
+        "high": "高置信度",
+        "medium": "中置信度",
+        "low": "低置信度",
+    }
+    return mapping.get((level or "").strip().lower(), "置信度待定")
+
+
+def _humanize_decision(raw: str | None) -> str | None:
+    text = _non_empty_text(raw)
+    if not text:
+        return None
+    lowered = text.strip().lower()
+    mapping = {
+        "prepare_messages": "直接进入检索",
+        "retrieval_subgraph": "进入检索流程",
+        "evidence_gate_subgraph": "进入证据门控",
+        "answer_subgraph": "进入答案生成",
+        "doc_gate_fuse": "进入门控汇总",
+        "doc_gate_route": "进入文档判定",
+        "answer_review_fuse": "进入审查汇总",
+        "chain_of_verification": "进入验证链",
+        "claim_citation_check": "进入引用校验",
+        "answer_repair": "进入答案修复",
+        "answer_commit": "提交答案",
+        "confidence_calibrate": "进入最终收口",
+        "force_exit": "结束当前回答",
+        "clarify": "需要补充信息",
+        "retry": "继续检索",
+        "transform_query": "改写后重试",
+        "pass": "通过",
+        "passed": "通过",
+        "fail": "未通过",
+        "failed": "未通过",
+    }
+    if lowered in mapping:
+        return mapping[lowered]
+    if any("\u4e00" <= ch <= "\u9fff" for ch in text):
+        return text
+    label = _BUSINESS_LABEL_FALLBACKS.get(lowered)
+    if label:
+        return f"进入{label}" if label != "结束" else label
+    return None

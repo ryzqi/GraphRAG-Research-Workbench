@@ -1,7 +1,6 @@
 import { useMemo, useState } from 'react';
 import {
   Alert,
-  Button,
   Box,
   Chip,
   Collapse,
@@ -27,6 +26,7 @@ import {
   type TraceStageStatus,
 } from '../../services/kbChatTraceNodes';
 import { resolveKbNodeTheme } from '../../services/kbNodeCatalog';
+import { KbChatFlowNodeDetailSections } from './KbChatFlowNodeDetailSections';
 import type { PipelineStep } from './PipelineProgress';
 
 interface KbChatFlowPanelProps {
@@ -670,8 +670,15 @@ export function buildFallbackOutputItems(
       });
       pushDisplayItem(items, { key: 'reason', label: '处理原因', value: summary.reason });
     } else if (nodeId === 'hyde') {
+      const hydeDocs = pickStringList(snapshot, 'hyde_docs');
+      const hydeDoc = pickText(snapshot, 'hyde_doc') ?? hydeDocs?.[0] ?? null;
       pushDisplayItem(items, { key: 'enabled', label: '是否启用 HyDE', value: summary.enabled });
-      pushDisplayItem(items, { key: 'hyde_doc', label: 'HyDE 生成内容', value: pickText(snapshot, 'hyde_doc') });
+      pushDisplayItem(items, { key: 'hyde_doc', label: 'HyDE 生成内容', value: hydeDoc });
+      pushDisplayItem(items, {
+        key: 'hyde_docs_count',
+        label: 'HyDE 文档数量',
+        value: hydeDocs?.length,
+      });
       pushDisplayItem(items, { key: 'reason', label: '处理原因', value: summary.reason });
     } else if (nodeId === 'prepare_messages') {
       const queryItems = formatQueryItems(snapshot.query_items);
@@ -771,11 +778,17 @@ export function buildFallbackOutputItems(
       pushDisplayItem(items, { key: 'truncated', label: '是否截断', value: compressionStats.truncated });
     } else if (nodeId === 'evidence_gate_subgraph') {
       const routing = getRoutingDecision(snapshot, 'doc_gate');
+      const fuseSummary = getStageSummary(snapshot, 'doc_gate_fuse');
       const routeSummary = getStageSummary(snapshot, 'doc_gate_route');
+      pushDisplayItem(items, {
+        key: 'decision',
+        label: '门控决策',
+        value: asNonEmptyText(routeSummary.decision) ?? asNonEmptyText(fuseSummary.decision),
+      });
+      pushDisplayItem(items, { key: 'score', label: '门控得分', value: routeSummary.score ?? fuseSummary.score });
       pushDisplayItem(items, { key: 'next_node', label: '下一跳', value: asNonEmptyText(routing.next_node) });
       pushDisplayItem(items, { key: 'action', label: '后续动作', value: asNonEmptyText(routing.action) });
       pushDisplayItem(items, { key: 'reason', label: '判定原因', value: asNonEmptyText(routing.reason) });
-      pushDisplayItem(items, { key: 'score', label: '门控得分', value: routing.score ?? routeSummary.score });
     } else if (nodeId === 'doc_gate_dispatch') {
       pushDisplayItem(items, { key: 'doc_gate_round', label: '门控轮次', value: snapshot.doc_gate_round });
       pushDisplayItem(items, { key: 'gates', label: '派发门控', value: ['sufficiency', 'answerability', 'conflict'] });
@@ -892,90 +905,6 @@ export function buildFallbackOutputItems(
   return items;
 }
 
-function DetailValueBlock({
-  value,
-}: {
-  value: string | string[];
-}) {
-  const [expanded, setExpanded] = useState(false);
-  const text = Array.isArray(value) ? value.join('\n') : value;
-  const lineCount = text.split('\n').length;
-  const needsCollapse = lineCount > 6 || text.length > 320;
-
-  return (
-    <Stack spacing={0.35} sx={{ minWidth: 0 }}>
-      <Typography
-        variant='body2'
-        sx={{
-          whiteSpace: 'pre-wrap',
-          wordBreak: 'break-word',
-          ...(needsCollapse && !expanded
-            ? {
-                display: '-webkit-box',
-                WebkitLineClamp: 6,
-                WebkitBoxOrient: 'vertical',
-                overflow: 'hidden',
-              }
-            : null),
-        }}
-      >
-        {text}
-      </Typography>
-      {needsCollapse && (
-        <Button
-          size='small'
-          variant='text'
-          onClick={() => setExpanded((prev) => !prev)}
-          sx={{ px: 0, minWidth: 0, alignSelf: 'flex-start' }}
-        >
-          {expanded ? '收起' : '展开全文'}
-        </Button>
-      )}
-    </Stack>
-  );
-}
-
-function DetailSection({
-  title,
-  items,
-}: {
-  title: string;
-  items: ChatNodeDisplayItem[] | NodeDetailItem[] | null | undefined;
-}) {
-  if (!items || items.length === 0) {
-    return null;
-  }
-  return (
-    <Stack spacing={0.8}>
-      <Typography variant='caption' color='text.secondary'>
-        {title}
-      </Typography>
-      <Stack spacing={0.9}>
-        {items.map((item) => (
-          <Box
-            key={`${title}-${item.key}`}
-            sx={{
-              border: 1,
-              borderColor: 'divider',
-              borderRadius: 1.5,
-              p: 1,
-              bgcolor: (theme) =>
-                theme.palette.mode === 'light'
-                  ? alpha(theme.palette.common.black, 0.02)
-                  : alpha(theme.palette.common.black, 0.16),
-            }}
-          >
-            <Typography variant='caption' color='text.secondary' sx={{ display: 'block', mb: 0.25 }}>
-              {item.label}
-            </Typography>
-            <DetailValueBlock value={item.value} />
-          </Box>
-        ))}
-      </Stack>
-    </Stack>
-  );
-}
-
 export function KbChatFlowPanel({
   schema,
   runState,
@@ -1002,12 +931,8 @@ export function KbChatFlowPanel({
           stage.nodes.map((node) => {
             const detailNodeId = node.focusNodeId;
             const latestNodeEvent = node.latestNodeEvent;
-            const rawInputItems =
-              latestNodeEvent?.display_input_items ??
-              buildFallbackInputItems(detailNodeId, latestNodeEvent);
-            const rawOutputItems =
-              latestNodeEvent?.display_output_items ??
-              buildFallbackOutputItems(detailNodeId, latestNodeEvent);
+            const rawInputItems = latestNodeEvent?.display_input_items ?? null;
+            const rawOutputItems = latestNodeEvent?.display_output_items ?? null;
             return [
               node.id,
               {
@@ -1248,8 +1173,10 @@ export function KbChatFlowPanel({
                                   {node.latestNodeEvent.error_summary}
                                 </Typography>
                               )}
-                              <DetailSection title='关键输入' items={inputDetailItems} />
-                              <DetailSection title='关键输出' items={outputDetailItems} />
+                              <KbChatFlowNodeDetailSections
+                                inputItems={inputDetailItems}
+                                outputItems={outputDetailItems}
+                              />
                             </Stack>
                           </Collapse>
                         </Stack>

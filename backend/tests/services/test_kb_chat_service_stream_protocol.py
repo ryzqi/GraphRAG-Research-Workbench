@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 from types import SimpleNamespace
+import uuid
 
 import pytest
 
@@ -153,4 +154,43 @@ def test_kb_chat_custom_event_taxonomy_is_explicit() -> None:
         "answer_review_fused",
         "guardrail_warning",
         "heartbeat",
+    }
+
+
+def test_build_node_io_payload_preserves_display_contract_fields() -> None:
+    run_id = uuid.uuid4()
+
+    payload = KbChatService._build_node_io_payload(
+        run_id=run_id,
+        node_name="complexity_classify",
+        node_id="complexity_classify",
+        phase="error",
+        attempt=2,
+        display_input_items=[
+            {"key": "user_input", "label": "用户问题", "value": "解释 CoT 和 ToT 的区别"}
+        ],
+        display_output_items=[
+            {"key": "decision", "label": "结论", "value": "复杂问题"},
+            {"key": "reason", "label": "原因", "value": "涉及方法比较与边界说明"},
+            {"key": "next_node_label", "label": "下一跳", "value": "问题分解"},
+            {"key": "error_summary", "label": "错误信息", "value": "节点执行失败"},
+        ],
+        error_summary="节点执行失败",
+        node_path=["preprocess_subgraph", "complexity_classify"],
+    )
+
+    assert payload["display_input_items"] == [
+        {"key": "user_input", "label": "用户问题", "value": "解释 CoT 和 ToT 的区别"}
+    ]
+    assert payload["display_output_items"] == [
+        {"key": "decision", "label": "结论", "value": "复杂问题"},
+        {"key": "reason", "label": "原因", "value": "涉及方法比较与边界说明"},
+        {"key": "next_node_label", "label": "下一跳", "value": "问题分解"},
+        {"key": "error_summary", "label": "错误信息", "value": "节点执行失败"},
+    ]
+    assert payload["error_summary"] == "节点执行失败"
+    assert payload["node_path"] == ["preprocess_subgraph", "complexity_classify"]
+    assert payload["node"] == {
+        "id": "complexity_classify",
+        "name": "complexity_classify",
     }

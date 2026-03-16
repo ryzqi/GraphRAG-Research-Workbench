@@ -141,6 +141,7 @@ function resolveObservedNodeOrder(
 
 function resolveEnabledNodes(
   schema: KbGraphSchema | null | undefined,
+  runState: ChatRunStateEvent | undefined,
   steps: PipelineStep[],
   events: ChatNodeIoEvent[]
 ): NodeDefinition[] {
@@ -188,6 +189,41 @@ function resolveEnabledNodes(
       event.node_name,
       null,
       resolveObservedNodeOrder(event.node_name, 20_000 + index, schema)
+    );
+    if (Array.isArray(event.node_path)) {
+      event.node_path.forEach((nodeId, pathIndex) => {
+        if (typeof nodeId !== 'string' || !nodeId.trim()) {
+          return;
+        }
+        registerNode(
+          nodeId,
+          null,
+          resolveObservedNodeOrder(nodeId, 21_000 + index * 100 + pathIndex, schema)
+        );
+      });
+    }
+  });
+
+  const activePath = Array.isArray(runState?.active_path) ? runState.active_path : [];
+  activePath.forEach((nodeId, index) => {
+    if (typeof nodeId !== 'string' || !nodeId.trim()) {
+      return;
+    }
+    registerNode(
+      nodeId,
+      null,
+      resolveObservedNodeOrder(nodeId, 30_000 + index, schema)
+    );
+  });
+
+  [runState?.current_step_id, runState?.current_node].forEach((nodeId, index) => {
+    if (typeof nodeId !== 'string' || !nodeId.trim()) {
+      return;
+    }
+    registerNode(
+      nodeId,
+      null,
+      resolveObservedNodeOrder(nodeId, 31_000 + index, schema)
     );
   });
 
@@ -531,7 +567,7 @@ export function buildTraceStageGroups({
 }: TraceNodeBuildParams): TraceNodeStageGroup[] {
   const steps = pipelineSteps ?? [];
   const events = nodeIoEvents ?? [];
-  const nodes = resolveEnabledNodes(schema, steps, events);
+  const nodes = resolveEnabledNodes(schema, runState, steps, events);
   const currentNodeId =
     (typeof runState?.current_step_id === 'string' ? runState.current_step_id : null) ??
     (typeof runState?.current_node === 'string' ? runState.current_node : null);
