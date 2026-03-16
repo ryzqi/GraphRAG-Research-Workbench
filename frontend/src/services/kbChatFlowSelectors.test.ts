@@ -3,26 +3,25 @@ import { describe, expect, it } from 'vitest';
 import { selectKbChatFlowDetailItems } from './kbChatFlowSelectors';
 
 describe('kbChatFlowSelectors', () => {
-  it('returns all candidate detail items instead of truncating', () => {
+  it('keeps only curated key outputs for known nodes instead of exposing every raw field', () => {
     const result = selectKbChatFlowDetailItems({
-      nodeId: 'answer_subgraph',
+      nodeId: 'coref_rewrite',
       section: 'output',
       items: [
-        { key: 'next_node', label: '下一跳', value: 'answer_commit' },
-        { key: 'reason', label: '原因', value: 'passed' },
-        { key: 'degrade_reason', label: '降级原因', value: 'none' },
-        { key: 'best_answer', label: '候选答案', value: 'ok' },
-        { key: 'repair_attempts', label: '修复次数', value: '1' },
-        { key: 'extra_signal', label: '扩展信号', value: 'keep-me' },
+        { key: 'coref_query', label: '改写后问题', value: '北京市 2025 年社保缴费基数' },
+        { key: 'confidence', label: '消解置信度', value: '0.92' },
+        { key: 'selected_mention', label: '选择候选', value: '北京市' },
+        { key: 'reason', label: '改写原因', value: 'resolved_pronoun' },
+        { key: 'needs_clarification_hint', label: '建议先澄清', value: '否' },
+        { key: 'rewritten', label: '是否改写', value: '是' },
       ],
       event: null,
     });
 
-    expect(result).toHaveLength(6);
-    expect(result[result.length - 1]?.key).toBe('extra_signal');
+    expect(result.map((item) => item.key)).toEqual(['coref_query']);
   });
 
-  it('prioritizes canonical next_node routing detail for answer_subgraph output', () => {
+  it('keeps only the candidate answer for answer_subgraph output instead of internal routing fields', () => {
     const result = selectKbChatFlowDetailItems({
       nodeId: 'answer_subgraph',
       section: 'output',
@@ -34,8 +33,7 @@ describe('kbChatFlowSelectors', () => {
       event: null,
     });
 
-    expect(result[0]?.key).toBe('next_node');
-    expect(result[1]?.key).toBe('reason');
+    expect(result.map((item) => item.key)).toEqual(['best_answer']);
   });
 
   it('adds risk hint when confidence level is low', () => {
@@ -65,11 +63,6 @@ describe('kbChatFlowSelectors', () => {
       event: null,
     });
 
-    expect(result.map((item) => item.key)).toEqual([
-      'check_count',
-      'checks',
-      'dispatch_reason',
-      'router_note',
-    ]);
+    expect(result.map((item) => item.key)).toEqual(['checks']);
   });
 });

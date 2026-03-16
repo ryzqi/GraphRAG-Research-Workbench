@@ -26,7 +26,7 @@ describe('KbChatFlowPanel', () => {
     expect(extractTraceCommandGoto({})).toBeNull();
   });
 
-  it('renders compact summaries without exposing execution path or machine summary keys', () => {
+  it('renders key outputs without exposing execution path or statistic tags', () => {
     const html = renderToStaticMarkup(
       createElement(KbChatFlowPanel, {
         schema: null,
@@ -63,10 +63,10 @@ describe('KbChatFlowPanel', () => {
     );
 
     expect(html).toContain('已识别为复杂问题');
-    expect(html).toContain('复杂度: 复杂');
     expect(html).not.toContain('执行路径');
     expect(html).not.toContain('fallback_used');
     expect(html).not.toContain('slot_count');
+    expect(html).not.toContain('复杂度: 复杂');
   });
 
   it('uses canonical routing record for answer_subgraph fallback output items', () => {

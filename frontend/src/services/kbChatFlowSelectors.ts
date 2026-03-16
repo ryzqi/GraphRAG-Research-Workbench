@@ -16,149 +16,119 @@ interface NodeDetailPolicy {
 const NODE_DETAIL_POLICY_MAP: Record<string, NodeDetailPolicy> = {
   preprocess_subgraph: {
     input: ['user_input'],
-    output: ['next_node', 'action', 'reason', 'normalized_query', 'final_answer'],
+    output: ['normalized_query', 'final_answer'],
   },
   merge_context: {
     input: ['user_input'],
-    output: [
-      'current_question',
-      'summary_source',
-      'compression_ratio',
-      'llm_resolve_used',
-      'merge_fallback_used',
-      'merged_context',
-      'memory_included',
-    ],
+    output: ['merged_context'],
   },
   coref_rewrite: {
     input: ['query'],
-    output: ['coref_query', 'confidence', 'selected_mention', 'reason', 'needs_clarification_hint', 'rewritten'],
+    output: ['coref_query'],
   },
   ambiguity_check: {
     input: ['query'],
-    output: ['ambiguous', 'reason_code', 'confidence', 'action', 'final_answer'],
+    output: ['action', 'final_answer'],
   },
   normalize_rewrite: {
     input: ['query'],
-    output: ['normalized_query', 'rewritten'],
+    output: ['normalized_query'],
   },
   complexity_classify: {
     input: ['normalized_query'],
-    output: [
-      'complexity_level',
-      'next_node',
-      'query_strategy',
-      'query_strategy_confidence',
-      'query_strategy_signals',
-    ],
+    output: ['complexity_level'],
   },
   generate_variants_mod: {
     input: ['normalized_query'],
-    output: ['multi_queries', 'count', 'reason'],
+    output: ['multi_queries'],
   },
   decomposition: {
     input: ['normalized_query'],
-    output: ['sub_queries', 'count'],
+    output: ['sub_queries'],
   },
   generate_variants: {
     input: ['normalized_query'],
-    output: ['multi_queries', 'count'],
+    output: ['multi_queries'],
   },
   entity_expand: {
     input: ['normalized_query'],
-    output: [
-      'multi_queries',
-      'input_count',
-      'expanded_count',
-      'added_count',
-      'pruned_count',
-      'min_confidence',
-      'drift_guardrail_triggered',
-      'fallback_reason',
-    ],
+    output: ['multi_queries'],
   },
   hyde: {
     input: ['normalized_query'],
-    output: ['enabled', 'hyde_doc'],
+    output: ['hyde_doc'],
   },
   prepare_messages: {
     input: ['normalized_query', 'query_strategy'],
-    output: [
-      'query_bundle_items_count',
-      'message_plan_candidate_count',
-      'message_plan_dropped_count',
-      'fallback_reason',
-      'quality_signals',
-      'query_items',
-    ],
+    output: ['query_items'],
   },
   preprocess_exit: {
     input: ['normalized_query'],
-    output: ['next_node', 'normalized_query', 'final_answer'],
+    output: ['normalized_query', 'final_answer'],
   },
   retrieval_subgraph: {
     input: ['query_items', 'normalized_query'],
-    output: ['query_strategy', 'evidence_count', 'retrieval_count'],
+    output: ['evidence_count'],
   },
   dispatch_subqueries: {
     input: ['query_strategy', 'query_items'],
-    output: ['mode', 'branch_count', 'reason'],
+    output: ['mode'],
   },
   retrieval_budget_plan: {
     input: ['complexity_level', 'query_items', 'reason'],
-    output: ['per_query_top_k', 'global_candidates_limit', 'rerank_input_limit'],
+    output: [],
   },
   retrieve_subquery: {
     input: ['query', 'kind'],
-    output: ['query', 'kind', 'success'],
+    output: ['success'],
   },
   merge_subquery_context: {
     input: ['subquery_runs_count'],
-    output: ['mode', 'branch_count', 'evidence_count'],
+    output: ['evidence_count'],
   },
   retrieve: {
     input: ['query_items', 'normalized_query'],
-    output: ['evidence_count', 'attempted'],
+    output: ['evidence_count'],
   },
   context_compress: {
     input: ['final_context'],
-    output: ['token_limit', 'input_tokens', 'output_tokens', 'truncated'],
+    output: ['truncated'],
   },
   evidence_gate_subgraph: {
     input: ['question', 'final_context'],
-    output: ['next_node', 'action', 'reason', 'passed', 'risk_level'],
+    output: ['passed', 'action', 'reason'],
   },
   doc_gate_dispatch: {
     input: ['question', 'final_context'],
-    output: ['action', 'dispatch_reason', 'branch_count'],
+    output: ['action'],
   },
   doc_gate_route: {
     input: ['question'],
-    output: ['next_node', 'passed', 'decision_source', 'confidence', 'evidence_score', 'risk_level', 'action'],
+    output: ['passed', 'action'],
   },
   doc_gate_sufficiency: {
     input: ['final_context'],
-    output: ['passed', 'confidence', 'reason'],
+    output: ['passed', 'reason'],
   },
   doc_gate_answerability: {
     input: ['final_context'],
-    output: ['passed', 'confidence', 'reason'],
+    output: ['passed', 'reason'],
   },
   doc_gate_conflict: {
     input: ['final_context'],
-    output: ['passed', 'confidence', 'reason'],
+    output: ['passed', 'reason'],
   },
   doc_gate_fuse: {
     input: ['gate_scores'],
-    output: ['action', 'reason', 'confidence'],
+    output: ['action', 'reason'],
   },
   transform_query: {
     input: ['normalized_query'],
-    output: ['normalized_query', 'rewritten'],
+    output: ['normalized_query'],
   },
   answer_subgraph: {
     input: ['question'],
-    output: ['next_node', 'action', 'reason', 'degrade_reason', 'best_answer', 'repair_attempts'],
+    output: ['best_answer'],
   },
   draft_generate: {
     input: ['question'],
@@ -166,23 +136,23 @@ const NODE_DETAIL_POLICY_MAP: Record<string, NodeDetailPolicy> = {
   },
   answer_repair: {
     input: ['draft_answer'],
-    output: ['repair_attempt', 'fallback_reason', 'final_answer'],
+    output: ['final_answer'],
   },
   answer_commit: {
     input: ['reason'],
-    output: ['next_node', 'reason', 'degrade_reason', 'best_answer'],
+    output: ['best_answer'],
   },
   answer_review_dispatch: {
     input: ['draft_answer'],
-    output: ['check_count', 'checks', 'dispatch_reason', 'branch_count'],
+    output: ['checks'],
   },
   answer_review_citation: {
     input: ['draft_answer'],
-    output: ['passed', 'reason', 'coverage_ratio'],
+    output: ['passed', 'reason'],
   },
   answer_review_factual: {
     input: ['draft_answer'],
-    output: ['passed', 'reason', 'factual_risk'],
+    output: ['passed', 'reason'],
   },
   answer_review_answerability: {
     input: ['draft_answer'],
@@ -190,23 +160,23 @@ const NODE_DETAIL_POLICY_MAP: Record<string, NodeDetailPolicy> = {
   },
   answer_review_fuse: {
     input: ['review_breakdown'],
-    output: ['passed', 'action', 'reason', 'review_confidence'],
+    output: ['passed', 'reason', 'action'],
   },
   cove_check: {
     input: ['draft_answer'],
-    output: ['enabled', 'high_risk', 'reason', 'risk_level', 'action'],
+    output: ['action', 'reason'],
   },
   chain_of_verification: {
     input: ['draft_answer'],
-    output: ['passed', 'reason', 'citation_count', 'verification_rounds', 'failed_claims', 'repair_action'],
+    output: ['passed', 'reason', 'repair_action'],
   },
   claim_citation_check: {
     input: ['draft_answer'],
-    output: ['passed', 'missing_claims', 'invalid_citations'],
+    output: ['passed'],
   },
   confidence_calibrate: {
     input: ['final_answer'],
-    output: ['confidence_score', 'confidence_level', 'signals', 'reason'],
+    output: ['confidence_level', 'reason'],
   },
   force_exit: {
     input: ['action', 'reason'],
@@ -277,7 +247,9 @@ export function selectKbChatFlowDetailItems(params: {
   const selected: KbChatFlowDetailItem[] = [];
   const seen = new Set<string>();
   const limit = Number.MAX_SAFE_INTEGER;
+  const hasPolicy = Object.prototype.hasOwnProperty.call(NODE_DETAIL_POLICY_MAP, params.nodeId);
   const policyKeys = [...(NODE_DETAIL_POLICY_MAP[params.nodeId]?.[params.section] ?? [])];
+  const shouldAppendUncuratedItems = params.section === 'input' || !hasPolicy;
 
   if (params.nodeId === 'ambiguity_check' && params.section === 'output') {
     const action = candidates.find((item) => item.key === 'action');
@@ -306,7 +278,7 @@ export function selectKbChatFlowDetailItems(params: {
     }
   }
 
-  if (selected.length < limit) {
+  if (shouldAppendUncuratedItems && selected.length < limit) {
     for (const item of candidates) {
       appendItem(item);
       if (selected.length >= limit) {

@@ -211,7 +211,7 @@ describe('kbChatTraceNodes', () => {
     expect(nodes.find((node) => node.id === 'merge_context')?.status).toBe('completed');
   });
 
-  it('builds compact chinese summaries and tags instead of exposing machine summary fields', () => {
+  it('builds compact chinese summaries without exposing default statistic tags', () => {
     const nodes = buildTraceNodes({
       runState: {
         run_id: 'run-1',
@@ -246,14 +246,31 @@ describe('kbChatTraceNodes', () => {
 
     const node = nodes.find((item) => item.id === 'complexity_classify');
     expect(node?.summaryText).toBe('已识别为复杂问题');
-    expect(node?.summaryTags).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ label: '耗时', value: '0.3s' }),
-        expect.objectContaining({ label: '复杂度', value: '复杂' }),
-      ])
+    expect(node?.summaryTags).toEqual([]);
+  });
+
+  it('uses the rewritten question itself as the visible key output for rewrite nodes', () => {
+    const nodes = buildTraceNodes({
+      nodeIoEvents: [
+        {
+          run_id: 'run-1',
+          node_id: 'coref_rewrite',
+          node_name: 'coref_rewrite',
+          phase: 'end',
+          output_summary: {
+            rewritten: true,
+          },
+          output_snapshot: {
+            coref_query: '2025年北京的社保缴费基数是多少',
+          },
+          ts: '2026-01-01T00:00:02.000Z',
+        },
+      ],
+    });
+
+    expect(nodes.find((node) => node.id === 'coref_rewrite')?.summaryText).toBe(
+      '改写后问题：2025年北京的社保缴费基数是多少'
     );
-    expect(node?.summaryTags.some((tag) => tag.label.includes('fallback'))).toBe(false);
-    expect(node?.summaryTags.some((tag) => tag.label.includes('slot'))).toBe(false);
   });
 
   it('builds stage summary text from the most relevant node summary', () => {

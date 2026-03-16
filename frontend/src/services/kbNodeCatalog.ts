@@ -45,13 +45,13 @@ export interface KbNodeCatalogEntry {
 }
 
 export const KB_TRACE_STAGE_META: KbTraceStageMeta[] = [
-  { id: 'stage_1_preprocess', title: '阶段1 预处理', subtitle: '上下文融合与歧义处理', order: 1 },
-  { id: 'stage_2_route', title: '阶段2 路由判定', subtitle: '复杂度判定与直接分流', order: 2 },
-  { id: 'stage_3_enhance', title: '阶段3 查询增强', subtitle: '拆解、扩展与消息准备', order: 3 },
-  { id: 'stage_4_retrieve', title: '阶段4 检索', subtitle: '预算规划与上下文构建', order: 4 },
-  { id: 'stage_5_gate', title: '阶段5 证据评估', subtitle: '并行门控与动作决策', order: 5 },
-  { id: 'stage_6_answer', title: '阶段6 生成与验证', subtitle: '草稿生成、审查与回修', order: 6 },
-  { id: 'stage_7_finalize', title: '阶段7 收敛输出', subtitle: '终态整理与置信度校准', order: 7 },
+  { id: 'stage_1_preprocess', title: '阶段1 理解问题', subtitle: '整理上下文，确认用户真正想问什么', order: 1 },
+  { id: 'stage_2_route', title: '阶段2 选择路径', subtitle: '判断问题复杂度并决定后续路线', order: 2 },
+  { id: 'stage_3_enhance', title: '阶段3 补强查询', subtitle: '分解问题并准备检索查询', order: 3 },
+  { id: 'stage_4_retrieve', title: '阶段4 检索资料', subtitle: '从知识库取回可用内容', order: 4 },
+  { id: 'stage_5_gate', title: '阶段5 核验证据', subtitle: '检查证据是否足够且没有明显冲突', order: 5 },
+  { id: 'stage_6_answer', title: '阶段6 组织答案', subtitle: '生成、审查并修复答案', order: 6 },
+  { id: 'stage_7_finalize', title: '阶段7 输出结果', subtitle: '整理最终结论并给出结果', order: 7 },
 ];
 
 const C = {

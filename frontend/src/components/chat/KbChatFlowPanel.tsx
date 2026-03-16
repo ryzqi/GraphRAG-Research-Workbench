@@ -1133,7 +1133,7 @@ export function KbChatFlowPanel({
                   <Chip
                     size='small'
                     color={stageChipColor}
-                    label={`${statusLabel(stage.status)} · ${stage.completed}/${stage.total}`}
+                    label={statusLabel(stage.status)}
                   />
                 </Stack>
 
@@ -1224,21 +1224,6 @@ export function KbChatFlowPanel({
                               sx={{ height: 4, borderRadius: 999 }}
                             />
                           </Stack>
-
-                          {node.summaryTags.length > 0 && (
-                            <Stack direction='row' spacing={0.5} useFlexGap flexWrap='wrap'>
-                              {node.summaryTags.map((item) => (
-                                <Chip
-                                  key={`${node.id}-${item.label}`}
-                                  size='small'
-                                  variant='outlined'
-                                  color={item.tone ?? 'default'}
-                                  label={`${item.label}: ${item.value}`}
-                                />
-                              ))}
-                            </Stack>
-                          )}
-
                           <Collapse in={expanded} unmountOnExit>
                             <Stack spacing={1} sx={{ pt: 0.5 }}>
                               {node.latestStep && (

@@ -93,16 +93,18 @@ function latestByTs<T extends { ts?: string }>(items: T[]): T | null {
   return [...items].sort((a, b) => eventTime(a.ts) - eventTime(b.ts))[items.length - 1];
 }
 
-function boolToText(value: boolean): string {
-  return value ? '是' : '否';
-}
-
 function asNonEmptyText(value: unknown): string | null {
   return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
 }
 
-function formatSeconds(value: number): string {
-  return `${Math.max(0, value / 1000).toFixed(1)}s`;
+function summarizeText(value: string | null, maxChars = 28): string | null {
+  if (!value) {
+    return null;
+  }
+  if (value.length <= maxChars) {
+    return value;
+  }
+  return `${value.slice(0, Math.max(1, maxChars - 1)).trimEnd()}…`;
 }
 
 function isTerminalStatus(status: TraceNodeStatus): boolean {
@@ -287,25 +289,6 @@ function complexityLabel(value: unknown): string | null {
   }
 }
 
-function summaryResultLabel(value: unknown): string | null {
-  if (typeof value !== 'boolean') {
-    return null;
-  }
-  return value ? '通过' : '未通过';
-}
-
-function resolveRouteLabel(value: unknown): string | null {
-  const route = asNonEmptyText(value);
-  if (!route) {
-    return null;
-  }
-  const complexity = complexityLabel(route);
-  if (complexity) {
-    return `${complexity}路径`;
-  }
-  return resolveKbNodeLabel(route, null);
-}
-
 function resolveEvidenceCount(summary: Record<string, unknown>): number | null {
   const value =
     summary.evidence_count ??
@@ -324,79 +307,6 @@ function extractRoutingDecision(
 ): Record<string, unknown> {
   const routing = asRecord(snapshot.routing_decisions);
   return asRecord(routing?.[phase]) ?? {};
-}
-
-function pushSummaryTag(
-  tags: TraceNodeMetric[],
-  metric: TraceNodeMetric | null | undefined
-): void {
-  if (!metric || !metric.value || tags.some((item) => item.label === metric.label)) {
-    return;
-  }
-  tags.push(metric);
-}
-
-function buildSummaryTags(params: {
-  nodeId: string;
-  latestNodeEvent: ChatNodeIoEvent | null;
-  latestStep: PipelineStep | null;
-}): TraceNodeMetric[] {
-  const { nodeId, latestNodeEvent, latestStep } = params;
-  const { summary, snapshot } = resolveSummarySource(latestNodeEvent, latestStep);
-  const tags: TraceNodeMetric[] = [];
-
-  if (typeof latestNodeEvent?.latency_ms === 'number') {
-    pushSummaryTag(tags, { label: '耗时', value: formatSeconds(latestNodeEvent.latency_ms), tone: 'info' });
-  }
-
-  const complexity =
-    complexityLabel(summary.complexity_level) ??
-    complexityLabel(snapshot.complexity_level);
-  if (complexity) {
-    pushSummaryTag(tags, { label: '复杂度', value: complexity, tone: 'primary' });
-  }
-
-  const route =
-    resolveRouteLabel(summary.next_node) ??
-    resolveRouteLabel(extractRoutingDecision(snapshot, 'preprocess').next_node) ??
-    resolveRouteLabel(extractRoutingDecision(snapshot, 'doc_gate').next_node) ??
-    resolveRouteLabel(extractRoutingDecision(snapshot, 'answer_subgraph').next_node);
-  if (route) {
-    pushSummaryTag(tags, { label: '路由', value: route, tone: 'secondary' });
-  }
-
-  const count = resolveEvidenceCount(summary);
-  if (typeof count === 'number') {
-    pushSummaryTag(tags, {
-      label:
-        nodeId.includes('retrieve') || nodeId.includes('query') || nodeId === 'dispatch_subqueries'
-          ? '命中'
-          : '数量',
-      value: String(count),
-      tone: 'primary',
-    });
-  }
-
-  const result =
-    summaryResultLabel(summary.passed) ??
-    summaryResultLabel(summary.ambiguous === false ? true : summary.ambiguous === true ? false : null);
-  if (result) {
-    pushSummaryTag(tags, {
-      label: summary.ambiguous !== undefined ? '判定' : '结果',
-      value: summary.ambiguous === false ? '明确' : summary.ambiguous === true ? '需澄清' : result,
-      tone: result === '通过' || result === '明确' ? 'success' : 'warning',
-    });
-  }
-
-  if (typeof summary.truncated === 'boolean') {
-    pushSummaryTag(tags, {
-      label: '压缩',
-      value: boolToText(summary.truncated),
-      tone: summary.truncated ? 'warning' : 'success',
-    });
-  }
-
-  return tags.slice(0, 3);
 }
 
 function buildGenericSummaryText(params: {
@@ -448,6 +358,12 @@ function buildNodeSummaryText(params: {
     asNonEmptyText(snapshot.best_answer) ??
     asNonEmptyText(snapshot.draft_answer);
   const docGateDecision = extractRoutingDecision(snapshot, 'doc_gate');
+  const rewrittenQuery =
+    summarizeText(
+      asNonEmptyText(snapshot.coref_query) ??
+        asNonEmptyText(snapshot.normalized_query) ??
+        asNonEmptyText(snapshot.rewrite_input_query)
+    );
 
   switch (nodeId) {
     case 'merge_context':
@@ -455,11 +371,14 @@ function buildNodeSummaryText(params: {
     case 'coref_rewrite':
     case 'normalize_rewrite':
     case 'transform_query':
+      if (summary.rewritten === true && rewrittenQuery) {
+        return `改写后问题：${rewrittenQuery}`;
+      }
       if (summary.rewritten === true) {
-        return '已改写问题表述';
+        return '已更新问题表述';
       }
       if (summary.rewritten === false) {
-        return '沿用原问题表述';
+        return '问题保持不变';
       }
       return buildGenericSummaryText(params);
     case 'ambiguity_check':
@@ -581,17 +500,17 @@ function buildStageSummaryText(params: {
 
   switch (status) {
     case 'running':
-      return `正在执行${stage.title.replace(/^阶段\d+\s*/, '')}`;
+      return `正在执行${stage.title.replace(/^(阶段|步骤)\d+\s*/, '')}`;
     case 'completed':
-      return `已完成${stage.title.replace(/^阶段\d+\s*/, '')}`;
+      return `已完成${stage.title.replace(/^(阶段|步骤)\d+\s*/, '')}`;
     case 'failed':
-      return `${stage.title.replace(/^阶段\d+\s*/, '')}失败`;
+      return `${stage.title.replace(/^(阶段|步骤)\d+\s*/, '')}失败`;
     case 'waiting_user':
       return '等待用户补充信息';
     case 'skipped':
       return '本阶段未执行';
     default:
-      return stage.subtitle;
+      return '等待开始';
   }
 }
 
@@ -656,11 +575,7 @@ export function buildTraceStageGroups({
       title,
       subtitle: null,
       summaryText,
-      summaryTags: buildSummaryTags({
-        nodeId: node.id,
-        latestNodeEvent,
-        latestStep,
-      }),
+      summaryTags: [],
       stageId,
       status,
       isActive: status === 'running' || currentNodeId === node.id,
