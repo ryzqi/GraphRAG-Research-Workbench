@@ -1,453 +1,82 @@
+import fs from 'node:fs';
+
 import { describe, expect, it } from 'vitest';
 
-import { buildTraceNodes, buildTraceStageGroups } from './kbChatTraceNodes';
+import {
+  buildTraceExecutionTimeline,
+  buildTraceStageSummaries,
+} from './kbChatTraceNodes';
+import { createSseParser } from '../lib/sse';
+import { normalizeChatStreamEvent } from './chats';
+import {
+  kbChatTraceSelectors,
+  reduceKbChatTraceState,
+} from './kbChatTraceStore';
+import { resolveKbNodeLabel } from './kbNodeLabels';
 
 describe('kbChatTraceNodes', () => {
-  it('keeps every executed node inside its stage instead of collapsing to the latest stage node', () => {
-    const groups = buildTraceStageGroups({
-      nodeIoEvents: [
-        {
-          run_id: 'run-1',
-          node_id: 'preprocess_subgraph',
-          node_name: 'preprocess_subgraph',
-          phase: 'end',
-          ts: '2026-01-01T00:00:00.000Z',
-        },
-        {
-          run_id: 'run-1',
-          node_id: 'merge_context',
-          node_name: 'merge_context',
-          phase: 'end',
-          ts: '2026-01-01T00:00:01.000Z',
-        },
-        {
-          run_id: 'run-1',
-          node_id: 'answer_review_factual',
-          node_name: 'answer_review_factual',
-          phase: 'end',
-          ts: '2026-01-01T00:00:02.000Z',
-        },
-      ],
-    });
-
-    const preprocessStage = groups.find((stage) => stage.id === 'stage_1_preprocess');
-    expect(preprocessStage?.nodes.some((node) => node.id === 'preprocess_subgraph')).toBe(false);
-    expect(preprocessStage?.nodes.some((node) => node.id === 'merge_context')).toBe(true);
-    expect(preprocessStage?.nodes.find((node) => node.id === 'merge_context')?.status).toBe('completed');
-
-    const answerStage = groups.find((stage) => stage.id === 'stage_6_answer');
-    expect(answerStage?.nodes.some((node) => node.id === 'answer_review_factual')).toBe(true);
-    expect(answerStage?.nodes.find((node) => node.id === 'answer_review_factual')?.status).toBe(
-      'completed'
-    );
-  });
-
-  it('builds flat node cards with stable ordering and stage metadata', () => {
-    const nodes = buildTraceNodes({
-      runState: {
-        run_id: 'run-1',
-        run_status: 'running',
-        current_step_id: 'merge_context',
-        current_step_label: '上下文合并',
-        current_step_status: 'started',
-        current_node: 'merge_context',
-        attempt: 1,
-        message: null,
-        progress: { completed: 1, total: 10, percent: 10 },
-        ts: '2026-01-01T00:00:00.000Z',
-      },
-      pipelineSteps: [
-        {
-          step_id: 'merge_context',
-          label: '上下文合并',
-          status: 'started',
-          message: '正在合并上下文',
-          ts: '2026-01-01T00:00:00.000Z',
-        },
-      ],
-    });
-
-    const mergeContextIndex = nodes.findIndex((node) => node.id === 'merge_context');
-    const gateDispatch = nodes.find((node) => node.id === 'doc_gate_dispatch');
-
-    expect(nodes.some((node) => node.id === 'preprocess_subgraph')).toBe(false);
-    expect(mergeContextIndex).toBeGreaterThanOrEqual(0);
-    expect(nodes[mergeContextIndex]?.status).toBe('running');
-    expect(gateDispatch?.stageId).toBe('stage_5_gate');
-  });
-
-  it('does not expose english node ids as node subtitles in the flow panel', () => {
-    const nodes = buildTraceNodes({
-      nodeIoEvents: [
-        {
-          run_id: 'run-1',
-          node_id: 'merge_context',
-          node_name: 'merge_context',
-          phase: 'end',
-          ts: '2026-01-01T00:00:01.000Z',
-        },
-      ],
-    });
-
-    expect(nodes.find((node) => node.id === 'merge_context')?.title).toBe('上下文合并');
-    expect(nodes.find((node) => node.id === 'merge_context')?.subtitle).toBeNull();
-  });
-
-  it('does not preserve chinese fallback titles for removed legacy preprocess shell nodes', () => {
-    const nodes = buildTraceNodes({
-      nodeIoEvents: [
-        {
-          run_id: 'run-1',
-          node_id: 'AMBIGUITY_CHECK_ENABLED',
-          node_name: 'AMBIGUITY_CHECK_ENABLED',
-          phase: 'end',
-          ts: '2026-01-01T00:00:01.000Z',
-        },
-        {
-          run_id: 'run-1',
-          node_id: 'adaptive_routing',
-          node_name: 'adaptive_routing',
-          phase: 'end',
-          ts: '2026-01-01T00:00:02.000Z',
-        },
-        {
-          run_id: 'run-1',
-          node_id: 'ENABLE_HYDE',
-          node_name: 'ENABLE_HYDE',
-          phase: 'end',
-          ts: '2026-01-01T00:00:03.000Z',
-        },
-      ],
-    });
-
-    expect(nodes.find((node) => node.id === 'AMBIGUITY_CHECK_ENABLED')?.title).toBe(
-      'AMBIGUITY_CHECK_ENABLED'
-    );
-    expect(nodes.find((node) => node.id === 'adaptive_routing')?.title).toBe(
-      'adaptive_routing'
-    );
-    expect(nodes.find((node) => node.id === 'ENABLE_HYDE')?.title).toBe('ENABLE_HYDE');
-  });
-
-  it('prefers terminal waiting_user and failed state for the current node over stale started steps', () => {
-    const waitingNodes = buildTraceNodes({
-      runState: {
-        run_id: 'run-1',
-        run_status: 'waiting_user',
-        current_step_id: 'merge_context',
-        current_step_label: '上下文合并',
-        current_step_status: 'waiting_user',
-        current_node: 'merge_context',
-        attempt: 1,
-        message: '请补充范围',
-        active_path: ['merge_context'],
-        progress: { completed: 1, total: 10, percent: 10 },
-        ts: '2026-01-01T00:00:02.000Z',
-      },
-      pipelineSteps: [
-        {
-          step_id: 'merge_context',
-          label: '上下文合并',
-          status: 'started',
-          ts: '2026-01-01T00:00:01.000Z',
-        },
-      ],
-    });
-
-    const failedNodes = buildTraceNodes({
-      runState: {
-        run_id: 'run-1',
-        run_status: 'failed',
-        current_step_id: 'merge_context',
-        current_step_label: '上下文合并',
-        current_step_status: 'failed',
-        current_node: 'merge_context',
-        attempt: 1,
-        message: '检索失败',
-        active_path: ['merge_context'],
-        progress: { completed: 1, total: 10, percent: 10 },
-        ts: '2026-01-01T00:00:03.000Z',
-      },
-      pipelineSteps: [
-        {
-          step_id: 'merge_context',
-          label: '上下文合并',
-          status: 'started',
-          ts: '2026-01-01T00:00:01.000Z',
-        },
-      ],
-    });
-
-    expect(waitingNodes.find((node) => node.id === 'merge_context')?.status).toBe('waiting_user');
-    expect(failedNodes.find((node) => node.id === 'merge_context')?.status).toBe('failed');
-  });
-
-  it('prefers current_step_status over stale pipeline step status for the active node', () => {
-    const nodes = buildTraceNodes({
-      runState: {
-        run_id: 'run-1',
-        run_status: 'running',
-        current_step_id: 'merge_context',
-        current_step_label: '上下文合并',
-        current_step_status: 'completed',
-        current_node: 'merge_context',
-        attempt: 1,
-        message: null,
-        active_path: ['merge_context'],
-        progress: { completed: 1, total: 10, percent: 10 },
-        ts: '2026-01-01T00:00:02.000Z',
-      },
-      pipelineSteps: [
-        {
-          step_id: 'merge_context',
-          label: '上下文合并',
-          status: 'started',
-          ts: '2026-01-01T00:00:01.000Z',
-        },
-      ],
-    });
-
-    expect(nodes.find((node) => node.id === 'merge_context')?.status).toBe('completed');
-  });
-
-  it('builds compact chinese summaries without exposing default statistic tags', () => {
-    const nodes = buildTraceNodes({
-      runState: {
-        run_id: 'run-1',
-        run_status: 'running',
-        current_step_id: 'complexity_classify',
-        current_step_label: '复杂度分类',
-        current_step_status: 'completed',
-        current_node: 'complexity_classify',
-        attempt: 1,
-        message: null,
-        active_path: ['merge_context', 'complexity_classify'],
-        progress: { completed: 2, total: 10, percent: 20 },
-        ts: '2026-01-01T00:00:02.000Z',
-      },
-      nodeIoEvents: [
-        {
-          run_id: 'run-1',
-          node_id: 'complexity_classify',
-          node_name: 'complexity_classify',
-          phase: 'end',
-          latency_ms: 321,
-          output_summary: {
-            complexity_level: 'complex',
-            fallback_used: true,
-            slot_count: 0,
-            ambiguous: false,
-          },
-          ts: '2026-01-01T00:00:02.000Z',
-        },
-      ],
-    });
-
-    const node = nodes.find((item) => item.id === 'complexity_classify');
-    expect(node?.summaryText).toBe('已识别为复杂问题');
-    expect(node?.summaryTags).toEqual([]);
-  });
-
-  it('uses the rewritten question itself as the visible key output for rewrite nodes', () => {
-    const nodes = buildTraceNodes({
-      nodeIoEvents: [
-        {
-          run_id: 'run-1',
-          node_id: 'coref_rewrite',
-          node_name: 'coref_rewrite',
-          phase: 'end',
-          output_summary: {
-            rewritten: true,
-          },
-          output_snapshot: {
-            coref_query: '2025年北京的社保缴费基数是多少',
-          },
-          ts: '2026-01-01T00:00:02.000Z',
-        },
-      ],
-    });
-
-    expect(nodes.find((node) => node.id === 'coref_rewrite')?.summaryText).toBe(
-      '改写后问题：2025年北京的社保缴费基数是多少'
-    );
-  });
-
-  it('builds stage summary text from the most relevant node summary', () => {
-    const groups = buildTraceStageGroups({
-      runState: {
-        run_id: 'run-1',
-        run_status: 'running',
-        current_step_id: 'complexity_classify',
-        current_step_label: '复杂度分类',
-        current_step_status: 'completed',
-        current_node: 'complexity_classify',
-        attempt: 1,
-        message: null,
-        active_path: ['merge_context', 'complexity_classify'],
-        progress: { completed: 2, total: 10, percent: 20 },
-        ts: '2026-01-01T00:00:02.000Z',
-      },
-      nodeIoEvents: [
-        {
-          run_id: 'run-1',
-          node_id: 'complexity_classify',
-          node_name: 'complexity_classify',
-          phase: 'end',
-          output_summary: {
-            complexity_level: 'complex',
-          },
-          ts: '2026-01-01T00:00:02.000Z',
-        },
-      ],
-    });
-
-    expect(groups.find((stage) => stage.id === 'stage_2_route')?.summaryText).toBe(
-      '已识别为复杂问题'
-    );
-  });
-
-  it('renders only schema nodes plus observed nodes when graph schema exists', () => {
-    const groups = buildTraceStageGroups({
-      schema: {
-        version: '2026-03-12',
-        hash: 'schema-hash-legacy',
-        nodes: [
-          { id: 'answer_subgraph', label: '答案子图', phase: 'generate', order: 37 },
-          { id: 'draft_generate', label: '草稿生成', phase: 'generate', order: 38 },
-          { id: 'answer_review_fuse', label: '审查结果融合', phase: 'verify', order: 43 },
-        ],
-        edges: [],
-      },
-      nodeIoEvents: [
-        {
-          run_id: 'run-1',
-          node_id: 'draft_generate',
-          node_name: 'draft_generate',
-          phase: 'end',
-          ts: '2026-01-01T00:00:01.000Z',
-        },
-        {
-          run_id: 'run-1',
-          node_id: 'answer_review_fuse',
-          node_name: 'answer_review_fuse',
-          phase: 'end',
-          ts: '2026-01-01T00:00:02.000Z',
-        },
-      ],
-    });
-
-    const nodeIds = groups.flatMap((stage) => stage.nodes.map((node) => node.id));
-
-    expect(nodeIds).toContain('draft_generate');
-    expect(nodeIds).toContain('answer_review_fuse');
-    expect(nodeIds).not.toContain('generate');
-    expect(nodeIds).not.toContain('answer_review');
-  });
-
-  it('prefers backend schema phase and order over local catalog when building nodes', () => {
-    const nodes = buildTraceNodes({
-      schema: {
-        version: '1.1',
-        hash: 'schema-hash',
-        nodes: [
-          {
-            id: 'transform_query',
-            label: '重试改写',
-            phase: 'finalize',
-            order: 999,
-            metadata: { label: '重试改写', phase: 'finalize', order: 999 },
-          },
-        ],
-        edges: [],
-      },
-      nodeIoEvents: [
-        {
-          run_id: 'run-1',
-          node_id: 'transform_query',
-          node_name: 'transform_query',
-          phase: 'end',
-          ts: '2026-01-01T00:00:01.000Z',
-        },
-      ],
-    });
-
-    expect(nodes.find((node) => node.id === 'transform_query')).toMatchObject({
-      title: '重试改写',
-      stageId: 'stage_7_finalize',
-      order: 999,
-    });
-  });
-
-  it('registers node_path nodes even when schema omits nested conditional nodes', () => {
-    const nodes = buildTraceNodes({
+  it('filters wrapper subgraph executions while preserving repeated visible node order', () => {
+    const executions = buildTraceExecutionTimeline({
       schema: {
         version: '1.1',
         hash: 'schema-hash',
         nodes: [
           { id: 'preprocess_subgraph', label: '预处理子图', phase: 'preprocess', order: 0 },
-          { id: 'retrieval_subgraph', label: '检索子图', phase: 'retrieve', order: 13 },
+          { id: 'merge_context', label: '上下文合并', phase: 'preprocess', order: 1 },
+          { id: 'retrieve_subquery', label: '子查询检索', phase: 'retrieve', order: 16 },
         ],
         edges: [],
       },
-      nodeIoEvents: [
+      traceExecutions: [
         {
-          run_id: 'run-1',
-          node_id: 'preprocess_subgraph',
+          execution_id: 'task-wrapper',
           node_name: 'preprocess_subgraph',
-          node_path: ['preprocess_subgraph', 'entity_expand', 'hyde'],
-          phase: 'start',
-          ts: '2026-01-01T00:00:01.000Z',
+          node_label: '预处理子图',
+          status: 'completed',
+          started_at: '2026-01-01T00:00:00.000Z',
+          updated_at: '2026-01-01T00:00:00.000Z',
+        },
+        {
+          execution_id: 'task-1',
+          node_name: 'retrieve_subquery',
+          node_label: '子查询检索',
+          status: 'completed',
+          started_at: '2026-01-01T00:00:01.000Z',
+          updated_at: '2026-01-01T00:00:02.000Z',
+          output_items: [{ key: 'retrieval_count', label: '证据数', value: '4' }],
+        },
+        {
+          execution_id: 'task-2',
+          node_name: 'retrieve_subquery',
+          node_label: '子查询检索',
+          status: 'completed',
+          started_at: '2026-01-01T00:00:03.000Z',
+          updated_at: '2026-01-01T00:00:04.000Z',
+          output_items: [{ key: 'retrieval_count', label: '证据数', value: '2' }],
+        },
+        {
+          execution_id: 'task-model',
+          node_name: 'model',
+          node_label: 'model',
+          status: 'completed',
+          started_at: '2026-01-01T00:00:05.000Z',
+          updated_at: '2026-01-01T00:00:06.000Z',
         },
       ],
     });
 
-    const nodeIds = new Set(nodes.map((node) => node.id));
-    expect(nodeIds.has('preprocess_subgraph')).toBe(false);
-    expect(nodeIds.has('entity_expand')).toBe(true);
-    expect(nodeIds.has('hyde')).toBe(true);
+    expect(executions.map((execution) => execution.execution_id)).toEqual(['task-1', 'task-2']);
+    expect(executions.map((execution) => execution.summaryText)).toEqual(['证据数：4', '证据数：2']);
   });
 
-  it('registers active_path and current_node even when schema is truncated', () => {
-    const nodes = buildTraceNodes({
+  it('derives stage summaries from execution timeline plus authoritative runState', () => {
+    const stages = buildTraceStageSummaries({
       schema: {
         version: '1.1',
         hash: 'schema-hash',
         nodes: [
-          { id: 'preprocess_subgraph', label: '预处理子图', phase: 'preprocess', order: 0 },
-          { id: 'retrieval_subgraph', label: '检索子图', phase: 'retrieve', order: 13 },
-        ],
-        edges: [],
-      },
-      runState: {
-        run_id: 'run-1',
-        run_status: 'running',
-        current_step_id: 'entity_expand',
-        current_step_label: '实体扩展',
-        current_step_status: 'started',
-        current_node: 'entity_expand',
-        active_path: ['preprocess_subgraph', 'entity_expand'],
-        attempt: 1,
-        message: null,
-        progress: { completed: 1, total: 10, percent: 10 },
-        ts: '2026-01-01T00:00:02.000Z',
-      },
-    });
-
-    expect(nodes.some((node) => node.id === 'preprocess_subgraph')).toBe(false);
-    expect(nodes.find((node) => node.id === 'entity_expand')).toMatchObject({
-      title: '实体扩展',
-      status: 'running',
-    });
-  });
-
-  it('hides subgraph wrapper nodes with runtime suffixes while keeping observed main graph nodes', () => {
-    const nodes = buildTraceNodes({
-      schema: {
-        version: '1.1',
-        hash: 'schema-hash',
-        nodes: [
-          { id: 'retrieval_subgraph', label: '检索子图', phase: 'retrieve', order: 13 },
-          { id: 'dispatch_subqueries', label: '子查询派发', phase: 'retrieve', order: 15 },
+          { id: 'merge_context', label: '上下文合并', phase: 'preprocess', order: 1 },
+          { id: 'complexity_classify', label: '复杂度分类', phase: 'route', order: 5 },
           { id: 'retrieve_subquery', label: '子查询检索', phase: 'retrieve', order: 16 },
         ],
         edges: [],
@@ -455,59 +84,237 @@ describe('kbChatTraceNodes', () => {
       runState: {
         run_id: 'run-1',
         run_status: 'running',
-        current_step_id: 'retrieval_subgraph:a1c1902b-6120-d123',
-        current_step_label: '检索子图',
+        current_step_id: 'retrieve_subquery',
+        current_step_label: '子查询检索',
         current_step_status: 'started',
-        current_node: 'dispatch_subqueries',
-        active_path: [
-          'retrieval_subgraph:a1c1902b-6120-d123',
-          'dispatch_subqueries',
-          'retrieve_subquery',
-        ],
+        current_node: 'retrieve_subquery',
         attempt: 1,
         message: null,
-        progress: { completed: 1, total: 10, percent: 10 },
-        ts: '2026-01-01T00:00:02.000Z',
+        progress: { completed: 2, total: 10, percent: 20 },
+        active_path: ['merge_context', 'complexity_classify', 'retrieve_subquery'],
+        ts: '2026-01-01T00:00:03.000Z',
       },
-      nodeIoEvents: [
+      traceExecutions: [
         {
-          run_id: 'run-1',
-          node_id: 'retrieval_subgraph:a1c1902b-6120-d123',
-          node_name: 'retrieval_subgraph:a1c1902b-6120-d123',
-          node_path: [
-            'retrieval_subgraph:a1c1902b-6120-d123',
-            'dispatch_subqueries',
-            'retrieve_subquery',
-          ],
-          phase: 'start',
-          ts: '2026-01-01T00:00:01.000Z',
+          execution_id: 'task-merge',
+          node_name: 'merge_context',
+          node_label: '上下文合并',
+          status: 'completed',
+          started_at: '2026-01-01T00:00:00.000Z',
+          updated_at: '2026-01-01T00:00:01.000Z',
+        },
+        {
+          execution_id: 'task-route',
+          node_name: 'complexity_classify',
+          node_label: '复杂度分类',
+          status: 'completed',
+          started_at: '2026-01-01T00:00:01.000Z',
+          updated_at: '2026-01-01T00:00:02.000Z',
+        },
+        {
+          execution_id: 'task-retrieve',
+          node_name: 'retrieve_subquery',
+          node_label: '子查询检索',
+          status: 'started',
+          started_at: '2026-01-01T00:00:02.000Z',
+          updated_at: '2026-01-01T00:00:03.000Z',
         },
       ],
     });
 
-    const nodeIds = new Set(nodes.map((node) => node.id));
-    expect(nodeIds.has('retrieval_subgraph')).toBe(false);
-    expect(nodeIds.has('retrieval_subgraph:a1c1902b-6120-d123')).toBe(false);
-    expect(nodeIds.has('dispatch_subqueries')).toBe(true);
-    expect(nodeIds.has('retrieve_subquery')).toBe(true);
+    expect(stages.find((stage) => stage.id === 'stage_1_preprocess')).toMatchObject({
+      status: 'completed',
+      executionCount: 1,
+    });
+    expect(stages.find((stage) => stage.id === 'stage_2_route')).toMatchObject({
+      status: 'completed',
+      executionCount: 1,
+    });
+    expect(stages.find((stage) => stage.id === 'stage_4_retrieve')).toMatchObject({
+      status: 'running',
+      currentNodeLabel: '子查询检索',
+      executionCount: 1,
+    });
   });
 
-  it('does not include deprecated preprocess shell nodes in fallback trace view', () => {
-    const nodes = buildTraceNodes({});
-    const nodeIds = new Set(nodes.map((node) => node.id));
+  it('replays live SSE into a timeline that hides every subgraph wrapper while preserving visible step order', () => {
+    const parser = createSseParser();
+    const raw = fs.readFileSync(new URL('../../../live_kb_chat_trace.sse', import.meta.url), 'utf8');
+    const sseEvents = [...parser.feed(raw), ...parser.flush()];
+    const traceStateCtx = {
+      totalNodes: 100,
+      resolveNodeLabel: (nodeId: string) => resolveKbNodeLabel(nodeId, null),
+    };
+    let traceState = reduceKbChatTraceState(
+      {},
+      { type: 'meta', runId: 'live-run' },
+      traceStateCtx
+    );
+    const visibleStepStartOrder: string[] = [];
 
-    [
-      'AMBIGUITY_CHECK_ENABLED',
-      'adaptive_routing',
-      'simple_path',
-      'moderate_path',
-      'complex_path',
-      'ENABLE_MULTI_QUERY_MOD',
-      'ENABLE_DECOMPOSITION',
-      'ENABLE_MULTI_QUERY',
-      'ENABLE_HYDE',
-    ].forEach((nodeId) => {
-      expect(nodeIds.has(nodeId)).toBe(false);
+    for (const sseEvent of sseEvents) {
+      const normalized = normalizeChatStreamEvent(sseEvent);
+      if (!normalized) {
+        continue;
+      }
+      const { event, payload } = normalized;
+      if (event === 'meta') {
+        if (typeof payload.run_id === 'string') {
+          traceState = reduceKbChatTraceState(
+            traceState,
+            { type: 'meta', runId: payload.run_id },
+            traceStateCtx
+          );
+        }
+        continue;
+      }
+
+      if (event === 'step') {
+        const stepId = typeof payload.step_id === 'string' ? payload.step_id : null;
+        const executionId =
+          typeof payload.execution_id === 'string' ? payload.execution_id : null;
+        if (
+          stepId &&
+          executionId &&
+          payload.status === 'started' &&
+          !stepId.endsWith('_subgraph') &&
+          stepId !== 'model'
+        ) {
+          visibleStepStartOrder.push(`${stepId}#${executionId}`);
+        }
+        traceState = reduceKbChatTraceState(traceState, { type: 'step', raw: payload }, traceStateCtx);
+        continue;
+      }
+
+      if (event === 'state') {
+        traceState = reduceKbChatTraceState(traceState, { type: 'state', raw: payload }, traceStateCtx);
+        continue;
+      }
+
+      if (event === 'node_io') {
+        traceState = reduceKbChatTraceState(
+          traceState,
+          { type: 'node_io', raw: payload },
+          traceStateCtx
+        );
+        continue;
+      }
+
+      if (event === 'updates') {
+        traceState = reduceKbChatTraceState(
+          traceState,
+          { type: 'updates', raw: payload },
+          traceStateCtx
+        );
+        continue;
+      }
+
+      if (event === 'ui_event') {
+        traceState = reduceKbChatTraceState(
+          traceState,
+          { type: 'ui_event', raw: payload },
+          traceStateCtx
+        );
+        continue;
+      }
+
+      if (event === 'custom' || event === 'heartbeat') {
+        traceState = reduceKbChatTraceState(
+          traceState,
+          { type: 'custom', raw: payload },
+          traceStateCtx
+        );
+      }
+    }
+
+    const timeline = buildTraceExecutionTimeline({
+      schema: null,
+      runState: kbChatTraceSelectors.runState(traceState),
+      traceExecutions: kbChatTraceSelectors.traceExecutions(traceState),
+    });
+
+    expect(timeline.map((execution) => `${execution.node_name}#${execution.execution_id}`)).toEqual(
+      visibleStepStartOrder
+    );
+    expect(timeline.some((execution) => execution.node_name.endsWith('_subgraph'))).toBe(false);
+  });
+
+  it('keeps the latest visible business node active when runState points at a hidden internal node', () => {
+    const schema = {
+      version: '1.1',
+      hash: 'schema-hash',
+      nodes: [
+        { id: 'merge_context', label: '上下文合并', phase: 'preprocess', order: 1 },
+        { id: 'normalize_rewrite', label: '问题规范', phase: 'preprocess', order: 4 },
+        { id: 'complexity_classify', label: '复杂度分类', phase: 'route', order: 5 },
+      ],
+      edges: [],
+    } as const;
+
+    const traceExecutions = [
+      {
+        execution_id: 'task-merge',
+        node_name: 'merge_context',
+        node_label: '上下文合并',
+        status: 'completed' as const,
+        started_at: '2026-01-01T00:00:00.000Z',
+        updated_at: '2026-01-01T00:00:01.000Z',
+      },
+      {
+        execution_id: 'task-normalize',
+        node_name: 'normalize_rewrite',
+        node_label: '问题规范',
+        status: 'started' as const,
+        started_at: '2026-01-01T00:00:02.000Z',
+        updated_at: '2026-01-01T00:00:03.000Z',
+      },
+    ];
+
+    const timeline = buildTraceExecutionTimeline({
+      schema,
+      runState: {
+        run_id: 'run-1',
+        run_status: 'running',
+        current_step_id: 'model',
+        current_step_label: 'model',
+        current_step_status: 'started',
+        current_node: 'model',
+        attempt: 1,
+        message: null,
+        progress: { completed: 1, total: 4, percent: 25 },
+        ts: '2026-01-01T00:00:03.500Z',
+      },
+      traceExecutions,
+    });
+
+    expect(timeline.find((execution) => execution.execution_id === 'task-normalize')).toMatchObject({
+      isActive: true,
+    });
+
+    const stages = buildTraceStageSummaries({
+      schema,
+      runState: {
+        run_id: 'run-1',
+        run_status: 'running',
+        current_step_id: 'model',
+        current_step_label: 'model',
+        current_step_status: 'started',
+        current_node: 'model',
+        attempt: 1,
+        message: null,
+        progress: { completed: 1, total: 4, percent: 25 },
+        ts: '2026-01-01T00:00:03.500Z',
+      },
+      traceExecutions,
+    });
+
+    expect(stages.find((stage) => stage.id === 'stage_1_preprocess')).toMatchObject({
+      status: 'running',
+      currentNodeLabel: '问题规范',
+    });
+    expect(stages.find((stage) => stage.id === 'stage_4_retrieve')).toMatchObject({
+      status: 'idle',
+      currentNodeLabel: null,
     });
   });
 });

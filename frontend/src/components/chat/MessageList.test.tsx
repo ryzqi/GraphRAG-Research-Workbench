@@ -27,7 +27,6 @@ describe('MessageList', () => {
     const html = renderToStaticMarkup(
       createElement(MessageList, {
         loading: false,
-        showPipeline: false,
         messages: [
           createAssistantMessage({
             content: '最终答案。\n\n参考来源\n[S1] 尾部引用块应该被移除',

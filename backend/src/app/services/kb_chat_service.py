@@ -13,7 +13,7 @@ import json
 import logging
 import math
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal, cast
@@ -209,6 +209,9 @@ class _KbChatStreamRunState:
     current_step_id: str | None = None
     current_node: str | None = None
     state_version: int = 0
+    latest_execution_by_scope: dict[tuple[tuple[str, ...], str], str] = field(
+        default_factory=dict
+    )
 
 
 class KbChatService:
@@ -2523,6 +2526,7 @@ class KbChatService:
     def _build_node_io_payload(
         *,
         run_id: uuid.UUID,
+        execution_id: str | None = None,
         node_name: str,
         node_id: str,
         phase: str,
@@ -2546,6 +2550,9 @@ class KbChatService:
             "attempt": attempt,
             "ts": (ts or datetime.now(timezone.utc)).isoformat(),
         }
+        if isinstance(execution_id, str) and execution_id:
+            payload["execution_id"] = execution_id
+            payload["task_id"] = execution_id
         if input_summary is not None:
             payload["input_summary"] = input_summary
         if output_summary is not None:
@@ -2582,10 +2589,106 @@ class KbChatService:
             return None
 
     @staticmethod
+    def _build_graph_stream_options() -> dict[str, Any]:
+        return {
+            "stream_mode": ["messages", "updates", "custom", "tasks"],
+            "subgraphs": True,
+            "version": "v2",
+        }
+
+    @staticmethod
+    def _build_step_payload_from_task_event(
+        *,
+        payload: dict[str, Any],
+        node_path: list[str] | None = None,
+    ) -> dict[str, Any] | None:
+        task_id = payload.get("id")
+        node_name = payload.get("name")
+        if (
+            not isinstance(task_id, str)
+            or not task_id
+            or not isinstance(node_name, str)
+            or not node_name
+        ):
+            return None
+
+        normalized_node_path = (
+            [str(item) for item in node_path if isinstance(item, str) and item]
+            if isinstance(node_path, list)
+            else []
+        )
+        if not normalized_node_path or normalized_node_path[-1] != node_name:
+            normalized_node_path = [*normalized_node_path, node_name]
+        ts = datetime.now(timezone.utc).isoformat()
+
+        if "input" in payload or "triggers" in payload:
+            triggers = payload.get("triggers")
+            meta: dict[str, Any] = {
+                "task_id": task_id,
+                "node_path": normalized_node_path,
+            }
+            if isinstance(triggers, list):
+                meta["triggers"] = [
+                    str(item) for item in triggers if isinstance(item, str)
+                ]
+            return {
+                "execution_id": task_id,
+                "step_id": node_name,
+                "label": node_name,
+                "status": "started",
+                "node": node_name,
+                "ts": ts,
+                "meta": meta,
+            }
+
+        interrupts = payload.get("interrupts")
+        if isinstance(interrupts, list) and interrupts:
+            return {
+                "execution_id": task_id,
+                "step_id": node_name,
+                "label": node_name,
+                "status": "waiting_user",
+                "node": node_name,
+                "ts": ts,
+                "meta": {
+                    "task_id": task_id,
+                    "node_path": normalized_node_path,
+                    "interrupt_count": len(interrupts),
+                },
+            }
+
+        error_message = payload.get("error")
+        meta = {
+            "task_id": task_id,
+            "node_path": normalized_node_path,
+        }
+        result = payload.get("result")
+        if isinstance(result, dict) and result:
+            meta["result_keys"] = [str(key) for key in result.keys()]
+        return {
+            "execution_id": task_id,
+            "step_id": node_name,
+            "label": node_name,
+            "status": (
+                "failed"
+                if isinstance(error_message, str) and error_message
+                else "completed"
+            ),
+            "node": node_name,
+            "message": (
+                error_message
+                if isinstance(error_message, str) and error_message
+                else None
+            ),
+            "ts": ts,
+            "meta": meta,
+        }
+
+    @staticmethod
     def _normalize_graph_stream_event(
         event: Any,
     ) -> tuple[str, Any, list[str] | None] | None:
-        """Normalize LangGraph stream tuple for both plain and subgraph modes."""
+        """Normalize LangGraph v2 StreamPart or legacy tuple stream output."""
         def _to_node_path(value: Any) -> list[str] | None:
             if isinstance(value, tuple):
                 path = [str(item) for item in value if isinstance(item, str) and item]
@@ -2595,6 +2698,11 @@ class KbChatService:
                 return path or None
             return None
 
+        if isinstance(event, dict):
+            mode = event.get("type")
+            if not isinstance(mode, str):
+                return None
+            return mode, event.get("data"), _to_node_path(event.get("ns"))
         if isinstance(event, tuple):
             if len(event) == 2:
                 mode, chunk = event
@@ -2616,6 +2724,74 @@ class KbChatService:
                 return None
             return (mode, chunk, node_path) if isinstance(mode, str) else None
         return None
+
+    @staticmethod
+    def _normalize_stream_namespace(node_path: list[str] | None) -> tuple[str, ...]:
+        if not isinstance(node_path, list):
+            return ()
+        return tuple(str(item) for item in node_path if isinstance(item, str) and item)
+
+    @staticmethod
+    def _build_stream_execution_scope(
+        *,
+        node_name: str | None,
+        node_path: list[str] | None = None,
+    ) -> tuple[tuple[str, ...], str] | None:
+        if not isinstance(node_name, str) or not node_name:
+            return None
+        return (KbChatService._normalize_stream_namespace(node_path), node_name)
+
+    @staticmethod
+    def _remember_stream_execution(
+        *,
+        stream_state: _KbChatStreamRunState,
+        execution_id: str | None,
+        node_name: str | None,
+        node_path: list[str] | None = None,
+    ) -> None:
+        if not isinstance(execution_id, str) or not execution_id:
+            return
+        scope = KbChatService._build_stream_execution_scope(
+            node_name=node_name,
+            node_path=node_path,
+        )
+        if scope is None:
+            return
+        stream_state.latest_execution_by_scope[scope] = execution_id
+
+    @staticmethod
+    def _resolve_stream_execution_id(
+        *,
+        stream_state: _KbChatStreamRunState,
+        payload: dict[str, Any],
+        node_name: str | None,
+        node_path: list[str] | None = None,
+    ) -> str | None:
+        execution_id = payload.get("execution_id")
+        if isinstance(execution_id, str) and execution_id:
+            return execution_id
+        task_id = payload.get("task_id")
+        if isinstance(task_id, str) and task_id:
+            return task_id
+        scope = KbChatService._build_stream_execution_scope(
+            node_name=node_name,
+            node_path=node_path,
+        )
+        if scope is None:
+            return None
+        return stream_state.latest_execution_by_scope.get(scope)
+
+    @staticmethod
+    def _build_scoped_node_path(
+        *,
+        node_name: str | None,
+        node_path: list[str] | None = None,
+    ) -> list[str]:
+        scoped_path = list(KbChatService._normalize_stream_namespace(node_path))
+        if isinstance(node_name, str) and node_name:
+            if not scoped_path or scoped_path[-1] != node_name:
+                scoped_path.append(node_name)
+        return scoped_path
 
     @staticmethod
     def _build_active_path(
@@ -2691,6 +2867,46 @@ class KbChatService:
 
         stream_state.current_step_id = node_name
         stream_state.current_node = node_name
+        return node_name
+
+    @staticmethod
+    def _apply_stream_state_step(
+        *,
+        stream_state: _KbChatStreamRunState,
+        payload: dict[str, Any],
+        node_path: list[str] | None = None,
+    ) -> str | None:
+        node_name = payload.get("node") or payload.get("step_id")
+        status = payload.get("status")
+        if not isinstance(node_name, str) or not node_name or not isinstance(status, str):
+            return None
+
+        previous_attempt = stream_state.stage_attempts.get(node_name, 0)
+        if status == "started":
+            stream_state.stage_attempts[node_name] = previous_attempt + 1
+            stream_state.stage_status[node_name] = "started"
+        elif status == "waiting_user":
+            stream_state.stage_attempts[node_name] = previous_attempt or 1
+            stream_state.stage_status[node_name] = "waiting_user"
+        elif status == "failed":
+            stream_state.stage_attempts[node_name] = previous_attempt or 1
+            stream_state.stage_status[node_name] = "failed"
+        else:
+            stream_state.stage_attempts[node_name] = previous_attempt or 1
+            stream_state.stage_status[node_name] = "completed"
+
+        stream_state.current_step_id = node_name
+        stream_state.current_node = node_name
+        KbChatService._remember_stream_execution(
+            stream_state=stream_state,
+            execution_id=(
+                payload.get("execution_id")
+                if isinstance(payload.get("execution_id"), str)
+                else None
+            ),
+            node_name=node_name,
+            node_path=node_path,
+        )
         return node_name
 
     @staticmethod
@@ -3327,11 +3543,15 @@ class KbChatService:
             resolved_node_name = node_name if isinstance(node_name, str) and node_name else None
             drift_delta = 0
             salvage_used = False
-            if event_type in {"messages", "updates", "node_io"}:
+            if event_type in {"messages", "updates", "node_io", "step"}:
                 if resolved_node_name is None and isinstance(node_path, list) and node_path:
                     resolved_node_name = node_path[-1]
                     drift_delta += 1
                     salvage_used = True
+            scoped_node_path = self._build_scoped_node_path(
+                node_name=resolved_node_name,
+                node_path=node_path,
+            )
             if not isinstance(payload.get("ts"), str) or not str(payload.get("ts") or "").strip():
                 drift_delta += 1
                 salvage_used = True
@@ -3348,7 +3568,7 @@ class KbChatService:
                 node=node,
                 event_id=f"{run.id}:{seq}",
                 seq=seq,
-                node_path=node_path,
+                node_path=scoped_node_path,
                 attempt=attempt,
             )
             return (
@@ -3473,8 +3693,7 @@ class KbChatService:
                 build_graph_input_state(exec_ctx.state),
                 config,
                 context=exec_ctx.run_context,
-                stream_mode=["messages", "updates", "custom"],
-                subgraphs=True,
+                **self._build_graph_stream_options(),
             )
 
             queue: asyncio.Queue[tuple[str, object]] = asyncio.Queue()
@@ -3661,6 +3880,41 @@ class KbChatService:
                         )
                         continue
 
+                    if mode == "tasks" and isinstance(chunk, dict):
+                        step_payload = self._build_step_payload_from_task_event(
+                            payload=chunk,
+                            node_path=node_path,
+                        )
+                        if step_payload is None:
+                            continue
+                        node_name = self._apply_stream_state_step(
+                            stream_state=stream_run_state,
+                            payload=step_payload,
+                            node_path=node_path,
+                        )
+                        event_attempt = (
+                            stream_run_state.stage_attempts.get(node_name)
+                            if isinstance(node_name, str) and node_name
+                            else None
+                        )
+                        yield _emit_enveloped(
+                            event_type="step",
+                            payload=step_payload,
+                            node_name=node_name,
+                            node_path=node_path or [],
+                            attempt=event_attempt if isinstance(event_attempt, int) else None,
+                        )
+                        yield _emit_state(
+                            run_status=AgentRunStatus.RUNNING.value,
+                            message=(
+                                step_payload.get("message")
+                                if isinstance(step_payload.get("message"), str)
+                                else None
+                            ),
+                            node_path=node_path or [],
+                        )
+                        continue
+
                     if mode == "custom":
                         safe_payload = self._json_safe_custom_payload(chunk)
                         if isinstance(safe_payload, dict):
@@ -3695,6 +3949,21 @@ class KbChatService:
                                     payload=payload_dict,
                                     node_path=node_path,
                                 )
+                                execution_id = self._resolve_stream_execution_id(
+                                    stream_state=stream_run_state,
+                                    payload=payload_dict,
+                                    node_name=node_name,
+                                    node_path=node_path,
+                                )
+                                if execution_id is not None:
+                                    payload_dict["execution_id"] = execution_id
+                                    payload_dict.setdefault("task_id", execution_id)
+                                    self._remember_stream_execution(
+                                        stream_state=stream_run_state,
+                                        execution_id=execution_id,
+                                        node_name=node_name,
+                                        node_path=node_path,
+                                    )
                                 for meta_key in ("input_snapshot_meta", "output_snapshot_meta"):
                                     meta = payload_dict.get(meta_key)
                                     if isinstance(meta, dict) and meta.get("truncated") is True:

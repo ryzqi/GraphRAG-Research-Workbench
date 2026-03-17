@@ -29,17 +29,9 @@ import { ErrorAlert } from '../components/ui/ErrorAlert';
 import { KbChatConfigPanel } from '../components/chat/KbChatConfigPanel';
 
 import type { ChatMessage } from '../components/chat/MessageList';
-import type {
-  PipelineStep,
-  PipelineTimelineEvent,
-} from '../components/chat/PipelineProgress';
-
 import {
   type AgentMode,
   type ChatRunStateEvent,
-  type ChatRunUiEvent,
-  type ChatNodeDisplayItem,
-  type ChatNodeIoEvent,
   type KbGraphSchema,
   type KbChatConfig,
   type ChatMessageResponse,
@@ -114,60 +106,6 @@ const DEFAULT_KB_CHAT_CONFIG: KbChatConfig = {
   retrieval_multiscale_max_chunks_per_document: 2,
 };
 
-function sortPipelineSteps(steps: PipelineStep[]): PipelineStep[] {
-  return [...steps].sort((a, b) => {
-    const tsCompare = (a.ts ?? '').localeCompare(b.ts ?? '');
-    if (tsCompare !== 0) {
-      return tsCompare;
-    }
-    return a.step_id.localeCompare(b.step_id);
-  });
-}
-
-function upsertPipelineStep(
-  steps: PipelineStep[] | undefined,
-  incoming: PipelineStep
-): PipelineStep[] {
-  const current = [...(steps ?? [])];
-  const index = current.findIndex((step) => step.step_id === incoming.step_id);
-  if (index === -1) {
-    current.push(incoming);
-  } else {
-    current[index] = {
-      ...current[index],
-      ...incoming,
-      label: incoming.label || current[index].label,
-    };
-  }
-  return sortPipelineSteps(current);
-}
-
-function finalizePipelineSteps(steps: PipelineStep[] | undefined): PipelineStep[] | undefined {
-  if (!steps || steps.length === 0) {
-    return steps;
-  }
-  return steps.map((step) => {
-    if (step.status === 'started') {
-      return { ...step, status: 'completed' };
-    }
-    return step;
-  });
-}
-
-function calculateProgress(steps: PipelineStep[] | undefined) {
-  const stepList = steps ?? [];
-  const total = Math.max(stepList.length, 1);
-  const completed = stepList.filter(
-    (step) =>
-      step.status === 'completed' ||
-      step.status === 'skipped' ||
-      step.status === 'failed' ||
-      step.status === 'waiting_user'
-  ).length;
-  const percent = total > 0 ? Math.min(100, Math.round((completed / total) * 1000) / 10) : 0;
-  return { completed, total, percent };
-}
-
 function createInitialRunState(runId: string, totalNodes = 1): ChatRunStateEvent {
   return {
     run_id: runId,
@@ -185,40 +123,6 @@ function createInitialRunState(runId: string, totalNodes = 1): ChatRunStateEvent
     },
     ts: new Date().toISOString(),
   };
-}
-
-function parseUiEvent(data: Record<string, unknown>): ChatRunUiEvent | null {
-  const runId = typeof data.run_id === 'string' ? data.run_id : '';
-  const eventType = typeof data.event_type === 'string' ? data.event_type : '';
-  if (!runId || !eventType) {
-    return null;
-  }
-  return {
-    event_type: eventType,
-    run_id: runId,
-    step_id: typeof data.step_id === 'string' ? data.step_id : null,
-    status: typeof data.status === 'string' ? data.status : null,
-    node: typeof data.node === 'string' ? data.node : null,
-    message: typeof data.message === 'string' ? data.message : null,
-    candidate_answer:
-      typeof data.candidate_answer === 'string' ? data.candidate_answer : null,
-    source_step_id:
-      typeof data.source_step_id === 'string' ? data.source_step_id : null,
-    degrade_reason:
-      typeof data.degrade_reason === 'string' ? data.degrade_reason : null,
-    meta:
-      data.meta && typeof data.meta === 'object'
-        ? (data.meta as Record<string, unknown>)
-        : null,
-    ts: typeof data.ts === 'string' ? data.ts : new Date().toISOString(),
-  };
-}
-
-function asRecord(value: unknown): Record<string, unknown> | null {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    return null;
-  }
-  return value as Record<string, unknown>;
 }
 
 function resolveGraphTotalNodes(schema: KbGraphSchema | null | undefined): number {
@@ -265,227 +169,44 @@ function resolveClarificationAnchorStep(
   return { step_id: stepId, label };
 }
 
-function mergeActivePath(
-  current: string[] | undefined,
-  nodeIds: string[]
-): string[] {
-  const seen = new Set<string>();
-  const result: string[] = [];
-  for (const nodeId of current ?? []) {
-    if (!seen.has(nodeId)) {
-      seen.add(nodeId);
-      result.push(nodeId);
-    }
-  }
-  for (const nodeId of nodeIds) {
-    if (!seen.has(nodeId)) {
-      seen.add(nodeId);
-      result.push(nodeId);
-    }
-  }
-  return result;
-}
-
-function buildProgressFromActivePath(
-  activePath: string[] | undefined,
-  totalNodes: number,
-  runStatus: ChatRunStateEvent['run_status']
-) {
-  const completed = runStatus === 'succeeded'
-    ? Math.max(1, totalNodes)
-    : Math.min(Math.max(0, activePath?.length ?? 0), Math.max(1, totalNodes));
-  const total = Math.max(1, totalNodes);
-  const percent = total > 0 ? Math.min(100, Math.round((completed / total) * 1000) / 10) : 0;
-  return { completed, total, percent };
-}
-
-function parseUpdatesChunk(data: Record<string, unknown>): Record<string, unknown> | null {
-  const nested = asRecord(data.chunk);
-  if (nested) {
-    return nested;
-  }
-  return asRecord(data);
-}
-
-function parseNodeDisplayItems(value: unknown): ChatNodeDisplayItem[] | null {
-  if (!Array.isArray(value)) {
-    return null;
-  }
-  const normalized: ChatNodeDisplayItem[] = [];
-  for (const item of value) {
-    const record = asRecord(item);
-    if (!record) {
-      continue;
-    }
-    const key = typeof record.key === 'string' ? record.key : null;
-    const label = typeof record.label === 'string' ? record.label : null;
-    const rawValue = record.value;
-    if (!key || !label) {
-      continue;
-    }
-    if (typeof rawValue === 'string') {
-      normalized.push({ key, label, value: rawValue });
-      continue;
-    }
-    if (Array.isArray(rawValue)) {
-      const lines = rawValue.filter((line): line is string => typeof line === 'string');
-      if (lines.length > 0) {
-        normalized.push({ key, label, value: lines });
-      }
-    }
-  }
-  return normalized.length > 0 ? normalized : null;
-}
-
-function parseNodeIoEvent(data: Record<string, unknown>): ChatNodeIoEvent | null {
-  const run = asRecord(data.run);
-  const node = asRecord(data.node);
-  const runId =
-    typeof data.run_id === 'string'
-      ? data.run_id
-      : typeof run?.id === 'string'
-        ? run.id
-        : null;
-  const nodeName =
-    typeof data.node_name === 'string'
-      ? data.node_name
-      : typeof data.node === 'string'
-        ? data.node
-        : typeof node?.name === 'string'
-          ? node.name
-          : null;
-  const nodeId =
-    typeof data.node_id === 'string'
-      ? data.node_id
-      : typeof node?.id === 'string'
-        ? node.id
-        : nodeName;
-  const phaseRaw = typeof data.phase === 'string' ? data.phase : null;
-  const phase =
-    phaseRaw === 'start' || phaseRaw === 'end' || phaseRaw === 'error'
-      ? phaseRaw
-      : null;
-  if (!runId || !nodeName || !nodeId || !phase) {
-    return null;
-  }
-  return {
-    run_id: runId,
-    node_name: nodeName,
-    node_id: nodeId,
-    phase,
-    display_input_items: parseNodeDisplayItems(data.display_input_items),
-    display_output_items: parseNodeDisplayItems(data.display_output_items),
-    attempt: typeof data.attempt === 'number' ? data.attempt : null,
-    latency_ms: typeof data.latency_ms === 'number' ? data.latency_ms : null,
-    input_summary: asRecord(data.input_summary),
-    output_summary: asRecord(data.output_summary),
-    input_snapshot: asRecord(data.input_snapshot),
-    output_snapshot: asRecord(data.output_snapshot),
-    error_summary: typeof data.error_summary === 'string' ? data.error_summary : null,
-    ts: typeof data.ts === 'string' ? data.ts : new Date().toISOString(),
-  };
-}
-
-function createTimelineEventFromStep(step: PipelineStep): PipelineTimelineEvent {
-  const attempt = typeof step.meta?.attempt === 'number' ? step.meta.attempt : null;
-  const ioSummaryRaw = step.meta?.io_summary;
-  const ioSummary =
-    ioSummaryRaw && typeof ioSummaryRaw === 'object'
-      ? (ioSummaryRaw as Record<string, unknown>)
-      : null;
-  return {
-    id: `step-${step.step_id}-${step.status}-${step.ts ?? Date.now()}`,
-    source: 'step',
-    step_id: step.step_id,
-    label: step.label,
-    node: step.node ?? null,
-    status: step.status,
-    run_status: null,
-    attempt,
-    message: step.message ?? null,
-    io_summary: ioSummary,
-    ts: step.ts ?? new Date().toISOString(),
-  };
-}
-
-function createTimelineEventFromUi(event: ChatRunUiEvent): PipelineTimelineEvent {
-  const label =
-    event.event_type === 'degraded_to_candidate'
-      ? '降级候选答案'
-      : event.event_type === 'candidate_answer_updated'
-        ? '候选答案更新'
-        : event.step_id ?? event.event_type;
-  return {
-    id: `ui-${event.run_id}-${event.event_type}-${event.ts}`,
-    source: 'ui',
-    step_id: event.step_id ?? null,
-    label,
-    node: event.node ?? null,
-    status: event.status ?? 'running',
-    run_status: null,
-    attempt:
-      typeof event.meta?.attempt === 'number' ? (event.meta.attempt as number) : null,
-    message: event.message ?? null,
-    event_type: event.event_type,
-    ts: event.ts,
-  };
-}
-
-function appendTimelineEvent(
-  timeline: PipelineTimelineEvent[] | undefined,
-  event: PipelineTimelineEvent
-): PipelineTimelineEvent[] {
-  const current = timeline ?? [];
-  const last = current[current.length - 1];
-  const lastSummary = last?.io_summary ? JSON.stringify(last.io_summary) : '';
-  const nextSummary = event.io_summary ? JSON.stringify(event.io_summary) : '';
-  if (
-    last &&
-    last.source === event.source &&
-    last.step_id === event.step_id &&
-    last.node === event.node &&
-    last.status === event.status &&
-    last.run_status === event.run_status &&
-    last.event_type === event.event_type &&
-    last.attempt === event.attempt &&
-    last.message === event.message &&
-    lastSummary === nextSummary
-  ) {
-    return current;
-  }
-  return [...current, event];
-}
-
 function createTerminalRunState(
   runId: string,
   status: TerminalRunStatus,
-  steps: PipelineStep[] | undefined,
+  _steps: undefined,
   message?: string,
   previousState?: ChatRunStateEvent
 ): ChatRunStateEvent {
-  const sorted = sortPipelineSteps(steps ?? []);
-  const current = sorted[sorted.length - 1];
+  const fallbackTotal = previousState?.progress.total ?? 1;
+  const baseState =
+    previousState ??
+    createInitialRunState(runId, fallbackTotal);
+  const currentStepStatus =
+    status === 'succeeded'
+      ? baseState.current_step_status === 'started' || !baseState.current_step_status
+        ? 'completed'
+        : baseState.current_step_status
+      : status === 'failed'
+        ? baseState.current_step_status === 'started'
+          ? 'failed'
+          : baseState.current_step_status
+        : status === 'waiting_user'
+          ? 'waiting_user'
+          : baseState.current_step_status;
+  const progress =
+    status === 'succeeded'
+      ? {
+          completed: Math.max(1, baseState.progress.total),
+          total: Math.max(1, baseState.progress.total),
+          percent: 100,
+        }
+      : baseState.progress;
   return {
+    ...baseState,
     run_id: runId,
     run_status: status,
-    current_step_id:
-      current?.step_id ?? (status === 'waiting_user' ? previousState?.current_step_id ?? null : null),
-    current_step_label:
-      current?.label ?? (status === 'waiting_user' ? previousState?.current_step_label ?? null : null),
-    current_step_status: current?.status ?? (status === 'waiting_user' ? 'waiting_user' : null),
-    current_node: current?.node ?? (status === 'waiting_user' ? previousState?.current_node ?? null : null),
-    attempt:
-      typeof current?.meta?.attempt === 'number'
-        ? current.meta.attempt
-        : status === 'waiting_user'
-          ? previousState?.attempt ?? null
-          : null,
-    message: message ?? current?.message ?? null,
-    state_version: previousState?.state_version,
-    active_path: previousState?.active_path,
-    last_good_answer: previousState?.last_good_answer,
-    degrade_reason: previousState?.degrade_reason,
-    progress: calculateProgress(sorted),
+    current_step_status: currentStepStatus,
+    message: message ?? baseState.message,
+    progress,
     ts: new Date().toISOString(),
   };
 }
@@ -647,19 +368,37 @@ export function KbChatPage() {
     []
   );
 
+  const buildTraceStateFromMessage = useCallback(
+    (msg: ChatMessage): KbChatTraceStoreState => ({
+      runId: msg.runId,
+      runState: msg.runState,
+      executionsById: msg.executionsById,
+      executionOrder: msg.executionOrder,
+      answerRevealReady: msg.answerRevealReady,
+      traceWarnings: msg.traceWarnings,
+    }),
+    []
+  );
+
+  const applyTraceStateToMessage = useCallback(
+    (msg: ChatMessage, nextTraceState: KbChatTraceStoreState): ChatMessage => ({
+      ...msg,
+      runId: nextTraceState.runId ?? msg.runId,
+      runState: kbChatTraceSelectors.runState(nextTraceState),
+      executionsById: kbChatTraceSelectors.executionsById(nextTraceState),
+      executionOrder: kbChatTraceSelectors.executionOrder(nextTraceState),
+      traceExecutions: kbChatTraceSelectors.traceExecutions(nextTraceState),
+      traceWarnings: kbChatTraceSelectors.warnings(nextTraceState),
+      answerRevealReady: nextTraceState.answerRevealReady ?? msg.answerRevealReady,
+    }),
+    []
+  );
+
   const applyUpdatesEvent = useCallback(
     (messageId: string, raw: Record<string, unknown>) => {
       const totalNodes = resolveGraphTotalNodes(graphSchema);
       updateMessage(messageId, (msg) => {
-        const traceState: KbChatTraceStoreState = {
-          runId: msg.runId,
-          runState: msg.runState,
-          pipelineSteps: msg.pipelineSteps,
-          nodeTimeline: msg.nodeTimeline,
-          nodeIoEvents: msg.nodeIoEvents,
-          answerRevealReady: msg.answerRevealReady,
-          traceWarnings: msg.traceWarnings,
-        };
+        const traceState = buildTraceStateFromMessage(msg);
         const nextTraceState = reduceKbChatTraceState(
           traceState,
           { type: 'updates', raw },
@@ -673,35 +412,43 @@ export function KbChatPage() {
         const answerRevealReady = Boolean(
           nextTraceState.answerRevealReady ?? msg.answerRevealReady
         );
+        const nextMessage = applyTraceStateToMessage(msg, nextTraceState);
         return {
-          ...msg,
-          runId: nextTraceState.runId ?? msg.runId,
-          runState: kbChatTraceSelectors.runState(nextTraceState),
-          pipelineSteps: kbChatTraceSelectors.pipelineSteps(nextTraceState),
-          nodeTimeline: kbChatTraceSelectors.nodeTimeline(nextTraceState),
-          nodeIoEvents: kbChatTraceSelectors.nodeIoEvents(nextTraceState),
-          traceWarnings: kbChatTraceSelectors.warnings(nextTraceState),
+          ...nextMessage,
           answerRevealReady,
           content: answerRevealReady ? msg.stagedContent ?? msg.content : msg.content,
         };
       });
     },
-    [finalizeNodeIds, graphSchema, updateMessage]
+    [applyTraceStateToMessage, buildTraceStateFromMessage, finalizeNodeIds, graphSchema, updateMessage]
+  );
+
+  const applyStepEvent = useCallback(
+    (messageId: string, raw: Record<string, unknown>) => {
+      const totalNodes = resolveGraphTotalNodes(graphSchema);
+      updateMessage(messageId, (msg) => {
+        const traceState = buildTraceStateFromMessage(msg);
+        const nextTraceState = reduceKbChatTraceState(
+          traceState,
+          { type: 'step', raw },
+          {
+            totalNodes,
+            resolveNodeLabel: (nodeId) => resolveKbNodeLabel(nodeId, graphSchema),
+            shouldRevealAnswerOnNodeEvent: (event) =>
+              shouldRevealAnswerOnNodeEvent(event, finalizeNodeIds),
+          }
+        );
+        return applyTraceStateToMessage(msg, nextTraceState);
+      });
+    },
+    [applyTraceStateToMessage, buildTraceStateFromMessage, finalizeNodeIds, graphSchema, updateMessage]
   );
 
   const applyStateEvent = useCallback(
     (messageId: string, raw: Record<string, unknown>) => {
       const totalNodes = resolveGraphTotalNodes(graphSchema);
       updateMessage(messageId, (msg) => {
-        const traceState: KbChatTraceStoreState = {
-          runId: msg.runId,
-          runState: msg.runState,
-          pipelineSteps: msg.pipelineSteps,
-          nodeTimeline: msg.nodeTimeline,
-          nodeIoEvents: msg.nodeIoEvents,
-          answerRevealReady: msg.answerRevealReady,
-          traceWarnings: msg.traceWarnings,
-        };
+        const traceState = buildTraceStateFromMessage(msg);
         const nextTraceState = reduceKbChatTraceState(
           traceState,
           { type: 'state', raw },
@@ -712,34 +459,17 @@ export function KbChatPage() {
               shouldRevealAnswerOnNodeEvent(event, finalizeNodeIds),
           }
         );
-        return {
-          ...msg,
-          runId: nextTraceState.runId ?? msg.runId,
-          runState: kbChatTraceSelectors.runState(nextTraceState),
-          pipelineSteps: kbChatTraceSelectors.pipelineSteps(nextTraceState),
-          nodeTimeline: kbChatTraceSelectors.nodeTimeline(nextTraceState),
-          nodeIoEvents: kbChatTraceSelectors.nodeIoEvents(nextTraceState),
-          traceWarnings: kbChatTraceSelectors.warnings(nextTraceState),
-          answerRevealReady: nextTraceState.answerRevealReady ?? msg.answerRevealReady,
-        };
+        return applyTraceStateToMessage(msg, nextTraceState);
       });
     },
-    [finalizeNodeIds, graphSchema, updateMessage]
+    [applyTraceStateToMessage, buildTraceStateFromMessage, finalizeNodeIds, graphSchema, updateMessage]
   );
 
 const applyUiEvent = useCallback(
     (messageId: string, raw: Record<string, unknown>) => {
       const totalNodes = resolveGraphTotalNodes(graphSchema);
       updateMessage(messageId, (msg) => {
-        const traceState: KbChatTraceStoreState = {
-          runId: msg.runId,
-          runState: msg.runState,
-          pipelineSteps: msg.pipelineSteps,
-          nodeTimeline: msg.nodeTimeline,
-          nodeIoEvents: msg.nodeIoEvents,
-          answerRevealReady: msg.answerRevealReady,
-          traceWarnings: msg.traceWarnings,
-        };
+        const traceState = buildTraceStateFromMessage(msg);
         const nextTraceState = reduceKbChatTraceState(
           traceState,
           { type: 'ui_event', raw },
@@ -758,37 +488,24 @@ const applyUiEvent = useCallback(
             typeof raw.event_type === 'string' &&
             raw.event_type === 'degraded_to_candidate'
         );
+        const nextMessage = applyTraceStateToMessage(msg, nextTraceState);
         return {
-          ...msg,
-          runId: nextTraceState.runId ?? msg.runId,
+          ...nextMessage,
           runState: nextRunState,
-          pipelineSteps: kbChatTraceSelectors.pipelineSteps(nextTraceState),
-          nodeTimeline: kbChatTraceSelectors.nodeTimeline(nextTraceState),
-          nodeIoEvents: kbChatTraceSelectors.nodeIoEvents(nextTraceState),
-          traceWarnings: kbChatTraceSelectors.warnings(nextTraceState),
-          answerRevealReady: nextTraceState.answerRevealReady ?? msg.answerRevealReady,
           content: shouldUseCandidateFallback
             ? nextRunState?.last_good_answer ?? msg.content
             : msg.content,
         };
       });
     },
-    [finalizeNodeIds, graphSchema, updateMessage]
+    [applyTraceStateToMessage, buildTraceStateFromMessage, finalizeNodeIds, graphSchema, updateMessage]
   );
 
   const applyNodeIoEvent = useCallback(
     (messageId: string, raw: Record<string, unknown>) => {
       const totalNodes = resolveGraphTotalNodes(graphSchema);
       updateMessage(messageId, (msg) => {
-        const traceState: KbChatTraceStoreState = {
-          runId: msg.runId,
-          runState: msg.runState,
-          pipelineSteps: msg.pipelineSteps,
-          nodeTimeline: msg.nodeTimeline,
-          nodeIoEvents: msg.nodeIoEvents,
-          answerRevealReady: msg.answerRevealReady,
-          traceWarnings: msg.traceWarnings,
-        };
+        const traceState = buildTraceStateFromMessage(msg);
         const nextTraceState = reduceKbChatTraceState(
           traceState,
           { type: 'node_io', raw },
@@ -802,35 +519,22 @@ const applyUiEvent = useCallback(
         const answerRevealReady = Boolean(
           nextTraceState.answerRevealReady ?? msg.answerRevealReady
         );
+        const nextMessage = applyTraceStateToMessage(msg, nextTraceState);
         return {
-          ...msg,
-          runId: nextTraceState.runId ?? msg.runId,
-          runState: kbChatTraceSelectors.runState(nextTraceState),
+          ...nextMessage,
           answerRevealReady,
           content: answerRevealReady ? msg.stagedContent ?? msg.content : msg.content,
-          pipelineSteps: kbChatTraceSelectors.pipelineSteps(nextTraceState),
-          nodeIoEvents: kbChatTraceSelectors.nodeIoEvents(nextTraceState),
-          nodeTimeline: kbChatTraceSelectors.nodeTimeline(nextTraceState),
-          traceWarnings: kbChatTraceSelectors.warnings(nextTraceState),
         };
       });
     },
-    [finalizeNodeIds, graphSchema, updateMessage]
+    [applyTraceStateToMessage, buildTraceStateFromMessage, finalizeNodeIds, graphSchema, updateMessage]
   );
 
   const applyCustomEvent = useCallback(
     (messageId: string, raw: Record<string, unknown>) => {
       const totalNodes = resolveGraphTotalNodes(graphSchema);
       updateMessage(messageId, (msg) => {
-        const traceState: KbChatTraceStoreState = {
-          runId: msg.runId,
-          runState: msg.runState,
-          pipelineSteps: msg.pipelineSteps,
-          nodeTimeline: msg.nodeTimeline,
-          nodeIoEvents: msg.nodeIoEvents,
-          answerRevealReady: msg.answerRevealReady,
-          traceWarnings: msg.traceWarnings,
-        };
+        const traceState = buildTraceStateFromMessage(msg);
         const nextTraceState = reduceKbChatTraceState(
           traceState,
           { type: 'custom', raw },
@@ -841,19 +545,10 @@ const applyUiEvent = useCallback(
               shouldRevealAnswerOnNodeEvent(event, finalizeNodeIds),
           }
         );
-        return {
-          ...msg,
-          runId: nextTraceState.runId ?? msg.runId,
-          runState: kbChatTraceSelectors.runState(nextTraceState),
-          pipelineSteps: kbChatTraceSelectors.pipelineSteps(nextTraceState),
-          nodeTimeline: kbChatTraceSelectors.nodeTimeline(nextTraceState),
-          nodeIoEvents: kbChatTraceSelectors.nodeIoEvents(nextTraceState),
-          traceWarnings: kbChatTraceSelectors.warnings(nextTraceState),
-          answerRevealReady: nextTraceState.answerRevealReady ?? msg.answerRevealReady,
-        };
+        return applyTraceStateToMessage(msg, nextTraceState);
       });
     },
-    [finalizeNodeIds, graphSchema, updateMessage]
+    [applyTraceStateToMessage, buildTraceStateFromMessage, finalizeNodeIds, graphSchema, updateMessage]
   );
 
   const applyHeartbeatEvent = useCallback(
@@ -884,19 +579,22 @@ const applyUiEvent = useCallback(
       const message = response.message;
       updateMessage(messageId, (msg) => {
         const anchorStep = resolveClarificationAnchorStep(msg.runState, clarificationStep);
-        const nextSteps = upsertPipelineStep(msg.pipelineSteps, {
-          step_id: anchorStep.step_id,
-          label: anchorStep.label,
-          status: 'waiting_user',
-          message,
-          ts: new Date().toISOString(),
-        });
+        const baseRunState =
+          msg.runState ??
+          createInitialRunState(runId, resolveGraphTotalNodes(graphSchema));
         const nextRunState = createTerminalRunState(
           runId,
           'waiting_user',
-          nextSteps,
+          undefined,
           message,
-          msg.runState
+          {
+            ...baseRunState,
+            current_step_id: baseRunState.current_step_id ?? anchorStep.step_id,
+            current_step_label: baseRunState.current_step_label ?? anchorStep.label,
+            current_step_status: 'waiting_user',
+            current_node: baseRunState.current_node ?? anchorStep.step_id,
+            message,
+          }
         );
         return {
           ...msg,
@@ -914,14 +612,13 @@ const applyUiEvent = useCallback(
           confidenceLevel: response.confidence_level ?? null,
           responseSource: response.source ?? 'live',
           cacheMeta: response.cache ?? null,
-          pipelineSteps: nextSteps,
           runState: nextRunState,
           traceWarnings: msg.traceWarnings ?? [],
           isStreaming: false,
         };
       });
     },
-    [clarificationStep, updateMessage]
+    [clarificationStep, graphSchema, updateMessage]
   );
 
   const handleCloseError = () => {
@@ -991,9 +688,9 @@ const applyUiEvent = useCallback(
         answerRevealReady: false,
         think: '',
         toolSteps: [],
-        pipelineSteps: [],
-        nodeTimeline: [],
-        nodeIoEvents: [],
+        traceExecutions: [],
+        executionsById: {},
+        executionOrder: [],
         traceWarnings: [],
         isStreaming: true,
         thinkStartTime: Date.now(),
@@ -1041,23 +738,27 @@ const applyUiEvent = useCallback(
           const runIdFromMeta = meta.run_id;
           if (runIdFromMeta) {
             updateMessage(assistantId, (msg) => {
-              const nextRunState =
-                msg.runState ??
-                createInitialRunState(
-                  runIdFromMeta,
-                  resolveGraphTotalNodes(graphSchema)
-                );
-              return {
-                ...msg,
-                runId: runIdFromMeta,
-                runState: nextRunState,
-              };
+              const nextTraceState = reduceKbChatTraceState(
+                buildTraceStateFromMessage(msg),
+                { type: 'meta', runId: runIdFromMeta },
+                {
+                  totalNodes: resolveGraphTotalNodes(graphSchema),
+                  resolveNodeLabel: (nodeId) => resolveKbNodeLabel(nodeId, graphSchema),
+                  shouldRevealAnswerOnNodeEvent: (nodeEvent) =>
+                    shouldRevealAnswerOnNodeEvent(nodeEvent, finalizeNodeIds),
+                }
+              );
+              return applyTraceStateToMessage(msg, nextTraceState);
             });
           }
         }
 
         if (event.event === 'updates') {
           applyUpdatesEvent(assistantId, parseSseJson<Record<string, unknown>>(event.data));
+        }
+
+        if (event.event === 'step') {
+          applyStepEvent(assistantId, parseSseJson<Record<string, unknown>>(event.data));
         }
 
         if (event.event === 'state') {
@@ -1118,7 +819,6 @@ const applyUiEvent = useCallback(
           const data = parseSseJson<ChatMessageResponse>(event.data);
           if (data.status === 'succeeded') {
             updateMessage(assistantId, (msg) => {
-              const nextSteps = finalizePipelineSteps(msg.pipelineSteps);
               const nextStatus = resolveTerminalRunStatus(
                 data.run.status,
                 resolveTerminalRunStatus(msg.runState?.run_status)
@@ -1126,7 +826,7 @@ const applyUiEvent = useCallback(
               const nextRunState = createTerminalRunState(
                 data.run.id,
                 nextStatus,
-                nextSteps,
+                undefined,
                 undefined,
                 msg.runState
               );
@@ -1147,7 +847,6 @@ const applyUiEvent = useCallback(
                 responseSource: data.source ?? 'live',
                 cacheMeta: data.cache ?? null,
                 runId: data.run.id,
-                pipelineSteps: nextSteps,
                 runState: nextRunState,
                 pendingClarification: undefined,
                 isStreaming: false,
@@ -1174,12 +873,11 @@ const applyUiEvent = useCallback(
       deltaBatcher.flush();
       msgState = completeMessageState(msgState);
       updateMessage(assistantId, (msg) => {
-        const nextSteps = finalizePipelineSteps(msg.pipelineSteps);
         const nextRunState = msg.runId
           ? createTerminalRunState(
               msg.runId,
               resolveTerminalRunStatus(msg.runState?.run_status),
-              nextSteps,
+              undefined,
               undefined,
               msg.runState
             )
@@ -1190,7 +888,6 @@ const applyUiEvent = useCallback(
           stagedContent: msgState.final_content,
           think: msgState.thought_log,
           toolSteps: msgState.tool_steps,
-          pipelineSteps: nextSteps,
           runState: nextRunState,
           isStreaming: false,
         };
@@ -1202,7 +899,7 @@ const applyUiEvent = useCallback(
             ? createTerminalRunState(
                 msg.runId,
                 'failed',
-                msg.pipelineSteps,
+                undefined,
                 getErrorMessage(e),
                 msg.runState
               )
@@ -1235,7 +932,11 @@ const applyUiEvent = useCallback(
     hasPendingClarification,
     upsertSession,
     updateMessage,
+    buildTraceStateFromMessage,
+    applyTraceStateToMessage,
+    finalizeNodeIds,
     applyUpdatesEvent,
+    applyStepEvent,
     applyStateEvent,
     applyUiEvent,
     applyNodeIoEvent,
@@ -1253,14 +954,9 @@ const applyUiEvent = useCallback(
       let msgState = createMessageState();
       updateMessage(messageId, (msg) => {
         const anchorStep = resolveClarificationAnchorStep(msg.runState, clarificationStep);
-        const nextSteps = upsertPipelineStep(msg.pipelineSteps, {
-          step_id: anchorStep.step_id,
-          label: anchorStep.label,
-          status: 'started',
-          message: '已收到补充信息，继续执行',
-          ts: new Date().toISOString(),
-        });
-        const startedStep = nextSteps.find((step) => step.step_id === anchorStep.step_id);
+        const baseRunState =
+          msg.runState ??
+          createInitialRunState(runId, resolveGraphTotalNodes(graphSchema));
         return {
           ...msg,
           content: '',
@@ -1268,14 +964,17 @@ const applyUiEvent = useCallback(
           answerRevealReady: false,
           think: '',
           pendingClarification: undefined,
-          pipelineSteps: nextSteps,
           traceWarnings: [],
-          nodeTimeline: startedStep
-            ? appendTimelineEvent(
-                msg.nodeTimeline,
-                createTimelineEventFromStep(startedStep)
-              )
-            : msg.nodeTimeline,
+          runState: {
+            ...baseRunState,
+            run_id: runId,
+            current_step_id: anchorStep.step_id,
+            current_step_label: anchorStep.label,
+            current_step_status: 'started',
+            current_node: anchorStep.step_id,
+            message: '已收到补充信息，继续执行',
+            ts: new Date().toISOString(),
+          },
           isStreaming: true,
           thinkStartTime: Date.now(),
         };
@@ -1309,23 +1008,27 @@ const applyUiEvent = useCallback(
             const runIdFromMeta = meta.run_id;
             if (runIdFromMeta) {
               updateMessage(messageId, (msg) => {
-                const nextRunState =
-                  msg.runState ??
-                  createInitialRunState(
-                    runIdFromMeta,
-                    resolveGraphTotalNodes(graphSchema)
-                  );
-                return {
-                  ...msg,
-                  runId: runIdFromMeta,
-                  runState: nextRunState,
-                };
+                const nextTraceState = reduceKbChatTraceState(
+                  buildTraceStateFromMessage(msg),
+                  { type: 'meta', runId: runIdFromMeta },
+                  {
+                    totalNodes: resolveGraphTotalNodes(graphSchema),
+                    resolveNodeLabel: (nodeId) => resolveKbNodeLabel(nodeId, graphSchema),
+                    shouldRevealAnswerOnNodeEvent: (nodeEvent) =>
+                      shouldRevealAnswerOnNodeEvent(nodeEvent, finalizeNodeIds),
+                  }
+                );
+                return applyTraceStateToMessage(msg, nextTraceState);
               });
             }
           }
 
           if (event.event === 'updates') {
             applyUpdatesEvent(messageId, parseSseJson<Record<string, unknown>>(event.data));
+          }
+
+          if (event.event === 'step') {
+            applyStepEvent(messageId, parseSseJson<Record<string, unknown>>(event.data));
           }
 
           if (event.event === 'state') {
@@ -1385,9 +1088,8 @@ const applyUiEvent = useCallback(
             sawFinalEvent = true;
             deltaBatcher.flush();
             const data = parseSseJson<ChatMessageResponse>(event.data);
-            if (data.status === 'succeeded') {
-              updateMessage(messageId, (msg) => {
-                const nextSteps = finalizePipelineSteps(msg.pipelineSteps);
+          if (data.status === 'succeeded') {
+            updateMessage(messageId, (msg) => {
                 const nextStatus = resolveTerminalRunStatus(
                   data.run.status,
                   resolveTerminalRunStatus(msg.runState?.run_status)
@@ -1395,7 +1097,7 @@ const applyUiEvent = useCallback(
                 const nextRunState = createTerminalRunState(
                   data.run.id,
                   nextStatus,
-                  nextSteps,
+                  undefined,
                   undefined,
                   msg.runState
                 );
@@ -1417,7 +1119,6 @@ const applyUiEvent = useCallback(
                   cacheMeta: data.cache ?? null,
                   runId: data.run.id,
                   pendingClarification: undefined,
-                  pipelineSteps: nextSteps,
                   runState: nextRunState,
                   isStreaming: false,
                 };
@@ -1443,12 +1144,11 @@ const applyUiEvent = useCallback(
         deltaBatcher.flush();
         msgState = completeMessageState(msgState);
         updateMessage(messageId, (msg) => {
-          const nextSteps = finalizePipelineSteps(msg.pipelineSteps);
           const nextRunState = msg.runId
             ? createTerminalRunState(
                 msg.runId,
                 resolveTerminalRunStatus(msg.runState?.run_status),
-                nextSteps,
+                undefined,
                 undefined,
                 msg.runState
               )
@@ -1459,7 +1159,6 @@ const applyUiEvent = useCallback(
             stagedContent: msgState.final_content,
             think: msgState.thought_log,
             toolSteps: msgState.tool_steps,
-            pipelineSteps: nextSteps,
             runState: nextRunState,
             isStreaming: false,
           };
@@ -1471,7 +1170,7 @@ const applyUiEvent = useCallback(
               ? createTerminalRunState(
                   msg.runId,
                   'failed',
-                  msg.pipelineSteps,
+                  undefined,
                   getErrorMessage(e),
                   msg.runState
                 )
@@ -1503,7 +1202,11 @@ const applyUiEvent = useCallback(
       loading,
       loadingSession,
       updateMessage,
+      buildTraceStateFromMessage,
+      applyTraceStateToMessage,
+      finalizeNodeIds,
       applyUpdatesEvent,
+      applyStepEvent,
       applyStateEvent,
       applyUiEvent,
       applyNodeIoEvent,
@@ -1829,7 +1532,6 @@ const applyUiEvent = useCallback(
                     onClarificationSubmit={handleClarificationSubmit}
                     approvalLoading={loading || loadingSession}
                     bottomInset={bottomInset}
-                    showPipeline={false}
                     showEvidence
                     normalizeInlineEvidenceSection
                     scrollButtonAlign='right'
@@ -1866,8 +1568,7 @@ const applyUiEvent = useCallback(
               <KbChatFlowPanel
                 schema={graphSchema}
                 runState={activeAssistantMessage?.runState}
-                pipelineSteps={activeAssistantMessage?.pipelineSteps}
-                nodeIoEvents={activeAssistantMessage?.nodeIoEvents}
+                traceExecutions={activeAssistantMessage?.traceExecutions}
                 traceWarnings={activeAssistantMessage?.traceWarnings}
               />
             </Box>
@@ -1897,8 +1598,7 @@ const applyUiEvent = useCallback(
         <KbChatFlowPanel
           schema={graphSchema}
           runState={activeAssistantMessage?.runState}
-          pipelineSteps={activeAssistantMessage?.pipelineSteps}
-          nodeIoEvents={activeAssistantMessage?.nodeIoEvents}
+          traceExecutions={activeAssistantMessage?.traceExecutions}
           traceWarnings={activeAssistantMessage?.traceWarnings}
         />
       </Drawer>

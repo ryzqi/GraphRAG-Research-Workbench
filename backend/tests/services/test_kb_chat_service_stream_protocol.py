@@ -194,3 +194,117 @@ def test_build_node_io_payload_preserves_display_contract_fields() -> None:
         "id": "complexity_classify",
         "name": "complexity_classify",
     }
+
+
+def test_build_graph_stream_options_prefers_langgraph_v2_with_tasks() -> None:
+    assert KbChatService._build_graph_stream_options() == {
+        "stream_mode": ["messages", "updates", "custom", "tasks"],
+        "subgraphs": True,
+        "version": "v2",
+    }
+
+
+def test_normalize_graph_stream_event_accepts_langgraph_v2_stream_part() -> None:
+    normalized = KbChatService._normalize_graph_stream_event(
+        {
+            "type": "tasks",
+            "ns": ("retrieval_subgraph:task-1", "retrieve_subquery"),
+            "data": {
+                "id": "task-1",
+                "name": "retrieve_subquery",
+                "input": {"query": "什么是 CoT"},
+                "triggers": ["branch:0"],
+            },
+        }
+    )
+
+    assert normalized == (
+        "tasks",
+        {
+            "id": "task-1",
+            "name": "retrieve_subquery",
+            "input": {"query": "什么是 CoT"},
+            "triggers": ["branch:0"],
+        },
+        ["retrieval_subgraph:task-1", "retrieve_subquery"],
+    )
+
+
+def test_build_step_payload_from_task_event_maps_start_and_waiting_user() -> None:
+    started = KbChatService._build_step_payload_from_task_event(
+        payload={
+            "id": "task-1",
+            "name": "retrieve_subquery",
+            "input": {"query": "什么是 CoT"},
+            "triggers": ["branch:0"],
+        },
+        node_path=["retrieval_subgraph:task-1", "retrieve_subquery"],
+    )
+    waiting = KbChatService._build_step_payload_from_task_event(
+        payload={
+            "id": "task-1",
+            "name": "ambiguity_check",
+            "error": None,
+            "interrupts": [{"id": "interrupt-1"}],
+            "result": {},
+        },
+        node_path=["preprocess_subgraph:task-2", "ambiguity_check"],
+    )
+
+    assert started == {
+        "execution_id": "task-1",
+        "step_id": "retrieve_subquery",
+        "label": "retrieve_subquery",
+        "status": "started",
+        "node": "retrieve_subquery",
+        "ts": started["ts"],
+        "meta": {
+            "task_id": "task-1",
+            "node_path": ["retrieval_subgraph:task-1", "retrieve_subquery"],
+            "triggers": ["branch:0"],
+        },
+    }
+    assert waiting == {
+        "execution_id": "task-1",
+        "step_id": "ambiguity_check",
+        "label": "ambiguity_check",
+        "status": "waiting_user",
+        "node": "ambiguity_check",
+        "ts": waiting["ts"],
+        "meta": {
+            "task_id": "task-1",
+            "node_path": ["preprocess_subgraph:task-2", "ambiguity_check"],
+            "interrupt_count": 1,
+        },
+    }
+
+
+def test_build_step_payload_from_task_event_promotes_task_id_to_execution_id() -> None:
+    started = KbChatService._build_step_payload_from_task_event(
+        payload={
+            "id": "task-branch-1",
+            "name": "retrieve_subquery",
+            "input": {"query": "什么是 CoT"},
+        },
+        node_path=["retrieval_subgraph:task-branch-1", "retrieve_subquery"],
+    )
+
+    assert started is not None
+    assert started["execution_id"] == "task-branch-1"
+    assert started["meta"]["task_id"] == "task-branch-1"
+
+
+def test_build_node_io_payload_includes_execution_id_for_detail_binding() -> None:
+    run_id = uuid.uuid4()
+
+    payload = KbChatService._build_node_io_payload(
+        run_id=run_id,
+        execution_id="task-branch-1",
+        node_name="retrieve_subquery",
+        node_id="retrieve_subquery",
+        phase="end",
+        attempt=1,
+        node_path=["retrieval_subgraph:task-branch-1", "retrieve_subquery"],
+    )
+
+    assert payload["execution_id"] == "task-branch-1"

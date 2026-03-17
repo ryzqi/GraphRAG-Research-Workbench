@@ -9,9 +9,14 @@ import json
 from typing import Any
 
 from langchain_core.runnables import Runnable
-from langgraph.config import get_stream_writer
+from langgraph.config import get_config, get_stream_writer
 from langgraph.runtime import Runtime
 from langgraph.types import Command, Send
+
+try:  # LangGraph v1.1 task ids live in configurable runtime internals.
+    from langgraph._internal._constants import CONFIG_KEY_TASK_ID
+except Exception:  # pragma: no cover - fallback for unexpected packaging differences.
+    CONFIG_KEY_TASK_ID = "__pregel_task_id"
 
 from app.agents.kb_chat_trace_display_contract import (
     build_node_input_display_items as _build_contract_input_display_items,
@@ -965,12 +970,29 @@ def _build_node_output_display_items(
     )
 
 
+def _resolve_current_task_id() -> str | None:
+    try:
+        config = get_config()
+    except Exception:
+        return None
+    configurable = config.get("configurable")
+    if not isinstance(configurable, dict):
+        return None
+    task_id = configurable.get(CONFIG_KEY_TASK_ID)
+    return task_id if isinstance(task_id, str) and task_id else None
+
+
 def _build_event_base_payload(node_name: str) -> dict[str, Any]:
-    return {
+    payload = {
         "event_type": "node_io",
         "node_name": node_name,
         "node_id": node_name,
     }
+    task_id = _resolve_current_task_id()
+    if task_id is not None:
+        payload["task_id"] = task_id
+        payload["execution_id"] = task_id
+    return payload
 
 
 def _resolve_display_builder(

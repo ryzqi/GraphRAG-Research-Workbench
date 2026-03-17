@@ -19,172 +19,108 @@ describe('kbChatTraceStore', () => {
     ]);
   });
 
-  it('keeps updates action idempotent for repeated event payload', () => {
-    const base = {};
-    const action = {
-      type: 'updates' as const,
-      raw: {
-        run_id: 'run-1',
-        chunk: {
-          retrieve: { ok: true },
-        },
-      },
-      ts: '2026-01-01T00:00:00.000Z',
-    };
-    const once = reduceKbChatTraceState(base, action, ctx);
-    const twice = reduceKbChatTraceState(once, action, ctx);
-
-    expect(twice.pipelineSteps?.length).toBe(1);
-    expect(twice.nodeTimeline?.length).toBe(1);
-  });
-
-  it('deduplicates repeated node_io events', () => {
-    const action = {
-      type: 'node_io' as const,
-      raw: {
-        run_id: 'run-1',
-        node_id: 'retrieve',
-        node_name: 'retrieve',
-        phase: 'end',
-        ts: '2026-01-01T00:00:00.000Z',
-      },
-    };
-    const once = reduceKbChatTraceState({}, action, ctx);
-    const twice = reduceKbChatTraceState(once, action, ctx);
-    expect(twice.nodeIoEvents?.length).toBe(1);
-    expect(twice.nodeTimeline?.length).toBe(1);
-  });
-
-  it('keeps node_io display input/output items for detail rendering', () => {
-    const next = reduceKbChatTraceState(
-      {},
-      {
-        type: 'node_io',
-        raw: {
-          run_id: 'run-1',
-          node_id: 'retrieve_subquery',
-          node_name: 'retrieve_subquery',
-          phase: 'end',
-          display_input_items: [{ key: 'query', label: '输入查询', value: '火车票退改签' }],
-          display_output_items: [{ key: 'retrieval_count', label: '证据数', value: '4' }],
-          ts: '2026-01-01T00:00:00.000Z',
-        },
-      },
-      ctx
-    );
-    expect(next.nodeIoEvents?.[0]?.display_input_items?.[0]?.key).toBe('query');
-    expect(next.nodeIoEvents?.[0]?.display_output_items?.[0]?.key).toBe('retrieval_count');
-  });
-
-  it('preserves node_path from node_io payload for trace details', () => {
-    const next = reduceKbChatTraceState(
-      {},
-      {
-        type: 'node_io',
-        raw: {
-          run_id: 'run-1',
-          node_id: 'retrieve_subquery',
-          node_name: 'retrieve_subquery',
-          node_path: ['retrieval_subgraph', 'dispatch_subqueries', 'retrieve_subquery'],
-          phase: 'end',
-          ts: '2026-01-01T00:00:00.000Z',
-        },
-      },
-      ctx
-    );
-
-    expect(next.nodeIoEvents?.[0]).toMatchObject({
-      node_path: ['retrieval_subgraph', 'dispatch_subqueries', 'retrieve_subquery'],
-    });
-  });
-
-  it('rebuilds step order by timestamp', () => {
+  it('tracks parallel execution instances for the same node separately', () => {
     let state = reduceKbChatTraceState(
       {},
       {
-        type: 'updates',
-        raw: { run_id: 'run-1', chunk: { b_node: { ok: true } } },
-        ts: '2026-01-01T00:00:02.000Z',
-      },
-      ctx
-    );
-    state = reduceKbChatTraceState(
-      state,
-      {
-        type: 'updates',
-        raw: { run_id: 'run-1', chunk: { a_node: { ok: true } } },
-        ts: '2026-01-01T00:00:01.000Z',
-      },
-      ctx
-    );
-    expect(state.pipelineSteps?.map((step) => step.step_id)).toEqual(['a_node', 'b_node']);
-  });
-
-  it('applies state events to run state, pipeline steps, and timeline', () => {
-    let state = reduceKbChatTraceState(
-      {},
-      {
-        type: 'updates',
-        raw: { run_id: 'run-1', chunk: { preprocess_subgraph: { ok: true } } },
-        ts: '2026-01-01T00:00:00.000Z',
-      },
-      ctx
-    );
-    state = reduceKbChatTraceState(
-      state,
-      {
-        type: 'node_io',
+        type: 'step',
         raw: {
           run_id: 'run-1',
-          node_id: 'merge_context',
-          node_name: 'merge_context',
-          phase: 'start',
+          execution_id: 'task-1',
+          step_id: 'retrieve_subquery',
+          label: '子查询检索 #1',
+          status: 'started',
+          node: 'retrieve_subquery',
           ts: '2026-01-01T00:00:01.000Z',
         },
       },
       ctx
     );
 
-    const next = reduceKbChatTraceState(
+    state = reduceKbChatTraceState(
       state,
       {
-        type: 'state',
+        type: 'step',
         raw: {
           run_id: 'run-1',
-          run_status: 'waiting_user',
-          current_step_id: 'merge_context',
-          current_step_label: '上下文合并',
-          current_step_status: 'waiting_user',
-          current_node: 'merge_context',
-          attempt: 2,
-          message: '需要补充信息',
-          state_version: 3,
-          active_path: ['merge_context'],
-          progress: { completed: 1, total: 20, percent: 5 },
+          execution_id: 'task-2',
+          step_id: 'retrieve_subquery',
+          label: '子查询检索 #2',
+          status: 'started',
+          node: 'retrieve_subquery',
           ts: '2026-01-01T00:00:02.000Z',
         },
       },
       ctx
     );
 
-    expect(next.runState?.active_path).toEqual(['preprocess_subgraph', 'merge_context']);
-    expect(next.runState?.current_step_status).toBe('waiting_user');
-    expect(next.pipelineSteps?.find((step) => step.step_id === 'merge_context')).toMatchObject({
-      label: '上下文合并',
-      status: 'waiting_user',
-      node: 'merge_context',
-      message: '需要补充信息',
+    expect(state.executionOrder).toEqual(['task-1', 'task-2']);
+    expect(state.executionsById?.['task-1']).toMatchObject({
+      execution_id: 'task-1',
+      node_name: 'retrieve_subquery',
+      node_label: 'retrieve_subquery',
+      status: 'started',
+      started_at: '2026-01-01T00:00:01.000Z',
     });
-    expect(next.nodeTimeline?.at(-1)).toMatchObject({
-      source: 'state',
-      step_id: 'merge_context',
-      status: 'waiting_user',
-      run_status: 'waiting_user',
-      message: '需要补充信息',
+    expect(state.executionsById?.['task-2']).toMatchObject({
+      execution_id: 'task-2',
+      node_name: 'retrieve_subquery',
+      node_label: 'retrieve_subquery',
+      status: 'started',
+      started_at: '2026-01-01T00:00:02.000Z',
     });
   });
 
-  it('does not let later node_io events overwrite the active runState from state events', () => {
+  it('binds node_io detail payloads onto the matching execution instance', () => {
+    let state = reduceKbChatTraceState(
+      {},
+      {
+        type: 'step',
+        raw: {
+          run_id: 'run-1',
+          execution_id: 'task-1',
+          step_id: 'retrieve_subquery',
+          label: '子查询检索',
+          status: 'started',
+          node: 'retrieve_subquery',
+          ts: '2026-01-01T00:00:01.000Z',
+        },
+      },
+      ctx
+    );
+
+    state = reduceKbChatTraceState(
+      state,
+      {
+        type: 'node_io',
+        raw: {
+          run_id: 'run-1',
+          execution_id: 'task-1',
+          node_id: 'retrieve_subquery',
+          node_name: 'retrieve_subquery',
+          node_path: ['retrieval_subgraph:task-1', 'retrieve_subquery'],
+          phase: 'end',
+          display_input_items: [{ key: 'query', label: '输入查询', value: 'CoT 和 ToT 区别' }],
+          display_output_items: [{ key: 'retrieval_count', label: '证据数', value: '4' }],
+          latency_ms: 88,
+          ts: '2026-01-01T00:00:02.000Z',
+        },
+      },
+      ctx
+    );
+
+    expect(state.executionsById?.['task-1']).toMatchObject({
+      execution_id: 'task-1',
+      status: 'completed',
+      ended_at: '2026-01-01T00:00:02.000Z',
+      node_path: ['retrieval_subgraph:task-1', 'retrieve_subquery'],
+      input_items: [{ key: 'query', label: '输入查询', value: 'CoT 和 ToT 区别' }],
+      output_items: [{ key: 'retrieval_count', label: '证据数', value: '4' }],
+      latency_ms: 88,
+    });
+  });
+
+  it('keeps state events as authoritative run snapshots after state_version appears', () => {
     const fromState = reduceKbChatTraceState(
       {},
       {
@@ -210,12 +146,14 @@ describe('kbChatTraceStore', () => {
     const next = reduceKbChatTraceState(
       fromState,
       {
-        type: 'node_io',
+        type: 'step',
         raw: {
           run_id: 'run-1',
-          node_id: 'normalize_rewrite',
-          node_name: 'normalize_rewrite',
-          phase: 'end',
+          execution_id: 'task-2',
+          step_id: 'retrieve_subquery',
+          label: '子查询检索',
+          status: 'started',
+          node: 'retrieve_subquery',
           ts: '2026-01-01T00:00:03.000Z',
         },
       },
@@ -228,56 +166,52 @@ describe('kbChatTraceStore', () => {
       current_node: 'merge_context',
       active_path: ['preprocess_subgraph', 'merge_context'],
     });
-    expect(next.nodeIoEvents?.at(-1)?.node_name).toBe('normalize_rewrite');
-    expect(next.pipelineSteps?.find((step) => step.step_id === 'normalize_rewrite')).toMatchObject({
-      status: 'completed',
-      node: 'normalize_rewrite',
+    expect(next.executionsById?.['task-2']).toMatchObject({
+      execution_id: 'task-2',
+      status: 'started',
     });
   });
 
-  it('emits warning on node_io field drift', () => {
+  it('ignores updates as a right-panel truth source', () => {
+    const next = reduceKbChatTraceState(
+      {},
+      {
+        type: 'updates',
+        raw: {
+          run_id: 'run-1',
+          chunk: {
+            retrieve_subquery: { ok: true },
+          },
+        },
+      },
+      ctx
+    );
+
+    expect(next.executionOrder).toEqual([]);
+    expect(next.executionsById).toEqual({});
+  });
+
+  it('warns when node_io arrives without execution identity', () => {
     const next = reduceKbChatTraceState(
       {},
       {
         type: 'node_io',
         raw: {
-          event_type: 'node_io',
-          node_name: 'retrieve',
-        },
-      },
-      ctx
-    );
-    expect(next.traceWarnings?.[0]).toContain('field drift');
-  });
-
-  it('salvages custom review signals into timeline entries instead of dropping them silently', () => {
-    const next = reduceKbChatTraceState(
-      {},
-      {
-        type: 'custom',
-        raw: {
           run_id: 'run-1',
-          event_type: 'answer_review_fused',
-          node_name: 'answer_review_fuse',
-          passed: false,
-          reason: 'citation_mismatch',
-          goto: 'answer_repair',
-          ts: '2026-01-01T00:00:00.000Z',
+          node_id: 'retrieve_subquery',
+          node_name: 'retrieve_subquery',
+          phase: 'end',
+          ts: '2026-01-01T00:00:02.000Z',
         },
       },
       ctx
     );
 
-    expect(next.nodeTimeline?.at(-1)).toMatchObject({
-      source: 'ui',
-      step_id: 'answer_review_fuse',
-      event_type: 'review_signal',
-      message: 'citation_mismatch',
-    });
-    expect(next.traceWarnings ?? []).toHaveLength(0);
+    expect(next.executionOrder).toEqual([]);
+    expect(next.traceWarnings?.at(-1)).toContain('execution_id');
   });
 
-  it('keeps heartbeat custom events benign while warning on unhandled custom taxonomy', () => {
+  it('keeps heartbeat benign while warning on unhandled custom taxonomy', () => {
     const heartbeat = reduceKbChatTraceState(
       {},
       {
@@ -304,6 +238,7 @@ describe('kbChatTraceStore', () => {
       },
       ctx
     );
+
     expect(unhandled.traceWarnings?.at(-1)).toContain('unhandled custom event');
   });
 });

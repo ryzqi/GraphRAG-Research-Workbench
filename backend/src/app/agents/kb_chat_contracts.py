@@ -11,6 +11,7 @@ NodeScopedEventType = Literal[
     "messages",
     "updates",
     "node_io",
+    "step",
     "ui_event",
     "final",
     "error",
@@ -21,6 +22,7 @@ NODE_SCOPED_EVENT_TYPES: set[str] = {
     "messages",
     "updates",
     "node_io",
+    "step",
 }
 
 KbChatCustomEventType = Literal[

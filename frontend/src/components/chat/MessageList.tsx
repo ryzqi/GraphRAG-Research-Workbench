@@ -9,8 +9,8 @@ import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
 import { ClarificationCard, MessageItem, ToolApprovalCard } from './MessageItem';
 import { SparkleLoading } from './SparkleLoading';
 import type {
-  ChatNodeIoEvent,
   ChatRunStateEvent,
+  ChatTraceExecution,
   EvidenceItem,
   PendingClarification,
   SemanticCacheMeta,
@@ -24,7 +24,6 @@ import {
   resolveConfidenceChipMeta,
   shouldRenderClarificationCard,
 } from '../../services/chatMessageDisplay';
-import { PipelineProgress, type PipelineStep, type PipelineTimelineEvent } from './PipelineProgress';
 
 const VIRTUALIZATION_THRESHOLD = 60;
 const VIRTUAL_OVERSCAN = 4;
@@ -45,9 +44,9 @@ export interface ChatMessage {
     tool_output?: string;
     status: 'pending' | 'completed' | 'failed';
   }>;
-  pipelineSteps?: PipelineStep[];
-  nodeTimeline?: PipelineTimelineEvent[];
-  nodeIoEvents?: ChatNodeIoEvent[];
+  traceExecutions?: ChatTraceExecution[];
+  executionsById?: Record<string, ChatTraceExecution>;
+  executionOrder?: string[];
   pendingToolApproval?: {
     interrupts: Array<{
       interrupt_id: string;
@@ -84,7 +83,6 @@ interface MessageListProps {
   onClarificationSubmit?: (messageId: string, runId: string, content: string) => void;
   approvalLoading?: boolean;
   bottomInset?: number;
-  showPipeline?: boolean;
   showEvidence?: boolean;
   selectedAssistantId?: string | null;
   onAssistantSelect?: (messageId: string) => void;
@@ -103,7 +101,6 @@ interface MessageRowProps {
   ) => void;
   onClarificationSubmit?: (messageId: string, runId: string, content: string) => void;
   approvalLoading: boolean;
-  showPipeline: boolean;
   showEvidence: boolean;
   selectedAssistantId?: string | null;
   onAssistantSelect?: (messageId: string) => void;
@@ -116,7 +113,6 @@ const MessageRow = memo(
     onToolApprovalSubmit,
     onClarificationSubmit,
     approvalLoading,
-    showPipeline,
     showEvidence,
     selectedAssistantId,
     onAssistantSelect,
@@ -177,18 +173,6 @@ const MessageRow = memo(
           }
         }}
       >
-        {showPipeline &&
-          message.role === 'assistant' &&
-          ((message.nodeTimeline?.length ?? 0) > 0 || Boolean(message.runState)) && (
-            <Box sx={{ ml: 7, mb: 1.5 }}>
-              <PipelineProgress
-                timeline={message.nodeTimeline ?? []}
-                isStreaming={Boolean(message.isStreaming)}
-                runState={message.runState}
-              />
-            </Box>
-          )}
-
         <MessageItem
           role={message.role}
           content={content}
@@ -272,7 +256,6 @@ const MessageRow = memo(
     prev.onToolApprovalSubmit === next.onToolApprovalSubmit &&
     prev.onClarificationSubmit === next.onClarificationSubmit &&
     prev.approvalLoading === next.approvalLoading &&
-    prev.showPipeline === next.showPipeline &&
     prev.showEvidence === next.showEvidence &&
     prev.selectedAssistantId === next.selectedAssistantId &&
     prev.onAssistantSelect === next.onAssistantSelect &&
@@ -286,7 +269,6 @@ export function MessageList({
   onClarificationSubmit,
   approvalLoading = false,
   bottomInset = 220,
-  showPipeline = true,
   showEvidence = true,
   selectedAssistantId,
   onAssistantSelect,
@@ -479,7 +461,6 @@ export function MessageList({
                 onToolApprovalSubmit={onToolApprovalSubmit}
                 onClarificationSubmit={onClarificationSubmit}
                 approvalLoading={approvalLoading}
-                showPipeline={showPipeline}
                 showEvidence={showEvidence}
                 selectedAssistantId={selectedAssistantId}
                 onAssistantSelect={onAssistantSelect}

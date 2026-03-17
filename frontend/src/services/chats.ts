@@ -63,6 +63,13 @@ export interface ChatRunUiEvent {
   ts: string;
 }
 
+export type ChatTraceExecutionStatus =
+  | 'started'
+  | 'completed'
+  | 'failed'
+  | 'waiting_user'
+  | 'skipped';
+
 export interface KbChatConfig {
   entity_expand_max_candidates: number;
   entity_expand_max_variants: number;
@@ -283,6 +290,7 @@ export interface NormalizedChatStreamEvent {
 }
 
 export interface ChatNodeIoEvent {
+  execution_id?: string | null;
   display_input_items?: ChatNodeDisplayItem[] | null;
   display_output_items?: ChatNodeDisplayItem[] | null;
   run_id: string;
@@ -308,6 +316,23 @@ export interface ChatNodeDisplayItem {
   value: string | string[];
 }
 
+export interface ChatTraceExecution {
+  execution_id: string;
+  run_id?: string;
+  node_name: string;
+  node_label: string;
+  status: ChatTraceExecutionStatus;
+  started_at: string;
+  updated_at: string;
+  ended_at?: string | null;
+  node_path?: string[] | null;
+  attempt?: number | null;
+  latency_ms?: number | null;
+  input_items?: ChatNodeDisplayItem[] | null;
+  output_items?: ChatNodeDisplayItem[] | null;
+  error_summary?: string | null;
+}
+
 export interface KbGraphNode {
   id: string;
   label: string;
@@ -325,8 +350,8 @@ export interface KbGraphEdge {
 export interface KbGraphSchema {
   version: string;
   hash: string;
-  nodes: KbGraphNode[];
-  edges: KbGraphEdge[];
+  nodes: readonly KbGraphNode[];
+  edges: readonly KbGraphEdge[];
 }
 
 export function isChatRunStreamStatus(value: unknown): value is ChatRunStreamStatus {
