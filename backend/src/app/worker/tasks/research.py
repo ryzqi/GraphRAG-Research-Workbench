@@ -121,7 +121,10 @@ async def _run_research(
                     # 初始化依赖（每任务创建）
                     http_client = resources.http_client
                     milvus = resources.milvus
-                    embedding = EmbeddingClient(http_client=http_client)
+                    embedding = resources.embedding_client or EmbeddingClient(
+                        http_client=resources.embedding_http_client,
+                        settings=resources.settings,
+                    )
                     redis = resources.redis
                     retrieval = RetrievalService(session, milvus, embedding, redis)
 
@@ -334,14 +337,15 @@ async def _run_research_v2(
                     http_client = resources.http_client
                     milvus = resources.milvus
                     redis = resources.redis
+                    embedding = resources.embedding_client
                     if (
                         http_client is None
                         or milvus is None
                         or redis is None
+                        or embedding is None
                     ):  # pragma: no cover - defensive
                         raise RuntimeError("研究任务资源初始化失败")
 
-                    embedding = EmbeddingClient(http_client=http_client)
                     retrieval = RetrievalService(db, milvus, embedding, redis)
 
                     # v2 研究路径不再装配 MCP 扩展，保留空列表占位。

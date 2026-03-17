@@ -374,7 +374,10 @@ async def _process_doc(*, doc, resources) -> _DocProcessOutcome:
             },
         )
 
-        embedding_client = EmbeddingClient(http_client=resources.http_client)
+        embedding_client = resources.embedding_client or EmbeddingClient(
+            http_client=resources.embedding_http_client,
+            settings=get_settings(),
+        )
         chunker = ChunkingEngine(settings=get_settings(), embedding=embedding_client)
         context_service = ContextualEmbeddingService(settings=get_settings())
         chunk_items = await chunker.split(parsed, index_config)

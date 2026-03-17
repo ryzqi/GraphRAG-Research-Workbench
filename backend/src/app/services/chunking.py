@@ -8,6 +8,8 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+import httpx
+
 from app.core.settings import Settings, get_settings
 from app.integrations.embedding_client import EmbeddingClient
 from app.schemas.knowledge_bases import (
@@ -81,9 +83,11 @@ class ChunkingEngine:
         *,
         settings: Settings | None = None,
         embedding: EmbeddingClient | None = None,
+        embedding_http_client: httpx.AsyncClient | None = None,
     ) -> None:
         self._settings = settings if settings is not None else get_settings()
         self._embedding = embedding
+        self._embedding_http_client = embedding_http_client
 
     async def split(
         self, document: ParsedDocument, index_config: IndexConfig
@@ -268,7 +272,10 @@ class ChunkingEngine:
                 threshold_used=None,
             )
 
-        embedding = self._embedding or EmbeddingClient()
+        embedding = self._embedding or EmbeddingClient(
+            http_client=self._embedding_http_client,
+            settings=self._settings,
+        )
         self._embedding = embedding
 
         vectors: list[list[float]] = []
@@ -276,7 +283,7 @@ class ChunkingEngine:
         try:
             for start_idx in range(0, len(sentences), batch_size):
                 batch = sentences[start_idx : start_idx + batch_size]
-                vectors.extend(await embedding.embed(texts=batch))
+                vectors.extend(await embedding.embed(texts=batch, stage="chunking"))
         except Exception as exc:
             chunk_size_tokens, chunk_overlap_tokens = _first_query_dependent_multiscale_window(
                 index_config

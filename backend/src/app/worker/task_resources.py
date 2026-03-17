@@ -9,7 +9,12 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from app.core.settings import Settings, get_settings
 from app.db.session import create_engine, create_sessionmaker
-from app.integrations.http_client import close_http_client, create_http_client
+from app.integrations.embedding_client import EmbeddingClient
+from app.integrations.http_client import (
+    HttpClientProfile,
+    close_http_client,
+    create_http_client,
+)
 from app.integrations.model_runtime_config import ModelRuntimeConfigManager
 from app.integrations.milvus_client import MilvusClient, create_milvus_client
 from app.integrations.redis_client import RedisClient, close_redis_client, create_redis_client
@@ -21,6 +26,8 @@ class TaskResources:
     engine: AsyncEngine | None = None
     sessionmaker: async_sessionmaker[AsyncSession] | None = None
     http_client: httpx.AsyncClient | None = None
+    embedding_http_client: httpx.AsyncClient | None = None
+    embedding_client: EmbeddingClient | None = None
     redis: RedisClient | None = None
     milvus: MilvusClient | None = None
 
@@ -40,6 +47,8 @@ async def managed_task_resources(
     engine = None
     sessionmaker = None
     http_client = None
+    embedding_http_client = None
+    embedding_client = None
     redis = None
     milvus = None
 
@@ -59,6 +68,14 @@ async def managed_task_resources(
             )
     if with_http:
         http_client = create_http_client(cfg)
+        embedding_http_client = create_http_client(
+            cfg,
+            profile=HttpClientProfile.EMBEDDING_BATCH,
+        )
+        embedding_client = EmbeddingClient(
+            http_client=embedding_http_client,
+            settings=cfg,
+        )
     if with_redis:
         redis = create_redis_client(cfg)
     if with_milvus:
@@ -69,6 +86,8 @@ async def managed_task_resources(
         engine=engine,
         sessionmaker=sessionmaker,
         http_client=http_client,
+        embedding_http_client=embedding_http_client,
+        embedding_client=embedding_client,
         redis=redis,
         milvus=milvus,
     )
@@ -76,6 +95,7 @@ async def managed_task_resources(
         yield resources
     finally:
         await close_http_client(http_client)
+        await close_http_client(embedding_http_client)
         await close_redis_client(redis)
         if milvus is not None:
             try:

@@ -17,7 +17,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.settings import get_settings
-from app.integrations.embedding_client import EmbeddingClient
+from app.integrations.embedding_client import EmbeddingCallError, EmbeddingClient
 from app.integrations.milvus_client import MilvusClient
 from app.integrations.redis_client import RedisClient
 from app.integrations.rerank_client import RerankClient
@@ -197,6 +197,9 @@ class RetrievalService:
             "bm25_hits": 0,
             "rrf_candidates": 0,
             "rerank_applied": False,
+            "dense_disabled": False,
+            "dense_disabled_reason": None,
+            "optional_embedding_skips": [],
         }
         if reason:
             stats["reason"] = reason
@@ -635,7 +638,11 @@ class RetrievalService:
             raise asyncio.TimeoutError()
 
         vectors = await self._run_with_timeout(
-            self._embedding.embed(texts=embed_texts, timeout_seconds=timeout_value),
+            self._embedding.embed(
+                texts=embed_texts,
+                timeout_seconds=timeout_value,
+                stage="dedupe",
+            ),
             timeout_value,
         )
         if (
@@ -755,7 +762,11 @@ class RetrievalService:
             raise asyncio.TimeoutError()
 
         vectors = await self._run_with_timeout(
-            self._embedding.embed(texts=texts, timeout_seconds=timeout_value),
+            self._embedding.embed(
+                texts=texts,
+                timeout_seconds=timeout_value,
+                stage="diversity",
+            ),
             timeout_value,
         )
         if not isinstance(vectors, list) or len(vectors) != len(candidates):
@@ -779,7 +790,11 @@ class RetrievalService:
         return normalized
 
     async def _get_query_embedding(
-        self, query: str, *, timeout_seconds: float | None = None
+        self,
+        query: str,
+        *,
+        timeout_seconds: float | None = None,
+        stage: str = "query_main",
     ) -> list[float]:
         """Get query embedding with cache support."""
         if self._redis and self._settings.retrieval_cache_enabled:
@@ -803,7 +818,12 @@ class RetrievalService:
 
         start_time = time.perf_counter()
         embeddings = await self._run_with_timeout(
-            self._embedding.embed(texts=[query]), timeout_value
+            self._embedding.embed(
+                texts=[query],
+                timeout_seconds=timeout_value,
+                stage=stage,
+            ),
+            timeout_value,
         )
         latency_ms = int((time.perf_counter() - start_time) * 1000)
 
@@ -854,8 +874,14 @@ class RetrievalService:
         if not query:
             raise ValueError("empty_query")
 
+        query_stage = self._query_embedding_stage(item)
+
         if str(item.get("kind") or "") != "hyde":
-            embedding = await self._get_query_embedding(query, timeout_seconds=timeout_seconds)
+            embedding = await self._get_query_embedding(
+                query,
+                timeout_seconds=timeout_seconds,
+                stage=query_stage,
+            )
             return embedding, 0, 0, "not_hyde"
 
         raw_hyde_queries = item.get("hyde_queries")
@@ -877,12 +903,16 @@ class RetrievalService:
         )
         if aggregation != HYDE_AGGREGATION:
             embedding = await self._get_query_embedding(
-                hyde_queries[0], timeout_seconds=timeout_seconds
+                hyde_queries[0],
+                timeout_seconds=timeout_seconds,
+                stage="hyde",
             )
             return embedding, len(hyde_queries), 1, "unsupported_aggregation"
         if len(hyde_queries) == 1:
             embedding = await self._get_query_embedding(
-                hyde_queries[0], timeout_seconds=timeout_seconds
+                hyde_queries[0],
+                timeout_seconds=timeout_seconds,
+                stage="hyde",
             )
             return embedding, len(hyde_queries), 1, "single_sample"
 
@@ -895,6 +925,7 @@ class RetrievalService:
             vec = await self._get_query_embedding(
                 hyde_query,
                 timeout_seconds=remaining,
+                stage="hyde",
             )
             vectors.append(vec)
 
@@ -985,6 +1016,34 @@ class RetrievalService:
             if ek == key:
                 return
         hits.append(src)
+
+    @staticmethod
+    def _query_embedding_stage(item: QueryItem) -> str:
+        kind = str(item.get("kind") or "").strip().lower()
+        if kind == "hyde":
+            return "hyde"
+        if kind == "main":
+            return "query_main"
+        return "query_variant"
+
+    @staticmethod
+    def _embedding_failure_reason(
+        exc: Exception,
+        *,
+        fallback_stage: str,
+    ) -> str:
+        if isinstance(exc, EmbeddingCallError):
+            stage = str(exc.stage or fallback_stage)
+            if exc.breaker_state == "open" or getattr(exc, "short_circuited", False):
+                return f"{stage}:breaker_open"
+            if exc.status_code is not None:
+                return f"{stage}:status_{exc.status_code}"
+            if exc.retryable:
+                return f"{stage}:retryable_error"
+            return f"{stage}:error"
+        if isinstance(exc, asyncio.TimeoutError):
+            return f"{fallback_stage}:timeout"
+        return f"{fallback_stage}:error"
 
     @staticmethod
     def _rrf_rank(
@@ -1147,6 +1206,8 @@ class RetrievalService:
         hyde_requested_total = 0
         hyde_used_total = 0
         hyde_aggregation_reason = "not_used"
+        dense_disabled_reasons: list[str] = []
+        optional_embedding_skips: list[str] = []
 
         # Use the "main" query as rerank query, fallback to the first available.
         main_query = ""
@@ -1175,10 +1236,12 @@ class RetrievalService:
             int,
             int,
             str,
+            str | None,
+            list[str],
         ]:
             q = (item.get("query") or "").strip()
             if not q:
-                return index, 0, 0, {}, {}, [], 0, 0, "empty_query"
+                return index, 0, 0, {}, {}, [], 0, 0, "empty_query", None, []
 
             if deadline is not None:
                 remaining = self._remaining_seconds(deadline)
@@ -1191,6 +1254,8 @@ class RetrievalService:
             hyde_requested_count = 0
             hyde_used_count = 0
             hyde_reason = "not_hyde"
+            dense_disabled_reason: str | None = None
+            local_optional_embedding_skips: list[str] = []
             if use_dense:
                 try:
                     remaining = self._remaining_seconds(deadline)
@@ -1211,6 +1276,10 @@ class RetrievalService:
                     logger.warning("Embedding request timed out; disable dense retrieval for this query.", extra={"query": q[:50]})
                     embedding = None
                     use_dense = False
+                    dense_disabled_reason = self._embedding_failure_reason(
+                        asyncio.TimeoutError(),
+                        fallback_stage=self._query_embedding_stage(item),
+                    )
                 except asyncio.CancelledError:
                     raise
                 except Exception as exc:  # pragma: no cover
@@ -1219,6 +1288,12 @@ class RetrievalService:
                     )
                     embedding = None
                     use_dense = False
+                    dense_disabled_reason = self._embedding_failure_reason(
+                        exc,
+                        fallback_stage=self._query_embedding_stage(item),
+                    )
+                    if self._query_embedding_stage(item) == "hyde":
+                        local_optional_embedding_skips.append(dense_disabled_reason)
 
             async def _safe_dense() -> list[dict]:
                 if not use_dense or embedding is None:
@@ -1382,6 +1457,8 @@ class RetrievalService:
                     hyde_requested_count,
                     hyde_used_count,
                     hyde_reason,
+                    dense_disabled_reason,
+                    local_optional_embedding_skips,
                 )
 
             if (
@@ -1409,6 +1486,8 @@ class RetrievalService:
                 hyde_requested_count,
                 hyde_used_count,
                 hyde_reason,
+                dense_disabled_reason,
+                local_optional_embedding_skips,
             )
 
         semaphore = asyncio.Semaphore(QUERY_FANOUT_CONCURRENCY)
@@ -1425,6 +1504,8 @@ class RetrievalService:
             int,
             int,
             str,
+            str | None,
+            list[str],
         ]:
             async with semaphore:
                 return await _process_query_item(index, item)
@@ -1457,6 +1538,8 @@ class RetrievalService:
                 hyde_requested_count,
                 hyde_used_count,
                 hyde_reason,
+                dense_disabled_reason,
+                local_optional_embedding_skips,
             ) = result
             dense_hits_total += dense_count
             bm25_hits_total += bm25_count
@@ -1464,6 +1547,9 @@ class RetrievalService:
             hyde_used_total += hyde_used_count
             if hyde_requested_count > 0:
                 hyde_aggregation_reason = hyde_reason
+            if dense_disabled_reason:
+                dense_disabled_reasons.append(dense_disabled_reason)
+            optional_embedding_skips.extend(local_optional_embedding_skips)
 
             for key, chunk in local_chunk_by_key.items():
                 chunk_by_key.setdefault(key, chunk)
@@ -1483,6 +1569,11 @@ class RetrievalService:
                 stats={
                     "dense_hits": dense_hits_total,
                     "bm25_hits": bm25_hits_total,
+                    "dense_disabled": bool(dense_disabled_reasons),
+                    "dense_disabled_reason": (
+                        dense_disabled_reasons[0] if dense_disabled_reasons else None
+                    ),
+                    "optional_embedding_skips": optional_embedding_skips,
                     "hyde_requested_count": hyde_requested_total,
                     "hyde_used_count": hyde_used_total,
                     "hyde_aggregation": (
@@ -1594,14 +1685,19 @@ class RetrievalService:
                 )
             except asyncio.TimeoutError:
                 logger.warning("Semantic-similarity dedupe timed out; skip this dedupe step.")
-                dedup_similarity_reason = "timeout"
+                dedup_similarity_reason = "dedupe:timeout"
+                optional_embedding_skips.append(dedup_similarity_reason)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
                 logger.warning(
                     "Semantic-similarity dedupe failed; keep original candidates.", extra={"error": str(exc)}
                 )
-                dedup_similarity_reason = "error"
+                dedup_similarity_reason = self._embedding_failure_reason(
+                    exc,
+                    fallback_stage="dedupe",
+                )
+                optional_embedding_skips.append(dedup_similarity_reason)
         post_dedup_count = len(rrf_results)
 
         candidates_for_rerank = rrf_results[:rerank_input_limit]
@@ -1625,7 +1721,8 @@ class RetrievalService:
                 logger.warning("MMR diversity timed out; fallback to RRF order.")
                 candidates_for_rerank = rrf_results[:rerank_input_limit]
                 diversity_applied = False
-                diversity_reason = "timeout"
+                diversity_reason = "diversity:timeout"
+                optional_embedding_skips.append(diversity_reason)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
@@ -1634,7 +1731,11 @@ class RetrievalService:
                 )
                 candidates_for_rerank = rrf_results[:rerank_input_limit]
                 diversity_applied = False
-                diversity_reason = "error"
+                diversity_reason = self._embedding_failure_reason(
+                    exc,
+                    fallback_stage="diversity",
+                )
+                optional_embedding_skips.append(diversity_reason)
 
         # Rerank: RRF -> rerank -> Top-N. Inputs are additionally capped.
         rerank_applied = False
@@ -1741,6 +1842,11 @@ class RetrievalService:
             stats={
                 "dense_hits": dense_hits_total,
                 "bm25_hits": bm25_hits_total,
+                "dense_disabled": bool(dense_disabled_reasons),
+                "dense_disabled_reason": (
+                    dense_disabled_reasons[0] if dense_disabled_reasons else None
+                ),
+                "optional_embedding_skips": optional_embedding_skips,
                 "hyde_requested_count": hyde_requested_total,
                 "hyde_used_count": hyde_used_total,
                 "hyde_aggregation": HYDE_AGGREGATION if hyde_requested_total > 0 else None,

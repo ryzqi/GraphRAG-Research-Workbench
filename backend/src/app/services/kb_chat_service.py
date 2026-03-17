@@ -432,7 +432,10 @@ class KbChatService:
             return None
 
         try:
-            query_embeddings = await self._embedding.embed(texts=[normalized_question])
+            query_embeddings = await self._embedding.embed(
+                texts=[normalized_question],
+                stage="semantic_cache_lookup",
+            )
         except Exception:
             return None
         if not isinstance(query_embeddings, list) or not query_embeddings:
@@ -517,7 +520,10 @@ class KbChatService:
             return
 
         try:
-            embeddings = await self._embedding.embed(texts=[normalized_question])
+            embeddings = await self._embedding.embed(
+                texts=[normalized_question],
+                stage="semantic_cache_write",
+            )
         except Exception:
             return
         if not isinstance(embeddings, list) or not embeddings:

@@ -212,6 +212,48 @@ class Settings(BaseSettings):
     http_keepalive_expiry_seconds: float = Field(
         5.0, alias="HTTP_KEEPALIVE_EXPIRY_SECONDS"
     )
+    embedding_http_realtime_timeout_connect_seconds: float | None = Field(
+        None, ge=0.0, alias="EMBEDDING_HTTP_REALTIME_TIMEOUT_CONNECT_SECONDS"
+    )
+    embedding_http_realtime_timeout_read_seconds: float | None = Field(
+        None, ge=0.0, alias="EMBEDDING_HTTP_REALTIME_TIMEOUT_READ_SECONDS"
+    )
+    embedding_http_realtime_timeout_write_seconds: float | None = Field(
+        None, ge=0.0, alias="EMBEDDING_HTTP_REALTIME_TIMEOUT_WRITE_SECONDS"
+    )
+    embedding_http_realtime_timeout_pool_seconds: float | None = Field(
+        None, ge=0.0, alias="EMBEDDING_HTTP_REALTIME_TIMEOUT_POOL_SECONDS"
+    )
+    embedding_http_realtime_max_connections: int | None = Field(
+        None, ge=1, alias="EMBEDDING_HTTP_REALTIME_MAX_CONNECTIONS"
+    )
+    embedding_http_realtime_max_keepalive_connections: int | None = Field(
+        None, ge=1, alias="EMBEDDING_HTTP_REALTIME_MAX_KEEPALIVE_CONNECTIONS"
+    )
+    embedding_http_realtime_keepalive_expiry_seconds: float | None = Field(
+        None, ge=0.0, alias="EMBEDDING_HTTP_REALTIME_KEEPALIVE_EXPIRY_SECONDS"
+    )
+    embedding_http_batch_timeout_connect_seconds: float | None = Field(
+        None, ge=0.0, alias="EMBEDDING_HTTP_BATCH_TIMEOUT_CONNECT_SECONDS"
+    )
+    embedding_http_batch_timeout_read_seconds: float | None = Field(
+        None, ge=0.0, alias="EMBEDDING_HTTP_BATCH_TIMEOUT_READ_SECONDS"
+    )
+    embedding_http_batch_timeout_write_seconds: float | None = Field(
+        None, ge=0.0, alias="EMBEDDING_HTTP_BATCH_TIMEOUT_WRITE_SECONDS"
+    )
+    embedding_http_batch_timeout_pool_seconds: float | None = Field(
+        None, ge=0.0, alias="EMBEDDING_HTTP_BATCH_TIMEOUT_POOL_SECONDS"
+    )
+    embedding_http_batch_max_connections: int | None = Field(
+        None, ge=1, alias="EMBEDDING_HTTP_BATCH_MAX_CONNECTIONS"
+    )
+    embedding_http_batch_max_keepalive_connections: int | None = Field(
+        None, ge=1, alias="EMBEDDING_HTTP_BATCH_MAX_KEEPALIVE_CONNECTIONS"
+    )
+    embedding_http_batch_keepalive_expiry_seconds: float | None = Field(
+        None, ge=0.0, alias="EMBEDDING_HTTP_BATCH_KEEPALIVE_EXPIRY_SECONDS"
+    )
 
     milvus_host: str = Field("localhost", alias="MILVUS_HOST")
     milvus_port: int = Field(19530, alias="MILVUS_PORT")
@@ -237,6 +279,19 @@ class Settings(BaseSettings):
     embedding_model: str = Field("text-embedding-3-small", alias="EMBEDDING_MODEL")
     embedding_timeout_seconds: float = Field(30.0, alias="EMBEDDING_TIMEOUT_SECONDS")
     embedding_dim: int | None = Field(None, alias="EMBEDDING_DIM")
+    embedding_retry_max_retries: int = Field(2, ge=0, alias="EMBEDDING_RETRY_MAX_RETRIES")
+    embedding_retry_base_delay_seconds: float = Field(
+        0.2, ge=0.0, alias="EMBEDDING_RETRY_BASE_DELAY_SECONDS"
+    )
+    embedding_retry_jitter_ratio: float = Field(
+        0.2, ge=0.0, alias="EMBEDDING_RETRY_JITTER_RATIO"
+    )
+    embedding_breaker_failure_threshold: int = Field(
+        3, ge=1, alias="EMBEDDING_BREAKER_FAILURE_THRESHOLD"
+    )
+    embedding_breaker_open_seconds: float = Field(
+        30.0, ge=0.0, alias="EMBEDDING_BREAKER_OPEN_SECONDS"
+    )
 
     minio_endpoint: str = Field("localhost:9000", alias="MINIO_ENDPOINT")
     minio_access_key: str = Field(_DEFAULT_MINIO_ACCESS_KEY, alias="MINIO_ACCESS_KEY")

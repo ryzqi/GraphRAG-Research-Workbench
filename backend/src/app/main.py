@@ -18,7 +18,11 @@ from app.core.settings import get_settings, validate_startup_settings
 from app.db.schema_guard import ensure_ingestion_schema_ready
 from app.db.session import get_engine, get_sessionmaker
 from app.integrations.embedding_client import EmbeddingClient
-from app.integrations.http_client import close_http_client, create_http_client
+from app.integrations.http_client import (
+    HttpClientProfile,
+    close_http_client,
+    create_http_client,
+)
 from app.integrations.llm_client import LLMClient
 from app.integrations.model_runtime_config import ModelRuntimeConfigManager
 from app.integrations.milvus_client import create_milvus_client
@@ -50,8 +54,15 @@ async def lifespan(app: FastAPI):
     await StoreManager.initialize()
     DeepAgentsStoreManager.initialize()
     app.state.http_client = create_http_client(settings)
+    app.state.embedding_http_client = create_http_client(
+        settings,
+        profile=HttpClientProfile.EMBEDDING_REALTIME,
+    )
     app.state.llm_client = LLMClient(http_client=app.state.http_client)
-    app.state.embedding_client = EmbeddingClient(http_client=app.state.http_client)
+    app.state.embedding_client = EmbeddingClient(
+        http_client=app.state.embedding_http_client,
+        settings=settings,
+    )
     app.state.rerank_client = RerankClient(settings=settings, http_client=app.state.http_client)
     app.state.milvus_client = create_milvus_client()
     app.state.redis = create_redis_client(settings)
@@ -60,6 +71,10 @@ async def lifespan(app: FastAPI):
         await close_http_client(app.state.http_client)
     except Exception as exc:  # pragma: no cover - best effort
         logger.warning("HTTP client 关闭失败", extra={"error": str(exc)})
+    try:
+        await close_http_client(app.state.embedding_http_client)
+    except Exception as exc:  # pragma: no cover - best effort
+        logger.warning("Embedding HTTP client 关闭失败", extra={"error": str(exc)})
     try:
         await app.state.milvus_client.aclose()
     except Exception as exc:  # pragma: no cover - best effort

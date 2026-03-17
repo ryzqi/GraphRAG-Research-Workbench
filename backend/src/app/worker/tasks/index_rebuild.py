@@ -210,8 +210,10 @@ async def _run_index_rebuild_job(job_id: str) -> None:
             try:
                 milvus_client = resources.milvus
                 http_client = resources.http_client
-
-                embedding_client = EmbeddingClient(http_client=http_client)
+                embedding_client = resources.embedding_client or EmbeddingClient(
+                    http_client=resources.embedding_http_client,
+                    settings=settings,
+                )
                 chunker = ChunkingEngine(settings=settings, embedding=embedding_client)
                 context_service = ContextualEmbeddingService(settings=settings)
                 chunk_store = ChunkPersistenceService(session)
