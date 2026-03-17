@@ -18,7 +18,6 @@ import type { ChatRunStateEvent, ChatTraceExecution, KbGraphSchema } from '../..
 import { selectKbChatFlowDetailItems } from '../../services/kbChatFlowSelectors';
 import {
   buildTraceExecutionTimeline,
-  buildTraceStageSummaries,
   type TraceStageStatus,
 } from '../../services/kbChatTraceNodes';
 import { resolveKbNodeTheme } from '../../services/kbNodeCatalog';
@@ -150,10 +149,6 @@ export function KbChatFlowPanel({
     () => buildTraceExecutionTimeline({ schema, runState, traceExecutions }),
     [schema, runState, traceExecutions]
   );
-  const stageSummaries = useMemo(
-    () => buildTraceStageSummaries({ schema, runState, traceExecutions }),
-    [schema, runState, traceExecutions]
-  );
 
   return (
     <Paper
@@ -202,46 +197,6 @@ export function KbChatFlowPanel({
             />
           </Stack>
         )}
-
-        <Stack direction='row' spacing={0.8} useFlexGap flexWrap='wrap'>
-          {stageSummaries.map((stage) => (
-            <Paper
-              key={stage.id}
-              variant='outlined'
-              sx={{
-                px: 1,
-                py: 0.8,
-                borderRadius: 2,
-                minWidth: 132,
-                flex: '1 1 160px',
-                borderColor: statusBorderColor(stage.status),
-                bgcolor: stage.isActive
-                  ? (theme) => alpha(theme.palette.primary.main, 0.05)
-                  : (theme) => alpha(theme.palette.background.default, 0.32),
-              }}
-            >
-              <Stack spacing={0.5}>
-                <Stack direction='row' justifyContent='space-between' alignItems='center'>
-                  <Typography variant='caption' fontWeight={700}>
-                    {stage.title}
-                  </Typography>
-                  <Chip
-                    size='small'
-                    label={statusLabel(stage.status)}
-                    color={statusChipColor(stage.status)}
-                    sx={{ height: 20 }}
-                  />
-                </Stack>
-                <Typography variant='caption' color='text.secondary'>
-                  {stage.currentNodeLabel ? `当前节点：${stage.currentNodeLabel}` : stage.subtitle}
-                </Typography>
-                <Typography variant='caption' color='text.secondary'>
-                  执行实例 {stage.executionCount}
-                </Typography>
-              </Stack>
-            </Paper>
-          ))}
-        </Stack>
 
         {traceWarnings && traceWarnings.length > 0 && (
           <Alert severity='warning' sx={{ py: 0.5 }}>

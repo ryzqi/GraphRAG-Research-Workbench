@@ -122,6 +122,51 @@ describe('KbChatFlowPanel', () => {
     expect(html).not.toContain('节点进度');
   });
 
+  it('does not render stage summary blocks above the node timeline', () => {
+    const html = renderToStaticMarkup(
+      createElement(KbChatFlowPanel, {
+        schema: MINIMAL_SCHEMA,
+        runState: {
+          run_id: 'run-1',
+          run_status: 'running',
+          current_step_id: 'complexity_classify',
+          current_step_label: '复杂度分类',
+          current_step_status: 'started',
+          current_node: 'complexity_classify',
+          active_path: ['complexity_classify'],
+          attempt: 1,
+          message: null,
+          progress: { completed: 50, total: 100, percent: 50 },
+          ts: '2026-01-01T00:00:02.000Z',
+        },
+        traceExecutions: [
+          {
+            execution_id: 'task-1',
+            node_name: 'merge_context',
+            node_label: '上下文合并',
+            status: 'completed',
+            started_at: '2026-01-01T00:00:01.000Z',
+            updated_at: '2026-01-01T00:00:02.000Z',
+          },
+          {
+            execution_id: 'task-2',
+            node_name: 'complexity_classify',
+            node_label: '复杂度分类',
+            status: 'started',
+            started_at: '2026-01-01T00:00:03.000Z',
+            updated_at: '2026-01-01T00:00:04.000Z',
+          },
+        ],
+      })
+    );
+
+    expect(html).toContain('上下文合并');
+    expect(html).toContain('复杂度分类');
+    expect(html).not.toContain('阶段1 理解问题');
+    expect(html).not.toContain('阶段2 选择路径');
+    expect(html).not.toContain('执行实例');
+  });
+
   it('renders repeated visible node executions in real timeline order instead of collapsing by node id', () => {
     const html = renderToStaticMarkup(
       createElement(KbChatFlowPanel, {
