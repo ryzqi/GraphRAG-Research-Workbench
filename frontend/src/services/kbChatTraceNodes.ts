@@ -71,6 +71,12 @@ interface NodeDefinition {
   order: number;
 }
 
+const HIDDEN_TRACE_SUBGRAPH_NODE_IDS = new Set([
+  'preprocess_subgraph',
+  'retrieval_subgraph',
+  'answer_subgraph',
+]);
+
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return null;
@@ -139,6 +145,20 @@ function resolveObservedNodeOrder(
   return catalogOrder === Number.MAX_SAFE_INTEGER ? fallbackOrder : catalogOrder;
 }
 
+function resolveTraceNodeBaseId(nodeId: string): string {
+  const trimmedNodeId = nodeId.trim();
+  if (!trimmedNodeId) {
+    return '';
+  }
+  const separatorIndex = trimmedNodeId.indexOf(':');
+  return separatorIndex >= 0 ? trimmedNodeId.slice(0, separatorIndex) : trimmedNodeId;
+}
+
+function shouldDisplayTraceNode(nodeId: string): boolean {
+  const baseId = resolveTraceNodeBaseId(nodeId);
+  return baseId.length > 0 && !HIDDEN_TRACE_SUBGRAPH_NODE_IDS.has(baseId);
+}
+
 function resolveEnabledNodes(
   schema: KbGraphSchema | null | undefined,
   runState: ChatRunStateEvent | undefined,
@@ -149,7 +169,7 @@ function resolveEnabledNodes(
   const hasSchemaNodes = Array.isArray(schema?.nodes) && schema.nodes.length > 0;
 
   const registerNode = (nodeId: string, phase: string | null, order: number) => {
-    if (!nodeId || nodes.has(nodeId)) {
+    if (!nodeId || !shouldDisplayTraceNode(nodeId) || nodes.has(nodeId)) {
       return;
     }
     nodes.set(nodeId, {

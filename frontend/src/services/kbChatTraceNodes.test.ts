@@ -31,7 +31,7 @@ describe('kbChatTraceNodes', () => {
     });
 
     const preprocessStage = groups.find((stage) => stage.id === 'stage_1_preprocess');
-    expect(preprocessStage?.nodes.some((node) => node.id === 'preprocess_subgraph')).toBe(true);
+    expect(preprocessStage?.nodes.some((node) => node.id === 'preprocess_subgraph')).toBe(false);
     expect(preprocessStage?.nodes.some((node) => node.id === 'merge_context')).toBe(true);
     expect(preprocessStage?.nodes.find((node) => node.id === 'merge_context')?.status).toBe('completed');
 
@@ -67,12 +67,11 @@ describe('kbChatTraceNodes', () => {
       ],
     });
 
-    const preprocessWrapperIndex = nodes.findIndex((node) => node.id === 'preprocess_subgraph');
     const mergeContextIndex = nodes.findIndex((node) => node.id === 'merge_context');
     const gateDispatch = nodes.find((node) => node.id === 'doc_gate_dispatch');
 
-    expect(preprocessWrapperIndex).toBeGreaterThanOrEqual(0);
-    expect(mergeContextIndex).toBeGreaterThan(preprocessWrapperIndex);
+    expect(nodes.some((node) => node.id === 'preprocess_subgraph')).toBe(false);
+    expect(mergeContextIndex).toBeGreaterThanOrEqual(0);
     expect(nodes[mergeContextIndex]?.status).toBe('running');
     expect(gateDispatch?.stageId).toBe('stage_5_gate');
   });
@@ -403,6 +402,7 @@ describe('kbChatTraceNodes', () => {
     });
 
     const nodeIds = new Set(nodes.map((node) => node.id));
+    expect(nodeIds.has('preprocess_subgraph')).toBe(false);
     expect(nodeIds.has('entity_expand')).toBe(true);
     expect(nodeIds.has('hyde')).toBe(true);
   });
@@ -433,10 +433,63 @@ describe('kbChatTraceNodes', () => {
       },
     });
 
+    expect(nodes.some((node) => node.id === 'preprocess_subgraph')).toBe(false);
     expect(nodes.find((node) => node.id === 'entity_expand')).toMatchObject({
       title: '实体扩展',
       status: 'running',
     });
+  });
+
+  it('hides subgraph wrapper nodes with runtime suffixes while keeping observed main graph nodes', () => {
+    const nodes = buildTraceNodes({
+      schema: {
+        version: '1.1',
+        hash: 'schema-hash',
+        nodes: [
+          { id: 'retrieval_subgraph', label: '检索子图', phase: 'retrieve', order: 13 },
+          { id: 'dispatch_subqueries', label: '子查询派发', phase: 'retrieve', order: 15 },
+          { id: 'retrieve_subquery', label: '子查询检索', phase: 'retrieve', order: 16 },
+        ],
+        edges: [],
+      },
+      runState: {
+        run_id: 'run-1',
+        run_status: 'running',
+        current_step_id: 'retrieval_subgraph:a1c1902b-6120-d123',
+        current_step_label: '检索子图',
+        current_step_status: 'started',
+        current_node: 'dispatch_subqueries',
+        active_path: [
+          'retrieval_subgraph:a1c1902b-6120-d123',
+          'dispatch_subqueries',
+          'retrieve_subquery',
+        ],
+        attempt: 1,
+        message: null,
+        progress: { completed: 1, total: 10, percent: 10 },
+        ts: '2026-01-01T00:00:02.000Z',
+      },
+      nodeIoEvents: [
+        {
+          run_id: 'run-1',
+          node_id: 'retrieval_subgraph:a1c1902b-6120-d123',
+          node_name: 'retrieval_subgraph:a1c1902b-6120-d123',
+          node_path: [
+            'retrieval_subgraph:a1c1902b-6120-d123',
+            'dispatch_subqueries',
+            'retrieve_subquery',
+          ],
+          phase: 'start',
+          ts: '2026-01-01T00:00:01.000Z',
+        },
+      ],
+    });
+
+    const nodeIds = new Set(nodes.map((node) => node.id));
+    expect(nodeIds.has('retrieval_subgraph')).toBe(false);
+    expect(nodeIds.has('retrieval_subgraph:a1c1902b-6120-d123')).toBe(false);
+    expect(nodeIds.has('dispatch_subqueries')).toBe(true);
+    expect(nodeIds.has('retrieve_subquery')).toBe(true);
   });
 
   it('does not include deprecated preprocess shell nodes in fallback trace view', () => {
