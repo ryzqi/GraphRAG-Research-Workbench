@@ -38,7 +38,6 @@ from app.services.query_rewrite_service import (
 )
 
 logger = logging.getLogger(__name__)
-DIVERSITY_MMR_LAMBDA = 0.7
 QUERY_FANOUT_CONCURRENCY = 3
 DEDUP_EMBEDDING_SIMILARITY_THRESHOLD = 0.95
 
@@ -80,7 +79,6 @@ class RetrievalStats:
     rewrite_reason: str | None = None
     rewrite_latency_ms: int | None = None
     hybrid_enabled: bool = False
-    hybrid_ranker: str | None = None
     rerank_enabled: bool = False
     rerank_applied: bool = False
     rerank_reason: str | None = None
@@ -97,9 +95,6 @@ class RetrievalFeatureFlags:
 
 @dataclass(slots=True)
 class RetrievalRuntimeOverrides:
-    hybrid_ranker: str
-    hybrid_dense_weight: float
-    hybrid_sparse_weight: float
     hybrid_rrf_k: int
     retrieval_top_k: int
     retrieval_rerank_top_k: int
@@ -193,12 +188,9 @@ class RetrievalService:
     @staticmethod
     def _empty_layer_draft(reason: str | None = None) -> RetrievalLayerDraft:
         stats: dict[str, object] = {
-            "dense_hits": 0,
-            "bm25_hits": 0,
+            "hybrid_hits": 0,
             "rrf_candidates": 0,
             "rerank_applied": False,
-            "dense_disabled": False,
-            "dense_disabled_reason": None,
             "optional_embedding_skips": [],
         }
         if reason:
@@ -360,9 +352,6 @@ class RetrievalService:
             "rank_fusion_min_score": self._settings.retrieval_rank_fusion_min_score,
             "rerank_min_score": self._settings.retrieval_rerank_min_score,
             "hybrid_enabled": feature_flags.hybrid_enabled,
-            "hybrid_ranker": runtime_overrides.hybrid_ranker,
-            "hybrid_dense_weight": runtime_overrides.hybrid_dense_weight,
-            "hybrid_sparse_weight": runtime_overrides.hybrid_sparse_weight,
             "hybrid_rrf_k": runtime_overrides.hybrid_rrf_k,
             "rewrite_enabled": feature_flags.query_rewrite_enabled,
             "rerank_enabled": feature_flags.rerank_enabled,
@@ -394,12 +383,6 @@ class RetrievalService:
     def _resolve_runtime_overrides(
         self, feature_overrides: dict[str, object] | None
     ) -> RetrievalRuntimeOverrides:
-        ranker = str(self._settings.retrieval_hybrid_ranker or "rrf").strip().lower()
-        if ranker not in {"rrf", "weighted"}:
-            ranker = "rrf"
-
-        dense_weight = float(self._settings.retrieval_hybrid_dense_weight)
-        sparse_weight = float(self._settings.retrieval_hybrid_sparse_weight)
         hybrid_rrf_k = int(self._settings.retrieval_hybrid_rrf_k)
         retrieval_top_k = int(self._settings.retrieval_default_top_k)
         retrieval_rerank_top_k = int(self._settings.retrieval_max_top_k)
@@ -412,20 +395,6 @@ class RetrievalService:
         multiscale_max_chunks_per_document = 2
 
         if isinstance(feature_overrides, dict):
-            override_ranker = feature_overrides.get("hybrid_ranker")
-            if isinstance(override_ranker, str):
-                candidate = override_ranker.strip().lower()
-                if candidate in {"rrf", "weighted"}:
-                    ranker = candidate
-
-            override_dense = feature_overrides.get("hybrid_dense_weight")
-            if isinstance(override_dense, (int, float)):
-                dense_weight = float(override_dense)
-
-            override_sparse = feature_overrides.get("hybrid_sparse_weight")
-            if isinstance(override_sparse, (int, float)):
-                sparse_weight = float(override_sparse)
-
             override_rrf_k = feature_overrides.get("hybrid_rrf_k")
             if isinstance(override_rrf_k, int):
                 hybrid_rrf_k = override_rrf_k
@@ -472,21 +441,7 @@ class RetrievalService:
                     override_multiscale_max_chunks_per_document
                 )
 
-        dense_weight = max(0.0, min(1.0, dense_weight))
-        sparse_weight = max(0.0, min(1.0, sparse_weight))
-        if ranker == "weighted":
-            total_weight = dense_weight + sparse_weight
-            if total_weight <= 0:
-                dense_weight = 0.5
-                sparse_weight = 0.5
-            else:
-                dense_weight /= total_weight
-                sparse_weight /= total_weight
-
         return RetrievalRuntimeOverrides(
-            hybrid_ranker=ranker,
-            hybrid_dense_weight=dense_weight,
-            hybrid_sparse_weight=sparse_weight,
             hybrid_rrf_k=max(1, min(int(hybrid_rrf_k), 200)),
             retrieval_top_k=max(1, int(retrieval_top_k)),
             retrieval_rerank_top_k=max(1, int(retrieval_rerank_top_k)),
@@ -505,32 +460,6 @@ class RetrievalService:
         )
 
     @staticmethod
-    def _weighted_rank(
-        dense_keys: list[tuple[str, str, str]],
-        bm25_keys: list[tuple[str, str, str]],
-        *,
-        dense_weight: float,
-        sparse_weight: float,
-        k: int,
-    ) -> tuple[list[tuple[str, str, str]], dict[tuple[str, str, str], float]]:
-        scores: dict[tuple[str, str, str], float] = {}
-        best_rank: dict[tuple[str, str, str], int] = {}
-
-        for rank, key in enumerate(dense_keys, start=1):
-            scores[key] = scores.get(key, 0.0) + dense_weight / float(k + rank)
-            best_rank[key] = min(best_rank.get(key, rank), rank)
-
-        for rank, key in enumerate(bm25_keys, start=1):
-            scores[key] = scores.get(key, 0.0) + sparse_weight / float(k + rank)
-            best_rank[key] = min(best_rank.get(key, rank), rank)
-
-        ordered = sorted(
-            scores.keys(),
-            key=lambda key: (-scores[key], best_rank.get(key, 10**9), key),
-        )
-        return ordered, scores
-
-    @staticmethod
     def _cosine_similarity(vec_a: list[float], vec_b: list[float]) -> float:
         if not vec_a or not vec_b or len(vec_a) != len(vec_b):
             return 0.0
@@ -542,7 +471,7 @@ class RetrievalService:
         return dot_product / (norm_a * norm_b)
 
     @staticmethod
-    def _candidate_text_for_diversity(result: RetrievalResult) -> str:
+    def _candidate_text_for_similarity(result: RetrievalResult) -> str:
         text = (result.chunk.content or "").strip()
         if not text:
             text = (result.context_text or "").strip()
@@ -553,7 +482,7 @@ class RetrievalService:
 
     @classmethod
     def _candidate_text_for_dedup(cls, result: RetrievalResult) -> str:
-        return cls._candidate_text_for_diversity(result)
+        return cls._candidate_text_for_similarity(result)
 
     @staticmethod
     def _normalize_text_for_hash(text: str) -> str:
@@ -683,104 +612,6 @@ class RetrievalService:
         deduped = [candidates[idx] for idx in deduped_indices]
         removed = max(0, len(candidates) - len(deduped))
         return deduped, removed, "embedding_similarity"
-
-    @classmethod
-    def _mmr_rank(
-        cls,
-        candidates: list[RetrievalResult],
-        *,
-        candidate_vectors: list[list[float]],
-        limit: int,
-        lambda_mult: float,
-    ) -> list[RetrievalResult]:
-        if not candidates or limit <= 0:
-            return []
-        if len(candidates) != len(candidate_vectors):
-            return candidates[:limit]
-
-        n = len(candidates)
-        limit = min(limit, n)
-        lambda_mult = max(0.0, min(1.0, float(lambda_mult)))
-
-        raw_relevance = [float(c.score) for c in candidates]
-        max_rel = max(raw_relevance)
-        min_rel = min(raw_relevance)
-        if max_rel - min_rel > 1e-9:
-            relevance = [(score - min_rel) / (max_rel - min_rel) for score in raw_relevance]
-        else:
-            relevance = [1.0 for _ in raw_relevance]
-
-        selected_indices: list[int] = []
-        remaining: set[int] = set(range(n))
-
-        while remaining and len(selected_indices) < limit:
-            best_idx: int | None = None
-            best_score = float("-inf")
-            for idx in sorted(remaining):
-                redundancy_penalty = 0.0
-                if selected_indices:
-                    redundancy_penalty = max(
-                        cls._cosine_similarity(candidate_vectors[idx], candidate_vectors[j])
-                        for j in selected_indices
-                    )
-                mmr_score = (
-                    lambda_mult * relevance[idx]
-                    - (1.0 - lambda_mult) * redundancy_penalty
-                )
-                if mmr_score > best_score:
-                    best_score = mmr_score
-                    best_idx = idx
-            if best_idx is None:  # pragma: no cover
-                break
-            selected_indices.append(best_idx)
-            remaining.remove(best_idx)
-
-        return [candidates[idx] for idx in selected_indices]
-
-    async def _apply_diversity_penalty(
-        self,
-        candidates: list[RetrievalResult],
-        *,
-        limit: int,
-        lambda_mult: float = DIVERSITY_MMR_LAMBDA,
-        timeout_seconds: float | None = None,
-    ) -> tuple[list[RetrievalResult], bool, str]:
-        if limit <= 0:
-            return [], False, "limit_non_positive"
-        if len(candidates) <= 1:
-            return candidates[:limit], False, "insufficient_candidates"
-
-        texts = [self._candidate_text_for_diversity(item) for item in candidates]
-        if not any(texts):
-            return candidates[:limit], False, "empty_candidate_text"
-        texts = [text if text else "content unavailable" for text in texts]
-
-        timeout_value = float(self._settings.embedding_timeout_seconds)
-        if timeout_seconds is not None:
-            timeout_value = min(timeout_value, float(timeout_seconds))
-        if timeout_value <= 0:
-            raise asyncio.TimeoutError()
-
-        vectors = await self._run_with_timeout(
-            self._embedding.embed(
-                texts=texts,
-                timeout_seconds=timeout_value,
-                stage="diversity",
-            ),
-            timeout_value,
-        )
-        if not isinstance(vectors, list) or len(vectors) != len(candidates):
-            return candidates[:limit], False, "embedding_shape_mismatch"
-
-        ranked = self._mmr_rank(
-            candidates,
-            candidate_vectors=vectors,
-            limit=limit,
-            lambda_mult=lambda_mult,
-        )
-        if not ranked:
-            return candidates[:limit], False, "mmr_empty"
-        return ranked, True, "mmr"
 
     def _normalize_query(self, query: str) -> str:
         """Normalize the input query before retrieval."""
@@ -1121,10 +952,10 @@ class RetrievalService:
         timeout_seconds: float | None = None,
         feature_overrides: dict[str, object] | None = None,
     ) -> RetrievalLayerDraft:
-        """Unified RetrievalLayer: dense + BM25 + global RRF + optional rerank + Top-N.
+        """Unified RetrievalLayer: native hybrid_search + global RRF + optional rerank + Top-N.
 
         NOTE: Any retry/transform query loop should come back to THIS method to ensure
-        the retrieval chain stays consistent (dense+BM25+RRF+optional rerank).
+        the retrieval chain stays consistent (hybrid_search+RRF+optional rerank).
         """
 
         deadline = self._make_deadline(timeout_seconds)
@@ -1165,10 +996,10 @@ class RetrievalService:
             int(self._settings.retrieval_max_top_k) * max(2, query_count * 2),
         )
         if global_candidates_limit is None:
-            # Worst-case: dense+BM25 per query -> 2*per_query_top_k per query.
+            # Worst-case: one hybrid result set per query, plus extra headroom for fanout.
             global_candidates_limit = min(
                 max_candidate_cap,
-                per_query_top_k * 2 * query_count,
+                per_query_top_k * query_count,
             )
         global_candidates_limit = max(int(global_candidates_limit), top_n)
         global_candidates_limit = min(global_candidates_limit, max_candidate_cap)
@@ -1202,12 +1033,10 @@ class RetrievalService:
         hits_by_key: dict[tuple[str, str, str], list[QueryHitSource]] = {}
         per_query_ranked: list[list[tuple[str, str, str]]] = []
 
-        dense_hits_total = 0
-        bm25_hits_total = 0
+        hybrid_hits_total = 0
         hyde_requested_total = 0
         hyde_used_total = 0
         hyde_aggregation_reason = "not_used"
-        dense_disabled_reasons: list[str] = []
         optional_embedding_skips: list[str] = []
 
         # Use the "main" query as rerank query, fallback to the first available.
@@ -1230,19 +1059,17 @@ class RetrievalService:
         ) -> tuple[
             int,
             int,
-            int,
             dict[tuple[str, str, str], RetrievedChunk],
             dict[tuple[str, str, str], list[QueryHitSource]],
             list[tuple[str, str, str]],
             int,
             int,
             str,
-            str | None,
             list[str],
         ]:
             q = (item.get("query") or "").strip()
             if not q:
-                return index, 0, 0, {}, {}, [], 0, 0, "empty_query", None, []
+                return index, 0, {}, {}, [], 0, 0, "empty_query", []
 
             if deadline is not None:
                 remaining = self._remaining_seconds(deadline)
@@ -1251,173 +1078,127 @@ class RetrievalService:
 
             use_dense = bool(item.get("use_dense", True))
             use_bm25 = bool(item.get("use_bm25", True)) and feature_flags.hybrid_enabled
-            embedding: list[float] | None = None
+            if not feature_flags.hybrid_enabled or not use_dense or not use_bm25:
+                return index, 0, {}, {}, [], 0, 0, "hybrid_disabled", []
+
             hyde_requested_count = 0
             hyde_used_count = 0
             hyde_reason = "not_hyde"
-            dense_disabled_reason: str | None = None
             local_optional_embedding_skips: list[str] = []
-            if use_dense:
-                try:
-                    remaining = self._remaining_seconds(deadline)
-                    if remaining is not None and remaining <= 0:
-                        raise asyncio.TimeoutError()
-                    (
-                        embedding,
-                        hyde_requested_count,
-                        hyde_used_count,
-                        hyde_reason,
-                    ) = await self._resolve_query_embedding(
-                        item,
-                        timeout_seconds=remaining,
-                    )
-                except asyncio.TimeoutError:
-                    if deadline is not None:
-                        raise
-                    logger.warning("Embedding request timed out; disable dense retrieval for this query.", extra={"query": q[:50]})
-                    embedding = None
-                    use_dense = False
-                    dense_disabled_reason = self._embedding_failure_reason(
-                        asyncio.TimeoutError(),
-                        fallback_stage=self._query_embedding_stage(item),
-                    )
-                except asyncio.CancelledError:
+            try:
+                remaining = self._remaining_seconds(deadline)
+                if remaining is not None and remaining <= 0:
+                    raise asyncio.TimeoutError()
+                (
+                    embedding,
+                    hyde_requested_count,
+                    hyde_used_count,
+                    hyde_reason,
+                ) = await self._resolve_query_embedding(
+                    item,
+                    timeout_seconds=remaining,
+                )
+            except asyncio.TimeoutError:
+                if deadline is not None:
                     raise
-                except Exception as exc:  # pragma: no cover
-                    logger.warning(
-                        "Embedding request failed; disable dense retrieval for this query.", extra={"error": str(exc)}
+                logger.warning(
+                    "Embedding request timed out; skip hybrid retrieval for this query.",
+                    extra={"query": q[:50]},
+                )
+                return (
+                    index,
+                    0,
+                    {},
+                    {},
+                    [],
+                    hyde_requested_count,
+                    hyde_used_count,
+                    hyde_reason,
+                    local_optional_embedding_skips,
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # pragma: no cover
+                logger.warning(
+                    "Embedding request failed; skip hybrid retrieval for this query.",
+                    extra={"error": str(exc)},
+                )
+                if self._query_embedding_stage(item) == "hyde":
+                    local_optional_embedding_skips.append(
+                        self._embedding_failure_reason(
+                            exc,
+                            fallback_stage=self._query_embedding_stage(item),
+                        )
                     )
-                    embedding = None
-                    use_dense = False
-                    dense_disabled_reason = self._embedding_failure_reason(
-                        exc,
-                        fallback_stage=self._query_embedding_stage(item),
-                    )
-                    if self._query_embedding_stage(item) == "hyde":
-                        local_optional_embedding_skips.append(dense_disabled_reason)
+                return (
+                    index,
+                    0,
+                    {},
+                    {},
+                    [],
+                    hyde_requested_count,
+                    hyde_used_count,
+                    hyde_reason,
+                    local_optional_embedding_skips,
+                )
 
-            async def _safe_dense() -> list[dict]:
-                if not use_dense or embedding is None:
+            async def _safe_hybrid(
+                *,
+                kb_id_values: list[str],
+                collection_name: str | None = None,
+            ) -> list[dict]:
+                if not kb_id_values:
                     return []
-                hits: list[dict] = []
                 try:
                     timeout_value = self._effective_timeout(
                         deadline=deadline, per_call_timeout=None
                     )
-                    if default_kb_id_strs:
-                        dense_default = await self._run_with_timeout(
-                            self._milvus.search(
-                                embedding=embedding,
-                                kb_ids=default_kb_id_strs,
-                                top_k=per_query_top_k,
-                                extra_filter_expr=extra_filter_expr,
-                            ),
-                            timeout_value,
-                        )
-                        hits.extend(dense_default)
-
-                    if multiscale_kb_id_strs:
-                        for collection_name in multiscale_collections:
-                            timeout_value = self._effective_timeout(
-                                deadline=deadline, per_call_timeout=None
-                            )
-                            dense_window = await self._run_with_timeout(
-                                self._milvus.search(
-                                    embedding=embedding,
-                                    kb_ids=multiscale_kb_id_strs,
-                                    top_k=per_query_top_k,
-                                    extra_filter_expr=extra_filter_expr,
-                                    collection_name=collection_name,
-                                ),
-                                timeout_value,
-                            )
-                            hits.extend(dense_window)
-                    return hits
+                    return await self._run_with_timeout(
+                        self._milvus.hybrid_search(
+                            embedding=embedding,
+                            query=q,
+                            kb_ids=kb_id_values,
+                            top_k=per_query_top_k,
+                            rrf_k=rrf_k,
+                            extra_filter_expr=extra_filter_expr,
+                            collection_name=collection_name,
+                        ),
+                        timeout_value,
+                    )
                 except asyncio.TimeoutError:
                     if deadline is not None:
                         raise
-                    logger.warning("Dense retrieval timed out.", extra={"query": q[:50]})
+                    logger.warning(
+                        "Hybrid retrieval timed out.", extra={"query": q[:50]}
+                    )
                     return []
                 except asyncio.CancelledError:
                     raise
                 except Exception as exc:
                     logger.warning(
-                        "Dense retrieval failed.", extra={"error": str(exc)}
+                        "Hybrid retrieval failed.", extra={"error": str(exc)}
                     )
                     return []
 
-            async def _safe_bm25() -> list[dict]:
-                if not use_bm25:
-                    return []
-                hits: list[dict] = []
-                try:
-                    timeout_value = self._effective_timeout(
-                        deadline=deadline, per_call_timeout=None
-                    )
-                    if default_kb_id_strs:
-                        bm25_default = await self._run_with_timeout(
-                            self._milvus.bm25_search(
-                                query=q,
-                                kb_ids=default_kb_id_strs,
-                                top_k=per_query_top_k,
-                                extra_filter_expr=extra_filter_expr,
-                            ),
-                            timeout_value,
+            hybrid_hits: list[dict] = []
+            hybrid_hits.extend(
+                await _safe_hybrid(kb_id_values=default_kb_id_strs)
+            )
+            if multiscale_kb_id_strs:
+                for collection_name in multiscale_collections:
+                    hybrid_hits.extend(
+                        await _safe_hybrid(
+                            kb_id_values=multiscale_kb_id_strs,
+                            collection_name=collection_name,
                         )
-                        hits.extend(bm25_default)
-
-                    if multiscale_kb_id_strs:
-                        for collection_name in multiscale_collections:
-                            timeout_value = self._effective_timeout(
-                                deadline=deadline, per_call_timeout=None
-                            )
-                            bm25_window = await self._run_with_timeout(
-                                self._milvus.bm25_search(
-                                    query=q,
-                                    kb_ids=multiscale_kb_id_strs,
-                                    top_k=per_query_top_k,
-                                    extra_filter_expr=extra_filter_expr,
-                                    collection_name=collection_name,
-                                ),
-                                timeout_value,
-                            )
-                            hits.extend(bm25_window)
-                    return hits
-                except asyncio.TimeoutError:
-                    if deadline is not None:
-                        raise
-                    logger.warning("BM25 retrieval timed out.", extra={"query": q[:50]})
-                    return []
-                except asyncio.CancelledError:
-                    raise
-                except Exception as exc:
-                    logger.warning("BM25 retrieval failed.", extra={"error": str(exc)})
-                    return []
-
-            dense_hits: list[dict] = []
-            bm25_hits: list[dict] = []
-            if use_dense and use_bm25:
-                if deadline is None:
-                    async with asyncio.TaskGroup() as tg:
-                        dense_task = tg.create_task(_safe_dense())
-                        bm25_task = tg.create_task(_safe_bm25())
-                    dense_hits = dense_task.result()
-                    bm25_hits = bm25_task.result()
-                else:
-                    dense_hits = await _safe_dense()
-                    bm25_hits = await _safe_bm25()
-            elif use_dense:
-                dense_hits = await _safe_dense()
-            elif use_bm25:
-                bm25_hits = await _safe_bm25()
+                    )
 
             src = self._query_hit_source(item)
             local_chunk_by_key: dict[tuple[str, str, str], RetrievedChunk] = {}
             local_hits_by_key: dict[tuple[str, str, str], list[QueryHitSource]] = {}
-            dense_keys: list[tuple[str, str, str]] = []
-            bm25_keys: list[tuple[str, str, str]] = []
+            hybrid_keys: list[tuple[str, str, str]] = []
 
-            for hit in dense_hits:
+            for hit in hybrid_hits:
                 chunk = self._build_chunk_from_hit(hit)
                 if not chunk:
                     continue
@@ -1425,69 +1206,32 @@ class RetrievalService:
                 local_chunk_by_key.setdefault(key, chunk)
                 local_hits_by_key.setdefault(key, [])
                 self._add_hit_source(local_hits_by_key[key], src)
-                dense_keys.append(key)
+                hybrid_keys.append(key)
 
-            for hit in bm25_hits:
-                chunk = self._build_chunk_from_hit(hit)
-                if not chunk:
-                    continue
-                key = self._candidate_key(chunk)
-                local_chunk_by_key.setdefault(key, chunk)
-                local_hits_by_key.setdefault(key, [])
-                self._add_hit_source(local_hits_by_key[key], src)
-                bm25_keys.append(key)
-
-            if dense_keys:
-                dense_keys = list(dict.fromkeys(dense_keys))
-            if bm25_keys:
-                bm25_keys = list(dict.fromkeys(bm25_keys))
-
-            ranked_lists: list[list[tuple[str, str, str]]] = []
-            if dense_keys:
-                ranked_lists.append(dense_keys)
-            if bm25_keys:
-                ranked_lists.append(bm25_keys)
-            if not ranked_lists:
+            if hybrid_keys:
+                hybrid_keys = list(dict.fromkeys(hybrid_keys))
+            if not hybrid_keys:
                 return (
                     index,
-                    len(dense_hits),
-                    len(bm25_hits),
+                    len(hybrid_hits),
                     local_chunk_by_key,
                     local_hits_by_key,
                     [],
                     hyde_requested_count,
                     hyde_used_count,
                     hyde_reason,
-                    dense_disabled_reason,
                     local_optional_embedding_skips,
                 )
 
-            if (
-                runtime_overrides.hybrid_ranker == "weighted"
-                and dense_keys
-                and bm25_keys
-            ):
-                per_keys, _ = self._weighted_rank(
-                    dense_keys,
-                    bm25_keys,
-                    dense_weight=runtime_overrides.hybrid_dense_weight,
-                    sparse_weight=runtime_overrides.hybrid_sparse_weight,
-                    k=rrf_k,
-                )
-            else:
-                per_keys, _ = self._rrf_rank(ranked_lists, k=rrf_k)
-
             return (
                 index,
-                len(dense_hits),
-                len(bm25_hits),
+                len(hybrid_hits),
                 local_chunk_by_key,
                 local_hits_by_key,
-                per_keys,
+                hybrid_keys,
                 hyde_requested_count,
                 hyde_used_count,
                 hyde_reason,
-                dense_disabled_reason,
                 local_optional_embedding_skips,
             )
 
@@ -1498,14 +1242,12 @@ class RetrievalService:
         ) -> tuple[
             int,
             int,
-            int,
             dict[tuple[str, str, str], RetrievedChunk],
             dict[tuple[str, str, str], list[QueryHitSource]],
             list[tuple[str, str, str]],
             int,
             int,
             str,
-            str | None,
             list[str],
         ]:
             async with semaphore:
@@ -1531,25 +1273,20 @@ class RetrievalService:
                 continue
             (
                 _index,
-                dense_count,
-                bm25_count,
+                hybrid_count,
                 local_chunk_by_key,
                 local_hits_by_key,
                 per_keys,
                 hyde_requested_count,
                 hyde_used_count,
                 hyde_reason,
-                dense_disabled_reason,
                 local_optional_embedding_skips,
             ) = result
-            dense_hits_total += dense_count
-            bm25_hits_total += bm25_count
+            hybrid_hits_total += hybrid_count
             hyde_requested_total += hyde_requested_count
             hyde_used_total += hyde_used_count
             if hyde_requested_count > 0:
                 hyde_aggregation_reason = hyde_reason
-            if dense_disabled_reason:
-                dense_disabled_reasons.append(dense_disabled_reason)
             optional_embedding_skips.extend(local_optional_embedding_skips)
 
             for key, chunk in local_chunk_by_key.items():
@@ -1568,12 +1305,7 @@ class RetrievalService:
                 evidence_items=[],
                 results=[],
                 stats={
-                    "dense_hits": dense_hits_total,
-                    "bm25_hits": bm25_hits_total,
-                    "dense_disabled": bool(dense_disabled_reasons),
-                    "dense_disabled_reason": (
-                        dense_disabled_reasons[0] if dense_disabled_reasons else None
-                    ),
+                    "hybrid_hits": hybrid_hits_total,
                     "optional_embedding_skips": optional_embedding_skips,
                     "hyde_requested_count": hyde_requested_total,
                     "hyde_used_count": hyde_used_total,
@@ -1662,7 +1394,6 @@ class RetrievalService:
         rrf_results, rank_fusion_filtered_count = self._apply_stage_score_cutoff(
             rrf_results,
             stage="rank_fusion",
-            ranker=runtime_overrides.hybrid_ranker,
         )
         pre_dedup_count = len(rrf_results)
 
@@ -1702,41 +1433,6 @@ class RetrievalService:
         post_dedup_count = len(rrf_results)
 
         candidates_for_rerank = rrf_results[:rerank_input_limit]
-        diversity_applied = False
-        diversity_reason = "empty_candidates"
-        if candidates_for_rerank:
-            try:
-                diversity_timeout = self._effective_timeout(
-                    deadline=deadline, per_call_timeout=None
-                )
-                candidates_for_rerank, diversity_applied, diversity_reason = (
-                    await self._apply_diversity_penalty(
-                        candidates_for_rerank,
-                        limit=rerank_input_limit,
-                        lambda_mult=DIVERSITY_MMR_LAMBDA,
-                        timeout_seconds=diversity_timeout,
-                    )
-                )
-            except asyncio.TimeoutError:
-                # Diversity ranking is optional: degrade to RRF order.
-                logger.warning("MMR diversity timed out; fallback to RRF order.")
-                candidates_for_rerank = rrf_results[:rerank_input_limit]
-                diversity_applied = False
-                diversity_reason = "diversity:timeout"
-                optional_embedding_skips.append(diversity_reason)
-            except asyncio.CancelledError:
-                raise
-            except Exception as exc:
-                logger.warning(
-                    "MMR diversity failed; fallback to RRF order.", extra={"error": str(exc)}
-                )
-                candidates_for_rerank = rrf_results[:rerank_input_limit]
-                diversity_applied = False
-                diversity_reason = self._embedding_failure_reason(
-                    exc,
-                    fallback_stage="diversity",
-                )
-                optional_embedding_skips.append(diversity_reason)
 
         # Rerank: RRF -> rerank -> Top-N. Inputs are additionally capped.
         rerank_applied = False
@@ -1841,12 +1537,7 @@ class RetrievalService:
             evidence_items=evidence_items,
             results=final_results,
             stats={
-                "dense_hits": dense_hits_total,
-                "bm25_hits": bm25_hits_total,
-                "dense_disabled": bool(dense_disabled_reasons),
-                "dense_disabled_reason": (
-                    dense_disabled_reasons[0] if dense_disabled_reasons else None
-                ),
+                "hybrid_hits": hybrid_hits_total,
                 "optional_embedding_skips": optional_embedding_skips,
                 "hyde_requested_count": hyde_requested_total,
                 "hyde_used_count": hyde_used_total,
@@ -1870,15 +1561,7 @@ class RetrievalService:
                 "global_candidates_limit": global_candidates_limit,
                 "rerank_input_limit": rerank_input_limit,
                 "fanout_concurrency": QUERY_FANOUT_CONCURRENCY,
-                "diversity_applied": diversity_applied,
-                "diversity_reason": diversity_reason,
-                "diversity_lambda": DIVERSITY_MMR_LAMBDA,
-                "diversity_candidates_in": min(len(rrf_results), rerank_input_limit),
-                "diversity_candidates_out": len(candidates_for_rerank),
                 "hybrid_enabled": feature_flags.hybrid_enabled,
-                "hybrid_ranker": runtime_overrides.hybrid_ranker,
-                "hybrid_dense_weight": runtime_overrides.hybrid_dense_weight,
-                "hybrid_sparse_weight": runtime_overrides.hybrid_sparse_weight,
                 "hybrid_rrf_k": runtime_overrides.hybrid_rrf_k,
                 "rerank_enabled": feature_flags.rerank_enabled,
                 "rerank_applied": rerank_applied,
@@ -2317,11 +2000,6 @@ class RetrievalService:
                 rewrite_reason="timeout",
                 rewrite_latency_ms=None,
                 hybrid_enabled=feature_flags.hybrid_enabled,
-                hybrid_ranker=(
-                    runtime_overrides.hybrid_ranker
-                    if feature_flags.hybrid_enabled
-                    else None
-                ),
                 rerank_enabled=feature_flags.rerank_enabled,
                 reason="timeout",
             )
@@ -2351,11 +2029,6 @@ class RetrievalService:
                 rewrite_reason="timeout",
                 rewrite_latency_ms=None,
                 hybrid_enabled=feature_flags.hybrid_enabled,
-                hybrid_ranker=(
-                    runtime_overrides.hybrid_ranker
-                    if feature_flags.hybrid_enabled
-                    else None
-                ),
                 rerank_enabled=feature_flags.rerank_enabled,
                 reason="timeout",
             )
@@ -2504,16 +2177,11 @@ class RetrievalService:
                     rewrite_reason=rewrite_result.reason,
                     rewrite_latency_ms=rewrite_result.latency_ms,
                     hybrid_enabled=feature_flags.hybrid_enabled,
-                    hybrid_ranker=(
-                        runtime_overrides.hybrid_ranker
-                        if feature_flags.hybrid_enabled
-                        else None
-                    ),
                     rerank_enabled=feature_flags.rerank_enabled,
                 )
                 return results
 
-        # Unified retrieval layer: dense + BM25 + RRF (+ optional rerank) + Top-N.
+        # Unified retrieval layer: hybrid_search + global RRF (+ optional rerank) + Top-N.
         query_items = build_query_items(main_query=effective_query)
         remaining = self._remaining_seconds(deadline)
         if remaining is not None and remaining <= 0:
@@ -2531,9 +2199,6 @@ class RetrievalService:
                 "query_rewrite_enabled": feature_flags.query_rewrite_enabled,
                 "hybrid_retrieval_enabled": feature_flags.hybrid_enabled,
                 "rerank_enabled": feature_flags.rerank_enabled,
-                "hybrid_ranker": runtime_overrides.hybrid_ranker,
-                "hybrid_dense_weight": runtime_overrides.hybrid_dense_weight,
-                "hybrid_sparse_weight": runtime_overrides.hybrid_sparse_weight,
                 "hybrid_rrf_k": runtime_overrides.hybrid_rrf_k,
                 "retrieval_top_k": runtime_overrides.retrieval_top_k,
                 "retrieval_rerank_top_k": runtime_overrides.retrieval_rerank_top_k,
@@ -2569,11 +2234,6 @@ class RetrievalService:
                 rewrite_reason=rewrite_result.reason,
                 rewrite_latency_ms=rewrite_result.latency_ms,
                 hybrid_enabled=feature_flags.hybrid_enabled,
-                hybrid_ranker=(
-                    runtime_overrides.hybrid_ranker
-                    if feature_flags.hybrid_enabled
-                    else None
-                ),
                 rerank_enabled=feature_flags.rerank_enabled,
                 reason=cast(str | None, layer.stats.get("reason")),
             )
@@ -2608,11 +2268,6 @@ class RetrievalService:
             rewrite_reason=rewrite_result.reason,
             rewrite_latency_ms=rewrite_result.latency_ms,
             hybrid_enabled=feature_flags.hybrid_enabled,
-            hybrid_ranker=(
-                runtime_overrides.hybrid_ranker
-                if feature_flags.hybrid_enabled
-                else None
-            ),
             rerank_enabled=feature_flags.rerank_enabled,
             rerank_applied=bool(layer.stats.get("rerank_applied")),
             rerank_reason=cast(str | None, layer.stats.get("rerank_reason")),
@@ -2651,7 +2306,6 @@ class RetrievalService:
         self,
         *,
         stage: Literal["raw", "rank_fusion", "rerank"],
-        ranker: str | None = None,
     ) -> float | None:
         if stage == "raw":
             cutoff = self._settings.retrieval_raw_min_score
@@ -2662,7 +2316,7 @@ class RetrievalService:
             if cutoff is not None:
                 return cutoff
             # Rank-based fusion scores are not calibrated against raw/rerank scores.
-            # Keep legacy RETRIEVAL_MIN_SCORE from clearing RRF/weighted candidates.
+            # Keep legacy RETRIEVAL_MIN_SCORE from clearing RRF candidates.
             return None
 
         cutoff = self._settings.retrieval_rerank_min_score
@@ -2675,9 +2329,8 @@ class RetrievalService:
         results: list[RetrievalResult],
         *,
         stage: Literal["raw", "rank_fusion", "rerank"],
-        ranker: str | None = None,
     ) -> tuple[list[RetrievalResult], int]:
-        min_score = self._resolve_stage_score_cutoff(stage=stage, ranker=ranker)
+        min_score = self._resolve_stage_score_cutoff(stage=stage)
         if min_score is None or min_score <= 0:
             return results, 0
         filtered = [r for r in results if r.score >= min_score]

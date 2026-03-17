@@ -40,19 +40,19 @@ class _FakeEmbedding:
 
 
 class _FakeMilvus:
-    def __init__(self, *, dense_hits=None, bm25_hits=None) -> None:
-        self._dense_hits = list(dense_hits or [])
-        self._bm25_hits = list(bm25_hits or [])
-        self.search_calls: list[dict[str, object]] = []
-        self.bm25_calls: list[dict[str, object]] = []
+    def __init__(self, *, hybrid_hits=None) -> None:
+        self._hybrid_hits = list(hybrid_hits or [])
+        self.hybrid_calls: list[dict[str, object]] = []
+
+    async def hybrid_search(self, **kwargs):
+        self.hybrid_calls.append(dict(kwargs))
+        return list(self._hybrid_hits)
 
     async def search(self, **kwargs):
-        self.search_calls.append(dict(kwargs))
-        return list(self._dense_hits)
+        raise AssertionError(f"unexpected dense search fallback: {kwargs}")
 
     async def bm25_search(self, **kwargs):
-        self.bm25_calls.append(dict(kwargs))
-        return list(self._bm25_hits)
+        raise AssertionError(f"unexpected bm25 search fallback: {kwargs}")
 
 
 def _settings() -> SimpleNamespace:
@@ -63,9 +63,6 @@ def _settings() -> SimpleNamespace:
         retrieval_query_lowercase=False,
         retrieval_max_top_k=8,
         retrieval_default_top_k=4,
-        retrieval_hybrid_ranker="rrf",
-        retrieval_hybrid_dense_weight=0.7,
-        retrieval_hybrid_sparse_weight=0.3,
         retrieval_hybrid_rrf_k=60,
         retrieval_min_score=0.0,
         retrieval_raw_min_score=0.0,
@@ -123,7 +120,9 @@ def _make_service(
         ),
     )
     monkeypatch.setattr(service, "_load_kb_index_configs", AsyncMock(return_value={}))
-    monkeypatch.setattr(service, "_hydrate_chunks_from_postgres", AsyncMock(return_value=None))
+    monkeypatch.setattr(
+        service, "_hydrate_chunks_from_postgres", AsyncMock(return_value=None)
+    )
     monkeypatch.setattr(
         service,
         "_apply_parent_child_strategy",
@@ -143,12 +142,10 @@ def _make_service(
 
 
 @pytest.mark.asyncio
-async def test_retrieve_layer_disables_dense_when_query_embedding_fails_and_keeps_bm25(
+async def test_retrieve_layer_skips_query_when_required_hybrid_embedding_fails(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     kb_id = uuid.uuid4()
-    material_id = uuid.uuid4()
-    chunk_id = uuid.uuid4()
 
     def _handler(stage: str, texts: list[str]) -> list[list[float]]:
         if stage == "query_main":
@@ -164,20 +161,18 @@ async def test_retrieve_layer_disables_dense_when_query_embedding_fails_and_keep
         return [[0.1, 0.2, 0.3, 0.4] for _ in texts]
 
     embedding = _FakeEmbedding(handler=_handler)
-    milvus = _FakeMilvus(
-        bm25_hits=[
-            _make_hit(
-                kb_id=kb_id,
-                material_id=material_id,
-                chunk_id=chunk_id,
-                content="bm25 fallback chunk",
-            )
-        ]
-    )
+    milvus = _FakeMilvus()
     service = _make_service(monkeypatch, embedding=embedding, milvus=milvus)
 
     layer = await service.retrieve_layer(
-        query_items=[{"kind": "main", "query": "what happened?", "use_dense": True, "use_bm25": True}],
+        query_items=[
+            {
+                "kind": "main",
+                "query": "what happened?",
+                "use_dense": True,
+                "use_bm25": True,
+            }
+        ],
         kb_ids=[kb_id],
         top_n=1,
         per_query_top_k=1,
@@ -185,14 +180,12 @@ async def test_retrieve_layer_disables_dense_when_query_embedding_fails_and_keep
         rerank_input_limit=1,
     )
 
-    assert [result.chunk.id for result in layer.results] == [chunk_id]
-    assert layer.stats["dense_hits"] == 0
-    assert layer.stats["bm25_hits"] == 1
-    assert layer.stats["dense_disabled"] is True
-    assert "query_main" in str(layer.stats["dense_disabled_reason"])
-    assert layer.stats["optional_embedding_skips"] == []
-    assert len(milvus.search_calls) == 0
-    assert len(milvus.bm25_calls) == 1
+    assert layer.results == []
+    assert layer.stats["hybrid_hits"] == 0
+    assert layer.stats["rrf_candidates"] == 0
+    assert "dense_disabled" not in layer.stats
+    assert "diversity_reason" not in layer.stats
+    assert milvus.hybrid_calls == []
     assert embedding.calls[0]["stage"] == "query_main"
 
 
@@ -231,7 +224,55 @@ async def test_resolve_query_embedding_uses_hyde_stage_for_hypotheses(
 
 
 @pytest.mark.asyncio
-async def test_optional_embedding_short_circuit_keeps_candidates_and_exposes_reasons(
+async def test_retrieve_layer_uses_milvus_native_hybrid_search(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    kb_id = uuid.uuid4()
+    material_id = uuid.uuid4()
+    chunk_id = uuid.uuid4()
+
+    embedding = _FakeEmbedding()
+    milvus = _FakeMilvus(
+        hybrid_hits=[
+            _make_hit(
+                kb_id=kb_id,
+                material_id=material_id,
+                chunk_id=chunk_id,
+                content="hybrid chunk",
+            )
+        ]
+    )
+    service = _make_service(monkeypatch, embedding=embedding, milvus=milvus)
+
+    layer = await service.retrieve_layer(
+        query_items=[
+            {
+                "kind": "main",
+                "query": "hybrid only",
+                "use_dense": True,
+                "use_bm25": True,
+            }
+        ],
+        kb_ids=[kb_id],
+        top_n=1,
+        per_query_top_k=1,
+        global_candidates_limit=2,
+        rerank_input_limit=1,
+    )
+
+    assert [result.chunk.id for result in layer.results] == [chunk_id]
+    assert layer.stats["hybrid_hits"] == 1
+    assert layer.stats["rrf_candidates"] == 1
+    assert len(milvus.hybrid_calls) == 1
+    hybrid_call = milvus.hybrid_calls[0]
+    assert hybrid_call["query"] == "hybrid only"
+    assert hybrid_call["top_k"] == 1
+    assert hybrid_call["rrf_k"] == 60
+    assert embedding.calls[0]["stage"] == "query_main"
+
+
+@pytest.mark.asyncio
+async def test_optional_embedding_short_circuit_keeps_candidates_and_exposes_dedupe_reason_only(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     kb_id = uuid.uuid4()
@@ -251,22 +292,11 @@ async def test_optional_embedding_short_circuit_keeps_candidates_and_exposes_rea
                 breaker_state="open",
                 short_circuited=True,
             )
-        if stage == "diversity":
-            raise EmbeddingCallError(
-                stage=EmbeddingCallStage.DIVERSITY,
-                status_code=None,
-                retryable=True,
-                attempts=0,
-                batch_size=len(texts),
-                input_chars=sum(len(text) for text in texts),
-                breaker_state="open",
-                short_circuited=True,
-            )
         return [[0.1, 0.2, 0.3, 0.4] for _ in texts]
 
     embedding = _FakeEmbedding(handler=_handler)
     milvus = _FakeMilvus(
-        bm25_hits=[
+        hybrid_hits=[
             _make_hit(
                 kb_id=kb_id,
                 material_id=material_id,
@@ -284,7 +314,14 @@ async def test_optional_embedding_short_circuit_keeps_candidates_and_exposes_rea
     service = _make_service(monkeypatch, embedding=embedding, milvus=milvus)
 
     layer = await service.retrieve_layer(
-        query_items=[{"kind": "main", "query": "fallback only", "use_dense": False, "use_bm25": True}],
+        query_items=[
+            {
+                "kind": "main",
+                "query": "hybrid only",
+                "use_dense": True,
+                "use_bm25": True,
+            }
+        ],
         kb_ids=[kb_id],
         top_n=2,
         per_query_top_k=2,
@@ -292,11 +329,11 @@ async def test_optional_embedding_short_circuit_keeps_candidates_and_exposes_rea
         rerank_input_limit=2,
     )
 
-    assert [result.chunk.id for result in layer.results] == [first_chunk_id, second_chunk_id]
-    assert layer.stats["dedup_similarity_reason"] == "dedupe:breaker_open"
-    assert layer.stats["diversity_reason"] == "diversity:breaker_open"
-    assert layer.stats["optional_embedding_skips"] == [
-        "dedupe:breaker_open",
-        "diversity:breaker_open",
+    assert [result.chunk.id for result in layer.results] == [
+        first_chunk_id,
+        second_chunk_id,
     ]
-    assert [call["stage"] for call in embedding.calls] == ["dedupe", "diversity"]
+    assert layer.stats["dedup_similarity_reason"] == "dedupe:breaker_open"
+    assert "diversity_reason" not in layer.stats
+    assert layer.stats["optional_embedding_skips"] == ["dedupe:breaker_open"]
+    assert [call["stage"] for call in embedding.calls] == ["query_main", "dedupe"]

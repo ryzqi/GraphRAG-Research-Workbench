@@ -76,9 +76,6 @@ export interface KbChatConfig {
   entity_expand_min_confidence: number;
   retrieval_top_k: number;
   retrieval_rerank_top_k: number;
-  retrieval_hybrid_ranker: 'rrf' | 'weighted';
-  retrieval_hybrid_dense_weight: number;
-  retrieval_hybrid_sparse_weight: number;
   retrieval_hybrid_rrf_k: number;
   retrieval_parent_max_parents: number;
   retrieval_parent_max_children_per_parent: number;
@@ -423,9 +420,6 @@ export function toKbGraphSchemaQuery(config: Partial<KbChatConfig>): string {
     'entity_expand_min_confidence',
     'retrieval_top_k',
     'retrieval_rerank_top_k',
-    'retrieval_hybrid_ranker',
-    'retrieval_hybrid_dense_weight',
-    'retrieval_hybrid_sparse_weight',
     'retrieval_hybrid_rrf_k',
     'retrieval_parent_max_parents',
     'retrieval_parent_max_children_per_parent',

@@ -393,13 +393,6 @@ class Settings(BaseSettings):
         None, alias="RETRIEVAL_RERANK_MIN_SCORE"
     )
     retrieval_query_lowercase: bool = Field(False, alias="RETRIEVAL_QUERY_LOWERCASE")
-    retrieval_hybrid_ranker: str = Field("rrf", alias="RETRIEVAL_HYBRID_RANKER")
-    retrieval_hybrid_dense_weight: float = Field(
-        0.6, alias="RETRIEVAL_HYBRID_DENSE_WEIGHT"
-    )
-    retrieval_hybrid_sparse_weight: float = Field(
-        0.4, alias="RETRIEVAL_HYBRID_SPARSE_WEIGHT"
-    )
     retrieval_hybrid_rrf_k: int = Field(60, alias="RETRIEVAL_HYBRID_RRF_K")
     retrieval_query_rewrite_max_tokens: int = Field(
         64, alias="RETRIEVAL_QUERY_REWRITE_MAX_TOKENS"

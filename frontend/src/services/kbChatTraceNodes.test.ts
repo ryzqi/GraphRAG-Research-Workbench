@@ -187,7 +187,10 @@ describe('kbChatTraceNodes', () => {
 
   it('replays live SSE into a timeline that hides every subgraph wrapper while preserving visible step order', () => {
     const parser = createSseParser();
-    const raw = fs.readFileSync(new URL('../../../live_kb_chat_trace.sse', import.meta.url), 'utf8');
+    const raw = fs.readFileSync(
+      new URL('./__fixtures__/live_kb_chat_trace.sse', import.meta.url),
+      'utf8'
+    );
     const sseEvents = [...parser.feed(raw), ...parser.flush()];
     const traceStateCtx = {
       totalNodes: 100,

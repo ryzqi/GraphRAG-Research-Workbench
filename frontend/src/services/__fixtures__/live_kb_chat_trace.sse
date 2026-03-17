@@ -1,0 +1,32 @@
+event: meta
+data: {"run_id":"live-run","type":"meta","version":"2.0","run":{"id":"live-run"}}
+
+event: step
+data: {"type":"step","version":"2.0","run_id":"live-run","execution_id":"wrapper-preprocess","step_id":"preprocess_subgraph","label":"preprocess_subgraph","status":"started","node":"preprocess_subgraph","ts":"2026-03-17T00:00:00.000Z","meta":{"node_path":[]}}
+
+event: step
+data: {"type":"step","version":"2.0","run_id":"live-run","execution_id":"task-merge","step_id":"merge_context","label":"merge_context","status":"started","node":"merge_context","ts":"2026-03-17T00:00:00.100Z","meta":{"node_path":["preprocess_subgraph:wrapper-preprocess"]}}
+
+event: step
+data: {"type":"step","version":"2.0","run_id":"live-run","execution_id":"task-merge","step_id":"merge_context","label":"merge_context","status":"completed","node":"merge_context","ts":"2026-03-17T00:00:00.200Z","meta":{"node_path":["preprocess_subgraph:wrapper-preprocess"]}}
+
+event: step
+data: {"type":"step","version":"2.0","run_id":"live-run","execution_id":"wrapper-retrieve","step_id":"retrieval_subgraph","label":"retrieval_subgraph","status":"started","node":"retrieval_subgraph","ts":"2026-03-17T00:00:00.300Z","meta":{"node_path":[]}}
+
+event: step
+data: {"type":"step","version":"2.0","run_id":"live-run","execution_id":"task-r1","step_id":"retrieve_subquery","label":"retrieve_subquery","status":"started","node":"retrieve_subquery","ts":"2026-03-17T00:00:00.400Z","meta":{"node_path":["retrieval_subgraph:wrapper-retrieve"]}}
+
+event: step
+data: {"type":"step","version":"2.0","run_id":"live-run","execution_id":"task-r1","step_id":"retrieve_subquery","label":"retrieve_subquery","status":"completed","node":"retrieve_subquery","ts":"2026-03-17T00:00:00.500Z","meta":{"node_path":["retrieval_subgraph:wrapper-retrieve"]}}
+
+event: step
+data: {"type":"step","version":"2.0","run_id":"live-run","execution_id":"task-r2","step_id":"retrieve_subquery","label":"retrieve_subquery","status":"started","node":"retrieve_subquery","ts":"2026-03-17T00:00:00.600Z","meta":{"node_path":["retrieval_subgraph:wrapper-retrieve"]}}
+
+event: step
+data: {"type":"step","version":"2.0","run_id":"live-run","execution_id":"task-model","step_id":"model","label":"model","status":"started","node":"model","ts":"2026-03-17T00:00:00.700Z","meta":{"node_path":["retrieval_subgraph:wrapper-retrieve","retrieve_subquery"]}}
+
+event: custom
+data: {"type":"heartbeat","event_type":"heartbeat","run_id":"live-run","ts":"2026-03-17T00:00:00.750Z"}
+
+event: state
+data: {"type":"state","version":"2.0","run_id":"live-run","run_status":"running","current_step_id":"model","current_step_label":"model","current_step_status":"started","current_node":"model","attempt":1,"message":null,"progress":{"completed":2,"total":6,"percent":33.3},"active_path":["preprocess_subgraph","merge_context","retrieval_subgraph","retrieve_subquery","model"],"ts":"2026-03-17T00:00:00.800Z"}

@@ -17,7 +17,6 @@ try:
         Function,
         FunctionType,
         RRFRanker,
-        WeightedRanker,
     )
     from pymilvus.milvus_client.index import IndexParams
 except Exception:  # pragma: no cover
@@ -29,7 +28,6 @@ except Exception:  # pragma: no cover
     Function = None  # type: ignore
     FunctionType = None  # type: ignore
     RRFRanker = None  # type: ignore
-    WeightedRanker = None  # type: ignore
     IndexParams = None  # type: ignore
 
 logger = logging.getLogger(__name__)
@@ -38,19 +36,6 @@ def _escape_string(value: str) -> str:
     """转义字符串中的特殊字符，防止注入攻击。"""
 
     return re.sub(r'(["\\\'])', r"\\\1", value)
-
-
-def _build_weighted_ranker(
-    weights: list[float],
-    reqs: list[AnnSearchRequest],
-):
-    if WeightedRanker is None:
-        raise RuntimeError("pymilvus 缺少 WeightedRanker")
-    if len(weights) != len(reqs):
-        raise ValueError(f"权重数量({len(weights)})与 reqs 数量({len(reqs)})不一致")
-    return WeightedRanker(*weights)
-
-
 @dataclass(slots=True)
 class MilvusSearchHit:
     chunk_id: str
@@ -167,14 +152,6 @@ class MilvusClient:
         raise RuntimeError(
             "Milvus schema 与当前代码不兼容，缺少字段："
             f"{missing_str}。请重建 collection 并重导入数据。"
-        )
-
-    def supports_hybrid_search(self) -> bool:
-        hybrid = getattr(self._client, "hybrid_search", None)
-        return (
-            hybrid is not None
-            and AnnSearchRequest is not None
-            and (RRFRanker is not None or WeightedRanker is not None)
         )
 
     def _require_schema_types(self) -> None:
@@ -394,90 +371,6 @@ class MilvusClient:
                 )
         return hits
 
-    async def search(
-        self,
-        *,
-        embedding: list[float],
-        kb_ids: list[str],
-        top_k: int = 5,
-        extra_filter_expr: str | None = None,
-        collection_name: str | None = None,
-    ) -> list[MilvusSearchHit]:
-        """在指定 kb_ids 范围内检索相似 chunk_id（dense）。"""
-
-        search = getattr(self._client, "search", None)
-        if search is None:
-            raise RuntimeError("pymilvus API 不匹配：缺少 search")
-
-        target_collection = collection_name or self._collection
-        await self._load_field_cache(collection_name=target_collection)
-        self._assert_schema_compatible()
-
-        expr = self._build_filter_expr(kb_ids, extra_filter_expr)
-        res = await search(
-            collection_name=target_collection,
-            data=[embedding],
-            anns_field=self._DEFAULT_VECTOR_FIELD,
-            limit=top_k,
-            output_fields=[
-                "chunk_id",
-                "kb_id",
-                "material_id",
-                "chunk_role",
-                "parent_chunk_id",
-                "child_seq",
-                "content",
-                "context",
-                "locator",
-                "metadata",
-            ],
-            filter=expr,
-            search_params={"metric_type": "COSINE", "params": {}},
-        )
-        return self._parse_hits(res)
-
-    async def bm25_search(
-        self,
-        *,
-        query: str,
-        kb_ids: list[str],
-        top_k: int = 5,
-        extra_filter_expr: str | None = None,
-        collection_name: str | None = None,
-    ) -> list[MilvusSearchHit]:
-        """BM25 keyword retrieval (sparse) within kb_ids scope."""
-
-        search = getattr(self._client, "search", None)
-        if search is None:
-            raise RuntimeError("pymilvus API 不匹配：缺少 search")
-
-        target_collection = collection_name or self._collection
-        await self._load_field_cache(collection_name=target_collection)
-        self._assert_schema_compatible()
-
-        expr = self._build_filter_expr(kb_ids, extra_filter_expr)
-        res = await search(
-            collection_name=target_collection,
-            data=[query],
-            anns_field=self._SPARSE_FIELD,
-            limit=top_k,
-            output_fields=[
-                "chunk_id",
-                "kb_id",
-                "material_id",
-                "chunk_role",
-                "parent_chunk_id",
-                "child_seq",
-                "content",
-                "context",
-                "locator",
-                "metadata",
-            ],
-            filter=expr,
-            search_params={"metric_type": "BM25"},
-        )
-        return self._parse_hits(res)
-
     async def hybrid_search(
         self,
         *,
@@ -485,9 +378,6 @@ class MilvusClient:
         query: str,
         kb_ids: list[str],
         top_k: int = 5,
-        ranker: str = "rrf",
-        dense_weight: float = 0.7,
-        sparse_weight: float = 0.3,
         rrf_k: int = 60,
         extra_filter_expr: str | None = None,
         collection_name: str | None = None,
@@ -519,14 +409,9 @@ class MilvusClient:
         )
 
         reqs = [dense_req, sparse_req]
-        ranker_key = ranker.lower()
-        if ranker_key == "weighted":
-            weights = [dense_weight, sparse_weight]
-            ranker_impl = _build_weighted_ranker(weights, reqs)
-        elif RRFRanker is not None:
-            ranker_impl = RRFRanker(k=rrf_k)
-        else:
+        if RRFRanker is None:
             raise RuntimeError("pymilvus 缺少 ranker 实现")
+        ranker_impl = RRFRanker(k=rrf_k)
 
         res = await hybrid_search(
             collection_name=target_collection,

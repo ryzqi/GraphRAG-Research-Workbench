@@ -2,7 +2,6 @@ import {
   Alert,
   Box,
   Grid,
-  MenuItem,
   Paper,
   Stack,
   TextField,
@@ -73,19 +72,6 @@ export function KbChatConfigPanel({
   };
 
   const errors = validateKbChatConfig(value);
-  const isWeightedRanker = value.retrieval_hybrid_ranker === 'weighted';
-  const hybridRankerHelperText = isWeightedRanker
-    ? '当前 Weighted：按 Dense/BM25 权重融合，便于精细控制召回偏好。'
-    : '当前 RRF：按排名融合，通常更稳健且无需调 Dense/BM25 权重。';
-  const hybridRrfKHelperText = isWeightedRanker
-    ? '当前 Weighted 模式下不生效；切换到 RRF 后用于控制融合平滑度。'
-    : '控制 RRF 对排名差异的敏感度；调大更平滑，调小更偏向前排结果。';
-  const denseWeightHelperText = isWeightedRanker
-    ? 'Weighted 生效：调大后更偏向语义（Dense）召回结果。'
-    : '当前 RRF 模式：该参数暂不生效，切换 Weighted 后可调语义召回占比。';
-  const sparseWeightHelperText = isWeightedRanker
-    ? 'Weighted 生效：调大后更偏向关键词（BM25）召回结果。'
-    : '当前 RRF 模式：该参数暂不生效，切换 Weighted 后可调关键词召回占比。';
   const parentChildLimitStateText = parentChildLimitsEnabled ? '父子分块生效' : '仅父子分块生效';
   const parentChildLimitDisabled = disabled || !parentChildLimitsEnabled;
   const parentMaxParentsHelperText = `${parentChildLimitStateText}；控制可保留父块数，调大可提升覆盖但会增加噪声。`;
@@ -187,29 +173,12 @@ export function KbChatConfigPanel({
                   fullWidth
                 />
                 <TextField
-                  label='Hybrid Ranker'
-                  select
-                  value={value.retrieval_hybrid_ranker}
-                  onChange={(event) =>
-                    onChange({
-                      ...value,
-                      retrieval_hybrid_ranker: event.target.value as KbChatConfig['retrieval_hybrid_ranker'],
-                    })
-                  }
-                  helperText={hybridRankerHelperText}
-                  disabled={disabled}
-                  fullWidth
-                >
-                  <MenuItem value='rrf'>RRF</MenuItem>
-                  <MenuItem value='weighted'>Weighted</MenuItem>
-                </TextField>
-                <TextField
                   label='Hybrid RRF k'
                   type='number'
                   value={value.retrieval_hybrid_rrf_k}
                   onChange={(event) => handleIntField('retrieval_hybrid_rrf_k', event.target.value)}
                   inputProps={{ min: 1, max: 200 }}
-                  helperText={hybridRrfKHelperText}
+                  helperText='控制 Milvus 原生 hybrid_search 的 RRF 平滑度；调大更平滑，调小更偏向前排结果。'
                   disabled={disabled}
                   fullWidth
                 />
@@ -224,30 +193,6 @@ export function KbChatConfigPanel({
                   融合与策略限制参数
                 </Typography>
                 <Grid container spacing={1.2}>
-                  <Grid size={{ xs: 12, md: 6 }}>
-                    <TextField
-                      label='Dense 权重'
-                      type='number'
-                      value={value.retrieval_hybrid_dense_weight}
-                      onChange={(event) => handleFloatField('retrieval_hybrid_dense_weight', event.target.value)}
-                      inputProps={{ min: 0, max: 1, step: 0.05 }}
-                      helperText={denseWeightHelperText}
-                      disabled={disabled || value.retrieval_hybrid_ranker !== 'weighted'}
-                      fullWidth
-                    />
-                  </Grid>
-                  <Grid size={{ xs: 12, md: 6 }}>
-                    <TextField
-                      label='BM25 权重'
-                      type='number'
-                      value={value.retrieval_hybrid_sparse_weight}
-                      onChange={(event) => handleFloatField('retrieval_hybrid_sparse_weight', event.target.value)}
-                      inputProps={{ min: 0, max: 1, step: 0.05 }}
-                      helperText={sparseWeightHelperText}
-                      disabled={disabled || value.retrieval_hybrid_ranker !== 'weighted'}
-                      fullWidth
-                    />
-                  </Grid>
                   <Grid size={{ xs: 12, md: 6 }}>
                     <TextField
                       label='父块保留上限'

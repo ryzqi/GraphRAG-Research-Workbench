@@ -261,9 +261,6 @@ class KbChatService:
         return {
             "retrieval_top_k": int(config.retrieval_top_k),
             "retrieval_rerank_top_k": int(config.retrieval_rerank_top_k),
-            "hybrid_ranker": str(config.retrieval_hybrid_ranker),
-            "hybrid_dense_weight": float(config.retrieval_hybrid_dense_weight),
-            "hybrid_sparse_weight": float(config.retrieval_hybrid_sparse_weight),
             "hybrid_rrf_k": int(config.retrieval_hybrid_rrf_k),
             "parent_max_parents": int(config.retrieval_parent_max_parents),
             "parent_max_children_per_parent": int(
@@ -938,13 +935,6 @@ class KbChatService:
                 ),
                 "retrieval_top_k": int(kb_chat_config.retrieval_top_k),
                 "retrieval_rerank_top_k": int(kb_chat_config.retrieval_rerank_top_k),
-                "retrieval_hybrid_ranker": str(kb_chat_config.retrieval_hybrid_ranker),
-                "retrieval_hybrid_dense_weight": float(
-                    kb_chat_config.retrieval_hybrid_dense_weight
-                ),
-                "retrieval_hybrid_sparse_weight": float(
-                    kb_chat_config.retrieval_hybrid_sparse_weight
-                ),
                 "retrieval_hybrid_rrf_k": int(kb_chat_config.retrieval_hybrid_rrf_k),
                 "retrieval_parent_max_parents": int(
                     kb_chat_config.retrieval_parent_max_parents
@@ -1013,8 +1003,7 @@ class KbChatService:
             "min_score": getattr(retrieval_stats, "min_score", None)
             if retrieval_stats
             else None,
-            "dense_hits": layer_stats.get("dense_hits"),
-            "bm25_hits": layer_stats.get("bm25_hits"),
+            "hybrid_hits": layer_stats.get("hybrid_hits"),
             "hyde_requested_count": layer_stats.get("hyde_requested_count"),
             "hyde_used_count": layer_stats.get("hyde_used_count"),
             "hyde_aggregation": layer_stats.get("hyde_aggregation"),

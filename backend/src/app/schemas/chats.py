@@ -57,9 +57,6 @@ class KbChatConfig(BaseModel):
     entity_expand_min_confidence: float = Field(0.55, ge=0.0, le=1.0)
     retrieval_top_k: int = Field(12, ge=1, le=20)
     retrieval_rerank_top_k: int = Field(50, ge=1, le=50)
-    retrieval_hybrid_ranker: Literal["rrf", "weighted"] = "rrf"
-    retrieval_hybrid_dense_weight: float = Field(0.6, ge=0.0, le=1.0)
-    retrieval_hybrid_sparse_weight: float = Field(0.4, ge=0.0, le=1.0)
     retrieval_hybrid_rrf_k: int = Field(60, ge=1, le=200)
     retrieval_parent_max_parents: int = Field(8, ge=1, le=20)
     retrieval_parent_max_children_per_parent: int = Field(3, ge=1, le=10)
@@ -76,14 +73,6 @@ class KbChatConfig(BaseModel):
             )
         if self.retrieval_rerank_top_k < self.retrieval_top_k:
             raise ValueError("retrieval_rerank_top_k 必须大于等于 retrieval_top_k")
-        if self.retrieval_hybrid_ranker == "weighted":
-            total_weight = (
-                self.retrieval_hybrid_dense_weight + self.retrieval_hybrid_sparse_weight
-            )
-            if abs(total_weight - 1.0) > 1e-6:
-                raise ValueError(
-                    "retrieval_hybrid_dense_weight 与 retrieval_hybrid_sparse_weight 之和必须为 1"
-                )
         return self
 
 
@@ -110,9 +99,6 @@ class KbGraphSchemaResponse(BaseModel):
 
 def default_kb_chat_config(*, settings: Settings | None = None) -> KbChatConfig:
     cfg = settings if settings is not None else get_settings()
-    ranker = str(cfg.retrieval_hybrid_ranker or "rrf").strip().lower()
-    if ranker not in {"rrf", "weighted"}:
-        ranker = "rrf"
     return KbChatConfig(
         entity_expand_max_candidates=int(
             getattr(cfg, "kb_chat_entity_expand_max_candidates", 8)
@@ -128,9 +114,6 @@ def default_kb_chat_config(*, settings: Settings | None = None) -> KbChatConfig:
             int(cfg.retrieval_default_top_k),
             int(cfg.retrieval_max_top_k),
         ),
-        retrieval_hybrid_ranker=ranker,
-        retrieval_hybrid_dense_weight=float(cfg.retrieval_hybrid_dense_weight),
-        retrieval_hybrid_sparse_weight=float(cfg.retrieval_hybrid_sparse_weight),
         retrieval_hybrid_rrf_k=int(cfg.retrieval_hybrid_rrf_k),
         retrieval_parent_max_parents=8,
         retrieval_parent_max_children_per_parent=3,

@@ -20,11 +20,13 @@ const removedConfigKeys = [
 ];
 
 describe('kbChatConfig contract cleanup', () => {
-  it('does not serialize removed capability toggles, entity expand timeout, or doc gate leftovers', () => {
+  it('does not serialize removed capability toggles, legacy hybrid knobs, entity expand timeout, or doc gate leftovers', () => {
     const legacyPayload = {
       retrieval_top_k: 9,
-      retrieval_hybrid_ranker: 'weighted',
-      retrieval_hybrid_dense_weight: 0.7,
+      retrieval_hybrid_rrf_k: 72,
+      retrieval_hybrid_ranker: 'weighted' as never,
+      retrieval_hybrid_dense_weight: 0.7 as never,
+      retrieval_hybrid_sparse_weight: 0.3 as never,
       query_rewrite_enabled: false as never,
       ambiguity_check_enabled: false as never,
       normalize_llm_enabled: false as never,
@@ -42,8 +44,10 @@ describe('kbChatConfig contract cleanup', () => {
     const query = toKbGraphSchemaQuery(legacyPayload);
 
     expect(query).toContain('retrieval_top_k=9');
-    expect(query).toContain('retrieval_hybrid_ranker=weighted');
-    expect(query).toContain('retrieval_hybrid_dense_weight=0.7');
+    expect(query).toContain('retrieval_hybrid_rrf_k=72');
+    expect(query).not.toContain('retrieval_hybrid_ranker');
+    expect(query).not.toContain('retrieval_hybrid_dense_weight');
+    expect(query).not.toContain('retrieval_hybrid_sparse_weight');
     for (const key of removedConfigKeys) {
       expect(query).not.toContain(key);
     }
