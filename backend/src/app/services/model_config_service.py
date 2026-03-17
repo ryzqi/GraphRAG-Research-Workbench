@@ -265,6 +265,9 @@ class ModelConfigService:
         for provider in _PROVIDER_ORDER:
             if provider in by_provider:
                 continue
+            # Product-level bootstrap default: newly discovered providers start enabled in the
+            # config UI to reduce first-run setup friction, but they still remain unusable until
+            # users configure API keys / model names.
             row = ModelProviderConfig(
                 provider=provider,
                 enabled=True,
@@ -287,6 +290,8 @@ class ModelConfigService:
 
         selection = await self._db.get(ModelRuntimeSelection, 1)
         if selection is None:
+            # Keep OpenAI as the deterministic initial anchor for active-provider selection;
+            # actual runnable model still depends on user-supplied provider models.
             openai_row = by_provider[ModelProviderORM.OPENAI]
             selection = ModelRuntimeSelection(
                 id=1,

@@ -43,14 +43,6 @@ interface TraceExecutionTimelineParams {
 
 const TRACE_SUBGRAPH_NODE_SUFFIX = '_subgraph';
 
-function eventTime(value: string | null | undefined): number {
-  if (!value) {
-    return 0;
-  }
-  const parsed = Date.parse(value);
-  return Number.isFinite(parsed) ? parsed : 0;
-}
-
 function resolveTraceNodeBaseId(nodeId: string): string {
   const trimmedNodeId = nodeId.trim();
   if (!trimmedNodeId) {
@@ -84,25 +76,14 @@ function resolveCurrentVisibleNodeName(params: {
     return currentNodeName;
   }
 
-  const latestVisibleStartedExecution = [...(traceExecutions ?? [])]
-    .filter(
-      (execution) =>
-        execution.status === 'started' && shouldDisplayTraceNode(execution.node_name, schema)
-    )
-    .sort((left, right) => {
-      const updatedCompare = eventTime(right.updated_at) - eventTime(left.updated_at);
-      if (updatedCompare !== 0) {
-        return updatedCompare;
-      }
-      const startedCompare = eventTime(right.started_at) - eventTime(left.started_at);
-      if (startedCompare !== 0) {
-        return startedCompare;
-      }
-      return right.execution_id.localeCompare(left.execution_id);
-    })
-    .at(0);
-
-  return latestVisibleStartedExecution?.node_name ?? null;
+  return (
+    [...(traceExecutions ?? [])]
+      .reverse()
+      .find(
+        (execution) =>
+          execution.status === 'started' && shouldDisplayTraceNode(execution.node_name, schema)
+      )?.node_name ?? null
+  );
 }
 
 function normalizeStageStatus(status: string | null | undefined): TraceStageStatus | null {
@@ -191,17 +172,6 @@ export function buildTraceExecutionTimeline({
   });
   return [...(traceExecutions ?? [])]
     .filter((execution) => shouldDisplayTraceNode(execution.node_name, schema))
-    .sort((left, right) => {
-      const startedCompare = eventTime(left.started_at) - eventTime(right.started_at);
-      if (startedCompare !== 0) {
-        return startedCompare;
-      }
-      const updatedCompare = eventTime(left.updated_at) - eventTime(right.updated_at);
-      if (updatedCompare !== 0) {
-        return updatedCompare;
-      }
-      return left.execution_id.localeCompare(right.execution_id);
-    })
     .map((execution) => {
       const theme = resolveKbNodeTheme(execution.node_name, schema);
       return {

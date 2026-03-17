@@ -37,6 +37,8 @@ def _build_celery_conf(cfg: Settings) -> dict[str, Any]:
     conf: dict[str, Any] = {
         "broker_connection_retry_on_startup": True,
         "broker_transport_options": {
+            # Keep aligned with Settings: this repo intentionally uses 7200s instead of
+            # Celery Redis' 3600s default to reduce premature redelivery of long tasks.
             "visibility_timeout": cfg.celery_broker_visibility_timeout_seconds
         },
         "accept_content": ["json"],

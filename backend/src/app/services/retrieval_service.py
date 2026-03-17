@@ -832,7 +832,8 @@ class RetrievalService:
             extra={"query": query[:50], "latency_ms": latency_ms},
         )
 
-        # Cache embeddings with a longer TTL than retrieval result cache.
+        # Embeddings are reusable across rewrite/retrieval variants, so keep them slightly
+        # longer than the short-lived retrieval result cache.
         if self._redis and self._settings.retrieval_cache_enabled:
             try:
                 await self._redis.set(
@@ -1909,6 +1910,8 @@ class RetrievalService:
         reranker = self._reranker or RerankClient(self._settings)
         self._reranker = reranker
 
+        # Rerank is optional quality boost: stay within the configured soft budget and
+        # gracefully degrade to the original ordering when the reranker is too slow.
         timeout_value = float(self._settings.retrieval_rerank_timeout_seconds)
         if timeout_seconds is not None:
             timeout_value = min(timeout_value, float(timeout_seconds))

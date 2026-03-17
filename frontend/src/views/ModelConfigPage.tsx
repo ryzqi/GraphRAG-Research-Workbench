@@ -30,6 +30,10 @@ import { alpha } from '@mui/material/styles';
 import { useEffect, useMemo, useState, type DragEvent, type KeyboardEvent } from 'react';
 
 import { Button } from '../components/ui/Button';
+import {
+  DEFAULT_MODEL_PROVIDER,
+  createDefaultModelProviderFormState,
+} from '../constants/formDefaults';
 import { ErrorAlert } from '../components/ui/ErrorAlert';
 import { PageHeader } from '../components/ui/PageHeader';
 import {
@@ -69,17 +73,6 @@ type DraggingModelState = {
   index: number;
 } | null;
 
-const EMPTY_FORM: ProviderFormState = {
-  enabled: true,
-  baseUrl: '',
-  models: [],
-  modelInput: '',
-  apiKey: '',
-  clearApiKey: false,
-  thinkingEnabled: true,
-  thinkingLevel: 'high',
-};
-
 function normalizeModelNames(values: string[]): string[] {
   const deduped: string[] = [];
   const seen = new Set<string>();
@@ -110,10 +103,12 @@ function moveModel(models: string[], from: number, to: number): string[] {
 }
 
 function buildForm(provider: ProviderConfigRead | undefined): ProviderFormState {
+  const defaults = createDefaultModelProviderFormState();
   if (!provider) {
-    return { ...EMPTY_FORM };
+    return defaults;
   }
   return {
+    ...defaults,
     enabled: provider.enabled,
     baseUrl: provider.base_url ?? '',
     models: normalizeModelNames(provider.models ?? []),
@@ -121,7 +116,7 @@ function buildForm(provider: ProviderConfigRead | undefined): ProviderFormState 
     apiKey: '',
     clearApiKey: false,
     thinkingEnabled: provider.thinking_enabled,
-    thinkingLevel: provider.thinking_level ?? 'high',
+    thinkingLevel: provider.thinking_level ?? defaults.thinkingLevel,
   };
 }
 
@@ -146,12 +141,13 @@ export function ModelConfigPage() {
   const updateActiveMutation = useUpdateActiveModel();
 
   const [forms, setForms] = useState<Record<ModelProvider, ProviderFormState>>({
-    openai: { ...EMPTY_FORM },
-    ollama: { ...EMPTY_FORM },
-    nvidia: { ...EMPTY_FORM },
+    openai: createDefaultModelProviderFormState(),
+    ollama: createDefaultModelProviderFormState(),
+    nvidia: createDefaultModelProviderFormState(),
   });
-  const [selectedProvider, setSelectedProvider] = useState<ModelProvider>('openai');
-  const [activeProviderDraft, setActiveProviderDraft] = useState<ModelProvider>('openai');
+  const [selectedProvider, setSelectedProvider] = useState<ModelProvider>(DEFAULT_MODEL_PROVIDER);
+  const [activeProviderDraft, setActiveProviderDraft] =
+    useState<ModelProvider>(DEFAULT_MODEL_PROVIDER);
   const [activeModelDraft, setActiveModelDraft] = useState('');
   const [pageError, setPageError] = useState<string | null>(null);
   const [savingProvider, setSavingProvider] = useState<ModelProvider | null>(null);

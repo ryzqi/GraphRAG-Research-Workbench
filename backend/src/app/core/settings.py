@@ -165,6 +165,8 @@ class Settings(BaseSettings):
     db_pool_recycle_seconds: int = Field(1800, alias="DB_POOL_RECYCLE_SECONDS")
 
     redis_url: str = Field(_DEFAULT_REDIS_URL, alias="REDIS_URL")
+    # Keep Redis socket timeouts fail-fast by default for local/dev deployments.
+    # Remote or high-latency Redis deployments should explicitly override these.
     redis_socket_timeout_seconds: float = Field(
         1.0, alias="REDIS_SOCKET_TIMEOUT_SECONDS"
     )
@@ -177,6 +179,8 @@ class Settings(BaseSettings):
     celery_result_backend: str = Field(
         _DEFAULT_CELERY_RESULT_BACKEND, alias="CELERY_RESULT_BACKEND"
     )
+    # Celery Redis transport defaults visibility_timeout to 3600s.
+    # Keep 7200s here for long-running ingestion/research tasks unless workload evidence says otherwise.
     celery_broker_visibility_timeout_seconds: int = Field(
         7_200, ge=1, alias="CELERY_BROKER_VISIBILITY_TIMEOUT_SECONDS"
     )
@@ -372,8 +376,10 @@ class Settings(BaseSettings):
     )
 
     # 检索配置
+    # 普通问答路径默认收敛在较小候选集，复杂问题仍可通过 rerank/max_top_k 扩大召回窗口。
     retrieval_default_top_k: int = Field(12, alias="RETRIEVAL_DEFAULT_TOP_K")
     retrieval_max_top_k: int = Field(50, alias="RETRIEVAL_MAX_TOP_K")
+    # 检索/改写结果缓存只保留短窗口，兼顾重复提问命中率与知识库持续导入时的新鲜度。
     retrieval_cache_ttl_seconds: int = Field(300, alias="RETRIEVAL_CACHE_TTL_SECONDS")
     retrieval_cache_enabled: bool = Field(True, alias="RETRIEVAL_CACHE_ENABLED")
     retrieval_min_score: float | None = Field(0.2, alias="RETRIEVAL_MIN_SCORE")
@@ -407,6 +413,7 @@ class Settings(BaseSettings):
     retrieval_rerank_model: str = Field(
         "BAAI/bge-reranker-v2-m3", alias="RETRIEVAL_RERANK_MODEL"
     )
+    # rerank 是可降级步骤；超时后 retrieval_service 会回退到 RRF 顺序，避免慢上游拖垮主请求。
     retrieval_rerank_timeout_seconds: int = Field(
         10, alias="RETRIEVAL_RERANK_TIMEOUT_SECONDS"
     )
@@ -464,9 +471,11 @@ class Settings(BaseSettings):
     kb_chat_semantic_cache_enabled: bool = Field(
         True, alias="KB_CHAT_SEMANTIC_CACHE_ENABLED"
     )
+    # 语义缓存阈值偏高，优先降低“相似但不等价”问题的误命中，而不是盲目追求命中率。
     kb_chat_semantic_cache_similarity_threshold: float = Field(
         0.88, ge=0.0, le=1.0, alias="KB_CHAT_SEMANTIC_CACHE_SIMILARITY_THRESHOLD"
     )
+    # 语义缓存保留 24h，配合 max_items/skip 条件吸收重复追问，又避免无限滞留旧答案。
     kb_chat_semantic_cache_ttl_seconds: int = Field(
         24 * 60 * 60, ge=0, alias="KB_CHAT_SEMANTIC_CACHE_TTL_SECONDS"
     )
@@ -476,6 +485,7 @@ class Settings(BaseSettings):
     kb_chat_parallel_retrieval_min_queries: int = Field(
         2, ge=1, le=8, alias="KB_CHAT_PARALLEL_RETRIEVAL_MIN_QUERIES"
     )
+    # 并行检索分支上限主要用于约束 fan-out 成本；需要更激进召回时优先走 runtime override，而非放大全局默认值。
     kb_chat_parallel_retrieval_max_branches: int = Field(
         6, ge=1, le=12, alias="KB_CHAT_PARALLEL_RETRIEVAL_MAX_BRANCHES"
     )

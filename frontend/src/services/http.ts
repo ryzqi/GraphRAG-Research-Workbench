@@ -32,11 +32,14 @@ function normalizeApiBaseUrl(raw: string): string {
 const API_BASE_URL = (() => {
   const raw = process.env.NEXT_PUBLIC_API_BASE_URL;
   if (!raw) {
+    // Dev-only fallback for local frontend/backend split startup.
     return 'http://127.0.0.1:8000';
   }
   return normalizeApiBaseUrl(raw);
 })();
 
+// Browser fetch has no built-in request timeout; keep the frontend default aligned
+// with the backend's common 30s slow-path budget unless a call site overrides it.
 const DEFAULT_API_TIMEOUT_MS = 30_000;
 
 export function getApiBaseUrl(): string {

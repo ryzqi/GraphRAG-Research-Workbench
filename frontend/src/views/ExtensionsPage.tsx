@@ -27,6 +27,7 @@ import {
 } from '@mui/material';
 import { useState } from 'react';
 
+import { createDefaultExtensionFormState } from '../constants/formDefaults';
 import {
   useCreateExtension,
   useDeleteExtension,
@@ -117,51 +118,33 @@ function getConnectionStatusColor(
   return 'error';
 }
 
-function buildDefaultForm(templateId: string | null): ExtensionFormState {
-  return {
-    name: '',
-    transport: 'http',
-    emitMetrics: true,
-    logLevelOverride: '',
-
-    httpUrl: '',
-    httpTimeoutSeconds: '',
-    httpAuthType: 'none',
-    httpAuthToken: '',
-    httpHeadersJson: '',
-
-    stdioTemplateId: templateId ?? '',
-    stdioArgsText: '',
-    stdioEnvJson: '',
-    stdioTimeoutSeconds: '',
-  };
-}
-
 function buildFormFromExtension(ext: ToolExtension): ExtensionFormState {
+  const defaults = createDefaultExtensionFormState(ext.stdio_config?.template_id ?? null);
   return {
+    ...defaults,
     name: ext.name,
     transport: ext.transport,
-    emitMetrics: ext.observability_config?.emit_metrics ?? true,
-    logLevelOverride: ext.observability_config?.log_level_override ?? '',
+    emitMetrics: ext.observability_config?.emit_metrics ?? defaults.emitMetrics,
+    logLevelOverride: ext.observability_config?.log_level_override ?? defaults.logLevelOverride,
 
-    httpUrl: ext.http_config?.url ?? '',
+    httpUrl: ext.http_config?.url ?? defaults.httpUrl,
     httpTimeoutSeconds:
       ext.http_config?.timeout_seconds !== null &&
       ext.http_config?.timeout_seconds !== undefined
         ? String(ext.http_config.timeout_seconds)
-        : '',
-    httpAuthType: ext.http_config?.auth?.type ?? 'none',
-    httpAuthToken: ext.http_config?.auth?.token ?? '',
+        : defaults.httpTimeoutSeconds,
+    httpAuthType: ext.http_config?.auth?.type ?? defaults.httpAuthType,
+    httpAuthToken: ext.http_config?.auth?.token ?? defaults.httpAuthToken,
     httpHeadersJson: formatJson(ext.http_config?.headers ?? null),
 
-    stdioTemplateId: ext.stdio_config?.template_id ?? '',
+    stdioTemplateId: ext.stdio_config?.template_id ?? defaults.stdioTemplateId,
     stdioArgsText: (ext.stdio_config?.args ?? []).join('\n'),
     stdioEnvJson: formatJson(ext.stdio_config?.env ?? null),
     stdioTimeoutSeconds:
       ext.stdio_config?.timeout_seconds !== null &&
       ext.stdio_config?.timeout_seconds !== undefined
         ? String(ext.stdio_config.timeout_seconds)
-        : '',
+        : defaults.stdioTimeoutSeconds,
   };
 }
 
@@ -228,7 +211,7 @@ export function ExtensionsPage() {
   const [editingExtensionId, setEditingExtensionId] = useState<string | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [formState, setFormState] = useState<ExtensionFormState>(() =>
-    buildDefaultForm(null)
+    createDefaultExtensionFormState(null)
   );
   const [deleteTarget, setDeleteTarget] = useState<ToolExtension | null>(null);
 
@@ -303,7 +286,7 @@ export function ExtensionsPage() {
     setError(null);
     setEditorMode('create');
     setEditingExtensionId(null);
-    setFormState(buildDefaultForm(templates[0]?.id ?? null));
+    setFormState(createDefaultExtensionFormState(templates[0]?.id ?? null));
     setDrawerOpen(true);
   };
 

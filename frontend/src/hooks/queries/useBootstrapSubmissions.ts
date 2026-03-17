@@ -11,9 +11,9 @@ import {
   type BootstrapSubmissionFinalizeResponse,
   type BootstrapSubmissionStatus,
 } from '../../services/bootstrapSubmissions';
+import { DEFAULT_STATUS_POLLING_INTERVAL_MS } from '../../constants/runtimeDefaults';
 
 const NO_ID = '__none__';
-const DEFAULT_POLLING_INTERVAL_MS = 2_000;
 
 interface UseCreateBootstrapSubmissionOptions {
   invalidateMode?: 'blocking' | 'background';
@@ -45,7 +45,7 @@ export function useBootstrapSubmission(jobId: string | undefined) {
       skipInitialFetchIfCached: true,
       refreshInterval: (latest) =>
         shouldPollBootstrapSubmission(latest as BootstrapSubmission | undefined)
-          ? DEFAULT_POLLING_INTERVAL_MS
+          ? DEFAULT_STATUS_POLLING_INTERVAL_MS
           : 0,
     }
   );

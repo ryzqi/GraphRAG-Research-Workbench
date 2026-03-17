@@ -2,6 +2,10 @@
  * 导出 API 封装
  */
 
+import {
+  DEFAULT_EXPORT_POLL_INTERVAL_MS,
+  DEFAULT_EXPORT_POLL_MAX_ATTEMPTS,
+} from '../constants/runtimeDefaults';
 import { apiFetch } from './http';
 
 export type ExportType = 'chat' | 'research';
@@ -43,8 +47,8 @@ export async function getExport(exportId: string): Promise<ExportJob> {
  */
 export async function pollExportUntilDone(
   exportId: string,
-  intervalMs = 1000,
-  maxAttempts = 60
+  intervalMs = DEFAULT_EXPORT_POLL_INTERVAL_MS,
+  maxAttempts = DEFAULT_EXPORT_POLL_MAX_ATTEMPTS
 ): Promise<ExportJob> {
   for (let i = 0; i < maxAttempts; i++) {
     const job = await getExport(exportId);

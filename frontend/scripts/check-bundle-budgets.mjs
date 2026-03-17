@@ -6,6 +6,10 @@ const NEXT_DIR = path.join(ROOT, '.next');
 const CONFIG_PATH = path.join(ROOT, 'config', 'bundle-budgets.json');
 const REPORT_PATH = path.join(ROOT, 'reports', 'bundle-budget-report.json');
 
+// These budgets are repo-specific regression guardrails based on built route bundles.
+// They are not Next.js defaults and should be tuned against measured output, not copied
+// as generic web-performance targets.
+
 function readJson(filePath) {
   return JSON.parse(fs.readFileSync(filePath, 'utf8'));
 }

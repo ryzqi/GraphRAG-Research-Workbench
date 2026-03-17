@@ -104,9 +104,9 @@ uv run celery -A app.worker.celery_app inspect active_queues -t 5
 
 至少应看到 `default`、`dispatch`、`ingestion` 三个队列存在消费者。
 
-### Celery 运行参数（推荐默认值）
+### Celery 运行参数（仓库当前建议值）
 
-- `CELERY_BROKER_VISIBILITY_TIMEOUT_SECONDS=7200`
+- `CELERY_BROKER_VISIBILITY_TIMEOUT_SECONDS=7200`（Celery Redis 官方默认是 `3600`；本仓为长任务场景保守放宽）
 - `CELERY_WORKER_PREFETCH_MULTIPLIER=1`
 - `CELERY_TASK_STORE_ERRORS_EVEN_IF_IGNORED=true`
 - `CELERY_WORKER_SEND_TASK_EVENTS=false`
@@ -142,6 +142,7 @@ pwsh -ExecutionPolicy Bypass -File ./scripts/reset_data.ps1 -Force
 
 - PDF 默认先走 MinerU（pipeline）解析；若失败或输出为空，可自动回退到 `pypdf` 文本提取兜底，保证“至少可检索”。
 - URL / DOCX / Markdown / TXT 的解析行为保持不变。
+- 当前文件上传/导入链路的单文件大小上限为 `50MB`（frontend 校验、materials/upload、bootstrap upload、ingestion manifest 已对齐）。
 - 相关环境变量（放入 `.env`）：
   - `MINERU_MODEL_SOURCE`：`huggingface` / `modelscope` / `local`
   - `MINERU_LANG`：默认 `ch`

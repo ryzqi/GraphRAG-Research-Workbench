@@ -3,6 +3,11 @@
  */
 import { useEffect, useMemo, useState } from 'react';
 import { useSWRConfig } from 'swr';
+import {
+  DEFAULT_STATUS_POLLING_INTERVAL_MS,
+  INGESTION_STREAM_FALLBACK_POLLING_STEPS_MS,
+  INGESTION_STREAM_RETRY_MULTIPLIER,
+} from '../../constants/runtimeDefaults';
 import { parseSseJson } from '../../lib/sse';
 import {
   cancelIngestionBatch,
@@ -17,9 +22,6 @@ import {
 import { useApiMutation, useApiQuery } from '../../lib/swr';
 
 const NO_ID = '__none__';
-const DEFAULT_POLLING_INTERVAL_MS = 2_000;
-const FALLBACK_POLLING_STEPS = [1_000, 2_000, 5_000] as const;
-const STREAM_RETRY_MULTIPLIER = 2;
 
 type StreamStatus = 'idle' | 'connecting' | 'live' | 'fallback_polling';
 
@@ -86,7 +88,7 @@ export function shouldFallbackAfterStreamExit(state: StreamExitState): boolean {
 }
 
 export function useIngestionBatch(batchId: string | undefined, options?: UseIngestionBatchOptions) {
-  const refreshIntervalMs = options?.refreshIntervalMs ?? DEFAULT_POLLING_INTERVAL_MS;
+  const refreshIntervalMs = options?.refreshIntervalMs ?? DEFAULT_STATUS_POLLING_INTERVAL_MS;
   return useApiQuery(
     batchId ? KEYS.batch(batchId) : null,
     batchId ? () => getIngestionBatch(batchId) : null,
@@ -118,7 +120,9 @@ export function useIngestionBatchLive(options: UseIngestionBatchLiveOptions): Us
 
   const fallbackIntervalMs =
     streamStatus === 'fallback_polling'
-      ? FALLBACK_POLLING_STEPS[Math.min(fallbackStep, FALLBACK_POLLING_STEPS.length - 1)]
+      ? INGESTION_STREAM_FALLBACK_POLLING_STEPS_MS[
+          Math.min(fallbackStep, INGESTION_STREAM_FALLBACK_POLLING_STEPS_MS.length - 1)
+        ]
       : 0;
 
   const pollingIntervalMs =
@@ -126,7 +130,7 @@ export function useIngestionBatchLive(options: UseIngestionBatchLiveOptions): Us
       ? 0
       : streamStatus === 'fallback_polling'
         ? fallbackIntervalMs
-        : DEFAULT_POLLING_INTERVAL_MS;
+        : DEFAULT_STATUS_POLLING_INTERVAL_MS;
 
   const batchQuery = useIngestionBatch(resolvedBatchId, {
     refreshIntervalMs: pollingIntervalMs,
@@ -162,7 +166,7 @@ export function useIngestionBatchLive(options: UseIngestionBatchLiveOptions): Us
     const scheduleRetry = (options?: { immediateRefetch?: boolean }) => {
       let nextStep = 0;
       setFallbackStep((prev) => {
-        nextStep = Math.min(prev + 1, FALLBACK_POLLING_STEPS.length - 1);
+        nextStep = Math.min(prev + 1, INGESTION_STREAM_FALLBACK_POLLING_STEPS_MS.length - 1);
         return nextStep;
       });
       setStreamStatus('fallback_polling');
@@ -170,7 +174,8 @@ export function useIngestionBatchLive(options: UseIngestionBatchLiveOptions): Us
         void mutate(KEYS.batch(resolvedBatchId));
       }
 
-      const retryDelayMs = FALLBACK_POLLING_STEPS[nextStep] * STREAM_RETRY_MULTIPLIER;
+      const retryDelayMs =
+        INGESTION_STREAM_FALLBACK_POLLING_STEPS_MS[nextStep] * INGESTION_STREAM_RETRY_MULTIPLIER;
       retryTimer = setTimeout(() => {
         if (!active) {
           return;

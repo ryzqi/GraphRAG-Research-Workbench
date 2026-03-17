@@ -83,17 +83,6 @@ function statusBorderColor(status: TraceStageStatus | 'started'): string {
   }
 }
 
-function formatTime(ts?: string | null): string | null {
-  if (!ts) {
-    return null;
-  }
-  const date = new Date(ts);
-  if (Number.isNaN(date.getTime())) {
-    return ts;
-  }
-  return date.toLocaleTimeString('zh-CN', { hour12: false });
-}
-
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return null;
@@ -240,8 +229,6 @@ export function KbChatFlowPanel({
                 items: execution.output_items,
                 event: null,
               });
-              const startedAt = formatTime(execution.started_at);
-              const endedAt = formatTime(execution.ended_at ?? execution.updated_at);
               return (
                 <Paper
                   key={execution.execution_id}
@@ -267,9 +254,6 @@ export function KbChatFlowPanel({
                             <Box sx={{ minWidth: 0, flex: 1 }}>
                               <Typography variant='body2' fontWeight={700} noWrap>
                                 {execution.node_label}
-                              </Typography>
-                              <Typography variant='caption' color='text.secondary' noWrap>
-                                {execution.summaryText}
                               </Typography>
                             </Box>
                           </Stack>
@@ -297,24 +281,6 @@ export function KbChatFlowPanel({
                               </IconButton>
                             </Tooltip>
                           </Stack>
-                        </Stack>
-
-                        <Stack direction='row' spacing={1.2} useFlexGap flexWrap='wrap'>
-                          {startedAt && (
-                            <Typography variant='caption' color='text.secondary'>
-                              开始 {startedAt}
-                            </Typography>
-                          )}
-                          {endedAt && (
-                            <Typography variant='caption' color='text.secondary'>
-                              更新 {endedAt}
-                            </Typography>
-                          )}
-                          {typeof execution.latency_ms === 'number' && (
-                            <Typography variant='caption' color='text.secondary'>
-                              耗时 {execution.latency_ms} ms
-                            </Typography>
-                          )}
                         </Stack>
 
                         <Collapse in={isExpanded} timeout='auto' unmountOnExit>

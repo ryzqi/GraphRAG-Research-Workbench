@@ -69,6 +69,54 @@ describe('kbChatTraceNodes', () => {
     expect(executions.map((execution) => execution.summaryText)).toEqual(['证据数：4', '证据数：2']);
   });
 
+  it('preserves incoming execution order and active fallback without sorting by timestamps', () => {
+    const executions = buildTraceExecutionTimeline({
+      schema: {
+        version: '1.1',
+        hash: 'schema-hash',
+        nodes: [
+          { id: 'complexity_classify', label: '复杂度分类', phase: 'route', order: 5 },
+          { id: 'hyde', label: 'HyDE 生成', phase: 'enhance', order: 10 },
+        ],
+        edges: [],
+      },
+      runState: {
+        run_id: 'run-1',
+        run_status: 'running',
+        current_step_id: 'model',
+        current_step_label: 'model',
+        current_step_status: 'started',
+        current_node: 'model',
+        attempt: 1,
+        message: null,
+        progress: { completed: 2, total: 10, percent: 20 },
+        active_path: ['complexity_classify', 'hyde', 'model'],
+        ts: '2026-01-01T00:00:03.000Z',
+      },
+      traceExecutions: [
+        {
+          execution_id: 'task-2',
+          node_name: 'hyde',
+          node_label: 'HyDE 生成',
+          status: 'started',
+          started_at: '2026-01-01T00:00:01.000Z',
+          updated_at: '2026-01-01T00:00:01.000Z',
+        },
+        {
+          execution_id: 'task-1',
+          node_name: 'complexity_classify',
+          node_label: '复杂度分类',
+          status: 'started',
+          started_at: '2026-01-01T00:00:05.000Z',
+          updated_at: '2026-01-01T00:00:06.000Z',
+        },
+      ],
+    });
+
+    expect(executions.map((execution) => execution.execution_id)).toEqual(['task-2', 'task-1']);
+    expect(executions.map((execution) => execution.isActive)).toEqual([false, true]);
+  });
+
   it('derives stage summaries from execution timeline plus authoritative runState', () => {
     const stages = buildTraceStageSummaries({
       schema: {

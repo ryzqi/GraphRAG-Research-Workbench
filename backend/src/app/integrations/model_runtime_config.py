@@ -254,6 +254,9 @@ class ModelRuntimeConfigManager:
     def _build_fallback_snapshot() -> RuntimeModelSnapshot:
         providers: dict[ModelProvider, RuntimeProviderConfig] = {}
         for provider in _PROVIDER_PRIORITY:
+            # Runtime fallback is intentionally fail-closed: if config rows cannot be loaded,
+            # do not silently mark providers as usable. Keep provider ordering / thinking
+            # defaults stable so the UI and diagnostics still have deterministic structure.
             providers[provider] = RuntimeProviderConfig(
                 provider=provider,
                 enabled=False,

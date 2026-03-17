@@ -88,6 +88,32 @@ describe('KbChatFlowPanel', () => {
     expect(html).toContain('暂无关键输出');
   });
 
+  it('shows only the node name before expansion and hides summary and timing text', () => {
+    const html = renderToStaticMarkup(
+      createElement(KbChatFlowPanel, {
+        schema: MINIMAL_SCHEMA,
+        traceExecutions: [
+          {
+            execution_id: 'task-1',
+            node_name: 'complexity_classify',
+            node_label: '复杂度分类',
+            status: 'completed',
+            started_at: '2026-01-01T00:00:01.000Z',
+            updated_at: '2026-01-01T00:00:02.000Z',
+            latency_ms: 88,
+            output_items: [{ key: 'decision', label: '结论', value: '无需澄清' }],
+          },
+        ],
+      })
+    );
+
+    expect(html).toContain('复杂度分类');
+    expect(html).not.toContain('结论：无需澄清');
+    expect(html).not.toContain('开始');
+    expect(html).not.toContain('更新');
+    expect(html).not.toContain('耗时');
+  });
+
   it('does not render fake node progress labels in the timeline-first view', () => {
     const html = renderToStaticMarkup(
       createElement(KbChatFlowPanel, {
@@ -167,7 +193,7 @@ describe('KbChatFlowPanel', () => {
     expect(html).not.toContain('执行实例');
   });
 
-  it('renders repeated visible node executions in real timeline order instead of collapsing by node id', () => {
+  it('renders repeated visible node executions without showing collapsed output summaries', () => {
     const html = renderToStaticMarkup(
       createElement(KbChatFlowPanel, {
         schema: MINIMAL_SCHEMA,
@@ -195,6 +221,7 @@ describe('KbChatFlowPanel', () => {
     );
 
     expect(html.match(/复杂度分类/g)?.length).toBeGreaterThanOrEqual(2);
-    expect(html.indexOf('复杂问题')).toBeLessThan(html.indexOf('重新判定复杂问题'));
+    expect(html).not.toContain('结论：复杂问题');
+    expect(html).not.toContain('结论：重新判定复杂问题');
   });
 });
