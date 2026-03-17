@@ -9,6 +9,7 @@ import time
 import httpx
 
 from app.core.settings import get_settings
+from app.utils.text_sanitization import sanitize_visible_text
 
 _RETRYABLE_STATUS_CODES = frozenset({408, 409, 429, 500, 502, 503, 504})
 _OPTIONAL_STAGES = {
@@ -351,8 +352,20 @@ class EmbeddingClient:
             timeout_seconds=timeout_seconds,
             policy=policy,
         )
+        normalized_texts = [sanitize_visible_text(text) for text in texts]
+        if not normalized_texts or any(not text for text in normalized_texts):
+            raise EmbeddingCallError(
+                stage=call_policy.stage,
+                status_code=None,
+                retryable=False,
+                attempts=0,
+                batch_size=len(normalized_texts),
+                input_chars=sum(len(text) for text in normalized_texts),
+                breaker_state="closed",
+                message="Embedding 输入不能为空或仅包含不可见字符",
+            )
         url = f"{self._base_url}/embeddings"
-        payload: dict[str, object] = {"model": self._model, "input": texts}
+        payload: dict[str, object] = {"model": self._model, "input": normalized_texts}
         if self._expected_dim is not None:
             payload["dimensions"] = self._expected_dim
         headers = {"Authorization": f"Bearer {self._api_key}"}
@@ -363,7 +376,7 @@ class EmbeddingClient:
                 url=url,
                 payload=payload,
                 headers=headers,
-                texts=texts,
+                texts=normalized_texts,
                 policy=call_policy,
             )
 
@@ -373,6 +386,6 @@ class EmbeddingClient:
                 url=url,
                 payload=payload,
                 headers=headers,
-                texts=texts,
+                texts=normalized_texts,
                 policy=call_policy,
             )

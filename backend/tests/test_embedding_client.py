@@ -121,6 +121,27 @@ async def test_embed_includes_configured_dimensions_in_request(
 
 
 @pytest.mark.asyncio
+async def test_embed_rejects_invisible_only_input_without_http_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        embedding_client_module,
+        "get_settings",
+        lambda: _settings(embedding_dim=4),
+    )
+    http_client = _RecordingAsyncClient(
+        responses=[_FakeResponse({"data": [{"embedding": [0.1, 0.2, 0.3, 0.4]}]})],
+    )
+
+    client = embedding_client_module.EmbeddingClient(http_client=http_client)
+
+    with pytest.raises(Exception, match="不能为空"):
+        await client.embed(texts=["\u200b"], stage="query_main")
+
+    assert http_client.calls == []
+
+
+@pytest.mark.asyncio
 async def test_embed_raises_when_provider_dimension_mismatches_configuration(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

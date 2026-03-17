@@ -10,6 +10,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.core.settings import Settings, get_settings
+from app.utils.text_sanitization import has_visible_text
 
 
 class ChatSessionType(str, Enum):
@@ -210,6 +211,13 @@ class ChatRecentListResponse(BaseModel):
 class ChatMessageCreate(BaseModel):
     content: str = Field(..., min_length=1)
     client_request_id: str | None = Field(default=None, min_length=1, max_length=128)
+
+    @field_validator("content")
+    @classmethod
+    def _validate_content(cls, value: str) -> str:
+        if not has_visible_text(value):
+            raise ValueError("content 不能为空")
+        return value
 
     @field_validator("client_request_id", mode="before")
     @classmethod
