@@ -292,9 +292,9 @@ function Get-CeleryBeatCommand {
     return "uv run celery -A app.worker.celery_app beat --loglevel=INFO"
 }
 function Get-BackendApiCommand {
-    $command = "uv run uvicorn app.main:app --host 127.0.0.1 --port 8000 --loop asyncio:SelectorEventLoop"
+    $command = "uv run uvicorn app.main:app --host 127.0.0.1 --port 8000 --loop app.core.uvicorn_loop:windows_selector_loop_factory"
     if ($Verbose) {
-        Write-Host "后端 API 参数：--loop asyncio:SelectorEventLoop（Windows + psycopg 兼容）" -ForegroundColor DarkGray
+        Write-Host "后端 API 参数：--loop app.core.uvicorn_loop:windows_selector_loop_factory（Windows 强制 SelectorEventLoop，兼容 psycopg）" -ForegroundColor DarkGray
     }
     return $command
 }
@@ -516,7 +516,7 @@ if (-not $SkipFrontend) {
 Write-Host ""
 Write-Host "一键启动流程已完成，以下服务已启动（或启动中）:" -ForegroundColor Cyan
 if (-not $SkipInfra) { Write-Host " - 基础依赖：Podman compose (infra/up.ps1)" -ForegroundColor Cyan }
-if (-not $SkipBackend) { Write-Host " - 后端 API：uvicorn 生产参数监听 8000（Windows 使用 SelectorEventLoop）" -ForegroundColor Cyan }
+if (-not $SkipBackend) { Write-Host " - 后端 API：uvicorn 生产参数监听 8000（Windows 启动期强制 SelectorEventLoopPolicy）" -ForegroundColor Cyan }
 if (-not $SkipWorker) {
     Write-Host " - Celery Beat：独立进程（周期补偿调度）" -ForegroundColor Cyan
     Write-Host " - Celery Worker(dispatch)：队列 dispatch（默认并发 2）" -ForegroundColor Cyan

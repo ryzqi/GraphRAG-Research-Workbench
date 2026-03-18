@@ -45,7 +45,7 @@ pwsh -ExecutionPolicy Bypass -File .\scripts\start_all.ps1
 - **迁移已整合为单一基线（2026-02-18）**：若你的本地数据库仍来自旧迁移链/旧结构，请先重置 `public` schema，再执行 `cd backend; uv run alembic upgrade head`。
 - 脚本默认按**Windows 生产模式**启动：
   - 前端会先执行 `npm run build` 再启动 `next start`。
-  - 后端使用无 `--reload` 的 uvicorn 参数，并固定 `--loop asyncio:SelectorEventLoop`（兼容 psycopg 异步连接）。
+  - 后端使用无 `--reload` 的 uvicorn 参数，并固定 `--loop app.core.uvicorn_loop:windows_selector_loop_factory`，在 Windows 启动期强制 `SelectorEventLoop`，兼容 psycopg 异步连接。
   - Worker 默认 `--pool=threads`，并发默认 `min(逻辑 CPU 核数, 8)`，`--prefetch-multiplier=1`；可通过 `CELERY_*_WORKER_POOL` / `CELERY_*_WORKER_CONCURRENCY` / `CELERY_*_WORKER_PREFETCH_MULTIPLIER` 覆盖。
   - Celery 默认关闭事件发送（`CELERY_WORKER_SEND_TASK_EVENTS=false`、`CELERY_TASK_SEND_SENT_EVENT=false`）以降低常驻开销；排障时再临时开启。
   - Windows + threads 默认不设置全局 soft/hard time limit（`CELERY_TASK_SOFT_TIME_LIMIT_SECONDS=0`、`CELERY_TASK_TIME_LIMIT_SECONDS=0`）；若迁移到 Linux prefork 再按需开启。
@@ -73,7 +73,7 @@ pwsh -ExecutionPolicy Bypass -File .\scripts\start_all.ps1
 ```powershell
 cd backend
 uv sync
-uv run uvicorn app.main:app --host 127.0.0.1 --port 8000 --loop asyncio:SelectorEventLoop
+uv run uvicorn app.main:app --host 127.0.0.1 --port 8000 --loop app.core.uvicorn_loop:windows_selector_loop_factory
 ```
 
 - 文档：`http://localhost:8000/docs`
