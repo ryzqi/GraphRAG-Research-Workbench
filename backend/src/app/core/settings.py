@@ -560,6 +560,7 @@ class Settings(BaseSettings):
 
     @field_validator(
         "database_url",
+        "memory_store_url",
         "redis_url",
         "celery_broker_url",
         "celery_result_backend",

@@ -7,16 +7,11 @@ from contextlib import AbstractContextManager
 
 from langgraph.store.base import BaseStore
 from langgraph.store.memory import InMemoryStore
-from langgraph.store.postgres import PostgresStore
 
-from app.core.settings import Settings, get_settings
+from app.core.memory_store import StoreManager
+from app.core.settings import get_settings
 
 logger = logging.getLogger(__name__)
-
-
-def _resolve_store_url(settings: Settings) -> str:
-    url = settings.memory_store_url or settings.database_url
-    return url.replace("postgresql+asyncpg://", "postgresql://")
 
 
 class DeepAgentsStoreManager:
@@ -44,13 +39,13 @@ class DeepAgentsStoreManager:
             raise ValueError(f"不支持的记忆后端类型: {settings.memory_store_backend}")
 
         try:
-            store_ctx = PostgresStore.from_conn_string(_resolve_store_url(settings))
-            cls._store_ctx = store_ctx
-            cls._store = store_ctx.__enter__()
-            cls._store.setup()
+            # Reuse the already-initialized async LangGraph store instead of running a
+            # second synchronous PostgresStore bootstrap during app startup.
+            cls._store = StoreManager.get_store()
+            cls._store_ctx = None
             cls._initialized = True
         except Exception:
-            logger.exception("初始化 DeepAgents Store 失败，已降级为 InMemoryStore。")
+            logger.exception("复用 LangGraph Store 初始化 DeepAgents Store 失败，已降级为 InMemoryStore。")
             cls._store = InMemoryStore()
             cls._store_ctx = None
             cls._initialized = True

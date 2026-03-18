@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from uvicorn.config import Config
 
 
 def test_start_all_uses_custom_windows_selector_loop_factory() -> None:
@@ -23,7 +24,25 @@ def test_start_all_uses_custom_windows_selector_loop_factory() -> None:
 def test_windows_selector_loop_factory_returns_selector_event_loop() -> None:
     from app.core.uvicorn_loop import windows_selector_loop_factory
 
-    loop_factory = windows_selector_loop_factory(use_subprocess=False)
+    loop = windows_selector_loop_factory()
+    try:
+        assert isinstance(loop, asyncio.SelectorEventLoop)
+    finally:
+        loop.close()
+
+
+@pytest.mark.skipif(
+    not sys.platform.startswith("win"),
+    reason="Windows-specific uvicorn custom loop contract test",
+)
+def test_uvicorn_config_custom_loop_factory_returns_selector_event_loop() -> None:
+    config = Config(
+        "app.main:app",
+        loop="app.core.uvicorn_loop:windows_selector_loop_factory",
+    )
+
+    loop_factory = config.get_loop_factory()
+    assert loop_factory is not None
     loop = loop_factory()
     try:
         assert isinstance(loop, asyncio.SelectorEventLoop)
