@@ -78,6 +78,7 @@ from app.services.streaming import (
     extract_answer_text,
     extract_stream_delta,
 )
+from app.utils.text_sanitization import sanitize_visible_text
 from app.agents.kb_chat_contracts import (
     KB_CHAT_CUSTOM_EVENT_TYPES,
     STATE_SCHEMA_V3,
@@ -398,7 +399,7 @@ class KbChatService:
         redis = getattr(self, "_redis", None)
         if redis is None:
             return None
-        normalized_question = str(question or "").strip()
+        normalized_question = sanitize_visible_text(str(question or ""))
         if not normalized_question:
             return None
 
@@ -510,7 +511,7 @@ class KbChatService:
         redis = getattr(self, "_redis", None)
         if redis is None:
             return
-        normalized_question = str(question or "").strip()
+        normalized_question = sanitize_visible_text(str(question or ""))
         normalized_answer = str(answer or "").strip()
         if not normalized_question or not normalized_answer:
             return

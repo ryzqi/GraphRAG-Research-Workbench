@@ -37,6 +37,7 @@ from app.core.settings import Settings, get_settings
 from app.integrations.chat_model_factory import create_chat_model
 from app.prompts import get_prompt_loader
 from app.schemas.query_enhancement import QueryItem
+from app.utils.text_sanitization import sanitize_visible_text
 
 logger = logging.getLogger(__name__)
 
@@ -117,7 +118,7 @@ class MergeContextResolutionResult:
 
 
 def _normalize_whitespace(text: str) -> str:
-    return re.sub(r"\\s+", " ", text).strip()
+    return re.sub(r"\\s+", " ", sanitize_visible_text(text)).strip()
 
 
 def _normalize_single_line(text: str) -> str:

@@ -121,8 +121,13 @@ async def test_embed_includes_configured_dimensions_in_request(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "text",
+    ["\u200b", "\u200e", "\u200f", "\u2066", "\u2069", "\u00ad"],
+)
 async def test_embed_rejects_invisible_only_input_without_http_request(
     monkeypatch: pytest.MonkeyPatch,
+    text: str,
 ) -> None:
     monkeypatch.setattr(
         embedding_client_module,
@@ -136,7 +141,7 @@ async def test_embed_rejects_invisible_only_input_without_http_request(
     client = embedding_client_module.EmbeddingClient(http_client=http_client)
 
     with pytest.raises(Exception, match="不能为空"):
-        await client.embed(texts=["\u200b"], stage="query_main")
+        await client.embed(texts=[text], stage="query_main")
 
     assert http_client.calls == []
 

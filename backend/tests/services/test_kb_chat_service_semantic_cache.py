@@ -162,6 +162,35 @@ async def test_semantic_cache_lookup_swallows_untyped_embedding_runtime_errors()
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("question", ["\u200e", "\u2066", "\u00ad"])
+async def test_semantic_cache_lookup_skips_invisible_only_question_before_embedding(
+    question: str,
+) -> None:
+    redis = _FakeRedis(
+        payload=json.dumps(
+            [
+                {
+                    "question": "cache query",
+                    "answer": "cached answer",
+                    "embedding": [0.9, 0.1],
+                }
+            ]
+        )
+    )
+    embedding = _RecordingEmbeddingClient()
+    service = _build_service(redis=redis, embedding=embedding)
+
+    result = await service._semantic_cache_lookup(
+        session=_build_session(),
+        kb_chat_config=_FakeConfig(),
+        question=question,
+    )
+
+    assert result is None
+    assert embedding.calls == []
+
+
+@pytest.mark.asyncio
 async def test_write_semantic_cache_entry_skips_breaker_open_embedding_failures_with_write_stage() -> None:
     redis = _FakeRedis()
     embedding = _RecordingEmbeddingClient(
@@ -192,5 +221,31 @@ async def test_write_semantic_cache_entry_skips_breaker_open_embedding_failures_
             "policy": None,
         }
     ]
+    assert redis.get_calls == []
+    assert redis.set_calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("question", ["\u200e", "\u2066", "\u00ad"])
+async def test_write_semantic_cache_entry_skips_invisible_only_question_before_embedding(
+    question: str,
+) -> None:
+    redis = _FakeRedis()
+    embedding = _RecordingEmbeddingClient()
+    service = _build_service(redis=redis, embedding=embedding)
+
+    await service._write_semantic_cache_entry(
+        session=_build_session(),
+        kb_chat_config=_FakeConfig(),
+        question=question,
+        answer="cache answer",
+        evidence=[],
+        confidence_score=0.91,
+        confidence_level="high",
+        stage_summaries={"answer": {"status": "ok"}},
+        metrics={"route_consistency_rate": 100.0},
+    )
+
+    assert embedding.calls == []
     assert redis.get_calls == []
     assert redis.set_calls == []
