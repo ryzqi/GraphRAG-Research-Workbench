@@ -303,7 +303,6 @@ class KbChatInternalState(KbChatInternalStateBase, total=False):
     doc_gate_round: int
     doc_gate_runs: Annotated[list[dict[str, Any]], add]
     answer_review_runs: Annotated[list[AnswerReviewRun], add]
-    cove_state: dict[str, Any]
     confidence_score: float
     confidence_level: ConfidenceLevel
     reflection: ReflectionResult
@@ -462,11 +461,6 @@ class CompressContextInput(TypedDict, total=False):
     stage_summaries: dict[str, Any]
 
 
-class DocGateDispatchInput(TypedDict, total=False):
-    doc_gate_round: int
-    doc_gate_task: dict[str, Any]
-
-
 class DocGateContextInput(TypedDict, total=False):
     user_input: str
     rewrite_input_query: str
@@ -476,14 +470,6 @@ class DocGateContextInput(TypedDict, total=False):
     doc_gate_round: int
     doc_gate_task: dict[str, Any]
     doc_gate_runs: list[dict[str, Any]]
-
-
-class DocGateFuseInput(TypedDict, total=False):
-    doc_gate_round: int
-    doc_gate_task: dict[str, Any]
-    doc_gate_runs: list[dict[str, Any]]
-    stage_summaries: dict[str, Any]
-
 
 class DocGateRouteInput(TypedDict, total=False):
     doc_gate_round: int
@@ -559,30 +545,6 @@ class AnswerReviewFuseInput(TypedDict, total=False):
     draft_answer: str
     stage_summaries: dict[str, Any]
 
-
-class CoveCheckInput(TypedDict, total=False):
-    user_input: str
-    rewrite_input_query: str
-    coref_query: str
-    normalized_query: str
-    stage_summaries: dict[str, Any]
-
-
-class ChainOfVerificationInput(TypedDict, total=False):
-    draft_answer: str
-    final_context: str
-    stage_summaries: dict[str, Any]
-
-
-class ClaimCitationCheckInput(TypedDict, total=False):
-    draft_answer: str
-    final_context: str
-    cove_state: dict[str, Any]
-    reflection: ReflectionResult
-    loop_counts: LoopCounts
-    stage_summaries: dict[str, Any]
-
-
 class AnswerRepairInput(TypedDict, total=False):
     user_input: str
     rewrite_input_query: str
@@ -622,7 +584,6 @@ class ConfidenceCalibrateInput(TypedDict, total=False):
     routing_decisions: dict[str, RoutingDecision]
     reflection: ReflectionResult
     retrieval_diagnostics: dict[str, float]
-    cove_state: dict[str, Any]
     loop_counts: LoopCounts
     metrics: dict[str, Any]
     stage_summaries: dict[str, Any]

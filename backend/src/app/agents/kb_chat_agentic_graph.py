@@ -1410,6 +1410,7 @@ class KbChatAgenticGraph:
         retrieval_subgraph = build_retrieval_subgraph(
             settings=settings,
             kb_tool=kb_tool,
+            chat_model=chat_model,
         )
         evidence_gate_subgraph = build_evidence_gate_subgraph(settings=settings)
         answer_subgraph = build_answer_subgraph(settings=settings, chat_model=chat_model)

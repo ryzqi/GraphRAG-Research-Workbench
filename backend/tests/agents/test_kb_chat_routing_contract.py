@@ -108,36 +108,15 @@ def test_doc_gate_route_writes_doc_gate_routing_decision() -> None:
                     "reason": "passed",
                     "extra": {"tokens": 120, "evidence_count": 2},
                 },
-                {
-                    "gate": "answerability",
-                    "round": 1,
-                    "passed": True,
-                    "score": 0.7,
-                    "reason": "passed",
-                    "extra": {"overlap": 2, "query_terms": 3},
-                },
-                {
-                    "gate": "conflict",
-                    "round": 1,
-                    "passed": True,
-                    "score": 1.0,
-                    "reason": "passed",
-                    "extra": {"conflict_level": "none", "conflict_pairs": []},
-                },
             ],
             "reflection": {},
-            "stage_summaries": {
-                "doc_gate_fuse": {
-                    "decision": "retry_conflict",
-                    "score": 0.2,
-                }
-            },
+            "stage_summaries": {},
         },
         settings=_settings(),
     )
 
     assert routed["routing_decisions"]["doc_gate"]["next_node"] == "answer_subgraph"
-    assert routed["routing_decisions"]["doc_gate"]["decision_source"] == "parallel_gate"
+    assert routed["routing_decisions"]["doc_gate"]["decision_source"] == "sufficiency_gate"
     assert routed["stage_summaries"]["doc_gate_route"]["decision"] == "pass"
 
 
@@ -146,8 +125,8 @@ def test_doc_gate_route_ignores_stage_summary_as_control_plane_input() -> None:
         {
             "reflection": {},
             "stage_summaries": {
-                "doc_gate_fuse": {
-                    "decision": "pass",
+                "doc_gate_sufficiency": {
+                    "passed": True,
                     "score": 0.8,
                 }
             },

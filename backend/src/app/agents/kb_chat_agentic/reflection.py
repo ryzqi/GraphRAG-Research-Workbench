@@ -1059,7 +1059,7 @@ def route_after_answer_review(state: AnswerRoutingDecisionInput, settings: Setti
 
 
 def confidence_calibrate(state: ConfidenceCalibrateInput) -> dict[str, Any]:
-    """Calibrate final confidence from gate/review/citation/retrieval/CoVe signals."""
+    """Calibrate final confidence from gate/review/citation/retrieval signals."""
     stage_summaries = state.get("stage_summaries")
     if not isinstance(stage_summaries, dict):
         stage_summaries = {}
@@ -1077,17 +1077,6 @@ def confidence_calibrate(state: ConfidenceCalibrateInput) -> dict[str, Any]:
         if isinstance(reflection, dict)
         else 0.0
     )
-    cove_state = state.get("cove_state")
-    cove_passed = (
-        bool(cove_state.get("passed"))
-        if isinstance(cove_state, dict) and cove_state.get("passed") is not None
-        else True
-    )
-    claim_check_passed = (
-        bool(cove_state.get("claim_check_passed"))
-        if isinstance(cove_state, dict) and cove_state.get("claim_check_passed") is not None
-        else True
-    )
     loop_counts = state.get("loop_counts")
     retry_counts = loop_counts if isinstance(loop_counts, dict) else {}
     total_retries = max(
@@ -1097,10 +1086,23 @@ def confidence_calibrate(state: ConfidenceCalibrateInput) -> dict[str, Any]:
     )
     review_signal = max(0.0, min(1.0, review_conf * max(0.0, 1.0 - (0.2 * total_retries))))
 
-    citation_coverage = float(
-        (cove_state.get("claim_coverage") if isinstance(cove_state, dict) else 0.0)
-        or 0.0
+    review_breakdown = (
+        reflection.get("review_breakdown")
+        if isinstance(reflection, dict) and isinstance(reflection.get("review_breakdown"), dict)
+        else {}
     )
+    citation_review = (
+        review_breakdown.get("citation")
+        if isinstance(review_breakdown.get("citation"), dict)
+        else {}
+    )
+    citation_coverage = (
+        1.0
+        if citation_review.get("passed") is True
+        else float(citation_review.get("confidence") or 0.0)
+    )
+    if citation_coverage <= 0.0 and isinstance(reflection, dict) and reflection.get("review_passed") is True:
+        citation_coverage = 1.0
     citation_coverage = max(0.0, min(1.0, citation_coverage))
 
     retrieval_diagnostics = state.get("retrieval_diagnostics")
@@ -1118,32 +1120,20 @@ def confidence_calibrate(state: ConfidenceCalibrateInput) -> dict[str, Any]:
             min(1.0, (coverage * 0.45) + (novelty * 0.30) + ((1.0 - conflict) * 0.25)),
         )
 
-    if isinstance(cove_state, dict) and bool(cove_state.get("enabled")) and bool(cove_state.get("triggered")):
-        raw_cove_signal = cove_state.get("supported_ratio")
-        if raw_cove_signal is None:
-            raw_cove_signal = 1.0 if cove_passed else 0.0
-        cove_signal = max(0.0, min(1.0, float(raw_cove_signal or 0.0)))
-    else:
-        cove_signal = 1.0
-
-    if not claim_check_passed:
-        citation_coverage *= 0.8
     if gate_reason == "retry":
         gate_signal *= 0.85
 
     weights = {
-        "gate_signal": Decimal("0.30"),
-        "review_signal": Decimal("0.20"),
-        "citation_coverage": Decimal("0.25"),
+        "gate_signal": Decimal("0.35"),
+        "review_signal": Decimal("0.35"),
+        "citation_coverage": Decimal("0.15"),
         "retrieval_signal": Decimal("0.15"),
-        "cove_signal": Decimal("0.10"),
     }
     weighted_sum = (
         Decimal(str(max(0.0, min(1.0, gate_signal)))) * weights["gate_signal"]
         + Decimal(str(review_signal)) * weights["review_signal"]
         + Decimal(str(citation_coverage)) * weights["citation_coverage"]
         + Decimal(str(retrieval_signal)) * weights["retrieval_signal"]
-        + Decimal(str(cove_signal)) * weights["cove_signal"]
     )
     confidence_score = float(
         max(Decimal("0.0"), min(Decimal("1.0"), weighted_sum)).quantize(
@@ -1163,7 +1153,6 @@ def confidence_calibrate(state: ConfidenceCalibrateInput) -> dict[str, Any]:
         "review_signal": round(review_signal, 4),
         "citation_coverage": round(citation_coverage, 4),
         "retrieval_signal": round(retrieval_signal, 4),
-        "cove_signal": round(cove_signal, 4),
         "total_retries": total_retries,
     }
     stage_summaries = {
@@ -1175,15 +1164,8 @@ def confidence_calibrate(state: ConfidenceCalibrateInput) -> dict[str, Any]:
             "review_confidence": round(review_conf, 4),
             "citation_coverage": round(citation_coverage, 4),
             "retrieval_signal": round(retrieval_signal, 4),
-            "cove_signal": round(cove_signal, 4),
             "signals": signal_breakdown,
-            "reason": (
-                "weighted_multi_signal"
-                if claim_check_passed and cove_passed
-                else "penalized_after_validation"
-            ),
-            "cove_passed": cove_passed,
-            "claim_check_passed": claim_check_passed,
+            "reason": "weighted_multi_signal",
             "completed_at": now_iso(),
         },
     }

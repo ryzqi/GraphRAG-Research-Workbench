@@ -26,8 +26,6 @@ _NODE_SUMMARY_KEY_MAP: dict[str, str] = {
 
 _DOC_GATE_NODE_TO_GATE: dict[str, str] = {
     "doc_gate_sufficiency": "sufficiency",
-    "doc_gate_answerability": "answerability",
-    "doc_gate_conflict": "conflict",
 }
 
 _ANSWER_REVIEW_NODE_TO_CHECK: dict[str, str] = {
@@ -38,8 +36,6 @@ _ANSWER_REVIEW_NODE_TO_CHECK: dict[str, str] = {
 
 _GATE_LABELS: dict[str, str] = {
     "sufficiency": "证据充分度",
-    "answerability": "可回答性",
-    "conflict": "证据冲突检测",
 }
 
 _REVIEW_CHECK_LABELS: dict[str, str] = {
@@ -73,11 +69,7 @@ _BUSINESS_LABEL_FALLBACKS: dict[str, str] = {
     "retrieve": "知识检索",
     "context_compress": "上下文压缩",
     "evidence_gate_subgraph": "证据门控子图",
-    "doc_gate_dispatch": "文档门控分发",
     "doc_gate_sufficiency": "证据充分度",
-    "doc_gate_answerability": "可回答性",
-    "doc_gate_conflict": "证据冲突检测",
-    "doc_gate_fuse": "门控结果汇总",
     "doc_gate_route": "文档判定",
     "transform_query": "查询改写",
     "answer_subgraph": "答案子图",
@@ -87,9 +79,6 @@ _BUSINESS_LABEL_FALLBACKS: dict[str, str] = {
     "answer_review_factual": "事实正确性审查",
     "answer_review_answerability": "可回答性审查",
     "answer_review_fuse": "审查结果汇总",
-    "cove_check": "高风险验证判定",
-    "chain_of_verification": "验证链",
-    "claim_citation_check": "断言引用校验",
     "answer_repair": "答案修复",
     "answer_commit": "答案提交",
     "force_exit": "结束",
@@ -154,11 +143,7 @@ _INPUT_CONTRACTS: dict[str, list[str]] = {
     "retrieve": ["query_items"],
     "context_compress": ["retrieved_evidence"],
     "evidence_gate_subgraph": ["normalized_query", "current_evidence"],
-    "doc_gate_dispatch": ["normalized_query", "current_evidence"],
     "doc_gate_sufficiency": ["current_evidence"],
-    "doc_gate_answerability": ["current_evidence"],
-    "doc_gate_conflict": ["current_evidence"],
-    "doc_gate_fuse": ["gate_results"],
     "doc_gate_route": ["normalized_query", "gate_results"],
     "transform_query": ["normalized_query"],
     "answer_subgraph": ["normalized_query", "current_evidence"],
@@ -168,9 +153,6 @@ _INPUT_CONTRACTS: dict[str, list[str]] = {
     "answer_review_factual": ["draft_answer"],
     "answer_review_answerability": ["draft_answer"],
     "answer_review_fuse": ["review_results"],
-    "cove_check": ["draft_answer"],
-    "chain_of_verification": ["draft_answer"],
-    "claim_citation_check": ["draft_answer"],
     "answer_repair": ["draft_answer"],
     "answer_commit": ["candidate_answer"],
     "force_exit": ["exit_action", "candidate_answer"],
@@ -199,11 +181,7 @@ _OUTPUT_CONTRACTS: dict[str, list[str]] = {
     "retrieve": ["retrieved_evidence"],
     "context_compress": ["compressed_evidence"],
     "evidence_gate_subgraph": ["decision", "reason", "next_node_label"],
-    "doc_gate_dispatch": ["dispatch_targets"],
     "doc_gate_sufficiency": ["decision", "reason", "next_node_label"],
-    "doc_gate_answerability": ["decision", "reason", "next_node_label"],
-    "doc_gate_conflict": ["decision", "reason", "next_node_label"],
-    "doc_gate_fuse": ["decision", "reason", "next_node_label"],
     "doc_gate_route": ["decision", "reason", "next_node_label"],
     "transform_query": ["normalized_query"],
     "answer_subgraph": ["decision", "reason", "next_node_label"],
@@ -213,9 +191,6 @@ _OUTPUT_CONTRACTS: dict[str, list[str]] = {
     "answer_review_factual": ["decision", "reason", "next_node_label"],
     "answer_review_answerability": ["decision", "reason", "next_node_label"],
     "answer_review_fuse": ["decision", "reason", "next_node_label"],
-    "cove_check": ["decision", "reason", "next_node_label"],
-    "chain_of_verification": ["decision", "reason", "next_node_label"],
-    "claim_citation_check": ["decision", "reason", "next_node_label"],
     "answer_repair": ["repaired_answer"],
     "answer_commit": ["final_answer"],
     "force_exit": ["final_answer", "reason", "next_node_label"],
@@ -472,7 +447,7 @@ def _build_input_value_map(
         values["retrieved_evidence"] = _format_evidence_from_snapshot(snapshot)
     if node_name == "retrieve_subquery":
         values["subquery"] = _pick_text(current_subquery_run, "query") or values["subquery"]
-    if node_name in {"doc_gate_fuse", "doc_gate_route"}:
+    if node_name == "doc_gate_route":
         values["gate_results"] = _format_gate_results(snapshot)
     if node_name == "answer_review_fuse":
         values["review_results"] = _format_review_results(snapshot)
@@ -589,23 +564,8 @@ def _resolve_dispatch_targets(
     snapshot: Mapping[str, Any],
     node_label_resolver: NodeLabelResolver | None,
 ) -> list[str] | None:
-    trace = _resolve_trace_command(snapshot)
-    raw_targets = trace.get("goto_targets")
     if node_name == "dispatch_subqueries":
         return _format_query_items(snapshot.get("query_items"))
-    if node_name == "doc_gate_dispatch":
-        if isinstance(raw_targets, list) and raw_targets:
-            targets = [
-                _resolve_node_label(str(target), node_label_resolver=node_label_resolver)
-                for target in raw_targets
-                if isinstance(target, str) and target.strip()
-            ]
-            return [target for target in targets if target]
-        return [
-            _GATE_LABELS["sufficiency"],
-            _GATE_LABELS["answerability"],
-            _GATE_LABELS["conflict"],
-        ]
     return None
 
 
@@ -641,7 +601,7 @@ def _format_gate_results(snapshot: Mapping[str, Any]) -> list[str] | None:
         return None
     active_round = _resolve_doc_gate_round(snapshot)
     result: list[str] = []
-    for gate in ("sufficiency", "answerability", "conflict"):
+    for gate in ("sufficiency",):
         match = None
         for item in reversed(runs):
             if not isinstance(item, dict) or str(item.get("gate") or "") != gate:
@@ -838,7 +798,7 @@ def _resolve_decision_triplet(
         reason = _pick_text(summary, "reason") or "已完成检索并进入证据判断"
         return decision, reason, next_node_label or "下游节点未知"
 
-    if node_name in {"evidence_gate_subgraph", "doc_gate_fuse", "doc_gate_route"}:
+    if node_name in {"evidence_gate_subgraph", "doc_gate_route"}:
         routing = _resolve_routing_decision(snapshot, "doc_gate")
         raw = (
             _pick_text(summary, "decision")
@@ -849,13 +809,13 @@ def _resolve_decision_triplet(
         reason = _pick_text(routing, "reason") or _pick_text(summary, "reason") or default_reason
         return decision, reason, next_node_label or "下游节点未知"
 
-    if node_name in {"doc_gate_sufficiency", "doc_gate_answerability", "doc_gate_conflict"}:
+    if node_name == "doc_gate_sufficiency":
         run = _resolve_doc_gate_run(snapshot, node_name)
         passed = run.get("passed")
         decision = "通过" if passed is True else "未通过" if passed is False else "未返回明确结论"
         reason = _pick_text(run, "reason") or default_reason
         return decision, reason, next_node_label or _resolve_node_label(
-            "doc_gate_fuse",
+            "doc_gate_route",
             node_label_resolver=node_label_resolver,
         ) or "下游节点未知"
 
@@ -889,28 +849,6 @@ def _resolve_decision_triplet(
         else:
             raw = _pick_text(summary, "next_step") or _pick_text(trace, "goto")
             decision = _answer_route_decision_text(raw)
-        reason = _pick_text(summary, "reason") or default_reason
-        return decision, reason, next_node_label or "下游节点未知"
-
-    if node_name == "cove_check":
-        enabled = summary.get("enabled")
-        if enabled is True:
-            decision = "需要验证链"
-            reason = "识别为高风险问题"
-        else:
-            decision = "跳过验证链"
-            reason = "低风险问题，无需验证链"
-        return decision, reason, next_node_label or "下游节点未知"
-
-    if node_name == "chain_of_verification":
-        passed = summary.get("passed")
-        decision = "验证通过" if passed is True else "验证未通过" if passed is False else "未返回明确结论"
-        reason = _pick_text(summary, "reason") or default_reason
-        return decision, reason, next_node_label or "下游节点未知"
-
-    if node_name == "claim_citation_check":
-        passed = summary.get("passed")
-        decision = "引用校验通过" if passed is True else "引用校验未通过" if passed is False else "未返回明确结论"
         reason = _pick_text(summary, "reason") or default_reason
         return decision, reason, next_node_label or "下游节点未知"
 
@@ -969,9 +907,7 @@ def _resolve_next_node_label(
         ]
     )
 
-    if node_name in {"doc_gate_sufficiency", "doc_gate_answerability", "doc_gate_conflict"}:
-        candidates.append("doc_gate_fuse")
-    elif node_name == "doc_gate_fuse":
+    if node_name == "doc_gate_sufficiency":
         candidates.append("doc_gate_route")
     elif node_name in {
         "answer_review_citation",
@@ -979,14 +915,6 @@ def _resolve_next_node_label(
         "answer_review_answerability",
     }:
         candidates.append("answer_review_fuse")
-    elif node_name == "cove_check":
-        enabled = summary.get("enabled")
-        candidates.append("chain_of_verification" if enabled else "claim_citation_check")
-    elif node_name == "chain_of_verification":
-        candidates.append("claim_citation_check")
-    elif node_name == "claim_citation_check":
-        passed = summary.get("passed")
-        candidates.append("answer_commit" if passed is True else "answer_repair")
 
     for candidate in candidates:
         label = _resolve_node_label(candidate, node_label_resolver=node_label_resolver)
@@ -1063,9 +991,6 @@ def _answer_route_decision_text(raw: str | None) -> str:
     mapping = {
         "confidence_calibrate": "审查通过",
         "answer_commit": "审查通过",
-        "cove_check": "进入进一步验证",
-        "chain_of_verification": "进入进一步验证",
-        "claim_citation_check": "进入进一步验证",
         "answer_review_fuse": "进入审查汇总",
         "answer_repair": "需要修复答案",
         "transform_query": "需要继续检索",
@@ -1098,11 +1023,8 @@ def _humanize_decision(raw: str | None) -> str | None:
         "retrieval_subgraph": "进入检索流程",
         "evidence_gate_subgraph": "进入证据门控",
         "answer_subgraph": "进入答案生成",
-        "doc_gate_fuse": "进入门控汇总",
         "doc_gate_route": "进入文档判定",
         "answer_review_fuse": "进入审查汇总",
-        "chain_of_verification": "进入验证链",
-        "claim_citation_check": "进入引用校验",
         "answer_repair": "进入答案修复",
         "answer_commit": "提交答案",
         "confidence_calibrate": "进入最终收口",

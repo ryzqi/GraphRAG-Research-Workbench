@@ -80,31 +80,12 @@ class ContextBuilder:
                 "dropped_tokens": 0,
             }
 
-        max_tokens = self._normalize_budget(self._settings.context_retrieval_max_tokens)
         included: list[RetrievalResult] = []
         used_tokens = 0
         total_tokens = sum(self._chunk_tokens(r) for r in results)
-        first_override: str | None = None
-        text_truncated = False
 
         for r in results:
             chunk_tokens = self._chunk_tokens(r)
-            if max_tokens is not None and used_tokens + chunk_tokens > max_tokens:
-                if not included:
-                    truncated_text, truncated_tokens, truncated = self._truncate_text(
-                        self._result_text(r), max_tokens
-                    )
-                    included.append(
-                        RetrievalResult(
-                            chunk=r.chunk,
-                            score=r.score,
-                            context_text=r.context_text,
-                        )
-                    )
-                    first_override = truncated_text
-                    used_tokens = truncated_tokens
-                    text_truncated = truncated
-                break
             included.append(r)
             used_tokens += chunk_tokens
 
@@ -113,7 +94,7 @@ class ContextBuilder:
         else:
             context_parts: list[str] = []
             for i, r in enumerate(included, 1):
-                text = first_override if i == 1 and first_override else self._result_text(r)
+                text = self._result_text(r)
                 label = self._result_citation_label(r, index=i)
                 context_parts.append(f"[{label}] {text}")
             context = "\n\n".join(context_parts)
@@ -124,7 +105,7 @@ class ContextBuilder:
             "items": len(included),
         }
         truncation = {
-            "truncated": len(included) < len(results) or text_truncated,
+            "truncated": False,
             "dropped_items": max(len(results) - len(included), 0),
             "dropped_tokens": max(total_tokens - used_tokens, 0),
         }
@@ -224,7 +205,6 @@ class ContextBuilder:
             "history_messages": self._normalize_budget(self._settings.context_history_max_messages),
             "history_tokens": self._normalize_budget(self._settings.context_history_max_tokens),
             "summary_tokens": self._normalize_budget(self._settings.summary_max_tokens),
-            "retrieval_tokens": self._normalize_budget(self._settings.context_retrieval_max_tokens),
             "tool_tokens": self._normalize_budget(self._settings.context_tool_max_tokens),
         }
 

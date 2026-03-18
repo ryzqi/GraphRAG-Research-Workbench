@@ -2,56 +2,41 @@
 
 from __future__ import annotations
 
-from collections import Counter
+import asyncio
 from functools import partial
 import re
+import time
 from typing import Any, TypedDict
 
+from langchain.messages import HumanMessage, SystemMessage
 from langchain.tools import BaseTool
+from langchain_core.language_models.chat_models import BaseChatModel
 from langgraph.graph import END, StateGraph
+from langgraph.runtime import Runtime
 from langgraph.types import RetryPolicy
 
+from app.agents.kb_chat_agentic.budget import now_iso
 from app.agents.kb_chat_agentic.reflection import (
     dispatch_subqueries,
     kb_retrieve_context,
     merge_subquery_context,
     retrieve_subquery_context,
 )
-from app.agents.kb_chat_trace_nodes import (
-    extend_kb_chat_node_metadata,
-    wrap_kb_chat_node_with_io,
-)
 from app.agents.kb_chat_agentic_state import (
     CompressContextInput,
     KbChatInternalState,
     RetrievalBudgetPlanInput,
 )
+from app.agents.kb_chat_trace_nodes import (
+    extend_kb_chat_node_metadata,
+    wrap_kb_chat_node_with_io,
+)
 from app.core.settings import Settings
+from app.prompts import get_prompt_loader
+from app.services.streaming import extract_answer_text
 from app.utils.token_counter import count_tokens_approximately
 
-_TERM_RE = re.compile(r"[\u4e00-\u9fffA-Za-z0-9_]{2,}")
-_EVIDENCE_BLOCK_RE = re.compile(
-    r"^\[([^\[\]\n]{1,128})\]\s*(.*?)(?=^\[[^\[\]\n]{1,128}\]\s|\Z)",
-    re.MULTILINE | re.DOTALL,
-)
-_SENTENCE_SPLIT_RE = re.compile(r"(?<=[。！？!?；;])")
-_GENERIC_QUERY_TERMS = {
-    "什么",
-    "为何",
-    "为啥",
-    "如何",
-    "怎样",
-    "怎么",
-    "是否",
-    "能否",
-    "可以",
-    "请问",
-    "有关",
-    "关于",
-    "多少",
-    "哪些",
-    "使用",
-}
+_EVIDENCE_LABEL_RE = re.compile(r"\[[^\[\]\n]{1,128}\]")
 
 
 class KbChatGraphContext(TypedDict, total=False):
@@ -161,251 +146,105 @@ def _resolve_query_text(state: dict[str, Any]) -> str:
     return ""
 
 
-def _extract_terms(text: str, *, drop_generic: bool = False) -> set[str]:
-    terms: set[str] = set()
-    for match in _TERM_RE.finditer(text or ""):
-        token = match.group(0).strip().lower()
-        if len(token) < 2:
-            continue
-        if not (drop_generic and token in _GENERIC_QUERY_TERMS):
-            terms.add(token)
-        cjk_only = "".join(ch for ch in token if "\u4e00" <= ch <= "\u9fff")
-        if len(cjk_only) < 2:
-            continue
-        max_ngram = min(4, len(cjk_only))
-        for size in range(2, max_ngram + 1):
-            for start in range(0, len(cjk_only) - size + 1):
-                candidate = cjk_only[start : start + size]
-                if drop_generic and candidate in _GENERIC_QUERY_TERMS:
-                    continue
-                terms.add(candidate)
-    return terms
-
-
-def _split_evidence_blocks(context: str) -> list[dict[str, Any]]:
-    blocks: list[dict[str, Any]] = []
-    if not context:
-        return blocks
-    for index, match in enumerate(_EVIDENCE_BLOCK_RE.finditer(context.strip())):
-        label = str(match.group(1) or "").strip()
-        body = str(match.group(2) or "").strip()
-        if not label or not body:
-            continue
-        raw = f"[{label}] {body}".strip()
-        blocks.append(
-            {
-                "index": index,
-                "label": f"[{label}]",
-                "body": body,
-                "raw": raw,
-                "tokens": count_tokens_approximately(raw),
-            }
-        )
-    return blocks
-
-
-def _normalize_dedupe_key(text: str) -> str:
-    return " ".join((text or "").split()).casefold()
-
-
-def _sentence_score(sentence: str, query_terms: set[str]) -> int:
-    if not sentence.strip():
-        return 0
-    if not query_terms:
-        return 1
-    sentence_terms = _extract_terms(sentence)
-    return len(query_terms & sentence_terms)
-
-
-def _score_block_relevance(
+async def _compress_context(
+    state: CompressContextInput,
+    runtime: Runtime[KbChatGraphContext],
     *,
-    query_terms: set[str],
-    block_terms: set[str],
-    term_document_frequency: Counter[str],
-) -> float:
-    if not query_terms or not block_terms:
-        return 0.0
-    score = 0.0
-    for term in query_terms & block_terms:
-        score += min(4.0, float(len(term))) / float(max(1, term_document_frequency.get(term, 1)))
-    return round(score, 4)
+    settings: Settings,
+    chat_model: BaseChatModel,
+) -> dict[str, Any]:
+    _ = runtime, settings
+    start = time.perf_counter()
+    raw_context = str(state.get("final_context") or "").strip()
+    final_context = raw_context or "（未找到相关内容）"
+    question = _resolve_query_text(state)
+    input_tokens = count_tokens_approximately(final_context)
 
+    compressed_context = final_context
+    fallback_reason: str | None = None
+    fallback_used = False
 
-def _select_relevant_excerpt(body: str, query_terms: set[str], *, token_budget: int) -> str:
-    sentences = [
-        sentence.strip()
-        for sentence in _SENTENCE_SPLIT_RE.split(body)
-        if isinstance(sentence, str) and sentence.strip()
-    ]
-    if not sentences:
-        return body.strip()
-
-    ranked = sorted(
-        enumerate(sentences),
-        key=lambda row: (-_sentence_score(row[1], query_terms), row[0]),
-    )
-    selected_indices: list[int] = []
-    for idx, sentence in ranked:
-        if _sentence_score(sentence, query_terms) <= 0 and selected_indices:
-            continue
-        selected_indices.append(idx)
-        ordered = [sentences[item] for item in sorted(set(selected_indices))]
-        excerpt = " ".join(ordered).strip()
-        if count_tokens_approximately(excerpt) >= token_budget:
-            break
-
-    if not selected_indices:
-        selected_indices = [0]
-
-    ordered = [sentences[item] for item in sorted(set(selected_indices))]
-    excerpt = " ".join(ordered).strip()
-    if count_tokens_approximately(excerpt) <= token_budget:
-        return excerpt
-
-    trimmed = ordered[:1]
-    excerpt = trimmed[0]
-    while count_tokens_approximately(excerpt) > token_budget and len(excerpt) > 64:
-        excerpt = excerpt[: max(64, int(len(excerpt) * 0.85))].rstrip()
-    return excerpt
-
-
-def _compress_context(state: CompressContextInput) -> dict[str, Any]:
-    final_context = str(state.get("final_context") or "").strip()
-    if not final_context:
-        final_context = "（未找到相关内容）"
-    token_limit = 2500
-    token_count = count_tokens_approximately(final_context)
-    within_limit = token_count <= token_limit
-    query_text = _resolve_query_text(state)
-    query_terms = _extract_terms(query_text, drop_generic=True)
-    if not query_terms:
-        query_terms = _extract_terms(query_text)
-    compressed = final_context
-    deduped_block_count = 0
-    dropped_block_count = 0
-    retained_labels: list[str] = []
-
-    blocks = _split_evidence_blocks(final_context)
-    if blocks:
-        deduped_blocks: list[dict[str, Any]] = []
-        seen_bodies: set[str] = set()
-        scored_rows: list[dict[str, Any]] = []
-        block_term_sets: dict[int, set[str]] = {}
-        for block in blocks:
-            body_key = _normalize_dedupe_key(str(block.get("body") or ""))
-            if body_key in seen_bodies:
-                deduped_block_count += 1
-                continue
-            seen_bodies.add(body_key)
-            deduped_blocks.append(block)
-            block_index = int(block.get("index") or 0)
-            block_terms = _extract_terms(str(block.get("body") or ""))
-            block_term_sets[block_index] = block_terms
-            scored_rows.append(
-                {
-                    "block": block,
-                    "score": 0.0,
-                    "index": block_index,
-                }
+    if final_context and question:
+        prompts = get_prompt_loader()
+        try:
+            compress_system = prompts.render_with_few_shot("kb_chat/context_compress")
+        except KeyError:
+            compress_system = (
+                "你是知识库证据压缩器。"
+                "请围绕用户问题压缩参考内容，只保留回答问题所必需的事实与原有引用标签。"
+                "禁止新增事实，禁止编造或改写引用标签，输出纯文本。"
             )
-
-        term_document_frequency: Counter[str] = Counter()
-        for terms in block_term_sets.values():
-            for term in query_terms & terms:
-                term_document_frequency[term] += 1
-        for row in scored_rows:
-            block_index = int(row["index"])
-            row["score"] = _score_block_relevance(
-                query_terms=query_terms,
-                block_terms=block_term_sets.get(block_index, set()),
-                term_document_frequency=term_document_frequency,
+        compress_user = (
+            "请压缩以下知识库参考内容，只输出压缩后的参考内容。\n"
+            "要求：\n"
+            "1) 仅保留与问题直接相关、且对回答必需的证据；\n"
+            "2) 必须保留原始引用标签，如 [S1]、[S2]；\n"
+            "3) 不得新增参考内容之外的事实；\n"
+            "4) 如果原文已经足够精炼，也可以原样返回；\n"
+            "5) 不要输出解释、标题或 Markdown 代码块。\n\n"
+            f"问题：{question}\n\n"
+            f"参考内容：\n{final_context}"
+        )
+        model = chat_model.bind(max_tokens=1600)
+        try:
+            msg = await model.ainvoke(
+                [
+                    SystemMessage(content=compress_system),
+                    HumanMessage(content=compress_user),
+                ]
             )
-
-        scored_rows.sort(key=lambda row: (-float(row["score"]), int(row["index"])))
-        selected_parts: list[str] = []
-        selected_scores = [float(row["score"]) for row in scored_rows]
-        max_score = max(selected_scores, default=0.0)
-        has_relevant_block = max_score > 0
-        low_relevance_cutoff = max_score * 0.6 if has_relevant_block else 0.0
-        for row in scored_rows:
-            block = row["block"]
-            score = float(row["score"])
-            if has_relevant_block and score < low_relevance_cutoff:
-                dropped_block_count += 1
-                continue
-            if within_limit:
-                candidate = str(block["raw"]).strip()
+            candidate = extract_answer_text(getattr(msg, "content", "")).strip()
+            if not candidate:
+                fallback_reason = "empty_compress_output"
+            elif count_tokens_approximately(candidate) > input_tokens:
+                fallback_reason = "non_compacting_output"
             else:
-                excerpt_budget = 480 if score > 0 else 220
-                excerpt = _select_relevant_excerpt(
-                    str(block.get("body") or ""),
-                    query_terms,
-                    token_budget=excerpt_budget,
-                )
-                candidate = f"{block['label']} {excerpt}".strip()
-            next_candidate = "\n\n".join([*selected_parts, candidate]).strip()
-            if (
-                selected_parts
-                and count_tokens_approximately(next_candidate) > token_limit
-            ):
-                dropped_block_count += 1
-                continue
-            selected_parts.append(candidate)
-            retained_labels.append(str(block["label"]))
+                compressed_context = candidate
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            fallback_reason = "compress_invoke_failed"
+    else:
+        fallback_reason = "compress_input_missing"
 
-        if selected_parts:
-            if (
-                within_limit
-                and deduped_block_count == 0
-                and dropped_block_count == 0
-                and len(selected_parts) == len(blocks)
-            ):
-                compressed = final_context
-            else:
-                compressed = "\n\n".join(selected_parts).strip()
-        else:
-            compressed = deduped_blocks[0]["raw"] if deduped_blocks else final_context
+    if fallback_reason is not None:
+        fallback_used = True
+        compressed_context = final_context
 
-    truncated = count_tokens_approximately(compressed) < token_count
-    if count_tokens_approximately(compressed) > token_limit:
-        keep_ratio = max(0.1, token_limit / max(count_tokens_approximately(compressed), 1))
-        keep_chars = max(512, int(len(compressed) * keep_ratio))
-        compressed = compressed[:keep_chars].rstrip() + "\n\n（上下文已压缩）"
-        truncated = True
-    compressed_tokens = count_tokens_approximately(compressed)
+    output_tokens = count_tokens_approximately(compressed_context)
+    evidence_count = len(_EVIDENCE_LABEL_RE.findall(compressed_context))
+    summary = {
+        "decision_source": "llm",
+        "fallback_reason": fallback_reason,
+        "fallback_used": fallback_used,
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "truncated": output_tokens < input_tokens,
+        "evidence_count": evidence_count,
+        "question_present": bool(question),
+        "latency_ms": int((time.perf_counter() - start) * 1000),
+        "completed_at": now_iso(),
+    }
     stage_summaries = state.get("stage_summaries")
     if not isinstance(stage_summaries, dict):
         stage_summaries = {}
     stage_summaries = {
         **stage_summaries,
-        "context_compress": {
-            "token_limit": token_limit,
-            "input_tokens": token_count,
-            "output_tokens": compressed_tokens,
-            "truncated": truncated,
-            "deduped_block_count": deduped_block_count,
-            "dropped_block_count": dropped_block_count,
-            "retained_block_count": len(retained_labels),
-            "selected_labels": retained_labels[:12],
-        },
+        "context_compress": summary,
     }
     return {
-        "compression_stats": {
-            "token_limit": token_limit,
-            "input_tokens": token_count,
-            "output_tokens": compressed_tokens,
-            "truncated": truncated,
-            "deduped_block_count": deduped_block_count,
-            "dropped_block_count": dropped_block_count,
-            "retained_block_count": len(retained_labels),
-            "selected_labels": retained_labels[:12],
-        },
-        "final_context": compressed,
+        "compression_stats": summary,
+        "final_context": compressed_context,
         "stage_summaries": stage_summaries,
     }
 
 
-def build_retrieval_subgraph(*, settings: Settings, kb_tool: BaseTool):
+def build_retrieval_subgraph(
+    *,
+    settings: Settings,
+    kb_tool: BaseTool,
+    chat_model: BaseChatModel,
+):
     """Compile retrieval subgraph aligned to flowchart Stage 4."""
 
     graph = StateGraph(
@@ -468,7 +307,16 @@ def build_retrieval_subgraph(*, settings: Settings, kb_tool: BaseTool):
         side_effect_type="external_io",
         retry_policy=retrieval_retry_policy,
     )
-    add_traced_node("context_compress", _compress_context, side_effect_type="deterministic_rule")
+    add_traced_node(
+        "context_compress",
+        lambda s, runtime: _compress_context(
+            s,
+            runtime,
+            settings=settings,
+            chat_model=chat_model,
+        ),
+        side_effect_type="llm",
+    )
 
     graph.set_entry_point("retrieval_budget_plan")
     graph.add_edge("retrieval_budget_plan", "dispatch_subqueries")

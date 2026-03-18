@@ -8,6 +8,7 @@ from app.agents.kb_chat_agentic_graph import KbChatAgenticGraph
 from app.agents.preprocess_subgraph import build_preprocess_subgraph
 from app.agents.retrieval_subgraph import build_retrieval_subgraph
 from app.services.kb_chat_service import KbChatService
+from app.services.kb_chat_service import _KB_CHAT_CHECKPOINT_RESET_FIELDS
 
 
 def _settings(**overrides: object) -> SimpleNamespace:
@@ -52,7 +53,9 @@ def test_kb_chat_graph_compile_omits_dead_graph_cache(monkeypatch) -> None:
 
 def test_retry_policies_are_attached_only_to_transient_failure_nodes() -> None:
     preprocess = build_preprocess_subgraph(settings=_settings())
-    retrieval = build_retrieval_subgraph(settings=_settings(), kb_tool=SimpleNamespace())
+    retrieval = build_retrieval_subgraph(
+        settings=_settings(), kb_tool=SimpleNamespace(), chat_model=SimpleNamespace()
+    )
     evidence_gate = build_evidence_gate_subgraph(settings=_settings())
     answer = build_answer_subgraph(settings=_settings(), chat_model=SimpleNamespace())
     graph = KbChatAgenticGraph(
@@ -71,21 +74,26 @@ def test_retry_policies_are_attached_only_to_transient_failure_nodes() -> None:
     assert answer.builder.nodes["answer_repair"].retry_policy is not None
 
     assert evidence_gate.builder.nodes["doc_gate_sufficiency"].retry_policy is None
-    assert evidence_gate.builder.nodes["doc_gate_answerability"].retry_policy is None
-    assert evidence_gate.builder.nodes["doc_gate_conflict"].retry_policy is None
+    assert {
+        "doc_gate_dispatch",
+        "doc_gate_answerability",
+        "doc_gate_conflict",
+        "doc_gate_fuse",
+    }.isdisjoint(evidence_gate.builder.nodes)
+    assert {
+        "cove_check",
+        "chain_of_verification",
+        "claim_citation_check",
+    }.isdisjoint(answer.builder.nodes)
 
 
 def test_non_retry_rule_nodes_publish_explicit_execution_metadata() -> None:
     evidence_gate = build_evidence_gate_subgraph(settings=_settings())
     sufficiency_meta = evidence_gate.builder.nodes["doc_gate_sufficiency"].metadata
-    answerability_meta = evidence_gate.builder.nodes["doc_gate_answerability"].metadata
 
     assert sufficiency_meta["retry_enabled"] is False
     assert sufficiency_meta["side_effect_type"] == "deterministic_rule"
     assert sufficiency_meta["retry_disabled_reason"] == "deterministic_rule"
-
-    assert answerability_meta["retry_enabled"] is False
-    assert answerability_meta["side_effect_type"] == "deterministic_rule"
 
 
 def test_retry_cache_metrics_publish_retry_breakdown_and_disabled_graph_cache() -> None:
@@ -159,3 +167,7 @@ def test_final_state_consistency_rejects_legacy_finalize_terminal() -> None:
     )
 
     assert score == 0.0
+
+
+def test_checkpoint_reset_fields_drop_removed_cove_state() -> None:
+    assert "cove_state" not in _KB_CHAT_CHECKPOINT_RESET_FIELDS

@@ -6,14 +6,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from app.agents.evidence_gate_subgraph import (
-    _doc_gate_answerability,
-    _doc_gate_conflict,
-    _doc_gate_dispatch,
-    _doc_gate_fuse,
-    _doc_gate_route,
-    _doc_gate_sufficiency,
-)
+from app.agents.answer_subgraph import build_answer_subgraph
+from app.agents.evidence_gate_subgraph import _doc_gate_route, _doc_gate_sufficiency
 from app.agents.kb_chat_agentic.answer_subgraph import (
     _answer_commit,
     _answer_repair,
@@ -22,9 +16,6 @@ from app.agents.kb_chat_agentic.answer_subgraph import (
     _answer_review_dispatch,
     _answer_review_factual,
     _answer_review_fuse,
-    _chain_of_verification,
-    _claim_citation_check,
-    _cove_check,
 )
 from app.agents.kb_chat_agentic.reflection import (
     confidence_calibrate,
@@ -117,6 +108,10 @@ def test_make_initial_state_omits_legacy_duplicate_context_fields() -> None:
     }
 
 
+def test_internal_state_schema_omits_removed_cove_state_field() -> None:
+    assert "cove_state" not in get_type_hints(KbChatInternalState)
+
+
 def _state_annotation_name(fn: object) -> str:
     annotation = get_type_hints(fn).get("state")
     return getattr(annotation, "__name__", str(annotation))
@@ -136,11 +131,7 @@ def test_kb_chat_nodes_use_narrow_read_side_state_schema_annotations() -> None:
         merge_subquery_context: "MergeSubqueryContextInput",
         kb_retrieve_context: "RetrieveContextInput",
         _compress_context: "CompressContextInput",
-        _doc_gate_dispatch: "DocGateDispatchInput",
         _doc_gate_sufficiency: "DocGateContextInput",
-        _doc_gate_answerability: "DocGateContextInput",
-        _doc_gate_conflict: "DocGateContextInput",
-        _doc_gate_fuse: "DocGateFuseInput",
         _doc_gate_route: "DocGateRouteInput",
         transform_query_for_retry: "TransformQueryInput",
         _answer_review_dispatch: "AnswerReviewDispatchInput",
@@ -148,9 +139,6 @@ def test_kb_chat_nodes_use_narrow_read_side_state_schema_annotations() -> None:
         _answer_review_factual: "AnswerReviewLLMInput",
         _answer_review_answerability: "AnswerReviewLLMInput",
         _answer_review_fuse: "AnswerReviewFuseInput",
-        _cove_check: "CoveCheckInput",
-        _chain_of_verification: "ChainOfVerificationInput",
-        _claim_citation_check: "ClaimCitationCheckInput",
         _answer_repair: "AnswerRepairInput",
         _answer_commit: "AnswerCommitInput",
         force_exit_node: "ForceExitInput",
@@ -262,18 +250,31 @@ async def test_merge_context_writes_only_merged_context(
     assert result["merged_context"] == "用户问题：当前问题"
 
 
-def test_compress_context_writes_only_final_context() -> None:
-    result = _compress_context(
+@pytest.mark.asyncio
+async def test_compress_context_fail_open_keeps_raw_context_when_llm_returns_empty() -> None:
+    class _FakeChatModel:
+        def bind(self, **_: object) -> "_FakeChatModel":
+            return self
+
+        async def ainvoke(self, _messages: object) -> SimpleNamespace:
+            return SimpleNamespace(content="")
+
+    result = await _compress_context(
         {
             "user_input": "当前问题",
+            "normalized_query": "当前问题",
             "final_context": "[S1] 证据内容",
             "stage_summaries": {},
-        }
+        },
+        runtime=SimpleNamespace(context={}),
+        settings=_settings(),
+        chat_model=_FakeChatModel(),
     )
 
     assert "compressed_context" not in result
     assert result["final_context"] == "[S1] 证据内容"
-    assert result["stage_summaries"]["context_compress"]["output_tokens"] >= 1
+    assert result["compression_stats"]["fallback_reason"] == "empty_compress_output"
+    assert result["stage_summaries"]["context_compress"]["decision_source"] == "llm"
 
 
 def test_build_kb_chat_run_context_prefers_authoritative_inputs() -> None:
@@ -368,9 +369,43 @@ def test_kb_chat_subgraphs_share_internal_state_schema() -> None:
     retrieval = build_retrieval_subgraph(
         settings=settings,
         kb_tool=SimpleNamespace(),
+        chat_model=SimpleNamespace(),
     )
     evidence_gate = build_evidence_gate_subgraph(settings=settings)
 
     assert preprocess.builder.state_schema is KbChatInternalState
     assert retrieval.builder.state_schema is KbChatInternalState
     assert evidence_gate.builder.state_schema is KbChatInternalState
+
+
+def test_pruned_nodes_absent_from_live_subgraphs() -> None:
+    settings = _settings(
+        retrieval_default_top_k=5,
+        retrieval_max_top_k=50,
+        kb_chat_parallel_retrieval_min_queries=2,
+        kb_chat_parallel_retrieval_max_branches=6,
+        kb_chat_parallel_retrieval_include_main=True,
+        kb_chat_max_total_rounds=3,
+        kb_chat_max_generation_retries=2,
+        kb_chat_max_retrieval_retries=2,
+    )
+    retrieval = build_retrieval_subgraph(
+        settings=settings,
+        kb_tool=SimpleNamespace(),
+        chat_model=SimpleNamespace(),
+    )
+    evidence_gate = build_evidence_gate_subgraph(settings=settings)
+    answer = build_answer_subgraph(settings=settings, chat_model=SimpleNamespace())
+
+    assert {
+        "doc_gate_dispatch",
+        "doc_gate_answerability",
+        "doc_gate_conflict",
+        "doc_gate_fuse",
+    }.isdisjoint(evidence_gate.builder.nodes)
+    assert {
+        "cove_check",
+        "chain_of_verification",
+        "claim_citation_check",
+    }.isdisjoint(answer.builder.nodes)
+    assert "context_compress" in retrieval.builder.nodes

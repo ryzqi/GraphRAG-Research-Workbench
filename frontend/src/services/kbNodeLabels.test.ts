@@ -17,7 +17,7 @@ describe('kbNodeLabels', () => {
   });
 
   it('resolves labels for control and dispatch nodes from the shared catalog', () => {
-    expect(resolveKbNodeLabel('doc_gate_dispatch', null)).toBe('文档门控分发');
+    expect(resolveKbNodeLabel('doc_gate_route', null)).toBe('文档判定');
     expect(resolveKbNodeLabel('answer_review_dispatch', null)).toBe('审查分发');
     expect(resolveKbNodeLabel('preprocess_subgraph', null)).toBe('预处理子图');
   });

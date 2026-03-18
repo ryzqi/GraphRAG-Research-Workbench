@@ -69,6 +69,27 @@ def test_compiled_kb_chat_graph_drawable_export_handles_conditional_subgraph_rou
     assert ("evidence_gate_subgraph", "force_exit", True) in edge_set
 
 
+def test_drawable_graph_omits_pruned_gate_and_verification_nodes() -> None:
+    graph = KbChatAgenticGraph(
+        chat_model=SimpleNamespace(),
+        tools=[SimpleNamespace(name="kb_retrieve")],
+        tool_meta_by_name={},
+    )
+
+    drawable = graph.compile().get_graph().to_json()
+    node_ids = {node["id"] for node in drawable["nodes"]}
+
+    assert {
+        "doc_gate_dispatch",
+        "doc_gate_answerability",
+        "doc_gate_conflict",
+        "doc_gate_fuse",
+        "cove_check",
+        "chain_of_verification",
+        "claim_citation_check",
+    }.isdisjoint(node_ids)
+
+
 def test_schema_drawable_export_falls_back_to_builder_when_compiled_graph_is_truncated() -> None:
     graph = KbChatAgenticGraph(
         chat_model=SimpleNamespace(),

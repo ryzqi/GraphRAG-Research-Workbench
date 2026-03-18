@@ -13,7 +13,7 @@ from app.agents.kb_chat_agentic.answer_subgraph import (
 )
 from app.agents.kb_chat_agentic.reflection import confidence_calibrate
 from app.agents.kb_chat_agentic.reflection import dispatch_subqueries
-from app.agents.evidence_gate_subgraph import _doc_gate_fuse, _doc_gate_route
+from app.agents.evidence_gate_subgraph import _doc_gate_route
 from app.agents.kb_chat_trace_nodes import (
     _build_node_input_display_items,
     _build_node_output_display_items,
@@ -137,55 +137,29 @@ async def test_answer_review_fuse_does_not_reset_review_runs() -> None:
     )
 
     assert "answer_review_runs" not in command.update
-    assert command.goto == "cove_check"
+    assert command.goto == "answer_commit"
     fuse_summary = command.update["stage_summaries"]["answer_review_fuse"]
     assert fuse_summary["review_round"] == 1
     assert fuse_summary["review_breakdown"]["citation"]["review_round"] == 1
     assert fuse_summary["review_breakdown"]["citation"]["reason"] == "passed"
 
 
-def test_doc_gate_route_uses_stage_summary_instead_of_redundant_state_fields() -> None:
-    state = {
-        "doc_gate_round": 1,
-        "doc_gate_runs": [
-            {
-                "gate": "sufficiency",
-                "round": 1,
-                "passed": True,
-                "score": 0.8,
-                "reason": "passed",
-                "extra": {"tokens": 120, "evidence_count": 2},
-            },
-            {
-                "gate": "answerability",
-                "round": 1,
-                "passed": True,
-                "score": 0.7,
-                "reason": "passed",
-                "extra": {"overlap": 2, "query_terms": 3},
-            },
-            {
-                "gate": "conflict",
-                "round": 1,
-                "passed": True,
-                "score": 1.0,
-                "reason": "passed",
-                "extra": {"conflict_level": "none", "conflict_pairs": []},
-            },
-        ],
-        "reflection": {},
-        "stage_summaries": {},
-    }
-
-    fused = _doc_gate_fuse(state)
-
-    assert "doc_gate_scores" not in fused
-    assert fused["stage_summaries"]["doc_gate_fuse"]["decision"] == "pass"
-
+def test_doc_gate_route_uses_sufficiency_only_live_contract() -> None:
     routed = _doc_gate_route(
         {
-            **state,
-            **fused,
+            "doc_gate_round": 1,
+            "doc_gate_runs": [
+                {
+                    "gate": "sufficiency",
+                    "round": 1,
+                    "passed": True,
+                    "score": 0.8,
+                    "reason": "passed",
+                    "extra": {"tokens": 120, "evidence_count": 2},
+                }
+            ],
+            "reflection": {},
+            "stage_summaries": {},
         },
         settings=_settings(kb_chat_max_retrieval_retries=2),
     )
@@ -193,6 +167,7 @@ def test_doc_gate_route_uses_stage_summary_instead_of_redundant_state_fields() -
     assert "doc_gate_state" not in routed
     assert routed["reflection"]["relevance_passed"] is True
     assert routed["reflection"]["action"] == "none"
+    assert routed["routing_decisions"]["doc_gate"]["decision_source"] == "sufficiency_gate"
     assert routed["stage_summaries"]["doc_gate_route"]["decision"] == "pass"
 
 
@@ -208,22 +183,6 @@ def test_doc_gate_route_derives_decision_from_doc_gate_runs_without_stage_summar
                     "score": 0.9,
                     "reason": "passed",
                     "extra": {"tokens": 120, "evidence_count": 2},
-                },
-                {
-                    "gate": "answerability",
-                    "round": 1,
-                    "passed": True,
-                    "score": 0.8,
-                    "reason": "passed",
-                    "extra": {"overlap": 2, "query_terms": 3},
-                },
-                {
-                    "gate": "conflict",
-                    "round": 1,
-                    "passed": True,
-                    "score": 1.0,
-                    "reason": "passed",
-                    "extra": {"conflict_level": "none", "conflict_pairs": []},
                 },
             ],
             "reflection": {},
@@ -323,11 +282,7 @@ TRACE_INPUT_KEYS_BY_NODE = {
     "retrieve": ["query_items"],
     "context_compress": ["retrieved_evidence"],
     "evidence_gate_subgraph": ["normalized_query", "current_evidence"],
-    "doc_gate_dispatch": ["normalized_query", "current_evidence"],
     "doc_gate_sufficiency": ["current_evidence"],
-    "doc_gate_answerability": ["current_evidence"],
-    "doc_gate_conflict": ["current_evidence"],
-    "doc_gate_fuse": ["gate_results"],
     "doc_gate_route": ["normalized_query", "gate_results"],
     "transform_query": ["normalized_query"],
     "answer_subgraph": ["normalized_query", "current_evidence"],
@@ -337,9 +292,6 @@ TRACE_INPUT_KEYS_BY_NODE = {
     "answer_review_factual": ["draft_answer"],
     "answer_review_answerability": ["draft_answer"],
     "answer_review_fuse": ["review_results"],
-    "cove_check": ["draft_answer"],
-    "chain_of_verification": ["draft_answer"],
-    "claim_citation_check": ["draft_answer"],
     "answer_repair": ["draft_answer"],
     "answer_commit": ["candidate_answer"],
     "force_exit": ["exit_action", "candidate_answer"],
@@ -368,11 +320,7 @@ TRACE_OUTPUT_KEYS_BY_NODE = {
     "retrieve": ["retrieved_evidence"],
     "context_compress": ["compressed_evidence"],
     "evidence_gate_subgraph": ["decision", "reason", "next_node_label"],
-    "doc_gate_dispatch": ["dispatch_targets"],
     "doc_gate_sufficiency": ["decision", "reason", "next_node_label"],
-    "doc_gate_answerability": ["decision", "reason", "next_node_label"],
-    "doc_gate_conflict": ["decision", "reason", "next_node_label"],
-    "doc_gate_fuse": ["decision", "reason", "next_node_label"],
     "doc_gate_route": ["decision", "reason", "next_node_label"],
     "transform_query": ["normalized_query"],
     "answer_subgraph": ["decision", "reason", "next_node_label"],
@@ -382,9 +330,6 @@ TRACE_OUTPUT_KEYS_BY_NODE = {
     "answer_review_factual": ["decision", "reason", "next_node_label"],
     "answer_review_answerability": ["decision", "reason", "next_node_label"],
     "answer_review_fuse": ["decision", "reason", "next_node_label"],
-    "cove_check": ["decision", "reason", "next_node_label"],
-    "chain_of_verification": ["decision", "reason", "next_node_label"],
-    "claim_citation_check": ["decision", "reason", "next_node_label"],
     "answer_repair": ["repaired_answer"],
     "answer_commit": ["final_answer"],
     "force_exit": ["final_answer", "reason", "next_node_label"],
@@ -426,22 +371,6 @@ def _trace_base_snapshot() -> dict[str, Any]:
                 "score": 0.92,
                 "reason": "evidence_covers_question",
                 "extra": {"tokens": 128, "evidence_count": 2},
-            },
-            {
-                "gate": "answerability",
-                "round": 1,
-                "passed": True,
-                "score": 0.88,
-                "reason": "question_can_be_answered",
-                "extra": {"overlap": 4, "query_terms": 5},
-            },
-            {
-                "gate": "conflict",
-                "round": 1,
-                "passed": True,
-                "score": 0.96,
-                "reason": "no_conflict_detected",
-                "extra": {"conflict_markers": 0},
             },
         ],
         "answer_review_task": {"check": "citation", "review_round": 1},
@@ -520,7 +449,6 @@ def _trace_base_snapshot() -> dict[str, Any]:
                 "goto": "decomposition",
             },
             "retrieval_budget_plan": {"query_count": 2, "per_query_top_k": 6},
-            "doc_gate_fuse": {"decision": "pass", "reason": "三项门控均通过"},
             "doc_gate_route": {"decision": "pass", "reason": "证据足以回答"},
             "answer_review_dispatch": {
                 "checks": ["citation", "factual", "answerability"]
@@ -542,28 +470,17 @@ def _trace_snapshot_for_node(node_name: str) -> dict[str, Any]:
         "preprocess_exit": "force_exit",
         "retrieval_subgraph": "evidence_gate_subgraph",
         "evidence_gate_subgraph": "answer_subgraph",
-        "doc_gate_sufficiency": "doc_gate_fuse",
-        "doc_gate_answerability": "doc_gate_fuse",
-        "doc_gate_conflict": "doc_gate_fuse",
-        "doc_gate_fuse": "doc_gate_route",
+        "doc_gate_sufficiency": "doc_gate_route",
         "doc_gate_route": "answer_subgraph",
         "answer_subgraph": "confidence_calibrate",
         "answer_review_citation": "answer_review_fuse",
         "answer_review_factual": "answer_review_fuse",
         "answer_review_answerability": "answer_review_fuse",
-        "answer_review_fuse": "cove_check",
-        "cove_check": "chain_of_verification",
-        "chain_of_verification": "claim_citation_check",
-        "claim_citation_check": "answer_repair",
+        "answer_review_fuse": "answer_repair",
         "answer_repair": "answer_commit",
     }
     trace_targets = {
         "dispatch_subqueries": ["retrieve_subquery"],
-        "doc_gate_dispatch": [
-            "doc_gate_sufficiency",
-            "doc_gate_answerability",
-            "doc_gate_conflict",
-        ],
         "answer_review_dispatch": [
             "answer_review_citation",
             "answer_review_factual",
@@ -661,45 +578,33 @@ def test_retrieval_outputs_and_current_evidence_inputs_share_same_evidence_forma
     assert gate_by_key["current_evidence"] == TRACE_EVIDENCE_LINES
 
 
-def test_dispatch_and_review_lists_are_businessized_string_arrays() -> None:
-    dispatch_items = _build_node_output_display_items(
-        node_name="doc_gate_dispatch",
-        output_snapshot=_trace_snapshot_for_node("doc_gate_dispatch"),
+def test_gate_and_review_lists_are_businessized_string_arrays() -> None:
+    gate_route_input = _build_node_input_display_items(
+        node_name="doc_gate_route",
+        input_snapshot=_trace_snapshot_for_node("doc_gate_route"),
     )
     review_dispatch_items = _build_node_output_display_items(
         node_name="answer_review_dispatch",
         output_snapshot=_trace_snapshot_for_node("answer_review_dispatch"),
-    )
-    gate_fuse_input = _build_node_input_display_items(
-        node_name="doc_gate_fuse",
-        input_snapshot=_trace_snapshot_for_node("doc_gate_fuse"),
     )
     review_fuse_input = _build_node_input_display_items(
         node_name="answer_review_fuse",
         input_snapshot=_trace_snapshot_for_node("answer_review_fuse"),
     )
 
-    dispatch_by_key = {item["key"]: item["value"] for item in dispatch_items}
+    gate_route_by_key = {item["key"]: item["value"] for item in gate_route_input}
     review_dispatch_by_key = {
         item["key"]: item["value"] for item in review_dispatch_items
     }
-    gate_fuse_by_key = {item["key"]: item["value"] for item in gate_fuse_input}
     review_fuse_by_key = {item["key"]: item["value"] for item in review_fuse_input}
 
-    assert dispatch_by_key["dispatch_targets"] == [
-        "证据充分度",
-        "可回答性",
-        "证据冲突检测",
+    assert gate_route_by_key["gate_results"] == [
+        "证据充分度：通过｜原因：evidence_covers_question",
     ]
     assert review_dispatch_by_key["review_checks"] == [
         "引用覆盖审查",
         "事实正确性审查",
         "可回答性审查",
-    ]
-    assert gate_fuse_by_key["gate_results"] == [
-        "证据充分度：通过｜原因：evidence_covers_question",
-        "可回答性：通过｜原因：question_can_be_answered",
-        "证据冲突检测：通过｜原因：no_conflict_detected",
     ]
     assert review_fuse_by_key["review_results"] == [
         "引用覆盖审查：通过｜原因：关键断言均有引用",

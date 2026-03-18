@@ -416,9 +416,6 @@ class Settings(BaseSettings):
     context_history_max_tokens: int | None = Field(
         None, alias="CONTEXT_HISTORY_MAX_TOKENS"
     )
-    context_retrieval_max_tokens: int | None = Field(
-        None, alias="CONTEXT_RETRIEVAL_MAX_TOKENS"
-    )
     context_tool_max_tokens: int | None = Field(None, alias="CONTEXT_TOOL_MAX_TOKENS")
 
     # KB Chat（灰度开关 + 预算 + 查询增强 + 可观测）

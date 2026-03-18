@@ -30,11 +30,7 @@ const CURRENT_KB_CHAT_NODE_IDS = [
   'retrieve',
   'context_compress',
   'evidence_gate_subgraph',
-  'doc_gate_dispatch',
   'doc_gate_sufficiency',
-  'doc_gate_answerability',
-  'doc_gate_conflict',
-  'doc_gate_fuse',
   'doc_gate_route',
   'transform_query',
   'answer_subgraph',
@@ -44,9 +40,6 @@ const CURRENT_KB_CHAT_NODE_IDS = [
   'answer_review_factual',
   'answer_review_answerability',
   'answer_review_fuse',
-  'cove_check',
-  'chain_of_verification',
-  'claim_citation_check',
   'answer_repair',
   'answer_commit',
   'force_exit',
@@ -75,27 +68,20 @@ const EXPECTED_NODE_ORDERS: Record<(typeof CURRENT_KB_CHAT_NODE_IDS)[number], nu
   retrieve: 18,
   context_compress: 19,
   evidence_gate_subgraph: 20,
-  doc_gate_dispatch: 21,
-  doc_gate_sufficiency: 22,
-  doc_gate_answerability: 23,
-  doc_gate_conflict: 24,
-  doc_gate_fuse: 25,
-  doc_gate_route: 26,
-  transform_query: 27,
-  answer_subgraph: 28,
-  draft_generate: 29,
-  answer_review_dispatch: 30,
-  answer_review_citation: 31,
-  answer_review_factual: 32,
-  answer_review_answerability: 33,
-  answer_review_fuse: 34,
-  cove_check: 35,
-  chain_of_verification: 36,
-  claim_citation_check: 37,
-  answer_repair: 38,
-  answer_commit: 39,
-  force_exit: 40,
-  confidence_calibrate: 41,
+  doc_gate_sufficiency: 21,
+  doc_gate_route: 22,
+  transform_query: 23,
+  answer_subgraph: 24,
+  draft_generate: 25,
+  answer_review_dispatch: 26,
+  answer_review_citation: 27,
+  answer_review_factual: 28,
+  answer_review_answerability: 29,
+  answer_review_fuse: 30,
+  answer_repair: 31,
+  answer_commit: 32,
+  force_exit: 33,
+  confidence_calibrate: 34,
 };
 
 describe('kbNodeCatalog', () => {
@@ -159,6 +145,20 @@ describe('kbNodeCatalog', () => {
 
   it('does not keep deprecated answer aliases in local catalog fallback', () => {
     ['generate', 'answer_review', 'finalize'].forEach((nodeId) => {
+      expect(resolveKbNodeCatalogEntry(nodeId)).toBeNull();
+    });
+  });
+
+  it('does not keep pruned live gate and verification nodes in local catalog fallback', () => {
+    [
+      'doc_gate_dispatch',
+      'doc_gate_answerability',
+      'doc_gate_conflict',
+      'doc_gate_fuse',
+      'cove_check',
+      'chain_of_verification',
+      'claim_citation_check',
+    ].forEach((nodeId) => {
       expect(resolveKbNodeCatalogEntry(nodeId)).toBeNull();
     });
   });
