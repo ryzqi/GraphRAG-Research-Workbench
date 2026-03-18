@@ -49,9 +49,9 @@ _SENSITIVE_SNAPSHOT_KEYS = {
 KB_CHAT_NODE_METADATA: dict[str, dict[str, Any]] = {
     "preprocess_subgraph": {"label": "预处理子图", "phase": "preprocess", "order": 0},
     "merge_context": {"label": "上下文合并", "phase": "preprocess", "order": 1},
-    "coref_rewrite": {"label": "指代消解", "phase": "preprocess", "order": 2},
+    "resolve_reference": {"label": "指代消解", "phase": "preprocess", "order": 2},
     "ambiguity_check": {"label": "歧义判断", "phase": "preprocess", "order": 3},
-    "normalize_rewrite": {"label": "问题规范", "phase": "preprocess", "order": 4},
+    "query_normalize": {"label": "问题规范", "phase": "preprocess", "order": 4},
     "complexity_classify": {"label": "复杂度分类", "phase": "route", "order": 5},
     "generate_variants_mod": {"label": "中等变体生成", "phase": "enhance", "order": 6},
     "decomposition": {"label": "问题分解", "phase": "enhance", "order": 7},
@@ -61,15 +61,12 @@ KB_CHAT_NODE_METADATA: dict[str, dict[str, Any]] = {
     "prepare_messages": {"label": "消息整理", "phase": "enhance", "order": 11},
     "preprocess_exit": {"label": "预处理出口", "phase": "enhance", "order": 12},
     "retrieval_subgraph": {"label": "检索子图", "phase": "retrieve", "order": 13},
-    "retrieval_budget_plan": {"label": "检索预算规划", "phase": "retrieve", "order": 14},
+    "retrieval_plan": {"label": "检索预算规划", "phase": "retrieve", "order": 14},
     "dispatch_subqueries": {"label": "子查询派发", "phase": "retrieve", "order": 15},
     "retrieve_subquery": {"label": "子查询检索", "phase": "retrieve", "order": 16},
     "merge_subquery_context": {"label": "子查询上下文合并", "phase": "retrieve", "order": 17},
     "retrieve": {"label": "知识检索", "phase": "retrieve", "order": 18},
     "context_compress": {"label": "上下文压缩", "phase": "retrieve", "order": 19},
-    "evidence_gate_subgraph": {"label": "证据门控子图", "phase": "judge", "order": 20},
-    "doc_gate_sufficiency": {"label": "证据充分度", "phase": "judge", "order": 21},
-    "doc_gate_route": {"label": "文档判定", "phase": "judge", "order": 22},
     "transform_query": {"label": "查询改写", "phase": "retrieve", "order": 23},
     "answer_subgraph": {"label": "答案子图", "phase": "generate", "order": 24},
     "draft_generate": {"label": "草稿生成", "phase": "generate", "order": 25},
@@ -81,7 +78,6 @@ KB_CHAT_NODE_METADATA: dict[str, dict[str, Any]] = {
     "answer_repair": {"label": "答案修复", "phase": "verify", "order": 31},
     "answer_commit": {"label": "答案提交", "phase": "generate", "order": 32},
     "force_exit": {"label": "提前终止", "phase": "finalize", "order": 33},
-    "confidence_calibrate": {"label": "置信度校准", "phase": "finalize", "order": 34},
 }
 
 _NODE_SUMMARY_KEY_MAP: dict[str, str] = {

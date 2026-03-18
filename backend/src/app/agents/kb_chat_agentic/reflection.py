@@ -9,7 +9,6 @@ These nodes are designed to be:
 from __future__ import annotations
 
 import asyncio
-from decimal import Decimal, ROUND_HALF_UP
 import re
 import time
 from typing import Any
@@ -30,9 +29,7 @@ from app.services.query_rewrite_service import (
 )
 from app.agents.kb_chat_agentic_state import (
     AnswerRoutingDecisionInput,
-    ConfidenceCalibrateInput,
     DispatchSubqueriesInput,
-    DocGateRoutingDecisionInput,
     MergeSubqueryContextInput,
     RetrieveContextInput,
     RetrieveSubqueryContextInput,
@@ -743,6 +740,7 @@ def _set_final_answer_for_exit(
 def _resolve_query_text(state: dict) -> str:
     return _as_str(
         state.get("normalized_query")
+        or state.get("resolved_query")
         or state.get("coref_query")
         or state.get("rewrite_input_query")
         or state.get("user_input")
@@ -867,9 +865,8 @@ async def generate_draft(
 
     user = f"参考内容：\n{final_context}\n\n问题：{question}"
 
-    model = chat_model.bind(max_tokens=1024)
     try:
-        msg = await model.ainvoke(
+        msg = await chat_model.ainvoke(
             [SystemMessage(content=system_prompt), HumanMessage(content=user)]
         )
         draft = extract_answer_text(getattr(msg, "content", "")).strip()
@@ -989,6 +986,8 @@ async def transform_query_for_retry(
     return {
         "loop_counts": loop_counts,
         "normalized_query": new_query,
+        "resolved_query": new_query,
+        "reference_resolution_meta": {},
         "normalized_meta": normalized_meta,
         "coref_query": new_query,
         "sub_queries": [],
@@ -1027,25 +1026,11 @@ async def transform_query_for_retry(
     }
 
 
-def route_after_doc_grader(state: DocGateRoutingDecisionInput, settings: Settings) -> str:
-    """Route after DocGrader: answer_subgraph vs transform_query vs force_exit."""
-    routing = resolve_routing_decision(state, "doc_gate")
-    next_node = _as_str(routing.get("next_node")).strip()
-    if next_node in {"answer_subgraph", "transform_query", "force_exit"}:
-        return next_node
-    loop_counts = _get_loop_counts(state)
-    if loop_counts["retrieval_retries"] >= int(
-        getattr(settings, "kb_chat_max_retrieval_retries", 2)
-    ):
-        return "force_exit"
-    return "transform_query"
-
-
 def route_after_answer_review(state: AnswerRoutingDecisionInput, settings: Settings) -> str:
-    """Route after AnswerReview: confidence_calibrate vs transform_query vs force_exit."""
+    """Route after AnswerReview: END vs transform_query vs force_exit."""
     routing = resolve_routing_decision(state, "answer_subgraph")
     next_node = _as_str(routing.get("next_node")).strip()
-    if next_node in {"confidence_calibrate", "transform_query", "force_exit"}:
+    if next_node in {"END", "transform_query", "force_exit"}:
         return next_node
     loop_counts = _get_loop_counts(state)
     max_total_rounds = int(getattr(settings, "kb_chat_max_total_rounds", 3))
@@ -1056,133 +1041,6 @@ def route_after_answer_review(state: AnswerRoutingDecisionInput, settings: Setti
     ):
         return "force_exit"
     return "transform_query"
-
-
-def confidence_calibrate(state: ConfidenceCalibrateInput) -> dict[str, Any]:
-    """Calibrate final confidence from gate/review/citation/retrieval signals."""
-    stage_summaries = state.get("stage_summaries")
-    if not isinstance(stage_summaries, dict):
-        stage_summaries = {}
-    doc_gate_route = resolve_routing_decision(state, "doc_gate")
-    reflection = state.get("reflection")
-    gate_signal = 0.0
-    if isinstance(doc_gate_route, dict):
-        gate_signal = float(doc_gate_route.get("score") or 0.0)
-    if gate_signal <= 0.0 and isinstance(reflection, dict):
-        gate_signal = float(reflection.get("confidence") or 0.0)
-    gate_signal = max(0.0, min(1.0, gate_signal))
-    gate_reason = _as_str(doc_gate_route.get("reason")) if isinstance(doc_gate_route, dict) else ""
-    review_conf = (
-        float(reflection.get("review_confidence") or 0.0)
-        if isinstance(reflection, dict)
-        else 0.0
-    )
-    loop_counts = state.get("loop_counts")
-    retry_counts = loop_counts if isinstance(loop_counts, dict) else {}
-    total_retries = max(
-        0,
-        int(retry_counts.get("retrieval_retries") or 0)
-        + int(retry_counts.get("generation_retries") or 0),
-    )
-    review_signal = max(0.0, min(1.0, review_conf * max(0.0, 1.0 - (0.2 * total_retries))))
-
-    review_breakdown = (
-        reflection.get("review_breakdown")
-        if isinstance(reflection, dict) and isinstance(reflection.get("review_breakdown"), dict)
-        else {}
-    )
-    citation_review = (
-        review_breakdown.get("citation")
-        if isinstance(review_breakdown.get("citation"), dict)
-        else {}
-    )
-    citation_coverage = (
-        1.0
-        if citation_review.get("passed") is True
-        else float(citation_review.get("confidence") or 0.0)
-    )
-    if citation_coverage <= 0.0 and isinstance(reflection, dict) and reflection.get("review_passed") is True:
-        citation_coverage = 1.0
-    citation_coverage = max(0.0, min(1.0, citation_coverage))
-
-    retrieval_diagnostics = state.get("retrieval_diagnostics")
-    retrieval_metrics = retrieval_diagnostics if isinstance(retrieval_diagnostics, dict) else {}
-    top1_score = retrieval_metrics.get("top1_score")
-    top2_score = retrieval_metrics.get("top2_score")
-    if isinstance(top1_score, (int, float)) and isinstance(top2_score, (int, float)):
-        retrieval_signal = max(0.0, min(1.0, float(top1_score) - float(top2_score)))
-    else:
-        coverage = max(0.0, min(1.0, float(retrieval_metrics.get("coverage") or 0.0)))
-        novelty = max(0.0, min(1.0, float(retrieval_metrics.get("novelty") or 0.0)))
-        conflict = max(0.0, min(1.0, float(retrieval_metrics.get("conflict") or 0.0)))
-        retrieval_signal = max(
-            0.0,
-            min(1.0, (coverage * 0.45) + (novelty * 0.30) + ((1.0 - conflict) * 0.25)),
-        )
-
-    if gate_reason == "retry":
-        gate_signal *= 0.85
-
-    weights = {
-        "gate_signal": Decimal("0.35"),
-        "review_signal": Decimal("0.35"),
-        "citation_coverage": Decimal("0.15"),
-        "retrieval_signal": Decimal("0.15"),
-    }
-    weighted_sum = (
-        Decimal(str(max(0.0, min(1.0, gate_signal)))) * weights["gate_signal"]
-        + Decimal(str(review_signal)) * weights["review_signal"]
-        + Decimal(str(citation_coverage)) * weights["citation_coverage"]
-        + Decimal(str(retrieval_signal)) * weights["retrieval_signal"]
-    )
-    confidence_score = float(
-        max(Decimal("0.0"), min(Decimal("1.0"), weighted_sum)).quantize(
-            Decimal("0.0001"),
-            rounding=ROUND_HALF_UP,
-        )
-    )
-    if confidence_score >= 0.8:
-        confidence_level = "high"
-    elif confidence_score >= 0.5:
-        confidence_level = "medium"
-    else:
-        confidence_level = "low"
-
-    signal_breakdown = {
-        "gate_signal": round(max(0.0, min(1.0, gate_signal)), 4),
-        "review_signal": round(review_signal, 4),
-        "citation_coverage": round(citation_coverage, 4),
-        "retrieval_signal": round(retrieval_signal, 4),
-        "total_retries": total_retries,
-    }
-    stage_summaries = {
-        **stage_summaries,
-        "confidence_calibrate": {
-            "confidence_score": confidence_score,
-            "confidence_level": confidence_level,
-            "gate_confidence": round(gate_signal, 4),
-            "review_confidence": round(review_conf, 4),
-            "citation_coverage": round(citation_coverage, 4),
-            "retrieval_signal": round(retrieval_signal, 4),
-            "signals": signal_breakdown,
-            "reason": "weighted_multi_signal",
-            "completed_at": now_iso(),
-        },
-    }
-    metrics = state.get("metrics")
-    if not isinstance(metrics, dict):
-        metrics = {}
-    metrics = {
-        **metrics,
-        "confidence_score": confidence_score,
-        "confidence_level": confidence_level,
-    }
-    return {
-        "confidence_score": confidence_score,
-        "confidence_level": confidence_level,
-        "stage_summaries": stage_summaries,
-        "metrics": metrics,
-    }
 
 
 

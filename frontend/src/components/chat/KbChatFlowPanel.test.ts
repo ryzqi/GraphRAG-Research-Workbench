@@ -10,7 +10,7 @@ const MINIMAL_SCHEMA = {
   nodes: [
     { id: 'complexity_classify', label: '复杂度分类', phase: 'route', order: 5 },
     { id: 'hyde', label: 'HyDE 生成', phase: 'enhance', order: 10 },
-    { id: 'doc_gate_route', label: '门控路由', phase: 'judge', order: 26 },
+    { id: 'query_normalize', label: '问题规范', phase: 'preprocess', order: 4 },
     { id: 'preprocess_subgraph', label: '预处理子图', phase: 'preprocess', order: 0 },
   ],
   edges: [],

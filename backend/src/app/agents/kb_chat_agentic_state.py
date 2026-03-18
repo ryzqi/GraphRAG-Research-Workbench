@@ -23,7 +23,6 @@ from app.schemas.query_enhancement import QueryItem
 
 ReflectionAction = Literal["none", "clarify", "transform_query", "force_exit"]
 ComplexityLevel = Literal["simple", "moderate", "complex"]
-ConfidenceLevel = Literal["high", "medium", "low"]
 
 
 class ReflectionResult(TypedDict, total=False):
@@ -222,8 +221,6 @@ class KbChatOutputState(TypedDict, total=False):
     """Minimal public graph output exposed to service consumers."""
 
     final_answer: str
-    confidence_score: float
-    confidence_level: ConfidenceLevel
     clarification_payload: ClarificationPayload
     stage_summaries: dict[str, Any]
 
@@ -248,9 +245,10 @@ class KbChatInternalState(KbChatInternalStateBase, total=False):
     Stage I/O (high-level, to keep implementation honest):
     - MergeContext: reads messages/user_input/memory_keys -> writes
       context_frame/rewrite_input_query/merged_context
-    - CorefRewrite: reads rewrite_input_query/context_frame -> writes coref_query/coref_meta
-    - AmbiguityCheck: reads coref_query/normalized_query -> writes reflection/action (clarify)
-    - NormalizeRewrite: reads coref_query -> writes normalized_query
+    - ResolveReference: reads rewrite_input_query/context_frame -> writes
+      resolved_query/reference_resolution_meta
+    - AmbiguityCheck: reads resolved_query/normalized_query -> writes reflection/action (clarify)
+    - QueryNormalize: reads resolved_query -> writes normalized_query
     - ComplexityRouter: reads normalized_query -> writes query_strategy/confidence/signals
     - Decomposition: reads normalized_query -> writes sub_queries
     - MultiQuery: reads normalized_query -> writes multi_queries
@@ -266,6 +264,8 @@ class KbChatInternalState(KbChatInternalStateBase, total=False):
     rewrite_input_query: str
     merged_context: str
 
+    resolved_query: str
+    reference_resolution_meta: CorefMeta
     coref_query: str
     coref_meta: CorefMeta
     normalized_query: str
@@ -300,11 +300,7 @@ class KbChatInternalState(KbChatInternalStateBase, total=False):
     degrade_reason: str
     clarification_payload: ClarificationPayload
 
-    doc_gate_round: int
-    doc_gate_runs: Annotated[list[dict[str, Any]], add]
     answer_review_runs: Annotated[list[AnswerReviewRun], add]
-    confidence_score: float
-    confidence_level: ConfidenceLevel
     reflection: ReflectionResult
     routing_decisions: dict[str, RoutingDecision]
 
@@ -335,6 +331,8 @@ class CorefRewriteInput(TypedDict, total=False):
 class AmbiguityCheckInput(TypedDict, total=False):
     messages: Annotated[list[AnyMessage], add_messages]
     user_input: str
+    resolved_query: str
+    reference_resolution_meta: CorefMeta
     coref_query: str
     coref_meta: CorefMeta
     stage_summaries: dict[str, Any]
@@ -343,6 +341,7 @@ class AmbiguityCheckInput(TypedDict, total=False):
 class NormalizeRewriteInput(TypedDict, total=False):
     messages: Annotated[list[AnyMessage], add_messages]
     user_input: str
+    resolved_query: str
     coref_query: str
     runtime_config: dict[str, Any]
     stage_summaries: dict[str, Any]
@@ -360,6 +359,7 @@ class ComplexityClassifyInput(TypedDict, total=False):
 class PrepareMessagesInput(TypedDict, total=False):
     user_input: str
     rewrite_input_query: str
+    resolved_query: str
     coref_query: str
     normalized_query: str
     normalized_meta: NormalizeMeta
@@ -441,6 +441,7 @@ class MergeSubqueryContextInput(TypedDict, total=False):
 class RetrieveContextInput(TypedDict, total=False):
     user_input: str
     rewrite_input_query: str
+    resolved_query: str
     coref_query: str
     normalized_query: str
     query_items: list[QueryItem]
@@ -455,34 +456,17 @@ class RetrieveContextInput(TypedDict, total=False):
 class CompressContextInput(TypedDict, total=False):
     user_input: str
     rewrite_input_query: str
+    resolved_query: str
     coref_query: str
     normalized_query: str
     final_context: str
-    stage_summaries: dict[str, Any]
-
-
-class DocGateContextInput(TypedDict, total=False):
-    user_input: str
-    rewrite_input_query: str
-    coref_query: str
-    normalized_query: str
-    final_context: str
-    doc_gate_round: int
-    doc_gate_task: dict[str, Any]
-    doc_gate_runs: list[dict[str, Any]]
-
-class DocGateRouteInput(TypedDict, total=False):
-    doc_gate_round: int
-    doc_gate_task: dict[str, Any]
-    doc_gate_runs: list[dict[str, Any]]
-    loop_counts: LoopCounts
-    reflection: ReflectionResult
     stage_summaries: dict[str, Any]
 
 
 class TransformQueryInput(TypedDict, total=False):
     user_input: str
     rewrite_input_query: str
+    resolved_query: str
     coref_query: str
     normalized_query: str
     draft_answer: str
@@ -494,11 +478,6 @@ class TransformQueryInput(TypedDict, total=False):
 
 class PreprocessRoutingInput(TypedDict, total=False):
     routing_decisions: dict[str, RoutingDecision]
-
-
-class DocGateRoutingDecisionInput(TypedDict, total=False):
-    routing_decisions: dict[str, RoutingDecision]
-    loop_counts: LoopCounts
 
 
 class AnswerRoutingDecisionInput(TypedDict, total=False):
@@ -515,6 +494,7 @@ class AnswerReviewDispatchInput(TypedDict, total=False):
 class DraftGenerateInput(TypedDict, total=False):
     user_input: str
     rewrite_input_query: str
+    resolved_query: str
     coref_query: str
     normalized_query: str
     final_context: str
@@ -531,6 +511,7 @@ class AnswerReviewCitationInput(TypedDict, total=False):
 class AnswerReviewLLMInput(TypedDict, total=False):
     user_input: str
     rewrite_input_query: str
+    resolved_query: str
     coref_query: str
     normalized_query: str
     loop_counts: LoopCounts
@@ -548,6 +529,7 @@ class AnswerReviewFuseInput(TypedDict, total=False):
 class AnswerRepairInput(TypedDict, total=False):
     user_input: str
     rewrite_input_query: str
+    resolved_query: str
     coref_query: str
     normalized_query: str
     loop_counts: LoopCounts
@@ -577,15 +559,6 @@ class ForceExitInput(TypedDict, total=False):
     best_answer: str
     best_answer_meta: dict[str, Any]
     clarification_payload: ClarificationPayload
-    stage_summaries: dict[str, Any]
-
-
-class ConfidenceCalibrateInput(TypedDict, total=False):
-    routing_decisions: dict[str, RoutingDecision]
-    reflection: ReflectionResult
-    retrieval_diagnostics: dict[str, float]
-    loop_counts: LoopCounts
-    metrics: dict[str, Any]
     stage_summaries: dict[str, Any]
 
 

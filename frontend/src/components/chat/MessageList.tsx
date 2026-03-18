@@ -21,7 +21,6 @@ import { stripTrailingReferenceSection } from '../../lib/kbChatContent';
 import { calculateMessageListVirtualWindow } from '../../services/messageListVirtualization';
 import { shouldContainWheelScroll } from '../../services/chatScrollBehavior';
 import {
-  resolveConfidenceChipMeta,
   shouldRenderClarificationCard,
 } from '../../services/chatMessageDisplay';
 
@@ -66,8 +65,6 @@ export interface ChatMessage {
   stagedContent?: string;
   answerRevealReady?: boolean;
   traceWarnings?: string[];
-  confidenceScore?: number | null;
-  confidenceLevel?: 'high' | 'medium' | 'low' | null;
   responseSource?: 'live' | 'cached' | null;
   cacheMeta?: SemanticCacheMeta | null;
 }
@@ -149,7 +146,6 @@ const MessageRow = memo(
       (message.evidence?.length ?? 0) > 0
         ? stripTrailingReferenceSection(message.content)
         : message.content;
-    const confidenceChipMeta = resolveConfidenceChipMeta(message.confidenceLevel);
     const canRenderClarificationCard = shouldRenderClarificationCard({
       pendingClarification: message.pendingClarification,
       runId: message.runId,
@@ -183,26 +179,9 @@ const MessageRow = memo(
         />
 
         {message.role === 'assistant' &&
-          (confidenceChipMeta ||
-            typeof message.confidenceScore === 'number' ||
-            message.responseSource === 'cached') && (
+          message.responseSource === 'cached' && (
             <Box sx={{ mt: 1, ml: 7 }}>
               <Stack direction='row' spacing={0.75} alignItems='center' useFlexGap flexWrap='wrap'>
-                {confidenceChipMeta && (
-                  <Chip
-                    size='small'
-                    color={confidenceChipMeta.color}
-                    label={confidenceChipMeta.label}
-                  />
-                )}
-                {typeof message.confidenceScore === 'number' && (
-                  <Chip
-                    size='small'
-                    variant='outlined'
-                    color='info'
-                    label={`置信度 ${(message.confidenceScore * 100).toFixed(0)}%`}
-                  />
-                )}
                 {message.responseSource === 'cached' && (
                   <Chip size='small' variant='outlined' color='secondary' label='语义缓存命中' />
                 )}

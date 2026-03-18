@@ -24,19 +24,14 @@ _NODE_SUMMARY_KEY_MAP: dict[str, str] = {
     "answer_review_answerability": "answer_review",
 }
 
-_DOC_GATE_NODE_TO_GATE: dict[str, str] = {
-    "doc_gate_sufficiency": "sufficiency",
-}
-
 _ANSWER_REVIEW_NODE_TO_CHECK: dict[str, str] = {
     "answer_review_citation": "citation",
     "answer_review_factual": "factual",
     "answer_review_answerability": "answerability",
 }
 
-_GATE_LABELS: dict[str, str] = {
-    "sufficiency": "证据充分度",
-}
+_DOC_GATE_NODE_TO_GATE: dict[str, str] = {}
+_GATE_LABELS: dict[str, str] = {}
 
 _REVIEW_CHECK_LABELS: dict[str, str] = {
     "citation": "引用覆盖审查",
@@ -50,9 +45,9 @@ _BUSINESS_LABEL_FALLBACKS: dict[str, str] = {
     "none": "结束",
     "preprocess_subgraph": "预处理子图",
     "merge_context": "上下文合并",
-    "coref_rewrite": "指代消解",
+    "resolve_reference": "指代消解",
     "ambiguity_check": "歧义判断",
-    "normalize_rewrite": "问题规范",
+    "query_normalize": "问题规范",
     "complexity_classify": "复杂度分类",
     "generate_variants_mod": "中等变体生成",
     "decomposition": "问题分解",
@@ -62,15 +57,12 @@ _BUSINESS_LABEL_FALLBACKS: dict[str, str] = {
     "prepare_messages": "消息整理",
     "preprocess_exit": "预处理出口",
     "retrieval_subgraph": "检索子图",
-    "retrieval_budget_plan": "检索预算规划",
+    "retrieval_plan": "检索预算规划",
     "dispatch_subqueries": "子查询派发",
     "retrieve_subquery": "子查询检索",
     "merge_subquery_context": "子查询上下文合并",
     "retrieve": "知识检索",
     "context_compress": "上下文压缩",
-    "evidence_gate_subgraph": "证据门控子图",
-    "doc_gate_sufficiency": "证据充分度",
-    "doc_gate_route": "文档判定",
     "transform_query": "查询改写",
     "answer_subgraph": "答案子图",
     "draft_generate": "草稿生成",
@@ -82,18 +74,17 @@ _BUSINESS_LABEL_FALLBACKS: dict[str, str] = {
     "answer_repair": "答案修复",
     "answer_commit": "答案提交",
     "force_exit": "结束",
-    "confidence_calibrate": "结束",
     "retry": "继续检索",
     "retry_conflict": "继续检索",
     "transform_query_retry": "继续检索",
     "clarify": "结束",
-    "confidence": "置信度校准",
 }
 
 _DISPLAY_LABELS: dict[str, str] = {
     "user_input": "用户问题",
     "recent_turns": "最近对话",
     "merged_context": "合并上下文",
+    "resolved_query": "指代消解后问题",
     "normalized_query": "规范化问题",
     "query_items": "检索查询项",
     "draft_answer": "草稿答案",
@@ -124,9 +115,9 @@ _DISPLAY_LABELS: dict[str, str] = {
 _INPUT_CONTRACTS: dict[str, list[str]] = {
     "preprocess_subgraph": ["user_input"],
     "merge_context": ["user_input", "recent_turns"],
-    "coref_rewrite": ["user_input"],
-    "ambiguity_check": ["normalized_query"],
-    "normalize_rewrite": ["normalized_query"],
+    "resolve_reference": ["user_input"],
+    "ambiguity_check": ["resolved_query"],
+    "query_normalize": ["resolved_query"],
     "complexity_classify": ["user_input"],
     "generate_variants_mod": ["normalized_query"],
     "decomposition": ["normalized_query"],
@@ -136,15 +127,12 @@ _INPUT_CONTRACTS: dict[str, list[str]] = {
     "prepare_messages": ["normalized_query", "sub_queries", "multi_queries"],
     "preprocess_exit": ["normalized_query"],
     "retrieval_subgraph": ["query_items"],
-    "retrieval_budget_plan": ["normalized_query", "query_items"],
+    "retrieval_plan": ["normalized_query", "query_items"],
     "dispatch_subqueries": ["query_items"],
     "retrieve_subquery": ["subquery"],
     "merge_subquery_context": ["retrieved_evidence"],
     "retrieve": ["query_items"],
     "context_compress": ["retrieved_evidence"],
-    "evidence_gate_subgraph": ["normalized_query", "current_evidence"],
-    "doc_gate_sufficiency": ["current_evidence"],
-    "doc_gate_route": ["normalized_query", "gate_results"],
     "transform_query": ["normalized_query"],
     "answer_subgraph": ["normalized_query", "current_evidence"],
     "draft_generate": ["normalized_query", "current_evidence"],
@@ -156,15 +144,14 @@ _INPUT_CONTRACTS: dict[str, list[str]] = {
     "answer_repair": ["draft_answer"],
     "answer_commit": ["candidate_answer"],
     "force_exit": ["exit_action", "candidate_answer"],
-    "confidence_calibrate": ["final_answer"],
 }
 
 _OUTPUT_CONTRACTS: dict[str, list[str]] = {
     "preprocess_subgraph": ["decision", "reason", "next_node_label"],
     "merge_context": ["merged_context"],
-    "coref_rewrite": ["normalized_query"],
+    "resolve_reference": ["resolved_query"],
     "ambiguity_check": ["decision", "reason", "clarification_prompt"],
-    "normalize_rewrite": ["normalized_query"],
+    "query_normalize": ["normalized_query"],
     "complexity_classify": ["decision", "reason", "next_node_label"],
     "generate_variants_mod": ["multi_queries"],
     "decomposition": ["sub_queries"],
@@ -174,15 +161,12 @@ _OUTPUT_CONTRACTS: dict[str, list[str]] = {
     "prepare_messages": ["query_items"],
     "preprocess_exit": ["decision", "reason", "next_node_label", "final_answer"],
     "retrieval_subgraph": ["decision", "reason", "next_node_label"],
-    "retrieval_budget_plan": ["planned_query_count", "planned_per_query_top_k"],
+    "retrieval_plan": ["planned_query_count", "planned_per_query_top_k"],
     "dispatch_subqueries": ["dispatch_targets"],
     "retrieve_subquery": ["retrieved_evidence"],
     "merge_subquery_context": ["retrieved_evidence"],
     "retrieve": ["retrieved_evidence"],
     "context_compress": ["compressed_evidence"],
-    "evidence_gate_subgraph": ["decision", "reason", "next_node_label"],
-    "doc_gate_sufficiency": ["decision", "reason", "next_node_label"],
-    "doc_gate_route": ["decision", "reason", "next_node_label"],
     "transform_query": ["normalized_query"],
     "answer_subgraph": ["decision", "reason", "next_node_label"],
     "draft_generate": ["draft_answer"],
@@ -194,7 +178,6 @@ _OUTPUT_CONTRACTS: dict[str, list[str]] = {
     "answer_repair": ["repaired_answer"],
     "answer_commit": ["final_answer"],
     "force_exit": ["final_answer", "reason", "next_node_label"],
-    "confidence_calibrate": ["decision", "reason", "next_node_label"],
 }
 
 
@@ -414,9 +397,17 @@ def _build_input_value_map(
     values: dict[str, Any] = {
         "user_input": _pick_text(snapshot, "user_input"),
         "recent_turns": _pick_context_frame_turns(snapshot, "recent_turns"),
+        "resolved_query": _pick_text(
+            snapshot,
+            "resolved_query",
+            "coref_query",
+            "rewrite_input_query",
+            "user_input",
+        ),
         "normalized_query": _pick_text(
             snapshot,
             "normalized_query",
+            "resolved_query",
             "coref_query",
             "rewrite_input_query",
             "user_input",
@@ -447,8 +438,6 @@ def _build_input_value_map(
         values["retrieved_evidence"] = _format_evidence_from_snapshot(snapshot)
     if node_name == "retrieve_subquery":
         values["subquery"] = _pick_text(current_subquery_run, "query") or values["subquery"]
-    if node_name == "doc_gate_route":
-        values["gate_results"] = _format_gate_results(snapshot)
     if node_name == "answer_review_fuse":
         values["review_results"] = _format_review_results(snapshot)
     return values
@@ -473,9 +462,17 @@ def _build_output_value_map(
         "reason": reason,
         "next_node_label": next_node_label,
         "merged_context": _resolve_merged_context_display(snapshot),
+        "resolved_query": _pick_text(
+            snapshot,
+            "resolved_query",
+            "coref_query",
+            "rewrite_input_query",
+            "user_input",
+        ),
         "normalized_query": _pick_text(
             snapshot,
             "normalized_query",
+            "resolved_query",
             "coref_query",
             "rewrite_input_query",
             "user_input",
@@ -503,7 +500,7 @@ def _build_output_value_map(
     }
     if node_name == "answer_commit":
         values["final_answer"] = _pick_text(snapshot, "final_answer", "best_answer", "draft_answer")
-    if node_name in {"force_exit", "confidence_calibrate"}:
+    if node_name == "force_exit":
         values["next_node_label"] = "结束"
     return values
 
@@ -795,29 +792,8 @@ def _resolve_decision_triplet(
 
     if node_name == "retrieval_subgraph":
         decision = _humanize_decision(_pick_text(trace, "goto")) or "完成检索流程"
-        reason = _pick_text(summary, "reason") or "已完成检索并进入证据判断"
+        reason = _pick_text(summary, "reason") or "已完成检索并进入答案生成"
         return decision, reason, next_node_label or "下游节点未知"
-
-    if node_name in {"evidence_gate_subgraph", "doc_gate_route"}:
-        routing = _resolve_routing_decision(snapshot, "doc_gate")
-        raw = (
-            _pick_text(summary, "decision")
-            or _pick_text(routing, "reason_code", "action", "next_node")
-            or _pick_text(trace, "goto")
-        )
-        decision = _route_decision_text(raw)
-        reason = _pick_text(routing, "reason") or _pick_text(summary, "reason") or default_reason
-        return decision, reason, next_node_label or "下游节点未知"
-
-    if node_name == "doc_gate_sufficiency":
-        run = _resolve_doc_gate_run(snapshot, node_name)
-        passed = run.get("passed")
-        decision = "通过" if passed is True else "未通过" if passed is False else "未返回明确结论"
-        reason = _pick_text(run, "reason") or default_reason
-        return decision, reason, next_node_label or _resolve_node_label(
-            "doc_gate_route",
-            node_label_resolver=node_label_resolver,
-        ) or "下游节点未知"
 
     if node_name == "answer_subgraph":
         routing = _resolve_routing_decision(snapshot, "answer_subgraph")
@@ -852,11 +828,6 @@ def _resolve_decision_triplet(
         reason = _pick_text(summary, "reason") or default_reason
         return decision, reason, next_node_label or "下游节点未知"
 
-    if node_name == "confidence_calibrate":
-        decision = _confidence_decision_text(summary=summary, snapshot=snapshot)
-        reason = _pick_text(summary, "reason") or default_reason
-        return decision, reason, "结束"
-
     if node_name == "force_exit":
         reason = _pick_text(summary, "reason") or _pick_text(reflection, "reason") or default_reason
         return None, reason, "结束"
@@ -876,7 +847,7 @@ def _resolve_next_node_label(
     summary: Mapping[str, Any],
     node_label_resolver: NodeLabelResolver | None,
 ) -> str | None:
-    if node_name in {"force_exit", "confidence_calibrate"}:
+    if node_name == "force_exit":
         return "结束"
 
     trace = _resolve_trace_command(snapshot)
@@ -885,8 +856,6 @@ def _resolve_next_node_label(
     phase_by_node = {
         "preprocess_subgraph": "preprocess",
         "preprocess_exit": "preprocess",
-        "evidence_gate_subgraph": "doc_gate",
-        "doc_gate_route": "doc_gate",
         "answer_subgraph": "answer_subgraph",
         "answer_commit": "answer_subgraph",
     }
@@ -907,9 +876,7 @@ def _resolve_next_node_label(
         ]
     )
 
-    if node_name == "doc_gate_sufficiency":
-        candidates.append("doc_gate_route")
-    elif node_name in {
+    if node_name in {
         "answer_review_citation",
         "answer_review_factual",
         "answer_review_answerability",
@@ -939,8 +906,6 @@ def _resolve_node_label(
             return resolved
     if lowered in _BUSINESS_LABEL_FALLBACKS:
         return _BUSINESS_LABEL_FALLBACKS[lowered]
-    if lowered in _GATE_LABELS:
-        return _GATE_LABELS[lowered]
     if lowered in _REVIEW_CHECK_LABELS:
         return _REVIEW_CHECK_LABELS[lowered]
     if any("\u4e00" <= ch <= "\u9fff" for ch in key):
@@ -971,25 +936,9 @@ def _complexity_decision_text(
     return mapping.get((raw or "").strip().lower(), "待判定问题")
 
 
-def _route_decision_text(raw: str | None) -> str:
-    mapping = {
-        "pass": "可以回答",
-        "passed": "可以回答",
-        "answer_subgraph": "可以回答",
-        "retry": "继续检索",
-        "retry_conflict": "继续检索",
-        "transform_query": "继续检索",
-        "severe_conflict": "继续检索",
-        "exit_unanswerable": "结束当前回答",
-        "force_exit": "结束当前回答",
-        "clarify": "结束当前回答",
-    }
-    return mapping.get((raw or "").strip().lower(), _humanize_decision(raw) or "继续处理")
-
-
 def _answer_route_decision_text(raw: str | None) -> str:
     mapping = {
-        "confidence_calibrate": "审查通过",
+        "end": "审查通过",
         "answer_commit": "审查通过",
         "answer_review_fuse": "进入审查汇总",
         "answer_repair": "需要修复答案",
@@ -997,20 +946,6 @@ def _answer_route_decision_text(raw: str | None) -> str:
         "force_exit": "结束当前回答",
     }
     return mapping.get((raw or "").strip().lower(), _humanize_decision(raw) or "继续处理")
-
-
-def _confidence_decision_text(
-    *,
-    summary: Mapping[str, Any],
-    snapshot: Mapping[str, Any],
-) -> str:
-    level = _pick_text(summary, "confidence_level") or _pick_text(snapshot, "confidence_level")
-    mapping = {
-        "high": "高置信度",
-        "medium": "中置信度",
-        "low": "低置信度",
-    }
-    return mapping.get((level or "").strip().lower(), "置信度待定")
 
 
 def _humanize_decision(raw: str | None) -> str | None:
@@ -1021,13 +956,11 @@ def _humanize_decision(raw: str | None) -> str | None:
     mapping = {
         "prepare_messages": "直接进入检索",
         "retrieval_subgraph": "进入检索流程",
-        "evidence_gate_subgraph": "进入证据门控",
         "answer_subgraph": "进入答案生成",
-        "doc_gate_route": "进入文档判定",
         "answer_review_fuse": "进入审查汇总",
         "answer_repair": "进入答案修复",
         "answer_commit": "提交答案",
-        "confidence_calibrate": "进入最终收口",
+        "end": "结束",
         "force_exit": "结束当前回答",
         "clarify": "需要补充信息",
         "retry": "继续检索",

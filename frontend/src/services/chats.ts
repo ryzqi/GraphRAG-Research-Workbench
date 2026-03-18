@@ -156,8 +156,6 @@ export interface ChatAnswerResponse {
   status: 'succeeded';
   assistant_message: ChatMessage;
   evidence: EvidenceItem[];
-  confidence_score?: number | null;
-  confidence_level?: 'high' | 'medium' | 'low' | null;
   source?: 'live' | 'cached';
   cache?: SemanticCacheMeta | null;
   stage_summaries?: Record<string, unknown> | null;
@@ -239,8 +237,6 @@ export interface ChatPendingUserClarificationResponse {
   pending_clarification?: PendingClarification | null;
   assistant_message?: ChatMessage | null;
   evidence?: EvidenceItem[] | null;
-  confidence_score?: number | null;
-  confidence_level?: 'high' | 'medium' | 'low' | null;
   source?: 'live' | 'cached';
   cache?: SemanticCacheMeta | null;
   stage_summaries?: Record<string, unknown> | null;

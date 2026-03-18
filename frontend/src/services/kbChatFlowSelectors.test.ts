@@ -22,7 +22,7 @@ describe('kbChatFlowSelectors', () => {
 
   it('does not append risk hints or re-curate low confidence outputs', () => {
     const result = selectKbChatFlowDetailItems({
-      nodeId: 'confidence_calibrate',
+      nodeId: 'answer_commit',
       section: 'output',
       items: [
         { key: 'decision', label: '结论', value: '高置信' },
@@ -47,7 +47,7 @@ describe('kbChatFlowSelectors', () => {
     ] as const;
 
     const result = selectKbChatFlowDetailItems({
-      nodeId: 'retrieval_budget_plan',
+      nodeId: 'retrieval_plan',
       section: 'output',
       items,
       event: null,

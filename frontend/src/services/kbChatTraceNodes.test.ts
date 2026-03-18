@@ -296,7 +296,7 @@ describe('kbChatTraceNodes', () => {
       hash: 'schema-hash',
       nodes: [
         { id: 'merge_context', label: '上下文合并', phase: 'preprocess', order: 1 },
-        { id: 'normalize_rewrite', label: '问题规范', phase: 'preprocess', order: 4 },
+        { id: 'query_normalize', label: '问题规范', phase: 'preprocess', order: 4 },
         { id: 'complexity_classify', label: '复杂度分类', phase: 'route', order: 5 },
       ],
       edges: [],
@@ -313,7 +313,7 @@ describe('kbChatTraceNodes', () => {
       },
       {
         execution_id: 'task-normalize',
-        node_name: 'normalize_rewrite',
+        node_name: 'query_normalize',
         node_label: '问题规范',
         status: 'started' as const,
         started_at: '2026-01-01T00:00:02.000Z',

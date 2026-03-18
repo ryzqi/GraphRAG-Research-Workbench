@@ -12,16 +12,15 @@ from app.services.message_normalizer import extract_text_content
 _NON_ANSWER_STREAM_NODES = {
     # KB preprocess / retrieval / reflection nodes
     "merge_context",
-    "coref_rewrite",
+    "resolve_reference",
     "ambiguity_check",
-    "normalize_rewrite",
+    "query_normalize",
     "decomposition",
     "generate_variants",
     "entity_expand",
     "hyde",
     "prepare_messages",
     "retrieve",
-    "doc_gate_route",
     "answer_repair",
     "transform_query",
     "answer_review",
@@ -332,8 +331,6 @@ class StreamState:
     best_answer: str | None = None
     best_answer_meta: dict[str, Any] | None = None
     clarification_payload: dict[str, Any] | None = None
-    confidence_score: float | None = None
-    confidence_level: str | None = None
     reflection: dict[str, Any] | None = None
     degrade_reason: str | None = None
     routing_decisions: dict[str, Any] = field(default_factory=dict)
@@ -378,12 +375,6 @@ class StreamState:
             self.clarification_payload = clarification_payload
         elif "clarification_payload" in update and clarification_payload is None:
             self.clarification_payload = None
-        confidence_score = update.get("confidence_score")
-        if isinstance(confidence_score, (int, float)):
-            self.confidence_score = float(confidence_score)
-        confidence_level = update.get("confidence_level")
-        if isinstance(confidence_level, str):
-            self.confidence_level = confidence_level
         reflection = update.get("reflection")
         if isinstance(reflection, dict):
             self.reflection = reflection

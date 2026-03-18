@@ -208,8 +208,6 @@ async def test_write_semantic_cache_entry_skips_breaker_open_embedding_failures_
         question="cache query",
         answer="cache answer",
         evidence=[],
-        confidence_score=0.91,
-        confidence_level="high",
         stage_summaries={"answer": {"status": "ok"}},
         metrics={"route_consistency_rate": 100.0},
     )
@@ -240,8 +238,6 @@ async def test_write_semantic_cache_entry_skips_invisible_only_question_before_e
         question=question,
         answer="cache answer",
         evidence=[],
-        confidence_score=0.91,
-        confidence_level="high",
         stage_summaries={"answer": {"status": "ok"}},
         metrics={"route_consistency_rate": 100.0},
     )

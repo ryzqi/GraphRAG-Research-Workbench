@@ -101,7 +101,7 @@ def _resolve_answer_subgraph_next_step(
     reflection = state.get("reflection")
     reflection_obj = reflection if isinstance(reflection, dict) else {}
     if reflection_obj.get("review_passed") is True:
-        return "confidence_calibrate"
+        return "END"
 
     loop_counts = _get_loop_counts(state)
     max_total_rounds = int(getattr(settings, "kb_chat_max_total_rounds", 3))
@@ -151,6 +151,7 @@ def _merge_subgraph_state(
 def _resolve_query_text(state: dict[str, Any]) -> str:
     return _as_str(
         state.get("normalized_query")
+        or state.get("resolved_query")
         or state.get("coref_query")
         or state.get("rewrite_input_query")
         or state.get("user_input")
@@ -421,8 +422,8 @@ async def _answer_review_llm_check(
         chat_model=chat_model,
         system=system_prompt,
         user=(
-            f"问题：{question}\n\n参考内容：\n{final_context[:4000]}"
-            f"\n\n回答：\n{draft[:2000]}"
+            f"问题：{question}\n\n参考内容：\n{final_context}"
+            f"\n\n回答：\n{draft}"
         ),
     )
     if isinstance(judge, AnswerReviewSubDecision):
@@ -829,7 +830,7 @@ async def _answer_commit(
     }
     if final_answer:
         updates["final_answer"] = final_answer
-    if next_step == "confidence_calibrate":
+    if next_step == "END":
         if not final_answer:
             final_answer = "根据现有资料无法回答该问题（未生成答案）。"
             updates["final_answer"] = final_answer

@@ -16,7 +16,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import Any
 
 from langchain.messages import AIMessage, HumanMessage, SystemMessage
 from sqlalchemy import select
@@ -133,11 +133,7 @@ _KB_CHAT_CHECKPOINT_RESET_FIELDS = (
     "answer_subgraph_state",
     "degrade_reason",
     "clarification_payload",
-    "doc_gate_round",
-    "doc_gate_runs",
     "answer_review_runs",
-    "confidence_score",
-    "confidence_level",
     "reflection",
     "routing_decisions",
 )
@@ -163,8 +159,6 @@ class _KbRetrievalBuffer:
 class _SemanticCacheHit:
     answer: str
     evidence: list[dict[str, Any]]
-    confidence_score: float | None
-    confidence_level: str | None
     stage_summaries: dict[str, Any]
     metrics: dict[str, Any]
     score: float
@@ -470,22 +464,9 @@ class KbChatService:
         evidence = best_entry.get("evidence")
         stage_summaries = best_entry.get("stage_summaries")
         metrics = best_entry.get("metrics")
-        confidence_level = best_entry.get("confidence_level")
-        confidence_score = best_entry.get("confidence_score")
         return _SemanticCacheHit(
             answer=answer,
             evidence=evidence if isinstance(evidence, list) else [],
-            confidence_score=(
-                float(confidence_score)
-                if isinstance(confidence_score, (int, float))
-                else None
-            ),
-            confidence_level=(
-                confidence_level
-                if isinstance(confidence_level, str)
-                and confidence_level in {"high", "medium", "low"}
-                else None
-            ),
             stage_summaries=stage_summaries if isinstance(stage_summaries, dict) else {},
             metrics=metrics if isinstance(metrics, dict) else {},
             score=max(0.0, min(1.0, float(best_score))),
@@ -501,8 +482,6 @@ class KbChatService:
         question: str,
         answer: str,
         evidence: list[EvidenceItem],
-        confidence_score: float | None,
-        confidence_level: str | None,
         stage_summaries: dict[str, Any],
         metrics: dict[str, Any],
     ) -> None:
@@ -559,8 +538,6 @@ class KbChatService:
             "answer": normalized_answer,
             "embedding": vector,
             "evidence": [item.model_dump(mode="json") for item in evidence],
-            "confidence_score": confidence_score,
-            "confidence_level": confidence_level,
             "stage_summaries": stage_summaries if isinstance(stage_summaries, dict) else {},
             "metrics": metrics if isinstance(metrics, dict) else {},
             "created_at": datetime.now(timezone.utc).isoformat(),
@@ -598,8 +575,6 @@ class KbChatService:
         run_payload: dict[str, Any],
         assistant_message: dict[str, Any] | None = None,
         evidence: list[dict[str, Any]] | None = None,
-        confidence_score: float | None = None,
-        confidence_level: str | None = None,
         stage_summaries: dict[str, Any] | None = None,
         metrics: dict[str, Any] | None = None,
         message: str | None = None,
@@ -611,8 +586,6 @@ class KbChatService:
             "status": status,
             "assistant_message": assistant_message,
             "evidence": evidence or [],
-            "confidence_score": confidence_score,
-            "confidence_level": confidence_level,
             "source": source,
             "cache": cache,
             "stage_summaries": stage_summaries,
@@ -1101,14 +1074,6 @@ class KbChatService:
         if isinstance(query_strategy, str) and query_strategy:
             checks.append(query_strategy in {"direct", "decomposition", "multi_query"})
         routing = routing_decisions if isinstance(routing_decisions, dict) else {}
-        doc_gate_route = (
-            routing.get("doc_gate") if isinstance(routing.get("doc_gate"), dict) else {}
-        )
-        if doc_gate_route:
-            doc_gate_next = str(doc_gate_route.get("next_node") or "")
-            checks.append(
-                doc_gate_next in {"answer_subgraph", "transform_query", "force_exit"}
-            )
         answer_subgraph = (
             routing.get("answer_subgraph")
             if isinstance(routing.get("answer_subgraph"), dict)
@@ -1117,7 +1082,7 @@ class KbChatService:
         if answer_subgraph:
             checks.append(
                 str(answer_subgraph.get("next_node") or "")
-                in {"confidence_calibrate", "transform_query", "force_exit"}
+                in {"END", "transform_query", "force_exit"}
             )
         if not checks:
             return 100.0
@@ -1143,11 +1108,11 @@ class KbChatService:
         has_force_exit = isinstance(terminal_reason, str) and bool(terminal_reason.strip())
         if not next_step and not has_force_exit:
             return 100.0
-        if next_step == "confidence_calibrate":
+        if next_step == "END":
             return 100.0 if not has_force_exit else 0.0
         if next_step in {"transform_query", "force_exit"}:
             return 100.0 if has_force_exit else 0.0
-        if terminal_phase in {"doc_gate", "preprocess"} and terminal_route:
+        if terminal_phase == "preprocess" and terminal_route:
             return 100.0 if has_force_exit else 0.0
         return 0.0
 
@@ -2126,9 +2091,9 @@ class KbChatService:
 
         stage_label_map = {
             "merge_context": "上下文合并",
-            "coref_rewrite": "指代消解",
+            "resolve_reference": "指代消解",
             "ambiguity_check": "歧义检测",
-            "normalize_rewrite": "问题规范化",
+            "query_normalize": "问题规范化",
             "complexity_classify": "复杂度分类",
             "decomposition": "问题拆解",
             "generate_variants": "多路查询扩展",
@@ -2136,7 +2101,6 @@ class KbChatService:
             "hyde": "假设文档扩展",
             "prepare_messages": "检索准备",
             "retrieval": "检索融合",
-            "doc_gate_route": "相关性评估",
             "answer_subgraph": "答案子图",
             "generator": "答案生成",
             "answer_review": "答案审查",
@@ -2340,8 +2304,12 @@ class KbChatService:
                 if value is not None:
                     io_summary[key] = value
 
-        if node in {"coref_rewrite", "normalize_rewrite", "transform_query"}:
-            query = update.get("normalized_query") or update.get("coref_query")
+        if node in {"resolve_reference", "query_normalize", "transform_query"}:
+            query = (
+                update.get("normalized_query")
+                or update.get("resolved_query")
+                or update.get("coref_query")
+            )
             if isinstance(query, str) and query.strip():
                 io_summary["query"] = KbChatService._shorten_stream_text(query, 160)
 
@@ -3334,11 +3302,6 @@ class KbChatService:
         return ChatAnswerResponse(
             assistant_message=ChatMessageRead.model_validate(assistant_msg),
             evidence=persisted_evidence_items,
-            confidence_score=cache_hit.confidence_score,
-            confidence_level=cast(
-                Literal["high", "medium", "low"] | None,
-                cache_hit.confidence_level,
-            ),
             source="cached",
             cache=SemanticCacheMeta(
                 hit=True,
@@ -3465,8 +3428,6 @@ class KbChatService:
                             mode="json"
                         ),
                         evidence=[item.model_dump(mode="json") for item in cached_response.evidence],
-                        confidence_score=cached_response.confidence_score,
-                        confidence_level=cached_response.confidence_level,
                         stage_summaries=(
                             cached_response.stage_summaries
                             if isinstance(cached_response.stage_summaries, dict)
@@ -4087,8 +4048,6 @@ class KbChatService:
                             run_payload=run_payload,
                             assistant_message=None,
                             evidence=[],
-                            confidence_score=pending_response.confidence_score,
-                            confidence_level=pending_response.confidence_level,
                             stage_summaries=(
                                 pending_response.stage_summaries
                                 if isinstance(pending_response.stage_summaries, dict)
@@ -4170,8 +4129,6 @@ class KbChatService:
                     degrade_reason=stream_state.degrade_reason,
                 ),
                 clarification_payload=stream_state.clarification_payload,
-                confidence_score=stream_state.confidence_score,
-                confidence_level=stream_state.confidence_level,
                 reflection=stream_state.reflection,
                 query_strategy=stream_state.query_strategy,
                 routing_decisions=stream_state.routing_decisions,
@@ -4190,8 +4147,6 @@ class KbChatService:
                     run_payload=run_payload,
                     assistant_message=final_response.assistant_message.model_dump(mode="json"),
                     evidence=[item.model_dump(mode="json") for item in final_response.evidence],
-                    confidence_score=final_response.confidence_score,
-                    confidence_level=final_response.confidence_level,
                     stage_summaries=(
                         final_response.stage_summaries
                         if isinstance(final_response.stage_summaries, dict)
@@ -4286,8 +4241,6 @@ class KbChatService:
         error_message: str | None = None,
         terminal_reason: str | None = None,
         clarification_payload: dict[str, Any] | None = None,
-        confidence_score: float | None = None,
-        confidence_level: str | None = None,
         reflection: dict[str, Any] | None = None,
         query_strategy: str | None = None,
         routing_decisions: dict[str, Any] | None = None,
@@ -4663,24 +4616,6 @@ class KbChatService:
         await self._db.refresh(assistant_msg)
         await self._db.refresh(run)
 
-        if isinstance(confidence_score, (int, float)):
-            confidence_score = max(0.0, min(1.0, float(confidence_score)))
-        else:
-            confidence_score = None
-        if not isinstance(confidence_level, str) or confidence_level not in {
-            "high",
-            "medium",
-            "low",
-        }:
-            confidence_level = None
-        if confidence_level is None and confidence_score is not None:
-            if confidence_score >= 0.8:
-                confidence_level = "high"
-            elif confidence_score >= 0.5:
-                confidence_level = "medium"
-            else:
-                confidence_level = "low"
-
         semantic_cache_skip_reason = self._semantic_cache_skip_reason(
             clarification_payload=clarification_payload,
             routing_decisions=routing_decisions,
@@ -4696,8 +4631,6 @@ class KbChatService:
                     question=str(run.question or "").strip(),
                     answer=extract_answer_text(answer),
                     evidence=evidence_items,
-                    confidence_score=confidence_score,
-                    confidence_level=confidence_level,
                     stage_summaries=(
                         run.stage_summaries if isinstance(run.stage_summaries, dict) else {}
                     ),
@@ -4709,8 +4642,6 @@ class KbChatService:
         return ChatAnswerResponse(
             assistant_message=ChatMessageRead.model_validate(assistant_msg),
             evidence=evidence_items,
-            confidence_score=confidence_score,
-            confidence_level=cast(Literal["high", "medium", "low"] | None, confidence_level),
             source="live",
             cache=SemanticCacheMeta(
                 hit=False,

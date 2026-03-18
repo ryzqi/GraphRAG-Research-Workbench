@@ -8,17 +8,22 @@ function normalizeNodeId(value: string): string {
 export function resolveFinalizeNodeIds(
   schema: KbGraphSchema | null | undefined
 ): Set<string> {
+  const explicitTerminalNodeIds = new Set(['answer_commit', 'force_exit']);
   const ids = new Set<string>();
   for (const node of schema?.nodes ?? []) {
-    if (node.phase !== 'finalize' || typeof node.id !== 'string') {
+    if (typeof node.id !== 'string') {
       continue;
     }
     const trimmedId = node.id.trim();
     if (!trimmedId) {
       continue;
     }
+    const normalizedId = normalizeNodeId(trimmedId);
+    if (node.phase !== 'finalize' && !explicitTerminalNodeIds.has(normalizedId)) {
+      continue;
+    }
     ids.add(trimmedId);
-    ids.add(normalizeNodeId(trimmedId));
+    ids.add(normalizedId);
   }
   return ids;
 }

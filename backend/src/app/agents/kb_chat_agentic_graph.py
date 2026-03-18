@@ -29,7 +29,6 @@ from app.agents.tool_calling.registry import ToolMeta
 from app.core.settings import get_settings
 
 from app.agents.answer_subgraph import build_answer_subgraph
-from app.agents.evidence_gate_subgraph import build_evidence_gate_subgraph
 from app.agents.kb_chat_trace_nodes import (
     extend_kb_chat_node_metadata,
     KB_CHAT_NODE_METADATA,
@@ -39,8 +38,6 @@ from app.agents.preprocess_subgraph import build_preprocess_subgraph
 from app.agents.retrieval_subgraph import build_retrieval_subgraph
 from app.agents.kb_chat_agentic.tool_loop import force_exit_node
 from app.agents.kb_chat_agentic.reflection import (
-    confidence_calibrate,
-    route_after_doc_grader,
     route_after_answer_review,
     transform_query_for_retry,
 )
@@ -533,20 +530,21 @@ def _build_node_input_display_items(
             label="用户问题",
             value=_pick_text(snapshot, "user_input"),
         )
-    elif node_name == "coref_rewrite":
+    elif node_name == "resolve_reference":
         _append_display_item(
             items,
             key="query",
             label="输入问题",
             value=_pick_text(snapshot, "rewrite_input_query", "user_input"),
         )
-    elif node_name in {"ambiguity_check", "normalize_rewrite"}:
+    elif node_name in {"ambiguity_check", "query_normalize"}:
         _append_display_item(
             items,
             key="query",
             label="输入问题",
             value=_pick_text(
                 snapshot,
+                "resolved_query",
                 "coref_query",
                 "rewrite_input_query",
                 "user_input",
@@ -563,7 +561,7 @@ def _build_node_input_display_items(
             items,
             key="normalized_query",
             label="规范化问题",
-            value=_pick_text(snapshot, "normalized_query", "coref_query", "user_input"),
+            value=_pick_text(snapshot, "normalized_query", "resolved_query", "coref_query", "user_input"),
         )
         if node_name == "entity_expand":
             _append_display_item(
@@ -577,7 +575,7 @@ def _build_node_input_display_items(
             items,
             key="normalized_query",
             label="主问题",
-            value=_pick_text(snapshot, "normalized_query", "coref_query", "user_input"),
+            value=_pick_text(snapshot, "normalized_query", "resolved_query", "coref_query", "user_input"),
         )
         _append_display_item(
             items,
@@ -654,21 +652,14 @@ def _build_node_input_display_items(
                 items,
                 key="normalized_query",
                 label="检索问题",
-                value=_pick_text(snapshot, "normalized_query", "coref_query", "user_input"),
+                value=_pick_text(snapshot, "normalized_query", "resolved_query", "coref_query", "user_input"),
             )
-    elif node_name == "doc_gate_route":
-        _append_display_item(
-            items,
-            key="question",
-            label="待判定问题",
-            value=_pick_text(snapshot, "merged_context", "user_input"),
-        )
     elif node_name == "transform_query":
         _append_display_item(
             items,
             key="normalized_query",
             label="当前问题",
-            value=_pick_text(snapshot, "normalized_query", "coref_query", "user_input"),
+            value=_pick_text(snapshot, "normalized_query", "resolved_query", "coref_query", "user_input"),
         )
         _append_display_item(
             items,
@@ -761,12 +752,12 @@ def _build_node_output_display_items(
             label="回退启发式",
             value=summary.get("fallback_used"),
         )
-    elif node_name == "coref_rewrite":
+    elif node_name == "resolve_reference":
         _append_display_item(
             items,
-            key="coref_query",
+            key="resolved_query",
             label="改写后问题",
-            value=_pick_text(snapshot, "coref_query"),
+            value=_pick_text(snapshot, "resolved_query", "coref_query"),
         )
         _append_display_item(
             items,
@@ -841,7 +832,7 @@ def _build_node_output_display_items(
             label="澄清提示",
             value=_pick_text(snapshot, "final_answer"),
         )
-    elif node_name == "normalize_rewrite":
+    elif node_name == "query_normalize":
         _append_display_item(
             items,
             key="normalized_query",
@@ -1209,61 +1200,6 @@ def _build_node_output_display_items(
             label="检索查询",
             value=summary.get("query_used"),
         )
-    elif node_name == "doc_gate_route":
-        _append_display_item(
-            items,
-            key="passed",
-            label="相关性是否通过",
-            value=summary.get("passed"),
-        )
-        _append_display_item(
-            items,
-            key="action",
-            label="后续动作",
-            value=reflection.get("action"),
-        )
-        _append_display_item(
-            items,
-            key="reason",
-            label="判定原因",
-            value=summary.get("reason"),
-        )
-        _append_display_item(
-            items,
-            key="fallback_reason",
-            label="回退原因",
-            value=summary.get("fallback_reason"),
-        )
-        _append_display_item(
-            items,
-            key="decision_source",
-            label="判定来源",
-            value=summary.get("decision_source"),
-        )
-        _append_display_item(
-            items,
-            key="confidence",
-            label="判定置信度",
-            value=summary.get("confidence"),
-        )
-        _append_display_item(
-            items,
-            key="evidence_score",
-            label="证据评分",
-            value=summary.get("evidence_score"),
-        )
-        _append_display_item(
-            items,
-            key="risk_level",
-            label="风险等级",
-            value=summary.get("risk_level"),
-        )
-        _append_display_item(
-            items,
-            key="retry_advice",
-            label="重试建议",
-            value=summary.get("retry_advice"),
-        )
     elif node_name == "transform_query":
         _append_display_item(
             items,
@@ -1412,7 +1348,6 @@ class KbChatAgenticGraph:
             kb_tool=kb_tool,
             chat_model=chat_model,
         )
-        evidence_gate_subgraph = build_evidence_gate_subgraph(settings=settings)
         answer_subgraph = build_answer_subgraph(settings=settings, chat_model=chat_model)
         graph.add_node(
             "preprocess_subgraph",
@@ -1423,11 +1358,6 @@ class KbChatAgenticGraph:
             "retrieval_subgraph",
             _wrap_node_with_io("retrieval_subgraph", retrieval_subgraph),
             metadata=node_metadata("retrieval_subgraph", side_effect_type="subgraph"),
-        )
-        graph.add_node(
-            "evidence_gate_subgraph",
-            _wrap_node_with_io("evidence_gate_subgraph", evidence_gate_subgraph),
-            metadata=node_metadata("evidence_gate_subgraph", side_effect_type="subgraph"),
         )
         graph.add_node(
             "answer_subgraph",
@@ -1453,11 +1383,6 @@ class KbChatAgenticGraph:
             ),
             metadata=node_metadata("force_exit", side_effect_type="deterministic_rule"),
         )
-        graph.add_node(
-            "confidence_calibrate",
-            _wrap_node_with_io("confidence_calibrate", confidence_calibrate),
-            metadata=node_metadata("confidence_calibrate", side_effect_type="deterministic_rule"),
-        )
         graph.set_entry_point("preprocess_subgraph")
         graph.add_conditional_edges(
             "preprocess_subgraph",
@@ -1468,28 +1393,18 @@ class KbChatAgenticGraph:
                 "force_exit": "force_exit",
             },
         )
-        graph.add_edge("retrieval_subgraph", "evidence_gate_subgraph")
-        graph.add_conditional_edges(
-            "evidence_gate_subgraph",
-            lambda s: route_after_doc_grader(s, settings),
-            {
-                "answer_subgraph": "answer_subgraph",
-                "transform_query": "transform_query",
-                "force_exit": "force_exit",
-            },
-        )
+        graph.add_edge("retrieval_subgraph", "answer_subgraph")
         graph.add_edge("transform_query", "retrieval_subgraph")
         graph.add_conditional_edges(
             "answer_subgraph",
             lambda s: route_after_answer_review(s, settings),
             {
-                "confidence_calibrate": "confidence_calibrate",
+                "END": END,
                 "transform_query": "transform_query",
                 "force_exit": "force_exit",
             },
         )
-        graph.add_edge("force_exit", "confidence_calibrate")
-        graph.add_edge("confidence_calibrate", END)
+        graph.add_edge("force_exit", END)
         self._graph_builder = graph
 
     def compile(

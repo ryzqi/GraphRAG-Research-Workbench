@@ -33,6 +33,7 @@ from app.agents.kb_chat_trace_nodes import (
 )
 from app.core.settings import Settings
 from app.prompts import get_prompt_loader
+from app.services.query_rewrite_service import QueryRewriteService
 from app.services.streaming import extract_answer_text
 from app.utils.token_counter import count_tokens_approximately
 
@@ -65,10 +66,10 @@ def _budget_by_complexity(complexity: str) -> tuple[int, int, int]:
     return 5, 20, 10
 
 
-def _retrieval_budget_plan(
+def _fallback_retrieval_budget(
     state: RetrievalBudgetPlanInput,
     settings: Settings,
-) -> dict[str, Any]:
+) -> tuple[dict[str, int], dict[str, Any]]:
     complexity = str(state.get("complexity_level") or "simple")
     query_count = _resolve_query_count(state)
     per_query_top_k, global_candidates_limit, rerank_input_limit = _budget_by_complexity(
@@ -113,33 +114,128 @@ def _retrieval_budget_plan(
         min(global_candidates_limit, max_top_k * 6),
     )
 
+    return (
+        {
+            "per_query_top_k": per_query_top_k,
+            "global_candidates_limit": global_candidates_limit,
+            "rerank_input_limit": rerank_input_limit,
+        },
+        {
+            "complexity": complexity,
+            "query_count": query_count,
+            "failure_reason": failure_reason or None,
+            "retry_count": retry_count,
+        },
+    )
+
+
+def _merge_retrieval_plan_summary(
+    state: RetrievalBudgetPlanInput,
+    *,
+    budget: dict[str, int],
+    diagnostics: dict[str, Any],
+    decision_source: str = "llm",
+    fallback_reason: str | None = None,
+    fallback_used: bool = False,
+    reasoning: str | None = None,
+    latency_ms: int | None = None,
+) -> dict[str, Any]:
     stage_summaries = state.get("stage_summaries")
     if not isinstance(stage_summaries, dict):
         stage_summaries = {}
     stage_summaries = {
         **stage_summaries,
-        "retrieval_budget_plan": {
-            "complexity": complexity,
-            "query_count": query_count,
-            "per_query_top_k": per_query_top_k,
-            "global_candidates_limit": global_candidates_limit,
-            "rerank_input_limit": rerank_input_limit,
-            "failure_reason": failure_reason or None,
-            "retry_count": retry_count,
+        "retrieval_plan": {
+            **diagnostics,
+            **budget,
+            "decision_source": decision_source,
+            "fallback_reason": fallback_reason,
+            "fallback_used": fallback_used,
+            "reasoning": reasoning or "",
+            "latency_ms": latency_ms,
+            "completed_at": now_iso(),
         },
     }
+    return stage_summaries
+
+
+async def _retrieval_plan_node(
+    state: RetrievalBudgetPlanInput,
+    runtime: Runtime[KbChatGraphContext],
+    settings: Settings,
+) -> dict[str, Any]:
+    _ = runtime
+    start = time.perf_counter()
+    fallback_budget, diagnostics = _fallback_retrieval_budget(state, settings)
+    query = _resolve_query_text(state)
+    try:
+        planner = QueryRewriteService(settings=settings)
+        result = await planner.plan_retrieval_budget(
+            question=query,
+            normalized_query=query,
+            complexity_level=str(diagnostics.get("complexity") or "simple"),
+            query_items=state.get("query_items") if isinstance(state.get("query_items"), list) else [],
+            retry_count=int(diagnostics.get("retry_count") or 0),
+            failure_reason=str(diagnostics.get("failure_reason") or ""),
+            max_top_k=int(settings.retrieval_max_top_k),
+            fallback_budget=fallback_budget,
+        )
+        budget = result.budget if isinstance(result.budget, dict) else fallback_budget
+        meta = result.meta if isinstance(result.meta, dict) else {}
+        fallback_reason = str(meta.get("fallback_reason") or result.reason or "") or None
+        fallback_used = bool(meta.get("fallback_used")) or bool(fallback_reason)
+        reasoning = str(meta.get("reasoning") or "")
+    except Exception:
+        budget = fallback_budget
+        fallback_reason = "planner_invoke_failed"
+        fallback_used = True
+        reasoning = ""
+
+    stage_summaries = _merge_retrieval_plan_summary(
+        state,
+        budget=budget,
+        diagnostics=diagnostics,
+        decision_source="llm",
+        fallback_reason=fallback_reason,
+        fallback_used=fallback_used,
+        reasoning=reasoning,
+        latency_ms=int((time.perf_counter() - start) * 1000),
+    )
     return {
-        "retrieval_budget": {
-            "per_query_top_k": per_query_top_k,
-            "global_candidates_limit": global_candidates_limit,
-            "rerank_input_limit": rerank_input_limit,
-        },
+        "retrieval_budget": budget,
+        "stage_summaries": stage_summaries,
+    }
+
+
+def _retrieval_budget_plan(
+    state: RetrievalBudgetPlanInput,
+    settings: Settings,
+) -> dict[str, Any]:
+    budget, diagnostics = _fallback_retrieval_budget(state, settings)
+    stage_summaries = _merge_retrieval_plan_summary(
+        state,
+        budget=budget,
+        diagnostics=diagnostics,
+        decision_source="llm",
+        fallback_reason="sync_fallback",
+        fallback_used=True,
+        reasoning="",
+        latency_ms=0,
+    )
+    return {
+        "retrieval_budget": budget,
         "stage_summaries": stage_summaries,
     }
 
 
 def _resolve_query_text(state: dict[str, Any]) -> str:
-    for key in ("normalized_query", "coref_query", "rewrite_input_query", "user_input"):
+    for key in (
+        "normalized_query",
+        "resolved_query",
+        "coref_query",
+        "rewrite_input_query",
+        "user_input",
+    ):
         value = state.get(key)
         if isinstance(value, str) and value.strip():
             return value.strip()
@@ -171,7 +267,8 @@ async def _compress_context(
         except KeyError:
             compress_system = (
                 "你是知识库证据压缩器。"
-                "请围绕用户问题压缩参考内容，只保留回答问题所必需的事实与原有引用标签。"
+                "请围绕用户问题压缩参考内容，只保留回答问题所必需且可追溯的事实。"
+                "必须保留原有引用标签、数字、时间、范围、比较对象、否定/例外、条件前提。"
                 "禁止新增事实，禁止编造或改写引用标签，输出纯文本。"
             )
         compress_user = (
@@ -179,9 +276,10 @@ async def _compress_context(
             "要求：\n"
             "1) 仅保留与问题直接相关、且对回答必需的证据；\n"
             "2) 必须保留原始引用标签，如 [S1]、[S2]；\n"
-            "3) 不得新增参考内容之外的事实；\n"
-            "4) 如果原文已经足够精炼，也可以原样返回；\n"
-            "5) 不要输出解释、标题或 Markdown 代码块。\n\n"
+            "3) 必须保留关键数字、时间、范围、单位、阈值、比较对象、因果/前提、例外与否定；\n"
+            "4) 不得新增参考内容之外的事实；\n"
+            "5) 如果原文已经足够精炼，也可以原样返回；\n"
+            "6) 不要输出解释、标题、总结性前言或 Markdown 代码块。\n\n"
             f"问题：{question}\n\n"
             f"参考内容：\n{final_context}"
         )
@@ -198,6 +296,8 @@ async def _compress_context(
                 fallback_reason = "empty_compress_output"
             elif count_tokens_approximately(candidate) > input_tokens:
                 fallback_reason = "non_compacting_output"
+            elif final_context and _EVIDENCE_LABEL_RE.findall(final_context) and not _EVIDENCE_LABEL_RE.findall(candidate):
+                fallback_reason = "evidence_labels_dropped"
             else:
                 compressed_context = candidate
         except asyncio.CancelledError:
@@ -280,9 +380,9 @@ def build_retrieval_subgraph(
         )
 
     add_traced_node(
-        "retrieval_budget_plan",
-        partial(_retrieval_budget_plan, settings=settings),
-        side_effect_type="deterministic_rule",
+        "retrieval_plan",
+        partial(_retrieval_plan_node, settings=settings),
+        side_effect_type="llm",
     )
     add_traced_node(
         "dispatch_subqueries",
@@ -318,8 +418,8 @@ def build_retrieval_subgraph(
         side_effect_type="llm",
     )
 
-    graph.set_entry_point("retrieval_budget_plan")
-    graph.add_edge("retrieval_budget_plan", "dispatch_subqueries")
+    graph.set_entry_point("retrieval_plan")
+    graph.add_edge("retrieval_plan", "dispatch_subqueries")
     graph.add_edge("retrieve_subquery", "merge_subquery_context")
     graph.add_edge("merge_subquery_context", "context_compress")
     graph.add_edge("retrieve", "context_compress")

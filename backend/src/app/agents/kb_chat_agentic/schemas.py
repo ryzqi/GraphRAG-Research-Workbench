@@ -127,6 +127,19 @@ class TransformQueryDecision(BaseModel):
     query: str = Field(..., min_length=1)
 
 
+class ReferenceResolutionDecision(BaseModel):
+    """Structured output for LLM-driven reference resolution."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    resolved_query: str = Field(..., min_length=1, max_length=256)
+    triggered: bool = False
+    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+    selected_mention: str = Field(default="", max_length=120)
+    needs_clarification: bool = False
+    reasoning: str = Field(default="", max_length=240)
+
+
 NormalizeRecallRisk = Literal["low", "medium", "high"]
 
 
@@ -249,3 +262,14 @@ class HyDEBatchDecision(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     hypothetical_documents: list[str] = Field(default_factory=list, min_length=1, max_length=8)
+
+
+class RetrievalPlanDecision(BaseModel):
+    """Structured output for retrieval budget planning."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    per_query_top_k: int = Field(..., ge=1, le=50)
+    global_candidates_limit: int = Field(..., ge=1, le=300)
+    rerank_input_limit: int = Field(..., ge=1, le=300)
+    reasoning: str = Field(default="", max_length=240)

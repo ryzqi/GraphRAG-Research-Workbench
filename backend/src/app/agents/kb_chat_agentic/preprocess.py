@@ -818,7 +818,7 @@ async def coref_rewrite(state: CorefRewriteInput, settings: Settings) -> dict[st
     )
     try:
         svc = QueryRewriteService(settings=settings)
-        result = await svc.coref_rewrite(
+        result = await svc.resolve_reference(
             query,
             enabled=True,
             recent_turns=[
@@ -842,15 +842,15 @@ async def coref_rewrite(state: CorefRewriteInput, settings: Settings) -> dict[st
         meta = {
             "triggered": False,
             "confidence": 0.0,
-            "candidate_count": 0,
             "selected_mention": "",
-            "resolution_source": "none",
+            "resolution_source": "fail_open",
+            "reasoning": "",
             "needs_clarification": False,
         }
 
     stage_summaries = _merge_stage_summary(
         state,
-        "coref_rewrite",
+        "resolve_reference",
         {
             "rewritten": rewritten != query,
             "reason": reason,
@@ -864,9 +864,10 @@ async def coref_rewrite(state: CorefRewriteInput, settings: Settings) -> dict[st
             ),
             "triggered": bool(meta.get("triggered")),
             "confidence": float(meta.get("confidence") or 0.0),
-            "candidate_count": int(meta.get("candidate_count") or 0),
             "selected_mention": str(meta.get("selected_mention") or ""),
             "resolution_source": str(meta.get("resolution_source") or "none"),
+            "reasoning": str(meta.get("reasoning") or ""),
+            "fallback_reason": str(meta.get("fallback_reason") or reason or ""),
             "needs_clarification_hint": bool(meta.get("needs_clarification")),
             "latency_ms": int((time.perf_counter() - start) * 1000),
             "completed_at": now_iso(),
@@ -875,6 +876,8 @@ async def coref_rewrite(state: CorefRewriteInput, settings: Settings) -> dict[st
     )
 
     return {
+        "resolved_query": rewritten,
+        "reference_resolution_meta": meta,
         "coref_query": rewritten,
         "coref_meta": meta,
         "stage_summaries": stage_summaries,
@@ -884,7 +887,9 @@ async def coref_rewrite(state: CorefRewriteInput, settings: Settings) -> dict[st
 async def ambiguity_check(state: AmbiguityCheckInput, settings: Settings) -> dict[str, Any]:
     """Ambiguity check with model-first decision and structured clarification payload."""
     start = time.perf_counter()
-    query = state.get("coref_query")
+    query = state.get("resolved_query")
+    if not isinstance(query, str) or not query.strip():
+        query = state.get("coref_query")
     if not isinstance(query, str) or not query.strip():
         query = _extract_user_input(state)
 
@@ -897,7 +902,9 @@ async def ambiguity_check(state: AmbiguityCheckInput, settings: Settings) -> dic
     fallback_used = False
     clarification_payload: dict[str, Any] | None = None
 
-    coref_meta = state.get("coref_meta")
+    coref_meta = state.get("reference_resolution_meta")
+    if not isinstance(coref_meta, dict):
+        coref_meta = state.get("coref_meta")
     try:
         svc = QueryRewriteService(settings=settings)
         result = await svc.ambiguity_check(
@@ -983,8 +990,11 @@ async def normalize_rewrite(
 ) -> dict[str, Any]:
     """Normalize query with rule+LLM strategy and retrieval-safe metadata."""
     start = time.perf_counter()
-    input_source = "coref_query"
-    query = state.get("coref_query")
+    input_source = "resolved_query"
+    query = state.get("resolved_query")
+    if not isinstance(query, str) or not query.strip():
+        query = state.get("coref_query")
+        input_source = "coref_query"
     if not isinstance(query, str) or not query.strip():
         query = _extract_user_input(state)
         input_source = "user_input"
@@ -1029,7 +1039,7 @@ async def normalize_rewrite(
 
     stage_summaries = _merge_stage_summary(
         state,
-        "normalize_rewrite",
+        "query_normalize",
         {
             "rewritten": rewritten_flag,
             "normalization_source": normalization_source,
@@ -1559,7 +1569,9 @@ async def prepare_messages(
         normalized = _extract_user_input(state)
     normalized = normalized.strip()
 
-    original_query = state.get("coref_query")
+    original_query = state.get("resolved_query")
+    if not isinstance(original_query, str) or not original_query.strip():
+        original_query = state.get("coref_query")
     if not isinstance(original_query, str) or not original_query.strip():
         original_query = state.get("rewrite_input_query")
     if not isinstance(original_query, str) or not original_query.strip():

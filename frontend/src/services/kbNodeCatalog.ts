@@ -4,7 +4,6 @@ import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import AutoFixHighIcon from '@mui/icons-material/AutoFixHigh';
 import BlockIcon from '@mui/icons-material/Block';
 import FactCheckIcon from '@mui/icons-material/FactCheck';
-import GavelIcon from '@mui/icons-material/Gavel';
 import HelpOutlineIcon from '@mui/icons-material/HelpOutline';
 import HubIcon from '@mui/icons-material/Hub';
 import LensIcon from '@mui/icons-material/Lens';
@@ -59,16 +58,15 @@ const C = {
   retrieve: '#CA8A04',
   gate: '#EA580C',
   answer: '#9333EA',
-  finalize: '#0891B2',
   exit: '#475569',
 } as const;
 
 export const KB_NODE_CATALOG: Record<string, KbNodeCatalogEntry> = {
   preprocess_subgraph: { label: '预处理子图', stageId: 'stage_1_preprocess', order: 0, icon: AccountTreeIcon, color: C.preprocess, phase: 'preprocess' },
   merge_context: { label: '上下文合并', stageId: 'stage_1_preprocess', order: 1, icon: MergeTypeIcon, color: C.preprocess, phase: 'preprocess' },
-  coref_rewrite: { label: '指代消解', stageId: 'stage_1_preprocess', order: 2, icon: AccountTreeIcon, color: C.preprocess, phase: 'preprocess' },
+  resolve_reference: { label: '指代消解', stageId: 'stage_1_preprocess', order: 2, icon: AccountTreeIcon, color: C.preprocess, phase: 'preprocess' },
   ambiguity_check: { label: '歧义判断', stageId: 'stage_1_preprocess', order: 3, icon: HelpOutlineIcon, color: '#7C3AED', phase: 'preprocess' },
-  normalize_rewrite: { label: '问题规范', stageId: 'stage_1_preprocess', order: 4, icon: TuneIcon, color: '#4F46E5', phase: 'preprocess' },
+  query_normalize: { label: '问题规范', stageId: 'stage_1_preprocess', order: 4, icon: TuneIcon, color: '#4F46E5', phase: 'preprocess' },
   complexity_classify: { label: '复杂度分类', stageId: 'stage_2_route', order: 5, icon: FactCheckIcon, color: C.route, phase: 'route' },
   generate_variants_mod: { label: '中等变体生成', stageId: 'stage_3_enhance', order: 6, icon: HubIcon, color: C.enhance, phase: 'enhance' },
   decomposition: { label: '问题分解', stageId: 'stage_3_enhance', order: 7, icon: HubIcon, color: C.enhance, phase: 'enhance' },
@@ -78,15 +76,12 @@ export const KB_NODE_CATALOG: Record<string, KbNodeCatalogEntry> = {
   prepare_messages: { label: '消息整理', stageId: 'stage_3_enhance', order: 11, icon: TextSnippetIcon, color: '#65A30D', phase: 'enhance' },
   preprocess_exit: { label: '预处理出口', stageId: 'stage_3_enhance', order: 12, icon: TaskAltIcon, color: C.enhance, phase: 'enhance' },
   retrieval_subgraph: { label: '检索子图', stageId: 'stage_4_retrieve', order: 13, icon: AccountTreeIcon, color: C.retrieve, phase: 'retrieve' },
-  retrieval_budget_plan: { label: '检索预算规划', stageId: 'stage_4_retrieve', order: 14, icon: QueryStatsIcon, color: C.retrieve, phase: 'retrieve' },
+  retrieval_plan: { label: '检索预算规划', stageId: 'stage_4_retrieve', order: 14, icon: QueryStatsIcon, color: C.retrieve, phase: 'retrieve' },
   dispatch_subqueries: { label: '子查询派发', stageId: 'stage_4_retrieve', order: 15, icon: HubIcon, color: C.retrieve, phase: 'retrieve' },
   retrieve_subquery: { label: '子查询检索', stageId: 'stage_4_retrieve', order: 16, icon: SearchIcon, color: C.retrieve, phase: 'retrieve' },
   merge_subquery_context: { label: '子查询上下文合并', stageId: 'stage_4_retrieve', order: 17, icon: MergeTypeIcon, color: C.retrieve, phase: 'retrieve' },
   retrieve: { label: '知识检索', stageId: 'stage_4_retrieve', order: 18, icon: SearchIcon, color: C.retrieve, phase: 'retrieve' },
   context_compress: { label: '上下文压缩', stageId: 'stage_4_retrieve', order: 19, icon: TuneIcon, color: C.retrieve, phase: 'retrieve' },
-  evidence_gate_subgraph: { label: '证据门控子图', stageId: 'stage_5_gate', order: 20, icon: AccountTreeIcon, color: C.gate, phase: 'judge' },
-  doc_gate_sufficiency: { label: '证据充分度', stageId: 'stage_5_gate', order: 21, icon: GavelIcon, color: C.gate, phase: 'judge' },
-  doc_gate_route: { label: '文档判定', stageId: 'stage_5_gate', order: 22, icon: TaskAltIcon, color: C.gate, phase: 'judge' },
   transform_query: { label: '查询改写', stageId: 'stage_4_retrieve', order: 23, icon: TuneIcon, color: '#DC2626', phase: 'retrieve' },
   answer_subgraph: { label: '答案子图', stageId: 'stage_6_answer', order: 24, icon: AccountTreeIcon, color: C.answer, phase: 'generate' },
   draft_generate: { label: '草稿生成', stageId: 'stage_6_answer', order: 25, icon: AutoAwesomeIcon, color: C.answer, phase: 'generate' },
@@ -98,7 +93,6 @@ export const KB_NODE_CATALOG: Record<string, KbNodeCatalogEntry> = {
   answer_repair: { label: '答案修复', stageId: 'stage_6_answer', order: 31, icon: AutoFixHighIcon, color: C.answer, phase: 'verify' },
   answer_commit: { label: '答案提交', stageId: 'stage_6_answer', order: 32, icon: TaskAltIcon, color: C.answer, phase: 'generate' },
   force_exit: { label: '提前终止', stageId: 'stage_7_finalize', order: 33, icon: BlockIcon, color: C.exit, phase: 'finalize' },
-  confidence_calibrate: { label: '置信度校准', stageId: 'stage_7_finalize', order: 34, icon: FactCheckIcon, color: C.finalize, phase: 'finalize' },
 };
 
 const PHASE_TO_STAGE_ID: Partial<Record<string, KbTraceStageId>> = {

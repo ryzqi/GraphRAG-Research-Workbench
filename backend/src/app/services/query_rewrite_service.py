@@ -30,6 +30,8 @@ from app.agents.kb_chat_agentic.schemas import (
     MergeContextResolutionDecision,
     MultiQueryDecision,
     NormalizeDecision,
+    ReferenceResolutionDecision,
+    RetrievalPlanDecision,
     ReverseQuestionDecision,
     TransformQueryDecision,
 )
@@ -115,6 +117,15 @@ class MergeContextResolutionResult:
     success: bool
     reason: str | None = None
     latency_ms: int | None = None
+
+
+@dataclass(slots=True)
+class RetrievalPlanResult:
+    budget: dict[str, int]
+    success: bool
+    reason: str | None = None
+    latency_ms: int | None = None
+    meta: dict[str, object] | None = None
 
 
 def _normalize_whitespace(text: str) -> str:
@@ -424,6 +435,37 @@ def _dedupe_keep_order(items: Iterable[str]) -> list[str]:
         deduped.append(value)
         seen.add(value)
     return deduped
+
+
+def _render_recent_turns(turns: list[dict[str, str]] | None) -> str:
+    if not isinstance(turns, list):
+        return ""
+    lines: list[str] = []
+    for turn in turns:
+        if not isinstance(turn, dict):
+            continue
+        role_raw = _normalize_whitespace(str(turn.get("role") or ""))
+        text = _normalize_whitespace(str(turn.get("text") or ""))
+        if not text:
+            continue
+        role = "user" if role_raw == "user" else "assistant" if role_raw == "assistant" else role_raw
+        lines.append(f"{role}: {text}" if role else text)
+    return "\n".join(lines[:12])
+
+
+def _render_query_items(items: list[dict[str, object]] | None) -> list[str]:
+    if not isinstance(items, list):
+        return []
+    lines: list[str] = []
+    for index, item in enumerate(items, start=1):
+        if not isinstance(item, dict):
+            continue
+        query = _normalize_whitespace(str(item.get("query") or ""))
+        if not query:
+            continue
+        kind = _normalize_whitespace(str(item.get("kind") or "")) or "other"
+        lines.append(f"{index}. [{kind}] {query}")
+    return lines
 
 
 def _contains_coref_marker(query: str) -> bool:
@@ -832,7 +874,7 @@ class QueryRewriteService:
             latency_ms=latency_ms,
         )
 
-    async def coref_rewrite(
+    async def resolve_reference(
         self,
         query: str,
         *,
@@ -841,7 +883,7 @@ class QueryRewriteService:
         summary_text: str | None = None,
         memory_snippet: str | None = None,
     ) -> RewriteResult:
-        """Coreference rewrite with context-aware, low-latency heuristics."""
+        """Resolve conversational references with an LLM and fail open to the original query."""
         start = time.perf_counter()
         q = _sanitize_query_text(query)
         if not enabled:
@@ -853,9 +895,9 @@ class QueryRewriteService:
                 meta={
                     "triggered": False,
                     "confidence": 0.0,
-                    "candidate_count": 0,
                     "selected_mention": "",
-                    "resolution_source": "none",
+                    "resolution_source": "disabled",
+                    "reasoning": "",
                     "needs_clarification": False,
                 },
             )
@@ -868,107 +910,84 @@ class QueryRewriteService:
                 meta={
                     "triggered": False,
                     "confidence": 0.0,
-                    "candidate_count": 0,
                     "selected_mention": "",
-                    "resolution_source": "none",
+                    "resolution_source": "empty",
+                    "reasoning": "",
                     "needs_clarification": False,
                 },
             )
-
-        triggered = _contains_coref_marker(q) or len(q) <= 8
-        focus_terms = _extract_query_focus_terms(q)
-        candidates: list[tuple[float, str, str]] = []
-        seen: set[str] = set()
-
-        if isinstance(recent_turns, list):
-            normalized_turns = [
-                turn
-                for turn in recent_turns
-                if isinstance(turn, dict) and isinstance(turn.get("text"), str)
-            ]
-            total = len(normalized_turns)
-            for idx, turn in enumerate(reversed(normalized_turns)):
-                text = _normalize_whitespace(str(turn.get("text") or ""))
-                if not text:
-                    continue
-                role = str(turn.get("role") or "assistant").lower()
-                role_weight = 1.25 if role == "user" else 0.75
-                recency_weight = max(0.0, 1.0 - (idx / max(total, 1)) * 0.45)
-                for segment in _split_candidate_segments(text):
-                    lowered = segment.lower()
-                    if lowered in seen:
-                        continue
-                    overlap = 0.0
-                    if focus_terms and any(term in lowered for term in focus_terms):
-                        overlap = 0.3
-                    length_penalty = 0.2 if len(segment) > 24 else 0.0
-                    score = role_weight + recency_weight + overlap - length_penalty
-                    candidates.append((score, segment, f"recent_turns_{role}"))
-                    seen.add(lowered)
-
-        for source_name, source_text, source_weight in (
-            ("summary", summary_text, 0.65),
-            ("memory", memory_snippet, 0.55),
+        structured_result = await self._call_prompt_structured(
+            "kb_chat/resolve_reference",
+            schema=ReferenceResolutionDecision,
+            max_tokens=320,
+            question=q,
+            recent_turns=_render_recent_turns(recent_turns),
+            summary_text=_normalize_whitespace(summary_text or ""),
+            memory_snippet=_normalize_whitespace(memory_snippet or ""),
+        )
+        if structured_result.success and isinstance(
+            structured_result.payload, ReferenceResolutionDecision
         ):
-            text = _normalize_whitespace(str(source_text or ""))
-            if not text:
-                continue
-            for segment in _split_candidate_segments(text):
-                lowered = segment.lower()
-                if lowered in seen:
-                    continue
-                overlap = 0.0
-                if focus_terms and any(term in lowered for term in focus_terms):
-                    overlap = 0.2
-                score = source_weight + overlap
-                candidates.append((score, segment, source_name))
-                seen.add(lowered)
+            payload = structured_result.payload
+            resolved_query = _sanitize_query_text(payload.resolved_query) or q
+            confidence = round(max(0.0, min(1.0, float(payload.confidence))), 4)
+            needs_clarification = bool(payload.needs_clarification)
+            reasoning = _normalize_whitespace(payload.reasoning or "")
+            selected_mention = _normalize_whitespace(payload.selected_mention or "")
+            triggered = bool(payload.triggered or resolved_query != q or selected_mention)
+            return RewriteResult(
+                query=resolved_query,
+                rewritten=resolved_query != q,
+                reason="llm_structured",
+                latency_ms=int((time.perf_counter() - start) * 1000),
+                meta={
+                    "triggered": triggered,
+                    "confidence": confidence,
+                    "selected_mention": selected_mention,
+                    "resolution_source": "llm_structured",
+                    "reasoning": reasoning,
+                    "needs_clarification": needs_clarification,
+                    "clarification_hint": (
+                        _DEFAULT_CLARIFICATION_QUESTION
+                        if needs_clarification
+                        else ""
+                    ),
+                },
+            )
 
-        candidates.sort(key=lambda item: item[0], reverse=True)
-        candidate_count = len(candidates)
-        top_score, top_mention, source = (candidates[0] if candidates else (0.0, "", "none"))
-        confidence = round(max(0.0, min(1.0, top_score / 2.0)), 4)
-        needs_clarification = False
-        reason = "no_trigger"
-        rewritten_query = q
-        apply_strategy = "noop"
-
-        if not triggered:
-            reason = "no_trigger"
-        elif not top_mention:
-            reason = "no_candidate"
-            needs_clarification = True
-        elif confidence < _COREF_CONFIDENCE_THRESHOLD:
-            reason = "low_confidence"
-            needs_clarification = True
-        else:
-            rewritten_query, apply_strategy = _apply_coref_candidate(q, top_mention)
-            if rewritten_query != q:
-                reason = None
-            else:
-                reason = "unchanged_after_apply"
-                needs_clarification = True
-
-        latency_ms = int((time.perf_counter() - start) * 1000)
+        fallback_reason = structured_result.reason or "llm_unavailable"
         return RewriteResult(
-            query=rewritten_query,
-            rewritten=rewritten_query != q,
-            reason=reason,
-            latency_ms=latency_ms,
+            query=q,
+            rewritten=False,
+            reason=fallback_reason,
+            latency_ms=int((time.perf_counter() - start) * 1000),
             meta={
-                "triggered": triggered,
-                "confidence": confidence,
-                "candidate_count": candidate_count,
-                "selected_mention": top_mention,
-                "resolution_source": source,
-                "apply_strategy": apply_strategy,
-                "needs_clarification": needs_clarification,
-                "clarification_hint": (
-                    _DEFAULT_CLARIFICATION_QUESTION
-                    if needs_clarification and triggered
-                    else ""
-                ),
+                "triggered": False,
+                "confidence": 0.0,
+                "selected_mention": "",
+                "resolution_source": "fail_open",
+                "reasoning": "",
+                "needs_clarification": False,
+                "fallback_reason": fallback_reason,
             },
+        )
+
+    async def coref_rewrite(
+        self,
+        query: str,
+        *,
+        enabled: bool = True,
+        recent_turns: list[dict[str, str]] | None = None,
+        summary_text: str | None = None,
+        memory_snippet: str | None = None,
+    ) -> RewriteResult:
+        """Backward-compatible alias for LLM-driven reference resolution."""
+        return await self.resolve_reference(
+            query,
+            enabled=enabled,
+            recent_turns=recent_turns,
+            summary_text=summary_text,
+            memory_snippet=memory_snippet,
         )
 
     async def normalize_rewrite(
@@ -1122,6 +1141,104 @@ class QueryRewriteService:
                 **rule_meta,
                 "source": "rule_fallback",
                 "fallback_reason": fallback_reason or "llm_unavailable",
+            },
+        )
+
+    async def plan_retrieval_budget(
+        self,
+        *,
+        question: str,
+        normalized_query: str,
+        complexity_level: str,
+        query_items: list[dict[str, object]] | None,
+        retry_count: int,
+        failure_reason: str,
+        max_top_k: int,
+        fallback_budget: dict[str, int],
+    ) -> RetrievalPlanResult:
+        """Plan retrieval budget with an LLM and fail open to the supplied fallback budget."""
+        start = time.perf_counter()
+        normalized_items = query_items if isinstance(query_items, list) else []
+        query_count = max(
+            1,
+            sum(
+                1
+                for item in normalized_items
+                if isinstance(item, dict)
+                and _normalize_whitespace(str(item.get("query") or ""))
+            ),
+        )
+        structured_result = await self._call_prompt_structured(
+            "kb_chat/retrieval_plan",
+            schema=RetrievalPlanDecision,
+            max_tokens=240,
+            question=_normalize_whitespace(question),
+            normalized_query=_normalize_whitespace(normalized_query),
+            complexity_level=_normalize_whitespace(complexity_level) or "simple",
+            query_count=query_count,
+            query_items="\n".join(_render_query_items(normalized_items) or [])
+            or "1. [main] 无",
+            retry_count=max(0, int(retry_count)),
+            failure_reason=_normalize_whitespace(failure_reason) or "none",
+            fallback_per_query_top_k=max(
+                1, int(fallback_budget.get("per_query_top_k") or 1)
+            ),
+            fallback_global_candidates_limit=max(
+                1, int(fallback_budget.get("global_candidates_limit") or 1)
+            ),
+            fallback_rerank_input_limit=max(
+                1, int(fallback_budget.get("rerank_input_limit") or 1)
+            ),
+            max_top_k=max(1, int(max_top_k)),
+        )
+
+        fallback_reason = structured_result.reason or ""
+        planning_reasoning = ""
+        budget = {
+            "per_query_top_k": max(1, int(fallback_budget.get("per_query_top_k") or 1)),
+            "global_candidates_limit": max(
+                1, int(fallback_budget.get("global_candidates_limit") or 1)
+            ),
+            "rerank_input_limit": max(
+                1, int(fallback_budget.get("rerank_input_limit") or 1)
+            ),
+        }
+
+        if structured_result.success and isinstance(
+            structured_result.payload, RetrievalPlanDecision
+        ):
+            payload = structured_result.payload
+            safe_max_top_k = max(1, int(max_top_k))
+            per_query_top_k = max(1, min(int(payload.per_query_top_k), safe_max_top_k))
+            max_global_candidates = max(safe_max_top_k * 6, per_query_top_k)
+            rerank_input_limit = max(
+                per_query_top_k,
+                min(int(payload.rerank_input_limit), max(max_global_candidates, safe_max_top_k * 4)),
+            )
+            global_candidates_limit = max(
+                rerank_input_limit,
+                min(int(payload.global_candidates_limit), max_global_candidates),
+            )
+            budget = {
+                "per_query_top_k": per_query_top_k,
+                "global_candidates_limit": global_candidates_limit,
+                "rerank_input_limit": rerank_input_limit,
+            }
+            planning_reasoning = _normalize_whitespace(payload.reasoning or "")
+            fallback_reason = ""
+
+        latency_ms = int((time.perf_counter() - start) * 1000)
+        return RetrievalPlanResult(
+            budget=budget,
+            success=bool(structured_result.success and structured_result.payload is not None),
+            reason=fallback_reason or None,
+            latency_ms=latency_ms,
+            meta={
+                "decision_source": "llm",
+                "fallback_reason": fallback_reason,
+                "fallback_used": bool(fallback_reason),
+                "reasoning": planning_reasoning,
+                "query_count": query_count,
             },
         )
 

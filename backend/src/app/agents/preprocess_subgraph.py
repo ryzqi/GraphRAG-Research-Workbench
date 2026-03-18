@@ -98,7 +98,7 @@ def _route_after_ambiguity(state: PreprocessRoutingInput) -> str:
     decision = resolve_routing_decision(state, "preprocess")
     if str(decision.get("next_node") or "").strip().lower() == "force_exit":
         return "preprocess_exit"
-    return "normalize_rewrite"
+    return "query_normalize"
 
 
 def _resolve_complexity_next_node(
@@ -152,7 +152,7 @@ def _route_to_ambiguity_check(state: KbChatEmptyState, settings: Settings) -> st
     return (
         "ambiguity_check"
         if bool(getattr(settings, "kb_chat_ambiguity_check_enabled", True))
-        else "normalize_rewrite"
+        else "query_normalize"
     )
 
 
@@ -248,7 +248,7 @@ def build_preprocess_subgraph(*, settings: Settings):
         side_effect_type="context_read",
     )
     add_traced_node(
-        "coref_rewrite",
+        "resolve_reference",
         partial(coref_rewrite, settings=settings),
         side_effect_type="llm",
         retry_policy=llm_retry_policy,
@@ -260,7 +260,7 @@ def build_preprocess_subgraph(*, settings: Settings):
         retry_policy=llm_retry_policy,
     )
     add_traced_node(
-        "normalize_rewrite",
+        "query_normalize",
         partial(normalize_rewrite, settings=settings),
         side_effect_type="llm",
         retry_policy=llm_retry_policy,
@@ -309,24 +309,24 @@ def build_preprocess_subgraph(*, settings: Settings):
     add_traced_node("preprocess_exit", _preprocess_exit, side_effect_type="deterministic_rule")
 
     graph.set_entry_point("merge_context")
-    graph.add_edge("merge_context", "coref_rewrite")
+    graph.add_edge("merge_context", "resolve_reference")
     graph.add_conditional_edges(
-        "coref_rewrite",
+        "resolve_reference",
         lambda state: _route_to_ambiguity_check(state, settings),
         {
             "ambiguity_check": "ambiguity_check",
-            "normalize_rewrite": "normalize_rewrite",
+            "query_normalize": "query_normalize",
         },
     )
     graph.add_conditional_edges(
         "ambiguity_check",
         _route_after_ambiguity,
         {
-            "normalize_rewrite": "normalize_rewrite",
+            "query_normalize": "query_normalize",
             "preprocess_exit": "preprocess_exit",
         },
     )
-    graph.add_edge("normalize_rewrite", "complexity_classify")
+    graph.add_edge("query_normalize", "complexity_classify")
     graph.add_conditional_edges(
         "complexity_classify",
         lambda state: _route_after_complexity_classify(state, settings),

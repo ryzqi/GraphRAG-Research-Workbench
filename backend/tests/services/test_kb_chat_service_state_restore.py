@@ -131,8 +131,8 @@ def test_stream_state_apply_update_ignores_removed_confidence_fields() -> None:
     assert state.draft_answer == "草稿答案"
     assert state.final_answer == "最终答案"
     assert state.clarification_payload == {"question": "请补充时间范围"}
-    assert state.confidence_score is None
-    assert state.confidence_level is None
+    assert not hasattr(state, "confidence_score")
+    assert not hasattr(state, "confidence_level")
     assert state.reflection == {"action": "force_exit", "reason": "severe_conflict"}
     assert state.degrade_reason == "review_failed"
     assert state.routing_decisions == {
