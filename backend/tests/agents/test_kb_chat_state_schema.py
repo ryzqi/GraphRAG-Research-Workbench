@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+from langchain.messages import AIMessage, HumanMessage
 
 from app.agents.answer_subgraph import build_answer_subgraph
 from app.agents.evidence_gate_subgraph import _doc_gate_route, _doc_gate_sufficiency
@@ -248,6 +249,83 @@ async def test_merge_context_writes_only_merged_context(
 
     assert "display_context" not in result
     assert result["merged_context"] == "用户问题：当前问题"
+
+
+@pytest.mark.asyncio
+async def test_merge_context_dedupes_duplicate_recent_assistant_turns(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "app.agents.kb_chat_agentic.preprocess._generate_summary_from_turns",
+        AsyncMock(return_value=""),
+    )
+    answer = "CoT 是把复杂任务拆成逐步推理链条的方法。"
+
+    result = await merge_context(
+        {
+            "messages": [
+                HumanMessage(content="什么是CoT"),
+                AIMessage(content=answer),
+                HumanMessage(content="什么是CoT"),
+                AIMessage(content=answer),
+            ],
+            "user_input": "什么是CoT",
+            "metrics": {},
+            "stage_summaries": {},
+        },
+        runtime=SimpleNamespace(store=None),
+        settings=_settings(),
+    )
+
+    assert result["context_frame"]["selected_turns"] == [
+        {"role": "assistant", "text": answer}
+    ]
+    assert result["merged_context"] == f"最近对话：\n助手: {answer}\n\n用户问题：什么是CoT"
+
+
+@pytest.mark.asyncio
+async def test_merge_context_omits_memory_already_covered_by_recent_turns(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "app.agents.kb_chat_agentic.preprocess._generate_summary_from_turns",
+        AsyncMock(return_value=""),
+    )
+    monkeypatch.setattr(
+        "app.agents.kb_chat_agentic.preprocess.aget_kb_chat_memory",
+        AsyncMock(
+            return_value={
+                "entries": [
+                    {
+                        "q": "什么是CoT",
+                        "a": "CoT 是把复杂任务拆成逐步推理链条的方法。",
+                    }
+                ]
+            }
+        ),
+    )
+    answer = "CoT 是把复杂任务拆成逐步推理链条的方法。"
+
+    result = await merge_context(
+        {
+            "messages": [
+                HumanMessage(content="什么是CoT"),
+                AIMessage(content=answer),
+            ],
+            "user_input": "什么是CoT",
+            "metrics": {},
+            "stage_summaries": {},
+        },
+        runtime=SimpleNamespace(
+            store=object(),
+            context={"thread_id": "thread-1", "user_id": "user-1", "kb_ids": ["kb-1"]},
+        ),
+        settings=_settings(memory_enabled=True),
+    )
+
+    assert result["context_frame"]["memory_snippet"] == ""
+    assert "会话记忆（近期）" not in result["merged_context"]
+    assert result["merged_context"] == f"最近对话：\n助手: {answer}\n\n用户问题：什么是CoT"
 
 
 @pytest.mark.asyncio

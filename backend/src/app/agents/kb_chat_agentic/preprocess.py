@@ -428,6 +428,26 @@ def _recent_turns(messages: list[Any], *, max_turns: int = 3) -> list[dict[str, 
     return turns
 
 
+def _dedupe_turns_preserve_latest(turns: list[dict[str, str]]) -> list[dict[str, str]]:
+    if not turns:
+        return []
+    deduped_reversed: list[dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for turn in reversed(turns):
+        role = str(turn.get("role") or "assistant").strip() or "assistant"
+        text = str(turn.get("text") or "").strip()
+        normalized_text = _normalize_for_compare(text)
+        if not normalized_text:
+            continue
+        key = (role, normalized_text)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped_reversed.append({"role": role, "text": text})
+    deduped_reversed.reverse()
+    return deduped_reversed
+
+
 def _render_display_context(
     *,
     summary: str,
@@ -549,7 +569,49 @@ def _select_turns_for_merge(
     if not selected:
         return []
     max_turns = 2 if has_summary else 4
-    return selected[-max_turns * 2 :]
+    return _dedupe_turns_preserve_latest(selected[-max_turns * 2 :])
+
+
+def _filter_memory_entries_already_covered_by_turns(
+    memory: dict[str, Any] | None,
+    *,
+    question: str,
+    turns: list[dict[str, str]],
+) -> dict[str, Any] | None:
+    if not isinstance(memory, dict):
+        return None
+    raw_entries = memory.get("entries")
+    if not isinstance(raw_entries, list):
+        return memory
+
+    normalized_question = _normalize_for_compare(question)
+    user_texts = {normalized_question} if normalized_question else set()
+    assistant_texts: set[str] = set()
+    for turn in turns:
+        role = str(turn.get("role") or "assistant").strip().lower()
+        normalized_text = _normalize_for_compare(str(turn.get("text") or ""))
+        if not normalized_text:
+            continue
+        if role == "user":
+            user_texts.add(normalized_text)
+        elif role == "assistant":
+            assistant_texts.add(normalized_text)
+
+    filtered_entries: list[Any] = []
+    for entry in raw_entries:
+        record = _as_dict(entry)
+        if not record:
+            filtered_entries.append(entry)
+            continue
+        q = _normalize_for_compare(str(record.get("q") or ""))
+        a = _normalize_for_compare(str(record.get("a") or ""))
+        if q and a and q in user_texts and a in assistant_texts:
+            continue
+        filtered_entries.append(record)
+
+    filtered_memory = dict(memory)
+    filtered_memory["entries"] = filtered_entries
+    return filtered_memory
 
 
 def _needs_conflict_resolution(*, summary_text: str, memory_snippet: str) -> bool:
@@ -590,6 +652,7 @@ async def merge_context(
             summary_text = generated
             summary_source = "generated"
 
+    memory_data: dict[str, Any] | None = None
     memory_snippet = ""
     if settings.memory_enabled and runtime.store is not None:
         context = _runtime_context(runtime)
@@ -614,9 +677,11 @@ async def merge_context(
                 thread_id=thread_id,
                 kb_ids=kb_ids,
             )
-            if mem:
+            if isinstance(mem, dict):
+                memory_data = mem
                 memory_snippet = render_kb_chat_memory_snippet(mem)
         except Exception:  # pragma: no cover
+            memory_data = None
             memory_snippet = ""
 
     question = user_input.strip()
@@ -650,7 +715,20 @@ async def merge_context(
             fallback_used = True
             llm_resolve_reason = "error"
 
-    memory_for_render = memory_snippet if keep_memory else ""
+    filtered_memory = (
+        _filter_memory_entries_already_covered_by_turns(
+            memory_data,
+            question=question,
+            turns=selected_turns,
+        )
+        if keep_memory
+        else None
+    )
+    memory_for_render = (
+        render_kb_chat_memory_snippet(filtered_memory)
+        if filtered_memory is not None
+        else (memory_snippet if keep_memory else "")
+    )
     merged_context = _render_display_context(
         summary=f"对话摘要：\n{summary_text}" if summary_text else "",
         turns=selected_turns,
@@ -673,7 +751,7 @@ async def merge_context(
     source_chars = (
         len(summary_text)
         + sum(len((turn.get("text") or "").strip()) for turn in turns)
-        + len(memory_snippet)
+        + len(memory_for_render)
         + len(question)
     )
     compression_ratio = round(len(merged) / source_chars, 4) if source_chars else 1.0
