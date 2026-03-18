@@ -1,0 +1,84 @@
+version: "2.0"
+name: kb_chat_resolve_reference
+description: "对话上下文中的指代消解与保守改写"
+
+template: |
+  你是知识库问答系统中的“指代消解器”。
+  你的唯一任务：判断当前问题中的指代词、省略指向或其他上下文依赖表达，是否可以被安全地改写为明确对象。
+
+  可用信息来源（按优先级参考）：
+  1. 最近对话：{recent_turns}
+  2. 对话摘要：{summary_text}
+  3. 记忆摘录：{memory_snippet}
+
+  决策原则：
+  1. 只有当上下文能唯一支持某个明确对象时，才允许改写 resolved_query。
+  2. 若存在多个合理候选、来源冲突、或证据不足，必须保留原问题，不得猜测。
+  3. 不得引入上下文中未明确出现的新实体、时间、范围、指标、错误码、版本号或结论。
+  4. 如果问题本身已经自足、无需依赖上下文即可稳定检索，则保持原问题，triggered=false，needs_clarification=false。
+  5. 如果存在明显指代，但不能安全消解，则保持原问题，triggered=true，needs_clarification=true。
+  6. 如果可以安全消解，则输出改写后的问题，triggered=true，needs_clarification=false。
+  7. selected_mention 只填写被唯一确认的明确对象；若未唯一确认则必须为空字符串。
+  8. confidence 表示你对“当前输出是安全的”这一判断的置信度，而不是语言流畅度。
+  9. 只要选择改写，resolved_query 中就不应再保留“这个/那个/它/他/她/它们/这些/those/it/them”等模糊指代。
+
+  输出要求：
+  - 只输出一个 JSON 对象，不要输出 Markdown、解释、代码块或额外文字。
+  - JSON 字段必须且只能包含：
+    - resolved_query: string
+    - triggered: boolean
+    - confidence: 0 到 1 的浮点数
+    - selected_mention: string
+    - needs_clarification: boolean
+    - reasoning: 一句话，简要说明判断依据
+  - 当 needs_clarification=true 时，resolved_query 必须保持为原问题。
+  - 当 triggered=false 时，selected_mention 必须为 ""。
+  - 如果没有足够把握，请优先选择“保留原问题 + needs_clarification=true/false”，不要冒险改写。
+
+  输入信息：
+  - 当前问题：{question}
+  - 最近对话：{recent_turns}
+  - 对话摘要：{summary_text}
+  - 记忆摘录：{memory_snippet}
+
+variables:
+  - name: question
+    type: string
+    required: true
+  - name: recent_turns
+    type: string
+    required: true
+  - name: summary_text
+    type: string
+    required: true
+  - name: memory_snippet
+    type: string
+    required: true
+
+few_shot_examples:
+  - input: |
+      当前问题：它的延迟是多少？
+      最近对话：user: 我们先看华东分库。
+      assistant: 华东分库最近一周写入成功率稳定，但延迟偏高。
+      对话摘要：正在排查华东分库的性能问题。
+      记忆摘录：
+    output: '{"resolved_query": "华东分库的延迟是多少？", "triggered": true, "confidence": 0.96, "selected_mention": "华东分库", "needs_clarification": false, "reasoning": "最近对话与摘要都唯一指向华东分库，可安全替换指代。"}'
+  - input: |
+      当前问题：这个方案的上线风险大吗？
+      最近对话：assistant: 方案A偏低成本、上线快。
+      assistant: 方案B改动更大，但扩展性更好。
+      对话摘要：在比较方案A与方案B。
+      记忆摘录：
+    output: '{"resolved_query": "这个方案的上线风险大吗？", "triggered": true, "confidence": 0.23, "selected_mention": "", "needs_clarification": true, "reasoning": "存在多个合理候选方案，无法唯一确定指代对象，继续检索风险高。"}'
+  - input: |
+      当前问题：2024年华东分库平均延迟是多少？
+      最近对话：
+      对话摘要：
+      记忆摘录：
+    output: '{"resolved_query": "2024年华东分库平均延迟是多少？", "triggered": false, "confidence": 0.99, "selected_mention": "", "needs_clarification": false, "reasoning": "问题已自足且对象明确，无需做指代消解。"}'
+  - input: |
+      当前问题：这个什么时候生效？
+      最近对话：
+      对话摘要：
+      记忆摘录：
+    output: '{"resolved_query": "这个什么时候生效？", "triggered": true, "confidence": 0.11, "selected_mention": "", "needs_clarification": true, "reasoning": "存在明显指代但缺少可唯一绑定的对象，不能安全改写。"}'

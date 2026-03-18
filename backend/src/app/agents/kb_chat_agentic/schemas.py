@@ -7,35 +7,6 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 
-DocGraderReason = Literal[
-    "passed",
-    "no_evidence",
-    "not_relevant",
-    "insufficient",
-    "too_broad",
-    "needs_clarification",
-    "fallback_open",
-    "fallback_closed",
-]
-
-DocGraderRiskLevel = Literal["low", "medium", "high"]
-DocGraderRetryAdvice = Literal["none", "retry", "clarify"]
-
-
-class DocGraderDecision(BaseModel):
-    """Structured output for retrieval relevance grading."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    passed: bool
-    reason: DocGraderReason
-    missing_constraints: list[str] = Field(default_factory=list)
-    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
-    evidence_score: float = Field(default=0.0, ge=0.0, le=1.0)
-    risk_level: DocGraderRiskLevel = "medium"
-    retry_advice: DocGraderRetryAdvice = "retry"
-
-
 AnswerReviewReason = Literal[
     "passed",
     "no_evidence",
@@ -72,14 +43,6 @@ class AnswerReviewSubDecision(BaseModel):
     confidence: float = Field(default=0.0, ge=0.0, le=1.0)
     missing_citations: list[str] = Field(default_factory=list)
     unsupported_claims: list[str] = Field(default_factory=list)
-
-
-class ReverseQuestionDecision(BaseModel):
-    """Structured output for ambiguity clarification generation."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    question: str = Field(..., min_length=1)
 
 
 ClarificationReasonCode = Literal[

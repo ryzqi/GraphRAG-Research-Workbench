@@ -16,6 +16,15 @@ DUMMY_VALUES_BY_TYPE = {
 
 
 STRUCTURED_PROMPT_FIELDS: dict[str, tuple[str, ...]] = {
+    "kb_chat/resolve_reference": (
+        "json",
+        "resolved_query",
+        "triggered",
+        "confidence",
+        "selected_mention",
+        "needs_clarification",
+        "reasoning",
+    ),
     "kb_chat/ambiguity_decision": (
         "json",
         "ambiguous",
@@ -25,7 +34,6 @@ STRUCTURED_PROMPT_FIELDS: dict[str, tuple[str, ...]] = {
         "missing_slots",
         "suggested_answers",
     ),
-    "kb_chat/reverse_question": ("json", "question"),
     "kb_chat/transform_query": ("json", "query"),
     "kb_chat/normalize_query": (
         "json",
@@ -79,16 +87,6 @@ STRUCTURED_PROMPT_FIELDS: dict[str, tuple[str, ...]] = {
         "confidence",
         "missing_citations",
         "unsupported_claims",
-    ),
-    "kb_chat/doc_grader": (
-        "json",
-        "passed",
-        "reason",
-        "missing_constraints",
-        "confidence",
-        "evidence_score",
-        "risk_level",
-        "retry_advice",
     ),
     "tools/report_generate": (
         "json",

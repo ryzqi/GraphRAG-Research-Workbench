@@ -32,7 +32,6 @@ from app.agents.kb_chat_agentic.schemas import (
     NormalizeDecision,
     ReferenceResolutionDecision,
     RetrievalPlanDecision,
-    ReverseQuestionDecision,
     TransformQueryDecision,
 )
 from app.core.settings import Settings, get_settings
@@ -57,14 +56,6 @@ class RewriteResult:
     reason: str | None = None
     latency_ms: int | None = None
     meta: dict[str, object] | None = None
-
-
-@dataclass(slots=True)
-class TextResult:
-    text: str
-    success: bool
-    reason: str | None = None
-    latency_ms: int | None = None
 
 
 @dataclass(slots=True)
@@ -1364,40 +1355,6 @@ class QueryRewriteService:
             model_reason=model_reason or None,
             fallback_used=fallback_used,
             clarification_payload=clarification_payload if ambiguous else None,
-        )
-
-    async def generate_reverse_question(self, query: str) -> TextResult:
-        """Generate a clarifying question (degrades to a fixed safe template)."""
-        start = time.perf_counter()
-
-        structured_result = await self._call_prompt_structured(
-            "kb_chat/reverse_question",
-            schema=ReverseQuestionDecision,
-            max_tokens=128,
-            question=query,
-        )
-        if (
-            structured_result.success
-            and isinstance(structured_result.payload, ReverseQuestionDecision)
-            and structured_result.payload.question.strip()
-        ):
-            text = _sanitize_reverse_question(structured_result.payload.question.strip())
-            if not text:
-                text = _DEFAULT_CLARIFICATION_QUESTION
-            return TextResult(
-                text=text,
-                success=True,
-                reason=structured_result.reason,
-                latency_ms=structured_result.latency_ms,
-            )
-
-        text = _DEFAULT_CLARIFICATION_QUESTION
-        latency_ms = int((time.perf_counter() - start) * 1000)
-        return TextResult(
-            text=text,
-            success=True,
-            reason=structured_result.reason or "default_template",
-            latency_ms=latency_ms,
         )
 
     async def transform_query(
