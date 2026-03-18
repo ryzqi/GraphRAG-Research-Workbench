@@ -110,7 +110,7 @@ def test_build_node_io_summary_for_answer_subgraph_prefers_canonical_routing() -
     }
 
 
-def test_stream_state_apply_update_tracks_kb_chat_canonical_fields() -> None:
+def test_stream_state_apply_update_ignores_removed_confidence_fields() -> None:
     state = StreamState()
 
     state.apply_update(
@@ -131,8 +131,8 @@ def test_stream_state_apply_update_tracks_kb_chat_canonical_fields() -> None:
     assert state.draft_answer == "草稿答案"
     assert state.final_answer == "最终答案"
     assert state.clarification_payload == {"question": "请补充时间范围"}
-    assert state.confidence_score == 0.72
-    assert state.confidence_level == "medium"
+    assert state.confidence_score is None
+    assert state.confidence_level is None
     assert state.reflection == {"action": "force_exit", "reason": "severe_conflict"}
     assert state.degrade_reason == "review_failed"
     assert state.routing_decisions == {
@@ -203,8 +203,7 @@ def test_compute_route_consistency_uses_canonical_query_strategy_and_routing() -
     score = KbChatService._compute_route_consistency(
         query_strategy="decomposition",
         routing_decisions={
-            "doc_gate": {"next_node": "answer_subgraph"},
-            "answer_subgraph": {"next_node": "confidence_calibrate"},
+            "answer_subgraph": {"next_node": "END"},
         },
     )
 

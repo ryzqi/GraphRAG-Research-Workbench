@@ -11,9 +11,9 @@ import {
 const CURRENT_KB_CHAT_NODE_IDS = [
   'preprocess_subgraph',
   'merge_context',
-  'coref_rewrite',
+  'resolve_reference',
   'ambiguity_check',
-  'normalize_rewrite',
+  'query_normalize',
   'complexity_classify',
   'generate_variants_mod',
   'decomposition',
@@ -23,15 +23,12 @@ const CURRENT_KB_CHAT_NODE_IDS = [
   'prepare_messages',
   'preprocess_exit',
   'retrieval_subgraph',
-  'retrieval_budget_plan',
+  'retrieval_plan',
   'dispatch_subqueries',
   'retrieve_subquery',
   'merge_subquery_context',
   'retrieve',
   'context_compress',
-  'evidence_gate_subgraph',
-  'doc_gate_sufficiency',
-  'doc_gate_route',
   'transform_query',
   'answer_subgraph',
   'draft_generate',
@@ -43,15 +40,14 @@ const CURRENT_KB_CHAT_NODE_IDS = [
   'answer_repair',
   'answer_commit',
   'force_exit',
-  'confidence_calibrate',
 ] as const;
 
 const EXPECTED_NODE_ORDERS: Record<(typeof CURRENT_KB_CHAT_NODE_IDS)[number], number> = {
   preprocess_subgraph: 0,
   merge_context: 1,
-  coref_rewrite: 2,
+  resolve_reference: 2,
   ambiguity_check: 3,
-  normalize_rewrite: 4,
+  query_normalize: 4,
   complexity_classify: 5,
   generate_variants_mod: 6,
   decomposition: 7,
@@ -61,15 +57,12 @@ const EXPECTED_NODE_ORDERS: Record<(typeof CURRENT_KB_CHAT_NODE_IDS)[number], nu
   prepare_messages: 11,
   preprocess_exit: 12,
   retrieval_subgraph: 13,
-  retrieval_budget_plan: 14,
+  retrieval_plan: 14,
   dispatch_subqueries: 15,
   retrieve_subquery: 16,
   merge_subquery_context: 17,
   retrieve: 18,
   context_compress: 19,
-  evidence_gate_subgraph: 20,
-  doc_gate_sufficiency: 21,
-  doc_gate_route: 22,
   transform_query: 23,
   answer_subgraph: 24,
   draft_generate: 25,
@@ -81,7 +74,6 @@ const EXPECTED_NODE_ORDERS: Record<(typeof CURRENT_KB_CHAT_NODE_IDS)[number], nu
   answer_repair: 31,
   answer_commit: 32,
   force_exit: 33,
-  confidence_calibrate: 34,
 };
 
 describe('kbNodeCatalog', () => {
@@ -151,6 +143,9 @@ describe('kbNodeCatalog', () => {
 
   it('does not keep pruned live gate and verification nodes in local catalog fallback', () => {
     [
+      'evidence_gate_subgraph',
+      'doc_gate_sufficiency',
+      'doc_gate_route',
       'doc_gate_dispatch',
       'doc_gate_answerability',
       'doc_gate_conflict',
@@ -158,6 +153,7 @@ describe('kbNodeCatalog', () => {
       'cove_check',
       'chain_of_verification',
       'claim_citation_check',
+      'confidence_calibrate',
     ].forEach((nodeId) => {
       expect(resolveKbNodeCatalogEntry(nodeId)).toBeNull();
     });

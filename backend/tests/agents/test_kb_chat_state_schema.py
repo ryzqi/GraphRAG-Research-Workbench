@@ -8,7 +8,6 @@ import pytest
 from langchain.messages import AIMessage, HumanMessage
 
 from app.agents.answer_subgraph import build_answer_subgraph
-from app.agents.evidence_gate_subgraph import _doc_gate_route, _doc_gate_sufficiency
 from app.agents.kb_chat_agentic.answer_subgraph import (
     _answer_commit,
     _answer_repair,
@@ -19,13 +18,11 @@ from app.agents.kb_chat_agentic.answer_subgraph import (
     _answer_review_fuse,
 )
 from app.agents.kb_chat_agentic.reflection import (
-    confidence_calibrate,
     dispatch_subqueries,
     kb_retrieve_context,
     merge_subquery_context,
     retrieve_subquery_context,
     route_after_answer_review,
-    route_after_doc_grader,
     transform_query_for_retry,
 )
 from app.agents.kb_chat_agentic.tool_loop import force_exit_node
@@ -53,7 +50,6 @@ from app.agents.kb_chat_agentic_state import (
 )
 from app.agents.preprocess_subgraph import build_preprocess_subgraph
 from app.agents.retrieval_subgraph import build_retrieval_subgraph
-from app.agents.evidence_gate_subgraph import build_evidence_gate_subgraph
 from app.agents.retrieval_subgraph import _compress_context, _retrieval_budget_plan
 
 
@@ -113,6 +109,22 @@ def test_internal_state_schema_omits_removed_cove_state_field() -> None:
     assert "cove_state" not in get_type_hints(KbChatInternalState)
 
 
+def test_output_schema_omits_removed_confidence_fields() -> None:
+    hints = get_type_hints(KbChatOutputState)
+
+    assert "confidence_score" not in hints
+    assert "confidence_level" not in hints
+
+
+def test_internal_state_schema_omits_removed_gate_and_confidence_fields() -> None:
+    hints = get_type_hints(KbChatInternalState)
+
+    assert "doc_gate_round" not in hints
+    assert "doc_gate_runs" not in hints
+    assert "confidence_score" not in hints
+    assert "confidence_level" not in hints
+
+
 def _state_annotation_name(fn: object) -> str:
     annotation = get_type_hints(fn).get("state")
     return getattr(annotation, "__name__", str(annotation))
@@ -132,8 +144,6 @@ def test_kb_chat_nodes_use_narrow_read_side_state_schema_annotations() -> None:
         merge_subquery_context: "MergeSubqueryContextInput",
         kb_retrieve_context: "RetrieveContextInput",
         _compress_context: "CompressContextInput",
-        _doc_gate_sufficiency: "DocGateContextInput",
-        _doc_gate_route: "DocGateRouteInput",
         transform_query_for_retry: "TransformQueryInput",
         _answer_review_dispatch: "AnswerReviewDispatchInput",
         _answer_review_citation: "AnswerReviewCitationInput",
@@ -143,9 +153,7 @@ def test_kb_chat_nodes_use_narrow_read_side_state_schema_annotations() -> None:
         _answer_repair: "AnswerRepairInput",
         _answer_commit: "AnswerCommitInput",
         force_exit_node: "ForceExitInput",
-        confidence_calibrate: "ConfidenceCalibrateInput",
         _route_after_preprocess_subgraph: "PreprocessRoutingInput",
-        route_after_doc_grader: "DocGateRoutingDecisionInput",
         route_after_answer_review: "AnswerRoutingDecisionInput",
     }
 
@@ -187,6 +195,22 @@ def test_preprocess_subgraph_prunes_route_shell_nodes_from_builder() -> None:
 
     assert removed_nodes.isdisjoint(node_ids)
     assert removed_nodes.isdisjoint(branch_ids)
+    assert "resolve_reference" in node_ids
+    assert "query_normalize" in node_ids
+    assert "coref_rewrite" not in node_ids
+    assert "normalize_rewrite" not in node_ids
+
+
+def test_retrieval_subgraph_uses_new_planning_node_id() -> None:
+    retrieval = build_retrieval_subgraph(
+        settings=_settings(retrieval_max_top_k=50),
+        kb_tool=SimpleNamespace(),
+        chat_model=SimpleNamespace(),
+    )
+    node_ids = set(retrieval.builder.nodes.keys())
+
+    assert "retrieval_plan" in node_ids
+    assert "retrieval_budget_plan" not in node_ids
 
 
 def test_trace_metadata_prunes_preprocess_shell_nodes() -> None:
@@ -203,6 +227,15 @@ def test_trace_metadata_prunes_preprocess_shell_nodes() -> None:
     }
 
     assert removed_nodes.isdisjoint(KB_CHAT_NODE_METADATA)
+    assert "resolve_reference" in KB_CHAT_NODE_METADATA
+    assert "query_normalize" in KB_CHAT_NODE_METADATA
+    assert "retrieval_plan" in KB_CHAT_NODE_METADATA
+    assert "coref_rewrite" not in KB_CHAT_NODE_METADATA
+    assert "normalize_rewrite" not in KB_CHAT_NODE_METADATA
+    assert "evidence_gate_subgraph" not in KB_CHAT_NODE_METADATA
+    assert "doc_gate_sufficiency" not in KB_CHAT_NODE_METADATA
+    assert "doc_gate_route" not in KB_CHAT_NODE_METADATA
+    assert "confidence_calibrate" not in KB_CHAT_NODE_METADATA
 
 
 def test_build_graph_input_state_strips_internal_fields() -> None:
@@ -449,11 +482,11 @@ def test_kb_chat_subgraphs_share_internal_state_schema() -> None:
         kb_tool=SimpleNamespace(),
         chat_model=SimpleNamespace(),
     )
-    evidence_gate = build_evidence_gate_subgraph(settings=settings)
+    answer = build_answer_subgraph(settings=settings, chat_model=SimpleNamespace())
 
     assert preprocess.builder.state_schema is KbChatInternalState
     assert retrieval.builder.state_schema is KbChatInternalState
-    assert evidence_gate.builder.state_schema is KbChatInternalState
+    assert answer.builder.state_schema is KbChatInternalState
 
 
 def test_pruned_nodes_absent_from_live_subgraphs() -> None:
@@ -472,18 +505,18 @@ def test_pruned_nodes_absent_from_live_subgraphs() -> None:
         kb_tool=SimpleNamespace(),
         chat_model=SimpleNamespace(),
     )
-    evidence_gate = build_evidence_gate_subgraph(settings=settings)
     answer = build_answer_subgraph(settings=settings, chat_model=SimpleNamespace())
+    graph = KbChatAgenticGraph(
+        chat_model=SimpleNamespace(),
+        tools=[SimpleNamespace(name="kb_retrieve")],
+        tool_meta_by_name={},
+    )
 
-    assert {
-        "doc_gate_dispatch",
-        "doc_gate_answerability",
-        "doc_gate_conflict",
-        "doc_gate_fuse",
-    }.isdisjoint(evidence_gate.builder.nodes)
     assert {
         "cove_check",
         "chain_of_verification",
         "claim_citation_check",
     }.isdisjoint(answer.builder.nodes)
     assert "context_compress" in retrieval.builder.nodes
+    assert "evidence_gate_subgraph" not in graph._graph_builder.nodes
+    assert "confidence_calibrate" not in graph._graph_builder.nodes

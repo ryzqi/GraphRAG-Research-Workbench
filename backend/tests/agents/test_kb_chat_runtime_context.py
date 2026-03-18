@@ -44,7 +44,7 @@ def _runtime_context(
     )
 
 
-def test_retrieval_budget_plan_does_not_write_runtime_config_state() -> None:
+def test_retrieval_plan_writes_new_summary_key_and_llm_decision_source() -> None:
     result = _retrieval_budget_plan(
         {
             "complexity_level": "moderate",
@@ -56,6 +56,8 @@ def test_retrieval_budget_plan_does_not_write_runtime_config_state() -> None:
 
     assert "runtime_config" not in result
     assert result["retrieval_budget"]["per_query_top_k"] >= 1
+    assert "retrieval_budget_plan" not in result["stage_summaries"]
+    assert result["stage_summaries"]["retrieval_plan"]["decision_source"] == "llm"
 
 
 @pytest.mark.asyncio

@@ -47,8 +47,11 @@ def test_builder_fallback_collects_nested_and_conditional_edges() -> None:
 
     assert "preprocess_subgraph" in node_ids
     assert "transform_query" in node_ids
+    assert "answer_subgraph" in node_ids
+    assert "evidence_gate_subgraph" not in node_ids
+    assert "confidence_calibrate" not in node_ids
     assert ("preprocess_subgraph", "retrieval_subgraph", True) in edge_set
-    assert ("evidence_gate_subgraph", "answer_subgraph", True) in edge_set
+    assert ("retrieval_subgraph", "answer_subgraph", False) in edge_set
     assert ("transform_query", "retrieval_subgraph", False) in edge_set
 
 
@@ -66,7 +69,8 @@ def test_compiled_kb_chat_graph_drawable_export_handles_conditional_subgraph_rou
     }
 
     assert ("preprocess_subgraph", "force_exit", True) in edge_set
-    assert ("evidence_gate_subgraph", "force_exit", True) in edge_set
+    assert ("answer_subgraph", "force_exit", True) in edge_set
+    assert ("answer_subgraph", "transform_query", True) in edge_set
 
 
 def test_drawable_graph_omits_pruned_gate_and_verification_nodes() -> None:
@@ -80,6 +84,9 @@ def test_drawable_graph_omits_pruned_gate_and_verification_nodes() -> None:
     node_ids = {node["id"] for node in drawable["nodes"]}
 
     assert {
+        "evidence_gate_subgraph",
+        "doc_gate_sufficiency",
+        "doc_gate_route",
         "doc_gate_dispatch",
         "doc_gate_answerability",
         "doc_gate_conflict",
@@ -87,6 +94,7 @@ def test_drawable_graph_omits_pruned_gate_and_verification_nodes() -> None:
         "cove_check",
         "chain_of_verification",
         "claim_citation_check",
+        "confidence_calibrate",
     }.isdisjoint(node_ids)
 
 

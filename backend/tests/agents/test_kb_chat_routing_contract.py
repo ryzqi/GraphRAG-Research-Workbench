@@ -4,13 +4,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.agents.evidence_gate_subgraph import _doc_gate_route
 from app.agents.kb_chat_agentic.answer_subgraph import _answer_commit
 from app.agents.kb_chat_agentic.preprocess import prepare_messages
-from app.agents.kb_chat_agentic.reflection import (
-    route_after_answer_review,
-    route_after_doc_grader,
-)
+from app.agents.kb_chat_agentic.reflection import route_after_answer_review
 from app.agents.kb_chat_agentic.tool_loop import force_exit_node
 from app.agents.kb_chat_agentic_graph import _route_after_preprocess_subgraph
 from app.agents.preprocess_subgraph import _route_after_ambiguity
@@ -92,72 +88,7 @@ def test_route_after_ambiguity_ignores_legacy_reflection_action_when_routing_mis
         "reflection": {"action": "clarify"},
     }
 
-    assert _route_after_ambiguity(state) == "normalize_rewrite"
-
-
-def test_doc_gate_route_writes_doc_gate_routing_decision() -> None:
-    routed = _doc_gate_route(
-        {
-            "doc_gate_round": 1,
-            "doc_gate_runs": [
-                {
-                    "gate": "sufficiency",
-                    "round": 1,
-                    "passed": True,
-                    "score": 0.8,
-                    "reason": "passed",
-                    "extra": {"tokens": 120, "evidence_count": 2},
-                },
-            ],
-            "reflection": {},
-            "stage_summaries": {},
-        },
-        settings=_settings(),
-    )
-
-    assert routed["routing_decisions"]["doc_gate"]["next_node"] == "answer_subgraph"
-    assert routed["routing_decisions"]["doc_gate"]["decision_source"] == "sufficiency_gate"
-    assert routed["stage_summaries"]["doc_gate_route"]["decision"] == "pass"
-
-
-def test_doc_gate_route_ignores_stage_summary_as_control_plane_input() -> None:
-    routed = _doc_gate_route(
-        {
-            "reflection": {},
-            "stage_summaries": {
-                "doc_gate_sufficiency": {
-                    "passed": True,
-                    "score": 0.8,
-                }
-            },
-        },
-        settings=_settings(),
-    )
-
-    assert routed["routing_decisions"]["doc_gate"]["next_node"] == "transform_query"
-    assert routed["routing_decisions"]["doc_gate"]["reason_code"] == "retry"
-
-
-def test_route_after_doc_grader_prefers_routing_decision() -> None:
-    state = {
-        "routing_decisions": {
-            "doc_gate": {
-                "next_node": "answer_subgraph",
-            }
-        },
-        "reflection": {"relevance_passed": False},
-    }
-
-    assert route_after_doc_grader(state, _settings()) == "answer_subgraph"
-
-
-def test_route_after_doc_grader_ignores_legacy_reflection_when_routing_missing() -> None:
-    state = {
-        "reflection": {"relevance_passed": True},
-        "loop_counts": {"retrieval_retries": 0},
-    }
-
-    assert route_after_doc_grader(state, _settings()) == "transform_query"
+    assert _route_after_ambiguity(state) == "query_normalize"
 
 
 @pytest.mark.asyncio
@@ -183,7 +114,7 @@ async def test_answer_commit_writes_answer_subgraph_routing_decision() -> None:
         settings=_settings(),
     )
 
-    assert result["routing_decisions"]["answer_subgraph"]["next_node"] == "confidence_calibrate"
+    assert result["routing_decisions"]["answer_subgraph"]["next_node"] == "END"
     assert result["routing_decisions"]["answer_subgraph"]["decision_source"] == "answer_commit"
 
 
@@ -191,7 +122,7 @@ def test_route_after_answer_review_prefers_routing_decision() -> None:
     state = {
         "routing_decisions": {
             "answer_subgraph": {
-                "next_node": "confidence_calibrate",
+                "next_node": "END",
             }
         },
         "reflection": {
@@ -200,7 +131,7 @@ def test_route_after_answer_review_prefers_routing_decision() -> None:
         },
     }
 
-    assert route_after_answer_review(state, _settings()) == "confidence_calibrate"
+    assert route_after_answer_review(state, _settings()) == "END"
 
 
 def test_route_after_answer_review_ignores_legacy_reflection_when_routing_missing() -> None:

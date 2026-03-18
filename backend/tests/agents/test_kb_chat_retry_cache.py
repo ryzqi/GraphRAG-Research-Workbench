@@ -3,7 +3,6 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from app.agents.answer_subgraph import build_answer_subgraph
-from app.agents.evidence_gate_subgraph import build_evidence_gate_subgraph
 from app.agents.kb_chat_agentic_graph import KbChatAgenticGraph
 from app.agents.preprocess_subgraph import build_preprocess_subgraph
 from app.agents.retrieval_subgraph import build_retrieval_subgraph
@@ -56,7 +55,6 @@ def test_retry_policies_are_attached_only_to_transient_failure_nodes() -> None:
     retrieval = build_retrieval_subgraph(
         settings=_settings(), kb_tool=SimpleNamespace(), chat_model=SimpleNamespace()
     )
-    evidence_gate = build_evidence_gate_subgraph(settings=_settings())
     answer = build_answer_subgraph(settings=_settings(), chat_model=SimpleNamespace())
     graph = KbChatAgenticGraph(
         chat_model=SimpleNamespace(),
@@ -73,13 +71,10 @@ def test_retry_policies_are_attached_only_to_transient_failure_nodes() -> None:
     assert answer.builder.nodes["answer_review_answerability"].retry_policy is not None
     assert answer.builder.nodes["answer_repair"].retry_policy is not None
 
-    assert evidence_gate.builder.nodes["doc_gate_sufficiency"].retry_policy is None
-    assert {
-        "doc_gate_dispatch",
-        "doc_gate_answerability",
-        "doc_gate_conflict",
-        "doc_gate_fuse",
-    }.isdisjoint(evidence_gate.builder.nodes)
+    assert "retrieval_plan" in retrieval.builder.nodes
+    assert "retrieval_budget_plan" not in retrieval.builder.nodes
+    assert "evidence_gate_subgraph" not in graph._graph_builder.nodes
+    assert "confidence_calibrate" not in graph._graph_builder.nodes
     assert {
         "cove_check",
         "chain_of_verification",
@@ -87,13 +82,15 @@ def test_retry_policies_are_attached_only_to_transient_failure_nodes() -> None:
     }.isdisjoint(answer.builder.nodes)
 
 
-def test_non_retry_rule_nodes_publish_explicit_execution_metadata() -> None:
-    evidence_gate = build_evidence_gate_subgraph(settings=_settings())
-    sufficiency_meta = evidence_gate.builder.nodes["doc_gate_sufficiency"].metadata
+def test_retrieval_plan_publishes_llm_execution_metadata_without_retry_policy() -> None:
+    retrieval = build_retrieval_subgraph(
+        settings=_settings(), kb_tool=SimpleNamespace(), chat_model=SimpleNamespace()
+    )
+    planner_meta = retrieval.builder.nodes["retrieval_plan"].metadata
 
-    assert sufficiency_meta["retry_enabled"] is False
-    assert sufficiency_meta["side_effect_type"] == "deterministic_rule"
-    assert sufficiency_meta["retry_disabled_reason"] == "deterministic_rule"
+    assert planner_meta["retry_enabled"] is False
+    assert planner_meta["side_effect_type"] == "llm"
+    assert planner_meta["retry_disabled_reason"] == "llm"
 
 
 def test_retry_cache_metrics_publish_retry_breakdown_and_disabled_graph_cache() -> None:
@@ -146,28 +143,31 @@ def test_build_observability_includes_retry_cache_metrics() -> None:
     }
 
 
-def test_routing_contract_consistency_rejects_legacy_finalize_target() -> None:
+def test_routing_contract_consistency_accepts_terminal_end_target() -> None:
     score = KbChatService._compute_route_consistency(
         query_strategy="direct",
         routing_decisions={
-            "doc_gate": {"next_node": "answer_subgraph"},
-            "answer_subgraph": {"next_node": "finalize"},
+            "answer_subgraph": {"next_node": "END"},
         },
     )
 
-    assert score == round((2 / 3) * 100.0, 4)
+    assert score == 100.0
 
 
-def test_final_state_consistency_rejects_legacy_finalize_terminal() -> None:
+def test_final_state_consistency_accepts_terminal_end_target() -> None:
     score = KbChatService._compute_final_state_consistency(
         routing_decisions={
-            "answer_subgraph": {"next_node": "finalize"},
+            "answer_subgraph": {"next_node": "END"},
         },
         terminal_reason=None,
     )
 
-    assert score == 0.0
+    assert score == 100.0
 
 
-def test_checkpoint_reset_fields_drop_removed_cove_state() -> None:
+def test_checkpoint_reset_fields_drop_removed_gate_and_confidence_state() -> None:
     assert "cove_state" not in _KB_CHAT_CHECKPOINT_RESET_FIELDS
+    assert "doc_gate_round" not in _KB_CHAT_CHECKPOINT_RESET_FIELDS
+    assert "doc_gate_runs" not in _KB_CHAT_CHECKPOINT_RESET_FIELDS
+    assert "confidence_score" not in _KB_CHAT_CHECKPOINT_RESET_FIELDS
+    assert "confidence_level" not in _KB_CHAT_CHECKPOINT_RESET_FIELDS
