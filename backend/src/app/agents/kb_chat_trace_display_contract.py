@@ -54,7 +54,7 @@ _BUSINESS_LABEL_FALLBACKS: dict[str, str] = {
     "generate_variants": "多路扩展",
     "entity_expand": "实体扩展",
     "hyde": "HyDE扩展",
-    "prepare_messages": "消息整理",
+    "prepare_messages": "查询整理",
     "preprocess_exit": "预处理出口",
     "retrieval_subgraph": "检索子图",
     "retrieval_plan": "检索预算规划",

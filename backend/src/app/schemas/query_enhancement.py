@@ -46,6 +46,12 @@ class QueryItem(QueryRef, total=False):
     use_dense/use_bm25 allow HyDE or other strategies to affect only one path.
     """
 
+    origin: str
+    subquery_id: str
+    priority: int
+    coverage_tags: list[str]
+    purpose: str
+    quality_score: float
     use_dense: bool
     use_bm25: bool
     # Optional batched HyDE payload. Keep `query` as the primary/preview item.

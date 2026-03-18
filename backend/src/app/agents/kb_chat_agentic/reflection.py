@@ -25,7 +25,6 @@ from app.services.streaming import extract_answer_text
 from app.services.query_rewrite_service import (
     HYDE_REGENERATE_ON_RETRY,
     QueryRewriteService,
-    build_query_items,
 )
 from app.agents.kb_chat_agentic_state import (
     AnswerRoutingDecisionInput,
@@ -44,6 +43,11 @@ from .dispatch_fuse import (
     sort_by_priority_then_index,
 )
 from .json_safety import ensure_json_safe
+from .preprocess import (
+    build_prepared_query_bundle,
+    resolve_prepare_budget,
+    score_query_item_quality,
+)
 from .runtime_config import (
     normalize_alias_max,
     parallel_retrieval_include_main,
@@ -66,6 +70,12 @@ def _as_str(value: object) -> str:
     if isinstance(value, str):
         return value
     return str(value)
+
+
+def _as_dict(value: object) -> dict[str, Any] | None:
+    if isinstance(value, dict):
+        return value
+    return None
 
 
 def _get_loop_counts(state: dict) -> dict[str, int]:
@@ -127,6 +137,9 @@ def _normalize_query_item(item: object) -> dict[str, Any] | None:
         normalized["subquery_id"] = _as_str(item.get("subquery_id")).strip()
     if isinstance(item.get("priority"), int):
         normalized["priority"] = int(item["priority"])
+    quality_score = item.get("quality_score")
+    if isinstance(quality_score, (int, float)) and not isinstance(quality_score, bool):
+        normalized["quality_score"] = round(float(quality_score), 4)
     if isinstance(item.get("purpose"), str) and item.get("purpose", "").strip():
         normalized["purpose"] = _as_str(item.get("purpose")).strip()
     raw_tags = item.get("coverage_tags")
@@ -174,33 +187,17 @@ def _resolve_kb_ids(state: dict[str, Any], runtime: Runtime[Any] | None) -> list
     return None
 
 
-def _dispatch_quality_score(item: dict[str, Any], *, spec: dict[str, Any]) -> float:
-    kind = _as_str(item.get("kind")).strip() or "other"
-    priority = item.get("priority")
-    if not isinstance(priority, int):
-        priority = spec.get("priority")
-    if not isinstance(priority, int):
-        priority = 1 if kind == "main" else 4
-    tags = spec.get("coverage_tags")
-    if not isinstance(tags, list):
-        tags = item.get("coverage_tags")
-    if not isinstance(tags, list):
-        tags = []
-    unique_tags = {
-        _as_str(tag).strip().casefold()
-        for tag in tags
-        if _as_str(tag).strip()
-    }
-    kind_bonus = {
-        "subquery": 0.65,
-        "variant": 0.55,
-        "main": 0.45,
-        "hyde": 0.30,
-    }.get(kind, 0.20)
-    coverage_bonus = min(len(unique_tags), 4) * 0.1
-    # Lower priority value means higher urgency; cap to keep score stable.
-    priority_bonus = max(0, 8 - max(1, min(priority, 8))) * 0.12
-    return round(kind_bonus + coverage_bonus + priority_bonus, 4)
+def _dispatch_quality_score(
+    item: dict[str, Any],
+    *,
+    strategy: str,
+    spec: dict[str, Any],
+) -> float:
+    merged_item = {**spec, **item}
+    return score_query_item_quality(
+        merged_item,
+        strategy=strategy,
+    )
 
 
 def _build_subquery_dispatch_plan(
@@ -295,7 +292,7 @@ def _build_subquery_dispatch_plan(
         ranked_candidates.append(
             {
                 "item": item,
-                "score": _dispatch_quality_score(item, spec=spec),
+                "score": _dispatch_quality_score(item, strategy=strategy, spec=spec),
                 "index": idx,
             }
         )
@@ -974,14 +971,25 @@ async def transform_query_for_retry(
             hyde_docs = []
             hyde_reason = "error"
 
-    # Keep query bundle consistent: after transform, rebuild retrieval inputs.
-    aliases = normalized_meta.get("aliases") if isinstance(normalized_meta.get("aliases"), list) else []
-    query_items = build_query_items(
-        main_query=new_query,
-        variants=[str(v) for v in aliases if isinstance(v, str)],
-        hyde_docs=hyde_docs or None,
-        hyde_note="retry_regenerated" if hyde_docs else None,
+    bundle = build_prepared_query_bundle(
+        original_query=new_query,
+        normalized_query=new_query,
+        strategy="direct",
+        sub_queries=[],
+        sub_query_specs=[],
+        multi_queries=[],
+        hyde_docs=hyde_docs,
+        normalized_meta=normalized_meta if isinstance(normalized_meta, dict) else {},
+        budget=resolve_prepare_budget(
+            state=state,
+            runtime=runtime,
+            settings=settings,
+        ),
     )
+    query_items = bundle.get("query_items") if isinstance(bundle.get("query_items"), list) else []
+    message_plan = _as_dict(bundle.get("message_plan")) or {}
+    query_bundle = _as_dict(bundle.get("query_bundle")) or {}
+    prepare_diagnostics = _as_dict(bundle.get("prepare_diagnostics")) or {}
 
     return {
         "loop_counts": loop_counts,
@@ -994,6 +1002,9 @@ async def transform_query_for_retry(
         "multi_queries": [],
         "hyde_docs": hyde_docs,
         "query_items": query_items,
+        "message_plan": message_plan,
+        "query_bundle": query_bundle,
+        "prepare_diagnostics": prepare_diagnostics,
         "decomposition_plan": {
             "strategy": "direct",
             "version": "kb_chat_decomposition_plan_v2",
@@ -1019,6 +1030,8 @@ async def transform_query_for_retry(
                 "hyde_regenerated": bool(hyde_docs),
                 "hyde_docs_count": len(hyde_docs),
                 "hyde_reason": hyde_reason,
+                "query_bundle_items_count": len(query_items),
+                "prepare_fallback_reason": prepare_diagnostics.get("fallback_reason"),
                 "latency_ms": int((time.perf_counter() - start) * 1000),
                 "completed_at": now_iso(),
             },

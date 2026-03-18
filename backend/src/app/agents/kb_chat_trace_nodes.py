@@ -58,7 +58,7 @@ KB_CHAT_NODE_METADATA: dict[str, dict[str, Any]] = {
     "generate_variants": {"label": "多路扩展", "phase": "enhance", "order": 8},
     "entity_expand": {"label": "实体扩展", "phase": "enhance", "order": 9},
     "hyde": {"label": "HyDE扩展", "phase": "enhance", "order": 10},
-    "prepare_messages": {"label": "消息整理", "phase": "enhance", "order": 11},
+    "prepare_messages": {"label": "查询整理", "phase": "enhance", "order": 11},
     "preprocess_exit": {"label": "预处理出口", "phase": "enhance", "order": 12},
     "retrieval_subgraph": {"label": "检索子图", "phase": "retrieve", "order": 13},
     "retrieval_plan": {"label": "检索预算规划", "phase": "retrieve", "order": 14},

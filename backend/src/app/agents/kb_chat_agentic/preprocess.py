@@ -304,7 +304,152 @@ def _resolve_prepare_budget(
     }
 
 
-def _prepare_quality_score(item: dict[str, Any], *, strategy: str) -> float:
+def resolve_prepare_budget(
+    *,
+    state: dict[str, Any],
+    runtime: Runtime[Any],
+    settings: Settings,
+) -> dict[str, Any]:
+    return _resolve_prepare_budget(state=state, runtime=runtime, settings=settings)
+
+
+def _normalize_meta_values(
+    meta: dict[str, Any] | None,
+    key: str,
+    *,
+    limit: int,
+) -> list[str]:
+    if not isinstance(meta, dict):
+        return []
+    raw_values = meta.get(key)
+    if not isinstance(raw_values, list):
+        return []
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for raw_value in raw_values:
+        if not isinstance(raw_value, str):
+            continue
+        value = raw_value.strip()
+        if not value:
+            continue
+        lowered = value.casefold()
+        if lowered in seen:
+            continue
+        normalized.append(value)
+        seen.add(lowered)
+        if len(normalized) >= limit:
+            break
+    return normalized
+
+
+def _constraint_term_groups(meta: dict[str, Any] | None) -> dict[str, list[str]]:
+    return {
+        "entities": _normalize_meta_values(meta, "entities", limit=4),
+        "time_constraints": _normalize_meta_values(meta, "time_constraints", limit=3),
+        "metric_constraints": _normalize_meta_values(meta, "metric_constraints", limit=4),
+        "scope_constraints": _normalize_meta_values(meta, "scope_constraints", limit=4),
+    }
+
+
+def _constraint_terms(meta: dict[str, Any] | None) -> list[str]:
+    groups = _constraint_term_groups(meta)
+    return _dedupe_string_list(
+        [
+            *groups["entities"],
+            *groups["time_constraints"],
+            *groups["metric_constraints"],
+            *groups["scope_constraints"],
+        ]
+    )
+
+
+def _compose_query_terms(base_query: str, extra_terms: list[str]) -> str:
+    ordered: list[str] = []
+    seen: set[str] = set()
+    for raw_value in [base_query, *extra_terms]:
+        value = str(raw_value or "").strip()
+        if not value:
+            continue
+        lowered = value.casefold()
+        if lowered in seen:
+            continue
+        ordered.append(value)
+        seen.add(lowered)
+    return " ".join(ordered).strip()
+
+
+def _build_constraint_variants(
+    *,
+    base_query: str,
+    normalized_meta: dict[str, Any] | None,
+) -> list[str]:
+    if not base_query.strip():
+        return []
+    if isinstance(normalized_meta, dict) and normalized_meta.get("constraint_preserved") is False:
+        return []
+
+    groups = _constraint_term_groups(normalized_meta)
+    merged_terms = [
+        *groups["entities"],
+        *groups["time_constraints"],
+        *groups["metric_constraints"],
+        *groups["scope_constraints"],
+    ]
+    if not merged_terms:
+        return []
+
+    candidates: list[str] = []
+    combined = _compose_query_terms(base_query, merged_terms)
+    if combined and combined.casefold() != base_query.casefold():
+        candidates.append(combined)
+
+    focused_terms = [
+        *groups["entities"][:2],
+        *groups["metric_constraints"][:2],
+        *groups["time_constraints"][:1],
+    ]
+    focused = _compose_query_terms(base_query, focused_terms)
+    if focused and focused.casefold() not in {
+        base_query.casefold(),
+        *(item.casefold() for item in candidates),
+    }:
+        candidates.append(focused)
+
+    return candidates[:2]
+
+
+def _effective_prepare_quality_threshold(
+    *,
+    budget: dict[str, Any],
+    normalized_meta: dict[str, Any] | None,
+) -> float:
+    threshold = float(budget.get("quality_threshold") or 0.52)
+    if not isinstance(normalized_meta, dict):
+        return max(0.0, min(threshold, 1.0))
+
+    recall_risk = str(normalized_meta.get("recall_risk") or "").strip().lower()
+    if recall_risk == "high":
+        threshold -= 0.05
+    elif recall_risk == "low":
+        threshold += 0.02
+
+    if bool(normalized_meta.get("drift_risk")):
+        threshold += 0.04
+    if normalized_meta.get("constraint_preserved") is False:
+        threshold += 0.03
+    return max(0.0, min(threshold, 1.0))
+
+
+def score_query_item_quality(
+    item: dict[str, Any],
+    *,
+    strategy: str,
+    normalized_meta: dict[str, Any] | None = None,
+) -> float:
+    precomputed = item.get("quality_score")
+    if isinstance(precomputed, (int, float)) and not isinstance(precomputed, bool):
+        return round(max(0.0, min(float(precomputed), 1.25)), 4)
+
     kind = str(item.get("kind") or "other").strip() or "other"
     query = str(item.get("query") or "").strip()
     if not query:
@@ -327,6 +472,10 @@ def _prepare_quality_score(item: dict[str, Any], *, strategy: str) -> float:
     elif length > 180:
         base -= 0.12
 
+    priority = item.get("priority")
+    if isinstance(priority, int):
+        base += max(0, 8 - max(1, min(priority, 8))) * 0.015
+
     if strategy == "decomposition" and kind == "subquery":
         base += 0.05
     if strategy == "multi_query" and kind == "variant":
@@ -342,9 +491,339 @@ def _prepare_quality_score(item: dict[str, Any], *, strategy: str) -> float:
     if isinstance(raw_tags, list) and any(
         isinstance(tag, str) and str(tag).strip() for tag in raw_tags
     ):
-        base += 0.03
+        base += 0.04
 
-    return round(max(0.0, min(base, 1.0)), 4)
+    constraint_terms = _constraint_terms(normalized_meta)
+    if constraint_terms:
+        query_lower = query.casefold()
+        matched_constraints = sum(
+            1 for term in constraint_terms if term.casefold() in query_lower
+        )
+        base += min(matched_constraints, 4) * 0.05
+        if kind in {"variant", "subquery"} and matched_constraints == 0:
+            base -= 0.06
+
+    if isinstance(normalized_meta, dict):
+        recall_risk = str(normalized_meta.get("recall_risk") or "").strip().lower()
+        if recall_risk == "high" and kind in {"variant", "subquery", "hyde"}:
+            base += 0.04
+        elif recall_risk == "low" and kind == "hyde":
+            base -= 0.03
+
+        if bool(normalized_meta.get("drift_risk")) and kind in {"variant", "hyde"}:
+            base -= 0.08
+        if normalized_meta.get("constraint_preserved") is False and kind != "main":
+            base -= 0.12
+
+    return round(max(0.0, min(base, 1.25)), 4)
+
+
+def _prepare_quality_score(
+    item: dict[str, Any],
+    *,
+    strategy: str,
+    normalized_meta: dict[str, Any] | None = None,
+) -> float:
+    return score_query_item_quality(
+        item,
+        strategy=strategy,
+        normalized_meta=normalized_meta,
+    )
+
+
+def build_prepared_query_bundle(
+    *,
+    original_query: str,
+    normalized_query: str,
+    strategy: str,
+    sub_queries: list[str],
+    sub_query_specs: list[dict[str, Any]],
+    multi_queries: list[str],
+    hyde_docs: list[str],
+    normalized_meta: dict[str, Any] | None,
+    budget: dict[str, Any],
+) -> dict[str, Any]:
+    aliases = _normalize_meta_values(normalized_meta, "aliases", limit=8)
+    constraint_variants = _build_constraint_variants(
+        base_query=normalized_query or original_query,
+        normalized_meta=normalized_meta,
+    )
+    constraint_terms = _constraint_terms(normalized_meta)
+
+    variant_candidates: list[str] = []
+    variant_source_by_query: dict[str, str] = {}
+
+    def _add_variant_candidate(query: str, source: str) -> None:
+        value = str(query or "").strip()
+        if not value:
+            return
+        lowered = value.casefold()
+        if lowered in variant_source_by_query:
+            return
+        variant_source_by_query[lowered] = source
+        variant_candidates.append(value)
+
+    if normalized_query and normalized_query.casefold() != original_query.casefold():
+        _add_variant_candidate(normalized_query, "normalized_query")
+    for query in multi_queries:
+        _add_variant_candidate(query, "multi_query")
+    for query in aliases:
+        _add_variant_candidate(query, "normalize_alias")
+    for query in constraint_variants:
+        _add_variant_candidate(query, "normalized_meta_constraints")
+
+    raw_items = build_query_items(
+        main_query=original_query,
+        sub_queries=sub_queries,
+        sub_query_specs=sub_query_specs,
+        variants=_dedupe_string_list(variant_candidates),
+        hyde_docs=hyde_docs or None,
+    )
+
+    scored_rows: list[dict[str, Any]] = []
+    for idx, raw_item in enumerate(raw_items):
+        item = _as_dict(raw_item) or {}
+        query = str(item.get("query") or "").strip()
+        if not query:
+            continue
+        kind = str(item.get("kind") or "other").strip() or "other"
+        priority = item.get("priority")
+        if not isinstance(priority, int):
+            if kind == "main":
+                priority = 1
+            elif kind == "hyde":
+                priority = 7
+            else:
+                priority = idx + 2
+        source = "build_query_items"
+        if kind == "subquery":
+            source = "decomposition"
+        elif kind == "variant":
+            source = variant_source_by_query.get(query.casefold(), "multi_query")
+        elif kind == "hyde":
+            source = "hyde"
+
+        scored_rows.append(
+            {
+                "index": idx,
+                "kind": kind,
+                "query": query,
+                "source": source,
+                "priority": max(1, min(int(priority), 8)),
+                "quality_score": _prepare_quality_score(
+                    item,
+                    strategy=strategy,
+                    normalized_meta=normalized_meta,
+                ),
+                "item": item,
+            }
+        )
+
+    deduped_rows: list[dict[str, Any]] = []
+    dropped_rows: list[dict[str, Any]] = []
+    seen_keys: set[tuple[str, bool, bool]] = set()
+    for row in scored_rows:
+        item = _as_dict(row.get("item")) or {}
+        dedupe_key = (
+            str(row.get("query") or "").casefold(),
+            bool(item.get("use_dense", True)),
+            bool(item.get("use_bm25", True)),
+        )
+        if dedupe_key in seen_keys:
+            dropped_rows.append(
+                {
+                    "kind": row.get("kind"),
+                    "query": row.get("query"),
+                    "reason": "duplicate",
+                }
+            )
+            continue
+        seen_keys.add(dedupe_key)
+        deduped_rows.append(row)
+
+    quality_threshold = _effective_prepare_quality_threshold(
+        budget=budget,
+        normalized_meta=normalized_meta,
+    )
+    filtered_rows: list[dict[str, Any]] = []
+    for row in deduped_rows:
+        score = float(row.get("quality_score") or 0.0)
+        kind = str(row.get("kind") or "")
+        if score < quality_threshold and kind != "main":
+            dropped_rows.append(
+                {
+                    "kind": kind or "other",
+                    "query": row.get("query"),
+                    "reason": "low_quality",
+                    "quality_score": score,
+                }
+            )
+            continue
+        filtered_rows.append(row)
+
+    filtered_rows = sorted(
+        filtered_rows,
+        key=lambda row: (
+            0 if str(row.get("kind") or "") == "main" else 1,
+            int(row.get("priority") or 99),
+            -float(row.get("quality_score") or 0.0),
+            int(row.get("index") or 0),
+        ),
+    )
+
+    max_candidates = int(budget["max_candidates"])
+    selected_rows: list[dict[str, Any]] = []
+    for row in filtered_rows:
+        if len(selected_rows) >= max_candidates:
+            dropped_rows.append(
+                {
+                    "kind": row.get("kind"),
+                    "query": row.get("query"),
+                    "reason": "over_budget",
+                }
+            )
+            continue
+        selected_rows.append(row)
+
+    include_main = bool(budget["include_main"])
+    if include_main and not any(
+        str(row.get("kind") or "") == "main" for row in selected_rows
+    ):
+        main_row = next(
+            (
+                row
+                for row in filtered_rows
+                if str(row.get("kind") or "") == "main"
+            ),
+            None,
+        )
+        if main_row is not None:
+            if len(selected_rows) >= max_candidates and selected_rows:
+                removed = selected_rows.pop()
+                dropped_rows.append(
+                    {
+                        "kind": removed.get("kind"),
+                        "query": removed.get("query"),
+                        "reason": "replace_with_main",
+                    }
+                )
+            selected_rows.insert(0, main_row)
+
+    selected_items: list[dict[str, Any]] = []
+    for row in selected_rows:
+        item = _as_dict(row.get("item"))
+        if not item:
+            continue
+        selected_items.append(
+            {
+                **item,
+                "priority": int(row.get("priority") or item.get("priority") or 1),
+                "quality_score": float(row.get("quality_score") or 0.0),
+            }
+        )
+
+    kind_breakdown: dict[str, int] = {}
+    for item in selected_items:
+        kind = str(item.get("kind") or "other").strip() or "other"
+        kind_breakdown[kind] = int(kind_breakdown.get(kind, 0)) + 1
+
+    fallback_reason = "none"
+    if not selected_items:
+        fallback_reason = (
+            "all_filtered_low_quality" if deduped_rows else "empty_query_bundle"
+        )
+    elif strategy != "direct" and len(selected_items) < int(budget["min_queries"]):
+        fallback_reason = "below_min_queries"
+
+    quality_signals: list[str] = []
+    if any(str(row.get("kind")) == "subquery" for row in scored_rows):
+        quality_signals.append("has_subqueries")
+    if any(str(row.get("kind")) == "variant" for row in scored_rows):
+        quality_signals.append("has_variants")
+    if any(str(row.get("kind")) == "hyde" for row in scored_rows):
+        quality_signals.append("has_hyde")
+    if aliases:
+        quality_signals.append("alias_variants")
+    if constraint_terms:
+        quality_signals.append("constraint_terms_used")
+    if constraint_variants:
+        quality_signals.append("constraint_variants")
+    if isinstance(normalized_meta, dict):
+        recall_risk = str(normalized_meta.get("recall_risk") or "").strip().lower()
+        if recall_risk:
+            quality_signals.append(f"recall_risk:{recall_risk}")
+        if bool(normalized_meta.get("drift_risk")):
+            quality_signals.append("drift_risk")
+        if normalized_meta.get("constraint_preserved") is False:
+            quality_signals.append("constraint_preservation_uncertain")
+    if any(str(item.get("reason")) == "duplicate" for item in dropped_rows):
+        quality_signals.append("dedup_applied")
+    if any(str(item.get("reason")) == "low_quality" for item in dropped_rows):
+        quality_signals.append("quality_filtered")
+    if any(str(item.get("reason")) == "over_budget" for item in dropped_rows):
+        quality_signals.append("budget_trimmed")
+    if fallback_reason != "none":
+        quality_signals.append(f"fallback:{fallback_reason}")
+
+    message_plan = {
+        "strategy": strategy,
+        "candidates": [
+            {
+                "index": int(row.get("index") or 0),
+                "kind": str(row.get("kind") or "other"),
+                "query": str(row.get("query") or ""),
+                "source": str(row.get("source") or "unknown"),
+                "priority": int(row.get("priority") or 1),
+                "quality_score": float(row.get("quality_score") or 0.0),
+            }
+            for row in scored_rows
+        ],
+        "selected": [
+            {
+                "index": int(row.get("index") or 0),
+                "kind": str(row.get("kind") or "other"),
+                "query": str(row.get("query") or ""),
+                "source": str(row.get("source") or "unknown"),
+                "priority": int(row.get("priority") or 1),
+                "quality_score": float(row.get("quality_score") or 0.0),
+            }
+            for row in selected_rows
+        ],
+        "dropped": dropped_rows,
+        "budget": {
+            **budget,
+            "quality_threshold": quality_threshold,
+            "candidate_count": len(scored_rows),
+            "selected_count": len(selected_items),
+        },
+    }
+
+    query_bundle = {
+        "items": selected_items,
+        "kind_breakdown": kind_breakdown,
+        "dedup_stats": {
+            "raw_count": len(scored_rows),
+            "after_dedup_count": len(deduped_rows),
+            "selected_count": len(selected_items),
+            "dropped_count": len(dropped_rows),
+            "duplicate_dropped": sum(
+                1 for item in dropped_rows if str(item.get("reason")) == "duplicate"
+            ),
+            "low_quality_dropped": sum(
+                1 for item in dropped_rows if str(item.get("reason")) == "low_quality"
+            ),
+        },
+    }
+
+    return {
+        "query_items": selected_items,
+        "message_plan": message_plan,
+        "query_bundle": query_bundle,
+        "prepare_diagnostics": {
+            "quality_signals": quality_signals,
+            "fallback_reason": fallback_reason,
+        },
+    }
 
 
 def _merge_stage_summary(
@@ -1557,7 +2036,7 @@ async def prepare_messages(
 ) -> Command[str]:
     """Assemble retrieval query bundle and route with Command.
 
-    This node keeps message/query planning explicit for observability:
+    This node keeps query-bundle planning explicit for observability:
     - message_plan: candidate scoring + budget decisions
     - query_bundle: selected query_items + dedupe statistics
     - prepare_diagnostics: quality signals + fallback reason
@@ -1598,268 +2077,58 @@ async def prepare_messages(
         query for query in multi_queries_raw if isinstance(query, str) and query.strip()
     ]
 
-    alias_variants = _normalize_meta_aliases(state)
+    normalized_meta = _as_dict(state.get("normalized_meta")) or {}
     hyde_docs_raw = state.get("hyde_docs")
     if not isinstance(hyde_docs_raw, list):
         hyde_docs_raw = []
     hyde_docs = [doc for doc in hyde_docs_raw if isinstance(doc, str) and doc.strip()]
 
     strategy = _resolve_prepare_strategy(state)
-    budget = _resolve_prepare_budget(state=state, runtime=runtime, settings=settings)
-
-    variant_seed = [
-        query
-        for query in (multi_queries or alias_variants)
-        if isinstance(query, str) and query.strip()
-    ]
-    # O3: always keep original query as main item, then append normalized query.
-    variant_candidates: list[str] = []
-    if normalized and normalized.casefold() != original_query.casefold():
-        variant_candidates.append(normalized)
-    variant_candidates.extend(variant_seed)
-    variant_candidates = _dedupe_string_list(variant_candidates)
-
-    raw_items = build_query_items(
-        main_query=original_query,
+    budget = resolve_prepare_budget(state=state, runtime=runtime, settings=settings)
+    bundle = build_prepared_query_bundle(
+        original_query=original_query,
+        normalized_query=normalized,
+        strategy=strategy,
         sub_queries=sub_queries,
         sub_query_specs=sub_query_specs,
-        variants=variant_candidates,
-        hyde_docs=hyde_docs or None,
+        multi_queries=multi_queries,
+        hyde_docs=hyde_docs,
+        normalized_meta=normalized_meta,
+        budget=budget,
     )
-
-    scored_rows: list[dict[str, Any]] = []
-    for idx, raw_item in enumerate(raw_items):
-        item = _as_dict(raw_item) or {}
-        query = str(item.get("query") or "").strip()
-        if not query:
-            continue
-        kind = str(item.get("kind") or "other").strip() or "other"
-        priority = item.get("priority")
-        if not isinstance(priority, int):
-            if kind == "main":
-                priority = 1
-            elif kind == "hyde":
-                priority = 7
-            else:
-                priority = idx + 2
-        source = "build_query_items"
-        if kind == "subquery":
-            source = "decomposition"
-        elif kind == "variant":
-            source = "multi_query"
-        elif kind == "hyde":
-            source = "hyde"
-
-        scored_rows.append(
-            {
-                "index": idx,
-                "kind": kind,
-                "query": query,
-                "source": source,
-                "priority": max(1, min(int(priority), 8)),
-                "quality_score": _prepare_quality_score(item, strategy=strategy),
-                "item": item,
-            }
-        )
-
-    deduped_rows: list[dict[str, Any]] = []
-    dropped_rows: list[dict[str, Any]] = []
-    seen_keys: set[tuple[str, bool, bool]] = set()
-    for row in scored_rows:
-        item = _as_dict(row.get("item")) or {}
-        dedupe_key = (
-            str(row.get("query") or "").casefold(),
-            bool(item.get("use_dense", True)),
-            bool(item.get("use_bm25", True)),
-        )
-        if dedupe_key in seen_keys:
-            dropped_rows.append(
-                {
-                    "kind": row.get("kind"),
-                    "query": row.get("query"),
-                    "reason": "duplicate",
-                }
-            )
-            continue
-        seen_keys.add(dedupe_key)
-        deduped_rows.append(row)
-
-    quality_threshold = float(budget["quality_threshold"])
-    filtered_rows: list[dict[str, Any]] = []
-    for row in deduped_rows:
-        score = float(row.get("quality_score") or 0.0)
-        kind = str(row.get("kind") or "")
-        if score < quality_threshold and kind != "main":
-            dropped_rows.append(
-                {
-                    "kind": kind or "other",
-                    "query": row.get("query"),
-                    "reason": "low_quality",
-                    "quality_score": score,
-                }
-            )
-            continue
-        filtered_rows.append(row)
-
-    filtered_rows = sorted(
-        filtered_rows,
-        key=lambda row: (
-            0 if str(row.get("kind") or "") == "main" else 1,
-            int(row.get("priority") or 99),
-            -float(row.get("quality_score") or 0.0),
-            int(row.get("index") or 0),
-        ),
-    )
-
-    max_candidates = int(budget["max_candidates"])
-    selected_rows: list[dict[str, Any]] = []
-    for row in filtered_rows:
-        if len(selected_rows) >= max_candidates:
-            dropped_rows.append(
-                {
-                    "kind": row.get("kind"),
-                    "query": row.get("query"),
-                    "reason": "over_budget",
-                }
-            )
-            continue
-        selected_rows.append(row)
-
-    include_main = bool(budget["include_main"])
-    if include_main and not any(
-        str(row.get("kind") or "") == "main" for row in selected_rows
-    ):
-        main_row = next(
-            (
-                row
-                for row in filtered_rows
-                if str(row.get("kind") or "") == "main"
-            ),
-            None,
-        )
-        if main_row is not None:
-            if len(selected_rows) >= max_candidates and selected_rows:
-                removed = selected_rows.pop()
-                dropped_rows.append(
-                    {
-                        "kind": removed.get("kind"),
-                        "query": removed.get("query"),
-                        "reason": "replace_with_main",
-                    }
-                )
-            selected_rows.insert(0, main_row)
-
-    selected_items: list[dict[str, Any]] = []
-    for row in selected_rows:
-        item = _as_dict(row.get("item"))
-        if item:
-            selected_items.append(item)
-
-    kind_breakdown: dict[str, int] = {}
-    for item in selected_items:
-        kind = str(item.get("kind") or "other").strip() or "other"
-        kind_breakdown[kind] = int(kind_breakdown.get(kind, 0)) + 1
-
-    fallback_reason = "none"
-    if not selected_items:
-        fallback_reason = (
-            "all_filtered_low_quality" if deduped_rows else "empty_query_bundle"
-        )
-    elif strategy != "direct" and len(selected_items) < int(budget["min_queries"]):
-        fallback_reason = "below_min_queries"
-
-    quality_signals: list[str] = []
-    if any(str(row.get("kind")) == "subquery" for row in scored_rows):
-        quality_signals.append("has_subqueries")
-    if any(str(row.get("kind")) == "variant" for row in scored_rows):
-        quality_signals.append("has_variants")
-    if any(str(row.get("kind")) == "hyde" for row in scored_rows):
-        quality_signals.append("has_hyde")
-    if any(str(item.get("reason")) == "duplicate" for item in dropped_rows):
-        quality_signals.append("dedup_applied")
-    if any(str(item.get("reason")) == "low_quality" for item in dropped_rows):
-        quality_signals.append("quality_filtered")
-    if any(str(item.get("reason")) == "over_budget" for item in dropped_rows):
-        quality_signals.append("budget_trimmed")
-    if fallback_reason != "none":
-        quality_signals.append(f"fallback:{fallback_reason}")
-
-    message_plan = {
-        "strategy": strategy,
-        "candidates": [
-            {
-                "index": int(row.get("index") or 0),
-                "kind": str(row.get("kind") or "other"),
-                "query": str(row.get("query") or ""),
-                "source": str(row.get("source") or "unknown"),
-                "priority": int(row.get("priority") or 1),
-                "quality_score": float(row.get("quality_score") or 0.0),
-            }
-            for row in scored_rows
-        ],
-        "selected": [
-            {
-                "index": int(row.get("index") or 0),
-                "kind": str(row.get("kind") or "other"),
-                "query": str(row.get("query") or ""),
-                "source": str(row.get("source") or "unknown"),
-                "priority": int(row.get("priority") or 1),
-                "quality_score": float(row.get("quality_score") or 0.0),
-            }
-            for row in selected_rows
-        ],
-        "dropped": dropped_rows,
-        "budget": {
-            **budget,
-            "candidate_count": len(scored_rows),
-            "selected_count": len(selected_items),
-        },
-    }
-
-    query_bundle = {
-        "items": selected_items,
-        "kind_breakdown": kind_breakdown,
-        "dedup_stats": {
-            "raw_count": len(scored_rows),
-            "after_dedup_count": len(deduped_rows),
-            "selected_count": len(selected_items),
-            "dropped_count": len(dropped_rows),
-            "duplicate_dropped": sum(
-                1 for item in dropped_rows if str(item.get("reason")) == "duplicate"
-            ),
-            "low_quality_dropped": sum(
-                1 for item in dropped_rows if str(item.get("reason")) == "low_quality"
-            ),
-        },
-    }
 
     latency_ms = int((time.perf_counter() - start) * 1000)
     prepare_diagnostics = {
-        "quality_signals": quality_signals,
-        "fallback_reason": fallback_reason,
+        **(_as_dict(bundle.get("prepare_diagnostics")) or {}),
         "timing": {"latency_ms": latency_ms},
     }
+    message_plan = _as_dict(bundle.get("message_plan")) or {}
+    query_bundle = _as_dict(bundle.get("query_bundle")) or {}
+    query_items = (
+        bundle.get("query_items") if isinstance(bundle.get("query_items"), list) else []
+    )
+    fallback_reason = str(prepare_diagnostics.get("fallback_reason") or "none")
 
     stage_summaries = _merge_stage_summary(
         state,
         "prepare_messages",
         {
             "message_plan": {
-                "strategy": strategy,
-                "candidate_count": len(scored_rows),
-                "selected_count": len(selected_items),
-                "dropped_count": len(dropped_rows),
+                "strategy": message_plan.get("strategy") or strategy,
+                "candidate_count": len(message_plan.get("candidates") or []),
+                "selected_count": len(message_plan.get("selected") or []),
+                "dropped_count": len(message_plan.get("dropped") or []),
                 "original_query": original_query,
                 "normalized_query": normalized,
-                "budget": budget,
+                "budget": _as_dict(message_plan.get("budget")) or budget,
             },
             "query_bundle": {
-                "items_count": len(selected_items),
-                "kind_breakdown": kind_breakdown,
-                "dedup_stats": query_bundle["dedup_stats"],
+                "items_count": len(query_items),
+                "kind_breakdown": query_bundle.get("kind_breakdown") or {},
+                "dedup_stats": query_bundle.get("dedup_stats") or {},
             },
             "diagnostics": {
-                "quality_signals": quality_signals,
+                "quality_signals": prepare_diagnostics.get("quality_signals") or [],
                 "fallback_reason": fallback_reason,
                 "latency_ms": latency_ms,
                 "completed_at": now_iso(),
@@ -1869,7 +2138,7 @@ async def prepare_messages(
     )
 
     update: dict[str, Any] = {
-        "query_items": selected_items,
+        "query_items": query_items,
         "query_bundle": query_bundle,
         "message_plan": message_plan,
         "prepare_diagnostics": prepare_diagnostics,
