@@ -69,6 +69,18 @@ describe('kbChatFlowSelectors', () => {
       ],
       event: null,
     });
+    const mergedEvidenceItems = selectKbChatFlowDetailItems({
+      nodeId: 'merge_subquery_context',
+      section: 'output',
+      items: [
+        {
+          key: 'merged_evidence',
+          label: '合并后证据',
+          value: ['文档名：未命名文档\nChunk 内容：多子查询结果已汇总。'],
+        },
+      ],
+      event: null,
+    });
     const reviewItems = selectKbChatFlowDetailItems({
       nodeId: 'answer_review_dispatch',
       section: 'output',
@@ -87,6 +99,13 @@ describe('kbChatFlowSelectors', () => {
         key: 'retrieved_evidence',
         label: '检索证据',
         value: ['文档名：未命名文档\nChunk 内容：CoT 关注线性推理。'],
+      },
+    ]);
+    expect(mergedEvidenceItems).toEqual([
+      {
+        key: 'merged_evidence',
+        label: '合并后证据',
+        value: ['文档名：未命名文档\nChunk 内容：多子查询结果已汇总。'],
       },
     ]);
     expect(reviewItems).toEqual([
