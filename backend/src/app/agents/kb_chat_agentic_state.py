@@ -526,7 +526,7 @@ class AnswerReviewCitationInput(TypedDict, total=False):
     final_context: str
 
 
-class AnswerReviewLLMInput(TypedDict, total=False):
+class AnswerReviewInput(TypedDict, total=False):
     user_input: str
     rewrite_input_query: str
     resolved_query: str

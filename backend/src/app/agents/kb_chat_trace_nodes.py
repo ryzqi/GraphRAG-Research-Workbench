@@ -71,12 +71,11 @@ KB_CHAT_NODE_METADATA: dict[str, dict[str, Any]] = {
     "draft_generate": {"label": "草稿生成", "phase": "generate", "order": 21},
     "answer_review_dispatch": {"label": "审查分发", "phase": "verify", "order": 22},
     "answer_review_citation": {"label": "引用覆盖审查", "phase": "verify", "order": 23},
-    "answer_review_factual": {"label": "事实正确性审查", "phase": "verify", "order": 24},
-    "answer_review_answerability": {"label": "可回答性审查", "phase": "verify", "order": 25},
-    "answer_review_fuse": {"label": "审查结果融合", "phase": "verify", "order": 26},
-    "answer_repair": {"label": "答案修复", "phase": "verify", "order": 27},
-    "answer_commit": {"label": "答案提交", "phase": "generate", "order": 28},
-    "force_exit": {"label": "提前终止", "phase": "finalize", "order": 29},
+    "answer_review": {"label": "回答有效性审查", "phase": "verify", "order": 24},
+    "answer_review_fuse": {"label": "审查结果融合", "phase": "verify", "order": 25},
+    "answer_repair": {"label": "答案修复", "phase": "verify", "order": 26},
+    "answer_commit": {"label": "答案提交", "phase": "generate", "order": 27},
+    "force_exit": {"label": "提前终止", "phase": "finalize", "order": 28},
 }
 
 _NODE_SUMMARY_KEY_MAP: dict[str, str] = {

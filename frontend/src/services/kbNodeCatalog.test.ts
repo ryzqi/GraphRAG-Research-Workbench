@@ -33,8 +33,7 @@ const CURRENT_KB_CHAT_NODE_IDS = [
   'draft_generate',
   'answer_review_dispatch',
   'answer_review_citation',
-  'answer_review_factual',
-  'answer_review_answerability',
+  'answer_review',
   'answer_review_fuse',
   'answer_repair',
   'answer_commit',
@@ -66,12 +65,11 @@ const EXPECTED_NODE_ORDERS: Record<(typeof CURRENT_KB_CHAT_NODE_IDS)[number], nu
   draft_generate: 21,
   answer_review_dispatch: 22,
   answer_review_citation: 23,
-  answer_review_factual: 24,
-  answer_review_answerability: 25,
-  answer_review_fuse: 26,
-  answer_repair: 27,
-  answer_commit: 28,
-  force_exit: 29,
+  answer_review: 24,
+  answer_review_fuse: 25,
+  answer_repair: 26,
+  answer_commit: 27,
+  force_exit: 28,
 };
 
 describe('kbNodeCatalog', () => {
@@ -133,10 +131,14 @@ describe('kbNodeCatalog', () => {
     });
   });
 
-  it('does not keep deprecated answer aliases in local catalog fallback', () => {
-    ['generate', 'answer_review', 'finalize'].forEach((nodeId) => {
+  it('does not keep deprecated answer shell aliases in local catalog fallback', () => {
+    ['generate', 'finalize'].forEach((nodeId) => {
       expect(resolveKbNodeCatalogEntry(nodeId)).toBeNull();
     });
+  });
+
+  it('keeps the live merged answer review node in local catalog fallback', () => {
+    expect(resolveKbNodeCatalogEntry('answer_review')?.label).toBe('回答有效性审查');
   });
 
   it('does not keep pruned live gate and verification nodes in local catalog fallback', () => {

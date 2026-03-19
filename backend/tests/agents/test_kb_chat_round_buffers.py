@@ -10,7 +10,7 @@ from app.agents.kb_chat_agentic_graph import (
     _current_subquery_runs,
     _resolve_current_subquery_run,
 )
-from app.agents.kb_chat_trace_nodes import _resolve_answer_review_run
+from app.agents.kb_chat_trace_display_contract import _resolve_answer_review_run
 
 
 def _settings(**overrides: object) -> SimpleNamespace:

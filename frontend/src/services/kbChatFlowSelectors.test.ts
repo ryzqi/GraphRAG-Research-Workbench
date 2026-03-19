@@ -88,7 +88,7 @@ describe('kbChatFlowSelectors', () => {
         {
           key: 'review_checks',
           label: '审查项',
-          value: ['引用覆盖审查', '事实正确性审查', '可回答性审查'],
+          value: ['引用覆盖审查', '回答有效性审查'],
         },
       ],
       event: null,
@@ -112,7 +112,7 @@ describe('kbChatFlowSelectors', () => {
       {
         key: 'review_checks',
         label: '审查项',
-        value: ['引用覆盖审查', '事实正确性审查', '可回答性审查'],
+        value: ['引用覆盖审查', '回答有效性审查'],
       },
     ]);
   });

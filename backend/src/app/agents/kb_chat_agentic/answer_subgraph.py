@@ -33,7 +33,7 @@ from app.agents.kb_chat_agentic_state import (
     AnswerReviewCitationInput,
     AnswerReviewDispatchInput,
     AnswerReviewFuseInput,
-    AnswerReviewLLMInput,
+    AnswerReviewInput,
     DraftGenerateInput,
     KbChatInternalState,
     merge_routing_decision,
@@ -55,10 +55,9 @@ _REPAIRABLE_FAILURE_REASONS = {
     "citation_mismatch",
 }
 _EVIDENCE_LINE_RE = re.compile(r"^\[([^\[\]\n]{1,128})\]\s+", re.MULTILINE)
-_REVIEW_CHECKS: tuple[Literal["citation", "factual", "answerability"], ...] = (
+_REVIEW_CHECKS: tuple[Literal["citation", "answer"], ...] = (
     "citation",
-    "factual",
-    "answerability",
+    "answer",
 )
 
 
@@ -282,21 +281,11 @@ async def _answer_review_dispatch(
             },
         ),
         Send(
-            "answer_review_factual",
+            "answer_review",
             {
                 **state,
                 "answer_review_task": {
-                    "check": "factual",
-                    "review_round": review_round,
-                },
-            },
-        ),
-        Send(
-            "answer_review_answerability",
-            {
-                **state,
-                "answer_review_task": {
-                    "check": "answerability",
+                    "check": "answer",
                     "review_round": review_round,
                 },
             },
@@ -444,11 +433,10 @@ async def _answer_review_citation(
 
 
 async def _answer_review_llm_check(
-    state: AnswerReviewLLMInput,
+    state: AnswerReviewInput,
     *,
     settings: Settings,
     chat_model: BaseChatModel,
-    check: Literal["factual", "answerability"],
 ) -> dict[str, Any]:
     start = time.perf_counter()
     review_round = _current_review_round(state)
@@ -456,20 +444,12 @@ async def _answer_review_llm_check(
     final_context = _as_str(state.get("final_context")).strip()
     draft = _as_str(state.get("draft_answer")).strip()
     fallback_reason: str | None = None
-    if check == "factual":
-        prompt_key = "kb_chat/answer_review"
-        default_system = (
-            "你是严格的知识库回答事实审查器。"
-            "仅判断回答是否被参考内容支持，重点检查无依据断言和引用一致性。"
-            '仅输出 JSON：{"passed": true/false, "reason": "...", "confidence": 0-1}。'
-        )
-    else:
-        prompt_key = "kb_chat/answer_review"
-        default_system = (
-            "你是严格的知识库回答有效性审查器。"
-            "仅判断回答是否直接回答问题，避免答非所问、空泛套话。"
-            '仅输出 JSON：{"passed": true/false, "reason": "...", "confidence": 0-1}。'
-        )
+    prompt_key = "kb_chat/answer_review"
+    default_system = (
+        "你是严格的知识库答案有效性审查器。"
+        "请同时判断回答是否直接回应问题，以及关键断言是否被参考内容支持。"
+        '仅输出 JSON：{"passed": true/false, "reason": "...", "confidence": 0-1, "missing_citations": [], "unsupported_claims": []}。'
+    )
     prompts = get_prompt_loader()
     try:
         system_prompt = prompts.render_with_few_shot(prompt_key)
@@ -495,7 +475,7 @@ async def _answer_review_llm_check(
         decision_source = "fallback"
     result = {
         "review_round": review_round,
-        "check": check,
+        "check": "answer",
         "passed": passed,
         "reason": reason,
         "confidence": max(0.0, min(1.0, confidence)),
@@ -506,7 +486,7 @@ async def _answer_review_llm_check(
     _emit_review_event(
         {
             "event_type": "answer_review_subcheck",
-            "check": check,
+            "check": "answer",
             "passed": passed,
             "reason": reason,
             "fallback_reason": fallback_reason,
@@ -516,30 +496,15 @@ async def _answer_review_llm_check(
     return {"answer_review_runs": [result]}
 
 
-async def _answer_review_factual(
-    state: AnswerReviewLLMInput,
+async def _answer_review(
+    state: AnswerReviewInput,
     runtime: Runtime[KbChatAnswerSubgraphContext],
     *,
     settings: Settings,
     chat_model: BaseChatModel,
 ) -> dict[str, Any]:
     _ = runtime
-    return await _answer_review_llm_check(
-        state, settings=settings, chat_model=chat_model, check="factual"
-    )
-
-
-async def _answer_review_answerability(
-    state: AnswerReviewLLMInput,
-    runtime: Runtime[KbChatAnswerSubgraphContext],
-    *,
-    settings: Settings,
-    chat_model: BaseChatModel,
-) -> dict[str, Any]:
-    _ = runtime
-    return await _answer_review_llm_check(
-        state, settings=settings, chat_model=chat_model, check="answerability"
-    )
+    return await _answer_review_llm_check(state, settings=settings, chat_model=chat_model)
 
 
 async def _answer_review_fuse(
@@ -566,13 +531,12 @@ async def _answer_review_fuse(
         for check in _REVIEW_CHECKS
     }
     citation = by_check["citation"]
-    factual = by_check["factual"]
-    answerability = by_check["answerability"]
-    checks = [citation, factual, answerability]
+    answer = by_check["answer"]
+    checks = [citation, answer]
     passed = all(bool(item.get("passed")) for item in checks)
     reason = "passed"
     if not passed:
-        for key in ("citation", "factual", "answerability"):
+        for key in ("citation", "answer"):
             current = by_check[key]
             if not bool(current.get("passed")):
                 reason = _as_str(current.get("reason")).strip() or "fallback_closed"
@@ -966,8 +930,7 @@ def build_answer_subgraph(
         retry_disabled_reason="parallel_fanout",
         destinations=(
             "answer_review_citation",
-            "answer_review_factual",
-            "answer_review_answerability",
+            "answer_review",
             "answer_review_fuse",
         ),
     )
@@ -983,16 +946,8 @@ def build_answer_subgraph(
         retry_policy=generation_retry_policy,
     )
     add_traced_node(
-        "answer_review_factual",
-        lambda s, runtime: _answer_review_factual(
-            s, runtime, settings=settings, chat_model=chat_model
-        ),
-        side_effect_type="llm",
-        retry_policy=generation_retry_policy,
-    )
-    add_traced_node(
-        "answer_review_answerability",
-        lambda s, runtime: _answer_review_answerability(
+        "answer_review",
+        lambda s, runtime: _answer_review(
             s, runtime, settings=settings, chat_model=chat_model
         ),
         side_effect_type="llm",
@@ -1024,8 +979,7 @@ def build_answer_subgraph(
     graph.set_entry_point("draft_generate")
     graph.add_edge("draft_generate", "answer_review_dispatch")
     graph.add_edge("answer_review_citation", "answer_review_fuse")
-    graph.add_edge("answer_review_factual", "answer_review_fuse")
-    graph.add_edge("answer_review_answerability", "answer_review_fuse")
+    graph.add_edge("answer_review", "answer_review_fuse")
     graph.add_edge("answer_repair", "answer_review_dispatch")
     graph.add_edge("answer_commit", END)
     return graph.compile(name="kb_chat_answer_subgraph")

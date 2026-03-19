@@ -77,7 +77,6 @@ async def test_answer_review_dispatch_does_not_reset_review_runs() -> None:
     assert [task.arg["answer_review_task"]["review_round"] for task in command.goto] == [
         1,
         1,
-        1,
     ]
 
 
@@ -110,15 +109,7 @@ async def test_answer_review_fuse_does_not_reset_review_runs() -> None:
                 "decision_source": "rule",
             },
             {
-                "check": "factual",
-                "review_round": 1,
-                "passed": True,
-                "reason": "passed",
-                "confidence": 0.8,
-                "decision_source": "llm",
-            },
-            {
-                "check": "answerability",
+                "check": "answer",
                 "review_round": 1,
                 "passed": True,
                 "reason": "passed",
@@ -204,8 +195,7 @@ TRACE_INPUT_KEYS_BY_NODE = {
     "draft_generate": ["normalized_query", "current_evidence"],
     "answer_review_dispatch": ["draft_answer"],
     "answer_review_citation": ["draft_answer"],
-    "answer_review_factual": ["draft_answer"],
-    "answer_review_answerability": ["draft_answer"],
+    "answer_review": ["draft_answer"],
     "answer_review_fuse": ["review_results"],
     "answer_repair": ["draft_answer"],
     "answer_commit": ["candidate_answer"],
@@ -237,8 +227,7 @@ TRACE_OUTPUT_KEYS_BY_NODE = {
     "draft_generate": ["draft_answer"],
     "answer_review_dispatch": ["review_checks"],
     "answer_review_citation": ["decision", "reason", "next_node_label"],
-    "answer_review_factual": ["decision", "reason", "next_node_label"],
-    "answer_review_answerability": ["decision", "reason", "next_node_label"],
+    "answer_review": ["decision", "reason", "next_node_label"],
     "answer_review_fuse": ["decision", "reason", "next_node_label"],
     "answer_repair": ["repaired_answer"],
     "answer_commit": ["final_answer"],
@@ -301,19 +290,11 @@ def _trace_base_snapshot() -> dict[str, Any]:
                 "decision_source": "rule",
             },
             {
-                "check": "factual",
+                "check": "answer",
                 "review_round": 1,
                 "passed": False,
-                "reason": "第二段与证据不一致",
+                "reason": "unsupported_claims",
                 "confidence": 0.41,
-                "decision_source": "llm",
-            },
-            {
-                "check": "answerability",
-                "review_round": 1,
-                "passed": True,
-                "reason": "已直接回答用户问题",
-                "confidence": 0.88,
                 "decision_source": "llm",
             },
         ],
@@ -372,9 +353,9 @@ def _trace_base_snapshot() -> dict[str, Any]:
             },
             "retrieval_plan": {"query_count": 2, "per_query_top_k": 6},
             "answer_review_dispatch": {
-                "checks": ["citation", "factual", "answerability"]
+                "checks": ["citation", "answer"]
             },
-            "answer_review_fuse": {"decision": "retry", "reason": "事实审查未通过"},
+            "answer_review_fuse": {"decision": "retry", "reason": "unsupported_claims"},
         },
     }
 
@@ -389,8 +370,7 @@ def _trace_snapshot_for_node(node_name: str) -> dict[str, Any]:
         "retrieval_subgraph": "answer_subgraph",
         "answer_subgraph": "END",
         "answer_review_citation": "answer_review_fuse",
-        "answer_review_factual": "answer_review_fuse",
-        "answer_review_answerability": "answer_review_fuse",
+        "answer_review": "answer_review_fuse",
         "answer_review_fuse": "answer_repair",
         "answer_repair": "answer_commit",
     }
@@ -398,8 +378,7 @@ def _trace_snapshot_for_node(node_name: str) -> dict[str, Any]:
         "dispatch_subqueries": ["retrieve_subquery"],
         "answer_review_dispatch": [
             "answer_review_citation",
-            "answer_review_factual",
-            "answer_review_answerability",
+            "answer_review",
         ],
     }
     if node_name in trace_goto:
@@ -584,13 +563,11 @@ def test_review_lists_are_businessized_string_arrays() -> None:
 
     assert review_dispatch_by_key["review_checks"] == [
         "引用覆盖审查",
-        "事实正确性审查",
-        "可回答性审查",
+        "回答有效性审查",
     ]
     assert review_fuse_by_key["review_results"] == [
         "引用覆盖审查：通过｜原因：关键断言均有引用",
-        "事实正确性审查：未通过｜原因：第二段与证据不一致",
-        "可回答性审查：通过｜原因：已直接回答用户问题",
+        "回答有效性审查：未通过｜原因：unsupported_claims",
     ]
 
 

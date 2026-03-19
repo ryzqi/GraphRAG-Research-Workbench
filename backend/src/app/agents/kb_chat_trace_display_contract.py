@@ -19,14 +19,12 @@ _NODE_SUMMARY_KEY_MAP: dict[str, str] = {
     "draft_generate": "generator",
     "answer_commit": "answer_subgraph",
     "answer_review_citation": "answer_review",
-    "answer_review_factual": "answer_review",
-    "answer_review_answerability": "answer_review",
+    "answer_review": "answer_review",
 }
 
 _ANSWER_REVIEW_NODE_TO_CHECK: dict[str, str] = {
     "answer_review_citation": "citation",
-    "answer_review_factual": "factual",
-    "answer_review_answerability": "answerability",
+    "answer_review": "answer",
 }
 
 _DOC_GATE_NODE_TO_GATE: dict[str, str] = {}
@@ -34,8 +32,7 @@ _GATE_LABELS: dict[str, str] = {}
 
 _REVIEW_CHECK_LABELS: dict[str, str] = {
     "citation": "引用覆盖审查",
-    "factual": "事实正确性审查",
-    "answerability": "可回答性审查",
+    "answer": "回答有效性审查",
 }
 
 _AMBIGUITY_REASON_CODE_LABELS: dict[str, str] = {
@@ -75,8 +72,7 @@ _BUSINESS_LABEL_FALLBACKS: dict[str, str] = {
     "draft_generate": "草稿生成",
     "answer_review_dispatch": "审查分发",
     "answer_review_citation": "引用覆盖审查",
-    "answer_review_factual": "事实正确性审查",
-    "answer_review_answerability": "可回答性审查",
+    "answer_review": "回答有效性审查",
     "answer_review_fuse": "审查结果汇总",
     "answer_repair": "答案修复",
     "answer_commit": "答案提交",
@@ -145,8 +141,7 @@ _INPUT_CONTRACTS: dict[str, list[str]] = {
     "draft_generate": ["normalized_query", "current_evidence"],
     "answer_review_dispatch": ["draft_answer"],
     "answer_review_citation": ["draft_answer"],
-    "answer_review_factual": ["draft_answer"],
-    "answer_review_answerability": ["draft_answer"],
+    "answer_review": ["draft_answer"],
     "answer_review_fuse": ["review_results"],
     "answer_repair": ["draft_answer"],
     "answer_commit": ["candidate_answer"],
@@ -178,8 +173,7 @@ _OUTPUT_CONTRACTS: dict[str, list[str]] = {
     "draft_generate": ["draft_answer"],
     "answer_review_dispatch": ["review_checks"],
     "answer_review_citation": ["decision", "reason", "next_node_label"],
-    "answer_review_factual": ["decision", "reason", "next_node_label"],
-    "answer_review_answerability": ["decision", "reason", "next_node_label"],
+    "answer_review": ["decision", "reason", "next_node_label"],
     "answer_review_fuse": ["decision", "reason", "next_node_label"],
     "answer_repair": ["repaired_answer"],
     "answer_commit": ["final_answer"],
@@ -791,7 +785,7 @@ def _format_review_results(snapshot: Mapping[str, Any]) -> list[str] | None:
         return None
     active_round = _resolve_answer_review_round(snapshot)
     result: list[str] = []
-    for check in ("citation", "factual", "answerability"):
+    for check in ("citation", "answer"):
         match = None
         for item in reversed(runs):
             if not isinstance(item, dict) or str(item.get("check") or "") != check:
@@ -974,8 +968,7 @@ def _resolve_decision_triplet(
 
     if node_name in {
         "answer_review_citation",
-        "answer_review_factual",
-        "answer_review_answerability",
+        "answer_review",
     }:
         run = _resolve_answer_review_run(snapshot, node_name)
         passed = run.get("passed")
@@ -1048,8 +1041,7 @@ def _resolve_next_node_label(
 
     if node_name in {
         "answer_review_citation",
-        "answer_review_factual",
-        "answer_review_answerability",
+        "answer_review",
     }:
         candidates.append("answer_review_fuse")
 

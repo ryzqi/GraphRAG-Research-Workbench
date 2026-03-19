@@ -2208,8 +2208,7 @@ class KbChatService:
                 "draft_generate": "generator",
                 "answer_subgraph": "answer_subgraph",
                 "answer_review_citation": "answer_review",
-                "answer_review_factual": "answer_review",
-                "answer_review_answerability": "answer_review",
+                "answer_review": "answer_review",
                 "answer_review_fuse": "answer_review",
             }.get(node, node)
             candidate = stage_summaries.get(summary_key)

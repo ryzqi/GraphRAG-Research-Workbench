@@ -52,8 +52,8 @@ describe('kbChatAnswerReveal', () => {
       shouldRevealAnswerOnNodeEvent(
         {
           phase: 'end',
-          node_name: 'answer_review_factual',
-          node_id: 'answer_review_factual',
+          node_name: 'answer_review',
+          node_id: 'answer_review',
         },
         terminalNodeIds
       )

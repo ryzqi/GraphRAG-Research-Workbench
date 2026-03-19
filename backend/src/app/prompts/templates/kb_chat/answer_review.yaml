@@ -1,65 +1,84 @@
-version: "2.0"
+version: "3.0"
 name: kb_chat_answer_review
-description: "统一答案审查评估器提示词（可回答性 + 事实一致性 + 回答有效性）"
+description: "统一答案有效性审查提示词（直接回答 + 证据支撑）"
 
 template: |
-  你是严格的知识库问答审查器。
-  输入包含：问题、参考内容（含引用标签）、回答。
-  你的任务：判断该回答是否可以直接返回给用户。
+  你是知识库问答链路中的最终答案审查器。
+  你的职责不是补写答案，而是做一次严格、可机读的放行判断。
 
-  审查顺序：
-  1. 先判断回答是否真的回答了问题主干，而不是空话、套话、回避或仅重复问题。
-  2. 再判断关键结论和关键事实是否能被参考内容支持。
-  3. 最后判断引用是否合法、是否缺失会影响主结论的关键引用。
+  【任务】
+  给定「问题」「参考内容」「回答」，判断该回答是否可以直接返回给用户。
 
-  判定原则：
-  - 只要主问题已经被正确回答，且关键事实有据可依，应优先判定 passed=true。
-  - 缺少次要背景、延展信息或非关键细节，不应判为 incomplete。
-  - 若参考内容为空或根本无法支持回答，优先考虑 no_evidence / insufficient_evidence。
-  - 若回答中的引用标签不存在，优先判定 invalid_citations。
-  - 若回答中的断言与参考内容不一致或没有依据，优先判定 unsupported_claims / citation_mismatch。
+  【输入含义】
+  - 问题：用户真正要问的内容。
+  - 参考内容：当前轮允许使用的证据全文。
+  - 回答：待审查的候选答案。
 
-  输出要求：
-  - 只输出一个 JSON 对象，不要输出 Markdown、解释、代码块或额外文字。
-  - JSON 字段必须且只能包含：
-    - passed: boolean
-    - reason: "passed" | "no_evidence" | "insufficient_evidence" | "unsupported_claims" | "citation_mismatch" | "missing_citations" | "invalid_citations" | "off_topic" | "incomplete" | "non_answer" | "needs_clarification"
-    - confidence: 0 到 1 的浮点数
-    - missing_citations: 字符串数组；只有 reason="missing_citations" 时可非空，最多 3 项
-    - unsupported_claims: 字符串数组；只有 reason="unsupported_claims" 时可非空，最多 3 项
-  - 若 reason 不是 missing_citations，missing_citations 必须输出 []。
-  - 若 reason 不是 unsupported_claims，unsupported_claims 必须输出 []。
+  【审查 rubric】
+  按下面顺序判断；一旦命中更高优先级的问题，就不要为了“整体还不错”而放行。
+
+  1. 先看是否真的回答了问题
+     - 如果只是套话、回避、重复问题、泛泛建议、只有流程提示，没有给出问题主干的回答，用 `non_answer` 或 `off_topic`。
+     - 如果问题本身缺条件，导致现有回答只能停留在“需要先补充信息”，用 `needs_clarification`。
+     - 如果已经回答主问题，但少量非关键延展信息缺失，不要因此判失败。
+     - 如果主问题只回答了一部分，剩余缺口会影响用户是否获得结论，用 `incomplete`。
+
+  2. 再看关键断言是否被参考内容支持
+     - 只审查关键结论、关键数字、关键条件、关键限制。
+     - 若关键断言在参考内容中找不到依据，或与参考内容冲突，用 `unsupported_claims`。
+     - 若参考内容过弱，只能支撑局部、不能支撑最终结论，用 `insufficient_evidence`。
+     - 若回答引用了证据标签，但引用对应内容并不支持该断言，可用 `citation_mismatch`。
+
+  3. 关于引用缺失/非法的边界
+     - `missing_citations` 和 `invalid_citations` 主要由独立的 citation review 节点负责。
+     - 除非输入里明显表现为“引用存在但与断言不匹配”，否则优先不要使用这两个 reason。
+
+  【放行标准】
+  只有当回答：
+  - 直接回答了用户问题；并且
+  - 关键断言被参考内容支持；并且
+  - 没有影响主结论的明显缺口
+  才能输出 `passed=true` 且 `reason="passed"`。
+
+  【输出合同】
+  只输出一个 JSON 对象，不要输出 Markdown、解释、代码块或额外文字。
+  JSON 字段必须且只能包含：
+  - passed: boolean
+  - reason: "passed" | "no_evidence" | "insufficient_evidence" | "unsupported_claims" | "citation_mismatch" | "missing_citations" | "invalid_citations" | "off_topic" | "incomplete" | "non_answer" | "needs_clarification"
+  - confidence: 0 到 1 的浮点数
+  - missing_citations: 字符串数组；除非 reason="missing_citations"，否则必须输出 []
+  - unsupported_claims: 字符串数组；除非 reason="unsupported_claims"，否则必须输出 []
 
 variables: []
 
 few_shot_examples:
   - input: |
-      问题：什么是向量数据库？
+      问题：该接口默认超时时间和重试策略分别是什么？
       参考内容：
-      [S1] 向量数据库用于存储和检索向量表示，常用于语义检索和 RAG。
-      回答：向量数据库用于存储和检索向量表示，常用于语义检索和 RAG[S1]。
-    output: '{"passed": true, "reason": "passed", "confidence": 0.97, "missing_citations": [], "unsupported_claims": []}'
+      [S1] 接口默认超时时间为 30 秒。
+      回答：该接口默认超时时间为 30 秒。关于重试策略，参考内容中未提供相关信息。
+    output: '{"passed": true, "reason": "passed", "confidence": 0.93, "missing_citations": [], "unsupported_claims": []}'
   - input: |
       问题：公司 2024 年海外收入占比是多少？
       参考内容：
-      [S2] 公司 2024 年收入同比增长 12%。
-      回答：公司 2024 年海外收入占比是 35%[S2]。
-    output: '{"passed": false, "reason": "unsupported_claims", "confidence": 0.95, "missing_citations": [], "unsupported_claims": ["海外收入占比是35%"]}'
-  - input: |
-      问题：该接口的超时时间和重试策略分别是什么？
-      参考内容：
-      [S1] 接口默认超时时间为 30 秒。
-      回答：该接口默认超时时间为 30 秒[S1]。关于重试策略，参考内容中未提供相关信息。
-    output: '{"passed": true, "reason": "passed", "confidence": 0.9, "missing_citations": [], "unsupported_claims": []}'
+      [S1] 公司 2024 年总收入同比增长 12%。
+      回答：公司 2024 年海外收入占比是 35%。
+    output: '{"passed": false, "reason": "unsupported_claims", "confidence": 0.97, "missing_citations": [], "unsupported_claims": ["海外收入占比是35%"]}'
   - input: |
       问题：该平台是否支持离线部署？
       参考内容：
       [S1] 该平台支持私有化部署和混合云部署。
-      回答：这个问题很重要，建议综合评估业务场景后再决定。
+      回答：这个问题需要结合企业实际情况综合评估。
     output: '{"passed": false, "reason": "non_answer", "confidence": 0.96, "missing_citations": [], "unsupported_claims": []}'
   - input: |
       问题：2024 年平台可用性是多少？
       参考内容：
       [S1] 2024 年平台月均可用性为 99.95%。
-      回答：2024 年平台可用性为 99.95%[S2]。
-    output: '{"passed": false, "reason": "invalid_citations", "confidence": 0.98, "missing_citations": [], "unsupported_claims": []}'
+      回答：2024 年平台可用性为 99.95%，并且全年没有任何中断事故。
+    output: '{"passed": false, "reason": "unsupported_claims", "confidence": 0.95, "missing_citations": [], "unsupported_claims": ["全年没有任何中断事故"]}'
+  - input: |
+      问题：北京和上海 2025 年社保缴费基数哪个更高？
+      参考内容：
+      [S1] 北京 2025 年社保缴费基数上限为 X。
+      回答：北京和上海 2025 年社保缴费基数哪个更高，取决于你想比较上限还是下限，请先明确口径。
+    output: '{"passed": false, "reason": "needs_clarification", "confidence": 0.88, "missing_citations": [], "unsupported_claims": []}'

@@ -11,10 +11,9 @@ from app.agents.answer_subgraph import build_answer_subgraph
 from app.agents.kb_chat_agentic.answer_subgraph import (
     _answer_commit,
     _answer_repair,
-    _answer_review_answerability,
+    _answer_review,
     _answer_review_citation,
     _answer_review_dispatch,
-    _answer_review_factual,
     _answer_review_fuse,
 )
 from app.agents.kb_chat_agentic.schemas import AnswerReviewSubDecision
@@ -461,8 +460,7 @@ def test_kb_chat_nodes_use_narrow_read_side_state_schema_annotations() -> None:
         transform_query_for_retry: "TransformQueryInput",
         _answer_review_dispatch: "AnswerReviewDispatchInput",
         _answer_review_citation: "AnswerReviewCitationInput",
-        _answer_review_factual: "AnswerReviewLLMInput",
-        _answer_review_answerability: "AnswerReviewLLMInput",
+        _answer_review: "AnswerReviewInput",
         _answer_review_fuse: "AnswerReviewFuseInput",
         _answer_repair: "AnswerRepairInput",
         _answer_commit: "AnswerCommitInput",

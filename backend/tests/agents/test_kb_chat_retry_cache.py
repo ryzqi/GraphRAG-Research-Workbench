@@ -68,8 +68,7 @@ def test_retry_policies_are_attached_only_to_transient_failure_nodes() -> None:
     assert retrieval.builder.nodes["retrieve"].retry_policy is not None
     assert graph._graph_builder.nodes["transform_query"].retry_policy is not None
     assert answer.builder.nodes["draft_generate"].retry_policy is not None
-    assert answer.builder.nodes["answer_review_factual"].retry_policy is not None
-    assert answer.builder.nodes["answer_review_answerability"].retry_policy is not None
+    assert answer.builder.nodes["answer_review"].retry_policy is not None
     assert answer.builder.nodes["answer_repair"].retry_policy is not None
 
     assert "retrieval_plan" in retrieval.builder.nodes
