@@ -6,12 +6,17 @@ from collections.abc import Callable
 from datetime import datetime, timezone
 import inspect
 import json
-from typing import Any
+from typing import Any, Optional
 
-from langchain_core.runnables import Runnable
+from langchain_core.runnables import Runnable, RunnableConfig
 from langgraph.config import get_config, get_stream_writer
 from langgraph.runtime import Runtime
 from langgraph.types import Command, Send
+
+try:
+    from langgraph._internal._runnable import RunnableCallable
+except Exception:  # pragma: no cover - fallback for unexpected packaging differences.
+    RunnableCallable = None
 
 try:  # LangGraph v1.1 task ids live in configurable runtime internals.
     from langgraph._internal._constants import CONFIG_KEY_TASK_ID
@@ -571,7 +576,9 @@ async def _trace_async(
         raise
 
 
-class _KbChatTracedRunnable(Runnable[Any, Any]):
+class _KbChatTracedRunnable(
+    RunnableCallable if RunnableCallable is not None else Runnable[Any, Any]
+):
     def __init__(
         self,
         *,
@@ -580,23 +587,44 @@ class _KbChatTracedRunnable(Runnable[Any, Any]):
         build_input_display_items: DisplayItemsBuilder | None,
         build_output_display_items: DisplayItemsBuilder | None,
     ) -> None:
-        self._node_name = node_name
+        def _invoke(
+            input: Any, config: Optional[RunnableConfig] = None, **kwargs: Any
+        ) -> Any:
+            return runnable.invoke(input, config=config, **kwargs)
+
+        async def _ainvoke(
+            input: Any,
+            config: Optional[RunnableConfig] = None,
+            runtime: Runtime[Any] | None = None,
+            **kwargs: Any,
+        ) -> Any:
+            del runtime
+            return await _trace_async(
+                node_name=node_name,
+                state=input,
+                executor=lambda: runnable.ainvoke(input, config=config, **kwargs),
+                build_input_display_items=build_input_display_items,
+                build_output_display_items=build_output_display_items,
+            )
+
+        if RunnableCallable is None:  # pragma: no cover - defensive compatibility
+            self._invoke = _invoke
+            self._ainvoke = _ainvoke
+        else:
+            super().__init__(_invoke, _ainvoke, name=node_name)
+
+        self.builder = getattr(runnable, "builder", None)
         self._runnable = runnable
+        self._node_name = node_name
         self._build_input_display_items = build_input_display_items
         self._build_output_display_items = build_output_display_items
-        self.builder = getattr(runnable, "builder", None)
 
-    def invoke(self, input: Any, config: Any = None, **kwargs: Any) -> Any:
-        return self._runnable.invoke(input, config=config, **kwargs)
+    if RunnableCallable is None:  # pragma: no cover - defensive compatibility
+        def invoke(self, input: Any, config: Any = None, **kwargs: Any) -> Any:
+            return self._invoke(input, config=config, **kwargs)
 
-    async def ainvoke(self, input: Any, config: Any = None, **kwargs: Any) -> Any:
-        return await _trace_async(
-            node_name=self._node_name,
-            state=input,
-            executor=lambda: self._runnable.ainvoke(input, config=config, **kwargs),
-            build_input_display_items=self._build_input_display_items,
-            build_output_display_items=self._build_output_display_items,
-        )
+        async def ainvoke(self, input: Any, config: Any = None, **kwargs: Any) -> Any:
+            return await self._ainvoke(input, config=config, **kwargs)
 
 
 def wrap_kb_chat_node_with_io(

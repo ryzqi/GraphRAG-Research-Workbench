@@ -776,18 +776,155 @@ class KbChatService:
         return {"nodes": nodes, "edges": edges}
 
     @staticmethod
+    def _build_drawable_graph_from_compiled_xray(
+        graph: object, compiled_graph: dict[str, Any]
+    ) -> dict[str, Any]:
+        root_builder = getattr(graph, "_graph_builder", None)
+        root_metadata_by_node: dict[str, dict[str, Any]] = {}
+        if root_builder is not None:
+            for node_id, node_spec in getattr(root_builder, "nodes", {}).items():
+                if not isinstance(node_id, str) or node_id in {"__start__", "__end__"}:
+                    continue
+                metadata = getattr(node_spec, "metadata", None)
+                root_metadata_by_node[node_id] = (
+                    dict(metadata) if isinstance(metadata, dict) else {}
+                )
+
+        wrapper_node_ids = {
+            "preprocess_subgraph",
+            "retrieval_subgraph",
+            "answer_subgraph",
+        }
+        nodes_by_id: dict[str, dict[str, Any]] = {}
+        seen_edges: set[tuple[str, str, bool]] = set()
+        edges: list[dict[str, Any]] = []
+
+        def split_node_id(node_id: str) -> tuple[str | None, str]:
+            prefix, separator, suffix = node_id.partition(":")
+            if separator and prefix in wrapper_node_ids and suffix:
+                return prefix, suffix
+            return None, node_id
+
+        def append_node(node_id: str, metadata: dict[str, Any] | None) -> None:
+            if not node_id or node_id in {"__start__", "__end__"}:
+                return
+            normalized_metadata = dict(metadata) if isinstance(metadata, dict) else {}
+            existing = nodes_by_id.get(node_id)
+            if existing is None:
+                nodes_by_id[node_id] = {"id": node_id, "metadata": normalized_metadata}
+                return
+            existing_metadata = (
+                existing.get("metadata") if isinstance(existing.get("metadata"), dict) else {}
+            )
+            for key, value in normalized_metadata.items():
+                if key not in existing_metadata:
+                    existing_metadata[key] = value
+            existing["metadata"] = existing_metadata
+
+        def append_edge(source: str, target: str, *, conditional: bool) -> None:
+            if (
+                not source
+                or not target
+                or source in {"__start__", "__end__"}
+                or target in {"__start__", "__end__"}
+                or source == target
+                or source not in nodes_by_id
+                or target not in nodes_by_id
+            ):
+                return
+            identity = (source, target, conditional)
+            if identity in seen_edges:
+                return
+            seen_edges.add(identity)
+            edges.append(
+                {
+                    "source": source,
+                    "target": target,
+                    "conditional": conditional,
+                }
+            )
+
+        raw_nodes = compiled_graph.get("nodes") if isinstance(compiled_graph, dict) else None
+        if isinstance(raw_nodes, list):
+            for raw_node in raw_nodes:
+                if not isinstance(raw_node, dict):
+                    continue
+                raw_node_id = raw_node.get("id")
+                if not isinstance(raw_node_id, str):
+                    continue
+                _, node_id = split_node_id(raw_node_id)
+                metadata = (
+                    raw_node.get("metadata")
+                    if isinstance(raw_node.get("metadata"), dict)
+                    else None
+                )
+                append_node(node_id, metadata)
+
+        for node_id, metadata in root_metadata_by_node.items():
+            if node_id in wrapper_node_ids or node_id in nodes_by_id:
+                append_node(node_id, metadata)
+
+        raw_edges = compiled_graph.get("edges") if isinstance(compiled_graph, dict) else None
+        if isinstance(raw_edges, list):
+            for raw_edge in raw_edges:
+                if not isinstance(raw_edge, dict):
+                    continue
+                raw_source = raw_edge.get("source")
+                raw_target = raw_edge.get("target")
+                if not isinstance(raw_source, str) or not isinstance(raw_target, str):
+                    continue
+                if raw_source == "__start__" or raw_target == "__end__":
+                    continue
+                source_wrapper, source_node_id = split_node_id(raw_source)
+                target_wrapper, target_node_id = split_node_id(raw_target)
+                if source_wrapper and target_wrapper and source_wrapper == target_wrapper:
+                    source = source_node_id
+                    target = target_node_id
+                elif source_wrapper is None and target_wrapper is None:
+                    source = source_node_id
+                    target = target_node_id
+                else:
+                    source = source_wrapper or source_node_id
+                    target = target_wrapper or target_node_id
+                append_edge(
+                    source,
+                    target,
+                    conditional=bool(raw_edge.get("conditional", False)),
+                )
+
+        nodes = sorted(
+            nodes_by_id.values(),
+            key=lambda node: (
+                int(node.get("metadata", {}).get("order"))
+                if isinstance(node.get("metadata"), dict)
+                and isinstance(node["metadata"].get("order"), int)
+                else 10_000,
+                str(node.get("id") or ""),
+            ),
+        )
+        node_order_index = {
+            str(node.get("id")): index
+            for index, node in enumerate(nodes)
+            if isinstance(node.get("id"), str)
+        }
+        edges.sort(
+            key=lambda edge: (
+                node_order_index.get(edge["source"], 10_000),
+                node_order_index.get(edge["target"], 10_000),
+                edge["source"],
+                edge["target"],
+                edge["conditional"],
+            )
+        )
+        return {"nodes": nodes, "edges": edges}
+
+    @staticmethod
     def _build_schema_drawable_graph(graph: object) -> dict[str, Any]:
-        builder_graph: dict[str, Any] | None = None
-        compiled_graph: dict[str, Any] | None = None
-        builder_error: Exception | None = None
-
         try:
-            builder_graph = KbChatService._build_drawable_graph_from_builder(graph)
-        except Exception as exc:  # pragma: no cover - best effort fallback path
-            builder_error = exc
-
-        try:
-            compiled_graph = graph.compile().get_graph().to_json()
+            compiled_graph = graph.compile().get_graph(xray=True).to_json()
+            return KbChatService._build_drawable_graph_from_compiled_xray(
+                graph, compiled_graph
+            )
         except TypeError as exc:
             logger.warning(
                 "LangGraph drawable export failed; fallback to builder topology: %s", exc
@@ -797,25 +934,7 @@ class KbChatService:
                 "LangGraph drawable export errored; fallback to builder topology: %s", exc
             )
 
-        if builder_graph and compiled_graph:
-            builder_node_count = len(builder_graph.get("nodes", []))
-            compiled_node_count = len(compiled_graph.get("nodes", []))
-            if builder_node_count > compiled_node_count:
-                logger.warning(
-                    "LangGraph drawable export is truncated for KB Chat schema; using builder topology instead (builder=%s compiled=%s)",
-                    builder_node_count,
-                    compiled_node_count,
-                )
-                return builder_graph
-            return compiled_graph
-
-        if builder_graph is not None:
-            return builder_graph
-        if compiled_graph is not None:
-            return compiled_graph
-        if builder_error is not None:
-            raise builder_error
-        raise RuntimeError("Unable to build KB Chat drawable graph schema")
+        return KbChatService._build_drawable_graph_from_builder(graph)
 
     async def get_graph_schema(
         self,

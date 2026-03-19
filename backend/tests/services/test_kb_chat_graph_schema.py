@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from types import SimpleNamespace
 
 from app.agents.kb_chat_agentic_graph import KbChatAgenticGraph
@@ -55,6 +56,47 @@ def test_builder_fallback_collects_nested_and_conditional_edges() -> None:
     assert ("transform_query", "retrieval_subgraph", False) in edge_set
 
 
+def test_kb_chat_builder_topology_contract_remains_current() -> None:
+    graph = KbChatAgenticGraph(
+        chat_model=SimpleNamespace(),
+        tools=[SimpleNamespace(name="kb_retrieve")],
+        tool_meta_by_name={},
+    )
+
+    drawable = KbChatService._build_drawable_graph_from_builder(graph)
+    node_ids = {node["id"] for node in drawable["nodes"]}
+    edge_set = {
+        (edge["source"], edge["target"], edge["conditional"])
+        for edge in drawable["edges"]
+    }
+
+    assert {
+        "preprocess_subgraph",
+        "merge_context",
+        "query_plan",
+        "retrieval_subgraph",
+        "dispatch_subqueries",
+        "answer_subgraph",
+        "answer_commit",
+        "force_exit",
+    }.issubset(node_ids)
+    assert ("preprocess_subgraph", "retrieval_subgraph", True) in edge_set
+    assert ("retrieval_subgraph", "answer_subgraph", False) in edge_set
+    assert ("answer_subgraph", "transform_query", True) in edge_set
+
+
+def test_wrapped_kb_chat_graph_exposes_subgraphs_to_langgraph_xray() -> None:
+    graph = KbChatAgenticGraph(
+        chat_model=SimpleNamespace(),
+        tools=[SimpleNamespace(name="kb_retrieve")],
+        tool_meta_by_name={},
+    )
+
+    subgraph_names = {name for name, _ in graph.compile().get_subgraphs()}
+
+    assert {"preprocess_subgraph", "retrieval_subgraph", "answer_subgraph"} <= subgraph_names
+
+
 def test_compiled_kb_chat_graph_drawable_export_handles_conditional_subgraph_routes() -> None:
     graph = KbChatAgenticGraph(
         chat_model=SimpleNamespace(),
@@ -71,6 +113,21 @@ def test_compiled_kb_chat_graph_drawable_export_handles_conditional_subgraph_rou
     assert ("preprocess_subgraph", "force_exit", True) in edge_set
     assert ("answer_subgraph", "force_exit", True) in edge_set
     assert ("answer_subgraph", "transform_query", True) in edge_set
+
+
+def test_compiled_kb_chat_graph_xray_export_includes_nested_kb_nodes() -> None:
+    graph = KbChatAgenticGraph(
+        chat_model=SimpleNamespace(),
+        tools=[SimpleNamespace(name="kb_retrieve")],
+        tool_meta_by_name={},
+    )
+
+    drawable = graph.compile().get_graph(xray=True).to_json()
+    node_ids = {node["id"] for node in drawable["nodes"]}
+
+    assert "preprocess_subgraph:query_plan" in node_ids
+    assert "retrieval_subgraph:dispatch_subqueries" in node_ids
+    assert "answer_subgraph:answer_commit" in node_ids
 
 
 def test_drawable_graph_omits_pruned_gate_and_verification_nodes() -> None:
@@ -98,14 +155,17 @@ def test_drawable_graph_omits_pruned_gate_and_verification_nodes() -> None:
     }.isdisjoint(node_ids)
 
 
-def test_schema_drawable_export_falls_back_to_builder_when_compiled_graph_is_truncated() -> None:
+def test_schema_drawable_export_uses_xray_graph_without_truncation_warning(
+    caplog,
+) -> None:
     graph = KbChatAgenticGraph(
         chat_model=SimpleNamespace(),
         tools=[SimpleNamespace(name="kb_retrieve")],
         tool_meta_by_name={},
     )
 
-    drawable = KbChatService._build_schema_drawable_graph(graph)
+    with caplog.at_level(logging.WARNING):
+        drawable = KbChatService._build_schema_drawable_graph(graph)
     node_ids = {node["id"] for node in drawable["nodes"]}
 
     assert "query_plan" in node_ids
@@ -120,3 +180,7 @@ def test_schema_drawable_export_falls_back_to_builder_when_compiled_graph_is_tru
         "generate_variants_mod",
         "prepare_messages",
     }.isdisjoint(node_ids)
+    assert not any(
+        "LangGraph drawable export is truncated for KB Chat schema" in record.message
+        for record in caplog.records
+    )
