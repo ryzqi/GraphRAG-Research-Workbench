@@ -17,6 +17,7 @@ from app.agents.kb_chat_agentic.answer_subgraph import (
     _answer_review_factual,
     _answer_review_fuse,
 )
+from app.agents.kb_chat_agentic.schemas import AnswerReviewSubDecision
 from app.agents.kb_chat_agentic.reflection import (
     dispatch_subqueries,
     kb_retrieve_context,
@@ -61,6 +62,294 @@ def _settings(**overrides: object) -> SimpleNamespace:
     }
     defaults.update(overrides)
     return SimpleNamespace(**defaults)
+
+
+@pytest.mark.asyncio
+async def test_answer_review_citation_accepts_fullwidth_citation_markers() -> None:
+    result = await _answer_review_citation(
+        {
+            "draft_answer": "系统支持长期记忆与工作记忆【S1】。",
+            "final_context": "[S1] 系统支持长期记忆与工作记忆。",
+            "loop_counts": {
+                "total_rounds": 0,
+                "retrieval_retries": 0,
+                "generation_retries": 0,
+            },
+            "stage_summaries": {},
+        },
+        runtime=None,
+        settings=_settings(),
+    )
+
+    review = result["answer_review_runs"][0]
+    assert review["passed"] is True
+    assert review["reason"] == "passed"
+    assert review["citation_count"] == 1
+    assert review["valid_citation_count"] == 1
+    assert review["invalid_citations"] == []
+
+
+@pytest.mark.asyncio
+async def test_answer_review_citation_accepts_fullwidth_multi_label_blocks() -> None:
+    result = await _answer_review_citation(
+        {
+            "draft_answer": "系统同时支持短期记忆与长期记忆【S1、S2】。",
+            "final_context": (
+                "[S1] 系统支持短期记忆。\n"
+                "[S2] 系统支持长期记忆。"
+            ),
+            "loop_counts": {
+                "total_rounds": 0,
+                "retrieval_retries": 0,
+                "generation_retries": 0,
+            },
+            "stage_summaries": {},
+        },
+        runtime=None,
+        settings=_settings(),
+    )
+
+    review = result["answer_review_runs"][0]
+    assert review["passed"] is True
+    assert review["reason"] == "passed"
+    assert review["citation_count"] == 2
+    assert review["valid_citation_count"] == 2
+    assert review["invalid_citations"] == []
+
+
+@pytest.mark.asyncio
+async def test_answer_review_citation_flags_invalid_labels_in_mixed_marker_formats() -> None:
+    result = await _answer_review_citation(
+        {
+            "draft_answer": "系统支持长期记忆[S1]，并支持自动清理【S9】。",
+            "final_context": "[S1] 系统支持长期记忆。",
+            "loop_counts": {
+                "total_rounds": 0,
+                "retrieval_retries": 0,
+                "generation_retries": 0,
+            },
+            "stage_summaries": {},
+        },
+        runtime=None,
+        settings=_settings(),
+    )
+
+    review = result["answer_review_runs"][0]
+    assert review["passed"] is False
+    assert review["reason"] == "invalid_citations"
+    assert review["citation_count"] == 2
+    assert review["valid_citation_count"] == 1
+    assert review["invalid_citations"] == ["[S9]"]
+
+
+@pytest.mark.asyncio
+async def test_answer_review_citation_flags_uncovered_followup_sentence_without_local_citation() -> None:
+    result = await _answer_review_citation(
+        {
+            "draft_answer": "系统支持长期记忆[S1]。系统支持自动清理。",
+            "final_context": (
+                "[S1] 系统支持长期记忆。\n"
+                "[S2] 系统支持自动清理。"
+            ),
+            "loop_counts": {
+                "total_rounds": 0,
+                "retrieval_retries": 0,
+                "generation_retries": 0,
+            },
+            "stage_summaries": {},
+        },
+        runtime=None,
+        settings=_settings(),
+    )
+
+    review = result["answer_review_runs"][0]
+    assert review["passed"] is False
+    assert review["reason"] == "missing_citations"
+    assert review["missing_citations"] == ["系统支持自动清理。"]
+
+
+@pytest.mark.asyncio
+async def test_answer_review_citation_allows_explicit_no_info_followup_without_citation() -> None:
+    result = await _answer_review_citation(
+        {
+            "draft_answer": "接口默认超时时间为 30 秒[S1]。关于重试策略，参考内容中未提供相关信息。",
+            "final_context": "[S1] 接口默认超时时间为 30 秒。",
+            "loop_counts": {
+                "total_rounds": 0,
+                "retrieval_retries": 0,
+                "generation_retries": 0,
+            },
+            "stage_summaries": {},
+        },
+        runtime=None,
+        settings=_settings(),
+    )
+
+    review = result["answer_review_runs"][0]
+    assert review["passed"] is True
+    assert review["reason"] == "passed"
+    assert review["missing_citations"] == []
+
+
+@pytest.mark.asyncio
+async def test_answer_review_citation_flags_uncovered_bullet_item_without_local_citation() -> None:
+    result = await _answer_review_citation(
+        {
+            "draft_answer": "- 支持长期记忆[S1]\n- 支持自动清理",
+            "final_context": (
+                "[S1] 系统支持长期记忆。\n"
+                "[S2] 系统支持自动清理。"
+            ),
+            "loop_counts": {
+                "total_rounds": 0,
+                "retrieval_retries": 0,
+                "generation_retries": 0,
+            },
+            "stage_summaries": {},
+        },
+        runtime=None,
+        settings=_settings(),
+    )
+
+    review = result["answer_review_runs"][0]
+    assert review["passed"] is False
+    assert review["reason"] == "missing_citations"
+    assert review["missing_citations"] == ["支持自动清理"]
+
+
+@pytest.mark.asyncio
+async def test_answer_review_citation_allows_noncritical_uncovered_unit_when_llm_passes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def _fake_judge_structured(**_: object):
+        return (
+            AnswerReviewSubDecision(
+                passed=True,
+                reason="passed",
+                confidence=0.82,
+                missing_citations=[],
+                unsupported_claims=[],
+            ),
+            None,
+        )
+
+    monkeypatch.setattr(
+        "app.agents.kb_chat_agentic.answer_subgraph._judge_structured",
+        _fake_judge_structured,
+    )
+
+    result = await _answer_review_citation(
+        {
+            "user_input": "系统是否支持长期记忆？",
+            "draft_answer": "系统支持长期记忆[S1]。团队持续优化体验。",
+            "final_context": (
+                "[S1] 系统支持长期记忆。\n"
+                "[S2] 团队持续优化体验。"
+            ),
+            "loop_counts": {
+                "total_rounds": 0,
+                "retrieval_retries": 0,
+                "generation_retries": 0,
+            },
+            "stage_summaries": {},
+        },
+        runtime=SimpleNamespace(chat_model=SimpleNamespace()),
+        settings=_settings(),
+    )
+
+    review = result["answer_review_runs"][0]
+    assert review["passed"] is True
+    assert review["reason"] == "passed"
+    assert review["decision_source"] == "llm"
+    assert review["confidence"] == pytest.approx(0.82)
+    assert review["missing_citations"] == []
+
+
+@pytest.mark.asyncio
+async def test_answer_review_citation_keeps_missing_when_llm_marks_uncovered_unit_critical(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def _fake_judge_structured(**_: object):
+        return (
+            AnswerReviewSubDecision(
+                passed=False,
+                reason="missing_citations",
+                confidence=0.91,
+                missing_citations=["团队持续优化体验。"],
+                unsupported_claims=[],
+            ),
+            None,
+        )
+
+    monkeypatch.setattr(
+        "app.agents.kb_chat_agentic.answer_subgraph._judge_structured",
+        _fake_judge_structured,
+    )
+
+    result = await _answer_review_citation(
+        {
+            "user_input": "系统是否支持长期记忆？",
+            "draft_answer": "系统支持长期记忆[S1]。团队持续优化体验。",
+            "final_context": (
+                "[S1] 系统支持长期记忆。\n"
+                "[S2] 团队持续优化体验。"
+            ),
+            "loop_counts": {
+                "total_rounds": 0,
+                "retrieval_retries": 0,
+                "generation_retries": 0,
+            },
+            "stage_summaries": {},
+        },
+        runtime=SimpleNamespace(chat_model=SimpleNamespace()),
+        settings=_settings(),
+    )
+
+    review = result["answer_review_runs"][0]
+    assert review["passed"] is False
+    assert review["reason"] == "missing_citations"
+    assert review["decision_source"] == "llm"
+    assert review["confidence"] == pytest.approx(0.91)
+    assert review["missing_citations"] == ["团队持续优化体验。"]
+
+
+@pytest.mark.asyncio
+async def test_answer_review_citation_uses_fail_open_when_llm_decision_fallbacks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def _fake_judge_structured(**_: object):
+        return None, "invalid_schema"
+
+    monkeypatch.setattr(
+        "app.agents.kb_chat_agentic.answer_subgraph._judge_structured",
+        _fake_judge_structured,
+    )
+
+    result = await _answer_review_citation(
+        {
+            "user_input": "系统是否支持长期记忆？",
+            "draft_answer": "系统支持长期记忆[S1]。团队持续优化体验。",
+            "final_context": (
+                "[S1] 系统支持长期记忆。\n"
+                "[S2] 团队持续优化体验。"
+            ),
+            "loop_counts": {
+                "total_rounds": 0,
+                "retrieval_retries": 0,
+                "generation_retries": 0,
+            },
+            "stage_summaries": {},
+        },
+        runtime=SimpleNamespace(chat_model=SimpleNamespace()),
+        settings=_settings(kb_chat_grader_fail_policy="open"),
+    )
+
+    review = result["answer_review_runs"][0]
+    assert review["passed"] is True
+    assert review["reason"] == "passed"
+    assert review["decision_source"] == "fallback"
+    assert review["fallback_reason"] == "invalid_schema"
+    assert review["missing_citations"] == []
 
 
 def test_make_initial_state_omits_legacy_duplicate_context_fields() -> None:

@@ -88,6 +88,14 @@ STRUCTURED_PROMPT_FIELDS: dict[str, tuple[str, ...]] = {
         "missing_citations",
         "unsupported_claims",
     ),
+    "kb_chat/citation_review": (
+        "json",
+        "passed",
+        "reason",
+        "confidence",
+        "missing_citations",
+        "unsupported_claims",
+    ),
     "tools/report_generate": (
         "json",
         "report_md",

@@ -40,7 +40,11 @@ from app.agents.kb_chat_agentic_state import (
 )
 from app.core.settings import Settings
 from app.prompts import get_prompt_loader
-from app.services.evidence_guardrails import resolve_kb_refusal_answer
+from app.services.evidence_guardrails import (
+    extract_citation_label_occurrences,
+    review_citation_coverage,
+    resolve_kb_refusal_answer,
+)
 from app.services.streaming import extract_answer_text
 
 from .budget import now_iso
@@ -51,7 +55,6 @@ _REPAIRABLE_FAILURE_REASONS = {
     "citation_mismatch",
 }
 _EVIDENCE_LINE_RE = re.compile(r"^\[([^\[\]\n]{1,128})\]\s+", re.MULTILINE)
-_CITATION_RE = re.compile(r"\[([^\[\]\n]{1,128})\]")
 _REVIEW_CHECKS: tuple[Literal["citation", "factual", "answerability"], ...] = (
     "citation",
     "factual",
@@ -174,7 +177,7 @@ def _extract_evidence_labels(final_context: str) -> dict[str, str]:
 def _extract_citations(answer: str) -> list[str]:
     if not answer:
         return []
-    return [f"[{match.group(1).strip()}]" for match in _CITATION_RE.finditer(answer)]
+    return [f"[{label}]" for label in extract_citation_label_occurrences(answer)]
 
 
 def _partition_citations(
@@ -336,42 +339,96 @@ async def _answer_review_citation(
     runtime: Runtime[KbChatAnswerSubgraphContext],
     *,
     settings: Settings,
+    chat_model: BaseChatModel | None = None,
 ) -> dict[str, Any]:
-    _ = runtime, settings
+    _ = settings
     start = time.perf_counter()
     review_round = _current_review_round(state)
     draft = _as_str(state.get("draft_answer")).strip()
     final_context = _as_str(state.get("final_context")).strip()
+    question = _resolve_query_text(state)
     evidence_labels = _extract_evidence_labels(final_context)
     all_citations, valid_citations, invalid_citations = _partition_citations(
         draft, allowed_labels=evidence_labels
     )
+    coverage = review_citation_coverage(draft)
+    missing_citations = coverage.uncovered_units[:3]
+    fallback_reason: str | None = None
+    decision_source = "rule"
     if not draft:
         passed = False
         reason = "non_answer"
+        confidence = 0.9
     elif not evidence_labels:
         passed = False
         reason = "no_evidence"
+        confidence = 0.9
     elif not all_citations:
         passed = False
         reason = "missing_citations"
+        confidence = 0.9
     elif invalid_citations:
         passed = False
         reason = "invalid_citations"
+        confidence = 0.9
+    elif coverage.uncovered_units:
+        review_model = chat_model or getattr(runtime, "chat_model", None)
+        prompts = get_prompt_loader()
+        try:
+            system_prompt = prompts.render_with_few_shot("kb_chat/citation_review")
+        except KeyError:
+            system_prompt = (
+                "你是严格的知识库引用关键性审查器。"
+                "仅判断未附本地引用的回答片段是否属于影响主结论的关键断言。"
+                '仅输出 JSON：{"passed": true/false, "reason": "passed|missing_citations", "confidence": 0-1, "missing_citations": [], "unsupported_claims": []}。'
+            )
+        if review_model is None:
+            judge = None
+            fallback_reason = "missing_chat_model"
+        else:
+            judge, fallback_reason = await _judge_structured(
+                chat_model=review_model,
+                system=system_prompt,
+                user=(
+                    f"问题：{question}\n\n"
+                    f"参考内容：\n{final_context}\n\n"
+                    f"回答：\n{draft}\n\n"
+                    "未附本地引用的候选片段：\n"
+                    + "\n".join(f"- {item}" for item in coverage.uncovered_units[:6])
+                ),
+            )
+        if isinstance(judge, AnswerReviewSubDecision):
+            passed = bool(judge.passed)
+            reason = "passed" if passed else "missing_citations"
+            confidence = max(0.0, min(1.0, float(judge.confidence)))
+            decision_source = "llm"
+            missing_citations = [] if passed else (judge.missing_citations or missing_citations)
+        else:
+            passed = (
+                _as_str(getattr(settings, "kb_chat_grader_fail_policy", "closed")).strip().lower()
+                == "open"
+            )
+            reason = "passed" if passed else "missing_citations"
+            confidence = 0.0
+            decision_source = "fallback"
+            missing_citations = [] if passed else missing_citations
     else:
         passed = True
         reason = "passed"
+        confidence = 1.0
+        missing_citations = []
     result = {
         "review_round": review_round,
         "check": "citation",
         "passed": passed,
         "reason": reason,
-        "confidence": 1.0 if passed else 0.9,
-        "fallback_reason": None,
-        "decision_source": "rule",
+        "confidence": confidence,
+        "fallback_reason": fallback_reason,
+        "decision_source": decision_source,
         "citation_count": len(all_citations),
         "valid_citation_count": len(valid_citations),
         "invalid_citations": sorted(invalid_citations),
+        "missing_citations": missing_citations,
         "latency_ms": int((time.perf_counter() - start) * 1000),
     }
     _emit_review_event(
@@ -916,8 +973,14 @@ def build_answer_subgraph(
     )
     add_traced_node(
         "answer_review_citation",
-        lambda s, runtime: _answer_review_citation(s, runtime, settings=settings),
-        side_effect_type="deterministic_rule",
+        lambda s, runtime: _answer_review_citation(
+            s,
+            runtime,
+            settings=settings,
+            chat_model=chat_model,
+        ),
+        side_effect_type="llm",
+        retry_policy=generation_retry_policy,
     )
     add_traced_node(
         "answer_review_factual",
