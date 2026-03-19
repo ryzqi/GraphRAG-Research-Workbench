@@ -138,6 +138,26 @@ class NormalizeMeta(TypedDict, total=False):
     constraint_preserved: bool
 
 
+class QueryPlanFallbackPolicy(TypedDict, total=False):
+    allow_broaden: bool
+    allow_hyde: bool
+    allow_retry_rewrite: bool
+
+
+class QueryPlanResult(TypedDict, total=False):
+    strategy: Literal["direct", "paraphrase", "decomposition"]
+    reasoning: str
+    fallback_policy: QueryPlanFallbackPolicy
+
+
+class QueryPlanDiagnostics(TypedDict, total=False):
+    candidate_count: int
+    selected_count: int
+    fallback_reason: str
+    latency_ms: int
+    rejection_counts: dict[str, int]
+
+
 class MessagePlanCandidate(TypedDict, total=False):
     index: int
     kind: str
@@ -249,12 +269,8 @@ class KbChatInternalState(KbChatInternalStateBase, total=False):
       resolved_query/reference_resolution_meta
     - AmbiguityCheck: reads resolved_query/normalized_query -> writes reflection/action (clarify)
     - QueryNormalize: reads resolved_query -> writes normalized_query
-    - ComplexityRouter: reads normalized_query -> writes query_strategy/confidence/signals
-    - Decomposition: reads normalized_query -> writes sub_queries
-    - MultiQuery: reads normalized_query -> writes multi_queries
-    - HyDE: reads normalized_query -> writes hyde_docs
-    - QueryBundle: reads query family -> writes
-      message_plan/query_bundle/prepare_diagnostics/query_items
+    - QueryPlan: reads normalized_query -> writes
+      query_plan_result/query_plan_diagnostics/query_items
     - RetrievalLayer: reads query family -> writes final_context/metrics
     - ReflectionLayer: reads final_context -> writes reflection (+ optional rewritten query)
     - AnswerSubgraph: reads final_context -> writes draft_answer/final_answer/review
@@ -270,19 +286,12 @@ class KbChatInternalState(KbChatInternalStateBase, total=False):
     coref_meta: CorefMeta
     normalized_query: str
     normalized_meta: NormalizeMeta
-    entity_expand_meta: dict[str, Any]
-    query_strategy: Literal["direct", "decomposition", "multi_query"]
+    query_strategy: Literal["direct", "paraphrase", "decomposition", "multi_query"]
     complexity_level: ComplexityLevel
     query_strategy_confidence: float
     query_strategy_signals: list[str]
-    decomposition_plan: dict[str, Any]
-
-    sub_queries: list[str]
-    multi_queries: list[str]
-    hyde_docs: list[str]
-    message_plan: MessagePlan
-    query_bundle: QueryBundle
-    prepare_diagnostics: PrepareDiagnostics
+    query_plan_result: QueryPlanResult
+    query_plan_diagnostics: QueryPlanDiagnostics
     retrieval_plan: RetrievalPlan
     retrieval_budget: dict[str, Any]
     retrieval_diagnostics: dict[str, float]
@@ -373,6 +382,18 @@ class PrepareMessagesInput(TypedDict, total=False):
     stage_summaries: dict[str, Any]
 
 
+class QueryPlanInput(TypedDict, total=False):
+    user_input: str
+    rewrite_input_query: str
+    resolved_query: str
+    coref_query: str
+    normalized_query: str
+    normalized_meta: NormalizeMeta
+    reflection: ReflectionResult
+    runtime_config: dict[str, Any]
+    stage_summaries: dict[str, Any]
+
+
 class DecompositionInput(TypedDict, total=False):
     messages: Annotated[list[AnyMessage], add_messages]
     user_input: str
@@ -413,7 +434,7 @@ class RetrievalBudgetPlanInput(TypedDict, total=False):
 
 
 class DispatchSubqueriesInput(TypedDict, total=False):
-    query_strategy: Literal["direct", "decomposition", "multi_query"]
+    query_strategy: Literal["direct", "paraphrase", "decomposition", "multi_query"]
     query_items: list[QueryItem]
     sub_queries: list[str]
     decomposition_plan: dict[str, Any]

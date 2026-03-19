@@ -162,37 +162,37 @@ def test_build_node_io_payload_preserves_display_contract_fields() -> None:
 
     payload = KbChatService._build_node_io_payload(
         run_id=run_id,
-        node_name="complexity_classify",
-        node_id="complexity_classify",
+        node_name="query_plan",
+        node_id="query_plan",
         phase="error",
         attempt=2,
         display_input_items=[
-            {"key": "user_input", "label": "用户问题", "value": "解释 CoT 和 ToT 的区别"}
+            {"key": "normalized_query", "label": "规范化问题", "value": "解释 CoT 和 ToT 的区别"}
         ],
         display_output_items=[
-            {"key": "decision", "label": "结论", "value": "复杂问题"},
-            {"key": "reason", "label": "原因", "value": "涉及方法比较与边界说明"},
-            {"key": "next_node_label", "label": "下一跳", "value": "问题分解"},
+            {"key": "query_items", "label": "检索查询项", "value": ["1. [main] 解释 CoT 和 ToT 的区别"]},
+            {"key": "reason", "label": "原因", "value": "保留主问题并生成完整检索项"},
+            {"key": "next_node_label", "label": "下一跳", "value": "子查询派发"},
             {"key": "error_summary", "label": "错误信息", "value": "节点执行失败"},
         ],
         error_summary="节点执行失败",
-        node_path=["preprocess_subgraph", "complexity_classify"],
+        node_path=["preprocess_subgraph", "query_plan"],
     )
 
     assert payload["display_input_items"] == [
-        {"key": "user_input", "label": "用户问题", "value": "解释 CoT 和 ToT 的区别"}
+        {"key": "normalized_query", "label": "规范化问题", "value": "解释 CoT 和 ToT 的区别"}
     ]
     assert payload["display_output_items"] == [
-        {"key": "decision", "label": "结论", "value": "复杂问题"},
-        {"key": "reason", "label": "原因", "value": "涉及方法比较与边界说明"},
-        {"key": "next_node_label", "label": "下一跳", "value": "问题分解"},
+        {"key": "query_items", "label": "检索查询项", "value": ["1. [main] 解释 CoT 和 ToT 的区别"]},
+        {"key": "reason", "label": "原因", "value": "保留主问题并生成完整检索项"},
+        {"key": "next_node_label", "label": "下一跳", "value": "子查询派发"},
         {"key": "error_summary", "label": "错误信息", "value": "节点执行失败"},
     ]
     assert payload["error_summary"] == "节点执行失败"
-    assert payload["node_path"] == ["preprocess_subgraph", "complexity_classify"]
+    assert payload["node_path"] == ["preprocess_subgraph", "query_plan"]
     assert payload["node"] == {
-        "id": "complexity_classify",
-        "name": "complexity_classify",
+        "id": "query_plan",
+        "name": "query_plan",
     }
 
 

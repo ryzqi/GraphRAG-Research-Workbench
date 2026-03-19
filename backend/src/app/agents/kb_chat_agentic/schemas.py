@@ -236,3 +236,49 @@ class RetrievalPlanDecision(BaseModel):
     global_candidates_limit: int = Field(..., ge=1, le=300)
     rerank_input_limit: int = Field(..., ge=1, le=300)
     reasoning: str = Field(default="", max_length=240)
+
+
+QueryPlanStrategy = Literal["direct", "paraphrase", "decomposition"]
+QueryPlanItemKind = Literal["main", "paraphrase", "subquery", "hyde", "retry"]
+QueryPlanItemSource = Literal["canonical", "planner_llm", "lexicon", "fallback"]
+QueryPlanRetrievalMode = Literal["hybrid", "dense_only"]
+
+
+class QueryPlanFallbackPolicy(BaseModel):
+    """Structured fallback permissions for query planning."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    allow_broaden: bool = False
+    allow_hyde: bool = False
+    allow_retry_rewrite: bool = False
+
+
+class QueryPlanItemDecision(BaseModel):
+    """One planner-produced retrieval-ready query candidate."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    kind: QueryPlanItemKind = "paraphrase"
+    query: str = Field(..., min_length=1, max_length=256)
+    strategy_source: QueryPlanItemSource = "planner_llm"
+    trigger_reason: str = Field(default="", max_length=120)
+    semantic_complete: bool = True
+    preserve_constraints: bool = True
+    retrieval_mode: QueryPlanRetrievalMode = "hybrid"
+    priority: int = Field(default=2, ge=1, le=8)
+    purpose: str = Field(default="", max_length=120)
+    coverage_tags: list[str] = Field(default_factory=list, max_length=6)
+
+
+class QueryPlanDecision(BaseModel):
+    """Structured output for planner-driven KB retrieval query preparation."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    strategy: QueryPlanStrategy = "direct"
+    reasoning: str = Field(default="", max_length=240)
+    items: list[QueryPlanItemDecision] = Field(default_factory=list, max_length=6)
+    fallback_policy: QueryPlanFallbackPolicy = Field(
+        default_factory=QueryPlanFallbackPolicy
+    )

@@ -75,8 +75,8 @@ describe('kbChatTraceNodes', () => {
         version: '1.1',
         hash: 'schema-hash',
         nodes: [
-          { id: 'complexity_classify', label: '复杂度分类', phase: 'route', order: 5 },
-          { id: 'hyde', label: 'HyDE 生成', phase: 'enhance', order: 10 },
+          { id: 'query_plan', label: '查询规划', phase: 'preprocess', order: 5 },
+          { id: 'dispatch_subqueries', label: '子查询派发', phase: 'retrieve', order: 9 },
         ],
         edges: [],
       },
@@ -90,22 +90,22 @@ describe('kbChatTraceNodes', () => {
         attempt: 1,
         message: null,
         progress: { completed: 2, total: 10, percent: 20 },
-        active_path: ['complexity_classify', 'hyde', 'model'],
+        active_path: ['query_plan', 'dispatch_subqueries', 'model'],
         ts: '2026-01-01T00:00:03.000Z',
       },
       traceExecutions: [
         {
           execution_id: 'task-2',
-          node_name: 'hyde',
-          node_label: 'HyDE 生成',
+          node_name: 'dispatch_subqueries',
+          node_label: '子查询派发',
           status: 'started',
           started_at: '2026-01-01T00:00:01.000Z',
           updated_at: '2026-01-01T00:00:01.000Z',
         },
         {
           execution_id: 'task-1',
-          node_name: 'complexity_classify',
-          node_label: '复杂度分类',
+          node_name: 'query_plan',
+          node_label: '查询规划',
           status: 'started',
           started_at: '2026-01-01T00:00:05.000Z',
           updated_at: '2026-01-01T00:00:06.000Z',
@@ -124,8 +124,8 @@ describe('kbChatTraceNodes', () => {
         hash: 'schema-hash',
         nodes: [
           { id: 'merge_context', label: '上下文合并', phase: 'preprocess', order: 1 },
-          { id: 'complexity_classify', label: '复杂度分类', phase: 'route', order: 5 },
-          { id: 'retrieve_subquery', label: '子查询检索', phase: 'retrieve', order: 16 },
+          { id: 'query_plan', label: '查询规划', phase: 'preprocess', order: 5 },
+          { id: 'retrieve_subquery', label: '子查询检索', phase: 'retrieve', order: 10 },
         ],
         edges: [],
       },
@@ -139,7 +139,7 @@ describe('kbChatTraceNodes', () => {
         attempt: 1,
         message: null,
         progress: { completed: 2, total: 10, percent: 20 },
-        active_path: ['merge_context', 'complexity_classify', 'retrieve_subquery'],
+        active_path: ['merge_context', 'query_plan', 'retrieve_subquery'],
         ts: '2026-01-01T00:00:03.000Z',
       },
       traceExecutions: [
@@ -153,8 +153,8 @@ describe('kbChatTraceNodes', () => {
         },
         {
           execution_id: 'task-route',
-          node_name: 'complexity_classify',
-          node_label: '复杂度分类',
+          node_name: 'query_plan',
+          node_label: '查询规划',
           status: 'completed',
           started_at: '2026-01-01T00:00:01.000Z',
           updated_at: '2026-01-01T00:00:02.000Z',
@@ -172,11 +172,7 @@ describe('kbChatTraceNodes', () => {
 
     expect(stages.find((stage) => stage.id === 'stage_1_preprocess')).toMatchObject({
       status: 'completed',
-      executionCount: 1,
-    });
-    expect(stages.find((stage) => stage.id === 'stage_2_route')).toMatchObject({
-      status: 'completed',
-      executionCount: 1,
+      executionCount: 2,
     });
     expect(stages.find((stage) => stage.id === 'stage_4_retrieve')).toMatchObject({
       status: 'running',
@@ -297,7 +293,7 @@ describe('kbChatTraceNodes', () => {
       nodes: [
         { id: 'merge_context', label: '上下文合并', phase: 'preprocess', order: 1 },
         { id: 'query_normalize', label: '问题规范', phase: 'preprocess', order: 4 },
-        { id: 'complexity_classify', label: '复杂度分类', phase: 'route', order: 5 },
+        { id: 'query_plan', label: '查询规划', phase: 'preprocess', order: 5 },
       ],
       edges: [],
     } as const;

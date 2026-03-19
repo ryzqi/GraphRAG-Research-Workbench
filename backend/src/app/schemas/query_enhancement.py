@@ -13,6 +13,8 @@ from typing import Literal, TypedDict
 QuerySourceKind = Literal[
     # Main question after preprocessing.
     "main",
+    # Planner-approved paraphrase.
+    "paraphrase",
     # Decomposition sub-question.
     "subquery",
     # Multi-query variant.
@@ -51,6 +53,11 @@ class QueryItem(QueryRef, total=False):
     priority: int
     coverage_tags: list[str]
     purpose: str
+    strategy_source: Literal["canonical", "planner_llm", "lexicon", "fallback"]
+    trigger_reason: str
+    semantic_complete: bool
+    preserve_constraints: bool
+    retrieval_mode: Literal["hybrid", "dense_only"]
     quality_score: float
     use_dense: bool
     use_bm25: bool

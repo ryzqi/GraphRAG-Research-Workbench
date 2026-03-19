@@ -23,3 +23,18 @@ def test_build_event_base_payload_promotes_langgraph_task_id_to_execution_id(
         "task_id": "task-123",
         "execution_id": "task-123",
     }
+
+
+def test_query_plan_metadata_replaces_retired_preprocess_enhancement_nodes() -> None:
+    metadata = kb_chat_trace_nodes.KB_CHAT_NODE_METADATA
+
+    assert metadata["query_plan"]["label"] == "查询规划"
+    assert {
+        "complexity_classify",
+        "generate_variants_mod",
+        "decomposition",
+        "generate_variants",
+        "entity_expand",
+        "hyde",
+        "prepare_messages",
+    }.isdisjoint(metadata)

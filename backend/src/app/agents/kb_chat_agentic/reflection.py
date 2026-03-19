@@ -21,11 +21,9 @@ from langgraph.types import Command, Send
 
 from app.core.settings import Settings, get_settings
 from app.prompts import get_prompt_loader
+from app.services.kb_query_planner_service import KbQueryPlannerService
 from app.services.streaming import extract_answer_text
-from app.services.query_rewrite_service import (
-    HYDE_REGENERATE_ON_RETRY,
-    QueryRewriteService,
-)
+from app.services.query_rewrite_service import QueryRewriteService
 from app.agents.kb_chat_agentic_state import (
     AnswerRoutingDecisionInput,
     DispatchSubqueriesInput,
@@ -43,11 +41,7 @@ from .dispatch_fuse import (
     sort_by_priority_then_index,
 )
 from .json_safety import ensure_json_safe
-from .preprocess import (
-    build_prepared_query_bundle,
-    resolve_prepare_budget,
-    score_query_item_quality,
-)
+from .preprocess import score_query_item_quality
 from .runtime_config import (
     normalize_alias_max,
     parallel_retrieval_include_main,
@@ -222,6 +216,7 @@ def _build_subquery_dispatch_plan(
 
     allowed_kinds_by_strategy: dict[str, set[str]] = {
         "decomposition": {"subquery", "hyde", "main"},
+        "paraphrase": {"paraphrase", "hyde", "main"},
         "multi_query": {"variant", "hyde", "main"},
         "direct": {"main", "hyde"},
     }
@@ -952,44 +947,30 @@ async def transform_query_for_retry(
     except Exception:
         normalized_meta = {}
 
-    hyde_docs: list[str] = []
-    hyde_reason: str | None = None
-    hyde_should_regenerate = HYDE_REGENERATE_ON_RETRY
-    if hyde_should_regenerate:
-        try:
-            svc = QueryRewriteService(settings=settings)
-            hyde_result = await svc.hyde(new_query, enabled=True)
-            hyde_docs = [
-                value
-                for value in hyde_result.queries
-                if isinstance(value, str) and value.strip()
-            ]
-            hyde_reason = hyde_result.reason
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            hyde_docs = []
-            hyde_reason = "error"
-
-    bundle = build_prepared_query_bundle(
-        original_query=new_query,
+    planner = KbQueryPlannerService(settings=settings)
+    plan_result = await planner.plan(
         normalized_query=new_query,
-        strategy="direct",
-        sub_queries=[],
-        sub_query_specs=[],
-        multi_queries=[],
-        hyde_docs=hyde_docs,
         normalized_meta=normalized_meta if isinstance(normalized_meta, dict) else {},
-        budget=resolve_prepare_budget(
-            state=state,
-            runtime=runtime,
-            settings=settings,
-        ),
     )
-    query_items = bundle.get("query_items") if isinstance(bundle.get("query_items"), list) else []
-    message_plan = _as_dict(bundle.get("message_plan")) or {}
-    query_bundle = _as_dict(bundle.get("query_bundle")) or {}
-    prepare_diagnostics = _as_dict(bundle.get("prepare_diagnostics")) or {}
+    query_items = ensure_json_safe(
+        plan_result.items,
+        settings=settings,
+        label="transform_query.query_items",
+    )
+    query_plan_result = ensure_json_safe(
+        {
+            "strategy": plan_result.strategy,
+            "reasoning": plan_result.reasoning,
+            "fallback_policy": plan_result.fallback_policy,
+        },
+        settings=settings,
+        label="transform_query.query_plan_result",
+    )
+    query_plan_diagnostics = ensure_json_safe(
+        plan_result.diagnostics,
+        settings=settings,
+        label="transform_query.query_plan_diagnostics",
+    )
 
     return {
         "loop_counts": loop_counts,
@@ -998,20 +979,10 @@ async def transform_query_for_retry(
         "reference_resolution_meta": {},
         "normalized_meta": normalized_meta,
         "coref_query": new_query,
-        "sub_queries": [],
-        "multi_queries": [],
-        "hyde_docs": hyde_docs,
+        "query_strategy": plan_result.strategy,
         "query_items": query_items,
-        "message_plan": message_plan,
-        "query_bundle": query_bundle,
-        "prepare_diagnostics": prepare_diagnostics,
-        "decomposition_plan": {
-            "strategy": "direct",
-            "version": "kb_chat_decomposition_plan_v2",
-            "sub_query_specs": [],
-            "risk_flags": ["retry_rewrite"],
-            "reasoning": _as_str(reason) or "retry",
-        },
+        "query_plan_result": query_plan_result,
+        "query_plan_diagnostics": query_plan_diagnostics,
         **_merge_reflection(
             state,
             {
@@ -1027,11 +998,9 @@ async def transform_query_for_retry(
                 "rewritten": new_query != current,
                 "normalized_after_retry": True,
                 "normalization_source": str(normalized_meta.get("source") or ""),
-                "hyde_regenerated": bool(hyde_docs),
-                "hyde_docs_count": len(hyde_docs),
-                "hyde_reason": hyde_reason,
-                "query_bundle_items_count": len(query_items),
-                "prepare_fallback_reason": prepare_diagnostics.get("fallback_reason"),
+                "query_plan_strategy": plan_result.strategy,
+                "query_plan_items_count": len(query_items),
+                "query_plan_fallback_reason": query_plan_diagnostics.get("fallback_reason"),
                 "latency_ms": int((time.perf_counter() - start) * 1000),
                 "completed_at": now_iso(),
             },

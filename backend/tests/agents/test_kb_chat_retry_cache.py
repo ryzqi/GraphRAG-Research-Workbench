@@ -62,7 +62,8 @@ def test_retry_policies_are_attached_only_to_transient_failure_nodes() -> None:
         tool_meta_by_name={},
     )
 
-    assert preprocess.builder.nodes["complexity_classify"].retry_policy is not None
+    assert preprocess.builder.nodes["query_normalize"].retry_policy is not None
+    assert preprocess.builder.nodes["query_plan"].retry_policy is None
     assert retrieval.builder.nodes["retrieve_subquery"].retry_policy is not None
     assert retrieval.builder.nodes["retrieve"].retry_policy is not None
     assert graph._graph_builder.nodes["transform_query"].retry_policy is not None

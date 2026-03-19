@@ -2094,6 +2094,7 @@ class KbChatService:
             "resolve_reference": "指代消解",
             "ambiguity_check": "歧义检测",
             "query_normalize": "问题规范化",
+            "query_plan": "查询规划",
             "complexity_classify": "复杂度分类",
             "decomposition": "问题拆解",
             "generate_variants": "多路查询扩展",
@@ -2303,6 +2304,20 @@ class KbChatService:
             ):
                 if value is not None:
                     io_summary[key] = value
+
+        if node == "query_plan" and isinstance(node_summary, dict):
+            for key, value in (
+                ("query_count", node_summary.get("query_count")),
+                ("fallback_reason", node_summary.get("fallback_reason")),
+                ("rejection_counts", node_summary.get("rejection_counts")),
+            ):
+                if value is not None:
+                    io_summary[key] = value
+
+            query_items = update.get("query_items")
+            if isinstance(query_items, list):
+                io_summary["query_bundle_items_count"] = len(query_items)
+                io_summary["query_count"] = len(query_items)
 
         if node in {"resolve_reference", "query_normalize", "transform_query"}:
             query = (

@@ -25,6 +25,7 @@ from app.agents.kb_chat_memory import (
 )
 from app.core.settings import Settings
 from app.integrations.chat_model_factory import create_chat_model
+from app.services.kb_query_planner_service import KbQueryPlannerService
 from app.services.query_rewrite_service import (
     HYDE_NUM_HYPOTHESES,
     QueryRewriteService,
@@ -42,6 +43,7 @@ from app.agents.kb_chat_agentic_state import (
     MergeContextInput,
     NormalizeRewriteInput,
     PrepareMessagesInput,
+    QueryPlanInput,
     merge_routing_decision,
 )
 
@@ -457,6 +459,7 @@ def score_query_item_quality(
 
     base = {
         "main": 1.0,
+        "paraphrase": 0.88,
         "subquery": 0.92,
         "variant": 0.84,
         "hyde": 0.74,
@@ -478,6 +481,8 @@ def score_query_item_quality(
 
     if strategy == "decomposition" and kind == "subquery":
         base += 0.05
+    if strategy == "paraphrase" and kind == "paraphrase":
+        base += 0.04
     if strategy == "multi_query" and kind == "variant":
         base += 0.04
     if kind == "hyde":
@@ -2029,6 +2034,93 @@ async def hyde(state: HydeInput, settings: Settings) -> dict[str, Any]:
     return {"hyde_docs": hyde_docs, "stage_summaries": stage_summaries}
 
 
+async def query_plan(
+    state: QueryPlanInput,
+    runtime: Runtime[Any],
+    settings: Settings,
+) -> Command[str]:
+    """Plan retrieval-ready query items and route to retrieval."""
+
+    _ = runtime
+    start = time.perf_counter()
+    normalized = state.get("normalized_query")
+    if not isinstance(normalized, str) or not normalized.strip():
+        normalized = state.get("resolved_query")
+    if not isinstance(normalized, str) or not normalized.strip():
+        normalized = state.get("coref_query")
+    if not isinstance(normalized, str) or not normalized.strip():
+        normalized = _extract_user_input(state)
+    normalized = normalized.strip()
+
+    normalized_meta = _as_dict(state.get("normalized_meta")) or {}
+    planner = KbQueryPlannerService(settings=settings)
+    result = await planner.plan(
+        normalized_query=normalized,
+        normalized_meta=normalized_meta,
+    )
+    latency_ms = int((time.perf_counter() - start) * 1000)
+    query_plan_result = ensure_json_safe(
+        {
+            "strategy": result.strategy,
+            "reasoning": result.reasoning,
+            "fallback_policy": result.fallback_policy,
+        },
+        settings=settings,
+        label="query_plan_result",
+    )
+    query_plan_diagnostics = ensure_json_safe(
+        {
+            **result.diagnostics,
+            "timing": {"latency_ms": latency_ms},
+        },
+        settings=settings,
+        label="query_plan_diagnostics",
+    )
+    query_items = ensure_json_safe(result.items, settings=settings, label="query_items")
+    stage_summaries = _merge_stage_summary(
+        state,
+        "query_plan",
+        {
+            "strategy": result.strategy,
+            "query_count": len(result.items),
+            "rejection_counts": query_plan_diagnostics.get("rejection_counts") or {},
+            "fallback_reason": query_plan_diagnostics.get("fallback_reason") or "none",
+            "latency_ms": latency_ms,
+            "completed_at": now_iso(),
+        },
+        settings=settings,
+    )
+    update: dict[str, Any] = {
+        "query_strategy": result.strategy,
+        "query_plan_result": query_plan_result,
+        "query_plan_diagnostics": query_plan_diagnostics,
+        "query_items": query_items,
+        "stage_summaries": stage_summaries,
+    }
+    update = {
+        **update,
+        **merge_routing_decision(
+            state,
+            "preprocess",
+            {
+                "phase": "preprocess",
+                "next_node": "retrieval_subgraph",
+                "action": "none",
+                "reason": "query_planned",
+                "reason_code": "query_planned",
+                "decision_source": "query_plan",
+                "score": 1.0,
+                "completed_at": now_iso(),
+            },
+            updates=update,
+        ),
+    }
+    return Command(update=update, goto="dispatch_subqueries")
+
+
+# Legacy query-enhancement nodes below are retained only for compatibility
+# tests / rollback inspection. The live preprocess graph no longer registers
+# them after the `query_plan` cutover.
 async def prepare_messages(
     state: PrepareMessagesInput,
     runtime: Runtime[Any],

@@ -13,13 +13,11 @@ from app.agents.kb_chat_agentic.preprocess import (
     ambiguity_check,
     coref_rewrite,
     complexity_classify,
-    decomposition,
     entity_expand,
-    generate_variants,
-    hyde,
     merge_context,
     normalize_rewrite,
     prepare_messages,
+    query_plan,
 )
 from app.agents.kb_chat_trace_nodes import (
     extend_kb_chat_node_metadata,
@@ -31,6 +29,7 @@ from app.agents.kb_chat_agentic_state import (
     KbChatInternalState,
     PrepareMessagesInput,
     PreprocessRoutingInput,
+    QueryPlanInput,
     resolve_routing_decision,
 )
 from app.core.settings import Settings
@@ -177,6 +176,18 @@ async def _prepare_messages_terminal(
     return result if isinstance(result, dict) else {}
 
 
+async def _query_plan_terminal(
+    state: QueryPlanInput,
+    runtime: Runtime[KbChatGraphContext],
+    settings: Settings,
+) -> dict[str, Any]:
+    result = await query_plan(state, runtime=runtime, settings=settings)
+    if isinstance(result, Command):
+        updates = result.update if isinstance(result.update, dict) else {}
+        return updates
+    return result if isinstance(result, dict) else {}
+
+
 async def _entity_expand_terminal(
     state: dict[str, Any],
     runtime: Runtime[KbChatGraphContext],
@@ -266,44 +277,8 @@ def build_preprocess_subgraph(*, settings: Settings):
         retry_policy=llm_retry_policy,
     )
     add_traced_node(
-        "complexity_classify",
-        partial(_complexity_classify, settings=settings),
-        side_effect_type="llm",
-        retry_policy=llm_retry_policy,
-    )
-    add_traced_node(
-        "generate_variants_mod",
-        partial(generate_variants, settings=settings),
-        side_effect_type="llm",
-        retry_policy=llm_retry_policy,
-    )
-    add_traced_node(
-        "decomposition",
-        partial(decomposition, settings=settings),
-        side_effect_type="llm",
-        retry_policy=llm_retry_policy,
-    )
-    add_traced_node(
-        "generate_variants",
-        partial(generate_variants, settings=settings),
-        side_effect_type="llm",
-        retry_policy=llm_retry_policy,
-    )
-    add_traced_node(
-        "entity_expand",
-        partial(_entity_expand_terminal, settings=settings),
-        side_effect_type="llm",
-        retry_policy=llm_retry_policy,
-    )
-    add_traced_node(
-        "hyde",
-        partial(hyde, settings=settings),
-        side_effect_type="llm",
-        retry_policy=llm_retry_policy,
-    )
-    add_traced_node(
-        "prepare_messages",
-        partial(_prepare_messages_terminal, settings=settings),
+        "query_plan",
+        partial(_query_plan_terminal, settings=settings),
         side_effect_type="deterministic_rule",
     )
     add_traced_node("preprocess_exit", _preprocess_exit, side_effect_type="deterministic_rule")
@@ -326,37 +301,7 @@ def build_preprocess_subgraph(*, settings: Settings):
             "preprocess_exit": "preprocess_exit",
         },
     )
-    graph.add_edge("query_normalize", "complexity_classify")
-    graph.add_conditional_edges(
-        "complexity_classify",
-        lambda state: _route_after_complexity_classify(state, settings),
-        {
-            "prepare_messages": "prepare_messages",
-            "generate_variants_mod": "generate_variants_mod",
-            "decomposition": "decomposition",
-            "generate_variants": "generate_variants",
-            "entity_expand": "entity_expand",
-        },
-    )
-    graph.add_edge("generate_variants_mod", "prepare_messages")
-    graph.add_conditional_edges(
-        "decomposition",
-        lambda state: _route_after_decomposition(state, settings),
-        {
-            "generate_variants": "generate_variants",
-            "entity_expand": "entity_expand",
-        },
-    )
-    graph.add_edge("generate_variants", "entity_expand")
-    graph.add_conditional_edges(
-        "entity_expand",
-        lambda state: _route_to_hyde(state, settings),
-        {
-            "hyde": "hyde",
-            "prepare_messages": "prepare_messages",
-        },
-    )
-    graph.add_edge("hyde", "prepare_messages")
-    graph.add_edge("prepare_messages", "preprocess_exit")
+    graph.add_edge("query_normalize", "query_plan")
+    graph.add_edge("query_plan", "preprocess_exit")
     graph.add_edge("preprocess_exit", END)
     return graph.compile(name="kb_chat_preprocess_subgraph")

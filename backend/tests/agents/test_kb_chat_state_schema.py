@@ -40,7 +40,7 @@ from app.agents.kb_chat_agentic.preprocess import (
     coref_rewrite,
     merge_context,
     normalize_rewrite,
-    prepare_messages,
+    query_plan,
 )
 from app.agents.kb_chat_agentic_state import (
     build_graph_input_state,
@@ -376,6 +376,8 @@ def test_make_initial_state_omits_legacy_duplicate_context_fields() -> None:
     assert "final_context" not in state
     assert "compression_stats" not in state
     assert "answer_subgraph_state" not in state
+    assert "query_plan_result" not in state
+    assert "query_plan_diagnostics" not in state
     assert "doc_gate_round" not in state
     assert "doc_gate_runs" not in state
     assert "cove_state" not in state
@@ -414,6 +416,19 @@ def test_internal_state_schema_omits_removed_gate_and_confidence_fields() -> Non
     assert "confidence_level" not in hints
 
 
+def test_internal_state_schema_tracks_query_plan_and_omits_retired_query_enhancement_fields() -> None:
+    hints = get_type_hints(KbChatInternalState)
+
+    assert "query_plan_result" in hints
+    assert "query_plan_diagnostics" in hints
+    assert "multi_queries" not in hints
+    assert "decomposition_plan" not in hints
+    assert "entity_expand_meta" not in hints
+    assert "message_plan" not in hints
+    assert "query_bundle" not in hints
+    assert "prepare_diagnostics" not in hints
+
+
 def _state_annotation_name(fn: object) -> str:
     annotation = get_type_hints(fn).get("state")
     return getattr(annotation, "__name__", str(annotation))
@@ -426,7 +441,7 @@ def test_kb_chat_nodes_use_narrow_read_side_state_schema_annotations() -> None:
         ambiguity_check: "AmbiguityCheckInput",
         normalize_rewrite: "NormalizeRewriteInput",
         complexity_classify: "ComplexityClassifyInput",
-        prepare_messages: "PrepareMessagesInput",
+        query_plan: "QueryPlanInput",
         _retrieval_budget_plan: "RetrievalBudgetPlanInput",
         dispatch_subqueries: "DispatchSubqueriesInput",
         retrieve_subquery_context: "RetrieveSubqueryContextInput",
@@ -486,8 +501,18 @@ def test_preprocess_subgraph_prunes_route_shell_nodes_from_builder() -> None:
     assert removed_nodes.isdisjoint(branch_ids)
     assert "resolve_reference" in node_ids
     assert "query_normalize" in node_ids
+    assert "query_plan" in node_ids
     assert "coref_rewrite" not in node_ids
     assert "normalize_rewrite" not in node_ids
+    assert {
+        "complexity_classify",
+        "generate_variants_mod",
+        "decomposition",
+        "generate_variants",
+        "entity_expand",
+        "hyde",
+        "prepare_messages",
+    }.isdisjoint(node_ids)
 
 
 def test_retrieval_subgraph_uses_new_planning_node_id() -> None:
@@ -518,9 +543,17 @@ def test_trace_metadata_prunes_preprocess_shell_nodes() -> None:
     assert removed_nodes.isdisjoint(KB_CHAT_NODE_METADATA)
     assert "resolve_reference" in KB_CHAT_NODE_METADATA
     assert "query_normalize" in KB_CHAT_NODE_METADATA
+    assert "query_plan" in KB_CHAT_NODE_METADATA
     assert "retrieval_plan" in KB_CHAT_NODE_METADATA
     assert "coref_rewrite" not in KB_CHAT_NODE_METADATA
     assert "normalize_rewrite" not in KB_CHAT_NODE_METADATA
+    assert "prepare_messages" not in KB_CHAT_NODE_METADATA
+    assert "complexity_classify" not in KB_CHAT_NODE_METADATA
+    assert "generate_variants_mod" not in KB_CHAT_NODE_METADATA
+    assert "decomposition" not in KB_CHAT_NODE_METADATA
+    assert "generate_variants" not in KB_CHAT_NODE_METADATA
+    assert "entity_expand" not in KB_CHAT_NODE_METADATA
+    assert "hyde" not in KB_CHAT_NODE_METADATA
     assert "evidence_gate_subgraph" not in KB_CHAT_NODE_METADATA
     assert "doc_gate_sufficiency" not in KB_CHAT_NODE_METADATA
     assert "doc_gate_route" not in KB_CHAT_NODE_METADATA

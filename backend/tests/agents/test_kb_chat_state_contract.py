@@ -185,13 +185,7 @@ TRACE_INPUT_KEYS_BY_NODE = {
     "resolve_reference": ["user_input"],
     "ambiguity_check": ["resolved_query"],
     "query_normalize": ["resolved_query"],
-    "complexity_classify": ["user_input"],
-    "generate_variants_mod": ["normalized_query"],
-    "decomposition": ["normalized_query"],
-    "generate_variants": ["normalized_query"],
-    "entity_expand": ["normalized_query"],
-    "hyde": ["normalized_query"],
-    "prepare_messages": ["normalized_query", "sub_queries", "multi_queries"],
+    "query_plan": ["normalized_query"],
     "preprocess_exit": ["normalized_query"],
     "retrieval_subgraph": ["query_items"],
     "retrieval_plan": ["normalized_query", "query_items"],
@@ -219,19 +213,13 @@ TRACE_OUTPUT_KEYS_BY_NODE = {
     "resolve_reference": ["resolved_query"],
     "ambiguity_check": ["decision", "reason", "clarification_prompt"],
     "query_normalize": ["normalized_query"],
-    "complexity_classify": ["decision", "reason", "next_node_label"],
-    "generate_variants_mod": ["multi_queries"],
-    "decomposition": ["sub_queries"],
-    "generate_variants": ["multi_queries"],
-    "entity_expand": ["multi_queries"],
-    "hyde": ["hyde_docs"],
-    "prepare_messages": ["query_items"],
+    "query_plan": ["query_items"],
     "preprocess_exit": ["decision", "reason", "next_node_label", "final_answer"],
     "retrieval_subgraph": ["decision", "reason", "next_node_label"],
     "retrieval_plan": ["planned_query_count", "planned_per_query_top_k"],
     "dispatch_subqueries": ["dispatch_targets"],
     "retrieve_subquery": ["retrieved_evidence"],
-    "merge_subquery_context": ["retrieved_evidence"],
+    "merge_subquery_context": ["merged_evidence"],
     "retrieve": ["retrieved_evidence"],
     "context_compress": ["compressed_evidence"],
     "transform_query": ["normalized_query"],
@@ -244,7 +232,7 @@ TRACE_OUTPUT_KEYS_BY_NODE = {
     "answer_review_fuse": ["decision", "reason", "next_node_label"],
     "answer_repair": ["repaired_answer"],
     "answer_commit": ["final_answer"],
-    "force_exit": ["final_answer", "reason", "next_node_label"],
+    "force_exit": [],
 }
 
 
@@ -254,12 +242,32 @@ def _trace_base_snapshot() -> dict[str, Any]:
         "normalized_query": "解释 CoT 和 ToT 的区别",
         "resolved_query": "解释 CoT 和 ToT 的区别",
         "query_items": [
-            {"kind": "main", "query": "CoT 与 ToT 区别"},
-            {"kind": "comparison", "query": "Tree of Thoughts 与 Chain of Thought"},
+            {
+                "kind": "main",
+                "query": "CoT 与 ToT 区别",
+                "strategy_source": "canonical",
+                "trigger_reason": "always_keep_main",
+            },
+            {
+                "kind": "paraphrase",
+                "query": "Tree of Thoughts 与 Chain of Thought 的区别",
+                "strategy_source": "planner_llm",
+                "trigger_reason": "comparison_paraphrase",
+            },
         ],
-        "sub_queries": ["CoT 是什么", "ToT 是什么"],
-        "multi_queries": ["CoT 与 ToT 区别", "Tree of Thoughts explanation"],
-        "hyde_docs": ["HyDE 全文一", "HyDE 全文二"],
+        "query_plan_result": {
+            "strategy": "decomposition",
+            "reasoning": "涉及方法比较与边界说明",
+            "fallback_policy": {
+                "allow_broaden": True,
+                "allow_hyde": True,
+                "allow_retry_rewrite": True,
+            },
+        },
+        "query_plan_diagnostics": {
+            "selected_count": 2,
+            "rejection_counts": {"fragment_rejected": 1},
+        },
         "draft_answer": "这是草稿答案全文。",
         "final_answer": "这是最终答案全文。",
         "best_answer": "这是候选答案全文。",
@@ -340,10 +348,10 @@ def _trace_base_snapshot() -> dict[str, Any]:
         },
         "clarification_payload": {"question": "你更关注原理还是应用场景？"},
         "stage_summaries": {
-            "complexity_classify": {
+            "query_plan": {
                 "strategy": "decomposition",
                 "reasoning": "涉及方法比较与边界说明",
-                "goto": "decomposition",
+                "selected_count": 2,
             },
             "retrieval_plan": {"query_count": 2, "per_query_top_k": 6},
             "answer_review_dispatch": {
@@ -358,7 +366,7 @@ def _trace_snapshot_for_node(node_name: str) -> dict[str, Any]:
     snapshot = _trace_base_snapshot()
     trace_goto = {
         "preprocess_subgraph": "retrieval_subgraph",
-        "complexity_classify": "decomposition",
+        "query_plan": "preprocess_exit",
         "preprocess_exit": "force_exit",
         "retrieval_subgraph": "answer_subgraph",
         "answer_subgraph": "END",
@@ -390,12 +398,22 @@ def _trace_snapshot_for_node(node_name: str) -> dict[str, Any]:
         snapshot["stage_summaries"]["query_normalize"] = {"rewritten": True}
     if node_name == "resolve_reference":
         snapshot["resolved_query"] = "北京市 2025 年社保缴费基数"
+    if node_name == "merge_context":
+        snapshot["context_frame"]["summary_text"] = "对话聚焦 CoT 与 ToT 的推理路径差异"
+        snapshot["merged_context"] = (
+            "对话摘要：\n对话聚焦 CoT 与 ToT 的推理路径差异\n\n"
+            "用户问题：解释 CoT 和 ToT 的区别"
+        )
     if node_name == "preprocess_exit":
         snapshot["routing_decisions"]["preprocess"] = {
             "next_node": "force_exit",
             "reason": "已能直接回答",
         }
         snapshot["final_answer"] = "请先确认你想比较原理还是落地场景。"
+    if node_name == "transform_query":
+        snapshot["normalized_query"] = "CoT ToT 区别 线性推理 树状搜索"
+        snapshot["resolved_query"] = "解释 CoT 和 ToT 的区别"
+        snapshot["stage_summaries"]["transform_query"] = {"rewritten": True}
     if node_name == "force_exit":
         snapshot["final_answer"] = "根据现有资料，先给出可确认结论。"
     if node_name == "answer_repair":
@@ -435,18 +453,77 @@ def test_trace_display_output_contract_matches_spec(
     assert [item["key"] for item in items] == expected_keys
 
 
-def test_complexity_classify_output_is_curated_and_businessized() -> None:
+def test_query_plan_output_is_query_focused_and_metadata_aware() -> None:
     items = _build_node_output_display_items(
-        node_name="complexity_classify",
-        output_snapshot=_trace_snapshot_for_node("complexity_classify"),
+        node_name="query_plan",
+        output_snapshot=_trace_snapshot_for_node("query_plan"),
     )
 
-    by_key = {item["key"]: item["value"] for item in items}
-    assert by_key == {
-        "decision": "复杂问题",
-        "reason": "涉及方法比较与边界说明",
-        "next_node_label": "问题分解",
+    assert items == [
+        {
+            "key": "query_items",
+            "label": "检索查询项",
+            "value": [
+                "1. [main] CoT 与 ToT 区别",
+                "2. [paraphrase] Tree of Thoughts 与 Chain of Thought 的区别",
+            ],
+        }
+    ]
+
+
+def test_merge_context_omits_output_when_only_repeating_user_input_and_recent_turns() -> None:
+    snapshot = {
+        "user_input": "什么是 CoT",
+        "merged_context": "最近对话：\n助手: CoT 是逐步推理。\n\n用户问题：什么是 CoT",
+        "context_frame": {
+            "recent_turns": [{"role": "assistant", "text": "CoT 是逐步推理。"}],
+            "summary_text": "",
+            "memory_snippet": "",
+        },
     }
+
+    items = _build_node_output_display_items(
+        node_name="merge_context",
+        output_snapshot=snapshot,
+    )
+
+    assert items == []
+
+
+def test_merge_subquery_context_uses_merged_evidence_label() -> None:
+    items = _build_node_output_display_items(
+        node_name="merge_subquery_context",
+        output_snapshot=_trace_snapshot_for_node("merge_subquery_context"),
+    )
+
+    assert items == [
+        {
+            "key": "merged_evidence",
+            "label": "合并后证据",
+            "value": TRACE_EVIDENCE_LINES,
+        }
+    ]
+
+
+def test_transform_query_omits_output_when_retry_rewrite_is_unchanged() -> None:
+    snapshot = _trace_base_snapshot()
+    snapshot["stage_summaries"]["transform_query"] = {"rewritten": False}
+
+    items = _build_node_output_display_items(
+        node_name="transform_query",
+        output_snapshot=snapshot,
+    )
+
+    assert items == []
+
+
+def test_force_exit_removes_output_items_from_display_contract() -> None:
+    items = _build_node_output_display_items(
+        node_name="force_exit",
+        output_snapshot=_trace_snapshot_for_node("force_exit"),
+    )
+
+    assert items == []
 
 
 def test_retrieval_outputs_and_current_evidence_inputs_share_same_evidence_format() -> None:

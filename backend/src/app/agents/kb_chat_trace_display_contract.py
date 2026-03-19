@@ -17,7 +17,6 @@ _EVIDENCE_BLOCK_RE = re.compile(
 _NODE_SUMMARY_KEY_MAP: dict[str, str] = {
     "retrieve": "retrieval_layer",
     "draft_generate": "generator",
-    "generate_variants_mod": "generate_variants",
     "answer_commit": "answer_subgraph",
     "answer_review_citation": "answer_review",
     "answer_review_factual": "answer_review",
@@ -48,13 +47,7 @@ _BUSINESS_LABEL_FALLBACKS: dict[str, str] = {
     "resolve_reference": "指代消解",
     "ambiguity_check": "歧义判断",
     "query_normalize": "问题规范",
-    "complexity_classify": "复杂度分类",
-    "generate_variants_mod": "中等变体生成",
-    "decomposition": "问题分解",
-    "generate_variants": "多路扩展",
-    "entity_expand": "实体扩展",
-    "hyde": "HyDE扩展",
-    "prepare_messages": "查询整理",
+    "query_plan": "查询规划",
     "preprocess_exit": "预处理出口",
     "retrieval_subgraph": "检索子图",
     "retrieval_plan": "检索预算规划",
@@ -105,6 +98,7 @@ _DISPLAY_LABELS: dict[str, str] = {
     "planned_query_count": "计划查询数",
     "planned_per_query_top_k": "每路召回条数",
     "retrieved_evidence": "检索证据",
+    "merged_evidence": "合并后证据",
     "compressed_evidence": "压缩后证据",
     "hyde_docs": "HyDE 文档",
     "repaired_answer": "修复后答案",
@@ -118,13 +112,7 @@ _INPUT_CONTRACTS: dict[str, list[str]] = {
     "resolve_reference": ["user_input"],
     "ambiguity_check": ["resolved_query"],
     "query_normalize": ["resolved_query"],
-    "complexity_classify": ["user_input"],
-    "generate_variants_mod": ["normalized_query"],
-    "decomposition": ["normalized_query"],
-    "generate_variants": ["normalized_query"],
-    "entity_expand": ["normalized_query"],
-    "hyde": ["normalized_query"],
-    "prepare_messages": ["normalized_query", "sub_queries", "multi_queries"],
+    "query_plan": ["normalized_query"],
     "preprocess_exit": ["normalized_query"],
     "retrieval_subgraph": ["query_items"],
     "retrieval_plan": ["normalized_query", "query_items"],
@@ -152,19 +140,13 @@ _OUTPUT_CONTRACTS: dict[str, list[str]] = {
     "resolve_reference": ["resolved_query"],
     "ambiguity_check": ["decision", "reason", "clarification_prompt"],
     "query_normalize": ["normalized_query"],
-    "complexity_classify": ["decision", "reason", "next_node_label"],
-    "generate_variants_mod": ["multi_queries"],
-    "decomposition": ["sub_queries"],
-    "generate_variants": ["multi_queries"],
-    "entity_expand": ["multi_queries"],
-    "hyde": ["hyde_docs"],
-    "prepare_messages": ["query_items"],
+    "query_plan": ["query_items"],
     "preprocess_exit": ["decision", "reason", "next_node_label", "final_answer"],
     "retrieval_subgraph": ["decision", "reason", "next_node_label"],
     "retrieval_plan": ["planned_query_count", "planned_per_query_top_k"],
     "dispatch_subqueries": ["dispatch_targets"],
     "retrieve_subquery": ["retrieved_evidence"],
-    "merge_subquery_context": ["retrieved_evidence"],
+    "merge_subquery_context": ["merged_evidence"],
     "retrieve": ["retrieved_evidence"],
     "context_compress": ["compressed_evidence"],
     "transform_query": ["normalized_query"],
@@ -177,7 +159,7 @@ _OUTPUT_CONTRACTS: dict[str, list[str]] = {
     "answer_review_fuse": ["decision", "reason", "next_node_label"],
     "answer_repair": ["repaired_answer"],
     "answer_commit": ["final_answer"],
-    "force_exit": ["final_answer", "reason", "next_node_label"],
+    "force_exit": [],
 }
 
 
@@ -491,6 +473,7 @@ def _build_output_value_map(
             node_label_resolver=node_label_resolver,
         ),
         "retrieved_evidence": _format_evidence_for_node(node_name=node_name, snapshot=snapshot),
+        "merged_evidence": _format_evidence_from_snapshot(snapshot),
         "compressed_evidence": _format_compressed_evidence(snapshot),
         "review_checks": _format_review_checks(snapshot, node_label_resolver=node_label_resolver),
         "draft_answer": _pick_text(snapshot, "draft_answer"),
@@ -498,6 +481,8 @@ def _build_output_value_map(
         "final_answer": _pick_text(snapshot, "final_answer", "best_answer", "draft_answer"),
         "error_summary": _non_empty_text(error_summary),
     }
+    if node_name == "transform_query" and summary.get("rewritten") is False:
+        values["normalized_query"] = None
     if node_name == "answer_commit":
         values["final_answer"] = _pick_text(snapshot, "final_answer", "best_answer", "draft_answer")
     if node_name == "force_exit":
@@ -730,17 +715,15 @@ def _single_item_list(value: str | None) -> list[str] | None:
 
 
 def _resolve_merged_context_display(snapshot: Mapping[str, Any]) -> str | None:
-    direct = _pick_text(snapshot, "display_context", "merged_context")
+    direct = _pick_text(snapshot, "display_context")
     if direct:
         return direct
-    parts: list[str] = []
-    user_input = _pick_text(snapshot, "user_input")
-    if user_input:
-        parts.append(f"用户问题：{user_input}")
-    recent_turns = _pick_context_frame_turns(snapshot, "recent_turns") or []
-    parts.extend(recent_turns)
-    if parts:
-        return "\n".join(parts)
+    merged_context = _pick_text(snapshot, "merged_context")
+    if not merged_context:
+        return None
+    frame = _get_context_frame(snapshot) or {}
+    if _non_empty_text(frame.get("summary_text")) or _non_empty_text(frame.get("memory_snippet")):
+        return merged_context
     return None
 
 

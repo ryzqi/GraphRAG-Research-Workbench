@@ -15,6 +15,7 @@ _NON_ANSWER_STREAM_NODES = {
     "resolve_reference",
     "ambiguity_check",
     "query_normalize",
+    "query_plan",
     "decomposition",
     "generate_variants",
     "entity_expand",
