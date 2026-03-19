@@ -71,6 +71,7 @@ from app.services.evidence_guardrails import (
     normalize_citation_label,
     resolve_kb_refusal_answer,
 )
+from app.services.kb_evidence import stable_citation_sort_key
 from app.services.retrieval_service import RetrievalService
 from app.services.streaming import (
     StreamState,
@@ -125,6 +126,8 @@ _KB_CHAT_CHECKPOINT_RESET_FIELDS = (
     "subquery_runs",
     "subquery_task",
     "final_context",
+    "evidence_items",
+    "citation_catalog",
     "compression_stats",
     "draft_answer",
     "final_answer",
@@ -146,12 +149,10 @@ def _gray_release_log_dir() -> Path:
 @dataclass
 class _KbRetrievalBuffer:
     results: list
-    evidence_by_round: dict[int, list[dict[str, Any]]]
     meta: dict[str, Any]
 
     def release(self) -> None:
         self.results.clear()
-        self.evidence_by_round.clear()
         self.meta.clear()
 
 
@@ -183,7 +184,6 @@ class _KbChatExecution:
     history_usage: dict[str, Any]
     history_truncation: dict[str, Any]
     retrieval_results: list
-    evidence_draft_items_by_round: dict[int, list[dict[str, Any]]]
     retrieval_meta: dict[str, Any]
     retrieval_buffer: _KbRetrievalBuffer
     graph: object
@@ -561,9 +561,6 @@ class KbChatService:
         fallback_results = getattr(exec_ctx, "retrieval_results", None)
         if isinstance(fallback_results, list):
             fallback_results.clear()
-        fallback_evidence = getattr(exec_ctx, "evidence_draft_items_by_round", None)
-        if isinstance(fallback_evidence, dict):
-            fallback_evidence.clear()
         fallback_meta = getattr(exec_ctx, "retrieval_meta", None)
         if isinstance(fallback_meta, dict):
             fallback_meta.clear()
@@ -1478,7 +1475,6 @@ class KbChatService:
         # kb_retrieve：通过回调收集检索结果（用于 Evidence 落库/指标）
         retrieval_results: list = []
         seen_chunk_ids: set[uuid.UUID] = set()
-        evidence_draft_items_by_round: dict[int, list[dict[str, Any]]] = {}
         retrieval_meta: dict[str, Any] = {
             "usage": None,
             "truncation": None,
@@ -1487,7 +1483,6 @@ class KbChatService:
         }
         retrieval_buffer = _KbRetrievalBuffer(
             results=retrieval_results,
-            evidence_by_round=evidence_draft_items_by_round,
             meta=retrieval_meta,
         )
 
@@ -1514,23 +1509,6 @@ class KbChatService:
             if retrieval_round is None:
                 retrieval_round = 0
             retrieval_meta["retrieval_round"] = retrieval_round
-
-            items = meta.get("evidence_items")
-            if isinstance(items, list):
-                round_items: list[dict[str, Any]] = []
-                seen_evidence_chunk_ids: set[str] = set()
-                for it in items:
-                    if not isinstance(it, dict):
-                        continue
-                    cid = it.get("chunk_id")
-                    if (
-                        isinstance(cid, str)
-                        and cid
-                        and cid not in seen_evidence_chunk_ids
-                    ):
-                        round_items.append(it)
-                        seen_evidence_chunk_ids.add(cid)
-                evidence_draft_items_by_round[retrieval_round] = round_items
 
         kb_tool = build_kb_retrieve_tool(
             retrieval=self._retrieval,
@@ -1642,7 +1620,6 @@ class KbChatService:
             history_usage=history_usage,
             history_truncation=history_truncation,
             retrieval_results=retrieval_results,
-            evidence_draft_items_by_round=evidence_draft_items_by_round,
             retrieval_meta=retrieval_meta,
             retrieval_buffer=retrieval_buffer,
             graph=graph,
@@ -2854,16 +2831,6 @@ class KbChatService:
             return max(value, 0)
         return None
 
-    @staticmethod
-    def _citation_sort_key(citation_id: str) -> tuple[int, str]:
-        normalized = citation_id.strip().upper()
-        if normalized.startswith("S"):
-            suffix = normalized[1:]
-            if suffix.isdigit():
-                return int(suffix), normalized
-        return 10_000_000, normalized
-
-    @staticmethod
     def _normalize_optional_text(value: Any) -> str | None:
         if not isinstance(value, str):
             return None
@@ -2982,7 +2949,7 @@ class KbChatService:
 
         ordered_ids: list[str] = []
         seen: set[str] = set()
-        for citation_id in sorted(set(used), key=cls._citation_sort_key):
+        for citation_id in sorted(set(used), key=stable_citation_sort_key):
             if citation_id in seen:
                 continue
             if citation_id not in citation_catalog:
@@ -3005,45 +2972,6 @@ class KbChatService:
 
         return f"{text}\n\n" + "\n".join(lines)
 
-    @classmethod
-    def _resolve_preferred_evidence_round(
-        cls,
-        *,
-        best_answer_meta: dict[str, Any] | None,
-        loop_counts: dict[str, Any] | None,
-    ) -> int | None:
-        if isinstance(best_answer_meta, dict):
-            round_value = cls._safe_non_negative_int(best_answer_meta.get("retrieval_round"))
-            if round_value is not None:
-                return round_value
-
-        if isinstance(loop_counts, dict):
-            round_value = cls._safe_non_negative_int(loop_counts.get("retrieval_retries"))
-            if round_value is not None:
-                return round_value
-        return None
-
-    @staticmethod
-    def _select_evidence_draft_items(
-        *,
-        evidence_draft_items_by_round: dict[int, list[dict[str, Any]]] | None,
-        preferred_round: int | None,
-    ) -> list[dict[str, Any]]:
-        if not isinstance(evidence_draft_items_by_round, dict) or not evidence_draft_items_by_round:
-            return []
-        if preferred_round is not None:
-            items = evidence_draft_items_by_round.get(preferred_round)
-            if isinstance(items, list):
-                return list(items)
-            return []
-        available_rounds = [k for k in evidence_draft_items_by_round if isinstance(k, int)]
-        if not available_rounds:
-            return []
-        latest_round = max(available_rounds)
-        items = evidence_draft_items_by_round.get(latest_round)
-        return list(items) if isinstance(items, list) else []
-
-    @staticmethod
     def _extract_last_good_answer(
         *,
         answer: str,
@@ -4088,19 +4016,14 @@ class KbChatService:
                     degrade_reason_value=terminal_message,
                 )
 
-            preferred_evidence_round = self._resolve_preferred_evidence_round(
-                best_answer_meta=stream_state.best_answer_meta,
-                loop_counts=stream_state.loop_counts,
-            )
             final_response = await self._finalize_run(
                 session=session,
                 run=run,
                 kb_chat_config=exec_ctx.kb_chat_config,
                 started_at=exec_ctx.started_at,
                 answer=answer,
-                retrieval_results=exec_ctx.retrieval_results,
-                evidence_draft_items_by_round=exec_ctx.evidence_draft_items_by_round,
-                preferred_evidence_round=preferred_evidence_round,
+                final_evidence_items=stream_state.evidence_items,
+                final_citation_catalog=stream_state.citation_catalog,
                 stage_summaries=stage_summaries,
                 metrics=metrics,
                 status=terminal_status,
@@ -4215,9 +4138,8 @@ class KbChatService:
         kb_chat_config: KbChatConfig,
         started_at: datetime,
         answer: str,
-        retrieval_results: list,
-        evidence_draft_items_by_round: dict[int, list[dict[str, Any]]] | None = None,
-        preferred_evidence_round: int | None = None,
+        final_evidence_items: list[dict[str, Any]] | None = None,
+        final_citation_catalog: dict[str, dict[str, Any]] | None = None,
         stage_summaries: dict[str, Any],
         metrics: dict[str, Any],
         status: AgentRunStatus = AgentRunStatus.SUCCEEDED,
@@ -4243,16 +4165,12 @@ class KbChatService:
         seen_evidence_chunk_ids: set[uuid.UUID] = set()
         citation_catalog: dict[str, dict[str, Any]] = {}
         citation_id_by_chunk_id: dict[str, str] = {}
-        selected_evidence_draft_items = self._select_evidence_draft_items(
-            evidence_draft_items_by_round=evidence_draft_items_by_round,
-            preferred_round=preferred_evidence_round,
-        )
-        should_fallback_to_retrieval_results = (
-            not selected_evidence_draft_items and preferred_evidence_round is None
+        selected_evidence_items = (
+            list(final_evidence_items) if isinstance(final_evidence_items, list) else []
         )
 
-        if selected_evidence_draft_items:
-            for it in selected_evidence_draft_items:
+        if selected_evidence_items:
+            for it in selected_evidence_items:
                 if not isinstance(it, dict):
                     continue
 
@@ -4288,15 +4206,40 @@ class KbChatService:
                     if isinstance(raw_citation_id, str)
                     else ""
                 )
+                structured_catalog_item = (
+                    final_citation_catalog.get(citation_id)
+                    if isinstance(final_citation_catalog, dict) and citation_id
+                    else None
+                )
                 if is_stable_citation_id(citation_id):
                     citation_catalog[citation_id] = {
                         "citation_id": citation_id,
                         "material_title": self._normalize_optional_text(
                             it.get("material_title")
+                            or (
+                                structured_catalog_item.get("material_title")
+                                if isinstance(structured_catalog_item, dict)
+                                else None
+                            )
                         ),
-                        "citation_title": it.get("citation_title"),
-                        "citation_source": it.get("citation_source"),
-                        "locator": locator,
+                        "citation_title": it.get("citation_title")
+                        or (
+                            structured_catalog_item.get("citation_title")
+                            if isinstance(structured_catalog_item, dict)
+                            else None
+                        ),
+                        "citation_source": it.get("citation_source")
+                        or (
+                            structured_catalog_item.get("citation_source")
+                            if isinstance(structured_catalog_item, dict)
+                            else None
+                        ),
+                        "locator": locator
+                        or (
+                            structured_catalog_item.get("locator")
+                            if isinstance(structured_catalog_item, dict)
+                            else None
+                        ),
                         "chunk_id": str(chunk_id) if chunk_id else None,
                         "material_id": str(material_id) if material_id else None,
                         "kb_id": str(kb_id) if kb_id else None,
@@ -4334,42 +4277,6 @@ class KbChatService:
                 )
                 if chunk_id:
                     seen_evidence_chunk_ids.add(chunk_id)
-        elif should_fallback_to_retrieval_results:
-            for idx, r in enumerate(retrieval_results, 1):
-                citation_id = f"S{idx}"
-                ev = Evidence(
-                    run_id=run.id,
-                    source_kind=EvidenceSourceKind.KB,
-                    kb_id=r.chunk.kb_id,
-                    material_id=r.chunk.material_id,
-                    chunk_id=r.chunk.id,
-                    locator=r.chunk.locator,
-                    excerpt=r.chunk.content[:500],
-                )
-                self._db.add(ev)
-                evidence_items.append(
-                    EvidenceItem(
-                        source_kind=EvidenceSourceKind.KB.value,
-                        kb_id=r.chunk.kb_id,
-                        material_id=r.chunk.material_id,
-                        chunk_id=r.chunk.id,
-                        locator=r.chunk.locator,
-                        excerpt=r.chunk.content[:500],
-                        citation_id=citation_id,
-                    )
-                )
-                locator = r.chunk.locator if isinstance(r.chunk.locator, dict) else None
-                citation_catalog[citation_id] = {
-                    "citation_id": citation_id,
-                    "material_title": self._extract_locator_material_title(locator),
-                    "citation_title": None,
-                    "citation_source": None,
-                    "locator": locator,
-                    "chunk_id": str(r.chunk.id),
-                    "material_id": str(r.chunk.material_id),
-                    "kb_id": str(r.chunk.kb_id),
-                }
-                citation_id_by_chunk_id[str(r.chunk.id)] = citation_id
 
         material_ids: set[uuid.UUID] = set()
         for item in citation_catalog.values():
@@ -4383,7 +4290,7 @@ class KbChatService:
         material_title_map = await self._load_material_title_map(material_ids)
 
         citation_meta_by_id: dict[str, dict[str, str | None]] = {}
-        ordered_citation_ids = sorted(citation_catalog, key=self._citation_sort_key)
+        ordered_citation_ids = sorted(citation_catalog, key=stable_citation_sort_key)
         for idx, citation_id in enumerate(ordered_citation_ids, 1):
             item = citation_catalog[citation_id]
             material_id_text = self._normalize_optional_text(item.get("material_id"))
@@ -4441,7 +4348,7 @@ class KbChatService:
                     return normalized
             return None
 
-        allowed_labels: list[str] = sorted(citation_catalog, key=self._citation_sort_key)
+        allowed_labels: list[str] = sorted(citation_catalog, key=stable_citation_sort_key)
         if not allowed_labels:
             seen_labels: set[str] = set()
             for item in evidence_items:
@@ -4589,7 +4496,7 @@ class KbChatService:
                 for item in evidence_items
                 if item.chunk_id is not None
             ],
-            "citation_ids": sorted(citation_catalog, key=self._citation_sort_key),
+            "citation_ids": sorted(citation_catalog, key=stable_citation_sort_key),
             "latency_ms": latency_ms,
             **summary_metrics,
             **metrics,

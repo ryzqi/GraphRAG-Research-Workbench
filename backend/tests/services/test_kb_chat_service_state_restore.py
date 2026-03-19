@@ -159,16 +159,6 @@ def test_extract_clarification_pending_uses_canonical_payload() -> None:
     assert payload.question == "请补充时间范围"
     assert payload.reason_code == "missing_time"
 
-
-def test_resolve_preferred_evidence_round_uses_best_answer_meta_over_stage_summary() -> None:
-    result = KbChatService._resolve_preferred_evidence_round(
-        best_answer_meta={"retrieval_round": 2},
-        loop_counts={"retrieval_retries": 5},
-    )
-
-    assert result == 2
-
-
 def test_extract_last_good_answer_prefers_stream_state_canonical_answer_fields() -> None:
     stream_state = StreamState(
         final_answer="最终答案 [S1]",

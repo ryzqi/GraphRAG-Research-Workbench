@@ -33,6 +33,12 @@ from app.agents.kb_chat_trace_nodes import (
 )
 from app.core.settings import Settings
 from app.prompts import get_prompt_loader
+from app.services.kb_evidence import (
+    build_evidence_context,
+    canonicalize_evidence_items,
+    extract_stable_citation_ids,
+    select_evidence_items_by_citation_ids,
+)
 from app.services.query_rewrite_service import QueryRewriteService
 from app.services.streaming import extract_answer_text
 from app.utils.token_counter import count_tokens_approximately
@@ -252,13 +258,25 @@ async def _compress_context(
     _ = runtime, settings
     start = time.perf_counter()
     raw_context = str(state.get("final_context") or "").strip()
-    final_context = raw_context or "（未找到相关内容）"
+    current_evidence_items, current_citation_catalog = canonicalize_evidence_items(
+        state.get("evidence_items"),
+        citation_catalog=state.get("citation_catalog"),
+    )
+    final_context = (
+        build_evidence_context(current_evidence_items)
+        if current_evidence_items
+        else (raw_context or "（未找到相关内容）")
+    )
     question = _resolve_query_text(state)
     input_tokens = count_tokens_approximately(final_context)
 
     compressed_context = final_context
+    compressed_evidence_items = list(current_evidence_items)
+    compressed_citation_catalog = dict(current_citation_catalog)
     fallback_reason: str | None = None
     fallback_used = False
+    candidate_citation_ids: list[str] = []
+    invalid_citation_ids: list[str] = []
 
     if final_context and question:
         prompts = get_prompt_loader()
@@ -294,6 +312,36 @@ async def _compress_context(
             candidate = extract_answer_text(getattr(msg, "content", "")).strip()
             if not candidate:
                 fallback_reason = "empty_compress_output"
+            elif current_evidence_items:
+                candidate_citation_ids = extract_stable_citation_ids(candidate)
+                invalid_citation_ids = [
+                    citation_id
+                    for citation_id in candidate_citation_ids
+                    if citation_id not in current_citation_catalog
+                ]
+                if final_context and _EVIDENCE_LABEL_RE.findall(final_context) and not candidate_citation_ids:
+                    fallback_reason = "evidence_labels_dropped"
+                elif invalid_citation_ids:
+                    fallback_reason = "invalid_compressed_citation_labels"
+                else:
+                    selected_items = select_evidence_items_by_citation_ids(
+                        current_evidence_items,
+                        candidate_citation_ids,
+                    )
+                    if candidate_citation_ids and not selected_items:
+                        fallback_reason = "compressed_selection_empty"
+                    else:
+                        selected_items, selected_catalog = canonicalize_evidence_items(
+                            selected_items or current_evidence_items,
+                            citation_catalog=current_citation_catalog,
+                        )
+                        candidate_context = build_evidence_context(selected_items)
+                        if count_tokens_approximately(candidate_context) > input_tokens:
+                            fallback_reason = "non_compacting_output"
+                        else:
+                            compressed_evidence_items = selected_items
+                            compressed_citation_catalog = selected_catalog
+                            compressed_context = candidate_context
             elif count_tokens_approximately(candidate) > input_tokens:
                 fallback_reason = "non_compacting_output"
             elif final_context and _EVIDENCE_LABEL_RE.findall(final_context) and not _EVIDENCE_LABEL_RE.findall(candidate):
@@ -310,9 +358,15 @@ async def _compress_context(
     if fallback_reason is not None:
         fallback_used = True
         compressed_context = final_context
+        compressed_evidence_items = list(current_evidence_items)
+        compressed_citation_catalog = dict(current_citation_catalog)
 
     output_tokens = count_tokens_approximately(compressed_context)
-    evidence_count = len(_EVIDENCE_LABEL_RE.findall(compressed_context))
+    evidence_count = (
+        len(compressed_evidence_items)
+        if compressed_evidence_items
+        else len(_EVIDENCE_LABEL_RE.findall(compressed_context))
+    )
     summary = {
         "decision_source": "llm",
         "fallback_reason": fallback_reason,
@@ -321,6 +375,9 @@ async def _compress_context(
         "output_tokens": output_tokens,
         "truncated": output_tokens < input_tokens,
         "evidence_count": evidence_count,
+        "candidate_citation_ids": candidate_citation_ids,
+        "invalid_citation_ids": invalid_citation_ids,
+        "selected_citation_ids": list(compressed_citation_catalog),
         "question_present": bool(question),
         "latency_ms": int((time.perf_counter() - start) * 1000),
         "completed_at": now_iso(),
@@ -335,6 +392,8 @@ async def _compress_context(
     return {
         "compression_stats": summary,
         "final_context": compressed_context,
+        "evidence_items": compressed_evidence_items,
+        "citation_catalog": compressed_citation_catalog,
         "stage_summaries": stage_summaries,
     }
 

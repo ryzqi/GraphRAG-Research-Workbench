@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import re
 import time
+import uuid
 from typing import Any
 
 from langchain.messages import HumanMessage, SystemMessage
@@ -21,6 +22,9 @@ from langgraph.types import Command, Send
 
 from app.core.settings import Settings, get_settings
 from app.prompts import get_prompt_loader
+from app.services.kb_evidence import (
+    resolve_structured_evidence,
+)
 from app.services.streaming import extract_answer_text
 from app.services.query_rewrite_service import QueryRewriteService
 from app.agents.kb_chat_agentic_state import (
@@ -47,6 +51,10 @@ from .runtime_config import (
     parallel_retrieval_max_branches,
     parallel_retrieval_min_queries,
     retrieval_top_k,
+)
+from ..tools.kb_retrieve import (
+    push_kb_invocation_request_id,
+    reset_kb_invocation_request_id,
 )
 
 _EVIDENCE_LINE_RE = re.compile(r"^\[([^\[\]\n]{1,128})\]\s+", re.MULTILINE)
@@ -95,6 +103,18 @@ def _extract_evidence_count(final_context: str) -> int:
     if not final_context:
         return 0
     return sum(1 for _ in _EVIDENCE_LINE_RE.finditer(final_context))
+
+
+def _pop_kb_invocation_meta(
+    kb_tool: BaseTool,
+    *,
+    request_id: str,
+) -> dict[str, Any] | None:
+    store = getattr(kb_tool, "_kb_invocation_meta_by_request_id", None)
+    if not isinstance(store, dict):
+        return None
+    meta = store.pop(request_id, None)
+    return meta if isinstance(meta, dict) else None
 
 
 def _resolve_subquery_specs(state: dict) -> list[dict[str, Any]]:
@@ -499,13 +519,15 @@ async def _invoke_kb_retrieve(
     retrieval_round: int,
     runtime: Runtime[Any] | None = None,
     query_items: list[dict[str, Any]] | None = None,
-) -> tuple[str, str | None]:
+) -> tuple[str, str | None, dict[str, Any]]:
     kb_ids = _resolve_kb_ids(state, runtime)
     retrieval_budget = _resolve_retrieval_budget_payload(
         state,
         settings,
         runtime=runtime,
     )
+    request_id = uuid.uuid4().hex
+    request_id_token = push_kb_invocation_request_id(request_id)
     try:
         payload = build_retrieval_payload(
             query=query,
@@ -521,8 +543,11 @@ async def _invoke_kb_retrieve(
     except asyncio.CancelledError:
         raise
     except Exception:
-        return "（未找到相关内容）", "exception"
-    return _as_str(context).strip(), None
+        return "（未找到相关内容）", "exception", {}
+    finally:
+        reset_kb_invocation_request_id(request_id_token)
+    meta = _pop_kb_invocation_meta(kb_tool, request_id=request_id) or {}
+    return _as_str(context).strip(), None, meta
 
 
 async def retrieve_subquery_context(
@@ -545,7 +570,7 @@ async def retrieve_subquery_context(
         return {}
 
     retrieval_round = _current_retrieval_round(state)
-    context_text, retrieval_reason = await _invoke_kb_retrieve(
+    context_text, retrieval_reason, retrieval_meta = await _invoke_kb_retrieve(
         state=state,
         query=query,
         settings=settings,
@@ -554,11 +579,18 @@ async def retrieve_subquery_context(
         runtime=runtime,
         query_items=[query_item] if isinstance(query_item, dict) else None,
     )
+    meta_dict = retrieval_meta if isinstance(retrieval_meta, dict) else {}
+    evidence_items, citation_catalog, canonical_context = resolve_structured_evidence(
+        meta_dict.get("evidence_items"),
+        citation_catalog=meta_dict.get("citation_catalog"),
+    )
+    if evidence_items:
+        context_text = canonical_context
 
     kind = _as_str(task.get("kind")).strip() or "other"
     if isinstance(query_item, dict):
         kind = _as_str(query_item.get("kind")).strip() or kind
-    retrieval_count = _extract_evidence_count(context_text)
+    retrieval_count = len(evidence_items) if evidence_items else _extract_evidence_count(context_text)
 
     return {
         "subquery_runs": [
@@ -575,6 +607,8 @@ async def retrieve_subquery_context(
                 else [],
                 "query_used": query,
                 "context": context_text,
+                "evidence_items": evidence_items,
+                "citation_catalog": citation_catalog,
                 "used_query_item_bundle": isinstance(query_item, dict),
                 "retrieval_count": retrieval_count,
                 "success": retrieval_reason is None,
@@ -610,6 +644,7 @@ async def merge_subquery_context(
     runs = sort_by_priority_then_index(runs)
 
     merged_parts: list[str] = []
+    merged_evidence_items: list[dict[str, Any]] = []
     seen_contexts: set[str] = set()
     success_count = 0
     branch_kinds: dict[str, int] = {}
@@ -622,19 +657,31 @@ async def merge_subquery_context(
         if reason:
             failure_reasons[reason] = int(failure_reasons.get(reason, 0)) + 1
         context = _as_str(run.get("context")).strip()
-        if not context:
-            continue
+        branch_items, _, _ = resolve_structured_evidence(
+            run.get("evidence_items"),
+            citation_catalog=run.get("citation_catalog"),
+        )
         retrieval_count += int(run.get("retrieval_count") or 0)
-        key = context.casefold()
-        if key in seen_contexts:
-            continue
-        seen_contexts.add(key)
-        merged_parts.append(context)
+        if branch_items:
+            merged_evidence_items.extend(branch_items)
+        elif context:
+            key = context.casefold()
+            if key in seen_contexts:
+                continue
+            seen_contexts.add(key)
+            merged_parts.append(context)
         if bool(run.get("success")):
             success_count += 1
 
-    final_context = "\n\n".join(merged_parts).strip() if merged_parts else "（未找到相关内容）"
-    evidence_count = _extract_evidence_count(final_context)
+    evidence_items, citation_catalog, canonical_context = resolve_structured_evidence(
+        merged_evidence_items,
+        reindex=True,
+    )
+    if evidence_items:
+        final_context = canonical_context
+    else:
+        final_context = "\n\n".join(merged_parts).strip() if merged_parts else "（未找到相关内容）"
+    evidence_count = len(evidence_items) if evidence_items else _extract_evidence_count(final_context)
     retrieval_diagnostics = _compute_retrieval_diagnostics(
         state=state,
         final_context=final_context,
@@ -663,6 +710,8 @@ async def merge_subquery_context(
 
     return {
         "final_context": final_context,
+        "evidence_items": evidence_items,
+        "citation_catalog": citation_catalog,
         "retrieval_plan": {
             "mode": "parallel_fanout",
             "branch_count": len(runs),
@@ -753,7 +802,7 @@ async def kb_retrieve_context(
     query = _resolve_query_text(state)
     retrieval_round = max(loop_counts.get("retrieval_retries", 0), 0)
     query_items = state.get("query_items")
-    final_context, retrieval_reason = await _invoke_kb_retrieve(
+    final_context, retrieval_reason, retrieval_meta = await _invoke_kb_retrieve(
         state=state,
         query=query,
         settings=settings,
@@ -762,7 +811,14 @@ async def kb_retrieve_context(
         runtime=runtime,
         query_items=query_items if isinstance(query_items, list) and query_items else None,
     )
-    evidence_count = _extract_evidence_count(final_context)
+    meta_dict = retrieval_meta if isinstance(retrieval_meta, dict) else {}
+    evidence_items, citation_catalog, canonical_context = resolve_structured_evidence(
+        meta_dict.get("evidence_items"),
+        citation_catalog=meta_dict.get("citation_catalog"),
+    )
+    if evidence_items:
+        final_context = canonical_context
+    evidence_count = len(evidence_items) if evidence_items else _extract_evidence_count(final_context)
     if retrieval_reason is None and evidence_count <= 0:
         retrieval_reason = "no_evidence"
     retrieval_diagnostics = _compute_retrieval_diagnostics(
@@ -789,6 +845,8 @@ async def kb_retrieve_context(
 
     return {
         "final_context": final_context,
+        "evidence_items": evidence_items,
+        "citation_catalog": citation_catalog,
         "retrieval_plan": {
             "mode": "single_retrieve",
             "branch_count": 1,

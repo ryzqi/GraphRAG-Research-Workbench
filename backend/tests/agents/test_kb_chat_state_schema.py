@@ -146,6 +146,50 @@ async def test_answer_review_citation_flags_invalid_labels_in_mixed_marker_forma
 
 
 @pytest.mark.asyncio
+async def test_answer_review_citation_prefers_structured_catalog_over_final_context_layout() -> None:
+    result = await _answer_review_citation(
+        {
+            "draft_answer": (
+                "Agent 的工具是突破纯语言模型限制、实现与外部世界交互的关键能力[S1]。"
+                "使用工具的过程包括任务判断、工具选择、参数准备、工具调用、结果获取与处理、结果整合与规划[S2]。"
+            ),
+            "final_context": (
+                "[S1] Agent 的工具是突破纯语言模型限制、实现与外部世界交互的关键能力。\n"
+                "- [S2] 使用工具的过程包括任务判断、工具选择、参数准备、工具调用、结果获取与处理、结果整合与规划。"
+            ),
+            "citation_catalog": {
+                "S1": {"citation_id": "S1", "citation_title": "资料1"},
+                "S2": {"citation_id": "S2", "citation_title": "资料2"},
+            },
+            "evidence_items": [
+                {
+                    "citation_id": "S1",
+                    "excerpt": "Agent 的工具是突破纯语言模型限制、实现与外部世界交互的关键能力。",
+                },
+                {
+                    "citation_id": "S2",
+                    "excerpt": "使用工具的过程包括任务判断、工具选择、参数准备、工具调用、结果获取与处理、结果整合与规划。",
+                },
+            ],
+            "loop_counts": {
+                "total_rounds": 0,
+                "retrieval_retries": 0,
+                "generation_retries": 0,
+            },
+            "stage_summaries": {},
+        },
+        runtime=None,
+        settings=_settings(),
+    )
+
+    review = result["answer_review_runs"][0]
+    assert review["passed"] is True
+    assert review["reason"] == "passed"
+    assert review["valid_citation_count"] == 2
+    assert review["invalid_citations"] == []
+
+
+@pytest.mark.asyncio
 async def test_answer_review_citation_flags_uncovered_followup_sentence_without_local_citation() -> None:
     result = await _answer_review_citation(
         {
@@ -353,6 +397,70 @@ async def test_answer_review_citation_uses_fail_open_when_llm_decision_fallbacks
     assert review["decision_source"] == "fallback"
     assert review["fallback_reason"] == "invalid_schema"
     assert review["missing_citations"] == []
+
+
+@pytest.mark.asyncio
+async def test_merge_subquery_context_reindexes_structured_evidence_across_branches() -> None:
+    result = await merge_subquery_context(
+        {
+            "subquery_runs": [
+                {
+                    "retrieval_round": 0,
+                    "subquery_id": "sq_1",
+                    "index": 0,
+                    "query": "第一问",
+                    "kind": "main",
+                    "context": "[S1] 第一条证据。",
+                    "retrieval_count": 1,
+                    "success": True,
+                    "reason": None,
+                    "evidence_items": [
+                        {
+                            "citation_id": "S1",
+                            "chunk_id": "chunk-1",
+                            "material_id": "material-1",
+                            "kb_id": "kb-1",
+                            "excerpt": "第一条证据。",
+                        }
+                    ],
+                },
+                {
+                    "retrieval_round": 0,
+                    "subquery_id": "sq_2",
+                    "index": 1,
+                    "query": "第二问",
+                    "kind": "variant",
+                    "context": "[S1] 第二条证据。",
+                    "retrieval_count": 1,
+                    "success": True,
+                    "reason": None,
+                    "evidence_items": [
+                        {
+                            "citation_id": "S1",
+                            "chunk_id": "chunk-2",
+                            "material_id": "material-2",
+                            "kb_id": "kb-1",
+                            "excerpt": "第二条证据。",
+                        }
+                    ],
+                },
+            ],
+            "loop_counts": {
+                "total_rounds": 0,
+                "retrieval_retries": 0,
+                "generation_retries": 0,
+            },
+            "metrics": {},
+            "memory_keys": {},
+            "stage_summaries": {},
+        },
+        settings=_settings(),
+        runtime=None,
+    )
+
+    assert result["final_context"] == "[S1] 第一条证据。\n\n[S2] 第二条证据。"
+    assert [item["citation_id"] for item in result["evidence_items"]] == ["S1", "S2"]
+    assert sorted(result["citation_catalog"]) == ["S1", "S2"]
 
 
 def test_make_initial_state_omits_legacy_duplicate_context_fields() -> None:
@@ -718,6 +826,40 @@ async def test_compress_context_fail_open_keeps_raw_context_when_llm_returns_emp
     assert result["final_context"] == "[S1] 证据内容"
     assert result["compression_stats"]["fallback_reason"] == "empty_compress_output"
     assert result["stage_summaries"]["context_compress"]["decision_source"] == "llm"
+
+
+@pytest.mark.asyncio
+async def test_compress_context_rebuilds_canonical_context_from_structured_evidence_selection() -> None:
+    class _FakeChatModel:
+        def bind(self, **_: object) -> "_FakeChatModel":
+            return self
+
+        async def ainvoke(self, _messages: object) -> SimpleNamespace:
+            return SimpleNamespace(content="- [S2] 第二条证据。")
+
+    result = await _compress_context(
+        {
+            "user_input": "第二条证据是什么",
+            "normalized_query": "第二条证据是什么",
+            "final_context": "[S1] 第一条证据。\n\n[S2] 第二条证据。",
+            "evidence_items": [
+                {"citation_id": "S1", "excerpt": "第一条证据。"},
+                {"citation_id": "S2", "excerpt": "第二条证据。"},
+            ],
+            "citation_catalog": {
+                "S1": {"citation_id": "S1", "citation_title": "资料1"},
+                "S2": {"citation_id": "S2", "citation_title": "资料2"},
+            },
+            "stage_summaries": {},
+        },
+        runtime=SimpleNamespace(context={}),
+        settings=_settings(),
+        chat_model=_FakeChatModel(),
+    )
+
+    assert result["final_context"] == "[S2] 第二条证据。"
+    assert [item["citation_id"] for item in result["evidence_items"]] == ["S2"]
+    assert sorted(result["citation_catalog"]) == ["S2"]
 
 
 def test_build_kb_chat_run_context_prefers_authoritative_inputs() -> None:

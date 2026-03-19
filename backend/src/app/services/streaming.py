@@ -331,6 +331,8 @@ class StreamState:
     final_answer: str | None = None
     best_answer: str | None = None
     best_answer_meta: dict[str, Any] | None = None
+    evidence_items: list[dict[str, Any]] = field(default_factory=list)
+    citation_catalog: dict[str, dict[str, Any]] = field(default_factory=dict)
     clarification_payload: dict[str, Any] | None = None
     reflection: dict[str, Any] | None = None
     degrade_reason: str | None = None
@@ -371,6 +373,12 @@ class StreamState:
         best_answer_meta = update.get("best_answer_meta")
         if isinstance(best_answer_meta, dict):
             self.best_answer_meta = best_answer_meta
+        evidence_items = update.get("evidence_items")
+        if isinstance(evidence_items, list):
+            self.evidence_items = evidence_items
+        citation_catalog = update.get("citation_catalog")
+        if isinstance(citation_catalog, dict):
+            self.citation_catalog = citation_catalog
         clarification_payload = update.get("clarification_payload")
         if isinstance(clarification_payload, dict):
             self.clarification_payload = clarification_payload

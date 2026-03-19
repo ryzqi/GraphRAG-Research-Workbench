@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+from contextvars import ContextVar, Token
 import logging
 import uuid
 from datetime import datetime, timezone
@@ -25,6 +26,10 @@ from app.services.context_builder import ContextBuilder
 from app.services.retrieval_service import RetrievalResult, RetrievalService
 
 logger = logging.getLogger(__name__)
+_KB_INVOCATION_REQUEST_ID: ContextVar[str | None] = ContextVar(
+    "kb_retrieve_invocation_request_id",
+    default=None,
+)
 
 
 class KbRetrieveArgs(BaseModel):
@@ -60,6 +65,18 @@ class KbRetrieveArgs(BaseModel):
         ge=0,
         description="可选：检索轮次（用于将证据与最终答案绑定到同一轮检索上下文）。",
     )
+
+
+def push_kb_invocation_request_id(request_id: str) -> Token[str | None]:
+    return _KB_INVOCATION_REQUEST_ID.set(request_id.strip() or None)
+
+
+def reset_kb_invocation_request_id(token: Token[str | None]) -> None:
+    _KB_INVOCATION_REQUEST_ID.reset(token)
+
+
+def current_kb_invocation_request_id() -> str | None:
+    return _KB_INVOCATION_REQUEST_ID.get()
 
 
 def _citation_id(index: int) -> str:
@@ -160,6 +177,8 @@ def build_kb_retrieve_tool(
     on_results: Callable[[list[RetrievalResult], dict[str, Any]], None] | None = None,
 ) -> BaseTool:
     """构建 kb_retrieve 工具。"""
+
+    invocation_meta_by_request_id: dict[str, dict[str, Any]] = {}
 
     async def _retrieve(
         query: str,
@@ -282,92 +301,95 @@ def build_kb_retrieve_tool(
 
         context, char_truncated = truncate_tool_output(context, tool_output_max_chars)
 
-        if on_results is not None:
-            # Build a unified, JSON-friendly evidence draft (chunk-level) for auditing/persistence.
-            draft_by_chunk_id: dict[str, dict[str, Any]] = {}
-            layer = getattr(retrieval, "last_layer_draft", None)
-            layer_items = (
-                getattr(layer, "evidence_items", None) if layer is not None else None
-            )
-            if isinstance(layer_items, list):
-                for it in layer_items:
-                    if isinstance(it, dict):
-                        cid = it.get("chunk_id")
-                        if isinstance(cid, str) and cid:
-                            draft_by_chunk_id[cid] = it
+        # Build a unified, JSON-friendly evidence draft (chunk-level) for auditing/persistence.
+        draft_by_chunk_id: dict[str, dict[str, Any]] = {}
+        layer = getattr(retrieval, "last_layer_draft", None)
+        layer_items = (
+            getattr(layer, "evidence_items", None) if layer is not None else None
+        )
+        if isinstance(layer_items, list):
+            for it in layer_items:
+                if isinstance(it, dict):
+                    cid = it.get("chunk_id")
+                    if isinstance(cid, str) and cid:
+                        draft_by_chunk_id[cid] = it
 
-            evidence_items: list[dict[str, Any]] = []
-            for i, r in enumerate(included, 1):
-                citation_id = _citation_id(i)
-                citation_title = _citation_title_from_result(r, index=i)
-                citation_source = _citation_source_from_result(r)
-                chunk_id = getattr(getattr(r, "chunk", None), "id", None)
-                if chunk_id is None:
-                    continue
-                cid = str(chunk_id)
-                # Evidence excerpts should match what the model saw in the retrieval context
-                # (context_text may be parent content under parent/child strategy).
-                excerpt_text = str(r.context_text or r.chunk.content or "")[:500]
-                item = draft_by_chunk_id.get(cid)
-                if item is None:
-                    chunk = getattr(r, "chunk", None)
-                    kb_id = getattr(chunk, "kb_id", None)
-                    material_id = getattr(chunk, "material_id", None)
-                    evidence_items.append(
-                        {
-                            "source_kind": "kb",
-                            "kb_id": str(kb_id) if kb_id else "",
-                            "material_id": str(material_id) if material_id else "",
-                            "chunk_id": cid,
-                            "locator": getattr(chunk, "locator", None),
-                            "excerpt": excerpt_text,
-                            "score": float(getattr(r, "score", 0.0) or 0.0),
-                            "hits": [],
-                            "citation_id": citation_id,
-                            "citation_title": citation_title,
-                            "citation_source": citation_source,
-                        }
-                    )
-                else:
-                    merged = dict(item)
-                    merged["excerpt"] = excerpt_text
-                    merged["citation_id"] = citation_id
-                    merged["citation_title"] = citation_title
-                    merged["citation_source"] = citation_source
-                    evidence_items.append(merged)
+        evidence_items: list[dict[str, Any]] = []
+        for i, r in enumerate(included, 1):
+            citation_id = _citation_id(i)
+            citation_title = _citation_title_from_result(r, index=i)
+            citation_source = _citation_source_from_result(r)
+            chunk_id = getattr(getattr(r, "chunk", None), "id", None)
+            if chunk_id is None:
+                continue
+            cid = str(chunk_id)
+            # Evidence excerpts should match what the model saw in the retrieval context
+            # (context_text may be parent content under parent/child strategy).
+            excerpt_text = str(r.context_text or r.chunk.content or "")[:500]
+            item = draft_by_chunk_id.get(cid)
+            if item is None:
+                chunk = getattr(r, "chunk", None)
+                kb_id = getattr(chunk, "kb_id", None)
+                material_id = getattr(chunk, "material_id", None)
+                evidence_items.append(
+                    {
+                        "source_kind": "kb",
+                        "kb_id": str(kb_id) if kb_id else "",
+                        "material_id": str(material_id) if material_id else "",
+                        "chunk_id": cid,
+                        "locator": getattr(chunk, "locator", None),
+                        "excerpt": excerpt_text,
+                        "score": float(getattr(r, "score", 0.0) or 0.0),
+                        "hits": [],
+                        "citation_id": citation_id,
+                        "citation_title": citation_title,
+                        "citation_source": citation_source,
+                    }
+                )
+            else:
+                merged = dict(item)
+                merged["excerpt"] = excerpt_text
+                merged["citation_id"] = citation_id
+                merged["citation_title"] = citation_title
+                merged["citation_source"] = citation_source
+                evidence_items.append(merged)
 
-            on_results(
-                included,
+        invocation_meta = {
+            "count": len(included),
+            "usage": usage,
+            "truncation": truncation,
+            "char_truncated": char_truncated,
+            "evidence_items": evidence_items,
+            "citation_catalog": [
                 {
-                    "count": len(included),
-                    "usage": usage,
-                    "truncation": truncation,
-                    "char_truncated": char_truncated,
-                    "evidence_items": evidence_items,
-                    "citation_catalog": [
-                        {
-                            "citation_id": it.get("citation_id"),
-                            "title": it.get("citation_title"),
-                            "source": it.get("citation_source"),
-                            "locator": it.get("locator"),
-                            "chunk_id": it.get("chunk_id"),
-                            "material_id": it.get("material_id"),
-                            "kb_id": it.get("kb_id"),
-                        }
-                        for it in evidence_items
-                    ],
-                    "kb_scope": kb_scope,
-                    "retrieval_round": retrieval_round
-                    if isinstance(retrieval_round, int)
-                    else None,
-                    "completed_at": datetime.now(timezone.utc).isoformat(),
-                },
-            )
+                    "citation_id": it.get("citation_id"),
+                    "title": it.get("citation_title"),
+                    "source": it.get("citation_source"),
+                    "locator": it.get("locator"),
+                    "chunk_id": it.get("chunk_id"),
+                    "material_id": it.get("material_id"),
+                    "kb_id": it.get("kb_id"),
+                }
+                for it in evidence_items
+            ],
+            "kb_scope": kb_scope,
+            "retrieval_round": retrieval_round
+            if isinstance(retrieval_round, int)
+            else None,
+            "completed_at": datetime.now(timezone.utc).isoformat(),
+        }
+        request_id = current_kb_invocation_request_id()
+        if isinstance(request_id, str) and request_id.strip():
+            invocation_meta_by_request_id[request_id.strip()] = invocation_meta
+        if on_results is not None:
+            on_results(included, invocation_meta)
 
         return context
 
-    return lc_tool(
+    tool = lc_tool(
         "kb_retrieve",
         description="从知识库检索资料，返回带编号的引用片段。",
         args_schema=KbRetrieveArgs,
     )(_retrieve)
+    setattr(tool, "_kb_invocation_meta_by_request_id", invocation_meta_by_request_id)
+    return tool

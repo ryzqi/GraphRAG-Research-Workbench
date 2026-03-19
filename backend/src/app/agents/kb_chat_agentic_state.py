@@ -198,6 +198,8 @@ class SubqueryRun(TypedDict, total=False):
     purpose: str
     coverage_tags: list[str]
     context: str
+    evidence_items: list[dict[str, Any]]
+    citation_catalog: dict[str, dict[str, Any]]
     used_query_item_bundle: bool
     retrieval_count: int
     success: bool
@@ -306,6 +308,8 @@ class KbChatInternalState(KbChatInternalStateBase, total=False):
     subquery_task: dict[str, Any]
 
     final_context: str
+    evidence_items: list[dict[str, Any]]
+    citation_catalog: dict[str, dict[str, Any]]
     compression_stats: dict[str, Any]
     draft_answer: str
     final_answer: str
@@ -478,6 +482,8 @@ class CompressContextInput(TypedDict, total=False):
     coref_query: str
     normalized_query: str
     final_context: str
+    evidence_items: list[dict[str, Any]]
+    citation_catalog: dict[str, dict[str, Any]]
     stage_summaries: dict[str, Any]
 
 
@@ -516,6 +522,8 @@ class DraftGenerateInput(TypedDict, total=False):
     coref_query: str
     normalized_query: str
     final_context: str
+    evidence_items: list[dict[str, Any]]
+    citation_catalog: dict[str, dict[str, Any]]
     loop_counts: LoopCounts
     stage_summaries: dict[str, Any]
 
@@ -524,6 +532,8 @@ class AnswerReviewCitationInput(TypedDict, total=False):
     loop_counts: LoopCounts
     draft_answer: str
     final_context: str
+    evidence_items: list[dict[str, Any]]
+    citation_catalog: dict[str, dict[str, Any]]
 
 
 class AnswerReviewInput(TypedDict, total=False):
@@ -535,6 +545,8 @@ class AnswerReviewInput(TypedDict, total=False):
     loop_counts: LoopCounts
     draft_answer: str
     final_context: str
+    evidence_items: list[dict[str, Any]]
+    citation_catalog: dict[str, dict[str, Any]]
 
 
 class AnswerReviewFuseInput(TypedDict, total=False):
@@ -553,6 +565,8 @@ class AnswerRepairInput(TypedDict, total=False):
     loop_counts: LoopCounts
     draft_answer: str
     final_context: str
+    evidence_items: list[dict[str, Any]]
+    citation_catalog: dict[str, dict[str, Any]]
     answer_subgraph_state: dict[str, Any]
     stage_summaries: dict[str, Any]
 

@@ -45,6 +45,7 @@ from app.services.evidence_guardrails import (
     review_citation_coverage,
     resolve_kb_refusal_answer,
 )
+from app.services.kb_evidence import resolve_structured_evidence
 from app.services.streaming import extract_answer_text
 
 from .budget import now_iso
@@ -171,6 +172,24 @@ def _extract_evidence_labels(final_context: str) -> dict[str, str]:
         normalized = f"[{raw}]"
         labels.setdefault(normalized.casefold(), normalized)
     return labels
+
+
+def _resolve_allowed_citation_labels(
+    state: dict[str, Any],
+    *,
+    final_context: str,
+) -> tuple[dict[str, str], str, str]:
+    evidence_items, citation_catalog, structured_context = resolve_structured_evidence(
+        state.get("evidence_items"),
+        citation_catalog=state.get("citation_catalog"),
+    )
+    if citation_catalog:
+        labels = {
+            f"[{citation_id}]".casefold(): f"[{citation_id}]"
+            for citation_id in citation_catalog
+        }
+        return labels, "citation_catalog", structured_context or final_context
+    return _extract_evidence_labels(final_context), "final_context", final_context
 
 
 def _extract_citations(answer: str) -> list[str]:
@@ -334,9 +353,12 @@ async def _answer_review_citation(
     start = time.perf_counter()
     review_round = _current_review_round(state)
     draft = _as_str(state.get("draft_answer")).strip()
-    final_context = _as_str(state.get("final_context")).strip()
+    raw_final_context = _as_str(state.get("final_context")).strip()
     question = _resolve_query_text(state)
-    evidence_labels = _extract_evidence_labels(final_context)
+    evidence_labels, label_source, final_context = _resolve_allowed_citation_labels(
+        state,
+        final_context=raw_final_context,
+    )
     all_citations, valid_citations, invalid_citations = _partition_citations(
         draft, allowed_labels=evidence_labels
     )
@@ -414,8 +436,10 @@ async def _answer_review_citation(
         "confidence": confidence,
         "fallback_reason": fallback_reason,
         "decision_source": decision_source,
+        "label_source": label_source,
         "citation_count": len(all_citations),
         "valid_citation_count": len(valid_citations),
+        "available_citation_labels": sorted(evidence_labels.values()),
         "invalid_citations": sorted(invalid_citations),
         "missing_citations": missing_citations,
         "latency_ms": int((time.perf_counter() - start) * 1000),
@@ -441,7 +465,11 @@ async def _answer_review_llm_check(
     start = time.perf_counter()
     review_round = _current_review_round(state)
     question = _resolve_query_text(state)
-    final_context = _as_str(state.get("final_context")).strip()
+    raw_final_context = _as_str(state.get("final_context")).strip()
+    _, _, final_context = _resolve_allowed_citation_labels(
+        state,
+        final_context=raw_final_context,
+    )
     draft = _as_str(state.get("draft_answer")).strip()
     fallback_reason: str | None = None
     prompt_key = "kb_chat/answer_review"
@@ -682,7 +710,11 @@ async def _answer_repair(
     }
 
     draft_answer = _as_str(state.get("draft_answer")).strip()
-    final_context = _as_str(state.get("final_context")).strip()
+    raw_final_context = _as_str(state.get("final_context")).strip()
+    _, _, final_context = _resolve_allowed_citation_labels(
+        state,
+        final_context=raw_final_context,
+    )
     question = _resolve_query_text(state)
 
     repaired_answer = draft_answer
