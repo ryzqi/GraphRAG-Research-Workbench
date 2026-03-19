@@ -126,12 +126,14 @@ async def test_query_plan_finalize_writes_preprocess_routing_decision() -> None:
     query_plan_finalize = _query_plan_finalize_callable()
     command = await query_plan_finalize(
         {
-            "user_input": "解释agent的记忆系统",
-            "normalized_query": "解释agent的记忆系统",
+            "user_input": "介绍一下react框架",
+            "normalized_query": "介绍一下react框架",
             "normalized_meta": {
                 "recall_risk": "high",
                 "drift_risk": False,
                 "constraint_preserved": True,
+                "aliases": ["react", "介绍一下"],
+                "entities": ["react", "介绍一下", "框架"],
             },
             "query_strategy": "direct",
             "stage_summaries": {},
@@ -145,7 +147,8 @@ async def test_query_plan_finalize_writes_preprocess_routing_decision() -> None:
         for item in command.update["query_items"]
         if isinstance(item, dict)
     ]
-    assert query_texts == ["解释agent的记忆系统"]
+    assert query_texts == ["介绍一下react框架"]
+    assert len(command.update["query_items"]) == 1
     assert command.goto == "preprocess_exit"
     assert command.update["routing_decisions"]["preprocess"]["next_node"] == "retrieval_subgraph"
     assert (
@@ -154,6 +157,10 @@ async def test_query_plan_finalize_writes_preprocess_routing_decision() -> None:
     )
     assert command.update["query_plan_result"]["strategy"] == "direct"
     assert command.update["query_plan_diagnostics"]["fallback_reason"] == "none"
+    assert "alias_variants" not in (command.update["query_plan_diagnostics"]["quality_signals"] or [])
+    assert "constraint_variants" not in (
+        command.update["query_plan_diagnostics"]["quality_signals"] or []
+    )
     assert "message_plan" not in command.update
     assert "query_bundle" not in command.update
     assert "prepare_diagnostics" not in command.update
@@ -417,6 +424,11 @@ async def test_transform_query_for_retry_rebuilds_query_plan_outputs(
     assert result["query_plan_result"]["strategy"] == "multi_query"
     assert result["query_plan_diagnostics"]["fallback_reason"] == "none"
     assert len(result["query_items"]) >= 2
+    assert all(
+        str(item.get("query") or "") not in {"平台 SLA", "核心集群"}
+        for item in result["query_items"]
+        if isinstance(item, dict)
+    )
     assert "message_plan" not in result
     assert "query_bundle" not in result
     assert "prepare_diagnostics" not in result

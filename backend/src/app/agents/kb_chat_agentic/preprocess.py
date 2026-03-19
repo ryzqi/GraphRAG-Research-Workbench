@@ -195,29 +195,6 @@ async def _write_complexity_cache(
         await runtime.store.aput(ns, cache_key, wrapped)
 
 
-def _normalize_meta_aliases(state: dict) -> list[str]:
-    meta = state.get("normalized_meta")
-    if not isinstance(meta, dict):
-        return []
-    aliases = meta.get("aliases")
-    if not isinstance(aliases, list):
-        return []
-    deduped: list[str] = []
-    seen: set[str] = set()
-    for alias in aliases:
-        if not isinstance(alias, str):
-            continue
-        value = alias.strip()
-        if not value:
-            continue
-        key = value.casefold()
-        if key in seen:
-            continue
-        deduped.append(value)
-        seen.add(key)
-    return deduped
-
-
 def _dedupe_string_list(values: list[str]) -> list[str]:
     deduped: list[str] = []
     seen: set[str] = set()
@@ -365,61 +342,6 @@ def _constraint_terms(meta: dict[str, Any] | None) -> list[str]:
     )
 
 
-def _compose_query_terms(base_query: str, extra_terms: list[str]) -> str:
-    ordered: list[str] = []
-    seen: set[str] = set()
-    for raw_value in [base_query, *extra_terms]:
-        value = str(raw_value or "").strip()
-        if not value:
-            continue
-        lowered = value.casefold()
-        if lowered in seen:
-            continue
-        ordered.append(value)
-        seen.add(lowered)
-    return " ".join(ordered).strip()
-
-
-def _build_constraint_variants(
-    *,
-    base_query: str,
-    normalized_meta: dict[str, Any] | None,
-) -> list[str]:
-    if not base_query.strip():
-        return []
-    if isinstance(normalized_meta, dict) and normalized_meta.get("constraint_preserved") is False:
-        return []
-
-    groups = _constraint_term_groups(normalized_meta)
-    merged_terms = [
-        *groups["entities"],
-        *groups["time_constraints"],
-        *groups["metric_constraints"],
-        *groups["scope_constraints"],
-    ]
-    if not merged_terms:
-        return []
-
-    candidates: list[str] = []
-    combined = _compose_query_terms(base_query, merged_terms)
-    if combined and combined.casefold() != base_query.casefold():
-        candidates.append(combined)
-
-    focused_terms = [
-        *groups["entities"][:2],
-        *groups["metric_constraints"][:2],
-        *groups["time_constraints"][:1],
-    ]
-    focused = _compose_query_terms(base_query, focused_terms)
-    if focused and focused.casefold() not in {
-        base_query.casefold(),
-        *(item.casefold() for item in candidates),
-    }:
-        candidates.append(focused)
-
-    return candidates[:2]
-
-
 def _effective_prepare_quality_threshold(
     *,
     budget: dict[str, Any],
@@ -548,11 +470,6 @@ def build_prepared_query_bundle(
     normalized_meta: dict[str, Any] | None,
     budget: dict[str, Any],
 ) -> dict[str, Any]:
-    aliases = _normalize_meta_values(normalized_meta, "aliases", limit=8)
-    constraint_variants = _build_constraint_variants(
-        base_query=normalized_query or original_query,
-        normalized_meta=normalized_meta,
-    )
     constraint_terms = _constraint_terms(normalized_meta)
 
     variant_candidates: list[str] = []
@@ -568,17 +485,11 @@ def build_prepared_query_bundle(
         variant_source_by_query[lowered] = source
         variant_candidates.append(value)
 
-    if normalized_query and normalized_query.casefold() != original_query.casefold():
-        _add_variant_candidate(normalized_query, "normalized_query")
     for query in multi_queries:
         _add_variant_candidate(query, "multi_query")
-    for query in aliases:
-        _add_variant_candidate(query, "normalize_alias")
-    for query in constraint_variants:
-        _add_variant_candidate(query, "normalized_meta_constraints")
 
     raw_items = build_query_items(
-        main_query=original_query,
+        main_query=normalized_query or original_query,
         sub_queries=sub_queries,
         sub_query_specs=sub_query_specs,
         variants=_dedupe_string_list(variant_candidates),
@@ -747,12 +658,8 @@ def build_prepared_query_bundle(
         quality_signals.append("has_variants")
     if any(str(row.get("kind")) == "hyde" for row in scored_rows):
         quality_signals.append("has_hyde")
-    if aliases:
-        quality_signals.append("alias_variants")
     if constraint_terms:
         quality_signals.append("constraint_terms_used")
-    if constraint_variants:
-        quality_signals.append("constraint_variants")
     if isinstance(normalized_meta, dict):
         recall_risk = str(normalized_meta.get("recall_risk") or "").strip().lower()
         if recall_risk:
@@ -1882,7 +1789,6 @@ async def generate_variants(
     if not isinstance(query, str) or not query.strip():
         query = _extract_user_input(state)
     deduped: list[str] = []
-    alias_candidates = _normalize_meta_aliases(state)
     success = False
     reason: str | None = None
     try:
@@ -1895,20 +1801,6 @@ async def generate_variants(
         deduped = [query.strip()] if query.strip() else []
         success = False
         reason = "error"
-    if alias_candidates:
-        deduped = [*deduped, *alias_candidates]
-        # dedupe keep order
-        seen: set[str] = set()
-        merged_variants: list[str] = []
-        for item in deduped:
-            if not isinstance(item, str):
-                continue
-            value = item.strip()
-            if not value or value.casefold() in seen:
-                continue
-            merged_variants.append(value)
-            seen.add(value.casefold())
-        deduped = merged_variants
 
     stage_summaries = _merge_stage_summary(
         state,
@@ -1916,7 +1808,7 @@ async def generate_variants(
         {
             "driver": "llm",
             "count": len(deduped),
-            "alias_count": len(alias_candidates),
+            "alias_count": 0,
             "success": success,
             "reason": reason,
             "completed_at": now_iso(),
@@ -1939,11 +1831,15 @@ async def entity_expand(
     if not isinstance(queries, list):
         queries = []
     original = [q for q in queries if isinstance(q, str) and q.strip()]
-    alias_candidates = _normalize_meta_aliases(state)
     normalized_query = state.get("normalized_query")
     if not isinstance(normalized_query, str):
         normalized_query = ""
     normalized_meta = state.get("normalized_meta")
+    alias_candidates = _normalize_meta_values(
+        normalized_meta if isinstance(normalized_meta, dict) else None,
+        "aliases",
+        limit=8,
+    )
     entities = []
     if isinstance(normalized_meta, dict) and isinstance(normalized_meta.get("entities"), list):
         entities = [item for item in normalized_meta["entities"] if isinstance(item, str)]
@@ -1979,19 +1875,6 @@ async def entity_expand(
         reason = "error"
         success = False
         diagnostics = {"fallback_reason": "exception"}
-    if alias_candidates:
-        expanded = [*expanded, *alias_candidates]
-        deduped: list[str] = []
-        seen: set[str] = set()
-        for item in expanded:
-            if not isinstance(item, str):
-                continue
-            value = item.strip()
-            if not value or value.casefold() in seen:
-                continue
-            deduped.append(value)
-            seen.add(value.casefold())
-        expanded = deduped
     expanded = [value for value in expanded if isinstance(value, str) and value.strip()]
     expanded = expanded[:max(1, max_variants)]
     input_count = len(_dedupe_string_list(original))

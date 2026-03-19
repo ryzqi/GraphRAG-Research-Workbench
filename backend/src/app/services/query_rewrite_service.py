@@ -382,7 +382,7 @@ def _rule_normalize_query(query: str, *, alias_limit: int) -> tuple[str, dict[st
     time_constraints = _extract_time_constraints(text)
     metric_constraints = _extract_metric_constraints(text)
     scope_constraints = _extract_scope_constraints(text)
-    aliases = _sanitize_aliases([*aliases, *entities[:2]], limit=alias_limit)
+    aliases = _sanitize_aliases(aliases, limit=alias_limit)
 
     recall_risk = _infer_recall_risk(query=text, alias_count=len(aliases))
     normalized_meta: dict[str, object] = {
@@ -564,8 +564,6 @@ def _entity_seed_queries(
         [
             _normalize_whitespace(normalized_query),
             *_sanitize_aliases(queries, limit=max_candidates),
-            *_sanitize_aliases(aliases, limit=max_candidates),
-            *_sanitize_aliases(entities, limit=max_candidates),
         ]
     )[: max(1, max_candidates)]
 

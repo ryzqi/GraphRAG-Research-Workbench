@@ -177,6 +177,12 @@ def test_report_generate_prompt_matches_runtime_confidence_levels(prompt_loader)
     assert "high" not in template
 
 
+def test_normalize_query_prompt_forbids_generic_intent_phrases_in_aliases(prompt_loader) -> None:
+    template = prompt_loader.get("kb_chat/normalize_query").template
+    assert "不得把意图词" in template
+    assert "问法片段" in template
+
+
 def test_general_and_kb_system_prompts_keep_core_operating_rules(prompt_loader) -> None:
     general_prompt = prompt_loader.get("general_chat/system").template.lower()
     kb_prompt = prompt_loader.get("kb_chat/system").template.lower()

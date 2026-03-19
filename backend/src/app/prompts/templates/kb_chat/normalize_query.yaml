@@ -11,9 +11,10 @@ template: |
   2. 允许做轻量规范化：去噪、术语统一、别名补充、缩写展开。
   3. 不得编造新事实；如果不确定，宁可保守。
   4. aliases 只能放安全的别名、缩写展开或表面形式变化。
-  5. aliases 长度不得超过 {alias_limit}。
-  6. recall_risk 必须是 low / medium / high 之一。
-  7. 如果你担心改写会偏离原问题，请把 drift_risk 设为 true。
+  5. 不得把意图词、问法片段或通用短语写入 aliases，例如“介绍一下”“是什么”“怎么处理”。
+  6. aliases 长度不得超过 {alias_limit}。
+  7. recall_risk 必须是 low / medium / high 之一。
+  8. 如果你担心改写会偏离原问题，请把 drift_risk 设为 true。
 
   输出要求：
   - Return JSON only.

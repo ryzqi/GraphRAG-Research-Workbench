@@ -1,6 +1,10 @@
 from __future__ import annotations
 
-from app.services.query_rewrite_service import build_query_items
+from app.services.query_rewrite_service import (
+    _entity_seed_queries,
+    _rule_normalize_query,
+    build_query_items,
+)
 
 
 def test_build_query_items_drops_invisible_only_candidates() -> None:
@@ -47,3 +51,23 @@ def test_build_query_items_drops_invisible_only_candidates() -> None:
             "hyde_aggregation": "mean_embedding",
         },
     ]
+
+
+def test_rule_normalize_query_does_not_promote_focus_terms_to_aliases() -> None:
+    query, meta = _rule_normalize_query("介绍一下react框架", alias_limit=4)
+
+    assert query == "介绍一下react框架"
+    assert meta["entities"] == ["react", "介绍一下", "框架"]
+    assert meta["aliases"] == []
+
+
+def test_entity_seed_queries_do_not_append_aliases_or_entities() -> None:
+    seed = _entity_seed_queries(
+        normalized_query="介绍一下react框架",
+        queries=["react 框架"],
+        aliases=["react"],
+        entities=["react", "框架"],
+        max_candidates=8,
+    )
+
+    assert seed == ["介绍一下react框架", "react 框架"]
