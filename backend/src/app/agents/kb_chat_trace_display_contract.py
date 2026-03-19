@@ -38,6 +38,15 @@ _REVIEW_CHECK_LABELS: dict[str, str] = {
     "answerability": "可回答性审查",
 }
 
+_AMBIGUITY_REASON_CODE_LABELS: dict[str, str] = {
+    "missing_entity": "缺少具体对象",
+    "missing_scope": "缺少范围约束",
+    "missing_time": "缺少时间范围",
+    "missing_metric": "缺少指标口径",
+    "coref_uncertain": "指代对象不明确",
+    "mixed": "关键信息不完整",
+}
+
 _BUSINESS_LABEL_FALLBACKS: dict[str, str] = {
     "__end__": "结束",
     "end": "结束",
@@ -263,6 +272,34 @@ def _resolve_trace_command(snapshot: Mapping[str, Any]) -> dict[str, Any]:
 def _resolve_routing_decision(snapshot: Mapping[str, Any], phase: str) -> dict[str, Any]:
     routing = _as_dict(snapshot.get("routing_decisions")) or {}
     return _as_dict(routing.get(phase)) or {}
+
+
+def _resolve_ambiguity_reason(
+    *,
+    summary: Mapping[str, Any],
+    reflection: Mapping[str, Any],
+    default_reason: str,
+) -> str:
+    clarification_payload = _as_dict(summary.get("clarification_payload")) or {}
+    model_reason = _pick_text(summary, "model_reason") or _pick_text(
+        clarification_payload, "model_reason"
+    )
+    if model_reason:
+        return model_reason
+
+    reason_code = _pick_text(summary, "reason_code") or _pick_text(
+        clarification_payload, "reason_code"
+    )
+    if reason_code:
+        mapped = _AMBIGUITY_REASON_CODE_LABELS.get(reason_code.strip().lower())
+        if mapped:
+            return mapped
+
+    return (
+        _pick_text(summary, "reason")
+        or _pick_text(reflection, "reason")
+        or default_reason
+    )
 
 
 def _resolve_doc_gate_round(snapshot: Mapping[str, Any]) -> int | None:
@@ -749,7 +786,11 @@ def _resolve_decision_triplet(
         if ambiguous is None:
             ambiguous = _pick_text(reflection, "action") == "clarify"
         decision = "需要澄清" if bool(ambiguous) else "无需澄清"
-        reason = _pick_text(summary, "reason") or _pick_text(reflection, "reason") or default_reason
+        reason = _resolve_ambiguity_reason(
+            summary=summary,
+            reflection=reflection,
+            default_reason=default_reason,
+        )
         return decision, reason, next_node_label
 
     if node_name == "complexity_classify":

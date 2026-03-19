@@ -586,3 +586,57 @@ def test_error_phase_display_preserves_inputs_and_user_readable_error() -> None:
         "label": "错误信息",
         "value": "节点执行失败",
     }
+
+
+def test_ambiguity_check_prefers_model_reason_over_technical_reason() -> None:
+    snapshot = _trace_snapshot_for_node("ambiguity_check")
+    snapshot["stage_summaries"]["ambiguity_check"] = {
+        "ambiguous": True,
+        "reason": "error",
+        "reason_code": "missing_time",
+        "model_reason": "缺少时间范围，继续检索会让答案口径不稳定。",
+    }
+
+    items = _build_node_output_display_items(
+        node_name="ambiguity_check",
+        output_snapshot=snapshot,
+    )
+
+    assert items == [
+        {"key": "decision", "label": "结论", "value": "需要澄清"},
+        {
+            "key": "reason",
+            "label": "原因",
+            "value": "缺少时间范围，继续检索会让答案口径不稳定。",
+        },
+        {
+            "key": "clarification_prompt",
+            "label": "澄清提示",
+            "value": "你更关注原理还是应用场景？",
+        },
+    ]
+
+
+def test_ambiguity_check_falls_back_to_reason_code_when_model_reason_missing() -> None:
+    snapshot = _trace_snapshot_for_node("ambiguity_check")
+    snapshot["stage_summaries"]["ambiguity_check"] = {
+        "ambiguous": True,
+        "reason": "invalid_schema",
+        "reason_code": "missing_time",
+        "model_reason": "",
+    }
+
+    items = _build_node_output_display_items(
+        node_name="ambiguity_check",
+        output_snapshot=snapshot,
+    )
+
+    assert items == [
+        {"key": "decision", "label": "结论", "value": "需要澄清"},
+        {"key": "reason", "label": "原因", "value": "缺少时间范围"},
+        {
+            "key": "clarification_prompt",
+            "label": "澄清提示",
+            "value": "你更关注原理还是应用场景？",
+        },
+    ]
