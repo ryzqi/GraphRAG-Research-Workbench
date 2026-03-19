@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from string import Formatter
 
 import pytest
@@ -46,25 +47,6 @@ STRUCTURED_PROMPT_FIELDS: dict[str, tuple[str, ...]] = {
         "recall_risk",
         "drift_risk",
         "reasoning",
-    ),
-    "kb_chat/query_plan": (
-        "json",
-        "strategy",
-        "reasoning",
-        "items",
-        "fallback_policy",
-        "allow_broaden",
-        "allow_hyde",
-        "allow_retry_rewrite",
-        "kind",
-        "query",
-        "strategy_source",
-        "trigger_reason",
-        "semantic_complete",
-        "preserve_constraints",
-        "retrieval_mode",
-        "priority",
-        "purpose",
     ),
     "kb_chat/context_merge": (
         "json",
@@ -174,6 +156,19 @@ def test_all_prompt_templates_have_renderable_variable_contracts(prompt_loader) 
             rendered_with_examples = prompt_loader.render_with_few_shot(key, **kwargs)
             assert "示例输入" in rendered_with_examples
             assert "示例输出" in rendered_with_examples
+
+
+def test_complexity_classify_prompt_includes_diverse_route_examples_and_v5_contract(
+    prompt_loader,
+) -> None:
+    template = prompt_loader.get("kb_chat/complexity_classify")
+    assert "kb_chat_complexity_classify_v5" in template.template
+    assert template.few_shot_examples, "complexity_classify should use few-shot examples"
+
+    strategies = {
+        json.loads(str(example["output"]))["strategy"] for example in template.few_shot_examples
+    }
+    assert {"direct", "multi_query", "decomposition"}.issubset(strategies)
 
 
 def test_report_generate_prompt_matches_runtime_confidence_levels(prompt_loader) -> None:

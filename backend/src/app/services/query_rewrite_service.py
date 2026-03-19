@@ -22,6 +22,7 @@ from pydantic import BaseModel, ValidationError
 from app.agents.kb_chat_agentic.schemas import (
     AmbiguityDecision,
     ClarificationSlotDecision,
+    COMPLEXITY_CLASSIFY_DECISION_VERSION,
     ComplexityDecision,
     DecompositionDecision,
     EntityExpandDecision,
@@ -1462,7 +1463,7 @@ class QueryRewriteService:
                 success=False,
                 confidence=0.0,
                 risk_flags=[],
-                decision_version="kb_chat_complexity_classify_v4",
+                decision_version=COMPLEXITY_CLASSIFY_DECISION_VERSION,
                 latency_ms=0,
             )
 
@@ -1487,7 +1488,7 @@ class QueryRewriteService:
             risk_flags = _sanitize_risk_flags(payload.risk_flags)
             decision_version = _normalize_whitespace(payload.decision_version)
             if not decision_version:
-                decision_version = "kb_chat_complexity_classify_v4"
+                decision_version = COMPLEXITY_CLASSIFY_DECISION_VERSION
             return ComplexityRouteResult(
                 strategy=strategy,
                 success=True,
@@ -1504,7 +1505,7 @@ class QueryRewriteService:
             success=False,
             confidence=0.0,
             risk_flags=["llm_failed_fallback_direct"],
-            decision_version="kb_chat_complexity_classify_v4",
+            decision_version=COMPLEXITY_CLASSIFY_DECISION_VERSION,
             latency_ms=latency_ms,
         )
 

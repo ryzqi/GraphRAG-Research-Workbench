@@ -20,7 +20,7 @@ _NON_ANSWER_STREAM_NODES = {
     "generate_variants",
     "entity_expand",
     "hyde",
-    "prepare_messages",
+    "query_plan_finalize",
     "retrieve",
     "answer_repair",
     "transform_query",

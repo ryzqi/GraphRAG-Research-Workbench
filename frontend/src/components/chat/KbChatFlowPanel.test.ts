@@ -8,7 +8,7 @@ const MINIMAL_SCHEMA = {
   version: '1.1',
   hash: 'schema-hash',
   nodes: [
-    { id: 'complexity_classify', label: '复杂度分类', phase: 'route', order: 5 },
+    { id: 'query_plan', label: '查询规划', phase: 'route', order: 5 },
     { id: 'hyde', label: 'HyDE 生成', phase: 'enhance', order: 10 },
     { id: 'query_normalize', label: '问题规范', phase: 'preprocess', order: 4 },
     { id: 'preprocess_subgraph', label: '预处理子图', phase: 'preprocess', order: 0 },
@@ -42,8 +42,8 @@ describe('KbChatFlowPanel', () => {
         traceExecutions: [
           {
             execution_id: 'task-1',
-            node_name: 'complexity_classify',
-            node_label: '复杂度分类',
+            node_name: 'query_plan',
+            node_label: '查询规划',
             status: 'completed',
             started_at: '2026-01-01T00:00:01.000Z',
             updated_at: '2026-01-01T00:00:02.000Z',
@@ -95,8 +95,8 @@ describe('KbChatFlowPanel', () => {
         traceExecutions: [
           {
             execution_id: 'task-1',
-            node_name: 'complexity_classify',
-            node_label: '复杂度分类',
+            node_name: 'query_plan',
+            node_label: '查询规划',
             status: 'completed',
             started_at: '2026-01-01T00:00:01.000Z',
             updated_at: '2026-01-01T00:00:02.000Z',
@@ -107,7 +107,7 @@ describe('KbChatFlowPanel', () => {
       })
     );
 
-    expect(html).toContain('复杂度分类');
+    expect(html).toContain('查询规划');
     expect(html).not.toContain('结论：无需澄清');
     expect(html).not.toContain('开始');
     expect(html).not.toContain('更新');
@@ -121,11 +121,11 @@ describe('KbChatFlowPanel', () => {
         runState: {
           run_id: 'run-1',
           run_status: 'running',
-          current_step_id: 'complexity_classify',
-          current_step_label: '复杂度分类',
+          current_step_id: 'query_plan',
+          current_step_label: '查询规划',
           current_step_status: 'started',
-          current_node: 'complexity_classify',
-          active_path: ['complexity_classify'],
+          current_node: 'query_plan',
+          active_path: ['query_plan'],
           attempt: 1,
           message: null,
           progress: { completed: 50, total: 100, percent: 50 },
@@ -134,8 +134,8 @@ describe('KbChatFlowPanel', () => {
         traceExecutions: [
           {
             execution_id: 'task-1',
-            node_name: 'complexity_classify',
-            node_label: '复杂度分类',
+            node_name: 'query_plan',
+            node_label: '查询规划',
             status: 'started',
             started_at: '2026-01-01T00:00:01.000Z',
             updated_at: '2026-01-01T00:00:02.000Z',
@@ -155,11 +155,11 @@ describe('KbChatFlowPanel', () => {
         runState: {
           run_id: 'run-1',
           run_status: 'running',
-          current_step_id: 'complexity_classify',
-          current_step_label: '复杂度分类',
+          current_step_id: 'query_plan',
+          current_step_label: '查询规划',
           current_step_status: 'started',
-          current_node: 'complexity_classify',
-          active_path: ['complexity_classify'],
+          current_node: 'query_plan',
+          active_path: ['query_plan'],
           attempt: 1,
           message: null,
           progress: { completed: 50, total: 100, percent: 50 },
@@ -176,8 +176,8 @@ describe('KbChatFlowPanel', () => {
           },
           {
             execution_id: 'task-2',
-            node_name: 'complexity_classify',
-            node_label: '复杂度分类',
+            node_name: 'query_plan',
+            node_label: '查询规划',
             status: 'started',
             started_at: '2026-01-01T00:00:03.000Z',
             updated_at: '2026-01-01T00:00:04.000Z',
@@ -187,7 +187,7 @@ describe('KbChatFlowPanel', () => {
     );
 
     expect(html).toContain('上下文合并');
-    expect(html).toContain('复杂度分类');
+    expect(html).toContain('查询规划');
     expect(html).not.toContain('阶段1 理解问题');
     expect(html).not.toContain('阶段2 选择路径');
     expect(html).not.toContain('执行实例');
@@ -200,8 +200,8 @@ describe('KbChatFlowPanel', () => {
         traceExecutions: [
           {
             execution_id: 'task-1',
-            node_name: 'complexity_classify',
-            node_label: '复杂度分类',
+            node_name: 'query_plan',
+            node_label: '查询规划',
             status: 'completed',
             started_at: '2026-01-01T00:00:01.000Z',
             updated_at: '2026-01-01T00:00:02.000Z',
@@ -209,8 +209,8 @@ describe('KbChatFlowPanel', () => {
           },
           {
             execution_id: 'task-2',
-            node_name: 'complexity_classify',
-            node_label: '复杂度分类',
+            node_name: 'query_plan',
+            node_label: '查询规划',
             status: 'completed',
             started_at: '2026-01-01T00:00:03.000Z',
             updated_at: '2026-01-01T00:00:04.000Z',
@@ -220,7 +220,7 @@ describe('KbChatFlowPanel', () => {
       })
     );
 
-    expect(html.match(/复杂度分类/g)?.length).toBeGreaterThanOrEqual(2);
+    expect(html.match(/查询规划/g)?.length).toBeGreaterThanOrEqual(2);
     expect(html).not.toContain('结论：复杂问题');
     expect(html).not.toContain('结论：重新判定复杂问题');
   });

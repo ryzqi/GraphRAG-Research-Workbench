@@ -13,13 +13,14 @@ describe('kbNodeLabels', () => {
     expect(resolveKbNodeLabel('doc_gate_route', null)).toBe('doc_gate_route');
     expect(resolveKbNodeLabel('confidence_calibrate', null)).toBe('confidence_calibrate');
     expect(resolveKbNodeLabel('complexity_classify', null)).toBe('complexity_classify');
-    expect(resolveKbNodeLabel('hyde', null)).toBe('hyde');
     expect(resolveKbNodeLabel('prepare_messages', null)).toBe('prepare_messages');
   });
 
   it('keeps labels for nodes that still belong to the current flowchart', () => {
     expect(resolveKbNodeLabel('query_plan', null)).toBe('查询规划');
     expect(resolveKbNodeLabel('resolve_reference', null)).toBe('指代消解');
+    expect(resolveKbNodeLabel('hyde', null)).toBe('假设文档扩展');
+    expect(resolveKbNodeLabel('query_plan_finalize', null)).toBe('查询定稿');
   });
 
   it('resolves labels for control and dispatch nodes from the shared catalog', () => {

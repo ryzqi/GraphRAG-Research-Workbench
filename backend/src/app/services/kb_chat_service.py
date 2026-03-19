@@ -2095,12 +2095,11 @@ class KbChatService:
             "ambiguity_check": "歧义检测",
             "query_normalize": "问题规范化",
             "query_plan": "查询规划",
-            "complexity_classify": "复杂度分类",
             "decomposition": "问题拆解",
             "generate_variants": "多路查询扩展",
             "entity_expand": "实体扩展",
             "hyde": "假设文档扩展",
-            "prepare_messages": "检索准备",
+            "query_plan_finalize": "查询定稿",
             "retrieval": "检索融合",
             "answer_subgraph": "答案子图",
             "generator": "答案生成",
@@ -2268,48 +2267,24 @@ class KbChatService:
                 if value is not None:
                     io_summary[key] = value
 
-        if node == "prepare_messages" and isinstance(node_summary, dict):
-            message_plan = (
-                node_summary.get("message_plan")
-                if isinstance(node_summary.get("message_plan"), dict)
-                else {}
-            )
-            query_bundle = (
-                node_summary.get("query_bundle")
-                if isinstance(node_summary.get("query_bundle"), dict)
-                else {}
-            )
-            diagnostics = (
-                node_summary.get("diagnostics")
-                if isinstance(node_summary.get("diagnostics"), dict)
-                else {}
-            )
-            budget = (
-                message_plan.get("budget")
-                if isinstance(message_plan.get("budget"), dict)
-                else {}
-            )
+        if node == "query_plan" and isinstance(node_summary, dict):
             for key, value in (
-                ("message_plan_strategy", message_plan.get("strategy")),
-                ("message_plan_candidate_count", message_plan.get("candidate_count")),
-                ("message_plan_selected_count", message_plan.get("selected_count")),
-                ("message_plan_dropped_count", message_plan.get("dropped_count")),
-                ("message_plan_max_candidates", budget.get("max_candidates")),
-                ("message_plan_min_queries", budget.get("min_queries")),
-                ("query_bundle_items_count", query_bundle.get("items_count")),
-                ("query_bundle_kind_breakdown", query_bundle.get("kind_breakdown")),
-                ("query_bundle_dedup_stats", query_bundle.get("dedup_stats")),
-                ("fallback_reason", diagnostics.get("fallback_reason")),
-                ("quality_signals", diagnostics.get("quality_signals")),
+                ("strategy", node_summary.get("strategy")),
+                ("confidence", node_summary.get("confidence")),
+                ("next_node", node_summary.get("next_node")),
+                ("recall_risk", node_summary.get("recall_risk")),
             ):
                 if value is not None:
                     io_summary[key] = value
 
-        if node == "query_plan" and isinstance(node_summary, dict):
+        if node == "query_plan_finalize" and isinstance(node_summary, dict):
             for key, value in (
                 ("query_count", node_summary.get("query_count")),
+                ("candidate_count", node_summary.get("candidate_count")),
+                ("selected_count", node_summary.get("selected_count")),
                 ("fallback_reason", node_summary.get("fallback_reason")),
                 ("rejection_counts", node_summary.get("rejection_counts")),
+                ("kind_breakdown", node_summary.get("kind_breakdown")),
             ):
                 if value is not None:
                     io_summary[key] = value
@@ -2340,12 +2315,6 @@ class KbChatService:
                 io_summary["hyde_docs_count"] = len(
                     [doc for doc in hyde_docs if isinstance(doc, str) and doc.strip()]
                 )
-
-        if node == "prepare_messages":
-            query_items = update.get("query_items")
-            if isinstance(query_items, list):
-                io_summary["query_bundle_items_count"] = len(query_items)
-                io_summary["query_count"] = len(query_items)
 
         if node == "retrieve":
             metrics = update.get("metrics")

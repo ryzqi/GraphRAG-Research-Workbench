@@ -109,13 +109,14 @@ def test_schema_drawable_export_falls_back_to_builder_when_compiled_graph_is_tru
     node_ids = {node["id"] for node in drawable["nodes"]}
 
     assert "query_plan" in node_ids
+    assert "decomposition" in node_ids
+    assert "generate_variants" in node_ids
+    assert "entity_expand" in node_ids
+    assert "hyde" in node_ids
+    assert "query_plan_finalize" in node_ids
     assert "merge_context" in node_ids
     assert {
         "complexity_classify",
         "generate_variants_mod",
-        "decomposition",
-        "generate_variants",
-        "entity_expand",
-        "hyde",
         "prepare_messages",
     }.isdisjoint(node_ids)

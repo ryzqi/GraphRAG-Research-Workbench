@@ -29,12 +29,17 @@ def test_query_plan_metadata_replaces_retired_preprocess_enhancement_nodes() -> 
     metadata = kb_chat_trace_nodes.KB_CHAT_NODE_METADATA
 
     assert metadata["query_plan"]["label"] == "查询规划"
+    assert metadata["query_plan"]["phase"] == "route"
+    assert metadata["query_plan_finalize"]["label"] == "查询定稿"
     assert {
-        "complexity_classify",
-        "generate_variants_mod",
         "decomposition",
         "generate_variants",
         "entity_expand",
         "hyde",
+        "query_plan_finalize",
+    }.issubset(metadata)
+    assert {
+        "complexity_classify",
+        "generate_variants_mod",
         "prepare_messages",
     }.isdisjoint(metadata)

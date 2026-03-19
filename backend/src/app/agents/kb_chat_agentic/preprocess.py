@@ -12,6 +12,7 @@ import hashlib
 import json
 import re
 import time
+from types import SimpleNamespace
 from typing import Any
 
 from langchain.messages import AIMessage, HumanMessage, SystemMessage
@@ -25,8 +26,8 @@ from app.agents.kb_chat_memory import (
 )
 from app.core.settings import Settings
 from app.integrations.chat_model_factory import create_chat_model
-from app.services.kb_query_planner_service import KbQueryPlannerService
 from app.services.query_rewrite_service import (
+    COMPLEXITY_CLASSIFY_DECISION_VERSION,
     HYDE_NUM_HYPOTHESES,
     QueryRewriteService,
     build_query_items,
@@ -34,7 +35,6 @@ from app.services.query_rewrite_service import (
 from app.utils.token_counter import count_tokens_approximately
 from app.agents.kb_chat_agentic_state import (
     AmbiguityCheckInput,
-    ComplexityClassifyInput,
     CorefRewriteInput,
     DecompositionInput,
     EntityExpandInput,
@@ -42,8 +42,8 @@ from app.agents.kb_chat_agentic_state import (
     HydeInput,
     MergeContextInput,
     NormalizeRewriteInput,
-    PrepareMessagesInput,
     QueryPlanInput,
+    QueryPlanFinalizeInput,
     merge_routing_decision,
 )
 
@@ -129,7 +129,7 @@ def _complexity_cache_key(
         "recall_risk": recall_risk.strip().lower(),
         "has_multi_target": bool(has_multi_target),
         "is_comparison": bool(is_comparison),
-        "decision_version": decision_version.strip() or "kb_chat_complexity_classify_v4",
+        "decision_version": decision_version.strip() or COMPLEXITY_CLASSIFY_DECISION_VERSION,
     }
     raw = json.dumps(payload, ensure_ascii=False, sort_keys=True)
     digest = hashlib.sha1(raw.encode("utf-8")).hexdigest()
@@ -1552,13 +1552,54 @@ async def normalize_rewrite(
     }
 
 
-async def complexity_classify(
-    state: ComplexityClassifyInput,
+def _default_decomposition_plan(query: str = "") -> dict[str, Any]:
+    normalized = query.strip()
+    return {
+        "strategy": "direct",
+        "version": "kb_chat_decomposition_plan_v2",
+        "sub_query_specs": [
+            {
+                "query": normalized,
+                "priority": 1,
+                "coverage_tags": [],
+                "purpose": "canonical",
+            }
+        ]
+        if normalized
+        else [],
+        "risk_flags": [],
+        "reasoning": "",
+    }
+
+
+def _resolve_query_plan_next_node(*, strategy: str, settings: Settings) -> str:
+    if strategy == "decomposition":
+        if bool(getattr(settings, "kb_chat_decomposition_enabled", True)):
+            return "decomposition"
+        if bool(getattr(settings, "kb_chat_multi_query_enabled", True)):
+            return "generate_variants"
+        return "entity_expand"
+    if strategy == "multi_query":
+        if bool(getattr(settings, "kb_chat_multi_query_enabled", True)):
+            return "generate_variants"
+        return "entity_expand"
+    return "query_plan_finalize"
+
+
+def _complexity_level_for_strategy(strategy: str) -> str:
+    if strategy == "decomposition":
+        return "complex"
+    if strategy == "multi_query":
+        return "moderate"
+    return "simple"
+
+
+async def _classify_query_strategy(
+    *,
+    state: dict[str, Any],
     settings: Settings,
     runtime: Runtime[Any] | None = None,
-) -> Command[str]:
-    """Decide preprocess strategy: direct / decomposition / multi-query."""
-    start = time.perf_counter()
+) -> dict[str, Any]:
     query = state.get("normalized_query")
     if not isinstance(query, str) or not query.strip():
         query = _extract_user_input(state)
@@ -1568,7 +1609,7 @@ async def complexity_classify(
     reasoning: str | None = None
     confidence = 0.0
     risk_flags: list[str] = []
-    decision_version = "kb_chat_complexity_classify_v4"
+    decision_version = COMPLEXITY_CLASSIFY_DECISION_VERSION
     cache_hit = False
     cache_status = "disabled"
     cache_key_version = "v1"
@@ -1613,8 +1654,8 @@ async def complexity_classify(
                     4,
                 )
                 decision_version = str(
-                    cached.get("decision_version") or "kb_chat_complexity_classify_v4"
-                ).strip() or "kb_chat_complexity_classify_v4"
+                    cached.get("decision_version") or COMPLEXITY_CLASSIFY_DECISION_VERSION
+                ).strip() or COMPLEXITY_CLASSIFY_DECISION_VERSION
                 raw_flags = (
                     cached.get("risk_flags")
                     if isinstance(cached.get("risk_flags"), list)
@@ -1648,15 +1689,11 @@ async def complexity_classify(
             reasoning = decision.reasoning
             confidence = round(max(0.0, min(1.0, float(decision.confidence or 0.0))), 4)
             decision_version = str(
-                decision.decision_version or "kb_chat_complexity_classify_v4"
+                decision.decision_version or COMPLEXITY_CLASSIFY_DECISION_VERSION
             ).strip()
             if not decision_version:
-                decision_version = "kb_chat_complexity_classify_v4"
-            raw_flags = (
-                decision.risk_flags
-                if isinstance(decision.risk_flags, list)
-                else []
-            )
+                decision_version = COMPLEXITY_CLASSIFY_DECISION_VERSION
+            raw_flags = decision.risk_flags if isinstance(decision.risk_flags, list) else []
             risk_flags = [
                 str(flag).strip()
                 for flag in raw_flags
@@ -1689,53 +1726,77 @@ async def complexity_classify(
                 if cache_status in {"miss", "no_store", "disabled"}:
                     cache_status = "write_error"
 
-    route_map = {
-        "decomposition": "decomposition",
-        "multi_query": "generate_variants",
-        "direct": "prepare_messages",
+    return {
+        "strategy": strategy,
+        "success": success,
+        "reasoning": reasoning,
+        "confidence": confidence,
+        "risk_flags": risk_flags,
+        "decision_version": decision_version,
+        "recall_risk": recall_risk,
+        "has_multi_target": has_multi_target,
+        "is_comparison": is_comparison,
+        "cache_hit": cache_hit,
+        "cache_status": cache_status,
+        "cache_key_version": cache_key_version,
     }
-    goto = route_map.get(strategy, route_map["direct"])
 
+
+async def query_plan(
+    state: QueryPlanInput,
+    runtime: Runtime[Any],
+    settings: Settings,
+) -> Command[str]:
+    """Classify query complexity and route into the live Scheme B enhancement chain."""
+
+    start = time.perf_counter()
+    decision = await _classify_query_strategy(
+        state=state,
+        settings=settings,
+        runtime=runtime,
+    )
+    strategy = str(decision.get("strategy") or "direct")
+    next_node = _resolve_query_plan_next_node(strategy=strategy, settings=settings)
     stage_summaries = _merge_stage_summary(
         state,
-        "complexity_classify",
+        "query_plan",
         {
             "strategy": strategy,
-            "confidence": confidence,
-            "risk_flags": risk_flags,
-            "decision_version": decision_version,
-            "recall_risk": recall_risk,
-            "has_multi_target": has_multi_target,
-            "is_comparison": is_comparison,
-            "reasoning": reasoning,
-            "success": success,
-            "goto": goto,
-            "cache_hit": cache_hit,
-            "complexity_cache_status": cache_status,
-            "cache_key_version": cache_key_version,
-            "completed_at": now_iso(),
+            "confidence": float(decision.get("confidence") or 0.0),
+            "risk_flags": decision.get("risk_flags") or [],
+            "decision_version": decision.get("decision_version"),
+            "recall_risk": decision.get("recall_risk"),
+            "has_multi_target": decision.get("has_multi_target"),
+            "is_comparison": decision.get("is_comparison"),
+            "reasoning": decision.get("reasoning"),
+            "success": bool(decision.get("success")),
+            "next_node": next_node,
+            "cache_hit": bool(decision.get("cache_hit")),
+            "complexity_cache_status": decision.get("cache_status"),
+            "cache_key_version": decision.get("cache_key_version"),
             "latency_ms": int((time.perf_counter() - start) * 1000),
+            "completed_at": now_iso(),
         },
         settings=settings,
     )
-
-    # Reset fan-out artifacts before entering the selected branch.
+    normalized = state.get("normalized_query")
+    normalized_query = normalized.strip() if isinstance(normalized, str) else ""
     updates: dict[str, Any] = {
         "query_strategy": strategy,
-        "query_strategy_confidence": confidence,
-        "query_strategy_signals": risk_flags,
+        "complexity_level": _complexity_level_for_strategy(strategy),
+        "query_strategy_confidence": float(decision.get("confidence") or 0.0),
+        "query_strategy_signals": decision.get("risk_flags") or [],
         "sub_queries": [],
         "multi_queries": [],
-        "decomposition_plan": {
-            "strategy": "direct",
-            "version": "kb_chat_decomposition_plan_v2",
-            "sub_query_specs": [],
-            "risk_flags": [],
-            "reasoning": "",
-        },
+        "hyde_docs": [],
+        "decomposition_plan": _default_decomposition_plan(normalized_query),
+        "entity_expand_meta": {},
+        "query_items": [],
+        "query_plan_result": {},
+        "query_plan_diagnostics": {},
         "stage_summaries": stage_summaries,
     }
-    return Command(update=updates, goto=goto)
+    return Command(update=updates, goto=next_node)
 
 
 async def decomposition(state: DecompositionInput, settings: Settings) -> dict[str, Any]:
@@ -1958,6 +2019,11 @@ async def entity_expand(
         "fallback_reason": fallback_reason or reason,
         "drift_guardrail_triggered": pruned_drift > 0,
     }
+    next_node = (
+        "hyde"
+        if bool(getattr(settings, "kb_chat_hyde_enabled", True))
+        else "query_plan_finalize"
+    )
     stage_summaries = _merge_stage_summary(
         state,
         "entity_expand",
@@ -1976,6 +2042,8 @@ async def entity_expand(
             "count": expanded_count,
             "min_confidence": min_confidence,
             "alias_count": len(alias_candidates),
+            "next_node": next_node,
+            "hyde_enabled": next_node == "hyde",
             "completed_at": now_iso(),
             "latency_ms": int((time.perf_counter() - start) * 1000),
         },
@@ -1987,7 +2055,7 @@ async def entity_expand(
             "entity_expand_meta": entity_expand_meta,
             "stage_summaries": stage_summaries,
         },
-        goto="hyde",
+        goto=next_node,
     )
 
 
@@ -2034,112 +2102,7 @@ async def hyde(state: HydeInput, settings: Settings) -> dict[str, Any]:
     return {"hyde_docs": hyde_docs, "stage_summaries": stage_summaries}
 
 
-async def query_plan(
-    state: QueryPlanInput,
-    runtime: Runtime[Any],
-    settings: Settings,
-) -> Command[str]:
-    """Plan retrieval-ready query items and route to retrieval."""
-
-    _ = runtime
-    start = time.perf_counter()
-    normalized = state.get("normalized_query")
-    if not isinstance(normalized, str) or not normalized.strip():
-        normalized = state.get("resolved_query")
-    if not isinstance(normalized, str) or not normalized.strip():
-        normalized = state.get("coref_query")
-    if not isinstance(normalized, str) or not normalized.strip():
-        normalized = _extract_user_input(state)
-    normalized = normalized.strip()
-
-    normalized_meta = _as_dict(state.get("normalized_meta")) or {}
-    planner = KbQueryPlannerService(settings=settings)
-    result = await planner.plan(
-        normalized_query=normalized,
-        normalized_meta=normalized_meta,
-    )
-    latency_ms = int((time.perf_counter() - start) * 1000)
-    query_plan_result = ensure_json_safe(
-        {
-            "strategy": result.strategy,
-            "reasoning": result.reasoning,
-            "fallback_policy": result.fallback_policy,
-        },
-        settings=settings,
-        label="query_plan_result",
-    )
-    query_plan_diagnostics = ensure_json_safe(
-        {
-            **result.diagnostics,
-            "timing": {"latency_ms": latency_ms},
-        },
-        settings=settings,
-        label="query_plan_diagnostics",
-    )
-    query_items = ensure_json_safe(result.items, settings=settings, label="query_items")
-    stage_summaries = _merge_stage_summary(
-        state,
-        "query_plan",
-        {
-            "strategy": result.strategy,
-            "query_count": len(result.items),
-            "rejection_counts": query_plan_diagnostics.get("rejection_counts") or {},
-            "fallback_reason": query_plan_diagnostics.get("fallback_reason") or "none",
-            "latency_ms": latency_ms,
-            "completed_at": now_iso(),
-        },
-        settings=settings,
-    )
-    update: dict[str, Any] = {
-        "query_strategy": result.strategy,
-        "query_plan_result": query_plan_result,
-        "query_plan_diagnostics": query_plan_diagnostics,
-        "query_items": query_items,
-        "stage_summaries": stage_summaries,
-    }
-    update = {
-        **update,
-        **merge_routing_decision(
-            state,
-            "preprocess",
-            {
-                "phase": "preprocess",
-                "next_node": "retrieval_subgraph",
-                "action": "none",
-                "reason": "query_planned",
-                "reason_code": "query_planned",
-                "decision_source": "query_plan",
-                "score": 1.0,
-                "completed_at": now_iso(),
-            },
-            updates=update,
-        ),
-    }
-    return Command(update=update, goto="dispatch_subqueries")
-
-
-# Legacy query-enhancement nodes below are retained only for compatibility
-# tests / rollback inspection. The live preprocess graph no longer registers
-# them after the `query_plan` cutover.
-async def prepare_messages(
-    state: PrepareMessagesInput,
-    runtime: Runtime[Any],
-    settings: Settings,
-) -> Command[str]:
-    """Assemble retrieval query bundle and route with Command.
-
-    This node keeps query-bundle planning explicit for observability:
-    - message_plan: candidate scoring + budget decisions
-    - query_bundle: selected query_items + dedupe statistics
-    - prepare_diagnostics: quality signals + fallback reason
-    """
-
-    start = time.perf_counter()
-    normalized = state.get("normalized_query")
-    if not isinstance(normalized, str) or not normalized.strip():
-        normalized = _extract_user_input(state)
-    normalized = normalized.strip()
-
+def _resolve_query_plan_original_query(state: dict[str, Any]) -> str:
     original_query = state.get("resolved_query")
     if not isinstance(original_query, str) or not original_query.strip():
         original_query = state.get("coref_query")
@@ -2147,8 +2110,51 @@ async def prepare_messages(
         original_query = state.get("rewrite_input_query")
     if not isinstance(original_query, str) or not original_query.strip():
         original_query = _extract_user_input(state)
-    original_query = original_query.strip() or normalized
+    return original_query.strip()
 
+
+def _resolve_query_plan_normalized_query(state: dict[str, Any]) -> str:
+    normalized = state.get("normalized_query")
+    if not isinstance(normalized, str) or not normalized.strip():
+        normalized = state.get("resolved_query")
+    if not isinstance(normalized, str) or not normalized.strip():
+        normalized = state.get("coref_query")
+    if not isinstance(normalized, str) or not normalized.strip():
+        normalized = _extract_user_input(state)
+    return normalized.strip()
+
+
+def _build_query_plan_fallback_policy(
+    *,
+    strategy: str,
+    normalized_meta: dict[str, Any],
+    settings: Settings,
+) -> dict[str, bool]:
+    recall_risk = str(normalized_meta.get("recall_risk") or "medium").strip().lower()
+    allow_broaden = strategy in {"decomposition", "multi_query"} or recall_risk in {
+        "medium",
+        "high",
+    }
+    allow_hyde = bool(getattr(settings, "kb_chat_hyde_enabled", True)) and (
+        strategy in {"decomposition", "multi_query"} or recall_risk == "high"
+    )
+    return {
+        "allow_broaden": allow_broaden,
+        "allow_hyde": allow_hyde,
+        "allow_retry_rewrite": True,
+    }
+
+
+def _build_query_plan_finalize_update(
+    *,
+    state: dict[str, Any],
+    runtime: Runtime[Any],
+    settings: Settings,
+    latency_ms: int,
+) -> dict[str, Any]:
+    normalized = _resolve_query_plan_normalized_query(state)
+    original_query = _resolve_query_plan_original_query(state) or normalized
+    normalized_meta = _as_dict(state.get("normalized_meta")) or {}
     sub_queries_raw = state.get("sub_queries")
     if not isinstance(sub_queries_raw, list):
         sub_queries_raw = []
@@ -2165,11 +2171,8 @@ async def prepare_messages(
     multi_queries_raw = state.get("multi_queries")
     if not isinstance(multi_queries_raw, list):
         multi_queries_raw = []
-    multi_queries = [
-        query for query in multi_queries_raw if isinstance(query, str) and query.strip()
-    ]
+    multi_queries = [query for query in multi_queries_raw if isinstance(query, str) and query.strip()]
 
-    normalized_meta = _as_dict(state.get("normalized_meta")) or {}
     hyde_docs_raw = state.get("hyde_docs")
     if not isinstance(hyde_docs_raw, list):
         hyde_docs_raw = []
@@ -2188,8 +2191,6 @@ async def prepare_messages(
         normalized_meta=normalized_meta,
         budget=budget,
     )
-
-    latency_ms = int((time.perf_counter() - start) * 1000)
     prepare_diagnostics = {
         **(_as_dict(bundle.get("prepare_diagnostics")) or {}),
         "timing": {"latency_ms": latency_ms},
@@ -2200,54 +2201,104 @@ async def prepare_messages(
         bundle.get("query_items") if isinstance(bundle.get("query_items"), list) else []
     )
     fallback_reason = str(prepare_diagnostics.get("fallback_reason") or "none")
-
+    dedup_stats = _as_dict(query_bundle.get("dedup_stats")) or {}
+    rejection_counts = {
+        "fragment_rejected": 0,
+        "duplicate_rejected": int(dedup_stats.get("duplicate_dropped") or 0),
+        "low_quality_rejected": int(dedup_stats.get("low_quality_dropped") or 0),
+        "over_budget_rejected": sum(
+            1
+            for item in message_plan.get("dropped") or []
+            if isinstance(item, dict) and str(item.get("reason") or "") == "over_budget"
+        ),
+    }
+    query_plan_result = ensure_json_safe(
+        {
+            "strategy": strategy,
+            "reasoning": (
+                _as_dict(state.get("stage_summaries") or {}).get("query_plan", {}).get("reasoning")
+                if isinstance(_as_dict(state.get("stage_summaries") or {}).get("query_plan"), dict)
+                else ""
+            )
+            or "",
+            "fallback_policy": _build_query_plan_fallback_policy(
+                strategy=strategy,
+                normalized_meta=normalized_meta,
+                settings=settings,
+            ),
+        },
+        settings=settings,
+        label="query_plan_result",
+    )
+    query_plan_diagnostics = ensure_json_safe(
+        {
+            "candidate_count": len(message_plan.get("candidates") or []),
+            "selected_count": len(query_items),
+            "fallback_reason": fallback_reason,
+            "latency_ms": latency_ms,
+            "rejection_counts": rejection_counts,
+            "quality_signals": prepare_diagnostics.get("quality_signals") or [],
+            "kind_breakdown": query_bundle.get("kind_breakdown") or {},
+            "budget": _as_dict(message_plan.get("budget")) or budget,
+        },
+        settings=settings,
+        label="query_plan_diagnostics",
+    )
+    query_items = ensure_json_safe(query_items, settings=settings, label="query_items")
     stage_summaries = _merge_stage_summary(
         state,
-        "prepare_messages",
+        "query_plan_finalize",
         {
-            "message_plan": {
-                "strategy": message_plan.get("strategy") or strategy,
-                "candidate_count": len(message_plan.get("candidates") or []),
-                "selected_count": len(message_plan.get("selected") or []),
-                "dropped_count": len(message_plan.get("dropped") or []),
-                "original_query": original_query,
-                "normalized_query": normalized,
-                "budget": _as_dict(message_plan.get("budget")) or budget,
-            },
-            "query_bundle": {
-                "items_count": len(query_items),
-                "kind_breakdown": query_bundle.get("kind_breakdown") or {},
-                "dedup_stats": query_bundle.get("dedup_stats") or {},
-            },
-            "diagnostics": {
-                "quality_signals": prepare_diagnostics.get("quality_signals") or [],
-                "fallback_reason": fallback_reason,
-                "latency_ms": latency_ms,
-                "completed_at": now_iso(),
-            },
+            "strategy": strategy,
+            "query_count": len(query_items),
+            "candidate_count": len(message_plan.get("candidates") or []),
+            "selected_count": len(query_items),
+            "rejection_counts": query_plan_diagnostics.get("rejection_counts") or {},
+            "fallback_reason": fallback_reason,
+            "kind_breakdown": query_bundle.get("kind_breakdown") or {},
+            "latency_ms": latency_ms,
+            "completed_at": now_iso(),
         },
         settings=settings,
     )
-
-    update: dict[str, Any] = {
+    return {
+        "query_strategy": strategy,
+        "query_plan_result": query_plan_result,
+        "query_plan_diagnostics": query_plan_diagnostics,
         "query_items": query_items,
-        "query_bundle": query_bundle,
-        "message_plan": message_plan,
-        "prepare_diagnostics": prepare_diagnostics,
         "stage_summaries": stage_summaries,
     }
 
-    goto = "dispatch_subqueries"
+async def query_plan_finalize(
+    state: QueryPlanFinalizeInput,
+    runtime: Runtime[Any],
+    settings: Settings,
+) -> Command[str]:
+    """Finalize Scheme B query planning into retrieval-ready query_items."""
+
+    start = time.perf_counter()
+    update = _build_query_plan_finalize_update(
+        state=state,
+        runtime=runtime,
+        settings=settings,
+        latency_ms=int((time.perf_counter() - start) * 1000),
+    )
+    fallback_reason = str(update["query_plan_diagnostics"].get("fallback_reason") or "none")
+    outer_next_node = "retrieval_subgraph"
+    action = "none"
+    reason = "query_planned"
+    reason_code = "query_planned"
     if fallback_reason != "none":
-        goto = "transform_query"
+        outer_next_node = "transform_query"
+        action = "transform_query"
+        reason = fallback_reason
+        reason_code = fallback_reason
         reflection = _as_dict(state.get("reflection")) or {}
         update["reflection"] = {
             **reflection,
             "action": "transform_query",
             "reason": fallback_reason,
         }
-
-    outer_next_node = "transform_query" if goto == "transform_query" else "retrieval_subgraph"
     update = {
         **update,
         **merge_routing_decision(
@@ -2256,13 +2307,104 @@ async def prepare_messages(
             {
                 "phase": "preprocess",
                 "next_node": outer_next_node,
-                "action": "transform_query" if goto == "transform_query" else "none",
-                "reason": fallback_reason if fallback_reason != "none" else "prepared",
-                "reason_code": fallback_reason if fallback_reason != "none" else "prepared",
-                "decision_source": "prepare_messages",
+                "action": action,
+                "reason": reason,
+                "reason_code": reason_code,
+                "decision_source": "query_plan_finalize",
                 "completed_at": now_iso(),
             },
             updates=update,
         ),
     }
-    return Command(update=update, goto=goto)
+    return Command(update=update, goto="preprocess_exit")
+
+
+def _merge_query_plan_state(base: dict[str, Any], patch: dict[str, Any]) -> dict[str, Any]:
+    merged = {**base, **patch}
+    for key in ("stage_summaries", "routing_decisions", "reflection"):
+        base_value = base.get(key)
+        patch_value = patch.get(key)
+        if isinstance(base_value, dict) and isinstance(patch_value, dict):
+            merged[key] = {**base_value, **patch_value}
+    return merged
+
+
+def _command_update_payload(result: Command[str] | dict[str, Any]) -> dict[str, Any]:
+    if isinstance(result, Command):
+        return result.update if isinstance(result.update, dict) else {}
+    return result if isinstance(result, dict) else {}
+
+
+def _command_goto(result: Command[str] | dict[str, Any]) -> str | None:
+    if isinstance(result, Command):
+        goto = result.goto
+        return goto if isinstance(goto, str) and goto.strip() else None
+    return None
+
+
+def _route_after_decomposition(settings: Settings) -> str:
+    if bool(getattr(settings, "kb_chat_multi_query_enabled", True)):
+        return "generate_variants"
+    return "entity_expand"
+
+
+def _route_after_generate_variants(settings: Settings) -> str:
+    return "entity_expand"
+
+
+async def run_query_plan_scheme_b(
+    state: dict[str, Any],
+    *,
+    runtime: Runtime[Any] | None,
+    settings: Settings,
+) -> dict[str, Any]:
+    """Rebuild query planning with the same live Scheme B semantics used in preprocess."""
+
+    effective_runtime = runtime
+    if effective_runtime is None:
+        effective_runtime = SimpleNamespace(context={}, store=None)
+
+    current_state = dict(state)
+    accumulated_updates: dict[str, Any] = {}
+
+    decision = await query_plan(
+        current_state,
+        runtime=effective_runtime,
+        settings=settings,
+    )
+    decision_updates = _command_update_payload(decision)
+    accumulated_updates = _merge_query_plan_state(accumulated_updates, decision_updates)
+    current_state = _merge_query_plan_state(current_state, decision_updates)
+    next_node = _command_goto(decision) or "query_plan_finalize"
+
+    while next_node in {"decomposition", "generate_variants", "entity_expand", "hyde"}:
+        if next_node == "decomposition":
+            step_result = await decomposition(current_state, settings=settings)
+            next_node = _route_after_decomposition(settings)
+        elif next_node == "generate_variants":
+            step_result = await generate_variants(current_state, settings=settings)
+            next_node = _route_after_generate_variants(settings)
+        elif next_node == "entity_expand":
+            step_result = await entity_expand(
+                current_state,
+                runtime=effective_runtime,
+                settings=settings,
+            )
+            next_node = _command_goto(step_result) or "query_plan_finalize"
+        else:
+            step_result = await hyde(current_state, settings=settings)
+            next_node = "query_plan_finalize"
+
+        step_updates = _command_update_payload(step_result)
+        accumulated_updates = _merge_query_plan_state(accumulated_updates, step_updates)
+        current_state = _merge_query_plan_state(current_state, step_updates)
+
+    finalize_latency_ms = 0
+    finalize_updates = _build_query_plan_finalize_update(
+        state=current_state,
+        runtime=effective_runtime,
+        settings=settings,
+        latency_ms=finalize_latency_ms,
+    )
+    accumulated_updates = _merge_query_plan_state(accumulated_updates, finalize_updates)
+    return accumulated_updates

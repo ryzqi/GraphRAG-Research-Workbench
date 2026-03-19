@@ -36,11 +36,15 @@ from app.agents.kb_chat_contracts import STATE_SCHEMA_V3
 from app.agents.kb_chat_trace_nodes import KB_CHAT_NODE_METADATA
 from app.agents.kb_chat_agentic.preprocess import (
     ambiguity_check,
-    complexity_classify,
     coref_rewrite,
+    decomposition,
+    entity_expand,
+    generate_variants,
+    hyde,
     merge_context,
     normalize_rewrite,
     query_plan,
+    query_plan_finalize,
 )
 from app.agents.kb_chat_agentic_state import (
     build_graph_input_state,
@@ -421,9 +425,11 @@ def test_internal_state_schema_tracks_query_plan_and_omits_retired_query_enhance
 
     assert "query_plan_result" in hints
     assert "query_plan_diagnostics" in hints
-    assert "multi_queries" not in hints
-    assert "decomposition_plan" not in hints
-    assert "entity_expand_meta" not in hints
+    assert "sub_queries" in hints
+    assert "multi_queries" in hints
+    assert "hyde_docs" in hints
+    assert "decomposition_plan" in hints
+    assert "entity_expand_meta" in hints
     assert "message_plan" not in hints
     assert "query_bundle" not in hints
     assert "prepare_diagnostics" not in hints
@@ -440,8 +446,12 @@ def test_kb_chat_nodes_use_narrow_read_side_state_schema_annotations() -> None:
         coref_rewrite: "CorefRewriteInput",
         ambiguity_check: "AmbiguityCheckInput",
         normalize_rewrite: "NormalizeRewriteInput",
-        complexity_classify: "ComplexityClassifyInput",
         query_plan: "QueryPlanInput",
+        decomposition: "DecompositionInput",
+        generate_variants: "GenerateVariantsInput",
+        entity_expand: "EntityExpandInput",
+        hyde: "HydeInput",
+        query_plan_finalize: "QueryPlanFinalizeInput",
         _retrieval_budget_plan: "RetrievalBudgetPlanInput",
         dispatch_subqueries: "DispatchSubqueriesInput",
         retrieve_subquery_context: "RetrieveSubqueryContextInput",
@@ -502,15 +512,16 @@ def test_preprocess_subgraph_prunes_route_shell_nodes_from_builder() -> None:
     assert "resolve_reference" in node_ids
     assert "query_normalize" in node_ids
     assert "query_plan" in node_ids
+    assert "decomposition" in node_ids
+    assert "generate_variants" in node_ids
+    assert "entity_expand" in node_ids
+    assert "hyde" in node_ids
+    assert "query_plan_finalize" in node_ids
     assert "coref_rewrite" not in node_ids
     assert "normalize_rewrite" not in node_ids
     assert {
         "complexity_classify",
         "generate_variants_mod",
-        "decomposition",
-        "generate_variants",
-        "entity_expand",
-        "hyde",
         "prepare_messages",
     }.isdisjoint(node_ids)
 
@@ -544,16 +555,17 @@ def test_trace_metadata_prunes_preprocess_shell_nodes() -> None:
     assert "resolve_reference" in KB_CHAT_NODE_METADATA
     assert "query_normalize" in KB_CHAT_NODE_METADATA
     assert "query_plan" in KB_CHAT_NODE_METADATA
+    assert "decomposition" in KB_CHAT_NODE_METADATA
+    assert "generate_variants" in KB_CHAT_NODE_METADATA
+    assert "entity_expand" in KB_CHAT_NODE_METADATA
+    assert "hyde" in KB_CHAT_NODE_METADATA
+    assert "query_plan_finalize" in KB_CHAT_NODE_METADATA
     assert "retrieval_plan" in KB_CHAT_NODE_METADATA
     assert "coref_rewrite" not in KB_CHAT_NODE_METADATA
     assert "normalize_rewrite" not in KB_CHAT_NODE_METADATA
     assert "prepare_messages" not in KB_CHAT_NODE_METADATA
     assert "complexity_classify" not in KB_CHAT_NODE_METADATA
     assert "generate_variants_mod" not in KB_CHAT_NODE_METADATA
-    assert "decomposition" not in KB_CHAT_NODE_METADATA
-    assert "generate_variants" not in KB_CHAT_NODE_METADATA
-    assert "entity_expand" not in KB_CHAT_NODE_METADATA
-    assert "hyde" not in KB_CHAT_NODE_METADATA
     assert "evidence_gate_subgraph" not in KB_CHAT_NODE_METADATA
     assert "doc_gate_sufficiency" not in KB_CHAT_NODE_METADATA
     assert "doc_gate_route" not in KB_CHAT_NODE_METADATA

@@ -57,6 +57,11 @@ _BUSINESS_LABEL_FALLBACKS: dict[str, str] = {
     "ambiguity_check": "歧义判断",
     "query_normalize": "问题规范",
     "query_plan": "查询规划",
+    "decomposition": "问题拆解",
+    "generate_variants": "多路查询扩展",
+    "entity_expand": "实体扩展",
+    "hyde": "假设文档扩展",
+    "query_plan_finalize": "查询定稿",
     "preprocess_exit": "预处理出口",
     "retrieval_subgraph": "检索子图",
     "retrieval_plan": "检索预算规划",
@@ -122,6 +127,11 @@ _INPUT_CONTRACTS: dict[str, list[str]] = {
     "ambiguity_check": ["resolved_query"],
     "query_normalize": ["resolved_query"],
     "query_plan": ["normalized_query"],
+    "decomposition": ["normalized_query"],
+    "generate_variants": ["normalized_query"],
+    "entity_expand": ["normalized_query", "multi_queries"],
+    "hyde": ["normalized_query"],
+    "query_plan_finalize": ["normalized_query", "sub_queries", "multi_queries"],
     "preprocess_exit": ["normalized_query"],
     "retrieval_subgraph": ["query_items"],
     "retrieval_plan": ["normalized_query", "query_items"],
@@ -149,7 +159,12 @@ _OUTPUT_CONTRACTS: dict[str, list[str]] = {
     "resolve_reference": ["resolved_query"],
     "ambiguity_check": ["decision", "reason", "clarification_prompt"],
     "query_normalize": ["normalized_query"],
-    "query_plan": ["query_items"],
+    "query_plan": ["decision", "reason", "next_node_label"],
+    "decomposition": ["sub_queries"],
+    "generate_variants": ["multi_queries"],
+    "entity_expand": ["multi_queries"],
+    "hyde": ["hyde_docs"],
+    "query_plan_finalize": ["query_items"],
     "preprocess_exit": ["decision", "reason", "next_node_label", "final_answer"],
     "retrieval_subgraph": ["decision", "reason", "next_node_label"],
     "retrieval_plan": ["planned_query_count", "planned_per_query_top_k"],
@@ -405,6 +420,138 @@ def _format_query_items(value: Any) -> list[str] | None:
     return items or None
 
 
+def _extract_query_texts_by_kind(
+    snapshot: Mapping[str, Any],
+    *kinds: str,
+) -> list[str] | None:
+    raw_items = snapshot.get("query_items")
+    if not isinstance(raw_items, list):
+        return None
+    allowed = {kind.strip().lower() for kind in kinds if isinstance(kind, str) and kind.strip()}
+    if not allowed:
+        return None
+    items: list[str] = []
+    for item in raw_items:
+        record = _as_dict(item)
+        if not record:
+            continue
+        raw_kind = _pick_text(record, "kind")
+        if not raw_kind or raw_kind.strip().lower() not in allowed:
+            continue
+        if raw_kind.strip().lower() == "hyde":
+            hyde_queries = _pick_string_list(record, "hyde_queries")
+            if hyde_queries:
+                items.extend(hyde_queries)
+                continue
+        query = _pick_text(record, "query")
+        if query:
+            items.append(query)
+    return items or None
+
+
+def _resolve_kind_breakdown_count(
+    snapshot: Mapping[str, Any],
+    *kinds: str,
+) -> int:
+    summary = _summary_for_node(snapshot, "query_plan_finalize")
+    breakdown = _as_dict(summary.get("kind_breakdown")) or {}
+    total = 0
+    for kind in kinds:
+        raw = breakdown.get(kind)
+        if isinstance(raw, int) and raw > 0:
+            total += raw
+    return total
+
+
+def _resolve_sub_queries_display(snapshot: Mapping[str, Any]) -> list[str] | None:
+    explicit = _pick_string_list(snapshot, "sub_queries")
+    if explicit:
+        return explicit
+
+    decomposition_plan = _as_dict(snapshot.get("decomposition_plan")) or {}
+    specs = decomposition_plan.get("sub_query_specs")
+    if isinstance(specs, list):
+        queries = [
+            query
+            for spec in specs
+            if isinstance(spec, dict)
+            for query in [_pick_text(spec, "query")]
+            if query
+        ]
+        if queries:
+            return queries
+
+    from_query_items = _extract_query_texts_by_kind(snapshot, "subquery")
+    if from_query_items:
+        return from_query_items
+
+    subquery_count = _resolve_kind_breakdown_count(snapshot, "subquery")
+    if subquery_count > 0:
+        return [f"共 {subquery_count} 个分解问题（trace 未记录明细）"]
+
+    strategy = (
+        _pick_text(_as_dict(snapshot.get("query_plan_result")) or {}, "strategy")
+        or _pick_text(_summary_for_node(snapshot, "query_plan"), "strategy")
+        or _pick_text(snapshot, "query_strategy")
+    )
+    if (strategy or "").strip().lower() == "decomposition":
+        return ["已进入问题拆解，trace 未记录明细"]
+    return None
+
+
+def _resolve_multi_queries_display(snapshot: Mapping[str, Any]) -> list[str] | None:
+    explicit = _pick_string_list(snapshot, "multi_queries")
+    if explicit:
+        return explicit
+
+    from_query_items = _extract_query_texts_by_kind(snapshot, "variant", "paraphrase")
+    if from_query_items:
+        return from_query_items
+
+    stage_count_candidates = [
+        _summary_for_node(snapshot, "generate_variants").get("count"),
+        _summary_for_node(snapshot, "entity_expand").get("count"),
+        _summary_for_node(snapshot, "entity_expand").get("expanded_count"),
+    ]
+    for raw in stage_count_candidates:
+        if isinstance(raw, int) and raw > 0:
+            return [f"共 {raw} 条多路查询（trace 未记录明细）"]
+
+    strategy = (
+        _pick_text(_as_dict(snapshot.get("query_plan_result")) or {}, "strategy")
+        or _pick_text(_summary_for_node(snapshot, "query_plan"), "strategy")
+        or _pick_text(snapshot, "query_strategy")
+    )
+    if (strategy or "").strip().lower() in {"decomposition", "multi_query"}:
+        return ["已生成多路查询，trace 未记录明细"]
+    return None
+
+
+def _resolve_hyde_docs_display(snapshot: Mapping[str, Any]) -> list[str] | None:
+    explicit = _pick_string_list(snapshot, "hyde_docs")
+    if explicit:
+        return explicit
+
+    single_doc = _pick_text(snapshot, "hyde_doc")
+    if single_doc:
+        return [single_doc]
+
+    from_query_items = _extract_query_texts_by_kind(snapshot, "hyde")
+    if from_query_items:
+        return from_query_items
+
+    hyde_summary = _summary_for_node(snapshot, "hyde")
+    generated_count = hyde_summary.get("generated_count")
+    if isinstance(generated_count, int) and generated_count > 0:
+        return [f"共 {generated_count} 篇 HyDE 文档（trace 未记录正文）"]
+
+    fallback_policy = _as_dict((_as_dict(snapshot.get("query_plan_result")) or {}).get("fallback_policy")) or {}
+    entity_expand_summary = _summary_for_node(snapshot, "entity_expand")
+    if bool(fallback_policy.get("allow_hyde")) or bool(entity_expand_summary.get("hyde_enabled")):
+        return ["已启用 HyDE，trace 未记录文档正文"]
+    return None
+
+
 def _build_input_value_map(
     *,
     node_name: str,
@@ -448,8 +595,8 @@ def _build_input_value_map(
         ),
         "gate_results": _format_gate_results(snapshot),
         "review_results": _format_review_results(snapshot),
-        "sub_queries": _pick_string_list(snapshot, "sub_queries"),
-        "multi_queries": _pick_string_list(snapshot, "multi_queries"),
+        "sub_queries": _resolve_sub_queries_display(snapshot),
+        "multi_queries": _resolve_multi_queries_display(snapshot),
         "final_answer": _pick_text(snapshot, "final_answer"),
         "retrieved_evidence": _format_evidence_for_node(node_name=node_name, snapshot=snapshot),
     }
@@ -497,10 +644,9 @@ def _build_output_value_map(
             "user_input",
         ),
         "clarification_prompt": _pick_text(snapshot, "final_answer", "clarification_prompt"),
-        "multi_queries": _pick_string_list(snapshot, "multi_queries"),
-        "sub_queries": _pick_string_list(snapshot, "sub_queries"),
-        "hyde_docs": _pick_string_list(snapshot, "hyde_docs")
-        or _single_item_list(_pick_text(snapshot, "hyde_doc")),
+        "multi_queries": _resolve_multi_queries_display(snapshot),
+        "sub_queries": _resolve_sub_queries_display(snapshot),
+        "hyde_docs": _resolve_hyde_docs_display(snapshot),
         "query_items": _format_query_items(snapshot.get("query_items")),
         "planned_query_count": _resolve_planned_query_count(snapshot, summary),
         "planned_per_query_top_k": _resolve_planned_top_k(summary),
@@ -793,7 +939,7 @@ def _resolve_decision_triplet(
         )
         return decision, reason, next_node_label
 
-    if node_name == "complexity_classify":
+    if node_name == "query_plan":
         decision = _complexity_decision_text(summary=summary, snapshot=snapshot)
         reason = _pick_text(summary, "reasoning", "reason") or default_reason
         return decision, reason, next_node_label or "下游节点未知"
@@ -948,11 +1094,10 @@ def _complexity_decision_text(
         or _pick_text(summary, "goto")
     )
     mapping = {
-        "simple": "简单问题",
+        "simple": "直接检索",
         "direct": "简单问题",
         "moderate": "中等问题",
         "multi_query": "中等问题",
-        "generate_variants_mod": "中等问题",
         "generate_variants": "中等问题",
         "complex": "复杂问题",
         "decomposition": "复杂问题",
@@ -978,8 +1123,8 @@ def _humanize_decision(raw: str | None) -> str | None:
         return None
     lowered = text.strip().lower()
     mapping = {
-        "prepare_messages": "直接进入检索",
         "retrieval_subgraph": "进入检索流程",
+        "query_plan_finalize": "进入查询定稿",
         "answer_subgraph": "进入答案生成",
         "answer_review_fuse": "进入审查汇总",
         "answer_repair": "进入答案修复",

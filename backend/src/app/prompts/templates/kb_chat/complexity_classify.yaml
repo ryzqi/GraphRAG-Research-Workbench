@@ -1,4 +1,4 @@
-version: "4.1"
+version: "5.0"
 name: kb_chat_complexity_classify
 description: "问题复杂度分类（结构化 + 置信度 + 风险信号）"
 
@@ -17,19 +17,35 @@ template: |
   - 是否多目标：{has_multi_target}
   - 是否比较问题：{is_comparison}
 
-  决策原则：
-  1. 比较、权衡、并列实体分别作答、跨步骤链路、跨文档证据拼接，优先选 decomposition。
-  2. 目标单一，但存在别名、缩写、中英混写、口语化表达或术语不稳定，优先选 multi_query。
-  3. 其余情况选 direct。
-  4. 如果 multi_query 与 decomposition 难以区分，保守起见优先 decomposition。
+  决策顺序（严格按顺序判断）：
+  1. 先判断是否必须 decomposition：
+     - 比较、权衡、优缺点、差异、取舍。
+     - 并列实体/系统/版本/时间段，需要分别检索再汇总。
+     - 明显多步骤链路：原因 + 影响 + 处置、定位 + 修复、流程分段、跨阶段排障。
+     - 需要跨文档证据拼接，单条查询难以同时覆盖多个独立子问题。
+  2. 若不满足上面条件，再判断是否需要 multi_query：
+     - 目标单一，但术语写法不稳定：别名、缩写、简称、中英混写、业务口语、常见错写。
+     - recall_risk=high 且问题仍是单目标，优先 multi_query，而不是直接升级到 decomposition。
+     - 问题本质只问一件事，但可能需要并行释义来提升召回覆盖。
+  3. 其余情况选 direct：
+     - 单目标、单跳、约束清晰，主问题本身已经是稳定可检索表达。
+
+  负面规则：
+  - 不要因为问题字数长、约束多，就自动选 decomposition；若核心目标仍然单一，应在 direct / multi_query 中判断。
+  - 不要把“高召回风险”直接等同为 decomposition；若只是术语不稳定，应选 multi_query。
+  - 单一事实问法、单一概念解释、单一流程问法，如果核心实体稳定，优先 direct。
+
+  平局规则：
+  - direct 与 multi_query 难分时，只要存在明显术语不稳定信号，优先 multi_query。
+  - multi_query 与 decomposition 难分时，保守起见优先 decomposition。
 
   输出要求：
   - 只输出一个 JSON 对象，不要输出 Markdown、解释、代码块或额外文字。
   - JSON 字段必须且只能包含：reasoning, strategy, confidence, risk_flags, decision_version。
   - strategy 只能是 direct / decomposition / multi_query。
   - confidence 为 0 到 1 的浮点数。
-  - risk_flags 为 0 到 8 个短标签数组，例如 comparison、multi_target、multi_hop、recall_risk_high、term_ambiguity、constraint_heavy。
-  - decision_version 固定输出：kb_chat_complexity_classify_v4。
+  - risk_flags 为 0 到 8 个短标签数组，例如 comparison、multi_target、multi_hop、recall_risk_high、term_alias、acronym、mixed_language、constraint_heavy。
+  - decision_version 固定输出：kb_chat_complexity_classify_v5。
   - reasoning 只写一句话，简要解释为什么选择该策略。
 
 variables:
@@ -45,3 +61,35 @@ variables:
   - name: is_comparison
     type: boolean
     required: true
+
+few_shot_examples:
+  - input: |
+      用户问题：Redis 的默认端口是多少？
+      已知召回风险：low
+      是否多目标：false
+      是否比较问题：false
+    output: '{"reasoning":"这是单目标单跳事实问题，主问题本身已是稳定检索表达。","strategy":"direct","confidence":0.98,"risk_flags":["single_hop"],"decision_version":"kb_chat_complexity_classify_v5"}'
+  - input: |
+      用户问题：解释 agent memory 的工作机制
+      已知召回风险：high
+      是否多目标：false
+      是否比较问题：false
+    output: '{"reasoning":"问题目标单一，但存在中英混写术语，适合并行释义提升召回。","strategy":"multi_query","confidence":0.93,"risk_flags":["mixed_language","term_alias","recall_risk_high"],"decision_version":"kb_chat_complexity_classify_v5"}'
+  - input: |
+      用户问题：K8s Pod OOMKilled 怎么解决？
+      已知召回风险：high
+      是否多目标：false
+      是否比较问题：false
+    output: '{"reasoning":"问题只聚焦一个故障现象，但缩写与运维口语较多，宜走多路改写。","strategy":"multi_query","confidence":0.89,"risk_flags":["acronym","term_alias","recall_risk_high"],"decision_version":"kb_chat_complexity_classify_v5"}'
+  - input: |
+      用户问题：比较 LangGraph 和 Deep Agents 在长期任务编排上的差异
+      已知召回风险：medium
+      是否多目标：true
+      是否比较问题：true
+    output: '{"reasoning":"这是明确的比较型多目标问题，需要拆成独立检索视角后再汇总。","strategy":"decomposition","confidence":0.97,"risk_flags":["comparison","multi_target"],"decision_version":"kb_chat_complexity_classify_v5"}'
+  - input: |
+      用户问题：定位 KB Chat 首包慢的根因并给出排障顺序
+      已知召回风险：high
+      是否多目标：true
+      是否比较问题：false
+    output: '{"reasoning":"问题同时要求根因定位与排障步骤，属于多阶段链路，应拆分检索。","strategy":"decomposition","confidence":0.95,"risk_flags":["multi_step","multi_hop","recall_risk_high"],"decision_version":"kb_chat_complexity_classify_v5"}'

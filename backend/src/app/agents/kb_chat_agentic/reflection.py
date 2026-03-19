@@ -21,7 +21,6 @@ from langgraph.types import Command, Send
 
 from app.core.settings import Settings, get_settings
 from app.prompts import get_prompt_loader
-from app.services.kb_query_planner_service import KbQueryPlannerService
 from app.services.streaming import extract_answer_text
 from app.services.query_rewrite_service import QueryRewriteService
 from app.agents.kb_chat_agentic_state import (
@@ -41,7 +40,7 @@ from .dispatch_fuse import (
     sort_by_priority_then_index,
 )
 from .json_safety import ensure_json_safe
-from .preprocess import score_query_item_quality
+from .preprocess import run_query_plan_scheme_b, score_query_item_quality
 from .runtime_config import (
     normalize_alias_max,
     parallel_retrieval_include_main,
@@ -215,7 +214,7 @@ def _build_subquery_dispatch_plan(
     ]
 
     allowed_kinds_by_strategy: dict[str, set[str]] = {
-        "decomposition": {"subquery", "hyde", "main"},
+        "decomposition": {"subquery", "variant", "hyde", "main"},
         "paraphrase": {"paraphrase", "hyde", "main"},
         "multi_query": {"variant", "hyde", "main"},
         "direct": {"main", "hyde"},
@@ -947,30 +946,51 @@ async def transform_query_for_retry(
     except Exception:
         normalized_meta = {}
 
-    planner = KbQueryPlannerService(settings=settings)
-    plan_result = await planner.plan(
-        normalized_query=new_query,
-        normalized_meta=normalized_meta if isinstance(normalized_meta, dict) else {},
+    plan_updates = await run_query_plan_scheme_b(
+        {
+            **state,
+            "normalized_query": new_query,
+            "resolved_query": new_query,
+            "reference_resolution_meta": {},
+            "normalized_meta": normalized_meta,
+            "coref_query": new_query,
+            "stage_summaries": state.get("stage_summaries")
+            if isinstance(state.get("stage_summaries"), dict)
+            else {},
+        },
+        runtime=runtime,
+        settings=settings,
     )
     query_items = ensure_json_safe(
-        plan_result.items,
+        plan_updates.get("query_items") if isinstance(plan_updates.get("query_items"), list) else [],
         settings=settings,
         label="transform_query.query_items",
     )
     query_plan_result = ensure_json_safe(
-        {
-            "strategy": plan_result.strategy,
-            "reasoning": plan_result.reasoning,
-            "fallback_policy": plan_result.fallback_policy,
-        },
+        plan_updates.get("query_plan_result")
+        if isinstance(plan_updates.get("query_plan_result"), dict)
+        else {},
         settings=settings,
         label="transform_query.query_plan_result",
     )
     query_plan_diagnostics = ensure_json_safe(
-        plan_result.diagnostics,
+        plan_updates.get("query_plan_diagnostics")
+        if isinstance(plan_updates.get("query_plan_diagnostics"), dict)
+        else {},
         settings=settings,
         label="transform_query.query_plan_diagnostics",
     )
+    query_strategy = str(plan_updates.get("query_strategy") or "direct")
+    stage_seed = {
+        **state,
+        "stage_summaries": plan_updates.get("stage_summaries")
+        if isinstance(plan_updates.get("stage_summaries"), dict)
+        else (
+            state.get("stage_summaries")
+            if isinstance(state.get("stage_summaries"), dict)
+            else {}
+        ),
+    }
 
     return {
         "loop_counts": loop_counts,
@@ -979,7 +999,22 @@ async def transform_query_for_retry(
         "reference_resolution_meta": {},
         "normalized_meta": normalized_meta,
         "coref_query": new_query,
-        "query_strategy": plan_result.strategy,
+        "query_strategy": query_strategy,
+        "sub_queries": plan_updates.get("sub_queries")
+        if isinstance(plan_updates.get("sub_queries"), list)
+        else [],
+        "multi_queries": plan_updates.get("multi_queries")
+        if isinstance(plan_updates.get("multi_queries"), list)
+        else [],
+        "hyde_docs": plan_updates.get("hyde_docs")
+        if isinstance(plan_updates.get("hyde_docs"), list)
+        else [],
+        "decomposition_plan": plan_updates.get("decomposition_plan")
+        if isinstance(plan_updates.get("decomposition_plan"), dict)
+        else {},
+        "entity_expand_meta": plan_updates.get("entity_expand_meta")
+        if isinstance(plan_updates.get("entity_expand_meta"), dict)
+        else {},
         "query_items": query_items,
         "query_plan_result": query_plan_result,
         "query_plan_diagnostics": query_plan_diagnostics,
@@ -992,13 +1027,13 @@ async def transform_query_for_retry(
             },
         ),
         **_merge_stage_summary(
-            state,
+            stage_seed,
             "transform_query",
             {
                 "rewritten": new_query != current,
                 "normalized_after_retry": True,
                 "normalization_source": str(normalized_meta.get("source") or ""),
-                "query_plan_strategy": plan_result.strategy,
+                "query_plan_strategy": query_strategy,
                 "query_plan_items_count": len(query_items),
                 "query_plan_fallback_reason": query_plan_diagnostics.get("fallback_reason"),
                 "latency_ms": int((time.perf_counter() - start) * 1000),

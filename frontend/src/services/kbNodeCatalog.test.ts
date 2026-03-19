@@ -15,6 +15,11 @@ const CURRENT_KB_CHAT_NODE_IDS = [
   'ambiguity_check',
   'query_normalize',
   'query_plan',
+  'decomposition',
+  'generate_variants',
+  'entity_expand',
+  'hyde',
+  'query_plan_finalize',
   'preprocess_exit',
   'retrieval_subgraph',
   'retrieval_plan',
@@ -43,25 +48,30 @@ const EXPECTED_NODE_ORDERS: Record<(typeof CURRENT_KB_CHAT_NODE_IDS)[number], nu
   ambiguity_check: 3,
   query_normalize: 4,
   query_plan: 5,
-  preprocess_exit: 6,
-  retrieval_subgraph: 7,
-  retrieval_plan: 8,
-  dispatch_subqueries: 9,
-  retrieve_subquery: 10,
-  merge_subquery_context: 11,
-  retrieve: 12,
-  context_compress: 13,
-  transform_query: 14,
-  answer_subgraph: 15,
-  draft_generate: 16,
-  answer_review_dispatch: 17,
-  answer_review_citation: 18,
-  answer_review_factual: 19,
-  answer_review_answerability: 20,
-  answer_review_fuse: 21,
-  answer_repair: 22,
-  answer_commit: 23,
-  force_exit: 24,
+  decomposition: 6,
+  generate_variants: 7,
+  entity_expand: 8,
+  hyde: 9,
+  query_plan_finalize: 10,
+  preprocess_exit: 11,
+  retrieval_subgraph: 12,
+  retrieval_plan: 13,
+  dispatch_subqueries: 14,
+  retrieve_subquery: 15,
+  merge_subquery_context: 16,
+  retrieve: 17,
+  context_compress: 18,
+  transform_query: 19,
+  answer_subgraph: 20,
+  draft_generate: 21,
+  answer_review_dispatch: 22,
+  answer_review_citation: 23,
+  answer_review_factual: 24,
+  answer_review_answerability: 25,
+  answer_review_fuse: 26,
+  answer_repair: 27,
+  answer_commit: 28,
+  force_exit: 29,
 };
 
 describe('kbNodeCatalog', () => {
@@ -147,16 +157,18 @@ describe('kbNodeCatalog', () => {
     });
   });
 
-  it('does not keep retired preprocess enhancement nodes in local catalog fallback', () => {
+  it('keeps live Scheme B preprocess enhancement nodes and drops retired aliases', () => {
     [
-      'complexity_classify',
-      'generate_variants_mod',
-      'decomposition',
-      'generate_variants',
-      'entity_expand',
-      'hyde',
-      'prepare_messages',
-    ].forEach((nodeId) => {
+      ['decomposition', '问题拆解'],
+      ['generate_variants', '多路查询扩展'],
+      ['entity_expand', '实体扩展'],
+      ['hyde', '假设文档扩展'],
+      ['query_plan_finalize', '查询定稿'],
+    ].forEach(([nodeId, label]) => {
+      expect(resolveKbNodeCatalogEntry(nodeId)?.label).toBe(label);
+    });
+
+    ['complexity_classify', 'generate_variants_mod', 'prepare_messages'].forEach((nodeId) => {
       expect(resolveKbNodeCatalogEntry(nodeId)).toBeNull();
     });
   });

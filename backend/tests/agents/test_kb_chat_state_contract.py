@@ -186,6 +186,11 @@ TRACE_INPUT_KEYS_BY_NODE = {
     "ambiguity_check": ["resolved_query"],
     "query_normalize": ["resolved_query"],
     "query_plan": ["normalized_query"],
+    "decomposition": ["normalized_query"],
+    "generate_variants": ["normalized_query"],
+    "entity_expand": ["normalized_query", "multi_queries"],
+    "hyde": ["normalized_query"],
+    "query_plan_finalize": ["normalized_query", "sub_queries", "multi_queries"],
     "preprocess_exit": ["normalized_query"],
     "retrieval_subgraph": ["query_items"],
     "retrieval_plan": ["normalized_query", "query_items"],
@@ -213,7 +218,12 @@ TRACE_OUTPUT_KEYS_BY_NODE = {
     "resolve_reference": ["resolved_query"],
     "ambiguity_check": ["decision", "reason", "clarification_prompt"],
     "query_normalize": ["normalized_query"],
-    "query_plan": ["query_items"],
+    "query_plan": ["decision", "reason", "next_node_label"],
+    "decomposition": ["sub_queries"],
+    "generate_variants": ["multi_queries"],
+    "entity_expand": ["multi_queries"],
+    "hyde": ["hyde_docs"],
+    "query_plan_finalize": ["query_items"],
     "preprocess_exit": ["decision", "reason", "next_node_label", "final_answer"],
     "retrieval_subgraph": ["decision", "reason", "next_node_label"],
     "retrieval_plan": ["planned_query_count", "planned_per_query_top_k"],
@@ -351,7 +361,14 @@ def _trace_base_snapshot() -> dict[str, Any]:
             "query_plan": {
                 "strategy": "decomposition",
                 "reasoning": "涉及方法比较与边界说明",
+                "next_node": "decomposition",
+            },
+            "query_plan_finalize": {
+                "query_count": 2,
+                "candidate_count": 3,
                 "selected_count": 2,
+                "kind_breakdown": {"main": 1, "subquery": 1},
+                "fallback_reason": "none",
             },
             "retrieval_plan": {"query_count": 2, "per_query_top_k": 6},
             "answer_review_dispatch": {
@@ -366,7 +383,8 @@ def _trace_snapshot_for_node(node_name: str) -> dict[str, Any]:
     snapshot = _trace_base_snapshot()
     trace_goto = {
         "preprocess_subgraph": "retrieval_subgraph",
-        "query_plan": "preprocess_exit",
+        "query_plan": "decomposition",
+        "query_plan_finalize": "preprocess_exit",
         "preprocess_exit": "force_exit",
         "retrieval_subgraph": "answer_subgraph",
         "answer_subgraph": "END",
@@ -461,12 +479,19 @@ def test_query_plan_output_is_query_focused_and_metadata_aware() -> None:
 
     assert items == [
         {
-            "key": "query_items",
-            "label": "检索查询项",
-            "value": [
-                "1. [main] CoT 与 ToT 区别",
-                "2. [paraphrase] Tree of Thoughts 与 Chain of Thought 的区别",
-            ],
+            "key": "decision",
+            "label": "结论",
+            "value": "复杂问题",
+        },
+        {
+            "key": "reason",
+            "label": "原因",
+            "value": "涉及方法比较与边界说明",
+        },
+        {
+            "key": "next_node_label",
+            "label": "下一跳",
+            "value": "问题拆解",
         }
     ]
 

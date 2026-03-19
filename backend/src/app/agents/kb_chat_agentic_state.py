@@ -145,7 +145,7 @@ class QueryPlanFallbackPolicy(TypedDict, total=False):
 
 
 class QueryPlanResult(TypedDict, total=False):
-    strategy: Literal["direct", "paraphrase", "decomposition"]
+    strategy: Literal["direct", "paraphrase", "decomposition", "multi_query"]
     reasoning: str
     fallback_policy: QueryPlanFallbackPolicy
 
@@ -269,7 +269,8 @@ class KbChatInternalState(KbChatInternalStateBase, total=False):
       resolved_query/reference_resolution_meta
     - AmbiguityCheck: reads resolved_query/normalized_query -> writes reflection/action (clarify)
     - QueryNormalize: reads resolved_query -> writes normalized_query
-    - QueryPlan: reads normalized_query -> writes
+    - QueryPlan: reads normalized_query -> writes query_strategy + routes to restored enhancement nodes
+    - QueryPlanFinalize: reads query family artifacts -> writes
       query_plan_result/query_plan_diagnostics/query_items
     - RetrievalLayer: reads query family -> writes final_context/metrics
     - ReflectionLayer: reads final_context -> writes reflection (+ optional rewritten query)
@@ -290,6 +291,11 @@ class KbChatInternalState(KbChatInternalStateBase, total=False):
     complexity_level: ComplexityLevel
     query_strategy_confidence: float
     query_strategy_signals: list[str]
+    sub_queries: list[str]
+    multi_queries: list[str]
+    hyde_docs: list[str]
+    decomposition_plan: dict[str, Any]
+    entity_expand_meta: dict[str, Any]
     query_plan_result: QueryPlanResult
     query_plan_diagnostics: QueryPlanDiagnostics
     retrieval_plan: RetrievalPlan
@@ -356,16 +362,7 @@ class NormalizeRewriteInput(TypedDict, total=False):
     stage_summaries: dict[str, Any]
 
 
-class ComplexityClassifyInput(TypedDict, total=False):
-    messages: Annotated[list[AnyMessage], add_messages]
-    user_input: str
-    normalized_query: str
-    normalized_meta: NormalizeMeta
-    runtime_config: dict[str, Any]
-    stage_summaries: dict[str, Any]
-
-
-class PrepareMessagesInput(TypedDict, total=False):
+class QueryPlanFinalizeInput(TypedDict, total=False):
     user_input: str
     rewrite_input_query: str
     resolved_query: str

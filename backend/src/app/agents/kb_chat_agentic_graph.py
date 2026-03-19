@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from typing import Any, TypedDict, cast
-import hashlib
 import json
 
 from functools import partial
@@ -62,131 +61,6 @@ def _route_after_preprocess_subgraph(state: PreprocessRoutingInput) -> str:
     if next_node in {"retrieval_subgraph", "transform_query", "force_exit"}:
         return next_node
     return "retrieval_subgraph"
-
-
-def _complexity_classify_cache_key_factory(*, direct_target: str) -> Any:
-    def _key_func(*args: Any, **kwargs: Any) -> str:
-        state: dict[str, Any] = {}
-        if args and isinstance(args[0], dict):
-            state = args[0]
-        elif isinstance(kwargs.get("state"), dict):
-            state = cast(dict[str, Any], kwargs["state"])
-        stage_summaries = state.get("stage_summaries")
-        stage_fingerprint = "none"
-        if isinstance(stage_summaries, dict):
-            try:
-                stage_payload = json.dumps(
-                    stage_summaries,
-                    ensure_ascii=False,
-                    sort_keys=True,
-                    default=_json_default,
-                )
-                stage_fingerprint = hashlib.sha256(
-                    stage_payload.encode("utf-8")
-                ).hexdigest()
-            except Exception:
-                stage_fingerprint = "serialize_error"
-        normalized_meta = state.get("normalized_meta")
-        if not isinstance(normalized_meta, dict):
-            normalized_meta = {}
-        query = state.get("normalized_query")
-        if not isinstance(query, str) or not query.strip():
-            fallback_query = state.get("user_input")
-            query = fallback_query if isinstance(fallback_query, str) else ""
-        payload = {
-            "classify_version": "kb_chat_complexity_classify_v4",
-            "query": query.strip(),
-            "recall_risk": str(normalized_meta.get("recall_risk") or "unknown"),
-            "has_multi_target": bool(normalized_meta.get("has_multi_target")),
-            "is_comparison": bool(normalized_meta.get("is_comparison")),
-            "direct_target": direct_target,
-            "stage_fingerprint": stage_fingerprint,
-        }
-        return json.dumps(payload, ensure_ascii=False, sort_keys=True)
-
-    return _key_func
-
-
-def _entity_expand_cache_key_factory() -> Any:
-    def _key_func(*args: Any, **kwargs: Any) -> str:
-        state: dict[str, Any] = {}
-        if args and isinstance(args[0], dict):
-            state = args[0]
-        elif isinstance(kwargs.get("state"), dict):
-            state = cast(dict[str, Any], kwargs["state"])
-        normalized_query = state.get("normalized_query")
-        if not isinstance(normalized_query, str):
-            normalized_query = ""
-        multi_queries = state.get("multi_queries")
-        if not isinstance(multi_queries, list):
-            multi_queries = []
-        normalized_meta = state.get("normalized_meta")
-        if not isinstance(normalized_meta, dict):
-            normalized_meta = {}
-        payload = {
-            "version": "kb_chat_entity_expand_v1",
-            "normalized_query": normalized_query.strip(),
-            "multi_queries": [
-                str(item).strip()
-                for item in multi_queries
-                if isinstance(item, str) and str(item).strip()
-            ],
-            "aliases": [
-                str(item).strip()
-                for item in (normalized_meta.get("aliases") or [])
-                if isinstance(item, str) and str(item).strip()
-            ],
-            "entities": [
-                str(item).strip()
-                for item in (normalized_meta.get("entities") or [])
-                if isinstance(item, str) and str(item).strip()
-            ],
-        }
-        return json.dumps(payload, ensure_ascii=False, sort_keys=True)
-
-    return _key_func
-
-
-def _prepare_messages_cache_key_factory() -> Any:
-    def _key_func(*args: Any, **kwargs: Any) -> str:
-        state: dict[str, Any] = {}
-        if args and isinstance(args[0], dict):
-            state = args[0]
-        elif isinstance(kwargs.get("state"), dict):
-            state = cast(dict[str, Any], kwargs["state"])
-
-        decomposition_plan = state.get("decomposition_plan")
-        if not isinstance(decomposition_plan, dict):
-            decomposition_plan = {}
-        payload = {
-            "version": "kb_chat_prepare_messages_v1",
-            "strategy": str(state.get("query_strategy") or "direct"),
-            "normalized_query": str(state.get("normalized_query") or "").strip(),
-            "sub_queries": [
-                str(item).strip()
-                for item in (state.get("sub_queries") or [])
-                if isinstance(item, str) and str(item).strip()
-            ],
-            "multi_queries": [
-                str(item).strip()
-                for item in (state.get("multi_queries") or [])
-                if isinstance(item, str) and str(item).strip()
-            ],
-            "hyde_docs": [
-                str(item).strip()
-                for item in (state.get("hyde_docs") or [])
-                if isinstance(item, str) and str(item).strip()
-            ],
-            "sub_query_specs": decomposition_plan.get("sub_query_specs")
-            if isinstance(decomposition_plan.get("sub_query_specs"), list)
-            else [],
-            "runtime_config": state.get("runtime_config")
-            if isinstance(state.get("runtime_config"), dict)
-            else {},
-        }
-        return json.dumps(payload, ensure_ascii=False, sort_keys=True, default=_json_default)
-
-    return _key_func
 
 
 def build_kb_chat_run_config(*, thread_id: str | None, recursion_limit: int) -> dict[str, Any]:
@@ -551,7 +425,7 @@ def _build_node_input_display_items(
             ),
         )
     elif node_name in {
-        "complexity_classify",
+        "query_plan",
         "decomposition",
         "generate_variants",
         "entity_expand",
@@ -570,7 +444,7 @@ def _build_node_input_display_items(
                 label="待扩展查询",
                 value=_pick_string_list(snapshot, "multi_queries"),
             )
-    elif node_name == "prepare_messages":
+    elif node_name == "query_plan_finalize":
         _append_display_item(
             items,
             key="normalized_query",
@@ -845,7 +719,7 @@ def _build_node_output_display_items(
             label="是否变化",
             value=summary.get("rewritten"),
         )
-    elif node_name == "complexity_classify":
+    elif node_name == "query_plan":
         _append_display_item(
             items,
             key="query_strategy",
@@ -872,9 +746,9 @@ def _build_node_output_display_items(
         )
         _append_display_item(
             items,
-            key="goto",
+            key="next_node",
             label="下一节点",
-            value=summary.get("goto"),
+            value=summary.get("next_node"),
         )
     elif node_name == "decomposition":
         sub_queries = _pick_string_list(snapshot, "sub_queries")
@@ -1015,11 +889,7 @@ def _build_node_output_display_items(
             label="处理原因",
             value=summary.get("reason"),
         )
-    elif node_name == "prepare_messages":
-        message_plan = _as_dict(summary.get("message_plan")) or {}
-        query_bundle_summary = _as_dict(summary.get("query_bundle")) or {}
-        diagnostics = _as_dict(summary.get("diagnostics")) or {}
-        budget = _as_dict(message_plan.get("budget")) or {}
+    elif node_name == "query_plan_finalize":
         query_items = _format_query_items(snapshot.get("query_items"))
         _append_display_item(
             items,
@@ -1031,45 +901,33 @@ def _build_node_output_display_items(
             items,
             key="query_bundle_items_count",
             label="入选查询数",
-            value=query_bundle_summary.get("items_count")
-            if query_bundle_summary.get("items_count") is not None
+            value=summary.get("query_count")
+            if summary.get("query_count") is not None
             else len(query_items),
         )
         _append_display_item(
             items,
-            key="message_plan_candidate_count",
+            key="candidate_count",
             label="候选查询数",
-            value=message_plan.get("candidate_count"),
+            value=summary.get("candidate_count"),
         )
         _append_display_item(
             items,
-            key="message_plan_dropped_count",
-            label="丢弃查询数",
-            value=message_plan.get("dropped_count"),
+            key="selected_count",
+            label="入选数量",
+            value=summary.get("selected_count"),
         )
         _append_display_item(
             items,
-            key="message_plan_strategy",
-            label="消息策略",
-            value=message_plan.get("strategy"),
-        )
-        _append_display_item(
-            items,
-            key="message_plan_max_candidates",
-            label="分支预算上限",
-            value=budget.get("max_candidates"),
+            key="kind_breakdown",
+            label="类型分布",
+            value=summary.get("kind_breakdown"),
         )
         _append_display_item(
             items,
             key="fallback_reason",
             label="回退原因",
-            value=diagnostics.get("fallback_reason"),
-        )
-        _append_display_item(
-            items,
-            key="quality_signals",
-            label="质量信号",
-            value=diagnostics.get("quality_signals"),
+            value=summary.get("fallback_reason"),
         )
     elif node_name == "dispatch_subqueries":
         _append_display_item(

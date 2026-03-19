@@ -11,7 +11,7 @@ describe('kbChatFlowSelectors', () => {
     ] as const;
 
     const result = selectKbChatFlowDetailItems({
-      nodeId: 'complexity_classify',
+      nodeId: 'query_plan',
       section: 'output',
       items,
       event: null,
