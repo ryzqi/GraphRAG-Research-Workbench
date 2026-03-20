@@ -199,6 +199,16 @@ def test_general_and_kb_system_prompts_keep_core_operating_rules(prompt_loader) 
     assert "report_generate" in research_prompt
 
 
+def test_kb_system_prompt_documents_markdown_table_citation_boundary(prompt_loader) -> None:
+    kb_prompt = prompt_loader.get("kb_chat/system").template.lower()
+
+    assert "markdown 表格" in kb_prompt
+    assert "表头" in kb_prompt
+    assert "分隔行" in kb_prompt
+    assert "数据行" in kb_prompt
+    assert "至少一个有效引用" in kb_prompt
+
+
 def test_context_compress_prompt_requires_verbatim_subset_only(prompt_loader) -> None:
     template = prompt_loader.get("kb_chat/context_compress").template
     assert "原文子集" in template

@@ -55,6 +55,7 @@ from app.agents.kb_chat_agentic_state import (
 from app.agents.preprocess_subgraph import build_preprocess_subgraph
 from app.agents.retrieval_subgraph import build_retrieval_subgraph
 from app.agents.retrieval_subgraph import _compress_context, _retrieval_budget_plan
+from app.services.evidence_guardrails import review_citation_coverage
 
 
 def _settings(**overrides: object) -> SimpleNamespace:
@@ -262,6 +263,51 @@ async def test_answer_review_citation_flags_uncovered_bullet_item_without_local_
     assert review["passed"] is False
     assert review["reason"] == "missing_citations"
     assert review["missing_citations"] == ["支持自动清理"]
+
+
+@pytest.mark.asyncio
+async def test_answer_review_citation_ignores_markdown_heading_and_table_scaffold_without_local_citation() -> None:
+    result = await _answer_review_citation(
+        {
+            "draft_answer": (
+                "**对比要点**\n"
+                "| 维度 | ReAct | Plan-and-Solve |\n"
+                "|------|-------|----------------|\n"
+                "| 核心理念 | 动作-观察的循环式推理，实时交互[S2] | 先计划后执行的线性流程[S1] |"
+            ),
+            "final_context": (
+                "[S1] Plan-and-Solve 采用先计划后执行的线性流程。\n"
+                "[S2] ReAct 采用动作-观察的循环式推理。"
+            ),
+            "loop_counts": {
+                "total_rounds": 0,
+                "retrieval_retries": 0,
+                "generation_retries": 0,
+            },
+            "stage_summaries": {},
+        },
+        runtime=None,
+        settings=_settings(),
+    )
+
+    review = result["answer_review_runs"][0]
+    assert review["passed"] is True
+    assert review["reason"] == "passed"
+    assert review["missing_citations"] == []
+
+
+def test_review_citation_coverage_keeps_markdown_table_data_rows_strict() -> None:
+    coverage = review_citation_coverage(
+        "**对比要点**\n"
+        "| 维度 | ReAct | Plan-and-Solve |\n"
+        "|------|-------|----------------|\n"
+        "| 核心理念 | 动作-观察的循环式推理，实时交互 | 先计划后执行的线性流程 |"
+    )
+
+    assert coverage.uncovered_units == [
+        "| 核心理念 | 动作-观察的循环式推理，实时交互 | 先计划后执行的线性流程 |"
+    ]
+    assert coverage.covered_units == []
 
 
 @pytest.mark.asyncio
