@@ -38,9 +38,7 @@ def _build_state() -> dict[str, object]:
 
 
 @pytest.mark.asyncio
-async def test_paragraph_citation_review_passes_when_main_claim_matches_aggregate_sources(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+async def test_paragraph_citation_review_passes_when_main_claim_matches_aggregate_sources() -> None:
     state = {
         **_build_state(),
         "answer_paragraphs": [
@@ -61,15 +59,6 @@ async def test_paragraph_citation_review_passes_when_main_claim_matches_aggregat
             }
         ],
     }
-
-    def _legacy_coverage_should_not_run(_: str) -> object:
-        raise AssertionError("answer_review_citation 不应再调用 review_citation_coverage")
-
-    monkeypatch.setattr(
-        answer_subgraph,
-        "review_citation_coverage",
-        _legacy_coverage_should_not_run,
-    )
 
     updates = await answer_subgraph._answer_review_citation(
         state,
@@ -367,15 +356,7 @@ async def test_answer_repair_prunes_auxiliary_only_unsupported_paragraph_metadat
 
 
 @pytest.mark.asyncio
-async def test_answer_repair_reprojects_paragraph_metadata_after_llm_citation_repair(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(
-        answer_subgraph,
-        "_citation_coverage_score",
-        lambda answer: (10, 2, 2) if answer.startswith("修复后") else (0, 0, 0),
-    )
-
+async def test_answer_repair_reprojects_paragraph_metadata_after_llm_citation_repair() -> None:
     state = {
         **_build_state(),
         "draft_answer": "旧回答没有正确引用。",
@@ -446,11 +427,7 @@ async def test_answer_repair_reprojects_paragraph_metadata_after_llm_citation_re
 
 
 @pytest.mark.asyncio
-async def test_answer_repair_without_citations_still_fails_followup_citation_review(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(answer_subgraph, "_citation_coverage_score", lambda _: (0, 0, 0))
-
+async def test_answer_repair_without_citations_still_fails_followup_citation_review() -> None:
     state = {
         **_build_state(),
         "draft_answer": "旧回答没有正确引用。",

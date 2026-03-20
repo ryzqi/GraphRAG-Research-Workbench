@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
 
 _CITATION_BLOCK_RE = re.compile(
     r"\[([^\[\]\n]{1,128})\]|【([^【】\n]{1,128})】"
@@ -11,48 +10,16 @@ _CITATION_BLOCK_RE = re.compile(
 _CITATION_SPLIT_RE = re.compile(r"[,\uFF0C;\uFF1B\u3001]+")
 _MULTI_SPACE_RE = re.compile(r"[ \t]{2,}")
 _STABLE_CITATION_ID_RE = re.compile(r"^S[1-9]\d*$", re.IGNORECASE)
-_SPACE_BEFORE_PUNCT_RE = re.compile(r"\s+([。！？!?；;：:,，])")
-_LEADING_LIST_MARKER_RE = re.compile(r"^\s*(?:[-*•]\s+|\d+[\.\)、)]\s*)")
-_MARKDOWN_ATX_HEADING_RE = re.compile(r"^\s{0,3}#{1,6}\s+\S.*$")
-_MARKDOWN_STRONG_HEADING_RE = re.compile(r"^\s*(?:\*\*[^*\n]+\*\*|__[^_\n]+__)\s*$")
-_MARKDOWN_TABLE_SEPARATOR_CELL_RE = re.compile(r"^:?-{3,}:?$")
 _NO_ANSWER_PREFIXES = (
     "根据现有资料无法回答该问题",
     "基于当前信息仍无法稳定回答该问题",
 )
 _RETRY_EXHAUSTED_NO_ANSWER = "基于当前信息仍无法稳定回答该问题（已停止重试）。"
-_NO_CITATION_NEEDED_MARKERS = (
-    "参考内容中未提供",
-    "参考内容未提供",
-    "资料中未提供",
-    "未提供相关信息",
-    "未说明",
-    "未提及",
-    "未披露",
-    "无法确定",
-    "无法判断",
-    "无法直接回答",
-    "根据参考内容无法",
-    "暂无相关信息",
-)
-_CITATION_UNIT_DELIMS = set("。！？!?；;\n")
-
-
-@dataclass(slots=True)
-class CitationCoverageReview:
-    uncovered_units: list[str]
-    covered_units: list[str]
 
 
 def _collapse_spaces(text: str) -> str:
     # Keep newlines intact; only collapse repeated spaces/tabs.
     return _MULTI_SPACE_RE.sub(" ", text).strip()
-
-
-def _normalize_coverage_text(text: str) -> str:
-    collapsed = _collapse_spaces(text)
-    collapsed = _SPACE_BEFORE_PUNCT_RE.sub(r"\1", collapsed)
-    return _LEADING_LIST_MARKER_RE.sub("", collapsed).strip()
 
 
 def normalize_citation_label(label: str) -> str:
@@ -97,71 +64,6 @@ def _iter_citation_parts(raw_block: str) -> list[str]:
     return parts or [raw_block]
 
 
-def _split_answer_review_units(text: str) -> list[str]:
-    units: list[str] = []
-    buf: list[str] = []
-
-    def _flush() -> None:
-        value = _normalize_coverage_text("".join(buf))
-        if value:
-            units.append(value)
-        buf.clear()
-
-    for ch in (text or "").replace("\r\n", "\n").replace("\r", "\n"):
-        buf.append(ch)
-        if ch in _CITATION_UNIT_DELIMS:
-            _flush()
-
-    if buf:
-        _flush()
-    return units
-
-
-def _unit_requires_citation(unit_text: str) -> bool:
-    normalized = _normalize_coverage_text(unit_text)
-    if not normalized:
-        return False
-    if normalized.endswith(("：", ":")):
-        return False
-    if normalized.endswith(("？", "?")):
-        return False
-    return not any(marker in normalized for marker in _NO_CITATION_NEEDED_MARKERS)
-
-
-def _is_markdown_heading_only_unit(unit_text: str) -> bool:
-    normalized = _normalize_coverage_text(unit_text)
-    if not normalized:
-        return False
-    return bool(
-        _MARKDOWN_ATX_HEADING_RE.fullmatch(normalized)
-        or _MARKDOWN_STRONG_HEADING_RE.fullmatch(normalized)
-    )
-
-
-def _split_markdown_table_cells(unit_text: str) -> list[str] | None:
-    normalized = _normalize_coverage_text(unit_text)
-    if not normalized.startswith("|") or not normalized.endswith("|"):
-        return None
-    cells = [cell.strip() for cell in normalized.strip("|").split("|")]
-    return cells if len(cells) >= 2 else None
-
-
-def _is_markdown_table_separator_row(unit_text: str) -> bool:
-    cells = _split_markdown_table_cells(unit_text)
-    if not cells:
-        return False
-    return all(_MARKDOWN_TABLE_SEPARATOR_CELL_RE.fullmatch(cell) for cell in cells)
-
-
-def _is_markdown_table_header_row(unit_text: str, *, next_unit_text: str | None = None) -> bool:
-    cells = _split_markdown_table_cells(unit_text)
-    if not cells or _is_markdown_table_separator_row(unit_text):
-        return False
-    if not next_unit_text:
-        return False
-    return _is_markdown_table_separator_row(next_unit_text)
-
-
 def extract_citation_label_occurrences(text: str) -> list[str]:
     labels: list[str] = []
     for match in _CITATION_BLOCK_RE.finditer(text or ""):
@@ -183,35 +85,6 @@ def extract_citation_labels(text: str) -> list[str]:
         seen.add(key)
         labels.append(label)
     return labels
-
-
-def review_citation_coverage(answer: str) -> CitationCoverageReview:
-    uncovered_units: list[str] = []
-    covered_units: list[str] = []
-    raw_units = _split_answer_review_units(answer)
-
-    for index, raw_unit in enumerate(raw_units):
-        normalized_unit = _normalize_coverage_text(
-            _CITATION_BLOCK_RE.sub("", raw_unit)
-        )
-        next_unit = raw_units[index + 1] if index + 1 < len(raw_units) else None
-        if _is_markdown_heading_only_unit(normalized_unit):
-            continue
-        if _is_markdown_table_header_row(normalized_unit, next_unit_text=next_unit):
-            continue
-        if _is_markdown_table_separator_row(normalized_unit):
-            continue
-        if not _unit_requires_citation(normalized_unit):
-            continue
-        if extract_citation_label_occurrences(raw_unit):
-            covered_units.append(normalized_unit)
-            continue
-        uncovered_units.append(normalized_unit)
-
-    return CitationCoverageReview(
-        uncovered_units=uncovered_units,
-        covered_units=covered_units,
-    )
 
 
 def enforce_kb_answer_citation_guardrails(

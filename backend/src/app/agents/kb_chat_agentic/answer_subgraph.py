@@ -51,7 +51,6 @@ from app.services.kb_answer_paragraphs import (
 from app.services.evidence_guardrails import (
     extract_citation_label_occurrences,
     is_kb_refusal_answer,
-    review_citation_coverage,
     resolve_kb_refusal_answer,
 )
 from app.services.kb_evidence import resolve_structured_evidence
@@ -769,15 +768,6 @@ def _project_repair_candidate(
         _build_answer_render_meta_from_paragraphs(projected_paragraphs),
         normalized_answer,
         "",
-    )
-
-
-def _citation_coverage_score(answer: str) -> tuple[int, int, int]:
-    coverage = review_citation_coverage(answer)
-    return (
-        -len(coverage.uncovered_units),
-        len(coverage.covered_units),
-        len(extract_citation_label_occurrences(answer)),
     )
 
 
