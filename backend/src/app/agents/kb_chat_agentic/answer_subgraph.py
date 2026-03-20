@@ -26,7 +26,11 @@ from app.agents.kb_chat_trace_nodes import (
     wrap_kb_chat_node_with_io,
 )
 from app.agents.kb_chat_agentic.reflection import generate_draft
-from app.agents.kb_chat_agentic.schemas import AnswerReviewSubDecision
+from app.agents.kb_chat_agentic.schemas import (
+    AnswerParagraph,
+    AnswerRenderMeta,
+    AnswerReviewSubDecision,
+)
 from app.agents.kb_chat_agentic_state import (
     AnswerCommitInput,
     AnswerRepairInput,
@@ -40,8 +44,13 @@ from app.agents.kb_chat_agentic_state import (
 )
 from app.core.settings import Settings
 from app.prompts import get_prompt_loader
+from app.services.kb_answer_paragraphs import (
+    prune_unsupported_auxiliary_claims,
+    render_answer_paragraphs,
+)
 from app.services.evidence_guardrails import (
     extract_citation_label_occurrences,
+    is_kb_refusal_answer,
     review_citation_coverage,
     resolve_kb_refusal_answer,
 )
@@ -54,8 +63,10 @@ _REPAIRABLE_FAILURE_REASONS = {
     "missing_citations",
     "invalid_citations",
     "citation_mismatch",
+    "unsupported_claims",
 }
 _EVIDENCE_LINE_RE = re.compile(r"^\[([^\[\]\n]{1,128})\]\s+", re.MULTILINE)
+_INLINE_CITATION_RE = re.compile(r"\[[^\[\]\n]{1,128}\]")
 _REVIEW_CHECKS: tuple[Literal["citation", "answer"], ...] = (
     "citation",
     "answer",
@@ -215,6 +226,479 @@ def _partition_citations(
     return all_citations, valid, invalid
 
 
+def _normalize_citation_id(value: object) -> str:
+    text = _as_str(value).strip()
+    if text.startswith("[") and text.endswith("]"):
+        text = text[1:-1].strip()
+    return text
+
+
+def _normalize_citation_label(value: object) -> str:
+    citation_id = _normalize_citation_id(value)
+    return f"[{citation_id}]" if citation_id else ""
+
+
+def _ordered_unique_paragraph_ids(
+    paragraphs: list[AnswerParagraph],
+    paragraph_ids: set[str],
+) -> list[str]:
+    return [paragraph.paragraph_id for paragraph in paragraphs if paragraph.paragraph_id in paragraph_ids]
+
+
+def _load_answer_paragraphs(
+    state: dict[str, Any],
+    *,
+    draft_answer: str = "",
+) -> list[AnswerParagraph]:
+    raw_paragraphs = state.get("answer_paragraphs")
+    paragraphs: list[AnswerParagraph] = []
+    if isinstance(raw_paragraphs, list):
+        for raw in raw_paragraphs:
+            try:
+                paragraphs.append(AnswerParagraph.model_validate(raw))
+            except ValidationError:
+                continue
+        return paragraphs
+    if not draft_answer:
+        return []
+    fallback_citation_ids = [
+        citation_id
+        for citation_id in (
+            _normalize_citation_id(raw_label) for raw_label in _extract_citations(draft_answer)
+        )
+        if citation_id
+    ]
+    try:
+        return [
+            AnswerParagraph(
+                paragraph_id="p1",
+                text=draft_answer,
+                citation_ids=fallback_citation_ids,
+                claims=[],
+                review_status="passed",
+            )
+        ]
+    except ValidationError:
+        return []
+
+
+def _resolve_unsupported_scope(
+    paragraphs: list[AnswerParagraph],
+) -> tuple[str, list[str]]:
+    main_ids: set[str] = set()
+    auxiliary_ids: set[str] = set()
+    for paragraph in paragraphs:
+        has_main_unsupported = any(
+            claim.role == "main" and claim.support_status == "unsupported"
+            for claim in paragraph.claims
+        )
+        has_auxiliary_unsupported = any(
+            claim.role == "auxiliary" and claim.support_status == "unsupported"
+            for claim in paragraph.claims
+        )
+        if has_main_unsupported:
+            main_ids.add(paragraph.paragraph_id)
+        if has_auxiliary_unsupported:
+            auxiliary_ids.add(paragraph.paragraph_id)
+    if main_ids and auxiliary_ids:
+        scope = "mixed"
+    elif main_ids:
+        scope = "main"
+    elif auxiliary_ids:
+        scope = "auxiliary_only"
+    else:
+        scope = "none"
+    return scope, _ordered_unique_paragraph_ids(paragraphs, main_ids | auxiliary_ids)
+
+
+def _build_paragraph_review_counts(
+    paragraphs: list[AnswerParagraph],
+    *,
+    failed_paragraph_ids: set[str],
+) -> dict[str, int]:
+    total = len(paragraphs)
+    failed = min(len(failed_paragraph_ids), total)
+    return {
+        "total": total,
+        "passed": max(total - failed, 0),
+        "failed": failed,
+    }
+
+
+def _build_review_details(
+    paragraphs: list[AnswerParagraph],
+    *,
+    failed_paragraph_ids: set[str],
+    repair_target_ids: set[str] | None = None,
+    unsupported_scope: str | None = None,
+    extra: dict[str, object] | None = None,
+) -> dict[str, object]:
+    repair_target_ids = repair_target_ids or set()
+    details: dict[str, object] = {
+        "paragraph_review_counts": _build_paragraph_review_counts(
+            paragraphs,
+            failed_paragraph_ids=failed_paragraph_ids,
+        ),
+        "repair_target_count": len(repair_target_ids),
+        "unsupported_scope": unsupported_scope or "none",
+    }
+    if isinstance(extra, dict):
+        details.update(extra)
+    return details
+
+
+def _build_answer_render_meta_from_paragraphs(
+    paragraphs: list[AnswerParagraph],
+) -> dict[str, Any]:
+    citation_ids: list[str] = []
+    claim_count = 0
+    for paragraph in paragraphs:
+        claim_count += len(paragraph.claims)
+        citation_ids.extend(paragraph.citation_ids)
+    return AnswerRenderMeta(
+        paragraph_count=len(paragraphs),
+        claim_count=claim_count,
+        citation_count=len(dict.fromkeys(citation_ids)),
+        citation_mode="paragraph_aggregate",
+    ).model_dump()
+
+
+def _normalize_repaired_paragraphs(
+    paragraphs: list[AnswerParagraph],
+) -> list[AnswerParagraph]:
+    normalized: list[AnswerParagraph] = []
+    for paragraph in paragraphs:
+        has_unsupported = any(
+            claim.support_status == "unsupported" for claim in paragraph.claims
+        )
+        review_status = "needs_repair" if has_unsupported else "passed"
+        normalized.append(paragraph.model_copy(update={"review_status": review_status}))
+    return normalized
+
+
+def _format_paragraph_review_payload(paragraphs: list[AnswerParagraph]) -> str:
+    if not paragraphs:
+        return "（无可用段落元数据）"
+    blocks: list[str] = []
+    for paragraph in paragraphs:
+        claim_lines = [
+            (
+                f"- role={claim.role}; support_status={claim.support_status}; "
+                f"claim={claim.claim_text}; supporting_citation_ids={list(claim.supporting_citation_ids)}"
+            )
+            for claim in paragraph.claims
+        ] or ["- （无 claims）"]
+        blocks.append(
+            "\n".join(
+                [
+                    f"paragraph_id={paragraph.paragraph_id}",
+                    f"text={paragraph.text}",
+                    f"citation_ids={list(paragraph.citation_ids)}",
+                    "claims:",
+                    *claim_lines,
+                ]
+            )
+        )
+    return "\n\n".join(blocks)
+
+
+def _is_refusal_like_paragraph_text(text: str) -> bool:
+    normalized = _as_str(text).strip()
+    if not normalized:
+        return False
+    return is_kb_refusal_answer(normalized)
+
+
+def _strip_inline_citations(text: str) -> str:
+    if not text:
+        return ""
+    stripped = _INLINE_CITATION_RE.sub("", text)
+    stripped = re.sub(r"[ \t]+\n", "\n", stripped)
+    stripped = re.sub(r"\n{3,}", "\n\n", stripped)
+    return stripped.strip()
+
+
+def _project_answer_text_to_paragraphs(answer: str) -> list[AnswerParagraph]:
+    cleaned_answer = _as_str(answer).strip()
+    if not cleaned_answer:
+        return []
+    raw_blocks = [
+        block.strip()
+        for block in re.split(r"\n\s*\n", cleaned_answer)
+        if block.strip()
+    ]
+    if not raw_blocks:
+        raw_blocks = [cleaned_answer]
+    paragraphs: list[AnswerParagraph] = []
+    for index, block in enumerate(raw_blocks, start=1):
+        citation_ids = [
+            citation_id
+            for citation_id in (
+                _normalize_citation_id(raw_label) for raw_label in _extract_citations(block)
+            )
+            if citation_id
+        ]
+        paragraphs.append(
+            AnswerParagraph(
+                paragraph_id=f"p{index}",
+                text=_strip_inline_citations(block),
+                citation_ids=list(dict.fromkeys(citation_ids)),
+                claims=[],
+                review_status="passed",
+            )
+        )
+    return paragraphs
+
+
+def _review_paragraph_citations(
+    paragraphs: list[AnswerParagraph],
+    *,
+    allowed_labels: dict[str, str],
+) -> dict[str, object]:
+    allowed_by_id = {
+        _normalize_citation_id(label).casefold(): label
+        for label in allowed_labels.values()
+        if _normalize_citation_id(label)
+    }
+    all_citations: list[str] = []
+    valid_citations: set[str] = set()
+    invalid_citations: set[str] = set()
+    missing_citations: list[str] = []
+    citation_mismatches: list[str] = []
+    failed_ids: set[str] = set()
+    metadata_incomplete = False
+
+    for paragraph in paragraphs:
+        paragraph_valid_labels: set[str] = set()
+        paragraph_has_citations = False
+        for raw_citation_id in paragraph.citation_ids:
+            normalized_id = _normalize_citation_id(raw_citation_id)
+            if not normalized_id:
+                continue
+            paragraph_has_citations = True
+            label = f"[{normalized_id}]"
+            all_citations.append(label)
+            canonical = allowed_by_id.get(normalized_id.casefold())
+            if canonical is None:
+                invalid_citations.add(label)
+                failed_ids.add(paragraph.paragraph_id)
+            else:
+                valid_citations.add(canonical)
+                paragraph_valid_labels.add(canonical)
+
+        main_claims = [
+            claim for claim in paragraph.claims if claim.role == "main" and claim.claim_text.strip()
+        ]
+        if (
+            paragraph.text.strip()
+            and not paragraph_has_citations
+            and not main_claims
+            and not _is_refusal_like_paragraph_text(paragraph.text)
+        ):
+            missing_citations.append(paragraph.text.strip())
+            failed_ids.add(paragraph.paragraph_id)
+            continue
+        citable_main_claims = []
+        for claim in main_claims:
+            supporting_labels = {
+                normalized
+                for normalized in (
+                    _normalize_citation_label(raw_support_id)
+                    for raw_support_id in claim.supporting_citation_ids
+                )
+                if normalized
+            }
+            if (
+                claim.support_status in {"supported", "weak_supported"}
+                and supporting_labels
+            ):
+                citable_main_claims.append((claim, supporting_labels))
+        if not main_claims and paragraph.text.strip() and paragraph_has_citations:
+            metadata_incomplete = True
+        if not paragraph_has_citations and citable_main_claims:
+            for claim, _ in citable_main_claims:
+                missing_citations.append(claim.claim_text)
+            failed_ids.add(paragraph.paragraph_id)
+            continue
+        for claim, supporting_labels in citable_main_claims:
+            if not paragraph_has_citations:
+                missing_citations.append(claim.claim_text)
+                failed_ids.add(paragraph.paragraph_id)
+                continue
+            if not supporting_labels.issubset(paragraph_valid_labels):
+                citation_mismatches.append(claim.claim_text)
+                failed_ids.add(paragraph.paragraph_id)
+        if main_claims and not citable_main_claims and paragraph_has_citations:
+            metadata_incomplete = True
+
+    unsupported_scope, _ = _resolve_unsupported_scope(paragraphs)
+    if invalid_citations:
+        reason = "invalid_citations"
+        passed = False
+    elif missing_citations:
+        reason = "missing_citations"
+        passed = False
+    elif citation_mismatches:
+        reason = "citation_mismatch"
+        passed = False
+    else:
+        reason = "passed"
+        passed = True
+
+    affected_ids = _ordered_unique_paragraph_ids(paragraphs, failed_ids)
+    repair_target_ids = set(affected_ids) if not passed else set()
+    return {
+        "passed": passed,
+        "reason": reason,
+        "all_citations": all_citations,
+        "valid_citations": valid_citations,
+        "invalid_citations": invalid_citations,
+        "missing_citations": list(dict.fromkeys(missing_citations))[:3],
+        "citation_mismatches": list(dict.fromkeys(citation_mismatches))[:3],
+        "affected_paragraph_ids": affected_ids,
+        "needs_llm": bool(paragraphs) and passed and metadata_incomplete,
+        "details": _build_review_details(
+            paragraphs,
+            failed_paragraph_ids=failed_ids,
+            repair_target_ids=repair_target_ids,
+            unsupported_scope=unsupported_scope,
+            extra={
+                "invalid_citation_count": len(invalid_citations),
+                "missing_citation_count": len(list(dict.fromkeys(missing_citations))),
+                "citation_mismatch_count": len(list(dict.fromkeys(citation_mismatches))),
+            },
+        ),
+    }
+
+
+def _resolve_answer_review_details(
+    paragraphs: list[AnswerParagraph],
+    *,
+    reason: str,
+    unsupported_claims: list[str],
+) -> tuple[list[str], dict[str, object]]:
+    unsupported_scope, unsupported_ids = _resolve_unsupported_scope(paragraphs)
+    failed_ids: set[str] = {
+        paragraph.paragraph_id
+        for paragraph in paragraphs
+        if paragraph.review_status != "passed"
+        or any(claim.support_status == "unsupported" for claim in paragraph.claims)
+    }
+    affected_ids = unsupported_ids if reason == "unsupported_claims" else []
+    repair_target_ids = set(unsupported_ids) if unsupported_scope == "auxiliary_only" else set()
+    details = _build_review_details(
+        paragraphs,
+        failed_paragraph_ids=failed_ids,
+        repair_target_ids=repair_target_ids,
+        unsupported_scope=unsupported_scope,
+        extra={"unsupported_claim_count": len(unsupported_claims)},
+    )
+    return affected_ids, details
+
+
+def _extract_run_details(run: dict[str, Any]) -> dict[str, Any]:
+    raw = run.get("details")
+    return raw if isinstance(raw, dict) else {}
+
+
+def _coalesce_paragraph_summary(
+    citation: dict[str, Any],
+    answer: dict[str, Any],
+) -> tuple[dict[str, int], int, str]:
+    answer_details = _extract_run_details(answer)
+    citation_details = _extract_run_details(citation)
+    counts = answer_details.get("paragraph_review_counts")
+    if not isinstance(counts, dict):
+        counts = citation_details.get("paragraph_review_counts")
+    if not isinstance(counts, dict):
+        counts = {"total": 0, "passed": 0, "failed": 0}
+    repair_target_count = int(
+        answer_details.get(
+            "repair_target_count",
+            citation_details.get("repair_target_count", 0),
+        )
+        or 0
+    )
+    unsupported_scope_summary = _as_str(
+        answer_details.get(
+            "unsupported_scope",
+            citation_details.get("unsupported_scope", "none"),
+        )
+    ).strip() or "none"
+    return counts, repair_target_count, unsupported_scope_summary
+
+
+def _is_repairable_review_failure(
+    *,
+    reason: str,
+    citation: dict[str, Any],
+    answer: dict[str, Any],
+) -> bool:
+    if reason not in _REPAIRABLE_FAILURE_REASONS:
+        return False
+    if reason != "unsupported_claims":
+        return True
+    unsupported_scope = _as_str(_extract_run_details(answer).get("unsupported_scope")).strip()
+    return unsupported_scope == "auxiliary_only"
+
+
+def _resolve_answer_review_details_from_state(state: dict[str, Any]) -> dict[str, Any]:
+    reflection = state.get("reflection")
+    reflection_obj = reflection if isinstance(reflection, dict) else {}
+    review_breakdown = (
+        reflection_obj.get("review_breakdown")
+        if isinstance(reflection_obj.get("review_breakdown"), dict)
+        else {}
+    )
+    answer_check = (
+        review_breakdown.get("answer") if isinstance(review_breakdown.get("answer"), dict) else {}
+    )
+    details = answer_check.get("details")
+    if isinstance(details, dict):
+        return details
+    return {}
+
+
+def _maybe_repair_auxiliary_only_paragraphs(
+    state: dict[str, Any],
+) -> tuple[list[dict[str, Any]], dict[str, Any], str] | None:
+    reflection = state.get("reflection")
+    reflection_obj = reflection if isinstance(reflection, dict) else {}
+    reason = _as_str(reflection_obj.get("reason")).strip()
+    if reason != "unsupported_claims":
+        return None
+
+    review_details = _resolve_answer_review_details_from_state(state)
+    unsupported_scope = _as_str(review_details.get("unsupported_scope")).strip()
+    if not unsupported_scope:
+        stage_summaries = state.get("stage_summaries")
+        answer_review_summary = (
+            stage_summaries.get("answer_review")
+            if isinstance(stage_summaries, dict)
+            and isinstance(stage_summaries.get("answer_review"), dict)
+            else {}
+        )
+        unsupported_scope = _as_str(
+            answer_review_summary.get("unsupported_scope_summary")
+        ).strip()
+    if unsupported_scope != "auxiliary_only":
+        return None
+
+    paragraphs = _load_answer_paragraphs(
+        state,
+        draft_answer=_as_str(state.get("draft_answer")).strip(),
+    )
+    if not paragraphs:
+        return None
+
+    pruned = prune_unsupported_auxiliary_claims(paragraphs)
+    normalized = _normalize_repaired_paragraphs(pruned)
+    serialized = [paragraph.model_dump() for paragraph in normalized]
+    render_meta = _build_answer_render_meta_from_paragraphs(normalized)
+    repaired_answer = render_answer_paragraphs(normalized)
+    return serialized, render_meta, repaired_answer
+
+
 def _citation_coverage_score(answer: str) -> tuple[int, int, int]:
     coverage = review_citation_coverage(answer)
     return (
@@ -368,11 +852,18 @@ async def _answer_review_citation(
         state,
         final_context=raw_final_context,
     )
-    all_citations, valid_citations, invalid_citations = _partition_citations(
-        draft, allowed_labels=evidence_labels
+    paragraphs = _load_answer_paragraphs(state, draft_answer=draft)
+    paragraph_review = _review_paragraph_citations(
+        paragraphs,
+        allowed_labels=evidence_labels,
     )
-    coverage = review_citation_coverage(draft)
-    missing_citations = coverage.uncovered_units[:3]
+    all_citations = paragraph_review["all_citations"]
+    valid_citations = paragraph_review["valid_citations"]
+    invalid_citations = paragraph_review["invalid_citations"]
+    missing_citations = paragraph_review["missing_citations"]
+    citation_mismatches = paragraph_review["citation_mismatches"]
+    affected_paragraph_ids = paragraph_review["affected_paragraph_ids"]
+    details = paragraph_review["details"]
     fallback_reason: str | None = None
     decision_source = "rule"
     if not draft:
@@ -383,24 +874,27 @@ async def _answer_review_citation(
         passed = False
         reason = "no_evidence"
         confidence = 0.9
-    elif not all_citations:
-        passed = False
-        reason = "missing_citations"
+    elif isinstance(state.get("answer_paragraphs"), list) and not paragraphs:
+        passed = True
+        reason = "passed"
+        confidence = 1.0
+        missing_citations = []
+    elif paragraph_review["reason"] != "passed":
+        passed = bool(paragraph_review["passed"])
+        reason = _as_str(paragraph_review["reason"]).strip() or "missing_citations"
         confidence = 0.9
-    elif invalid_citations:
-        passed = False
-        reason = "invalid_citations"
-        confidence = 0.9
-    elif coverage.uncovered_units:
+        if reason == "citation_mismatch":
+            missing_citations = citation_mismatches
+    elif bool(paragraph_review["needs_llm"]):
         review_model = chat_model or getattr(runtime, "chat_model", None)
         prompts = get_prompt_loader()
         try:
             system_prompt = prompts.render_with_few_shot("kb_chat/citation_review")
         except KeyError:
             system_prompt = (
-                "你是严格的知识库引用关键性审查器。"
-                "仅判断未附本地引用的回答片段是否属于影响主结论的关键断言。"
-                '仅输出 JSON：{"passed": true/false, "reason": "passed|missing_citations", "confidence": 0-1, "missing_citations": [], "unsupported_claims": []}。'
+                "你是严格的知识库段落级引用来源审查器。"
+                "请基于段落、claim 与 citation_ids 判断主断言的来源是否完整且对齐。"
+                '仅输出 JSON：{"passed": true/false, "reason": "passed|missing_citations|citation_mismatch", "confidence": 0-1, "missing_citations": [], "unsupported_claims": [], "affected_paragraph_ids": [], "details": {}}。'
             )
         if review_model is None:
             judge = None
@@ -413,16 +907,19 @@ async def _answer_review_citation(
                     f"问题：{question}\n\n"
                     f"参考内容：\n{final_context}\n\n"
                     f"回答：\n{draft}\n\n"
-                    "未附本地引用的候选片段：\n"
-                    + "\n".join(f"- {item}" for item in coverage.uncovered_units[:6])
+                    "段落级审查数据：\n"
+                    f"{_format_paragraph_review_payload(paragraphs)}"
                 ),
             )
         if isinstance(judge, AnswerReviewSubDecision):
             passed = bool(judge.passed)
-            reason = "passed" if passed else "missing_citations"
+            reason = judge.reason
             confidence = max(0.0, min(1.0, float(judge.confidence)))
             decision_source = "llm"
             missing_citations = [] if passed else (judge.missing_citations or missing_citations)
+            affected_paragraph_ids = list(judge.affected_paragraph_ids or affected_paragraph_ids)
+            if isinstance(judge.details, dict) and judge.details:
+                details = dict(judge.details)
         else:
             passed = (
                 _as_str(getattr(settings, "kb_chat_grader_fail_policy", "closed")).strip().lower()
@@ -443,6 +940,8 @@ async def _answer_review_citation(
         "passed": passed,
         "reason": reason,
         "confidence": confidence,
+        "details": details,
+        "affected_paragraph_ids": affected_paragraph_ids,
         "fallback_reason": fallback_reason,
         "decision_source": decision_source,
         "label_source": label_source,
@@ -480,12 +979,13 @@ async def _answer_review_llm_check(
         final_context=raw_final_context,
     )
     draft = _as_str(state.get("draft_answer")).strip()
+    paragraphs = _load_answer_paragraphs(state, draft_answer=draft)
     fallback_reason: str | None = None
     prompt_key = "kb_chat/answer_review"
     default_system = (
         "你是严格的知识库答案有效性审查器。"
-        "请同时判断回答是否直接回应问题，以及关键断言是否被参考内容支持。"
-        '仅输出 JSON：{"passed": true/false, "reason": "...", "confidence": 0-1, "missing_citations": [], "unsupported_claims": []}。'
+        "请同时判断回答是否直接回应问题，以及主断言与辅助断言分别是否被参考内容支持。"
+        '仅输出 JSON：{"passed": true/false, "reason": "...", "confidence": 0-1, "missing_citations": [], "unsupported_claims": [], "affected_paragraph_ids": [], "details": {}}。'
     )
     prompts = get_prompt_loader()
     try:
@@ -497,7 +997,7 @@ async def _answer_review_llm_check(
         system=system_prompt,
         user=(
             f"问题：{question}\n\n参考内容：\n{final_context}"
-            f"\n\n回答：\n{draft}"
+            f"\n\n回答：\n{draft}\n\n段落级审查数据：\n{_format_paragraph_review_payload(paragraphs)}"
         ),
     )
     if isinstance(judge, AnswerReviewSubDecision):
@@ -505,17 +1005,38 @@ async def _answer_review_llm_check(
         reason = judge.reason
         confidence = float(judge.confidence)
         decision_source = "llm"
+        unsupported_claims = list(judge.unsupported_claims)
+        missing_citations = list(judge.missing_citations)
     else:
         passed = settings.kb_chat_grader_fail_policy == "open"
         reason = "fallback_open" if passed else "fallback_closed"
         confidence = 0.0
         decision_source = "fallback"
+        unsupported_claims = []
+        missing_citations = []
+    affected_paragraph_ids, details = _resolve_answer_review_details(
+        paragraphs,
+        reason=reason,
+        unsupported_claims=unsupported_claims,
+    )
+    if isinstance(judge, AnswerReviewSubDecision):
+        if judge.affected_paragraph_ids:
+            affected_paragraph_ids = list(judge.affected_paragraph_ids)
+        if isinstance(judge.details, dict) and judge.details:
+            details = {
+                **details,
+                **judge.details,
+            }
     result = {
         "review_round": review_round,
         "check": "answer",
         "passed": passed,
         "reason": reason,
         "confidence": max(0.0, min(1.0, confidence)),
+        "unsupported_claims": unsupported_claims,
+        "missing_citations": missing_citations,
+        "affected_paragraph_ids": affected_paragraph_ids,
+        "details": details,
         "fallback_reason": fallback_reason,
         "decision_source": decision_source,
         "latency_ms": int((time.perf_counter() - start) * 1000),
@@ -600,6 +1121,9 @@ async def _answer_review_fuse(
         review_risk_level = "medium"
     action = "none" if passed else "transform_query"
     draft = _as_str(state.get("draft_answer")).strip()
+    paragraph_review_counts, repair_target_count, unsupported_scope_summary = (
+        _coalesce_paragraph_summary(citation, answer)
+    )
     best_answer_meta: dict[str, Any] | None = None
     if passed and draft:
         best_answer_meta = {
@@ -619,6 +1143,10 @@ async def _answer_review_fuse(
         "review_risk_level": review_risk_level,
         "review_confidence": round(max(0.0, min(1.0, avg_confidence)), 4),
         "review_decision_source": "mixed" if len(decision_sources) > 1 else (next(iter(decision_sources)) if decision_sources else "unknown"),
+        "paragraph_review_counts": paragraph_review_counts,
+        "paragraph_pass_count": int(paragraph_review_counts.get("passed") or 0),
+        "repair_target_count": repair_target_count,
+        "unsupported_scope_summary": unsupported_scope_summary,
         "best_answer": draft if passed and draft else None,
         "best_answer_meta": best_answer_meta,
         "latency_ms": int((time.perf_counter() - start) * 1000),
@@ -661,11 +1189,19 @@ async def _answer_review_fuse(
     max_generation_retries = int(settings.kb_chat_max_generation_retries)
     if (
         not passed
-        and _as_str(reason) in _REPAIRABLE_FAILURE_REASONS
+        and _is_repairable_review_failure(
+            reason=_as_str(reason),
+            citation=citation,
+            answer=answer,
+        )
         and generation_retries >= max_generation_retries
     ):
         goto = "answer_commit"
-    elif not passed and _as_str(reason) not in _REPAIRABLE_FAILURE_REASONS:
+    elif not passed and not _is_repairable_review_failure(
+        reason=_as_str(reason),
+        citation=citation,
+        answer=answer,
+    ):
         goto = "answer_commit"
     _emit_review_event(
         {
@@ -728,7 +1264,13 @@ async def _answer_repair(
 
     repaired_answer = draft_answer
     fallback_reason: str | None = None
-    if draft_answer and final_context and question:
+    repaired_paragraphs = None
+    repaired_render_meta = None
+    deterministic_repair = _maybe_repair_auxiliary_only_paragraphs(state)
+    if deterministic_repair is not None:
+        repaired_paragraphs, repaired_render_meta, repaired_answer = deterministic_repair
+        fallback_reason = "deterministic_auxiliary_prune"
+    elif draft_answer and final_context and question:
         prompts = get_prompt_loader()
         try:
             repair_system = prompts.render_with_few_shot("kb_chat/system")
@@ -762,6 +1304,13 @@ async def _answer_repair(
                     fallback_reason = "repair_citation_coverage_regressed"
                 else:
                     repaired_answer = candidate
+                    projected_paragraphs = _project_answer_text_to_paragraphs(repaired_answer)
+                    repaired_paragraphs = [
+                        paragraph.model_dump() for paragraph in projected_paragraphs
+                    ]
+                    repaired_render_meta = _build_answer_render_meta_from_paragraphs(
+                        projected_paragraphs
+                    )
             else:
                 fallback_reason = "empty_repair_output"
         except asyncio.CancelledError:
@@ -782,6 +1331,9 @@ async def _answer_repair(
         "draft_answer": repaired_answer,
         "final_answer": repaired_answer,
     }
+    if repaired_paragraphs is not None and repaired_render_meta is not None:
+        updates["answer_paragraphs"] = repaired_paragraphs
+        updates["answer_render_meta"] = repaired_render_meta
     updates = {
         **updates,
         **_merge_stage_summary(
@@ -789,7 +1341,17 @@ async def _answer_repair(
             "answer_repair",
             {
                 "repair_attempt": repair_attempts,
+                "repair_mode": (
+                    "deterministic_auxiliary_prune"
+                    if deterministic_repair is not None
+                    else "llm_or_fallback"
+                ),
                 "fallback_reason": fallback_reason,
+                "paragraph_count": (
+                    repaired_render_meta.get("paragraph_count")
+                    if isinstance(repaired_render_meta, dict)
+                    else None
+                ),
                 "latency_ms": int((time.perf_counter() - start) * 1000),
                 "completed_at": now_iso(),
             },

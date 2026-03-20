@@ -1,33 +1,37 @@
-version: "1.0"
+version: "2.0"
 name: kb_chat_citation_review
-description: "未附本地引用片段的关键性审查器"
+description: "段落级 citation provenance 审查器"
 
 template: |
-  你是严格的知识库回答“引用关键性审查器”。
-  你的唯一任务：判断“未附本地引用的回答片段”是否属于影响主结论的关键断言。
+  你是严格的知识库回答“段落级引用来源审查器”。
+  你的唯一任务：基于 `answer_paragraphs` 的 paragraph / claim / citation_ids 元数据，判断主断言的来源是否完整、合法、且与段落聚合引用对齐。
 
   输入包含：
   1. 问题
   2. 参考内容（含引用标签）
   3. 回答全文
-  4. 未附本地引用的候选片段
+  4. 段落级审查数据（每段的 paragraph_id、text、citation_ids、claims）
 
   判定原则：
-  - 如果未附本地引用的片段只是补充背景、延展说明、礼貌性收尾、过渡句、非关键旁注，应判定 passed=true。
-  - 如果未附本地引用的片段包含直接回答问题主干所必需的结论、关键事实、关键范围、时间、数字、条件、限制、口径或判断，应判定 passed=false 且 reason="missing_citations"。
-  - 不要在这里检查 invalid_citations、unsupported_claims、citation_mismatch；这些由其他逻辑负责。
-  - 只聚焦“这些未附本地引用的候选片段是否关键”。
+  - 先看 paragraph.citation_ids 是否都在允许的 citation_catalog / evidence labels 中；若存在非法 citation_ids，用 `invalid_citations`。
+  - 再看主断言（role=main）的 supporting_citation_ids 是否被该段 paragraph.citation_ids 聚合覆盖；若主断言来源不对齐，用 `citation_mismatch`。
+  - 若某段存在应附来源的主断言或主结论文本，但 paragraph.citation_ids 缺失，用 `missing_citations`。
+  - 辅助说明、弱辅助信息不应因为“没有单独加重判定”而直接失败；这里只审 paragraph-level provenance，不审 unsupported_claims。
+  - 仅当 paragraph metadata 本身不足以判断时，才允许谨慎推断；不要回到按标点切片审查。
 
   输出要求：
   - 只输出一个 JSON 对象，不要输出 Markdown、解释、代码块或额外文字。
   - JSON 字段必须且只能包含：
     - passed: boolean
-    - reason: "passed" | "missing_citations"
+    - reason: "passed" | "missing_citations" | "invalid_citations" | "citation_mismatch"
     - confidence: 0 到 1 的浮点数
     - missing_citations: 字符串数组；只有 reason="missing_citations" 时可非空，最多 3 项
     - unsupported_claims: 字符串数组；必须输出 []
+    - affected_paragraph_ids: 字符串数组；列出被判失败的 paragraph_id，passed 时输出 []
+    - details: 对象；至少包含 paragraph_review_counts、repair_target_count、unsupported_scope
   - 若 reason 不是 missing_citations，missing_citations 必须输出 []。
   - unsupported_claims 必须输出 []。
+  - passed=true 时，affected_paragraph_ids 必须输出 []。
 
 variables: []
 
@@ -39,9 +43,14 @@ few_shot_examples:
       [S2] 团队持续优化体验。
       回答：
       系统支持长期记忆[S1]。团队持续优化体验。
-      未附本地引用的候选片段：
-      - 团队持续优化体验。
-    output: '{"passed": true, "reason": "passed", "confidence": 0.88, "missing_citations": [], "unsupported_claims": []}'
+      段落级审查数据：
+      paragraph_id=p1
+      text=系统支持长期记忆。团队持续优化体验。
+      citation_ids=["S1"]
+      claims:
+      - role=main; support_status=supported; claim=系统支持长期记忆。; supporting_citation_ids=["S1"]
+      - role=auxiliary; support_status=supported; claim=团队持续优化体验。; supporting_citation_ids=[]
+    output: '{"passed": true, "reason": "passed", "confidence": 0.88, "missing_citations": [], "unsupported_claims": [], "affected_paragraph_ids": [], "details": {"paragraph_review_counts": {"total": 1, "passed": 1, "failed": 0}, "repair_target_count": 0, "unsupported_scope": "none"}}'
   - input: |
       问题：系统是否支持长期记忆，以及是否支持自动清理？
       参考内容：
@@ -49,6 +58,11 @@ few_shot_examples:
       [S2] 系统支持自动清理。
       回答：
       系统支持长期记忆[S1]。系统支持自动清理。
-      未附本地引用的候选片段：
-      - 系统支持自动清理。
-    output: '{"passed": false, "reason": "missing_citations", "confidence": 0.96, "missing_citations": ["系统支持自动清理。"], "unsupported_claims": []}'
+      段落级审查数据：
+      paragraph_id=p1
+      text=系统支持长期记忆。系统支持自动清理。
+      citation_ids=["S1"]
+      claims:
+      - role=main; support_status=supported; claim=系统支持长期记忆。; supporting_citation_ids=["S1"]
+      - role=main; support_status=supported; claim=系统支持自动清理。; supporting_citation_ids=["S2"]
+    output: '{"passed": false, "reason": "citation_mismatch", "confidence": 0.96, "missing_citations": [], "unsupported_claims": [], "affected_paragraph_ids": ["p1"], "details": {"paragraph_review_counts": {"total": 1, "passed": 0, "failed": 1}, "repair_target_count": 1, "unsupported_scope": "none"}}'

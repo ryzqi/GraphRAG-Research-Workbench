@@ -220,6 +220,11 @@ class AnswerReviewRun(TypedDict, total=False):
     passed: bool
     reason: str
     confidence: float
+    missing_citations: list[str]
+    invalid_citations: list[str]
+    unsupported_claims: list[str]
+    affected_paragraph_ids: list[str]
+    details: dict[str, object]
     fallback_reason: str | None
     decision_source: str
     latency_ms: int
