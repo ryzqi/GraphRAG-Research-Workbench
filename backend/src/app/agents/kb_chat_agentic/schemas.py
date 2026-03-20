@@ -230,3 +230,41 @@ class ContextCompressDecision(BaseModel):
 
     decision: Literal["keep_all", "subset", "no_evidence"] = "keep_all"
     items: list[ContextCompressItem] = Field(default_factory=list, max_length=32)
+
+
+ClaimRole = Literal["main", "auxiliary"]
+ClaimSupportStatus = Literal["supported", "weak_supported", "unsupported"]
+ParagraphReviewStatus = Literal["passed", "needs_repair", "failed"]
+
+
+class ParagraphClaim(BaseModel):
+    """Structured review unit for one claim inside an answer paragraph."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    claim_id: str = Field(..., min_length=1, max_length=64)
+    claim_text: str = Field(..., min_length=1, max_length=4000)
+    role: ClaimRole = "main"
+    support_status: ClaimSupportStatus = "supported"
+    supporting_citation_ids: list[str] = Field(default_factory=list, max_length=16)
+
+
+class AnswerParagraph(BaseModel):
+    """Structured paragraph unit for answer review/rendering."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    paragraph_id: str = Field(..., min_length=1, max_length=64)
+    text: str = Field(default="", max_length=8000)
+    citation_ids: list[str] = Field(default_factory=list, max_length=32)
+    claims: list[ParagraphClaim] = Field(default_factory=list, max_length=16)
+    review_status: ParagraphReviewStatus = "passed"
+
+
+class AnswerRenderMeta(BaseModel):
+    """Latest-only render metadata derived from answer paragraphs."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    paragraph_count: int = Field(default=0, ge=0)
+    citation_count: int = Field(default=0, ge=0)

@@ -243,6 +243,8 @@ class KbChatOutputState(TypedDict, total=False):
     """Minimal public graph output exposed to service consumers."""
 
     final_answer: str
+    answer_paragraphs: list[dict[str, Any]]
+    answer_render_meta: dict[str, Any]
     clarification_payload: ClarificationPayload
     stage_summaries: dict[str, Any]
 
@@ -312,6 +314,8 @@ class KbChatInternalState(KbChatInternalStateBase, total=False):
     compression_stats: dict[str, Any]
     draft_answer: str
     final_answer: str
+    answer_paragraphs: list[dict[str, Any]]
+    answer_render_meta: dict[str, Any]
     best_answer: str
     best_answer_meta: dict[str, Any]
     answer_subgraph_state: dict[str, Any]
@@ -515,6 +519,8 @@ class DraftGenerateInput(TypedDict, total=False):
     final_context: str
     evidence_items: list[dict[str, Any]]
     citation_catalog: dict[str, dict[str, Any]]
+    answer_paragraphs: list[dict[str, Any]]
+    answer_render_meta: dict[str, Any]
     loop_counts: LoopCounts
     stage_summaries: dict[str, Any]
 
@@ -525,6 +531,8 @@ class AnswerReviewCitationInput(TypedDict, total=False):
     final_context: str
     evidence_items: list[dict[str, Any]]
     citation_catalog: dict[str, dict[str, Any]]
+    answer_paragraphs: list[dict[str, Any]]
+    answer_render_meta: dict[str, Any]
 
 
 class AnswerReviewInput(TypedDict, total=False):
@@ -538,6 +546,8 @@ class AnswerReviewInput(TypedDict, total=False):
     final_context: str
     evidence_items: list[dict[str, Any]]
     citation_catalog: dict[str, dict[str, Any]]
+    answer_paragraphs: list[dict[str, Any]]
+    answer_render_meta: dict[str, Any]
 
 
 class AnswerReviewFuseInput(TypedDict, total=False):
@@ -558,6 +568,8 @@ class AnswerRepairInput(TypedDict, total=False):
     final_context: str
     evidence_items: list[dict[str, Any]]
     citation_catalog: dict[str, dict[str, Any]]
+    answer_paragraphs: list[dict[str, Any]]
+    answer_render_meta: dict[str, Any]
     answer_subgraph_state: dict[str, Any]
     stage_summaries: dict[str, Any]
 
@@ -568,6 +580,8 @@ class AnswerCommitInput(TypedDict, total=False):
     answer_subgraph_state: dict[str, Any]
     final_answer: str
     draft_answer: str
+    answer_paragraphs: list[dict[str, Any]]
+    answer_render_meta: dict[str, Any]
     best_answer: str
     best_answer_meta: dict[str, Any]
     stage_summaries: dict[str, Any]
