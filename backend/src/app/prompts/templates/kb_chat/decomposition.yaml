@@ -12,18 +12,19 @@ template: |
 
   规则：
   1. 子查询必须保留关键实体、时间、范围、指标和统计口径，不得引入新事实。
-  2. 若问题本身已足够明确，可只返回 1 个子查询，此时 strategy 可为 direct。
-  3. 若问题需要按实体、指标或步骤分拆，可返回 2 到 5 个子查询。
+  2. 当前节点只在“已判定需要问题拆解”时调用，因此 sub_queries 至少返回 2 条，最多 5 条；禁止只返回原题单条。
+  3. 对比较题、双实体题、步骤题，优先按“实体 / 维度 / 证据角度”拆开，而不是复制原题。
   4. 子查询之间尽量独立，避免“B 依赖 A 的答案”。
   5. 子查询要短、可检索、可直接用于召回，不写解释性句子。
   6. coverage_tags 只保留高价值标签，如 entity、time、metric、scope、compare、process。
+  7. 禁止输出“原题”“保持原题”“同义改写”这类占位式拆解。
 
   输出要求：
   - 只输出一个 JSON 对象，不要输出 Markdown、解释、代码块或额外文字。
   - JSON 字段必须且只能包含：
     - strategy: "direct" | "decomposition" | "multi_query" | "hybrid"
     - plan_version: 固定写 "kb_chat_decomposition_plan_v2"
-    - sub_queries: 字符串数组，长度 1 到 5
+    - sub_queries: 字符串数组，长度 2 到 5
     - sub_query_specs: 数组；每项包含 query、purpose、priority、coverage_tags
     - risk_flags: 字符串数组
     - reasoning: 一句话解释
@@ -38,7 +39,7 @@ variables:
     required: true
 
 few_shot_examples:
+  - input: "比较Self-Ask框架和Reflection框架的区别"
+    output: '{"strategy": "decomposition", "plan_version": "kb_chat_decomposition_plan_v2", "sub_queries": ["Self-Ask框架 工作机制 关键步骤", "Reflection框架 工作机制 关键步骤", "Self-Ask框架 Reflection框架 适用场景 优缺点 对比"], "sub_query_specs": [{"query": "Self-Ask框架 工作机制 关键步骤", "purpose": "提取 Self-Ask 的核心机制证据", "priority": 1, "coverage_tags": ["entity", "process"]}, {"query": "Reflection框架 工作机制 关键步骤", "purpose": "提取 Reflection 的核心机制证据", "priority": 1, "coverage_tags": ["entity", "process"]}, {"query": "Self-Ask框架 Reflection框架 适用场景 优缺点 对比", "purpose": "补全差异与适用边界证据", "priority": 2, "coverage_tags": ["compare", "scope"]}], "risk_flags": [], "reasoning": "比较类问题需要拆出双方机制与差异维度后再汇总。"}'
   - input: "比较 A 方案和 B 方案在 2024 年的成本与效果差异"
     output: '{"strategy": "decomposition", "plan_version": "kb_chat_decomposition_plan_v2", "sub_queries": ["A 方案 2024 成本", "B 方案 2024 成本", "A 方案 B 方案 2024 效果 对比"], "sub_query_specs": [{"query": "A 方案 2024 成本", "purpose": "提取 A 方案成本", "priority": 1, "coverage_tags": ["entity", "time", "metric"]}, {"query": "B 方案 2024 成本", "purpose": "提取 B 方案成本", "priority": 1, "coverage_tags": ["entity", "time", "metric"]}, {"query": "A 方案 B 方案 2024 效果 对比", "purpose": "补全效果差异证据", "priority": 2, "coverage_tags": ["compare", "time", "metric"]}], "risk_flags": [], "reasoning": "比较类问题需要分拆实体与指标后再汇总。"}'
-  - input: "Redis 的默认端口是多少？"
-    output: '{"strategy": "direct", "plan_version": "kb_chat_decomposition_plan_v2", "sub_queries": ["Redis 默认端口"], "sub_query_specs": [{"query": "Redis 默认端口", "purpose": "直接检索单一事实", "priority": 1, "coverage_tags": ["entity", "metric"]}], "risk_flags": [], "reasoning": "这是单跳事实查询，无需过度分解。"}'

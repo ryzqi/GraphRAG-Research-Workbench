@@ -201,6 +201,46 @@ _COMPARE_KEYWORDS = (
     "比较",
 )
 _MULTI_TARGET_SEPARATORS = (",", "，", " and ", " 与 ", " 和 ", "及")
+_MULTI_QUERY_LABEL_TOKENS = {
+    "同义词",
+    "技术术语",
+    "表达",
+    "用户视角",
+    "实际问题",
+    "专家视角",
+    "专业术语",
+    "窄范围",
+    "具体条件",
+    "广范围",
+    "全局概览",
+    "术语化",
+    "术语化查询",
+    "用户表达",
+    "用户表达查询",
+    "范围扩展",
+    "范围扩展查询",
+}
+_TROUBLESHOOT_KEYWORDS = (
+    "怎么",
+    "如何",
+    "解决",
+    "排查",
+    "报错",
+    "故障",
+    "异常",
+    "error",
+    "failed",
+    "failure",
+    "troubleshoot",
+    "debug",
+)
+_LEADING_COMPARE_PATTERNS = (
+    r"^(?:请)?(?:帮我)?(?:比较|对比|compare)\s*",
+)
+_TRAILING_COMPARE_PATTERNS = (
+    r"(?:的)?(?:区别|差异|不同点|对比|比较|优缺点)\s*$",
+    r"(?:differences?|comparison)\s*$",
+)
 
 
 def _normalize_reason_code(value: object) -> str:
@@ -541,22 +581,94 @@ def _rule_based_multi_query_candidates(query: str) -> list[str]:
     q = _normalize_whitespace(query)
     if not q:
         return []
+
+    def _default_focus(text: str) -> str:
+        focus = re.sub(r"^(?:请)?(?:介绍|解释|说明|分析|总结|聊聊|请问)\s*", "", text)
+        focus = re.sub(r"(?:是什么|是啥|有哪些|如何|怎么做|怎么办)\s*$", "", focus)
+        return _normalize_whitespace(focus) or text
+
+    def _comparison_focus(text: str) -> str:
+        focus = text
+        for pattern in _LEADING_COMPARE_PATTERNS:
+            focus = re.sub(pattern, "", focus, flags=re.IGNORECASE)
+        for pattern in _TRAILING_COMPARE_PATTERNS:
+            focus = re.sub(pattern, "", focus, flags=re.IGNORECASE)
+        focus = re.sub(r"\b(?:vs|versus)\b", " ", focus, flags=re.IGNORECASE)
+        focus = re.sub(r"[，,、/]+", " ", focus)
+        focus = focus.replace(" 和 ", " ").replace(" 与 ", " ").replace(" 及 ", " ")
+        focus = focus.replace("和", " ").replace("与", " ").replace("及", " ")
+        focus = focus.replace("的", " ")
+        return _normalize_whitespace(focus) or text
+
+    lowered = q.lower()
+    if _looks_compare_or_multi_target(q):
+        focus = _comparison_focus(q)
+        return [
+            q,
+            f"{focus} 原理 机制 对比",
+            f"{focus} 适用场景 优缺点",
+        ]
+    if any(keyword in lowered for keyword in _TROUBLESHOOT_KEYWORDS):
+        focus = _default_focus(q)
+        return [
+            q,
+            f"{focus} 原因 排查",
+            f"{focus} 解决方案 最佳实践",
+        ]
+    focus = _default_focus(q)
     return [
         q,
-        f"{q} 同义词 技术术语 表达",
-        f"{q} 用户视角 实际问题",
-        f"{q} 专家视角 专业术语",
-        f"{q} 窄范围 具体条件",
-        f"{q} 广范围 全局概览",
+        f"{focus} 核心概念 定义",
+        f"{focus} 应用场景 限制",
     ]
+
+
+def _is_label_stuffed_multi_query(candidate: str, *, original_query: str) -> bool:
+    normalized_candidate = _normalize_whitespace(candidate)
+    normalized_original = _normalize_whitespace(original_query)
+    if not normalized_candidate or not normalized_original:
+        return False
+    if normalized_candidate == normalized_original:
+        return False
+    if not normalized_candidate.startswith(normalized_original):
+        return False
+    suffix = _normalize_whitespace(normalized_candidate[len(normalized_original) :])
+    if not suffix:
+        return False
+    tokens = [token.strip() for token in re.split(r"\s+", suffix) if token.strip()]
+    if not tokens:
+        return False
+    return all(token in _MULTI_QUERY_LABEL_TOKENS for token in tokens)
+
+
+def _normalize_multi_query_variants(
+    queries: Iterable[str], *, original_query: str
+) -> tuple[list[str], str | None]:
+    normalized: list[str] = []
+    invalid_reason: str | None = None
+    original = _normalize_whitespace(original_query)
+    for candidate in _dedupe_keep_order(queries):
+        if _is_label_stuffed_multi_query(candidate, original_query=original):
+            invalid_reason = invalid_reason or "label_stuffing"
+            continue
+        normalized.append(candidate)
+    distinct_from_original = [
+        candidate for candidate in normalized if _normalize_whitespace(candidate) != original
+    ]
+    if len(distinct_from_original) < 2:
+        invalid_reason = invalid_reason or "insufficient_distinct_queries"
+    return normalized, invalid_reason
 
 
 def _coerce_fixed_multi_query_variants(
     queries: Iterable[str], *, original_query: str
-) -> tuple[list[str], bool]:
-    base = _dedupe_keep_order(queries)
+) -> tuple[list[str], bool, str | None]:
+    base, invalid_reason = _normalize_multi_query_variants(
+        queries,
+        original_query=original_query,
+    )
     if len(base) >= MULTI_QUERY_FIXED_VARIANTS:
-        return base[:MULTI_QUERY_FIXED_VARIANTS], False
+        return base[:MULTI_QUERY_FIXED_VARIANTS], False, invalid_reason
 
     completed = _dedupe_keep_order(
         [*base, *_rule_based_multi_query_candidates(original_query)]
@@ -564,7 +676,7 @@ def _coerce_fixed_multi_query_variants(
     if len(completed) < MULTI_QUERY_FIXED_VARIANTS:
         for idx in range(len(completed), MULTI_QUERY_FIXED_VARIANTS):
             completed.append(f"{_normalize_whitespace(original_query)} 变体{idx + 1}")
-    return completed[:MULTI_QUERY_FIXED_VARIANTS], True
+    return completed[:MULTI_QUERY_FIXED_VARIANTS], True, invalid_reason
 
 
 def _entity_seed_queries(
@@ -1772,7 +1884,7 @@ class QueryRewriteService:
             sub_queries = _dedupe_keep_order(
                 [*spec_queries, *payload.sub_queries]
             )[:DECOMPOSITION_MAX_SUB_QUERIES]
-            if sub_queries:
+            if len(sub_queries) >= 2:
                 latency_ms = int((time.perf_counter() - start) * 1000)
                 normalized_specs: list[dict[str, object]] = []
                 for idx, q in enumerate(sub_queries):
@@ -1837,6 +1949,12 @@ class QueryRewriteService:
                         "spec_count": len(normalized_specs),
                     },
                 )
+            structured_result = StructuredCallResult(
+                payload=payload,
+                success=False,
+                reason="llm_invalid_decomposition_insufficient_subqueries",
+                latency_ms=structured_result.latency_ms,
+            )
 
         latency_ms = int((time.perf_counter() - start) * 1000)
         fallback_reason = structured_result.reason or "llm_structured_fallback_original"
@@ -1892,11 +2010,18 @@ class QueryRewriteService:
             structured_result.success
             and isinstance(structured_result.payload, MultiQueryDecision)
         ):
-            fixed_variants, completed = _coerce_fixed_multi_query_variants(
+            fixed_variants, completed, invalid_reason = _coerce_fixed_multi_query_variants(
                 structured_result.payload.queries,
                 original_query=q,
             )
             latency_ms = int((time.perf_counter() - start) * 1000)
+            if invalid_reason:
+                return QueryListResult(
+                    queries=fixed_variants,
+                    success=False,
+                    reason=f"llm_invalid_multi_query_{invalid_reason}",
+                    latency_ms=latency_ms,
+                )
             return QueryListResult(
                 queries=fixed_variants,
                 success=True,
@@ -1909,7 +2034,7 @@ class QueryRewriteService:
             )
 
         latency_ms = int((time.perf_counter() - start) * 1000)
-        fixed_variants, _ = _coerce_fixed_multi_query_variants([], original_query=q)
+        fixed_variants, _, _ = _coerce_fixed_multi_query_variants([], original_query=q)
         return QueryListResult(
             queries=fixed_variants,
             success=False,

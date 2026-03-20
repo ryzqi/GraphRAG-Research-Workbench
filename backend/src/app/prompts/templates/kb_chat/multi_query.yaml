@@ -12,14 +12,17 @@ template: |
 
   三条查询的分工：
   1. 术语化查询：偏标准术语、规范表达。
-  2. 用户表达查询：偏口语或业务方常用说法。
-  3. 范围扩展查询：在不改变实体和核心约束前提下做适度扩展。
+  2. 场景化查询：偏真实使用场景、业务问题或故障现象。
+  3. 证据维度查询：补充原理 / 限制 / 优缺点 / 排查维度中的一个高价值角度。
 
   规则：
   1. 必须保留核心实体、时间范围、指标和限制条件，不得引入新事实。
   2. 若问题含中英文混合术语，查询中应尽量保留中英文高价值表达。
   3. 每条查询都应短、可检索、可直接用于召回。
-  4. 如果某一分工不适用，也要给出最接近该分工的安全表达。
+  4. 如果某一分工不适用，也要给出最接近该分工的安全表达，但仍必须像真实检索词。
+  5. 禁止输出“同义词”“技术术语”“用户视角”“实际问题”“专家视角”等标签词本身。
+  6. 禁止只把原问题后面拼接说明标签；每条查询都必须是可以直接检索的独立短句。
+  7. 至少两条查询必须相对原问题新增明确的检索角度（如原理、适用场景、排查原因、限制条件）。
 
   输出要求：
   - 只输出一个 JSON 对象，不要输出 Markdown、解释、代码块或额外文字。
@@ -34,5 +37,7 @@ variables:
     required: true
 
 few_shot_examples:
+  - input: "比较Self-Ask框架和Reflection框架的区别"
+    output: '{"queries": ["Self-Ask框架 Reflection框架 区别", "Self-Ask框架 Reflection框架 原理 机制 对比", "Self-Ask框架 Reflection框架 适用场景 优缺点"]}'
   - input: "Kubernetes Pod OOMKilled 怎么解决？"
-    output: '{"queries": ["Kubernetes Pod OOMKilled 解决方案", "K8s 容器 OOMKilled 怎么排查", "Pod 内存限制 resources limits 调优"]}'
+    output: '{"queries": ["Kubernetes Pod OOMKilled 解决方案", "K8s 容器 OOMKilled 原因 排查", "Pod 内存限制 resources limits 调优"]}'
