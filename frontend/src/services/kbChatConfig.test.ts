@@ -7,9 +7,13 @@ const removedConfigKeys = [
   'query_rewrite_enabled',
   'ambiguity_check_enabled',
   'normalize_llm_enabled',
+  'normalize_alias_max',
   'hyde_enabled',
   'entity_expand_enabled',
   'entity_expand_timeout_seconds',
+  'entity_expand_max_candidates',
+  'entity_expand_max_variants',
+  'entity_expand_min_confidence',
   'parallel_retrieval_enabled',
   'doc_gate_rule_threshold',
   'doc_gate_llm_confidence_floor',
@@ -30,9 +34,13 @@ describe('kbChatConfig contract cleanup', () => {
       query_rewrite_enabled: false as never,
       ambiguity_check_enabled: false as never,
       normalize_llm_enabled: false as never,
+      normalize_alias_max: 6 as never,
       hyde_enabled: false as never,
       entity_expand_enabled: false as never,
       entity_expand_timeout_seconds: 1.2 as never,
+      entity_expand_max_candidates: 9 as never,
+      entity_expand_max_variants: 6 as never,
+      entity_expand_min_confidence: 0.6 as never,
       parallel_retrieval_enabled: false as never,
       doc_gate_rule_threshold: 0.2 as never,
       doc_gate_llm_confidence_floor: 0.3 as never,
@@ -48,6 +56,9 @@ describe('kbChatConfig contract cleanup', () => {
     expect(query).not.toContain('retrieval_hybrid_ranker');
     expect(query).not.toContain('retrieval_hybrid_dense_weight');
     expect(query).not.toContain('retrieval_hybrid_sparse_weight');
+    expect(query).not.toContain('entity_expand_max_candidates');
+    expect(query).not.toContain('entity_expand_max_variants');
+    expect(query).not.toContain('entity_expand_min_confidence');
     for (const key of removedConfigKeys) {
       expect(query).not.toContain(key);
     }

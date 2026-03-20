@@ -58,10 +58,10 @@ _AMBIGUITY_TECHNICAL_REASONS: set[str] = {
 }
 _AMBIGUITY_DEFAULT_REASON_TRUE = "问题缺少关键信息，需先澄清后再检索。"
 _AMBIGUITY_DEFAULT_REASON_FALSE = "未命中需澄清信号，可直接继续检索。"
-_QUERY_PLAN_REASON_DIRECT = "未命中复杂问题信号，先按简单问题直接检索。"
-_QUERY_PLAN_REASON_MULTI_QUERY = "目标单一但召回风险较高，按多路查询扩展检索。"
-_QUERY_PLAN_REASON_DECOMPOSITION = "命中比较或多目标信号，按问题拆解处理。"
-_QUERY_PLAN_REASON_DECOMPOSITION_GENERIC = "问题涉及多步骤或多视角信息，按问题拆解处理。"
+_QUERY_PLAN_REASON_DIRECT = "未命中复杂问题信号，按主问题并辅以 HyDE 补强检索。"
+_QUERY_PLAN_REASON_MULTI_QUERY = "目标单一但召回风险较高，先做多路查询扩展，再进入 HyDE 补强。"
+_QUERY_PLAN_REASON_DECOMPOSITION = "命中比较或多目标信号，先做问题拆解，再进入 HyDE 补强。"
+_QUERY_PLAN_REASON_DECOMPOSITION_GENERIC = "问题涉及多步骤或多视角信息，先做问题拆解，再进入 HyDE 补强。"
 
 _BUSINESS_LABEL_FALLBACKS: dict[str, str] = {
     "__end__": "结束",
@@ -75,7 +75,6 @@ _BUSINESS_LABEL_FALLBACKS: dict[str, str] = {
     "query_plan": "查询规划",
     "decomposition": "问题拆解",
     "generate_variants": "多路查询扩展",
-    "entity_expand": "实体扩展",
     "hyde": "假设文档扩展",
     "query_plan_finalize": "查询定稿",
     "preprocess_exit": "预处理出口",
@@ -144,7 +143,6 @@ _INPUT_CONTRACTS: dict[str, list[str]] = {
     "query_plan": ["normalized_query"],
     "decomposition": ["normalized_query"],
     "generate_variants": ["normalized_query"],
-    "entity_expand": ["normalized_query", "multi_queries"],
     "hyde": ["normalized_query"],
     "query_plan_finalize": ["normalized_query", "sub_queries", "multi_queries"],
     "preprocess_exit": ["normalized_query"],
@@ -176,7 +174,6 @@ _OUTPUT_CONTRACTS: dict[str, list[str]] = {
     "query_plan": ["decision", "reason", "next_node_label"],
     "decomposition": ["sub_queries"],
     "generate_variants": ["multi_queries"],
-    "entity_expand": ["multi_queries"],
     "hyde": ["hyde_docs"],
     "query_plan_finalize": ["query_items"],
     "preprocess_exit": ["next_node_label", "final_answer"],
@@ -559,8 +556,6 @@ def _resolve_multi_queries_display(snapshot: Mapping[str, Any]) -> list[str] | N
 
     stage_count_candidates = [
         _summary_for_node(snapshot, "generate_variants").get("count"),
-        _summary_for_node(snapshot, "entity_expand").get("count"),
-        _summary_for_node(snapshot, "entity_expand").get("expanded_count"),
     ]
     for raw in stage_count_candidates:
         if isinstance(raw, int) and raw > 0:
@@ -594,9 +589,10 @@ def _resolve_hyde_docs_display(snapshot: Mapping[str, Any]) -> list[str] | None:
     if isinstance(generated_count, int) and generated_count > 0:
         return [f"共 {generated_count} 篇 HyDE 文档（trace 未记录正文）"]
 
-    fallback_policy = _as_dict((_as_dict(snapshot.get("query_plan_result")) or {}).get("fallback_policy")) or {}
-    entity_expand_summary = _summary_for_node(snapshot, "entity_expand")
-    if bool(fallback_policy.get("allow_hyde")) or bool(entity_expand_summary.get("hyde_enabled")):
+    fallback_policy = _as_dict(
+        (_as_dict(snapshot.get("query_plan_result")) or {}).get("fallback_policy")
+    ) or {}
+    if bool(fallback_policy.get("allow_hyde")):
         return ["已启用 HyDE，trace 未记录文档正文"]
     return None
 

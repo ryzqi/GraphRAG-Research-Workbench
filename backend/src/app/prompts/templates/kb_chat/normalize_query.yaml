@@ -10,11 +10,12 @@ template: |
   1. 必须保留关键实体、数字、时间范围、错误码、版本号、指标和范围约束。
   2. 允许做轻量规范化：去噪、术语统一、别名补充、缩写展开。
   3. 不得编造新事实；如果不确定，宁可保守。
-  4. aliases 只能放安全的别名、缩写展开或表面形式变化。
-  5. 不得把意图词、问法片段或通用短语写入 aliases，例如“介绍一下”“是什么”“怎么处理”。
-  6. aliases 长度不得超过 {alias_limit}。
-  7. recall_risk 必须是 low / medium / high 之一。
-  8. 如果你担心改写会偏离原问题，请把 drift_risk 设为 true。
+  4. aliases 只能放安全的别名、缩写展开或表面形式变化，不要塞入意图词、问法片段或通用短语。
+  5. 如果原问题已经适合检索，可以保持 canonical_query 基本不变。
+  6. recall_risk 必须是 low / medium / high 之一。
+  7. 如果你担心改写会偏离原问题，请把 drift_risk 设为 true。
+  8. 如果关键信息被完整保留，请把 constraint_preserved 设为 true；否则设为 false。
+  9. 如果问题同时涉及多个对象、多个目标或显式对比，请把 has_multi_target / is_comparison 标出来。
 
   输出要求：
   - Return JSON only.
@@ -27,29 +28,23 @@ template: |
     - scope_constraints
     - recall_risk
     - drift_risk
+    - constraint_preserved
+    - has_multi_target
+    - is_comparison
     - reasoning
 
   输入：
   - User question: {question}
-  - Rule-normalized query: {rule_normalized_query}
 
 variables:
   - name: question
     type: string
     required: true
-  - name: rule_normalized_query
-    type: string
-    required: true
-  - name: alias_limit
-    type: integer
-    required: true
 
 few_shot_examples:
   - input: |
       User question: K8s pod CrashLoopBackOff troubleshooting steps
-      Rule-normalized query: K8s pod CrashLoopBackOff troubleshooting steps
-    output: '{"canonical_query": "K8s pod CrashLoopBackOff troubleshooting steps", "aliases": ["kubernetes pod CrashLoopBackOff"], "entities": ["K8s", "CrashLoopBackOff"], "time_constraints": [], "metric_constraints": [], "scope_constraints": [], "recall_risk": "high", "drift_risk": false, "reasoning": "Acronym and technical token need alias expansion."}'
+    output: '{"canonical_query": "K8s pod CrashLoopBackOff troubleshooting steps", "aliases": ["kubernetes pod CrashLoopBackOff"], "entities": ["K8s", "CrashLoopBackOff"], "time_constraints": [], "metric_constraints": [], "scope_constraints": [], "recall_risk": "high", "drift_risk": false, "constraint_preserved": true, "has_multi_target": false, "is_comparison": false, "reasoning": "Acronym and technical token need alias expansion."}'
   - input: |
       User question: What is the platform availability in 2024?
-      Rule-normalized query: platform availability 2024
-    output: '{"canonical_query": "platform availability 2024", "aliases": ["platform SLA 2024"], "entities": ["platform"], "time_constraints": ["2024"], "metric_constraints": ["availability", "SLA"], "scope_constraints": [], "recall_risk": "medium", "drift_risk": false, "reasoning": "Preserve the KPI and year while adding one safe alias."}'
+    output: '{"canonical_query": "platform availability 2024", "aliases": ["platform SLA 2024"], "entities": ["platform"], "time_constraints": ["2024"], "metric_constraints": ["availability", "SLA"], "scope_constraints": [], "recall_risk": "medium", "drift_risk": false, "constraint_preserved": true, "has_multi_target": false, "is_comparison": false, "reasoning": "Preserve the KPI and year while adding one safe alias."}'

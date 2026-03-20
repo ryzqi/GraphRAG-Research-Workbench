@@ -428,7 +428,6 @@ def _build_node_input_display_items(
         "query_plan",
         "decomposition",
         "generate_variants",
-        "entity_expand",
         "hyde",
     }:
         _append_display_item(
@@ -437,13 +436,6 @@ def _build_node_input_display_items(
             label="规范化问题",
             value=_pick_text(snapshot, "normalized_query", "resolved_query", "coref_query", "user_input"),
         )
-        if node_name == "entity_expand":
-            _append_display_item(
-                items,
-                key="multi_queries",
-                label="待扩展查询",
-                value=_pick_string_list(snapshot, "multi_queries"),
-            )
     elif node_name == "query_plan_finalize":
         _append_display_item(
             items,
@@ -794,69 +786,7 @@ def _build_node_output_display_items(
             label="处理原因",
             value=summary.get("reason"),
         )
-    elif node_name == "entity_expand":
-        multi_queries = _pick_string_list(snapshot, "multi_queries")
-        _append_display_item(
-            items,
-            key="multi_queries",
-            label="澶氳矾鏌ヨ",
-            value=multi_queries,
-        )
-        _append_display_item(
-            items,
-            key="input_count",
-            label="杈撳叆鏁伴噺",
-            value=summary.get("input_count"),
-        )
-        _append_display_item(
-            items,
-            key="expanded_count",
-            label="鎵╁睍鍚庢暟閲?",
-            value=summary.get("expanded_count"),
-        )
-        _append_display_item(
-            items,
-            key="added_count",
-            label="鏂板鏁伴噺",
-            value=summary.get("added_count"),
-        )
-        _append_display_item(
-            items,
-            key="pruned_count",
-            label="鍓灊鏁伴噺",
-            value=summary.get("pruned_count"),
-        )
-        _append_display_item(
-            items,
-            key="min_confidence",
-            label="鏈€浣庣疆淇″害",
-            value=summary.get("min_confidence"),
-        )
-        _append_display_item(
-            items,
-            key="drift_guardrail_triggered",
-            label="鏄惁鍛戒腑婕傜Щ闃插",
-            value=summary.get("drift_guardrail_triggered"),
-        )
-        _append_display_item(
-            items,
-            key="fallback_reason",
-            label="闄嶇骇鍘熷洜",
-            value=summary.get("fallback_reason"),
-        )
-        _append_display_item(
-            items,
-            key="reason",
-            label="澶勭悊鍘熷洜",
-            value=summary.get("reason"),
-        )
     elif node_name == "hyde":
-        _append_display_item(
-            items,
-            key="enabled",
-            label="是否启用 HyDE",
-            value=summary.get("enabled"),
-        )
         hyde_docs = _pick_string_list(snapshot, "hyde_docs")
         if hyde_docs:
             _append_display_item(

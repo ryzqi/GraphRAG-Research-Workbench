@@ -89,9 +89,6 @@ const KbChatFlowPanel = dynamic(
 type TerminalRunStatus = 'succeeded' | 'failed' | 'canceled' | 'waiting_user';
 
 const DEFAULT_KB_CHAT_CONFIG: KbChatConfig = {
-  entity_expand_max_candidates: 8,
-  entity_expand_max_variants: 6,
-  entity_expand_min_confidence: 0.55,
   retrieval_top_k: 12,
   retrieval_rerank_top_k: 50,
   retrieval_hybrid_rrf_k: 60,

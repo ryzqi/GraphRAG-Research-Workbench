@@ -17,7 +17,6 @@ const CURRENT_KB_CHAT_NODE_IDS = [
   'query_plan',
   'decomposition',
   'generate_variants',
-  'entity_expand',
   'hyde',
   'query_plan_finalize',
   'preprocess_exit',
@@ -49,27 +48,26 @@ const EXPECTED_NODE_ORDERS: Record<(typeof CURRENT_KB_CHAT_NODE_IDS)[number], nu
   query_plan: 5,
   decomposition: 6,
   generate_variants: 7,
-  entity_expand: 8,
-  hyde: 9,
-  query_plan_finalize: 10,
-  preprocess_exit: 11,
-  retrieval_subgraph: 12,
-  retrieval_plan: 13,
-  dispatch_subqueries: 14,
-  retrieve_subquery: 15,
-  merge_subquery_context: 16,
-  retrieve: 17,
-  context_compress: 18,
-  transform_query: 19,
-  answer_subgraph: 20,
-  draft_generate: 21,
-  answer_review_dispatch: 22,
-  answer_review_citation: 23,
-  answer_review: 24,
-  answer_review_fuse: 25,
-  answer_repair: 26,
-  answer_commit: 27,
-  force_exit: 28,
+  hyde: 8,
+  query_plan_finalize: 9,
+  preprocess_exit: 10,
+  retrieval_subgraph: 11,
+  retrieval_plan: 12,
+  dispatch_subqueries: 13,
+  retrieve_subquery: 14,
+  merge_subquery_context: 15,
+  retrieve: 16,
+  context_compress: 17,
+  transform_query: 18,
+  answer_subgraph: 19,
+  draft_generate: 20,
+  answer_review_dispatch: 21,
+  answer_review_citation: 22,
+  answer_review: 23,
+  answer_review_fuse: 24,
+  answer_repair: 25,
+  answer_commit: 26,
+  force_exit: 27,
 };
 
 describe('kbNodeCatalog', () => {
@@ -163,14 +161,13 @@ describe('kbNodeCatalog', () => {
     [
       ['decomposition', '问题拆解'],
       ['generate_variants', '多路查询扩展'],
-      ['entity_expand', '实体扩展'],
       ['hyde', '假设文档扩展'],
       ['query_plan_finalize', '查询定稿'],
     ].forEach(([nodeId, label]) => {
       expect(resolveKbNodeCatalogEntry(nodeId)?.label).toBe(label);
     });
 
-    ['complexity_classify', 'generate_variants_mod', 'prepare_messages'].forEach((nodeId) => {
+    ['complexity_classify', 'generate_variants_mod', 'prepare_messages', 'entity_expand'].forEach((nodeId) => {
       expect(resolveKbNodeCatalogEntry(nodeId)).toBeNull();
     });
   });

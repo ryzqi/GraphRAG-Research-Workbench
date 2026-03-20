@@ -18,7 +18,6 @@ _NON_ANSWER_STREAM_NODES = {
     "query_plan",
     "decomposition",
     "generate_variants",
-    "entity_expand",
     "hyde",
     "query_plan_finalize",
     "retrieve",

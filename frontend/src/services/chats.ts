@@ -71,9 +71,6 @@ export type ChatTraceExecutionStatus =
   | 'skipped';
 
 export interface KbChatConfig {
-  entity_expand_max_candidates: number;
-  entity_expand_max_variants: number;
-  entity_expand_min_confidence: number;
   retrieval_top_k: number;
   retrieval_rerank_top_k: number;
   retrieval_hybrid_rrf_k: number;
@@ -411,9 +408,6 @@ export function normalizeChatStreamEvent(event: SseEvent): NormalizedChatStreamE
 export function toKbGraphSchemaQuery(config: Partial<KbChatConfig>): string {
   const params = new URLSearchParams();
   const orderedKeys: Array<keyof KbChatConfig> = [
-    'entity_expand_max_candidates',
-    'entity_expand_max_variants',
-    'entity_expand_min_confidence',
     'retrieval_top_k',
     'retrieval_rerank_top_k',
     'retrieval_hybrid_rrf_k',

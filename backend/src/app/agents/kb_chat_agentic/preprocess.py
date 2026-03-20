@@ -37,7 +37,6 @@ from app.agents.kb_chat_agentic_state import (
     AmbiguityCheckInput,
     CorefRewriteInput,
     DecompositionInput,
-    EntityExpandInput,
     GenerateVariantsInput,
     HydeInput,
     MergeContextInput,
@@ -53,10 +52,6 @@ from .budget import (
 )
 from .json_safety import ensure_json_safe
 from .runtime_config import (
-    entity_expand_max_candidates,
-    entity_expand_max_variants,
-    entity_expand_min_confidence,
-    normalize_alias_max,
     parallel_retrieval_include_main,
     parallel_retrieval_max_branches,
     parallel_retrieval_min_queries,
@@ -1384,8 +1379,9 @@ async def normalize_rewrite(
     settings: Settings,
     runtime: Runtime[Any] | None = None,
 ) -> dict[str, Any]:
-    """Normalize query with rule+LLM strategy and retrieval-safe metadata."""
+    """Normalize query with LLM-only structured output and fail-open fallback."""
     start = time.perf_counter()
+    _ = runtime
     input_source = "resolved_query"
     query = state.get("resolved_query")
     if not isinstance(query, str) or not query.strip():
@@ -1397,10 +1393,10 @@ async def normalize_rewrite(
 
     rewritten = query
     rewritten_flag = False
-    normalization_source = "rule_fallback"
+    normalization_source = "fail_open"
     fallback_reason = "error"
     normalized_meta: dict[str, Any] = {
-        "source": "rule_fallback",
+        "source": "fail_open",
         "fallback_reason": "error",
         "aliases": [],
         "entities": [],
@@ -1414,16 +1410,12 @@ async def normalize_rewrite(
     }
     try:
         svc = QueryRewriteService(settings=settings)
-        result = await svc.normalize_rewrite(
-            query,
-            llm_enabled=True,
-            alias_limit=normalize_alias_max(state, settings, runtime=runtime),
-        )
+        result = await svc.normalize_rewrite(query)
         rewritten = result.query
         rewritten_flag = result.rewritten
         if isinstance(result.meta, dict):
             normalized_meta = {**normalized_meta, **result.meta}
-        normalization_source = str(normalized_meta.get("source") or "rule_fallback")
+        normalization_source = str(normalized_meta.get("source") or "fail_open")
         fallback_reason = str(normalized_meta.get("fallback_reason") or result.reason or "")
     except Exception:  # pragma: no cover
         rewritten = query
@@ -1490,12 +1482,12 @@ def _resolve_query_plan_next_node(*, strategy: str, settings: Settings) -> str:
             return "decomposition"
         if bool(getattr(settings, "kb_chat_multi_query_enabled", True)):
             return "generate_variants"
-        return "entity_expand"
+        return "hyde"
     if strategy == "multi_query":
         if bool(getattr(settings, "kb_chat_multi_query_enabled", True)):
             return "generate_variants"
-        return "entity_expand"
-    return "query_plan_finalize"
+        return "hyde"
+    return "hyde"
 
 
 def _complexity_level_for_strategy(strategy: str) -> str:
@@ -1709,7 +1701,6 @@ async def query_plan(
         "multi_queries": [],
         "hyde_docs": [],
         "decomposition_plan": _default_decomposition_plan(normalized_query),
-        "entity_expand_meta": {},
         "query_items": [],
         "query_plan_result": {},
         "query_plan_diagnostics": {},
@@ -1718,7 +1709,7 @@ async def query_plan(
     return Command(update=updates, goto=next_node)
 
 
-async def decomposition(state: DecompositionInput, settings: Settings) -> dict[str, Any]:
+async def decomposition(state: DecompositionInput, settings: Settings) -> Command[str]:
     """Generate sub-queries (via QueryRewriteService; degrades safely)."""
     start = time.perf_counter()
     query = state.get("normalized_query")
@@ -1785,16 +1776,20 @@ async def decomposition(state: DecompositionInput, settings: Settings) -> dict[s
         settings=settings,
     )
 
-    return {
-        "sub_queries": sub_queries,
-        "decomposition_plan": decomposition_plan,
-        "stage_summaries": stage_summaries,
-    }
+    stage_summaries["decomposition"]["next_node"] = "hyde"
+    return Command(
+        update={
+            "sub_queries": sub_queries,
+            "decomposition_plan": decomposition_plan,
+            "stage_summaries": stage_summaries,
+        },
+        goto="hyde",
+    )
 
 async def generate_variants(
     state: GenerateVariantsInput,
     settings: Settings,
-) -> dict[str, Any]:
+) -> Command[str]:
     """Generate query variants (via QueryRewriteService; degrades safely)."""
     start = time.perf_counter()
     query = state.get("normalized_query")
@@ -1828,131 +1823,11 @@ async def generate_variants(
         },
         settings=settings,
     )
-    return {"multi_queries": deduped, "stage_summaries": stage_summaries}
-
-
-async def entity_expand(
-    state: EntityExpandInput,
-    runtime: Runtime[Any],
-    settings: Settings,
-) -> Command[str]:
-    """Entity expansion with confidence/drift guardrails and Command routing."""
-    start = time.perf_counter()
-    _ = runtime
-    queries = state.get("multi_queries")
-    if not isinstance(queries, list):
-        queries = []
-    original = [q for q in queries if isinstance(q, str) and q.strip()]
-    normalized_query = state.get("normalized_query")
-    if not isinstance(normalized_query, str):
-        normalized_query = ""
-    normalized_meta = state.get("normalized_meta")
-    alias_candidates = _normalize_meta_values(
-        normalized_meta if isinstance(normalized_meta, dict) else None,
-        "aliases",
-        limit=8,
-    )
-    entities = []
-    if isinstance(normalized_meta, dict) and isinstance(normalized_meta.get("entities"), list):
-        entities = [item for item in normalized_meta["entities"] if isinstance(item, str)]
-
-    max_candidates = entity_expand_max_candidates(state, settings, runtime=runtime)
-    max_variants = entity_expand_max_variants(state, settings, runtime=runtime)
-    min_confidence = entity_expand_min_confidence(state, settings, runtime=runtime)
-
-    expanded = original
-    success = False
-    reason: str | None = "disabled"
-    diagnostics: dict[str, Any] = {}
-    try:
-        svc = QueryRewriteService(settings=settings)
-        result = await svc.entity_expand(
-            original,
-            normalized_query=normalized_query,
-            aliases=alias_candidates,
-            entities=entities,
-            enabled=True,
-            max_candidates=max_candidates,
-            max_variants=max_variants,
-            min_confidence=min_confidence,
-        )
-        expanded = result.queries
-        success = result.success
-        reason = result.reason
-        diagnostics = (
-            result.diagnostics if isinstance(result.diagnostics, dict) else {}
-        )
-    except Exception:  # pragma: no cover
-        expanded = original
-        reason = "error"
-        success = False
-        diagnostics = {"fallback_reason": "exception"}
-    expanded = [value for value in expanded if isinstance(value, str) and value.strip()]
-    expanded = expanded[:max(1, max_variants)]
-    input_count = len(_dedupe_string_list(original))
-    expanded_count = len(_dedupe_string_list(expanded))
-    added_count = max(0, expanded_count - min(input_count, max(1, max_variants)))
-    pruned_count = int(diagnostics.get("pruned_count") or 0)
-    pruned_drift = int(diagnostics.get("pruned_drift") or 0)
-    fallback_reason = (
-        str(diagnostics.get("fallback_reason")).strip()
-        if isinstance(diagnostics.get("fallback_reason"), str)
-        else ""
-    )
-    entity_expand_meta = {
-        "enabled": True,
-        "input_count": input_count,
-        "expanded_count": expanded_count,
-        "added_count": added_count,
-        "pruned_count": pruned_count,
-        "pruned_drift": pruned_drift,
-        "pruned_low_confidence": int(diagnostics.get("pruned_low_confidence") or 0),
-        "min_confidence": min_confidence,
-        "max_candidates": max_candidates,
-        "max_variants": max_variants,
-        "reason": reason,
-        "fallback_reason": fallback_reason or reason,
-        "drift_guardrail_triggered": pruned_drift > 0,
-    }
-    next_node = (
-        "hyde"
-        if bool(getattr(settings, "kb_chat_hyde_enabled", True))
-        else "query_plan_finalize"
-    )
-    stage_summaries = _merge_stage_summary(
-        state,
-        "entity_expand",
-        {
-            "success": success,
-            "enabled": True,
-            "reason": reason,
-            "input_count": input_count,
-            "expanded_count": expanded_count,
-            "added_count": added_count,
-            "pruned_count": pruned_count,
-            "pruned_low_confidence": int(diagnostics.get("pruned_low_confidence") or 0),
-            "pruned_drift": pruned_drift,
-            "drift_guardrail_triggered": pruned_drift > 0,
-            "fallback_reason": fallback_reason or reason,
-            "count": expanded_count,
-            "min_confidence": min_confidence,
-            "alias_count": len(alias_candidates),
-            "next_node": next_node,
-            "hyde_enabled": next_node == "hyde",
-            "completed_at": now_iso(),
-            "latency_ms": int((time.perf_counter() - start) * 1000),
-        },
-        settings=settings,
-    )
+    stage_summaries["generate_variants"]["next_node"] = "hyde"
     return Command(
-        update={
-            "multi_queries": expanded,
-            "entity_expand_meta": entity_expand_meta,
-            "stage_summaries": stage_summaries,
-        },
-        goto=next_node,
+        update={"multi_queries": deduped, "stage_summaries": stage_summaries},
+        goto="hyde",
     )
-
 
 async def hyde(state: HydeInput, settings: Settings) -> dict[str, Any]:
     """HyDE node (LLM-driven with safe fallback)."""
@@ -1965,7 +1840,7 @@ async def hyde(state: HydeInput, settings: Settings) -> dict[str, Any]:
     reason: str | None = None
     try:
         svc = QueryRewriteService(settings=settings)
-        result = await svc.hyde(query, enabled=True)
+        result = await svc.hyde(query)
         hyde_docs = [item for item in result.queries if isinstance(item, str) and item.strip()]
         success = result.success
         reason = result.reason
@@ -1983,7 +1858,6 @@ async def hyde(state: HydeInput, settings: Settings) -> dict[str, Any]:
         "hyde",
         {
             "driver": "llm",
-            "enabled": True,
             "success": success,
             "requested_count": HYDE_NUM_HYPOTHESES,
             "generated_count": len(hyde_docs),
@@ -2030,12 +1904,9 @@ def _build_query_plan_fallback_policy(
         "medium",
         "high",
     }
-    allow_hyde = bool(getattr(settings, "kb_chat_hyde_enabled", True)) and (
-        strategy in {"decomposition", "multi_query"} or recall_risk == "high"
-    )
     return {
         "allow_broaden": allow_broaden,
-        "allow_hyde": allow_hyde,
+        "allow_hyde": True,
         "allow_retry_rewrite": True,
     }
 
@@ -2237,16 +2108,6 @@ def _command_goto(result: Command[str] | dict[str, Any]) -> str | None:
     return None
 
 
-def _route_after_decomposition(settings: Settings) -> str:
-    if bool(getattr(settings, "kb_chat_multi_query_enabled", True)):
-        return "generate_variants"
-    return "entity_expand"
-
-
-def _route_after_generate_variants(settings: Settings) -> str:
-    return "entity_expand"
-
-
 async def run_query_plan_scheme_b(
     state: dict[str, Any],
     *,
@@ -2272,27 +2133,18 @@ async def run_query_plan_scheme_b(
     current_state = _merge_query_plan_state(current_state, decision_updates)
     next_node = _command_goto(decision) or "query_plan_finalize"
 
-    while next_node in {"decomposition", "generate_variants", "entity_expand", "hyde"}:
+    while next_node in {"decomposition", "generate_variants", "hyde"}:
         if next_node == "decomposition":
             step_result = await decomposition(current_state, settings=settings)
-            next_node = _route_after_decomposition(settings)
         elif next_node == "generate_variants":
             step_result = await generate_variants(current_state, settings=settings)
-            next_node = _route_after_generate_variants(settings)
-        elif next_node == "entity_expand":
-            step_result = await entity_expand(
-                current_state,
-                runtime=effective_runtime,
-                settings=settings,
-            )
-            next_node = _command_goto(step_result) or "query_plan_finalize"
         else:
             step_result = await hyde(current_state, settings=settings)
-            next_node = "query_plan_finalize"
 
         step_updates = _command_update_payload(step_result)
         accumulated_updates = _merge_query_plan_state(accumulated_updates, step_updates)
         current_state = _merge_query_plan_state(current_state, step_updates)
+        next_node = _command_goto(step_result) or "query_plan_finalize"
 
     finalize_latency_ms = 0
     finalize_updates = _build_query_plan_finalize_update(

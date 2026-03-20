@@ -119,6 +119,9 @@ class NormalizeDecision(BaseModel):
     scope_constraints: list[str] = Field(default_factory=list, max_length=6)
     recall_risk: NormalizeRecallRisk = "medium"
     drift_risk: bool = False
+    constraint_preserved: bool = True
+    has_multi_target: bool = False
+    is_comparison: bool = False
     reasoning: str = Field(default="", max_length=240)
 
 
@@ -190,36 +193,6 @@ class MultiQueryDecision(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     queries: list[str] = Field(default_factory=list, min_length=1, max_length=6)
-
-
-class EntityExpansionCandidate(BaseModel):
-    """Single entity expansion candidate with confidence."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    query: str = Field(..., min_length=1, max_length=256)
-    confidence: float = Field(default=0.5, ge=0.0, le=1.0)
-    reason: str = Field(default="", max_length=120)
-
-
-class EntityExpandDecision(BaseModel):
-    """Structured output for entity expansion."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    candidates: list[EntityExpansionCandidate] = Field(
-        default_factory=list, max_length=12
-    )
-    dropped_queries: list[str] = Field(default_factory=list, max_length=12)
-    reasoning: str = Field(default="", max_length=240)
-
-
-class HyDEDecision(BaseModel):
-    """Structured output for HyDE hypothetical document generation."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    hypothetical_document: str = Field(..., min_length=1)
 
 
 class HyDEBatchDecision(BaseModel):

@@ -52,9 +52,6 @@ class KbChatConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    entity_expand_max_candidates: int = Field(8, ge=1, le=12)
-    entity_expand_max_variants: int = Field(6, ge=1, le=12)
-    entity_expand_min_confidence: float = Field(0.55, ge=0.0, le=1.0)
     retrieval_top_k: int = Field(12, ge=1, le=20)
     retrieval_rerank_top_k: int = Field(50, ge=1, le=50)
     retrieval_hybrid_rrf_k: int = Field(60, ge=1, le=200)
@@ -67,10 +64,6 @@ class KbChatConfig(BaseModel):
 
     @model_validator(mode="after")
     def validate_constraints(self) -> "KbChatConfig":
-        if self.entity_expand_max_variants > self.entity_expand_max_candidates:
-            raise ValueError(
-                "entity_expand_max_variants 必须小于等于 entity_expand_max_candidates"
-            )
         if self.retrieval_rerank_top_k < self.retrieval_top_k:
             raise ValueError("retrieval_rerank_top_k 必须大于等于 retrieval_top_k")
         return self
@@ -100,15 +93,6 @@ class KbGraphSchemaResponse(BaseModel):
 def default_kb_chat_config(*, settings: Settings | None = None) -> KbChatConfig:
     cfg = settings if settings is not None else get_settings()
     return KbChatConfig(
-        entity_expand_max_candidates=int(
-            getattr(cfg, "kb_chat_entity_expand_max_candidates", 8)
-        ),
-        entity_expand_max_variants=int(
-            getattr(cfg, "kb_chat_entity_expand_max_variants", 6)
-        ),
-        entity_expand_min_confidence=float(
-            getattr(cfg, "kb_chat_entity_expand_min_confidence", 0.55)
-        ),
         retrieval_top_k=int(cfg.retrieval_default_top_k),
         retrieval_rerank_top_k=max(
             int(cfg.retrieval_default_top_k),

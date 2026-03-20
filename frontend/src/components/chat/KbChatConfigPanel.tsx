@@ -41,14 +41,6 @@ function toInt(value: string): number | null {
   return Number.isFinite(parsed) ? Math.trunc(parsed) : null;
 }
 
-function toFloat(value: string): number | null {
-  if (value.trim() === '') {
-    return null;
-  }
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : null;
-}
-
 export function KbChatConfigPanel({
   value,
   onChange,
@@ -57,14 +49,6 @@ export function KbChatConfigPanel({
 }: KbChatConfigPanelProps) {
   const handleIntField = (key: keyof KbChatConfig, raw: string) => {
     const parsed = toInt(raw);
-    if (parsed === null) {
-      return;
-    }
-    onChange({ ...value, [key]: parsed });
-  };
-
-  const handleFloatField = (key: keyof KbChatConfig, raw: string) => {
-    const parsed = toFloat(raw);
     if (parsed === null) {
       return;
     }
@@ -133,42 +117,6 @@ export function KbChatConfigPanel({
                   onChange={(event) => handleIntField('retrieval_rerank_top_k', event.target.value)}
                   inputProps={{ min: value.retrieval_top_k, max: 50 }}
                   helperText={`控制进入重排序的候选量；调大可提升命中率但更耗时（范围 ${value.retrieval_top_k}~50）。`}
-                  disabled={disabled}
-                  fullWidth
-                />
-                <TextField
-                  label='实体扩展候选上限'
-                  type='number'
-                  value={value.entity_expand_max_candidates}
-                  onChange={(event) =>
-                    handleIntField('entity_expand_max_candidates', event.target.value)
-                  }
-                  inputProps={{ min: 1, max: 12 }}
-                  helperText='实体扩展节点按需触发时使用该候选池大小，召回优先建议 6~10。'
-                  disabled={disabled}
-                  fullWidth
-                />
-                <TextField
-                  label='实体扩展输出上限'
-                  type='number'
-                  value={value.entity_expand_max_variants}
-                  onChange={(event) =>
-                    handleIntField('entity_expand_max_variants', event.target.value)
-                  }
-                  inputProps={{ min: 1, max: 12 }}
-                  helperText='实体扩展节点按需触发时保留的最终查询数，需小于等于候选上限。'
-                  disabled={disabled}
-                  fullWidth
-                />
-                <TextField
-                  label='实体扩展最小置信度'
-                  type='number'
-                  value={value.entity_expand_min_confidence}
-                  onChange={(event) =>
-                    handleFloatField('entity_expand_min_confidence', event.target.value)
-                  }
-                  inputProps={{ min: 0, max: 1, step: 0.05 }}
-                  helperText='实体扩展节点按需触发时，低于该置信度的候选会被剪枝。'
                   disabled={disabled}
                   fullWidth
                 />
@@ -278,7 +226,6 @@ export function KbChatConfigPanel({
             </Box>
           </Grid>
         </Grid>
-
       </Stack>
     </Paper>
   );

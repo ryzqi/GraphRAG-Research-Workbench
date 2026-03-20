@@ -12,7 +12,6 @@ from app.agents.kb_chat_agentic.preprocess import (
     ambiguity_check,
     coref_rewrite,
     decomposition,
-    entity_expand,
     generate_variants,
     hyde,
     merge_context,
@@ -55,16 +54,6 @@ def _route_to_ambiguity_check(state: KbChatEmptyState, settings: Settings) -> st
         if bool(getattr(settings, "kb_chat_ambiguity_check_enabled", True))
         else "query_normalize"
     )
-
-
-def _route_after_decomposition(_: dict[str, Any], settings: Settings) -> str:
-    if bool(getattr(settings, "kb_chat_multi_query_enabled", True)):
-        return "generate_variants"
-    return "entity_expand"
-
-
-def _route_after_generate_variants(_: dict[str, Any]) -> str:
-    return "entity_expand"
 
 
 def _preprocess_exit(_: KbChatEmptyState) -> dict[str, Any]:
@@ -136,8 +125,7 @@ def build_preprocess_subgraph(*, settings: Settings):
         destinations={
             "decomposition": "decomposition",
             "generate_variants": "generate_variants",
-            "entity_expand": "entity_expand",
-            "query_plan_finalize": "query_plan_finalize",
+            "hyde": "hyde",
         },
     )
     add_traced_node(
@@ -145,22 +133,14 @@ def build_preprocess_subgraph(*, settings: Settings):
         partial(decomposition, settings=settings),
         side_effect_type="llm",
         retry_policy=llm_retry_policy,
+        destinations={"hyde": "hyde"},
     )
     add_traced_node(
         "generate_variants",
         partial(generate_variants, settings=settings),
         side_effect_type="llm",
         retry_policy=llm_retry_policy,
-    )
-    add_traced_node(
-        "entity_expand",
-        partial(entity_expand, settings=settings),
-        side_effect_type="llm",
-        retry_policy=llm_retry_policy,
-        destinations={
-            "hyde": "hyde",
-            "query_plan_finalize": "query_plan_finalize",
-        },
+        destinations={"hyde": "hyde"},
     )
     add_traced_node(
         "hyde",
@@ -194,21 +174,6 @@ def build_preprocess_subgraph(*, settings: Settings):
         },
     )
     graph.add_edge("query_normalize", "query_plan")
-    graph.add_conditional_edges(
-        "decomposition",
-        lambda state: _route_after_decomposition(state, settings),
-        {
-            "generate_variants": "generate_variants",
-            "entity_expand": "entity_expand",
-        },
-    )
-    graph.add_conditional_edges(
-        "generate_variants",
-        _route_after_generate_variants,
-        {
-            "entity_expand": "entity_expand",
-        },
-    )
     graph.add_edge("hyde", "query_plan_finalize")
     graph.add_edge("query_plan_finalize", "preprocess_exit")
     graph.add_edge("preprocess_exit", END)

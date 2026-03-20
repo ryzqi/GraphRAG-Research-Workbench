@@ -85,9 +85,6 @@ async def _prime_stream_events(
 async def get_kb_chat_graph_schema(
     db: AsyncSessionDep,
     request: Request,
-    entity_expand_max_candidates: int | None = Query(None, ge=1, le=12),
-    entity_expand_max_variants: int | None = Query(None, ge=1, le=12),
-    entity_expand_min_confidence: float | None = Query(None, ge=0.0, le=1.0),
     retrieval_top_k: int | None = Query(None, ge=1, le=20),
     retrieval_rerank_top_k: int | None = Query(None, ge=1, le=50),
     retrieval_hybrid_rrf_k: int | None = Query(None, ge=1, le=200),
@@ -102,9 +99,6 @@ async def get_kb_chat_graph_schema(
     raw_config = {
         key: value
         for key, value in {
-            "entity_expand_max_candidates": entity_expand_max_candidates,
-            "entity_expand_max_variants": entity_expand_max_variants,
-            "entity_expand_min_confidence": entity_expand_min_confidence,
             "retrieval_top_k": retrieval_top_k,
             "retrieval_rerank_top_k": retrieval_rerank_top_k,
             "retrieval_hybrid_rrf_k": retrieval_hybrid_rrf_k,

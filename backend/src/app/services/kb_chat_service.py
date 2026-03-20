@@ -106,7 +106,6 @@ _KB_CHAT_CHECKPOINT_RESET_FIELDS = (
     "coref_meta",
     "normalized_query",
     "normalized_meta",
-    "entity_expand_meta",
     "query_strategy",
     "complexity_level",
     "query_strategy_confidence",
@@ -1003,15 +1002,6 @@ class KbChatService:
                 ),
                 "max_generation_retries": int(
                     self._settings.kb_chat_max_generation_retries
-                ),
-                "entity_expand_max_candidates": int(
-                    kb_chat_config.entity_expand_max_candidates
-                ),
-                "entity_expand_max_variants": int(
-                    kb_chat_config.entity_expand_max_variants
-                ),
-                "entity_expand_min_confidence": float(
-                    kb_chat_config.entity_expand_min_confidence
                 ),
                 "complexity_cache_enabled": bool(
                     self._settings.kb_chat_complexity_cache_enabled
@@ -2193,7 +2183,6 @@ class KbChatService:
             "query_plan": "查询规划",
             "decomposition": "问题拆解",
             "generate_variants": "多路查询扩展",
-            "entity_expand": "实体扩展",
             "hyde": "假设文档扩展",
             "query_plan_finalize": "查询定稿",
             "retrieval": "检索融合",
@@ -2398,7 +2387,7 @@ class KbChatService:
             if isinstance(query, str) and query.strip():
                 io_summary["query"] = KbChatService._shorten_stream_text(query, 160)
 
-        if node in {"decomposition", "generate_variants", "entity_expand"}:
+        if node in {"decomposition", "generate_variants"}:
             list_key = "sub_queries" if node == "decomposition" else "multi_queries"
             values = update.get(list_key)
             if isinstance(values, list):

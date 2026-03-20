@@ -25,8 +25,6 @@ from app.agents.kb_chat_agentic.schemas import (
     COMPLEXITY_CLASSIFY_DECISION_VERSION,
     ComplexityDecision,
     DecompositionDecision,
-    EntityExpandDecision,
-    EntityExpansionCandidate,
     HyDEBatchDecision,
     MergeContextResolutionDecision,
     MultiQueryDecision,
@@ -181,26 +179,6 @@ _AMBIGUITY_REASON_LABELS = {
     "mixed": "关键信息不完整",
 }
 
-_ACRONYM_ALIAS_MAP: dict[str, str] = {
-    "k8s": "kubernetes",
-    "oauth2": "oauth 2.0",
-    "oauth": "oauth 2.0",
-    "sla": "service level agreement",
-    "api": "application programming interface",
-    "sdk": "software development kit",
-}
-_COMPARE_KEYWORDS = (
-    "compare",
-    "difference",
-    "vs",
-    "which",
-    "better",
-    "优缺点",
-    "区别",
-    "对比",
-    "比较",
-)
-_MULTI_TARGET_SEPARATORS = (",", "，", " and ", " 与 ", " 和 ", "及")
 _MULTI_QUERY_LABEL_TOKENS = {
     "同义词",
     "技术术语",
@@ -241,6 +219,20 @@ _TRAILING_COMPARE_PATTERNS = (
     r"(?:的)?(?:区别|差异|不同点|对比|比较|优缺点)\s*$",
     r"(?:differences?|comparison)\s*$",
 )
+_COMPARE_KEYWORDS = (
+    "compare",
+    "difference",
+    "differences",
+    "comparison",
+    "vs",
+    "which",
+    "better",
+    "优缺点",
+    "区别",
+    "对比",
+    "比较",
+)
+_MULTI_TARGET_SEPARATORS = (",", "，", " and ", " 与 ", " 和 ", "及")
 
 
 def _normalize_reason_code(value: object) -> str:
@@ -249,6 +241,13 @@ def _normalize_reason_code(value: object) -> str:
         if normalized in _REASON_CODES:
             return normalized
     return "mixed"
+
+
+def _looks_compare_or_multi_target(query: str) -> bool:
+    lowered = query.lower()
+    if any(keyword in lowered for keyword in _COMPARE_KEYWORDS):
+        return True
+    return any(separator in query for separator in _MULTI_TARGET_SEPARATORS)
 
 
 def _normalize_clarification_options(values: Iterable[str]) -> list[str]:
@@ -335,127 +334,6 @@ def _sanitize_risk_flags(values: Iterable[object], *, limit: int = 8) -> list[st
     return normalized
 
 
-def _extract_number_tokens(text: str) -> set[str]:
-    return set(re.findall(r"\d+(?:\.\d+)?", text))
-
-
-def _extract_time_constraints(text: str) -> list[str]:
-    patterns = (
-        r"\b\d{4}\b",
-        r"\b\d{4}[-/]\d{1,2}(?:[-/]\d{1,2})?\b",
-        r"\d{4}年(?:\d{1,2}月(?:\d{1,2}日)?)?",
-        r"(?:Q[1-4]|[1-4]季度)",
-    )
-    values: list[str] = []
-    for pattern in patterns:
-        values.extend(re.findall(pattern, text, flags=re.IGNORECASE))
-    return _sanitize_aliases(values, limit=6)
-
-
-def _extract_metric_constraints(text: str) -> list[str]:
-    metric_tokens = (
-        "SLA",
-        "latency",
-        "error rate",
-        "availability",
-        "throughput",
-        "p95",
-        "p99",
-        "可用性",
-        "错误率",
-        "延迟",
-        "吞吐",
-        "指标",
-    )
-    lowered = text.lower()
-    found = [token for token in metric_tokens if token.lower() in lowered]
-    return _sanitize_aliases(found, limit=6)
-
-
-def _extract_scope_constraints(text: str) -> list[str]:
-    scopes = (
-        "生产环境",
-        "测试环境",
-        "线上",
-        "离线",
-        "global",
-        "regional",
-        "国内",
-        "海外",
-    )
-    lowered = text.lower()
-    found = [token for token in scopes if token.lower() in lowered]
-    return _sanitize_aliases(found, limit=6)
-
-
-def _infer_recall_risk(*, query: str, alias_count: int) -> str:
-    lowered = query.lower()
-    has_mixed = bool(re.search(r"[A-Za-z]", query) and re.search(r"[\u4e00-\u9fff]", query))
-    acronym_hits = sum(1 for token in _ACRONYM_ALIAS_MAP if re.search(rf"\b{re.escape(token)}\b", lowered))
-    if alias_count >= 3 or has_mixed or acronym_hits >= 2:
-        return "high"
-    if alias_count >= 1 or acronym_hits >= 1:
-        return "medium"
-    return "low"
-
-
-def _looks_compare_or_multi_target(query: str) -> bool:
-    lowered = query.lower()
-    if any(keyword in lowered for keyword in _COMPARE_KEYWORDS):
-        return True
-    return any(separator in query for separator in _MULTI_TARGET_SEPARATORS)
-
-
-def _rule_normalize_query(query: str, *, alias_limit: int) -> tuple[str, dict[str, object]]:
-    text = _sanitize_query_text(query)
-    if not text:
-        return "", {
-            "aliases": [],
-            "entities": [],
-            "time_constraints": [],
-            "metric_constraints": [],
-            "scope_constraints": [],
-            "recall_risk": "low",
-            "drift_risk": False,
-            "constraint_preserved": True,
-            "has_multi_target": False,
-            "is_comparison": False,
-            "reasoning": "empty_input",
-        }
-
-    text = re.sub(r"[\u3000\t\r\n]+", " ", text)
-    text = re.sub(r"[，、;；|]+", " ", text)
-    text = _normalize_whitespace(text)
-
-    aliases: list[str] = []
-    lowered = f" {text.lower()} "
-    for acronym, expansion in _ACRONYM_ALIAS_MAP.items():
-        if f" {acronym} " in lowered:
-            aliases.append(expansion)
-
-    entities = _sanitize_aliases(sorted(_extract_query_focus_terms(text)), limit=8)
-    time_constraints = _extract_time_constraints(text)
-    metric_constraints = _extract_metric_constraints(text)
-    scope_constraints = _extract_scope_constraints(text)
-    aliases = _sanitize_aliases(aliases, limit=alias_limit)
-
-    recall_risk = _infer_recall_risk(query=text, alias_count=len(aliases))
-    normalized_meta: dict[str, object] = {
-        "aliases": aliases,
-        "entities": entities,
-        "time_constraints": time_constraints,
-        "metric_constraints": metric_constraints,
-        "scope_constraints": scope_constraints,
-        "recall_risk": recall_risk,
-        "drift_risk": False,
-        "constraint_preserved": True,
-        "has_multi_target": _looks_compare_or_multi_target(text),
-        "is_comparison": any(keyword in text.lower() for keyword in _COMPARE_KEYWORDS),
-        "reasoning": "rule_based_normalization",
-    }
-    return text, normalized_meta
-
-
 def _sanitize_reverse_question(text: str) -> str:
     value = _normalize_single_line(text).strip("`\"' ")
     if not value:
@@ -523,23 +401,6 @@ def _contains_coref_marker(query: str) -> bool:
         re.search(rf"\b{re.escape(marker)}\b", lowered) is not None
         for marker in _COREF_MARKERS_EN
     )
-
-
-def _extract_query_focus_terms(query: str) -> set[str]:
-    q = _normalize_whitespace(query)
-    if not q:
-        return set()
-    tokens = re.findall(r"[A-Za-z0-9_]{2,}|[\u4e00-\u9fff]{2,}", q)
-    focus: set[str] = set()
-    for token in tokens:
-        lowered = token.lower()
-        if lowered in _COREF_MARKERS_EN:
-            continue
-        if token in _COREF_MARKERS_ZH:
-            continue
-        focus.add(lowered)
-    return focus
-
 
 def _split_candidate_segments(text: str) -> list[str]:
     raw_segments = re.split(r"[，。；、,.!?;:\n]+", _normalize_whitespace(text))
@@ -677,54 +538,6 @@ def _coerce_fixed_multi_query_variants(
         for idx in range(len(completed), MULTI_QUERY_FIXED_VARIANTS):
             completed.append(f"{_normalize_whitespace(original_query)} 变体{idx + 1}")
     return completed[:MULTI_QUERY_FIXED_VARIANTS], True, invalid_reason
-
-
-def _entity_seed_queries(
-    *,
-    normalized_query: str,
-    queries: Iterable[str],
-    aliases: Iterable[str],
-    entities: Iterable[str],
-    max_candidates: int,
-) -> list[str]:
-    return _dedupe_keep_order(
-        [
-            _normalize_whitespace(normalized_query),
-            *_sanitize_aliases(queries, limit=max_candidates),
-        ]
-    )[: max(1, max_candidates)]
-
-
-def _entity_focus_overlap(query: str, *, focus_terms: set[str]) -> bool:
-    if not focus_terms:
-        return True
-    tokens = _extract_query_focus_terms(query)
-    return bool(tokens.intersection(focus_terms))
-
-
-def _normalize_entity_candidates(
-    candidates: Iterable[EntityExpansionCandidate], *, limit: int
-) -> list[EntityExpansionCandidate]:
-    deduped: list[EntityExpansionCandidate] = []
-    seen: set[str] = set()
-    for candidate in candidates:
-        query = _sanitize_query_text(candidate.query)
-        if not query:
-            continue
-        key = query.casefold()
-        if key in seen:
-            continue
-        deduped.append(
-            EntityExpansionCandidate(
-                query=query,
-                confidence=max(0.0, min(1.0, float(candidate.confidence))),
-                reason=_normalize_whitespace(candidate.reason),
-            )
-        )
-        seen.add(key)
-        if len(deduped) >= limit:
-            break
-    return deduped
 
 
 def _normalize_hyde_documents(
@@ -1244,154 +1057,87 @@ class QueryRewriteService:
     async def normalize_rewrite(
         self,
         query: str,
-        *,
-        llm_enabled: bool | None = None,
-        alias_limit: int | None = None,
     ) -> RewriteResult:
-        """Normalize query with rule-first logic and optional structured LLM refinement."""
+        """Normalize query with structured LLM output only; fail open to original query."""
         start = time.perf_counter()
-        if not query.strip():
-            return RewriteResult(
-                query=query, rewritten=False, reason="empty", latency_ms=0
-            )
-
-        alias_max = max(1, min(8, int(alias_limit or getattr(self._settings, "kb_chat_normalize_alias_max", 4))))
-        rule_query, rule_meta = _rule_normalize_query(query, alias_limit=alias_max)
-        if not rule_query:
-            latency_ms = int((time.perf_counter() - start) * 1000)
-            return RewriteResult(
-                query=query,
-                rewritten=False,
-                reason="empty_output",
-                latency_ms=latency_ms,
-                meta={
-                    **rule_meta,
-                    "source": "rule_only",
-                    "fallback_reason": "empty_rule_output",
-                },
-            )
-
-        enabled_flag = True if llm_enabled is None else bool(llm_enabled)
-        if not enabled_flag:
-            latency_ms = int((time.perf_counter() - start) * 1000)
-            return RewriteResult(
-                query=rule_query,
-                rewritten=rule_query != query,
-                reason="llm_disabled",
-                latency_ms=latency_ms,
-                meta={**rule_meta, "source": "rule_only", "fallback_reason": "llm_disabled"},
-            )
+        q = _sanitize_query_text(query)
+        if not q:
+            return RewriteResult(query=q, rewritten=False, reason="empty", latency_ms=0)
 
         structured_result = await self._call_prompt_structured(
             "kb_chat/normalize_query",
             schema=NormalizeDecision,
             max_tokens=320,
-            question=query,
-            rule_normalized_query=rule_query,
-            alias_limit=alias_max,
+            question=q,
         )
-        fallback_reason = structured_result.reason
+        fallback_reason = structured_result.reason or "llm_failed_fail_open"
         if structured_result.success and isinstance(structured_result.payload, NormalizeDecision):
             payload = structured_result.payload
             candidate_query = _sanitize_query_text(payload.canonical_query)
-            if candidate_query:
-                original_numbers = _extract_number_tokens(rule_query)
-                candidate_numbers = _extract_number_tokens(candidate_query)
-                constraint_preserved = original_numbers.issubset(candidate_numbers)
-                aliases = _sanitize_aliases(
-                    [
-                        *payload.aliases,
-                        *(
-                            rule_meta.get("aliases", [])
-                            if isinstance(rule_meta.get("aliases"), list)
-                            else []
-                        ),
-                    ],
-                    limit=alias_max,
-                )
-                entities = _sanitize_aliases(
-                    [
-                        *payload.entities,
-                        *(
-                            rule_meta.get("entities", [])
-                            if isinstance(rule_meta.get("entities"), list)
-                            else []
-                        ),
-                    ],
-                    limit=8,
-                )
-                time_constraints = _sanitize_aliases(
-                    [
-                        *payload.time_constraints,
-                        *(
-                            rule_meta.get("time_constraints", [])
-                            if isinstance(rule_meta.get("time_constraints"), list)
-                            else []
-                        ),
-                    ],
-                    limit=6,
-                )
-                metric_constraints = _sanitize_aliases(
-                    [
-                        *payload.metric_constraints,
-                        *(
-                            rule_meta.get("metric_constraints", [])
-                            if isinstance(rule_meta.get("metric_constraints"), list)
-                            else []
-                        ),
-                    ],
-                    limit=6,
-                )
-                scope_constraints = _sanitize_aliases(
-                    [
-                        *payload.scope_constraints,
-                        *(
-                            rule_meta.get("scope_constraints", [])
-                            if isinstance(rule_meta.get("scope_constraints"), list)
-                            else []
-                        ),
-                    ],
-                    limit=6,
-                )
+            if candidate_query and bool(payload.constraint_preserved) and not bool(
+                payload.drift_risk
+            ):
                 recall_risk = payload.recall_risk
                 if recall_risk not in {"low", "medium", "high"}:
-                    recall_risk = str(rule_meta.get("recall_risk") or "medium")
-
-                if constraint_preserved:
-                    latency_ms = int((time.perf_counter() - start) * 1000)
-                    return RewriteResult(
-                        query=candidate_query,
-                        rewritten=candidate_query != query,
-                        reason="llm_structured",
-                        latency_ms=latency_ms,
-                        meta={
-                            "source": "llm_structured",
-                            "fallback_reason": "",
-                            "aliases": aliases,
-                            "entities": entities,
-                            "time_constraints": time_constraints,
-                            "metric_constraints": metric_constraints,
-                            "scope_constraints": scope_constraints,
-                            "recall_risk": recall_risk,
-                            "drift_risk": bool(payload.drift_risk),
-                            "constraint_preserved": True,
-                            "has_multi_target": bool(rule_meta.get("has_multi_target")),
-                            "is_comparison": bool(rule_meta.get("is_comparison")),
-                            "reasoning": _normalize_whitespace(payload.reasoning or ""),
-                        },
-                    )
+                    recall_risk = "medium"
+                latency_ms = int((time.perf_counter() - start) * 1000)
+                return RewriteResult(
+                    query=candidate_query,
+                    rewritten=candidate_query != q,
+                    reason="llm_structured",
+                    latency_ms=latency_ms,
+                    meta={
+                        "source": "llm_structured",
+                        "fallback_reason": "",
+                        "aliases": _sanitize_aliases(payload.aliases, limit=8),
+                        "entities": _sanitize_aliases(payload.entities, limit=8),
+                        "time_constraints": _sanitize_aliases(
+                            payload.time_constraints,
+                            limit=6,
+                        ),
+                        "metric_constraints": _sanitize_aliases(
+                            payload.metric_constraints,
+                            limit=6,
+                        ),
+                        "scope_constraints": _sanitize_aliases(
+                            payload.scope_constraints,
+                            limit=6,
+                        ),
+                        "recall_risk": recall_risk,
+                        "drift_risk": bool(payload.drift_risk),
+                        "constraint_preserved": bool(payload.constraint_preserved),
+                        "has_multi_target": bool(payload.has_multi_target),
+                        "is_comparison": bool(payload.is_comparison),
+                        "reasoning": _normalize_whitespace(payload.reasoning or ""),
+                    },
+                )
+            if not candidate_query:
+                fallback_reason = "empty_output"
+            elif bool(payload.drift_risk):
+                fallback_reason = "drift_risk_fail_open"
+            else:
                 fallback_reason = "constraint_not_preserved"
 
         latency_ms = int((time.perf_counter() - start) * 1000)
         return RewriteResult(
-            query=rule_query,
-            rewritten=rule_query != query,
-            reason="rule_fallback",
+            query=q,
+            rewritten=False,
+            reason=fallback_reason,
             latency_ms=latency_ms,
             meta={
-                **rule_meta,
-                "source": "rule_fallback",
-                "fallback_reason": fallback_reason or "llm_unavailable",
+                "source": "fail_open",
+                "fallback_reason": fallback_reason,
+                "aliases": [],
+                "entities": [],
+                "time_constraints": [],
+                "metric_constraints": [],
+                "scope_constraints": [],
+                "recall_risk": "medium",
+                "drift_risk": False,
+                "constraint_preserved": True,
+                "has_multi_target": False,
+                "is_comparison": False,
+                "reasoning": "",
             },
         )
 
@@ -2042,153 +1788,12 @@ class QueryRewriteService:
             latency_ms=latency_ms,
         )
 
-    async def entity_expand(
-        self,
-        queries: list[str],
-        *,
-        normalized_query: str | None = None,
-        aliases: list[str] | None = None,
-        entities: list[str] | None = None,
-        enabled: bool | None = None,
-        max_candidates: int = 8,
-        max_variants: int = 6,
-        min_confidence: float = 0.55,
-    ) -> QueryListResult:
-        """Expand entity-oriented retrieval queries with structured outputs + guardrails."""
-        start = time.perf_counter()
-        enabled_flag = True if enabled is None else bool(enabled)
-        if not enabled_flag:
-            base = _dedupe_keep_order(queries)
-            latency_ms = int((time.perf_counter() - start) * 1000)
-            return QueryListResult(
-                queries=base[: max(1, max_variants)],
-                success=False,
-                reason="disabled",
-                latency_ms=latency_ms,
-                diagnostics={
-                    "input_count": len(base),
-                    "expanded_count": len(base[: max(1, max_variants)]),
-                    "added_count": 0,
-                    "pruned_count": 0,
-                    "pruned_low_confidence": 0,
-                    "pruned_drift": 0,
-                },
-            )
-
-        seed_query = _normalize_whitespace(normalized_query or "")
-        base_queries = _sanitize_aliases(queries, limit=max(1, max_candidates))
-        seed = _entity_seed_queries(
-            normalized_query=seed_query or (base_queries[0] if base_queries else ""),
-            queries=base_queries,
-            aliases=aliases or [],
-            entities=entities or [],
-            max_candidates=max(1, max_candidates),
-        )
-        if not seed:
-            latency_ms = int((time.perf_counter() - start) * 1000)
-            return QueryListResult(
-                queries=[],
-                success=False,
-                reason="empty",
-                latency_ms=latency_ms,
-                diagnostics={
-                    "input_count": 0,
-                    "expanded_count": 0,
-                    "added_count": 0,
-                    "pruned_count": 0,
-                    "pruned_low_confidence": 0,
-                    "pruned_drift": 0,
-                },
-            )
-
-        structured_result = await self._call_prompt_structured(
-            "kb_chat/entity_expand",
-            schema=EntityExpandDecision,
-            max_tokens=384,
-            question=seed_query or seed[0],
-            seed_queries="\n".join(f"- {item}" for item in seed),
-            aliases=", ".join(_sanitize_aliases(aliases or [], limit=6)) or "none",
-            entities=", ".join(_sanitize_aliases(entities or [], limit=6)) or "none",
-            max_candidates=max(1, max_candidates),
-        )
-        focus_terms = _extract_query_focus_terms(seed_query or seed[0])
-        pruned_low_confidence = 0
-        pruned_drift = 0
-        accepted: list[str] = []
-
-        if (
-            structured_result.success
-            and isinstance(structured_result.payload, EntityExpandDecision)
-        ):
-            normalized_candidates = _normalize_entity_candidates(
-                structured_result.payload.candidates,
-                limit=max(1, max_candidates),
-            )
-            for candidate in normalized_candidates:
-                if candidate.confidence < float(min_confidence):
-                    pruned_low_confidence += 1
-                    continue
-                if not _entity_focus_overlap(candidate.query, focus_terms=focus_terms):
-                    pruned_drift += 1
-                    continue
-                accepted.append(candidate.query)
-            expanded = _dedupe_keep_order([*seed, *accepted])[: max(1, max_variants)]
-            added_count = max(0, len(expanded) - min(len(seed), max(1, max_variants)))
-            latency_ms = int((time.perf_counter() - start) * 1000)
-            return QueryListResult(
-                queries=expanded,
-                success=added_count > 0,
-                reason=(
-                    "llm_structured"
-                    if added_count > 0
-                    else "llm_structured_no_gain"
-                ),
-                latency_ms=latency_ms,
-                diagnostics={
-                    "input_count": len(seed),
-                    "expanded_count": len(expanded),
-                    "added_count": added_count,
-                    "pruned_count": pruned_low_confidence + pruned_drift,
-                    "pruned_low_confidence": pruned_low_confidence,
-                    "pruned_drift": pruned_drift,
-                    "reasoning": _normalize_whitespace(
-                        structured_result.payload.reasoning
-                    ),
-                    "min_confidence": float(min_confidence),
-                },
-            )
-
-        expanded = seed[: max(1, max_variants)]
-        latency_ms = int((time.perf_counter() - start) * 1000)
-        return QueryListResult(
-            queries=expanded,
-            success=False,
-            reason="llm_failed_seed_only",
-            latency_ms=latency_ms,
-            diagnostics={
-                "input_count": len(seed),
-                "expanded_count": len(expanded),
-                "added_count": max(0, len(expanded) - len(base_queries)),
-                "pruned_count": 0,
-                "pruned_low_confidence": 0,
-                "pruned_drift": 0,
-                "fallback_reason": structured_result.reason or "llm_failed_seed_only",
-                "min_confidence": float(min_confidence),
-            },
-        )
-
     async def hyde(
         self,
         query: str,
-        *,
-        enabled: bool | None = None,
     ) -> QueryListResult:
         """HyDE generator (LLM-first with safe fallback)."""
         start = time.perf_counter()
-        enabled_flag = True if enabled is None else bool(enabled)
-        if not enabled_flag:
-            return QueryListResult(queries=[], success=False, reason="disabled", latency_ms=0)
-
         q = _normalize_whitespace(query)
         if not q:
             return QueryListResult(queries=[], success=False, reason="empty", latency_ms=0)

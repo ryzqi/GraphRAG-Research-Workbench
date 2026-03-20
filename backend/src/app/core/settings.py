@@ -444,11 +444,6 @@ class Settings(BaseSettings):
     kb_chat_multi_query_enabled: bool = Field(
         True, alias="KB_CHAT_MULTI_QUERY_ENABLED"
     )
-    kb_chat_hyde_enabled: bool = Field(True, alias="KB_CHAT_HYDE_ENABLED")
-
-    kb_chat_normalize_alias_max: int = Field(
-        4, ge=1, le=8, alias="KB_CHAT_NORMALIZE_ALIAS_MAX"
-    )
     kb_chat_max_clarification_rounds: int = Field(
         1, alias="KB_CHAT_MAX_CLARIFICATION_ROUNDS"
     )

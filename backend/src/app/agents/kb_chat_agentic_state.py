@@ -297,7 +297,6 @@ class KbChatInternalState(KbChatInternalStateBase, total=False):
     multi_queries: list[str]
     hyde_docs: list[str]
     decomposition_plan: dict[str, Any]
-    entity_expand_meta: dict[str, Any]
     query_plan_result: QueryPlanResult
     query_plan_diagnostics: QueryPlanDiagnostics
     retrieval_plan: RetrievalPlan
@@ -407,14 +406,6 @@ class GenerateVariantsInput(TypedDict, total=False):
     user_input: str
     normalized_query: str
     normalized_meta: NormalizeMeta
-    stage_summaries: dict[str, Any]
-
-
-class EntityExpandInput(TypedDict, total=False):
-    multi_queries: list[str]
-    normalized_query: str
-    normalized_meta: NormalizeMeta
-    runtime_config: dict[str, Any]
     stage_summaries: dict[str, Any]
 
 

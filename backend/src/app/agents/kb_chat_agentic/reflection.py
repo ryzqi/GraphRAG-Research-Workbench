@@ -46,7 +46,6 @@ from .dispatch_fuse import (
 from .json_safety import ensure_json_safe
 from .preprocess import run_query_plan_scheme_b, score_query_item_quality
 from .runtime_config import (
-    normalize_alias_max,
     parallel_retrieval_include_main,
     parallel_retrieval_max_branches,
     parallel_retrieval_min_queries,
@@ -990,11 +989,7 @@ async def transform_query_for_retry(
 
     try:
         svc = QueryRewriteService(settings=settings)
-        normalize_result = await svc.normalize_rewrite(
-            new_query,
-            llm_enabled=True,
-            alias_limit=normalize_alias_max(state, settings, runtime=runtime),
-        )
+        normalize_result = await svc.normalize_rewrite(new_query)
         if normalize_result.query.strip():
             new_query = normalize_result.query.strip()
         if isinstance(normalize_result.meta, dict):
@@ -1069,9 +1064,6 @@ async def transform_query_for_retry(
         else [],
         "decomposition_plan": plan_updates.get("decomposition_plan")
         if isinstance(plan_updates.get("decomposition_plan"), dict)
-        else {},
-        "entity_expand_meta": plan_updates.get("entity_expand_meta")
-        if isinstance(plan_updates.get("entity_expand_meta"), dict)
         else {},
         "query_items": query_items,
         "query_plan_result": query_plan_result,
