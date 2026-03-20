@@ -214,7 +214,7 @@ TRACE_OUTPUT_KEYS_BY_NODE = {
     "entity_expand": ["multi_queries"],
     "hyde": ["hyde_docs"],
     "query_plan_finalize": ["query_items"],
-    "preprocess_exit": ["decision", "reason", "next_node_label", "final_answer"],
+    "preprocess_exit": ["next_node_label", "final_answer"],
     "retrieval_subgraph": ["decision", "reason", "next_node_label"],
     "retrieval_plan": ["planned_query_count", "planned_per_query_top_k"],
     "dispatch_subqueries": ["dispatch_targets"],
@@ -231,7 +231,7 @@ TRACE_OUTPUT_KEYS_BY_NODE = {
     "answer_review_fuse": ["decision", "reason", "next_node_label"],
     "answer_repair": ["repaired_answer"],
     "answer_commit": ["final_answer"],
-    "force_exit": [],
+    "force_exit": ["final_answer"],
 }
 
 
@@ -475,6 +475,61 @@ def test_query_plan_output_is_query_focused_and_metadata_aware() -> None:
     ]
 
 
+def test_query_plan_uses_business_fallback_reason_when_reasoning_missing() -> None:
+    snapshot = _trace_snapshot_for_node("query_plan")
+    snapshot["stage_summaries"]["query_plan"] = {
+        "strategy": "decomposition",
+        "reasoning": "",
+        "failure_reason": "invalid_schema",
+        "has_multi_target": True,
+        "is_comparison": True,
+        "next_node": "decomposition",
+    }
+
+    items = _build_node_output_display_items(
+        node_name="query_plan",
+        output_snapshot=snapshot,
+    )
+
+    assert items == [
+        {
+            "key": "decision",
+            "label": "结论",
+            "value": "复杂问题",
+        },
+        {
+            "key": "reason",
+            "label": "原因",
+            "value": "命中比较或多目标信号，按问题拆解处理。",
+        },
+        {
+            "key": "next_node_label",
+            "label": "下一跳",
+            "value": "问题拆解",
+        },
+    ]
+
+
+def test_preprocess_exit_omits_decision_and_reason_items() -> None:
+    items = _build_node_output_display_items(
+        node_name="preprocess_exit",
+        output_snapshot=_trace_snapshot_for_node("preprocess_exit"),
+    )
+
+    assert items == [
+        {
+            "key": "next_node_label",
+            "label": "下一跳",
+            "value": "提前终止",
+        },
+        {
+            "key": "final_answer",
+            "label": "最终答案",
+            "value": "请先确认你想比较原理还是落地场景。",
+        },
+    ]
+
+
 def test_merge_context_omits_output_when_only_repeating_user_input_and_recent_turns() -> None:
     snapshot = {
         "user_input": "什么是 CoT",
@@ -521,13 +576,23 @@ def test_transform_query_omits_output_when_retry_rewrite_is_unchanged() -> None:
     assert items == []
 
 
-def test_force_exit_removes_output_items_from_display_contract() -> None:
+def test_force_exit_exposes_full_final_answer_without_truncation() -> None:
+    snapshot = _trace_snapshot_for_node("force_exit")
+    long_answer = "这是强制终止节点输出。" + ("长文本片段" * 80)
+    snapshot["final_answer"] = long_answer
+
     items = _build_node_output_display_items(
         node_name="force_exit",
-        output_snapshot=_trace_snapshot_for_node("force_exit"),
+        output_snapshot=snapshot,
     )
 
-    assert items == []
+    assert items == [
+        {
+            "key": "final_answer",
+            "label": "最终答案",
+            "value": long_answer,
+        }
+    ]
 
 
 def test_retrieval_outputs_and_current_evidence_inputs_share_same_evidence_format() -> None:
@@ -640,5 +705,29 @@ def test_ambiguity_check_falls_back_to_reason_code_when_model_reason_missing() -
             "key": "clarification_prompt",
             "label": "澄清提示",
             "value": "你更关注原理还是应用场景？",
+        },
+    ]
+
+
+def test_ambiguity_check_never_surfaces_technical_reason_when_no_clarification_needed() -> None:
+    snapshot = _trace_snapshot_for_node("ambiguity_check")
+    snapshot["stage_summaries"]["ambiguity_check"] = {
+        "ambiguous": False,
+        "reason": "error",
+        "model_reason": "",
+    }
+    snapshot["final_answer"] = ""
+
+    items = _build_node_output_display_items(
+        node_name="ambiguity_check",
+        output_snapshot=snapshot,
+    )
+
+    assert items == [
+        {"key": "decision", "label": "结论", "value": "无需澄清"},
+        {
+            "key": "reason",
+            "label": "原因",
+            "value": "未命中需澄清信号，可直接继续检索。",
         },
     ]

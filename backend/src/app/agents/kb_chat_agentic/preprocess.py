@@ -1287,6 +1287,7 @@ async def ambiguity_check(state: AmbiguityCheckInput, settings: Settings) -> dic
     ambiguous = False
     reverse_question = ""
     reason: str | None = None
+    failure_reason: str | None = None
     reason_code: str | None = None
     confidence: float | None = None
     model_reason: str | None = None
@@ -1306,6 +1307,7 @@ async def ambiguity_check(state: AmbiguityCheckInput, settings: Settings) -> dic
         ambiguous = result.ambiguous
         reverse_question = result.reverse_question or ""
         reason = result.reason
+        failure_reason = result.failure_reason
         reason_code = result.reason_code
         confidence = result.confidence
         model_reason = result.model_reason
@@ -1315,7 +1317,9 @@ async def ambiguity_check(state: AmbiguityCheckInput, settings: Settings) -> dic
     except Exception:  # pragma: no cover
         ambiguous = False
         reverse_question = ""
-        reason = "error"
+        reason = "未命中需澄清信号，可直接继续检索。"
+        failure_reason = "error"
+        model_reason = reason
         fallback_used = True
 
     slot_count = 0
@@ -1330,6 +1334,7 @@ async def ambiguity_check(state: AmbiguityCheckInput, settings: Settings) -> dic
         {
             "ambiguous": ambiguous,
             "reason": reason,
+            "failure_reason": failure_reason,
             "reason_code": reason_code,
             "confidence": confidence,
             "model_reason": model_reason,
@@ -1514,6 +1519,7 @@ async def _classify_query_strategy(
     strategy = "direct"
     success = False
     reasoning: str | None = None
+    failure_reason: str | None = None
     confidence = 0.0
     risk_flags: list[str] = []
     decision_version = COMPLEXITY_CLASSIFY_DECISION_VERSION
@@ -1560,6 +1566,7 @@ async def _classify_query_strategy(
                     max(0.0, min(1.0, float(cached.get("confidence") or 0.0))),
                     4,
                 )
+                failure_reason = None
                 decision_version = str(
                     cached.get("decision_version") or COMPLEXITY_CLASSIFY_DECISION_VERSION
                 ).strip() or COMPLEXITY_CLASSIFY_DECISION_VERSION
@@ -1594,6 +1601,7 @@ async def _classify_query_strategy(
             )
             success = decision.success
             reasoning = decision.reasoning
+            failure_reason = getattr(decision, "failure_reason", None)
             confidence = round(max(0.0, min(1.0, float(decision.confidence or 0.0))), 4)
             decision_version = str(
                 decision.decision_version or COMPLEXITY_CLASSIFY_DECISION_VERSION
@@ -1609,6 +1617,8 @@ async def _classify_query_strategy(
         except Exception:  # pragma: no cover
             strategy = "direct"
             success = False
+            reasoning = None
+            failure_reason = "error"
         if cache_enabled and success:
             try:
                 await _write_complexity_cache(
@@ -1637,6 +1647,7 @@ async def _classify_query_strategy(
         "strategy": strategy,
         "success": success,
         "reasoning": reasoning,
+        "failure_reason": failure_reason,
         "confidence": confidence,
         "risk_flags": risk_flags,
         "decision_version": decision_version,
@@ -1676,6 +1687,7 @@ async def query_plan(
             "has_multi_target": decision.get("has_multi_target"),
             "is_comparison": decision.get("is_comparison"),
             "reasoning": decision.get("reasoning"),
+            "failure_reason": decision.get("failure_reason"),
             "success": bool(decision.get("success")),
             "next_node": next_node,
             "cache_hit": bool(decision.get("cache_hit")),

@@ -224,4 +224,29 @@ describe('KbChatFlowPanel', () => {
     expect(html).not.toContain('结论：复杂问题');
     expect(html).not.toContain('结论：重新判定复杂问题');
   });
+
+  it('renders long output values with explicit anti-truncation wrapping styles', () => {
+    const longAnswer = `第一行结论\n${'超长连续输出片段'.repeat(40)}`;
+    const html = renderToStaticMarkup(
+      createElement(KbChatFlowPanel, {
+        schema: MINIMAL_SCHEMA,
+        defaultExpandedExecutionId: 'task-1',
+        traceExecutions: [
+          {
+            execution_id: 'task-1',
+            node_name: 'force_exit',
+            node_label: '结束',
+            status: 'completed',
+            started_at: '2026-01-01T00:00:01.000Z',
+            updated_at: '2026-01-01T00:00:02.000Z',
+            output_items: [{ key: 'final_answer', label: '最终答案', value: longAnswer }],
+          },
+        ],
+      })
+    );
+
+    expect(html).toContain('最终答案');
+    expect(html).toContain('第一行结论');
+    expect(html).toContain('overflow-wrap:anywhere');
+  });
 });

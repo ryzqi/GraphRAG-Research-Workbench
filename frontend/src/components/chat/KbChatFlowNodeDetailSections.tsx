@@ -17,6 +17,7 @@ function DetailValueBlock({ value }: { value: string | string[] }) {
             sx={{
               whiteSpace: 'pre-wrap',
               wordBreak: 'break-word',
+              overflowWrap: 'anywhere',
             }}
           >
             {line}
@@ -32,6 +33,7 @@ function DetailValueBlock({ value }: { value: string | string[] }) {
       sx={{
         whiteSpace: 'pre-wrap',
         wordBreak: 'break-word',
+        overflowWrap: 'anywhere',
       }}
     >
       {value}

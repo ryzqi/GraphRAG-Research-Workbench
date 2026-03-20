@@ -74,6 +74,7 @@ class AmbiguityResult:
     ambiguous: bool
     reverse_question: str | None = None
     reason: str | None = None
+    failure_reason: str | None = None
     latency_ms: int | None = None
     reason_code: str | None = None
     confidence: float | None = None
@@ -87,6 +88,7 @@ class ComplexityRouteResult:
     strategy: str
     success: bool
     reasoning: str | None = None
+    failure_reason: str | None = None
     confidence: float = 0.0
     risk_flags: list[str] | None = None
     decision_version: str | None = None
@@ -157,6 +159,11 @@ _COREF_CONFIDENCE_THRESHOLD = 0.72
 _DEFAULT_CLARIFICATION_QUESTION = (
     "为了更准确地回答，请补充你指的是哪个对象、范围或时间？"
 )
+_DEFAULT_AMBIGUITY_TRUE_REASON = "问题缺少关键信息，需先澄清后再检索。"
+_DEFAULT_AMBIGUITY_FALSE_REASON = "未命中需澄清信号，可直接继续检索。"
+_DEFAULT_COMPLEXITY_DIRECT_REASON = "未命中复杂问题信号，先按简单问题直接检索。"
+_DEFAULT_COMPLEXITY_MULTI_QUERY_REASON = "目标单一但召回风险较高，按多路查询扩展检索。"
+_DEFAULT_COMPLEXITY_DECOMPOSITION_REASON = "命中比较或多目标信号，按问题拆解处理。"
 _REASON_CODES = {
     "missing_entity",
     "missing_scope",
@@ -164,6 +171,14 @@ _REASON_CODES = {
     "missing_metric",
     "coref_uncertain",
     "mixed",
+}
+_AMBIGUITY_REASON_LABELS = {
+    "missing_entity": "缺少具体对象",
+    "missing_scope": "缺少范围约束",
+    "missing_time": "缺少时间范围",
+    "missing_metric": "缺少指标口径",
+    "coref_uncertain": "指代对象不明确",
+    "mixed": "关键信息不完整",
 }
 
 _ACRONYM_ALIAS_MAP: dict[str, str] = {
@@ -764,11 +779,80 @@ class QueryRewriteService:
     @staticmethod
     def _classify_structured_error(exc: Exception) -> str:
         name = exc.__class__.__name__
-        if name == "StructuredOutputValidationError":
+        if name in {
+            "StructuredOutputValidationError",
+            "ValidationError",
+            "OutputParserException",
+        }:
             return "invalid_schema"
         if name == "MultipleStructuredOutputsError":
             return "multiple_structured_outputs"
         return "error"
+
+    @staticmethod
+    def _resolve_ambiguity_business_reason(
+        *,
+        ambiguous: bool,
+        model_reason: str | None,
+        reason_code: str | None,
+    ) -> str:
+        normalized_reason = _normalize_whitespace(model_reason or "")
+        if normalized_reason:
+            return normalized_reason
+        normalized_code = _normalize_reason_code(reason_code)
+        if ambiguous:
+            return _AMBIGUITY_REASON_LABELS.get(
+                normalized_code, _DEFAULT_AMBIGUITY_TRUE_REASON
+            )
+        return _DEFAULT_AMBIGUITY_FALSE_REASON
+
+    @staticmethod
+    def _fallback_complexity_route(
+        *,
+        recall_risk: str | None,
+        has_multi_target: bool,
+        is_comparison: bool,
+        failure_reason: str | None,
+        latency_ms: int,
+    ) -> ComplexityRouteResult:
+        normalized_risk = _normalize_whitespace(recall_risk or "").lower()
+        if is_comparison or has_multi_target:
+            risk_flags: list[str] = []
+            if is_comparison:
+                risk_flags.append("comparison")
+            if has_multi_target:
+                risk_flags.append("multi_target")
+            return ComplexityRouteResult(
+                strategy="decomposition",
+                success=False,
+                reasoning=_DEFAULT_COMPLEXITY_DECOMPOSITION_REASON,
+                failure_reason=failure_reason,
+                confidence=0.35,
+                risk_flags=risk_flags,
+                decision_version=COMPLEXITY_CLASSIFY_DECISION_VERSION,
+                latency_ms=latency_ms,
+            )
+        if normalized_risk == "high":
+            return ComplexityRouteResult(
+                strategy="multi_query",
+                success=False,
+                reasoning=_DEFAULT_COMPLEXITY_MULTI_QUERY_REASON,
+                failure_reason=failure_reason,
+                confidence=0.28,
+                risk_flags=["recall_risk_high"],
+                decision_version=COMPLEXITY_CLASSIFY_DECISION_VERSION,
+                latency_ms=latency_ms,
+            )
+        return ComplexityRouteResult(
+            strategy="direct",
+            success=False,
+            reasoning=_DEFAULT_COMPLEXITY_DIRECT_REASON,
+            failure_reason=failure_reason,
+            confidence=0.0,
+            risk_flags=["llm_failed_fallback_direct"] if failure_reason else [],
+            decision_version=COMPLEXITY_CLASSIFY_DECISION_VERSION,
+            latency_ms=latency_ms,
+        )
 
     async def _invoke_structured(
         self,
@@ -808,6 +892,71 @@ class QueryRewriteService:
             return StructuredCallResult(payload=structured_payload, success=True)
         try:
             payload = schema.model_validate(structured_payload)
+        except ValidationError:
+            return StructuredCallResult(payload=None, success=False, reason="invalid_schema")
+        return StructuredCallResult(payload=payload, success=True)
+
+    async def _invoke_model_structured(
+        self,
+        *,
+        schema: type[BaseModel],
+        user_prompt: str,
+        max_tokens: int,
+    ) -> StructuredCallResult:
+        from langchain.messages import HumanMessage
+
+        try:
+            model = self._get_structured_chat_model().bind(max_tokens=max_tokens)
+            structured_model = model.with_structured_output(schema, include_raw=True)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            return StructuredCallResult(
+                payload=None,
+                success=False,
+                reason=self._classify_structured_error(exc),
+            )
+
+        request = [HumanMessage(content=user_prompt)]
+        try:
+            ainvoke = getattr(structured_model, "ainvoke", None)
+            if callable(ainvoke):
+                result = await ainvoke(request)
+            else:
+                result = await asyncio.to_thread(structured_model.invoke, request)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            return StructuredCallResult(
+                payload=None,
+                success=False,
+                reason=self._classify_structured_error(exc),
+            )
+
+        if not isinstance(result, dict):
+            return StructuredCallResult(
+                payload=None, success=False, reason="empty_structured_response"
+            )
+
+        parsing_error = result.get("parsing_error")
+        if isinstance(parsing_error, Exception):
+            return StructuredCallResult(
+                payload=None,
+                success=False,
+                reason=self._classify_structured_error(parsing_error),
+            )
+        if parsing_error is not None:
+            return StructuredCallResult(payload=None, success=False, reason="error")
+
+        parsed_payload = result.get("parsed")
+        if parsed_payload is None:
+            return StructuredCallResult(
+                payload=None, success=False, reason="empty_structured_response"
+            )
+        if isinstance(parsed_payload, schema):
+            return StructuredCallResult(payload=parsed_payload, success=True)
+        try:
+            payload = schema.model_validate(parsed_payload)
         except ValidationError:
             return StructuredCallResult(payload=None, success=False, reason="invalid_schema")
         return StructuredCallResult(payload=payload, success=True)
@@ -1243,25 +1392,32 @@ class QueryRewriteService:
         start = time.perf_counter()
         enabled_flag = True if enabled is None else bool(enabled)
         if not enabled_flag:
-            return AmbiguityResult(ambiguous=False, reason="disabled", latency_ms=0)
+            disabled_reason = "当前未启用歧义澄清，继续后续检索。"
+            return AmbiguityResult(
+                ambiguous=False,
+                reason=disabled_reason,
+                latency_ms=0,
+                model_reason=disabled_reason,
+            )
 
         q = _sanitize_query_text(query)
         if not q:
+            business_reason = "问题内容为空，需先补充具体问题。"
             payload = _build_clarification_payload(
                 question=_DEFAULT_CLARIFICATION_QUESTION,
                 reason_code="missing_entity",
                 confidence=1.0,
-                model_reason="empty_query_guardrail",
+                model_reason=business_reason,
             )
             latency_ms = int((time.perf_counter() - start) * 1000)
             return AmbiguityResult(
                 ambiguous=True,
                 reverse_question=str(payload["question"]),
-                reason="guardrail_empty_query",
+                reason=business_reason,
                 latency_ms=latency_ms,
                 reason_code="missing_entity",
                 confidence=1.0,
-                model_reason="empty_query_guardrail",
+                model_reason=business_reason,
                 fallback_used=True,
                 clarification_payload=payload,
             )
@@ -1282,20 +1438,44 @@ class QueryRewriteService:
                 coref_selected_mention = _normalize_whitespace(mention_value)
             coref_needs_clarification = bool(coref_meta.get("needs_clarification"))
 
-        structured_result = await self._call_prompt_structured(
-            "kb_chat/ambiguity_decision",
-            schema=AmbiguityDecision,
-            max_tokens=320,
-            question=q,
-            coref_confidence=round(max(0.0, min(1.0, coref_confidence)), 4),
-            coref_hint=coref_hint,
-            coref_selected_mention=coref_selected_mention,
-            coref_needs_clarification=coref_needs_clarification,
-        )
+        try:
+            prompt = self._prompts.render_with_few_shot(
+                "kb_chat/ambiguity_decision",
+                question=q,
+                coref_confidence=round(max(0.0, min(1.0, coref_confidence)), 4),
+                coref_hint=coref_hint,
+                coref_selected_mention=coref_selected_mention,
+                coref_needs_clarification=coref_needs_clarification,
+            )
+        except KeyError:
+            structured_result = StructuredCallResult(
+                payload=None,
+                success=False,
+                reason="prompt_missing",
+                latency_ms=0,
+            )
+        except Exception as exc:  # pragma: no cover
+            logger.warning(
+                "Prompt render 失败",
+                extra={"prompt_key": "kb_chat/ambiguity_decision", "error": str(exc)},
+            )
+            structured_result = StructuredCallResult(
+                payload=None,
+                success=False,
+                reason="prompt_error",
+                latency_ms=0,
+            )
+        else:
+            structured_result = await self._invoke_model_structured(
+                schema=AmbiguityDecision,
+                user_prompt=prompt,
+                max_tokens=320,
+            )
 
         fallback_used = False
         ambiguous = False
-        reason = structured_result.reason or "model_structured"
+        reason: str | None = None
+        failure_reason: str | None = None
         reason_code = "mixed"
         confidence = 0.0
         model_reason = ""
@@ -1309,7 +1489,12 @@ class QueryRewriteService:
             ambiguous = bool(payload.ambiguous)
             reason_code = _normalize_reason_code(payload.reason_code)
             confidence = round(max(0.0, min(1.0, float(payload.confidence))), 4)
-            model_reason = _normalize_whitespace(payload.reasoning or "")
+            model_reason = self._resolve_ambiguity_business_reason(
+                ambiguous=ambiguous,
+                model_reason=payload.reasoning,
+                reason_code=reason_code,
+            )
+            reason = model_reason
             if ambiguous:
                 question_text = _sanitize_reverse_question(
                     payload.clarifying_question or ""
@@ -1328,12 +1513,18 @@ class QueryRewriteService:
         else:
             fallback_used = True
             ambiguous = self._is_ambiguous_heuristic(q)
+            failure_reason = structured_result.reason or "model_failed_guardrail_fallback"
             if ambiguous:
                 reason_code = (
                     "coref_uncertain" if coref_needs_clarification else "mixed"
                 )
                 confidence = 0.35
-                model_reason = "guardrail_fallback"
+                model_reason = self._resolve_ambiguity_business_reason(
+                    ambiguous=True,
+                    model_reason=None,
+                    reason_code=reason_code,
+                )
+                reason = model_reason
                 clarification_payload = _build_clarification_payload(
                     question=_DEFAULT_CLARIFICATION_QUESTION,
                     reason_code=reason_code,
@@ -1341,13 +1532,20 @@ class QueryRewriteService:
                     model_reason=model_reason,
                 )
                 reverse_question = str(clarification_payload.get("question") or "")
-            reason = structured_result.reason or "model_failed_guardrail_fallback"
+            else:
+                model_reason = self._resolve_ambiguity_business_reason(
+                    ambiguous=False,
+                    model_reason=None,
+                    reason_code=None,
+                )
+                reason = model_reason
 
         latency_ms = int((time.perf_counter() - start) * 1000)
         return AmbiguityResult(
             ambiguous=ambiguous,
             reverse_question=reverse_question,
             reason=reason,
+            failure_reason=failure_reason,
             latency_ms=latency_ms,
             reason_code=reason_code if ambiguous else None,
             confidence=confidence if ambiguous else None,
@@ -1459,20 +1657,48 @@ class QueryRewriteService:
             return ComplexityRouteResult(
                 strategy="direct",
                 success=False,
+                reasoning=_DEFAULT_COMPLEXITY_DIRECT_REASON,
                 confidence=0.0,
                 risk_flags=[],
                 decision_version=COMPLEXITY_CLASSIFY_DECISION_VERSION,
                 latency_ms=0,
             )
 
-        structured_result = await self._call_prompt_structured(
-            "kb_chat/complexity_classify",
+        try:
+            prompt = self._prompts.render_with_few_shot(
+                "kb_chat/complexity_classify",
+                question=q,
+                recall_risk=(recall_risk or "unknown"),
+                has_multi_target=bool(has_multi_target),
+                is_comparison=bool(is_comparison),
+            )
+        except KeyError:
+            latency_ms = int((time.perf_counter() - start) * 1000)
+            return self._fallback_complexity_route(
+                recall_risk=recall_risk,
+                has_multi_target=has_multi_target,
+                is_comparison=is_comparison,
+                failure_reason="prompt_missing",
+                latency_ms=latency_ms,
+            )
+        except Exception as exc:  # pragma: no cover
+            logger.warning(
+                "Prompt render 失败",
+                extra={"prompt_key": "kb_chat/complexity_classify", "error": str(exc)},
+            )
+            latency_ms = int((time.perf_counter() - start) * 1000)
+            return self._fallback_complexity_route(
+                recall_risk=recall_risk,
+                has_multi_target=has_multi_target,
+                is_comparison=is_comparison,
+                failure_reason="prompt_error",
+                latency_ms=latency_ms,
+            )
+
+        structured_result = await self._invoke_model_structured(
             schema=ComplexityDecision,
+            user_prompt=prompt,
             max_tokens=256,
-            question=q,
-            recall_risk=(recall_risk or "unknown"),
-            has_multi_target=bool(has_multi_target),
-            is_comparison=bool(is_comparison),
         )
         if (
             structured_result.success
@@ -1491,6 +1717,7 @@ class QueryRewriteService:
                 strategy=strategy,
                 success=True,
                 reasoning=getattr(payload, "reasoning", None),
+                failure_reason=None,
                 confidence=confidence,
                 risk_flags=risk_flags,
                 decision_version=decision_version,
@@ -1498,12 +1725,11 @@ class QueryRewriteService:
             )
 
         latency_ms = int((time.perf_counter() - start) * 1000)
-        return ComplexityRouteResult(
-            strategy="direct",
-            success=False,
-            confidence=0.0,
-            risk_flags=["llm_failed_fallback_direct"],
-            decision_version=COMPLEXITY_CLASSIFY_DECISION_VERSION,
+        return self._fallback_complexity_route(
+            recall_risk=recall_risk,
+            has_multi_target=has_multi_target,
+            is_comparison=is_comparison,
+            failure_reason=structured_result.reason or "llm_failed_fallback_direct",
             latency_ms=latency_ms,
         )
 

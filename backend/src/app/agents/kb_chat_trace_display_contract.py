@@ -43,6 +43,25 @@ _AMBIGUITY_REASON_CODE_LABELS: dict[str, str] = {
     "coref_uncertain": "指代对象不明确",
     "mixed": "关键信息不完整",
 }
+_AMBIGUITY_TECHNICAL_REASONS: set[str] = {
+    "error",
+    "invalid_schema",
+    "multiple_structured_outputs",
+    "empty_structured_response",
+    "prompt_missing",
+    "prompt_error",
+    "ambiguous_query",
+    "model_structured",
+    "model_failed_guardrail_fallback",
+    "guardrail_empty_query",
+    "guardrail_fallback",
+}
+_AMBIGUITY_DEFAULT_REASON_TRUE = "问题缺少关键信息，需先澄清后再检索。"
+_AMBIGUITY_DEFAULT_REASON_FALSE = "未命中需澄清信号，可直接继续检索。"
+_QUERY_PLAN_REASON_DIRECT = "未命中复杂问题信号，先按简单问题直接检索。"
+_QUERY_PLAN_REASON_MULTI_QUERY = "目标单一但召回风险较高，按多路查询扩展检索。"
+_QUERY_PLAN_REASON_DECOMPOSITION = "命中比较或多目标信号，按问题拆解处理。"
+_QUERY_PLAN_REASON_DECOMPOSITION_GENERIC = "问题涉及多步骤或多视角信息，按问题拆解处理。"
 
 _BUSINESS_LABEL_FALLBACKS: dict[str, str] = {
     "__end__": "结束",
@@ -160,7 +179,7 @@ _OUTPUT_CONTRACTS: dict[str, list[str]] = {
     "entity_expand": ["multi_queries"],
     "hyde": ["hyde_docs"],
     "query_plan_finalize": ["query_items"],
-    "preprocess_exit": ["decision", "reason", "next_node_label", "final_answer"],
+    "preprocess_exit": ["next_node_label", "final_answer"],
     "retrieval_subgraph": ["decision", "reason", "next_node_label"],
     "retrieval_plan": ["planned_query_count", "planned_per_query_top_k"],
     "dispatch_subqueries": ["dispatch_targets"],
@@ -177,7 +196,7 @@ _OUTPUT_CONTRACTS: dict[str, list[str]] = {
     "answer_review_fuse": ["decision", "reason", "next_node_label"],
     "answer_repair": ["repaired_answer"],
     "answer_commit": ["final_answer"],
-    "force_exit": [],
+    "force_exit": ["final_answer"],
 }
 
 
@@ -289,6 +308,9 @@ def _resolve_ambiguity_reason(
     reflection: Mapping[str, Any],
     default_reason: str,
 ) -> str:
+    ambiguous = summary.get("ambiguous")
+    if ambiguous is None:
+        ambiguous = _pick_text(reflection, "action") == "clarify"
     clarification_payload = _as_dict(summary.get("clarification_payload")) or {}
     model_reason = _pick_text(summary, "model_reason") or _pick_text(
         clarification_payload, "model_reason"
@@ -304,11 +326,44 @@ def _resolve_ambiguity_reason(
         if mapped:
             return mapped
 
+    summary_reason = _pick_text(summary, "reason")
+    if summary_reason and summary_reason.strip().lower() not in _AMBIGUITY_TECHNICAL_REASONS:
+        return summary_reason
+
     return (
-        _pick_text(summary, "reason")
-        or _pick_text(reflection, "reason")
-        or default_reason
-    )
+        _AMBIGUITY_DEFAULT_REASON_TRUE
+        if bool(ambiguous)
+        else _AMBIGUITY_DEFAULT_REASON_FALSE
+    ) or default_reason
+
+
+def _resolve_query_plan_reason(
+    *,
+    summary: Mapping[str, Any],
+    snapshot: Mapping[str, Any],
+    default_reason: str,
+) -> str:
+    reasoning = _pick_text(summary, "reasoning")
+    if not reasoning and not _pick_text(summary, "failure_reason"):
+        reasoning = _pick_text(_as_dict(snapshot.get("query_plan_result")) or {}, "reasoning")
+    if reasoning:
+        return reasoning
+
+    raw_strategy = (
+        _pick_text(summary, "strategy")
+        or _pick_text(snapshot, "query_strategy")
+        or _pick_text(summary, "goto")
+        or ""
+    ).strip().lower()
+    if raw_strategy == "decomposition":
+        if bool(summary.get("is_comparison")) or bool(summary.get("has_multi_target")):
+            return _QUERY_PLAN_REASON_DECOMPOSITION
+        return _QUERY_PLAN_REASON_DECOMPOSITION_GENERIC
+    if raw_strategy in {"multi_query", "generate_variants"}:
+        return _QUERY_PLAN_REASON_MULTI_QUERY
+    if raw_strategy in {"direct", "simple", "query_plan_finalize"}:
+        return _QUERY_PLAN_REASON_DIRECT
+    return default_reason
 
 
 def _resolve_doc_gate_round(snapshot: Mapping[str, Any]) -> int | None:
@@ -935,15 +990,15 @@ def _resolve_decision_triplet(
 
     if node_name == "query_plan":
         decision = _complexity_decision_text(summary=summary, snapshot=snapshot)
-        reason = _pick_text(summary, "reasoning", "reason") or default_reason
+        reason = _resolve_query_plan_reason(
+            summary=summary,
+            snapshot=snapshot,
+            default_reason=default_reason,
+        )
         return decision, reason, next_node_label or "下游节点未知"
 
     if node_name == "preprocess_exit":
-        route = _resolve_routing_decision(snapshot, "preprocess")
-        raw_next = _pick_text(route, "next_node") or _pick_text(trace, "goto")
-        decision = "直接给出答案" if raw_next == "force_exit" else _humanize_decision(raw_next)
-        reason = _pick_text(route, "reason") or _pick_text(reflection, "reason") or default_reason
-        return decision or "结束当前流程", reason, next_node_label or "结束"
+        return None, None, next_node_label or "结束"
 
     if node_name == "preprocess_subgraph":
         route = _resolve_routing_decision(snapshot, "preprocess")
