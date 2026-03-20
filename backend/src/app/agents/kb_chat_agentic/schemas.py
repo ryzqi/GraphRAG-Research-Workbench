@@ -261,10 +261,20 @@ class AnswerParagraph(BaseModel):
     review_status: ParagraphReviewStatus = "passed"
 
 
+class DraftAnswerDecision(BaseModel):
+    """Structured output for draft answer generation."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    paragraphs: list[AnswerParagraph] = Field(default_factory=list, max_length=12)
+
+
 class AnswerRenderMeta(BaseModel):
     """Latest-only render metadata derived from answer paragraphs."""
 
     model_config = ConfigDict(extra="forbid")
 
     paragraph_count: int = Field(default=0, ge=0)
+    claim_count: int = Field(default=0, ge=0)
     citation_count: int = Field(default=0, ge=0)
+    citation_mode: Literal["paragraph_aggregate"] = "paragraph_aggregate"

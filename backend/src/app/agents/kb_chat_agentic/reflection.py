@@ -22,10 +22,13 @@ from langgraph.types import Command, Send
 
 from app.core.settings import Settings, get_settings
 from app.prompts import get_prompt_loader
+from app.services.kb_answer_paragraphs import (
+    recalculate_paragraph_citation_ids,
+    render_answer_paragraphs,
+)
 from app.services.kb_evidence import (
     resolve_structured_evidence,
 )
-from app.services.streaming import extract_answer_text
 from app.services.query_rewrite_service import QueryRewriteService
 from app.agents.kb_chat_agentic_state import (
     AnswerRoutingDecisionInput,
@@ -45,6 +48,7 @@ from .dispatch_fuse import (
 )
 from .json_safety import ensure_json_safe
 from .preprocess import run_query_plan_scheme_b, score_query_item_quality
+from .schemas import AnswerParagraph, AnswerRenderMeta, DraftAnswerDecision
 from .runtime_config import (
     parallel_retrieval_include_main,
     parallel_retrieval_max_branches,
@@ -786,6 +790,49 @@ def _resolve_query_text(state: dict) -> str:
     ).strip()
 
 
+def _coerce_draft_answer_decision(
+    payload: object,
+) -> tuple[DraftAnswerDecision | None, str | None]:
+    if payload is None:
+        return None, "empty_structured_response"
+    try:
+        decision = (
+            payload
+            if isinstance(payload, DraftAnswerDecision)
+            else DraftAnswerDecision.model_validate(payload)
+        )
+    except Exception:
+        return None, "structured_parse_failed"
+    if not decision.paragraphs:
+        return decision, "empty_structured_paragraphs"
+    return decision, None
+
+
+def _normalize_answer_paragraphs(
+    paragraphs: list[AnswerParagraph],
+) -> list[AnswerParagraph]:
+    return [
+        recalculate_paragraph_citation_ids(paragraph)
+        for paragraph in paragraphs
+    ]
+
+
+def _build_answer_render_meta(
+    paragraphs: list[AnswerParagraph],
+) -> dict[str, Any]:
+    citation_ids: list[str] = []
+    claim_count = 0
+    for paragraph in paragraphs:
+        claim_count += len(paragraph.claims)
+        citation_ids.extend(paragraph.citation_ids)
+    return AnswerRenderMeta(
+        paragraph_count=len(paragraphs),
+        claim_count=claim_count,
+        citation_count=len(dict.fromkeys(citation_ids)),
+        citation_mode="paragraph_aggregate",
+    ).model_dump()
+
+
 async def kb_retrieve_context(
     state: RetrieveContextInput,
     *,
@@ -909,36 +956,91 @@ async def generate_draft(
     question = _resolve_query_text(state)
     final_context = _as_str(state.get("final_context")).strip()
     prompts = get_prompt_loader()
-    system_prompt = prompts.render_with_few_shot('kb_chat/system')
+    system_prompt = prompts.render_with_few_shot("kb_chat/system")
 
-    user = f"参考内容：\n{final_context}\n\n问题：{question}"
+    user = (
+        "请基于参考内容回答问题，并按结构化段落返回。\n"
+        "要求：\n"
+        "1) paragraphs 按自然段组织，每段 text 只写正文，不要内嵌 [Sx] 标签；\n"
+        "2) citation_ids 只填写该段主旨所依赖的可见引用标签，如 S1、S2；\n"
+        "3) 默认采用段末聚合引用，不要求逐句引用，但段内关键结论必须能被该段 citation_ids 支撑；\n"
+        "4) claims 仅保留该段关键断言；supporting_citation_ids 只填有效 Sx 标签；\n"
+        "5) 若参考内容不足以形成可回答段落，返回空 paragraphs，不要编造。\n"
+        "6) 不要输出 Markdown 代码块、解释性前言或 schema 外字段。\n\n"
+        f"参考内容：\n{final_context}\n\n"
+        f"问题：{question}"
+    )
+
+    structured_reason: str | None = None
+    paragraph_payloads: list[dict[str, Any]] = []
+    render_meta = _build_answer_render_meta([])
+    draft = ""
 
     try:
-        msg = await chat_model.ainvoke(
+        structured_model = chat_model.with_structured_output(
+            DraftAnswerDecision,
+            method="function_calling",
+        )
+        result = await structured_model.ainvoke(
             [SystemMessage(content=system_prompt), HumanMessage(content=user)]
         )
-        draft = extract_answer_text(getattr(msg, "content", "")).strip()
+        decision, structured_reason = _coerce_draft_answer_decision(result)
+        if decision is not None:
+            paragraphs = _normalize_answer_paragraphs([
+                AnswerParagraph.model_validate(paragraph)
+                for paragraph in decision.paragraphs
+            ])
+            paragraph_payloads = [paragraph.model_dump() for paragraph in paragraphs]
+            render_meta = _build_answer_render_meta(paragraphs)
+            draft = render_answer_paragraphs(paragraph_payloads).strip()
     except asyncio.CancelledError:
         raise
     except Exception:
-        draft = ""
+        structured_reason = "structured_invoke_failed"
 
     if not draft:
-        draft = "根据现有资料无法回答该问题（生成失败）。"
+        if structured_reason == "empty_structured_paragraphs":
+            draft = "根据现有资料无法回答该问题。"
+        else:
+            draft = "根据现有资料无法回答该问题（生成失败）。"
+
+    generator_summary = {
+        "latency_ms": int((time.perf_counter() - start) * 1000),
+        "paragraph_count": int(render_meta.get("paragraph_count") or 0),
+        "claim_count": int(render_meta.get("claim_count") or 0),
+        "citation_count": int(render_meta.get("citation_count") or 0),
+        "citation_mode": render_meta.get("citation_mode") or "paragraph_aggregate",
+        "fallback_reason": structured_reason,
+        "completed_at": now_iso(),
+    }
+    summary_updates = _merge_stage_summary(state, "generator", generator_summary)
+    draft_generate_state = {
+        **state,
+        **summary_updates,
+    }
+    summary_updates.update(
+        _merge_stage_summary(
+            draft_generate_state,
+            "draft_generate",
+            {
+                "paragraph_count": int(render_meta.get("paragraph_count") or 0),
+                "claim_count": int(render_meta.get("claim_count") or 0),
+                "citation_count": int(render_meta.get("citation_count") or 0),
+                "citation_mode": render_meta.get("citation_mode")
+                or "paragraph_aggregate",
+                "completed_at": now_iso(),
+            },
+        )
+    )
 
     return {
         "loop_counts": loop_counts,
+        "answer_paragraphs": paragraph_payloads,
+        "answer_render_meta": render_meta,
         "draft_answer": draft,
         # Keep final_answer aligned so ForceExit can always return something sane.
         "final_answer": draft,
-        **_merge_stage_summary(
-            state,
-            "generator",
-            {
-                "latency_ms": int((time.perf_counter() - start) * 1000),
-                "completed_at": now_iso(),
-            },
-        ),
+        **summary_updates,
     }
 
 async def transform_query_for_retry(
