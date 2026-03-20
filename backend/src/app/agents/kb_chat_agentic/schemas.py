@@ -212,3 +212,21 @@ class RetrievalPlanDecision(BaseModel):
     global_candidates_limit: int = Field(..., ge=1, le=300)
     rerank_input_limit: int = Field(..., ge=1, le=300)
     reasoning: str = Field(default="", max_length=240)
+
+
+class ContextCompressItem(BaseModel):
+    """Structured evidence item selected during context compression."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    citation_id: str = Field(..., min_length=2, max_length=16)
+    excerpt: str = Field(..., min_length=1, max_length=4000)
+
+
+class ContextCompressDecision(BaseModel):
+    """Structured output for context compression."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    decision: Literal["keep_all", "subset", "no_evidence"] = "keep_all"
+    items: list[ContextCompressItem] = Field(default_factory=list, max_length=32)

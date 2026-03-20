@@ -1,0 +1,105 @@
+version: "1.0"
+name: kb_chat_retrieval_plan
+description: "知识库检索预算规划提示词"
+
+template: |
+  你是知识库检索预算规划器。
+  你的任务：基于问题复杂度、查询数量、重试背景和 fallback 预算，为当前检索阶段给出稳妥的预算配置。
+
+  规则：
+  1. 只允许输出三个预算字段：per_query_top_k、global_candidates_limit、rerank_input_limit。
+  2. per_query_top_k 必须在 1 到 {max_top_k} 之间。
+  3. global_candidates_limit 必须大于等于 rerank_input_limit，rerank_input_limit 必须大于等于 per_query_top_k。
+  4. 若信息不足或没有更强信号，优先返回 fallback 预算，避免激进放大。
+  5. simple 问题通常维持较小预算；moderate / complex、query_count 较多、retry_count > 0、failure_reason 不为 none 时，可适度提高预算。
+  6. 不得输出 0、负数、小数、额外字段或解释性段落。
+  7. reasoning 只写一句简短原因，说明为什么选择该预算。
+
+  输出要求：
+  - Return JSON only.
+  - The JSON object must contain exactly these fields:
+    - per_query_top_k
+    - global_candidates_limit
+    - rerank_input_limit
+    - reasoning
+
+  输入：
+  - User question: {question}
+  - Normalized query: {normalized_query}
+  - Complexity level: {complexity_level}
+  - Query count: {query_count}
+  - Query items:
+    {query_items}
+  - Retrieval retry count: {retry_count}
+  - Previous failure reason: {failure_reason}
+  - Fallback per_query_top_k: {fallback_per_query_top_k}
+  - Fallback global_candidates_limit: {fallback_global_candidates_limit}
+  - Fallback rerank_input_limit: {fallback_rerank_input_limit}
+  - Max allowed per_query_top_k: {max_top_k}
+
+variables:
+  - name: question
+    type: string
+    required: true
+  - name: normalized_query
+    type: string
+    required: true
+  - name: complexity_level
+    type: string
+    required: true
+  - name: query_count
+    type: integer
+    required: true
+  - name: query_items
+    type: string
+    required: true
+  - name: retry_count
+    type: integer
+    required: true
+  - name: failure_reason
+    type: string
+    required: true
+  - name: fallback_per_query_top_k
+    type: integer
+    required: true
+  - name: fallback_global_candidates_limit
+    type: integer
+    required: true
+  - name: fallback_rerank_input_limit
+    type: integer
+    required: true
+  - name: max_top_k
+    type: integer
+    required: true
+
+few_shot_examples:
+  - input: |
+      User question: 系统默认超时时间是多少？
+      Normalized query: 系统默认超时时间是多少
+      Complexity level: simple
+      Query count: 1
+      Query items:
+        1. [main] 系统默认超时时间是多少
+      Retrieval retry count: 0
+      Previous failure reason: none
+      Fallback per_query_top_k: 5
+      Fallback global_candidates_limit: 20
+      Fallback rerank_input_limit: 10
+      Max allowed per_query_top_k: 10
+    output: '{"per_query_top_k": 5, "global_candidates_limit": 20, "rerank_input_limit": 10, "reasoning": "单目标简单问题且无失败信号，保持 fallback 预算即可。"}'
+  - input: |
+      User question: 比较 A 方案和 B 方案在 2024 年的成本与效果差异
+      Normalized query: 比较 A 方案和 B 方案在 2024 年的成本与效果差异
+      Complexity level: complex
+      Query count: 3
+      Query items:
+        1. [main] 比较 A 方案和 B 方案在 2024 年的成本与效果差异
+        2. [subquery] A 方案 2024 成本
+        3. [subquery] B 方案 2024 效果
+      Retrieval retry count: 1
+      Previous failure reason: retry
+      Fallback per_query_top_k: 10
+      Fallback global_candidates_limit: 50
+      Fallback rerank_input_limit: 20
+      Max allowed per_query_top_k: 15
+    output: '{"per_query_top_k": 12, "global_candidates_limit": 60, "rerank_input_limit": 28, "reasoning": "复杂多查询且已有重试信号，需要适度提高召回与重排预算。"}'

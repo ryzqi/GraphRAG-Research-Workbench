@@ -14,8 +14,10 @@ from langchain_core.language_models.chat_models import BaseChatModel
 from langgraph.graph import END, StateGraph
 from langgraph.runtime import Runtime
 from langgraph.types import RetryPolicy
+from pydantic import ValidationError
 
 from app.agents.kb_chat_agentic.budget import now_iso
+from app.agents.kb_chat_agentic.schemas import ContextCompressDecision
 from app.agents.kb_chat_agentic.reflection import (
     dispatch_subqueries,
     kb_retrieve_context,
@@ -38,13 +40,10 @@ from app.services.kb_evidence import (
     canonicalize_evidence_items,
 )
 from app.services.query_rewrite_service import QueryRewriteService
-from app.services.streaming import extract_answer_text
 from app.utils.token_counter import count_tokens_approximately
 
 _EVIDENCE_LABEL_RE = re.compile(r"\[[^\[\]\n]{1,128}\]")
-_COMPRESS_BLOCK_RE = re.compile(r"\[(S[1-9]\d*)\]\s*", re.IGNORECASE)
 _BLANK_LINE_RE = re.compile(r"\n{2,}")
-_NO_EVIDENCE_MARKER = "NO_EVIDENCE"
 
 
 class KbChatGraphContext(TypedDict, total=False):
@@ -281,22 +280,15 @@ def _is_verbatim_subset(candidate_excerpt: str, source_excerpt: str) -> bool:
     return len(line_parts) > 1 and _ordered_verbatim_subset(line_parts, source)
 
 
-def _parse_compressed_candidate(candidate: str) -> list[tuple[str, str]]:
-    normalized = _normalize_newlines(candidate).strip()
-    matches = list(_COMPRESS_BLOCK_RE.finditer(normalized))
-    if not matches:
-        return []
-
-    blocks: list[tuple[str, str]] = []
-    for index, match in enumerate(matches):
-        citation_id = match.group(1).upper()
-        start = match.end()
-        end = matches[index + 1].start() if index + 1 < len(matches) else len(normalized)
-        excerpt = normalized[start:end].strip()
-        if not excerpt:
-            return []
-        blocks.append((citation_id, excerpt))
-    return blocks
+def _coerce_context_compress_decision(
+    value: object,
+) -> tuple[ContextCompressDecision | None, str | None]:
+    if isinstance(value, ContextCompressDecision):
+        return value, None
+    try:
+        return ContextCompressDecision.model_validate(value), None
+    except ValidationError:
+        return None, "invalid_schema"
 
 
 async def _compress_context(
@@ -328,6 +320,7 @@ async def _compress_context(
     fallback_used = False
     candidate_citation_ids: list[str] = []
     invalid_citation_ids: list[str] = []
+    decision: ContextCompressDecision | None = None
 
     if final_context and question:
         prompts = get_prompt_loader()
@@ -338,88 +331,110 @@ async def _compress_context(
                 "你是知识库证据压缩器。"
                 "请围绕用户问题压缩参考内容，只保留回答问题所必需且可追溯的事实。"
                 "必须保留原有引用标签、数字、时间、范围、比较对象、否定/例外、条件前提。"
-                "禁止新增事实，禁止编造或改写引用标签，输出纯文本。"
+                "禁止新增事实，禁止编造或改写引用标签，输出 JSON。"
             )
         compress_user = (
-            "请压缩以下知识库参考内容，只输出压缩后的参考内容。\n"
+            "请压缩以下知识库参考内容，并按 JSON 合同返回。\n"
             "要求：\n"
             "1) 仅保留与问题直接相关、且对回答必需的证据；\n"
             "2) 必须保留原始引用标签，如 [S1]、[S2]；\n"
             "3) 必须保留关键数字、时间、范围、单位、阈值、比较对象、因果/前提、例外与否定；\n"
             "4) 不得新增参考内容之外的事实；\n"
-            "5) 如果原文已经足够精炼，也可以原样返回；\n"
-            "6) 不要输出解释、标题、总结性前言或 Markdown 代码块。\n\n"
+            "5) excerpt 必须是参考内容中的原文连续片段，不得改写；\n"
+            "6) 如果原文已经足够精炼，可返回 keep_all；\n"
+            "7) 如果全部参考内容都与问题无关，可返回 no_evidence；\n"
+            "8) 不要输出解释、标题、总结性前言或 Markdown 代码块。\n\n"
             f"问题：{question}\n\n"
             f"参考内容：\n{final_context}"
         )
-        model = chat_model.bind(max_tokens=1600)
         try:
-            msg = await model.ainvoke(
+            structured_model = chat_model.with_structured_output(
+                ContextCompressDecision,
+                include_raw=True,
+            )
+            result = await structured_model.ainvoke(
                 [
                     SystemMessage(content=compress_system),
                     HumanMessage(content=compress_user),
                 ]
             )
-            candidate = extract_answer_text(getattr(msg, "content", "")).strip()
-            if not candidate:
-                fallback_reason = "empty_compress_output"
-            elif candidate.upper() == _NO_EVIDENCE_MARKER:
+
+            if not isinstance(result, dict):
+                fallback_reason = "empty_structured_response"
+            else:
+                parsing_error = result.get("parsing_error")
+                if isinstance(parsing_error, Exception):
+                    fallback_reason = "invalid_schema"
+                elif parsing_error is not None:
+                    fallback_reason = "invalid_schema"
+                else:
+                    decision, decision_error = _coerce_context_compress_decision(
+                        result.get("parsed")
+                    )
+                    fallback_reason = decision_error
+
+            if fallback_reason is None and decision is None:
+                fallback_reason = "empty_structured_response"
+
+            if isinstance(decision, ContextCompressDecision) and decision.decision == "no_evidence":
                 compressed_context = "（未找到相关内容）"
                 compressed_evidence_items = []
                 compressed_citation_catalog = {}
-            elif current_evidence_items:
-                candidate_blocks = _parse_compressed_candidate(candidate)
+            elif isinstance(decision, ContextCompressDecision) and decision.decision == "keep_all":
+                compressed_context = final_context
+                compressed_evidence_items = list(current_evidence_items)
+                compressed_citation_catalog = dict(current_citation_catalog)
+                candidate_citation_ids = list(current_citation_catalog)
+            elif isinstance(decision, ContextCompressDecision):
                 candidate_citation_ids = list(
-                    dict.fromkeys(citation_id for citation_id, _ in candidate_blocks)
+                    dict.fromkeys(item.citation_id.strip().upper() for item in decision.items)
                 )
-                invalid_citation_ids = [
-                    citation_id
-                    for citation_id in candidate_citation_ids
-                    if citation_id not in current_citation_catalog
-                ]
-                if final_context and _EVIDENCE_LABEL_RE.findall(final_context) and not candidate_blocks:
-                    fallback_reason = "evidence_labels_dropped"
-                elif invalid_citation_ids:
-                    fallback_reason = "invalid_compressed_citation_labels"
+                if not candidate_citation_ids:
+                    fallback_reason = "empty_compress_output"
                 else:
                     by_citation_id = {
-                        str(item.get("citation_id")): item for item in current_evidence_items
+                        str(item.get("citation_id") or "").strip().upper(): item
+                        for item in current_evidence_items
                     }
-                    rebuilt_items: list[dict[str, Any]] = []
-                    for citation_id, excerpt in candidate_blocks:
-                        source_item = by_citation_id.get(citation_id)
-                        if not isinstance(source_item, dict) or not _is_verbatim_subset(
-                            excerpt,
-                            str(source_item.get("excerpt") or ""),
-                        ):
-                            fallback_reason = "non_verbatim_subset"
-                            break
-                        rebuilt_items.append(
-                            {
-                                **source_item,
-                                "citation_id": citation_id,
-                                "excerpt": excerpt,
-                            }
-                        )
+                    invalid_citation_ids = [
+                        citation_id
+                        for citation_id in candidate_citation_ids
+                        if citation_id not in current_citation_catalog
+                    ]
+                    if invalid_citation_ids:
+                        fallback_reason = "invalid_compressed_citation_labels"
+                    else:
+                        rebuilt_items: list[dict[str, Any]] = []
+                        for selected in decision.items:
+                            citation_id = selected.citation_id.strip().upper()
+                            excerpt = _normalize_newlines(selected.excerpt).strip()
+                            source_item = by_citation_id.get(citation_id)
+                            if not isinstance(source_item, dict) or not _is_verbatim_subset(
+                                excerpt,
+                                str(source_item.get("excerpt") or ""),
+                            ):
+                                fallback_reason = "non_verbatim_subset"
+                                break
+                            rebuilt_items.append(
+                                {
+                                    **source_item,
+                                    "citation_id": citation_id,
+                                    "excerpt": excerpt,
+                                }
+                            )
 
-                    if fallback_reason is None:
-                        rebuilt_items, rebuilt_catalog = canonicalize_evidence_items(
-                            rebuilt_items,
-                            citation_catalog=current_citation_catalog,
-                        )
-                        candidate_context = build_evidence_context(rebuilt_items)
-                        if count_tokens_approximately(candidate_context) > input_tokens:
-                            fallback_reason = "non_compacting_output"
-                        else:
-                            compressed_evidence_items = rebuilt_items
-                            compressed_citation_catalog = rebuilt_catalog
-                            compressed_context = candidate_context
-            elif count_tokens_approximately(candidate) > input_tokens:
-                fallback_reason = "non_compacting_output"
-            elif final_context and _EVIDENCE_LABEL_RE.findall(final_context) and not _EVIDENCE_LABEL_RE.findall(candidate):
-                fallback_reason = "evidence_labels_dropped"
-            else:
-                compressed_context = candidate
+                        if fallback_reason is None:
+                            rebuilt_items, rebuilt_catalog = canonicalize_evidence_items(
+                                rebuilt_items,
+                                citation_catalog=current_citation_catalog,
+                            )
+                            candidate_context = build_evidence_context(rebuilt_items)
+                            if count_tokens_approximately(candidate_context) > input_tokens:
+                                fallback_reason = "non_compacting_output"
+                            else:
+                                compressed_evidence_items = rebuilt_items
+                                compressed_citation_catalog = rebuilt_catalog
+                                compressed_context = candidate_context
         except asyncio.CancelledError:
             raise
         except Exception:

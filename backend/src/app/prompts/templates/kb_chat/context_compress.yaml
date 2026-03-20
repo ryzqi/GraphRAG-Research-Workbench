@@ -1,20 +1,30 @@
-version: "1.0"
+version: "2.0"
 name: kb_chat_context_compress
-description: "知识库上下文压缩提示词，保留问题相关证据与原始引用标签"
+description: "知识库上下文压缩提示词，返回结构化证据选择结果"
 
 template: |
   你是知识库证据压缩器。
-  你的任务：围绕用户问题压缩参考内容，只保留回答问题所必需的证据片段。
+  你的任务：围绕用户问题，从带引用标签的参考内容中选择回答所必需的原文证据，并按结构化合同返回。
 
-  约束：
-  - 只能输出参考内容的原文子集。
-  - 不得归纳总结，不得改写原句，不得补充、猜测或重述事实。
-  - 必须保留原始引用标签，如 [S1]、[S2]。
-  - 你可以删除 chunk 内与问题无关的片段；如果整个 chunk 无关，可以整段删除。
-  - 保留的内容必须仍然是原文中的连续原句、原段落或原始条目，不要改动字词。
-  - 如果原文已经足够精炼，可以原样返回。
-  - 如果全部参考内容都与问题无关，只输出 `NO_EVIDENCE`。
-  - 只输出压缩后的参考内容正文，不要输出解释、标题、JSON 或 Markdown 代码块。
+  规则：
+  1. excerpt 必须是对应 citation 的原文连续片段，不得改写、拼接、总结或补充新事实。
+  2. citation_id 必须直接复用现有引用标签的编号部分，例如 S1、S2；不要输出方括号。
+  3. 如果现有参考内容已经足够精炼且无需删除，输出 decision=keep_all，items 返回空数组。
+  4. 如果只需保留部分证据，输出 decision=subset，并在 items 中逐条列出要保留的 citation_id 与 excerpt。
+  5. 如果全部参考内容都与问题无关，输出 decision=no_evidence，items 返回空数组。
+  6. 不得编造 citation_id，不得输出参考内容中不存在的 excerpt，不得输出额外字段。
+
+  输出要求：
+  - Return JSON only.
+  - The JSON object must contain exactly these fields:
+    - decision
+    - items
+  - decision must be one of: keep_all, subset, no_evidence
+  - items must be an array of objects
+  - each item must contain exactly:
+    - citation_id
+    - excerpt
+  - When decision is keep_all or no_evidence, items should be []
 
 variables: []
 
@@ -25,5 +35,17 @@ few_shot_examples:
       [S1] 接口默认超时时间为 30 秒，可通过 timeout 参数覆盖。
       [S2] 系统支持重试与熔断策略。
       [S3] 部署方式包括公有云和私有化部署。
-    output: |
+    output: '{"decision": "subset", "items": [{"citation_id": "S1", "excerpt": "接口默认超时时间为 30 秒，可通过 timeout 参数覆盖。"}]}'
+  - input: |
+      问题：支持哪些部署方式？
+      参考内容：
       [S1] 接口默认超时时间为 30 秒，可通过 timeout 参数覆盖。
+      [S2] 系统支持重试与熔断策略。
+      [S3] 部署方式包括公有云和私有化部署。
+    output: '{"decision": "subset", "items": [{"citation_id": "S3", "excerpt": "部署方式包括公有云和私有化部署。"}]}'
+  - input: |
+      问题：数据库默认端口是多少？
+      参考内容：
+      [S1] 接口默认超时时间为 30 秒，可通过 timeout 参数覆盖。
+      [S2] 系统支持重试与熔断策略。
+    output: '{"decision": "no_evidence", "items": []}'
