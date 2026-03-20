@@ -36,14 +36,15 @@ from app.prompts import get_prompt_loader
 from app.services.kb_evidence import (
     build_evidence_context,
     canonicalize_evidence_items,
-    extract_stable_citation_ids,
-    select_evidence_items_by_citation_ids,
 )
 from app.services.query_rewrite_service import QueryRewriteService
 from app.services.streaming import extract_answer_text
 from app.utils.token_counter import count_tokens_approximately
 
 _EVIDENCE_LABEL_RE = re.compile(r"\[[^\[\]\n]{1,128}\]")
+_COMPRESS_BLOCK_RE = re.compile(r"\[(S[1-9]\d*)\]\s*", re.IGNORECASE)
+_BLANK_LINE_RE = re.compile(r"\n{2,}")
+_NO_EVIDENCE_MARKER = "NO_EVIDENCE"
 
 
 class KbChatGraphContext(TypedDict, total=False):
@@ -248,6 +249,56 @@ def _resolve_query_text(state: dict[str, Any]) -> str:
     return ""
 
 
+def _normalize_newlines(text: str) -> str:
+    return text.replace("\r\n", "\n").replace("\r", "\n")
+
+
+def _ordered_verbatim_subset(parts: list[str], source: str) -> bool:
+    cursor = 0
+    for part in parts:
+        position = source.find(part, cursor)
+        if position < 0:
+            return False
+        cursor = position + len(part)
+    return True
+
+
+def _is_verbatim_subset(candidate_excerpt: str, source_excerpt: str) -> bool:
+    candidate = _normalize_newlines(candidate_excerpt).strip()
+    source = _normalize_newlines(source_excerpt)
+    if not candidate or not source:
+        return False
+    if candidate in source:
+        return True
+
+    paragraph_parts = [
+        part for part in _BLANK_LINE_RE.split(candidate) if part.strip()
+    ]
+    if len(paragraph_parts) > 1 and _ordered_verbatim_subset(paragraph_parts, source):
+        return True
+
+    line_parts = [line for line in candidate.split("\n") if line.strip()]
+    return len(line_parts) > 1 and _ordered_verbatim_subset(line_parts, source)
+
+
+def _parse_compressed_candidate(candidate: str) -> list[tuple[str, str]]:
+    normalized = _normalize_newlines(candidate).strip()
+    matches = list(_COMPRESS_BLOCK_RE.finditer(normalized))
+    if not matches:
+        return []
+
+    blocks: list[tuple[str, str]] = []
+    for index, match in enumerate(matches):
+        citation_id = match.group(1).upper()
+        start = match.end()
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(normalized)
+        excerpt = normalized[start:end].strip()
+        if not excerpt:
+            return []
+        blocks.append((citation_id, excerpt))
+    return blocks
+
+
 async def _compress_context(
     state: CompressContextInput,
     runtime: Runtime[KbChatGraphContext],
@@ -312,35 +363,56 @@ async def _compress_context(
             candidate = extract_answer_text(getattr(msg, "content", "")).strip()
             if not candidate:
                 fallback_reason = "empty_compress_output"
+            elif candidate.upper() == _NO_EVIDENCE_MARKER:
+                compressed_context = "（未找到相关内容）"
+                compressed_evidence_items = []
+                compressed_citation_catalog = {}
             elif current_evidence_items:
-                candidate_citation_ids = extract_stable_citation_ids(candidate)
+                candidate_blocks = _parse_compressed_candidate(candidate)
+                candidate_citation_ids = list(
+                    dict.fromkeys(citation_id for citation_id, _ in candidate_blocks)
+                )
                 invalid_citation_ids = [
                     citation_id
                     for citation_id in candidate_citation_ids
                     if citation_id not in current_citation_catalog
                 ]
-                if final_context and _EVIDENCE_LABEL_RE.findall(final_context) and not candidate_citation_ids:
+                if final_context and _EVIDENCE_LABEL_RE.findall(final_context) and not candidate_blocks:
                     fallback_reason = "evidence_labels_dropped"
                 elif invalid_citation_ids:
                     fallback_reason = "invalid_compressed_citation_labels"
                 else:
-                    selected_items = select_evidence_items_by_citation_ids(
-                        current_evidence_items,
-                        candidate_citation_ids,
-                    )
-                    if candidate_citation_ids and not selected_items:
-                        fallback_reason = "compressed_selection_empty"
-                    else:
-                        selected_items, selected_catalog = canonicalize_evidence_items(
-                            selected_items or current_evidence_items,
+                    by_citation_id = {
+                        str(item.get("citation_id")): item for item in current_evidence_items
+                    }
+                    rebuilt_items: list[dict[str, Any]] = []
+                    for citation_id, excerpt in candidate_blocks:
+                        source_item = by_citation_id.get(citation_id)
+                        if not isinstance(source_item, dict) or not _is_verbatim_subset(
+                            excerpt,
+                            str(source_item.get("excerpt") or ""),
+                        ):
+                            fallback_reason = "non_verbatim_subset"
+                            break
+                        rebuilt_items.append(
+                            {
+                                **source_item,
+                                "citation_id": citation_id,
+                                "excerpt": excerpt,
+                            }
+                        )
+
+                    if fallback_reason is None:
+                        rebuilt_items, rebuilt_catalog = canonicalize_evidence_items(
+                            rebuilt_items,
                             citation_catalog=current_citation_catalog,
                         )
-                        candidate_context = build_evidence_context(selected_items)
+                        candidate_context = build_evidence_context(rebuilt_items)
                         if count_tokens_approximately(candidate_context) > input_tokens:
                             fallback_reason = "non_compacting_output"
                         else:
-                            compressed_evidence_items = selected_items
-                            compressed_citation_catalog = selected_catalog
+                            compressed_evidence_items = rebuilt_items
+                            compressed_citation_catalog = rebuilt_catalog
                             compressed_context = candidate_context
             elif count_tokens_approximately(candidate) > input_tokens:
                 fallback_reason = "non_compacting_output"

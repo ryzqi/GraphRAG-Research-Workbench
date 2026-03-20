@@ -198,3 +198,17 @@ def test_general_and_kb_system_prompts_keep_core_operating_rules(prompt_loader) 
     assert "kb_retrieve" in research_prompt
     assert "report_generate" in research_prompt
 
+
+def test_context_compress_prompt_requires_verbatim_subset_only(prompt_loader) -> None:
+    template = prompt_loader.get("kb_chat/context_compress").template
+    assert "原文子集" in template
+    assert "不得归纳总结" in template
+    assert "不得改写原句" in template
+
+
+def test_answer_review_prompt_allows_lightweight_paraphrase_without_mismatch(prompt_loader) -> None:
+    template = prompt_loader.get("kb_chat/answer_review").template
+    assert "轻度同义改写" in template
+    assert "断言强度" in template
+    assert "未超出参考内容" in template
+

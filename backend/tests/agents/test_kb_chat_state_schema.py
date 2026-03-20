@@ -862,6 +862,176 @@ async def test_compress_context_rebuilds_canonical_context_from_structured_evide
     assert sorted(result["citation_catalog"]) == ["S2"]
 
 
+@pytest.mark.asyncio
+async def test_compress_context_keeps_only_verbatim_relevant_subset_within_chunk() -> None:
+    original_excerpt = (
+        "对于没有历史点击数据的新商品，模型难以准确生成其向量。\n"
+        "    - **解决方案**：利用**多模态信息**，结合商品的标题、描述、图片等多种数据共同进行编码，以弥补行为数据的不足。\n"
+        "---\n"
+        "## 3. Re-rank模型：深度匹配与精准排序的“裁判”\n\n"
+        "- **核心任务：排序 (Ranking)**\n"
+        "    - 在Embedding模型筛选出的候选结果（如几百个）基础上，进行**更复杂、更精细**的二次排序。\n"
+        "    - 它的目标是把**最相关 (Most Relevant)** 的结果推到用户最先看到的位置。\n"
+    )
+    kept_excerpt = (
+        "## 3. Re-rank模型：深度匹配与精准排序的“裁判”\n\n"
+        "- **核心任务：排序 (Ranking)**\n"
+        "    - 在Embedding模型筛选出的候选结果（如几百个）基础上，进行**更复杂、更精细**的二次排序。\n"
+        "    - 它的目标是把**最相关 (Most Relevant)** 的结果推到用户最先看到的位置。"
+    )
+
+    class _FakeChatModel:
+        def bind(self, **_: object) -> "_FakeChatModel":
+            return self
+
+        async def ainvoke(self, _messages: object) -> SimpleNamespace:
+            return SimpleNamespace(content=f"[S1] {kept_excerpt}")
+
+    result = await _compress_context(
+        {
+            "user_input": "介绍一下重排序",
+            "normalized_query": "介绍一下重排序",
+            "final_context": f"[S1] {original_excerpt}",
+            "evidence_items": [{"citation_id": "S1", "excerpt": original_excerpt}],
+            "citation_catalog": {
+                "S1": {"citation_id": "S1", "citation_title": "Agent基础"},
+            },
+            "stage_summaries": {},
+        },
+        runtime=SimpleNamespace(context={}),
+        settings=_settings(),
+        chat_model=_FakeChatModel(),
+    )
+
+    assert result["final_context"] == f"[S1] {kept_excerpt}"
+    assert result["evidence_items"][0]["excerpt"] == kept_excerpt
+    assert result["compression_stats"]["fallback_used"] is False
+
+
+@pytest.mark.asyncio
+async def test_compress_context_allows_dropping_irrelevant_chunk_when_model_returns_no_evidence() -> None:
+    class _FakeChatModel:
+        def bind(self, **_: object) -> "_FakeChatModel":
+            return self
+
+        async def ainvoke(self, _messages: object) -> SimpleNamespace:
+            return SimpleNamespace(content="NO_EVIDENCE")
+
+    result = await _compress_context(
+        {
+            "user_input": "介绍一下重排序",
+            "normalized_query": "介绍一下重排序",
+            "final_context": "[S1] 天气晴朗，适合出游。",
+            "evidence_items": [{"citation_id": "S1", "excerpt": "天气晴朗，适合出游。"}],
+            "citation_catalog": {
+                "S1": {"citation_id": "S1", "citation_title": "无关资料"},
+            },
+            "stage_summaries": {},
+        },
+        runtime=SimpleNamespace(context={}),
+        settings=_settings(),
+        chat_model=_FakeChatModel(),
+    )
+
+    assert result["final_context"] == "（未找到相关内容）"
+    assert result["evidence_items"] == []
+    assert result["citation_catalog"] == {}
+    assert result["compression_stats"]["fallback_used"] is False
+
+
+@pytest.mark.asyncio
+async def test_compress_context_fail_open_when_model_returns_rewritten_subset() -> None:
+    original_excerpt = (
+        "## 3. Re-rank模型：深度匹配与精准排序的“裁判”\n\n"
+        "- **核心任务：排序 (Ranking)**\n"
+        "    - 在Embedding模型筛选出的候选结果（如几百个）基础上，进行**更复杂、更精细**的二次排序。"
+    )
+
+    class _FakeChatModel:
+        def bind(self, **_: object) -> "_FakeChatModel":
+            return self
+
+        async def ainvoke(self, _messages: object) -> SimpleNamespace:
+            return SimpleNamespace(content="[S1] 重排序模型会对候选结果做更精细的二次排序。")
+
+    result = await _compress_context(
+        {
+            "user_input": "介绍一下重排序",
+            "normalized_query": "介绍一下重排序",
+            "final_context": f"[S1] {original_excerpt}",
+            "evidence_items": [{"citation_id": "S1", "excerpt": original_excerpt}],
+            "citation_catalog": {
+                "S1": {"citation_id": "S1", "citation_title": "Agent基础"},
+            },
+            "stage_summaries": {},
+        },
+        runtime=SimpleNamespace(context={}),
+        settings=_settings(),
+        chat_model=_FakeChatModel(),
+    )
+
+    assert result["final_context"] == f"[S1] {original_excerpt}"
+    assert result["compression_stats"]["fallback_reason"] == "non_verbatim_subset"
+
+
+@pytest.mark.asyncio
+async def test_answer_repair_falls_back_to_original_when_repair_worsens_local_citation_coverage() -> None:
+    original_draft = (
+        "重排序模型负责把最相关的结果推到用户最先看到的位置[S1]。"
+        "它通常采用交叉编码器，将用户查询与单个候选项作为整体输入模型[S1]。"
+    )
+    degraded_repair = (
+        "重排序模型负责把最相关的结果推到用户最先看到的位置；"
+        "它通常采用交叉编码器，将用户查询与单个候选项作为整体输入模型[S1]。"
+    )
+
+    class _FakeChatModel:
+        def bind(self, **_: object) -> "_FakeChatModel":
+            return self
+
+        async def ainvoke(self, _messages: object) -> SimpleNamespace:
+            return SimpleNamespace(content=degraded_repair)
+
+    result = await _answer_repair(
+        {
+            "user_input": "介绍一下重排序",
+            "draft_answer": original_draft,
+            "final_context": (
+                "[S1] 重排序模型负责把最相关的结果推到用户最先看到的位置。"
+                "它通常采用交叉编码器，将用户查询与单个候选项作为整体输入模型。"
+            ),
+            "evidence_items": [
+                {
+                    "citation_id": "S1",
+                    "excerpt": (
+                        "重排序模型负责把最相关的结果推到用户最先看到的位置。"
+                        "它通常采用交叉编码器，将用户查询与单个候选项作为整体输入模型。"
+                    ),
+                }
+            ],
+            "citation_catalog": {
+                "S1": {"citation_id": "S1", "citation_title": "Agent基础"},
+            },
+            "loop_counts": {
+                "total_rounds": 1,
+                "retrieval_retries": 0,
+                "generation_retries": 0,
+            },
+            "stage_summaries": {},
+        },
+        runtime=SimpleNamespace(context={}),
+        settings=_settings(),
+        chat_model=_FakeChatModel(),
+    )
+
+    assert result["draft_answer"] == original_draft
+    assert result["final_answer"] == original_draft
+    assert (
+        result["stage_summaries"]["answer_repair"]["fallback_reason"]
+        == "repair_citation_coverage_regressed"
+    )
+
+
 def test_build_kb_chat_run_context_prefers_authoritative_inputs() -> None:
     context = build_kb_chat_run_context(
         thread_id="thread-live",

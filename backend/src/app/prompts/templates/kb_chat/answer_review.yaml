@@ -25,9 +25,10 @@ template: |
 
   2. 再看关键断言是否被参考内容支持
      - 只审查关键结论、关键数字、关键条件、关键限制。
+     - 允许轻度同义改写；只要断言强度、适用范围、前提条件没有变化，且表述未超出参考内容，不要判失败。
      - 若关键断言在参考内容中找不到依据，或与参考内容冲突，用 `unsupported_claims`。
      - 若参考内容过弱，只能支撑局部、不能支撑最终结论，用 `insufficient_evidence`。
-     - 若回答引用了证据标签，但引用对应内容并不支持该断言，可用 `citation_mismatch`。
+     - 只有在回答引用了证据标签、但该标签对应内容确实不支持该断言时，才用 `citation_mismatch`。
 
   3. 关于引用缺失/非法的边界
      - `missing_citations` 和 `invalid_citations` 主要由独立的 citation review 节点负责。

@@ -215,6 +215,15 @@ def _partition_citations(
     return all_citations, valid, invalid
 
 
+def _citation_coverage_score(answer: str) -> tuple[int, int, int]:
+    coverage = review_citation_coverage(answer)
+    return (
+        -len(coverage.uncovered_units),
+        len(coverage.covered_units),
+        len(extract_citation_label_occurrences(answer)),
+    )
+
+
 def _classify_structured_error(exc: Exception) -> str:
     name = exc.__class__.__name__
     if name == "StructuredOutputValidationError":
@@ -732,8 +741,9 @@ async def _answer_repair(
             "请修复回答，仅输出最终答案正文。\n"
             "要求：\n"
             "1) 仅使用参考内容中的事实；\n"
-            "2) 关键事实必须附带有效 [Sx] 引用；\n"
-            "3) 不能引入参考内容外信息。\n\n"
+            "2) 每个关键子句都要就近附带有效 [Sx] 引用；\n"
+            "3) 不要把多句已有引用的内容压成句尾单引的复合句；\n"
+            "4) 不能引入参考内容外信息。\n\n"
             f"问题：{question}\n\n"
             f"参考内容：\n{final_context}\n\n"
             f"原回答：\n{draft_answer}"
@@ -748,7 +758,10 @@ async def _answer_repair(
             )
             candidate = extract_answer_text(getattr(msg, "content", "")).strip()
             if candidate:
-                repaired_answer = candidate
+                if _citation_coverage_score(candidate) < _citation_coverage_score(draft_answer):
+                    fallback_reason = "repair_citation_coverage_regressed"
+                else:
+                    repaired_answer = candidate
             else:
                 fallback_reason = "empty_repair_output"
         except asyncio.CancelledError:
