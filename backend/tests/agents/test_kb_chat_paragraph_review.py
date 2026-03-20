@@ -552,11 +552,7 @@ async def test_answer_repair_reprojects_paragraph_metadata_after_llm_citation_re
 async def test_answer_repair_without_citations_still_fails_followup_citation_review(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(
-        answer_subgraph,
-        "_citation_coverage_score",
-        lambda _: (0, 0, 0),
-    )
+    monkeypatch.setattr(answer_subgraph, "_citation_coverage_score", lambda _: (0, 0, 0))
 
     state = {
         **_build_state(),
@@ -601,22 +597,14 @@ async def test_answer_repair_without_citations_still_fails_followup_citation_rev
         chat_model=_StaticRepairModel("修复后的第一段。\n\n修复后的第二段。"),
     )
 
-    assert repaired_updates["answer_paragraphs"] == [
-        {
-            "paragraph_id": "p1",
-            "text": "修复后的第一段。",
-            "citation_ids": [],
-            "claims": [],
-            "review_status": "passed",
-        },
-        {
-            "paragraph_id": "p2",
-            "text": "修复后的第二段。",
-            "citation_ids": [],
-            "claims": [],
-            "review_status": "passed",
-        },
-    ]
+    assert repaired_updates["draft_answer"] == state["draft_answer"]
+    assert repaired_updates["final_answer"] == state["final_answer"]
+    assert "answer_paragraphs" not in repaired_updates
+    assert "answer_render_meta" not in repaired_updates
+    assert (
+        repaired_updates["stage_summaries"]["answer_repair"]["fallback_reason"]
+        == "repair_projection_missing_citations"
+    )
 
     review_updates = await answer_subgraph._answer_review_citation(
         {
@@ -630,11 +618,11 @@ async def test_answer_repair_without_citations_still_fails_followup_citation_rev
     review_run = review_updates["answer_review_runs"][0]
     assert review_run["passed"] is False
     assert review_run["reason"] == "missing_citations"
-    assert review_run["affected_paragraph_ids"] == ["p1", "p2"]
+    assert review_run["affected_paragraph_ids"] == ["p_old"]
     assert review_run["details"]["paragraph_review_counts"] == {
-        "total": 2,
+        "total": 1,
         "passed": 0,
-        "failed": 2,
+        "failed": 1,
     }
 
 

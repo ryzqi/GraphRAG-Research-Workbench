@@ -659,6 +659,31 @@ def _resolve_answer_review_details_from_state(state: dict[str, Any]) -> dict[str
     return {}
 
 
+def _resolve_unsupported_scope_from_state(state: dict[str, Any]) -> str:
+    review_details = _resolve_answer_review_details_from_state(state)
+    unsupported_scope = _as_str(review_details.get("unsupported_scope")).strip()
+    if unsupported_scope:
+        return unsupported_scope
+
+    stage_summaries = state.get("stage_summaries")
+    answer_review_summary = (
+        stage_summaries.get("answer_review")
+        if isinstance(stage_summaries, dict)
+        and isinstance(stage_summaries.get("answer_review"), dict)
+        else {}
+    )
+    return _as_str(answer_review_summary.get("unsupported_scope_summary")).strip()
+
+
+def _count_unsupported_auxiliary_claims(paragraphs: list[AnswerParagraph]) -> int:
+    return sum(
+        1
+        for paragraph in paragraphs
+        for claim in paragraph.claims
+        if claim.role == "auxiliary" and claim.support_status == "unsupported"
+    )
+
+
 def _maybe_repair_auxiliary_only_paragraphs(
     state: dict[str, Any],
 ) -> tuple[list[dict[str, Any]], dict[str, Any], str] | None:
@@ -668,19 +693,7 @@ def _maybe_repair_auxiliary_only_paragraphs(
     if reason != "unsupported_claims":
         return None
 
-    review_details = _resolve_answer_review_details_from_state(state)
-    unsupported_scope = _as_str(review_details.get("unsupported_scope")).strip()
-    if not unsupported_scope:
-        stage_summaries = state.get("stage_summaries")
-        answer_review_summary = (
-            stage_summaries.get("answer_review")
-            if isinstance(stage_summaries, dict)
-            and isinstance(stage_summaries.get("answer_review"), dict)
-            else {}
-        )
-        unsupported_scope = _as_str(
-            answer_review_summary.get("unsupported_scope_summary")
-        ).strip()
+    unsupported_scope = _resolve_unsupported_scope_from_state(state)
     if unsupported_scope != "auxiliary_only":
         return None
 
@@ -697,6 +710,40 @@ def _maybe_repair_auxiliary_only_paragraphs(
     render_meta = _build_answer_render_meta_from_paragraphs(normalized)
     repaired_answer = render_answer_paragraphs(normalized)
     return serialized, render_meta, repaired_answer
+
+
+def _project_repair_candidate(
+    candidate: str,
+    *,
+    allowed_labels: dict[str, str],
+) -> tuple[
+    list[dict[str, Any]] | None,
+    dict[str, Any] | None,
+    str | None,
+    str | None,
+]:
+    projected_paragraphs = _project_answer_text_to_paragraphs(candidate)
+    if not projected_paragraphs:
+        return None, None, None, "repair_projection_empty"
+
+    paragraph_review = _review_paragraph_citations(
+        projected_paragraphs,
+        allowed_labels=allowed_labels,
+    )
+    review_reason = _as_str(paragraph_review.get("reason")).strip()
+    if review_reason != "passed":
+        return None, None, None, f"repair_projection_{review_reason or 'failed'}"
+
+    normalized_answer = render_answer_paragraphs(projected_paragraphs)
+    if not normalized_answer:
+        return None, None, None, "repair_projection_empty"
+
+    return (
+        [paragraph.model_dump() for paragraph in projected_paragraphs],
+        _build_answer_render_meta_from_paragraphs(projected_paragraphs),
+        normalized_answer,
+        "",
+    )
 
 
 def _citation_coverage_score(answer: str) -> tuple[int, int, int]:
@@ -1256,21 +1303,47 @@ async def _answer_repair(
 
     draft_answer = _as_str(state.get("draft_answer")).strip()
     raw_final_context = _as_str(state.get("final_context")).strip()
-    _, _, final_context = _resolve_allowed_citation_labels(
+    evidence_labels, _, final_context = _resolve_allowed_citation_labels(
         state,
         final_context=raw_final_context,
     )
     question = _resolve_query_text(state)
+    source_paragraphs = _load_answer_paragraphs(
+        state,
+        draft_answer=draft_answer,
+    )
+    source_render_meta = state.get("answer_render_meta")
+    if not isinstance(source_render_meta, dict) and source_paragraphs:
+        source_render_meta = _build_answer_render_meta_from_paragraphs(source_paragraphs)
+    reflection = state.get("reflection")
+    reflection_obj = reflection if isinstance(reflection, dict) else {}
 
     repaired_answer = draft_answer
     fallback_reason: str | None = None
-    repaired_paragraphs = None
-    repaired_render_meta = None
+    repair_mode = "llm_or_fallback"
+    repaired_paragraphs: list[dict[str, Any]] | None = None
+    repaired_render_meta: dict[str, Any] | None = None
+    removed_auxiliary_claim_count = 0
     deterministic_repair = _maybe_repair_auxiliary_only_paragraphs(state)
     if deterministic_repair is not None:
         repaired_paragraphs, repaired_render_meta, repaired_answer = deterministic_repair
         fallback_reason = "deterministic_auxiliary_prune"
-    elif draft_answer and final_context and question:
+        repair_mode = "deterministic_auxiliary_prune"
+        repaired_models = [
+            AnswerParagraph.model_validate(paragraph) for paragraph in repaired_paragraphs
+        ]
+        removed_auxiliary_claim_count = max(
+            _count_unsupported_auxiliary_claims(source_paragraphs)
+            - _count_unsupported_auxiliary_claims(repaired_models),
+            0,
+        )
+    elif (
+        _as_str(reflection_obj.get("reason")).strip() == "unsupported_claims"
+        and _resolve_unsupported_scope_from_state(state) != "auxiliary_only"
+    ):
+        fallback_reason = "repair_scope_not_supported"
+        repair_mode = "scope_blocked"
+    elif draft_answer and final_context and question and evidence_labels:
         prompts = get_prompt_loader()
         try:
             repair_system = prompts.render_with_few_shot("kb_chat/system")
@@ -1283,12 +1356,14 @@ async def _answer_repair(
             "请修复回答，仅输出最终答案正文。\n"
             "要求：\n"
             "1) 仅使用参考内容中的事实；\n"
-            "2) 每个关键子句都要就近附带有效 [Sx] 引用；\n"
-            "3) 不要把多句已有引用的内容压成句尾单引的复合句；\n"
+            "2) 采用段落级聚合引用：每段结尾统一附带有效 [Sx]；不要逐句强制补引；\n"
+            "3) 若某段存在无法被支持的辅助断言，删除该辅助断言，不要强行补引；\n"
             "4) 不能引入参考内容外信息。\n\n"
             f"问题：{question}\n\n"
             f"参考内容：\n{final_context}\n\n"
-            f"原回答：\n{draft_answer}"
+            f"原回答：\n{draft_answer}\n\n"
+            "当前段落级元数据：\n"
+            f"{_format_paragraph_review_payload(source_paragraphs)}"
         )
         model = chat_model.bind(max_tokens=1024)
         try:
@@ -1300,16 +1375,28 @@ async def _answer_repair(
             )
             candidate = extract_answer_text(getattr(msg, "content", "")).strip()
             if candidate:
-                if _citation_coverage_score(candidate) < _citation_coverage_score(draft_answer):
-                    fallback_reason = "repair_citation_coverage_regressed"
+                (
+                    repaired_paragraphs,
+                    repaired_render_meta,
+                    normalized_candidate,
+                    projection_fallback_reason,
+                ) = _project_repair_candidate(
+                    candidate,
+                    allowed_labels=evidence_labels,
+                )
+                if projection_fallback_reason:
+                    fallback_reason = projection_fallback_reason
                 else:
-                    repaired_answer = candidate
-                    projected_paragraphs = _project_answer_text_to_paragraphs(repaired_answer)
-                    repaired_paragraphs = [
-                        paragraph.model_dump() for paragraph in projected_paragraphs
+                    repaired_answer = _as_str(normalized_candidate).strip()
+                    repair_mode = "llm_rewrite"
+                    repaired_models = [
+                        AnswerParagraph.model_validate(paragraph)
+                        for paragraph in repaired_paragraphs or []
                     ]
-                    repaired_render_meta = _build_answer_render_meta_from_paragraphs(
-                        projected_paragraphs
+                    removed_auxiliary_claim_count = max(
+                        _count_unsupported_auxiliary_claims(source_paragraphs)
+                        - _count_unsupported_auxiliary_claims(repaired_models),
+                        0,
                     )
             else:
                 fallback_reason = "empty_repair_output"
@@ -1334,6 +1421,14 @@ async def _answer_repair(
     if repaired_paragraphs is not None and repaired_render_meta is not None:
         updates["answer_paragraphs"] = repaired_paragraphs
         updates["answer_render_meta"] = repaired_render_meta
+    effective_render_meta = (
+        repaired_render_meta if isinstance(repaired_render_meta, dict) else source_render_meta
+    )
+    rerendered_paragraph_count = (
+        int(repaired_render_meta.get("paragraph_count") or 0)
+        if isinstance(repaired_render_meta, dict)
+        else 0
+    )
     updates = {
         **updates,
         **_merge_stage_summary(
@@ -1341,15 +1436,23 @@ async def _answer_repair(
             "answer_repair",
             {
                 "repair_attempt": repair_attempts,
-                "repair_mode": (
-                    "deterministic_auxiliary_prune"
-                    if deterministic_repair is not None
-                    else "llm_or_fallback"
-                ),
+                "repair_mode": repair_mode,
                 "fallback_reason": fallback_reason,
+                "removed_auxiliary_claim_count": removed_auxiliary_claim_count,
+                "rerendered_paragraph_count": rerendered_paragraph_count,
                 "paragraph_count": (
-                    repaired_render_meta.get("paragraph_count")
-                    if isinstance(repaired_render_meta, dict)
+                    effective_render_meta.get("paragraph_count")
+                    if isinstance(effective_render_meta, dict)
+                    else None
+                ),
+                "claim_count": (
+                    effective_render_meta.get("claim_count")
+                    if isinstance(effective_render_meta, dict)
+                    else None
+                ),
+                "citation_count": (
+                    effective_render_meta.get("citation_count")
+                    if isinstance(effective_render_meta, dict)
                     else None
                 ),
                 "latency_ms": int((time.perf_counter() - start) * 1000),
