@@ -832,7 +832,10 @@ class QueryRewriteService:
 
         try:
             model = self._get_structured_chat_model().bind(max_tokens=max_tokens)
-            structured_model = model.with_structured_output(schema, include_raw=True)
+            structured_model = model.with_structured_output(
+                schema,
+                method="function_calling",
+            )
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -858,30 +861,14 @@ class QueryRewriteService:
                 reason=self._classify_structured_error(exc),
             )
 
-        if not isinstance(result, dict):
+        if result is None:
             return StructuredCallResult(
                 payload=None, success=False, reason="empty_structured_response"
             )
-
-        parsing_error = result.get("parsing_error")
-        if isinstance(parsing_error, Exception):
-            return StructuredCallResult(
-                payload=None,
-                success=False,
-                reason=self._classify_structured_error(parsing_error),
-            )
-        if parsing_error is not None:
-            return StructuredCallResult(payload=None, success=False, reason="error")
-
-        parsed_payload = result.get("parsed")
-        if parsed_payload is None:
-            return StructuredCallResult(
-                payload=None, success=False, reason="empty_structured_response"
-            )
-        if isinstance(parsed_payload, schema):
-            return StructuredCallResult(payload=parsed_payload, success=True)
+        if isinstance(result, schema):
+            return StructuredCallResult(payload=result, success=True)
         try:
-            payload = schema.model_validate(parsed_payload)
+            payload = schema.model_validate(result)
         except ValidationError:
             return StructuredCallResult(payload=None, success=False, reason="invalid_schema")
         return StructuredCallResult(payload=payload, success=True)

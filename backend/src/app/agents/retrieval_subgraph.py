@@ -350,7 +350,7 @@ async def _compress_context(
         try:
             structured_model = chat_model.with_structured_output(
                 ContextCompressDecision,
-                include_raw=True,
+                method="function_calling",
             )
             result = await structured_model.ainvoke(
                 [
@@ -359,19 +359,11 @@ async def _compress_context(
                 ]
             )
 
-            if not isinstance(result, dict):
+            if result is None:
                 fallback_reason = "empty_structured_response"
             else:
-                parsing_error = result.get("parsing_error")
-                if isinstance(parsing_error, Exception):
-                    fallback_reason = "invalid_schema"
-                elif parsing_error is not None:
-                    fallback_reason = "invalid_schema"
-                else:
-                    decision, decision_error = _coerce_context_compress_decision(
-                        result.get("parsed")
-                    )
-                    fallback_reason = decision_error
+                decision, decision_error = _coerce_context_compress_decision(result)
+                fallback_reason = decision_error
 
             if fallback_reason is None and decision is None:
                 fallback_reason = "empty_structured_response"
