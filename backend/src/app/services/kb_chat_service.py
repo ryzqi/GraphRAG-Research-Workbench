@@ -2950,6 +2950,7 @@ class KbChatService:
             return max(value, 0)
         return None
 
+    @staticmethod
     def _normalize_optional_text(value: Any) -> str | None:
         if not isinstance(value, str):
             return None
@@ -3091,6 +3092,7 @@ class KbChatService:
 
         return f"{text}\n\n" + "\n".join(lines)
 
+    @staticmethod
     def _extract_last_good_answer(
         *,
         answer: str,

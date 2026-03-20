@@ -175,6 +175,29 @@ def test_extract_last_good_answer_prefers_stream_state_canonical_answer_fields()
     assert source == "stream_state.final_answer"
 
 
+def test_extract_last_good_answer_supports_instance_invocation() -> None:
+    service = object.__new__(KbChatService)
+    stream_state = StreamState(
+        final_answer="最终答案 [S1]",
+        draft_answer="草稿答案 [S1]",
+    )
+
+    answer, source = service._extract_last_good_answer(
+        answer="",
+        stream_state=stream_state,
+    )
+
+    assert answer == "最终答案 [S1]"
+    assert source == "stream_state.final_answer"
+
+
+def test_normalize_optional_text_supports_instance_invocation() -> None:
+    service = object.__new__(KbChatService)
+
+    assert service._normalize_optional_text("  资料标题  ") == "资料标题"
+    assert service._normalize_optional_text(None) is None
+
+
 def test_semantic_cache_skip_reason_uses_canonical_reflection_reason() -> None:
     reason = KbChatService._semantic_cache_skip_reason(
         clarification_payload=None,
