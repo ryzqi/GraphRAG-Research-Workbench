@@ -601,23 +601,49 @@ def _extract_run_details(run: dict[str, Any]) -> dict[str, Any]:
     return raw if isinstance(raw, dict) else {}
 
 
+def _extract_run_affected_paragraph_ids(run: dict[str, Any]) -> set[str]:
+    raw = run.get("affected_paragraph_ids")
+    if not isinstance(raw, list):
+        return set()
+    return {
+        _as_str(paragraph_id).strip()
+        for paragraph_id in raw
+        if _as_str(paragraph_id).strip()
+    }
+
+
 def _coalesce_paragraph_summary(
     citation: dict[str, Any],
     answer: dict[str, Any],
 ) -> tuple[dict[str, int], int, str]:
     answer_details = _extract_run_details(answer)
     citation_details = _extract_run_details(citation)
-    counts = answer_details.get("paragraph_review_counts")
-    if not isinstance(counts, dict):
-        counts = citation_details.get("paragraph_review_counts")
-    if not isinstance(counts, dict):
-        counts = {"total": 0, "passed": 0, "failed": 0}
-    repair_target_count = int(
-        answer_details.get(
-            "repair_target_count",
-            citation_details.get("repair_target_count", 0),
-        )
-        or 0
+
+    def _counts_from(details: dict[str, Any]) -> dict[str, int]:
+        raw = details.get("paragraph_review_counts")
+        if not isinstance(raw, dict):
+            return {"total": 0, "passed": 0, "failed": 0}
+        return {
+            "total": int(raw.get("total") or 0),
+            "passed": int(raw.get("passed") or 0),
+            "failed": int(raw.get("failed") or 0),
+        }
+
+    answer_counts = _counts_from(answer_details)
+    citation_counts = _counts_from(citation_details)
+    affected_ids = _extract_run_affected_paragraph_ids(citation) | _extract_run_affected_paragraph_ids(
+        answer
+    )
+    total = max(answer_counts["total"], citation_counts["total"], len(affected_ids))
+    failed = max(answer_counts["failed"], citation_counts["failed"], len(affected_ids))
+    counts = {
+        "total": total,
+        "passed": max(total - failed, 0),
+        "failed": failed,
+    }
+    repair_target_count = max(
+        int(answer_details.get("repair_target_count") or 0),
+        int(citation_details.get("repair_target_count") or 0),
     )
     unsupported_scope_summary = _as_str(
         answer_details.get(
