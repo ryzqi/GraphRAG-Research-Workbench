@@ -1,4 +1,4 @@
-version: "4.0"
+version: "4.1"
 name: kb_chat_answer_review
 description: "统一答案有效性审查提示词（main claim decisive + paragraph semantics）"
 
@@ -23,6 +23,8 @@ template: |
      - 如果问题本身缺条件，导致现有回答只能停留在“需要先补充信息”，用 `needs_clarification`。
      - 如果已经回答主问题，但少量非关键延展信息缺失，不要因此判失败。
      - 如果主问题只回答了一部分，剩余缺口会影响用户是否获得结论，用 `incomplete`。
+     - 若问题同时要求多个必答子项（例如“先比较，再说明原因/映射/流程”），缺任一必答子项都应判为 `incomplete`。
+     - 若问题要求“说明某机制/组件如何支撑某结论/差异/结果”，只有列出机制/组件名称而未建立“机制/组件 -> 作用 -> 所支撑的结论/差异/结果”映射，仍属于 `incomplete`。
 
   2. 再看关键断言是否被参考内容支持
      - 主断言（main claim）是决定性项；主断言一旦 unsupported，就不能当作可修小问题放行。
@@ -120,3 +122,17 @@ few_shot_examples:
       claims:
       - role=main; support_status=weak_supported; claim=需要先明确比较口径。; supporting_citation_ids=["S1"]
     output: '{"passed": false, "reason": "needs_clarification", "confidence": 0.88, "missing_citations": [], "unsupported_claims": [], "affected_paragraph_ids": [], "details": {"paragraph_review_counts": {"total": 1, "passed": 1, "failed": 0}, "repair_target_count": 0, "unsupported_scope": "none"}}'
+  - input: |
+      问题：比较 Agentic AI 和传统大语言模型（LLM）的核心区别，并说明 Agentic AI 的四大核心组件如何支撑这种差异。
+      参考内容：
+      [S1] Agentic AI 拥有决策结构，会围绕目标先澄清、规划并分步执行；传统 LLM 通常接收问题后直接生成内容。
+      [S2] 任务规划器负责拆解目标与安排顺序；工具调用系统负责调用外部 API；记忆模块记录历史上下文和执行状态；控制策略决定重试、等待输入或终止。
+      回答：Agentic AI 和传统 LLM 的核心区别在于前者具备决策结构、后者通常直接生成内容。Agentic AI 的四大核心组件包括任务规划器、工具调用系统、记忆模块和控制策略。[S1][S2]
+      段落级审查数据：
+      paragraph_id=p1
+      text=Agentic AI 和传统 LLM 的核心区别在于前者具备决策结构、后者通常直接生成内容。Agentic AI 的四大核心组件包括任务规划器、工具调用系统、记忆模块和控制策略。
+      citation_ids=["S1","S2"]
+      claims:
+      - role=main; support_status=supported; claim=Agentic AI 具备决策结构，而传统 LLM 通常直接生成内容。; supporting_citation_ids=["S1"]
+      - role=main; support_status=supported; claim=Agentic AI 的四大核心组件包括任务规划器、工具调用系统、记忆模块和控制策略。; supporting_citation_ids=["S2"]
+    output: '{"passed": false, "reason": "incomplete", "confidence": 0.94, "missing_citations": [], "unsupported_claims": [], "affected_paragraph_ids": ["p1"], "details": {"paragraph_review_counts": {"total": 1, "passed": 0, "failed": 1}, "repair_target_count": 1, "unsupported_scope": "none"}}'

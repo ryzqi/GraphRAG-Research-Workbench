@@ -26,6 +26,7 @@ from app.services.kb_answer_paragraphs import (
     recalculate_paragraph_citation_ids,
     render_answer_paragraphs,
 )
+from app.services.streaming import extract_answer_text
 from app.services.kb_evidence import (
     resolve_structured_evidence,
 )
@@ -61,6 +62,7 @@ from ..tools.kb_retrieve import (
 )
 
 _EVIDENCE_LINE_RE = re.compile(r"^\[([^\[\]\n]{1,128})\]\s+", re.MULTILINE)
+_INLINE_CITATION_RE = re.compile(r"\[([^\[\]\n]{1,128})\]")
 _CITATION_ONLY_FAILURE_REASONS = {
     "missing_citations",
     "invalid_citations",
@@ -833,6 +835,84 @@ def _build_answer_render_meta(
     ).model_dump()
 
 
+def _extract_allowed_citation_ids(final_context: str) -> dict[str, str]:
+    allowed: dict[str, str] = {}
+    for match in _EVIDENCE_LINE_RE.finditer(final_context or ""):
+        citation_id = _as_str(match.group(1)).strip()
+        if citation_id:
+            allowed.setdefault(citation_id.casefold(), citation_id)
+    return allowed
+
+
+def _extract_inline_citation_ids(text: str) -> list[str]:
+    return [
+        _as_str(match.group(1)).strip()
+        for match in _INLINE_CITATION_RE.finditer(text or "")
+        if _as_str(match.group(1)).strip()
+    ]
+
+
+def _strip_inline_citations(text: str) -> str:
+    stripped = _INLINE_CITATION_RE.sub("", _as_str(text))
+    stripped = re.sub(r"[ \t]+\n", "\n", stripped)
+    stripped = re.sub(r"\n{3,}", "\n\n", stripped)
+    return stripped.strip()
+
+
+def _project_plain_text_answer_to_paragraphs(
+    answer: str,
+    *,
+    allowed_citation_ids: dict[str, str],
+) -> list[AnswerParagraph]:
+    cleaned_answer = _as_str(answer).strip()
+    if not cleaned_answer:
+        return []
+
+    raw_blocks = [
+        block.strip()
+        for block in re.split(r"\n\s*\n", cleaned_answer)
+        if block.strip()
+    ]
+    if not raw_blocks:
+        raw_blocks = [cleaned_answer]
+    merged_blocks: list[str] = []
+    index = 0
+    while index < len(raw_blocks):
+        block = raw_blocks[index]
+        current_citations = _extract_inline_citation_ids(block)
+        if (
+            not current_citations
+            and index + 1 < len(raw_blocks)
+            and _extract_inline_citation_ids(raw_blocks[index + 1])
+        ):
+            merged_blocks.append(f"{block}\n\n{raw_blocks[index + 1]}")
+            index += 2
+            continue
+        merged_blocks.append(block)
+        index += 1
+
+    paragraphs: list[AnswerParagraph] = []
+    for index, block in enumerate(merged_blocks, start=1):
+        citation_ids: list[str] = []
+        for citation_id in _extract_inline_citation_ids(block):
+            canonical = allowed_citation_ids.get(citation_id.casefold())
+            if canonical and canonical not in citation_ids:
+                citation_ids.append(canonical)
+        text = _strip_inline_citations(block)
+        if not text and not citation_ids:
+            continue
+        paragraphs.append(
+            AnswerParagraph(
+                paragraph_id=f"p{index}",
+                text=text,
+                citation_ids=citation_ids,
+                claims=[],
+                review_status="passed",
+            )
+        )
+    return paragraphs
+
+
 async def kb_retrieve_context(
     state: RetrieveContextInput,
     *,
@@ -999,10 +1079,47 @@ async def generate_draft(
         structured_reason = "structured_invoke_failed"
 
     if not draft:
-        if structured_reason == "empty_structured_paragraphs":
-            draft = "根据现有资料无法回答该问题。"
-        else:
-            draft = "根据现有资料无法回答该问题（生成失败）。"
+        if (
+            structured_reason in {"empty_structured_paragraphs", "empty_structured_response"}
+            and final_context
+            and question
+        ):
+            plain_user = (
+                "请基于参考内容直接回答问题，仅输出最终答案正文。\n"
+                "要求：\n"
+                "1) 仅使用参考内容中的事实；\n"
+                "2) 默认采用段落级聚合引用：每段结尾统一附带有效 [Sx]；\n"
+                "3) 若问题同时要求多个必答子项，必须逐一覆盖；\n"
+                "4) 不要输出 JSON、代码块或额外解释。\n\n"
+                f"参考内容：\n{final_context}\n\n"
+                f"问题：{question}"
+            )
+            try:
+                plain_model = chat_model.bind(max_tokens=1024)
+                plain_msg = await plain_model.ainvoke(
+                    [SystemMessage(content=system_prompt), HumanMessage(content=plain_user)]
+                )
+                candidate = extract_answer_text(getattr(plain_msg, "content", "")).strip()
+                projected = _project_plain_text_answer_to_paragraphs(
+                    candidate,
+                    allowed_citation_ids=_extract_allowed_citation_ids(final_context),
+                )
+                if projected:
+                    paragraph_payloads = [paragraph.model_dump() for paragraph in projected]
+                    render_meta = _build_answer_render_meta(projected)
+                    draft = render_answer_paragraphs(paragraph_payloads).strip()
+                    structured_reason = (
+                        f"{structured_reason}_recovered_by_plain_text_projection"
+                    )
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                pass
+        if not draft:
+            if structured_reason == "empty_structured_paragraphs":
+                draft = "根据现有资料无法回答该问题。"
+            else:
+                draft = "根据现有资料无法回答该问题（生成失败）。"
 
     generator_summary = {
         "latency_ms": int((time.perf_counter() - start) * 1000),

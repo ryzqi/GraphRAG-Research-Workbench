@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 from app.agents.kb_chat_agentic import answer_subgraph
+from app.agents.kb_chat_agentic.tool_loop import force_exit_node
 from app.core.settings import Settings
 
 
@@ -209,3 +210,49 @@ async def test_missing_paragraph_citations_route_to_answer_repair_when_safe() ->
     assert fuse_command.goto == "answer_repair"
     assert fuse_command.update["reflection"]["reason"] == "missing_citations"
     assert fuse_command.update["stage_summaries"]["answer_review"]["repair_target_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_answer_commit_promotes_existing_final_answer_to_best_answer_before_force_exit() -> None:
+    state = {
+        "loop_counts": {
+            "total_rounds": 1,
+            "retrieval_retries": 0,
+            "generation_retries": 1,
+        },
+        "answer_subgraph_state": {
+            "repair_attempts": 1,
+        },
+        "draft_answer": "AI Agent 的 Tool Use / Function Calling 六步完整流程是任务判断、工具选择、参数准备、工具调用、结果获取与处理、结果整合与下一步规划。[S1]",
+        "final_answer": "AI Agent 的 Tool Use / Function Calling 六步完整流程是任务判断、工具选择、参数准备、工具调用、结果获取与处理、结果整合与下一步规划。[S1]",
+        "stage_summaries": {},
+        "reflection": {
+            "review_passed": False,
+            "reason": "missing_citations",
+            "action": "transform_query",
+        },
+    }
+
+    commit_updates = await answer_subgraph._answer_commit(
+        state,
+        SimpleNamespace(),
+        settings=Settings(),
+    )
+
+    assert (
+        commit_updates["routing_decisions"]["answer_subgraph"]["next_node"]
+        == "force_exit"
+    )
+    assert commit_updates["best_answer"] == state["final_answer"]
+    assert commit_updates["best_answer_meta"]["from_node"] == "answer_commit"
+
+    force_exit_updates = force_exit_node(
+        {
+            **state,
+            **commit_updates,
+        },
+        settings=Settings(),
+    )
+
+    assert force_exit_updates["final_answer"] == state["final_answer"]
+    assert force_exit_updates["stage_summaries"]["force_exit"]["used_best_answer"] is True

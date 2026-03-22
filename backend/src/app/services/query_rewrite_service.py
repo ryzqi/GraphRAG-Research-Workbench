@@ -233,6 +233,7 @@ _COMPARE_KEYWORDS = (
     "比较",
 )
 _MULTI_TARGET_SEPARATORS = (",", "，", " and ", " 与 ", " 和 ", "及")
+_TERM_ALIAS_KEYWORDS = ("别名", "又称", "也叫", "简称", "alias", "aka")
 
 
 def _normalize_reason_code(value: object) -> str:
@@ -248,6 +249,23 @@ def _looks_compare_or_multi_target(query: str) -> bool:
     if any(keyword in lowered for keyword in _COMPARE_KEYWORDS):
         return True
     return any(separator in query for separator in _MULTI_TARGET_SEPARATORS)
+
+
+def _looks_term_alias_query(query: str) -> bool:
+    normalized = _normalize_whitespace(query)
+    if not normalized:
+        return False
+    lowered = normalized.lower()
+    if any(keyword in lowered for keyword in _TERM_ALIAS_KEYWORDS):
+        return True
+    has_latin = re.search(r"[A-Za-z]", normalized) is not None
+    if not has_latin:
+        return False
+    if re.search(r"[A-Za-z][A-Za-z0-9+_.-]*\s*[／/]\s*[A-Za-z][A-Za-z0-9+_.-]*", normalized):
+        return True
+    if any(token in normalized for token in ("（", "）", "(", ")")):
+        return True
+    return False
 
 
 def _normalize_clarification_options(values: Iterable[str]) -> list[str]:
@@ -482,6 +500,80 @@ def _rule_based_multi_query_candidates(query: str) -> list[str]:
         f"{focus} 核心概念 定义",
         f"{focus} 应用场景 限制",
     ]
+
+
+def _rule_based_decomposition_candidates(query: str) -> list[dict[str, object]]:
+    q = _normalize_whitespace(query)
+    if not q:
+        return []
+
+    def _clean_clause(text: str) -> str:
+        clause = _normalize_whitespace(text)
+        clause = clause.strip("，。；;,.!?？! ")
+        clause = re.sub(r"^(?:请)?(?:帮我)?", "", clause)
+        clause = re.sub(r"(?:是什么|是啥|有哪些|如何|怎么办|怎么做)\s*$", "", clause)
+        return _normalize_whitespace(clause)
+
+    def _comparison_focus(text: str) -> str:
+        focus = text
+        for pattern in _LEADING_COMPARE_PATTERNS:
+            focus = re.sub(pattern, "", focus, flags=re.IGNORECASE)
+        for pattern in _TRAILING_COMPARE_PATTERNS:
+            focus = re.sub(pattern, "", focus, flags=re.IGNORECASE)
+        focus = re.sub(r"\b(?:vs|versus)\b", " ", focus, flags=re.IGNORECASE)
+        focus = re.sub(r"[，,、/]+", " ", focus)
+        return _normalize_whitespace(focus)
+
+    candidates: list[dict[str, object]] = []
+    seen: set[str] = set()
+
+    def _append(text: str, *, purpose: str, tags: list[str]) -> None:
+        normalized = _clean_clause(text)
+        if not normalized or normalized in seen:
+            return
+        seen.add(normalized)
+        candidates.append(
+            {
+                "query": normalized,
+                "purpose": purpose,
+                "coverage_tags": tags,
+            }
+        )
+
+    clause_split = re.split(
+        r"(?:，|,)?(?:并说明|并概括|并总结|并分析|并阐述|并补充|同时说明|同时概括|以及说明|以及分析)",
+        q,
+        maxsplit=1,
+    )
+    primary_clause = clause_split[0] if clause_split else q
+    secondary_clause = clause_split[1] if len(clause_split) > 1 else ""
+
+    primary_focus = _comparison_focus(primary_clause) if _looks_compare_or_multi_target(primary_clause) else primary_clause
+    _append(primary_focus, purpose="primary_compare", tags=["comparison"])
+    if secondary_clause:
+        _append(secondary_clause, purpose="secondary_clause", tags=["follow_up"])
+
+    if len(candidates) < 2 and _looks_compare_or_multi_target(q):
+        comparison_query = primary_focus or q
+        _append(f"{comparison_query} 核心区别 对比", purpose="comparison_summary", tags=["comparison"])
+        _append(f"{comparison_query} 分别 作用 角色", purpose="role_split", tags=["multi_target"])
+
+    if len(candidates) < 2:
+        fallback_focus = _clean_clause(q)
+        _append(f"{fallback_focus} 子问题 1", purpose="fallback_part_1", tags=["fallback"])
+        _append(f"{fallback_focus} 子问题 2", purpose="fallback_part_2", tags=["fallback"])
+
+    normalized_specs: list[dict[str, object]] = []
+    for idx, item in enumerate(candidates[:DECOMPOSITION_MAX_SUB_QUERIES], start=1):
+        normalized_specs.append(
+            {
+                "query": item["query"],
+                "priority": idx,
+                "coverage_tags": item["coverage_tags"],
+                "purpose": item["purpose"],
+            }
+        )
+    return normalized_specs
 
 
 def _is_label_stuffed_multi_query(candidate: str, *, original_query: str) -> bool:
@@ -734,18 +826,26 @@ class QueryRewriteService:
     @staticmethod
     def _fallback_complexity_route(
         *,
+        query: str,
         recall_risk: str | None,
         has_multi_target: bool,
         is_comparison: bool,
         failure_reason: str | None,
         latency_ms: int,
     ) -> ComplexityRouteResult:
+        normalized_query = _normalize_whitespace(query)
         normalized_risk = _normalize_whitespace(recall_risk or "").lower()
-        if is_comparison or has_multi_target:
+        heuristic_compare_or_multi_target = _looks_compare_or_multi_target(normalized_query)
+        heuristic_term_alias = _looks_term_alias_query(normalized_query)
+        query_has_mixed_language = (
+            re.search(r"[A-Za-z]", normalized_query) is not None
+            and re.search(r"[\u4e00-\u9fff]", normalized_query) is not None
+        )
+        if is_comparison or has_multi_target or heuristic_compare_or_multi_target:
             risk_flags: list[str] = []
-            if is_comparison:
+            if is_comparison or heuristic_compare_or_multi_target:
                 risk_flags.append("comparison")
-            if has_multi_target:
+            if has_multi_target or heuristic_compare_or_multi_target:
                 risk_flags.append("multi_target")
             return ComplexityRouteResult(
                 strategy="decomposition",
@@ -757,14 +857,19 @@ class QueryRewriteService:
                 decision_version=COMPLEXITY_CLASSIFY_DECISION_VERSION,
                 latency_ms=latency_ms,
             )
-        if normalized_risk == "high":
+        if normalized_risk == "high" or heuristic_term_alias:
+            risk_flags = ["recall_risk_high"] if normalized_risk == "high" else []
+            if heuristic_term_alias:
+                risk_flags.append("term_alias")
+            if heuristic_term_alias and query_has_mixed_language:
+                risk_flags.append("mixed_language")
             return ComplexityRouteResult(
                 strategy="multi_query",
                 success=False,
                 reasoning=_DEFAULT_COMPLEXITY_MULTI_QUERY_REASON,
                 failure_reason=failure_reason,
                 confidence=0.28,
-                risk_flags=["recall_risk_high"],
+                risk_flags=_sanitize_risk_flags(risk_flags),
                 decision_version=COMPLEXITY_CLASSIFY_DECISION_VERSION,
                 latency_ms=latency_ms,
             )
@@ -1520,6 +1625,7 @@ class QueryRewriteService:
         except KeyError:
             latency_ms = int((time.perf_counter() - start) * 1000)
             return self._fallback_complexity_route(
+                query=q,
                 recall_risk=recall_risk,
                 has_multi_target=has_multi_target,
                 is_comparison=is_comparison,
@@ -1533,6 +1639,7 @@ class QueryRewriteService:
             )
             latency_ms = int((time.perf_counter() - start) * 1000)
             return self._fallback_complexity_route(
+                query=q,
                 recall_risk=recall_risk,
                 has_multi_target=has_multi_target,
                 is_comparison=is_comparison,
@@ -1571,6 +1678,7 @@ class QueryRewriteService:
 
         latency_ms = int((time.perf_counter() - start) * 1000)
         return self._fallback_complexity_route(
+            query=q,
             recall_risk=recall_risk,
             has_multi_target=has_multi_target,
             is_comparison=is_comparison,
@@ -1691,6 +1799,30 @@ class QueryRewriteService:
 
         latency_ms = int((time.perf_counter() - start) * 1000)
         fallback_reason = structured_result.reason or "llm_structured_fallback_original"
+        fallback_specs = _rule_based_decomposition_candidates(q)
+        if len(fallback_specs) >= 2:
+            fallback_queries = [
+                _normalize_whitespace(str(spec.get("query") or ""))
+                for spec in fallback_specs
+                if _normalize_whitespace(str(spec.get("query") or ""))
+            ]
+            risk_flags = ["llm_fallback"]
+            if _looks_compare_or_multi_target(q):
+                risk_flags.extend(["comparison", "multi_target"])
+            return QueryListResult(
+                queries=fallback_queries,
+                success=False,
+                reason=fallback_reason,
+                latency_ms=latency_ms,
+                plan={
+                    "strategy": "decomposition",
+                    "version": "kb_chat_decomposition_plan_v2",
+                    "sub_query_specs": fallback_specs,
+                    "risk_flags": _sanitize_risk_flags(risk_flags),
+                    "reasoning": fallback_reason,
+                },
+                diagnostics={"source": "heuristic_decomposition"},
+            )
         return QueryListResult(
             queries=[q],
             success=False,

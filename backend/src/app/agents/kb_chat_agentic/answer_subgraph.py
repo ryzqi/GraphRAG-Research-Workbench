@@ -1532,10 +1532,26 @@ async def _answer_commit(
         reflection_patch = {"action": "none"}
 
     merged_reflection = {**reflection_obj, **reflection_patch}
-    final_answer = _as_str(state.get("final_answer") or state.get("draft_answer")).strip()
+    committed_answer = _as_str(state.get("final_answer") or state.get("draft_answer")).strip()
+    final_answer = committed_answer
     if not final_answer and next_step == "force_exit":
         final_answer = resolve_kb_refusal_answer(reason=degrade_reason or reason)
     best_answer = _as_str(state.get("best_answer")).strip()
+    best_answer_meta = (
+        state.get("best_answer_meta")
+        if isinstance(state.get("best_answer_meta"), dict)
+        else None
+    )
+    if next_step == "force_exit" and committed_answer and not best_answer:
+        best_answer = committed_answer
+        best_answer_meta = {
+            "from_node": "answer_commit",
+            "reason": degrade_reason or reason or "force_exit",
+            "review_passed": review_passed,
+            "repair_attempts": repair_attempts,
+            "generation_retries": int(loop_counts.get("generation_retries") or 0),
+            "completed_at": now_iso(),
+        }
 
     summary = {
         "passed": merged_reflection.get("review_passed") is True,
@@ -1577,6 +1593,10 @@ async def _answer_commit(
     }
     if final_answer:
         updates["final_answer"] = final_answer
+    if best_answer:
+        updates["best_answer"] = best_answer
+    if isinstance(best_answer_meta, dict):
+        updates["best_answer_meta"] = best_answer_meta
     if next_step == "END":
         if not final_answer:
             final_answer = "根据现有资料无法回答该问题（未生成答案）。"
