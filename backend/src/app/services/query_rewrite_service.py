@@ -10,6 +10,7 @@ Keep outputs JSON-friendly so they can be safely stored in LangGraph state.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import re
 import time
@@ -118,6 +119,123 @@ class RetrievalPlanResult:
     reason: str | None = None
     latency_ms: int | None = None
     meta: dict[str, object] | None = None
+
+
+def _extract_structured_text(value: object) -> str:
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, list):
+        chunks: list[str] = []
+        for item in value:
+            if isinstance(item, str) and item.strip():
+                chunks.append(item.strip())
+                continue
+            if not isinstance(item, dict):
+                continue
+            for key in ("text", "content"):
+                raw = item.get(key)
+                if isinstance(raw, str) and raw.strip():
+                    chunks.append(raw.strip())
+                    break
+        return "\n".join(chunks).strip()
+    return ""
+
+
+def _coerce_schema_from_json_like(
+    *,
+    value: object,
+    schema: type[BaseModel],
+) -> tuple[BaseModel | None, str | None]:
+    if isinstance(value, schema):
+        return value, None
+    if isinstance(value, str):
+        raw = value.strip()
+        if not raw:
+            return None, "empty_structured_response"
+        try:
+            return schema.model_validate_json(raw), None
+        except ValidationError:
+            try:
+                value = json.loads(raw)
+            except (TypeError, ValueError):
+                return None, "invalid_schema"
+    try:
+        return schema.model_validate(value), None
+    except ValidationError:
+        return None, "invalid_schema"
+
+
+def _extract_tool_call_payload(raw: object) -> tuple[object | None, str | None]:
+    tool_calls = getattr(raw, "tool_calls", None)
+    if isinstance(tool_calls, list) and tool_calls:
+        if len(tool_calls) > 1:
+            return None, "multiple_structured_outputs"
+        if isinstance(tool_calls[0], dict) and "args" in tool_calls[0]:
+            return tool_calls[0].get("args"), None
+
+    additional_kwargs = getattr(raw, "additional_kwargs", None)
+    if isinstance(additional_kwargs, dict):
+        openai_tool_calls = additional_kwargs.get("tool_calls")
+        if isinstance(openai_tool_calls, list) and openai_tool_calls:
+            if len(openai_tool_calls) > 1:
+                return None, "multiple_structured_outputs"
+            call = openai_tool_calls[0]
+            if isinstance(call, dict):
+                function = call.get("function")
+                if isinstance(function, dict) and "arguments" in function:
+                    return function.get("arguments"), None
+    return None, None
+
+
+def coerce_structured_result_payload(
+    *,
+    result: object,
+    schema: type[BaseModel],
+) -> tuple[BaseModel | None, str | None]:
+    if result is None:
+        return None, "empty_structured_response"
+
+    if isinstance(result, schema):
+        return result, None
+
+    if isinstance(result, dict):
+        parsed = result.get("parsed")
+        if isinstance(parsed, schema):
+            return parsed, None
+        if parsed is not None:
+            try:
+                return schema.model_validate(parsed), None
+            except ValidationError:
+                pass
+
+        raw = result.get("raw")
+        tool_payload, tool_payload_error = _extract_tool_call_payload(raw)
+        if tool_payload_error is not None:
+            return None, tool_payload_error
+        if tool_payload is not None:
+            payload, reason = _coerce_schema_from_json_like(
+                value=tool_payload,
+                schema=schema,
+            )
+            if payload is not None or reason != "invalid_schema":
+                return payload, reason
+        raw_content = _extract_structured_text(getattr(raw, "content", raw))
+        if raw_content:
+            return _coerce_schema_from_json_like(value=raw_content, schema=schema)
+
+        try:
+            return schema.model_validate(result), None
+        except ValidationError:
+            parsing_error = result.get("parsing_error")
+            if parsing_error is not None:
+                return None, "invalid_schema"
+            return None, "empty_structured_response"
+
+    raw_content = _extract_structured_text(getattr(result, "content", result))
+    if raw_content:
+        return _coerce_schema_from_json_like(value=raw_content, schema=schema)
+
+    return _coerce_schema_from_json_like(value=result, schema=schema)
 
 
 def _normalize_whitespace(text: str) -> str:
@@ -548,15 +666,27 @@ def _rule_based_decomposition_candidates(query: str) -> list[dict[str, object]]:
     primary_clause = clause_split[0] if clause_split else q
     secondary_clause = clause_split[1] if len(clause_split) > 1 else ""
 
-    primary_focus = _comparison_focus(primary_clause) if _looks_compare_or_multi_target(primary_clause) else primary_clause
+    primary_focus = (
+        _comparison_focus(primary_clause)
+        if _looks_compare_or_multi_target(primary_clause)
+        else primary_clause
+    )
     _append(primary_focus, purpose="primary_compare", tags=["comparison"])
     if secondary_clause:
         _append(secondary_clause, purpose="secondary_clause", tags=["follow_up"])
 
     if len(candidates) < 2 and _looks_compare_or_multi_target(q):
         comparison_query = primary_focus or q
-        _append(f"{comparison_query} 核心区别 对比", purpose="comparison_summary", tags=["comparison"])
-        _append(f"{comparison_query} 分别 作用 角色", purpose="role_split", tags=["multi_target"])
+        _append(
+            f"{comparison_query} 核心区别 对比",
+            purpose="comparison_summary",
+            tags=["comparison"],
+        )
+        _append(
+            f"{comparison_query} 分别 作用 角色",
+            purpose="role_split",
+            tags=["multi_target"],
+        )
 
     if len(candidates) < 2:
         fallback_focus = _clean_clause(q)
@@ -777,7 +907,10 @@ class QueryRewriteService:
 
     def _get_structured_chat_model(self) -> object:
         if self._structured_chat_model is None:
-            self._structured_chat_model = create_chat_model(settings=self._settings)
+            self._structured_chat_model = create_chat_model(
+                settings=self._settings,
+                use_previous_response_id=False,
+            )
         return self._structured_chat_model
 
     def _get_structured_agent(self, schema: type[BaseModel]) -> object:
@@ -940,6 +1073,7 @@ class QueryRewriteService:
             structured_model = model.with_structured_output(
                 schema,
                 method="function_calling",
+                include_raw=True,
             )
         except asyncio.CancelledError:
             raise
@@ -966,16 +1100,9 @@ class QueryRewriteService:
                 reason=self._classify_structured_error(exc),
             )
 
-        if result is None:
-            return StructuredCallResult(
-                payload=None, success=False, reason="empty_structured_response"
-            )
-        if isinstance(result, schema):
-            return StructuredCallResult(payload=result, success=True)
-        try:
-            payload = schema.model_validate(result)
-        except ValidationError:
-            return StructuredCallResult(payload=None, success=False, reason="invalid_schema")
+        payload, reason = coerce_structured_result_payload(result=result, schema=schema)
+        if payload is None:
+            return StructuredCallResult(payload=None, success=False, reason=reason)
         return StructuredCallResult(payload=payload, success=True)
 
     async def rewrite(
@@ -1984,10 +2111,8 @@ class QueryRewriteService:
             )
 
         start_time = time.perf_counter()
-        agent = self._get_structured_agent(schema)
         try:
-            structured = await self._invoke_structured(
-                agent=agent,
+            structured = await self._invoke_model_structured(
                 schema=schema,
                 user_prompt=prompt,
                 max_tokens=max_tokens,

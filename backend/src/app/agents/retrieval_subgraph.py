@@ -39,7 +39,10 @@ from app.services.kb_evidence import (
     build_evidence_context,
     canonicalize_evidence_items,
 )
-from app.services.query_rewrite_service import QueryRewriteService
+from app.services.query_rewrite_service import (
+    QueryRewriteService,
+    coerce_structured_result_payload,
+)
 from app.utils.token_counter import count_tokens_approximately
 
 _EVIDENCE_LABEL_RE = re.compile(r"\[[^\[\]\n]{1,128}\]")
@@ -351,6 +354,7 @@ async def _compress_context(
             structured_model = chat_model.with_structured_output(
                 ContextCompressDecision,
                 method="function_calling",
+                include_raw=True,
             )
             result = await structured_model.ainvoke(
                 [
@@ -359,10 +363,14 @@ async def _compress_context(
                 ]
             )
 
-            if result is None:
-                fallback_reason = "empty_structured_response"
+            payload, payload_error = coerce_structured_result_payload(
+                result=result,
+                schema=ContextCompressDecision,
+            )
+            if payload is None:
+                fallback_reason = payload_error or "empty_structured_response"
             else:
-                decision, decision_error = _coerce_context_compress_decision(result)
+                decision, decision_error = _coerce_context_compress_decision(payload)
                 fallback_reason = decision_error
 
             if fallback_reason is None and decision is None:

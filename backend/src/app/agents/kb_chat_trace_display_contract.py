@@ -589,11 +589,8 @@ def _resolve_hyde_docs_display(snapshot: Mapping[str, Any]) -> list[str] | None:
     if isinstance(generated_count, int) and generated_count > 0:
         return [f"共 {generated_count} 篇 HyDE 文档（trace 未记录正文）"]
 
-    fallback_policy = _as_dict(
-        (_as_dict(snapshot.get("query_plan_result")) or {}).get("fallback_policy")
-    ) or {}
-    if bool(fallback_policy.get("allow_hyde")):
-        return ["已启用 HyDE，trace 未记录文档正文"]
+    if hyde_summary:
+        return ["本轮未生成 HyDE 文档，已沿原问题继续检索"]
     return None
 
 
@@ -946,13 +943,7 @@ def _resolve_merged_context_display(snapshot: Mapping[str, Any]) -> str | None:
     direct = _pick_text(snapshot, "display_context")
     if direct:
         return direct
-    merged_context = _pick_text(snapshot, "merged_context")
-    if not merged_context:
-        return None
-    frame = _get_context_frame(snapshot) or {}
-    if _non_empty_text(frame.get("summary_text")) or _non_empty_text(frame.get("memory_snippet")):
-        return merged_context
-    return None
+    return _pick_text(snapshot, "merged_context")
 
 
 def _resolve_decision_triplet(
