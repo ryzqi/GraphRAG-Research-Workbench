@@ -31,3 +31,19 @@ export function shouldRenderClarificationCard(params: {
       params.hasSubmitHandler
   );
 }
+
+export function shouldShowAssistantCopyAction(params: {
+  role: 'user' | 'assistant';
+  content: string | null | undefined;
+  pendingClarification: unknown;
+}): boolean {
+  if (params.role !== 'assistant') {
+    return false;
+  }
+
+  if (params.pendingClarification) {
+    return false;
+  }
+
+  return Boolean(params.content?.trim());
+}

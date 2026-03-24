@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   resolveConfidenceChipMeta,
+  shouldShowAssistantCopyAction,
   shouldRenderClarificationCard,
 } from './chatMessageDisplay';
 
@@ -45,6 +46,40 @@ describe('chatMessageDisplay', () => {
         pendingClarification: { message: 'x' },
         runId: 'run-1',
         hasSubmitHandler: false,
+      })
+    ).toBe(false);
+  });
+
+  it('only shows copy action for assistant messages that already have a normal answer', () => {
+    expect(
+      shouldShowAssistantCopyAction({
+        role: 'assistant',
+        content: '这是正常回答',
+        pendingClarification: null,
+      })
+    ).toBe(true);
+
+    expect(
+      shouldShowAssistantCopyAction({
+        role: 'assistant',
+        content: '',
+        pendingClarification: { message: '请补充范围' },
+      })
+    ).toBe(false);
+
+    expect(
+      shouldShowAssistantCopyAction({
+        role: 'assistant',
+        content: '请补充范围',
+        pendingClarification: { message: '请补充范围' },
+      })
+    ).toBe(false);
+
+    expect(
+      shouldShowAssistantCopyAction({
+        role: 'user',
+        content: '用户消息',
+        pendingClarification: null,
       })
     ).toBe(false);
   });

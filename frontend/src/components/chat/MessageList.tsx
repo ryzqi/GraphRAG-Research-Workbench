@@ -22,6 +22,7 @@ import { calculateMessageListVirtualWindow } from '../../services/messageListVir
 import { shouldContainWheelScroll } from '../../services/chatScrollBehavior';
 import {
   shouldRenderClarificationCard,
+  shouldShowAssistantCopyAction,
 } from '../../services/chatMessageDisplay';
 
 const VIRTUALIZATION_THRESHOLD = 60;
@@ -151,6 +152,11 @@ const MessageRow = memo(
       runId: message.runId,
       hasSubmitHandler: Boolean(onClarificationSubmit),
     });
+    const showAssistantCopyAction = shouldShowAssistantCopyAction({
+      role: message.role,
+      content,
+      pendingClarification: message.pendingClarification,
+    });
 
     return (
       <Box
@@ -175,6 +181,7 @@ const MessageRow = memo(
           think={message.think}
           isStreaming={message.isStreaming}
           thinkStartTime={message.thinkStartTime}
+          showActions={showAssistantCopyAction}
           onCitationClick={message.role === 'assistant' ? handleCitationClick : undefined}
         />
 
