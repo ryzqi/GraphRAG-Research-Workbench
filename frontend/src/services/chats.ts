@@ -458,7 +458,9 @@ export async function deleteChatSession(sessionId: string): Promise<void> {
  * 获取最近对话
  */
 export async function getRecentChats(limit = 20): Promise<RecentChatListResponse> {
-  return apiFetch<RecentChatListResponse>(`/api/v1/chats/recent?limit=${limit}`);
+  return apiFetch<RecentChatListResponse>(`/api/v1/chats/recent?limit=${limit}`, {
+    cache: 'no-store',
+  });
 }
 
 /**

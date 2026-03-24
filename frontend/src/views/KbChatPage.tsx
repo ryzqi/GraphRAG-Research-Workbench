@@ -6,7 +6,7 @@
  * - LangGraph 步骤实时可视化
  * - 澄清补充交互（pending_user_clarification）
  */
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import dynamic from 'next/dynamic';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import {
@@ -44,6 +44,7 @@ import {
   streamResumeClarification,
 } from '../services/chats';
 import { resolveKbNodeLabel } from '../services/kbNodeLabels';
+import { shouldResetChatStateOnSessionClear } from '../services/chatSessionNavigation';
 import {
   kbChatTraceSelectors,
   reduceKbChatTraceState,
@@ -250,6 +251,17 @@ export function KbChatPage() {
   const [loadingSession, setLoadingSession] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [mobileTraceOpen, setMobileTraceOpen] = useState(false);
+  const [activeAssistantId, setActiveAssistantId] = useState<string | null>(null);
+  const previousSessionIdRef = useRef<string | null>(sessionId);
+
+  const resetSession = useCallback(() => {
+    setSession(null);
+    setMessages([]);
+    setGraphSchema(null);
+    setError(null);
+    setActiveAssistantId(null);
+    setMobileTraceOpen(false);
+  }, []);
 
   useKbChatSessionController({
     sessionId,
@@ -263,6 +275,16 @@ export function KbChatPage() {
     setKbChatConfig,
     defaultConfig: DEFAULT_KB_CHAT_CONFIG,
   });
+
+  useEffect(() => {
+    const previousSessionId = previousSessionIdRef.current;
+    if (!shouldResetChatStateOnSessionClear(previousSessionId, sessionId)) {
+      previousSessionIdRef.current = sessionId;
+      return;
+    }
+    resetSession();
+    previousSessionIdRef.current = sessionId;
+  }, [resetSession, sessionId]);
 
   const { upsertSession } = useRecentHistory();
 
@@ -284,7 +306,6 @@ export function KbChatPage() {
     () => messages.some((msg) => Boolean(msg.pendingClarification)),
     [messages]
   );
-  const [activeAssistantId, setActiveAssistantId] = useState<string | null>(null);
 
   const assistantMessages = useMemo(
     () => messages.filter((msg) => msg.role === 'assistant'),
@@ -1203,15 +1224,6 @@ const applyUiEvent = useCallback(
       markClarificationPending,
     ]
   );
-
-  const resetSession = useCallback(() => {
-    setSession(null);
-    setMessages([]);
-    setGraphSchema(null);
-    setError(null);
-    setActiveAssistantId(null);
-    setMobileTraceOpen(false);
-  }, []);
 
   if (!session) {
     return (

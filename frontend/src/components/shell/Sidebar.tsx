@@ -2,8 +2,9 @@
  * Gemini 风格侧边栏组件
  * 支持桌面端可折叠、移动端 Drawer 模式
  */
+import { useCallback } from 'react';
 import Link from 'next/link';
-import { usePathname, useRouter } from 'next/navigation';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import {
   Box,
   Drawer,
@@ -35,6 +36,7 @@ import HistoryIcon from '@mui/icons-material/History';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import { useThemeMode } from '../../theme/ThemeProvider';
 import { useRecentHistory } from '../../hooks/useRecentHistory';
+import { resolveDeletedSessionNavigationTarget } from '../../services/chatSessionNavigation';
 import { SIDEBAR_WIDTH_COLLAPSED, SIDEBAR_WIDTH_EXPANDED } from './constants';
 
 const TEXT_REVEAL_EASING = 'cubic-bezier(0.2, 0, 0, 1)';
@@ -83,13 +85,34 @@ export function Sidebar({
   const theme = useTheme();
   const pathname = usePathname();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { resolvedMode, toggleMode } = useThemeMode();
   const isMobile = useMediaQuery(theme.breakpoints.down('md'));
   const { sessions: recentSessions, removeSession } = useRecentHistory();
+  const currentSessionId = searchParams.get('sessionId');
   const textRevealTransition = theme.transitions.create(['max-width', 'opacity'], {
     duration: TEXT_REVEAL_DURATION_MS,
     easing: TEXT_REVEAL_EASING,
   });
+
+  const handleRemoveSession = useCallback(
+    (sessionId: string, sessionType: 'general_chat' | 'kb_chat') => {
+      const navigationTarget = resolveDeletedSessionNavigationTarget({
+        pathname,
+        currentSessionId,
+        deletedSessionId: sessionId,
+        deletedSessionType: sessionType,
+      });
+      if (navigationTarget) {
+        router.replace(navigationTarget);
+      }
+      removeSession(sessionId);
+      if (isMobile) {
+        onMobileClose();
+      }
+    },
+    [currentSessionId, isMobile, onMobileClose, pathname, removeSession, router]
+  );
 
   const sidebarContent = (
     <Box
@@ -265,7 +288,7 @@ export function Sidebar({
                     aria-label={`删除会话 ${session.title}`}
                     onClick={(e) => {
                       e.stopPropagation();
-                      removeSession(session.sessionId);
+                      handleRemoveSession(session.sessionId, session.type);
                     }}
                     sx={{ opacity: 0.6, '&:hover': { opacity: 1 } }}
                   >

@@ -9,6 +9,7 @@ import {
   buildGeneralChatRecentTitle,
   shouldSkipGeneralChatHydration,
 } from '../services/generalChatSessionBehavior';
+import { shouldResetChatStateOnSessionClear } from '../services/chatSessionNavigation';
 import {
   buildChatSessionRequestKey,
   ChatSessionRequestControl,
@@ -87,6 +88,7 @@ export function useGeneralChatController() {
   );
   const requestControlRef = useRef(new ChatSessionRequestControl());
   const pendingBootstrapSessionIdRef = useRef<string | null>(null);
+  const previousSessionIdRef = useRef<string | null>(sessionId);
   const streamAbortRef = useRef<AbortController | null>(null);
 
   const abortActiveStream = useCallback(() => {
@@ -195,13 +197,19 @@ export function useGeneralChatController() {
   }, [sessionId, sessionRequestKey, clearSessionIdFromUrl, abortActiveStream]);
 
   useEffect(() => {
-    if (sessionId) return;
+    const previousSessionId = previousSessionIdRef.current;
+    if (!shouldResetChatStateOnSessionClear(previousSessionId, sessionId)) {
+      previousSessionIdRef.current = sessionId;
+      return;
+    }
     abortActiveStream();
     setSession(null);
     setMessages([]);
+    setInput('');
     setLoading(false);
     setLoadingSession(false);
     setError(null);
+    previousSessionIdRef.current = sessionId;
   }, [sessionId, abortActiveStream]);
 
   const updateMessage = useCallback((id: string, updater: (msg: ChatMessage) => ChatMessage) => {
