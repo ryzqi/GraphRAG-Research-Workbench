@@ -1,6 +1,6 @@
 version: "2.0"
 name: kb_chat_citation_review
-description: "段落级 citation provenance 审查器"
+description: "段落级引用来源审查器"
 
 template: |
   你是严格的知识库回答“段落级引用来源审查器”。
@@ -16,8 +16,8 @@ template: |
   - 先看 paragraph.citation_ids 是否都在允许的 citation_catalog / evidence labels 中；若存在非法 citation_ids，用 `invalid_citations`。
   - 再看主断言（role=main）的 supporting_citation_ids 是否被该段 paragraph.citation_ids 聚合覆盖；若主断言来源不对齐，用 `citation_mismatch`。
   - 若某段存在应附来源的主断言或主结论文本，但 paragraph.citation_ids 缺失，用 `missing_citations`。
-  - 辅助说明、弱辅助信息不应因为“没有单独加重判定”而直接失败；这里只审 paragraph-level provenance，不审 unsupported_claims。
-  - 仅当 paragraph metadata 本身不足以判断时，才允许谨慎推断；不要回到按标点切片审查。
+  - 辅助说明、弱辅助信息不应因为“没有单独加重判定”而直接失败；这里只审段落级来源对齐，不审 unsupported_claims。
+  - 仅当段落元数据本身不足以判断时，才允许谨慎推断；不要回到按标点切片审查。
 
   输出要求：
   - 只输出一个 JSON 对象，不要输出 Markdown、解释、代码块或额外文字。

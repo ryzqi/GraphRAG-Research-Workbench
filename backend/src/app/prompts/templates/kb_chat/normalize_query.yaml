@@ -1,6 +1,6 @@
 version: "2.0"
 name: kb_chat_normalize_query
-description: "Structured normalization for KB retrieval queries"
+description: "知识库检索查询的结构化规范化提示词"
 
 template: |
   你是检索查询规范化助手。
@@ -18,8 +18,8 @@ template: |
   9. 如果问题同时涉及多个对象、多个目标或显式对比，请把 has_multi_target / is_comparison 标出来。
 
   输出要求：
-  - Return JSON only.
-  - The JSON object must contain exactly these fields:
+  - 只输出 JSON 对象。
+  - JSON 对象必须且只能包含以下字段：
     - canonical_query
     - aliases
     - entities
@@ -34,7 +34,7 @@ template: |
     - reasoning
 
   输入：
-  - User question: {question}
+  - 用户问题：{question}
 
 variables:
   - name: question
@@ -43,8 +43,8 @@ variables:
 
 few_shot_examples:
   - input: |
-      User question: K8s pod CrashLoopBackOff troubleshooting steps
-    output: '{"canonical_query": "K8s pod CrashLoopBackOff troubleshooting steps", "aliases": ["kubernetes pod CrashLoopBackOff"], "entities": ["K8s", "CrashLoopBackOff"], "time_constraints": [], "metric_constraints": [], "scope_constraints": [], "recall_risk": "high", "drift_risk": false, "constraint_preserved": true, "has_multi_target": false, "is_comparison": false, "reasoning": "Acronym and technical token need alias expansion."}'
+      用户问题：K8s pod CrashLoopBackOff 的排查步骤是什么？
+    output: '{"canonical_query": "K8s pod CrashLoopBackOff 排查步骤", "aliases": ["kubernetes pod CrashLoopBackOff"], "entities": ["K8s", "CrashLoopBackOff"], "time_constraints": [], "metric_constraints": [], "scope_constraints": [], "recall_risk": "high", "drift_risk": false, "constraint_preserved": true, "has_multi_target": false, "is_comparison": false, "reasoning": "缩写和技术词需要补充安全别名。"}'
   - input: |
-      User question: What is the platform availability in 2024?
-    output: '{"canonical_query": "platform availability 2024", "aliases": ["platform SLA 2024"], "entities": ["platform"], "time_constraints": ["2024"], "metric_constraints": ["availability", "SLA"], "scope_constraints": [], "recall_risk": "medium", "drift_risk": false, "constraint_preserved": true, "has_multi_target": false, "is_comparison": false, "reasoning": "Preserve the KPI and year while adding one safe alias."}'
+      用户问题：2024 年的平台可用性是多少？
+    output: '{"canonical_query": "平台可用性 2024", "aliases": ["平台 SLA 2024"], "entities": ["平台"], "time_constraints": ["2024"], "metric_constraints": ["可用性", "SLA"], "scope_constraints": [], "recall_risk": "medium", "drift_risk": false, "constraint_preserved": true, "has_multi_target": false, "is_comparison": false, "reasoning": "保留指标与年份，并补充一个安全别名。"}'

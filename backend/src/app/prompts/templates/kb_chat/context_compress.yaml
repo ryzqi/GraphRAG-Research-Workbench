@@ -17,16 +17,16 @@ template: |
   8. 若问题要求技术架构、模型名称、组件名称或术语清单，必须保留参考内容中的原始名词（如 Dual-Encoder、Cross-Encoder）；不要只保留泛化后的机制描述。
 
   输出要求：
-  - Return JSON only.
-  - The JSON object must contain exactly these fields:
+  - 只输出 JSON 对象。
+  - JSON 对象必须且只能包含以下字段：
     - decision
     - items
-  - decision must be one of: keep_all, subset, no_evidence
-  - items must be an array of objects
-  - each item must contain exactly:
+  - decision 的取值只能是：keep_all、subset、no_evidence
+  - items 必须是对象数组
+  - 每个条目必须且只能包含：
     - citation_id
     - excerpt
-  - When decision is keep_all or no_evidence, items should be []
+  - 当 decision 为 keep_all 或 no_evidence 时，items 必须为 []
 
 variables: []
 

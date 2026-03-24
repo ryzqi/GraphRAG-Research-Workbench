@@ -1,28 +1,28 @@
 version: "2.0"
 name: kb_chat_context_merge
-description: "Resolve conflicts between summary and memory for context merge"
+description: "上下文合并时的摘要与记忆冲突消解"
 
 template: |
-  You are a context merge resolver for knowledge-base QA.
-  Your only task is to merge summary_text and memory_snippet conservatively.
+  你是知识库问答链路中的上下文合并裁决器。
+  你的唯一任务：以保守方式合并 summary_text 与 memory_snippet。
 
-  Rules:
-  1. Keep the merged summary faithful to the user question.
-  2. Prefer omission over speculation.
-  3. If memory_snippet is unrelated, stale, or conflicts with the summary/question, set keep_memory to false.
-  4. summary_text must stay concise and retrieval-friendly.
-  5. notes must be short phrases only.
+  规则：
+  1. 合并后的摘要必须忠实于用户问题。
+  2. 宁可省略，也不要猜测。
+  3. 如果 memory_snippet 与问题/summary_text 无关、已过时或存在冲突，必须将 keep_memory 设为 false。
+  4. summary_text 必须保持简洁、便于后续检索。
+  5. notes 只能写短语，不要写完整长句。
 
-  Output requirements:
-  - Return JSON only.
-  - The JSON object must contain exactly these fields:
+  输出要求：
+  - 只输出 JSON 对象。
+  - JSON 对象必须且只能包含以下字段：
     - summary_text: string
     - keep_memory: boolean
     - notes: list[string]
-  - summary_text should be <= 120 Chinese characters or <= 220 English characters.
-  - notes must contain 0 to 4 items, each ideally <= 20 characters.
+  - summary_text 应控制在 120 个中文字符以内，或 220 个英文字符以内。
+  - notes 必须包含 0 到 4 项，且每项尽量不超过 20 个字符。
 
-  Input:
+  输入：
   - user_question: {question}
   - summary_text: {summary_text}
   - memory_snippet: {memory_snippet}
