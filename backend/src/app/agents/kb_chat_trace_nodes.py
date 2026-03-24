@@ -575,55 +575,129 @@ async def _trace_async(
         raise
 
 
-class _KbChatTracedRunnable(
-    RunnableCallable if RunnableCallable is not None else Runnable[Any, Any]
-):
-    def __init__(
-        self,
-        *,
-        node_name: str,
-        runnable: Runnable[Any, Any],
-        build_input_display_items: DisplayItemsBuilder | None,
-        build_output_display_items: DisplayItemsBuilder | None,
-    ) -> None:
-        def _invoke(
-            input: Any, config: Optional[RunnableConfig] = None, **kwargs: Any
-        ) -> Any:
-            return runnable.invoke(input, config=config, **kwargs)
+def _build_traced_runnable_handlers(
+    *,
+    node_name: str,
+    runnable: Runnable[Any, Any],
+    build_input_display_items: DisplayItemsBuilder | None,
+    build_output_display_items: DisplayItemsBuilder | None,
+) -> tuple[
+    Callable[..., Any],
+    Callable[..., Any],
+]:
+    def _invoke(
+        input: Any, config: Optional[RunnableConfig] = None, **kwargs: Any
+    ) -> Any:
+        return runnable.invoke(input, config=config, **kwargs)
 
-        async def _ainvoke(
-            input: Any,
-            config: Optional[RunnableConfig] = None,
-            runtime: Runtime[Any] | None = None,
-            **kwargs: Any,
-        ) -> Any:
-            del runtime
-            return await _trace_async(
+    async def _ainvoke(
+        input: Any,
+        config: Optional[RunnableConfig] = None,
+        runtime: Runtime[Any] | None = None,
+        **kwargs: Any,
+    ) -> Any:
+        del runtime
+        return await _trace_async(
+            node_name=node_name,
+            state=input,
+            executor=lambda: runnable.ainvoke(input, config=config, **kwargs),
+            build_input_display_items=build_input_display_items,
+            build_output_display_items=build_output_display_items,
+        )
+
+    return _invoke, _ainvoke
+
+
+def _bind_traced_runnable_metadata(
+    traced: Any,
+    *,
+    node_name: str,
+    runnable: Runnable[Any, Any],
+    build_input_display_items: DisplayItemsBuilder | None,
+    build_output_display_items: DisplayItemsBuilder | None,
+) -> None:
+    traced.builder = getattr(runnable, "builder", None)
+    traced._runnable = runnable
+    traced._node_name = node_name
+    traced._build_input_display_items = build_input_display_items
+    traced._build_output_display_items = build_output_display_items
+
+
+if RunnableCallable is None:  # pragma: no cover - defensive compatibility
+    class _KbChatFallbackTracedRunnable(Runnable[Any, Any]):
+        def __init__(
+            self,
+            *,
+            node_name: str,
+            runnable: Runnable[Any, Any],
+            build_input_display_items: DisplayItemsBuilder | None,
+            build_output_display_items: DisplayItemsBuilder | None,
+        ) -> None:
+            self._invoke, self._ainvoke = _build_traced_runnable_handlers(
                 node_name=node_name,
-                state=input,
-                executor=lambda: runnable.ainvoke(input, config=config, **kwargs),
+                runnable=runnable,
+                build_input_display_items=build_input_display_items,
+                build_output_display_items=build_output_display_items,
+            )
+            _bind_traced_runnable_metadata(
+                self,
+                node_name=node_name,
+                runnable=runnable,
                 build_input_display_items=build_input_display_items,
                 build_output_display_items=build_output_display_items,
             )
 
-        if RunnableCallable is None:  # pragma: no cover - defensive compatibility
-            self._invoke = _invoke
-            self._ainvoke = _ainvoke
-        else:
-            super().__init__(_invoke, _ainvoke, name=node_name)
-
-        self.builder = getattr(runnable, "builder", None)
-        self._runnable = runnable
-        self._node_name = node_name
-        self._build_input_display_items = build_input_display_items
-        self._build_output_display_items = build_output_display_items
-
-    if RunnableCallable is None:  # pragma: no cover - defensive compatibility
         def invoke(self, input: Any, config: Any = None, **kwargs: Any) -> Any:
             return self._invoke(input, config=config, **kwargs)
 
         async def ainvoke(self, input: Any, config: Any = None, **kwargs: Any) -> Any:
             return await self._ainvoke(input, config=config, **kwargs)
+
+else:
+    class _KbChatRunnableCallableTraced(RunnableCallable):
+        def __init__(
+            self,
+            *,
+            node_name: str,
+            runnable: Runnable[Any, Any],
+            build_input_display_items: DisplayItemsBuilder | None,
+            build_output_display_items: DisplayItemsBuilder | None,
+        ) -> None:
+            invoke_fn, ainvoke_fn = _build_traced_runnable_handlers(
+                node_name=node_name,
+                runnable=runnable,
+                build_input_display_items=build_input_display_items,
+                build_output_display_items=build_output_display_items,
+            )
+            super().__init__(invoke_fn, ainvoke_fn, name=node_name)
+            _bind_traced_runnable_metadata(
+                self,
+                node_name=node_name,
+                runnable=runnable,
+                build_input_display_items=build_input_display_items,
+                build_output_display_items=build_output_display_items,
+            )
+
+def _create_traced_runnable(
+    *,
+    node_name: str,
+    runnable: Runnable[Any, Any],
+    build_input_display_items: DisplayItemsBuilder | None,
+    build_output_display_items: DisplayItemsBuilder | None,
+) -> Runnable[Any, Any]:
+    if RunnableCallable is None:  # pragma: no cover - defensive compatibility
+        return _KbChatFallbackTracedRunnable(
+            node_name=node_name,
+            runnable=runnable,
+            build_input_display_items=build_input_display_items,
+            build_output_display_items=build_output_display_items,
+        )
+    return _KbChatRunnableCallableTraced(
+        node_name=node_name,
+        runnable=runnable,
+        build_input_display_items=build_input_display_items,
+        build_output_display_items=build_output_display_items,
+    )
 
 
 def wrap_kb_chat_node_with_io(
@@ -634,7 +708,7 @@ def wrap_kb_chat_node_with_io(
     build_output_display_items: DisplayItemsBuilder | None = None,
 ):
     if isinstance(node_callable, Runnable):
-        return _KbChatTracedRunnable(
+        return _create_traced_runnable(
             node_name=node_name,
             runnable=node_callable,
             build_input_display_items=build_input_display_items,
