@@ -3,6 +3,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import pytest
+from langchain.messages import AIMessage
 
 from app.agents.kb_chat_agentic import answer_subgraph
 from app.agents.kb_chat_agentic.schemas import AnswerReviewSubDecision
@@ -35,6 +36,73 @@ def _build_state() -> dict[str, object]:
         },
         "stage_summaries": {},
     }
+
+
+class _FakeReviewStructuredRunnable:
+    def __init__(self, response: object) -> None:
+        self._response = response
+        self.requests: list[object] = []
+
+    async def ainvoke(self, request: object) -> object:
+        self.requests.append(request)
+        return self._response
+
+
+class _FakeReviewModel:
+    def __init__(self, response: object) -> None:
+        self._response = response
+        self.structured_calls: list[tuple[object, dict[str, object]]] = []
+        self.structured_runnable: _FakeReviewStructuredRunnable | None = None
+
+    def with_structured_output(
+        self, schema: object, /, **kwargs: object
+    ) -> _FakeReviewStructuredRunnable:
+        self.structured_calls.append((schema, dict(kwargs)))
+        self.structured_runnable = _FakeReviewStructuredRunnable(self._response)
+        return self.structured_runnable
+
+
+@pytest.mark.asyncio
+async def test_judge_structured_uses_function_calling_include_raw_and_raw_payload_recovery(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_model = _FakeReviewModel(
+        {
+            "raw": AIMessage(
+                content=(
+                    '{"passed": true, "reason": "passed", "confidence": 0.94, '
+                    '"missing_citations": [], "unsupported_claims": [], '
+                    '"affected_paragraph_ids": [], "details": {}}'
+                )
+            ),
+            "parsed": None,
+            "parsing_error": None,
+        }
+    )
+    monkeypatch.setattr(
+        answer_subgraph,
+        "create_agent",
+        lambda **_: (_ for _ in ()).throw(
+            AssertionError("answer_review 不应再走 create_agent(response_format) 路径")
+        ),
+        raising=False,
+    )
+
+    decision, fallback_reason = await answer_subgraph._judge_structured(
+        chat_model=fake_model,
+        system="你是段落回答审查器。",
+        user="请审查回答是否满足引用要求。",
+    )
+
+    assert fallback_reason is None
+    assert decision is not None
+    assert decision.passed is True
+    assert decision.reason == "passed"
+    assert fake_model.structured_calls == [
+        (AnswerReviewSubDecision, {"method": "function_calling", "include_raw": True})
+    ]
+    assert fake_model.structured_runnable is not None
+    assert len(fake_model.structured_runnable.requests) == 1
 
 
 @pytest.mark.asyncio
@@ -240,6 +308,291 @@ async def test_answer_review_marks_auxiliary_only_unsupported_as_repairable(
     assert review_run["reason"] == "unsupported_claims"
     assert review_run["affected_paragraph_ids"] == ["p1"]
     assert review_run["details"]["unsupported_scope"] == "auxiliary_only"
+    assert review_run["details"]["repair_target_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_answer_review_prompt_includes_multi_entity_coverage_and_required_terms(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state = {
+        "user_input": "Embedding 模型和 Re-rank 模型分别负责什么、采用什么技术架构、各自面临哪些挑战？",
+        "draft_answer": (
+            "Embedding 模型负责海选阶段（召回），快速从海量信息中捕获所有可能相关的候选项。"
+            "它采用双塔结构（Dual-Encoder），面临的挑战包括向量表达的对齐以及冷启动问题。[S1][S2]\n\n"
+            "Re-rank 模型负责决赛阶段（排序），其技术架构为将查询与单个候选项整体输入模型，"
+            "主要挑战是算力与性能的平衡。[S3][S4]"
+        ),
+        "final_context": (
+            "[S1] Embedding 模型负责海选阶段（召回），快速从海量信息中捕获候选项。\n"
+            "[S2] Embedding 模型采用双塔结构（Dual-Encoder），主要挑战是向量表达对齐与冷启动。\n"
+            "[S3] Re-rank 模型负责决赛阶段（排序），对候选项进行精细化打分。\n"
+            "[S4] Re-rank 模型采用交叉编码器（Cross-Encoder），主要挑战是算力与性能的平衡。"
+        ),
+        "citation_catalog": _build_citation_catalog("S1", "S2", "S3", "S4"),
+        "answer_paragraphs": [
+            {
+                "paragraph_id": "p1",
+                "text": "Embedding 模型负责海选阶段（召回），快速从海量信息中捕获所有可能相关的候选项。它采用双塔结构（Dual-Encoder），面临的挑战包括向量表达的对齐以及冷启动问题。",
+                "citation_ids": ["S1", "S2"],
+                "claims": [],
+                "review_status": "passed",
+            },
+            {
+                "paragraph_id": "p2",
+                "text": "Re-rank 模型负责决赛阶段（排序），其技术架构为将查询与单个候选项整体输入模型，主要挑战是算力与性能的平衡。",
+                "citation_ids": ["S3", "S4"],
+                "claims": [],
+                "review_status": "passed",
+            },
+        ],
+        "stage_summaries": {},
+        "loop_counts": {
+            "total_rounds": 0,
+            "retrieval_retries": 0,
+            "generation_retries": 0,
+        },
+    }
+    captured: dict[str, object] = {}
+
+    async def _fake_judge_structured(**kwargs: object) -> tuple[AnswerReviewSubDecision, None]:
+        captured.update(kwargs)
+        return (
+            AnswerReviewSubDecision(
+                passed=False,
+                reason="incomplete",
+                confidence=0.95,
+                affected_paragraph_ids=["p2"],
+            ),
+            None,
+        )
+
+    monkeypatch.setattr(answer_subgraph, "_judge_structured", _fake_judge_structured)
+
+    await answer_subgraph._answer_review(
+        state,
+        SimpleNamespace(),
+        settings=Settings(),
+        chat_model=SimpleNamespace(),
+    )
+
+    prompt = str(captured["user"])
+    assert "覆盖清单：" in prompt
+    assert "- Embedding 模型: 职责 / 技术架构 / 挑战；必须保留原始名词：召回 / Dual-Encoder" in prompt
+    assert "- Re-rank 模型: 职责 / 技术架构 / 挑战；必须保留原始名词：排序 / Cross-Encoder" in prompt
+
+
+@pytest.mark.asyncio
+async def test_answer_review_overrides_passed_when_multi_entity_answer_only_covers_one_side(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state = {
+        "user_input": "Embedding 模型和 Re-rank 模型分别负责什么、采用什么技术架构、各自面临哪些挑战？",
+        "draft_answer": (
+            "Embedding 模型负责海选阶段（召回），快速从海量信息中捕获所有可能相关的候选项；"
+            "其技术架构是双塔结构（Dual-Encoder），主要挑战是向量表达对齐与冷启动问题。[S1][S2]"
+        ),
+        "final_context": (
+            "[S1] Embedding 模型负责海选阶段（召回），快速从海量信息中捕获候选项。\n"
+            "[S2] Embedding 模型采用双塔结构（Dual-Encoder），主要挑战是向量表达对齐与冷启动。"
+        ),
+        "citation_catalog": _build_citation_catalog("S1", "S2"),
+        "answer_paragraphs": [
+            {
+                "paragraph_id": "p1",
+                "text": "Embedding 模型负责海选阶段（召回），快速从海量信息中捕获所有可能相关的候选项；其技术架构是双塔结构（Dual-Encoder），主要挑战是向量表达对齐与冷启动问题。",
+                "citation_ids": ["S1", "S2"],
+                "claims": [],
+                "review_status": "passed",
+            }
+        ],
+        "stage_summaries": {},
+        "loop_counts": {
+            "total_rounds": 0,
+            "retrieval_retries": 0,
+            "generation_retries": 0,
+        },
+    }
+
+    async def _fake_judge_structured(**_: object) -> tuple[AnswerReviewSubDecision, None]:
+        return (
+            AnswerReviewSubDecision(
+                passed=True,
+                reason="passed",
+                confidence=0.91,
+                affected_paragraph_ids=[],
+            ),
+            None,
+        )
+
+    monkeypatch.setattr(answer_subgraph, "_judge_structured", _fake_judge_structured)
+
+    updates = await answer_subgraph._answer_review(
+        state,
+        SimpleNamespace(),
+        settings=Settings(),
+        chat_model=SimpleNamespace(),
+    )
+
+    review_run = updates["answer_review_runs"][0]
+    assert review_run["passed"] is False
+    assert review_run["reason"] == "incomplete"
+    assert review_run["details"]["missing_entities"] == ["Re-rank 模型"]
+    assert review_run["details"]["coverage_guardrail"] == "multi_entity_entities"
+
+
+@pytest.mark.asyncio
+async def test_answer_review_overrides_passed_when_required_original_term_is_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state = {
+        "user_input": "Embedding 模型和 Re-rank 模型分别负责什么、采用什么技术架构、各自面临哪些挑战？",
+        "draft_answer": (
+            "Embedding 模型负责海选阶段（召回），快速从海量信息中捕获所有可能相关的候选项；"
+            "其技术架构是双塔结构（Dual-Encoder），主要挑战是向量表达对齐与冷启动问题。[S1][S2]\n\n"
+            "Re-rank 模型负责决赛阶段（排序），对候选项进行精细化打分；"
+            "其技术架构是将查询与单个候选项整体输入模型，主要挑战是算力与性能的平衡。[S3][S4]"
+        ),
+        "final_context": (
+            "[S1] Embedding 模型负责海选阶段（召回），快速从海量信息中捕获候选项。\n"
+            "[S2] Embedding 模型采用双塔结构（Dual-Encoder），主要挑战是向量表达对齐与冷启动。\n"
+            "[S3] Re-rank 模型负责决赛阶段（排序），对候选项进行精细化打分。\n"
+            "[S4] Re-rank 模型采用交叉编码器（Cross-Encoder），主要挑战是算力与性能的平衡。"
+        ),
+        "citation_catalog": _build_citation_catalog("S1", "S2", "S3", "S4"),
+        "answer_paragraphs": [
+            {
+                "paragraph_id": "p1",
+                "text": "Embedding 模型负责海选阶段（召回），快速从海量信息中捕获所有可能相关的候选项；其技术架构是双塔结构（Dual-Encoder），主要挑战是向量表达对齐与冷启动问题。",
+                "citation_ids": ["S1", "S2"],
+                "claims": [],
+                "review_status": "passed",
+            },
+            {
+                "paragraph_id": "p2",
+                "text": "Re-rank 模型负责决赛阶段（排序），对候选项进行精细化打分；其技术架构是将查询与单个候选项整体输入模型，主要挑战是算力与性能的平衡。",
+                "citation_ids": ["S3", "S4"],
+                "claims": [],
+                "review_status": "passed",
+            },
+        ],
+        "stage_summaries": {},
+        "loop_counts": {
+            "total_rounds": 0,
+            "retrieval_retries": 0,
+            "generation_retries": 0,
+        },
+    }
+
+    async def _fake_judge_structured(**_: object) -> tuple[AnswerReviewSubDecision, None]:
+        return (
+            AnswerReviewSubDecision(
+                passed=True,
+                reason="passed",
+                confidence=0.96,
+                affected_paragraph_ids=[],
+            ),
+            None,
+        )
+
+    monkeypatch.setattr(answer_subgraph, "_judge_structured", _fake_judge_structured)
+
+    updates = await answer_subgraph._answer_review(
+        state,
+        SimpleNamespace(),
+        settings=Settings(),
+        chat_model=SimpleNamespace(),
+    )
+
+    review_run = updates["answer_review_runs"][0]
+    assert review_run["passed"] is False
+    assert review_run["reason"] == "incomplete"
+    assert review_run["decision_source"] == "deterministic_guard"
+    assert review_run["affected_paragraph_ids"] == ["p2"]
+    assert review_run["details"]["coverage_guardrail"] == "required_original_terms"
+    assert review_run["details"]["missing_terms"] == {
+        "Re-rank 模型": ["Cross-Encoder"]
+    }
+    assert review_run["details"]["repair_target_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_answer_review_overrides_passed_when_required_responsibility_label_is_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state = {
+        "user_input": "Embedding 模型和 Re-rank 模型分别负责什么、采用什么技术架构、各自面临哪些挑战？",
+        "draft_answer": (
+            "Embedding 模型的职责是将用户搜索词、商品标题、文本内容等转化为向量，以捕捉语义相似性；"
+            "其技术架构是双塔结构（Dual-Encoder），主要挑战是向量表达对齐与冷启动问题。[S4]\n\n"
+            "Re-rank 模型负责决赛阶段（排序），对候选项进行精细化打分；"
+            "其技术架构是交叉编码器（Cross-Encoder），主要挑战是算力与性能的平衡。[S2]"
+        ),
+        "final_context": (
+            "[S4] ## 2.  Embedding 模型：语义理解与高效召回的“猎人”\n"
+            "- **核心任务：理解 (Understanding)**\n"
+            "  - 它扮演“翻译家”的角色，将用户的搜索词、商品标题、文本内容等转化成向量。\n"
+            "- **技术架构：双塔结构 (Dual-Encoder)**\n"
+            "  - 一个塔编码查询，另一个塔编码物品。\n"
+            "- **面临的挑战：向量表达的对齐与冷启动**\n"
+            "  - 需要解决语义对齐与新物品冷启动问题。\n"
+            "[S2] ## 3. Re-rank模型：深度匹配与精准排序的“裁判”\n"
+            "- **核心任务：排序 (Ranking)**\n"
+            "- **技术架构：交叉编码器 (Cross-Encoder)**\n"
+            "- **面临的挑战：算力与性能的平衡**"
+        ),
+        "citation_catalog": _build_citation_catalog("S4", "S2"),
+        "answer_paragraphs": [
+            {
+                "paragraph_id": "p1",
+                "text": "Embedding 模型的职责是将用户搜索词、商品标题、文本内容等转化为向量，以捕捉语义相似性；其技术架构是双塔结构（Dual-Encoder），主要挑战是向量表达对齐与冷启动问题。",
+                "citation_ids": ["S4"],
+                "claims": [],
+                "review_status": "passed",
+            },
+            {
+                "paragraph_id": "p2",
+                "text": "Re-rank 模型负责决赛阶段（排序），对候选项进行精细化打分；其技术架构是交叉编码器（Cross-Encoder），主要挑战是算力与性能的平衡。",
+                "citation_ids": ["S2"],
+                "claims": [],
+                "review_status": "passed",
+            },
+        ],
+        "stage_summaries": {},
+        "loop_counts": {
+            "total_rounds": 0,
+            "retrieval_retries": 0,
+            "generation_retries": 0,
+        },
+    }
+
+    async def _fake_judge_structured(**_: object) -> tuple[AnswerReviewSubDecision, None]:
+        return (
+            AnswerReviewSubDecision(
+                passed=True,
+                reason="passed",
+                confidence=0.96,
+                affected_paragraph_ids=[],
+            ),
+            None,
+        )
+
+    monkeypatch.setattr(answer_subgraph, "_judge_structured", _fake_judge_structured)
+
+    updates = await answer_subgraph._answer_review(
+        state,
+        SimpleNamespace(),
+        settings=Settings(),
+        chat_model=SimpleNamespace(),
+    )
+
+    review_run = updates["answer_review_runs"][0]
+    assert review_run["passed"] is False
+    assert review_run["reason"] == "incomplete"
+    assert review_run["decision_source"] == "deterministic_guard"
+    assert review_run["affected_paragraph_ids"] == ["p1"]
+    assert review_run["details"]["coverage_guardrail"] == "required_original_terms"
+    assert review_run["details"]["missing_terms"] == {"Embedding 模型": ["理解"]}
     assert review_run["details"]["repair_target_count"] == 1
 
 
@@ -517,3 +870,35 @@ async def test_paragraph_citation_review_fails_projected_text_without_citations_
     assert review_run["passed"] is False
     assert review_run["reason"] == "missing_citations"
     assert review_run["affected_paragraph_ids"] == ["p1"]
+
+
+@pytest.mark.asyncio
+async def test_answer_repair_normalizes_fullwidth_citations_before_projection() -> None:
+    state = {
+        "user_input": "说明 Re-rank 模型的技术架构。",
+        "draft_answer": "旧答案。",
+        "final_context": (
+            "[S1] Re-rank 模型负责排序。\n"
+            "[S4] 常见技术架构是交叉编码器。"
+        ),
+        "citation_catalog": _build_citation_catalog("S1", "S4"),
+        "loop_counts": {
+            "total_rounds": 0,
+            "retrieval_retries": 0,
+            "generation_retries": 0,
+        },
+        "stage_summaries": {},
+    }
+
+    updates = await answer_subgraph._answer_repair(
+        state,
+        SimpleNamespace(),
+        settings=Settings(),
+        chat_model=_StaticRepairModel(
+            "Re‑rank 模型负责排序，并常用交叉编码器做深度匹配。【S1】【S4】"
+        ),
+    )
+
+    assert updates["draft_answer"] == "Re-rank 模型负责排序，并常用交叉编码器做深度匹配。[S1][S4]"
+    assert updates["answer_paragraphs"][0]["citation_ids"] == ["S1", "S4"]
+    assert updates["stage_summaries"]["answer_repair"]["fallback_reason"] is None

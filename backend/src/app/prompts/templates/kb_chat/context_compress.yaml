@@ -13,6 +13,8 @@ template: |
   4. 如果只需保留部分证据，输出 decision=subset，并在 items 中逐条列出要保留的 citation_id 与 excerpt。
   5. 如果全部参考内容都与问题无关，输出 decision=no_evidence，items 返回空数组。
   6. 不得编造 citation_id，不得输出参考内容中不存在的 excerpt，不得输出额外字段。
+  7. 若问题同时要求多个实体与多个必答维度（例如“分别负责什么、技术架构、挑战”），subset 时必须保留每个实体 × 每个必答维度至少一条原文证据；若无法完整覆盖，直接输出 decision=keep_all。
+  8. 若问题要求技术架构、模型名称、组件名称或术语清单，必须保留参考内容中的原始名词（如 Dual-Encoder、Cross-Encoder）；不要只保留泛化后的机制描述。
 
   输出要求：
   - Return JSON only.
@@ -49,3 +51,11 @@ few_shot_examples:
       [S1] 接口默认超时时间为 30 秒，可通过 timeout 参数覆盖。
       [S2] 系统支持重试与熔断策略。
     output: '{"decision": "no_evidence", "items": []}'
+  - input: |
+      问题：Embedding 模型和 Re-rank 模型分别负责什么、采用什么技术架构、各自面临哪些挑战？
+      参考内容：
+      [S1] Embedding 模型负责海选阶段（召回），快速捕获候选项。
+      [S2] Embedding 模型采用双塔结构（Dual-Encoder），并面临向量对齐与冷启动挑战。
+      [S3] Re-rank 模型负责决赛阶段（排序），对候选项精细打分。
+      [S4] Re-rank 模型采用交叉编码器（Cross-Encoder），并面临算力与性能平衡挑战。
+    output: '{"decision": "subset", "items": [{"citation_id": "S1", "excerpt": "Embedding 模型负责海选阶段（召回），快速捕获候选项。"}, {"citation_id": "S2", "excerpt": "Embedding 模型采用双塔结构（Dual-Encoder），并面临向量对齐与冷启动挑战。"}, {"citation_id": "S3", "excerpt": "Re-rank 模型负责决赛阶段（排序），对候选项精细打分。"}, {"citation_id": "S4", "excerpt": "Re-rank 模型采用交叉编码器（Cross-Encoder），并面临算力与性能平衡挑战。"}]}'

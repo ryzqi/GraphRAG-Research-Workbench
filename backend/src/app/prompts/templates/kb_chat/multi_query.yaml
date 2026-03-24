@@ -15,6 +15,11 @@ template: |
   2. 场景化查询：偏真实使用场景、业务问题或故障现象。
   3. 证据维度查询：补充原理 / 限制 / 优缺点 / 排查维度中的一个高价值角度。
 
+  特殊约束：
+  - 当用户问题本身在问“主要变体 / 类型 / 分类 / 列表 / 有哪些”时，三条查询都必须保持在“分类 / 变体 / 列表”这个意图内展开。
+  - 不要把这类问题改写成应用场景、性能对比或优缺点问题。
+  - 只有当原问题本身就在问场景、对比、优缺点、排查时，才允许把这些角度放进扩展查询。
+
   规则：
   1. 必须保留核心实体、时间范围、指标和限制条件，不得引入新事实。
   2. 若问题含中英文混合术语，查询中应尽量保留中英文高价值表达。
@@ -39,5 +44,7 @@ variables:
 few_shot_examples:
   - input: "比较Self-Ask框架和Reflection框架的区别"
     output: '{"queries": ["Self-Ask框架 Reflection框架 区别", "Self-Ask框架 Reflection框架 原理 机制 对比", "Self-Ask框架 Reflection框架 适用场景 优缺点"]}'
+  - input: "Chain-of-Thought（CoT，思维链）的主要变体有哪些？"
+    output: '{"queries": ["Chain-of-Thought（CoT，思维链）的主要变体有哪些？", "Chain-of-Thought（CoT，思维链） 主要变体 类型 分类", "Chain-of-Thought（CoT，思维链） 常见变体 列表"]}'
   - input: "Kubernetes Pod OOMKilled 怎么解决？"
     output: '{"queries": ["Kubernetes Pod OOMKilled 解决方案", "K8s 容器 OOMKilled 原因 排查", "Pod 内存限制 resources limits 调优"]}'

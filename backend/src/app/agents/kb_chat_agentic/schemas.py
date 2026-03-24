@@ -124,7 +124,7 @@ class NormalizeDecision(BaseModel):
     constraint_preserved: bool = True
     has_multi_target: bool = False
     is_comparison: bool = False
-    reasoning: str = Field(default="", max_length=240)
+    reasoning: str = Field(default="", max_length=512)
 
 
 class MergeContextResolutionDecision(BaseModel):
@@ -256,7 +256,7 @@ class AnswerParagraph(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    paragraph_id: str = Field(..., min_length=1, max_length=64)
+    paragraph_id: str = Field(default="", max_length=64)
     text: str = Field(default="", max_length=8000)
     citation_ids: list[str] = Field(default_factory=list, max_length=32)
     claims: list[ParagraphClaim] = Field(default_factory=list, max_length=16)

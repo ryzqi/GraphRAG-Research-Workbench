@@ -8,11 +8,11 @@ commit. It keeps the parent graph routing contract intact by writing
 from __future__ import annotations
 
 import asyncio
+import logging
 import re
 import time
 from typing import Any, Literal, TypedDict
 
-from langchain.agents import create_agent
 from langchain.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_core.language_models.chat_models import BaseChatModel
 from langgraph.config import get_stream_writer
@@ -25,7 +25,13 @@ from app.agents.kb_chat_trace_nodes import (
     extend_kb_chat_node_metadata,
     wrap_kb_chat_node_with_io,
 )
-from app.agents.kb_chat_agentic.reflection import generate_draft
+from app.agents.kb_chat_agentic.reflection import (
+    _build_answer_coverage_hint,
+    _extract_question_entities,
+    _extract_required_dimensions,
+    _extract_required_term_map,
+    generate_draft,
+)
 from app.agents.kb_chat_agentic.schemas import (
     AnswerParagraph,
     AnswerRenderMeta,
@@ -45,18 +51,23 @@ from app.agents.kb_chat_agentic_state import (
 from app.core.settings import Settings
 from app.prompts import get_prompt_loader
 from app.services.kb_answer_paragraphs import (
+    normalize_answer_text_variants,
     prune_unsupported_auxiliary_claims,
     render_answer_paragraphs,
 )
 from app.services.evidence_guardrails import (
     extract_citation_label_occurrences,
     is_kb_refusal_answer,
+    normalize_citation_label,
     resolve_kb_refusal_answer,
 )
 from app.services.kb_evidence import resolve_structured_evidence
+from app.services.query_rewrite_service import coerce_structured_result_payload
 from app.services.streaming import extract_answer_text
 
 from .budget import now_iso
+
+logger = logging.getLogger(__name__)
 
 _REPAIRABLE_FAILURE_REASONS = {
     "missing_citations",
@@ -65,7 +76,7 @@ _REPAIRABLE_FAILURE_REASONS = {
     "unsupported_claims",
 }
 _EVIDENCE_LINE_RE = re.compile(r"^\[([^\[\]\n]{1,128})\]\s+", re.MULTILINE)
-_INLINE_CITATION_RE = re.compile(r"\[[^\[\]\n]{1,128}\]")
+_INLINE_CITATION_RE = re.compile(r"\[([^\[\]\n]{1,128})\]|【([^【】\n]{1,128})】")
 _REVIEW_CHECKS: tuple[Literal["citation", "answer"], ...] = (
     "citation",
     "answer",
@@ -226,10 +237,7 @@ def _partition_citations(
 
 
 def _normalize_citation_id(value: object) -> str:
-    text = _as_str(value).strip()
-    if text.startswith("[") and text.endswith("]"):
-        text = text[1:-1].strip()
-    return text
+    return normalize_citation_label(_as_str(value))
 
 
 def _normalize_citation_label(value: object) -> str:
@@ -411,14 +419,144 @@ def _is_refusal_like_paragraph_text(text: str) -> bool:
 def _strip_inline_citations(text: str) -> str:
     if not text:
         return ""
-    stripped = _INLINE_CITATION_RE.sub("", text)
+    stripped = _INLINE_CITATION_RE.sub("", normalize_answer_text_variants(text))
     stripped = re.sub(r"[ \t]+\n", "\n", stripped)
     stripped = re.sub(r"\n{3,}", "\n\n", stripped)
     return stripped.strip()
 
 
+def _compact_answer_coverage_text(text: str) -> str:
+    normalized = normalize_answer_text_variants(_strip_inline_citations(text))
+    return re.sub(r"[\s\-‐‑‒–—―_]+", "", normalized).casefold()
+
+
+def _detect_multi_entity_answer_gap(
+    *,
+    question: str,
+    draft: str,
+    paragraphs: list[AnswerParagraph],
+) -> dict[str, object] | None:
+    entities = _extract_question_entities(question)
+    if len(entities) < 2:
+        return None
+
+    answer_body = "\n".join(
+        paragraph.text.strip()
+        for paragraph in paragraphs
+        if paragraph.text and paragraph.text.strip()
+    ).strip()
+    if not answer_body:
+        answer_body = draft
+    compact_answer = _compact_answer_coverage_text(answer_body)
+    missing_entities = [
+        entity
+        for entity in entities
+        if _compact_answer_coverage_text(entity) not in compact_answer
+    ]
+    if not missing_entities:
+        return None
+
+    paragraph_ids = [
+        paragraph.paragraph_id
+        for paragraph in paragraphs
+        if isinstance(paragraph.paragraph_id, str) and paragraph.paragraph_id.strip()
+    ]
+    return {
+        "reason": "incomplete",
+        "missing_entities": missing_entities,
+        "required_dimensions": _extract_required_dimensions(question),
+        "affected_paragraph_ids": paragraph_ids[-1:] if paragraph_ids else [],
+        "coverage_guardrail": "multi_entity_entities",
+    }
+
+
+def _detect_required_original_term_gap(
+    *,
+    question: str,
+    draft: str,
+    paragraphs: list[AnswerParagraph],
+    final_context: str,
+) -> dict[str, object] | None:
+    normalized_question = _as_str(question).strip()
+    if not normalized_question or not final_context:
+        return None
+
+    required_dimensions = _extract_required_dimensions(normalized_question)
+    requires_original_terms = any(
+        dimension in required_dimensions for dimension in ("职责", "技术架构")
+    ) or any(
+        keyword in normalized_question for keyword in ("模型名称", "组件名称", "术语", "名词清单")
+    )
+    if not requires_original_terms:
+        return None
+
+    entities = _extract_question_entities(normalized_question)
+    if len(entities) < 2:
+        return None
+
+    required_term_map = _extract_required_term_map(
+        entities,
+        final_context=final_context,
+        required_dimensions=required_dimensions,
+    )
+    if not required_term_map:
+        return None
+
+    answer_body = "\n".join(
+        paragraph.text.strip()
+        for paragraph in paragraphs
+        if paragraph.text and paragraph.text.strip()
+    ).strip()
+    if not answer_body:
+        answer_body = draft
+    compact_answer = _compact_answer_coverage_text(answer_body)
+    if not compact_answer:
+        return None
+
+    missing_terms: dict[str, list[str]] = {}
+    affected_ids: list[str] = []
+    for entity in entities:
+        compact_entity = _compact_answer_coverage_text(entity)
+        if not compact_entity or compact_entity not in compact_answer:
+            continue
+        terms = required_term_map.get(entity) or []
+        missing_for_entity = [
+            term for term in terms if _compact_answer_coverage_text(term) not in compact_answer
+        ]
+        if not missing_for_entity:
+            continue
+        missing_terms[entity] = missing_for_entity
+        for paragraph in paragraphs:
+            paragraph_id = _as_str(paragraph.paragraph_id).strip()
+            if not paragraph_id:
+                continue
+            compact_paragraph = _compact_answer_coverage_text(paragraph.text)
+            if compact_entity in compact_paragraph:
+                affected_ids.append(paragraph_id)
+
+    if not missing_terms:
+        return None
+
+    ordered_affected_ids = list(dict.fromkeys(affected_ids))
+    if not ordered_affected_ids:
+        ordered_affected_ids = [
+            paragraph.paragraph_id
+            for paragraph in paragraphs
+            if isinstance(paragraph.paragraph_id, str) and paragraph.paragraph_id.strip()
+        ][-1:]
+
+    return {
+        "reason": "incomplete",
+        "missing_terms": missing_terms,
+        "required_dimensions": required_dimensions,
+        "affected_paragraph_ids": ordered_affected_ids,
+        "repair_target_count": len(ordered_affected_ids),
+        "coverage_guardrail": "required_original_terms",
+    }
+
+
 def _project_answer_text_to_paragraphs(answer: str) -> list[AnswerParagraph]:
-    cleaned_answer = _as_str(answer).strip()
+    cleaned_answer = normalize_answer_text_variants(_as_str(answer)).strip()
     if not cleaned_answer:
         return []
     raw_blocks = [
@@ -659,6 +797,11 @@ def _is_repairable_review_failure(
     citation: dict[str, Any],
     answer: dict[str, Any],
 ) -> bool:
+    if reason == "incomplete":
+        coverage_guardrail = _as_str(
+            _extract_run_details(answer).get("coverage_guardrail")
+        ).strip()
+        return coverage_guardrail == "required_original_terms"
     if reason not in _REPAIRABLE_FAILURE_REASONS:
         return False
     if reason != "unsupported_claims":
@@ -786,28 +929,29 @@ async def _judge_structured(
     system: str,
     user: str,
 ) -> tuple[AnswerReviewSubDecision | None, str | None]:
-    agent = create_agent(
-        model=chat_model,
-        tools=[],
-        system_prompt=system,
-        response_format=AnswerReviewSubDecision,
-    )
-    request = {"messages": [{"role": "user", "content": user}]}
     try:
-        result = await agent.ainvoke(request)
+        structured_model = chat_model.with_structured_output(
+            AnswerReviewSubDecision,
+            method="function_calling",
+            include_raw=True,
+        )
+        result = await structured_model.ainvoke(
+            [SystemMessage(content=system), HumanMessage(content=user)]
+        )
     except asyncio.CancelledError:
         raise
     except Exception as exc:
         return None, _classify_structured_error(exc)
-    if not isinstance(result, dict):
-        return None, "empty_structured_response"
-    structured_payload = result.get("structured_response")
-    if structured_payload is None:
-        return None, "empty_structured_response"
-    if isinstance(structured_payload, AnswerReviewSubDecision):
-        return structured_payload, None
+    payload, reason = coerce_structured_result_payload(
+        result=result,
+        schema=AnswerReviewSubDecision,
+    )
+    if payload is None:
+        return None, reason
+    if isinstance(payload, AnswerReviewSubDecision):
+        return payload, None
     try:
-        payload = AnswerReviewSubDecision.model_validate(structured_payload)
+        payload = AnswerReviewSubDecision.model_validate(payload)
     except ValidationError:
         return None, "invalid_schema"
     return payload, None
@@ -1055,11 +1199,15 @@ async def _answer_review_llm_check(
         system_prompt = prompts.render_with_few_shot(prompt_key)
     except KeyError:
         system_prompt = default_system
+    coverage_hint = _build_answer_coverage_hint(question, final_context)
+    coverage_block = f"{coverage_hint}\n\n" if coverage_hint else ""
     judge, fallback_reason = await _judge_structured(
         chat_model=chat_model,
         system=system_prompt,
         user=(
-            f"问题：{question}\n\n参考内容：\n{final_context}"
+            f"问题：{question}\n\n"
+            f"{coverage_block}"
+            f"参考内容：\n{final_context}"
             f"\n\n回答：\n{draft}\n\n段落级审查数据：\n{_format_paragraph_review_payload(paragraphs)}"
         ),
     )
@@ -1077,11 +1225,51 @@ async def _answer_review_llm_check(
         decision_source = "fallback"
         unsupported_claims = []
         missing_citations = []
+    coverage_gap = _detect_multi_entity_answer_gap(
+        question=question,
+        draft=draft,
+        paragraphs=paragraphs,
+    )
+    if coverage_gap is None:
+        coverage_gap = _detect_required_original_term_gap(
+            question=question,
+            draft=draft,
+            paragraphs=paragraphs,
+            final_context=final_context,
+        )
+    if passed and coverage_gap is not None:
+        passed = False
+        reason = str(coverage_gap.get("reason") or "incomplete")
+        confidence = min(confidence, 0.35)
+        decision_source = "deterministic_guard"
     affected_paragraph_ids, details = _resolve_answer_review_details(
         paragraphs,
         reason=reason,
         unsupported_claims=unsupported_claims,
     )
+    if coverage_gap is not None:
+        guard_details = {
+            "coverage_guardrail": coverage_gap.get("coverage_guardrail"),
+            "missing_entities": coverage_gap.get("missing_entities") or [],
+            "missing_terms": coverage_gap.get("missing_terms") or {},
+            "required_dimensions": coverage_gap.get("required_dimensions") or [],
+            "repair_target_count": int(coverage_gap.get("repair_target_count") or 0),
+        }
+        details = {
+            **details,
+            **guard_details,
+        }
+        guard_affected_ids = coverage_gap.get("affected_paragraph_ids")
+        if (
+            isinstance(guard_affected_ids, list)
+            and guard_affected_ids
+            and not affected_paragraph_ids
+        ):
+            affected_paragraph_ids = [
+                _as_str(paragraph_id).strip()
+                for paragraph_id in guard_affected_ids
+                if _as_str(paragraph_id).strip()
+            ]
     if isinstance(judge, AnswerReviewSubDecision):
         if judge.affected_paragraph_ids:
             affected_paragraph_ids = list(judge.affected_paragraph_ids)
@@ -1361,6 +1549,8 @@ async def _answer_repair(
         repair_mode = "scope_blocked"
     elif draft_answer and final_context and question and evidence_labels:
         prompts = get_prompt_loader()
+        coverage_hint = _build_answer_coverage_hint(question, final_context)
+        coverage_block = f"{coverage_hint}\n\n" if coverage_hint else ""
         try:
             repair_system = prompts.render_with_few_shot("kb_chat/system")
         except KeyError:
@@ -1374,7 +1564,9 @@ async def _answer_repair(
             "1) 仅使用参考内容中的事实；\n"
             "2) 采用段落级聚合引用：每段结尾统一附带有效 [Sx]；不要逐句强制补引；\n"
             "3) 若某段存在无法被支持的辅助断言，删除该辅助断言，不要强行补引；\n"
-            "4) 不能引入参考内容外信息。\n\n"
+            "4) 若参考内容已出现某实体或术语，不得把该实体整体写成“资料不足”。\n"
+            "5) 不能引入参考内容外信息。\n\n"
+            f"{coverage_block}"
             f"问题：{question}\n\n"
             f"参考内容：\n{final_context}\n\n"
             f"原回答：\n{draft_answer}\n\n"
@@ -1402,6 +1594,17 @@ async def _answer_repair(
                 )
                 if projection_fallback_reason:
                     fallback_reason = projection_fallback_reason
+                    logger.warning(
+                        "Answer repair 候选投影失败",
+                        extra={
+                            "projection_fallback_reason": projection_fallback_reason,
+                            "candidate_preview": candidate[:1600],
+                            "source_paragraph_count": len(source_paragraphs),
+                            "source_citation_count": sum(
+                                len(paragraph.citation_ids) for paragraph in source_paragraphs
+                            ),
+                        },
+                    )
                 else:
                     repaired_answer = _as_str(normalized_candidate).strip()
                     repair_mode = "llm_rewrite"

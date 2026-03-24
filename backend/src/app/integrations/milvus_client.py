@@ -68,6 +68,21 @@ class MilvusClient:
         self._client = AsyncMilvusClient(uri=uri)
         self._field_cache: set[str] | None = None
 
+    @staticmethod
+    def _default_output_fields() -> list[str]:
+        return [
+            "chunk_id",
+            "kb_id",
+            "material_id",
+            "chunk_role",
+            "parent_chunk_id",
+            "child_seq",
+            "content",
+            "context",
+            "locator",
+            "metadata",
+        ]
+
     async def aclose(self) -> None:
         """关闭 Milvus 异步客户端。"""
         close = getattr(self._client, "close", None)
@@ -418,18 +433,38 @@ class MilvusClient:
             reqs=reqs,
             ranker=ranker_impl,
             limit=top_k,
-            output_fields=[
-                "chunk_id",
-                "kb_id",
-                "material_id",
-                "chunk_role",
-                "parent_chunk_id",
-                "child_seq",
-                "content",
-                "context",
-                "locator",
-                "metadata",
-            ],
+            output_fields=self._default_output_fields(),
+        )
+        return self._parse_hits(res)
+
+    async def sparse_search(
+        self,
+        *,
+        query: str,
+        kb_ids: list[str],
+        top_k: int = 5,
+        extra_filter_expr: str | None = None,
+        collection_name: str | None = None,
+    ) -> list[MilvusSearchHit]:
+        """稀疏检索：仅 BM25，无需 embedding。"""
+
+        search = getattr(self._client, "search", None)
+        if search is None:
+            raise RuntimeError("pymilvus API 不匹配：缺少 search")
+
+        target_collection = collection_name or self._collection
+        await self._load_field_cache(collection_name=target_collection)
+        self._assert_schema_compatible()
+
+        filter_expr = self._build_filter_expr(kb_ids, extra_filter_expr) or ""
+        res = await search(
+            collection_name=target_collection,
+            data=[query],
+            filter=filter_expr,
+            limit=top_k,
+            output_fields=self._default_output_fields(),
+            search_params={"metric_type": "BM25"},
+            anns_field=self._SPARSE_FIELD,
         )
         return self._parse_hits(res)
 
@@ -611,18 +646,7 @@ class MilvusClient:
 
         escaped = [_escape_string(cid) for cid in chunk_ids]
         quoted = ", ".join(f"\"{cid}\"" for cid in escaped)
-        fields = output_fields or [
-            "chunk_id",
-            "kb_id",
-            "material_id",
-            "chunk_role",
-            "parent_chunk_id",
-            "child_seq",
-            "content",
-            "context",
-            "locator",
-            "metadata",
-        ]
+        fields = output_fields or self._default_output_fields()
         res = await query(
             collection_name=target_collection,
             filter=f"chunk_id in [{quoted}]",

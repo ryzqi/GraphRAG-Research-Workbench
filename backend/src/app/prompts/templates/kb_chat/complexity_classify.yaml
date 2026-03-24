@@ -34,6 +34,8 @@ template: |
   - 不要因为问题字数长、约束多，就自动选 decomposition；若核心目标仍然单一，应在 direct / multi_query 中判断。
   - 不要把“高召回风险”直接等同为 decomposition；若只是术语不稳定，应选 multi_query。
   - 单一事实问法、单一概念解释、单一流程问法，如果核心实体稳定，优先 direct。
+  - 不要仅因标准专有名词中英混写就判为 multi_query；若主问题是稳定实体的清单/综述问法（如“AI Agent 的六大核心组件是什么？”），优先 direct。
+  - 出现“分别”“各自”等并列回答多个实体/子问题的信号时，应优先判为 decomposition，即使同时存在中英混写或术语别名。
 
   平局规则：
   - direct 与 multi_query 难分时，只要存在明显术语不稳定信号，优先 multi_query。
@@ -70,17 +72,35 @@ few_shot_examples:
       是否比较问题：false
     output: '{"reasoning":"这是单目标单跳事实问题，主问题本身已是稳定检索表达。","strategy":"direct","confidence":0.98,"risk_flags":["single_hop"],"decision_version":"kb_chat_complexity_classify_v5"}'
   - input: |
+      用户问题：AI Agent 的六大核心组件是什么？
+      已知召回风险：medium
+      是否多目标：false
+      是否比较问题：false
+    output: '{"reasoning":"这是稳定实体的清单型问题，核心目标单一，适合直接检索。","strategy":"direct","confidence":0.96,"risk_flags":["stable_overview"],"decision_version":"kb_chat_complexity_classify_v5"}'
+  - input: |
       用户问题：解释 agent memory 的工作机制
       已知召回风险：high
       是否多目标：false
       是否比较问题：false
     output: '{"reasoning":"问题目标单一，但存在中英混写术语，适合并行释义提升召回。","strategy":"multi_query","confidence":0.93,"risk_flags":["mixed_language","term_alias","recall_risk_high"],"decision_version":"kb_chat_complexity_classify_v5"}'
   - input: |
+      用户问题：Chain-of-Thought（CoT，思维链）的主要变体有哪些？
+      已知召回风险：medium
+      是否多目标：false
+      是否比较问题：false
+    output: '{"reasoning":"目标单一，但同时包含英文全称、缩写与中文别名，适合多路改写提升召回。","strategy":"multi_query","confidence":0.94,"risk_flags":["mixed_language","term_alias"],"decision_version":"kb_chat_complexity_classify_v5"}'
+  - input: |
       用户问题：K8s Pod OOMKilled 怎么解决？
       已知召回风险：high
       是否多目标：false
       是否比较问题：false
     output: '{"reasoning":"问题只聚焦一个故障现象，但缩写与运维口语较多，宜走多路改写。","strategy":"multi_query","confidence":0.89,"risk_flags":["acronym","term_alias","recall_risk_high"],"decision_version":"kb_chat_complexity_classify_v5"}'
+  - input: |
+      用户问题：Embedding 模型和 Re-rank 模型分别负责什么、采用什么技术架构、各自面临哪些挑战？
+      已知召回风险：medium
+      是否多目标：false
+      是否比较问题：false
+    output: '{"reasoning":"问题要求分别回答两个实体的职责、架构与挑战，属于并列多目标问题，应拆分检索。","strategy":"decomposition","confidence":0.97,"risk_flags":["multi_target","mixed_language"],"decision_version":"kb_chat_complexity_classify_v5"}'
   - input: |
       用户问题：比较 LangGraph 和 Deep Agents 在长期任务编排上的差异
       已知召回风险：medium

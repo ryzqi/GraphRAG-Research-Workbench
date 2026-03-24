@@ -1,4 +1,4 @@
-version: "4.1"
+version: "4.2"
 name: kb_chat_answer_review
 description: "统一答案有效性审查提示词（main claim decisive + paragraph semantics）"
 
@@ -25,6 +25,8 @@ template: |
      - 如果主问题只回答了一部分，剩余缺口会影响用户是否获得结论，用 `incomplete`。
      - 若问题同时要求多个必答子项（例如“先比较，再说明原因/映射/流程”），缺任一必答子项都应判为 `incomplete`。
      - 若问题要求“说明某机制/组件如何支撑某结论/差异/结果”，只有列出机制/组件名称而未建立“机制/组件 -> 作用 -> 所支撑的结论/差异/结果”映射，仍属于 `incomplete`。
+     - 若问题要求技术架构、模型名称、组件名称、职责标签、阶段名或术语清单，只描述机制但未显式保留参考内容中的原始名词或标签，仍属于 `incomplete`。
+     - 若多实体并列问题中遗漏某一实体的必答维度，属于 `incomplete`；若把只属于某一实体的技术架构、挑战或职责错误泛化到全部实体，属于 `unsupported_claims` 或 `incomplete`。
 
   2. 再看关键断言是否被参考内容支持
      - 主断言（main claim）是决定性项；主断言一旦 unsupported，就不能当作可修小问题放行。

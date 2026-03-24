@@ -325,7 +325,7 @@ def build_kb_retrieve_tool(
             cid = str(chunk_id)
             # Evidence excerpts should match what the model saw in the retrieval context
             # (context_text may be parent content under parent/child strategy).
-            excerpt_text = str(r.context_text or r.chunk.content or "")[:500]
+            excerpt_text = RetrievalService._result_excerpt(r)
             item = draft_by_chunk_id.get(cid)
             if item is None:
                 chunk = getattr(r, "chunk", None)

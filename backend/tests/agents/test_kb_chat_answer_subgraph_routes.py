@@ -213,6 +213,38 @@ async def test_missing_paragraph_citations_route_to_answer_repair_when_safe() ->
 
 
 @pytest.mark.asyncio
+async def test_required_original_terms_guardrail_routes_incomplete_answer_to_repair() -> None:
+    state = _build_fuse_state(
+        citation_run=_build_passed_run(check="citation"),
+        answer_run={
+            "review_round": 0,
+            "check": "answer",
+            "passed": False,
+            "reason": "incomplete",
+            "confidence": 0.34,
+            "details": {
+                "paragraph_review_counts": {"total": 2, "passed": 1, "failed": 1},
+                "repair_target_count": 1,
+                "unsupported_scope": "none",
+                "coverage_guardrail": "required_original_terms",
+                "missing_terms": {"Re-rank 模型": ["Cross-Encoder"]},
+            },
+            "affected_paragraph_ids": ["p2"],
+        },
+    )
+
+    command = await answer_subgraph._answer_review_fuse(
+        state,
+        SimpleNamespace(),
+        settings=Settings(),
+    )
+
+    assert command.goto == "answer_repair"
+    assert command.update["reflection"]["reason"] == "incomplete"
+    assert command.update["stage_summaries"]["answer_review"]["repair_target_count"] == 1
+
+
+@pytest.mark.asyncio
 async def test_answer_commit_promotes_existing_final_answer_to_best_answer_before_force_exit() -> None:
     state = {
         "loop_counts": {

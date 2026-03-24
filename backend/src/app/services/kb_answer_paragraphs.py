@@ -6,12 +6,14 @@ import re
 from collections.abc import Iterable
 
 from app.agents.kb_chat_agentic.schemas import AnswerParagraph
+from app.services.evidence_guardrails import is_stable_citation_id, normalize_citation_label
 
-_CITATION_LABEL_RE = re.compile(r"\[(S\d+)\]", re.IGNORECASE)
+_CITATION_LABEL_RE = re.compile(r"\[([^\[\]\n]{1,128})\]|【([^【】\n]{1,128})】")
 _SPACE_BEFORE_PUNCTUATION_RE = re.compile(r"\s+([，。！？；：,.!?;:])")
 _MULTI_BLANK_LINE_RE = re.compile(r"\n{3,}")
 _TERMINAL_PUNCTUATION = ("。", "！", "？", "!", "?", "；", ";", "：", ":")
 _LEADING_PUNCTUATION = tuple("，。！？；：,.!?;:)]】）】")
+_HYPHEN_VARIANTS = ("\u2010", "\u2011", "\u2012", "\u2013", "\u2014", "\u2015", "\u2212")
 
 
 def _dedupe_preserve_order(values: Iterable[str]) -> list[str]:
@@ -26,15 +28,26 @@ def _dedupe_preserve_order(values: Iterable[str]) -> list[str]:
     return result
 
 
+def normalize_answer_text_variants(text: str) -> str:
+    normalized = str(text or "").replace("\u00a0", " ").replace("\u200b", "")
+    for char in _HYPHEN_VARIANTS:
+        normalized = normalized.replace(char, "-")
+    return normalized
+
+
 def _clean_text(text: str) -> str:
-    cleaned = str(text or "").strip()
+    cleaned = normalize_answer_text_variants(str(text or "")).strip()
     cleaned = _SPACE_BEFORE_PUNCTUATION_RE.sub(r"\1", cleaned)
     cleaned = _MULTI_BLANK_LINE_RE.sub("\n\n", cleaned)
     return cleaned.strip()
 
 
 def _strip_citation_labels(text: str) -> str:
-    return _clean_text(_CITATION_LABEL_RE.sub("", text))
+    def _strip_if_stable(match: re.Match[str]) -> str:
+        label = normalize_citation_label(match.group(1) or match.group(2) or "")
+        return "" if is_stable_citation_id(label) else match.group(0)
+
+    return _clean_text(_CITATION_LABEL_RE.sub(_strip_if_stable, normalize_answer_text_variants(text)))
 
 
 def _rebuild_text_from_claims(paragraph: AnswerParagraph) -> str:

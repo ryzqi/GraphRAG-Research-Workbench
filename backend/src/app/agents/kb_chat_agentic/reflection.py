@@ -21,8 +21,10 @@ from langgraph.runtime import Runtime
 from langgraph.types import Command, Send
 
 from app.core.settings import Settings, get_settings
+from app.integrations.chat_model_factory import create_chat_model
 from app.prompts import get_prompt_loader
 from app.services.kb_answer_paragraphs import (
+    normalize_answer_text_variants,
     recalculate_paragraph_citation_ids,
     render_answer_paragraphs,
 )
@@ -30,7 +32,10 @@ from app.services.streaming import extract_answer_text
 from app.services.kb_evidence import (
     resolve_structured_evidence,
 )
-from app.services.query_rewrite_service import QueryRewriteService
+from app.services.query_rewrite_service import (
+    QueryRewriteService,
+    coerce_structured_result_payload,
+)
 from app.agents.kb_chat_agentic_state import (
     AnswerRoutingDecisionInput,
     DispatchSubqueriesInput,
@@ -62,12 +67,31 @@ from ..tools.kb_retrieve import (
 )
 
 _EVIDENCE_LINE_RE = re.compile(r"^\[([^\[\]\n]{1,128})\]\s+", re.MULTILINE)
-_INLINE_CITATION_RE = re.compile(r"\[([^\[\]\n]{1,128})\]")
+_INLINE_CITATION_RE = re.compile(r"\[([^\[\]\n]{1,128})\]|【([^【】\n]{1,128})】")
 _CITATION_ONLY_FAILURE_REASONS = {
     "missing_citations",
     "invalid_citations",
     "citation_mismatch",
 }
+_QUESTION_PREFIX_RE = re.compile(
+    r"^(?:请问|请说明|请比较|请介绍|请概述|请分析|请列出|比较|说明|介绍|概述|分析|列出|关于)\s*"
+)
+_ENTITY_SPLIT_RE = re.compile(r"\s*(?:和|与|及|以及|、|，|,)\s*")
+_MULTI_ENTITY_SIGNAL_KEYWORDS = ("分别", "各自", "各个", "逐一")
+_QUESTION_DIMENSION_KEYWORDS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("职责", ("负责什么", "职责", "核心任务", "作用", "做什么")),
+    ("技术架构", ("技术架构", "采用什么技术架构", "采用什么架构", "模型架构", "架构")),
+    ("挑战", ("挑战", "难点", "瓶颈")),
+    ("适用场景", ("适用场景", "适用范围", "场景")),
+    ("流程", ("流程", "步骤", "过程")),
+)
+_LATIN_TERM_RE = re.compile(r"[（(]([A-Za-z][A-Za-z0-9\-/ ]{1,64})[)）]")
+_RESPONSIBILITY_LABEL_RE = re.compile(
+    r"(?:核心任务|职责|作用)\s*[：:]\s*([^（(。\n；;，,]+)"
+)
+_RESPONSIBILITY_STAGE_RE = re.compile(
+    r"负责([^，。,；;\n（(]{1,20})(?:[（(]([^()（）\n]{1,32})[)）])?"
+)
 
 
 def _as_str(value: object) -> str:
@@ -782,6 +806,8 @@ def _set_final_answer_for_exit(
         "final_answer": answer,
         **_merge_reflection(state, {"action": "force_exit", "reason": reason}),
     }
+
+
 def _resolve_query_text(state: dict) -> str:
     return _as_str(
         state.get("normalized_query")
@@ -790,6 +816,331 @@ def _resolve_query_text(state: dict) -> str:
         or state.get("rewrite_input_query")
         or state.get("user_input")
     ).strip()
+
+
+def _extract_question_entities(question: str) -> list[str]:
+    normalized = _QUESTION_PREFIX_RE.sub("", _as_str(question).strip())
+    if not normalized or not any(
+        keyword in normalized for keyword in _MULTI_ENTITY_SIGNAL_KEYWORDS
+    ):
+        return []
+
+    boundary_candidates = [
+        normalized.find(keyword)
+        for keyword in (
+            "分别",
+            "各自",
+            "各个",
+            "逐一",
+            "负责什么",
+            "采用什么",
+            "面临哪些",
+            "技术架构",
+            "挑战",
+            "难点",
+            "瓶颈",
+            "流程",
+            "步骤",
+            "是什么",
+            "有哪些",
+        )
+        if keyword in normalized
+    ]
+    boundary = min(boundary_candidates) if boundary_candidates else -1
+    head = normalized[:boundary] if boundary > 0 else normalized
+
+    entities: list[str] = []
+    for part in _ENTITY_SPLIT_RE.split(head):
+        entity = _QUESTION_PREFIX_RE.sub("", _as_str(part).strip("：:；;，,。？? "))
+        entity = re.sub(r"^(?:对比|比较)\s*", "", entity).strip()
+        entity = re.sub(
+            r"的?(?:职责|技术架构|架构|挑战|难点|瓶颈|适用场景|适用范围|场景|流程|步骤)$",
+            "",
+            entity,
+        ).strip()
+        entity = entity.rstrip("的").strip()
+        if len(entity) < 2 or entity in {"什么", "哪些", "哪个", "哪种"}:
+            continue
+        if entity not in entities:
+            entities.append(entity)
+    return entities if len(entities) >= 2 else []
+
+
+def _extract_required_dimensions(question: str) -> list[str]:
+    normalized = _as_str(question).strip()
+    dimensions: list[str] = []
+    for label, keywords in _QUESTION_DIMENSION_KEYWORDS:
+        if any(keyword in normalized for keyword in keywords) and label not in dimensions:
+            dimensions.append(label)
+    return dimensions
+
+
+def _extract_required_term_map(
+    entities: list[str],
+    *,
+    final_context: str,
+    required_dimensions: list[str] | None = None,
+) -> dict[str, list[str]]:
+    if not entities or not final_context:
+        return {}
+
+    required_dimensions = required_dimensions or []
+    blocks: list[str] = []
+    current_block: list[str] = []
+    for raw_line in _as_str(final_context).splitlines():
+        line = _as_str(raw_line)
+        if _EVIDENCE_LINE_RE.match(line):
+            if current_block:
+                block = "\n".join(current_block).strip()
+                if block:
+                    blocks.append(block)
+            current_block = [line]
+            continue
+        if current_block:
+            current_block.append(line)
+    if current_block:
+        block = "\n".join(current_block).strip()
+        if block:
+            blocks.append(block)
+    if not blocks:
+        blocks = [_as_str(final_context).strip()]
+
+    def _normalize_required_term(term: object) -> str:
+        normalized = _as_str(term)
+        normalized = normalized.replace("**", "").replace("__", "").strip()
+        normalized = re.split(r"[（(]", normalized, maxsplit=1)[0]
+        normalized = re.split(r"[。；;，,\n]", normalized, maxsplit=1)[0]
+        normalized = normalized.strip(" -*_`：:、")
+        return normalized
+
+    def _append_term(terms: list[str], term: object) -> None:
+        normalized = _normalize_required_term(term)
+        if not normalized or normalized in terms:
+            return
+        terms.append(normalized)
+
+    def _extract_block_terms(block: str) -> list[str]:
+        terms: list[str] = []
+        lines = [line.strip() for line in _as_str(block).splitlines() if line.strip()]
+        if "职责" in required_dimensions:
+            for line in lines:
+                if "核心任务" in line or "职责" in line or "作用" in line:
+                    for match in _RESPONSIBILITY_LABEL_RE.finditer(line):
+                        _append_term(terms, match.group(1))
+                if "负责" in line:
+                    for match in _RESPONSIBILITY_STAGE_RE.finditer(line):
+                        parenthetical = _normalize_required_term(match.group(2))
+                        if parenthetical:
+                            _append_term(terms, parenthetical)
+                            continue
+                        stage_or_label = _normalize_required_term(match.group(1))
+                        if stage_or_label and (
+                            stage_or_label.endswith("阶段") or len(stage_or_label) <= 6
+                        ):
+                            _append_term(terms, stage_or_label)
+        if "技术架构" in required_dimensions:
+            for line in lines:
+                if not any(
+                    keyword in line
+                    for keyword in ("技术架构", "架构", "采用", "结构", "编码器")
+                ):
+                    continue
+                for match in _LATIN_TERM_RE.finditer(line):
+                    _append_term(terms, match.group(1))
+        return terms
+
+    term_map: dict[str, list[str]] = {}
+    for entity in entities:
+        entity_key = re.sub(r"\s+", "", entity).casefold()
+        terms: list[str] = []
+        relevant_blocks = [
+            block
+            for block in blocks
+            if entity_key and entity_key in re.sub(r"\s+", "", block).casefold()
+        ]
+        if not relevant_blocks and len(blocks) == len(entities):
+            entity_index = entities.index(entity)
+            if 0 <= entity_index < len(blocks):
+                relevant_blocks = [blocks[entity_index]]
+        for block in relevant_blocks:
+            for term in _extract_block_terms(block):
+                _append_term(terms, term)
+        if terms:
+            term_map[entity] = terms[:4]
+    return term_map
+
+
+def _build_answer_coverage_hint(question: str, final_context: str = "") -> str:
+    entities = _extract_question_entities(question)
+    if len(entities) < 2:
+        return ""
+
+    dimensions = _extract_required_dimensions(question)
+    dimension_text = " / ".join(dimensions) if dimensions else "问题要求的关键信息"
+    required_terms = _extract_required_term_map(
+        entities,
+        final_context=final_context,
+        required_dimensions=dimensions,
+    )
+    lines = ["覆盖清单："]
+    for entity in entities:
+        line = f"- {entity}: {dimension_text}"
+        terms = required_terms.get(entity)
+        if terms:
+            line += f"；必须保留原始名词：{' / '.join(terms)}"
+        lines.append(line)
+    lines.extend(
+        [
+            "额外约束：",
+            "- 必须按上面的实体 × 维度逐项覆盖；若某个维度无证据，只能说明该维度缺证，不得把整实体写成“资料不足”。",
+            "- 只要参考内容中已经出现某实体或其原始术语，就不得声称“参考内容未提供该实体信息”。",
+            "- 对技术架构、职责标签或阶段名类问题，必须显式保留参考内容中的原始名词或标签。",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def _compact_answer_coverage_text(text: str) -> str:
+    normalized = normalize_answer_text_variants(_as_str(text))
+    return re.sub(r"[\s\-‐‑‒–—―_]+", "", normalized).casefold()
+
+
+def _detect_draft_coverage_gap(
+    *,
+    question: str,
+    draft: str,
+    final_context: str,
+) -> dict[str, object] | None:
+    entities = _extract_question_entities(question)
+    if len(entities) < 2:
+        return None
+
+    compact_answer = _compact_answer_coverage_text(draft)
+    missing_entities = [
+        entity
+        for entity in entities
+        if _compact_answer_coverage_text(entity) not in compact_answer
+    ]
+    if missing_entities:
+        return {
+            "reason": "incomplete",
+            "missing_entities": missing_entities,
+            "required_dimensions": _extract_required_dimensions(question),
+            "coverage_guardrail": "multi_entity_entities",
+        }
+
+    required_dimensions = _extract_required_dimensions(question)
+    requires_original_terms = any(
+        dimension in required_dimensions for dimension in ("职责", "技术架构")
+    ) or any(
+        keyword in _as_str(question)
+        for keyword in ("模型名称", "组件名称", "术语", "名词清单")
+    )
+    if not requires_original_terms:
+        return None
+
+    required_term_map = _extract_required_term_map(
+        entities,
+        final_context=final_context,
+        required_dimensions=required_dimensions,
+    )
+    if not required_term_map:
+        return None
+
+    missing_terms: dict[str, list[str]] = {}
+    for entity in entities:
+        compact_entity = _compact_answer_coverage_text(entity)
+        if compact_entity not in compact_answer:
+            continue
+        terms = required_term_map.get(entity) or []
+        missing_for_entity = [
+            term for term in terms if _compact_answer_coverage_text(term) not in compact_answer
+        ]
+        if missing_for_entity:
+            missing_terms[entity] = missing_for_entity
+    if not missing_terms:
+        return None
+    return {
+        "reason": "incomplete",
+        "missing_terms": missing_terms,
+        "required_dimensions": required_dimensions,
+        "coverage_guardrail": "required_original_terms",
+    }
+
+
+def _format_draft_coverage_gap(gap: dict[str, object] | None) -> str:
+    if not isinstance(gap, dict) or not gap:
+        return ""
+    lines = ["当前草稿存在以下覆盖缺口："]
+    missing_entities = gap.get("missing_entities")
+    if isinstance(missing_entities, list) and missing_entities:
+        lines.append(f"- 缺少实体覆盖：{' / '.join(_as_str(entity) for entity in missing_entities)}")
+    missing_terms = gap.get("missing_terms")
+    if isinstance(missing_terms, dict):
+        for entity, terms in missing_terms.items():
+            if not isinstance(terms, list) or not terms:
+                continue
+            lines.append(
+                f"- {_as_str(entity)} 缺少原始名词：{' / '.join(_as_str(term) for term in terms)}"
+            )
+    return "\n".join(lines)
+
+
+async def _attempt_local_plain_text_draft_repair(
+    *,
+    chat_model: BaseChatModel,
+    system_prompt: str,
+    question: str,
+    final_context: str,
+    coverage_block: str,
+    draft: str,
+    coverage_gap: dict[str, object],
+) -> tuple[list[dict[str, Any]], dict[str, Any], str] | None:
+    gap_block = _format_draft_coverage_gap(coverage_gap)
+    repair_user = (
+        "请修复下面这份回答草稿，仅输出最终答案正文。\n"
+        "要求：\n"
+        "1) 必须按实体 × 维度逐项覆盖问题要求的信息；\n"
+        "2) 若参考内容已出现某实体或术语，不得把该实体整体写成“资料不足”或“未提供”；\n"
+        "3) 对技术架构、职责标签或阶段名类问题，必须显式保留参考内容中的原始名词或标签；\n"
+        "4) 仅使用参考内容中的事实，并在每段结尾保留有效 [Sx] 聚合引用；\n"
+        "5) 不要输出 JSON、代码块或额外解释。\n\n"
+        f"{gap_block}\n\n"
+        f"{coverage_block}"
+        f"问题：{question}\n\n"
+        f"参考内容：\n{final_context}\n\n"
+        f"原回答：\n{draft}"
+    )
+    try:
+        repair_model = chat_model.bind(max_tokens=1024)
+        repair_msg = await repair_model.ainvoke(
+            [SystemMessage(content=system_prompt), HumanMessage(content=repair_user)]
+        )
+        candidate = extract_answer_text(getattr(repair_msg, "content", "")).strip()
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        return None
+    if not candidate:
+        return None
+
+    projected = _project_plain_text_answer_to_paragraphs(
+        candidate,
+        allowed_citation_ids=_extract_allowed_citation_ids(final_context),
+    )
+    if not projected:
+        return None
+
+    repaired_payloads = [paragraph.model_dump() for paragraph in projected]
+    repaired_render_meta = _build_answer_render_meta(projected)
+    repaired_draft = render_answer_paragraphs(repaired_payloads).strip()
+    if _detect_draft_coverage_gap(
+        question=question,
+        draft=repaired_draft,
+        final_context=final_context,
+    ) is not None:
+        return None
+    return repaired_payloads, repaired_render_meta, repaired_draft
 
 
 def _coerce_draft_answer_decision(
@@ -810,13 +1161,110 @@ def _coerce_draft_answer_decision(
     return decision, None
 
 
+def _merge_draft_structured_reason(
+    *,
+    payload_reason: str | None,
+    decision_reason: str | None,
+) -> str | None:
+    if decision_reason is None:
+        return payload_reason
+    if (
+        payload_reason in {"invalid_schema", "structured_parse_failed", "multiple_structured_outputs"}
+        and decision_reason == "empty_structured_response"
+    ):
+        return payload_reason
+    return decision_reason or payload_reason
+
+
+def _should_retry_draft_structured(reason: str | None) -> bool:
+    return reason in {
+        "structured_invoke_failed",
+        "empty_structured_response",
+        "invalid_schema",
+        "structured_parse_failed",
+        "multiple_structured_outputs",
+    }
+
+
+def _can_project_plain_text_after_structured_failure(reason: str | None) -> bool:
+    return reason in {
+        "empty_structured_paragraphs",
+        "empty_structured_response",
+        "invalid_schema",
+        "structured_parse_failed",
+        "multiple_structured_outputs",
+    }
+
+
+def _build_draft_retry_chat_model(*, settings: Settings) -> BaseChatModel | Any | None:
+    try:
+        retry_model = create_chat_model(
+            settings=settings,
+            use_previous_response_id=False,
+        )
+    except Exception:
+        return None
+    return retry_model
+
+
+async def _invoke_draft_structured(
+    *,
+    chat_model: BaseChatModel,
+    messages: list[SystemMessage | HumanMessage],
+) -> tuple[list[dict[str, Any]], dict[str, Any], str, str | None]:
+    structured_reason: str | None = None
+    paragraph_payloads: list[dict[str, Any]] = []
+    render_meta = _build_answer_render_meta([])
+    draft = ""
+
+    try:
+        structured_model = chat_model.with_structured_output(
+            DraftAnswerDecision,
+            method="function_calling",
+            include_raw=True,
+        )
+        result = await structured_model.ainvoke(messages)
+        payload, payload_reason = coerce_structured_result_payload(
+            result=result,
+            schema=DraftAnswerDecision,
+        )
+        decision, decision_reason = _coerce_draft_answer_decision(payload)
+        structured_reason = _merge_draft_structured_reason(
+            payload_reason=payload_reason,
+            decision_reason=decision_reason,
+        )
+        if decision is not None:
+            paragraphs = _normalize_answer_paragraphs([
+                AnswerParagraph.model_validate(paragraph)
+                for paragraph in decision.paragraphs
+            ])
+            paragraph_payloads = [paragraph.model_dump() for paragraph in paragraphs]
+            render_meta = _build_answer_render_meta(paragraphs)
+            draft = render_answer_paragraphs(paragraph_payloads).strip()
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        structured_reason = "structured_invoke_failed"
+
+    return paragraph_payloads, render_meta, draft, structured_reason
+
+
 def _normalize_answer_paragraphs(
     paragraphs: list[AnswerParagraph],
 ) -> list[AnswerParagraph]:
-    return [
-        recalculate_paragraph_citation_ids(paragraph)
-        for paragraph in paragraphs
-    ]
+    normalized: list[AnswerParagraph] = []
+    seen_ids: set[str] = set()
+    for index, paragraph in enumerate(paragraphs, start=1):
+        paragraph_id = paragraph.paragraph_id.strip() or f"p{index}"
+        if paragraph_id in seen_ids:
+            paragraph_id = f"p{index}"
+        seen_ids.add(paragraph_id)
+        normalized.append(
+            recalculate_paragraph_citation_ids(
+                paragraph.model_copy(update={"paragraph_id": paragraph_id})
+            )
+        )
+    return normalized
 
 
 def _build_answer_render_meta(
@@ -845,15 +1293,16 @@ def _extract_allowed_citation_ids(final_context: str) -> dict[str, str]:
 
 
 def _extract_inline_citation_ids(text: str) -> list[str]:
+    normalized = normalize_answer_text_variants(_as_str(text))
     return [
-        _as_str(match.group(1)).strip()
-        for match in _INLINE_CITATION_RE.finditer(text or "")
-        if _as_str(match.group(1)).strip()
+        _as_str(match.group(1) or match.group(2)).strip()
+        for match in _INLINE_CITATION_RE.finditer(normalized)
+        if _as_str(match.group(1) or match.group(2)).strip()
     ]
 
 
 def _strip_inline_citations(text: str) -> str:
-    stripped = _INLINE_CITATION_RE.sub("", _as_str(text))
+    stripped = _INLINE_CITATION_RE.sub("", normalize_answer_text_variants(_as_str(text)))
     stripped = re.sub(r"[ \t]+\n", "\n", stripped)
     stripped = re.sub(r"\n{3,}", "\n\n", stripped)
     return stripped.strip()
@@ -864,7 +1313,7 @@ def _project_plain_text_answer_to_paragraphs(
     *,
     allowed_citation_ids: dict[str, str],
 ) -> list[AnswerParagraph]:
-    cleaned_answer = _as_str(answer).strip()
+    cleaned_answer = normalize_answer_text_variants(_as_str(answer)).strip()
     if not cleaned_answer:
         return []
 
@@ -1035,6 +1484,8 @@ async def generate_draft(
 
     question = _resolve_query_text(state)
     final_context = _as_str(state.get("final_context")).strip()
+    coverage_hint = _build_answer_coverage_hint(question, final_context)
+    coverage_block = f"{coverage_hint}\n\n" if coverage_hint else ""
     prompts = get_prompt_loader()
     system_prompt = prompts.render_with_few_shot("kb_chat/system")
 
@@ -1047,6 +1498,7 @@ async def generate_draft(
         "4) claims 仅保留该段关键断言；supporting_citation_ids 只填有效 Sx 标签；\n"
         "5) 若参考内容不足以形成可回答段落，返回空 paragraphs，不要编造。\n"
         "6) 不要输出 Markdown 代码块、解释性前言或 schema 外字段。\n\n"
+        f"{coverage_block}"
         f"参考内容：\n{final_context}\n\n"
         f"问题：{question}"
     )
@@ -1055,32 +1507,44 @@ async def generate_draft(
     paragraph_payloads: list[dict[str, Any]] = []
     render_meta = _build_answer_render_meta([])
     draft = ""
+    draft_messages: list[SystemMessage | HumanMessage] = [
+        SystemMessage(content=system_prompt),
+        HumanMessage(content=user),
+    ]
 
-    try:
-        structured_model = chat_model.with_structured_output(
-            DraftAnswerDecision,
-            method="function_calling",
-        )
-        result = await structured_model.ainvoke(
-            [SystemMessage(content=system_prompt), HumanMessage(content=user)]
-        )
-        decision, structured_reason = _coerce_draft_answer_decision(result)
-        if decision is not None:
-            paragraphs = _normalize_answer_paragraphs([
-                AnswerParagraph.model_validate(paragraph)
-                for paragraph in decision.paragraphs
-            ])
-            paragraph_payloads = [paragraph.model_dump() for paragraph in paragraphs]
-            render_meta = _build_answer_render_meta(paragraphs)
-            draft = render_answer_paragraphs(paragraph_payloads).strip()
-    except asyncio.CancelledError:
-        raise
-    except Exception:
-        structured_reason = "structured_invoke_failed"
+    (
+        paragraph_payloads,
+        render_meta,
+        draft,
+        structured_reason,
+    ) = await _invoke_draft_structured(
+        chat_model=chat_model,
+        messages=draft_messages,
+    )
+
+    if not draft and _should_retry_draft_structured(structured_reason):
+        retry_chat_model = _build_draft_retry_chat_model(settings=settings)
+        if retry_chat_model is not None:
+            (
+                retry_paragraph_payloads,
+                retry_render_meta,
+                retry_draft,
+                retry_reason,
+            ) = await _invoke_draft_structured(
+                chat_model=retry_chat_model,
+                messages=draft_messages,
+            )
+            if retry_draft:
+                paragraph_payloads = retry_paragraph_payloads
+                render_meta = retry_render_meta
+                draft = retry_draft
+                structured_reason = retry_reason
+            else:
+                structured_reason = retry_reason or structured_reason
 
     if not draft:
         if (
-            structured_reason in {"empty_structured_paragraphs", "empty_structured_response"}
+            _can_project_plain_text_after_structured_failure(structured_reason)
             and final_context
             and question
         ):
@@ -1090,7 +1554,9 @@ async def generate_draft(
                 "1) 仅使用参考内容中的事实；\n"
                 "2) 默认采用段落级聚合引用：每段结尾统一附带有效 [Sx]；\n"
                 "3) 若问题同时要求多个必答子项，必须逐一覆盖；\n"
-                "4) 不要输出 JSON、代码块或额外解释。\n\n"
+                "4) 若参考内容已出现某实体或术语，不得把该实体整体写成“资料不足”。\n"
+                "5) 不要输出 JSON、代码块或额外解释。\n\n"
+                f"{coverage_block}"
                 f"参考内容：\n{final_context}\n\n"
                 f"问题：{question}"
             )
@@ -1120,6 +1586,24 @@ async def generate_draft(
                 draft = "根据现有资料无法回答该问题。"
             else:
                 draft = "根据现有资料无法回答该问题（生成失败）。"
+    elif final_context and question:
+        coverage_gap = _detect_draft_coverage_gap(
+            question=question,
+            draft=draft,
+            final_context=final_context,
+        )
+        if coverage_gap is not None:
+            repaired = await _attempt_local_plain_text_draft_repair(
+                chat_model=chat_model,
+                system_prompt=system_prompt,
+                question=question,
+                final_context=final_context,
+                coverage_block=coverage_block,
+                draft=draft,
+                coverage_gap=coverage_gap,
+            )
+            if repaired is not None:
+                paragraph_payloads, render_meta, draft = repaired
 
     generator_summary = {
         "latency_ms": int((time.perf_counter() - start) * 1000),
@@ -1218,14 +1702,32 @@ async def transform_query_for_retry(
     except Exception:
         normalized_meta = {}
 
+    original_resolved_query = _as_str(state.get("resolved_query")).strip()
+    if not original_resolved_query:
+        original_resolved_query = _as_str(state.get("rewrite_input_query")).strip()
+    if not original_resolved_query:
+        original_resolved_query = current
+    original_coref_query = _as_str(state.get("coref_query")).strip() or original_resolved_query
+    rewrite_input_query = (
+        _as_str(state.get("rewrite_input_query")).strip()
+        or original_resolved_query
+        or new_query
+    )
+    reference_resolution_meta = (
+        state.get("reference_resolution_meta")
+        if isinstance(state.get("reference_resolution_meta"), dict)
+        else {}
+    )
+
     plan_updates = await run_query_plan_scheme_b(
         {
             **state,
             "normalized_query": new_query,
-            "resolved_query": new_query,
-            "reference_resolution_meta": {},
+            "resolved_query": original_resolved_query or new_query,
+            "rewrite_input_query": rewrite_input_query,
+            "reference_resolution_meta": reference_resolution_meta,
             "normalized_meta": normalized_meta,
-            "coref_query": new_query,
+            "coref_query": original_coref_query or new_query,
             "stage_summaries": state.get("stage_summaries")
             if isinstance(state.get("stage_summaries"), dict)
             else {},

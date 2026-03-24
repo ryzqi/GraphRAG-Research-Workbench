@@ -13,6 +13,7 @@ import asyncio
 import json
 import logging
 import re
+import sys
 import time
 from dataclasses import dataclass
 from typing import Iterable
@@ -47,6 +48,10 @@ MULTI_QUERY_FIXED_VARIANTS = 3
 HYDE_NUM_HYPOTHESES = 5
 HYDE_AGGREGATION = "mean_embedding"
 HYDE_REGENERATE_ON_RETRY = True
+STRUCTURED_CALL_RETRYABLE_REASONS = frozenset(
+    {"error", "empty_structured_response", "invalid_schema"}
+)
+STRUCTURED_CALL_MAX_ATTEMPTS = 2
 
 
 @dataclass(slots=True)
@@ -141,6 +146,124 @@ def _extract_structured_text(value: object) -> str:
     return ""
 
 
+def _debug_preview(value: object, *, limit: int = 1600) -> str:
+    if isinstance(value, BaseModel):
+        serializable: object = value.model_dump(mode="json")
+    else:
+        serializable = value
+    try:
+        rendered = json.dumps(serializable, ensure_ascii=False, default=str)
+    except TypeError:
+        rendered = repr(serializable)
+    rendered = rendered.strip()
+    if len(rendered) <= limit:
+        return rendered
+    return f"{rendered[:limit]}…"
+
+
+def _looks_like_json_object_key(raw: str, start: int) -> bool:
+    if start >= len(raw) or raw[start] != '"':
+        return False
+
+    i = start + 1
+    escaped = False
+    while i < len(raw):
+        ch = raw[i]
+        if escaped:
+            escaped = False
+        elif ch == "\\":
+            escaped = True
+        elif ch == '"':
+            i += 1
+            while i < len(raw) and raw[i].isspace():
+                i += 1
+            return i < len(raw) and raw[i] == ":"
+        i += 1
+    return False
+
+
+def _repair_missing_array_object_start(raw: str) -> str | None:
+    """修复数组对象项丢失起始 `{` 的近似 JSON 漂移。"""
+
+    result: list[str] = []
+    stack: list[str] = []
+    in_string = False
+    escaped = False
+    just_closed_object_in_array = False
+    pending_array_item_after_comma = False
+    changed = False
+
+    for index, ch in enumerate(raw):
+        if pending_array_item_after_comma:
+            if ch.isspace():
+                result.append(ch)
+                continue
+            if ch == '"' and _looks_like_json_object_key(raw, index):
+                result.append("{")
+                stack.append("{")
+                changed = True
+            pending_array_item_after_comma = False
+
+        result.append(ch)
+
+        if in_string:
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == '"':
+                in_string = False
+            continue
+
+        if ch == '"':
+            in_string = True
+            just_closed_object_in_array = False
+            continue
+        if ch == "{":
+            stack.append("{")
+            just_closed_object_in_array = False
+            continue
+        if ch == "[":
+            stack.append("[")
+            just_closed_object_in_array = False
+            continue
+        if ch == "}":
+            if stack and stack[-1] == "{":
+                stack.pop()
+            just_closed_object_in_array = bool(stack and stack[-1] == "[")
+            continue
+        if ch == "]":
+            if stack and stack[-1] == "[":
+                stack.pop()
+            just_closed_object_in_array = False
+            continue
+        if ch == ",":
+            if just_closed_object_in_array:
+                pending_array_item_after_comma = True
+            just_closed_object_in_array = False
+            continue
+        if not ch.isspace():
+            just_closed_object_in_array = False
+
+    if not changed:
+        return None
+    return "".join(result)
+
+
+def _repair_common_malformed_json(raw: str) -> str | None:
+    """修复部分模型在 raw structured 文本里常见的近似 JSON 漂移。"""
+
+    repaired = re.sub(r'(?<=\[)\s*"(?=\{)', "", raw)
+    repaired = re.sub(r'(?<=,)\s*"(?=\{)', "", repaired)
+    repaired = re.sub(r'}\s*,\s*"\s*}\s*,\s*(?=\{)', "},", repaired)
+    repaired_array_object_start = _repair_missing_array_object_start(repaired)
+    if repaired_array_object_start is not None:
+        repaired = repaired_array_object_start
+    if repaired == raw:
+        return None
+    return repaired
+
+
 def _coerce_schema_from_json_like(
     *,
     value: object,
@@ -152,13 +275,25 @@ def _coerce_schema_from_json_like(
         raw = value.strip()
         if not raw:
             return None, "empty_structured_response"
-        try:
-            return schema.model_validate_json(raw), None
-        except ValidationError:
+
+        candidates = [raw]
+        repaired = _repair_common_malformed_json(raw)
+        if repaired and repaired not in candidates:
+            candidates.append(repaired)
+
+        for candidate in candidates:
             try:
-                value = json.loads(raw)
-            except (TypeError, ValueError):
-                return None, "invalid_schema"
+                return schema.model_validate_json(candidate), None
+            except ValidationError:
+                try:
+                    value = json.loads(candidate)
+                except (TypeError, ValueError):
+                    continue
+                try:
+                    return schema.model_validate(value), None
+                except ValidationError:
+                    continue
+        return None, "invalid_schema"
     try:
         return schema.model_validate(value), None
     except ValidationError:
@@ -172,6 +307,24 @@ def _extract_tool_call_payload(raw: object) -> tuple[object | None, str | None]:
             return None, "multiple_structured_outputs"
         if isinstance(tool_calls[0], dict) and "args" in tool_calls[0]:
             return tool_calls[0].get("args"), None
+
+    content = getattr(raw, "content", None)
+    if isinstance(content, list) and content:
+        content_payloads: list[object] = []
+        for block in content:
+            if not isinstance(block, dict):
+                continue
+            block_type = str(block.get("type") or "").strip().lower()
+            if block_type not in {"tool_use", "tool_call"}:
+                continue
+            for key in ("input", "args"):
+                if key in block:
+                    content_payloads.append(block.get(key))
+                    break
+        if len(content_payloads) > 1:
+            return None, "multiple_structured_outputs"
+        if content_payloads:
+            return content_payloads[0], None
 
     additional_kwargs = getattr(raw, "additional_kwargs", None)
     if isinstance(additional_kwargs, dict):
@@ -210,6 +363,7 @@ def coerce_structured_result_payload(
 
         raw = result.get("raw")
         tool_payload, tool_payload_error = _extract_tool_call_payload(raw)
+        tool_payload_invalid = False
         if tool_payload_error is not None:
             return None, tool_payload_error
         if tool_payload is not None:
@@ -219,9 +373,12 @@ def coerce_structured_result_payload(
             )
             if payload is not None or reason != "invalid_schema":
                 return payload, reason
+            tool_payload_invalid = True
         raw_content = _extract_structured_text(getattr(raw, "content", raw))
         if raw_content:
             return _coerce_schema_from_json_like(value=raw_content, schema=schema)
+        if tool_payload_invalid:
+            return None, "invalid_schema"
 
         try:
             return schema.model_validate(result), None
@@ -236,6 +393,34 @@ def coerce_structured_result_payload(
         return _coerce_schema_from_json_like(value=raw_content, schema=schema)
 
     return _coerce_schema_from_json_like(value=result, schema=schema)
+
+
+def _structured_result_debug_snapshot(result: object) -> dict[str, object]:
+    if not isinstance(result, dict):
+        return {
+            "result_type": type(result).__name__,
+            "result_preview": _debug_preview(result),
+        }
+
+    raw = result.get("raw")
+    tool_payload, tool_payload_error = _extract_tool_call_payload(raw)
+    return {
+        "result_type": "dict",
+        "parsed_type": type(result.get("parsed")).__name__ if result.get("parsed") is not None else None,
+        "parsed_preview": _debug_preview(result.get("parsed")),
+        "parsing_error_type": (
+            type(result.get("parsing_error")).__name__
+            if result.get("parsing_error") is not None
+            else None
+        ),
+        "parsing_error_preview": _debug_preview(result.get("parsing_error")),
+        "raw_type": type(raw).__name__ if raw is not None else None,
+        "raw_content_preview": _debug_preview(getattr(raw, "content", None)),
+        "raw_tool_calls_preview": _debug_preview(getattr(raw, "tool_calls", None)),
+        "raw_additional_kwargs_preview": _debug_preview(getattr(raw, "additional_kwargs", None)),
+        "tool_payload_error": tool_payload_error,
+        "tool_payload_preview": _debug_preview(tool_payload),
+    }
 
 
 def _normalize_whitespace(text: str) -> str:
@@ -280,6 +465,10 @@ _DEFAULT_AMBIGUITY_FALSE_REASON = "未命中需澄清信号，可直接继续检
 _DEFAULT_COMPLEXITY_DIRECT_REASON = "未命中复杂问题信号，先按简单问题直接检索。"
 _DEFAULT_COMPLEXITY_MULTI_QUERY_REASON = "目标单一但召回风险较高，按多路查询扩展检索。"
 _DEFAULT_COMPLEXITY_DECOMPOSITION_REASON = "命中比较或多目标信号，按问题拆解处理。"
+_GUARDRAIL_COMPLEXITY_DIRECT_REASON = "命中稳定实体的清单型问题信号，应优先直接检索。"
+_GUARDRAIL_COMPLEXITY_DECOMPOSITION_REASON = (
+    "命中“分别/各自”等并列子问题信号，应拆分检索后再汇总。"
+)
 _REASON_CODES = {
     "missing_entity",
     "missing_scope",
@@ -352,6 +541,59 @@ _COMPARE_KEYWORDS = (
 )
 _MULTI_TARGET_SEPARATORS = (",", "，", " and ", " 与 ", " 和 ", "及")
 _TERM_ALIAS_KEYWORDS = ("别名", "又称", "也叫", "简称", "alias", "aka")
+_TAXONOMY_QUERY_KEYWORDS = (
+    "主要变体",
+    "常见变体",
+    "变体",
+    "类型",
+    "分类",
+    "类别",
+    "列表",
+    "清单",
+)
+_STABLE_OVERVIEW_ASK_MARKERS = ("是什么", "有哪些", "包括什么", "包括哪些")
+_TAXONOMY_ASK_MARKERS = (
+    "有哪些",
+    "包括哪些",
+    "包括什么",
+    "都有哪些",
+    "有哪些类型",
+    "有哪些分类",
+    "是什么",
+)
+_TAXONOMY_DRIFT_KEYWORDS = (
+    "场景",
+    "应用",
+    "优缺点",
+    "性能",
+    "对比",
+    "比较",
+    "区别",
+    "差异",
+    "挑战",
+    "案例",
+)
+_STABLE_OVERVIEW_KEYWORDS = (
+    "核心组件",
+    "核心模块",
+    "组成部分",
+    "主要变体",
+    "关键步骤",
+    "六步完整流程",
+)
+_QUESTION_PREFIX_RE = re.compile(
+    r"^(?:请问|请说明|请比较|请介绍|请概述|请分析|请列出|比较|说明|介绍|概述|分析|列出|关于)\s*"
+)
+_ENTITY_SPLIT_RE = re.compile(r"\s*(?:和|与|及|以及|、|，|,)\s*")
+_MULTI_ENTITY_SIGNAL_KEYWORDS = ("分别", "各自", "各个", "逐一")
+_QUESTION_DIMENSION_KEYWORDS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("职责", ("负责什么", "职责", "核心任务", "作用", "做什么")),
+    ("技术架构", ("技术架构", "采用什么技术架构", "采用什么架构", "模型架构", "架构")),
+    ("挑战", ("挑战", "难点", "瓶颈")),
+    ("适用场景", ("适用场景", "适用范围", "场景")),
+    ("流程", ("流程", "步骤", "过程")),
+)
+_GUARDRAIL_TEXT_NORMALIZE_RE = re.compile(r"[\s\-‐‑‒–—―_]+")
 
 
 def _normalize_reason_code(value: object) -> str:
@@ -366,7 +608,15 @@ def _looks_compare_or_multi_target(query: str) -> bool:
     lowered = query.lower()
     if any(keyword in lowered for keyword in _COMPARE_KEYWORDS):
         return True
-    return any(separator in query for separator in _MULTI_TARGET_SEPARATORS)
+    if any(separator in query for separator in _MULTI_TARGET_SEPARATORS):
+        return True
+    return (
+        re.search(
+            r"[\u4e00-\u9fffA-Za-z0-9\])）]\s*(?:和|与|及|以及)\s*[\u4e00-\u9fffA-Za-z0-9\[（(]",
+            query,
+        )
+        is not None
+    )
 
 
 def _looks_term_alias_query(query: str) -> bool:
@@ -382,6 +632,184 @@ def _looks_term_alias_query(query: str) -> bool:
     if re.search(r"[A-Za-z][A-Za-z0-9+_.-]*\s*[／/]\s*[A-Za-z][A-Za-z0-9+_.-]*", normalized):
         return True
     if any(token in normalized for token in ("（", "）", "(", ")")):
+        return True
+    return False
+
+
+def _looks_taxonomy_query(query: str) -> bool:
+    normalized = _normalize_whitespace(query)
+    if not normalized:
+        return False
+    lowered = normalized.lower()
+    if any(keyword in lowered for keyword in _COMPARE_KEYWORDS):
+        return False
+    if any(token in normalized for token in ("分别", "各自")):
+        return False
+    return any(keyword in normalized for keyword in _TAXONOMY_QUERY_KEYWORDS) and any(
+        marker in normalized for marker in _TAXONOMY_ASK_MARKERS
+    )
+
+
+def _taxonomy_focus(text: str) -> str:
+    focus = _normalize_whitespace(text)
+    focus = re.sub(r"[？?]\s*$", "", focus)
+    focus = re.sub(
+        r"(?:的)?(?:主要|常见)?(?:变体|类型|分类|类别|列表|清单)(?:有哪些|包括哪些|包括什么|都有哪些|是什么)?\s*$",
+        "",
+        focus,
+    )
+    focus = re.sub(r"(?:有哪些|包括哪些|包括什么|都有哪些|是什么)\s*$", "", focus)
+    return _normalize_whitespace(focus)
+
+
+def _is_taxonomy_intent_drift_variant(candidate: str, *, original_query: str) -> bool:
+    if not _looks_taxonomy_query(original_query):
+        return False
+    normalized = _normalize_whitespace(candidate)
+    if not normalized:
+        return True
+    lowered = normalized.lower()
+    return any(keyword in lowered for keyword in _TAXONOMY_DRIFT_KEYWORDS)
+
+
+def _looks_stable_overview_query(query: str) -> bool:
+    normalized = _normalize_whitespace(query)
+    if not normalized:
+        return False
+    if _looks_compare_or_multi_target(normalized):
+        return False
+    return any(keyword in normalized for keyword in _STABLE_OVERVIEW_KEYWORDS) and any(
+        marker in normalized for marker in _STABLE_OVERVIEW_ASK_MARKERS
+    )
+
+
+def _contains_cjk(text: str) -> bool:
+    return re.search(r"[\u3400-\u4dbf\u4e00-\u9fff]", text) is not None
+
+
+def _compact_guardrail_text(text: str) -> str:
+    return _GUARDRAIL_TEXT_NORMALIZE_RE.sub("", _normalize_whitespace(text)).casefold()
+
+
+def _extract_multi_target_entities_for_guardrail(question: str) -> list[str]:
+    normalized = _QUESTION_PREFIX_RE.sub("", _normalize_whitespace(question))
+    if not normalized or not any(
+        keyword in normalized for keyword in _MULTI_ENTITY_SIGNAL_KEYWORDS
+    ):
+        return []
+
+    boundary_candidates = [
+        normalized.find(keyword)
+        for keyword in (
+            "分别",
+            "各自",
+            "各个",
+            "逐一",
+            "负责什么",
+            "采用什么",
+            "面临哪些",
+            "技术架构",
+            "挑战",
+            "难点",
+            "瓶颈",
+            "流程",
+            "步骤",
+            "是什么",
+            "有哪些",
+        )
+        if keyword in normalized
+    ]
+    boundary = min(boundary_candidates) if boundary_candidates else -1
+    head = normalized[:boundary] if boundary > 0 else normalized
+
+    entities: list[str] = []
+    for part in _ENTITY_SPLIT_RE.split(head):
+        entity = _QUESTION_PREFIX_RE.sub("", _normalize_whitespace(part).strip("：:；;，,。？? "))
+        entity = re.sub(r"^(?:对比|比较)\s*", "", entity).strip()
+        entity = re.sub(
+            r"的?(?:职责|技术架构|架构|挑战|难点|瓶颈|适用场景|适用范围|场景|流程|步骤)$",
+            "",
+            entity,
+        ).strip()
+        entity = entity.rstrip("的").strip()
+        if len(entity) < 2 or entity in {"什么", "哪些", "哪个", "哪种"}:
+            continue
+        if entity not in entities:
+            entities.append(entity)
+    return entities if len(entities) >= 2 else []
+
+
+def _extract_required_dimension_keywords_for_guardrail(
+    question: str,
+) -> list[tuple[str, tuple[str, ...]]]:
+    normalized = _normalize_whitespace(question)
+    required: list[tuple[str, tuple[str, ...]]] = []
+    for label, keywords in _QUESTION_DIMENSION_KEYWORDS:
+        if any(keyword in normalized for keyword in keywords):
+            required.append((label, keywords))
+    return required
+
+
+def _normalize_guardrail_reason(original_query: str, candidate_query: str) -> str | None:
+    original = _normalize_whitespace(original_query)
+    candidate = _normalize_whitespace(candidate_query)
+    if not original or not candidate or original == candidate:
+        return None
+    if _looks_taxonomy_query(original):
+        if _contains_cjk(original) and not _contains_cjk(candidate):
+            return "taxonomy_cross_language_drift"
+        original_anchor_terms = [
+            term for term in _TAXONOMY_QUERY_KEYWORDS if term in original
+        ]
+        if original_anchor_terms and not any(term in candidate for term in original_anchor_terms):
+            return "taxonomy_anchor_lost"
+        if any(marker in original for marker in _TAXONOMY_ASK_MARKERS) and not any(
+            marker in candidate for marker in _TAXONOMY_ASK_MARKERS
+        ):
+            return "taxonomy_ask_lost"
+        if _is_taxonomy_intent_drift_variant(candidate, original_query=original):
+            return "taxonomy_intent_drift"
+    if _looks_compare_or_multi_target(original):
+        entities = _extract_multi_target_entities_for_guardrail(original)
+        if len(entities) >= 2:
+            compact_candidate = _compact_guardrail_text(candidate)
+            missing_entities = [
+                entity
+                for entity in entities
+                if _compact_guardrail_text(entity) not in compact_candidate
+            ]
+            if missing_entities:
+                return "multi_target_entity_lost"
+            required_dimensions = _extract_required_dimension_keywords_for_guardrail(original)
+            if required_dimensions:
+                for _, keywords in required_dimensions:
+                    if not any(_compact_guardrail_text(keyword) in compact_candidate for keyword in keywords):
+                        return "multi_target_dimension_lost"
+    if not _looks_stable_overview_query(original):
+        return None
+    if _contains_cjk(original) and not _contains_cjk(candidate):
+        return "stable_overview_cross_language_drift"
+    original_anchor_terms = [
+        term for term in _STABLE_OVERVIEW_KEYWORDS if term in original
+    ]
+    if original_anchor_terms and not any(term in candidate for term in original_anchor_terms):
+        return "stable_overview_anchor_lost"
+    if any(marker in original for marker in _STABLE_OVERVIEW_ASK_MARKERS) and not any(
+        marker in candidate for marker in _STABLE_OVERVIEW_ASK_MARKERS
+    ):
+        return "stable_overview_ask_lost"
+    return None
+
+
+def _looks_explicit_decomposition_query(query: str) -> bool:
+    normalized = _normalize_whitespace(query)
+    if not normalized:
+        return False
+    if any(token in normalized for token in ("分别", "各自")):
+        return True
+    if _looks_compare_or_multi_target(normalized) and any(
+        token in normalized for token in ("比较", "对比", "区别", "差异", "优缺点", "取舍")
+    ):
         return True
     return False
 
@@ -598,6 +1026,13 @@ def _rule_based_multi_query_candidates(query: str) -> list[str]:
         return _normalize_whitespace(focus) or text
 
     lowered = q.lower()
+    if _looks_taxonomy_query(q):
+        focus = _taxonomy_focus(q) or _default_focus(q)
+        return [
+            q,
+            f"{focus} 主要变体 类型 分类",
+            f"{focus} 常见变体 列表",
+        ]
     if _looks_compare_or_multi_target(q):
         focus = _comparison_focus(q)
         return [
@@ -733,6 +1168,8 @@ def _normalize_multi_query_variants(
     for candidate in _dedupe_keep_order(queries):
         if _is_label_stuffed_multi_query(candidate, original_query=original):
             invalid_reason = invalid_reason or "label_stuffing"
+            continue
+        if _is_taxonomy_intent_drift_variant(candidate, original_query=original_query):
             continue
         normalized.append(candidate)
     distinct_from_original = [
@@ -1017,6 +1454,62 @@ class QueryRewriteService:
             latency_ms=latency_ms,
         )
 
+    @staticmethod
+    def _apply_complexity_guardrail(
+        *,
+        query: str,
+        recall_risk: str | None,
+        has_multi_target: bool,
+        is_comparison: bool,
+        strategy: str,
+        confidence: float,
+        risk_flags: list[str] | None,
+        decision_version: str | None,
+        latency_ms: int | None,
+    ) -> ComplexityRouteResult | None:
+        normalized_query = _normalize_whitespace(query)
+        normalized_risk = _normalize_whitespace(recall_risk or "").lower()
+        current_risk_flags = _sanitize_risk_flags(risk_flags or [])
+
+        if strategy != "multi_query":
+            return None
+
+        if (
+            is_comparison
+            or has_multi_target
+            or _looks_explicit_decomposition_query(normalized_query)
+        ):
+            return ComplexityRouteResult(
+                strategy="decomposition",
+                success=True,
+                reasoning=_GUARDRAIL_COMPLEXITY_DECOMPOSITION_REASON,
+                failure_reason=None,
+                confidence=confidence,
+                risk_flags=_sanitize_risk_flags(
+                    [*current_risk_flags, "comparison" if is_comparison else "", "multi_target"]
+                ),
+                decision_version=decision_version or COMPLEXITY_CLASSIFY_DECISION_VERSION,
+                latency_ms=latency_ms,
+            )
+
+        if (
+            normalized_risk != "high"
+            and not _looks_term_alias_query(normalized_query)
+            and _looks_stable_overview_query(normalized_query)
+        ):
+            return ComplexityRouteResult(
+                strategy="direct",
+                success=True,
+                reasoning=_GUARDRAIL_COMPLEXITY_DIRECT_REASON,
+                failure_reason=None,
+                confidence=confidence,
+                risk_flags=_sanitize_risk_flags([*current_risk_flags, "stable_overview"]),
+                decision_version=decision_version or COMPLEXITY_CLASSIFY_DECISION_VERSION,
+                latency_ms=latency_ms,
+            )
+
+        return None
+
     async def _invoke_structured(
         self,
         *,
@@ -1078,6 +1571,27 @@ class QueryRewriteService:
         except asyncio.CancelledError:
             raise
         except Exception as exc:
+            print(
+                json.dumps(
+                    {
+                        "event": "structured_output_init_failed",
+                        "schema": schema.__name__,
+                        "error_type": exc.__class__.__name__,
+                        "error": str(exc),
+                    },
+                    ensure_ascii=False,
+                ),
+                file=sys.stderr,
+                flush=True,
+            )
+            logger.warning(
+                "Structured output 初始化失败",
+                extra={
+                    "schema": schema.__name__,
+                    "error_type": exc.__class__.__name__,
+                    "error": str(exc),
+                },
+            )
             return StructuredCallResult(
                 payload=None,
                 success=False,
@@ -1094,6 +1608,27 @@ class QueryRewriteService:
         except asyncio.CancelledError:
             raise
         except Exception as exc:
+            print(
+                json.dumps(
+                    {
+                        "event": "structured_output_invoke_failed",
+                        "schema": schema.__name__,
+                        "error_type": exc.__class__.__name__,
+                        "error": str(exc),
+                    },
+                    ensure_ascii=False,
+                ),
+                file=sys.stderr,
+                flush=True,
+            )
+            logger.warning(
+                "Structured output 调用失败",
+                extra={
+                    "schema": schema.__name__,
+                    "error_type": exc.__class__.__name__,
+                    "error": str(exc),
+                },
+            )
             return StructuredCallResult(
                 payload=None,
                 success=False,
@@ -1102,6 +1637,28 @@ class QueryRewriteService:
 
         payload, reason = coerce_structured_result_payload(result=result, schema=schema)
         if payload is None:
+            print(
+                json.dumps(
+                    {
+                        "event": "structured_output_parse_failed",
+                        "schema": schema.__name__,
+                        "reason": reason,
+                        **_structured_result_debug_snapshot(result),
+                    },
+                    ensure_ascii=False,
+                    default=str,
+                ),
+                file=sys.stderr,
+                flush=True,
+            )
+            logger.warning(
+                "Structured output 解析失败",
+                extra={
+                    "schema": schema.__name__,
+                    "reason": reason,
+                    **_structured_result_debug_snapshot(result),
+                },
+            )
             return StructuredCallResult(payload=None, success=False, reason=reason)
         return StructuredCallResult(payload=payload, success=True)
 
@@ -1300,6 +1857,42 @@ class QueryRewriteService:
                 if recall_risk not in {"low", "medium", "high"}:
                     recall_risk = "medium"
                 latency_ms = int((time.perf_counter() - start) * 1000)
+                guardrail_reason = _normalize_guardrail_reason(q, candidate_query)
+                payload_meta = {
+                    "aliases": _sanitize_aliases(payload.aliases, limit=8),
+                    "entities": _sanitize_aliases(payload.entities, limit=8),
+                    "time_constraints": _sanitize_aliases(
+                        payload.time_constraints,
+                        limit=6,
+                    ),
+                    "metric_constraints": _sanitize_aliases(
+                        payload.metric_constraints,
+                        limit=6,
+                    ),
+                    "scope_constraints": _sanitize_aliases(
+                        payload.scope_constraints,
+                        limit=6,
+                    ),
+                    "recall_risk": recall_risk,
+                    "drift_risk": bool(payload.drift_risk),
+                    "constraint_preserved": bool(payload.constraint_preserved),
+                    "has_multi_target": bool(payload.has_multi_target),
+                    "is_comparison": bool(payload.is_comparison),
+                    "reasoning": _normalize_whitespace(payload.reasoning or ""),
+                }
+                if guardrail_reason is not None:
+                    return RewriteResult(
+                        query=q,
+                        rewritten=False,
+                        reason="guardrail_preserve_original",
+                        latency_ms=latency_ms,
+                        meta={
+                            **payload_meta,
+                            "source": "guardrail_preserve_original",
+                            "fallback_reason": guardrail_reason,
+                            "guardrail_reason": guardrail_reason,
+                        },
+                    )
                 return RewriteResult(
                     query=candidate_query,
                     rewritten=candidate_query != q,
@@ -1308,26 +1901,7 @@ class QueryRewriteService:
                     meta={
                         "source": "llm_structured",
                         "fallback_reason": "",
-                        "aliases": _sanitize_aliases(payload.aliases, limit=8),
-                        "entities": _sanitize_aliases(payload.entities, limit=8),
-                        "time_constraints": _sanitize_aliases(
-                            payload.time_constraints,
-                            limit=6,
-                        ),
-                        "metric_constraints": _sanitize_aliases(
-                            payload.metric_constraints,
-                            limit=6,
-                        ),
-                        "scope_constraints": _sanitize_aliases(
-                            payload.scope_constraints,
-                            limit=6,
-                        ),
-                        "recall_risk": recall_risk,
-                        "drift_risk": bool(payload.drift_risk),
-                        "constraint_preserved": bool(payload.constraint_preserved),
-                        "has_multi_target": bool(payload.has_multi_target),
-                        "is_comparison": bool(payload.is_comparison),
-                        "reasoning": _normalize_whitespace(payload.reasoning or ""),
+                        **payload_meta,
                     },
                 )
             if not candidate_query:
@@ -1662,6 +2236,19 @@ class QueryRewriteService:
             and structured_result.payload.query.strip()
         ):
             text = _sanitize_query_text(structured_result.payload.query.strip())
+            guardrail_reason = _normalize_guardrail_reason(query, text)
+            if guardrail_reason is not None:
+                return RewriteResult(
+                    query=query,
+                    rewritten=False,
+                    reason="guardrail_preserve_original",
+                    latency_ms=structured_result.latency_ms,
+                    meta={
+                        "source": "guardrail_preserve_original",
+                        "fallback_reason": guardrail_reason,
+                        "guardrail_reason": guardrail_reason,
+                    },
+                )
             return RewriteResult(
                 query=text,
                 rewritten=text != query,
@@ -1792,6 +2379,19 @@ class QueryRewriteService:
             decision_version = _normalize_whitespace(payload.decision_version)
             if not decision_version:
                 decision_version = COMPLEXITY_CLASSIFY_DECISION_VERSION
+            guarded_result = self._apply_complexity_guardrail(
+                query=q,
+                recall_risk=recall_risk,
+                has_multi_target=has_multi_target,
+                is_comparison=is_comparison,
+                strategy=strategy,
+                confidence=confidence,
+                risk_flags=risk_flags,
+                decision_version=decision_version,
+                latency_ms=structured_result.latency_ms,
+            )
+            if guarded_result is not None:
+                return guarded_result
             return ComplexityRouteResult(
                 strategy=strategy,
                 success=True,
@@ -2007,11 +2607,18 @@ class QueryRewriteService:
                 original_query=q,
             )
             latency_ms = int((time.perf_counter() - start) * 1000)
-            if invalid_reason:
+            if invalid_reason and not completed:
                 return QueryListResult(
                     queries=fixed_variants,
                     success=False,
                     reason=f"llm_invalid_multi_query_{invalid_reason}",
+                    latency_ms=latency_ms,
+                )
+            if invalid_reason and completed:
+                return QueryListResult(
+                    queries=fixed_variants,
+                    success=True,
+                    reason="llm_structured_with_rule_completion",
                     latency_ms=latency_ms,
                 )
             return QueryListResult(
@@ -2094,7 +2701,7 @@ class QueryRewriteService:
         max_tokens: int,
         **kwargs: object,
     ) -> StructuredCallResult:
-        """Call prompt and parse structured output via create_agent(response_format=Schema)."""
+        """Call prompt and parse structured output via with_structured_output(..., method="function_calling")."""
         try:
             prompt = self._prompts.render_with_few_shot(prompt_key, **kwargs)
         except KeyError:
@@ -2111,25 +2718,64 @@ class QueryRewriteService:
             )
 
         start_time = time.perf_counter()
-        try:
-            structured = await self._invoke_model_structured(
-                schema=schema,
-                user_prompt=prompt,
-                max_tokens=max_tokens,
+        structured: StructuredCallResult | None = None
+        for attempt in range(1, STRUCTURED_CALL_MAX_ATTEMPTS + 1):
+            try:
+                structured = await self._invoke_model_structured(
+                    schema=schema,
+                    user_prompt=prompt,
+                    max_tokens=max_tokens,
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                latency_ms = int((time.perf_counter() - start_time) * 1000)
+                logger.warning(
+                    "Prompt LLM structured 调用失败",
+                    extra={"prompt_key": prompt_key, "error": str(exc)},
+                )
+                return StructuredCallResult(
+                    payload=None, success=False, reason="error", latency_ms=latency_ms
+                )
+            reason = str(structured.reason or "")
+            if (
+                structured.success
+                or attempt >= STRUCTURED_CALL_MAX_ATTEMPTS
+                or reason not in STRUCTURED_CALL_RETRYABLE_REASONS
+            ):
+                break
+            print(
+                json.dumps(
+                    {
+                        "event": "structured_output_retry",
+                        "prompt_key": prompt_key,
+                        "schema": schema.__name__,
+                        "attempt": attempt + 1,
+                        "retry_reason": reason,
+                    },
+                    ensure_ascii=False,
+                ),
+                file=sys.stderr,
+                flush=True,
             )
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:
-            latency_ms = int((time.perf_counter() - start_time) * 1000)
             logger.warning(
-                "Prompt LLM structured 调用失败",
-                extra={"prompt_key": prompt_key, "error": str(exc)},
-            )
-            return StructuredCallResult(
-                payload=None, success=False, reason="error", latency_ms=latency_ms
+                "Structured output 返回可重试失败，准备重试",
+                extra={
+                    "prompt_key": prompt_key,
+                    "schema": schema.__name__,
+                    "attempt": attempt + 1,
+                    "retry_reason": reason,
+                },
             )
 
         latency_ms = int((time.perf_counter() - start_time) * 1000)
+        if structured is None:
+            return StructuredCallResult(
+                payload=None,
+                success=False,
+                reason="error",
+                latency_ms=latency_ms,
+            )
         if not structured.success or structured.payload is None:
             return StructuredCallResult(
                 payload=None,

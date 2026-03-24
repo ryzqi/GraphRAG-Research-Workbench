@@ -30,6 +30,7 @@ from app.services.query_rewrite_service import (
     COMPLEXITY_CLASSIFY_DECISION_VERSION,
     HYDE_NUM_HYPOTHESES,
     QueryRewriteService,
+    _looks_stable_overview_query,
     build_query_items,
 )
 from app.utils.token_counter import count_tokens_approximately
@@ -118,6 +119,7 @@ def _complexity_cache_key(
     has_multi_target: bool,
     is_comparison: bool,
     decision_version: str,
+    cache_key_version: str,
 ) -> str:
     payload = {
         "query": query.strip(),
@@ -125,6 +127,7 @@ def _complexity_cache_key(
         "has_multi_target": bool(has_multi_target),
         "is_comparison": bool(is_comparison),
         "decision_version": decision_version.strip() or COMPLEXITY_CLASSIFY_DECISION_VERSION,
+        "cache_key_version": cache_key_version.strip() or "v1",
     }
     raw = json.dumps(payload, ensure_ascii=False, sort_keys=True)
     digest = hashlib.sha1(raw.encode("utf-8")).hexdigest()
@@ -453,6 +456,20 @@ def _prepare_quality_score(
     )
 
 
+def _is_direct_stable_overview_query(
+    *,
+    original_query: str,
+    normalized_query: str,
+    strategy: str,
+) -> bool:
+    if strategy != "direct":
+        return False
+    for candidate in (original_query, normalized_query):
+        if isinstance(candidate, str) and _looks_stable_overview_query(candidate):
+            return True
+    return False
+
+
 def build_prepared_query_bundle(
     *,
     original_query: str,
@@ -466,6 +483,11 @@ def build_prepared_query_bundle(
     budget: dict[str, Any],
 ) -> dict[str, Any]:
     constraint_terms = _constraint_terms(normalized_meta)
+    skip_hyde = _is_direct_stable_overview_query(
+        original_query=original_query,
+        normalized_query=normalized_query,
+        strategy=strategy,
+    )
 
     variant_candidates: list[str] = []
     variant_source_by_query: dict[str, str] = {}
@@ -488,7 +510,7 @@ def build_prepared_query_bundle(
         sub_queries=sub_queries,
         sub_query_specs=sub_query_specs,
         variants=_dedupe_string_list(variant_candidates),
-        hyde_docs=hyde_docs or None,
+        hyde_docs=None if skip_hyde else (hyde_docs or None),
     )
 
     scored_rows: list[dict[str, Any]] = []
@@ -532,6 +554,15 @@ def build_prepared_query_bundle(
 
     deduped_rows: list[dict[str, Any]] = []
     dropped_rows: list[dict[str, Any]] = []
+    if skip_hyde and hyde_docs:
+        hyde_query = str(hyde_docs[0] or "").strip()
+        dropped_rows.append(
+            {
+                "kind": "hyde",
+                "query": hyde_query,
+                "reason": "stable_overview_direct_disable_hyde",
+            }
+        )
     seen_keys: set[tuple[str, bool, bool]] = set()
     for row in scored_rows:
         item = _as_dict(row.get("item")) or {}
@@ -653,6 +684,8 @@ def build_prepared_query_bundle(
         quality_signals.append("has_variants")
     if any(str(row.get("kind")) == "hyde" for row in scored_rows):
         quality_signals.append("has_hyde")
+    if skip_hyde and hyde_docs:
+        quality_signals.append("stable_overview_direct_skip_hyde")
     if constraint_terms:
         quality_signals.append("constraint_terms_used")
     if isinstance(normalized_meta, dict):
@@ -1253,7 +1286,11 @@ async def coref_rewrite(state: CorefRewriteInput, settings: Settings) -> dict[st
             "selected_mention": str(meta.get("selected_mention") or ""),
             "resolution_source": str(meta.get("resolution_source") or "none"),
             "reasoning": str(meta.get("reasoning") or ""),
-            "fallback_reason": str(meta.get("fallback_reason") or reason or ""),
+            "fallback_reason": (
+                str(meta.get("fallback_reason") or reason or "")
+                if str(meta.get("resolution_source") or "none") == "fail_open"
+                else None
+            ),
             "needs_clarification_hint": bool(meta.get("needs_clarification")),
             "latency_ms": int((time.perf_counter() - start) * 1000),
             "completed_at": now_iso(),
@@ -1416,7 +1453,12 @@ async def normalize_rewrite(
         if isinstance(result.meta, dict):
             normalized_meta = {**normalized_meta, **result.meta}
         normalization_source = str(normalized_meta.get("source") or "fail_open")
-        fallback_reason = str(normalized_meta.get("fallback_reason") or result.reason or "")
+        if normalization_source == "fail_open":
+            fallback_reason = str(
+                normalized_meta.get("fallback_reason") or result.reason or ""
+            )
+        else:
+            fallback_reason = ""
     except Exception:  # pragma: no cover
         rewritten = query
         rewritten_flag = False
@@ -1431,7 +1473,8 @@ async def normalize_rewrite(
         {
             "rewritten": rewritten_flag,
             "normalization_source": normalization_source,
-            "fallback_reason": fallback_reason,
+            "fallback_reason": fallback_reason or None,
+            "guardrail_reason": str(normalized_meta.get("guardrail_reason") or "") or None,
             "alias_count": len([a for a in normalized_aliases if isinstance(a, str) and a.strip()]),
             "constraint_preserved": bool(normalized_meta.get("constraint_preserved", True)),
             "drift_risk": bool(normalized_meta.get("drift_risk", False)),
@@ -1504,8 +1547,12 @@ async def _classify_query_strategy(
     settings: Settings,
     runtime: Runtime[Any] | None = None,
 ) -> dict[str, Any]:
-    query = state.get("normalized_query")
-    if not isinstance(query, str) or not query.strip():
+    query = _resolve_query_plan_original_query(state)
+    if not query:
+        normalized_query = state.get("normalized_query")
+        if isinstance(normalized_query, str) and normalized_query.strip():
+            query = normalized_query.strip()
+    if not query:
         query = _extract_user_input(state)
 
     strategy = "direct"
@@ -1517,7 +1564,7 @@ async def _classify_query_strategy(
     decision_version = COMPLEXITY_CLASSIFY_DECISION_VERSION
     cache_hit = False
     cache_status = "disabled"
-    cache_key_version = "v1"
+    cache_key_version = "v2"
     normalized_meta = state.get("normalized_meta")
     if not isinstance(normalized_meta, dict):
         normalized_meta = {}
@@ -1531,6 +1578,7 @@ async def _classify_query_strategy(
         has_multi_target=has_multi_target,
         is_comparison=is_comparison,
         decision_version=decision_version,
+        cache_key_version=cache_key_version,
     )
     if cache_enabled:
         if runtime is None or runtime.store is None:
@@ -1792,8 +1840,12 @@ async def generate_variants(
 ) -> Command[str]:
     """Generate query variants (via QueryRewriteService; degrades safely)."""
     start = time.perf_counter()
-    query = state.get("normalized_query")
-    if not isinstance(query, str) or not query.strip():
+    query = _resolve_query_plan_original_query(state)
+    if not query:
+        normalized_query = state.get("normalized_query")
+        if isinstance(normalized_query, str) and normalized_query.strip():
+            query = normalized_query.strip()
+    if not query:
         query = _extract_user_input(state)
     deduped: list[str] = []
     success = False
@@ -1832,9 +1884,30 @@ async def generate_variants(
 async def hyde(state: HydeInput, settings: Settings) -> dict[str, Any]:
     """HyDE node (LLM-driven with safe fallback)."""
     start = time.perf_counter()
-    query = state.get("normalized_query")
-    if not isinstance(query, str) or not query.strip():
-        query = _extract_user_input(state)
+    query = _resolve_query_plan_normalized_query(state)
+    original_query = _resolve_query_plan_original_query(state) or query
+    strategy = _resolve_prepare_strategy(state)
+    if _is_direct_stable_overview_query(
+        original_query=original_query,
+        normalized_query=query,
+        strategy=strategy,
+    ):
+        stage_summaries = _merge_stage_summary(
+            state,
+            "hyde",
+            {
+                "driver": "rule",
+                "success": True,
+                "requested_count": 0,
+                "generated_count": 0,
+                "retry_regenerated": False,
+                "reason": "stable_overview_direct_skip_hyde",
+                "completed_at": now_iso(),
+                "latency_ms": int((time.perf_counter() - start) * 1000),
+            },
+            settings=settings,
+        )
+        return {"hyde_docs": [], "stage_summaries": stage_summaries}
     hyde_docs: list[str] = []
     success = False
     reason: str | None = None
@@ -1898,6 +1971,7 @@ def _build_query_plan_fallback_policy(
     strategy: str,
     normalized_meta: dict[str, Any],
     settings: Settings,
+    stable_overview: bool = False,
 ) -> dict[str, bool]:
     recall_risk = str(normalized_meta.get("recall_risk") or "medium").strip().lower()
     allow_broaden = strategy in {"decomposition", "multi_query"} or recall_risk in {
@@ -1906,7 +1980,7 @@ def _build_query_plan_fallback_policy(
     }
     return {
         "allow_broaden": allow_broaden,
-        "allow_hyde": True,
+        "allow_hyde": not (strategy == "direct" and stable_overview),
         "allow_retry_rewrite": True,
     }
 
@@ -1920,6 +1994,11 @@ def _build_query_plan_finalize_update(
 ) -> dict[str, Any]:
     normalized = _resolve_query_plan_normalized_query(state)
     original_query = _resolve_query_plan_original_query(state) or normalized
+    stable_overview = _is_direct_stable_overview_query(
+        original_query=original_query,
+        normalized_query=normalized,
+        strategy=_resolve_prepare_strategy(state),
+    )
     normalized_meta = _as_dict(state.get("normalized_meta")) or {}
     sub_queries_raw = state.get("sub_queries")
     if not isinstance(sub_queries_raw, list):
@@ -1966,7 +2045,9 @@ def _build_query_plan_finalize_update(
     query_items = (
         bundle.get("query_items") if isinstance(bundle.get("query_items"), list) else []
     )
-    fallback_reason = str(prepare_diagnostics.get("fallback_reason") or "none")
+    fallback_reason = str(prepare_diagnostics.get("fallback_reason") or "").strip()
+    if fallback_reason.lower() == "none":
+        fallback_reason = ""
     dedup_stats = _as_dict(query_bundle.get("dedup_stats")) or {}
     rejection_counts = {
         "fragment_rejected": 0,
@@ -1991,6 +2072,7 @@ def _build_query_plan_finalize_update(
                 strategy=strategy,
                 normalized_meta=normalized_meta,
                 settings=settings,
+                stable_overview=stable_overview,
             ),
         },
         settings=settings,
@@ -2020,7 +2102,7 @@ def _build_query_plan_finalize_update(
             "candidate_count": len(message_plan.get("candidates") or []),
             "selected_count": len(query_items),
             "rejection_counts": query_plan_diagnostics.get("rejection_counts") or {},
-            "fallback_reason": fallback_reason,
+            "fallback_reason": fallback_reason or None,
             "kind_breakdown": query_bundle.get("kind_breakdown") or {},
             "latency_ms": latency_ms,
             "completed_at": now_iso(),

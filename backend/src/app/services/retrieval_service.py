@@ -7,11 +7,12 @@ import hashlib
 import json
 import logging
 import math
+import re
 import time
 import uuid
 from dataclasses import dataclass
 from pathlib import PurePosixPath, PureWindowsPath
-from typing import Literal, cast
+from typing import Any, Literal, cast
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -40,6 +41,8 @@ from app.services.query_rewrite_service import (
 logger = logging.getLogger(__name__)
 QUERY_FANOUT_CONCURRENCY = 3
 DEDUP_EMBEDDING_SIMILARITY_THRESHOLD = 0.95
+DEFAULT_RESULT_EXCERPT_MAX_CHARS = 500
+EXPANDED_RESULT_EXCERPT_MAX_CHARS = 4000
 
 
 @dataclass(slots=True)
@@ -54,6 +57,9 @@ class RetrievedChunk:
     chunk_role: str | None
     parent_chunk_id: str | None
     child_seq: int | None
+    chunk_index: int | None = None
+    heading_path: str | None = None
+    global_chunk_order: int | None = None
 
 
 @dataclass(slots=True)
@@ -142,6 +148,7 @@ class RetrievalService:
         self._settings = get_settings()
         self._last_stats: RetrievalStats | None = None
         self._last_layer_draft: RetrievalLayerDraft | None = None
+        self._db_lock = asyncio.Lock()
 
     @property
     def last_stats(self) -> RetrievalStats | None:
@@ -184,6 +191,12 @@ class RetrievalService:
         if timeout_seconds <= 0:
             raise asyncio.TimeoutError()
         return await asyncio.wait_for(coro, timeout=timeout_seconds)
+
+    async def _db_execute(self, stmt):
+        if self._db is None:
+            raise RuntimeError("db_not_configured")
+        async with self._db_lock:
+            return await self._db.execute(stmt)
 
     @staticmethod
     def _empty_layer_draft(reason: str | None = None) -> RetrievalLayerDraft:
@@ -260,7 +273,7 @@ class RetrievalService:
         stmt = select(SourceMaterial.id, SourceMaterial.title).where(
             SourceMaterial.id.in_(list(material_ids))
         )
-        result = await self._db.execute(stmt)
+        result = await self._db_execute(stmt)
         title_by_id: dict[uuid.UUID, str] = {}
         for row in result.all():
             material_id = row[0]
@@ -297,27 +310,359 @@ class RetrievalService:
         for c in chunks:
             missing_content = not c.content
             missing_locator = c.locator is None or c.locator == {}
-            if missing_content or missing_locator:
+            missing_position = (
+                c.chunk_index is None
+                or c.global_chunk_order is None
+                or c.heading_path is None
+            )
+            if missing_content or missing_locator or missing_position:
                 missing.add(c.id)
         if not missing:
             return
 
         stmt = select(
-            DocumentChunk.id, DocumentChunk.raw_text, DocumentChunk.locator
+            DocumentChunk.id,
+            DocumentChunk.raw_text,
+            DocumentChunk.locator,
+            DocumentChunk.chunk_index,
+            DocumentChunk.heading_path,
+            DocumentChunk.global_chunk_order,
         ).where(DocumentChunk.id.in_(list(missing)))
-        result = await self._db.execute(stmt)
-        by_id: dict[uuid.UUID, tuple[str, dict | None]] = {
-            row.id: (row.raw_text, row.locator) for row in result.all()
+        result = await self._db_execute(stmt)
+        by_id: dict[
+            uuid.UUID,
+            tuple[str, dict | None, int | None, str | None, int | None],
+        ] = {
+            row.id: (
+                row.raw_text,
+                row.locator,
+                row.chunk_index,
+                row.heading_path,
+                row.global_chunk_order,
+            )
+            for row in result.all()
         }
         for c in chunks:
             got = by_id.get(c.id)
             if not got:
                 continue
-            text, locator = got
+            text, locator, chunk_index, heading_path, global_chunk_order = got
             if not c.content:
                 c.content = text or ""
             if (c.locator is None or c.locator == {}) and locator:
                 c.locator = locator
+            if c.chunk_index is None and isinstance(chunk_index, int):
+                c.chunk_index = chunk_index
+            if c.heading_path is None and isinstance(heading_path, str):
+                c.heading_path = heading_path
+            if c.global_chunk_order is None and isinstance(global_chunk_order, int):
+                c.global_chunk_order = global_chunk_order
+
+    @staticmethod
+    def _first_markdown_heading_match(text: str) -> re.Match[str] | None:
+        if not isinstance(text, str) or not text.strip():
+            return None
+        return re.search(r"(?m)^(#{2,6})\s+(.+?)\s*$", text)
+
+    @classmethod
+    def _first_markdown_heading(cls, text: str) -> tuple[int, str] | None:
+        match = cls._first_markdown_heading_match(text)
+        if match is None:
+            return None
+        return len(match.group(1)), match.group(2).strip()
+
+    @staticmethod
+    def _is_single_main_query(query_items: list[QueryItem]) -> bool:
+        if len(query_items) != 1:
+            return False
+        item = query_items[0]
+        if not isinstance(item, dict):
+            return False
+        kind = str(item.get("kind") or "").strip().lower()
+        query = str(item.get("query") or "").strip()
+        return kind == "main" and bool(query)
+
+    async def _expand_direct_section_neighbors(
+        self,
+        results: list[RetrievalResult],
+        *,
+        query_items: list[QueryItem],
+        top_n: int,
+        timeout_seconds: float | None = None,
+        hits_by_key: dict[tuple[str, str, str], list[QueryHitSource]] | None = None,
+    ) -> list[RetrievalResult]:
+        if (
+            not results
+            or self._db is None
+            or not self._is_single_main_query(query_items)
+        ):
+            return results
+
+        seed = results[0].chunk
+        if (
+            seed.global_chunk_order is None
+            or seed.chunk_role == "child"
+            or not isinstance(seed.content, str)
+            or not seed.content.strip()
+        ):
+            return results
+
+        heading = self._first_markdown_heading(seed.content)
+        if heading is None:
+            return results
+        seed_level, _ = heading
+        boundary_level = max(2, seed_level - 1)
+        max_scan_rows = max(8, min(max(top_n * 2, top_n + 4), 24))
+
+        stmt = (
+            select(
+                DocumentChunk.id,
+                DocumentChunk.kb_id,
+                DocumentChunk.material_id,
+                DocumentChunk.raw_text,
+                DocumentChunk.locator,
+                DocumentChunk.chunk_index,
+                DocumentChunk.heading_path,
+                DocumentChunk.global_chunk_order,
+            )
+            .where(
+                DocumentChunk.kb_id == seed.kb_id,
+                DocumentChunk.material_id == seed.material_id,
+                DocumentChunk.global_chunk_order >= int(seed.global_chunk_order),
+                DocumentChunk.global_chunk_order
+                <= int(seed.global_chunk_order) + max_scan_rows,
+            )
+            .order_by(DocumentChunk.global_chunk_order.asc())
+        )
+
+        rows = await self._run_with_timeout(self._db_execute(stmt), timeout_seconds)
+        existing_ids = {row.chunk.id for row in results}
+        expanded = list(results)
+        after_seed = False
+        section_parts = [seed.content.strip()]
+        expansion_limit = max(top_n, 6)
+
+        for row in rows.all():
+            row_order = row.global_chunk_order
+            if not isinstance(row_order, int):
+                continue
+            if row_order == seed.global_chunk_order:
+                after_seed = True
+                continue
+            if not after_seed:
+                continue
+
+            text = row.raw_text or ""
+            row_heading = self._first_markdown_heading(text)
+            if row_heading is not None and row_heading[0] <= boundary_level:
+                break
+            if not text.strip():
+                continue
+            section_parts.append(text.strip())
+            if row.id in existing_ids:
+                continue
+            if len(expanded) >= expansion_limit:
+                continue
+
+            chunk = RetrievedChunk(
+                id=row.id,
+                kb_id=row.kb_id,
+                material_id=row.material_id,
+                content=text,
+                context=None,
+                locator=row.locator,
+                metadata=None,
+                chunk_role="default",
+                parent_chunk_id=None,
+                child_seq=None,
+                chunk_index=row.chunk_index if isinstance(row.chunk_index, int) else None,
+                heading_path=row.heading_path if isinstance(row.heading_path, str) else None,
+                global_chunk_order=row_order,
+            )
+            expanded.append(
+                RetrievalResult(
+                    chunk=chunk,
+                    score=max(results[0].score - 0.001 * len(expanded), 0.0),
+                    context_text=text,
+                )
+            )
+            existing_ids.add(row.id)
+            if isinstance(hits_by_key, dict):
+                hits_by_key.setdefault(self._candidate_key(chunk), [])
+
+        if len(section_parts) > 1:
+            merged_section = "\n\n".join(part for part in section_parts if part)
+            expanded[0].context_text = merged_section
+
+        return expanded
+
+    async def _populate_result_context_from_heading_path(
+        self,
+        result: RetrievalResult,
+        *,
+        timeout_seconds: float | None = None,
+        scan_radius: int = 8,
+    ) -> RetrievalResult:
+        if self._db is None:
+            return result
+
+        seed = result.chunk
+        seed_content = (seed.content or "").strip()
+        existing_context = (result.context_text or "").strip()
+        heading_path = str(seed.heading_path or "").strip()
+        if (
+            not seed_content
+            or seed.global_chunk_order is None
+            or seed.chunk_role == "child"
+        ):
+            return result
+        if existing_context and len(existing_context) > len(seed_content):
+            return result
+
+        if not heading_path:
+            radius = max(int(scan_radius), 1)
+            stmt = (
+                select(
+                    DocumentChunk.id,
+                    DocumentChunk.kb_id,
+                    DocumentChunk.material_id,
+                    DocumentChunk.raw_text,
+                    DocumentChunk.locator,
+                    DocumentChunk.chunk_index,
+                    DocumentChunk.heading_path,
+                    DocumentChunk.global_chunk_order,
+                )
+                .where(
+                    DocumentChunk.kb_id == seed.kb_id,
+                    DocumentChunk.material_id == seed.material_id,
+                    DocumentChunk.global_chunk_order >= int(seed.global_chunk_order) - radius,
+                    DocumentChunk.global_chunk_order <= int(seed.global_chunk_order),
+                )
+                .order_by(DocumentChunk.global_chunk_order.asc())
+            )
+
+            rows = await self._run_with_timeout(self._db_execute(stmt), timeout_seconds)
+            ordered_rows = [
+                row
+                for row in rows.all()
+                if isinstance(getattr(row, "global_chunk_order", None), int)
+            ]
+            if not ordered_rows:
+                return result
+
+            seed_index = next(
+                (
+                    index
+                    for index, row in enumerate(ordered_rows)
+                    if int(row.global_chunk_order) == int(seed.global_chunk_order)
+                ),
+                None,
+            )
+            if seed_index is None or seed_index <= 0:
+                return result
+
+            start_index: int | None = None
+            start_match: re.Match[str] | None = None
+            for index in range(seed_index - 1, -1, -1):
+                match = self._first_markdown_heading_match(
+                    str(getattr(ordered_rows[index], "raw_text", "") or "")
+                )
+                if match is not None:
+                    start_index = index
+                    start_match = match
+                    break
+            if start_index is None or start_match is None:
+                return result
+
+            section_parts: list[str] = []
+            for index in range(start_index, seed_index + 1):
+                text = str(getattr(ordered_rows[index], "raw_text", "") or "")
+                if index == start_index and start_match.start() > 0:
+                    text = text[start_match.start() :]
+                if index == seed_index:
+                    end_match = self._first_markdown_heading_match(text)
+                    if end_match is not None and end_match.start() > 0:
+                        text = text[: end_match.start()]
+                text = text.strip()
+                if text:
+                    section_parts.append(text)
+
+            merged_section = "\n\n".join(section_parts).strip()
+            if (
+                not merged_section
+                or merged_section == seed_content
+                or seed_content not in merged_section
+            ):
+                return result
+
+            result.context_text = merged_section
+            return result
+
+        radius = max(int(scan_radius), 1)
+        stmt = (
+            select(
+                DocumentChunk.id,
+                DocumentChunk.kb_id,
+                DocumentChunk.material_id,
+                DocumentChunk.raw_text,
+                DocumentChunk.locator,
+                DocumentChunk.chunk_index,
+                DocumentChunk.heading_path,
+                DocumentChunk.global_chunk_order,
+            )
+            .where(
+                DocumentChunk.kb_id == seed.kb_id,
+                DocumentChunk.material_id == seed.material_id,
+                DocumentChunk.global_chunk_order >= int(seed.global_chunk_order) - radius,
+                DocumentChunk.global_chunk_order <= int(seed.global_chunk_order) + radius,
+            )
+            .order_by(DocumentChunk.global_chunk_order.asc())
+        )
+
+        rows = await self._run_with_timeout(self._db_execute(stmt), timeout_seconds)
+        ordered_rows = [
+            row
+            for row in rows.all()
+            if isinstance(getattr(row, "global_chunk_order", None), int)
+        ]
+        if not ordered_rows:
+            return result
+
+        seed_index = next(
+            (
+                index
+                for index, row in enumerate(ordered_rows)
+                if int(row.global_chunk_order) == int(seed.global_chunk_order)
+            ),
+            None,
+        )
+        if seed_index is None:
+            return result
+
+        def _same_heading_path(row: Any) -> bool:
+            return str(getattr(row, "heading_path", "") or "").strip() == heading_path
+
+        start = seed_index
+        while start > 0 and _same_heading_path(ordered_rows[start - 1]):
+            start -= 1
+        end = seed_index
+        while end + 1 < len(ordered_rows) and _same_heading_path(ordered_rows[end + 1]):
+            end += 1
+
+        section_parts = [
+            str(getattr(row, "raw_text", "") or "").strip()
+            for row in ordered_rows[start : end + 1]
+            if str(getattr(row, "raw_text", "") or "").strip()
+        ]
+        if not section_parts:
+            return result
+
+        merged_section = "\n\n".join(section_parts).strip()
+        if not merged_section or merged_section == seed_content:
+            return result
+
+        result.context_text = merged_section
+        return result
 
     def _cache_key(
         self, query: str, kb_ids: list[uuid.UUID], top_k: int, strategy: dict
@@ -472,13 +817,33 @@ class RetrievalService:
 
     @staticmethod
     def _candidate_text_for_similarity(result: RetrievalResult) -> str:
-        text = (result.chunk.content or "").strip()
-        if not text:
-            text = (result.context_text or "").strip()
+        text = RetrievalService._result_text(result)
         if not text:
             return ""
         # Keep cost bounded while preserving enough semantics for similarity scoring.
         return text[:1200]
+
+    @staticmethod
+    def _result_text(result: RetrievalResult) -> str:
+        context_text = (result.context_text or "").strip()
+        if context_text:
+            return context_text
+        return (result.chunk.content or "").strip()
+
+    @staticmethod
+    def _result_excerpt_limit(result: RetrievalResult) -> int:
+        context_text = (result.context_text or "").strip()
+        chunk_text = (result.chunk.content or "").strip()
+        if context_text and len(context_text) > len(chunk_text):
+            return EXPANDED_RESULT_EXCERPT_MAX_CHARS
+        return DEFAULT_RESULT_EXCERPT_MAX_CHARS
+
+    @classmethod
+    def _result_excerpt(cls, result: RetrievalResult) -> str:
+        text = cls._result_text(result)
+        if not text:
+            return ""
+        return text[: cls._result_excerpt_limit(result)]
 
     @classmethod
     def _candidate_text_for_dedup(cls, result: RetrievalResult) -> str:
@@ -1085,6 +1450,108 @@ class RetrievalService:
             hyde_used_count = 0
             hyde_reason = "not_hyde"
             local_optional_embedding_skips: list[str] = []
+            src = self._query_hit_source(item)
+            local_chunk_by_key: dict[tuple[str, str, str], RetrievedChunk] = {}
+            local_hits_by_key: dict[tuple[str, str, str], list[QueryHitSource]] = {}
+
+            def _build_query_result(
+                retrieval_hits: list[object],
+                *,
+                hit_count: int,
+            ) -> tuple[
+                int,
+                int,
+                dict[tuple[str, str, str], RetrievedChunk],
+                dict[tuple[str, str, str], list[QueryHitSource]],
+                list[tuple[str, str, str]],
+                int,
+                int,
+                str,
+                list[str],
+            ]:
+                ranked_keys: list[tuple[str, str, str]] = []
+                for hit in retrieval_hits:
+                    chunk = self._build_chunk_from_hit(hit)
+                    if not chunk:
+                        continue
+                    key = self._candidate_key(chunk)
+                    local_chunk_by_key.setdefault(key, chunk)
+                    local_hits_by_key.setdefault(key, [])
+                    self._add_hit_source(local_hits_by_key[key], src)
+                    ranked_keys.append(key)
+
+                if ranked_keys:
+                    ranked_keys = list(dict.fromkeys(ranked_keys))
+
+                return (
+                    index,
+                    hit_count,
+                    local_chunk_by_key,
+                    local_hits_by_key,
+                    ranked_keys,
+                    hyde_requested_count,
+                    hyde_used_count,
+                    hyde_reason,
+                    local_optional_embedding_skips,
+                )
+
+            async def _safe_sparse(
+                *,
+                kb_id_values: list[str],
+                collection_name: str | None = None,
+            ) -> list[dict]:
+                if not kb_id_values:
+                    return []
+                try:
+                    timeout_value = self._effective_timeout(
+                        deadline=deadline, per_call_timeout=None
+                    )
+                    return await self._run_with_timeout(
+                        self._milvus.sparse_search(
+                            query=q,
+                            kb_ids=kb_id_values,
+                            top_k=per_query_top_k,
+                            extra_filter_expr=extra_filter_expr,
+                            collection_name=collection_name,
+                        ),
+                        timeout_value,
+                    )
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        "Sparse retrieval timed out.", extra={"query": q[:50]}
+                    )
+                    return []
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    logger.warning(
+                        "Sparse retrieval failed.", extra={"error": str(exc)}
+                    )
+                    return []
+
+            async def _run_sparse_fallback(reason: str) -> tuple[
+                int,
+                int,
+                dict[tuple[str, str, str], RetrievedChunk],
+                dict[tuple[str, str, str], list[QueryHitSource]],
+                list[tuple[str, str, str]],
+                int,
+                int,
+                str,
+                list[str],
+            ]:
+                local_optional_embedding_skips.append(f"{reason}->sparse_only")
+                sparse_hits: list[dict] = []
+                sparse_hits.extend(await _safe_sparse(kb_id_values=default_kb_id_strs))
+                if multiscale_kb_id_strs:
+                    for collection_name in multiscale_collections:
+                        sparse_hits.extend(
+                            await _safe_sparse(
+                                kb_id_values=multiscale_kb_id_strs,
+                                collection_name=collection_name,
+                            )
+                        )
+                return _build_query_result(sparse_hits, hit_count=len(sparse_hits))
             try:
                 remaining = self._remaining_seconds(deadline)
                 if remaining is not None and remaining <= 0:
@@ -1099,47 +1566,28 @@ class RetrievalService:
                     timeout_seconds=remaining,
                 )
             except asyncio.TimeoutError:
-                if deadline is not None:
-                    raise
                 logger.warning(
-                    "Embedding request timed out; skip hybrid retrieval for this query.",
+                    "Embedding request timed out; fallback to sparse retrieval for this query.",
                     extra={"query": q[:50]},
                 )
-                return (
-                    index,
-                    0,
-                    {},
-                    {},
-                    [],
-                    hyde_requested_count,
-                    hyde_used_count,
-                    hyde_reason,
-                    local_optional_embedding_skips,
+                return await _run_sparse_fallback(
+                    self._embedding_failure_reason(
+                        asyncio.TimeoutError(),
+                        fallback_stage=self._query_embedding_stage(item),
+                    )
                 )
             except asyncio.CancelledError:
                 raise
             except Exception as exc:  # pragma: no cover
                 logger.warning(
-                    "Embedding request failed; skip hybrid retrieval for this query.",
+                    "Embedding request failed; fallback to sparse retrieval for this query.",
                     extra={"error": str(exc)},
                 )
-                if self._query_embedding_stage(item) == "hyde":
-                    local_optional_embedding_skips.append(
-                        self._embedding_failure_reason(
-                            exc,
-                            fallback_stage=self._query_embedding_stage(item),
-                        )
+                return await _run_sparse_fallback(
+                    self._embedding_failure_reason(
+                        exc,
+                        fallback_stage=self._query_embedding_stage(item),
                     )
-                return (
-                    index,
-                    0,
-                    {},
-                    {},
-                    [],
-                    hyde_requested_count,
-                    hyde_used_count,
-                    hyde_reason,
-                    local_optional_embedding_skips,
                 )
 
             async def _safe_hybrid(
@@ -1192,48 +1640,7 @@ class RetrievalService:
                             collection_name=collection_name,
                         )
                     )
-
-            src = self._query_hit_source(item)
-            local_chunk_by_key: dict[tuple[str, str, str], RetrievedChunk] = {}
-            local_hits_by_key: dict[tuple[str, str, str], list[QueryHitSource]] = {}
-            hybrid_keys: list[tuple[str, str, str]] = []
-
-            for hit in hybrid_hits:
-                chunk = self._build_chunk_from_hit(hit)
-                if not chunk:
-                    continue
-                key = self._candidate_key(chunk)
-                local_chunk_by_key.setdefault(key, chunk)
-                local_hits_by_key.setdefault(key, [])
-                self._add_hit_source(local_hits_by_key[key], src)
-                hybrid_keys.append(key)
-
-            if hybrid_keys:
-                hybrid_keys = list(dict.fromkeys(hybrid_keys))
-            if not hybrid_keys:
-                return (
-                    index,
-                    len(hybrid_hits),
-                    local_chunk_by_key,
-                    local_hits_by_key,
-                    [],
-                    hyde_requested_count,
-                    hyde_used_count,
-                    hyde_reason,
-                    local_optional_embedding_skips,
-                )
-
-            return (
-                index,
-                len(hybrid_hits),
-                local_chunk_by_key,
-                local_hits_by_key,
-                hybrid_keys,
-                hyde_requested_count,
-                hyde_used_count,
-                hyde_reason,
-                local_optional_embedding_skips,
-            )
+            return _build_query_result(hybrid_hits, hit_count=len(hybrid_hits))
 
         semaphore = asyncio.Semaphore(QUERY_FANOUT_CONCURRENCY)
 
@@ -1344,6 +1751,20 @@ class RetrievalService:
             await self._run_with_timeout(
                 self._hydrate_chunks_from_postgres([r.chunk for r in rrf_results]),
                 timeout_value,
+            )
+        except asyncio.TimeoutError:
+            return _timeout_draft()
+
+        try:
+            timeout_value = self._effective_timeout(
+                deadline=deadline, per_call_timeout=None
+            )
+            rrf_results = await self._expand_direct_section_neighbors(
+                rrf_results,
+                query_items=query_items,
+                top_n=top_n,
+                timeout_seconds=timeout_value,
+                hits_by_key=hits_by_key,
             )
         except asyncio.TimeoutError:
             return _timeout_draft()
@@ -1476,6 +1897,27 @@ class RetrievalService:
         else:
             final_results = candidates_for_rerank[:top_n]
 
+        if final_results:
+            try:
+                for result in final_results:
+                    timeout_value = self._effective_timeout(
+                        deadline=deadline,
+                        per_call_timeout=timeout_seconds,
+                    )
+                    await self._populate_result_context_from_heading_path(
+                        result,
+                        timeout_seconds=timeout_value,
+                    )
+            except asyncio.TimeoutError:
+                logger.warning("Heading-path context enrichment timed out; keep original excerpts")
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.warning(
+                    "Heading-path context enrichment failed; keep original excerpts",
+                    extra={"error": str(exc)},
+                )
+
         # Build JSON-friendly drafts for agentic state / auditing.
         retrieval_candidates: list[dict] = []
         for r in rrf_results:
@@ -1487,7 +1929,7 @@ class RetrievalService:
                     "chunk_id": str(r.chunk.id),
                     "score": float(r.score),
                     "stage": "rrf",
-                    "excerpt": (r.chunk.content or "")[:500],
+                    "excerpt": self._result_excerpt(r),
                     "locator": r.chunk.locator,
                     "metadata": r.chunk.metadata,
                     "chunk_role": r.chunk.chunk_role,
@@ -1506,7 +1948,7 @@ class RetrievalService:
                     "chunk_id": str(r.chunk.id),
                     "score": float(r.score),
                     "stage": "rerank" if rerank_applied else "rrf",
-                    "excerpt": (r.chunk.content or "")[:500],
+                    "excerpt": self._result_excerpt(r),
                     "locator": r.chunk.locator,
                     "metadata": r.chunk.metadata,
                     "chunk_role": r.chunk.chunk_role,
@@ -1525,7 +1967,7 @@ class RetrievalService:
                     "material_id": str(r.chunk.material_id),
                     "chunk_id": str(r.chunk.id),
                     "locator": r.chunk.locator,
-                    "excerpt": (r.chunk.content or "")[:500],
+                    "excerpt": self._result_excerpt(r),
                     "score": float(r.score),
                     "hits": hits_by_key.get(key, []),
                 }
@@ -1606,7 +2048,7 @@ class RetrievalService:
             rerank_results = await self._run_with_timeout(
                 reranker.rerank(
                     query=query,
-                    documents=[r.chunk.content for r in results],
+                    documents=[self._result_text(r) for r in results],
                     top_n=min(top_k, len(results)),
                     timeout_seconds=timeout_value,
                 ),
@@ -1630,7 +2072,11 @@ class RetrievalService:
         for item in rerank_results:
             if 0 <= item.index < len(results):
                 ordered.append(
-                    RetrievalResult(chunk=results[item.index].chunk, score=item.score)
+                    RetrievalResult(
+                        chunk=results[item.index].chunk,
+                        score=item.score,
+                        context_text=results[item.index].context_text,
+                    )
                 )
                 used.add(item.index)
 
@@ -1652,7 +2098,7 @@ class RetrievalService:
             KBConfigSnapshot.kb_id.in_(kb_ids),
             KBConfigSnapshot.is_active.is_(True),
         )
-        snapshot_rows = await self._db.execute(snapshot_stmt)
+        snapshot_rows = await self._db_execute(snapshot_stmt)
         for kb_id, raw in snapshot_rows.all():
             try:
                 configs[kb_id] = IndexConfig.model_validate(raw or {})
@@ -1667,7 +2113,7 @@ class RetrievalService:
             fallback_stmt = select(KnowledgeBase.id, KnowledgeBase.index_config).where(
                 KnowledgeBase.id.in_(missing_kb_ids)
             )
-            fallback_rows = await self._db.execute(fallback_stmt)
+            fallback_rows = await self._db_execute(fallback_stmt)
             for kb_id, raw in fallback_rows.all():
                 try:
                     configs[kb_id] = IndexConfig.model_validate(raw or {})
@@ -1719,6 +2165,9 @@ class RetrievalService:
                 chunk_role=getattr(hit, "chunk_role", None),
                 parent_chunk_id=getattr(hit, "parent_chunk_id", None),
                 child_seq=getattr(hit, "child_seq", None),
+                chunk_index=getattr(hit, "chunk_index", None),
+                heading_path=getattr(hit, "heading_path", None),
+                global_chunk_order=getattr(hit, "global_chunk_order", None),
             )
         except Exception:
             return None
@@ -1742,6 +2191,9 @@ class RetrievalService:
                 chunk_role=record.get("chunk_role"),
                 parent_chunk_id=record.get("parent_chunk_id"),
                 child_seq=record.get("child_seq"),
+                chunk_index=record.get("chunk_index"),
+                heading_path=record.get("heading_path"),
+                global_chunk_order=record.get("global_chunk_order"),
             )
         except Exception:
             return None
@@ -1757,7 +2209,8 @@ class RetrievalService:
     ) -> list[RetrievalResult]:
         if not results or not kb_configs:
             for r in results:
-                r.context_text = r.chunk.content
+                if not r.context_text:
+                    r.context_text = r.chunk.content
             return results
         if timeout_seconds is not None and float(timeout_seconds) <= 0:
             raise asyncio.TimeoutError()
@@ -1773,7 +2226,8 @@ class RetrievalService:
 
             if cfg.chunking.general_strategy != ChunkingStrategy.PARENT_CHILD:
                 for r in kb_results:
-                    r.context_text = r.chunk.content
+                    if not r.context_text:
+                        r.context_text = r.chunk.content
                 continue
 
             child_results = [
@@ -1783,7 +2237,8 @@ class RetrievalService:
             ]
             if not child_results:
                 for r in kb_results:
-                    r.context_text = r.chunk.content
+                    if not r.context_text:
+                        r.context_text = r.chunk.content
                 continue
 
             parent_child_kb_ids.add(kb_id)
@@ -2146,7 +2601,7 @@ class RetrievalService:
                             "material_id": str(r.chunk.material_id),
                             "chunk_id": str(r.chunk.id),
                             "locator": r.chunk.locator,
-                            "excerpt": (r.chunk.content or "")[:500],
+                            "excerpt": self._result_excerpt(r),
                             "score": float(r.score),
                             "hits": [],
                         }
