@@ -249,4 +249,34 @@ describe('KbChatFlowPanel', () => {
     expect(html).toContain('第一行结论');
     expect(html).toContain('overflow-wrap:anywhere');
   });
+
+  it('renders the semantic cache synthetic execution instead of the empty timeline state', () => {
+    const html = renderToStaticMarkup(
+      createElement(KbChatFlowPanel, {
+        schema: MINIMAL_SCHEMA,
+        defaultExpandedExecutionId: 'semantic-cache:run-1',
+        traceExecutions: [
+          {
+            execution_id: 'semantic-cache:run-1',
+            node_name: 'semantic_cache',
+            node_label: '',
+            status: 'completed',
+            started_at: '2026-03-24T10:00:01.000Z',
+            updated_at: '2026-03-24T10:00:02.000Z',
+            output_items: [
+              { key: 'score', label: '命中分数', value: '0.91' },
+              { key: 'threshold', label: '阈值', value: '0.88' },
+              { key: 'ttl_seconds', label: 'TTL', value: '86400' },
+            ],
+          },
+        ],
+      })
+    );
+
+    expect(html).not.toContain('等待节点开始执行');
+    expect(html).toContain('语义缓存');
+    expect(html).toContain('命中分数');
+    expect(html).toContain('阈值');
+    expect(html).toContain('TTL');
+  });
 });

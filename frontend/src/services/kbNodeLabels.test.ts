@@ -28,4 +28,8 @@ describe('kbNodeLabels', () => {
     expect(resolveKbNodeLabel('answer_review_dispatch', null)).toBe('审查分发');
     expect(resolveKbNodeLabel('preprocess_subgraph', null)).toBe('预处理子图');
   });
+
+  it('resolves the semantic cache synthetic node label from the shared catalog', () => {
+    expect(resolveKbNodeLabel('semantic_cache', null)).toBe('语义缓存');
+  });
 });

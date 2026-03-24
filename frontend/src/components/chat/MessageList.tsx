@@ -157,6 +157,16 @@ const MessageRow = memo(
       content,
       pendingClarification: message.pendingClarification,
     });
+    const cacheHitTypeLabel =
+      message.responseSource === 'cached' && message.cacheMeta?.hit_type === 'strong_hit'
+        ? '强命中'
+        : null;
+    const cacheScoreThresholdText =
+      message.responseSource === 'cached' &&
+      typeof message.cacheMeta?.score === 'number' &&
+      typeof message.cacheMeta?.threshold === 'number'
+        ? `${message.cacheMeta.score.toFixed(2)} / ${message.cacheMeta.threshold.toFixed(2)}`
+        : null;
 
     return (
       <Box
@@ -192,6 +202,16 @@ const MessageRow = memo(
                 {message.responseSource === 'cached' && (
                   <Chip size='small' variant='outlined' color='secondary' label='语义缓存命中' />
                 )}
+                {cacheHitTypeLabel ? (
+                  <Typography variant='caption' color='text.secondary'>
+                    {cacheHitTypeLabel}
+                  </Typography>
+                ) : null}
+                {cacheScoreThresholdText ? (
+                  <Typography variant='caption' color='text.secondary'>
+                    {cacheScoreThresholdText}
+                  </Typography>
+                ) : null}
                 {message.responseSource === 'cached' && message.cacheMeta?.ttl_seconds ? (
                   <Typography variant='caption' color='text.secondary'>
                     缓存剩余约 {Math.max(1, Math.round(message.cacheMeta.ttl_seconds / 3600))} 小时

@@ -54,6 +54,7 @@ from app.schemas.ingestion_batches import (
     ManifestUrlEntry,
 )
 from app.services.ingestion_contract import INGESTION_ERROR_SPECS, ingestion_error
+from app.services.knowledge_base_service import touch_kb_updated_at
 
 MAX_MANIFEST_ENTRIES = 100
 MAX_TEXT_LENGTH = 200_000
@@ -1048,6 +1049,8 @@ class IngestionBatchService:
             else:
                 kb.readiness = KnowledgeBaseReadiness.NOT_READY
             kb.readiness_updated_at = datetime.now(timezone.utc)
+        if batch.status == IngestionBatchStatus.COMPLETED and batch.succeeded_chunks >= 1:
+            await touch_kb_updated_at(self._db, batch.kb_id)
 
     async def _append_event(
         self,

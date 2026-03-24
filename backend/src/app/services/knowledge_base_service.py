@@ -19,6 +19,14 @@ from app.models.knowledge_base import (
 )
 
 
+async def touch_kb_updated_at(db: AsyncSession, kb_id: uuid.UUID) -> None:
+    kb = await db.get(KnowledgeBase, kb_id)
+    if kb is None:
+        return
+    kb.updated_at = datetime.now(timezone.utc)
+    await db.flush()
+
+
 class KnowledgeBaseService:
     def __init__(self, db: AsyncSession) -> None:
         self._db = db
@@ -196,6 +204,7 @@ class KnowledgeBaseService:
             return None
 
         kb.status = KnowledgeBaseStatus.ARCHIVED
+        await touch_kb_updated_at(self._db, kb_id)
         await self._db.commit()
         await self._db.refresh(kb)
         return kb

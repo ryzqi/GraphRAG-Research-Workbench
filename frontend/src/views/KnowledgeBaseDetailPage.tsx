@@ -50,6 +50,8 @@ import {
 
 type MobilePanel = 'documents' | 'browser' | 'preview';
 
+const EMPTY_WINDOW_CHUNKS: DocumentChunk[] = [];
+
 function buildChunkPreview(text: string, max = 124): string {
   const compact = text.replace(/\s+/g, ' ').trim();
   if (compact.length <= max) {
@@ -187,7 +189,7 @@ function ChunkBrowserWorkspace({
     [activeWindowKey, workspaceModel.windows]
   );
 
-  const activeWindowChunks = activeWindow?.items ?? [];
+  const activeWindowChunks = activeWindow?.items ?? EMPTY_WINDOW_CHUNKS;
   const activeChunkId = useMemo(
     () => resolveActiveChunkId(activeWindowChunks, selectedChunkId),
     [activeWindowChunks, selectedChunkId]

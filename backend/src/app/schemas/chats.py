@@ -325,6 +325,10 @@ class SemanticCacheMeta(BaseModel):
     score: float | None = Field(default=None, ge=0.0, le=1.0)
     threshold: float | None = Field(default=None, ge=0.0, le=1.0)
     ttl_seconds: int | None = Field(default=None, ge=0)
+    entry_id: str | None = Field(default=None, max_length=128)
+    schema_version: str | None = Field(default=None, max_length=32)
+    hit_type: Literal["strong_hit"] | None = None
+    created_at: datetime | str | None = None
 
 
 class ChatAnswerResponse(BaseModel):

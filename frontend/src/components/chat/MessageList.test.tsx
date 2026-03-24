@@ -78,4 +78,32 @@ describe('MessageList', () => {
 
     expect(html).toContain('data-show-actions="false"');
   });
+
+  it('renders semantic cache hit type, score and ttl for cached assistant message', () => {
+    const html = renderToStaticMarkup(
+      createElement(MessageList, {
+        loading: false,
+        messages: [
+          createAssistantMessage({
+            responseSource: 'cached',
+            cacheMeta: {
+              hit: true,
+              hit_type: 'strong_hit',
+              score: 0.91,
+              threshold: 0.88,
+              ttl_seconds: 24 * 60 * 60,
+              entry_id: 'entry-1',
+              schema_version: 'v3',
+              created_at: '2026-03-24T10:00:00Z',
+            },
+          }),
+        ],
+      })
+    );
+
+    expect(html).toContain('语义缓存命中');
+    expect(html).toContain('强命中');
+    expect(html).toContain('0.91 / 0.88');
+    expect(html).toContain('缓存剩余约 24 小时');
+  });
 });

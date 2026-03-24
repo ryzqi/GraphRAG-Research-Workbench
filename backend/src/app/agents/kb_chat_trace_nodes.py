@@ -80,6 +80,7 @@ KB_CHAT_NODE_METADATA: dict[str, dict[str, Any]] = {
     "answer_repair": {"label": "答案修复", "phase": "verify", "order": 25},
     "answer_commit": {"label": "答案提交", "phase": "generate", "order": 26},
     "force_exit": {"label": "提前终止", "phase": "finalize", "order": 27},
+    "semantic_cache": {"label": "语义缓存", "phase": "finalize", "order": 28},
 }
 
 _NODE_SUMMARY_KEY_MAP: dict[str, str] = {

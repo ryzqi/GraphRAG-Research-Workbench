@@ -211,6 +211,65 @@ describe('kbChatTraceStore', () => {
     expect(next.traceWarnings?.at(-1)).toContain('execution_id');
   });
 
+  it('builds a visible semantic cache execution from cached step and node_io events', () => {
+    let state = reduceKbChatTraceState(
+      {},
+      {
+        type: 'step',
+        raw: {
+          run_id: 'run-cache-1',
+          execution_id: 'semantic-cache:run-cache-1',
+          step_id: 'semantic_cache',
+          label: 'semantic_cache',
+          status: 'started',
+          node: 'semantic_cache',
+          ts: '2026-03-24T10:00:01.000Z',
+          meta: {
+            node_path: ['semantic_cache'],
+          },
+        },
+      },
+      ctx
+    );
+
+    state = reduceKbChatTraceState(
+      state,
+      {
+        type: 'node_io',
+        raw: {
+          run_id: 'run-cache-1',
+          execution_id: 'semantic-cache:run-cache-1',
+          node_id: 'semantic_cache',
+          node_name: 'semantic_cache',
+          node_path: ['semantic_cache'],
+          phase: 'end',
+          display_output_items: [
+            { key: 'hit_type', label: '命中类型', value: 'strong_hit' },
+            { key: 'score', label: '命中分数', value: '0.91' },
+            { key: 'threshold', label: '阈值', value: '0.88' },
+            { key: 'ttl_seconds', label: 'TTL', value: '86400' },
+          ],
+          ts: '2026-03-24T10:00:02.000Z',
+        },
+      },
+      ctx
+    );
+
+    expect(state.executionOrder).toEqual(['semantic-cache:run-cache-1']);
+    expect(state.executionsById?.['semantic-cache:run-cache-1']).toMatchObject({
+      execution_id: 'semantic-cache:run-cache-1',
+      node_name: 'semantic_cache',
+      status: 'completed',
+      node_path: ['semantic_cache'],
+      output_items: [
+        { key: 'hit_type', label: '命中类型', value: 'strong_hit' },
+        { key: 'score', label: '命中分数', value: '0.91' },
+        { key: 'threshold', label: '阈值', value: '0.88' },
+        { key: 'ttl_seconds', label: 'TTL', value: '86400' },
+      ],
+    });
+  });
+
   it('keeps heartbeat benign while warning on unhandled custom taxonomy', () => {
     const heartbeat = reduceKbChatTraceState(
       {},

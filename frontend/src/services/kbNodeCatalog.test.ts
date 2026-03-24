@@ -37,6 +37,7 @@ const CURRENT_KB_CHAT_NODE_IDS = [
   'answer_repair',
   'answer_commit',
   'force_exit',
+  'semantic_cache',
 ] as const;
 
 const EXPECTED_NODE_ORDERS: Record<(typeof CURRENT_KB_CHAT_NODE_IDS)[number], number> = {
@@ -68,6 +69,7 @@ const EXPECTED_NODE_ORDERS: Record<(typeof CURRENT_KB_CHAT_NODE_IDS)[number], nu
   answer_repair: 25,
   answer_commit: 26,
   force_exit: 27,
+  semantic_cache: 28,
 };
 
 describe('kbNodeCatalog', () => {
@@ -169,6 +171,15 @@ describe('kbNodeCatalog', () => {
 
     ['complexity_classify', 'generate_variants_mod', 'prepare_messages', 'entity_expand'].forEach((nodeId) => {
       expect(resolveKbNodeCatalogEntry(nodeId)).toBeNull();
+    });
+  });
+
+  it('keeps the semantic cache synthetic node in local catalog fallback', () => {
+    expect(resolveKbNodeCatalogEntry('semantic_cache')).toMatchObject({
+      label: '语义缓存',
+      stageId: 'stage_7_finalize',
+      order: 28,
+      phase: 'finalize',
     });
   });
 });

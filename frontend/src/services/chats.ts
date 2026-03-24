@@ -165,6 +165,10 @@ export interface SemanticCacheMeta {
   score?: number | null;
   threshold?: number | null;
   ttl_seconds?: number | null;
+  entry_id?: string | null;
+  schema_version?: string | null;
+  hit_type?: 'strong_hit' | null;
+  created_at?: string | null;
 }
 
 export interface PendingToolCall {

@@ -21,6 +21,7 @@ from app.schemas.knowledge_bases import ChunkingStrategy, IndexConfig
 from app.services.chunk_persistence_service import ChunkPersistenceService
 from app.services.chunking import ChunkingEngine
 from app.services.contextual_embedding_service import ContextualEmbeddingService
+from app.services.knowledge_base_service import touch_kb_updated_at
 from app.services.parsing import ParseError, parse_material
 from app.services.query_dependent_collections import collection_name_for_window
 from app.worker.celery_app import celery_app
@@ -455,6 +456,8 @@ async def _run_index_rebuild_job(job_id: str) -> None:
                 )
                 if stats["errors"]:
                     job.error_message = "Index rebuild completed with errors"
+                elif job.kb_id is not None:
+                    await touch_kb_updated_at(session, job.kb_id)
                 job.stats = stats
                 job.finished_at = datetime.now(timezone.utc)
 

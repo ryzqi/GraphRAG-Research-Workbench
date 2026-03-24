@@ -36,10 +36,17 @@
   },
   {
     "path": "src/components/chat/MessageItem.tsx",
-    "maxLines": 700,
+    "maxLines": 750,
     "expiresOn": "2026-06-30",
     "owner": "frontend",
     "reason": "消息组件拆分前临时豁免"
+  },
+  {
+    "path": "src/components/chat/MessageList.tsx",
+    "maxLines": 600,
+    "expiresOn": "2026-06-30",
+    "owner": "frontend",
+    "reason": "消息列表拆分前临时豁免"
   },
   {
     "path": "src/components/IndexConfigForm.tsx",
@@ -75,5 +82,19 @@
     "expiresOn": "2026-06-30",
     "owner": "frontend",
     "reason": "模型配置页拆分前临时豁免"
+  },
+  {
+    "path": "src/hooks/useGeneralChatController.ts",
+    "maxLines": 700,
+    "expiresOn": "2026-06-30",
+    "owner": "frontend",
+    "reason": "通用聊天控制器拆分前临时豁免"
+  },
+  {
+    "path": "src/services/kbChatTraceStore.ts",
+    "maxLines": 750,
+    "expiresOn": "2026-06-30",
+    "owner": "frontend",
+    "reason": "KB Chat trace store 拆分前临时豁免"
   }
 ]

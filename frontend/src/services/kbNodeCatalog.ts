@@ -87,6 +87,7 @@ export const KB_NODE_CATALOG: Record<string, KbNodeCatalogEntry> = {
   answer_repair: { label: '答案修复', stageId: 'stage_6_answer', order: 25, icon: AutoFixHighIcon, color: C.answer, phase: 'verify' },
   answer_commit: { label: '答案提交', stageId: 'stage_6_answer', order: 26, icon: TaskAltIcon, color: C.answer, phase: 'generate' },
   force_exit: { label: '提前终止', stageId: 'stage_7_finalize', order: 27, icon: BlockIcon, color: C.exit, phase: 'finalize' },
+  semantic_cache: { label: '语义缓存', stageId: 'stage_7_finalize', order: 28, icon: QueryStatsIcon, color: '#0F766E', phase: 'finalize' },
 };
 
 const PHASE_TO_STAGE_ID: Partial<Record<string, KbTraceStageId>> = {

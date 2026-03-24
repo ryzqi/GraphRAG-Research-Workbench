@@ -12,9 +12,10 @@ import inspect
 import json
 import logging
 import math
+import random
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -96,6 +97,11 @@ _GRAY_ROUTE_THRESHOLD = 99.5
 _GRAY_FINAL_THRESHOLD = 99.0
 _GRAY_CLARIFICATION_THRESHOLD = 99.0
 _GRAY_P95_THRESHOLD = 10.0
+_SEMANTIC_CACHE_SCHEMA_VERSION = "v3"
+_SEMANTIC_CACHE_ANSWER_CONTRACT_VERSION = "kb_chat_semantic_cache_v3"
+_SEMANTIC_CACHE_VERIFIED_LEVEL_DIRECT = "verified_direct"
+_SEMANTIC_CACHE_HIT_TYPE_STRONG = "strong_hit"
+_SEMANTIC_CACHE_PRE_CONTEXT_MAX_TURNS = 6
 _KB_CHAT_CHECKPOINT_RESET_FIELDS = (
     "user_input",
     "pending_tool_calls",
@@ -164,6 +170,12 @@ class _SemanticCacheHit:
     score: float
     threshold: float
     ttl_seconds: int
+    entry_id: str | None = None
+    schema_version: str | None = None
+    hit_type: str | None = None
+    created_at: str | None = None
+    context_fingerprint: str | None = None
+    kb_version: str | None = None
 
 
 @dataclass(frozen=True)
@@ -225,6 +237,7 @@ class KbChatService:
         self._context_builder = ContextBuilder(self._settings)
         self._summary_service = ConversationSummaryService(db, settings=self._settings)
         self._prompts = get_prompt_loader()
+        self._semantic_cache_shadow_candidate: dict[str, Any] | None = None
 
     def _build_graph(
         self,
@@ -284,17 +297,238 @@ class KbChatService:
             ),
         )
 
+    def _semantic_cache_soft_threshold(self) -> float:
+        configured = float(
+            getattr(self._settings, "kb_chat_semantic_cache_soft_threshold", 0.82)
+        )
+        return max(0.0, min(self._semantic_cache_threshold(), configured))
+
+    def _semantic_cache_shadow_mode(self) -> bool:
+        return bool(getattr(self._settings, "kb_chat_semantic_cache_shadow_mode", True))
+
     def _semantic_cache_ttl_seconds(self) -> int:
         return max(
             0,
             int(getattr(self._settings, "kb_chat_semantic_cache_ttl_seconds", 24 * 60 * 60)),
         )
 
+    def _semantic_cache_ttl_jitter_seconds(self) -> int:
+        return max(
+            0,
+            int(getattr(self._settings, "kb_chat_semantic_cache_ttl_jitter_seconds", 0)),
+        )
+
+    def _semantic_cache_effective_ttl_seconds(self) -> int:
+        ttl_seconds = self._semantic_cache_ttl_seconds()
+        jitter_seconds = self._semantic_cache_ttl_jitter_seconds()
+        if ttl_seconds <= 0 or jitter_seconds <= 0:
+            return ttl_seconds
+        return ttl_seconds + random.randint(0, jitter_seconds)
+
     def _semantic_cache_max_items(self) -> int:
         return max(
             1,
             int(getattr(self._settings, "kb_chat_semantic_cache_max_items", 128)),
         )
+
+    def _clear_semantic_cache_shadow_candidate(self) -> None:
+        self._semantic_cache_shadow_candidate = None
+
+    def _record_semantic_cache_shadow_candidate(
+        self,
+        candidate: dict[str, Any] | None,
+    ) -> None:
+        self._semantic_cache_shadow_candidate = (
+            dict(candidate) if isinstance(candidate, dict) else None
+        )
+
+    def _consume_semantic_cache_shadow_candidate(self) -> dict[str, Any] | None:
+        candidate = getattr(self, "_semantic_cache_shadow_candidate", None)
+        self._semantic_cache_shadow_candidate = None
+        return dict(candidate) if isinstance(candidate, dict) else None
+
+    async def _refresh_semantic_cache_hit_entry(
+        self,
+        *,
+        redis: RedisClient,
+        cache_key: str,
+        payload: list[dict[str, Any]],
+        entry: dict[str, Any],
+        ttl_seconds: int,
+        score: float,
+        threshold: float,
+        kb_version: str,
+    ) -> None:
+        now = datetime.now(timezone.utc).isoformat()
+        entry["last_hit_at"] = now
+        entry["hit_count"] = max(0, int(entry.get("hit_count") or 0)) + 1
+        entry["hit_type"] = _SEMANTIC_CACHE_HIT_TYPE_STRONG
+        existing_metrics = entry.get("metrics")
+        metrics = dict(existing_metrics) if isinstance(existing_metrics, dict) else {}
+        semantic_cache_metrics = (
+            dict(metrics.get("semantic_cache"))
+            if isinstance(metrics.get("semantic_cache"), dict)
+            else {}
+        )
+        semantic_cache_metrics.update(
+            {
+                "hit": True,
+                "score": score,
+                "threshold": threshold,
+                "hit_type": _SEMANTIC_CACHE_HIT_TYPE_STRONG,
+                "entry_id": str(entry.get("entry_id") or "").strip() or None,
+                "kb_version": kb_version,
+                "schema_version": str(entry.get("schema_version") or "").strip() or None,
+            }
+        )
+        metrics["semantic_cache"] = semantic_cache_metrics
+        entry["metrics"] = metrics
+        try:
+            await redis.set(
+                cache_key,
+                json.dumps(payload, ensure_ascii=False),
+                ex=ttl_seconds,
+            )
+        except Exception:
+            return
+
+    @staticmethod
+    def _semantic_cache_recent_turns(
+        history: list[LLMMessage],
+        *,
+        max_turns: int = _SEMANTIC_CACHE_PRE_CONTEXT_MAX_TURNS,
+        exclude_question: str | None = None,
+        exclude_answer: str | None = None,
+    ) -> list[dict[str, str]]:
+        normalized_question = sanitize_visible_text(str(exclude_question or ""))
+        normalized_answer = sanitize_visible_text(str(exclude_answer or ""))
+        turns: list[dict[str, str]] = []
+        for msg in history:
+            role = str(getattr(msg, "role", "") or "").strip().lower()
+            if role not in {"user", "assistant"}:
+                continue
+            content = sanitize_visible_text(str(getattr(msg, "content", "") or ""))
+            if not content:
+                continue
+            turns.append({"role": role, "content": content})
+        if normalized_answer and turns:
+            last_turn = turns[-1]
+            if last_turn["role"] == "assistant" and last_turn["content"] == normalized_answer:
+                turns.pop()
+        if normalized_question and turns:
+            last_turn = turns[-1]
+            if last_turn["role"] == "user" and last_turn["content"] == normalized_question:
+                turns.pop()
+        max_items = max(0, int(max_turns)) * 2
+        if max_items > 0 and len(turns) > max_items:
+            turns = turns[-max_items:]
+        return turns
+
+    async def _load_semantic_cache_pre_context(
+        self,
+        *,
+        session_id: uuid.UUID,
+        question: str,
+        current_answer: str | None = None,
+    ) -> dict[str, Any]:
+        summary_service = getattr(self, "_summary_service", None)
+        summary = (
+            await summary_service.load_latest_summary(session_id)
+            if summary_service is not None
+            else None
+        )
+        summary_text = (
+            sanitize_visible_text(str(getattr(summary, "content", "") or "")) or ""
+        )
+        history_limit = max(
+            int(getattr(self._settings, "context_history_max_messages", 12) or 12),
+            _SEMANTIC_CACHE_PRE_CONTEXT_MAX_TURNS * 2,
+        )
+        history = await self._load_history(session_id, limit=history_limit)
+        recent_turns = self._semantic_cache_recent_turns(
+            history,
+            max_turns=_SEMANTIC_CACHE_PRE_CONTEXT_MAX_TURNS,
+            exclude_question=question if current_answer else None,
+            exclude_answer=current_answer,
+        )
+        return {
+            "summary_text": summary_text,
+            "recent_turns": recent_turns,
+            "question": sanitize_visible_text(str(question or "")) or "",
+        }
+
+    @staticmethod
+    def _semantic_cache_context_fingerprint(pre_context: dict[str, Any]) -> str:
+        summary_text = sanitize_visible_text(str(pre_context.get("summary_text") or "")) or ""
+        question = sanitize_visible_text(str(pre_context.get("question") or "")) or ""
+        recent_turns_raw = pre_context.get("recent_turns")
+        recent_turns: list[dict[str, str]] = []
+        if isinstance(recent_turns_raw, list):
+            for item in recent_turns_raw:
+                if not isinstance(item, dict):
+                    continue
+                role = str(item.get("role") or "").strip().lower()
+                content = sanitize_visible_text(str(item.get("content") or "")) or ""
+                if role not in {"user", "assistant"} or not content:
+                    continue
+                recent_turns.append({"role": role, "content": content})
+        raw = json.dumps(
+            {
+                "summary_text": summary_text,
+                "recent_turns": recent_turns,
+                "question": question,
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+        return hashlib.sha1(raw.encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _semantic_cache_citation_ids(
+        *,
+        evidence: list[EvidenceItem],
+        metrics: dict[str, Any],
+    ) -> list[str]:
+        raw_ids = metrics.get("citation_ids") if isinstance(metrics, dict) else None
+        candidate_ids: list[str] = []
+        if isinstance(raw_ids, list):
+            for item in raw_ids:
+                if not isinstance(item, str):
+                    continue
+                normalized = item.strip().upper()
+                if normalized and is_stable_citation_id(normalized):
+                    candidate_ids.append(normalized)
+        if candidate_ids:
+            return list(dict.fromkeys(candidate_ids))
+        derived: list[str] = []
+        for item in evidence:
+            citation_id = str(item.citation_id or "").strip().upper()
+            if citation_id and is_stable_citation_id(citation_id):
+                derived.append(citation_id)
+        return list(dict.fromkeys(derived))
+
+    @staticmethod
+    def _semantic_cache_evidence_fingerprint(evidence: list[EvidenceItem]) -> list[str]:
+        fingerprints: list[str] = []
+        for item in evidence:
+            if item.kb_id is None or item.material_id is None or item.chunk_id is None:
+                continue
+            fingerprints.append(f"{item.kb_id}:{item.material_id}:{item.chunk_id}")
+        return list(dict.fromkeys(fingerprints))
+
+    @staticmethod
+    def _semantic_cache_source_run_id(metrics: dict[str, Any]) -> str | None:
+        gray_release_gate = metrics.get("gray_release_gate") if isinstance(metrics, dict) else None
+        if isinstance(gray_release_gate, dict):
+            source_run_id = gray_release_gate.get("source_run_id")
+            if isinstance(source_run_id, str) and source_run_id.strip():
+                return source_run_id.strip()
+        semantic_cache_meta = metrics.get("semantic_cache") if isinstance(metrics, dict) else None
+        if isinstance(semantic_cache_meta, dict):
+            source_run_id = semantic_cache_meta.get("source_run_id")
+            if isinstance(source_run_id, str) and source_run_id.strip():
+                return source_run_id.strip()
+        return None
 
     @staticmethod
     def _semantic_config_fingerprint(config: KbChatConfig) -> str:
@@ -350,7 +584,7 @@ class KbChatService:
         }
         raw = json.dumps(scope, ensure_ascii=False, sort_keys=True)
         digest = hashlib.sha1(raw.encode("utf-8")).hexdigest()
-        return f"kb_chat:semantic_cache:v2:{digest}"
+        return f"kb_chat:semantic_cache:v3:{digest}"
 
     @staticmethod
     def _as_float_vector(value: Any) -> list[float] | None:
@@ -387,6 +621,7 @@ class KbChatService:
         kb_chat_config: KbChatConfig,
         question: str,
     ) -> _SemanticCacheHit | None:
+        self._clear_semantic_cache_shadow_candidate()
         if not self._semantic_cache_enabled():
             return None
         redis = getattr(self, "_redis", None)
@@ -402,6 +637,14 @@ class KbChatService:
             kb_version = await self._semantic_kb_version(session)
         except Exception:
             kb_version = "kb_unknown"
+        try:
+            pre_context = await self._load_semantic_cache_pre_context(
+                session_id=session.id,
+                question=normalized_question,
+            )
+        except Exception:
+            return None
+        context_fingerprint = self._semantic_cache_context_fingerprint(pre_context)
         cache_key = self._semantic_cache_key(
             session,
             config_fingerprint=self._semantic_config_fingerprint(kb_chat_config),
@@ -434,11 +677,33 @@ class KbChatService:
         if query_vector is None:
             return None
 
-        best_entry: dict[str, Any] | None = None
-        best_score = -1.0
+        eligible_entries: list[dict[str, Any]] = []
         for item in payload:
             if not isinstance(item, dict):
                 continue
+            if str(item.get("schema_version") or "").strip() != _SEMANTIC_CACHE_SCHEMA_VERSION:
+                continue
+            if (
+                str(item.get("answer_contract_version") or "").strip()
+                != _SEMANTIC_CACHE_ANSWER_CONTRACT_VERSION
+            ):
+                continue
+            if (
+                str(item.get("verified_level") or "").strip()
+                != _SEMANTIC_CACHE_VERIFIED_LEVEL_DIRECT
+            ):
+                continue
+            if str(item.get("context_fingerprint") or "").strip() != context_fingerprint:
+                continue
+            if str(item.get("kb_version") or "").strip() != kb_version:
+                continue
+            eligible_entries.append(item)
+        if not eligible_entries:
+            return None
+
+        best_entry: dict[str, Any] | None = None
+        best_score = -1.0
+        for item in eligible_entries:
             vector = self._as_float_vector(item.get("embedding"))
             if vector is None:
                 continue
@@ -448,6 +713,26 @@ class KbChatService:
                 best_entry = item
 
         if best_entry is None or best_score < threshold:
+            best_score = max(0.0, min(1.0, float(best_score)))
+            soft_threshold = self._semantic_cache_soft_threshold()
+            if (
+                best_entry is not None
+                and self._semantic_cache_shadow_mode()
+                and best_score >= soft_threshold
+            ):
+                self._record_semantic_cache_shadow_candidate(
+                    {
+                        "hit_type": "soft_hit",
+                        "entry_id": str(best_entry.get("entry_id") or "").strip() or None,
+                        "schema_version": str(best_entry.get("schema_version") or "").strip()
+                        or None,
+                        "kb_version": str(best_entry.get("kb_version") or "").strip()
+                        or kb_version,
+                        "score": best_score,
+                        "threshold": threshold,
+                        "soft_threshold": soft_threshold,
+                    }
+                )
             return None
 
         try:
@@ -460,6 +745,17 @@ class KbChatService:
         answer = str(best_entry.get("answer") or "").strip()
         if not answer:
             return None
+        score = max(0.0, min(1.0, float(best_score)))
+        await self._refresh_semantic_cache_hit_entry(
+            redis=redis,
+            cache_key=cache_key,
+            payload=payload,
+            entry=best_entry,
+            ttl_seconds=ttl_value,
+            score=score,
+            threshold=threshold,
+            kb_version=kb_version,
+        )
         evidence = best_entry.get("evidence")
         stage_summaries = best_entry.get("stage_summaries")
         metrics = best_entry.get("metrics")
@@ -468,9 +764,16 @@ class KbChatService:
             evidence=evidence if isinstance(evidence, list) else [],
             stage_summaries=stage_summaries if isinstance(stage_summaries, dict) else {},
             metrics=metrics if isinstance(metrics, dict) else {},
-            score=max(0.0, min(1.0, float(best_score))),
+            score=score,
             threshold=threshold,
             ttl_seconds=ttl_value,
+            entry_id=str(best_entry.get("entry_id") or "").strip() or None,
+            schema_version=str(best_entry.get("schema_version") or "").strip() or None,
+            hit_type=str(best_entry.get("hit_type") or "").strip()
+            or _SEMANTIC_CACHE_HIT_TYPE_STRONG,
+            created_at=str(best_entry.get("created_at") or "").strip() or None,
+            context_fingerprint=context_fingerprint,
+            kb_version=str(best_entry.get("kb_version") or "").strip() or kb_version,
         )
 
     async def _write_semantic_cache_entry(
@@ -511,6 +814,22 @@ class KbChatService:
             kb_version = await self._semantic_kb_version(session)
         except Exception:
             kb_version = "kb_unknown"
+        try:
+            pre_context = await self._load_semantic_cache_pre_context(
+                session_id=session.id,
+                question=normalized_question,
+                current_answer=normalized_answer,
+            )
+        except Exception:
+            return
+        context_fingerprint = self._semantic_cache_context_fingerprint(pre_context)
+        citation_ids = self._semantic_cache_citation_ids(
+            evidence=evidence,
+            metrics=metrics if isinstance(metrics, dict) else {},
+        )
+        evidence_fingerprint = self._semantic_cache_evidence_fingerprint(evidence)
+        if not citation_ids or not evidence_fingerprint:
+            return
         cache_key = self._semantic_cache_key(
             session,
             config_fingerprint=self._semantic_config_fingerprint(kb_chat_config),
@@ -530,23 +849,44 @@ class KbChatService:
         deduped = [
             item
             for item in existing
-            if str(item.get("question") or "").strip().casefold() != question_key
+            if sanitize_visible_text(
+                str(item.get("question_normalized") or item.get("question") or "")
+            ).casefold()
+            != question_key
         ]
+        now = datetime.now(timezone.utc)
+        ttl_seconds = self._semantic_cache_effective_ttl_seconds()
         entry = {
+            "entry_id": str(uuid.uuid4()),
+            "schema_version": _SEMANTIC_CACHE_SCHEMA_VERSION,
             "question": normalized_question,
+            "question_normalized": normalized_question,
+            "context_fingerprint": context_fingerprint,
             "answer": normalized_answer,
             "embedding": vector,
             "evidence": [item.model_dump(mode="json") for item in evidence],
+            "citation_ids": citation_ids,
+            "evidence_fingerprint": evidence_fingerprint,
+            "verified_level": _SEMANTIC_CACHE_VERIFIED_LEVEL_DIRECT,
+            "hit_type": _SEMANTIC_CACHE_HIT_TYPE_STRONG,
+            "source_run_id": self._semantic_cache_source_run_id(
+                metrics if isinstance(metrics, dict) else {}
+            ),
+            "kb_version": kb_version,
+            "answer_contract_version": _SEMANTIC_CACHE_ANSWER_CONTRACT_VERSION,
             "stage_summaries": stage_summaries if isinstance(stage_summaries, dict) else {},
             "metrics": metrics if isinstance(metrics, dict) else {},
-            "created_at": datetime.now(timezone.utc).isoformat(),
+            "created_at": now.isoformat(),
+            "expires_at": (now + timedelta(seconds=ttl_seconds)).isoformat(),
+            "last_hit_at": None,
+            "hit_count": 0,
         }
         payload = [entry, *deduped][: self._semantic_cache_max_items()]
         try:
             await redis.set(
                 cache_key,
                 json.dumps(payload, ensure_ascii=False),
-                ex=self._semantic_cache_ttl_seconds(),
+                ex=ttl_seconds,
             )
         except Exception:
             return
@@ -2222,14 +2562,21 @@ class KbChatService:
         )
 
     @staticmethod
-    def _semantic_cache_skip_reason(
+    def _semantic_cache_entry_admission_reason(
         *,
+        status: AgentRunStatus | str,
         clarification_payload: dict[str, Any] | None,
         routing_decisions: dict[str, Any] | None,
         reflection: dict[str, Any] | None,
         degrade_reason: str | None,
         answer: str,
+        evidence: list[EvidenceItem],
+        metrics: dict[str, Any] | None,
+        stage_summaries: dict[str, Any] | None,
     ) -> str | None:
+        status_value = getattr(status, "value", status)
+        if str(status_value or "").strip() != AgentRunStatus.SUCCEEDED.value:
+            return "status_not_succeeded"
         reason = KbChatService._resolve_terminal_reason(
             clarification_payload=clarification_payload,
             routing_decisions=routing_decisions,
@@ -2240,6 +2587,29 @@ class KbChatService:
             return reason
         if is_kb_refusal_answer(extract_answer_text(answer)):
             return "refusal_answer"
+        if not isinstance(evidence, list) or not evidence:
+            return "missing_evidence"
+        raw_citation_ids = metrics.get("citation_ids") if isinstance(metrics, dict) else None
+        citation_ids = [
+            str(item).strip().upper()
+            for item in raw_citation_ids
+            if isinstance(item, str) and is_stable_citation_id(str(item).strip().upper())
+        ] if isinstance(raw_citation_ids, list) else []
+        if not citation_ids:
+            return "missing_citation_ids"
+        evidence_fingerprint = KbChatService._semantic_cache_evidence_fingerprint(evidence)
+        if not evidence_fingerprint:
+            return "missing_evidence_fingerprint"
+        answer_review_summary = (
+            stage_summaries.get("answer_review")
+            if isinstance(stage_summaries, dict)
+            else None
+        )
+        if not (
+            isinstance(answer_review_summary, dict)
+            and answer_review_summary.get("passed") is True
+        ):
+            return "answer_review_not_passed"
         return None
 
     @staticmethod
@@ -3266,6 +3636,10 @@ class KbChatService:
                 "score": cache_hit.score,
                 "threshold": cache_hit.threshold,
                 "ttl_seconds": cache_hit.ttl_seconds,
+                "entry_id": cache_hit.entry_id,
+                "schema_version": cache_hit.schema_version,
+                "hit_type": cache_hit.hit_type or _SEMANTIC_CACHE_HIT_TYPE_STRONG,
+                "created_at": cache_hit.created_at,
             },
         }
         metrics = {
@@ -3276,6 +3650,12 @@ class KbChatService:
                 "score": cache_hit.score,
                 "threshold": cache_hit.threshold,
                 "ttl_seconds": cache_hit.ttl_seconds,
+                "entry_id": cache_hit.entry_id,
+                "schema_version": cache_hit.schema_version,
+                "hit_type": cache_hit.hit_type or _SEMANTIC_CACHE_HIT_TYPE_STRONG,
+                "created_at": cache_hit.created_at,
+                "context_fingerprint": cache_hit.context_fingerprint,
+                "kb_version": cache_hit.kb_version,
             },
             "latency_ms": 0,
         }
@@ -3329,11 +3709,111 @@ class KbChatService:
                 score=cache_hit.score,
                 threshold=cache_hit.threshold,
                 ttl_seconds=cache_hit.ttl_seconds,
+                entry_id=cache_hit.entry_id,
+                schema_version=cache_hit.schema_version,
+                hit_type=cache_hit.hit_type or _SEMANTIC_CACHE_HIT_TYPE_STRONG,
+                created_at=cache_hit.created_at,
             ),
             stage_summaries=run.stage_summaries if isinstance(run.stage_summaries, dict) else None,
             metrics=run.metrics if isinstance(run.metrics, dict) else None,
             run=AgentRunRead.model_validate(run),
         )
+
+    @staticmethod
+    def _build_semantic_cache_display_output_items(
+        cache_meta: SemanticCacheMeta | None,
+    ) -> list[dict[str, str]]:
+        hit_type = cache_meta.hit_type if cache_meta is not None else None
+        score = cache_meta.score if cache_meta is not None else None
+        threshold = cache_meta.threshold if cache_meta is not None else None
+        ttl_seconds = cache_meta.ttl_seconds if cache_meta is not None else None
+        return [
+            {
+                "key": "hit_type",
+                "label": "命中类型",
+                "value": str(hit_type or _SEMANTIC_CACHE_HIT_TYPE_STRONG),
+            },
+            {
+                "key": "score",
+                "label": "命中分数",
+                "value": (
+                    f"{float(score):.2f}"
+                    if isinstance(score, (int, float))
+                    else "unknown"
+                ),
+            },
+            {
+                "key": "threshold",
+                "label": "阈值",
+                "value": (
+                    f"{float(threshold):.2f}"
+                    if isinstance(threshold, (int, float))
+                    else "unknown"
+                ),
+            },
+            {
+                "key": "ttl_seconds",
+                "label": "TTL",
+                "value": str(int(ttl_seconds))
+                if isinstance(ttl_seconds, (int, float))
+                else "unknown",
+            },
+        ]
+
+    def _emit_semantic_cache_fast_path(
+        self,
+        *,
+        run_id: uuid.UUID,
+        cache_meta: SemanticCacheMeta | None,
+        start_seq: int,
+    ) -> list[tuple[str, dict[str, Any]]]:
+        node_name = "semantic_cache"
+        node_path = [node_name]
+        execution_id = f"semantic-cache:{run_id}"
+        step_ts = datetime.now(timezone.utc)
+        node_io_ts = datetime.now(timezone.utc)
+        step_payload = {
+            "execution_id": execution_id,
+            "step_id": node_name,
+            "label": node_name,
+            "status": "started",
+            "node": node_name,
+            "ts": step_ts.isoformat(),
+            "meta": {
+                "task_id": execution_id,
+                "node_path": node_path,
+            },
+        }
+        return [
+            (
+                "step",
+                self._build_protocol_event_payload(
+                    event_type="step",
+                    run_id=run_id,
+                    payload=step_payload,
+                    node={"id": node_name, "name": node_name},
+                    event_id=f"{run_id}:{start_seq}",
+                    seq=start_seq,
+                    node_path=node_path,
+                ),
+            ),
+            (
+                "node_io",
+                self._build_node_io_payload(
+                    run_id=run_id,
+                    execution_id=execution_id,
+                    node_name=node_name,
+                    node_id=node_name,
+                    phase="end",
+                    attempt=1,
+                    display_output_items=self._build_semantic_cache_display_output_items(
+                        cache_meta
+                    ),
+                    ts=node_io_ts,
+                    node_path=node_path,
+                ),
+            ),
+        ]
 
     async def answer_stream(
         self,
@@ -3346,6 +3826,7 @@ class KbChatService:
     ) -> Any:
         """处理用户问题并返回流式 SSE（状态与节点事件基于 LangGraph 原生流）。"""
         if run is None:
+            self._clear_semantic_cache_shadow_candidate()
             await self._ensure_no_running_kb_chat_run(session_id=session.id)
             cache_config = self._resolve_session_kb_chat_config(session)
             cache_hit = await self._semantic_cache_lookup(
@@ -3359,7 +3840,8 @@ class KbChatService:
                     user_content=user_content,
                     cache_hit=cache_hit,
                 )
-                cached_stage_status: dict[str, str] = {}
+                cached_running_stage_status = {"semantic_cache": "started"}
+                cached_succeeded_stage_status = {"semantic_cache": "completed"}
                 cached_stage_attempts: dict[str, int] = {}
                 run_payload = cached_response.run.model_dump(mode="json")
                 yield (
@@ -3387,21 +3869,27 @@ class KbChatService:
                         payload=self._build_stream_state_payload(
                             run_id=cached_response.run.id,
                             run_status=AgentRunStatus.RUNNING.value,
-                            current_step_id=None,
-                            current_node=None,
-                            stage_status=cached_stage_status,
+                            current_step_id="semantic_cache",
+                            current_node="semantic_cache",
+                            stage_status=cached_running_stage_status,
                             stage_attempts=cached_stage_attempts,
                             state_version=1,
                             active_path=self._build_active_path(
-                                stage_status=cached_stage_status,
-                                current_step_id=None,
+                                stage_status=cached_running_stage_status,
+                                current_step_id="semantic_cache",
                             ),
-                            message="知识库问答开始",
+                            message="语义缓存命中，直接返回缓存答案",
                         ),
                         event_id=f"{cached_response.run.id}:1",
                         seq=1,
                     ),
                 )
+                for event_name, payload in self._emit_semantic_cache_fast_path(
+                    run_id=cached_response.run.id,
+                    cache_meta=cached_response.cache,
+                    start_seq=2,
+                ):
+                    yield (event_name, payload)
                 yield (
                     "stream_end",
                     self._build_protocol_event_payload(
@@ -3413,8 +3901,8 @@ class KbChatService:
                             "terminal_candidate": "out200",
                             "ts": datetime.now(timezone.utc).isoformat(),
                         },
-                        event_id=f"{cached_response.run.id}:2",
-                        seq=2,
+                        event_id=f"{cached_response.run.id}:4",
+                        seq=4,
                     ),
                 )
                 yield (
@@ -3425,19 +3913,19 @@ class KbChatService:
                         payload=self._build_stream_state_payload(
                             run_id=cached_response.run.id,
                             run_status=AgentRunStatus.SUCCEEDED.value,
-                            current_step_id=None,
-                            current_node=None,
-                            stage_status=cached_stage_status,
+                            current_step_id="semantic_cache",
+                            current_node="semantic_cache",
+                            stage_status=cached_succeeded_stage_status,
                             stage_attempts=cached_stage_attempts,
                             state_version=2,
                             active_path=self._build_active_path(
-                                stage_status=cached_stage_status,
-                                current_step_id=None,
+                                stage_status=cached_succeeded_stage_status,
+                                current_step_id="semantic_cache",
                             ),
                             current_step_status_override=AgentRunStatus.SUCCEEDED.value,
                         ),
-                        event_id=f"{cached_response.run.id}:3",
-                        seq=3,
+                        event_id=f"{cached_response.run.id}:5",
+                        seq=5,
                     ),
                 )
                 yield (
@@ -4579,6 +5067,9 @@ class KbChatService:
                 "protocol_required_field_drift_rate": protocol_required_field_drift_rate,
             },
         }
+        semantic_cache_shadow = self._consume_semantic_cache_shadow_candidate()
+        if semantic_cache_shadow is not None:
+            metrics["semantic_cache_shadow"] = semantic_cache_shadow
         gray_release_gate = self._build_gray_release_gate(metrics)
         gray_release_gate["source_run_id"] = str(run.id)
         gray_release_gate["evaluated_at"] = run.finished_at.isoformat()
@@ -4616,14 +5107,18 @@ class KbChatService:
         await self._db.refresh(assistant_msg)
         await self._db.refresh(run)
 
-        semantic_cache_skip_reason = self._semantic_cache_skip_reason(
+        semantic_cache_skip_reason = self._semantic_cache_entry_admission_reason(
+            status=status,
             clarification_payload=clarification_payload,
             routing_decisions=routing_decisions,
             reflection=reflection if isinstance(reflection, dict) else None,
             degrade_reason=terminal_reason,
             answer=answer,
+            evidence=evidence_items,
+            metrics=run.metrics if isinstance(run.metrics, dict) else {},
+            stage_summaries=run.stage_summaries if isinstance(run.stage_summaries, dict) else {},
         )
-        if status == AgentRunStatus.SUCCEEDED and semantic_cache_skip_reason is None:
+        if semantic_cache_skip_reason is None:
             try:
                 await self._write_semantic_cache_entry(
                     session=session,

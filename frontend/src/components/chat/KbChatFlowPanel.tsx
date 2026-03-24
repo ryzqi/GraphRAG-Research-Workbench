@@ -267,6 +267,11 @@ export function KbChatFlowPanel({
                             <Tooltip title={isExpanded ? '收起详情' : '展开详情'}>
                               <IconButton
                                 size='small'
+                                aria-label={
+                                  isExpanded
+                                    ? `收起${execution.node_label}详情`
+                                    : `展开${execution.node_label}详情`
+                                }
                                 onClick={() =>
                                   setExpandedExecutionId((current) =>
                                     current === execution.execution_id ? null : execution.execution_id
