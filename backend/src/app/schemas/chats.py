@@ -218,6 +218,7 @@ class EvidenceItem(BaseModel):
     chunk_id: uuid.UUID | None = None
     locator: dict | None = None
     excerpt: str
+    source_excerpt: str | None = None
     citation_id: str | None = None
     citation_title: str | None = None
     citation_page_hint: str | None = None

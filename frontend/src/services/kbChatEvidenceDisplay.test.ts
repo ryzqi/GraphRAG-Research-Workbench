@@ -4,6 +4,36 @@ import type { EvidenceItem } from './chats';
 import { resolveEvidenceCardItems } from './kbChatEvidenceDisplay';
 
 describe('kbChatEvidenceDisplay', () => {
+  it('prefers source_excerpt for UI display while keeping citation metadata', () => {
+    const evidence: EvidenceItem[] = [
+      {
+        source_kind: 'kb',
+        kb_id: null,
+        material_id: null,
+        chunk_id: null,
+        locator: {
+          material_title: 'Agent基础.md',
+          filename: 'docs/agent-basics.md',
+        },
+        excerpt: '复杂度高：结构更复杂。',
+        source_excerpt: '复杂度高：结构更复杂，需要更多的计算资源进行分支生成和评估。',
+        citation_id: 's3',
+        citation_title: 'Agent基础.md',
+        citation_source: 'docs/agent-basics.md',
+      },
+    ];
+
+    expect(resolveEvidenceCardItems(evidence)).toEqual([
+      expect.objectContaining({
+        citationId: 'S3',
+        citationChipLabel: '[S3]',
+        sourceTitle: 'Agent基础.md',
+        sourceDetail: 'docs/agent-basics.md',
+        excerpt: '复杂度高：结构更复杂，需要更多的计算资源进行分支生成和评估。',
+      }),
+    ]);
+  });
+
   it('prefers explicit citation metadata and keeps clean source details', () => {
     const evidence: EvidenceItem[] = [
       {

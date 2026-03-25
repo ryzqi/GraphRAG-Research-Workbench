@@ -21,6 +21,7 @@ describe('EvidenceList', () => {
               page_start: 5,
             },
             excerpt: '新版本将于四月上线。',
+            source_excerpt: '新版本将于四月上线，并默认开启知识库引用卡片。',
             citation_id: 'S1',
             citation_title: '产品发布说明 V2',
             citation_page_hint: 'p.5',
@@ -37,7 +38,7 @@ describe('EvidenceList', () => {
     expect(html).toContain('docs/product-launch.pdf');
     expect(html).toContain('知识库文档');
     expect(html).toContain('p.5');
-    expect(html).toContain('新版本将于四月上线。');
+    expect(html).toContain('新版本将于四月上线，并默认开启知识库引用卡片。');
   });
 
   it('marks the active citation card for highlight styling', () => {

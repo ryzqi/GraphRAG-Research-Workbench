@@ -152,6 +152,8 @@ export function resolveEvidenceCardItems(evidence: EvidenceItem[]): EvidenceCard
   return evidence.map((item, index) => {
     const citationId = getCitationId(item, index);
     const sourceTitle = getSourceTitle(item, index);
+    const sourceExcerpt = normalizeText(item.source_excerpt);
+    const excerpt = sourceExcerpt ?? item.excerpt.trim();
 
     return {
       key: getEvidenceKey(item, citationId, index),
@@ -161,7 +163,7 @@ export function resolveEvidenceCardItems(evidence: EvidenceItem[]): EvidenceCard
       sourceTitle,
       sourceDetail: getSourceDetail(item, sourceTitle),
       pageHint: getPageHint(item),
-      excerpt: item.excerpt.trim(),
+      excerpt,
     };
   });
 }

@@ -160,6 +160,7 @@ def _build_evidence_item() -> EvidenceItem:
         chunk_id=uuid.UUID("00000000-0000-0000-0000-000000000404"),
         locator={"filename": "cache-source.pdf"},
         excerpt="可复用证据",
+        source_excerpt="可复用证据的原始上下文",
         citation_id="S1",
     )
 
@@ -229,6 +230,7 @@ async def test_lookup_hits_for_standalone_paraphrase_with_same_scope() -> None:
     assert hit is not None
     assert hit.hit_type == "strong_hit"
     assert hit.answer == "这是可复用答案。"
+    assert hit.evidence[0]["source_excerpt"] == "可复用证据的原始上下文"
 
 
 @pytest.mark.asyncio
@@ -391,6 +393,7 @@ async def test_write_entry_records_scope_context_and_contract_fields() -> None:
     assert request.scope.allow_external is False
     assert request.context.mode == "standalone"
     assert request.citation_ids == ["S1"]
+    assert request.evidence[0]["source_excerpt"] == "可复用证据的原始上下文"
     assert request.evidence_fingerprint == [
         "00000000-0000-0000-0000-000000000402:00000000-0000-0000-0000-000000000403:00000000-0000-0000-0000-000000000404"
     ]

@@ -339,6 +339,7 @@ def build_kb_retrieve_tool(
                         "chunk_id": cid,
                         "locator": getattr(chunk, "locator", None),
                         "excerpt": excerpt_text,
+                        "source_excerpt": excerpt_text,
                         "score": float(getattr(r, "score", 0.0) or 0.0),
                         "hits": [],
                         "citation_id": citation_id,
@@ -349,6 +350,7 @@ def build_kb_retrieve_tool(
             else:
                 merged = dict(item)
                 merged["excerpt"] = excerpt_text
+                merged["source_excerpt"] = excerpt_text
                 merged["citation_id"] = citation_id
                 merged["citation_title"] = citation_title
                 merged["citation_source"] = citation_source

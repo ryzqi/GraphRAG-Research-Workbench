@@ -4457,6 +4457,7 @@ class KbChatService:
                 excerpt = str(it.get("excerpt") or "")[:500]
                 if not excerpt.strip():
                     continue
+                source_excerpt = self._normalize_optional_text(it.get("source_excerpt"))
 
                 locator = (
                     it.get("locator") if isinstance(it.get("locator"), dict) else None
@@ -4495,6 +4496,14 @@ class KbChatService:
                             if isinstance(structured_catalog_item, dict)
                             else None
                         ),
+                        "source_excerpt": self._normalize_optional_text(
+                            it.get("source_excerpt")
+                            or (
+                                structured_catalog_item.get("source_excerpt")
+                                if isinstance(structured_catalog_item, dict)
+                                else None
+                            )
+                        ),
                         "locator": locator
                         or (
                             structured_catalog_item.get("locator")
@@ -4527,6 +4536,7 @@ class KbChatService:
                         chunk_id=chunk_id,
                         locator=locator,
                         excerpt=excerpt,
+                        source_excerpt=source_excerpt,
                         citation_id=citation_id if is_stable_citation_id(citation_id) else None,
                         citation_title=self._normalize_optional_text(
                             it.get("citation_title")
@@ -4567,6 +4577,7 @@ class KbChatService:
             citation_title = self._extract_citation_title(item, fallback_index=idx)
             citation_page_hint = self._extract_citation_page_hint(locator)
             citation_source = self._extract_citation_source(item)
+            source_excerpt = self._normalize_optional_text(item.get("source_excerpt"))
 
             item["citation_title"] = citation_title
             item["citation_page_hint"] = citation_page_hint
@@ -4575,6 +4586,7 @@ class KbChatService:
                 "citation_title": citation_title,
                 "citation_page_hint": citation_page_hint,
                 "citation_source": citation_source,
+                "source_excerpt": source_excerpt,
             }
 
         for item in evidence_items:
@@ -4591,6 +4603,7 @@ class KbChatService:
             item.citation_title = meta.get("citation_title")
             item.citation_page_hint = meta.get("citation_page_hint")
             item.citation_source = meta.get("citation_source")
+            item.source_excerpt = meta.get("source_excerpt")
 
         def _label_from_locator(locator: dict | None) -> str | None:
             if not isinstance(locator, dict):

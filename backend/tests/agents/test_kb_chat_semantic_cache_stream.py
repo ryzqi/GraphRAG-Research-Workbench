@@ -9,6 +9,7 @@ from app.schemas.chats import (
     AgentRunRead,
     ChatAnswerResponse,
     ChatMessageRead,
+    EvidenceItem,
     SemanticCacheMeta,
     resolve_kb_chat_config,
 )
@@ -44,7 +45,18 @@ async def test_answer_stream_cached_hit_emits_semantic_cache_step_and_node_io() 
                 content="来自缓存的答案",
                 created_at="2026-03-24T10:00:00Z",
             ),
-            evidence=[],
+            evidence=[
+                EvidenceItem(
+                    source_kind="kb",
+                    kb_id=uuid.UUID("00000000-0000-0000-0000-000000000402"),
+                    material_id=uuid.UUID("00000000-0000-0000-0000-000000000403"),
+                    chunk_id=uuid.UUID("00000000-0000-0000-0000-000000000404"),
+                    locator={"filename": "cache-source.pdf"},
+                    excerpt="压缩后的证据",
+                    source_excerpt="原始 source excerpt",
+                    citation_id="S1",
+                )
+            ],
             source="cached",
             cache=SemanticCacheMeta(
                 hit=True,
@@ -140,6 +152,21 @@ async def test_answer_stream_cached_hit_emits_semantic_cache_step_and_node_io() 
 
     final_event = events[6][1]
     assert final_event["source"] == "cached"
+    assert final_event["evidence"] == [
+        {
+            "source_kind": "kb",
+            "kb_id": "00000000-0000-0000-0000-000000000402",
+            "material_id": "00000000-0000-0000-0000-000000000403",
+            "chunk_id": "00000000-0000-0000-0000-000000000404",
+            "locator": {"filename": "cache-source.pdf"},
+            "excerpt": "压缩后的证据",
+            "source_excerpt": "原始 source excerpt",
+            "citation_id": "S1",
+            "citation_title": None,
+            "citation_page_hint": None,
+            "citation_source": None,
+        }
+    ]
     assert final_event["cache"] == {
         "hit": True,
         "score": 0.91,

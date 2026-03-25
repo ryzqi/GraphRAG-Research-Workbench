@@ -127,6 +127,7 @@ export interface EvidenceItem {
   chunk_id: string | null;
   locator: Record<string, unknown> | null;
   excerpt: string;
+  source_excerpt?: string | null;
   citation_id?: string | null;
   citation_title?: string | null;
   citation_page_hint?: string | null;
