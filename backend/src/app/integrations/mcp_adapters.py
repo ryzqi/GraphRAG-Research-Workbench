@@ -6,18 +6,23 @@ import asyncio
 import json
 import re
 import time
+from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass
-from typing import Awaitable, Callable, Iterable
+from typing import TYPE_CHECKING, Awaitable, Callable, Iterable
 
 from langchain.tools import BaseTool
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from langchain_mcp_adapters.interceptors import MCPToolCallRequest, ToolCallInterceptor
+from langchain_mcp_adapters.tools import load_mcp_tools as load_langchain_mcp_tools
 from mcp.types import CallToolResult, TextContent
 
 from app.core.logging import get_logger
 from app.core.logging import redact_dict
 from app.core.settings import Settings
 from app.models.tool_extension import ExtensionTransport, ToolExtension
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
 
 logger = get_logger(__name__)
 
@@ -106,46 +111,33 @@ def _resolve_timeout_seconds(extension: ToolExtension, settings: Settings) -> in
     return timeout if timeout > 0 else default_timeout
 
 
-def _resolve_stdio_template(
+def _resolve_stdio_connection_config(
     extension: ToolExtension,
-    settings: Settings,
-) -> tuple[str, list[str], dict[str, str]]:
+) -> tuple[str, list[str], dict[str, str], str | None]:
     config = extension.stdio_config if isinstance(extension.stdio_config, dict) else None
     if not isinstance(config, dict):
         raise ValueError("stdio_config 缺失")
-    template_id = str(config.get("template_id", "")).strip()
-    if not template_id:
-        raise ValueError("stdio_config.template_id 不能为空")
-
-    template = settings.mcp_stdio_templates.get(template_id)
-    if not isinstance(template, dict):
-        raise ValueError(f"未知 stdio 模板: {template_id}")
-
-    command = str(template.get("command", "")).strip()
+    command = str(config.get("command", "")).strip()
     if not command:
-        raise ValueError(f"stdio 模板 {template_id} 缺少 command")
-
-    template_args = template.get("args", [])
-    if template_args is None:
-        template_args = []
-    if not isinstance(template_args, list):
-        raise ValueError(f"stdio 模板 {template_id}.args 必须为数组")
-    ext_args = config.get("args", [])
-    if ext_args is None:
-        ext_args = []
-    if not isinstance(ext_args, list):
+        raise ValueError("stdio_config.command 不能为空")
+    raw_args = config.get("args", [])
+    if raw_args is None:
+        raw_args = []
+    if not isinstance(raw_args, list):
         raise ValueError("stdio_config.args 必须为数组")
-    merged_args = [*template_args, *ext_args]
-    if len(merged_args) > _MAX_STDIO_ARGS:
+    if len(raw_args) > _MAX_STDIO_ARGS:
         raise ValueError("stdio 参数数量过多")
 
     args: list[str] = []
-    for index, item in enumerate(merged_args, start=1):
+    for index, item in enumerate(raw_args, start=1):
         args.append(_validate_stdio_token(str(item), field=f"args[{index}]"))
 
-    env = _to_str_dict(template.get("env"))
-    env.update(_to_str_dict(config.get("env")))
-    return command, args, env
+    env = _to_str_dict(config.get("env"))
+    cwd_raw = config.get("cwd")
+    cwd = None
+    if cwd_raw is not None:
+        cwd = str(cwd_raw).strip() or None
+    return command, args, env, cwd
 
 
 def _resolve_http_headers(extension: ToolExtension) -> tuple[str, dict[str, str]]:
@@ -275,7 +267,7 @@ class McpToolCallAuditInterceptor(ToolCallInterceptor):
                 "extension_name": getattr(ext, "name", None),
                 "transport": getattr(ext.transport, "value", None) if ext else None,
                 "tool_name": request.name,
-                "args": _format_audit_payload(redact_dict(request.args)),
+                "tool_args": _format_audit_payload(redact_dict(request.args)),
                 "timeout_seconds": timeout_seconds,
             },
         )
@@ -358,7 +350,7 @@ def build_mcp_server_params(
     if transport == ExtensionTransport.HTTP:
         url, headers = _resolve_http_headers(extension)
         params: dict[str, object] = {
-            "transport": "streamable_http",
+            "transport": "http",
             "url": url,
             "timeout": _resolve_timeout_seconds(extension, settings),
         }
@@ -367,7 +359,7 @@ def build_mcp_server_params(
         return params
 
     if transport == ExtensionTransport.STDIO:
-        command, args, env = _resolve_stdio_template(extension, settings)
+        command, args, env, cwd = _resolve_stdio_connection_config(extension)
         params: dict[str, object] = {
             "transport": "stdio",
             "command": command,
@@ -375,6 +367,8 @@ def build_mcp_server_params(
         }
         if env:
             params["env"] = env
+        if cwd:
+            params["cwd"] = cwd
         return params
 
     raise ValueError(f"不支持的传输类型: {extension.transport}")
@@ -492,6 +486,107 @@ async def load_mcp_tools(
         allow_external=allow_external,
     )
     return entries
+
+
+@asynccontextmanager
+async def open_mcp_tool_runtime(
+    *,
+    settings: Settings,
+    extensions: Iterable[ToolExtension],
+    allow_external: bool = True,
+) -> AsyncIterator[tuple[list[McpToolEntry], dict[str, McpServerDiagnostics]]]:
+    """为单次 agent 运行打开可复用的 MCP session，并在退出时统一关闭。"""
+    extensions_list = list(extensions)
+    if not settings.mcp_enabled or not extensions_list:
+        yield [], {}
+        return
+
+    connections = build_mcp_connections(extensions_list, settings)
+    if not connections:
+        diagnostics = {
+            str(ext.id): McpServerDiagnostics(
+                status="failed", last_error="扩展配置无效", latency_ms=None
+            )
+            for ext in extensions_list
+        }
+        yield [], diagnostics
+        return
+
+    extensions_by_id = {str(ext.id): ext for ext in extensions_list}
+    entries: list[McpToolEntry] = []
+    diagnostics: dict[str, McpServerDiagnostics] = {}
+
+    async with AsyncExitStack() as stack:
+        for ext in extensions_list:
+            server_name = str(ext.id)
+            if server_name not in connections:
+                diagnostics[server_name] = McpServerDiagnostics(
+                    status="failed",
+                    last_error="扩展配置无效",
+                    latency_ms=None,
+                )
+                continue
+
+            connection = connections[server_name]
+            client = MultiServerMCPClient(
+                {server_name: connection},
+                tool_name_prefix=False,
+                tool_interceptors=[
+                    McpToolCallAuditInterceptor(
+                        settings=settings,
+                        allow_external=allow_external,
+                        extensions_by_id=extensions_by_id,
+                    )
+                ],
+            )
+
+            start = time.perf_counter()
+            try:
+                session = await stack.enter_async_context(client.session(server_name))
+                tools = await load_langchain_mcp_tools(
+                    session,
+                    callbacks=client.callbacks,
+                    tool_interceptors=client.tool_interceptors,
+                    server_name=server_name,
+                    tool_name_prefix=client.tool_name_prefix,
+                )
+            except Exception as exc:  # noqa: BLE001
+                latency_ms = int((time.perf_counter() - start) * 1000)
+                diagnostics[server_name] = McpServerDiagnostics(
+                    status="failed",
+                    last_error=str(exc),
+                    latency_ms=latency_ms,
+                )
+                logger.warning(
+                    "加载 MCP 工具失败",
+                    extra={
+                        "extension_id": server_name,
+                        "error": str(exc),
+                        "latency_ms": latency_ms,
+                    },
+                )
+                continue
+
+            latency_ms = int((time.perf_counter() - start) * 1000)
+            if not tools:
+                diagnostics[server_name] = McpServerDiagnostics(
+                    status="degraded",
+                    last_error="未发现可用工具",
+                    latency_ms=latency_ms,
+                )
+                continue
+
+            diagnostics[server_name] = McpServerDiagnostics(
+                status="ok",
+                last_error=None,
+                latency_ms=latency_ms,
+            )
+            for tool in tools:
+                entries.append(
+                    McpToolEntry(extension=ext, tool=tool, raw_tool_name=tool.name)
+                )
+
+        yield entries, diagnostics
 
 
 def tool_input_schema(tool: BaseTool) -> dict | None:

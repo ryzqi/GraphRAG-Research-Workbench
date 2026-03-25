@@ -8,7 +8,7 @@ import {
 
 describe('formDefaults', () => {
   it('creates the repo default extension form state for new extensions', () => {
-    expect(createDefaultExtensionFormState('stdio-template-1')).toEqual({
+    expect(createDefaultExtensionFormState()).toEqual({
       name: '',
       transport: 'http',
       emitMetrics: true,
@@ -18,9 +18,10 @@ describe('formDefaults', () => {
       httpAuthType: 'none',
       httpAuthToken: '',
       httpHeadersJson: '',
-      stdioTemplateId: 'stdio-template-1',
+      stdioCommand: '',
       stdioArgsText: '',
       stdioEnvJson: '',
+      stdioWorkingDirectory: '',
       stdioTimeoutSeconds: '',
     });
   });

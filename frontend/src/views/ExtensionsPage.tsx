@@ -22,7 +22,6 @@ import {
   Tab,
   Tabs,
   TextField,
-  Tooltip,
   Typography,
 } from '@mui/material';
 import { useState } from 'react';
@@ -33,10 +32,15 @@ import {
   useDeleteExtension,
   useExtensionTools,
   useExtensions,
-  useStdioTemplates,
   useUpdateExtension,
 } from '../hooks/queries/useExtensions';
 import { getErrorMessage } from '../lib/errorHandler';
+import {
+  buildExtensionPayloadFromForm,
+  buildFormFromExtension,
+  importSingleMcpServerToFormState,
+  type ExtensionFormState,
+} from '../services/mcpExtensionForm';
 import type {
   ExtensionAuthType,
   ExtensionConnectionStatus,
@@ -54,56 +58,6 @@ import { PageHeader } from '../components/ui/PageHeader';
 type ListStatusFilter = 'all' | ExtensionStatus;
 type EditorMode = 'create' | 'edit';
 
-interface ExtensionFormState {
-  name: string;
-  transport: ExtensionTransport;
-  emitMetrics: boolean;
-  logLevelOverride: '' | 'DEBUG' | 'INFO' | 'WARNING' | 'ERROR';
-
-  httpUrl: string;
-  httpTimeoutSeconds: string;
-  httpAuthType: ExtensionAuthType;
-  httpAuthToken: string;
-  httpHeadersJson: string;
-
-  stdioTemplateId: string;
-  stdioArgsText: string;
-  stdioEnvJson: string;
-  stdioTimeoutSeconds: string;
-}
-
-function toOptionalNumber(value: string): number | undefined {
-  const trimmed = value.trim();
-  if (!trimmed) return undefined;
-  const parsed = Number(trimmed);
-  if (!Number.isInteger(parsed) || parsed <= 0) {
-    throw new Error('超时时间必须为正整数');
-  }
-  return parsed;
-}
-
-function parseJsonRecord(text: string, fieldName: string): Record<string, string> {
-  const trimmed = text.trim();
-  if (!trimmed) return {};
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(trimmed);
-  } catch {
-    throw new Error(`${fieldName} 必须是合法 JSON 对象`);
-  }
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    throw new Error(`${fieldName} 必须是 JSON 对象`);
-  }
-  return Object.fromEntries(
-    Object.entries(parsed).map(([k, v]) => [String(k), String(v)])
-  );
-}
-
-function formatJson(input: Record<string, string> | null | undefined): string {
-  if (!input || Object.keys(input).length === 0) return '';
-  return JSON.stringify(input, null, 2);
-}
-
 function getConnectionStatusLabel(status: ExtensionConnectionStatus): string {
   if (status === 'ok') return '连接正常';
   if (status === 'degraded') return '连接退化';
@@ -118,88 +72,6 @@ function getConnectionStatusColor(
   return 'error';
 }
 
-function buildFormFromExtension(ext: ToolExtension): ExtensionFormState {
-  const defaults = createDefaultExtensionFormState(ext.stdio_config?.template_id ?? null);
-  return {
-    ...defaults,
-    name: ext.name,
-    transport: ext.transport,
-    emitMetrics: ext.observability_config?.emit_metrics ?? defaults.emitMetrics,
-    logLevelOverride: ext.observability_config?.log_level_override ?? defaults.logLevelOverride,
-
-    httpUrl: ext.http_config?.url ?? defaults.httpUrl,
-    httpTimeoutSeconds:
-      ext.http_config?.timeout_seconds !== null &&
-      ext.http_config?.timeout_seconds !== undefined
-        ? String(ext.http_config.timeout_seconds)
-        : defaults.httpTimeoutSeconds,
-    httpAuthType: ext.http_config?.auth?.type ?? defaults.httpAuthType,
-    httpAuthToken: ext.http_config?.auth?.token ?? defaults.httpAuthToken,
-    httpHeadersJson: formatJson(ext.http_config?.headers ?? null),
-
-    stdioTemplateId: ext.stdio_config?.template_id ?? defaults.stdioTemplateId,
-    stdioArgsText: (ext.stdio_config?.args ?? []).join('\n'),
-    stdioEnvJson: formatJson(ext.stdio_config?.env ?? null),
-    stdioTimeoutSeconds:
-      ext.stdio_config?.timeout_seconds !== null &&
-      ext.stdio_config?.timeout_seconds !== undefined
-        ? String(ext.stdio_config.timeout_seconds)
-        : defaults.stdioTimeoutSeconds,
-  };
-}
-
-function buildPayloadFromForm(form: ExtensionFormState): ToolExtensionCreate {
-  const payload: ToolExtensionCreate = {
-    name: form.name.trim(),
-    transport: form.transport,
-    observability_config: {
-      emit_metrics: form.emitMetrics,
-      ...(form.logLevelOverride
-        ? { log_level_override: form.logLevelOverride }
-        : {}),
-    },
-  };
-
-  if (!payload.name) {
-    throw new Error('扩展名称不能为空');
-  }
-
-  if (form.transport === 'http') {
-    const timeout = toOptionalNumber(form.httpTimeoutSeconds);
-    const headers = parseJsonRecord(form.httpHeadersJson, 'HTTP Headers');
-    const token = form.httpAuthToken.trim();
-    payload.http_config = {
-      url: form.httpUrl.trim(),
-      protocol: 'streamable_http',
-      headers,
-      auth: {
-        type: form.httpAuthType,
-        ...(form.httpAuthType !== 'none' && token ? { token } : {}),
-      },
-      ...(timeout ? { timeout_seconds: timeout } : {}),
-    };
-    payload.stdio_config = null;
-  } else {
-    const timeout = toOptionalNumber(form.stdioTimeoutSeconds);
-    const env = parseJsonRecord(form.stdioEnvJson, 'STDIO 环境变量');
-    if (!form.stdioTemplateId.trim()) {
-      throw new Error('请选择 STDIO 命令模板');
-    }
-    payload.stdio_config = {
-      template_id: form.stdioTemplateId.trim(),
-      args: form.stdioArgsText
-        .split('\n')
-        .map((line) => line.trim())
-        .filter(Boolean),
-      env,
-      ...(timeout ? { timeout_seconds: timeout } : {}),
-    };
-    payload.http_config = null;
-  }
-
-  return payload;
-}
-
 export function ExtensionsPage() {
   const [error, setError] = useState<string | null>(null);
   const [selectedExtensionId, setSelectedExtensionId] = useState<string | null>(null);
@@ -211,18 +83,17 @@ export function ExtensionsPage() {
   const [editingExtensionId, setEditingExtensionId] = useState<string | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [formState, setFormState] = useState<ExtensionFormState>(() =>
-    createDefaultExtensionFormState(null)
+    createDefaultExtensionFormState()
   );
+  const [mcpImportJson, setMcpImportJson] = useState('');
   const [deleteTarget, setDeleteTarget] = useState<ToolExtension | null>(null);
 
   const extensionsQuery = useExtensions();
-  const templatesQuery = useStdioTemplates();
   const createMutation = useCreateExtension();
   const updateMutation = useUpdateExtension();
   const deleteMutation = useDeleteExtension();
 
   const extensions = extensionsQuery.data ?? [];
-  const templates = templatesQuery.data ?? [];
 
   const selectedExtension =
     extensions.find((ext) => ext.id === selectedExtensionId) ?? null;
@@ -246,7 +117,6 @@ export function ExtensionsPage() {
   const mergedError =
     error ??
     (extensionsQuery.error ? getErrorMessage(extensionsQuery.error) : null) ??
-    (templatesQuery.error ? getErrorMessage(templatesQuery.error) : null) ??
     (createMutation.error ? getErrorMessage(createMutation.error) : null) ??
     (updateMutation.error ? getErrorMessage(updateMutation.error) : null) ??
     (deleteMutation.error ? getErrorMessage(deleteMutation.error) : null) ??
@@ -273,10 +143,6 @@ export function ExtensionsPage() {
       extensionsQuery.refetch();
       return;
     }
-    if (templatesQuery.error) {
-      templatesQuery.refetch();
-      return;
-    }
     if (toolsQuery.error) {
       toolsQuery.refetch();
     }
@@ -286,7 +152,8 @@ export function ExtensionsPage() {
     setError(null);
     setEditorMode('create');
     setEditingExtensionId(null);
-    setFormState(createDefaultExtensionFormState(templates[0]?.id ?? null));
+    setMcpImportJson('');
+    setFormState(createDefaultExtensionFormState());
     setDrawerOpen(true);
   };
 
@@ -294,6 +161,7 @@ export function ExtensionsPage() {
     setError(null);
     setEditorMode('edit');
     setEditingExtensionId(ext.id);
+    setMcpImportJson('');
     setFormState(buildFormFromExtension(ext));
     setDrawerOpen(true);
   };
@@ -302,7 +170,7 @@ export function ExtensionsPage() {
     setError(null);
     let payload: ToolExtensionCreate;
     try {
-      payload = buildPayloadFromForm(formState);
+      payload = buildExtensionPayloadFromForm(formState);
     } catch (caught) {
       setError(getErrorMessage(caught));
       return;
@@ -331,6 +199,15 @@ export function ExtensionsPage() {
         },
       }
     );
+  };
+
+  const handleImportMcpJson = () => {
+    setError(null);
+    try {
+      setFormState(importSingleMcpServerToFormState(mcpImportJson));
+    } catch (caught) {
+      setError(getErrorMessage(caught));
+    }
   };
 
   const toggleExtensionStatus = (ext: ToolExtension) => {
@@ -556,11 +433,16 @@ export function ExtensionsPage() {
                           selectedExtension.stdio_config && (
                             <>
                               <Typography variant='body2' color='text.secondary'>
-                                模板 ID: {selectedExtension.stdio_config.template_id}
+                                命令: {selectedExtension.stdio_config.command}
                               </Typography>
                               <Typography variant='body2' color='text.secondary'>
-                                额外参数: {(selectedExtension.stdio_config.args ?? []).join(' ')}
+                                参数: {(selectedExtension.stdio_config.args ?? []).join(' ')}
                               </Typography>
+                              {selectedExtension.stdio_config.cwd && (
+                                <Typography variant='body2' color='text.secondary'>
+                                  工作目录: {selectedExtension.stdio_config.cwd}
+                                </Typography>
+                              )}
                             </>
                           )}
                       </Stack>
@@ -647,6 +529,33 @@ export function ExtensionsPage() {
             <Typography variant='h6'>
               {editorMode === 'create' ? '新建扩展' : '编辑扩展'}
             </Typography>
+
+            <Stack spacing={1}>
+              <Typography variant='subtitle2'>导入 mcpServers JSON</Typography>
+              <Typography variant='body2' color='text.secondary'>
+                仅支持一次导入 1 个 server，可导入 HTTP url 或 STDIO command。
+              </Typography>
+              <TextField
+                label='mcpServers JSON'
+                value={mcpImportJson}
+                onChange={(e) => setMcpImportJson(e.target.value)}
+                placeholder={`{\n  "mcpServers": {\n    "sequential-thinking": {\n      "command": "npx",\n      "args": ["-y", "@modelcontextprotocol/server-sequential-thinking"]\n    }\n  }\n}`}
+                multiline
+                minRows={7}
+                fullWidth
+              />
+              <Stack direction='row' justifyContent='flex-end'>
+                <Button
+                  variant='outlined'
+                  onClick={handleImportMcpJson}
+                  disabled={saving || !mcpImportJson.trim()}
+                >
+                  导入配置
+                </Button>
+              </Stack>
+            </Stack>
+
+            <Divider />
 
             <TextField
               label='扩展名称'
@@ -761,42 +670,22 @@ export function ExtensionsPage() {
               </Stack>
             ) : (
               <Stack spacing={1.5}>
-                <Stack direction='row' justifyContent='space-between' alignItems='center'>
-                  <Typography variant='subtitle2'>STDIO 配置</Typography>
-                  <Tooltip title='模板来源于后端 MCP_STDIO_TEMPLATES'>
-                    <Button
-                      variant='text'
-                      size='small'
-                      startIcon={<RefreshIcon />}
-                      onClick={() => templatesQuery.refetch()}
-                      loading={templatesQuery.isFetching}
-                    >
-                      刷新模板
-                    </Button>
-                  </Tooltip>
-                </Stack>
-                <FormControl fullWidth required>
-                  <InputLabel id='stdio-template-id-label'>命令模板</InputLabel>
-                  <Select
-                    labelId='stdio-template-id-label'
-                    label='命令模板'
-                    value={formState.stdioTemplateId}
-                    onChange={(e) =>
-                      setFormState((prev) => ({
-                        ...prev,
-                        stdioTemplateId: e.target.value,
-                      }))
-                    }
-                  >
-                    {templates.map((template) => (
-                      <MenuItem key={template.id} value={template.id}>
-                        {template.label}
-                      </MenuItem>
-                    ))}
-                  </Select>
-                </FormControl>
+                <Typography variant='subtitle2'>STDIO 配置</Typography>
                 <TextField
-                  label='额外参数（每行一个）'
+                  label='命令'
+                  value={formState.stdioCommand}
+                  onChange={(e) =>
+                    setFormState((prev) => ({
+                      ...prev,
+                      stdioCommand: e.target.value,
+                    }))
+                  }
+                  placeholder='npx'
+                  required
+                  fullWidth
+                />
+                <TextField
+                  label='参数（每行一个）'
                   value={formState.stdioArgsText}
                   onChange={(e) =>
                     setFormState((prev) => ({
@@ -820,6 +709,18 @@ export function ExtensionsPage() {
                   placeholder='{"MCP_MODE":"prod"}'
                   multiline
                   minRows={4}
+                  fullWidth
+                />
+                <TextField
+                  label='工作目录（可选）'
+                  value={formState.stdioWorkingDirectory}
+                  onChange={(e) =>
+                    setFormState((prev) => ({
+                      ...prev,
+                      stdioWorkingDirectory: e.target.value,
+                    }))
+                  }
+                  placeholder='C:\\Tools\\mcp'
                   fullWidth
                 />
                 <TextField

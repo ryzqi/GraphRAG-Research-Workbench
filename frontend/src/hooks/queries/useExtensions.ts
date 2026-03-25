@@ -6,7 +6,6 @@ import {
   deleteExtension,
   getExtensionTools,
   listExtensions,
-  listStdioTemplates,
   updateExtension,
   type ToolExtensionCreate,
   type ToolExtensionUpdate,
@@ -20,7 +19,6 @@ const KEYS = {
   list: () => [...KEYS.all, 'list'] as const,
   detail: (id: string) => [...KEYS.all, 'detail', id] as const,
   tools: (id: string | undefined) => [...KEYS.all, 'tools', id ?? NO_ID] as const,
-  stdioTemplates: () => [...KEYS.all, 'stdio-templates'] as const,
 };
 
 export function useExtensions() {
@@ -31,13 +29,6 @@ export function useExtensionTools(extensionId: string | undefined) {
   return useApiQuery(
     extensionId ? KEYS.tools(extensionId) : null,
     extensionId ? () => getExtensionTools(extensionId) : null
-  );
-}
-
-export function useStdioTemplates() {
-  return useApiQuery(
-    KEYS.stdioTemplates(),
-    () => listStdioTemplates().then((res) => res.items)
   );
 }
 

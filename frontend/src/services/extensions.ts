@@ -25,9 +25,10 @@ export interface ExtensionHttpConfig {
 }
 
 export interface ExtensionStdioConfig {
-  template_id: string;
+  command: string;
   args: string[];
   env: Record<string, string>;
+  cwd?: string | null;
   timeout_seconds?: number | null;
 }
 
@@ -78,18 +79,6 @@ export interface ToolDescriptorListResponse extends ListResponse<ToolDescriptor>
   latency_ms: number | null;
 }
 
-export interface StdioTemplateDescriptor {
-  id: string;
-  label: string;
-  description: string | null;
-  command: string;
-  args: string[];
-}
-
-export interface StdioTemplateListResponse {
-  items: StdioTemplateDescriptor[];
-}
-
 export type ToolExtensionListResponse = ListResponse<ToolExtension>;
 
 /**
@@ -113,13 +102,6 @@ export async function listExtensions(params?: {
  */
 export async function getExtension(extensionId: string): Promise<ToolExtension> {
   return apiFetch<ToolExtension>(`/api/v1/extensions/${extensionId}`);
-}
-
-/**
- * 获取 STDIO 模板列表
- */
-export async function listStdioTemplates(): Promise<StdioTemplateListResponse> {
-  return apiFetch<StdioTemplateListResponse>('/api/v1/extensions/stdio-templates');
 }
 
 /**

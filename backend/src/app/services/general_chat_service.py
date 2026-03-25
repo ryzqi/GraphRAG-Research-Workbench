@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import urlparse
@@ -35,7 +36,7 @@ from app.core.model_config_errors import ModelConfigIncompleteError
 from app.core.settings import get_settings
 from app.integrations.chat_model_factory import create_chat_model
 from app.integrations.llm_client import LLMClient
-from app.integrations.mcp_adapters import load_mcp_tools_with_diagnostics
+from app.integrations.mcp_adapters import open_mcp_tool_runtime
 from app.integrations.model_runtime_config import ModelRuntimeConfigManager
 from app.integrations.redis_client import RedisClient
 from app.prompts import get_prompt_loader
@@ -226,6 +227,7 @@ class GeneralChatService:
         self._redis = redis
         self._http_client = http_client
         self._dedup_missing_table_warned = False
+        self._active_tool_runtime_cm: Any | None = None
 
     @staticmethod
     def _normalize_client_request_id(client_request_id: str | None) -> str | None:
@@ -279,6 +281,64 @@ class GeneralChatService:
             redis=self._redis,
             http_client=self._http_client,
         )
+
+    @asynccontextmanager
+    async def _load_runtime_tool_registry_for_session(
+        self, *, session: ChatSession
+    ):
+        include_mcp = bool(session.allow_external and self._settings.mcp_enabled)
+        include_web_search = bool(self._settings.web_search_api_key)
+        extensions: list[ToolExtension] = []
+        if include_mcp:
+            stmt = select(ToolExtension).where(
+                ToolExtension.status == ExtensionStatus.ENABLED
+            )
+            result = await self._db.execute(stmt)
+            extensions = list(result.scalars().all())
+
+        if not include_mcp:
+            yield await build_tool_registry(
+                settings=self._settings,
+                extensions=[],
+                extra_tools=[build_system_time_tool()],
+                include_web_search=include_web_search,
+                include_mcp=False,
+                redis=self._redis,
+                http_client=self._http_client,
+            )
+            return
+
+        async with open_mcp_tool_runtime(
+            settings=self._settings,
+            extensions=extensions,
+            allow_external=True,
+        ) as (mcp_entries, _diagnostics):
+            yield await build_tool_registry(
+                settings=self._settings,
+                extensions=extensions,
+                mcp_entries=mcp_entries,
+                extra_tools=[build_system_time_tool()],
+                include_web_search=include_web_search,
+                include_mcp=True,
+                redis=self._redis,
+                http_client=self._http_client,
+            )
+
+    async def _open_runtime_tool_registry_for_session(
+        self, *, session: ChatSession
+    ) -> tuple[list[Any], dict[str, Any]]:
+        await self._close_runtime_tool_registry()
+        runtime_cm = self._load_runtime_tool_registry_for_session(session=session)
+        tools, tool_meta_by_name = await runtime_cm.__aenter__()
+        self._active_tool_runtime_cm = runtime_cm
+        return tools, tool_meta_by_name
+
+    async def _close_runtime_tool_registry(self) -> None:
+        runtime_cm = getattr(self, "_active_tool_runtime_cm", None)
+        if runtime_cm is None:
+            return
+        self._active_tool_runtime_cm = None
+        await runtime_cm.__aexit__(None, None, None)
 
     async def _claim_request_dedup(
         self,
@@ -841,6 +901,74 @@ class GeneralChatService:
         }
 
     @staticmethod
+    def _to_pending_interrupt_models(
+        pending_interrupts: list[dict[str, Any]],
+    ) -> list[PendingInterruptApproval]:
+        return [
+            PendingInterruptApproval(
+                interrupt_id=item["interrupt_id"],
+                message=item.get("message"),
+                pending_tool_calls=[
+                    PendingToolCall.model_validate(call)
+                    for call in item.get("pending_tool_calls", [])
+                    if isinstance(call, dict)
+                ],
+            )
+            for item in pending_interrupts
+            if isinstance(item, dict)
+        ]
+
+    async def _recover_stream_pending_tool_approval(
+        self,
+        *,
+        thread_id: str,
+        run: AgentRun,
+        stream_state: StreamState,
+        tool_meta_by_name: dict[str, Any],
+        started_at: datetime,
+        replay_metrics: dict[str, object],
+        preserve_existing_metrics: bool = False,
+    ) -> ChatPendingToolApprovalResponse | None:
+        checkpoint_tuple = await CheckpointManager.get_state(thread_id)
+        if checkpoint_tuple is None:
+            return None
+        pending_interrupts_raw = _extract_pending_interrupts(
+            checkpoint_tuple.pending_writes
+        )
+        if not pending_interrupts_raw:
+            return None
+
+        pending_interrupts = self._build_pending_interrupt_approvals(
+            pending_interrupts_raw,
+            tool_meta_by_name,
+        )
+        if not pending_interrupts:
+            return None
+
+        context_metrics = self._build_context_metrics(stream_state.messages)
+        run.stage_summaries = {
+            "tool_approval": self._build_interrupt_stage_summary(pending_interrupts)
+        }
+
+        next_metrics = {
+            "latency_ms": int((datetime.now(timezone.utc) - started_at).total_seconds() * 1000),
+            "context": context_metrics,
+            **replay_metrics,
+            **(stream_state.metrics if isinstance(stream_state.metrics, dict) else {}),
+        }
+        if preserve_existing_metrics and isinstance(run.metrics, dict):
+            next_metrics = {**run.metrics, **next_metrics}
+        run.metrics = next_metrics
+
+        await self._db.commit()
+        await self._db.refresh(run)
+        return ChatPendingToolApprovalResponse(
+            thread_id=thread_id,
+            pending_interrupts=self._to_pending_interrupt_models(pending_interrupts),
+            run=AgentRunRead.model_validate(run),
+        )
+
+    @staticmethod
     def _build_resume_decisions_payload(
         pending_interrupts: list[dict[str, Any]],
         approval: ToolApprovalRequest,
@@ -1151,7 +1279,7 @@ class GeneralChatService:
 
         try:
             # 统一工具注册（内置 + MCP）
-            tools, tool_meta_by_name = await self._load_tool_registry_for_session(
+            tools, tool_meta_by_name = await self._open_runtime_tool_registry_for_session(
                 session=session
             )
             hitl_interrupt_on = build_hitl_interrupt_on(tool_meta_by_name)
@@ -1299,6 +1427,7 @@ class GeneralChatService:
 
             raise
         finally:
+            await self._close_runtime_tool_registry()
             set_run_id(None)
 
     async def answer_stream(
@@ -1422,7 +1551,7 @@ class GeneralChatService:
 
         try:
             # 统一工具注册（内置 + MCP）
-            tools, tool_meta_by_name = await self._load_tool_registry_for_session(
+            tools, tool_meta_by_name = await self._open_runtime_tool_registry_for_session(
                 session=session
             )
             hitl_interrupt_on = build_hitl_interrupt_on(tool_meta_by_name)
@@ -1549,24 +1678,27 @@ class GeneralChatService:
 
                                 response = ChatPendingToolApprovalResponse(
                                     thread_id=thread_id,
-                                    pending_interrupts=[
-                                        PendingInterruptApproval(
-                                            interrupt_id=item["interrupt_id"],
-                                            message=item.get("message"),
-                                            pending_tool_calls=[
-                                                PendingToolCall.model_validate(call)
-                                                for call in item.get("pending_tool_calls", [])
-                                                if isinstance(call, dict)
-                                            ],
-                                        )
-                                        for item in pending_interrupts
-                                        if isinstance(item, dict)
-                                    ],
+                                    pending_interrupts=self._to_pending_interrupt_models(
+                                        pending_interrupts
+                                    ),
                                     run=AgentRunRead.model_validate(run),
                                 )
                                 emitted_payload = True
                                 yield "interrupt", response.model_dump(mode="json")
                                 return
+
+                    pending_response = await self._recover_stream_pending_tool_approval(
+                        thread_id=thread_id,
+                        run=run,
+                        stream_state=stream_state,
+                        tool_meta_by_name=tool_meta_by_name,
+                        started_at=started_at,
+                        replay_metrics=replay_metrics,
+                    )
+                    if pending_response is not None:
+                        emitted_payload = True
+                        yield "interrupt", pending_response.model_dump(mode="json")
+                        return
 
                     result = {
                         "messages": stream_state.messages,
@@ -1646,6 +1778,7 @@ class GeneralChatService:
                 "message": str(e),
             }
         finally:
+            await self._close_runtime_tool_registry()
             set_run_id(None)
 
     async def resume_after_tool_approval(
@@ -1679,7 +1812,7 @@ class GeneralChatService:
                 )
 
             # 为恢复执行重新构建 agent（状态由 checkpointer 提供）
-            tools, tool_meta_by_name = await self._load_tool_registry_for_session(
+            tools, tool_meta_by_name = await self._open_runtime_tool_registry_for_session(
                 session=session
             )
             hitl_interrupt_on = build_hitl_interrupt_on(tool_meta_by_name)
@@ -1687,7 +1820,6 @@ class GeneralChatService:
                 pending_interrupts_raw,
                 tool_meta_by_name,
             )
-            await self._ensure_extensions_connected(pending_interrupts)
             resume_payload = self._build_resume_decisions_payload(
                 pending_interrupts,
                 approval,
@@ -1776,6 +1908,7 @@ class GeneralChatService:
                 replay_metrics=replay_metrics,
             )
         finally:
+            await self._close_runtime_tool_registry()
             set_run_id(None)
 
     async def resume_after_tool_approval_stream(
@@ -1810,7 +1943,7 @@ class GeneralChatService:
                 return
 
             # 为恢复执行重新构建 agent（状态由 checkpointer 提供）
-            tools, tool_meta_by_name = await self._load_tool_registry_for_session(
+            tools, tool_meta_by_name = await self._open_runtime_tool_registry_for_session(
                 session=session
             )
             hitl_interrupt_on = build_hitl_interrupt_on(tool_meta_by_name)
@@ -1818,7 +1951,6 @@ class GeneralChatService:
                 pending_interrupts_raw,
                 tool_meta_by_name,
             )
-            await self._ensure_extensions_connected(pending_interrupts)
             resume_payload = self._build_resume_decisions_payload(
                 pending_interrupts,
                 approval,
@@ -1926,25 +2058,28 @@ class GeneralChatService:
 
                         response = ChatPendingToolApprovalResponse(
                             thread_id=thread_id,
-                            pending_interrupts=[
-                                PendingInterruptApproval(
-                                    interrupt_id=item["interrupt_id"],
-                                    message=item.get("message"),
-                                    pending_tool_calls=[
-                                        PendingToolCall.model_validate(call)
-                                        for call in item.get("pending_tool_calls", [])
-                                        if isinstance(call, dict)
-                                    ],
-                                )
-                                for item in next_pending_interrupts
-                                if isinstance(item, dict)
-                            ],
+                            pending_interrupts=self._to_pending_interrupt_models(
+                                next_pending_interrupts
+                            ),
                             run=AgentRunRead.model_validate(run),
                         )
                         yield "interrupt", response.model_dump(mode="json")
                         return
 
             started_at = run.started_at or datetime.now(timezone.utc)
+            pending_response = await self._recover_stream_pending_tool_approval(
+                thread_id=thread_id,
+                run=run,
+                stream_state=stream_state,
+                tool_meta_by_name=tool_meta_by_name,
+                started_at=started_at,
+                replay_metrics=replay_metrics,
+                preserve_existing_metrics=True,
+            )
+            if pending_response is not None:
+                yield "interrupt", pending_response.model_dump(mode="json")
+                return
+
             result = {
                 "messages": stream_state.messages,
                 "stage_summaries": stream_state.stage_summaries,
@@ -1993,83 +2128,8 @@ class GeneralChatService:
                 "message": str(e),
             }
         finally:
+            await self._close_runtime_tool_registry()
             set_run_id(None)
-
-    async def _ensure_extensions_connected(self, pending_interrupts: object) -> None:
-        if not isinstance(pending_interrupts, list) or not pending_interrupts:
-            return
-
-        extension_ids: set[uuid.UUID] = set()
-        for interrupt in pending_interrupts:
-            if not isinstance(interrupt, dict):
-                continue
-            pending_tool_calls = interrupt.get("pending_tool_calls")
-            if not isinstance(pending_tool_calls, list):
-                continue
-            for call in pending_tool_calls:
-                if not isinstance(call, dict):
-                    continue
-                if bool(call.get("is_builtin")):
-                    continue
-                extension_id = call.get("extension_id")
-                if not isinstance(extension_id, str):
-                    continue
-                if extension_id == "unknown":
-                    raise AppError(
-                        code="TOOL_APPROVAL_PAYLOAD_INVALID",
-                        message="待审批工具缺少扩展标识，无法恢复执行",
-                        status_code=400,
-                    )
-                try:
-                    extension_ids.add(uuid.UUID(extension_id))
-                except ValueError:
-                    raise AppError(
-                        code="TOOL_APPROVAL_PAYLOAD_INVALID",
-                        message="待审批工具扩展标识非法，无法恢复执行",
-                        status_code=400,
-                        details={"extension_id": extension_id},
-                    )
-
-        if not extension_ids:
-            return
-
-        stmt = select(ToolExtension).where(
-            ToolExtension.status == ExtensionStatus.ENABLED,
-            ToolExtension.id.in_(list(extension_ids)),
-        )
-        result = await self._db.execute(stmt)
-        extensions = list(result.scalars().all())
-        found_ids = {ext.id for ext in extensions}
-        missing_ids = [str(ext_id) for ext_id in extension_ids if ext_id not in found_ids]
-        if missing_ids:
-            raise AppError(
-                code="MCP_EXTENSION_UNAVAILABLE",
-                message="存在不可用的 MCP 扩展，请检查扩展连接状态",
-                status_code=503,
-                details={"missing_extension_ids": missing_ids},
-            )
-
-        _, diagnostics = await load_mcp_tools_with_diagnostics(
-            settings=self._settings,
-            extensions=extensions,
-            allow_external=True,
-        )
-        unavailable = {
-            ext_id: {
-                "status": diag.status,
-                "last_error": diag.last_error,
-                "latency_ms": diag.latency_ms,
-            }
-            for ext_id, diag in diagnostics.items()
-            if diag.status != "ok"
-        }
-        if unavailable:
-            raise AppError(
-                code="MCP_EXTENSION_UNAVAILABLE",
-                message="存在不可用的 MCP 扩展，请检查扩展连接状态",
-                status_code=503,
-                details={"diagnostics": unavailable},
-            )
 
     async def _finalize_run(
         self,

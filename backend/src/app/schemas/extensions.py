@@ -72,10 +72,22 @@ class ExtensionHttpConfig(BaseModel):
 class ExtensionStdioConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    template_id: str = Field(..., min_length=1, max_length=128)
-    args: list[str] = Field(default_factory=list, max_length=32)
+    command: str = Field(..., min_length=1, max_length=512)
+    args: list[str] = Field(default_factory=list, max_length=64)
     env: dict[str, str] = Field(default_factory=dict)
+    cwd: str | None = Field(None, min_length=1, max_length=2048)
     timeout_seconds: int | None = Field(None, ge=1, le=600)
+
+    @model_validator(mode="after")
+    def _validate_command(self) -> "ExtensionStdioConfig":
+        command = self.command.strip()
+        if not command:
+            raise ValueError("stdio_config.command is required")
+        self.command = command
+        if self.cwd is not None:
+            cwd = self.cwd.strip()
+            self.cwd = cwd or None
+        return self
 
 
 class ExtensionObservabilityConfig(BaseModel):
@@ -160,15 +172,3 @@ class ToolDescriptorListResponse(BaseModel):
     connection_status: ExtensionConnectionStatus = ExtensionConnectionStatus.OK
     last_error: str | None = None
     latency_ms: int | None = None
-
-
-class StdioTemplateDescriptor(BaseModel):
-    id: str
-    label: str
-    description: str | None = None
-    command: str
-    args: list[str] = Field(default_factory=list)
-
-
-class StdioTemplateListResponse(BaseModel):
-    items: list[StdioTemplateDescriptor]

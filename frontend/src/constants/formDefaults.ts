@@ -23,7 +23,7 @@ export function createDefaultModelProviderFormState() {
   };
 }
 
-export function createDefaultExtensionFormState(templateId: string | null) {
+export function createDefaultExtensionFormState() {
   return {
     name: '',
     transport: 'http' as const,
@@ -34,9 +34,10 @@ export function createDefaultExtensionFormState(templateId: string | null) {
     httpAuthType: 'none' as const,
     httpAuthToken: '',
     httpHeadersJson: '',
-    stdioTemplateId: templateId ?? '',
+    stdioCommand: '',
     stdioArgsText: '',
     stdioEnvJson: '',
+    stdioWorkingDirectory: '',
     stdioTimeoutSeconds: '',
   };
 }

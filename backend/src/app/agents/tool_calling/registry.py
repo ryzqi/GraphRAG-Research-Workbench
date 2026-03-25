@@ -21,7 +21,7 @@ from app.agents.tools.web_search import (
     build_web_search_tool,
 )
 from app.core.settings import Settings
-from app.integrations.mcp_adapters import load_mcp_tools
+from app.integrations.mcp_adapters import McpToolEntry, load_mcp_tools
 from app.integrations.redis_client import RedisClient
 from app.models.tool_extension import ToolExtension
 
@@ -83,6 +83,7 @@ async def build_tool_registry(
     *,
     settings: Settings,
     extensions: Sequence[ToolExtension] | None = None,
+    mcp_entries: Sequence[McpToolEntry] | None = None,
     extra_tools: Sequence[BaseTool] | None = None,
     include_web_search: bool = True,
     include_web_extract: bool = False,
@@ -166,12 +167,16 @@ async def build_tool_registry(
                 build_web_research_tool(
                     settings, redis=redis, http_client=http_client
                 )
-            )
+    )
 
     # MCP 扩展工具（外部工具，需命名空间）
     if include_mcp and settings.mcp_enabled and extensions:
-        mcp_entries = await load_mcp_tools(settings=settings, extensions=extensions)
-        for entry in mcp_entries:
+        resolved_mcp_entries = (
+            list(mcp_entries)
+            if mcp_entries is not None
+            else await load_mcp_tools(settings=settings, extensions=extensions)
+        )
+        for entry in resolved_mcp_entries:
             ext = entry.extension
             raw_tool_name = entry.raw_tool_name
             base_tool = entry.tool

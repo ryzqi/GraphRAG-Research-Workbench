@@ -9,10 +9,7 @@ from fastapi import APIRouter, Query, status
 from app.api.deps import AsyncSessionDep
 from app.core.errors import not_found
 from app.models.tool_extension import ExtensionStatus
-from app.core.settings import get_settings
 from app.schemas.extensions import (
-    StdioTemplateDescriptor,
-    StdioTemplateListResponse,
     ToolDescriptorListResponse,
     ToolExtensionCreate,
     ToolExtensionListResponse,
@@ -23,41 +20,6 @@ from app.schemas.pagination import PageMeta
 from app.services.extension_service import ExtensionService
 
 router = APIRouter()
-
-
-@router.get("/stdio-templates", response_model=StdioTemplateListResponse)
-async def list_stdio_templates() -> StdioTemplateListResponse:
-    """列出可用的 STDIO 命令模板。"""
-    settings = get_settings()
-    items: list[StdioTemplateDescriptor] = []
-    for template_id, raw in settings.mcp_stdio_templates.items():
-        if not isinstance(raw, dict):
-            continue
-        command = str(raw.get("command", "")).strip()
-        if not command:
-            continue
-        raw_args = raw.get("args")
-        args: list[str] = []
-        if isinstance(raw_args, list):
-            args = [str(v) for v in raw_args]
-        label = str(raw.get("label", template_id)).strip() or template_id
-        description_raw = raw.get("description")
-        description = (
-            str(description_raw).strip()
-            if isinstance(description_raw, str) and description_raw.strip()
-            else None
-        )
-        items.append(
-            StdioTemplateDescriptor(
-                id=template_id,
-                label=label,
-                description=description,
-                command=command,
-                args=args,
-            )
-        )
-    items_sorted = sorted(items, key=lambda item: item.label.lower())
-    return StdioTemplateListResponse(items=items_sorted)
 
 
 @router.get("", response_model=ToolExtensionListResponse)

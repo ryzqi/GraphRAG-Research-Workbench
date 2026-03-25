@@ -11,7 +11,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.errors import AppError, bad_request
 from app.core.settings import get_settings
 from app.integrations.mcp_adapters import (
-    load_mcp_tools,
     load_mcp_tools_with_diagnostics,
     tool_input_schema,
 )
@@ -240,29 +239,6 @@ class ExtensionService:
         tools_sorted = sorted(tools, key=lambda t: t.name)
         total = len(tools_sorted)
         return tools_sorted[skip : skip + limit], total, status, last_error, latency_ms
-
-    async def get_all_enabled_tools(self) -> dict[uuid.UUID, list[ToolDescriptor]]:
-        """获取所有启用扩展的工具。"""
-        stmt = select(ToolExtension).where(
-            ToolExtension.status == ExtensionStatus.ENABLED
-        )
-        result = await self._db.execute(stmt)
-        extensions = result.scalars().all()
-
-        tools_map: dict[uuid.UUID, list[ToolDescriptor]] = {}
-        if not extensions:
-            return tools_map
-
-        entries = await load_mcp_tools(settings=self._settings, extensions=extensions)
-        for entry in entries:
-            tool = ToolDescriptor(
-                name=entry.raw_tool_name,
-                description=getattr(entry.tool, "description", None),
-                input_schema=tool_input_schema(entry.tool),
-            )
-            tools_map.setdefault(entry.extension.id, []).append(tool)
-
-        return tools_map
 
     def _resolve_transport_configs(
         self,
