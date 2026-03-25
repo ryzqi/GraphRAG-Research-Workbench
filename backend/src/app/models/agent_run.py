@@ -18,7 +18,6 @@ from app.models.chat_session import AgentMode
 if TYPE_CHECKING:
     from app.models.chat_session import ChatSession
     from app.models.evidence import Evidence
-    from app.models.research_report import ResearchReport
 
 
 class AgentRunStatus(str, Enum):
@@ -31,7 +30,6 @@ class AgentRunStatus(str, Enum):
 class AgentRunType(str, Enum):
     KB_ANSWER = "kb_answer"
     GENERAL_ANSWER = "general_answer"
-    RESEARCH = "research"
 
 
 class AgentRun(Base):
@@ -84,7 +82,4 @@ class AgentRun(Base):
     )
     evidence: Mapped[list["Evidence"]] = relationship(
         "Evidence", back_populates="run", lazy="selectin"
-    )
-    research_report: Mapped["ResearchReport | None"] = relationship(
-        "ResearchReport", back_populates="run", uselist=False, lazy="selectin"
     )

@@ -39,7 +39,6 @@ class AgentRunStatus(str, Enum):
 class AgentRunType(str, Enum):
     KB_ANSWER = "kb_answer"
     GENERAL_ANSWER = "general_answer"
-    RESEARCH = "research"
 
 
 class EvidenceSourceKind(str, Enum):

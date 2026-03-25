@@ -25,7 +25,6 @@ celery_app = Celery(
         "app.worker.tasks.index_rebuild_outbox_dispatcher",
         "app.worker.tasks.bootstrap_watchdog",
         "app.worker.tasks.kb_bootstrap_jobs",
-        "app.worker.tasks.research",
     ],
 )
 
@@ -60,7 +59,6 @@ def _build_celery_conf(cfg: Settings) -> dict[str, Any]:
             Queue("dispatch"),
             Queue("ingestion"),
             Queue("rebuild"),
-            Queue("research"),
             Queue("export"),
         ),
         "task_routes": {
@@ -77,8 +75,6 @@ def _build_celery_conf(cfg: Settings) -> dict[str, Any]:
                 "queue": "dispatch"
             },
             "app.worker.tasks.index_rebuild.run_index_rebuild_job": {"queue": "rebuild"},
-            "app.worker.tasks.research.run_research": {"queue": "research"},
-            "app.worker.tasks.research.run_research_v2": {"queue": "research"},
             "app.worker.tasks.export.run_export": {"queue": "export"},
             "app.worker.tasks.kb_bootstrap_jobs.run_kb_bootstrap_job": {
                 "queue": "default"

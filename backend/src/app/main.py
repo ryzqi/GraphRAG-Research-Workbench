@@ -9,7 +9,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.v1.api import api_router
 from app.api.v2.api import api_router_v2
 from app.core.checkpoint import CheckpointManager
-from app.core.deepagents_store import DeepAgentsStoreManager
 from app.core.errors import register_exception_handlers
 from app.core.logging import configure_logging
 from app.core.memory_store import StoreManager
@@ -52,7 +51,6 @@ async def lifespan(app: FastAPI):
     )
     await CheckpointManager.initialize()
     await StoreManager.initialize()
-    DeepAgentsStoreManager.initialize()
     app.state.http_client = create_http_client(settings)
     app.state.embedding_http_client = create_http_client(
         settings,
@@ -96,7 +94,6 @@ async def lifespan(app: FastAPI):
         await ModelRuntimeConfigManager.shutdown()
     except Exception as exc:  # pragma: no cover - best effort
         logger.warning("模型运行时配置关闭失败", extra={"error": str(exc)})
-    DeepAgentsStoreManager.shutdown()
     await StoreManager.shutdown()
     await CheckpointManager.shutdown()
 

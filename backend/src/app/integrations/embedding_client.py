@@ -24,7 +24,6 @@ _ONLINE_OPTIONAL_STAGES = {
 _BATCH_STAGES = {
     "ingestion",
     "index_rebuild",
-    "research",
     "chunking",
 }
 
@@ -44,7 +43,6 @@ class EmbeddingCallStage(StrEnum):
     DIVERSITY = "diversity"
     INGESTION = "ingestion"
     INDEX_REBUILD = "index_rebuild"
-    RESEARCH = "research"
     CHUNKING = "chunking"
 
 
