@@ -6,9 +6,9 @@ const NEXT_DIR = path.join(ROOT, '.next');
 const CONFIG_PATH = path.join(ROOT, 'config', 'bundle-budgets.json');
 const REPORT_PATH = path.join(ROOT, 'reports', 'bundle-budget-report.json');
 
-// These budgets are repo-specific regression guardrails based on built route bundles.
-// They are not Next.js defaults and should be tuned against measured output, not copied
-// as generic web-performance targets.
+// 这些预算阈值是基于当前仓库已构建路由包体积设定的回归护栏。
+// 它们不是 Next.js 默认值，应结合实际构建结果调优，而不是直接照搬。
+// 不要把它们当作通用 Web 性能目标。
 
 function readJson(filePath) {
   return JSON.parse(fs.readFileSync(filePath, 'utf8'));

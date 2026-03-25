@@ -1,4 +1,4 @@
-"""Celery task that dispatches ingestion doc tasks from transactional outbox."""
+"""从事务 outbox 分发导入文档任务的 Celery 任务。"""
 
 from __future__ import annotations
 

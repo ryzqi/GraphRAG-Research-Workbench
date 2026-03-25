@@ -225,9 +225,9 @@ function MessageItemComponent({
             alignItems: isUser ? 'flex-end' : 'flex-start',
           }}
         >
-          {/* 消息气泡 - Gemini 风格 */}
+          {/* 消息气泡样式 */}
           {isUser ? (
-            // 用户消息：Google-ish Tonal bubble
+            // 用户消息：偏 tonal 的气泡样式
             <Paper
               elevation={0}
               sx={(theme) => {

@@ -9,7 +9,7 @@ from pydantic import BaseModel
 
 
 class CheckpointStateSummary(BaseModel):
-    """Checkpoint state summary for debugging without exposing raw channel_values."""
+    """用于调试的 checkpoint 状态摘要，避免直接暴露原始 channel_values。"""
 
     schema_version: str | None = None
     field_count: int = 0

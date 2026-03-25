@@ -37,8 +37,8 @@ def _build_celery_conf(cfg: Settings) -> dict[str, Any]:
     conf: dict[str, Any] = {
         "broker_connection_retry_on_startup": True,
         "broker_transport_options": {
-            # Keep aligned with Settings: this repo intentionally uses 7200s instead of
-            # Celery Redis' 3600s default to reduce premature redelivery of long tasks.
+            # 保持与 Settings 一致：本仓库刻意使用 7200 秒而非
+            # Celery Redis 默认的 3600 秒，以减少长任务被过早重复投递。
             "visibility_timeout": cfg.celery_broker_visibility_timeout_seconds
         },
         "accept_content": ["json"],

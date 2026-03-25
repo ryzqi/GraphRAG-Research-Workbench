@@ -1,4 +1,4 @@
-"""Shared helpers for building embedding input texts in worker tasks.
+"""为 worker 任务构建 embedding 输入文本的共享辅助函数。
 
 We want ingestion and index_rebuild to produce identical embedding inputs for the same
 chunk items, to avoid retrieval quality drift after a rebuild.
@@ -17,7 +17,7 @@ def build_embedding_inputs(
     contexts: Sequence[str] | None,
     contextual_enabled: bool,
 ) -> list[str]:
-    """Build embedding input strings for each chunk item.
+    """为每个 chunk 项构建 embedding 输入字符串。
 
     Rules:
     - If chunk_role == "child" and parent_ref is set, prefix with parent chunk content.

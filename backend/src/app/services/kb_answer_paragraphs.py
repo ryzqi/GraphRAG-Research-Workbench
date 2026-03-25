@@ -1,4 +1,4 @@
-"""Helpers for structured KB answer paragraphs."""
+"""结构化 KB 答案段落辅助函数。"""
 
 from __future__ import annotations
 

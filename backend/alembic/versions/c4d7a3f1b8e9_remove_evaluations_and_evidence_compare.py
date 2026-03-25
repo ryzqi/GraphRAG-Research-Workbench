@@ -1,4 +1,4 @@
-"""remove evaluations and evidence compare persistence artifacts
+"""移除 evaluations 与 evidence compare 持久化产物
 
 Revision ID: c4d7a3f1b8e9
 Revises: 9b9a6f4f20d1
@@ -11,7 +11,7 @@ from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
-# revision identifiers, used by Alembic.
+# Alembic 修订标识。
 revision = "c4d7a3f1b8e9"
 down_revision = "9b9a6f4f20d1"
 branch_labels = None

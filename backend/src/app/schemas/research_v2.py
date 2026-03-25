@@ -1,4 +1,4 @@
-"""Research v2 Schemas。"""
+"""Research v2 的 schema。"""
 
 from __future__ import annotations
 

@@ -60,7 +60,7 @@ class AppError(Exception):
     details: dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
-        # Ensure `str(AppError)` is meaningful (dataclass doesn't call Exception.__init__).
+        # 确保 `str(AppError)` 有意义；dataclass 默认不会调用 Exception.__init__。
         Exception.__init__(self, f"{self.code}: {self.message}")
 
 

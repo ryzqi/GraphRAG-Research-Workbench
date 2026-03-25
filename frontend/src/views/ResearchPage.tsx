@@ -29,7 +29,7 @@ import { getErrorMessage } from '../lib/errorHandler';
 import { safeOpenDownloadUrl } from '../utils/urlValidation';
 
 export function ResearchPage() {
-  // SWR：自动去重/缓存知识库列表（对齐 Vercel client-swr-dedup）
+  // 使用 SWR 自动去重并缓存知识库列表。
   const knowledgeBasesQuery = useSelectableKnowledgeBases();
   const knowledgeBases = knowledgeBasesQuery.data ?? [];
 
@@ -102,7 +102,7 @@ export function ResearchPage() {
         mode: 'single_agent',
       });
 
-      // 直接回填 SWR cache，避免额外请求并立即启动轮询。
+      // 直接回填 SWR 缓存，避免额外请求并立即开始轮询。
       await mutate(researchKeys.run(newRun.id), newRun, { revalidate: false });
       setRunId(newRun.id);
     } catch (e) {

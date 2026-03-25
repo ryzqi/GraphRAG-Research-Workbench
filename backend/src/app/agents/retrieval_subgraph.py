@@ -1,4 +1,4 @@
-"""Retrieval subgraph for KB Chat flowchart Stage 4."""
+"""KB Chat 流程图第 4 阶段的检索子图。"""
 
 from __future__ import annotations
 
@@ -755,7 +755,7 @@ def build_retrieval_subgraph(
     kb_tool: BaseTool,
     chat_model: BaseChatModel,
 ):
-    """Compile retrieval subgraph aligned to flowchart Stage 4."""
+    """编译与流程图第 4 阶段对齐的检索子图。"""
 
     graph = StateGraph(
         state_schema=KbChatInternalState,

@@ -1,4 +1,4 @@
-"""Shared dispatch/fuse helpers for rewrite and subquery fan-out."""
+"""改写与子查询扇出共用的派发 / 融合辅助函数。"""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from langgraph.types import Send
 
 
 def make_send_task(node: str, payload: dict[str, Any], state: dict[str, Any]) -> Send:
-    """Attach only branch-local state required for fan-out execution."""
+    """仅附加扇出分支执行所需的局部状态。"""
 
     branch_state = {**payload}
     loop_counts = state.get("loop_counts")
@@ -20,7 +20,7 @@ def make_send_task(node: str, payload: dict[str, Any], state: dict[str, Any]) ->
     return Send(node, branch_state)
 
 def sort_by_priority_then_index(runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Order fan-out runs deterministically for stable merge output."""
+    """按稳定顺序排列扇出结果，保证合并输出可复现。"""
 
     return sorted(
         runs,
@@ -42,7 +42,7 @@ def build_retrieval_payload(
     global_candidates_limit: int | None = None,
     rerank_input_limit: int | None = None,
 ) -> dict[str, Any]:
-    """Build normalized payload for kb_retrieve fan-out invocations."""
+    """为 kb_retrieve 扇出调用构造规范化载荷。"""
 
     payload: dict[str, Any] = {
         "query": query,

@@ -1,5 +1,5 @@
 ﻿# 最小验收脚本
-# 用于验证 quickstart 的关键检查点
+# 用于验证快速启动流程的关键项
 
 param(
     [switch]$SkipInfra,
@@ -77,7 +77,7 @@ Write-Host ""
 # 6. 检查文档
 Write-Host "6. 文档检查" -ForegroundColor Yellow
 Write-Check "architecture.md 存在" (Test-Path "docs/architecture.md")
-Write-Check "quickstart.md 存在" (Test-Path "specs/001-multi-kb-agent-collab/quickstart.md")
+Write-Check "快速启动文档存在" (Test-Path "specs/001-multi-kb-agent-collab/quickstart.md")
 Write-Check "README.md 存在" (Test-Path "README.md")
 Write-Host ""
 
@@ -85,15 +85,15 @@ Write-Host ""
 if (-not $SkipInfra) {
     Write-Host "7. 服务连通性检查" -ForegroundColor Yellow
 
-    # 后端 API
+    # 后端接口
     $apiHealth = Test-Endpoint "http://localhost:8000/api/v1/health" "Backend API"
     Write-Check "后端 API 健康检查" $apiHealth "请先运行: pwsh -ExecutionPolicy Bypass -File .\scripts\start_all.ps1（或仅后端命令: uv run uvicorn app.main:app --host 127.0.0.1 --port 8000 --loop app.core.uvicorn_loop:windows_selector_loop_factory）"
 
-    # 前端
+    # 前端服务
     $frontendHealth = Test-Endpoint "http://localhost:3000" "Frontend"
     Write-Check "前端服务" $frontendHealth "请确保前端服务已启动: npm run start"
 
-    # OpenAPI 文档
+    # OpenAPI 文档页
     $docsHealth = Test-Endpoint "http://localhost:8000/docs" "OpenAPI Docs"
     Write-Check "OpenAPI 文档" $docsHealth
 

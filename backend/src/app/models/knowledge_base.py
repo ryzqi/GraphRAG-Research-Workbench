@@ -77,7 +77,7 @@ class KnowledgeBase(Base):
         "SourceMaterial",
         back_populates="knowledge_base",
         lazy="selectin",
-        # Use DB-level ON DELETE CASCADE and prevent ORM nulling FK columns.
+        # 使用数据库层面的 ON DELETE CASCADE，并阻止 ORM 将外键列置空。
         passive_deletes="all",
     )
     chunks: Mapped[list["DocumentChunk"]] = relationship(

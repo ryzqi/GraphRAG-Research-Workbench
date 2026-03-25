@@ -1,4 +1,4 @@
-"""KB Chat agentic LangGraph (preprocess -> retrieval -> reflection -> answer)."""
+"""KB Chat agentic LangGraph：preprocess -> retrieval -> reflection -> answer。"""
 
 from __future__ import annotations
 
@@ -46,7 +46,7 @@ _NODE_METADATA: dict[str, dict[str, Any]] = KB_CHAT_NODE_METADATA
 
 
 class KbChatGraphContext(TypedDict, total=False):
-    """Run-scoped immutable context passed via LangGraph context_schema."""
+    """通过 LangGraph context_schema 传递的运行期只读上下文。"""
 
     thread_id: str
     user_id: str
@@ -64,7 +64,7 @@ def _route_after_preprocess_subgraph(state: PreprocessRoutingInput) -> str:
 
 
 def build_kb_chat_run_config(*, thread_id: str | None, recursion_limit: int) -> dict[str, Any]:
-    """Build LangGraph invocation config for KB chat.
+    """为 KB Chat 构建 LangGraph 调用配置。
 
     `recursion_limit` must stay at top-level config (not under `configurable`).
     """
@@ -83,7 +83,7 @@ def build_kb_chat_run_context(
     runtime_config: dict[str, Any] | None = None,
     settings: Any,
 ) -> KbChatGraphContext:
-    """Build run context for context_schema-backed node runtime data."""
+    """为 context_schema 驱动的节点运行时数据构建上下文。"""
 
     state_obj = state if isinstance(state, dict) else {}
     memory_keys = state_obj.get("memory_keys")
@@ -1086,7 +1086,7 @@ def _wrap_node_with_io(node_name: str, node_callable: Any):
     return shared_wrap_node_with_io(node_name, node_callable)
 
 class KbChatAgenticGraph:
-    """Agentic KB chat graph (preprocess → retrieval → reflection → answer)."""
+    """Agentic KB Chat 图：preprocess → retrieval → reflection → answer。"""
 
     def __init__(
         self,

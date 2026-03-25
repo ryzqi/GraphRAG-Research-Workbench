@@ -1,8 +1,8 @@
-"""KB Chat agentic graph helper nodes.
+"""KB Chat agentic 图辅助节点。
 
-KB Chat runs `kb_retrieve` explicitly in the agentic RAG flow, so it does not need a
-generic tool-calling loop here. We keep a small ForceExit helper to produce a safe
-final AIMessage when we must stop early (clarify/round-retry budget).
+KB Chat 会在 agentic RAG 流程里显式调用 `kb_retrieve`，
+因此这里不再需要通用工具调用循环。仅保留一个精简的 ForceExit 辅助节点，
+用于在必须提前停止时（澄清 / 轮次重试预算耗尽）生成安全的最终 AIMessage。
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ from .budget import budget_exceeded, now_iso
 
 
 def force_exit_node(state: ForceExitInput, settings: Settings) -> dict[str, Any]:
-    """Produce a final assistant message when exiting due to clarify/budget."""
+    """因澄清或预算退出时生成最终助手消息。"""
     reflection = state.get("reflection")
     reflection_obj = reflection if isinstance(reflection, dict) else {}
     _, terminal_route = resolve_terminal_routing_decision(
@@ -71,7 +71,7 @@ def force_exit_node(state: ForceExitInput, settings: Settings) -> dict[str, Any]
                 if isinstance(draft_answer, str) and draft_answer.strip():
                     final_answer = draft_answer
         else:
-            # Answer did not pass guardrails; discard any prefilled final answer.
+            # 答案未通过护栏校验时，丢弃任何预填的最终答案。
             final_answer = None
         if (
             (not isinstance(final_answer, str) or not final_answer.strip())

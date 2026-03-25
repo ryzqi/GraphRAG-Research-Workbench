@@ -1,8 +1,8 @@
-"""KB Chat answer generation subgraph.
+"""KB Chat 答案生成子图。
 
-This subgraph encapsulates draft generation -> review -> optional repair ->
-commit. It keeps the parent graph routing contract intact by writing
-`reflection.action/reason` and `stage_summaries.answer_subgraph`.
+该子图封装“草稿生成 → 审查 → 可选修复 → 提交”流程，
+并通过写入 `reflection.action/reason` 与 `stage_summaries.answer_subgraph`
+保持父图路由契约不变。
 """
 
 from __future__ import annotations
@@ -84,7 +84,7 @@ _REVIEW_CHECKS: tuple[Literal["citation", "answer"], ...] = (
 
 
 class KbChatAnswerSubgraphContext(TypedDict, total=False):
-    """Typed runtime context propagated from parent graph."""
+    """从父图透传的类型化运行时上下文。"""
 
     thread_id: str
     user_id: str
@@ -1826,7 +1826,7 @@ def build_answer_subgraph(
     settings: Settings,
     chat_model: BaseChatModel,
 ):
-    """Build compiled answer subgraph for parent KB chat graph."""
+    """为父级 KB Chat 图构建已编译的答案子图。"""
 
     graph = StateGraph(
         state_schema=KbChatInternalState,

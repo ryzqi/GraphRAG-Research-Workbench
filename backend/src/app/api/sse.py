@@ -16,7 +16,7 @@ SSE_HEADERS = {
 
 @dataclass
 class SseHeartbeatStats:
-    """Collect heartbeat emission stats for downstream observability."""
+    """收集 heartbeat 发送统计，用于下游可观测性。"""
 
     sent_count: int = 0
     gap_ms_samples: list[int] = field(default_factory=list)

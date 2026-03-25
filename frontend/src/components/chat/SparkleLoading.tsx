@@ -76,7 +76,7 @@ interface SparkleLoadingProps {
 }
 
 export function SparkleLoading({ variant = 'shimmer', width = '100%', height = 20 }: SparkleLoadingProps) {
-  // Gemini Sparkle 星光变体（默认用于思考状态）
+  // 星光变体（默认用于思考状态）
   if (variant === 'sparkle') {
     return (
       <Box
@@ -185,7 +185,7 @@ export function SparkleLoading({ variant = 'shimmer', width = '100%', height = 2
     );
   }
 
-  // shimmer 变体（默认）
+  // 闪烁变体（默认）
   return (
     <Box
       sx={{

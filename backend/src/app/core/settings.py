@@ -14,7 +14,7 @@ ENV_FILE = ROOT_DIR / ".env"
 
 _IPV4_LOOPBACK = "127.0.0.1"
 
-# Keep only Next.js dev origins on port 3000.
+# 仅保留 Next.js 开发环境使用的 3000 端口来源。
 _DEV_LOCAL_CORS_ORIGINS = [
     "http://localhost:3000",
     "http://127.0.0.1:3000",
@@ -88,11 +88,10 @@ def _parse_string_list(value: object) -> list[str]:
 
 
 def _prefer_ipv4_loopback_url(value: str) -> str:
-    """Prefer IPv4 loopback when a URL uses 'localhost' on Windows.
+    """Windows 下若 URL 使用 localhost，则优先改写为 IPv4 回环地址。
 
-    On Windows, some clients may try IPv6 (::1) first for 'localhost'. For services that
-    only listen on IPv4 (common with Podman port forwarding), this can lead to long
-    connection delays or timeouts. Rewriting to 127.0.0.1 avoids the issue.
+    某些客户端会先尝试 IPv6 (::1)；若服务只监听 IPv4（如常见的 Podman 端口转发），
+    就可能出现连接变慢或超时。改写为 127.0.0.1 可规避此问题。
     """
 
     if not value:
@@ -121,7 +120,7 @@ def _prefer_ipv4_loopback_url(value: str) -> str:
 
 
 def _prefer_ipv4_loopback_hostport(value: str) -> str:
-    """Prefer IPv4 loopback when a host[:port] string uses 'localhost' on Windows."""
+    """Windows 下 host[:port] 使用 localhost 时，优先改写为 IPv4 回环地址。"""
 
     if not value:
         return value
@@ -132,7 +131,7 @@ def _prefer_ipv4_loopback_hostport(value: str) -> str:
     if not raw:
         return value
 
-    # minio uses host[:port] (not a URL), so we do a simple prefix replace.
+    # MinIO 使用 host[:port] 而不是 URL，这里直接做前缀替换。
     if raw == "localhost":
         return _IPV4_LOOPBACK
     if raw.startswith("localhost:"):
@@ -165,8 +164,8 @@ class Settings(BaseSettings):
     db_pool_recycle_seconds: int = Field(1800, alias="DB_POOL_RECYCLE_SECONDS")
 
     redis_url: str = Field(_DEFAULT_REDIS_URL, alias="REDIS_URL")
-    # Keep Redis socket timeouts fail-fast by default for local/dev deployments.
-    # Remote or high-latency Redis deployments should explicitly override these.
+    # 本地/开发环境默认让 Redis socket 超时快速失败。
+    # 远端或高延迟 Redis 部署应显式覆盖这些参数。
     redis_socket_timeout_seconds: float = Field(
         1.0, alias="REDIS_SOCKET_TIMEOUT_SECONDS"
     )
@@ -179,8 +178,8 @@ class Settings(BaseSettings):
     celery_result_backend: str = Field(
         _DEFAULT_CELERY_RESULT_BACKEND, alias="CELERY_RESULT_BACKEND"
     )
-    # Celery Redis transport defaults visibility_timeout to 3600s.
-    # Keep 7200s here for long-running ingestion/research tasks unless workload evidence says otherwise.
+    # Celery Redis transport 默认 visibility_timeout 为 3600 秒。
+    # 这里保持 7200 秒，以降低长耗时导入/研究任务被提前重投的概率。
     celery_broker_visibility_timeout_seconds: int = Field(
         7_200, ge=1, alias="CELERY_BROKER_VISIBILITY_TIMEOUT_SECONDS"
     )

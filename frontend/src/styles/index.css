@@ -1,5 +1,5 @@
 :root {
-  /* Let the browser render built-in controls correctly in both themes. */
+  /* 让浏览器在浅色与深色主题下都能正确渲染内建控件。 */
   color-scheme: light dark;
   text-rendering: geometricPrecision;
   -webkit-font-smoothing: antialiased;

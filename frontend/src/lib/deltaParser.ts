@@ -19,7 +19,7 @@ export interface StreamDelta {
   attachment_mime?: string;
 }
 
-/** 消息状态（对应文档中的 MessageState） */
+/** 消息状态（对应文档里的 MessageState） */
 export interface MessageState {
   status: 'streaming' | 'completed' | 'error';
   thought_log: string;
@@ -62,7 +62,7 @@ export function applyDelta(state: MessageState, delta: StreamDelta): MessageStat
       break;
 
     case 'tool_call':
-      // 添加新的工具调用步骤
+      // 追加新的工具调用步骤。
       newState.tool_steps = [
         ...newState.tool_steps,
         {
@@ -75,7 +75,7 @@ export function applyDelta(state: MessageState, delta: StreamDelta): MessageStat
       break;
 
     case 'tool_result':
-      // 更新对应工具调用的结果
+      // 更新对应工具调用的执行结果。
       newState.tool_steps = newState.tool_steps.map((step) => {
         if (step.tool_call_id === delta.tool_call_id || step.tool_name === delta.tool_name) {
           return {
@@ -89,7 +89,7 @@ export function applyDelta(state: MessageState, delta: StreamDelta): MessageStat
       break;
 
     case 'attachment':
-      // 附件暂时作为占位文本添加到内容中
+      // 附件暂时以占位文本形式追加到内容中。
       if (delta.attachment_type && delta.attachment_url) {
         newState.final_content += `\n[${delta.attachment_type}: ${delta.attachment_url}]\n`;
       }
@@ -104,7 +104,7 @@ export function completeMessageState(state: MessageState): MessageState {
   return {
     ...state,
     status: 'completed',
-    is_thought_expanded: false, // 完成后收起思考过程
+    is_thought_expanded: false, // 完成后默认收起思考过程
   };
 }
 
@@ -117,7 +117,7 @@ export function parseDelta(data: unknown): StreamDelta | null {
   const obj = data as Record<string, unknown>;
   const kind = obj.kind as DeltaKind | undefined;
 
-  // 兼容旧格式：如果没有 kind 字段但有 text 字段，视为 answer
+  // 兼容旧格式：缺少 kind 但存在 text 时，按 answer 处理。
   if (!kind && typeof obj.text === 'string') {
     return {
       kind: 'answer',

@@ -237,7 +237,7 @@ class MilvusClient:
         )
 
     def _build_filter_expr(self, kb_ids: list[str], extra_expr: str | None = None) -> str | None:
-        """Build a safe filter expression for Milvus.
+        """为 Milvus 构建安全的过滤表达式。
 
         - Always enforces kb_id scope when provided.
         - Allows an optional extra expression hook (e.g. subject/tenant filters) which

@@ -93,7 +93,7 @@ def _extract_minio_ref(uri: str) -> tuple[str, str]:
 
 
 def _material_filename_from_object_name(object_name: str) -> str:
-    # material_service.upload_file: object_name = f"{kb_id}/{material_id}/{filename}"
+    # material_service.upload_file 生成的 object_name 形如 f"{kb_id}/{material_id}/{filename}"
     return object_name.split("/")[-1] if object_name else ""
 
 
@@ -102,7 +102,7 @@ def _page_blocks_from_middle_json(page: dict[str, Any]) -> tuple[str, list[dict[
     if isinstance(para_blocks, list) and para_blocks:
         return "para_blocks", [b for b in para_blocks if isinstance(b, dict)]
 
-    # Fallback: when para_blocks is missing/empty, try preproc_blocks to avoid dropping text.
+    # 兜底：当 para_blocks 缺失或为空时，尝试使用 preproc_blocks，避免文本被丢弃。
     preproc_blocks = page.get("preproc_blocks")
     if isinstance(preproc_blocks, list):
         return "preproc_blocks", [b for b in preproc_blocks if isinstance(b, dict)]
@@ -190,7 +190,7 @@ def extract_pdf_chunks_from_middle_json(middle_json: dict[str, Any]) -> list[Par
 
 
 def _mineru_block_to_text(block: dict[str, Any]) -> str:
-    # middle.json 结构：block -> lines -> spans -> content
+    # middle.json 的结构为：block -> lines -> spans -> content
     lines = block.get("lines")
     if not isinstance(lines, list):
         return ""
@@ -404,7 +404,7 @@ async def _parse_url(url: str, *, http_client: httpx.AsyncClient, settings: Sett
     if parsed.scheme not in {"http", "https"}:
         raise ParseError(error_code="INVALID_URL_SCHEME", message=f"不支持的 URL scheme: {parsed.scheme!r}")
 
-    # 这些配置项按需求建议可配置；默认值在 Settings 中提供（若缺失则走兜底）。
+    # 这些配置项建议按需开放配置；默认值由 Settings 提供，缺失时再走兜底。
     max_redirects = getattr(settings, "ingestion_url_max_redirects", 3)
     max_bytes = getattr(settings, "ingestion_url_max_bytes", 20 * 1024 * 1024)
     user_agent = getattr(settings, "ingestion_url_user_agent", "multi-kb-agent/ingestion")
@@ -458,7 +458,7 @@ async def _parse_url(url: str, *, http_client: httpx.AsyncClient, settings: Sett
             details={"url": url},
         ) from exc
 
-    # encoding：尽量利用 httpx 推断；否则按 utf-8/gb18030 回退
+    # 编码：尽量利用 httpx 推断；否则回退到 utf-8 或 gb18030。
     try:
         html_text = content_bytes.decode("utf-8")
     except UnicodeDecodeError:
@@ -477,7 +477,7 @@ async def _parse_url(url: str, *, http_client: httpx.AsyncClient, settings: Sett
     title = (readability_doc.title() or "").strip()
     main_html = readability_doc.summary()
 
-    # Readability 输出通常是 HTML，转成纯文本；纯文本本身也是合法 Markdown。
+    # Readability 输出通常为 HTML，这里转为纯文本；纯文本本身也可作为合法 Markdown。
     try:
         from lxml import html as lxml_html  # type: ignore[import-not-found]
 

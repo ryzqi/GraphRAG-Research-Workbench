@@ -1,4 +1,4 @@
-"""support multiple models per provider
+"""支持每个提供商配置多个模型
 
 Revision ID: e5a1b7d3c4f2
 Revises: d1e8b6c4a9f0
@@ -11,7 +11,7 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects import postgresql
 
-# revision identifiers, used by Alembic.
+# Alembic 修订标识。
 revision = "e5a1b7d3c4f2"
 down_revision = "d1e8b6c4a9f0"
 branch_labels = None

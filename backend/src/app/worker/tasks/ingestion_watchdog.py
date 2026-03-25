@@ -1,4 +1,4 @@
-"""Watchdog tasks for stale ingestion docs."""
+"""用于处理过期导入文档的 watchdog 任务。"""
 
 from __future__ import annotations
 

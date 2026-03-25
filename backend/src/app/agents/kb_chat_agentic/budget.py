@@ -1,8 +1,8 @@
-"""KB Chat budgets (rounds/retries) for agentic graph.
+"""KB Chat agentic 图的预算控制（轮次 / 重试）。
 
-Design notes:
-- Budgets must be checkpointer-friendly (JSON-serializable).
-- KB chat termination relies only on rounds/retries budgets.
+设计说明：
+- 预算字段必须兼容 checkpointer，可被 JSON 序列化。
+- KB Chat 是否终止仅依赖轮次与重试预算。
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ def now_iso() -> str:
 
 
 def ensure_budget_initialized(state: dict, settings: Settings) -> dict:
-    """Initialize budget metadata inside state.metrics if missing."""
+    """若 state.metrics 中缺少预算元数据则补齐。"""
     _ = settings
     metrics = state.get("metrics")
     if not isinstance(metrics, dict):
@@ -35,7 +35,7 @@ def ensure_budget_initialized(state: dict, settings: Settings) -> dict:
 
 
 def budget_exceeded(state: dict, settings: Settings) -> tuple[bool, str]:
-    """Return (exceeded, reason) for KB chat round/retry budgets."""
+    """返回 KB Chat 轮次 / 重试预算是否超限及原因。"""
 
     loop_counts = state.get("loop_counts")
     if isinstance(loop_counts, dict):

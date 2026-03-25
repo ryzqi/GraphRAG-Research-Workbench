@@ -1,4 +1,4 @@
-"""Index rebuild job worker."""
+"""索引重建作业 worker。"""
 
 from __future__ import annotations
 
@@ -33,13 +33,13 @@ logger = logging.getLogger(__name__)
 
 
 def _should_skip_index_rebuild_status(status: IndexRebuildStatus) -> bool:
-    """Only queued jobs may enter rebuild execution."""
+    """仅排队中的作业允许进入重建执行阶段。"""
     return status is not IndexRebuildStatus.QUEUED
 
 
 @celery_app.task(name="app.worker.tasks.index_rebuild.run_index_rebuild_job")
 def run_index_rebuild_job(job_id: str) -> None:
-    """Celery entrypoint for index rebuild."""
+    """索引重建的 Celery 入口。"""
     asyncio.run(_run_index_rebuild_job(job_id))
 
 
@@ -99,7 +99,7 @@ async def _prepare_rebuild_collections(
     ):
         collections: list[str] = []
 
-        # Cleanup legacy single-collection data to avoid mixed retrieval after migration.
+        # 清理旧单集合数据，避免迁移后检索结果混杂。
         await milvus_client.delete_by_kb_id(kb_id)
 
         for window in index_config.chunking.query_dependent_multiscale.windows:
@@ -245,7 +245,7 @@ async def _run_index_rebuild_job(job_id: str) -> None:
                 snapshot_config = (await session.execute(snapshot_stmt)).scalar_one_or_none()
                 index_config = IndexConfig.model_validate(snapshot_config or kb.index_config or {})
 
-                # Clear old vectors/chunks for this KB.
+                # 清理该知识库的旧向量与旧分块。
                 await _prepare_rebuild_collections(
                     milvus_client=milvus_client,
                     index_config=index_config,

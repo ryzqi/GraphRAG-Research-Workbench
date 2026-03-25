@@ -1,4 +1,4 @@
-"""Index rebuild job schemas."""
+"""索引重建作业的 schema。"""
 
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ class IndexRebuildStatus(str, Enum):
 
 
 class IndexRebuildJobRead(BaseModel):
-    """Index rebuild job response."""
+    """索引重建作业响应。"""
 
     model_config = ConfigDict(from_attributes=True)
 

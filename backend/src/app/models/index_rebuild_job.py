@@ -1,4 +1,4 @@
-"""Index rebuild job ORM model."""
+"""索引重建作业 ORM 模型。"""
 
 from __future__ import annotations
 
@@ -27,7 +27,7 @@ class IndexRebuildStatus(str, Enum):
 
 
 class IndexRebuildJob(Base):
-    """Index rebuild job."""
+    """索引重建作业。"""
 
     __tablename__ = "index_rebuild_jobs"
 

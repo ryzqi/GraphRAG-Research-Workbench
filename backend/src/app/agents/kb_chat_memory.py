@@ -1,9 +1,9 @@
-"""KB Chat memory helpers (LangGraph Store).
+"""KB Chat 记忆辅助函数（基于 LangGraph Store）。
 
-This module keeps the memory payload:
-- Structured (JSON dict)
-- Bounded (fixed-size list)
-- TTL-enabled (via store ttl when supported; fallback wrapper otherwise)
+本模块维护的记忆载荷具备以下特性：
+- 结构化：使用 JSON 字典
+- 有界：固定大小列表
+- 支持 TTL：优先使用 store 原生 ttl，不支持时退回包装层
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ KB_CHAT_MEMORY_SCHEMA = "kb_chat_user_memory_v1"
 KB_CHAT_MEMORY_KEY = "kb_chat_memory"
 KB_CHAT_ANONYMOUS_USER_PREFIX = "anonymous"
 
-# Conservative default: keep a small window and expire in a week.
+# 保守默认值：仅保留较小窗口，并在一周后过期。
 KB_CHAT_MEMORY_MAX_ENTRIES = 5
 KB_CHAT_MEMORY_TTL_SECONDS = 7 * 24 * 60 * 60
 
@@ -110,7 +110,7 @@ async def aget_kb_chat_memory(
         return None
     if raw.get("schema") == KB_CHAT_MEMORY_SCHEMA:
         return raw
-    # TTL-wrapper fallback for stores without native TTL.
+    # 对不支持原生 TTL 的 store，退回到 TTL 包装层。
     return _unwrap_value_with_ttl(raw)
 
 
@@ -169,7 +169,7 @@ async def append_kb_chat_memory_entry(
     ttl_seconds: int = KB_CHAT_MEMORY_TTL_SECONDS,
     max_entries: int = KB_CHAT_MEMORY_MAX_ENTRIES,
 ) -> None:
-    """Append a bounded Q/A entry to the user's memory."""
+    """向用户记忆追加一条有界的问答记录。"""
     existing = await aget_kb_chat_memory(
         store=store, user_id=user_id, thread_id=thread_id, kb_ids=kb_ids
     )

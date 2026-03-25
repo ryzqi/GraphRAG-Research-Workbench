@@ -1,4 +1,4 @@
-"""DocumentChunk persistence helpers."""
+"""DocumentChunk 持久化辅助函数。"""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ from app.utils.token_counter import count_tokens
 
 
 class ChunkPersistenceService:
-    """Persist chunking outputs into PostgreSQL document_chunks."""
+    """将分块结果持久化到 PostgreSQL 的 document_chunks 表。"""
 
     def __init__(self, db: AsyncSession) -> None:
         self._db = db
@@ -142,7 +142,7 @@ class ChunkPersistenceService:
         context_errors: Sequence[str | None] | None = None,
         context_attempts: Sequence[int] | None = None,
     ) -> list[uuid.UUID]:
-        """Replace all chunks for a material in one transaction scope."""
+        """在单个事务范围内替换某素材的全部 chunks。"""
         if chunk_ids is not None and len(chunk_ids) != len(chunk_items):
             raise ValueError("chunk_ids length must match chunk_items length")
 

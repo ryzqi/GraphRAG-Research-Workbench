@@ -691,7 +691,7 @@ export default function KnowledgeBaseAddDocumentsPage() {
             return;
           }
         } catch {
-          // Keep original error message when latest batch recovery also fails.
+          // 若最新批次恢复也失败，保留原始报错信息。
         }
       }
       setLocalError(getErrorMessage(error));

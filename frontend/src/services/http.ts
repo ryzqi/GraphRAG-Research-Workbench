@@ -23,7 +23,7 @@ function normalizeApiBaseUrl(raw: string): string {
       return url.toString().replace(/\/$/, '');
     }
   } catch {
-    // Ignore parsing errors for relative paths.
+    // 相对路径解析失败时直接保留原值。
   }
 
   return normalized;
@@ -32,14 +32,14 @@ function normalizeApiBaseUrl(raw: string): string {
 const API_BASE_URL = (() => {
   const raw = process.env.NEXT_PUBLIC_API_BASE_URL;
   if (!raw) {
-    // Dev-only fallback for local frontend/backend split startup.
+    // 仅用于本地前后端分离启动时的开发兜底地址。
     return 'http://127.0.0.1:8000';
   }
   return normalizeApiBaseUrl(raw);
 })();
 
-// Browser fetch has no built-in request timeout; keep the frontend default aligned
-// with the backend's common 30s slow-path budget unless a call site overrides it.
+// 浏览器 fetch 没有内置超时；默认与后端常见的 30 秒慢路径预算保持一致，
+// 除非调用方显式覆盖。
 const DEFAULT_API_TIMEOUT_MS = 30_000;
 
 export function getApiBaseUrl(): string {

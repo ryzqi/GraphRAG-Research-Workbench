@@ -1,4 +1,4 @@
-"""知识库相关 Schemas。"""
+"""知识库相关 schema。"""
 
 from __future__ import annotations
 
@@ -29,13 +29,13 @@ class MarkdownHeadingConfig(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def _compat_legacy_fields(cls, data: object) -> object:
-        """Compatibility for old index_config JSON (e.g. markdown_heading.enabled/max_section_chars)."""
+        """兼容旧版 index_config JSON（如 markdown_heading.enabled / max_section_chars）。"""
         if not isinstance(data, dict):
             return data
         payload = dict(data)
-        # Legacy toggle; markdown_heading is now a mutual-exclusive main strategy.
+        # 历史遗留开关；markdown_heading 现已是互斥的主策略。
         payload.pop("enabled", None)
-        # Legacy field name (previously used as "max chars per section").
+        # 历史字段名（此前用于表示“每节最大字符数”）。
         if "chunk_size" not in payload and "max_section_chars" in payload:
             payload["chunk_size"] = payload.pop("max_section_chars")
         return payload
@@ -211,7 +211,7 @@ class IndexConfig(BaseModel):
         if not isinstance(data, dict):
             return data
         payload = dict(data)
-        # Retrieval tuning has moved to kb_chat session config.
+        # 检索调优项已迁移到 kb_chat 会话配置。
         payload.pop("retrieval", None)
         return payload
 

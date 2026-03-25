@@ -1,4 +1,4 @@
-"""Web 搜索状态探测。"""
+"""网页搜索状态探测。"""
 
 from __future__ import annotations
 

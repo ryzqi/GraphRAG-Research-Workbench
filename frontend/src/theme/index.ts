@@ -4,28 +4,26 @@
  */
 import { createTheme, type ThemeOptions } from '@mui/material/styles';
 
-// ============================================================================
-// MD3 Tonal Palettes - 色调调色板
-// ============================================================================
+// MD3 色调调色板
 
-/** Primary 色调调色板 (基于 #1a73e8) */
+/** 主色调色板（基于 #1a73e8） */
 const primaryPalette = {
   0: '#000000',
   10: '#001d36',
   20: '#003258',
   30: '#004a7c',
-  40: '#1a73e8', // Primary (Light Mode)
+  40: '#1a73e8', // 浅色主题主色
   50: '#4a8df5',
   60: '#6ba5ff',
   70: '#9bc3ff',
-  80: '#c9deff', // Primary (Dark Mode)
+  80: '#c9deff', // 深色主题主色
   90: '#e5efff',
   95: '#f2f6ff',
   99: '#fdfcff',
   100: '#ffffff',
 };
 
-/** Secondary 色调调色板 */
+/** 次色调色板 */
 const secondaryPalette = {
   0: '#000000',
   10: '#1a1c1e',
@@ -42,7 +40,7 @@ const secondaryPalette = {
   100: '#ffffff',
 };
 
-/** Error 色调调色板 */
+/** 错误色调色板 */
 const errorPalette = {
   0: '#000000',
   10: '#410002',
@@ -59,7 +57,7 @@ const errorPalette = {
   100: '#ffffff',
 };
 
-/** Neutral 色调调色板 (用于 Surface) */
+/** 中性色调色板（用于 Surface） */
 const neutralPalette = {
   0: '#000000',
   4: '#0d0e11',
@@ -87,12 +85,10 @@ const neutralPalette = {
   100: '#ffffff',
 };
 
-// ============================================================================
-// MD3 Surface Containers - 表面容器色调
-// ============================================================================
+// MD3 表面容器色调
 
 const surfaceContainersLight = {
-  // Google Workspace / Gemini-ish light surfaces (cool tinted neutrals).
+  // 参考 Google Workspace 风格的浅色表面。
   surface: '#f0f4f9',
   surfaceDim: '#dde3ea',
   surfaceBright: '#f8fafd',
@@ -104,7 +100,7 @@ const surfaceContainersLight = {
 };
 
 const surfaceContainersDark = {
-  // Google Workspace / Gemini-ish dark surfaces (neutral, not pure black).
+  // 参考 Google Workspace 风格的深色表面，避免纯黑。
   surface: '#1e1f20',
   surfaceDim: '#17181a',
   surfaceBright: '#2b2c2d',
@@ -115,9 +111,7 @@ const surfaceContainersDark = {
   surfaceContainerHighest: '#3c3d40',
 };
 
-// ============================================================================
 // MD3 动画配置
-// ============================================================================
 
 export const md3Motion = {
   easing: {
@@ -144,9 +138,7 @@ export const md3Motion = {
   },
 };
 
-// ============================================================================
 // 主题配置工厂函数
-// ============================================================================
 
 function createMd3ThemeOptions(mode: 'light' | 'dark'): ThemeOptions {
   const isLight = mode === 'light';
@@ -269,7 +261,7 @@ function createMd3ThemeOptions(mode: 'light' | 'dark'): ThemeOptions {
       },
     },
     shape: {
-      borderRadius: 12, // MD3 默认圆角增大
+      borderRadius: 12, // MD3 默认使用更大的圆角
     },
     transitions: {
       easing: {
@@ -290,23 +282,23 @@ function createMd3ThemeOptions(mode: 'light' | 'dark'): ThemeOptions {
     },
     shadows: [
       'none',
-      // Level 1 - 微弱阴影
+      // 第 1 级：轻阴影
       '0 1px 2px 0 rgba(0,0,0,0.05)',
       '0 1px 3px 0 rgba(0,0,0,0.1), 0 1px 2px -1px rgba(0,0,0,0.1)',
-      // Level 2
+      // 第 2 级：中低阴影
       '0 4px 6px -1px rgba(0,0,0,0.1), 0 2px 4px -2px rgba(0,0,0,0.1)',
       '0 4px 6px -1px rgba(0,0,0,0.1), 0 2px 4px -2px rgba(0,0,0,0.1)',
-      // Level 3
+      // 第 3 级：中等阴影
       '0 10px 15px -3px rgba(0,0,0,0.1), 0 4px 6px -4px rgba(0,0,0,0.1)',
       '0 10px 15px -3px rgba(0,0,0,0.1), 0 4px 6px -4px rgba(0,0,0,0.1)',
       '0 10px 15px -3px rgba(0,0,0,0.1), 0 4px 6px -4px rgba(0,0,0,0.1)',
       '0 10px 15px -3px rgba(0,0,0,0.1), 0 4px 6px -4px rgba(0,0,0,0.1)',
-      // Level 4
+      // 第 4 级：较强阴影
       '0 20px 25px -5px rgba(0,0,0,0.1), 0 8px 10px -6px rgba(0,0,0,0.1)',
       '0 20px 25px -5px rgba(0,0,0,0.1), 0 8px 10px -6px rgba(0,0,0,0.1)',
       '0 20px 25px -5px rgba(0,0,0,0.1), 0 8px 10px -6px rgba(0,0,0,0.1)',
       '0 20px 25px -5px rgba(0,0,0,0.1), 0 8px 10px -6px rgba(0,0,0,0.1)',
-      // Level 5
+      // 第 5 级：最强阴影
       '0 25px 50px -12px rgba(0,0,0,0.25)',
       '0 25px 50px -12px rgba(0,0,0,0.25)',
       '0 25px 50px -12px rgba(0,0,0,0.25)',
@@ -339,7 +331,7 @@ function createMd3ThemeOptions(mode: 'light' | 'dark'): ThemeOptions {
           },
         },
       },
-      // MD3 Button: 全圆角 Pill 样式
+      // MD3 按钮：全圆角胶囊样式
       MuiButton: {
         styleOverrides: {
           root: {
@@ -356,7 +348,7 @@ function createMd3ThemeOptions(mode: 'light' | 'dark'): ThemeOptions {
             boxShadow: 'none',
             '&:hover': {
               boxShadow: '0 1px 3px rgba(0,0,0,0.12)',
-              // MD3: Tonal elevation - 背景色变浅而非加深阴影
+              // MD3 的 tonal elevation 更倾向于提亮背景，而不是叠加更重阴影。
               filter: 'brightness(1.08)',
             },
           },
@@ -393,7 +385,7 @@ function createMd3ThemeOptions(mode: 'light' | 'dark'): ThemeOptions {
           disableRipple: false,
         },
       },
-      // MD3 Card: 增大圆角，使用 Tonal elevation
+      // MD3 卡片：使用更大圆角与 tonal elevation。
       MuiCard: {
         styleOverrides: {
           root: {
@@ -410,14 +402,14 @@ function createMd3ThemeOptions(mode: 'light' | 'dark'): ThemeOptions {
       MuiPaper: {
         styleOverrides: {
           root: {
-            backgroundImage: 'none', // 移除默认渐变
+            backgroundImage: 'none', // 移除默认背景渐变
           },
           outlined: {
             borderColor: isLight ? neutralPalette[87] : neutralPalette[30],
           },
         },
       },
-      // MD3 TextField: 增大圆角
+      // MD3 文本框：使用更大圆角。
       MuiTextField: {
         defaultProps: {
           variant: 'outlined',
@@ -471,7 +463,7 @@ function createMd3ThemeOptions(mode: 'light' | 'dark'): ThemeOptions {
           },
         },
       },
-      // MD3 Dialog: 大圆角
+      // MD3 对话框：使用大圆角。
       MuiDialog: {
         styleOverrides: {
           paper: {
@@ -505,7 +497,7 @@ function createMd3ThemeOptions(mode: 'light' | 'dark'): ThemeOptions {
           },
         },
       },
-      // MD3 AppBar
+      // MD3 AppBar 样式
       MuiAppBar: {
         styleOverrides: {
           root: {
@@ -608,7 +600,7 @@ function createMd3ThemeOptions(mode: 'light' | 'dark'): ThemeOptions {
           thickness: 4,
         },
       },
-      // MD3 Skeleton
+      // MD3 Skeleton 样式
       MuiSkeleton: {
         styleOverrides: {
           root: {
@@ -621,7 +613,7 @@ function createMd3ThemeOptions(mode: 'light' | 'dark'): ThemeOptions {
           },
         },
       },
-      // MD3 Fab
+      // MD3 Fab 样式
       MuiFab: {
         styleOverrides: {
           root: {
@@ -634,12 +626,10 @@ function createMd3ThemeOptions(mode: 'light' | 'dark'): ThemeOptions {
   };
 }
 
-// ============================================================================
 // 导出主题
-// ============================================================================
 
-/** Light Mode 主题 */
+/** 浅色主题 */
 export const lightTheme = createTheme(createMd3ThemeOptions('light'));
 
-/** Dark Mode 主题 */
+/** 深色主题 */
 export const darkTheme = createTheme(createMd3ThemeOptions('dark'));

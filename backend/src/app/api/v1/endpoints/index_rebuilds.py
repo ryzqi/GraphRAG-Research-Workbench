@@ -1,4 +1,4 @@
-"""Index rebuild job endpoints."""
+"""索引重建作业接口。"""
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ router = APIRouter()
 async def get_index_rebuild_job(
     db: AsyncSessionDep, job_id: uuid.UUID
 ) -> IndexRebuildJobRead:
-    """Get index rebuild job status."""
+    """获取索引重建作业状态。"""
     service = IndexRebuildService(db)
     job = await service.get_by_id(job_id)
     if not job:

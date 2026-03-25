@@ -1,4 +1,4 @@
-"""KB Chat trace node display contract helpers."""
+"""KB Chat trace 节点展示契约辅助函数。"""
 
 from __future__ import annotations
 

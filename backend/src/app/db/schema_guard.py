@@ -13,7 +13,7 @@ INGESTION_STATUS_ENUM_NAMES: tuple[str, str] = (
 
 
 class IngestionSchemaMismatchError(RuntimeError):
-    """Raised when ingestion enums in DB do not match the application contract."""
+    """当数据库中的 ingestion 枚举与应用契约不一致时抛出。"""
 
 
 def validate_ingestion_enum_values(enum_values_by_name: Mapping[str, Sequence[str]]) -> None:

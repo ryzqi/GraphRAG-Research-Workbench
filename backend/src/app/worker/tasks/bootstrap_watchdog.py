@@ -1,4 +1,4 @@
-"""Watchdog tasks for stale bootstrap jobs."""
+"""用于处理过期 bootstrap 作业的 watchdog 任务。"""
 
 from __future__ import annotations
 

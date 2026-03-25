@@ -108,7 +108,7 @@ export function InputComposer({
       await onFileUpload(file);
     } finally {
       setUploading(false);
-      // 重置 input
+      // 重置输入框
       if (fileInputRef.current) {
         fileInputRef.current.value = '';
       }
@@ -150,7 +150,7 @@ export function InputComposer({
           gap: 0.75,
           p: 1.1,
           borderRadius: '24px',
-          // Glassmorphism 效果
+          // 毛玻璃效果
           bgcolor: (theme) =>
             theme.palette.mode === 'light' ? 'rgba(255, 255, 255, 0.8)' : 'rgba(30, 31, 34, 0.85)',
           backdropFilter: 'blur(20px)',

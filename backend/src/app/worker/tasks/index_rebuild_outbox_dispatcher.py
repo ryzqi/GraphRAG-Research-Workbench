@@ -1,4 +1,4 @@
-"""Celery task that dispatches index rebuild jobs from transactional outbox."""
+"""从事务 outbox 分发索引重建作业的 Celery 任务。"""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""Celery tasks for ingestion-batch document processing."""
+"""处理 ingestion-batch 文档的 Celery 任务。"""
 
 from __future__ import annotations
 
@@ -121,7 +121,7 @@ async def _write_records_to_milvus(
         index_config.chunking.general_strategy
         == ChunkingStrategy.QUERY_DEPENDENT_MULTISCALE
     ):
-        # Cleanup legacy single-collection data for the same material to prevent stale mix.
+        # 清理同一素材的旧单集合数据，避免检索结果混入过期内容。
         await milvus.delete_by_material(material_id)
 
         for window in index_config.chunking.query_dependent_multiscale.windows:

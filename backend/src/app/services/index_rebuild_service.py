@@ -1,4 +1,4 @@
-"""Index rebuild orchestration service."""
+"""索引重建编排服务。"""
 
 from __future__ import annotations
 
@@ -44,7 +44,7 @@ class IndexRebuildService:
         kb: KnowledgeBase,
         index_config: dict,
     ) -> IndexRebuildJob:
-        """Replace index config snapshot and enqueue rebuild."""
+        """替换索引配置快照并将重建任务入队。"""
 
         now = datetime.now(timezone.utc)
         running_stmt = select(IndexRebuildJob).where(

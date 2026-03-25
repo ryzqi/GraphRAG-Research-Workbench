@@ -1,4 +1,4 @@
-"""Query enhancement service (rewrite / clarify / fanout helpers).
+"""查询增强服务：提供 rewrite / clarify / fanout 辅助能力。
 
 This module is shared by:
 - RetrievalService's optional single-query rewrite
@@ -994,7 +994,7 @@ def _apply_coref_candidate(query: str, candidate: str) -> tuple[str, str]:
     rewritten = _sanitize_query_text(rewritten)
     if replaced and rewritten:
         return rewritten, "replace_marker"
-    # If marker exists but not replaced (or stripped away), prefix candidate context conservatively.
+    # 若标记存在但未被替换（或被清理掉），则保守地在前面补上候选上下文。
     if c and c.lower() not in q.lower():
         prefixed = _sanitize_query_text(f"{c} {q}")
         if prefixed:
@@ -1225,7 +1225,7 @@ def build_query_items(
     hyde_docs: list[str] | None = None,
     hyde_note: str | None = None,
 ) -> list[QueryItem]:
-    """Build a unified query collection for retrieval + provenance.
+    """为检索与溯源构建统一的查询集合。
 
     - `main_query` is always retained as the first query item.
     - Sub-queries and variants can coexist (complex path keeps both).
@@ -1321,7 +1321,7 @@ def build_query_items(
             hyde_item["note"] = _normalize_whitespace(hyde_note)
         items.append(hyde_item)
 
-    # Global dedupe to avoid repeated retrieval calls. Keep first occurrence.
+    # 做全局去重，避免重复检索调用，并保留首次出现的项。
     deduped: list[QueryItem] = []
     seen: set[tuple[str, bool, bool]] = set()
     for item in items:
@@ -1723,7 +1723,7 @@ class QueryRewriteService:
         summary_text: str | None = None,
         memory_snippet: str | None = None,
     ) -> RewriteResult:
-        """Resolve conversational references with an LLM and fail open to the original query."""
+        """使用 LLM 解析对话指代；失败时回退到原始查询。"""
         start = time.perf_counter()
         q = _sanitize_query_text(query)
         if not enabled:
@@ -1821,7 +1821,7 @@ class QueryRewriteService:
         summary_text: str | None = None,
         memory_snippet: str | None = None,
     ) -> RewriteResult:
-        """Backward-compatible alias for LLM-driven reference resolution."""
+        """面向 LLM 指代消解的向后兼容别名。"""
         return await self.resolve_reference(
             query,
             enabled=enabled,
@@ -1834,7 +1834,7 @@ class QueryRewriteService:
         self,
         query: str,
     ) -> RewriteResult:
-        """Normalize query with structured LLM output only; fail open to original query."""
+        """仅使用结构化 LLM 输出规范化查询；失败时回退到原始查询。"""
         start = time.perf_counter()
         q = _sanitize_query_text(query)
         if not q:
@@ -1946,7 +1946,7 @@ class QueryRewriteService:
         max_top_k: int,
         fallback_budget: dict[str, int],
     ) -> RetrievalPlanResult:
-        """Plan retrieval budget with an LLM and fail open to the supplied fallback budget."""
+        """使用 LLM 规划检索预算；失败时回退到给定的兜底预算。"""
         start = time.perf_counter()
         normalized_items = query_items if isinstance(query_items, list) else []
         query_count = max(
@@ -2039,7 +2039,7 @@ class QueryRewriteService:
         enabled: bool | None = None,
         coref_meta: dict[str, object] | None = None,
     ) -> AmbiguityResult:
-        """Model-driven ambiguity decision with guardrail fallback."""
+        """模型驱动的歧义判定，并带护栏兜底。"""
         start = time.perf_counter()
         enabled_flag = True if enabled is None else bool(enabled)
         if not enabled_flag:
@@ -2213,7 +2213,7 @@ class QueryRewriteService:
         hint: str | None = None,
         enabled: bool = True,
     ) -> RewriteResult:
-        """Transform query for retry (rewrite/expand), with safe fallback."""
+        """为重试场景改写 / 扩展查询，并提供安全兜底。"""
         if not enabled:
             return RewriteResult(
                 query=query,
@@ -2256,9 +2256,9 @@ class QueryRewriteService:
                 latency_ms=structured_result.latency_ms,
             )
 
-        # Reuse existing retrieval rewrite behavior as a low-risk fallback.
+        # 复用现有检索改写行为，作为低风险兜底。
         fallback = await self.rewrite(query)
-        # If fallback succeeded but didn't change, still keep transform surface explicit.
+        # 即便兜底成功但未改写结果，也要显式保留 transform 输出。
         if fallback.reason is None:
             fallback.reason = structured_result.reason or "fallback_rewrite"
         return fallback
@@ -2270,7 +2270,7 @@ class QueryRewriteService:
         summary_text: str,
         memory_snippet: str,
     ) -> MergeContextResolutionResult:
-        """Resolve conflict between summary and memory content for context merge."""
+        """解决摘要与记忆内容冲突，用于上下文合并。"""
         structured_result = await self._call_prompt_structured(
             "kb_chat/context_merge",
             schema=MergeContextResolutionDecision,
@@ -2314,7 +2314,7 @@ class QueryRewriteService:
         has_multi_target: bool = False,
         is_comparison: bool = False,
     ) -> ComplexityRouteResult:
-        """Decide preprocess routing strategy."""
+        """决定 preprocess 路由策略。"""
         start = time.perf_counter()
         q = _normalize_whitespace(query)
         if not q:
@@ -2419,7 +2419,7 @@ class QueryRewriteService:
         *,
         enabled: bool | None = None,
     ) -> QueryListResult:
-        """Decompose query into sub-questions via structured LLM output only."""
+        """仅通过结构化 LLM 输出将查询拆成子问题。"""
         start = time.perf_counter()
         enabled_flag = True if enabled is None else bool(enabled)
         if not enabled_flag:
@@ -2578,7 +2578,7 @@ class QueryRewriteService:
         *,
         enabled: bool | None = None,
     ) -> QueryListResult:
-        """Generate exactly 3 multi-query variants (LLM-first with safe fallback)."""
+        """生成恰好 3 个 multi-query 变体，并提供安全兜底。"""
         start = time.perf_counter()
         enabled_flag = True if enabled is None else bool(enabled)
         if not enabled_flag:
@@ -2645,7 +2645,7 @@ class QueryRewriteService:
         self,
         query: str,
     ) -> QueryListResult:
-        """HyDE generator (LLM-first with safe fallback)."""
+        """HyDE 生成器，优先使用 LLM，并提供安全兜底。"""
         start = time.perf_counter()
         q = _normalize_whitespace(query)
         if not q:
@@ -2688,7 +2688,7 @@ class QueryRewriteService:
             return True
         if len(q) <= 2:
             return True
-        # Guardrail only: short query + coreference markers is likely ambiguous.
+        # 仅用于护栏判断：短问题同时命中指代词时，通常意味着存在歧义。
         if len(q) <= 10 and _contains_coref_marker(q):
             return True
         return False
@@ -2701,7 +2701,7 @@ class QueryRewriteService:
         max_tokens: int,
         **kwargs: object,
     ) -> StructuredCallResult:
-        """Call prompt and parse structured output via with_structured_output(..., method="function_calling")."""
+        """调用提示词，并通过 with_structured_output(..., method="function_calling") 解析结构化输出。"""
         try:
             prompt = self._prompts.render_with_few_shot(prompt_key, **kwargs)
         except KeyError:

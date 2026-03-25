@@ -1,4 +1,4 @@
-"""KB Chat v3 contracts for state, routing, and stream envelopes."""
+"""KB Chat v3 的状态、路由与流式封装契约。"""
 
 from __future__ import annotations
 
@@ -43,7 +43,7 @@ KB_CHAT_CUSTOM_EVENT_TYPES: set[str] = {
 
 
 class ContractViolationError(ValueError):
-    """Raised when contract validation fails."""
+    """契约校验失败时抛出。"""
 
 
 def detect_event_protocol_version(event: Mapping[str, Any]) -> str:

@@ -1,4 +1,4 @@
-"""Research v2 编排与持久化服务。"""
+"""研究 v2 编排与持久化服务。"""
 
 from __future__ import annotations
 
@@ -33,7 +33,7 @@ from app.worker.celery_app import celery_app
 
 
 class ResearchEventStore:
-    """ResearchEvent append-only 存储。"""
+    """ResearchEvent 追加写存储。"""
 
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
@@ -177,7 +177,7 @@ class ResearchArtifactStore:
 
 
 class ResearchV2Service:
-    """Research v2 编排服务。"""
+    """研究 v2 编排服务。"""
 
     def __init__(self, celery: Celery | None = None) -> None:
         self._celery = celery or celery_app

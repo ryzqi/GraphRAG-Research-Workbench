@@ -1,4 +1,4 @@
-"""KB Chat agentic graph state (structured + checkpointer-friendly)."""
+"""KB Chat agentic 图状态：结构化且兼容 checkpointer。"""
 
 from __future__ import annotations
 
@@ -10,23 +10,19 @@ from langgraph.graph.message import add_messages
 
 from app.agents.kb_chat_contracts import STATE_SCHEMA_V3
 
-# -----------------------------
-# Query bundle types
-# -----------------------------
+# 查询包类型
 
 from app.schemas.query_enhancement import QueryItem
 
 
-# -----------------------------
-# Reflection / budget / metrics
-# -----------------------------
+# 反思 / 预算 / 指标
 
 ReflectionAction = Literal["none", "clarify", "transform_query", "force_exit"]
 ComplexityLevel = Literal["simple", "moderate", "complex"]
 
 
 class ReflectionResult(TypedDict, total=False):
-    """Outputs from reflection layer graders (serializable)."""
+    """反思层评分结果，可序列化。"""
 
     relevance_passed: bool
     review_passed: bool
@@ -46,7 +42,7 @@ class ReflectionResult(TypedDict, total=False):
 
 
 class RoutingDecision(TypedDict, total=False):
-    """Canonical routing record for cross-node / cross-subgraph decisions."""
+    """跨节点 / 子图决策使用的规范路由记录。"""
 
     phase: str
     next_node: str
@@ -62,7 +58,7 @@ class RoutingDecision(TypedDict, total=False):
 
 
 class LoopCounts(TypedDict):
-    """Loop counters used for budget control."""
+    """用于预算控制的循环计数。"""
 
     total_rounds: int
     retrieval_retries: int
@@ -70,14 +66,14 @@ class LoopCounts(TypedDict):
 
 
 class ContextTurn(TypedDict):
-    """A recent dialogue turn for display/debugging."""
+    """用于展示或调试的近期对话轮次。"""
 
     role: Literal["user", "assistant"]
     text: str
 
 
 class ContextFrame(TypedDict, total=False):
-    """Structured context assembled before rewrite/retrieval."""
+    """改写 / 检索前组装的结构化上下文。"""
 
     summary_text: str
     summary_source: Literal["persisted", "generated", "none"]
@@ -230,22 +226,20 @@ class AnswerReviewRun(TypedDict, total=False):
     latency_ms: int
 
 
-# -----------------------------
-# Graph state schema
-# -----------------------------
+# 图状态 schema
 
 class KbChatInputState(TypedDict):
-    """Minimal public graph input for a KB chat turn."""
+    """单轮 KB Chat 的最小公开输入。"""
 
-    # NOTE: LangGraph provides special reducers for message lists.
+    # 注意：LangGraph 为消息列表提供了专用 reducer。
     messages: Annotated[list[AnyMessage], add_messages]
 
-    # Raw user question (unmodified).
+    # 原始用户问题，不做改写。
     user_input: str
 
 
 class KbChatOutputState(TypedDict, total=False):
-    """Minimal public graph output exposed to service consumers."""
+    """暴露给服务调用方的最小公开输出。"""
 
     final_answer: str
     answer_paragraphs: list[dict[str, Any]]
@@ -255,35 +249,35 @@ class KbChatOutputState(TypedDict, total=False):
 
 
 class KbChatInternalStateBase(KbChatInputState):
-    """Required internal fields for agentic KB chat runs."""
+    """agentic KB Chat 运行所需的内部字段。"""
 
     schema_version: str
 
-    # Keep compatibility with existing streaming/service plumbing.
+    # 保持与现有 streaming/service 链路兼容。
     pending_tool_calls: list[dict]
 
-    # Budget / observability (kept compatible with existing AgentRun fields).
+    # 预算 / 可观测字段，保持与现有 AgentRun 字段兼容。
     loop_counts: LoopCounts
     stage_summaries: dict[str, Any]
     metrics: dict[str, Any]
 
 
 class KbChatInternalState(KbChatInternalStateBase, total=False):
-    """Optional fields populated across stages.
+    """各阶段逐步补充的可选字段。
 
-    Stage I/O (high-level, to keep implementation honest):
-    - MergeContext: reads messages/user_input/memory_keys -> writes
-      context_frame/rewrite_input_query/merged_context
-    - ResolveReference: reads rewrite_input_query/context_frame -> writes
-      resolved_query/reference_resolution_meta
-    - AmbiguityCheck: reads resolved_query/normalized_query -> writes reflection/action (clarify)
-    - QueryNormalize: reads resolved_query -> writes normalized_query
-    - QueryPlan: reads normalized_query -> writes query_strategy + routes to restored enhancement nodes
-    - QueryPlanFinalize: reads query family artifacts -> writes
-      query_plan_result/query_plan_diagnostics/query_items
-    - RetrievalLayer: reads query family -> writes final_context/metrics
-    - ReflectionLayer: reads final_context -> writes reflection (+ optional rewritten query)
-    - AnswerSubgraph: reads final_context -> writes draft_answer/final_answer/review
+    阶段 I/O（高层说明，用于约束实现边界）：
+    - MergeContext：读取 messages / user_input / memory_keys，写入
+      context_frame / rewrite_input_query / merged_context
+    - ResolveReference：读取 rewrite_input_query / context_frame，写入
+      resolved_query / reference_resolution_meta
+    - AmbiguityCheck：读取 resolved_query / normalized_query，写入 reflection / action（clarify）
+    - QueryNormalize：读取 resolved_query，写入 normalized_query
+    - QueryPlan：读取 normalized_query，写入 query_strategy，并路由到恢复后的增强节点
+    - QueryPlanFinalize：读取查询族产物，写入
+      query_plan_result / query_plan_diagnostics / query_items
+    - RetrievalLayer：读取查询族信息，写入 final_context / metrics
+    - ReflectionLayer：读取 final_context，写入 reflection（以及可选的改写查询）
+    - AnswerSubgraph：读取 final_context，写入 draft_answer / final_answer / review
     """
 
     context_frame: ContextFrame
@@ -333,7 +327,7 @@ class KbChatInternalState(KbChatInternalStateBase, total=False):
 
 
 class KbChatEmptyState(TypedDict, total=False):
-    """Explicit empty read-side schema for nodes that ignore graph state."""
+    """供忽略图状态的节点使用的显式空读侧 schema。"""
 
 
 class StageSummaryInput(TypedDict, total=False):
@@ -611,7 +605,7 @@ def merge_routing_decision(
     *,
     updates: dict[str, Any] | None = None,
 ) -> dict[str, dict[str, RoutingDecision]]:
-    """Merge a canonical routing record into state/update payloads."""
+    """将规范路由记录合并到 state / updates 载荷。"""
 
     merged: dict[str, RoutingDecision] = {}
     current = state.get("routing_decisions")
@@ -637,7 +631,7 @@ def merge_routing_decision(
 
 
 def resolve_routing_decision(state: dict[str, Any], phase: str) -> RoutingDecision:
-    """Read a canonical routing record from state."""
+    """从 state 中读取规范路由记录。"""
 
     routing = state.get("routing_decisions")
     if not isinstance(routing, dict):
@@ -660,7 +654,7 @@ def resolve_terminal_routing_decision(
     *,
     next_nodes: set[str] | None = None,
 ) -> tuple[str | None, RoutingDecision]:
-    """Resolve the latest canonical terminal-control routing record."""
+    """解析最新的规范终止控制路由记录。"""
 
     for phase in _TERMINAL_ROUTING_PHASE_ORDER:
         decision = resolve_routing_decision(state, phase)
@@ -678,7 +672,7 @@ def make_initial_state(
     user_input: str,
     messages: list[AnyMessage] | None = None,
 ) -> KbChatInternalState:
-    """Create a minimal, serializable initial state for an agentic KB chat run."""
+    """为一次 agentic KB Chat 运行创建最小可序列化初始状态。"""
 
     return {
         "messages": messages or [],
@@ -696,7 +690,7 @@ def make_initial_state(
 
 
 def build_graph_input_state(state: dict[str, Any] | KbChatInputState) -> KbChatInputState:
-    """Project arbitrary/internal state down to the public graph input schema."""
+    """将任意 / 内部状态投影为公开图输入 schema。"""
 
     messages = state.get("messages") if isinstance(state, dict) else None
     user_input = state.get("user_input") if isinstance(state, dict) else None

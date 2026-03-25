@@ -1,4 +1,4 @@
-"""DeepAgents store manager (singleton)."""
+"""DeepAgents 存储管理器（单例）。"""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 
 class DeepAgentsStoreManager:
-    """Store manager (singleton) for DeepAgents BaseStore."""
+    """DeepAgents BaseStore 管理器（单例）。"""
 
     _store: BaseStore | None = None
     _store_ctx: AbstractContextManager[BaseStore] | None = None
@@ -23,7 +23,7 @@ class DeepAgentsStoreManager:
 
     @classmethod
     def initialize(cls) -> None:
-        """Initialize DeepAgents store manager (called at app startup)."""
+        """初始化 DeepAgents Store 管理器（应用启动时调用）。"""
         if cls._initialized:
             return
 
@@ -39,8 +39,8 @@ class DeepAgentsStoreManager:
             raise ValueError(f"不支持的记忆后端类型: {settings.memory_store_backend}")
 
         try:
-            # Reuse the already-initialized async LangGraph store instead of running a
-            # second synchronous PostgresStore bootstrap during app startup.
+            # 直接复用已初始化的异步 LangGraph Store，
+            # 避免应用启动时再次同步初始化 PostgresStore。
             cls._store = StoreManager.get_store()
             cls._store_ctx = None
             cls._initialized = True
@@ -52,7 +52,7 @@ class DeepAgentsStoreManager:
 
     @classmethod
     def shutdown(cls) -> None:
-        """Shutdown DeepAgents store manager (called at app shutdown)."""
+        """关闭 DeepAgents Store 管理器（应用关闭时调用）。"""
         if cls._store_ctx is not None:
             cls._store_ctx.__exit__(None, None, None)
         cls._store = None
@@ -61,7 +61,7 @@ class DeepAgentsStoreManager:
 
     @classmethod
     def get_store(cls) -> BaseStore:
-        """Get initialized DeepAgents store instance."""
+        """获取已初始化的 DeepAgents Store 实例。"""
         if not cls._initialized or cls._store is None:
             raise RuntimeError("DeepAgentsStoreManager 未初始化")
         return cls._store

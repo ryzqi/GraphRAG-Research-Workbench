@@ -95,7 +95,7 @@ export function IndexConfigForm({
       chunking: { ...value.chunking, general_strategy: nextStrategy },
     };
 
-    // Switching strategy: reset the strategy you are leaving to defaults to avoid hidden invalid values.
+    // 切换策略时，将离开的策略重置为默认值，避免残留隐藏的非法配置。
     if (prev && prev !== nextStrategy) {
       switch (prev) {
         case 'query_dependent_multiscale':

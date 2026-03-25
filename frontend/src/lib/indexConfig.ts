@@ -21,7 +21,7 @@ export function validateIndexConfig(config: IndexConfig): string[] {
   const errors: string[] = [];
   const { chunking, contextual } = config;
 
-  // Only validate the currently selected main strategy.
+  // 仅校验当前选中的主策略。
   switch (chunking.general_strategy) {
     case 'query_dependent_multiscale': {
       if (chunking.query_dependent_multiscale.windows.length < 1) {
@@ -211,7 +211,7 @@ export function validateIndexConfig(config: IndexConfig): string[] {
       break;
   }
 
-  // Only validate enabled enhancement strategies.
+  // 仅校验已启用的增强策略。
   if (contextual.enabled) {
     checkRange(
       { value: contextual.max_tokens, min: 0, max: 512, label: 'Contextual max_tokens' },

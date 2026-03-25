@@ -1,4 +1,4 @@
-"""ToolNode/工具调用统一循环图构建器。
+"""ToolNode 与工具调用统一循环图构建器。
 
 该构建器用于生成标准的：model -> (human_review?) -> tools -> model 循环图。
 - model 节点：调用绑定工具的聊天模型，产生回答或 tool_calls。
@@ -46,14 +46,14 @@ class ToolCallingGraphBuilder:
         self._force_tool_name = force_tool_name
         self._messages_key = messages_key
 
-        # ToolNode：统一工具执行与错误处理。
+        # ToolNode：统一处理工具执行与错误。
         self._tool_node = ToolNode(
             self._tools,
             handle_tool_errors=True,
             messages_key=messages_key,
         )
 
-        # LLM：同一模型派生不同 tool_choice 版本。
+        # LLM：由同一模型派生不同 tool_choice 版本。
         if self._tools:
             self._model_auto = chat_model.bind_tools(self._tools)
             self._model_no_tools = chat_model.bind_tools(self._tools, tool_choice="none")

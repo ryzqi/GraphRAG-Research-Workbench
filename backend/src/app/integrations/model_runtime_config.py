@@ -120,8 +120,8 @@ class ModelRuntimeConfigManager:
     @classmethod
     def _get_lock(cls) -> asyncio.Lock:
         loop = asyncio.get_running_loop()
-        # Celery thread pools create a new event loop per asyncio.run call.
-        # Re-create the lock when the running loop changes to avoid cross-loop errors.
+        # Celery 线程池会在每次 asyncio.run 调用时创建新的事件循环。
+        # 当前运行循环变化时，需要重建锁，避免跨循环错误。
         if cls._lock is None or cls._lock_loop is not loop:
             cls._lock = asyncio.Lock()
             cls._lock_loop = loop
@@ -254,9 +254,9 @@ class ModelRuntimeConfigManager:
     def _build_fallback_snapshot() -> RuntimeModelSnapshot:
         providers: dict[ModelProvider, RuntimeProviderConfig] = {}
         for provider in _PROVIDER_PRIORITY:
-            # Runtime fallback is intentionally fail-closed: if config rows cannot be loaded,
-            # do not silently mark providers as usable. Keep provider ordering / thinking
-            # defaults stable so the UI and diagnostics still have deterministic structure.
+            # 运行时兜底策略刻意采用 fail-closed：若配置行无法加载，
+            # 不要静默把提供方标记为可用。需要保持提供方顺序与 thinking 默认值稳定，
+            # 以便 UI 与诊断结果仍具备确定性的结构。
             providers[provider] = RuntimeProviderConfig(
                 provider=provider,
                 enabled=False,

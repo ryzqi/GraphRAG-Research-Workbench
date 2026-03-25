@@ -1,4 +1,4 @@
-"""Helpers for KB chat runtime parameter resolution from graph state."""
+"""从图状态解析 KB Chat 运行时参数的辅助函数。"""
 
 from __future__ import annotations
 

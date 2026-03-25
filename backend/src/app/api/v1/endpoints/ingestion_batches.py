@@ -1,4 +1,4 @@
-"""Unified ingestion-batch APIs."""
+"""统一 ingestion-batch 接口。"""
 
 from __future__ import annotations
 

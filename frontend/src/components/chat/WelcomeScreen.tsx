@@ -149,7 +149,7 @@ export function WelcomeScreen({
   );
 }
 
-// 建议 Chips 独立导出
+// 建议将建议项 Chips 独立导出
 interface SuggestionChipsProps {
   suggestions: SuggestionChip[];
   onSelect: (value: string) => void;

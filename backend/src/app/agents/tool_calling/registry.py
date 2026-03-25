@@ -51,10 +51,10 @@ def _stringify_output(output: object) -> str:
         return str(output)
 
 def _sanitize_mcp_content(content: object) -> object:
-    """Make MCP tool outputs safe/serializable for ToolMessage content.
+    """将 MCP 工具输出清洗为适合 ToolMessage 的安全可序列化内容。
 
-    - Drops heavy base64 blobs from image/file blocks.
-    - Converts pydantic objects to dict when possible.
+    - 删除 image / file 块中的大体积 base64 数据。
+    - 可转换时优先把 pydantic 对象转成 dict。
     """
     if hasattr(content, "model_dump"):
         try:
@@ -142,7 +142,7 @@ async def build_tool_registry(
             ),
         )
 
-    # Tavily 外部工具
+    # Tavily 外部搜索工具
     if settings.web_search_api_key:
         if include_web_search:
             _wrap_external_tool(
@@ -169,7 +169,7 @@ async def build_tool_registry(
                 )
     )
 
-    # MCP 扩展工具（外部工具，需命名空间）
+    # MCP 扩展工具（外部工具，需要命名空间）
     if include_mcp and settings.mcp_enabled and extensions:
         resolved_mcp_entries = (
             list(mcp_entries)

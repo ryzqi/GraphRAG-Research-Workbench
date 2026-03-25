@@ -1,4 +1,4 @@
-"""Shared KB Chat node metadata and node_io wrappers."""
+"""共享的 KB Chat 节点元数据与 node_io 包装器。"""
 
 from __future__ import annotations
 

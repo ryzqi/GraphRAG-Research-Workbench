@@ -1,4 +1,4 @@
-"""Retrieval service with Milvus-backed search and optional cache/rewrite/rerank."""
+"""检索服务：基于 Milvus 搜索，并支持可选的缓存 / 改写 / rerank。"""
 
 from __future__ import annotations
 
@@ -114,7 +114,7 @@ class RetrievalRuntimeOverrides:
 
 @dataclass(slots=True)
 class RetrievalLayerDraft:
-    """Unified retrieval layer output (for agentic state + legacy tool compatibility).
+    """统一检索层输出，兼容 agentic state 与旧工具接口。
 
     - retrieval_candidates: RRF-fused (global) candidates after caps, before rerank
     - reranked_candidates: rerank output capped to Top-N (or RRF Top-N fallback)
@@ -156,7 +156,7 @@ class RetrievalService:
 
     @property
     def last_layer_draft(self) -> RetrievalLayerDraft | None:
-        """Last unified retrieval layer draft for the most recent retrieval call."""
+        """最近一次检索调用生成的统一检索层草稿。"""
         return self._last_layer_draft
 
     @staticmethod
@@ -242,7 +242,7 @@ class RetrievalService:
         value = raw.strip()
         if not value:
             return None
-        # Normalize both POSIX/Windows style path separators.
+        # 同时规范化 POSIX 与 Windows 风格的路径分隔符。
         value = value.replace("\\", "/")
         return value.rsplit("/", 1)[-1] or None
 
@@ -298,7 +298,7 @@ class RetrievalService:
             chunk.locator["citation_label"] = label
 
     async def _hydrate_chunks_from_postgres(self, chunks: list[RetrievedChunk]) -> None:
-        """Backfill chunk fields when Milvus hits lack output_fields.
+        """当 Milvus 命中结果缺少 output_fields 时，回填 chunk 字段。
 
         Prefer Milvus output_fields; only query Postgres when fields are missing.
         """
@@ -667,18 +667,18 @@ class RetrievalService:
     def _cache_key(
         self, query: str, kb_ids: list[uuid.UUID], top_k: int, strategy: dict
     ) -> str:
-        """Build the retrieval cache key."""
+        """构建检索缓存键。"""
         kb_str = ",".join(sorted(str(k) for k in kb_ids))
         fingerprint = json.dumps(strategy, sort_keys=True, ensure_ascii=False)
         raw = f"retrieval:{query}:{kb_str}:{top_k}:{fingerprint}"
         return f"retrieval:{hashlib.md5(raw.encode()).hexdigest()}"
 
     def _embedding_cache_key(self, query: str) -> str:
-        """Build the embedding cache key."""
+        """构建 embedding 缓存键。"""
         return f"embedding:{hashlib.md5(query.encode()).hexdigest()}"
 
     def _rewrite_cache_key(self, query: str) -> str:
-        """Build the query rewrite cache key."""
+        """构建查询改写缓存键。"""
         return f"rewrite:{hashlib.md5(query.encode()).hexdigest()}"
 
     def _strategy_fingerprint(
@@ -689,7 +689,7 @@ class RetrievalService:
         runtime_overrides: RetrievalRuntimeOverrides,
         kb_fingerprint: dict[str, dict] | None = None,
     ) -> dict:
-        """Build a stable strategy fingerprint used by retrieval cache keys."""
+        """构建稳定的策略指纹，用于生成检索缓存键。"""
         fingerprint = {
             "top_k": top_k,
             "min_score": self._settings.retrieval_min_score,
@@ -820,7 +820,7 @@ class RetrievalService:
         text = RetrievalService._result_text(result)
         if not text:
             return ""
-        # Keep cost bounded while preserving enough semantics for similarity scoring.
+        # 在控制成本的同时保留足够语义，用于相似度打分。
         return text[:1200]
 
     @staticmethod
@@ -979,7 +979,7 @@ class RetrievalService:
         return deduped, removed, "embedding_similarity"
 
     def _normalize_query(self, query: str) -> str:
-        """Normalize the input query before retrieval."""
+        """在检索前规范化输入查询。"""
         normalized = " ".join(query.strip().split())
         if self._settings.retrieval_query_lowercase:
             normalized = normalized.lower()
@@ -992,7 +992,7 @@ class RetrievalService:
         timeout_seconds: float | None = None,
         stage: str = "query_main",
     ) -> list[float]:
-        """Get query embedding with cache support."""
+        """获取带缓存支持的查询 embedding。"""
         if self._redis and self._settings.retrieval_cache_enabled:
             cache_key = self._embedding_cache_key(query)
             try:
@@ -1028,8 +1028,8 @@ class RetrievalService:
             extra={"query": query[:50], "latency_ms": latency_ms},
         )
 
-        # Embeddings are reusable across rewrite/retrieval variants, so keep them slightly
-        # longer than the short-lived retrieval result cache.
+        # Embedding 可在改写与检索变体之间复用，因此缓存时间可略长于
+        # 短生命周期的检索结果缓存。
         if self._redis and self._settings.retrieval_cache_enabled:
             try:
                 await self._redis.set(
@@ -1066,7 +1066,7 @@ class RetrievalService:
         *,
         timeout_seconds: float | None = None,
     ) -> tuple[list[float], int, int, str]:
-        """Resolve a query embedding, with HyDE batch aggregation when present."""
+        """解析查询 embedding；存在 HyDE 批量结果时同时聚合。"""
         query = str(item.get("query") or "").strip()
         if not query:
             raise ValueError("empty_query")
@@ -1129,7 +1129,7 @@ class RetrievalService:
         try:
             merged = self._mean_embedding(vectors)
         except ValueError:
-            # Degrade gracefully to the first usable sample.
+            # 平滑降级到第一条可用样本。
             return vectors[0], len(hyde_queries), 1, "dim_mismatch_first_sample"
         return merged, len(hyde_queries), len(vectors), "none"
 
@@ -1139,7 +1139,7 @@ class RetrievalService:
         *,
         enabled: bool | None = None,
     ) -> RewriteResult:
-        """Optionally rewrite query."""
+        """按需改写查询。"""
         rewrite_enabled = True if enabled is None else bool(enabled)
         if not rewrite_enabled:
             return RewriteResult(
@@ -1185,7 +1185,7 @@ class RetrievalService:
 
     @staticmethod
     def _candidate_key(chunk: RetrievedChunk) -> tuple[str, str, str]:
-        # Keep a stable, explicit key for global dedupe across KBs/materials.
+        # 为跨知识库 / 材料的全局去重保持稳定且显式的键。
         return (str(chunk.kb_id), str(chunk.material_id), str(chunk.id))
 
     @staticmethod
@@ -1248,9 +1248,9 @@ class RetrievalService:
         *,
         k: int,
     ) -> tuple[list[tuple[str, str, str]], dict[tuple[str, str, str], float]]:
-        """Reciprocal Rank Fusion (RRF).
+        """Reciprocal Rank Fusion（RRF）。
 
-        Returns (ordered_keys, score_by_key).
+        返回 `(ordered_keys, score_by_key)`。
         """
 
         scores: dict[tuple[str, str, str], float] = {}
@@ -1317,7 +1317,7 @@ class RetrievalService:
         timeout_seconds: float | None = None,
         feature_overrides: dict[str, object] | None = None,
     ) -> RetrievalLayerDraft:
-        """Unified RetrievalLayer: native hybrid_search + global RRF + optional rerank + Top-N.
+        """统一 RetrievalLayer：native hybrid_search + 全局 RRF + 可选 rerank + Top-N。
 
         NOTE: Any retry/transform query loop should come back to THIS method to ensure
         the retrieval chain stays consistent (hybrid_search+RRF+optional rerank).
@@ -1342,7 +1342,7 @@ class RetrievalService:
             self._last_layer_draft = draft
             return draft
 
-        # Enforce reasonable caps (production guardrails).
+        # 强制施加合理上限，作为生产护栏。
         if top_n <= 0:
             top_n = runtime_overrides.retrieval_top_k
         top_n = min(int(top_n), int(self._settings.retrieval_max_top_k))
@@ -1361,7 +1361,7 @@ class RetrievalService:
             int(self._settings.retrieval_max_top_k) * max(2, query_count * 2),
         )
         if global_candidates_limit is None:
-            # Worst-case: one hybrid result set per query, plus extra headroom for fanout.
+            # 最坏情况下每个查询产生一组混合结果，并为扇出额外预留余量。
             global_candidates_limit = min(
                 max_candidate_cap,
                 per_query_top_k * query_count,
@@ -1404,7 +1404,7 @@ class RetrievalService:
         hyde_aggregation_reason = "not_used"
         optional_embedding_skips: list[str] = []
 
-        # Use the "main" query as rerank query, fallback to the first available.
+        # 优先使用“main”查询作为 rerank 查询，若不存在则退回首个可用查询。
         main_query = ""
         for item in query_items:
             if item.get("kind") == "main" and (item.get("query") or "").strip():
@@ -1733,7 +1733,7 @@ class RetrievalService:
         global_keys, global_scores = self._rrf_rank(per_query_ranked, k=rrf_k)
         global_keys = global_keys[:global_candidates_limit]
 
-        # Build RetrievalResult list in global RRF order.
+        # 按全局 RRF 顺序构建 RetrievalResult 列表。
         rrf_results: list[RetrievalResult] = []
         for key in global_keys:
             chunk = chunk_by_key.get(key)
@@ -1743,7 +1743,7 @@ class RetrievalService:
                 RetrievalResult(chunk=chunk, score=global_scores.get(key, 0.0))
             )
 
-        # Prefer Milvus output_fields; backfill from Postgres only when necessary.
+        # 优先使用 Milvus 的 output_fields；仅在必要时再回填 Postgres 数据。
         try:
             timeout_value = self._effective_timeout(
                 deadline=deadline, per_call_timeout=None
@@ -1769,7 +1769,7 @@ class RetrievalService:
         except asyncio.TimeoutError:
             return _timeout_draft()
 
-        # kb_configs has been loaded before retrieval loop for multiscale routing.
+        # 为支持 multiscale 路由，kb_configs 已在检索循环前加载完成。
         try:
             timeout_value = self._effective_timeout(
                 deadline=deadline, per_call_timeout=None
@@ -1855,7 +1855,7 @@ class RetrievalService:
 
         candidates_for_rerank = rrf_results[:rerank_input_limit]
 
-        # Rerank: RRF -> rerank -> Top-N. Inputs are additionally capped.
+        # Rerank 流程：RRF → rerank → Top-N，输入还会额外受限。
         rerank_applied = False
         rerank_reason: str | None = "disabled"
         rerank_latency_ms: int | None = None
@@ -1876,7 +1876,7 @@ class RetrievalService:
                     enabled=feature_flags.rerank_enabled,
                 )
             except asyncio.TimeoutError:
-                # Rerank is optional: degrade to RRF order when timeout happens.
+                # Rerank 是可选步骤；超时时退回 RRF 顺序。
                 logger.warning("Rerank timed out; fallback to RRF order")
                 ordered, applied, reason, latency_ms = (
                     candidates_for_rerank,
@@ -1918,7 +1918,7 @@ class RetrievalService:
                     extra={"error": str(exc)},
                 )
 
-        # Build JSON-friendly drafts for agentic state / auditing.
+        # 为 agentic 状态和审计构建更适合 JSON 的草稿数据。
         retrieval_candidates: list[dict] = []
         for r in rrf_results:
             key = self._candidate_key(r.chunk)
@@ -2024,7 +2024,7 @@ class RetrievalService:
         hard_timeout: bool = False,
         enabled: bool | None = None,
     ) -> tuple[list[RetrievalResult], bool, str | None, int | None]:
-        """Optionally rerank candidates and gracefully degrade on failures."""
+        """按需对候选项 rerank，并在失败时平滑降级。"""
         rerank_enabled = True if enabled is None else bool(enabled)
         if not rerank_enabled:
             return results, False, "disabled", None
@@ -2035,8 +2035,8 @@ class RetrievalService:
         reranker = self._reranker or RerankClient(self._settings)
         self._reranker = reranker
 
-        # Rerank is optional quality boost: stay within the configured soft budget and
-        # gracefully degrade to the original ordering when the reranker is too slow.
+        # Rerank 是可选的质量增强：需保持在配置的软预算内，并
+        # 在 reranker 过慢时平滑降级到原始排序。
         timeout_value = float(self._settings.retrieval_rerank_timeout_seconds)
         if timeout_seconds is not None:
             timeout_value = min(timeout_value, float(timeout_seconds))
@@ -2080,7 +2080,7 @@ class RetrievalService:
                 )
                 used.add(item.index)
 
-        # Keep original ordering for items not returned by rerank.
+        # 对未被 rerank 返回的项保留原始顺序。
         for idx, res in enumerate(results):
             if idx not in used:
                 ordered.append(res)
@@ -2426,7 +2426,7 @@ class RetrievalService:
         timeout_seconds: float | None = None,
         feature_overrides: dict[str, object] | None = None,
     ) -> list[RetrievalResult]:
-        """Retrieve from Milvus by chunk IDs."""
+        """按 chunk ID 从 Milvus 检索。"""
         deadline = self._make_deadline(timeout_seconds)
         feature_flags = self._resolve_feature_flags(feature_overrides)
         runtime_overrides = self._resolve_runtime_overrides(feature_overrides)
@@ -2462,7 +2462,7 @@ class RetrievalService:
 
         normalized_query = self._normalize_query(query)
 
-        # Run in batches to avoid oversized queries.
+        # 分批执行，避免查询体积过大。
         if top_k is None:
             top_k = runtime_overrides.retrieval_top_k
         top_k = min(top_k, self._settings.retrieval_max_top_k)
@@ -2591,7 +2591,7 @@ class RetrievalService:
                 except asyncio.TimeoutError:
                     return _timeout_return()
 
-                # Cache path has no per-query provenance. Still expose evidence draft.
+                # 缓存路径没有逐查询来源信息，但仍需暴露证据草稿。
                 evidence_items: list[dict] = []
                 for r in results:
                     evidence_items.append(
@@ -2636,7 +2636,7 @@ class RetrievalService:
                 )
                 return results
 
-        # Unified retrieval layer: hybrid_search + global RRF (+ optional rerank) + Top-N.
+        # 统一检索层：hybrid_search + 全局 RRF（可选 rerank）+ Top-N。
         query_items = build_query_items(main_query=effective_query)
         remaining = self._remaining_seconds(deadline)
         if remaining is not None and remaining <= 0:
@@ -2646,7 +2646,7 @@ class RetrievalService:
             kb_ids=kb_ids,
             top_n=top_k,
             per_query_top_k=top_k,
-            # Keep defaults conservative: global cap and rerank cap follow Settings max_top_k.
+            # 默认值保持保守：全局上限与 rerank 上限均跟随 Settings.max_top_k。
             global_candidates_limit=self._settings.retrieval_max_top_k,
             rerank_input_limit=runtime_overrides.retrieval_rerank_top_k,
             timeout_seconds=remaining,
@@ -2694,7 +2694,7 @@ class RetrievalService:
             )
             return []
 
-        # Cache retrieval results.
+        # 缓存检索结果。
         if self._redis and self._settings.retrieval_cache_enabled and results:
             cache_data = [
                 {"chunk_id": str(r.chunk.id), "score": r.score} for r in results
@@ -2733,7 +2733,7 @@ class RetrievalService:
         return results
 
     async def _load_from_cache(self, cached: str) -> list[RetrievalResult]:
-        """Load retrieval results from cache payload."""
+        """从缓存载荷中加载检索结果。"""
         data = json.loads(cached)
         chunk_ids = [str(item["chunk_id"]) for item in data]
         scores = {str(item["chunk_id"]): item["score"] for item in data}
@@ -2770,8 +2770,8 @@ class RetrievalService:
             cutoff = self._settings.retrieval_rank_fusion_min_score
             if cutoff is not None:
                 return cutoff
-            # Rank-based fusion scores are not calibrated against raw/rerank scores.
-            # Keep legacy RETRIEVAL_MIN_SCORE from clearing RRF candidates.
+            # 基于排名的融合分数未与原始分数或 rerank 分数校准。
+            # 避免旧版 RETRIEVAL_MIN_SCORE 误清理 RRF 候选项。
             return None
 
         cutoff = self._settings.retrieval_rerank_min_score
@@ -2797,7 +2797,7 @@ class RetrievalService:
         return self._apply_stage_score_cutoff(results, stage="raw")
 
     def to_evidence_items(self, results: list[RetrievalResult]) -> list[EvidenceItem]:
-        """Convert retrieval results to evidence items."""
+        """将检索结果转换为证据项。"""
         items: list[EvidenceItem] = []
         for r in results:
             items.append(

@@ -1,4 +1,4 @@
-"""Unified ingestion-batch orchestration service."""
+"""统一 ingestion-batch 编排服务。"""
 
 from __future__ import annotations
 
@@ -876,7 +876,7 @@ class IngestionBatchService:
                 extra={"error": str(exc)},
             )
 
-    # Backward-compatible alias: callers should migrate to outbox triggering semantics.
+    # 向后兼容别名；调用方应迁移到 outbox 触发语义。
     def _enqueue_docs(self, doc_ids: list[uuid.UUID]) -> None:
         if not doc_ids:
             return
@@ -1173,7 +1173,7 @@ class IngestionBatchService:
             if ip in rule.network:
                 return rule.reason
 
-        # Keep explicit checks for high-risk categories even when CIDR config is overridden.
+        # 即使 CIDR 配置被覆盖，也要保留对高风险类别的显式检查。
         if ip.is_loopback:
             return "loopback"
         if ip.is_link_local:

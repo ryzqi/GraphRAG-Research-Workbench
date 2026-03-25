@@ -59,8 +59,8 @@ async def managed_task_resources(
             sessionmaker=sessionmaker,
             settings=cfg,
         )
-        # Worker processes are long-lived; refresh every task so runtime model
-        # config updates from the admin page take effect without restarts.
+        # Worker 进程生命周期较长；每次任务都刷新一次，
+        # 让管理页的运行时模型配置变更无需重启即可生效。
         async with sessionmaker() as model_config_session:
             await ModelRuntimeConfigManager.refresh(
                 db=model_config_session,

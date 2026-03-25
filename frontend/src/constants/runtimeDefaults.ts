@@ -16,7 +16,7 @@ export const DEFAULT_STATUS_POLLING_INTERVAL_MS = 2_000;
  */
 export const INGESTION_STREAM_FALLBACK_POLLING_STEPS_MS = [1_000, 2_000, 5_000] as const;
 
-/** Ingestion SSE 断流后，下一次主动重连前的等待倍率。 */
+/** ingestion SSE 断流后，下次主动重连前的等待倍率。 */
 export const INGESTION_STREAM_RETRY_MULTIPLIER = 2;
 
 /** 导出任务默认轮询间隔。 */

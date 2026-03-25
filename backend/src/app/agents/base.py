@@ -1,4 +1,4 @@
-"""Agent 基类模块。
+"""代理基类模块。
 
 提供统一的 Agent 图基类，支持日志、指标收集和追踪。
 """
@@ -24,7 +24,7 @@ StateT = TypeVar("StateT")
 
 @dataclass
 class BaseAgentState:
-    """Agent 状态基类。"""
+    """代理状态基类。"""
 
     question: str
     stage_summaries: dict[str, Any] = field(default_factory=dict)
@@ -43,7 +43,7 @@ class BaseAgentState:
 
 
 class BaseAgentGraph(ABC, Generic[StateT]):
-    """Agent 图基类。"""
+    """代理图基类。"""
 
     def __init__(self, llm: LLMClient) -> None:
         self._llm = llm

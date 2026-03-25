@@ -1,8 +1,8 @@
-"""KB Chat agentic preprocess nodes (MergeContext → HyDE).
+"""KB Chat agentic 预处理节点（MergeContext → HyDE）。
 
-These nodes are intentionally minimal first:
-- Prefer safe no-op / heuristic behaviors
-- Defer prompt-heavy LLM behaviors to later tasks (see OpenSpec tasks 1.4/1.11)
+这些节点当前刻意保持最小实现：
+- 优先采用安全的空操作或启发式行为
+- 将重提示词的 LLM 行为延后到后续任务处理
 """
 
 from __future__ import annotations
@@ -797,7 +797,7 @@ def _strip_summary_prefix(summary: str) -> str:
 
 
 def _recent_dialogue(messages: list[Any], *, max_turns: int = 3) -> str:
-    """Fallback conversational context when no explicit summary is present."""
+    """没有显式摘要时使用的对话上下文兜底。"""
     lines: list[str] = []
     for msg in reversed(messages):
         role = None
@@ -1046,14 +1046,14 @@ async def merge_context(
     runtime: Runtime[Any],
     settings: Settings,
 ) -> dict[str, Any]:
-    """Merge summary/memory/user_input into `merged_context` (skeleton).
+    """将 summary / memory / user_input 合并为 `merged_context`（骨架实现）。
 
     Current implementation uses user_input + optional summary system message.
     """
     start = time.perf_counter()
     updates: dict[str, Any] = {}
 
-    # Budget metadata is stored in metrics for checkpointer friendliness.
+    # 预算元数据存放在 metrics 中，便于 checkpointer 处理。
     updates.update(ensure_budget_initialized(state, settings))
 
     messages = state.get("messages")
@@ -1207,7 +1207,7 @@ async def merge_context(
 
 
 async def coref_rewrite(state: CorefRewriteInput, settings: Settings) -> dict[str, Any]:
-    """Coreference resolution / rewrite (degrades to original query on failure)."""
+    """执行指代消解 / 改写；失败时退回原始问题。"""
     start = time.perf_counter()
     input_source = "rewrite_input_query"
     query = state.get("rewrite_input_query")
@@ -1255,7 +1255,7 @@ async def coref_rewrite(state: CorefRewriteInput, settings: Settings) -> dict[st
         if isinstance(result.meta, dict):
             meta = result.meta
     except Exception:  # pragma: no cover
-        # Absolute fallback: keep original query.
+        # 最终兜底：保留原始问题。
         rewritten = query
         reason = "error"
         meta = {
@@ -1308,7 +1308,7 @@ async def coref_rewrite(state: CorefRewriteInput, settings: Settings) -> dict[st
 
 
 async def ambiguity_check(state: AmbiguityCheckInput, settings: Settings) -> dict[str, Any]:
-    """Ambiguity check with model-first decision and structured clarification payload."""
+    """使用模型优先决策执行歧义检查，并生成结构化澄清载荷。"""
     start = time.perf_counter()
     query = state.get("resolved_query")
     if not isinstance(query, str) or not query.strip():
@@ -1416,7 +1416,7 @@ async def normalize_rewrite(
     settings: Settings,
     runtime: Runtime[Any] | None = None,
 ) -> dict[str, Any]:
-    """Normalize query with LLM-only structured output and fail-open fallback."""
+    """用仅依赖 LLM 的结构化输出规范问题，并在失败时开放降级。"""
     start = time.perf_counter()
     _ = runtime
     input_source = "resolved_query"
@@ -1705,7 +1705,7 @@ async def query_plan(
     runtime: Runtime[Any],
     settings: Settings,
 ) -> Command[str]:
-    """Classify query complexity and route into the live Scheme B enhancement chain."""
+    """对问题复杂度分类，并路由到实时 Scheme B 增强链路。"""
 
     start = time.perf_counter()
     decision = await _classify_query_strategy(
@@ -1758,7 +1758,7 @@ async def query_plan(
 
 
 async def decomposition(state: DecompositionInput, settings: Settings) -> Command[str]:
-    """Generate sub-queries (via QueryRewriteService; degrades safely)."""
+    """生成子查询（经 QueryRewriteService，安全降级）。"""
     start = time.perf_counter()
     query = state.get("normalized_query")
     if not isinstance(query, str) or not query.strip():
@@ -1838,7 +1838,7 @@ async def generate_variants(
     state: GenerateVariantsInput,
     settings: Settings,
 ) -> Command[str]:
-    """Generate query variants (via QueryRewriteService; degrades safely)."""
+    """生成查询变体（经 QueryRewriteService，安全降级）。"""
     start = time.perf_counter()
     query = _resolve_query_plan_original_query(state)
     if not query:
@@ -1882,7 +1882,7 @@ async def generate_variants(
     )
 
 async def hyde(state: HydeInput, settings: Settings) -> dict[str, Any]:
-    """HyDE node (LLM-driven with safe fallback)."""
+    """HyDE 节点（LLM 驱动，带安全兜底）。"""
     start = time.perf_counter()
     query = _resolve_query_plan_normalized_query(state)
     original_query = _resolve_query_plan_original_query(state) or query
@@ -2122,7 +2122,7 @@ async def query_plan_finalize(
     runtime: Runtime[Any],
     settings: Settings,
 ) -> Command[str]:
-    """Finalize Scheme B query planning into retrieval-ready query_items."""
+    """将 Scheme B 查询规划定稿为可直接检索的 query_items。"""
 
     start = time.perf_counter()
     update = _build_query_plan_finalize_update(
@@ -2196,7 +2196,7 @@ async def run_query_plan_scheme_b(
     runtime: Runtime[Any] | None,
     settings: Settings,
 ) -> dict[str, Any]:
-    """Rebuild query planning with the same live Scheme B semantics used in preprocess."""
+    """用与预处理阶段一致的实时 Scheme B 语义重建查询规划。"""
 
     effective_runtime = runtime
     if effective_runtime is None:

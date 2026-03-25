@@ -109,8 +109,8 @@ class ModelConfigService:
 
     async def get_config(self) -> ModelConfigRead:
         await self._ensure_defaults()
-        # Keep in-memory runtime snapshot aligned with latest DB config
-        # even when users only visit/read the model-config page.
+        # 保持内存中的运行时快照与数据库最新配置同步。
+        # 即便用户只是访问或查看模型配置页也是如此。
         await ModelRuntimeConfigManager.refresh(db=self._db, settings=self._settings)
         provider_rows = await self._list_provider_rows()
         selection = await self._get_selection()
@@ -265,9 +265,9 @@ class ModelConfigService:
         for provider in _PROVIDER_ORDER:
             if provider in by_provider:
                 continue
-            # Product-level bootstrap default: newly discovered providers start enabled in the
-            # config UI to reduce first-run setup friction, but they still remain unusable until
-            # users configure API keys / model names.
+            # 产品层面的初始化默认值：新发现的提供方在配置界面中默认启用，
+            # 以减少首次配置阻力，但在用户补齐必要配置前仍不可用。
+            # 需要用户配置 API Key 和模型名称后才能真正使用。
             row = ModelProviderConfig(
                 provider=provider,
                 enabled=True,
@@ -290,8 +290,8 @@ class ModelConfigService:
 
         selection = await self._db.get(ModelRuntimeSelection, 1)
         if selection is None:
-            # Keep OpenAI as the deterministic initial anchor for active-provider selection;
-            # actual runnable model still depends on user-supplied provider models.
+            # 将 OpenAI 保持为可确定的初始激活提供方锚点；
+            # 实际可运行模型仍取决于用户提供的供应商模型列表。
             openai_row = by_provider[ModelProviderORM.OPENAI]
             selection = ModelRuntimeSelection(
                 id=1,

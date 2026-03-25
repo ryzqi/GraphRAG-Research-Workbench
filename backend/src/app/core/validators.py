@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from fastapi import HTTPException, status
 
-# 文件大小限制 (50MB)
+# 文件大小上限（50MB）
 MAX_FILE_SIZE = 50 * 1024 * 1024
 
 # 允许的 MIME 类型白名单（规范化后）
@@ -48,14 +48,14 @@ def validate_file_upload(
     content_type: str | None,
 ) -> None:
     """验证上传文件的大小和类型。"""
-    # 检查文件大小
+    # 校验文件大小
     if len(content) > MAX_FILE_SIZE:
         raise HTTPException(
             status_code=status.HTTP_413_CONTENT_TOO_LARGE,
             detail={"code": "FILE_TOO_LARGE", "message": f"文件大小超过限制 ({MAX_FILE_SIZE // 1024 // 1024}MB)"},
         )
 
-    # 检查文件扩展名
+    # 校验文件扩展名
     ext = ""
     if "." in filename:
         ext = "." + filename.rsplit(".", 1)[-1].lower()
@@ -65,7 +65,7 @@ def validate_file_upload(
             detail={"code": "INVALID_FILE_TYPE", "message": f"不支持的文件类型: {ext}"},
         )
 
-    # 检查 MIME 类型
+    # 校验 MIME 类型
     normalized_content_type = _normalize_content_type(content_type)
     if (
         normalized_content_type

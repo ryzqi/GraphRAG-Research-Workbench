@@ -56,7 +56,7 @@ export function Nav() {
   const router = useRouter();
   const { resolvedMode, toggleMode } = useThemeMode();
 
-  // 滚动检测 - 用于 On-scroll 背景填充效果
+  // 监听滚动状态，用于滚动时的背景填充效果。
   const scrolled = useScrollTrigger({
     disableHysteresis: true,
     threshold: 0,
@@ -67,7 +67,7 @@ export function Nav() {
       position="sticky"
       color="inherit"
       sx={{
-        // MD3 On-scroll 效果：滚动时背景填充
+        // MD3 滚动效果：滚动时填充背景。
         bgcolor: scrolled
           ? 'background.paper'
           : 'transparent',

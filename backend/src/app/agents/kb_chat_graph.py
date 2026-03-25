@@ -1,7 +1,7 @@
-"""KB Chat LangGraph builder (agentic-only).
+"""KB Chat LangGraph 构建器（仅保留 agentic 路径）。
 
-We intentionally removed the legacy ToolCallingGraph-based KB chat implementation.
-KB chat now always runs the structured agentic RAG flow.
+已移除旧版基于 ToolCallingGraph 的实现。
+KB Chat 现在固定走结构化 agentic RAG 流程。
 """
 
 from __future__ import annotations

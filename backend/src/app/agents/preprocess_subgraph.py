@@ -1,4 +1,4 @@
-"""Preprocess subgraph for KB Chat flowchart Stage 1-3."""
+"""KB Chat 流程图第 1-3 阶段的预处理子图。"""
 
 from __future__ import annotations
 
@@ -61,7 +61,7 @@ def _preprocess_exit(_: KbChatEmptyState) -> dict[str, Any]:
 
 
 def build_preprocess_subgraph(*, settings: Settings):
-    """Compile preprocess subgraph aligned to Scheme B live routing."""
+    """编译与 Scheme B 实时路由对齐的预处理子图。"""
 
     graph = StateGraph(
         state_schema=KbChatInternalState,

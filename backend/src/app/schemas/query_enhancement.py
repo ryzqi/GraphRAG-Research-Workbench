@@ -1,4 +1,4 @@
-"""Query enhancement / provenance types (JSON-friendly).
+"""查询增强 / 溯源类型定义（便于 JSON 序列化）。
 
 These structures are shared between agentic graph state and services.
 Keep them serializable (plain dict/list/str/bool/int) so LangGraph checkpointing
@@ -9,41 +9,41 @@ from __future__ import annotations
 
 from typing import Literal, TypedDict
 
-# NOTE: Keep in sync with KB agentic state and retrieval provenance needs.
+# 注意：需与 KB agentic state 和检索溯源需求保持同步。
 QuerySourceKind = Literal[
-    # Main question after preprocessing.
+    # 预处理后的主问题。
     "main",
-    # Planner-approved paraphrase.
+    # 由规划器确认的释义改写。
     "paraphrase",
-    # Decomposition sub-question.
+    # 拆解得到的子问题。
     "subquery",
-    # Multi-query variant.
+    # multi-query 变体。
     "variant",
-    # HyDE synthetic query/document.
+    # HyDE 生成的假设查询 / 文档。
     "hyde",
-    # Any rewrite/transform invoked during retries.
+    # 重试阶段触发的任意改写 / 变换。
     "rewrite",
-    # Fallback / unknown source.
+    # 兜底或未知来源。
     "other",
 ]
 
 
 class QueryRef(TypedDict, total=False):
-    """A reference to a query used in retrieval / scoring provenance."""
+    """检索 / 评分溯源中引用的查询。"""
 
     kind: QuerySourceKind
     query: str
-    # For subquery/variant, record the 0-based index in the corresponding list.
+    # 对子查询 / 变体，记录其在对应列表中的 0 基索引。
     index: int
     note: str
 
 
-# Provenance attached to candidates/evidence.
+# 附着在候选项 / 证据上的溯源信息。
 QueryHitSource = QueryRef
 
 
 class QueryItem(QueryRef, total=False):
-    """A concrete query input used by the retrieval layer.
+    """检索层实际使用的查询输入。
 
     use_dense/use_bm25 allow HyDE or other strategies to affect only one path.
     """
@@ -61,6 +61,6 @@ class QueryItem(QueryRef, total=False):
     quality_score: float
     use_dense: bool
     use_bm25: bool
-    # Optional batched HyDE payload. Keep `query` as the primary/preview item.
+    # 可选的批量 HyDE 载荷；`query` 仍作为主展示项 / 预览项。
     hyde_queries: list[str]
     hyde_aggregation: Literal["mean_embedding"]

@@ -1,4 +1,4 @@
-"""add index rebuild task outbox
+"""新增索引重建任务 outbox
 
 Revision ID: d1e8b6c4a9f0
 Revises: b7c3d1a9f2e4
@@ -11,7 +11,7 @@ from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
-# revision identifiers, used by Alembic.
+# Alembic 修订标识。
 revision = "d1e8b6c4a9f0"
 down_revision = "b7c3d1a9f2e4"
 branch_labels = None

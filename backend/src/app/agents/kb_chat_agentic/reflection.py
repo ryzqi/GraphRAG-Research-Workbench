@@ -1,9 +1,9 @@
-"""KB Chat agentic ReflectionLayer nodes (relevance / answer-review).
+"""KB Chat agentic ReflectionLayer 节点（相关性 / 答案审查）。
 
-These nodes are designed to be:
-- Minimal & production-safe (fallbacks)
-- Serializable-friendly (only write JSON-ish values to state)
-- Budget-aware (bind routing to loop_counts rounds/retries budgets)
+设计目标：
+- 保持最小实现且适合生产使用，并提供兜底
+- 仅向状态写入近似 JSON 的可序列化值
+- 感知预算，并将路由绑定到 loop_counts 的轮次 / 重试预算
 """
 
 from __future__ import annotations
@@ -247,7 +247,7 @@ def _build_subquery_dispatch_plan(
     settings: Settings,
     runtime: Runtime[Any] | None = None,
 ) -> tuple[list[Send] | str, dict[str, Any]]:
-    """Build fanout tasks from query_items and return route + diagnostics."""
+    """根据 query_items 构建扇出任务，并返回路由与诊断信息。"""
     strategy = str(state.get("query_strategy") or "direct")
     min_queries = parallel_retrieval_min_queries(state, settings, runtime=runtime)
     max_branches = parallel_retrieval_max_branches(state, settings, runtime=runtime)
@@ -586,7 +586,7 @@ async def retrieve_subquery_context(
     kb_tool: BaseTool,
     runtime: Runtime[Any] | None = None,
 ) -> dict[str, Any]:
-    """Run retrieval for a single subquery task (fanout branch)."""
+    """执行单个子查询任务的检索（扇出分支）。"""
     task = state.get("subquery_task")
     if not isinstance(task, dict):
         return {}
@@ -653,7 +653,7 @@ async def merge_subquery_context(
     settings: Settings,
     runtime: Runtime[Any] | None = None,
 ) -> dict[str, Any]:
-    """Aggregate fanout retrieval outputs into final_context + metrics."""
+    """将扇出检索结果汇总为 final_context 与 metrics。"""
     start = time.perf_counter()
     active_round = _current_retrieval_round(state)
     raw_runs = state.get("subquery_runs")
@@ -801,7 +801,7 @@ def _merge_reflection(state: dict, patch: dict[str, Any]) -> dict[str, Any]:
 def _set_final_answer_for_exit(
     state: dict, answer: str, *, reason: str
 ) -> dict[str, Any]:
-    # ForceExit node prefers final_answer; set it explicitly so we don't leak history AIMessage.
+    # ForceExit 节点优先使用 final_answer；这里显式设置，避免泄露历史 AIMessage。
     return {
         "final_answer": answer,
         **_merge_reflection(state, {"action": "force_exit", "reason": reason}),
@@ -1369,7 +1369,7 @@ async def kb_retrieve_context(
     kb_tool: BaseTool,
     runtime: Runtime[Any] | None = None,
 ) -> dict[str, Any]:
-    """Run kb_retrieve once and store the resulting Top-N context into state.final_context."""
+    """执行一次 kb_retrieve，并将得到的 Top-N 上下文写入 state.final_context。"""
     start = time.perf_counter()
     loop_counts = _get_loop_counts(state)
     if _total_rounds_exceeded(loop_counts, settings):
@@ -1457,15 +1457,15 @@ async def generate_draft(
     settings: Settings,
     chat_model: BaseChatModel,
 ) -> dict[str, Any]:
-    """Generate a draft answer using ONLY Top-N final_context; do not append to messages."""
+    """仅基于 Top-N final_context 生成草稿答案；不要追加到 messages。"""
     start = time.perf_counter()
     loop_counts = _get_loop_counts(state)
 
-    # Budget accounting: count each generation as one "round".
+    # 预算统计：每次生成都记作一轮。
     loop_counts = {**loop_counts, "total_rounds": loop_counts["total_rounds"] + 1}
 
     if _total_rounds_exceeded(loop_counts, settings):
-        # Prefer current best draft if any.
+        # 若存在当前最优草稿，则优先使用。
         return {
             "loop_counts": loop_counts,
             **_set_final_answer_for_exit(
@@ -1639,7 +1639,7 @@ async def generate_draft(
         "answer_paragraphs": paragraph_payloads,
         "answer_render_meta": render_meta,
         "draft_answer": draft,
-        # Keep final_answer aligned so ForceExit can always return something sane.
+        # 保持 final_answer 同步，确保 ForceExit 始终能返回合理内容。
         "final_answer": draft,
         **summary_updates,
     }
@@ -1650,7 +1650,7 @@ async def transform_query_for_retry(
     settings: Settings,
     runtime: Runtime[Any] | None = None,
 ) -> dict[str, Any]:
-    """Transform query and bump retrieval_retries (budget-aware)."""
+    """改写查询并递增 retrieval_retries，同时遵守预算约束。"""
     start = time.perf_counter()
     loop_counts = _get_loop_counts(state)
 
@@ -1815,7 +1815,7 @@ async def transform_query_for_retry(
 
 
 def route_after_answer_review(state: AnswerRoutingDecisionInput, settings: Settings) -> str:
-    """Route after AnswerReview: END vs transform_query vs force_exit."""
+    """在 AnswerReview 后路由到 END、transform_query 或 force_exit。"""
     routing = resolve_routing_decision(state, "answer_subgraph")
     next_node = _as_str(routing.get("next_node")).strip()
     if next_node in {"END", "transform_query", "force_exit"}:

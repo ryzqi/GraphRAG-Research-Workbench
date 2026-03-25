@@ -1,4 +1,4 @@
-"""JSON-safe helpers for KB chat graph state."""
+"""KB Chat 图状态的 JSON 安全辅助函数。"""
 
 from __future__ import annotations
 
@@ -12,12 +12,12 @@ logger = logging.getLogger(__name__)
 
 
 def ensure_json_safe(value: Any, *, settings: Settings, label: str) -> Any:
-    """Ensure value is JSON-serializable; raise or downgrade based on settings."""
+    """确保值可被 JSON 序列化；按配置决定报错或降级。"""
     try:
         json.dumps(value)
         return value
     except (TypeError, ValueError) as exc:
-        # Always fail-fast outside prod to surface checkpoint errors early.
+        # 非生产环境始终快速失败，尽早暴露 checkpoint 错误。
         if settings.app_env != "prod":
             raise ValueError(f"KB chat state is not JSON-safe: {label}") from exc
 

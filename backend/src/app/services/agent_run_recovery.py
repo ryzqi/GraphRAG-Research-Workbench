@@ -1,4 +1,4 @@
-"""Recovery helpers for stale interactive AgentRun rows."""
+"""用于恢复过期交互式 AgentRun 记录的辅助函数。"""
 
 from __future__ import annotations
 

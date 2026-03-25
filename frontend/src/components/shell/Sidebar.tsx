@@ -262,7 +262,7 @@ export function Sidebar({
           );
         })}
 
-        {/* Recent 历史 */}
+        {/* 最近历史 */}
         {expanded && recentSessions.length > 0 && (
           <>
             <Divider sx={{ my: 2 }} />
@@ -372,7 +372,7 @@ export function Sidebar({
     </Box>
   );
 
-  // 移动端使用 Drawer
+  // 移动端使用 Drawer 展示侧边栏。
   if (isMobile) {
     return (
       <Drawer

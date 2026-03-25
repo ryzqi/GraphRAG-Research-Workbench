@@ -1,4 +1,4 @@
-"""Schemas for unified ingestion batch APIs."""
+"""统一 ingestion batch API 的 schema。"""
 
 from __future__ import annotations
 

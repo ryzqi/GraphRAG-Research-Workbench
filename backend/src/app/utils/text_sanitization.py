@@ -4,7 +4,7 @@ import unicodedata
 
 
 def sanitize_visible_text(text: str) -> str:
-    """Remove invisible Unicode format characters and trim outer whitespace."""
+    """移除不可见 Unicode 格式字符，并裁剪首尾空白。"""
     return "".join(ch for ch in text if unicodedata.category(ch) != "Cf").strip()
 
 

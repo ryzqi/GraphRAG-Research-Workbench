@@ -1,4 +1,4 @@
-"""Queue-health diagnostics helpers."""
+"""队列健康诊断辅助函数。"""
 
 from __future__ import annotations
 

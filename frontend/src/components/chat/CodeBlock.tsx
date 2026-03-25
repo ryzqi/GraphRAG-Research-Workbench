@@ -45,7 +45,7 @@ export function CodeBlock({ language = 'text', children }: CodeBlockProps) {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch {
-      // Ignore copy failures.
+      // 复制失败时静默忽略。
     }
   }, [children]);
 

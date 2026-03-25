@@ -1,4 +1,4 @@
-"""Structured KB evidence helpers for canonical citation handling."""
+"""用于规范引用处理的结构化 KB 证据辅助函数。"""
 
 from __future__ import annotations
 

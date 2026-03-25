@@ -1,4 +1,4 @@
-"""Idempotency records for chat message creation requests."""
+"""聊天消息创建请求的幂等记录。"""
 
 from __future__ import annotations
 

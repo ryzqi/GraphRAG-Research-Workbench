@@ -1,4 +1,4 @@
-"""Chunking strategies and engine."""
+"""分块策略与分块引擎。"""
 
 from __future__ import annotations
 
@@ -76,7 +76,7 @@ class SemanticSplitResult:
 
 
 class ChunkingEngine:
-    """Chunking engine for ParsedDocument + IndexConfig."""
+    """面向 ParsedDocument + IndexConfig 的分块引擎。"""
 
     def __init__(
         self,
@@ -428,7 +428,7 @@ class ChunkingEngine:
             if heading_path:
                 base_meta["heading_path"] = heading_path
 
-            # Stage 2: split *within* each section only (no cross-section boundaries).
+            # 第 2 阶段：仅在各 section 内部切分，不跨 section 边界。
             if len(section) > chunk_size:
                 if recursive_splitter is not None:
                     sub_chunks = [c.strip() for c in recursive_splitter.split_text(section)]

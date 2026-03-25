@@ -29,7 +29,7 @@ def _supports_ollama_reasoning_level(model_name: str) -> bool:
 
 
 def _supports_nvidia_thinking_mode(model: Any) -> bool:
-    """Return True only when NVIDIA model metadata explicitly supports thinking mode."""
+    """仅当 NVIDIA 模型元数据明确声明支持 thinking 模式时返回 True。"""
     support = getattr(getattr(getattr(model, "_client", None), "model", None), "supports_thinking", None)
     return support is True
 
@@ -42,7 +42,7 @@ def _enable_kimi_runtime_capabilities(model: Any) -> None:
     metadata = getattr(getattr(model, "_client", None), "model", None)
     if metadata is None:
         return
-    # Kimi k2.5 supports tools/structured output, but metadata can lag behind.
+    # Kimi k2.5 支持 tools / structured output，但元数据可能滞后。
     for key in ("supports_tools", "supports_structured_output"):
         if getattr(metadata, key, None) is False:
             setattr(metadata, key, True)

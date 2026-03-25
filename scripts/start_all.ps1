@@ -121,7 +121,7 @@ function Get-HttpStatusCodeNoProxy {
         $useNoProxy = $false
     }
 
-    # Prefer curl.exe to avoid PowerShell/system proxy quirks and to get status codes for 4xx/5xx.
+    # 优先使用 curl.exe，避免 PowerShell 或系统代理差异，并可靠获取 4xx/5xx 状态码。
     if (Get-Command "curl.exe" -ErrorAction SilentlyContinue) {
         $curlArgs = @(
             "--silent"
@@ -151,7 +151,7 @@ function Get-HttpStatusCodeNoProxy {
         return [int]$resp.StatusCode
     }
     catch {
-        # If the server replied with a non-2xx, Invoke-WebRequest throws but carries the response.
+        # 服务端返回非 2xx 时，Invoke-WebRequest 会抛出异常，但异常对象仍携带响应。
         $resp = $_.Exception.Response
         if ($resp -and $resp.StatusCode) {
             try { return [int]$resp.StatusCode } catch { }
@@ -168,7 +168,7 @@ function Wait-BackendReady {
 
     $rawApiBase = if ($env:NEXT_PUBLIC_API_BASE_URL) { $env:NEXT_PUBLIC_API_BASE_URL } else { $env:VITE_API_BASE_URL }
     $baseUrl = Normalize-ApiBaseUrl -Raw $rawApiBase
-    # /ready 会检查 Postgres 等关键依赖是否可用；比 /health 更能反映“前端可用”的状态。
+    # /ready 会检查 Postgres 等关键依赖是否可用；比 /health 更能反映“前端可用”状态。
     $healthUrl = "$baseUrl/api/v1/ready"
     $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
 
@@ -272,7 +272,7 @@ function Get-CeleryWorkerCommand {
 
     $startupFlags = Get-EnvVarValue -Name "CELERY_WORKER_STARTUP_FLAGS"
     if (-not $startupFlags) {
-        # Celery on Windows is best-effort; disable mingle/gossip to reduce startup delay/noise.
+        # Windows 下的 Celery 仅按尽力而为模式运行，关闭 mingle/gossip 以减少启动延迟和噪声。
         $startupFlags = "--without-mingle --without-gossip"
     }
 

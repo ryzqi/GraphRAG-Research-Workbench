@@ -48,7 +48,7 @@ class EvidenceSourceKind(str, Enum):
 
 
 class KbChatConfig(BaseModel):
-    """Session-scoped KB answer chain runtime config."""
+    """会话级 KB 答案链运行时配置。"""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -308,7 +308,7 @@ ClarificationReasonCode = Literal[
 
 
 class ClarificationSlot(BaseModel):
-    """Structured slot the user can fill to remove ambiguity."""
+    """供用户填写以消除歧义的结构化槽位。"""
 
     key: str = Field(..., min_length=1, max_length=32)
     label: str = Field(..., min_length=1, max_length=64)
@@ -317,7 +317,7 @@ class ClarificationSlot(BaseModel):
 
 
 class PendingClarification(BaseModel):
-    """Structured clarification payload for UI-guided disambiguation."""
+    """供 UI 引导消歧使用的结构化澄清载荷。"""
 
     question: str = Field(..., min_length=1)
     reason_code: ClarificationReasonCode = "mixed"

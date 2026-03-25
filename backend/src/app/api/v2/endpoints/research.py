@@ -1,4 +1,4 @@
-"""Research v2 API endpoints。"""
+"""Research v2 接口。"""
 
 from __future__ import annotations
 

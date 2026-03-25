@@ -15,8 +15,8 @@ class ModelProvider(str, Enum):
 
 
 class ProviderConfigRead(BaseModel):
-    # Response-side defaults are defensive compatibility fallbacks only; the
-    # actual runtime/bootstrap defaults live in model_config_service/runtime_config.
+    # Response 侧默认值仅用于防御性兼容兜底；
+    # 真正的 runtime / bootstrap 默认值位于 model_config_service/runtime_config。
     provider: ModelProvider
     enabled: bool
     base_url: str | None = None

@@ -1,7 +1,7 @@
-"""LangGraph store manager (singleton).
+"""LangGraph 存储管理器（单例）。
 
-We use LangGraph Store for cross-session memory (user preferences, recent Q/A, etc.).
-The store backend is controlled by existing MEMORY_* settings.
+用于托管跨会话记忆（如用户偏好、最近问答等），
+后端类型由现有 MEMORY_* 配置控制。
 """
 
 from __future__ import annotations
@@ -20,12 +20,12 @@ logger = logging.getLogger(__name__)
 
 def _resolve_store_url(settings: Settings) -> str:
     url = settings.memory_store_url or settings.database_url
-    # AsyncPostgresStore uses psycopg style URLs.
+    # AsyncPostgresStore 需要 psycopg 风格的连接串。
     return url.replace("postgresql+asyncpg://", "postgresql://")
 
 
 class StoreManager:
-    """Store manager (singleton) for LangGraph BaseStore."""
+    """LangGraph BaseStore 管理器（单例）。"""
 
     _store: BaseStore | None = None
     _store_ctx: AbstractAsyncContextManager[BaseStore] | None = None
@@ -33,15 +33,15 @@ class StoreManager:
 
     @classmethod
     async def initialize(cls) -> None:
-        """Initialize store manager (called at app startup)."""
+        """初始化存储管理器（应用启动时调用）。"""
         if cls._initialized:
             return
 
         settings = get_settings()
         backend = (settings.memory_store_backend or "").strip().lower() or "postgres"
 
-        # MEMORY is optional; when disabled, keep an in-memory store instance so downstream code
-        # can still compile safely (but should gate on settings.memory_enabled for reads/writes).
+        # 记忆能力是可选项；禁用时仍保留内存版 store，
+        # 以便下游代码安全运行，但读写仍应受 settings.memory_enabled 约束。
         if not settings.memory_enabled or backend == "memory":
             cls._store = InMemoryStore()
             cls._initialized = True
@@ -57,7 +57,7 @@ class StoreManager:
             await cls._store.setup()
             cls._initialized = True
         except Exception:
-            # Memory is a non-critical optional component; fall back to in-memory store.
+            # 记忆能力属于非关键可选组件；初始化失败时降级为内存 store。
             logger.exception("初始化 LangGraph Store 失败，已降级为 InMemoryStore。")
             cls._store = InMemoryStore()
             cls._store_ctx = None
@@ -65,7 +65,7 @@ class StoreManager:
 
     @classmethod
     async def shutdown(cls) -> None:
-        """Shutdown store manager (called at app shutdown)."""
+        """关闭存储管理器（应用关闭时调用）。"""
         if cls._store_ctx is not None:
             await cls._store_ctx.__aexit__(None, None, None)
         cls._store = None
@@ -74,7 +74,7 @@ class StoreManager:
 
     @classmethod
     def get_store(cls) -> BaseStore:
-        """Get the store instance."""
+        """获取存储实例。"""
         if not cls._initialized or cls._store is None:
             raise RuntimeError("StoreManager 未初始化")
         return cls._store

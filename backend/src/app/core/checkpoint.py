@@ -27,7 +27,7 @@ class CheckpointManager:
             return
 
         settings = get_settings()
-        # 转换 asyncpg URL 为 psycopg 格式
+        # 将 asyncpg URL 转换为 psycopg 格式。
         db_url = settings.database_url.replace("postgresql+asyncpg://", "postgresql://")
 
         checkpointer_ctx = AsyncPostgresSaver.from_conn_string(db_url)
@@ -65,7 +65,7 @@ class CheckpointManager:
 
     @staticmethod
     def summarize_channel_values(channel_values: Any) -> dict[str, Any]:
-        """Build a small, stable summary instead of exposing raw checkpoint state."""
+        """构建一个小而稳定的摘要，避免直接暴露原始 checkpoint 状态。"""
         if not isinstance(channel_values, dict):
             return {}
 

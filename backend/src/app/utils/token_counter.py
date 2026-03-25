@@ -1,4 +1,4 @@
-"""Token counting and token-window helpers."""
+"""Token 计数与 token 窗口辅助函数。"""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ _DEFAULT_ENCODING = "cl100k_base"
 
 
 def count_tokens_approximately(text: str) -> int:
-    """Estimate token count with a stable heuristic (chars/4, ceil)."""
+    """使用稳定启发式规则估算 token 数量（chars/4 后向上取整）。"""
     if not text:
         return 0
     return max((len(text) + (_APPROX_TOKEN_CHARS - 1)) // _APPROX_TOKEN_CHARS, 1)
@@ -38,7 +38,7 @@ def _get_encoding(model: str | None):
 
 
 def count_tokens(text: str, *, model: str | None = None) -> int:
-    """Count tokens via tiktoken when available, otherwise fallback to approximation."""
+    """优先使用 tiktoken 计数；不可用时退回近似估算。"""
     if not text:
         return 0
 
@@ -59,7 +59,7 @@ def split_text_by_token_windows(
     chunk_overlap_tokens: int = 0,
     model: str | None = None,
 ) -> list[dict[str, int | str]]:
-    """Split text by token windows, preserving token start/end metadata."""
+    """按 token 窗口切分文本，并保留起止 token 元数据。"""
     if not text:
         return []
 
@@ -123,7 +123,7 @@ def split_text_to_token_budget(
     overlap_tokens: int = 0,
     model: str | None = None,
 ) -> list[str]:
-    """Split text into chunks whose token spans fit the provided budget."""
+    """将文本切为满足给定 token 预算的多个分块。"""
     windows = split_text_by_token_windows(
         text,
         chunk_size_tokens=max(max_tokens, 1),

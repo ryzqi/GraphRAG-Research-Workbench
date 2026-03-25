@@ -8,5 +8,5 @@ from __future__ import annotations
 
 from app.db.base import import_all_models
 
-# 确保所有模型被导入并注册到 DeclarativeBase 的 registry。
+# 确保所有模型都被导入，并注册到 DeclarativeBase 的 registry。
 import_all_models()

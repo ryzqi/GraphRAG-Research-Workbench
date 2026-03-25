@@ -1,4 +1,4 @@
-"""add ingestion task outbox
+"""新增导入任务 outbox
 
 Revision ID: 9b9a6f4f20d1
 Revises: 6f4b0d9e2c31
@@ -11,7 +11,7 @@ from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
-# revision identifiers, used by Alembic.
+# Alembic 修订标识。
 revision = "9b9a6f4f20d1"
 down_revision = "6f4b0d9e2c31"
 branch_labels = None

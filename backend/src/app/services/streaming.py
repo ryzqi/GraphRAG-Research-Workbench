@@ -10,7 +10,7 @@ from app.services.message_normalizer import extract_text_content
 
 
 _NON_ANSWER_STREAM_NODES = {
-    # KB preprocess / retrieval / reflection nodes
+    # KB preprocess / retrieval / reflection 节点
     "merge_context",
     "resolve_reference",
     "ambiguity_check",
@@ -86,7 +86,7 @@ class StreamDelta:
 
 
 def _should_stream_answer_content(node: str) -> bool:
-    """Return whether raw text from a node should be treated as answer content."""
+    """判断节点输出的原始文本是否应视为答案内容。"""
     if not node:
         return True
     if node == "tools":
@@ -139,12 +139,12 @@ def _extract_reasoning_from_block(block: object) -> list[str]:
 def _extract_reasoning_contents(token: object) -> list[str]:
     contents: list[str] = []
 
-    # 1) LangChain unified field: reasoning_content
+    # 1) LangChain 统一字段：reasoning_content
     reasoning_content = getattr(token, "reasoning_content", None)
     if isinstance(reasoning_content, str) and reasoning_content:
         contents.append(reasoning_content)
 
-    # 2) Provider-specific additional_kwargs.reasoning
+    # 2) 提供商特定字段 additional_kwargs.reasoning
     additional_kwargs = getattr(token, "additional_kwargs", None)
     if isinstance(additional_kwargs, dict):
         reasoning = additional_kwargs.get("reasoning")
@@ -156,7 +156,7 @@ def _extract_reasoning_contents(token: object) -> list[str]:
             if summary_text:
                 contents.append(summary_text)
 
-    # 3) Standard content blocks (LangChain v1)
+    # 3) 标准内容块（LangChain v1）
     try:
         content_blocks = getattr(token, "content_blocks", None)
     except Exception:
@@ -165,13 +165,13 @@ def _extract_reasoning_contents(token: object) -> list[str]:
         for block in content_blocks:
             contents.extend(_extract_reasoning_from_block(block))
 
-    # 4) Raw content list fallback
+    # 4) 原始 content 列表兜底
     content = getattr(token, "content", None)
     if isinstance(content, list):
         for item in content:
             contents.extend(_extract_reasoning_from_block(item))
 
-    # De-duplicate while preserving order.
+    # 去重，同时保持原有顺序。
     deduped: list[str] = []
     seen: set[str] = set()
     for text in contents:

@@ -1,4 +1,4 @@
-"""Schemas for system diagnostics APIs."""
+"""系统诊断 API 的 schema。"""
 
 from __future__ import annotations
 

@@ -30,7 +30,7 @@ _BATCH_STAGES = {
 
 
 class EmbeddingDimensionMismatchError(RuntimeError):
-    """Raised when the provider returns a vector size that does not match config."""
+    """当提供方返回的向量维度与配置不一致时抛出。"""
 
 
 class EmbeddingCallStage(StrEnum):

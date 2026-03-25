@@ -1563,7 +1563,7 @@ class GeneralChatService:
             config = CheckpointManager.make_config(thread_id)
             replay_metrics = self._build_replay_metrics(replay_decision)
 
-            # SSE: meta
+            # SSE：meta 事件
             yield "meta", {
                 "run_id": str(run.id),
                 "session_id": str(session.id),

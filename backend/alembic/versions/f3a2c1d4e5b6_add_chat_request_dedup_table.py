@@ -1,4 +1,4 @@
-"""add chat request dedup table
+"""新增聊天请求去重表
 
 Revision ID: f3a2c1d4e5b6
 Revises: e5a1b7d3c4f2
@@ -10,7 +10,7 @@ from __future__ import annotations
 import sqlalchemy as sa
 from alembic import op
 
-# revision identifiers, used by Alembic.
+# Alembic 修订标识。
 revision = "f3a2c1d4e5b6"
 down_revision = "e5a1b7d3c4f2"
 branch_labels = None

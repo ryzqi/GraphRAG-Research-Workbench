@@ -10,7 +10,7 @@ export function useModalAccessibility(
   const modalRef = useRef<HTMLDivElement>(null);
   const previousActiveElement = useRef<Element | null>(null);
 
-  // ESC 键关闭
+  // 按 ESC 键关闭。
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
       if (e.key === 'Escape' && isOpen) {

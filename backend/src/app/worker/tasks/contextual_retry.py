@@ -1,4 +1,4 @@
-"""Helpers for contextual generation with retry/fallback semantics."""
+"""带重试 / 兜底语义的上下文生成辅助函数。"""
 
 from __future__ import annotations
 

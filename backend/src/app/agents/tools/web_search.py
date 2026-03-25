@@ -1,4 +1,4 @@
-"""Web 搜索/抽取/爬取/研究工具。
+"""网页搜索、抽取、爬取与研究工具。
 基于 Tavily 实现联网搜索能力。"""
 
 from __future__ import annotations
@@ -44,7 +44,7 @@ AsyncCall = Callable[[], Awaitable[dict[str, Any]]]
 
 
 class WebSearchArgs(BaseModel):
-    """Web 搜索参数。"""
+    """网页搜索参数。"""
 
     query: str = Field(..., description="搜索查询")
     max_results: int | None = Field(
@@ -88,7 +88,7 @@ class WebSearchArgs(BaseModel):
 
 
 class WebExtractArgs(BaseModel):
-    """Web 抽取参数。"""
+    """网页抽取参数。"""
 
     urls: list[str] = Field(..., description="目标 URL 列表")
     extract_depth: Literal["basic", "advanced"] | None = Field(
@@ -108,7 +108,7 @@ class WebExtractArgs(BaseModel):
 
 
 class WebCrawlArgs(BaseModel):
-    """Web 爬取参数。"""
+    """网页爬取参数。"""
 
     url: str = Field(..., description="起始 URL")
     limit: int | None = Field(default=None, ge=1, le=100, description="最大抓取数量")
@@ -145,7 +145,7 @@ class WebCrawlArgs(BaseModel):
 
 
 class WebResearchArgs(BaseModel):
-    """Web 研究参数。"""
+    """网页研究参数。"""
 
     query: str = Field(..., description="研究问题")
     search_depth: Literal["basic", "advanced"] | None = Field(

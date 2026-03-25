@@ -59,7 +59,7 @@ async def _check_minio() -> None:
     def _check() -> None:
         storage._client.bucket_exists(storage._settings.minio_bucket_uploads)
 
-    # Run in a worker thread. abandon_on_cancel avoids readiness hanging when the SDK blocks.
+    # 在线程 worker 中执行；abandon_on_cancel 可避免 SDK 阻塞时 readiness 卡住。
     await anyio.to_thread.run_sync(_check, abandon_on_cancel=True)
 
 

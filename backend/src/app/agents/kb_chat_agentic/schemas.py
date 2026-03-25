@@ -1,4 +1,4 @@
-"""Structured output schemas for KB chat agentic nodes."""
+"""KB Chat agentic 节点的结构化输出 schema。"""
 
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ AnswerReviewReason = Literal[
 
 
 class AnswerReviewDecision(BaseModel):
-    """Structured output for final answer review."""
+    """最终答案审查的结构化输出。"""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -34,7 +34,7 @@ class AnswerReviewDecision(BaseModel):
 
 
 class AnswerReviewSubDecision(BaseModel):
-    """Structured output for one answer-review sub-check."""
+    """单个答案审查子检查的结构化输出。"""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -58,7 +58,7 @@ ClarificationReasonCode = Literal[
 
 
 class ClarificationSlotDecision(BaseModel):
-    """Structured slot required to disambiguate the question."""
+    """用于消解问题歧义的结构化槽位。"""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -69,7 +69,7 @@ class ClarificationSlotDecision(BaseModel):
 
 
 class AmbiguityDecision(BaseModel):
-    """Structured output for model-driven ambiguity decision."""
+    """模型驱动歧义判断的结构化输出。"""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -85,7 +85,7 @@ class AmbiguityDecision(BaseModel):
 
 
 class TransformQueryDecision(BaseModel):
-    """Structured output for retry query transformation."""
+    """重试时查询改写的结构化输出。"""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -93,7 +93,7 @@ class TransformQueryDecision(BaseModel):
 
 
 class ReferenceResolutionDecision(BaseModel):
-    """Structured output for LLM-driven reference resolution."""
+    """LLM 驱动指代消解的结构化输出。"""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -109,7 +109,7 @@ NormalizeRecallRisk = Literal["low", "medium", "high"]
 
 
 class NormalizeDecision(BaseModel):
-    """Structured output for query normalization."""
+    """问题规范化的结构化输出。"""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -128,7 +128,7 @@ class NormalizeDecision(BaseModel):
 
 
 class MergeContextResolutionDecision(BaseModel):
-    """Structured output for merge-context conflict resolution."""
+    """合并上下文冲突消解的结构化输出。"""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -175,7 +175,7 @@ class ComplexityDecision(BaseModel):
 
 
 class DecompositionDecision(BaseModel):
-    """Structured output for query decomposition."""
+    """问题拆解的结构化输出。"""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -190,7 +190,7 @@ class DecompositionDecision(BaseModel):
 
 
 class MultiQueryDecision(BaseModel):
-    """Structured output for multi-query generation."""
+    """多路查询生成的结构化输出。"""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -198,7 +198,7 @@ class MultiQueryDecision(BaseModel):
 
 
 class HyDEBatchDecision(BaseModel):
-    """Structured output for batched HyDE hypothetical document generation."""
+    """批量 HyDE 假设文档生成的结构化输出。"""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -206,7 +206,7 @@ class HyDEBatchDecision(BaseModel):
 
 
 class RetrievalPlanDecision(BaseModel):
-    """Structured output for retrieval budget planning."""
+    """检索预算规划的结构化输出。"""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -217,7 +217,7 @@ class RetrievalPlanDecision(BaseModel):
 
 
 class ContextCompressItem(BaseModel):
-    """Structured evidence item selected during context compression."""
+    """上下文压缩阶段选中的结构化证据项。"""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -226,7 +226,7 @@ class ContextCompressItem(BaseModel):
 
 
 class ContextCompressDecision(BaseModel):
-    """Structured output for context compression."""
+    """上下文压缩的结构化输出。"""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -240,7 +240,7 @@ ParagraphReviewStatus = Literal["passed", "needs_repair", "failed"]
 
 
 class ParagraphClaim(BaseModel):
-    """Structured review unit for one claim inside an answer paragraph."""
+    """答案段落内单条断言的结构化审查单元。"""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -252,7 +252,7 @@ class ParagraphClaim(BaseModel):
 
 
 class AnswerParagraph(BaseModel):
-    """Structured paragraph unit for answer review/rendering."""
+    """用于答案审查 / 渲染的结构化段落单元。"""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -264,7 +264,7 @@ class AnswerParagraph(BaseModel):
 
 
 class DraftAnswerDecision(BaseModel):
-    """Structured output for draft answer generation."""
+    """草稿答案生成的结构化输出。"""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -272,7 +272,7 @@ class DraftAnswerDecision(BaseModel):
 
 
 class AnswerRenderMeta(BaseModel):
-    """Latest-only render metadata derived from answer paragraphs."""
+    """由答案段落推导出的 latest-only 渲染元数据。"""
 
     model_config = ConfigDict(extra="forbid")
 

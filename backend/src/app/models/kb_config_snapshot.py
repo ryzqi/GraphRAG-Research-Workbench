@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 
 
 class KBConfigSnapshot(Base):
-    """Knowledge base index configuration snapshot."""
+    """知识库索引配置快照。"""
 
     __tablename__ = "kb_config_snapshots"
 

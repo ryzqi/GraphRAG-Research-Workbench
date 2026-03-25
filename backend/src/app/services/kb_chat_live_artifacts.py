@@ -1,4 +1,4 @@
-"""Helpers for KB Chat live-run SSE parsing and Markdown artifact rendering."""
+"""用于 KB Chat 实时运行的 SSE 解析与 Markdown 工件渲染辅助函数。"""
 
 from __future__ import annotations
 

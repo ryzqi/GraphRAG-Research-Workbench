@@ -95,7 +95,7 @@ class ConversationSummaryService:
         return bool((msg.meta or {}).get(self._META_FLAG))
 
     async def _persist_summary(self, session_id, summary_text: str) -> None:
-        """Persist the latest summary and keep history clean (delete older summaries)."""
+        """持久化最新摘要并清理历史记录（删除旧摘要）。"""
         await self._db.execute(
             delete(ChatMessage).where(
                 ChatMessage.session_id == session_id,

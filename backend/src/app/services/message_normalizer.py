@@ -169,7 +169,7 @@ def _is_assistant_message_dict(message: dict[str, Any]) -> bool:
 
 
 def _message_payload_dict(message: dict[str, Any]) -> dict[str, Any]:
-    """Normalize dict-shaped messages to a payload-style dict."""
+    """将字典形态的消息规范化为 payload 风格字典。"""
     data = message.get("data")
     if isinstance(data, dict):
         return data

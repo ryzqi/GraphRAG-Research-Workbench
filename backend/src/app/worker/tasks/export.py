@@ -13,7 +13,7 @@ from app.worker.task_resources import managed_task_resources
 
 
 def _should_skip_export_job_status(status: ExportStatus) -> bool:
-    """Only queued jobs may transition into task execution."""
+    """仅排队中的作业允许进入任务执行阶段。"""
     return status is not ExportStatus.QUEUED
 
 

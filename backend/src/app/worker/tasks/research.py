@@ -30,12 +30,12 @@ from app.worker.task_resources import managed_task_resources
 
 
 def _should_skip_run_status(status: AgentRunStatus) -> bool:
-    """Allow execution only while the run is actively running."""
+    """仅允许在运行仍处于 active 状态时执行。"""
     return status is not AgentRunStatus.RUNNING
 
 
 def _should_skip_research_session_status(status: ResearchSessionStatus) -> bool:
-    """Skip only terminal sessions; resumed sessions may enter with RUNNING state."""
+    """仅跳过终态会话；恢复后的会话可能以 RUNNING 状态进入。"""
     return status in TERMINAL_RESEARCH_SESSION_STATUSES
 
 

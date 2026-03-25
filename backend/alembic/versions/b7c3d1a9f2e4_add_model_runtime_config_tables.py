@@ -1,4 +1,4 @@
-"""add model runtime config tables
+"""新增模型运行时配置表
 
 Revision ID: b7c3d1a9f2e4
 Revises: c4d7a3f1b8e9
@@ -11,7 +11,7 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects import postgresql
 
-# revision identifiers, used by Alembic.
+# Alembic 修订标识。
 revision = "b7c3d1a9f2e4"
 down_revision = "c4d7a3f1b8e9"
 branch_labels = None

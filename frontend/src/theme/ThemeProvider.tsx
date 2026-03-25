@@ -1,6 +1,6 @@
 /**
- * MD3 主题切换 Provider
- * 支持 Light/Dark/System 模式，持久化用户选择
+ * MD3 主题切换提供器
+ * 支持浅色 / 深色 / 跟随系统三种模式，并持久化用户选择
  */
 import {
   createContext,
@@ -15,9 +15,7 @@ import { ThemeProvider as MuiThemeProvider } from '@mui/material/styles';
 import CssBaseline from '@mui/material/CssBaseline';
 import { lightTheme, darkTheme } from './index';
 
-// ============================================================================
 // 类型定义
-// ============================================================================
 
 export type ThemeMode = 'light' | 'dark' | 'system';
 
@@ -28,13 +26,11 @@ interface ThemeContextValue {
   resolvedMode: 'light' | 'dark';
   /** 切换主题模式 */
   setMode: (mode: ThemeMode) => void;
-  /** 切换 light/dark */
+  /** 在浅色与深色间切换 */
   toggleMode: () => void;
 }
 
-// ============================================================================
-// Context
-// ============================================================================
+// 主题上下文
 
 const ThemeContext = createContext<ThemeContextValue | undefined>(undefined);
 
@@ -48,7 +44,7 @@ function getSystemPreference(): 'light' | 'dark' {
     : 'light';
 }
 
-/** 从 localStorage 读取主题设置 */
+/** 从 localStorage 读取主题模式 */
 function getStoredMode(): ThemeMode {
   if (typeof window === 'undefined') return 'system';
   const stored = localStorage.getItem(STORAGE_KEY);
@@ -58,9 +54,7 @@ function getStoredMode(): ThemeMode {
   return 'system';
 }
 
-// ============================================================================
-// Provider 组件
-// ============================================================================
+// 提供器组件
 
 interface Md3ThemeProviderProps {
   children: ReactNode;
@@ -80,7 +74,7 @@ export function Md3ThemeProvider({
     getSystemPreference
   );
 
-  // 监听系统主题变化
+  // 监听系统主题变化。
   useEffect(() => {
     const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
 
@@ -92,7 +86,7 @@ export function Md3ThemeProvider({
     return () => mediaQuery.removeEventListener('change', handleChange);
   }, []);
 
-  // 计算实际生效的主题
+  // 计算当前实际生效的主题。
   const resolvedMode = useMemo<'light' | 'dark'>(() => {
     if (mode === 'system') {
       return systemPreference;
@@ -100,18 +94,18 @@ export function Md3ThemeProvider({
     return mode;
   }, [mode, systemPreference]);
 
-  // 选择对应的 MUI 主题
+  // 选择对应的 MUI 主题实例。
   const theme = useMemo(() => {
     return resolvedMode === 'dark' ? darkTheme : lightTheme;
   }, [resolvedMode]);
 
-  // 设置主题模式（带持久化）
+  // 设置主题模式并持久化。
   const setMode = useCallback((newMode: ThemeMode) => {
     setModeState(newMode);
     localStorage.setItem(STORAGE_KEY, newMode);
   }, []);
 
-  // 切换 light/dark
+  // 在浅色与深色间切换。
   const toggleMode = useCallback(() => {
     setMode(resolvedMode === 'light' ? 'dark' : 'light');
   }, [resolvedMode, setMode]);
@@ -136,9 +130,7 @@ export function Md3ThemeProvider({
   );
 }
 
-// ============================================================================
-// Hook
-// ============================================================================
+// 主题钩子
 
 /** 获取主题切换功能 */
 export function useThemeMode(): ThemeContextValue {

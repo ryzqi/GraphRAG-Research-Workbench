@@ -1,1 +1,1 @@
-"""Pydantic Schemas。"""
+"""Pydantic schema 集合。"""

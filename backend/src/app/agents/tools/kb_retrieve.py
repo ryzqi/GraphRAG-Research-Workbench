@@ -140,7 +140,7 @@ def _normalize_query_items(
             item["use_bm25"] = bool(raw.get("use_bm25", True))
             normalized.append(item)
 
-    # K2 contract: always preserve the original query as the first query item.
+    # K2 契约：始终保留原始查询作为第一个 query item。
     items = [
         {
             "kind": "main",
@@ -232,8 +232,8 @@ def build_kb_retrieve_tool(
             query_items=query_items,
         )
         if isinstance(query_items, list):
-            # Agentic KB chat passes a fanout query bundle (sub-queries/variants/HyDE).
-            # Use the unified RetrievalLayer so cross-query fusion (RRF/rerank/Top-N) actually takes effect.
+            # Agentic KB Chat 会传入 fanout 查询包（子查询 / 变体 / HyDE）。
+            # 使用统一 RetrievalLayer，让跨查询融合（RRF / rerank / Top-N）真正生效。
             settings = get_settings()
             configured_top_k = None
             configured_rerank_top_k = None
@@ -301,7 +301,7 @@ def build_kb_retrieve_tool(
 
         context, char_truncated = truncate_tool_output(context, tool_output_max_chars)
 
-        # Build a unified, JSON-friendly evidence draft (chunk-level) for auditing/persistence.
+        # 构建统一且便于 JSON 序列化的证据草稿（chunk 级），用于审计与持久化。
         draft_by_chunk_id: dict[str, dict[str, Any]] = {}
         layer = getattr(retrieval, "last_layer_draft", None)
         layer_items = (
@@ -323,8 +323,8 @@ def build_kb_retrieve_tool(
             if chunk_id is None:
                 continue
             cid = str(chunk_id)
-            # Evidence excerpts should match what the model saw in the retrieval context
-            # (context_text may be parent content under parent/child strategy).
+            # 证据摘录应与模型在检索上下文中实际看到的内容保持一致
+            # （在 parent/child 策略下，context_text 可能是父级内容）。
             excerpt_text = RetrievalService._result_excerpt(r)
             item = draft_by_chunk_id.get(cid)
             if item is None:

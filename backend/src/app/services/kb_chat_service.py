@@ -982,7 +982,7 @@ class KbChatService:
         layer_stats: dict[str, Any],
         kb_chat_config: KbChatConfig,
     ) -> dict[str, Any]:
-        """Build a minimal, non-sensitive snapshot for production observability."""
+        """为生产可观测性构建最小且不含敏感信息的快照。"""
         prompt_version = None
         try:
             prompt_version = self._prompts.get("kb_chat/system").version
@@ -2115,7 +2115,7 @@ class KbChatService:
         reflection: dict[str, Any] | None = None,
         best_answer: str | None = None,
     ) -> tuple[AgentRunStatus, str | None]:
-        """Resolve terminal run status from canonical state + final answer."""
+        """根据规范状态与最终答案解析终态运行状态。"""
         reason = KbChatService._resolve_terminal_reason(
             clarification_payload=clarification_payload,
             routing_decisions=routing_decisions,
@@ -2744,7 +2744,7 @@ class KbChatService:
     def _normalize_graph_stream_event(
         event: Any,
     ) -> tuple[str, Any, list[str] | None] | None:
-        """Normalize LangGraph v2 StreamPart or legacy tuple stream output."""
+        """规范化 LangGraph v2 StreamPart 或旧版 tuple 流输出。"""
         def _to_node_path(value: Any) -> list[str] | None:
             if isinstance(value, tuple):
                 path = [str(item) for item in value if isinstance(item, str) and item]
@@ -4451,7 +4451,7 @@ class KbChatService:
                 if source_kind == EvidenceSourceKind.KB and (
                     chunk_id is None or kb_id is None or material_id is None
                 ):
-                    # KB evidence must be chunk-traceable.
+                    # KB 证据必须能追溯到具体 chunk。
                     continue
 
                 excerpt = str(it.get("excerpt") or "")[:500]
@@ -4665,7 +4665,7 @@ class KbChatService:
                 selected_kb_ids=session.selected_kb_ids,
             )
 
-        # Best-effort: write a small, structured memory entry (bounded + TTL).
+        # 最佳努力写入一条小型结构化记忆记录（有界且带 TTL）。
         if status == AgentRunStatus.SUCCEEDED and self._settings.memory_enabled:
             try:
                 await append_kb_chat_memory_entry(

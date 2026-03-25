@@ -1,6 +1,6 @@
-"""Prompt 加载器。
+"""提示词加载器。
 
-从 YAML 文件加载 Prompt 模板，支持变量渲染和 few-shot 示例。
+从 YAML 文件加载提示词模板，支持变量渲染和 few-shot 示例。
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ from pydantic import BaseModel
 
 
 class PromptTemplate(BaseModel):
-    """Prompt 模板。"""
+    """提示词模板。"""
 
     version: str
     name: str
@@ -25,7 +25,7 @@ class PromptTemplate(BaseModel):
 
 
 class PromptLoader:
-    """Prompt 加载器（单例）。"""
+    """提示词加载器（单例）。"""
 
     _instance: PromptLoader | None = None
     _templates: dict[str, PromptTemplate]

@@ -1,4 +1,4 @@
-"""Answer subgraph entrypoint wrapper for KB Chat v3 rollout."""
+"""KB Chat v3 答案子图稳定入口封装。"""
 
 from __future__ import annotations
 
@@ -9,6 +9,6 @@ from app.core.settings import Settings
 
 
 def build_answer_subgraph(*, settings: Settings, chat_model: BaseChatModel):
-    """Compile the existing answer subgraph through a stable entrypoint."""
+    """通过稳定入口编译现有答案子图。"""
 
     return _build(settings=settings, chat_model=chat_model)

@@ -2,7 +2,7 @@
  * 文件上传验证工具。
  */
 
-// 文件大小限制 (50MB)
+// 文件大小上限（50MB）
 export const MAX_FILE_SIZE = 50 * 1024 * 1024;
 
 // 允许的文件扩展名
@@ -11,7 +11,7 @@ export const ALLOWED_EXTENSIONS = new Set(['.pdf', '.txt', '.md', '.docx']);
 // 与 <input accept> 保持一致的字符串表示（中心化，避免多处维护）。
 export const ACCEPTED_FILE_TYPES = Array.from(ALLOWED_EXTENSIONS).join(',');
 
-// UI 展示用（例如：PDF, TXT, MD, DOCX）
+// UI 展示用标签（如 PDF、TXT、MD、DOCX）。
 export const SUPPORTED_FILE_TYPES_LABEL = Array.from(ALLOWED_EXTENSIONS)
   .map((ext) => ext.replace('.', '').toUpperCase())
   .join(', ');
@@ -63,7 +63,7 @@ export function validateFile(file: File): FileValidationResult {
     };
   }
 
-  // 检查 MIME 类型
+  // 校验 MIME 类型
   if (file.type) {
     const normalizedMimeType = normalizeMimeType(file.type);
     const canonicalMimeType = MIME_TYPE_ALIASES.get(normalizedMimeType) ?? normalizedMimeType;
