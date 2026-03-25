@@ -460,21 +460,12 @@ class Settings(BaseSettings):
     kb_chat_semantic_cache_similarity_threshold: float = Field(
         0.88, ge=0.0, le=1.0, alias="KB_CHAT_SEMANTIC_CACHE_SIMILARITY_THRESHOLD"
     )
-    kb_chat_semantic_cache_soft_threshold: float = Field(
-        0.82, ge=0.0, le=1.0, alias="KB_CHAT_SEMANTIC_CACHE_SOFT_THRESHOLD"
+    kb_chat_semantic_cache_index_name: str = Field(
+        "kb_chat_semantic_cache_v4", alias="KB_CHAT_SEMANTIC_CACHE_INDEX_NAME"
     )
-    kb_chat_semantic_cache_shadow_mode: bool = Field(
-        True, alias="KB_CHAT_SEMANTIC_CACHE_SHADOW_MODE"
-    )
-    # 语义缓存保留 24h，配合 max_items/skip 条件吸收重复追问，又避免无限滞留旧答案。
+    # 语义缓存保留 24h，避免无限滞留旧答案，同时保持 RedisVL 条目可按 TTL 自动过期。
     kb_chat_semantic_cache_ttl_seconds: int = Field(
         24 * 60 * 60, ge=0, alias="KB_CHAT_SEMANTIC_CACHE_TTL_SECONDS"
-    )
-    kb_chat_semantic_cache_ttl_jitter_seconds: int = Field(
-        0, ge=0, alias="KB_CHAT_SEMANTIC_CACHE_TTL_JITTER_SECONDS"
-    )
-    kb_chat_semantic_cache_max_items: int = Field(
-        128, ge=1, alias="KB_CHAT_SEMANTIC_CACHE_MAX_ITEMS"
     )
     kb_chat_parallel_retrieval_min_queries: int = Field(
         2, ge=1, le=8, alias="KB_CHAT_PARALLEL_RETRIEVAL_MIN_QUERIES"

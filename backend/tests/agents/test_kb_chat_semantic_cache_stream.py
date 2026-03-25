@@ -13,6 +13,7 @@ from app.schemas.chats import (
     resolve_kb_chat_config,
 )
 from app.services.kb_chat_service import KbChatService
+from app.services.semantic_cache.policy import SEMANTIC_CACHE_SCHEMA_VERSION
 
 
 async def _collect_events(stream) -> list[tuple[str, dict]]:
@@ -51,7 +52,7 @@ async def test_answer_stream_cached_hit_emits_semantic_cache_step_and_node_io() 
                 threshold=0.88,
                 ttl_seconds=86400,
                 entry_id="entry-1",
-                schema_version="v3",
+                schema_version=SEMANTIC_CACHE_SCHEMA_VERSION,
                 hit_type="strong_hit",
                 created_at="2026-03-24T10:00:00Z",
             ),
@@ -145,7 +146,7 @@ async def test_answer_stream_cached_hit_emits_semantic_cache_step_and_node_io() 
         "threshold": 0.88,
         "ttl_seconds": 86400,
         "entry_id": "entry-1",
-        "schema_version": "v3",
+        "schema_version": SEMANTIC_CACHE_SCHEMA_VERSION,
         "hit_type": "strong_hit",
         "created_at": "2026-03-24T10:00:00Z",
     }

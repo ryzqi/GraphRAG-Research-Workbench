@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import math
 import uuid
 from datetime import datetime, timezone
@@ -11,64 +10,144 @@ import pytest
 from app.schemas.chats import EvidenceItem, resolve_kb_chat_config
 from app.services.knowledge_base_service import touch_kb_updated_at
 from app.services.kb_chat_service import KbChatService
+from app.services.semantic_cache.models import (
+    SemanticCacheHit,
+    SemanticCacheLookupRequest,
+    SemanticCacheStoreRequest,
+)
+from app.services.semantic_cache.policy import (
+    SEMANTIC_CACHE_HIT_TYPE_STRONG,
+    SEMANTIC_CACHE_SCHEMA_VERSION,
+)
+from app.services.semantic_cache.service import KbChatSemanticCacheService
 
 
-class _FakeRedis:
+class _FakeSemanticCacheBackend:
     def __init__(self) -> None:
-        self.values: dict[str, str] = {}
-        self.ttl_values: dict[str, int] = {}
-        self.get_calls: list[str] = []
-        self.set_calls: list[dict[str, object]] = []
+        self.lookup_requests: list[SemanticCacheLookupRequest] = []
+        self.store_requests: list[SemanticCacheStoreRequest] = []
 
-    async def get(self, key: str) -> str | None:
-        self.get_calls.append(key)
-        return self.values.get(key)
+    async def lookup(self, request: SemanticCacheLookupRequest) -> SemanticCacheHit | None:
+        self.lookup_requests.append(request)
+        best_request: SemanticCacheStoreRequest | None = None
+        best_score = -1.0
+        for candidate in self.store_requests:
+            if candidate.scope.scope_fingerprint != request.scope.scope_fingerprint:
+                continue
+            if candidate.context.mode != request.context.mode:
+                continue
+            if (
+                candidate.context.mode == "contextual"
+                and candidate.context.signature != request.context.signature
+            ):
+                continue
+            score = _cosine_similarity(candidate.question_vector, request.question_vector)
+            if score >= request.similarity_threshold and score > best_score:
+                best_score = score
+                best_request = candidate
+        if best_request is None:
+            return None
+        return SemanticCacheHit(
+            answer=best_request.answer,
+            evidence=best_request.evidence,
+            stage_summaries=best_request.stage_summaries,
+            metrics=best_request.metrics,
+            score=best_score,
+            threshold=request.similarity_threshold,
+            ttl_seconds=request.ttl_seconds,
+            entry_id="fake-entry-1",
+            schema_version=SEMANTIC_CACHE_SCHEMA_VERSION,
+            hit_type=SEMANTIC_CACHE_HIT_TYPE_STRONG,
+            created_at="2026-03-24T10:00:00Z",
+            context_fingerprint=best_request.context.signature,
+            kb_version=best_request.scope.kb_version,
+        )
 
-    async def set(self, key: str, value: str, ex: int | None = None) -> None:
-        self.values[key] = value
-        if ex is not None:
-            self.ttl_values[key] = ex
-        self.set_calls.append({"key": key, "value": value, "ex": ex})
-
-    async def ttl(self, key: str) -> int:
-        return self.ttl_values.get(key, -1)
+    async def store(self, request: SemanticCacheStoreRequest) -> None:
+        self.store_requests = [
+            item
+            for item in self.store_requests
+            if not (
+                item.scope.scope_fingerprint == request.scope.scope_fingerprint
+                and item.context.mode == request.context.mode
+                and item.context.signature == request.context.signature
+                and item.question == request.question
+            )
+        ]
+        self.store_requests.insert(0, request)
 
 
 class _FakeEmbedding:
-    def __init__(self, vector: list[float] | None = None) -> None:
-        self.vector = vector or [1.0, 0.0]
+    def __init__(self, vectors_by_text: dict[str, list[float]] | None = None) -> None:
+        self.vectors_by_text = vectors_by_text or {}
         self.calls: list[tuple[list[str], str]] = []
 
     async def embed(self, *, texts: list[str], stage: str) -> list[list[float]]:
         self.calls.append((texts, stage))
-        return [list(self.vector) for _ in texts]
+        return [list(self.vectors_by_text.get(text, [1.0, 0.0])) for text in texts]
 
 
-def _build_service() -> tuple[KbChatService, _FakeRedis]:
+class _StaticSemanticCacheService:
+    def __init__(self, *, threshold: float, ttl_seconds: int) -> None:
+        self._threshold = threshold
+        self._ttl_seconds = ttl_seconds
+
+    def similarity_threshold(self) -> float:
+        return self._threshold
+
+    def ttl_seconds(self) -> int:
+        return self._ttl_seconds
+
+
+def _cosine_similarity(left: list[float], right: list[float]) -> float:
+    if len(left) != len(right) or not left:
+        return 0.0
+    dot = 0.0
+    left_norm = 0.0
+    right_norm = 0.0
+    for l_value, r_value in zip(left, right, strict=False):
+        dot += l_value * r_value
+        left_norm += l_value * l_value
+        right_norm += r_value * r_value
+    if left_norm <= 0.0 or right_norm <= 0.0:
+        return 0.0
+    return dot / (math.sqrt(left_norm) * math.sqrt(right_norm))
+
+
+def _build_service(
+    *,
+    vectors_by_text: dict[str, list[float]] | None = None,
+) -> tuple[KbChatService, _FakeSemanticCacheBackend]:
     service = KbChatService.__new__(KbChatService)
-    redis = _FakeRedis()
+    backend = _FakeSemanticCacheBackend()
     service._settings = SimpleNamespace(
         kb_chat_semantic_cache_enabled=True,
         kb_chat_semantic_cache_similarity_threshold=0.88,
-        kb_chat_semantic_cache_soft_threshold=0.82,
-        kb_chat_semantic_cache_shadow_mode=True,
         kb_chat_semantic_cache_ttl_seconds=24 * 60 * 60,
-        kb_chat_semantic_cache_ttl_jitter_seconds=0,
-        kb_chat_semantic_cache_max_items=128,
+        kb_chat_semantic_cache_index_name="kb_chat_semantic_cache_test",
         embedding_model="text-embedding-3-small",
         context_history_max_messages=12,
     )
-    service._redis = redis
-    service._embedding = _FakeEmbedding()
-    return service, redis
+    service._embedding = _FakeEmbedding(vectors_by_text=vectors_by_text)
+    service._semantic_cache_service = KbChatSemanticCacheService(
+        embedding=service._embedding,
+        settings=service._settings,
+        backend=backend,
+    )
+    return service, backend
 
 
-def _build_session() -> SimpleNamespace:
+def _build_session(
+    *,
+    selected_kb_ids: list[uuid.UUID] | None = None,
+    allow_external: bool = False,
+) -> SimpleNamespace:
     return SimpleNamespace(
         id=uuid.UUID("00000000-0000-0000-0000-000000000401"),
         session_type=SimpleNamespace(value="kb_chat"),
-        selected_kb_ids=[uuid.UUID("00000000-0000-0000-0000-000000000402")],
-        allow_external=False,
+        selected_kb_ids=selected_kb_ids
+        or [uuid.UUID("00000000-0000-0000-0000-000000000402")],
+        allow_external=allow_external,
         mode=SimpleNamespace(value="single_agent"),
     )
 
@@ -85,103 +164,126 @@ def _build_evidence_item() -> EvidenceItem:
     )
 
 
-def _build_v3_entry(
-    *,
-    entry_id: str,
-    question: str,
-    context_fingerprint: str,
-    embedding: list[float],
-    kb_version: str,
-    hit_count: int = 0,
-    metrics: dict[str, object] | None = None,
-) -> dict[str, object]:
-    evidence_item = _build_evidence_item()
-    return {
-        "entry_id": entry_id,
-        "schema_version": "v3",
-        "question": question,
-        "question_normalized": question,
-        "context_fingerprint": context_fingerprint,
-        "answer": "缓存答案",
-        "embedding": embedding,
-        "evidence": [evidence_item.model_dump(mode="json")],
-        "citation_ids": ["S1"],
-        "evidence_fingerprint": [
-            "00000000-0000-0000-0000-000000000402:00000000-0000-0000-0000-000000000403:00000000-0000-0000-0000-000000000404"
-        ],
-        "verified_level": "verified_direct",
-        "hit_type": "strong_hit",
-        "source_run_id": "run-source-1",
-        "kb_version": kb_version,
-        "answer_contract_version": "kb_chat_semantic_cache_v3",
-        "created_at": "2026-03-24T10:00:00Z",
-        "expires_at": "2026-03-25T10:00:00Z",
-        "last_hit_at": None,
-        "hit_count": hit_count,
-        "stage_summaries": {"answer_review": {"passed": True}},
-        "metrics": metrics or {},
-    }
+def test_threshold_and_ttl_delegate_to_semantic_cache_service() -> None:
+    service = KbChatService.__new__(KbChatService)
+    service._settings = SimpleNamespace(
+        kb_chat_semantic_cache_similarity_threshold=0.88,
+        kb_chat_semantic_cache_ttl_seconds=24 * 60 * 60,
+    )
+    service._semantic_cache_service = _StaticSemanticCacheService(
+        threshold=0.73,
+        ttl_seconds=321,
+    )
+
+    assert service._semantic_cache_threshold() == 0.73
+    assert service._semantic_cache_ttl_seconds() == 321
 
 
 @pytest.mark.asyncio
-async def test_lookup_rejects_same_question_when_context_fingerprint_differs() -> None:
-    service, redis = _build_service()
+async def test_lookup_hits_for_standalone_paraphrase_with_same_scope() -> None:
+    service, _ = _build_service(
+        vectors_by_text={
+            "比较 CoT 和 ToT 的区别": [1.0, 0.0],
+            "CoT 和 ToT 两个框架有什么差异": [1.0, 0.0],
+        }
+    )
     session = _build_session()
     kb_chat_config = resolve_kb_chat_config(raw=None)
+    evidence_item = _build_evidence_item()
 
     async def _semantic_kb_version(_: object) -> str:
         return "kb-version-1"
 
-    async def _load_semantic_cache_pre_context(**_: object) -> dict[str, object]:
-        return {
-            "summary_text": "当前问题围绕北京社保口径。",
-            "recent_turns": [{"role": "user", "content": "先比较北京口径"}],
-            "question": "缓存是否命中？",
-        }
+    async def _load_semantic_cache_pre_context(
+        *,
+        session_id: object,
+        question: str,
+        current_answer: str | None = None,
+    ) -> dict[str, object]:
+        _ = (session_id, current_answer)
+        return {"summary_text": "", "recent_turns": [], "question": question}
 
     service._semantic_kb_version = _semantic_kb_version
     service._load_semantic_cache_pre_context = _load_semantic_cache_pre_context
 
-    cache_key = service._semantic_cache_key(
-        session,
-        config_fingerprint=service._semantic_config_fingerprint(kb_chat_config),
-        kb_version="kb-version-1",
+    await service._write_semantic_cache_entry(
+        session=session,
+        kb_chat_config=kb_chat_config,
+        question="比较 CoT 和 ToT 的区别",
+        answer="这是可复用答案。",
+        evidence=[evidence_item],
+        stage_summaries={"answer_review": {"passed": True}},
+        metrics={
+            "citation_ids": ["S1"],
+            "evidence_chunk_ids": [str(evidence_item.chunk_id)],
+            "gray_release_gate": {"source_run_id": "run-source-1"},
+        },
     )
-    redis.values[cache_key] = json.dumps(
-        [
-            {
-                "entry_id": "entry-1",
-                "schema_version": "v3",
-                "question": "缓存是否命中？",
-                "question_normalized": "缓存是否命中？",
-                "context_fingerprint": service._semantic_cache_context_fingerprint(
-                    {
-                        "summary_text": "上下文已经切到上海口径。",
-                        "recent_turns": [{"role": "user", "content": "先比较上海口径"}],
-                        "question": "缓存是否命中？",
-                    }
-                ),
-                "answer": "旧答案",
-                "embedding": [1.0, 0.0],
-                "evidence": [_build_evidence_item().model_dump(mode="json")],
-                "citation_ids": ["S1"],
-                "evidence_fingerprint": [
-                    "00000000-0000-0000-0000-000000000402:00000000-0000-0000-0000-000000000403:00000000-0000-0000-0000-000000000404"
-                ],
-                "verified_level": "verified_direct",
-                "kb_version": "kb-version-1",
-                "answer_contract_version": "kb_chat_semantic_cache_v3",
-                "created_at": "2026-03-24T10:00:00Z",
-                "expires_at": "2026-03-25T10:00:00Z",
-                "last_hit_at": None,
-                "hit_count": 0,
-                "stage_summaries": {},
-                "metrics": {},
-            }
-        ],
-        ensure_ascii=False,
+
+    hit = await service._semantic_cache_lookup(
+        session=session,
+        kb_chat_config=kb_chat_config,
+        question="CoT 和 ToT 两个框架有什么差异",
     )
-    redis.ttl_values[cache_key] = 7200
+
+    assert hit is not None
+    assert hit.hit_type == "strong_hit"
+    assert hit.answer == "这是可复用答案。"
+
+
+@pytest.mark.asyncio
+async def test_lookup_after_write_remains_hit_when_same_turn_enters_history() -> None:
+    service, _ = _build_service()
+    session = _build_session()
+    kb_chat_config = resolve_kb_chat_config(raw=None)
+    evidence_item = _build_evidence_item()
+
+    async def _semantic_kb_version(_: object) -> str:
+        return "kb-version-1"
+
+    def _pre_context(*, include_current_turn: bool, question: str) -> dict[str, object]:
+        recent_turns = [
+            {"role": "user", "content": "上一轮问题"},
+            {"role": "assistant", "content": "上一轮答案"},
+        ]
+        if include_current_turn:
+            recent_turns.extend(
+                [
+                    {"role": "user", "content": "缓存是否命中？"},
+                    {"role": "assistant", "content": "这是可复用答案。"},
+                ]
+            )
+        return {
+            "summary_text": "会话一直围绕同一个知识点展开。",
+            "recent_turns": recent_turns,
+            "question": question,
+        }
+
+    async def _load_semantic_cache_pre_context(
+        *,
+        session_id: object,
+        question: str,
+        current_answer: str | None = None,
+    ) -> dict[str, object]:
+        _ = session_id
+        return _pre_context(include_current_turn=current_answer is None, question=question)
+
+    service._semantic_kb_version = _semantic_kb_version
+    service._load_semantic_cache_pre_context = _load_semantic_cache_pre_context
+
+    await service._write_semantic_cache_entry(
+        session=session,
+        kb_chat_config=kb_chat_config,
+        question="缓存是否命中？",
+        answer="这是可复用答案。",
+        evidence=[evidence_item],
+        stage_summaries={"answer_review": {"passed": True}},
+        metrics={
+            "citation_ids": ["S1"],
+            "evidence_chunk_ids": [str(evidence_item.chunk_id)],
+            "gray_release_gate": {"source_run_id": "run-source-1"},
+        },
+    )
 
     hit = await service._semantic_cache_lookup(
         session=session,
@@ -189,12 +291,68 @@ async def test_lookup_rejects_same_question_when_context_fingerprint_differs() -
         question="缓存是否命中？",
     )
 
+    assert hit is not None
+    assert hit.answer == "这是可复用答案。"
+
+
+@pytest.mark.asyncio
+async def test_contextual_follow_up_misses_when_context_signature_differs() -> None:
+    service, _ = _build_service()
+    session = _build_session()
+    kb_chat_config = resolve_kb_chat_config(raw=None)
+    evidence_item = _build_evidence_item()
+
+    async def _semantic_kb_version(_: object) -> str:
+        return "kb-version-1"
+
+    async def _load_semantic_cache_pre_context(
+        *,
+        session_id: object,
+        question: str,
+        current_answer: str | None = None,
+    ) -> dict[str, object]:
+        _ = (session_id, current_answer)
+        if question == "它们分别适合什么场景？":
+            return {
+                "summary_text": "当前在比较 ReAct 和 AutoGPT。",
+                "recent_turns": [{"role": "user", "content": "先比较 ReAct 和 AutoGPT"}],
+                "question": question,
+            }
+        return {
+            "summary_text": "当前在比较 CoT 和 ToT。",
+            "recent_turns": [{"role": "user", "content": "先比较 CoT 和 ToT"}],
+            "question": question,
+        }
+
+    service._semantic_kb_version = _semantic_kb_version
+    service._load_semantic_cache_pre_context = _load_semantic_cache_pre_context
+
+    await service._write_semantic_cache_entry(
+        session=session,
+        kb_chat_config=kb_chat_config,
+        question="它们分别适合哪些场景？",
+        answer="这是上下文相关答案。",
+        evidence=[evidence_item],
+        stage_summaries={"answer_review": {"passed": True}},
+        metrics={
+            "citation_ids": ["S1"],
+            "evidence_chunk_ids": [str(evidence_item.chunk_id)],
+            "gray_release_gate": {"source_run_id": "run-source-1"},
+        },
+    )
+
+    hit = await service._semantic_cache_lookup(
+        session=session,
+        kb_chat_config=kb_chat_config,
+        question="它们分别适合什么场景？",
+    )
+
     assert hit is None
 
 
 @pytest.mark.asyncio
-async def test_write_entry_v3_contains_context_and_version_fields() -> None:
-    service, redis = _build_service()
+async def test_write_entry_records_scope_context_and_contract_fields() -> None:
+    service, backend = _build_service()
     session = _build_session()
     kb_chat_config = resolve_kb_chat_config(raw=None)
     evidence_item = _build_evidence_item()
@@ -227,34 +385,16 @@ async def test_write_entry_v3_contains_context_and_version_fields() -> None:
         },
     )
 
-    cache_key = service._semantic_cache_key(
-        session,
-        config_fingerprint=service._semantic_config_fingerprint(kb_chat_config),
-        kb_version="kb-version-1",
-    )
-    payload = json.loads(redis.values[cache_key])
-
-    assert len(payload) == 1
-    entry = payload[0]
-    assert entry["schema_version"] == "v3"
-    assert entry["question"] == "缓存是否命中？"
-    assert entry["question_normalized"] == "缓存是否命中？"
-    assert entry["context_fingerprint"] == service._semantic_cache_context_fingerprint(
-        pre_context
-    )
-    assert entry["citation_ids"] == ["S1"]
-    assert entry["evidence_fingerprint"] == [
+    assert len(backend.store_requests) == 1
+    request = backend.store_requests[0]
+    assert request.scope.kb_version == "kb-version-1"
+    assert request.scope.allow_external is False
+    assert request.context.mode == "standalone"
+    assert request.citation_ids == ["S1"]
+    assert request.evidence_fingerprint == [
         "00000000-0000-0000-0000-000000000402:00000000-0000-0000-0000-000000000403:00000000-0000-0000-0000-000000000404"
     ]
-    assert entry["verified_level"] == "verified_direct"
-    assert entry["source_run_id"] == "run-source-1"
-    assert entry["kb_version"] == "kb-version-1"
-    assert entry["answer_contract_version"] == "kb_chat_semantic_cache_v3"
-    assert entry["last_hit_at"] is None
-    assert entry["hit_count"] == 0
-    assert isinstance(entry["entry_id"], str) and entry["entry_id"]
-    assert isinstance(entry["created_at"], str) and entry["created_at"]
-    assert isinstance(entry["expires_at"], str) and entry["expires_at"]
+    assert request.source_run_id == "run-source-1"
 
 
 def test_write_admission_rejects_missing_evidence_or_citation_ids() -> None:
@@ -287,185 +427,48 @@ def test_write_admission_rejects_missing_evidence_or_citation_ids() -> None:
     assert missing_citation_reason == "missing_citation_ids"
 
 
-def test_key_prefix_switches_to_v3_without_dual_read() -> None:
+@pytest.mark.asyncio
+async def test_scope_isolation_prevents_cross_kb_hit() -> None:
     service, _ = _build_service()
-    session = _build_session()
     kb_chat_config = resolve_kb_chat_config(raw=None)
-
-    cache_key = service._semantic_cache_key(
-        session,
-        config_fingerprint=service._semantic_config_fingerprint(kb_chat_config),
-        kb_version="kb-version-1",
+    evidence_item = _build_evidence_item()
+    source_session = _build_session()
+    target_session = _build_session(
+        selected_kb_ids=[uuid.UUID("00000000-0000-0000-0000-000000000499")]
     )
 
-    assert cache_key.startswith("kb_chat:semantic_cache:v3:")
-    assert ":v2:" not in cache_key
+    async def _semantic_kb_version(session: object) -> str:
+        selected = getattr(session, "selected_kb_ids", [])
+        return f"kb-version-{selected[0]}"
 
-
-@pytest.mark.asyncio
-async def test_lookup_returns_strong_hit_only_when_context_and_threshold_both_match() -> None:
-    service, redis = _build_service()
-    session = _build_session()
-    kb_chat_config = resolve_kb_chat_config(raw=None)
-    pre_context = {
-        "summary_text": "当前问题围绕北京社保口径。",
-        "recent_turns": [{"role": "user", "content": "先比较北京口径"}],
-        "question": "缓存是否命中？",
-    }
-
-    async def _semantic_kb_version(_: object) -> str:
-        return "kb-version-1"
-
-    async def _load_semantic_cache_pre_context(**_: object) -> dict[str, object]:
-        return dict(pre_context)
+    async def _load_semantic_cache_pre_context(**kwargs: object) -> dict[str, object]:
+        question = str(kwargs.get("question") or "")
+        return {"summary_text": "", "recent_turns": [], "question": question}
 
     service._semantic_kb_version = _semantic_kb_version
     service._load_semantic_cache_pre_context = _load_semantic_cache_pre_context
 
-    cache_key = service._semantic_cache_key(
-        session,
-        config_fingerprint=service._semantic_config_fingerprint(kb_chat_config),
-        kb_version="kb-version-1",
-    )
-    redis.values[cache_key] = json.dumps(
-        [
-            _build_v3_entry(
-                entry_id="entry-strong-1",
-                question="缓存是否命中？",
-                context_fingerprint=service._semantic_cache_context_fingerprint(pre_context),
-                embedding=[0.91, math.sqrt(1 - 0.91**2)],
-                kb_version="kb-version-1",
-            )
-        ],
-        ensure_ascii=False,
-    )
-    redis.ttl_values[cache_key] = 7200
-
-    hit = await service._semantic_cache_lookup(
-        session=session,
+    await service._write_semantic_cache_entry(
+        session=source_session,
         kb_chat_config=kb_chat_config,
         question="缓存是否命中？",
+        answer="这是源知识库答案。",
+        evidence=[evidence_item],
+        stage_summaries={"answer_review": {"passed": True}},
+        metrics={
+            "citation_ids": ["S1"],
+            "evidence_chunk_ids": [str(evidence_item.chunk_id)],
+            "gray_release_gate": {"source_run_id": "run-source-1"},
+        },
     )
-
-    assert hit is not None
-    assert hit.hit_type == "strong_hit"
-    assert hit.entry_id == "entry-strong-1"
-    assert hit.schema_version == "v3"
-
-
-@pytest.mark.asyncio
-async def test_soft_hit_shadow_mode_records_candidate_but_returns_none() -> None:
-    service, redis = _build_service()
-    session = _build_session()
-    kb_chat_config = resolve_kb_chat_config(raw=None)
-    pre_context = {
-        "summary_text": "当前问题围绕北京社保口径。",
-        "recent_turns": [{"role": "user", "content": "先比较北京口径"}],
-        "question": "缓存是否命中？",
-    }
-
-    async def _semantic_kb_version(_: object) -> str:
-        return "kb-version-1"
-
-    async def _load_semantic_cache_pre_context(**_: object) -> dict[str, object]:
-        return dict(pre_context)
-
-    service._semantic_kb_version = _semantic_kb_version
-    service._load_semantic_cache_pre_context = _load_semantic_cache_pre_context
-
-    cache_key = service._semantic_cache_key(
-        session,
-        config_fingerprint=service._semantic_config_fingerprint(kb_chat_config),
-        kb_version="kb-version-1",
-    )
-    redis.values[cache_key] = json.dumps(
-        [
-            _build_v3_entry(
-                entry_id="entry-soft-1",
-                question="缓存是否命中？",
-                context_fingerprint=service._semantic_cache_context_fingerprint(pre_context),
-                embedding=[0.84, math.sqrt(1 - 0.84**2)],
-                kb_version="kb-version-1",
-            )
-        ],
-        ensure_ascii=False,
-    )
-    redis.ttl_values[cache_key] = 7200
 
     hit = await service._semantic_cache_lookup(
-        session=session,
+        session=target_session,
         kb_chat_config=kb_chat_config,
         question="缓存是否命中？",
     )
 
     assert hit is None
-    shadow_candidate = getattr(service, "_semantic_cache_shadow_candidate", None)
-    assert isinstance(shadow_candidate, dict)
-    assert shadow_candidate["hit_type"] == "soft_hit"
-    assert shadow_candidate["entry_id"] == "entry-soft-1"
-    assert shadow_candidate["schema_version"] == "v3"
-    assert shadow_candidate["kb_version"] == "kb-version-1"
-    assert shadow_candidate["score"] == pytest.approx(0.84, abs=0.01)
-    assert shadow_candidate["threshold"] == pytest.approx(0.88, abs=0.001)
-    assert shadow_candidate["soft_threshold"] == pytest.approx(0.82, abs=0.001)
-
-
-@pytest.mark.asyncio
-async def test_hit_touch_updates_last_hit_at_and_hit_count() -> None:
-    service, redis = _build_service()
-    session = _build_session()
-    kb_chat_config = resolve_kb_chat_config(raw=None)
-    pre_context = {
-        "summary_text": "当前问题围绕北京社保口径。",
-        "recent_turns": [{"role": "user", "content": "先比较北京口径"}],
-        "question": "缓存是否命中？",
-    }
-
-    async def _semantic_kb_version(_: object) -> str:
-        return "kb-version-1"
-
-    async def _load_semantic_cache_pre_context(**_: object) -> dict[str, object]:
-        return dict(pre_context)
-
-    service._semantic_kb_version = _semantic_kb_version
-    service._load_semantic_cache_pre_context = _load_semantic_cache_pre_context
-
-    cache_key = service._semantic_cache_key(
-        session,
-        config_fingerprint=service._semantic_config_fingerprint(kb_chat_config),
-        kb_version="kb-version-1",
-    )
-    redis.values[cache_key] = json.dumps(
-        [
-            _build_v3_entry(
-                entry_id="entry-hit-touch-1",
-                question="缓存是否命中？",
-                context_fingerprint=service._semantic_cache_context_fingerprint(pre_context),
-                embedding=[1.0, 0.0],
-                kb_version="kb-version-1",
-                hit_count=2,
-            )
-        ],
-        ensure_ascii=False,
-    )
-    redis.ttl_values[cache_key] = 7200
-
-    hit = await service._semantic_cache_lookup(
-        session=session,
-        kb_chat_config=kb_chat_config,
-        question="缓存是否命中？",
-    )
-
-    assert hit is not None
-    payload = json.loads(redis.values[cache_key])
-    entry = payload[0]
-    assert entry["hit_count"] == 3
-    assert isinstance(entry["last_hit_at"], str) and entry["last_hit_at"]
-    assert entry["metrics"]["semantic_cache"]["hit"] is True
-    assert entry["metrics"]["semantic_cache"]["hit_type"] == "strong_hit"
-    assert entry["metrics"]["semantic_cache"]["entry_id"] == "entry-hit-touch-1"
-    assert entry["metrics"]["semantic_cache"]["kb_version"] == "kb-version-1"
-    assert entry["metrics"]["semantic_cache"]["schema_version"] == "v3"
 
 
 @pytest.mark.asyncio

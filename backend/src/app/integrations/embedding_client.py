@@ -12,9 +12,11 @@ from app.core.settings import get_settings
 from app.utils.text_sanitization import sanitize_visible_text
 
 _RETRYABLE_STATUS_CODES = frozenset({408, 409, 429, 500, 502, 503, 504})
-_OPTIONAL_STAGES = {
-    "semantic_cache_lookup",
-    "semantic_cache_write",
+_SEMANTIC_CACHE_OPTIONAL_BUCKETS = {
+    "semantic_cache_lookup": "semantic_cache_lookup",
+    "semantic_cache_write": "semantic_cache_write",
+}
+_ONLINE_OPTIONAL_STAGES = {
     "hyde",
     "dedupe",
     "diversity",
@@ -180,7 +182,10 @@ class EmbeddingClient:
         stage_value = str(stage)
         breaker_bucket = "realtime_query"
         allow_short_circuit_when_open = False
-        if stage_value in _OPTIONAL_STAGES:
+        if stage_value in _SEMANTIC_CACHE_OPTIONAL_BUCKETS:
+            breaker_bucket = _SEMANTIC_CACHE_OPTIONAL_BUCKETS[stage_value]
+            allow_short_circuit_when_open = True
+        elif stage_value in _ONLINE_OPTIONAL_STAGES:
             breaker_bucket = "online_optional"
             allow_short_circuit_when_open = True
         elif stage_value in _BATCH_STAGES:
