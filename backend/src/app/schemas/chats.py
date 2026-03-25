@@ -169,9 +169,15 @@ class ChatSessionRecentRead(BaseModel):
     updated_at: datetime
 
 
+class WebSearchStatusRead(BaseModel):
+    configured: bool
+    verified: bool
+    healthy: bool
+
+
 class ChatRecentListResponse(BaseModel):
     items: list[ChatSessionRecentRead]
-    web_search_available: bool
+    web_search: WebSearchStatusRead
 
 
 # 消息相关

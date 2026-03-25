@@ -4,7 +4,11 @@
 import { useCallback } from 'react';
 import { useSWRConfig } from 'swr';
 import { useApiQuery } from '../lib/swr';
-import { deleteChatSession, getRecentChats } from '../services/chats';
+import {
+  deleteChatSession,
+  getRecentChats,
+  type WebSearchStatus,
+} from '../services/chats';
 
 export interface RecentSession {
   sessionId: string;
@@ -18,7 +22,13 @@ const RECENT_QUERY_KEY = ['chats', 'recent', MAX_RECENT] as const;
 
 type RecentHistoryData = {
   sessions: RecentSession[];
-  webSearchAvailable: boolean;
+  webSearch: WebSearchStatus;
+};
+
+const DEFAULT_WEB_SEARCH_STATUS: WebSearchStatus = {
+  configured: false,
+  verified: false,
+  healthy: false,
 };
 
 export const recentHistoryQueryKey = RECENT_QUERY_KEY;
@@ -30,7 +40,7 @@ export function toRecentHistoryData(input: {
     session_type: 'general_chat' | 'kb_chat';
     updated_at: string;
   }>;
-  web_search_available: boolean;
+  web_search: WebSearchStatus;
 }): RecentHistoryData {
   return {
     sessions: input.items.map((item) => ({
@@ -39,7 +49,7 @@ export function toRecentHistoryData(input: {
       type: item.session_type,
       updatedAt: item.updated_at,
     })),
-    webSearchAvailable: Boolean(input.web_search_available),
+    webSearch: input.web_search ?? DEFAULT_WEB_SEARCH_STATUS,
   };
 }
 
@@ -60,7 +70,7 @@ export function useRecentHistory() {
         (prev) => {
           const updated = { ...session, updatedAt: new Date().toISOString() };
           if (!prev) {
-            return { sessions: [updated], webSearchAvailable: false };
+            return { sessions: [updated], webSearch: DEFAULT_WEB_SEARCH_STATUS };
           }
           const filtered = prev.sessions.filter((s) => s.sessionId !== session.sessionId);
           return {
@@ -100,7 +110,7 @@ export function useRecentHistory() {
       RECENT_QUERY_KEY,
       (prev) => {
         if (!prev) {
-          return { sessions: [], webSearchAvailable: false };
+          return { sessions: [], webSearch: DEFAULT_WEB_SEARCH_STATUS };
         }
         return { ...prev, sessions: [] };
       },
@@ -117,7 +127,7 @@ export function useRecentHistory() {
     upsertSession,
     removeSession,
     clearHistory,
-    webSearchAvailable: recentQuery.data?.webSearchAvailable ?? false,
+    webSearch: recentQuery.data?.webSearch ?? DEFAULT_WEB_SEARCH_STATUS,
     refresh,
   };
 }

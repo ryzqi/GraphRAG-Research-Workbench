@@ -123,7 +123,7 @@ export function useGeneralChatController() {
   const [loadingSession, setLoadingSession] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [allowExternal, setAllowExternal] = useState(false);
-  const { upsertSession, webSearchAvailable } = useRecentHistory();
+  const { upsertSession, webSearch } = useRecentHistory();
 
   const hasPendingApproval = messages.some((m) => Boolean(m.pendingToolApproval));
   const isInputDisabled = loading || loadingSession || hasPendingApproval;
@@ -660,7 +660,7 @@ export function useGeneralChatController() {
     setAllowExternal,
     setError,
     setInput,
-    webSearchAvailable,
+    webSearch,
     hasPendingApproval,
     isInputDisabled,
     handleSend,

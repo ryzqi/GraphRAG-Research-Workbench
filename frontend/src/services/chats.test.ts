@@ -14,7 +14,11 @@ describe('getRecentChats', () => {
     apiFetchMock.mockReset();
     apiFetchMock.mockResolvedValue({
       items: [],
-      web_search_available: true,
+      web_search: {
+        configured: true,
+        verified: true,
+        healthy: true,
+      },
     });
   });
 

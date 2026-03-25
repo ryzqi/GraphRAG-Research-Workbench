@@ -108,9 +108,15 @@ export interface RecentChatSession {
   updated_at: string;
 }
 
+export interface WebSearchStatus {
+  configured: boolean;
+  verified: boolean;
+  healthy: boolean;
+}
+
 export interface RecentChatListResponse {
   items: RecentChatSession[];
-  web_search_available: boolean;
+  web_search: WebSearchStatus;
 }
 
 export interface ChatMessage {

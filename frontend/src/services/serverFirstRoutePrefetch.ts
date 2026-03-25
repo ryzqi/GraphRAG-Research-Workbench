@@ -1,5 +1,9 @@
 import { appendSWRFallback, type SWRFallback } from '../lib/swrFallback';
-import { getRecentChats, type RecentChatListResponse } from './chats';
+import {
+  getRecentChats,
+  type RecentChatListResponse,
+  type WebSearchStatus,
+} from './chats';
 import { getBootstrapSubmission, type BootstrapSubmission } from './bootstrapSubmissions';
 import { getLatestIngestionBatch, type IngestionBatch } from './ingestionBatches';
 import {
@@ -18,7 +22,11 @@ function toRecentHistoryData(input: RecentChatListResponse) {
       type: item.session_type,
       updatedAt: item.updated_at,
     })),
-    webSearchAvailable: Boolean(input.web_search_available),
+    webSearch: input.web_search ?? ({
+      configured: false,
+      verified: false,
+      healthy: false,
+    } satisfies WebSearchStatus),
   };
 }
 

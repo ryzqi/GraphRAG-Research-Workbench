@@ -6,7 +6,11 @@ import { WelcomeScreen } from './WelcomeScreen';
 import { InputComposer } from './InputComposer';
 import { ChatInputDock } from './ChatInputDock';
 import { ChatViewport } from './ChatViewport';
-import type { ChatSession, ToolApprovalRequest } from '../../services/chats';
+import type {
+  ChatSession,
+  ToolApprovalRequest,
+  WebSearchStatus,
+} from '../../services/chats';
 import type { ChatMessage } from './MessageList';
 
 const MessageList = dynamic(
@@ -28,7 +32,7 @@ interface GeneralChatViewProps {
   loading: boolean;
   error: string | null;
   allowExternal: boolean;
-  webSearchAvailable: boolean;
+  webSearch: WebSearchStatus;
   hasPendingApproval: boolean;
   isInputDisabled: boolean;
   setAllowExternal: (value: boolean) => void;
@@ -50,7 +54,7 @@ export function GeneralChatView({
   loading,
   error,
   allowExternal,
-  webSearchAvailable,
+  webSearch,
   hasPendingApproval,
   isInputDisabled,
   setAllowExternal,
@@ -67,7 +71,21 @@ export function GeneralChatView({
     : allowExternal
       ? 'MCP 将启用'
       : 'MCP 已关闭';
-  const webSearchBadgeLabel = webSearchAvailable ? '联网可用' : '联网不可用';
+  const webSearchConfiguredLabel = webSearch.configured ? '联网已配置' : '联网未配置';
+  const webSearchHealthLabel = !webSearch.configured
+    ? '联网未验证'
+    : !webSearch.verified
+      ? '联网未验证'
+      : webSearch.healthy
+        ? '联网已验证'
+        : '联网异常';
+  const webSearchHealthColor: 'default' | 'warning' | 'success' | 'error' = !webSearch.configured
+    ? 'default'
+    : !webSearch.verified
+      ? 'warning'
+      : webSearch.healthy
+        ? 'success'
+        : 'error';
 
   return (
     <ChatViewport
@@ -110,11 +128,12 @@ export function GeneralChatView({
             }
           />
           <Chip
-            label={webSearchBadgeLabel}
+            label={webSearchConfiguredLabel}
             size='small'
             variant='outlined'
-            color={webSearchAvailable ? 'success' : 'default'}
+            color={webSearch.configured ? 'success' : 'default'}
           />
+          <Chip label={webSearchHealthLabel} size='small' variant='outlined' color={webSearchHealthColor} />
           <Chip label={sessionBadgeLabel} size='small' variant='outlined' />
         </Box>
       }

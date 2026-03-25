@@ -39,6 +39,7 @@ from app.schemas.chats import (
 from app.services.general_chat_service import GeneralChatService
 from app.services.kb_chat_service import KbChatService
 from app.services.knowledge_base_service import KnowledgeBaseService
+from app.services.web_search_status_service import get_web_search_status
 
 router = APIRouter()
 _STREAM_HEARTBEAT_INTERVAL_SECONDS = 10.0
@@ -191,7 +192,7 @@ async def list_recent_chats(
 ) -> ChatRecentListResponse:
     """获取最近对话列表。"""
     settings = get_settings()
-    web_search_available = bool(settings.web_search_api_key)
+    web_search = await get_web_search_status(settings=settings)
 
     latest_message_subq = (
         select(
@@ -253,7 +254,7 @@ async def list_recent_chats(
 
     return ChatRecentListResponse(
         items=items,
-        web_search_available=web_search_available,
+        web_search=web_search,
     )
 
 

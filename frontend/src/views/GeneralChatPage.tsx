@@ -14,7 +14,7 @@ export function GeneralChatPage() {
       loading={controller.loading}
       error={controller.error}
       allowExternal={controller.allowExternal}
-      webSearchAvailable={controller.webSearchAvailable}
+      webSearch={controller.webSearch}
       hasPendingApproval={controller.hasPendingApproval}
       isInputDisabled={controller.isInputDisabled}
       setAllowExternal={controller.setAllowExternal}
