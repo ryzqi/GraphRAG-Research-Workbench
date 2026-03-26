@@ -65,6 +65,7 @@ from app.services.chat_replay_policy import (
     decide_replay_mode,
 )
 from app.services.general_chat_search_evidence import (
+    append_reference_urls_to_answer,
     extract_external_evidence_from_messages,
 )
 from app.services.message_normalizer import (
@@ -2275,6 +2276,7 @@ class GeneralChatService:
         if not isinstance(stage_summaries, dict):
             stage_summaries = {}
         external_evidence = extract_external_evidence_from_messages(messages)
+        answer = append_reference_urls_to_answer(answer, external_evidence)
         await self._persist_external_evidence(run.id, external_evidence)
 
         # 更新运行状态

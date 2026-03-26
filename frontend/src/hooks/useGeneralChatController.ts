@@ -9,6 +9,7 @@ import {
   buildGeneralChatRecentTitle,
   shouldSkipGeneralChatHydration,
 } from '../services/generalChatSessionBehavior';
+import { resolveGeneralChatFinalContent } from '../services/generalChatFinalContent';
 import { shouldResetChatStateOnSessionClear } from '../services/chatSessionNavigation';
 import {
   buildChatSessionRequestKey,
@@ -423,9 +424,10 @@ export function useGeneralChatController() {
             if (data.status !== 'succeeded') {
               throw new Error('发送消息返回了不支持的状态');
             }
-            const mergedContent = msgState.final_content.trim()
-              ? msgState.final_content
-              : data.assistant_message.content;
+            const mergedContent = resolveGeneralChatFinalContent({
+              streamedContent: msgState.final_content,
+              finalContent: data.assistant_message.content,
+            });
             updateMessage(assistantId, (msg) => ({
               ...msg,
               content: mergedContent,
@@ -588,9 +590,10 @@ export function useGeneralChatController() {
             if (data.status !== 'succeeded') {
               throw new Error('恢复执行返回了不支持的状态');
             }
-            const mergedContent = msgState.final_content.trim()
-              ? msgState.final_content
-              : data.assistant_message.content;
+            const mergedContent = resolveGeneralChatFinalContent({
+              streamedContent: msgState.final_content,
+              finalContent: data.assistant_message.content,
+            });
             updateMessage(pendingMessageId, (msg) => ({
               ...msg,
               content: mergedContent,

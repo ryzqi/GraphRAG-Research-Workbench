@@ -132,6 +132,45 @@ def _build_evidence_item(
     )
 
 
+def _resolve_reference_url(item: EvidenceItem) -> str | None:
+    candidates: list[str] = []
+    if isinstance(item.citation_source, str):
+        candidates.append(item.citation_source)
+    if isinstance(item.locator, dict):
+        for key in ("url", "source"):
+            value = item.locator.get(key)
+            if isinstance(value, str):
+                candidates.append(value)
+    for candidate in candidates:
+        normalized = _normalize_evidence_url(candidate.strip())
+        if normalized.startswith(("http://", "https://")):
+            return normalized
+    return None
+
+
+def extract_reference_urls(items: Sequence[EvidenceItem]) -> list[str]:
+    urls: list[str] = []
+    seen: set[str] = set()
+    for item in items:
+        url = _resolve_reference_url(item)
+        if not url or url in seen:
+            continue
+        seen.add(url)
+        urls.append(url)
+    return urls
+
+
+def append_reference_urls_to_answer(answer: str, items: Sequence[EvidenceItem]) -> str:
+    urls = extract_reference_urls(items)
+    cleaned_answer = str(answer or "").rstrip()
+    if not urls:
+        return cleaned_answer
+    reference_block = "\n".join(["参考来源", *[f"- {url}" for url in urls]])
+    if not cleaned_answer:
+        return reference_block
+    return f"{cleaned_answer}\n\n{reference_block}"
+
+
 def _upsert_search_result(
     items_by_url: dict[str, EvidenceItem],
     item: dict[str, Any],

@@ -172,6 +172,7 @@ export function GeneralChatView({
             onToolApprovalSubmit={onToolApprovalSubmit}
             approvalLoading={loading}
             bottomInset={bottomInset}
+            showEvidence={false}
             scrollButtonAlign='right'
             wheelContainment='off'
           />
