@@ -68,6 +68,32 @@ describe('kbChatEvidenceDisplay', () => {
     ]);
   });
 
+  it('prefers url-like detail for external sources over locator filename', () => {
+    const evidence: EvidenceItem[] = [
+      {
+        source_kind: 'external',
+        kb_id: null,
+        material_id: null,
+        chunk_id: null,
+        locator: {
+          material_title: 'LangGraph Releases',
+          filename: 'notes/langgraph-releases.md',
+          url: 'https://github.com/langchain-ai/langgraph/releases',
+          source: 'https://mirror.example.com/langgraph/releases',
+        },
+        excerpt: 'Latest releases summary',
+      },
+    ];
+
+    expect(resolveEvidenceCardItems(evidence)).toEqual([
+      expect.objectContaining({
+        sourceTypeLabel: '外部来源',
+        sourceTitle: 'LangGraph Releases',
+        sourceDetail: 'https://github.com/langchain-ai/langgraph/releases',
+      }),
+    ]);
+  });
+
   it('falls back to locator material title, page range and synthetic citation ids', () => {
     const evidence: EvidenceItem[] = [
       {

@@ -42,6 +42,15 @@ $envFile = Join-Path $repoRoot ".env"
 
 Import-DotEnv -Path $envFile
 
+$requiredDirs = @(
+  (Join-Path $PSScriptRoot "data\searxng"),
+  (Join-Path $PSScriptRoot "data\searxng-valkey")
+)
+
+foreach ($dir in $requiredDirs) {
+  New-Item -ItemType Directory -Path $dir -Force | Out-Null
+}
+
 Push-Location $repoRoot
 try {
   $detachArgs = @()
@@ -59,9 +68,8 @@ try {
     throw "未找到 podman 或 podman-compose。请先安装 Podman（建议 Podman Desktop）。"
   }
 
-  Write-Host "基础依赖已启动（Postgres/Redis/Milvus）。"
+  Write-Host "基础依赖已启动（Postgres/Redis/Etcd/MinIO/Milvus/SearXNG/Valkey）。"
 }
 finally {
   Pop-Location
 }
-

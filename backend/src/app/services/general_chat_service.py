@@ -29,6 +29,7 @@ from app.agents.general_chat_agent import (
 )
 from app.agents.tool_calling.registry import build_tool_registry
 from app.agents.tools.system_time import build_system_time_tool
+from app.agents.tools.web_search import has_web_extract_provider, has_web_search_provider
 from app.core.checkpoint import CheckpointManager
 from app.core.errors import AppError
 from app.core.logging import set_run_id
@@ -44,11 +45,13 @@ from app.models.agent_run import AgentRun, AgentRunStatus, AgentRunType
 from app.models.chat_message import ChatMessage, MessageRole
 from app.models.chat_request_dedup import ChatRequestDedup
 from app.models.chat_session import ChatSession
+from app.models.evidence import Evidence, EvidenceSourceKind
 from app.models.model_config import ModelProvider
 from app.models.tool_extension import ExtensionStatus, ToolExtension
 from app.schemas.chats import (
     AgentRunRead,
     ChatAnswerResponse,
+    EvidenceItem,
     ChatPendingToolApprovalResponse,
     ChatMessageRead,
     PendingInterruptApproval,
@@ -60,6 +63,9 @@ from app.services.chat_replay_policy import (
     ReplayDecision,
     ReplayMode,
     decide_replay_mode,
+)
+from app.services.general_chat_search_evidence import (
+    extract_external_evidence_from_messages,
 )
 from app.services.message_normalizer import (
     checkpoint_messages_require_reset,
@@ -81,6 +87,7 @@ DEDUP_ATTACH_TIMEOUT_SECONDS = 5.0
 DEDUP_RUN_WAIT_TIMEOUT_SECONDS = 25.0
 DEDUP_POLL_INTERVAL_SECONDS = 0.5
 DEDUP_TABLE_NAME = "chat_request_dedup"
+_EXTERNAL_EVIDENCE_META_KEY = "_external_evidence_meta"
 
 
 def _extract_interrupt_message(payload: object) -> str | None:
@@ -264,7 +271,8 @@ class GeneralChatService:
         self, *, session: ChatSession
     ) -> tuple[list[Any], dict[str, Any]]:
         include_mcp = bool(session.allow_external and self._settings.mcp_enabled)
-        include_web_search = bool(self._settings.web_search_api_key)
+        include_web_search = has_web_search_provider(self._settings)
+        include_web_extract = has_web_extract_provider(self._settings)
         extensions: list[ToolExtension] = []
         if include_mcp:
             stmt = select(ToolExtension).where(
@@ -277,7 +285,9 @@ class GeneralChatService:
             extensions=extensions,
             extra_tools=[build_system_time_tool()],
             include_web_search=include_web_search,
-            include_web_extract=include_web_search,
+            include_web_extract=include_web_extract,
+            include_web_research=False,
+            include_web_crawl=False,
             include_mcp=include_mcp,
             redis=self._redis,
             http_client=self._http_client,
@@ -288,7 +298,8 @@ class GeneralChatService:
         self, *, session: ChatSession
     ):
         include_mcp = bool(session.allow_external and self._settings.mcp_enabled)
-        include_web_search = bool(self._settings.web_search_api_key)
+        include_web_search = has_web_search_provider(self._settings)
+        include_web_extract = has_web_extract_provider(self._settings)
         extensions: list[ToolExtension] = []
         if include_mcp:
             stmt = select(ToolExtension).where(
@@ -303,7 +314,9 @@ class GeneralChatService:
                 extensions=[],
                 extra_tools=[build_system_time_tool()],
                 include_web_search=include_web_search,
-                include_web_extract=include_web_search,
+                include_web_extract=include_web_extract,
+                include_web_research=False,
+                include_web_crawl=False,
                 include_mcp=False,
                 redis=self._redis,
                 http_client=self._http_client,
@@ -321,7 +334,9 @@ class GeneralChatService:
                 mcp_entries=mcp_entries,
                 extra_tools=[build_system_time_tool()],
                 include_web_search=include_web_search,
-                include_web_extract=include_web_search,
+                include_web_extract=include_web_extract,
+                include_web_research=False,
+                include_web_crawl=False,
                 include_mcp=True,
                 redis=self._redis,
                 http_client=self._http_client,
@@ -519,11 +534,98 @@ class GeneralChatService:
                 status_code=409,
                 details={"run_id": str(run.id)},
             )
+        evidence = await self._list_run_evidence(run.id)
         return ChatAnswerResponse(
             assistant_message=ChatMessageRead.model_validate(assistant_msg),
-            evidence=[],
+            evidence=evidence,
+            stage_summaries=run.stage_summaries
+            if isinstance(run.stage_summaries, dict)
+            else None,
+            metrics=run.metrics if isinstance(run.metrics, dict) else None,
             run=AgentRunRead.model_validate(run),
         )
+
+    @staticmethod
+    def _serialize_external_evidence_locator(item: EvidenceItem) -> dict[str, Any] | None:
+        locator = dict(item.locator) if isinstance(item.locator, dict) else {}
+        meta: dict[str, str] = {}
+        if item.source_excerpt:
+            meta["source_excerpt"] = item.source_excerpt
+        if item.citation_id:
+            meta["citation_id"] = item.citation_id
+        if item.citation_title:
+            meta["citation_title"] = item.citation_title
+        if item.citation_page_hint:
+            meta["citation_page_hint"] = item.citation_page_hint
+        if item.citation_source:
+            meta["citation_source"] = item.citation_source
+        if meta:
+            locator[_EXTERNAL_EVIDENCE_META_KEY] = meta
+        return locator or None
+
+    @staticmethod
+    def _evidence_item_from_row(row: Evidence) -> EvidenceItem:
+        locator = dict(row.locator) if isinstance(row.locator, dict) else None
+        meta: dict[str, Any] | None = None
+        if isinstance(locator, dict):
+            raw_meta = locator.get(_EXTERNAL_EVIDENCE_META_KEY)
+            if isinstance(raw_meta, dict):
+                meta = dict(raw_meta)
+                locator = dict(locator)
+                locator.pop(_EXTERNAL_EVIDENCE_META_KEY, None)
+        return EvidenceItem(
+            source_kind=row.source_kind,
+            kb_id=row.kb_id,
+            material_id=row.material_id,
+            chunk_id=row.chunk_id,
+            locator=locator,
+            excerpt=row.excerpt,
+            source_excerpt=str(meta.get("source_excerpt") or "").strip() or None
+            if isinstance(meta, dict)
+            else None,
+            citation_id=str(meta.get("citation_id") or "").strip() or None
+            if isinstance(meta, dict)
+            else None,
+            citation_title=str(meta.get("citation_title") or "").strip() or None
+            if isinstance(meta, dict)
+            else None,
+            citation_page_hint=str(meta.get("citation_page_hint") or "").strip() or None
+            if isinstance(meta, dict)
+            else None,
+            citation_source=str(meta.get("citation_source") or "").strip() or None
+            if isinstance(meta, dict)
+            else None,
+        )
+
+    async def _list_run_evidence(self, run_id: uuid.UUID) -> list[EvidenceItem]:
+        stmt = (
+            select(Evidence)
+            .where(Evidence.run_id == run_id)
+            .order_by(Evidence.created_at.asc())
+        )
+        rows = list((await self._db.execute(stmt)).scalars().all())
+        return [self._evidence_item_from_row(row) for row in rows]
+
+    async def _persist_external_evidence(
+        self,
+        run_id: uuid.UUID,
+        items: list[EvidenceItem],
+    ) -> None:
+        for item in items:
+            excerpt = str(item.excerpt or "").strip()
+            if not excerpt:
+                continue
+            self._db.add(
+                Evidence(
+                    run_id=run_id,
+                    source_kind=EvidenceSourceKind.EXTERNAL,
+                    kb_id=None,
+                    material_id=None,
+                    chunk_id=None,
+                    locator=self._serialize_external_evidence_locator(item),
+                    excerpt=excerpt[:500],
+                )
+            )
 
     async def get_pending_tool_approval(
         self,
@@ -2172,6 +2274,8 @@ class GeneralChatService:
         stage_summaries = result.get("stage_summaries") or {}
         if not isinstance(stage_summaries, dict):
             stage_summaries = {}
+        external_evidence = extract_external_evidence_from_messages(messages)
+        await self._persist_external_evidence(run.id, external_evidence)
 
         # 更新运行状态
         run.status = AgentRunStatus.SUCCEEDED
@@ -2195,6 +2299,10 @@ class GeneralChatService:
 
         return ChatAnswerResponse(
             assistant_message=ChatMessageRead.model_validate(assistant_msg),
-            evidence=[],
+            evidence=external_evidence,
+            stage_summaries=run.stage_summaries
+            if isinstance(run.stage_summaries, dict)
+            else None,
+            metrics=run.metrics if isinstance(run.metrics, dict) else None,
             run=AgentRunRead.model_validate(run),
         )

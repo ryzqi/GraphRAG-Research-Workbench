@@ -1,0 +1,11 @@
+[botdetection]
+# 本地 Podman 端口映射场景下，请求直接来自宿主机回环地址；
+# 若把 localhost 标记为 trusted_proxies，SearXNG 会强制要求
+# X-Forwarded-For / X-Real-IP 头，反而会把本地直连请求判成异常。
+trusted_proxies = []
+
+[botdetection.ip_lists]
+pass_ip = [
+  '127.0.0.0/8',
+  '::1',
+]

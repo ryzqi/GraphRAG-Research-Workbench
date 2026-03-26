@@ -5,6 +5,7 @@ export interface EvidenceCardItem {
   key: string;
   citationId: string;
   citationChipLabel: string;
+  sourceKind: EvidenceItem['source_kind'];
   sourceTypeLabel: string;
   sourceTitle: string;
   sourceDetail: string | null;
@@ -18,6 +19,10 @@ function normalizeText(value: string | null | undefined): string | null {
   }
   const text = value.trim();
   return text || null;
+}
+
+function isHttpUrl(value: string | null | undefined): value is string {
+  return typeof value === 'string' && /^https?:\/\//i.test(value.trim());
 }
 
 function getLocatorString(
@@ -123,7 +128,15 @@ function getSourceDetail(item: EvidenceItem, sourceTitle: string): string | null
   const explicit = normalizeText(item.citation_source);
   const locatorFilename = normalizeText(getLocatorString(item.locator, 'filename'));
   const locatorSource = normalizeText(getLocatorString(item.locator, 'source'));
-  const detail = explicit ?? locatorFilename ?? locatorSource;
+  const locatorUrl = normalizeText(getLocatorString(item.locator, 'url'));
+  const urlLikeDetail =
+    item.source_kind === 'external'
+      ? [explicit, locatorUrl, locatorSource, locatorFilename].find((value) => isHttpUrl(value)) ?? null
+      : null;
+  const detail =
+    item.source_kind === 'external'
+      ? urlLikeDetail ?? explicit ?? locatorFilename ?? locatorSource ?? locatorUrl
+      : explicit ?? locatorFilename ?? locatorSource;
   if (!detail || isDuplicateSourceDetail(sourceTitle, detail)) {
     return null;
   }
@@ -159,6 +172,7 @@ export function resolveEvidenceCardItems(evidence: EvidenceItem[]): EvidenceCard
       key: getEvidenceKey(item, citationId, index),
       citationId,
       citationChipLabel: `[${citationId}]`,
+      sourceKind: item.source_kind,
       sourceTypeLabel: item.source_kind === 'kb' ? '知识库文档' : '外部来源',
       sourceTitle,
       sourceDetail: getSourceDetail(item, sourceTitle),

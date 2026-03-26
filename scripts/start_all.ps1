@@ -515,7 +515,14 @@ if (-not $SkipFrontend) {
 
 Write-Host ""
 Write-Host "一键启动流程已完成，以下服务已启动（或启动中）:" -ForegroundColor Cyan
-if (-not $SkipInfra) { Write-Host " - 基础依赖：Podman compose (infra/up.ps1)" -ForegroundColor Cyan }
+if (-not $SkipInfra) {
+    $searxngPort = [Environment]::GetEnvironmentVariable("SEARXNG_PORT")
+    if ([string]::IsNullOrWhiteSpace($searxngPort)) {
+        $searxngPort = "18080"
+    }
+    Write-Host " - 基础依赖：Podman compose (infra/up.ps1)" -ForegroundColor Cyan
+    Write-Host "   * SearXNG： http://127.0.0.1:$searxngPort" -ForegroundColor Cyan
+}
 if (-not $SkipBackend) { Write-Host " - 后端 API：uvicorn 生产参数监听 8000（Windows 启动期强制 SelectorEventLoopPolicy）" -ForegroundColor Cyan }
 if (-not $SkipWorker) {
     Write-Host " - Celery Beat：独立进程（周期补偿调度）" -ForegroundColor Cyan
@@ -525,5 +532,3 @@ if (-not $SkipWorker) {
 }
 if (-not $SkipFrontend) { Write-Host " - 前端：Next.js 生产服务监听 3000" -ForegroundColor Cyan }
 if ($RunSeed) { Write-Host " - 演示数据：已执行 seed_demo_kb.py" -ForegroundColor Cyan }
-
-

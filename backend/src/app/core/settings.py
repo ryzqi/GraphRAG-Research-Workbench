@@ -345,6 +345,25 @@ class Settings(BaseSettings):
     )
     web_search_auto_parameters: bool = Field(True, alias="WEB_SEARCH_AUTO_PARAMETERS")
     web_search_include_usage: bool = Field(False, alias="WEB_SEARCH_INCLUDE_USAGE")
+    jina_read_enabled: bool = Field(True, alias="JINA_READ_ENABLED")
+    jina_read_base_url: str = Field("https://r.jina.ai", alias="JINA_READ_BASE_URL")
+    jina_read_timeout_seconds: float = Field(
+        20.0, alias="JINA_READ_TIMEOUT_SECONDS"
+    )
+    searxng_search_enabled: bool = Field(True, alias="SEARXNG_SEARCH_ENABLED")
+    searxng_search_base_url: str = Field(
+        "http://127.0.0.1:18080", alias="SEARXNG_BASE_URL"
+    )
+    searxng_timeout_seconds: float = Field(15.0, alias="SEARXNG_TIMEOUT_SECONDS")
+    searxng_default_categories: list[str] = Field(
+        default_factory=list, alias="SEARXNG_DEFAULT_CATEGORIES"
+    )
+    searxng_default_language: str | None = Field(
+        None, alias="SEARXNG_DEFAULT_LANGUAGE"
+    )
+    searxng_default_engines: list[str] = Field(
+        default_factory=list, alias="SEARXNG_DEFAULT_ENGINES"
+    )
     web_extract_default_depth: str = Field("basic", alias="WEB_EXTRACT_DEFAULT_DEPTH")
     web_crawl_default_depth: str = Field("basic", alias="WEB_CRAWL_DEFAULT_DEPTH")
     web_crawl_default_limit: int = Field(10, alias="WEB_CRAWL_DEFAULT_LIMIT")
@@ -553,6 +572,8 @@ class Settings(BaseSettings):
         "redis_url",
         "celery_broker_url",
         "celery_result_backend",
+        "jina_read_base_url",
+        "searxng_search_base_url",
         mode="before",
     )
     @classmethod
@@ -617,6 +638,15 @@ class Settings(BaseSettings):
     )
     @classmethod
     def _parse_ingestion_url_lists(cls, v: object) -> list[str]:
+        return _parse_string_list(v)
+
+    @field_validator(
+        "searxng_default_categories",
+        "searxng_default_engines",
+        mode="before",
+    )
+    @classmethod
+    def _parse_searxng_string_lists(cls, v: object) -> list[str]:
         return _parse_string_list(v)
 
     @model_validator(mode="after")

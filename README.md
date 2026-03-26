@@ -46,6 +46,7 @@ pwsh -ExecutionPolicy Bypass -File .\scripts\start_all.ps1
 - 脚本默认按**Windows 生产模式**启动：
   - 前端会先执行 `npm run build` 再启动 `next start`。
   - 后端使用无 `--reload` 的 uvicorn 参数，并固定 `--loop app.core.uvicorn_loop:windows_selector_loop_factory`，在 Windows 启动期强制 `SelectorEventLoop`，兼容 psycopg 异步连接。
+  - 基础依赖会一并拉起 `Postgres / Redis / Etcd / MinIO / Milvus / SearXNG / Valkey`。
   - Worker 默认 `--pool=threads`，并发默认 `min(逻辑 CPU 核数, 8)`，`--prefetch-multiplier=1`；可通过 `CELERY_*_WORKER_POOL` / `CELERY_*_WORKER_CONCURRENCY` / `CELERY_*_WORKER_PREFETCH_MULTIPLIER` 覆盖。
   - Celery 默认关闭事件发送（`CELERY_WORKER_SEND_TASK_EVENTS=false`、`CELERY_TASK_SEND_SENT_EVENT=false`）以降低常驻开销；排障时再临时开启。
   - Windows + threads 默认不设置全局 soft/hard time limit（`CELERY_TASK_SOFT_TIME_LIMIT_SECONDS=0`、`CELERY_TASK_TIME_LIMIT_SECONDS=0`）；若迁移到 Linux prefork 再按需开启。
@@ -67,6 +68,40 @@ pwsh -ExecutionPolicy Bypass -File .\scripts\start_all.ps1
 > ```
 
 > **端口冲突**：若本地已安装 PostgreSQL 占用 5432 端口，需在 `.env` 中将 `POSTGRES_PORT` 改为 `5433`，并同步修改 `DATABASE_URL` 和 `MEMORY_STORE_URL` 中的端口。
+
+#### 基础依赖服务清单
+
+- PostgreSQL：`http://localhost:${POSTGRES_PORT}`（默认 `5433`）
+- Redis：`localhost:${REDIS_PORT}`（默认 `6379`）
+- MinIO：`http://localhost:${MINIO_PORT}`（默认 `9000`）
+- MinIO Console：`http://localhost:${MINIO_CONSOLE_PORT}`（默认 `9001`）
+- Milvus HTTP：`http://localhost:${MILVUS_HTTP_PORT}`（默认 `9091`）
+- SearXNG：`http://127.0.0.1:${SEARXNG_PORT}`（默认 `18080`）
+
+#### SearXNG（项目内一键启动集成）
+
+- 配置文件：`infra/searxng/config/settings.yml`
+- Limiter 配置：`infra/searxng/config/limiter.toml`
+- 缓存目录：`infra/data/searxng`
+- Valkey 数据目录：`infra/data/searxng-valkey`
+- 配置页：`http://127.0.0.1:18080/config`
+- JSON Search API 示例：
+
+```powershell
+Invoke-RestMethod -Uri 'http://127.0.0.1:18080/search?q=OpenAI&format=json' -Headers @{ 'User-Agent'='Mozilla/5.0' }
+```
+
+当前仓库内的 SearXNG 配置按官方文档做了本地联调优化：
+- 采用挂载卷保留 `/etc/searxng` 与 `/var/cache/searxng`
+- 保留 Valkey + `limiter.toml` 配套能力；本地直连默认关闭 `server.limiter`，避免无反向代理头时触发 429
+- 打开 `search.formats: [html, json]`
+- 使用 `use_default_settings` 只覆写本项目需要的项
+- 移除已知会在本地启动期产生明显噪声的少数默认 engines
+
+如需把 SearXNG 暴露到反向代理或更大范围网络，可在 `.env` 中将 `SEARXNG_LIMITER=true`，并确保代理正确传递 `X-Forwarded-For` 或 `X-Real-IP`。
+
+若 `/config` 可访问但 `format=json` 返回空结果，请优先检查 Podman 容器的外网连通性或代理配置；当前 SearXNG 需要容器内能够直接访问外部搜索引擎。
+若宿主机本身依赖本地代理出网，请在 `.env` 中填写 `SEARXNG_HTTP_PROXY` / `SEARXNG_HTTPS_PROXY`，并使用 **容器可访问** 的宿主机地址（例如局域网 IP），不要直接写 `127.0.0.1`。
 
 ### 2) 启动后端（FastAPI，生产参数）
 
@@ -153,9 +188,11 @@ pwsh -ExecutionPolicy Bypass -File ./scripts/reset_data.ps1 -Force
   - `PDF_FALLBACK_MAX_PAGES`：默认 `500`
   - `PDF_FALLBACK_MIN_TEXT_CHARS`：默认 `20`
 
-## Web 搜索（Tavily）配置
+## Web 搜索（Tavily + SearXNG + jina_read）配置
 
 - 必填：`WEB_SEARCH_API_KEY`
+- 可选搜索源：`SEARXNG_SEARCH_ENABLED`、`SEARXNG_BASE_URL`、`SEARXNG_TIMEOUT_SECONDS`
+- 可选正文增强：`JINA_READ_ENABLED`、`JINA_READ_BASE_URL`、`JINA_READ_TIMEOUT_SECONDS`
 - 常用参数：`WEB_SEARCH_DEFAULT_SEARCH_DEPTH`、`WEB_SEARCH_DEFAULT_TIME_RANGE`、`WEB_SEARCH_DEFAULT_MAX_RESULTS`
 - 策略开关：`WEB_SEARCH_AUTO_PARAMETERS`、`WEB_SEARCH_INCLUDE_USAGE`
 - 可靠性：`WEB_SEARCH_TIMEOUT_SECONDS`、`WEB_SEARCH_RETRY_MAX`、`WEB_SEARCH_RATE_LIMIT_PER_MINUTE`

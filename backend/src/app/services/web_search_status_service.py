@@ -6,7 +6,8 @@ import asyncio
 import logging
 import time
 
-from app.agents.tools.web_search import WebSearchArgs, WebSearchClient
+from app.agents.tools.federated_web_search import FederatedWebSearchService
+from app.agents.tools.web_search import build_search_providers, has_web_search_provider
 from app.core.settings import Settings
 from app.schemas.chats import WebSearchStatusRead
 
@@ -22,7 +23,7 @@ async def get_web_search_status(*, settings: Settings) -> WebSearchStatusRead:
     """返回结构化联网状态。"""
     global _cached_status, _cached_expires_at
 
-    if not settings.web_search_api_key:
+    if not has_web_search_provider(settings):
         return WebSearchStatusRead(
             configured=False,
             verified=False,
@@ -46,18 +47,23 @@ async def get_web_search_status(*, settings: Settings) -> WebSearchStatusRead:
 
 async def _probe_web_search_status(*, settings: Settings) -> WebSearchStatusRead:
     timeout_seconds = min(float(settings.web_search_timeout_seconds), 5.0)
-    client = WebSearchClient(settings)
+    providers = build_search_providers(settings=settings)
+    if not providers:
+        return WebSearchStatusRead(
+            configured=False,
+            verified=False,
+            healthy=False,
+        )
+    service = FederatedWebSearchService(providers=providers)
     try:
-        output = await client.search(
-            WebSearchArgs(
-                query="Tavily health check",
-                max_results=1,
-                search_depth="basic",
-                include_answer=False,
-                include_usage=False,
-                auto_parameters=False,
-                timeout_seconds=timeout_seconds,
-            )
+        output = await service.search(
+            query="web search health check",
+            max_results=1,
+            search_depth="basic",
+            include_answer=False,
+            include_usage=False,
+            auto_parameters=False,
+            timeout_seconds=timeout_seconds,
         )
     except Exception as exc:  # pragma: no cover - 失败分支由日志与上层状态兜底
         logger.warning("Web 搜索健康检查失败", extra={"error": str(exc)})
@@ -70,5 +76,8 @@ async def _probe_web_search_status(*, settings: Settings) -> WebSearchStatusRead
     return WebSearchStatusRead(
         configured=True,
         verified=True,
-        healthy=not bool(output.get("error")),
+        healthy=any(
+            report.get("provider") in {"tavily", "searxng"} and report.get("ok")
+            for report in output.get("provider_reports", [])
+        ),
     )

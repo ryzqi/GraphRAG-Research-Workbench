@@ -15,6 +15,10 @@ import httpx
 from langchain.tools import BaseTool, tool as lc_tool
 
 from app.agents.tools.web_search import (
+    build_jina_read_tool,
+    has_jina_read_provider,
+    has_web_extract_provider,
+    has_web_search_provider,
     build_web_crawl_tool,
     build_web_extract_tool,
     build_web_research_tool,
@@ -26,6 +30,7 @@ from app.integrations.redis_client import RedisClient
 from app.models.tool_extension import ToolExtension
 
 from .utils import DEFAULT_TOOL_OUTPUT_MAX_CHARS, make_mcp_tool_name, truncate_tool_output
+from .web_tool_payloads import compact_builtin_external_output
 
 
 @dataclass(frozen=True, slots=True)
@@ -122,8 +127,11 @@ async def build_tool_registry(
     def _wrap_external_tool(base_tool: BaseTool) -> None:
         async def _call_external(**kwargs: object) -> str:
             output = await base_tool.ainvoke(kwargs)
-            text, _ = truncate_tool_output(str(output), tool_output_max_chars)
-            return text
+            return compact_builtin_external_output(
+                base_tool.name,
+                output,
+                tool_output_max_chars,
+            )
 
         tool = lc_tool(
             base_tool.name,
@@ -142,20 +150,27 @@ async def build_tool_registry(
             ),
         )
 
-    # Tavily 外部搜索工具
+    # 内置联网工具
+    if include_web_search and has_web_search_provider(settings):
+        _wrap_external_tool(
+            build_web_search_tool(
+                settings, redis=redis, http_client=http_client
+            )
+        )
+    if include_web_extract and has_web_extract_provider(settings):
+        _wrap_external_tool(
+            build_web_extract_tool(
+                settings, redis=redis, http_client=http_client
+            )
+        )
+    if has_jina_read_provider(settings):
+        _wrap_external_tool(
+            build_jina_read_tool(
+                settings,
+                http_client=http_client,
+            )
+        )
     if settings.web_search_api_key:
-        if include_web_search:
-            _wrap_external_tool(
-                build_web_search_tool(
-                    settings, redis=redis, http_client=http_client
-                )
-            )
-        if include_web_extract:
-            _wrap_external_tool(
-                build_web_extract_tool(
-                    settings, redis=redis, http_client=http_client
-                )
-            )
         if include_web_crawl:
             _wrap_external_tool(
                 build_web_crawl_tool(
@@ -167,7 +182,7 @@ async def build_tool_registry(
                 build_web_research_tool(
                     settings, redis=redis, http_client=http_client
                 )
-    )
+            )
 
     # MCP 扩展工具（外部工具，需要命名空间）
     if include_mcp and settings.mcp_enabled and extensions:

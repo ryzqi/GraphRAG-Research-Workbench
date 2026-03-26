@@ -32,6 +32,16 @@ function Test-Endpoint {
     }
 }
 
+function Test-SearXngJsonSearch {
+    param([string]$BaseUrl)
+    try {
+        $resp = Invoke-RestMethod -Uri ($BaseUrl.TrimEnd('/') + "/search?q=OpenAI&format=json") -UseBasicParsing -Headers @{ "User-Agent" = "Mozilla/5.0 quickstart-check" } -TimeoutSec 15
+        return @($resp.results).Count -gt 0
+    } catch {
+        return $false
+    }
+}
+
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host "  多知识库知识代理系统 - 验收检查" -ForegroundColor Cyan
 Write-Host "========================================" -ForegroundColor Cyan
@@ -85,6 +95,13 @@ Write-Host ""
 if (-not $SkipInfra) {
     Write-Host "7. 服务连通性检查" -ForegroundColor Yellow
 
+    $searxngPort = if ($env:SEARXNG_PORT) { $env:SEARXNG_PORT } else { "18080" }
+    $searxngBaseUrl = "http://127.0.0.1:$searxngPort"
+    $searxngConfig = Test-Endpoint "$searxngBaseUrl/config" "SearXNG Config"
+    Write-Check "SearXNG 配置页" $searxngConfig "请先运行: pwsh -ExecutionPolicy Bypass -File .\scripts\start_all.ps1"
+    $searxngSearch = Test-SearXngJsonSearch -BaseUrl $searxngBaseUrl
+    Write-Check "SearXNG JSON 搜索 API" $searxngSearch "请检查 infra/searxng/config/settings.yml 中 search.formats 是否包含 json；若 API 可访问但 results 为空且容器日志出现 ConnectTimeout/ConnectError，请检查 Podman 外网连通性或代理配置（例如宿主机代理是否可从容器访问）。"
+
     # 后端接口
     $apiHealth = Test-Endpoint "http://localhost:8000/api/v1/health" "Backend API"
     Write-Check "后端 API 健康检查" $apiHealth "请先运行: pwsh -ExecutionPolicy Bypass -File .\scripts\start_all.ps1（或仅后端命令: uv run uvicorn app.main:app --host 127.0.0.1 --port 8000 --loop app.core.uvicorn_loop:windows_selector_loop_factory）"
@@ -122,5 +139,3 @@ if ($script:failed -gt 0) {
     Write-Host "所有检查通过！" -ForegroundColor Green
     exit 0
 }
-
-

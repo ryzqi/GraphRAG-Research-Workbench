@@ -23,6 +23,13 @@ function getCitationAnchorId(citationId: string, scopeId?: string): string {
   return buildCitationAnchorId(citationId, scopeId);
 }
 
+function isExternalHttpSourceDetail(
+  sourceKind: EvidenceItem['source_kind'],
+  detail: string | null
+): detail is string {
+  return sourceKind === 'external' && typeof detail === 'string' && /^https?:\/\//i.test(detail);
+}
+
 export function EvidenceList({
   evidence,
   activeCitationId,
@@ -82,6 +89,8 @@ export function EvidenceList({
       {displayItems.map((entry) => {
         const anchorId = getCitationAnchorId(entry.citationId, citationAnchorScopeId);
         const isActive = entry.citationId === normalizedActiveCitationId;
+        const sourceDetail = entry.sourceDetail;
+        const isExternalHttpLink = isExternalHttpSourceDetail(entry.sourceKind, sourceDetail);
 
         return (
           <Paper
@@ -153,14 +162,28 @@ export function EvidenceList({
                 <Typography variant='subtitle2' color='text.primary' sx={{ fontWeight: 700 }}>
                   {entry.sourceTitle}
                 </Typography>
-                {entry.sourceDetail ? (
-                  <Typography
-                    variant='caption'
-                    color='text.secondary'
-                    sx={{ overflowWrap: 'anywhere' }}
-                  >
-                    {entry.sourceDetail}
-                  </Typography>
+                {sourceDetail ? (
+                  isExternalHttpLink ? (
+                    <Typography
+                      component='a'
+                      variant='caption'
+                      color='text.secondary'
+                      href={sourceDetail}
+                      target='_blank'
+                      rel='noreferrer'
+                      sx={{ overflowWrap: 'anywhere' }}
+                    >
+                      {sourceDetail}
+                    </Typography>
+                  ) : (
+                    <Typography
+                      variant='caption'
+                      color='text.secondary'
+                      sx={{ overflowWrap: 'anywhere' }}
+                    >
+                      {sourceDetail}
+                    </Typography>
+                  )
                 ) : null}
               </Stack>
 

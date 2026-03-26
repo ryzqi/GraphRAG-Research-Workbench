@@ -41,6 +41,30 @@ describe('EvidenceList', () => {
     expect(html).toContain('新版本将于四月上线，并默认开启知识库引用卡片。');
   });
 
+  it('renders external source detail as clickable link when detail is an http url', () => {
+    const html = renderToStaticMarkup(
+      createElement(EvidenceList, {
+        evidence: [
+          {
+            source_kind: 'external',
+            kb_id: null,
+            material_id: null,
+            chunk_id: null,
+            locator: {
+              material_title: 'LangGraph Releases',
+              source: 'https://github.com/langchain-ai/langgraph/releases',
+            },
+            excerpt: 'Latest releases summary',
+          },
+        ],
+      })
+    );
+
+    expect(html).toContain('href="https://github.com/langchain-ai/langgraph/releases"');
+    expect(html).toContain('target="_blank"');
+    expect(html).toContain('rel="noreferrer"');
+  });
+
   it('marks the active citation card for highlight styling', () => {
     const html = renderToStaticMarkup(
       createElement(EvidenceList, {

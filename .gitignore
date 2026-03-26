@@ -2,6 +2,7 @@
 .specify
 .env
 .env.*
+!.env.example
 data/
 
 # Python

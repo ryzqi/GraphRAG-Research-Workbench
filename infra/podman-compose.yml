@@ -1,4 +1,4 @@
-# Podman compose file for local infrastructure dependencies (Postgres/Redis/Milvus).
+# Podman compose file for local infrastructure dependencies (Postgres/Redis/Milvus/SearXNG).
 # Target platform: Windows (development and deployment).
 # Run with Podman Desktop on Windows (podman machine / WSL2 backend).
 # Variables are loaded from the repo root `.env` by `infra/up.ps1` (PowerShell) or via your shell environment.
@@ -113,6 +113,49 @@ services:
       - minio
     volumes:
       - ./data/milvus:/var/lib/milvus
+
+  searxng_valkey:
+    image: docker.io/valkey/valkey:8-alpine
+    container_name: mkb_searxng_valkey
+    restart: unless-stopped
+    command: ["valkey-server", "--save", "60", "1", "--loglevel", "warning"]
+    volumes:
+      - ./data/searxng-valkey:/data
+    environment:
+      HTTP_PROXY: ""
+      HTTPS_PROXY: ""
+      http_proxy: ""
+      https_proxy: ""
+      NO_PROXY: "localhost,127.0.0.1,postgres,redis,minio,milvus,etcd,searxng,searxng_valkey,*.local,10.*,172.16.*,172.17.*,172.18.*,172.19.*,172.30.*,172.31.*,192.168.*"
+
+  searxng:
+    image: docker.io/searxng/searxng:latest
+    container_name: mkb_searxng
+    restart: unless-stopped
+    environment:
+      # 代理统一在 /etc/searxng/settings.yml 的 outgoing.proxies 中管理；
+      # 这里显式置空，避免容器级环境变量和 SearXNG 自身网络层相互干扰。
+      HTTP_PROXY: ""
+      HTTPS_PROXY: ""
+      http_proxy: ""
+      https_proxy: ""
+      NO_PROXY: ${SEARXNG_NO_PROXY:-localhost,127.0.0.1,postgres,redis,minio,milvus,etcd,searxng,searxng_valkey,*.local,10.*,172.16.*,172.17.*,172.18.*,172.19.*,172.30.*,172.31.*,192.168.*}
+      no_proxy: ${SEARXNG_NO_PROXY:-localhost,127.0.0.1,postgres,redis,minio,milvus,etcd,searxng,searxng_valkey,*.local,10.*,172.16.*,172.17.*,172.18.*,172.19.*,172.30.*,172.31.*,192.168.*}
+      SEARXNG_BASE_URL: ${SEARXNG_BASE_URL:-http://127.0.0.1:18080/}
+      SEARXNG_BIND_ADDRESS: "0.0.0.0"
+      SEARXNG_SECRET: ${SEARXNG_SECRET:-change-me-searxng-secret}
+      SEARXNG_LIMITER: ${SEARXNG_LIMITER:-false}
+      SEARXNG_PUBLIC_INSTANCE: "false"
+      SEARXNG_IMAGE_PROXY: ${SEARXNG_IMAGE_PROXY:-false}
+      SEARXNG_VALKEY_URL: ${SEARXNG_VALKEY_URL:-valkey://searxng_valkey:6379/0}
+      FORCE_OWNERSHIP: "true"
+    ports:
+      - "${SEARXNG_PORT:-18080}:8080"
+    depends_on:
+      - searxng_valkey
+    volumes:
+      - ./searxng/config:/etc/searxng
+      - ./data/searxng:/var/cache/searxng
 
 volumes:
   postgres_data:

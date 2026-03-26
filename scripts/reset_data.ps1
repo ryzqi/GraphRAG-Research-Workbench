@@ -84,7 +84,9 @@ Write-Host "[2/5] Remove local Redis/Milvus metadata directories..." -Foreground
 $pathsToClear = @(
     (Join-Path $infraDir "data/redis"),
     (Join-Path $infraDir "data/milvus"),
-    (Join-Path $infraDir "data/etcd")
+    (Join-Path $infraDir "data/etcd"),
+    (Join-Path $infraDir "data/searxng"),
+    (Join-Path $infraDir "data/searxng-valkey")
 )
 foreach ($pathToClear in $pathsToClear) {
     if (Test-Path -LiteralPath $pathToClear) {
