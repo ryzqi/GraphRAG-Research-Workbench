@@ -77,6 +77,7 @@ from app.services.streaming import (
     StreamState,
     apply_updates_chunk,
     extract_answer_text,
+    extract_message_text,
     extract_stream_delta,
 )
 from app.utils.token_counter import count_tokens_approximately
@@ -2257,6 +2258,8 @@ class GeneralChatService:
             if isinstance(msg, AIMessage):
                 # 提取纯文本回答（剥离思考段）
                 answer = extract_answer_text(msg.content)
+                if not answer:
+                    answer = extract_message_text(msg)
                 response_id = extract_response_id(msg)
                 break
 

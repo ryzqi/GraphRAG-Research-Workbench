@@ -160,6 +160,9 @@ def create_chat_model(
             "model": model_name,
             "base_url": provider_cfg.base_url or "http://127.0.0.1:11434",
         }
+        profile = build_chat_model_profile(cfg)
+        if profile is not None:
+            kwargs["profile"] = profile
         if provider_cfg.thinking_enabled:
             if _supports_ollama_reasoning_level(model_name):
                 kwargs["reasoning"] = provider_cfg.thinking_level or "high"
@@ -178,6 +181,9 @@ def create_chat_model(
             ) from exc
 
         kwargs = {"model": model_name}
+        profile = build_chat_model_profile(cfg)
+        if profile is not None:
+            kwargs["profile"] = profile
         if provider_cfg.api_key:
             kwargs["api_key"] = provider_cfg.api_key
         if provider_cfg.base_url:

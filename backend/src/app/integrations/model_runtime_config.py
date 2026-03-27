@@ -159,7 +159,11 @@ class ModelRuntimeConfigManager:
                 async with sessionmaker() as session:
                     cls._snapshot = await cls._load_snapshot(db=session, settings=cfg)
             except Exception as exc:
-                logger.warning("加载模型运行时配置失败，使用空配置", extra={"error": str(exc)})
+                logger.warning(
+                    "加载模型运行时配置失败，使用空配置: %s",
+                    exc,
+                    exc_info=True,
+                )
                 cls._snapshot = cls._build_fallback_snapshot()
 
     @classmethod
@@ -219,6 +223,11 @@ class ModelRuntimeConfigManager:
             )
 
         selection = await db.get(ModelRuntimeSelection, 1)
+        if selection is not None:
+            await db.refresh(
+                selection,
+                attribute_names=["active_provider", "active_model", "updated_at"],
+            )
         active_provider = _resolve_active_provider(
             providers=providers,
             requested_provider=selection.active_provider if selection is not None else None,
