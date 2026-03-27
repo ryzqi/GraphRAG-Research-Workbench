@@ -105,3 +105,5 @@ async def encode_sse(
             producer.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await producer
+        else:
+            await producer

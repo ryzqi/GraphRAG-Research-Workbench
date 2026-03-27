@@ -19,6 +19,7 @@ from langgraph.types import Command, Interrupt
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError, ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.exc import StaleDataError
 
 from app.agents.general_chat_agent import (
     SUMMARY_KEEP,
@@ -440,6 +441,26 @@ class GeneralChatService:
         await self._db.delete(current)
         await self._db.commit()
 
+    async def _persist_failed_run(self, *, run: AgentRun, error: Exception) -> None:
+        try:
+            run_id = getattr(run, "id", None)
+        except Exception:
+            run_id = None
+        run.status = AgentRunStatus.FAILED
+        run.finished_at = datetime.now(timezone.utc)
+        run.error_message = str(error)
+        try:
+            await self._db.commit()
+        except StaleDataError:
+            await self._db.rollback()
+            logger.warning(
+                "Skip failed run persistence because agent run row no longer exists",
+                extra={
+                    "run_id": str(run_id or ""),
+                    "original_exc_type": type(error).__name__,
+                },
+            )
+
     async def _wait_for_run_terminal(
         self,
         *,
@@ -816,6 +837,21 @@ class GeneralChatService:
         mod = exc.__class__.__module__ or ""
         if not mod.startswith("openai"):
             return None
+        exc_type = type(exc).__name__
+        if exc_type == "APITimeoutError":
+            return AppError(
+                code="LLM_UPSTREAM_TIMEOUT",
+                message="上游大模型服务响应超时，请稍后重试；若频繁出现，请在模型配置中调大超时时间或关闭思考模式",
+                status_code=504,
+                details={"exc_type": exc_type},
+            )
+        if exc_type == "APIConnectionError":
+            return AppError(
+                code="LLM_CONNECTION_ERROR",
+                message="大模型服务连接失败，请检查 Base URL、网络连通性或上游服务状态",
+                status_code=503,
+                details={"exc_type": exc_type},
+            )
 
         status_code = getattr(exc, "status_code", None)
         if status_code is None:
@@ -1516,10 +1552,7 @@ class GeneralChatService:
             )
 
         except Exception as e:
-            run.status = AgentRunStatus.FAILED
-            run.finished_at = datetime.now(timezone.utc)
-            run.error_message = str(e)
-            await self._db.commit()
+            await self._persist_failed_run(run=run, error=e)
 
             mapped = self._map_llm_exception(e)
             if mapped is not None:
@@ -1852,10 +1885,7 @@ class GeneralChatService:
                     raise
 
         except Exception as e:
-            run.status = AgentRunStatus.FAILED
-            run.finished_at = datetime.now(timezone.utc)
-            run.error_message = str(e)
-            await self._db.commit()
+            await self._persist_failed_run(run=run, error=e)
 
             if isinstance(e, ModelConfigIncompleteError):
                 yield "error", {
@@ -2202,10 +2232,7 @@ class GeneralChatService:
             yield "final", final_response.model_dump(mode="json")
 
         except Exception as e:
-            run.status = AgentRunStatus.FAILED
-            run.finished_at = datetime.now(timezone.utc)
-            run.error_message = str(e)
-            await self._db.commit()
+            await self._persist_failed_run(run=run, error=e)
 
             if isinstance(e, ModelConfigIncompleteError):
                 yield "error", {

@@ -14,8 +14,12 @@ from app.core.secrets import (
     mask_secret,
     resolve_model_config_kms_key,
 )
+from app.integrations.model_health_probe import probe_runtime_target
 from app.core.settings import Settings, get_settings
-from app.integrations.model_runtime_config import ModelRuntimeConfigManager
+from app.integrations.model_runtime_config import (
+    ModelRuntimeConfigManager,
+    RuntimeProviderConfig,
+)
 from app.models.model_config import (
     ModelProvider as ModelProviderORM,
     ModelProviderConfig,
@@ -155,6 +159,8 @@ class ModelConfigService:
             )
 
         selection = await self._get_selection()
+        next_provider_row: ModelProviderConfig | None = None
+        next_active_model: str | None = selection.active_model
         if (
             "enabled" in updates
             and not row.enabled
@@ -179,17 +185,19 @@ class ModelConfigService:
                     message="无可切换的已启用供应商（缺少模型名）",
                     status_code=422,
                 )
-            selection.active_provider = next_provider.provider
-            selection.active_model = next_model
+            next_provider_row = next_provider
+            next_active_model = next_model
         elif selection.active_provider == row.provider:
             available_models = _normalize_model_names(row.models)
             active_model = (selection.active_model or "").strip()
             if active_model and active_model in available_models:
-                selection.active_model = active_model
+                next_provider_row = row
+                next_active_model = active_model
             else:
                 next_model = self._resolve_active_model(row)
                 if next_model:
-                    selection.active_model = next_model
+                    next_provider_row = row
+                    next_active_model = next_model
                 else:
                     provider_rows = await self._list_provider_rows()
                     by_provider = {item.provider: item for item in provider_rows}
@@ -210,8 +218,16 @@ class ModelConfigService:
                             message="无可切换的已启用供应商（缺少模型名）",
                             status_code=422,
                         )
-                    selection.active_provider = next_provider.provider
-                    selection.active_model = next_provider_model
+                    next_provider_row = next_provider
+                    next_active_model = next_provider_model
+
+        if next_provider_row is not None and next_active_model:
+            await self._probe_runtime_target(
+                provider_cfg=self._runtime_provider_config_from_row(next_provider_row),
+                model_name=next_active_model,
+            )
+            selection.active_provider = next_provider_row.provider
+            selection.active_model = next_active_model
 
         await self._db.commit()
         return await self.get_config()
@@ -251,6 +267,10 @@ class ModelConfigService:
             )
 
         selection = await self._get_selection()
+        await self._probe_runtime_target(
+            provider_cfg=self._runtime_provider_config_from_row(row),
+            model_name=selected_model,
+        )
         selection.active_provider = row.provider
         selection.active_model = selected_model
 
@@ -331,6 +351,45 @@ class ModelConfigService:
         if default_models:
             return default_models[0]
         return None
+
+    def _runtime_provider_config_from_row(
+        self, row: ModelProviderConfig
+    ) -> RuntimeProviderConfig:
+        api_key = None
+        if row.api_key_encrypted:
+            try:
+                api_key = decrypt_secret(row.api_key_encrypted, kms_key=self._kms_key)
+            except Exception:
+                api_key = None
+
+        thinking_level = row.thinking_level
+        if not thinking_level and row.provider in {
+            ModelProviderORM.OPENAI,
+            ModelProviderORM.OLLAMA,
+        }:
+            thinking_level = "high"
+
+        return RuntimeProviderConfig(
+            provider=row.provider,
+            enabled=row.enabled,
+            base_url=row.base_url,
+            api_key=api_key,
+            models=_normalize_model_names(row.models),
+            thinking_enabled=row.thinking_enabled,
+            thinking_level=thinking_level,
+        )
+
+    async def _probe_runtime_target(
+        self,
+        *,
+        provider_cfg: RuntimeProviderConfig,
+        model_name: str,
+    ) -> None:
+        await probe_runtime_target(
+            provider_cfg=provider_cfg,
+            model_name=model_name,
+            settings=self._settings,
+        )
 
     def _to_config_read(
         self,
