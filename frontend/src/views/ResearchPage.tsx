@@ -15,16 +15,26 @@ import {
 import DownloadIcon from '@mui/icons-material/Download';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import { KnowledgeBaseSelector } from '../components/KnowledgeBaseSelector';
+import { ArtifactPanel } from '../components/research/ArtifactPanel';
+import { InterruptDecisionPanel } from '../components/research/InterruptDecisionPanel';
+import { PlanPreviewPanel } from '../components/research/PlanPreviewPanel';
+import { ResearchTimeline } from '../components/research/ResearchTimeline';
 import { Button } from '../components/ui/Button';
 import { ErrorAlert } from '../components/ui/ErrorAlert';
 import { LoadingSpinner } from '../components/ui/LoadingSpinner';
 import { PageHeader } from '../components/ui/PageHeader';
 import { StatusBadge } from '../components/ui/StatusBadge';
 import { createExport, pollExportUntilDone } from '../services/exports';
-import { useCreateResearchSession, useResearchSession } from '../hooks/queries/useResearch';
+import {
+  useConfirmResearchPlan,
+  useCreateResearchSession,
+  useInterruptResearchSession,
+  useResearchSession,
+  useResumeResearchSession,
+} from '../hooks/queries/useResearch';
 import { useSelectableKnowledgeBases } from '../hooks/queries/useKnowledgeBases';
 import { getErrorMessage } from '../lib/errorHandler';
-import type { ResearchCanonicalCitation, ResearchSessionStatus } from '../types/researchEvents';
+import type { ResearchSessionAccepted, ResearchSessionStatus } from '../types/researchEvents';
 import { safeOpenDownloadUrl } from '../utils/urlValidation';
 
 export function ResearchPage() {
@@ -33,29 +43,18 @@ export function ResearchPage() {
   const knowledgeBases = knowledgeBasesQuery.data ?? [];
 
   const createSessionMutation = useCreateResearchSession();
+  const confirmPlanMutation = useConfirmResearchPlan();
+  const interruptSessionMutation = useInterruptResearchSession();
+  const resumeSessionMutation = useResumeResearchSession();
 
   const [selectedKbIds, setSelectedKbIds] = useState<string[]>([]);
   const [question, setQuestion] = useState('');
   const [sessionId, setSessionId] = useState<string | null>(null);
-  const [acceptedSession, setAcceptedSession] = useState<{
-    session_id: string;
-    status: ResearchSessionStatus;
-    plan_snapshot: {
-      research_brief: string;
-      complexity: 'simple' | 'comparative' | 'complex';
-      summary: string;
-      subtasks: Array<{
-        title: string;
-        description: string;
-        target_sources: Array<'kb' | 'web' | 'paper' | 'hybrid'>;
-      }>;
-      target_sources: Array<'kb' | 'web' | 'paper' | 'hybrid'>;
-      budget_guidance?: string | null;
-      confirmation_required: boolean;
-    } | null;
-  } | null>(null);
+  const [acceptedSession, setAcceptedSession] = useState<ResearchSessionAccepted | null>(null);
   const [exporting, setExporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [resumeIdempotencyKey, setResumeIdempotencyKey] = useState('resume-1');
+  const [decisionDraft, setDecisionDraft] = useState('[{"action":"approve"}]');
 
   const sessionQuery = useResearchSession(sessionId ?? undefined, acceptedSession);
   const session = sessionQuery.data;
@@ -65,16 +64,11 @@ export function ResearchPage() {
   const mergedError =
     error ??
     (createSessionMutation.error ? getErrorMessage(createSessionMutation.error) : null) ??
+    (confirmPlanMutation.error ? getErrorMessage(confirmPlanMutation.error) : null) ??
+    (interruptSessionMutation.error ? getErrorMessage(interruptSessionMutation.error) : null) ??
+    (resumeSessionMutation.error ? getErrorMessage(resumeSessionMutation.error) : null) ??
     (knowledgeBasesQuery.error ? getErrorMessage(knowledgeBasesQuery.error) : null) ??
     (sessionQuery.error ? getErrorMessage(sessionQuery.error) : null);
-
-  const citations = useMemo(() => {
-    const raw = session?.report_json?.citations;
-    if (!Array.isArray(raw)) {
-      return [] as ResearchCanonicalCitation[];
-    }
-    return raw as ResearchCanonicalCitation[];
-  }, [session?.report_json]);
 
   const handleCloseError = () => {
     if (error) {
@@ -83,6 +77,18 @@ export function ResearchPage() {
     }
     if (createSessionMutation.error) {
       createSessionMutation.reset();
+      return;
+    }
+    if (confirmPlanMutation.error) {
+      confirmPlanMutation.reset();
+      return;
+    }
+    if (interruptSessionMutation.error) {
+      interruptSessionMutation.reset();
+      return;
+    }
+    if (resumeSessionMutation.error) {
+      resumeSessionMutation.reset();
       return;
     }
     if (knowledgeBasesQuery.error) {
@@ -120,10 +126,69 @@ export function ResearchPage() {
 
       setAcceptedSession(newSession);
       setSessionId(newSession.session_id);
+      setResumeIdempotencyKey(`resume-${Date.now()}`);
     } catch (e) {
       setError(getErrorMessage(e));
     }
   }, [createSessionMutation, question, selectedKbIds]);
+
+  const handleConfirmPlan = useCallback(async () => {
+    if (!sessionId) {
+      return;
+    }
+
+    setError(null);
+    try {
+      const nextAccepted = await confirmPlanMutation.mutateAsync({
+        sessionId,
+        body: {
+          approved: true,
+          note: '继续执行',
+        },
+      });
+      setAcceptedSession(nextAccepted);
+    } catch (caughtError) {
+      setError(getErrorMessage(caughtError));
+    }
+  }, [confirmPlanMutation, sessionId]);
+
+  const handleInterrupt = useCallback(async () => {
+    if (!sessionId) {
+      return;
+    }
+
+    setError(null);
+    try {
+      const nextAccepted = await interruptSessionMutation.mutateAsync({
+        sessionId,
+        reason: '前端请求中断，等待人工决策',
+      });
+      setAcceptedSession(nextAccepted);
+    } catch (caughtError) {
+      setError(getErrorMessage(caughtError));
+    }
+  }, [interruptSessionMutation, sessionId]);
+
+  const handleResume = useCallback(async () => {
+    if (!sessionId) {
+      return;
+    }
+
+    setError(null);
+    try {
+      const decisions = JSON.parse(decisionDraft) as Array<Record<string, unknown>>;
+      await resumeSessionMutation.mutateAsync({
+        sessionId,
+        body: {
+          idempotency_key: resumeIdempotencyKey.trim() || `resume-${Date.now()}`,
+          resume_from_event_id: session?.last_event_id ?? undefined,
+          decisions,
+        },
+      });
+    } catch (caughtError) {
+      setError(getErrorMessage(caughtError));
+    }
+  }, [decisionDraft, resumeIdempotencyKey, resumeSessionMutation, session?.last_event_id, sessionId]);
 
   const handleExport = useCallback(async () => {
     if (!session) return;
@@ -154,6 +219,8 @@ export function ResearchPage() {
     setAcceptedSession(null);
     setQuestion('');
     setError(null);
+    setDecisionDraft('[{"action":"approve"}]');
+    setResumeIdempotencyKey('resume-1');
   }, []);
 
   const getStatusPresentation = (status: ResearchSessionStatus) => {
@@ -264,26 +331,39 @@ export function ResearchPage() {
                 status={statusPresentation?.badge ?? 'pending'}
                 label={statusPresentation?.label ?? '等待中'}
               />
+              {(session.status === 'running' || session.status === 'resuming') ? (
+                <Button
+                  variant="outlined"
+                  size="small"
+                  onClick={handleInterrupt}
+                  loading={interruptSessionMutation.isPending}
+                >
+                  请求中断
+                </Button>
+              ) : null}
             </Stack>
-
-            {session.plan_snapshot && (
-              <Box>
-                <Typography variant="body2" fontWeight={500} sx={{ mb: 1 }}>
-                  计划摘要
-                </Typography>
-                <Box sx={{ fontSize: 13, color: 'text.secondary' }}>
-                  <Box sx={{ mb: 0.5 }}>{session.plan_snapshot.research_brief}</Box>
-                  <Box sx={{ mb: 0.5 }}>摘要：{session.plan_snapshot.summary}</Box>
-                  <Box sx={{ mb: 0.5 }}>
-                    来源：{session.plan_snapshot.target_sources.join(' / ')}
-                  </Box>
-                </Box>
-              </Box>
-            )}
           </Paper>
 
-          {/* 研究报告 */}
-          {session.report_md && (
+          <PlanPreviewPanel
+            planSnapshot={session.plan_snapshot}
+            status={session.status}
+            onConfirm={handleConfirmPlan}
+            confirmPending={confirmPlanMutation.isPending}
+          />
+
+          <ResearchTimeline events={session.events} />
+
+          <InterruptDecisionPanel
+            status={session.status}
+            resumeIdempotencyKey={resumeIdempotencyKey}
+            decisionDraft={decisionDraft}
+            onResumeIdempotencyKeyChange={setResumeIdempotencyKey}
+            onDecisionDraftChange={setDecisionDraft}
+            onResume={handleResume}
+            resumePending={resumeSessionMutation.isPending}
+          />
+
+          {session.report_md ? (
             <Paper variant="outlined" sx={{ p: 2 }}>
               <Stack
                 direction="row"
@@ -305,46 +385,14 @@ export function ResearchPage() {
                   导出报告
                 </Button>
               </Stack>
-
-              <Paper
-                elevation={0}
-                sx={{
-                  p: 2,
-                  bgcolor: 'grey.50',
-                  whiteSpace: 'pre-wrap',
-                  fontSize: 14,
-                  lineHeight: 1.6,
-                  maxHeight: 500,
-                  overflowY: 'auto',
-                }}
-              >
-                {session.report_md}
-              </Paper>
-
-              {citations.length > 0 && (
-                <Box sx={{ mt: 2 }}>
-                  <Typography variant="body2" fontWeight={500} sx={{ mb: 1 }}>
-                    引用 ({citations.length})
-                  </Typography>
-                  <Box sx={{ fontSize: 13, color: 'text.secondary' }}>
-                    {citations.map((c, i) => {
-                      const indexValue =
-                        typeof c.source_id === 'string' && c.source_id.trim()
-                          ? c.source_id
-                          : i + 1;
-                      const excerpt = typeof c.title === 'string' ? c.title : c.origin_url ?? c.url ?? '';
-
-                      return (
-                        <Box key={i} sx={{ mb: 0.5 }}>
-                          [{indexValue}] {excerpt.slice(0, 100)}...
-                        </Box>
-                      );
-                    })}
-                  </Box>
-                </Box>
-              )}
             </Paper>
-          )}
+          ) : null}
+
+          <ArtifactPanel
+            reportMd={session.report_md}
+            reportJson={session.report_json}
+            artifacts={session.artifacts}
+          />
         </Stack>
       )}
 
@@ -352,4 +400,3 @@ export function ResearchPage() {
     </Container>
   );
 }
-
