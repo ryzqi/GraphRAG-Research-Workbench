@@ -27,9 +27,9 @@
 - Current Phase: Phase 2 - Deep Agents 单引擎运行时与来源路由
 - Current Phase Inputs:
   - Phase 1 提交：`0c5fa63`、`efc6693`、`c3ccdf2`
-  - 当前 backend 无 `deepagents` 依赖
+  - 当前 backend 已锁定 `deepagents==0.4.12`
   - 官方约束：`create_deep_agent` 顶层配置、`subgraphs=True` + `version="v2"` 流式、`interrupt_on` 需配 `checkpointer`
-- Active Execution Wave: Task 4 RED（runtime 测试与依赖策略）
+- Active Execution Wave: Task 4 已完成；下一任务 = Task 5 source-aware routing
 - Phase Goal: 完成 Task 4（Deep Agents 单引擎运行时）
 - Phase Scope:
   - 包含：依赖策略、runtime types、runtime skeleton、研究模式工具装配约束、Task 4 测试
@@ -54,7 +54,7 @@
 
 ## Part 1: 当前阶段需求与范围
 ### 1.1 固化 Task 4 可执行目标
-- [ ] Task: 只实现 `tasks.md` Task 4 所需 runtime types、single-entry runtime skeleton、依赖与测试
+- [x] Task: 只实现 `tasks.md` Task 4 所需 runtime types、single-entry runtime skeleton、依赖与测试
 - Goal: 让本轮改动聚焦在 Deep Agents runtime 自身
 - Inputs / Dependencies: `tasks.md`, design, official Deep Agents docs, current backend deps
 - Procedure / Implementation notes: 先把 runtime 架子立住，再在下一任务接入 source-aware provider
@@ -64,18 +64,18 @@
 - Notes: 不在本轮实现 ResearchService / API
 
 ### 1.2 列出 Task 4 依赖与先决条件
-- [ ] Task: 确认 `deepagents` 版本策略、langchain/langgraph 兼容面、测试目录与 runtime 入口文件位置
+- [x] Task: 确认 `deepagents` 版本策略、langchain/langgraph 兼容面、测试目录与 runtime 入口文件位置
 - Goal: 避免依赖安装后再返工 runtime 设计
 - Inputs / Dependencies: `pyproject.toml`, `uv.lock`, official docs / PyPI, current codebase
 - Procedure / Implementation notes: 若 stable 缺关键 API，再升级到 pre-release；要把判断依据写入 state
 - Output / Artifact: 依赖清单
 - Done when: 后续每个动作都有明确依赖依据
 - Verification: 能直接列出待改文件与版本策略
-- Notes: 当前未知点是 0.4.12 stable 与 0.5.0a2 pre-release 的选择
+- Notes: 已选 stable `deepagents==0.4.12`；本地签名核对已满足 Task 4 所需 API，无需切到 pre-release
 
 ## Part 2: 当前阶段研究与拆解
 ### 2.1 详细检查 Task 4 相关上下文
-- [ ] Task: 读取 `pyproject.toml`、tool registry、Phase 1 输出、官方 Deep Agents customization/backends/streaming 文档
+- [x] Task: 读取 `pyproject.toml`、tool registry、Phase 1 输出、官方 Deep Agents customization/backends/streaming 文档
 - Goal: 让 runtime 设计既匹配本仓结构又不偏离当前官方用法
 - Inputs / Dependencies: 本地代码与官方文档
 - Procedure / Implementation notes: 重点确认 `create_deep_agent` 顶层参数、后端分层与 streaming 合同
@@ -85,7 +85,7 @@
 - Notes: Phase 2 的事实源仍以官方文档与本仓代码为准
 
 ### 2.2 把 Task 4 拆为可执行单元
-- [ ] Task: 拆成“锁定版本策略 -> 写 failing test -> 接入依赖/代码 -> 跑绿 -> 更新 todo/state -> 提交”
+- [x] Task: 拆成“锁定版本策略 -> 写 failing test -> 接入依赖/代码 -> 跑绿 -> 更新 todo/state -> 提交”
 - Goal: 保持一步一验
 - Inputs / Dependencies: TDD 规则、Task 4 验收
 - Procedure / Implementation notes: 不在测试之前写 production runtime
@@ -96,27 +96,27 @@
 
 ## Part 3: 当前阶段执行
 ### 3.1 新增 Task 4 回归测试（RED）
-- [ ] Task: 新建 `backend/tests/research/test_deep_research_runtime.py`
+- [x] Task: 新建 `backend/tests/research/test_deep_research_runtime.py`
 - Goal: 先让测试因 runtime 缺失或装配错误而失败
 - Inputs / Dependencies: Task 4 验收、官方文档、现有 Phase 1 输出
 - Procedure / Implementation notes: 覆盖单入口、禁用 MCP、后端分层、恢复配置、主/子代理模型参数
 - Output / Artifact: failing test
 - Done when: pytest 对该文件稳定失败且失败原因正确
 - Verification: `uv run pytest tests/research/test_deep_research_runtime.py -q`
-- Notes: 红阶段不能提前写 runtime
+- Notes: 红测已确认：`uv run pytest tests/research/test_deep_research_runtime.py -q` 因缺少 `app.services.deep_research_runtime` 在收集阶段失败
 
 ### 3.2 锁定依赖与 runtime types（GREEN 1）
-- [ ] Task: 选择并接入 `deepagents` 依赖策略，补齐 `research_runtime_types.py`
+- [x] Task: 选择并接入 `deepagents` 依赖策略，补齐 `research_runtime_types.py`
 - Goal: 为 runtime skeleton 提供稳定的依赖与类型地基
 - Inputs / Dependencies: failing test、官方文档、当前依赖图
 - Procedure / Implementation notes: 若需修改 `pyproject.toml` / `uv.lock`，必须保留明确版本理由
 - Output / Artifact: 依赖变更与 runtime types
 - Done when: 测试不再因缺依赖/缺类型失败
 - Verification: 重新跑定向 pytest
-- Notes: 优先选择能满足官方当前 API 的最小版本集
+- Notes: 已锁定 `deepagents==0.4.12`，并落地 provider / backend / stream / spillover 固定策略
 
 ### 3.3 落地 runtime skeleton 与装配约束（GREEN 2）
-- [ ] Task: 实现 `deep_research_runtime.py`
+- [x] Task: 实现 `deep_research_runtime.py`
 - Goal: 恢复研究模式唯一 runtime 入口
 - Inputs / Dependencies: Task 4 验收、依赖安装、runtime types、tool registry 现状
 - Procedure / Implementation notes:
@@ -126,10 +126,10 @@
 - Output / Artifact: runtime 文件
 - Done when: 测试转绿
 - Verification: `uv run pytest tests/research/test_deep_research_runtime.py -q`
-- Notes: 发现旧 research runtime 遗留代码则直接删除
+- Notes: 本轮未发现需删除的旧 runtime 文件；当前 research runtime 仅保留 `deep_research_runtime.py`
 
 ### 3.4 运行定向验证并修复（GREEN 3）
-- [ ] Task: 跑 pytest / ruff / 必要的依赖验证，失败则修复
+- [x] Task: 跑 pytest / ruff / 必要的依赖验证，失败则修复
 - Goal: 获得 fresh verification
 - Inputs / Dependencies: 测试文件、依赖、runtime 代码
 - Procedure / Implementation notes: 至少包含 red -> green 证据与最终通过输出
@@ -138,11 +138,14 @@
 - Verification:
   - `uv run pytest tests/research/test_deep_research_runtime.py -q`
   - `uv run ruff check ...`
-- Notes: 失败则继续留在本步骤
+- Notes:
+  - `uv run pytest tests/research/test_deep_research_runtime.py -q` -> `5 passed`
+  - `uv run pytest tests/research/test_models_runtime_schema.py tests/research/test_schemas_research.py tests/research/test_research_planner.py tests/research/test_deep_research_runtime.py -q` -> `18 passed`
+  - `uv run ruff check src/app/services/deep_research_runtime.py src/app/services/research_runtime_types.py tests/research/test_deep_research_runtime.py` -> `All checks passed!`
 
 ## Part 4: 验证与切换
 ### 4.1 验证本阶段已完成输出
-- [ ] Task: 复核 Task 4 验收与 medium todo 同步
+- [x] Task: 复核 Task 4 验收与 medium todo 同步
 - Goal: 防止“代码过了但 todo 仍旧过时”
 - Inputs / Dependencies: 定向验证输出、planning files
 - Procedure / Implementation notes: 只在证据和文档一致后勾选
@@ -152,11 +155,11 @@
 - Notes: 当前仅覆盖 Task 4 切换
 
 ### 4.2 准备下一个任务
-- [ ] Task: 更新 planning/state，并提交 Task 4
+- [x] Task: 更新 planning/state，并提交 Task 4
 - Goal: 让下一轮从 Task 5 直接起步
 - Inputs / Dependencies: Task 4 已验证通过
 - Procedure / Implementation notes: 提交后下一任务默认是 source-aware routing（Task 5）
 - Output / Artifact: 下一任务就绪状态
 - Done when: 下一任务与阻塞点明确
 - Verification: `git status --short`
-- Notes: 提交后再继续 Task 5
+- Notes: 下一任务为 Task 5（source-aware routing / provider 工具族）
