@@ -72,10 +72,10 @@
 
 ## 8. 导出链路与工件读取
 
-- [ ] 8.1 重构 `research_exporter.py`，直接从 `research_artifacts` 读取 `report_md` 与 `report_json`。
-- [ ] 8.2 更新 `worker/tasks/export.py` 与 `export_service.py`，统一按 `session_id` 读取研究工件。
-- [ ] 8.3 缺失关键工件时返回结构化错误码（如 `ARTIFACT_INCOMPLETE`）并记录诊断信息。
-- [ ] 8.4 编写 `backend/tests/research/test_research_exporter.py`，覆盖双产物成功与缺失工件失败场景。
+- [x] 8.1 重构 `research_exporter.py`，直接从 `research_artifacts` 读取 `report_md` 与 `report_json`。
+- [x] 8.2 更新 `worker/tasks/export.py` 与 `export_service.py`，统一按 `session_id` 读取研究工件。
+- [x] 8.3 缺失关键工件时返回结构化错误码（如 `ARTIFACT_INCOMPLETE`）并记录诊断信息。
+- [x] 8.4 编写 `backend/tests/research/test_research_exporter.py`，覆盖双产物成功与缺失工件失败场景。
 
 ## 9. 前端数据层直接改造当前研究服务
 

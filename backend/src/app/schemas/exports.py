@@ -4,11 +4,12 @@ import uuid
 from datetime import datetime
 from enum import Enum
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, model_validator
 
 
 class ExportType(str, Enum):
     CHAT = "chat"
+    RESEARCH = "research"
 
 
 class ExportStatus(str, Enum):
@@ -22,6 +23,14 @@ class ExportCreateRequest(BaseModel):
     type: ExportType
     run_id: uuid.UUID | None = None
     session_id: uuid.UUID | None = None
+
+    @model_validator(mode="after")
+    def validate_target(self) -> "ExportCreateRequest":
+        if self.type == ExportType.CHAT and self.run_id is None:
+            raise ValueError("chat 导出必须提供 run_id")
+        if self.type == ExportType.RESEARCH and self.session_id is None:
+            raise ValueError("research 导出必须提供 session_id")
+        return self
 
 
 class ExportJob(BaseModel):
