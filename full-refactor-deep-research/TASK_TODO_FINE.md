@@ -28,7 +28,7 @@
   - `specs/research-persistence-model/spec.md`
   - 当前 Alembic head = `a6b8c9d0e1f2`
   - 当前 backend 中无 research ORM / schema / service 文件
-- Active Execution Wave: Task 2 提交收尾
+- Active Execution Wave: Task 3 提交收尾
 - Phase Goal: 完成 Task 1（模型 / 迁移 / 测试 / 提交）
 - Phase Scope:
   - 包含：模型、迁移、定向测试、todo/state 更新、git 提交
@@ -208,11 +208,57 @@
 - Notes: GREEN=`5 passed`; 联合回归=`10 passed`; Ruff=`All checks passed!`
 
 ### 4.6 提交 Task 2 并准备 Task 3
-- [ ] Task: 更新 planning/state，并提交 Task 2
+- [x] Task: 更新 planning/state，并提交 Task 2
 - Goal: 在进入 planner 前保留已验证 stop point
 - Inputs / Dependencies: 4.5 验证通过
 - Procedure / Implementation notes: 提交信息准确描述 schema 契约
 - Output / Artifact: git commit
 - Done when: Task 2 已提交，execution state 切到 Task 3
 - Verification: `git status --short`
-- Notes: 提交后下一任务为 `research_planner.py`
+- Notes: 已提交 `efc6693 feat(research): add research schema contracts`；下一任务为 `research_planner.py`
+
+### 4.7 Task 3 RED：新增 preflight planner 测试
+- [x] Task: 新建 `backend/tests/research/test_research_planner.py`
+- Goal: 先锁定 simple / comparative / complex 三类规划结果
+- Inputs / Dependencies: `tasks.md` Task 3、proposal/design 对 planner 的边界描述
+- Procedure / Implementation notes: 覆盖 auto-approve、confirmation_required、target_sources 与 artifact payload
+- Output / Artifact: failing test
+- Done when: pytest 因缺少 `app.services.research_planner` 稳定失败
+- Verification: `uv run pytest tests/research/test_research_planner.py -q`
+- Notes: RED 结果为 `ModuleNotFoundError: No module named 'app.services.research_planner'`
+
+### 4.8 Task 3 GREEN：实现 preflight planner
+- [x] Task: 新建 `research_planner.py` 与 `research_planner_types.py`
+- Goal: 用轻量 planner 固化 brief / complexity / subtasks / target_sources / confirmation_required
+- Inputs / Dependencies: failing test、Task 2 schema、proposal/design
+- Procedure / Implementation notes:
+  - planner 只做启发式规划，不执行任何正式外部研究
+  - `ResearchPlannerResult` 暴露 `plan_snapshot`、`auto_approve`、`next_status`、`artifact_payload`
+  - simple 默认 auto-approve；comparative / complex 默认要求确认；显式 override 优先
+- Output / Artifact: planner 服务与 types
+- Done when: Task 3 测试转绿
+- Verification: `uv run pytest tests/research/test_research_planner.py -q`
+- Notes: 复用 `ResearchSessionCreateRequest` / `ResearchPlanSnapshot` 契约，不重复定义 schema
+
+### 4.9 Task 3 联合验证
+- [x] Task: 运行 Phase 1 全部 research 测试并做定向 ruff
+- Goal: 证明 planner 未回归 Task 1-2
+- Inputs / Dependencies: Task 1-3 全部改动
+- Procedure / Implementation notes: 至少执行 planner 单测 + Phase 1 联合回归
+- Output / Artifact: fresh verification
+- Done when: 全部定向 pytest / ruff 通过
+- Verification:
+  - `uv run pytest tests/research/test_research_planner.py -q`
+  - `uv run pytest tests/research/test_models_runtime_schema.py tests/research/test_schemas_research.py tests/research/test_research_planner.py -q`
+  - `uv run ruff check src/app/services/research_planner.py src/app/services/research_planner_types.py tests/research/test_research_planner.py`
+- Notes: GREEN=`3 passed`; 联合回归=`13 passed`; Ruff=`All checks passed!`
+
+### 4.10 提交 Task 3 并准备 Phase 2
+- [ ] Task: 更新 planning/state，并提交 Task 3
+- Goal: 在进入 runtime phase 前留住稳定基线
+- Inputs / Dependencies: 4.9 验证通过
+- Procedure / Implementation notes: 下一步需要归档 Phase 1 todo 并刷新 Phase 2 active planning files
+- Output / Artifact: git commit
+- Done when: Task 3 已提交，且 roadmap/state 指向 Phase 2 准备动作
+- Verification: `git status --short`
+- Notes: 提交后再刷新 Phase 2 计划文件

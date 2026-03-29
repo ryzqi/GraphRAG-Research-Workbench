@@ -7,23 +7,27 @@
   - `full-refactor-deep-research/TASK_TODO_MEDIUM.md`
   - `full-refactor-deep-research/TASK_TODO_FINE.md`
   - `full-refactor-deep-research/PROJECT_EXECUTION_STATE.md`
-- Current Focus / Active Phase: Phase 1 - 研究域模型与契约底座 / 当前任务 = Task 2
+- Current Focus / Active Phase: Phase 1 - 研究域模型与契约底座 / 当前任务 = Task 3
 - Active Execution Wave:
-  - 更新 planning/state 完成 Task 2 记录
-  - 执行 Task 2 git commit
-  - 提交后切换当前任务到 Task 3（preflight planner）
+  - 更新 planning/state 完成 Task 3 记录
+  - 执行 Task 3 git commit
+  - 提交后归档 Phase 1 todo 并刷新 Phase 2 计划
 - Last Verified Stop Point:
   - Task 1 已完成 RED -> GREEN：RED=`ModuleNotFoundError: No module named 'app.models.research_artifact'`
   - `uv run pytest tests/research/test_models_runtime_schema.py -q` -> `5 passed`
   - Task 2 已完成 RED -> GREEN：RED=`ModuleNotFoundError: No module named 'app.schemas.research'`
   - `uv run pytest tests/research/test_schemas_research.py -q` -> `5 passed`
   - `uv run pytest tests/research/test_models_runtime_schema.py tests/research/test_schemas_research.py -q` -> `10 passed`
+  - Task 3 已完成 RED -> GREEN：RED=`ModuleNotFoundError: No module named 'app.services.research_planner'`
+  - `uv run pytest tests/research/test_research_planner.py -q` -> `3 passed`
+  - `uv run pytest tests/research/test_models_runtime_schema.py tests/research/test_schemas_research.py tests/research/test_research_planner.py -q` -> `13 passed`
   - `uv run ruff check ...` -> `All checks passed!`
   - `uv run alembic heads` -> `38f4aa0f8d91 (head)`
+  - 提交记录：`0c5fa63 feat(research): restore research persistence foundation`；`efc6693 feat(research): add research schema contracts`
 - Latest Improvement / Regression Notes:
 - 改进：Task 1 已恢复三表 ORM、状态机 helper、base 注册与迁移；误生成的 `store` 表删除语句已手工去除
 - 风险：`deepagents` 依赖版本仍待进入 runtime 阶段时最终锁定
-- Next Recommended Action: 提交 Task 2，然后开始 Task 3 的 planner RED 测试
+- Next Recommended Action: 提交 Task 3，然后归档 Phase 1 todo 并刷新 Phase 2（Deep Agents runtime）计划
 - Current Blockers: 无阻塞；后续若 uv / alembic 因沙箱受限，继续按已批准前缀执行
 - Assumptions Awaiting Confirmation:
   - 本轮先采用 session 独立三表，不恢复 `AgentRunType.RESEARCH`
@@ -33,7 +37,7 @@
   - 前端 run-centric hard cut
 - Key Recent Decisions:
   - 事实源优先级：本地代码/迁移 -> full-refactor 设计文档 -> 2026-03-29 官方 Deep Agents 文档
-  - 当前 phase 只做 Task 1，不抢跑 Task 2/3
+  - Phase 1 维持一次一任务推进：Task 1 -> Task 2 -> Task 3
 - Verification Evidence Reference:
   - `uv run alembic heads && uv run alembic current`
   - 官方 Deep Agents 文档：customization / streaming / release policy / PyPI `deepagents`

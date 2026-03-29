@@ -21,7 +21,7 @@
 - Why Now / Decision Driver: runtime / API / frontend 后续工作都依赖稳定三表和契约底座
 - Phase Roadmap Summary: 先做模型/契约/planner 基础，再接 runtime、再接当前 API/前端、最后做门禁
 - Current Phase: Phase 1 - 研究域模型与契约底座
-- Phase Goal: 完成 Task 1-3 的基础壳层，当前正在推进 Task 2（研究 schema 契约）
+- Phase Goal: 完成 Task 1-3 的基础壳层，当前正在推进 Task 3（preflight planner）
 - Phase Scope:
   - 包含：三表 ORM、状态机约束、Alembic 迁移、Task 1 测试
   - 不包含：Deep Agents 依赖接入、运行时、API、前端、demo 启动
@@ -35,7 +35,7 @@
   - `backend/src/app/db/base.py` 注册
   - Alembic 新迁移
   - `backend/tests/research/test_models_runtime_schema.py`
-- Active Execution Wave: Task 2 提交收尾（同步状态 + git commit）
+- Active Execution Wave: Task 3 提交收尾（同步状态 + git commit）
 - Entry Criteria:
   - 最新官方 Deep Agents 文档已核对
   - 当前 Alembic head = `a6b8c9d0e1f2`
@@ -99,6 +99,13 @@
 - Deliverables: schema 文件与验证输出
 - Notes: RED=`ModuleNotFoundError: No module named 'app.schemas.research'`；GREEN=`5 passed`；联合回归=`10 passed`
 
+### 3.4 完成 Task 3 preflight planner
+- [x] Task: 新建 `backend/src/app/services/research_planner.py` 与 `research_planner_types.py`，并补齐 Task 3 对应测试
+- Goal: 让 planner 只负责产出 brief / complexity / target_sources / budget / confirmation_required
+- Done when: simple / comparative / complex 三类规划结果全部可验证
+- Deliverables: planner 服务、types 与验证输出
+- Notes: RED=`ModuleNotFoundError: No module named 'app.services.research_planner'`；GREEN=`3 passed`；Phase 1 联合回归=`13 passed`
+
 ## Part 4: 验证与切换
 ### 4.1 验证 Task 1 产物
 - [x] Task: 运行 Task 1 定向 pytest / Alembic 检查
@@ -115,8 +122,15 @@
 - Notes: 已提交 `0c5fa63 feat(research): restore research persistence foundation`；下一任务锁定为 `backend/src/app/schemas/research.py` 与 `backend/tests/research/test_schemas_research.py`
 
 ### 4.3 提交 Task 2 并切换到 Task 3
-- [ ] Task: 完成 Task 2 git 提交，并将当前活动任务切到 preflight planner（Task 3）
+- [x] Task: 完成 Task 2 git 提交，并将当前活动任务切到 preflight planner（Task 3）
 - Goal: 继续保持“一次一任务、任务完成即提交”
 - Done when: 已提交 Task 2，execution state 指向 Task 3
 - Deliverables: 提交记录与下一任务决策
-- Notes: 提交前不宣称 Task 2 完成
+- Notes: 已提交 `efc6693 feat(research): add research schema contracts`
+
+### 4.4 提交 Task 3 并结束 Phase 1
+- [ ] Task: 完成 Task 3 git 提交，并准备切换到 Phase 2（Deep Agents runtime）
+- Goal: 在进入 runtime 前保留完整的基础阶段 stop point
+- Done when: 已提交 Task 3，且下一步明确为归档 Phase 1 todo 并刷新 Phase 2 计划
+- Deliverables: 提交记录与 phase transition 决策
+- Notes: 提交前不宣称 Phase 1 完成
