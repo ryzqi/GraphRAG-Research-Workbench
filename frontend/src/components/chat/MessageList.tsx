@@ -24,6 +24,7 @@ import {
   shouldRenderClarificationCard,
   shouldShowAssistantCopyAction,
 } from '../../services/chatMessageDisplay';
+import { GeneralChatSourceChips } from './GeneralChatSourceChips';
 
 const VIRTUALIZATION_THRESHOLD = 60;
 const VIRTUAL_OVERSCAN = 4;
@@ -85,6 +86,7 @@ interface MessageListProps {
   selectedAssistantId?: string | null;
   onAssistantSelect?: (messageId: string) => void;
   normalizeInlineEvidenceSection?: boolean;
+  showSourceChips?: boolean;
   scrollButtonAlign?: 'center' | 'right';
   showScrollToBottom?: boolean;
   wheelContainment?: 'auto' | 'off';
@@ -103,6 +105,7 @@ interface MessageRowProps {
   selectedAssistantId?: string | null;
   onAssistantSelect?: (messageId: string) => void;
   normalizeInlineEvidenceSection: boolean;
+  showSourceChips: boolean;
 }
 
 const MessageRow = memo(
@@ -115,6 +118,7 @@ const MessageRow = memo(
     selectedAssistantId,
     onAssistantSelect,
     normalizeInlineEvidenceSection,
+    showSourceChips,
   }: MessageRowProps) {
     const [activeCitationId, setActiveCitationId] = useState<string | null>(null);
 
@@ -254,6 +258,16 @@ const MessageRow = memo(
             />
           </Box>
         )}
+
+        {!showEvidence &&
+          showSourceChips &&
+          message.role === 'assistant' &&
+          message.evidence &&
+          message.evidence.length > 0 && (
+            <Box sx={{ mt: 2, ml: 7 }}>
+              <GeneralChatSourceChips evidence={message.evidence} />
+            </Box>
+          )}
       </Box>
     );
   },
@@ -265,7 +279,8 @@ const MessageRow = memo(
     prev.showEvidence === next.showEvidence &&
     prev.selectedAssistantId === next.selectedAssistantId &&
     prev.onAssistantSelect === next.onAssistantSelect &&
-    prev.normalizeInlineEvidenceSection === next.normalizeInlineEvidenceSection
+    prev.normalizeInlineEvidenceSection === next.normalizeInlineEvidenceSection &&
+    prev.showSourceChips === next.showSourceChips
 );
 
 export function MessageList({
@@ -279,6 +294,7 @@ export function MessageList({
   selectedAssistantId,
   onAssistantSelect,
   normalizeInlineEvidenceSection = false,
+  showSourceChips = false,
   scrollButtonAlign = 'center',
   showScrollToBottom = true,
   wheelContainment = 'auto',
@@ -471,6 +487,7 @@ export function MessageList({
                 selectedAssistantId={selectedAssistantId}
                 onAssistantSelect={onAssistantSelect}
                 normalizeInlineEvidenceSection={normalizeInlineEvidenceSection}
+                showSourceChips={showSourceChips}
               />
             </Box>
           );

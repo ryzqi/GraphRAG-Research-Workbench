@@ -1,12 +1,18 @@
-import { createElement } from 'react';
+import { createElement, type ReactNode } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('next/dynamic', () => ({
   default: () =>
-    function MockMessageList(props: { showEvidence?: boolean }) {
+    function MockMessageList(props: {
+      showEvidence?: boolean;
+      showSourceChips?: boolean;
+      normalizeInlineEvidenceSection?: boolean;
+    }) {
       return createElement('mock-message-list', {
         'data-show-evidence': String(props.showEvidence),
+        'data-show-source-chips': String(props.showSourceChips),
+        'data-normalize-inline-evidence-section': String(props.normalizeInlineEvidenceSection),
       });
     },
 }));
@@ -24,7 +30,7 @@ vi.mock('./InputComposer', () => ({
 }));
 
 vi.mock('./ChatInputDock', () => ({
-  ChatInputDock: ({ children }: { children: unknown }) => createElement('div', null, children),
+  ChatInputDock: ({ children }: { children: ReactNode }) => createElement('div', null, children),
 }));
 
 vi.mock('./ChatViewport', () => ({
@@ -33,9 +39,9 @@ vi.mock('./ChatViewport', () => ({
     renderMessages,
     renderComposer,
   }: {
-    header: unknown;
-    renderMessages: (args: { bottomInset: number }) => unknown;
-    renderComposer: (args: { composerRef: { current: null } }) => unknown;
+    header: ReactNode;
+    renderMessages: (args: { bottomInset: number }) => ReactNode;
+    renderComposer: (args: { composerRef: { current: null } }) => ReactNode;
   }) =>
     createElement(
       'div',
@@ -74,7 +80,22 @@ describe('GeneralChatView', () => {
         loading: false,
         error: null,
         allowExternal: true,
-        webSearch: { configured: true, verified: true, healthy: true },
+        webSearch: {
+          configured: true,
+          verified: true,
+          mode: 'healthy',
+          providers: [
+            {
+              name: 'tavily',
+              configured: true,
+              verified: true,
+              healthy: true,
+              mode: 'healthy',
+              latency_ms: 320,
+              error: null,
+            },
+          ],
+        },
         hasPendingApproval: false,
         isInputDisabled: false,
         setAllowExternal: () => undefined,
@@ -87,5 +108,7 @@ describe('GeneralChatView', () => {
     );
 
     expect(html).toContain('data-show-evidence="false"');
+    expect(html).toContain('data-show-source-chips="true"');
+    expect(html).toContain('data-normalize-inline-evidence-section="true"');
   });
 });

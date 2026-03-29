@@ -28,7 +28,8 @@ type RecentHistoryData = {
 const DEFAULT_WEB_SEARCH_STATUS: WebSearchStatus = {
   configured: false,
   verified: false,
-  healthy: false,
+  mode: 'down',
+  providers: [],
 };
 
 export const recentHistoryQueryKey = RECENT_QUERY_KEY;

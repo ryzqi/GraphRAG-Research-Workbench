@@ -35,27 +35,34 @@ describe('MessageList', () => {
         loading: false,
         messages: [
           createAssistantMessage({
-            content: '最终答案。\n\n参考来源\n[S1] 尾部引用块应该被移除',
+            content: '最终答案。\n\n参考来源\n[1] docs.langchain.com - MCP - Docs by LangChain',
             evidence: [
               {
-                source_kind: 'kb',
-                kb_id: 'kb-1',
-                material_id: 'mat-1',
-                chunk_id: 'chunk-1',
-                locator: { filename: 'appendix.pdf' },
+                source_kind: 'external',
+                kb_id: null,
+                material_id: null,
+                chunk_id: null,
+                locator: {
+                  url: 'https://docs.langchain.com/oss/python/langchain-mcp',
+                  source: 'https://docs.langchain.com/oss/python/langchain-mcp',
+                  domain: 'docs.langchain.com',
+                },
                 excerpt: '真正展示的证据摘录。',
-                citation_id: 'S1',
+                citation_title: 'MCP - Docs by LangChain',
+                citation_source: 'https://docs.langchain.com/oss/python/langchain-mcp',
               },
             ],
           }),
         ],
         normalizeInlineEvidenceSection: true,
+        showEvidence: false,
+        showSourceChips: true,
       })
     );
 
     expect(html).toContain('最终答案。');
-    expect(html).toContain('真正展示的证据摘录。');
-    expect(html).not.toContain('尾部引用块应该被移除');
+    expect(html).toContain('docs.langchain.com');
+    expect(html).not.toContain('[1] docs.langchain.com - MCP - Docs by LangChain');
   });
 
   it('hides copy actions for assistant clarification messages before a normal answer is produced', () => {

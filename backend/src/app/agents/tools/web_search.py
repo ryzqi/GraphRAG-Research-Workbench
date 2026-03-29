@@ -18,11 +18,6 @@ import httpx
 from langchain.tools import BaseTool, tool as lc_tool
 from pydantic import BaseModel, Field
 
-from app.agents.tools.federated_web_search import (
-    FederatedWebSearchService,
-    ReadProvider,
-    SearchProvider,
-)
 from app.agents.tools.web_search_providers import (
     NormalizedSearchResult,
     ProviderSearchReport,
@@ -34,6 +29,14 @@ from app.agents.tools.web_search_providers.searxng_provider import SearxngSearch
 from app.core.settings import Settings
 from app.integrations.http_client import create_http_client
 from app.integrations.redis_client import RedisClient
+from app.search.web.contracts import ReadProvider, SearchRetriever
+from app.search.web.pipeline import WebSearchPipeline
+from app.search.web.retrievers import (
+    ProviderSearchRetriever,
+    SearchProviderBackend,
+    SearxngSearchRetriever,
+    TavilySearchRetriever,
+)
 
 if TYPE_CHECKING:
     from tavily import AsyncTavilyClient
@@ -1081,8 +1084,8 @@ def build_search_providers(
     *,
     redis: RedisClient | None = None,
     http_client: httpx.AsyncClient | None = None,
-) -> list[SearchProvider]:
-    providers: list[SearchProvider] = []
+) -> list[SearchProviderBackend]:
+    providers: list[SearchProviderBackend] = []
     if settings.web_search_api_key:
         providers.append(
             TavilySearchProviderAdapter(
@@ -1094,6 +1097,22 @@ def build_search_providers(
             SearxngSearchProvider(settings=settings, http_client=http_client)
         )
     return providers
+
+
+def build_search_retrievers(
+    providers: list[SearchProviderBackend],
+) -> list[SearchRetriever]:
+    retrievers: list[SearchRetriever] = []
+    for provider in providers:
+        provider_name = str(getattr(provider, "provider_name", "")).strip()
+        if provider_name == "tavily":
+            retrievers.append(TavilySearchRetriever(provider))
+            continue
+        if provider_name == "searxng":
+            retrievers.append(SearxngSearchRetriever(provider))
+            continue
+        retrievers.append(ProviderSearchRetriever(provider))
+    return retrievers
 
 
 def _build_web_search_error_output(
@@ -1119,7 +1138,7 @@ def build_web_search_tool(
     *,
     redis: RedisClient | None = None,
     http_client: httpx.AsyncClient | None = None,
-    search_providers: list[SearchProvider] | None = None,
+    search_providers: list[SearchProviderBackend] | None = None,
     read_provider: ReadProvider | None = None,
 ) -> BaseTool:
     """构建 Web 搜索工具。"""
@@ -1141,8 +1160,9 @@ def build_web_search_tool(
             else None
         )
     )
-    service = FederatedWebSearchService(
-        providers=resolved_search_providers,
+    retrievers = build_search_retrievers(resolved_search_providers)
+    pipeline = WebSearchPipeline(
+        retrievers=retrievers,
         read_provider=resolved_read_provider,
     )
 
@@ -1172,14 +1192,50 @@ def build_web_search_tool(
             if args.auto_parameters is not None
             else settings.web_search_auto_parameters
         )
-        output = await service.search(
+        normalized_include_domains = _normalize_domains(args.include_domains)
+        normalized_exclude_domains = _normalize_domains(args.exclude_domains)
+        timeout_seconds = args.timeout_seconds or settings.web_search_timeout_seconds
+        parameters = _filter_none(
+            {
+                "query": args.query,
+                "max_results": max_results,
+                "search_type": args.search_type,
+                "search_depth": search_depth,
+                "time_range": time_range,
+                "include_domains": normalized_include_domains,
+                "exclude_domains": normalized_exclude_domains,
+                "include_raw_content": args.include_raw_content,
+                "include_answer": args.include_answer,
+                "include_images": args.include_images,
+                "include_image_descriptions": args.include_image_descriptions,
+                "include_favicon": args.include_favicon,
+                "include_usage": include_usage,
+                "auto_parameters": auto_parameters,
+                "timeout_seconds": timeout_seconds,
+            }
+        )
+        if not retrievers:
+            error = {
+                "code": "WEB_SEARCH_PROVIDER_NOT_CONFIGURED",
+                "message": "未配置可用的 Web 搜索 provider",
+                "retryable": False,
+            }
+            return json.dumps(
+                _build_web_search_error_output(
+                    query=args.query,
+                    parameters=parameters,
+                    error=error,
+                ),
+                ensure_ascii=False,
+            )
+        output = await pipeline.search(
             query=args.query,
             max_results=max_results,
             search_type=args.search_type,
             search_depth=search_depth,
             time_range=time_range,
-            include_domains=_normalize_domains(args.include_domains),
-            exclude_domains=_normalize_domains(args.exclude_domains),
+            include_domains=normalized_include_domains,
+            exclude_domains=normalized_exclude_domains,
             include_raw_content=args.include_raw_content,
             include_answer=args.include_answer,
             include_images=args.include_images,
@@ -1187,8 +1243,12 @@ def build_web_search_tool(
             include_favicon=args.include_favicon,
             include_usage=include_usage,
             auto_parameters=auto_parameters,
-            timeout_seconds=args.timeout_seconds or settings.web_search_timeout_seconds,
+            timeout_seconds=timeout_seconds,
         )
+        output["parameters"] = parameters
+        output["total_found"] = len(output.get("results", []))
+        output.setdefault("usage", None)
+        output.setdefault("request_id", None)
         return json.dumps(output, ensure_ascii=False)
 
     return lc_tool(

@@ -108,10 +108,23 @@ export interface RecentChatSession {
   updated_at: string;
 }
 
-export interface WebSearchStatus {
+export type WebSearchStatusMode = 'healthy' | 'degraded' | 'down';
+
+export interface WebSearchProviderStatus {
+  name: 'tavily' | 'searxng' | 'jina_reader';
   configured: boolean;
   verified: boolean;
   healthy: boolean;
+  mode: WebSearchStatusMode;
+  latency_ms?: number | null;
+  error?: string | null;
+}
+
+export interface WebSearchStatus {
+  configured: boolean;
+  verified: boolean;
+  mode: WebSearchStatusMode;
+  providers: WebSearchProviderStatus[];
 }
 
 export interface RecentChatListResponse {

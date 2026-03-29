@@ -9,6 +9,7 @@ import { ChatViewport } from './ChatViewport';
 import type {
   ChatSession,
   ToolApprovalRequest,
+  WebSearchProviderStatus,
   WebSearchStatus,
 } from '../../services/chats';
 import type { ChatMessage } from './MessageList';
@@ -24,6 +25,64 @@ const quickPrompts = [
   { label: '优化表达', value: '请把下面内容润色成更专业的表达：' },
   { label: '风险与下一步', value: '请列出潜在风险与下一步建议：' },
 ];
+
+function getProviderLabel(name: WebSearchProviderStatus['name']): string {
+  if (name === 'tavily') {
+    return 'Tavily';
+  }
+  if (name === 'searxng') {
+    return 'SearXNG';
+  }
+  return 'Jina Reader';
+}
+
+function getProviderChipLabel(provider: WebSearchProviderStatus): string {
+  const suffix =
+    !provider.verified
+      ? '未验证'
+      : provider.mode === 'healthy'
+        ? '正常'
+        : provider.mode === 'degraded'
+          ? '降级'
+          : '异常';
+  return `${getProviderLabel(provider.name)} ${suffix}`;
+}
+
+function getStatusLabel(webSearch: WebSearchStatus): string {
+  if (!webSearch.configured) {
+    return '联网未配置';
+  }
+  if (!webSearch.verified) {
+    return '联网未验证';
+  }
+  if (webSearch.mode === 'healthy') {
+    return '联网正常';
+  }
+  if (webSearch.mode === 'degraded') {
+    return '联网降级';
+  }
+  return '联网不可用';
+}
+
+function getStatusColor(
+  mode: WebSearchStatus['mode'],
+  configured: boolean,
+  verified: boolean
+): 'default' | 'warning' | 'success' | 'error' {
+  if (!configured) {
+    return 'default';
+  }
+  if (!verified) {
+    return 'warning';
+  }
+  if (mode === 'healthy') {
+    return 'success';
+  }
+  if (mode === 'degraded') {
+    return 'warning';
+  }
+  return 'error';
+}
 
 interface GeneralChatViewProps {
   session: ChatSession | null;
@@ -71,21 +130,13 @@ export function GeneralChatView({
     : allowExternal
       ? 'MCP 将启用'
       : 'MCP 已关闭';
-  const webSearchConfiguredLabel = webSearch.configured ? '联网已配置' : '联网未配置';
-  const webSearchHealthLabel = !webSearch.configured
-    ? '联网未验证'
-    : !webSearch.verified
-      ? '联网未验证'
-      : webSearch.healthy
-        ? '联网已验证'
-        : '联网异常';
-  const webSearchHealthColor: 'default' | 'warning' | 'success' | 'error' = !webSearch.configured
-    ? 'default'
-    : !webSearch.verified
-      ? 'warning'
-      : webSearch.healthy
-        ? 'success'
-        : 'error';
+  const configuredProviders = webSearch.providers.filter((provider) => provider.configured);
+  const webSearchStatusLabel = getStatusLabel(webSearch);
+  const webSearchStatusColor = getStatusColor(
+    webSearch.mode,
+    webSearch.configured,
+    webSearch.verified
+  );
 
   return (
     <ChatViewport
@@ -128,12 +179,20 @@ export function GeneralChatView({
             }
           />
           <Chip
-            label={webSearchConfiguredLabel}
+            label={webSearchStatusLabel}
             size='small'
             variant='outlined'
-            color={webSearch.configured ? 'success' : 'default'}
+            color={webSearchStatusColor}
           />
-          <Chip label={webSearchHealthLabel} size='small' variant='outlined' color={webSearchHealthColor} />
+          {configuredProviders.map((provider) => (
+            <Chip
+              key={provider.name}
+              label={getProviderChipLabel(provider)}
+              size='small'
+              variant='outlined'
+              color={getStatusColor(provider.mode, provider.configured, provider.verified)}
+            />
+          ))}
           <Chip label={sessionBadgeLabel} size='small' variant='outlined' />
         </Box>
       }
@@ -173,6 +232,8 @@ export function GeneralChatView({
             approvalLoading={loading}
             bottomInset={bottomInset}
             showEvidence={false}
+            showSourceChips
+            normalizeInlineEvidenceSection
             scrollButtonAlign='right'
             wheelContainment='off'
           />

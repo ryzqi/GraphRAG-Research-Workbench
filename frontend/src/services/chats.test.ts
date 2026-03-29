@@ -17,7 +17,18 @@ describe('getRecentChats', () => {
       web_search: {
         configured: true,
         verified: true,
-        healthy: true,
+        mode: 'healthy',
+        providers: [
+          {
+            name: 'tavily',
+            configured: true,
+            verified: true,
+            healthy: true,
+            mode: 'healthy',
+            latency_ms: 320,
+            error: null,
+          },
+        ],
       },
     });
   });

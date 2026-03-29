@@ -13,6 +13,7 @@ function isLikelyReferenceBodyLine(line: string): boolean {
   }
   return (
     /^[-*+]\s+/.test(trimmed) ||
+    /^\[\d+\]\s+/.test(trimmed) ||
     /^\d+[.)、]\s+/.test(trimmed) ||
     /^\[?S\d+\]?/i.test(trimmed) ||
     /^资料\d+/.test(trimmed) ||

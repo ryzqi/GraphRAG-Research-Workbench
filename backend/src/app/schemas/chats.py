@@ -168,10 +168,24 @@ class ChatSessionRecentRead(BaseModel):
     updated_at: datetime
 
 
-class WebSearchStatusRead(BaseModel):
+WebSearchStatusMode = Literal["healthy", "degraded", "down"]
+
+
+class WebSearchProviderStatusRead(BaseModel):
+    name: Literal["tavily", "searxng", "jina_reader"]
     configured: bool
     verified: bool
     healthy: bool
+    mode: WebSearchStatusMode
+    latency_ms: int | None = None
+    error: str | None = None
+
+
+class WebSearchStatusRead(BaseModel):
+    configured: bool
+    verified: bool
+    mode: WebSearchStatusMode
+    providers: list[WebSearchProviderStatusRead] = Field(default_factory=list)
 
 
 class ChatRecentListResponse(BaseModel):

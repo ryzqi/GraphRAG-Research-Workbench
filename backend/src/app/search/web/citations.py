@@ -1,20 +1,23 @@
-"""普通代理 external evidence 提取。"""
+"""普通聊天外部来源的紧凑引用。"""
 
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Sequence
 from typing import Any
-from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from langchain.messages import ToolMessage
 
-from app.agents.tools.web_search_providers.base import canonicalize_url, extract_domain
 from app.models.evidence import EvidenceSourceKind
 from app.schemas.chats import EvidenceItem
 
+from .documents import canonicalize_url, extract_domain
+
 _EXCERPT_LIMIT = 500
 _SOURCE_EXCERPT_LIMIT = 1200
+_REFERENCE_HEADING = "参考来源"
+_REFERENCE_LINE_RE = re.compile(r"^\[(\d+)\]\s+([^\s]+)\s+-\s+(.+)$")
 _TRACKING_QUERY_KEYS = {
     "fbclid",
     "gclid",
@@ -84,17 +87,25 @@ def _normalize_evidence_url(url: str) -> str:
     canonical = canonicalize_url(url)
     if not canonical:
         return ""
-    try:
-        parts = urlsplit(canonical)
-    except Exception:
+    match = re.match(r"^(https?://[^?#]+)(?:\?([^#]*))?$", canonical)
+    if not match:
         return canonical
-    filtered_query = [
-        (key, value)
-        for key, value in parse_qsl(parts.query, keep_blank_values=True)
-        if key and not key.lower().startswith("utm_") and key.lower() not in _TRACKING_QUERY_KEYS
-    ]
-    normalized_query = urlencode(filtered_query, doseq=True)
-    return urlunsplit((parts.scheme, parts.netloc, parts.path, normalized_query, ""))
+    base = match.group(1)
+    query = match.group(2) or ""
+    if not query:
+        return base
+    pairs = []
+    for chunk in query.split("&"):
+        if not chunk:
+            continue
+        key, _, value = chunk.partition("=")
+        lowered = key.lower()
+        if lowered.startswith("utm_") or lowered in _TRACKING_QUERY_KEYS:
+            continue
+        pairs.append(chunk if value else key)
+    if not pairs:
+        return base
+    return f"{base}?{'&'.join(pairs)}"
 
 
 def _merge_locator(
@@ -120,7 +131,7 @@ def _build_evidence_item(
     resolved_title = (
         citation_title
         or (locator.get("material_title") if isinstance(locator, dict) else None)
-        or "外部页面"
+        or "外部来源"
     )
     return EvidenceItem(
         source_kind=EvidenceSourceKind.EXTERNAL,
@@ -132,45 +143,6 @@ def _build_evidence_item(
     )
 
 
-def _resolve_reference_url(item: EvidenceItem) -> str | None:
-    candidates: list[str] = []
-    if isinstance(item.citation_source, str):
-        candidates.append(item.citation_source)
-    if isinstance(item.locator, dict):
-        for key in ("url", "source"):
-            value = item.locator.get(key)
-            if isinstance(value, str):
-                candidates.append(value)
-    for candidate in candidates:
-        normalized = _normalize_evidence_url(candidate.strip())
-        if normalized.startswith(("http://", "https://")):
-            return normalized
-    return None
-
-
-def extract_reference_urls(items: Sequence[EvidenceItem]) -> list[str]:
-    urls: list[str] = []
-    seen: set[str] = set()
-    for item in items:
-        url = _resolve_reference_url(item)
-        if not url or url in seen:
-            continue
-        seen.add(url)
-        urls.append(url)
-    return urls
-
-
-def append_reference_urls_to_answer(answer: str, items: Sequence[EvidenceItem]) -> str:
-    urls = extract_reference_urls(items)
-    cleaned_answer = str(answer or "").rstrip()
-    if not urls:
-        return cleaned_answer
-    reference_block = "\n".join(["参考来源", *[f"- {url}" for url in urls]])
-    if not cleaned_answer:
-        return reference_block
-    return f"{cleaned_answer}\n\n{reference_block}"
-
-
 def _upsert_search_result(
     items_by_url: dict[str, EvidenceItem],
     item: dict[str, Any],
@@ -178,8 +150,7 @@ def _upsert_search_result(
     url = _normalize_evidence_url(str(item.get("url") or "").strip())
     if not url:
         return
-    key = url
-    existing = items_by_url.get(key)
+    existing = items_by_url.get(url)
     title = str(item.get("title") or "").strip() or None
     locator = _merge_locator(
         existing.locator if existing else None,
@@ -196,7 +167,7 @@ def _upsert_search_result(
         if existing and existing.excerpt.strip()
         else _trim_text(item.get("snippet") or item.get("content"), limit=_EXCERPT_LIMIT)
     )
-    items_by_url[key] = _build_evidence_item(
+    items_by_url[url] = _build_evidence_item(
         url=url,
         locator=locator,
         excerpt=excerpt,
@@ -219,8 +190,7 @@ def _upsert_content_result(
     normalized_content = _trim_text(content, limit=_SOURCE_EXCERPT_LIMIT)
     if not normalized_url or not normalized_content:
         return
-    key = normalized_url
-    existing = items_by_url.get(key)
+    existing = items_by_url.get(normalized_url)
     locator = _merge_locator(
         existing.locator if existing else None,
         _compact_locator(
@@ -231,7 +201,7 @@ def _upsert_content_result(
             published_at=published_at,
         ),
     )
-    items_by_url[key] = _build_evidence_item(
+    items_by_url[normalized_url] = _build_evidence_item(
         url=normalized_url,
         locator=locator,
         excerpt=_trim_text(normalized_content, limit=_EXCERPT_LIMIT),
@@ -288,3 +258,97 @@ def extract_external_evidence_from_messages(
                 content=payload.get("content"),
             )
     return list(items_by_url.values())
+
+
+def _resolve_reference_url(item: EvidenceItem) -> str | None:
+    candidates: list[str] = []
+    if isinstance(item.citation_source, str):
+        candidates.append(item.citation_source)
+    if isinstance(item.locator, dict):
+        for key in ("url", "source"):
+            value = item.locator.get(key)
+            if isinstance(value, str):
+                candidates.append(value)
+    for candidate in candidates:
+        normalized = canonicalize_url(candidate.strip())
+        if normalized.startswith(("http://", "https://")):
+            return normalized
+    return None
+
+
+def _resolve_reference_title(item: EvidenceItem) -> str:
+    if isinstance(item.citation_title, str) and item.citation_title.strip():
+        return item.citation_title.strip()
+    if isinstance(item.locator, dict):
+        title = item.locator.get("material_title")
+        if isinstance(title, str) and title.strip():
+            return title.strip()
+    return "外部来源"
+
+
+def _build_compact_entries(items: Sequence[EvidenceItem]) -> list[tuple[str, str, str]]:
+    entries: list[tuple[str, str, str]] = []
+    seen_urls: set[str] = set()
+    for item in items:
+        url = _resolve_reference_url(item)
+        if not url or url in seen_urls:
+            continue
+        seen_urls.add(url)
+        domain = extract_domain(url) or url
+        entries.append((domain, _resolve_reference_title(item), url))
+    return entries
+
+
+def _split_reference_block(answer: str) -> tuple[str, list[tuple[str, str]]]:
+    normalized = str(answer or "").replace("\r\n", "\n").rstrip()
+    if not normalized:
+        return "", []
+    marker = f"\n{_REFERENCE_HEADING}\n"
+    inline_marker = f"{_REFERENCE_HEADING}\n"
+    split_token = marker if marker in normalized else inline_marker if normalized.startswith(inline_marker) else None
+    if split_token is None:
+        return normalized, []
+
+    if split_token == inline_marker and normalized.startswith(inline_marker):
+        body = normalized[len(inline_marker):]
+        prefix = ""
+    else:
+        prefix, body = normalized.split(marker, 1)
+    existing: list[tuple[str, str]] = []
+    for line in body.splitlines():
+        match = _REFERENCE_LINE_RE.match(line.strip())
+        if not match:
+            continue
+        existing.append((match.group(2).strip(), match.group(3).strip()))
+    return prefix.rstrip(), existing
+
+
+def append_compact_citations_to_answer(answer: str, items: Sequence[EvidenceItem]) -> str:
+    compact_entries = _build_compact_entries(items)
+    prefix, existing_entries = _split_reference_block(answer)
+    merged_pairs: list[tuple[str, str]] = []
+    seen_pairs: set[tuple[str, str]] = set()
+
+    for domain, title in existing_entries:
+        pair = (domain, title)
+        if pair in seen_pairs:
+            continue
+        seen_pairs.add(pair)
+        merged_pairs.append(pair)
+
+    for domain, title, _ in compact_entries:
+        pair = (domain, title)
+        if pair in seen_pairs:
+            continue
+        seen_pairs.add(pair)
+        merged_pairs.append(pair)
+
+    if not merged_pairs:
+        return prefix
+
+    block = "\n".join(
+        [_REFERENCE_HEADING, *[f"[{index}] {domain} - {title}" for index, (domain, title) in enumerate(merged_pairs, start=1)]]
+    )
+    if prefix:
+        return f"{prefix}\n\n{block}"
+    return block

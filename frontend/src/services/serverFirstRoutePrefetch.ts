@@ -25,7 +25,8 @@ function toRecentHistoryData(input: RecentChatListResponse) {
     webSearch: input.web_search ?? ({
       configured: false,
       verified: false,
-      healthy: false,
+      mode: 'down',
+      providers: [],
     } satisfies WebSearchStatus),
   };
 }

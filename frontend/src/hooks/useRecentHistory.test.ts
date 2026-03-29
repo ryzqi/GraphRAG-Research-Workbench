@@ -16,7 +16,27 @@ describe('toRecentHistoryData', () => {
       web_search: {
         configured: true,
         verified: true,
-        healthy: false,
+        mode: 'degraded',
+        providers: [
+          {
+            name: 'tavily',
+            configured: true,
+            verified: true,
+            healthy: true,
+            mode: 'healthy',
+            latency_ms: 420,
+            error: null,
+          },
+          {
+            name: 'searxng',
+            configured: true,
+            verified: true,
+            healthy: false,
+            mode: 'down',
+            latency_ms: 5000,
+            error: 'timeout',
+          },
+        ],
       },
     });
 
@@ -32,7 +52,27 @@ describe('toRecentHistoryData', () => {
       webSearch: {
         configured: true,
         verified: true,
-        healthy: false,
+        mode: 'degraded',
+        providers: [
+          {
+            name: 'tavily',
+            configured: true,
+            verified: true,
+            healthy: true,
+            mode: 'healthy',
+            latency_ms: 420,
+            error: null,
+          },
+          {
+            name: 'searxng',
+            configured: true,
+            verified: true,
+            healthy: false,
+            mode: 'down',
+            latency_ms: 5000,
+            error: 'timeout',
+          },
+        ],
       },
     });
   });
