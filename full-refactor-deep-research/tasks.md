@@ -113,8 +113,8 @@
 
 ## 13. 最终验证与交付门禁
 
-- [ ] 13.1 执行 `cd backend; uv run pytest` 与 `uv run ruff check .`。
-- [ ] 13.2 执行 `cd frontend; npm run typecheck` 与 `npm run build`。
-- [ ] 13.3 执行 `pwsh -ExecutionPolicy Bypass -File scripts/demo_research.ps1`，确认 planner、runtime、finalizer 与工件链路正常。
-- [ ] 13.4 汇总质量 / 延迟 / 成本 / 韧性 / 来源覆盖门禁结果并形成发布决议记录。
-- [ ] 13.5 复核文档中统一使用当前研究单路径术语。
+- [x] 13.1 执行 `cd backend; uv run pytest` 与 `uv run ruff check .`。
+- [x] 13.2 执行 `cd frontend; npm run typecheck` 与 `npm run build`。
+- [x] 13.3 执行 `pwsh -ExecutionPolicy Bypass -File scripts/demo_research.ps1`，确认 planner、runtime、finalizer 与工件链路正常。
+- [x] 13.4 汇总质量 / 延迟 / 成本 / 韧性 / 来源覆盖门禁结果并形成发布决议记录。
+- [x] 13.5 复核文档中统一使用当前研究单路径术语。

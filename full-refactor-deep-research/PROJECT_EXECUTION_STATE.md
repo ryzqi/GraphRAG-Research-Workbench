@@ -7,11 +7,11 @@
   - `full-refactor-deep-research/TASK_TODO_MEDIUM.md`
   - `full-refactor-deep-research/TASK_TODO_FINE.md`
   - `full-refactor-deep-research/PROJECT_EXECUTION_STATE.md`
-- Current Focus / Active Phase: Phase 5 - 可观测、文档同步与最终交付门禁 / 当前任务 = Task 13（待启动）
+- Current Focus / Active Phase: Phase 5 - 可观测、文档同步与最终交付门禁 / 当前任务 = Task 13（已验证通过，待提交）
 - Active Execution Wave:
-  - 执行 backend 全量 `pytest` / `ruff`
-  - 执行 frontend `typecheck` / `build`
-  - 执行 demo script 与启动 smoke，并据此汇总最终 gate 结论
+  - 已完成 backend 全量 `pytest` / `ruff`
+  - 已完成 frontend `typecheck` / `build`
+  - 已完成 demo script、启动 smoke 与 gate 决议收口
 - Last Verified Stop Point:
   - Phase 1 已完成并提交：`0c5fa63 feat(research): restore research persistence foundation`
   - `efc6693 feat(research): add research schema contracts`
@@ -28,22 +28,32 @@
     - `pwsh -ExecutionPolicy Bypass -File .\scripts\demo_research.ps1 -DryRun` -> 输出当前 `/api/v1/research/sessions*` demo 流程
     - `rg -n "0\.5\.0a2|s\.jina\.ai|/api/v1/research/runs\*|/api/v1/research/runs|run_id\b|create_deep_agent\([^\n]*subagent_model|subagent_model=" ...` -> 仅剩有意保留的否定说明、`gate_run_id` 与“无顶层 `subagent_model`”校准说明
     - `uv run python -c "import inspect; from deepagents import create_deep_agent; print(inspect.signature(create_deep_agent))"` -> 已验证当前安装签名不含顶层 `subagent_model`
+  - Task 13 已完成（待本次提交）：
+    - `cd backend; uv run pytest` -> `78 passed`
+    - `cd backend; uv run ruff check .` -> `All checks passed!`
+    - `cd frontend; npm run typecheck` -> `passed`
+    - `cd frontend; npm run build` -> `passed`
+    - `pwsh -ExecutionPolicy Bypass -File .\scripts\demo_research.ps1 -BaseUrl http://127.0.0.1:8000 -TimeoutSec 90` -> planner/runtime/finalizer/artifacts 链路成功
+    - `http://127.0.0.1:8000/api/v1/ready` / `/docs` / `http://127.0.0.1:3000` -> `200`
 - Latest Improvement / Regression Notes:
   - 改进：ResearchService 现在会落盘 `metrics_snapshot` / `gate_snapshot`，并打通 `trace_id` / `session_id` / `lc_agent_name` / `namespace`
   - 改进：新增故障注入分类、事件回放一致性检查、interrupt-resume E2E 契约测试
   - 改进：文档、spec、README、demo script 与 Deep Agents 用法快照已统一到当前 session contract 与 `subagents[*].model` 事实源
-  - 风险：当前 runtime 真实装配与应用启动验证尚未执行，留到 Task 13 统一收口
-- Next Recommended Action: 启动 Task 13（全量测试、build、demo 与启动验证）
-- Current Blockers: 无硬阻塞；最终启动验证仍待 Task 13
+  - 改进：worker research task 现已真实装配 `build_deep_research_runtime_runner`，并补齐 structured response / workspace context / runtime 回归测试
+  - 改进：Deep Research runtime 现显式禁用 `use_previous_response_id`，避免 OpenAI `response_id not found` 触发 404
+  - 回归已关闭：`ResearchArtifactStore` lazy load `MissingGreenlet`、research 任务错投 `default` 队列、runtime runner 未配置
+- Next Recommended Action: 更新 planning files 并提交 Task 13 收口补丁
+- Current Blockers: 无
 - Assumptions Awaiting Confirmation:
   - Task 13 将以当前 `metrics_snapshot` / `gate_snapshot` 作为 release gate 事实源之一
 - Parked / Deferred Items:
-  - 真实 runtime 线上 provider 联通与启动 smoke，留给 Task 13
+  - demo 当前 provider 覆盖基于 workspace 文档语料；若后续要把 Tavily / Jina Reader / SearXNG / arXiv 全量联通纳入 release gate，需要单独补充外部 provider 专项验证
 - Key Recent Decisions:
   - `deepagents==0.4.12` 继续作为当前 stable runtime 版本基线
   - Deep Agents 仍保持 `create_deep_agent` 单入口、`subgraphs=True`、`version="v2"`、无 MCP
   - observability 默认门禁：`RESEARCH_GATE_MIN_QUALITY_SCORE=0.75`、`RESEARCH_GATE_MAX_P95_MS=120000`、`RESEARCH_GATE_MAX_SESSION_COST_USD=2.0`
   - rollback drill 仅提供 dry-run 记录；真实回滚仍需人工审批
+  - Task 13 发布决议：`gate_snapshot.pass = true`，当前 research 单路径可交付
 - Verification Evidence Reference:
   - `backend/tests/research/test_research_observability.py`
   - `backend/tests/research/test_research_fault_injection.py`
@@ -53,11 +63,14 @@
   - `full-refactor-deep-research/research-rollback-drill-record.md`
   - 官方 Deep Agents 文档：customization / overview / trace deep agents / interrupts / streaming
   - 本地 `uv run python` 对 `create_deep_agent` 签名的 fresh verification
+  - `tmp/research-demo/07-stream-final.txt`
+  - `tmp/research-demo/08-artifacts.json`
 - Related Files:
+  - `backend/src/app/services/deep_research_runtime.py`
   - `backend/src/app/services/research_observability.py`
   - `backend/src/app/services/research_replay.py`
   - `backend/src/app/services/research_service.py`
   - `backend/src/app/worker/tasks/research.py`
   - `scripts/research_rollback_drill.ps1`
   - `full-refactor-deep-research/research-rollback-runbook.md`
-- Last Updated: 2026-03-29
+- Last Updated: 2026-03-30

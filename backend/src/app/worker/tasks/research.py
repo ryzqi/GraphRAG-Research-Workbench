@@ -7,6 +7,7 @@ import uuid
 
 from app.core.settings import get_settings
 from app.models.research_session import ResearchSessionStatus
+from app.services.deep_research_runtime import build_deep_research_runtime_runner
 from app.services.research_service import build_research_service
 from app.worker.celery_app import celery_app
 from app.worker.task_resources import managed_task_resources
@@ -31,7 +32,12 @@ async def _run_research_session(session_id: str) -> None:
             return
 
         async with sessionmaker() as db:
-            service = build_research_service(db=db)
+            runtime_runner = await build_deep_research_runtime_runner(
+                settings=settings,
+                http_client=resources.http_client,
+                redis=resources.redis,
+            )
+            service = build_research_service(db=db, runtime_runner=runtime_runner)
             session = await service.get_session(session_uuid)
             if session.status not in {
                 ResearchSessionStatus.QUEUED,

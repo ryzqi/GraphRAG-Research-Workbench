@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.research_artifact import ResearchArtifact
@@ -26,15 +27,35 @@ class ResearchArtifactStore:
         retrieval_method: str | None = None,
         origin_url: str | None = None,
     ) -> ResearchArtifact:
-        existing = next(
-            (artifact for artifact in session.artifacts if artifact.artifact_key == artifact_key),
-            None,
-        )
-        if existing is None:
-            existing = ResearchArtifact(
-                session=session,
-                artifact_key=artifact_key,
+        artifacts_loaded = "artifacts" in session.__dict__
+        existing = None
+        if artifacts_loaded:
+            loaded_artifacts = session.__dict__.get("artifacts") or []
+            existing = next(
+                (
+                    artifact
+                    for artifact in loaded_artifacts
+                    if artifact.artifact_key == artifact_key
+                ),
+                None,
             )
+        elif session.id is not None and callable(getattr(self._db, "execute", None)):
+            stmt = select(ResearchArtifact).where(
+                ResearchArtifact.session_id == session.id,
+                ResearchArtifact.artifact_key == artifact_key,
+            )
+            existing = (await self._db.execute(stmt)).scalar_one_or_none()
+
+        if existing is None:
+            existing = ResearchArtifact(artifact_key=artifact_key)
+            if (
+                artifacts_loaded
+                or session.id is None
+                or not callable(getattr(self._db, "execute", None))
+            ):
+                existing.session = session
+            else:
+                existing.session_id = session.id
             self._db.add(existing)
         existing.content_text = content_text
         existing.content_json = content_json

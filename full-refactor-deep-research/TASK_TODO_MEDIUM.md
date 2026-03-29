@@ -30,7 +30,7 @@
   - backend / frontend 全量验证证据
   - demo script 实跑证据
   - 启动 smoke 与 gate 决议记录
-- Active Execution Wave: Task 12 已完成；下一任务 = Task 13 final verification
+- Active Execution Wave: Task 13 已完成验证，待提交当前收口补丁
 - Entry Criteria:
   - Phase 4 已完成
   - Task 11 trace / metrics / gate / replay / rollback 已验证并提交
@@ -109,17 +109,35 @@
 
 ## Part 3: 当前阶段研究与计划
 ### 3.1 Task 13 输入事实源
-- [ ] Task: 固定当前验证矩阵与命令顺序
+- [x] Task: 固定当前验证矩阵与命令顺序
 - Goal: 避免在最终收口阶段遗漏 backend / frontend / demo / startup 任一关键环节
 - Done when: Task 13 验证矩阵明确
 - Deliverables:
   - backend：`uv run pytest`、`uv run ruff check .`
   - frontend：`npm run typecheck`、`npm run build`
   - demo / startup：`scripts/demo_research.ps1`、实际启动链路
-- Notes: 以当前代码、Task 11 gate 工件、Task 12 文档事实源为准
+- Notes:
+  - 实际执行结果：
+    - `cd backend; uv run pytest` -> `78 passed`
+    - `cd backend; uv run ruff check .` -> `All checks passed!`
+    - `cd frontend; npm run typecheck` -> `passed`
+    - `cd frontend; npm run build` -> `passed`
+    - `pwsh -ExecutionPolicy Bypass -File .\scripts\demo_research.ps1 -BaseUrl http://127.0.0.1:8000 -TimeoutSec 90` -> 成功跑通
+    - `http://127.0.0.1:8000/api/v1/ready` / `/docs` / `http://127.0.0.1:3000` -> `200`
 
 ### 3.2 Task 13 执行顺序
-- [ ] Task: 采用“backend 全量 -> frontend 构建 -> demo -> 启动 smoke -> gate 决议 -> 提交”顺序
+- [x] Task: 采用“backend 全量 -> frontend 构建 -> demo -> 启动 smoke -> gate 决议 -> 提交”顺序
 - Goal: 让失败定位保持单向收敛，避免混淆根因
 - Done when: 下一轮执行顺序稳定
-- Notes: 若任一步失败，先修复再继续后续步骤
+- Notes:
+  - 实际失败与修复：
+    - `ResearchArtifactStore` 真实 DB 下访问未预加载 relationship 触发 `MissingGreenlet` -> 已补显式查询与回归测试
+    - Celery research 任务原先错误路由到 `default` 队列 -> 已改到 `research` 队列并补测试
+    - worker research task 原先未装配 runtime_runner -> 已接入 `build_deep_research_runtime_runner`
+    - OpenAI `previous_response_id` 404 导致 runtime fail -> 已在 Deep Research runtime 显式禁用 `use_previous_response_id`
+  - gate 结论：
+    - `gate_snapshot.pass = true`
+    - `quality_score = 0.825`
+    - `p95_ms = 19549`
+    - `session_cost_usd = 0.0`
+    - 当前 demo 工件 provider 统计为 `workspace`

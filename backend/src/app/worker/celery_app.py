@@ -60,6 +60,7 @@ def _build_celery_conf(cfg: Settings) -> dict[str, Any]:
             Queue("dispatch"),
             Queue("ingestion"),
             Queue("rebuild"),
+            Queue("research"),
             Queue("export"),
         ),
         "task_routes": {
@@ -80,7 +81,7 @@ def _build_celery_conf(cfg: Settings) -> dict[str, Any]:
             "app.worker.tasks.kb_bootstrap_jobs.run_kb_bootstrap_job": {
                 "queue": "default"
             },
-            "app.worker.tasks.research.run_research_session": {"queue": "default"},
+            "app.worker.tasks.research.run_research_session": {"queue": "research"},
             "app.worker.tasks.bootstrap_watchdog.fail_stale_bootstrap_jobs": {
                 "queue": "dispatch"
             },

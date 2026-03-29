@@ -75,6 +75,43 @@ function Get-LastEventIdFromSse {
     return $matches[$matches.Count - 1].Groups[1].Value
 }
 
+function Get-EventTypesFromSse {
+    param([string]$Content)
+
+    if (-not $Content) {
+        return @()
+    }
+
+    $matches = [regex]::Matches($Content, '"event_type"\s*:\s*"([^"]+)"')
+    if ($matches.Count -eq 0) {
+        return @()
+    }
+    return @($matches | ForEach-Object { $_.Groups[1].Value })
+}
+
+function Wait-ResearchEvent {
+    param(
+        [string]$SessionId,
+        [string]$ExpectedEventType,
+        [int]$WaitSec = 30
+    )
+
+    $deadline = (Get-Date).AddSeconds($WaitSec)
+    while ((Get-Date) -lt $deadline) {
+        $content = Get-ResearchStreamContent -SessionId $SessionId
+        $eventTypes = @(Get-EventTypesFromSse -Content $content)
+        if ($eventTypes -contains $ExpectedEventType) {
+            return $content
+        }
+        if ($eventTypes -contains "research.run.failed") {
+            throw "研究会话在等待事件 $ExpectedEventType 时失败。"
+        }
+        Start-Sleep -Milliseconds 250
+    }
+
+    throw "等待研究事件超时：$ExpectedEventType"
+}
+
 function Save-Json {
     param(
         [string]$Path,
@@ -139,12 +176,25 @@ if ($RequireConfirmation -or $confirmationRequired) {
 Write-Step "Fetch current stream snapshot"
 $streamContent = Get-ResearchStreamContent -SessionId $sessionId
 Set-Content -LiteralPath (Join-Path $OutputDir "03-stream-initial.txt") -Value $streamContent -Encoding utf8
-$lastEventId = Get-LastEventIdFromSse -Content $streamContent
-if ($lastEventId) {
-    Write-Step "Last event id: $lastEventId"
-}
+$eventTypes = @(Get-EventTypesFromSse -Content $streamContent)
 
 if (-not $SkipInterruptResume) {
+    if (-not ($eventTypes -contains "research.run.started") -and -not ($eventTypes -contains "research.final.completed")) {
+        Write-Step "Wait for research runtime to start"
+        $streamContent = Wait-ResearchEvent -SessionId $sessionId -ExpectedEventType "research.run.started" -WaitSec $TimeoutSec
+        Set-Content -LiteralPath (Join-Path $OutputDir "03-stream-initial.txt") -Value $streamContent -Encoding utf8
+        $eventTypes = @(Get-EventTypesFromSse -Content $streamContent)
+    }
+
+    $lastEventId = Get-LastEventIdFromSse -Content $streamContent
+    if ($lastEventId) {
+        Write-Step "Last event id: $lastEventId"
+    }
+
+    if ($eventTypes -contains "research.final.completed") {
+        Write-Step "Research already completed before interrupt window; skip interrupt/resume"
+    }
+    else {
     Write-Step "Interrupt research session"
     $interruptResponse = Invoke-JsonRequest -Method POST -Uri "$BaseUrl/api/v1/research/sessions/$sessionId/interrupt" -Body @{ reason = "demo_research.ps1 interrupt checkpoint" }
     Save-Json -Path (Join-Path $OutputDir "04-interrupt.json") -Value $interruptResponse
@@ -167,11 +217,17 @@ if (-not $SkipInterruptResume) {
     Write-Step "Fetch resumed stream snapshot"
     $resumeStreamContent = Get-ResearchStreamContent -SessionId $sessionId -LastEventId $resumeEventId
     Set-Content -LiteralPath (Join-Path $OutputDir "06-stream-resumed.txt") -Value $resumeStreamContent -Encoding utf8
+        $streamContent = $resumeStreamContent
+    }
 }
+
+Write-Step "Wait for final report"
+$finalStreamContent = Wait-ResearchEvent -SessionId $sessionId -ExpectedEventType "research.final.completed" -WaitSec $TimeoutSec
+Set-Content -LiteralPath (Join-Path $OutputDir "07-stream-final.txt") -Value $finalStreamContent -Encoding utf8
 
 Write-Step "Fetch research artifacts"
 $artifactsResponse = Invoke-JsonRequest -Method GET -Uri "$BaseUrl/api/v1/research/sessions/$sessionId/artifacts"
-Save-Json -Path (Join-Path $OutputDir "07-artifacts.json") -Value $artifactsResponse
+Save-Json -Path (Join-Path $OutputDir "08-artifacts.json") -Value $artifactsResponse
 
 $artifactKeys = @()
 if ($artifactsResponse.items) {

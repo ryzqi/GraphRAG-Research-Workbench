@@ -18,7 +18,7 @@
   - Task 11 提交：`d5448a3 feat(research): add observability gates and replay coverage`
   - Task 12 当前工作树产物：文档 / specs / README / demo script 同步
   - 当前 research runtime 约束：`create_deep_agent` 单入口、`subgraphs=True`、`version="v2"`、无 MCP
-- Active Execution Wave: Task 12 已完成；下一任务 = Task 13 全量验证
+- Active Execution Wave: Task 13 已完成验证，待提交当前收口补丁
 - Phase Goal: 完成 Task 13（最终验证与交付门禁）
 - Phase Scope:
   - 包含：backend 全量 `pytest` / `ruff`、frontend `typecheck` / `build`、demo script、启动 smoke、gate 决议
@@ -96,15 +96,18 @@
 
 ## Part 3: 当前阶段执行
 ### 3.1 下一轮首个执行波次
-- [ ] Task: 执行 backend 全量验证
+- [x] Task: 执行 backend 全量验证
 - Goal: 先确认 research 主链路与测试基线无回归
 - Output / Artifact:
   - `cd backend; uv run pytest`
   - `cd backend; uv run ruff check .`
 - Done when: backend 两条命令都有 fresh 结果
+- Notes:
+  - `uv run pytest` -> `78 passed`
+  - `uv run ruff check .` -> `All checks passed!`
 
 ### 3.2 下一轮验证基线
-- [ ] Task: backend 通过后执行 frontend / demo / 启动 smoke
+- [x] Task: backend 通过后执行 frontend / demo / 启动 smoke
 - Goal: 证明 workbench、demo 与真实启动链路都与当前 session contract 对齐
 - Verification:
   - `cd frontend; npm run typecheck`
@@ -112,3 +115,19 @@
   - `pwsh -ExecutionPolicy Bypass -File .\scripts\demo_research.ps1`
   - 实际启动链路 smoke
 - Done when: 全链路验证完成，且可汇总 gate 决议
+- Notes:
+  - `npm run typecheck` -> `passed`
+  - `npm run build` -> `passed`
+  - `pwsh -ExecutionPolicy Bypass -File .\scripts\demo_research.ps1 -BaseUrl http://127.0.0.1:8000 -TimeoutSec 90`
+    - session_id=`efecfe8c-2600-4e7d-84c9-1d48f3ea7a43`
+    - 最终事件序列：`research.plan.created` -> `research.plan.confirmed` -> `research.run.started` -> `research.finalizer.started` -> `research.final.completed`
+    - artifacts：`coverage_gaps`、`gate_snapshot`、`interim_findings`、`interim_summary`、`metrics_snapshot`、`plan_snapshot`、`report_json`、`report_md`、`research_brief`、`source_bundle`
+  - 启动 smoke：
+    - `http://127.0.0.1:8000/api/v1/ready` -> `200`
+    - `http://127.0.0.1:8000/docs` -> `200`
+    - `http://127.0.0.1:3000` -> `200`
+  - gate：
+    - `gate_snapshot.pass = true`
+    - `quality_score = 0.825`
+    - `p95_ms = 19549`
+    - `session_cost_usd = 0.0`
