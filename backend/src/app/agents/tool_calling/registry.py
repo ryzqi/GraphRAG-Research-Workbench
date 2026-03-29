@@ -24,10 +24,20 @@ from app.agents.tools.web_search import (
     build_web_research_tool,
     build_web_search_tool,
 )
+from app.agents.tools.research_tools import (
+    build_arxiv_fetch_tool,
+    build_arxiv_search_tool,
+    build_searxng_search_tool,
+    build_tavily_crawl_tool,
+    build_tavily_extract_tool,
+    build_tavily_research_tool,
+    build_tavily_search_tool,
+)
 from app.core.settings import Settings
 from app.integrations.mcp_adapters import McpToolEntry, load_mcp_tools
 from app.integrations.redis_client import RedisClient
 from app.models.tool_extension import ToolExtension
+from app.services.research_runtime_types import ResearchToolRegistryBundle
 
 from .utils import DEFAULT_TOOL_OUTPUT_MAX_CHARS, make_mcp_tool_name, truncate_tool_output
 from .web_tool_payloads import compact_builtin_external_output
@@ -250,3 +260,86 @@ async def build_tool_registry(
             )
 
     return tools, meta_by_name
+
+
+async def build_research_tool_registry(
+    *,
+    settings: Settings,
+    extra_tools: Sequence[BaseTool] | None = None,
+    tool_output_max_chars: int = DEFAULT_TOOL_OUTPUT_MAX_CHARS,
+    redis: RedisClient | None = None,
+    http_client: httpx.AsyncClient | None = None,
+) -> ResearchToolRegistryBundle:
+    """构建 deep research 专用工具集。
+
+    研究模式默认 hard cut 到 provider-specific 工具：
+    Tavily 全功能、Jina Reader、SearXNG Search、arXiv Search/Fetch。
+    """
+
+    del tool_output_max_chars  # 当前 research 工具直接返回结构化 JSON 字符串，不需要二次截断包装。
+
+    tools: list[BaseTool] = []
+    meta_by_name: dict[str, ToolMeta] = {}
+    tool_groups: dict[str, tuple[str, ...]] = {}
+
+    def _add_tool(tool: BaseTool, *, is_external: bool = True) -> None:
+        if tool.name in meta_by_name:
+            raise ValueError(f"工具名冲突: {tool.name}")
+        tools.append(tool)
+        meta_by_name[tool.name] = ToolMeta(
+            tool_name=tool.name,
+            raw_tool_name=tool.name,
+            extension_id="builtin",
+            extension_name="内置工具",
+            is_builtin=True,
+            is_external=is_external,
+        )
+
+    web_tool_names: list[str] = []
+    paper_tool_names: list[str] = []
+
+    if settings.web_search_api_key:
+        for tool in (
+            build_tavily_search_tool(settings, redis=redis, http_client=http_client),
+            build_tavily_extract_tool(settings, redis=redis, http_client=http_client),
+            build_tavily_crawl_tool(settings, redis=redis, http_client=http_client),
+            build_tavily_research_tool(settings, redis=redis, http_client=http_client),
+        ):
+            _add_tool(tool)
+            web_tool_names.append(tool.name)
+
+    if has_jina_read_provider(settings):
+        jina_tool = build_jina_read_tool(
+            settings,
+            http_client=http_client,
+        )
+        _add_tool(jina_tool)
+        web_tool_names.append(jina_tool.name)
+
+    if settings.searxng_search_enabled:
+        searxng_tool = build_searxng_search_tool(
+            settings,
+            http_client=http_client,
+        )
+        _add_tool(searxng_tool)
+        web_tool_names.append(searxng_tool.name)
+
+    for tool in (
+        build_arxiv_search_tool(),
+        build_arxiv_fetch_tool(),
+    ):
+        _add_tool(tool)
+        paper_tool_names.append(tool.name)
+
+    for tool in extra_tools or ():
+        _add_tool(tool, is_external=False)
+
+    tool_groups["web"] = tuple(web_tool_names)
+    tool_groups["paper"] = tuple(paper_tool_names)
+    tool_groups["citation"] = tuple()
+
+    return ResearchToolRegistryBundle(
+        tools=tools,
+        tool_meta_by_name=meta_by_name,
+        tool_groups=tool_groups,
+    )

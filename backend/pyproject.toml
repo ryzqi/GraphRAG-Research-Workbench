@@ -41,6 +41,7 @@ dependencies = [
   "cryptography>=45.0.7,<46",
   "redisvl>=0.16.0,<1",
   "deepagents==0.4.12",
+  "arxiv==2.4.1",
 ]
 
 [dependency-groups]

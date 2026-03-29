@@ -94,6 +94,9 @@ class SearxngSearchProvider:
         time_range: str | None = None,
         include_domains: list[str] | None = None,
         exclude_domains: list[str] | None = None,
+        categories: list[str] | None = None,
+        engines: list[str] | None = None,
+        language: str | None = None,
         timeout_seconds: float | None = None,
         **_: Any,
     ) -> ProviderSearchResponse:
@@ -110,12 +113,15 @@ class SearxngSearchProvider:
         }
         if time_range:
             params["time_range"] = time_range
-        if self._settings.searxng_default_categories:
-            params["categories"] = ",".join(self._settings.searxng_default_categories)
-        if self._settings.searxng_default_language:
-            params["language"] = self._settings.searxng_default_language
-        if self._settings.searxng_default_engines:
-            params["engines"] = ",".join(self._settings.searxng_default_engines)
+        resolved_categories = categories or self._settings.searxng_default_categories
+        resolved_language = language or self._settings.searxng_default_language
+        resolved_engines = engines or self._settings.searxng_default_engines
+        if resolved_categories:
+            params["categories"] = ",".join(resolved_categories)
+        if resolved_language:
+            params["language"] = resolved_language
+        if resolved_engines:
+            params["engines"] = ",".join(resolved_engines)
 
         try:
             payload = await self._request_json(

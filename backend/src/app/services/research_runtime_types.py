@@ -4,7 +4,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Mapping
+from typing import TYPE_CHECKING, Any, Mapping
+
+from langchain.tools import BaseTool
+
+if TYPE_CHECKING:
+    from app.agents.tool_calling.registry import ToolMeta
 
 
 class ResearchProviderId(str, Enum):
@@ -73,6 +78,7 @@ class ResearchRuntimeConfig:
     primary_model: Any
     subagent_model: Any
     system_prompt: str
+    finalizer_model: Any | None = None
     name: str = "deep-research"
     include_mcp: bool = False
     provider_ids: tuple[ResearchProviderId, ...] = DEFAULT_RESEARCH_PROVIDER_IDS
@@ -87,6 +93,8 @@ class ResearchRuntimeConfig:
     command_execution_backend: str | None = None
 
     def __post_init__(self) -> None:
+        if self.finalizer_model is None:
+            self.finalizer_model = self.primary_model
         if self.include_mcp:
             raise ValueError("Deep Research runtime 禁止启用 MCP 工具。")
         if not str(self.system_prompt or "").strip():
@@ -103,3 +111,12 @@ class ResearchRuntimeConfig:
             "include_web_research": True,
             "include_mcp": False,
         }
+
+
+@dataclass(slots=True, frozen=True)
+class ResearchToolRegistryBundle:
+    """研究模式工具注册结果。"""
+
+    tools: list[BaseTool]
+    tool_meta_by_name: dict[str, "ToolMeta"]
+    tool_groups: dict[str, tuple[str, ...]]

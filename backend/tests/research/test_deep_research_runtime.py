@@ -16,6 +16,7 @@ from app.services.research_runtime_types import (
     DEFAULT_RESEARCH_STREAM_POLICY,
     ResearchProviderId,
     ResearchRuntimeConfig,
+    ResearchToolRegistryBundle,
 )
 
 
@@ -120,19 +121,23 @@ async def test_create_deep_research_runtime_uses_single_deepagents_entry() -> No
     checkpointer_sentinel = object()
     store_sentinel = object()
 
-    async def fake_build_tool_registry(**kwargs: Any) -> tuple[list[object], dict[str, object]]:
+    async def fake_build_research_tool_registry(**kwargs: Any) -> ResearchToolRegistryBundle:
         captured["registry_kwargs"] = kwargs
-        return [SimpleNamespace(name="web_search")], {
-            "web_search": SimpleNamespace(tool_name="web_search")
-        }
+        return ResearchToolRegistryBundle(
+            tools=[SimpleNamespace(name="tavily_search")],
+            tool_meta_by_name={
+                "tavily_search": SimpleNamespace(tool_name="tavily_search")
+            },
+            tool_groups={"web": ("tavily_search",), "paper": (), "citation": ()},
+        )
 
     def fake_create_deep_agent(**kwargs: Any) -> str:
         captured["agent_kwargs"] = kwargs
         return "deep-agent-sentinel"
 
-    original_build_tool_registry = runtime_module.build_tool_registry
+    original_build_research_tool_registry = runtime_module.build_research_tool_registry
     original_create_deep_agent = runtime_module.create_deep_agent
-    runtime_module.build_tool_registry = fake_build_tool_registry  # type: ignore[assignment]
+    runtime_module.build_research_tool_registry = fake_build_research_tool_registry  # type: ignore[assignment]
     runtime_module.create_deep_agent = fake_create_deep_agent  # type: ignore[assignment]
     try:
         config = ResearchRuntimeConfig(
@@ -148,18 +153,13 @@ async def test_create_deep_research_runtime_uses_single_deepagents_entry() -> No
             store=store_sentinel,
         )
     finally:
-        runtime_module.build_tool_registry = original_build_tool_registry  # type: ignore[assignment]
+        runtime_module.build_research_tool_registry = original_build_research_tool_registry  # type: ignore[assignment]
         runtime_module.create_deep_agent = original_create_deep_agent  # type: ignore[assignment]
 
     assert captured["registry_kwargs"]["settings"] is settings_sentinel
-    assert captured["registry_kwargs"]["include_web_search"] is True
-    assert captured["registry_kwargs"]["include_web_extract"] is True
-    assert captured["registry_kwargs"]["include_web_crawl"] is True
-    assert captured["registry_kwargs"]["include_web_research"] is True
-    assert captured["registry_kwargs"]["include_mcp"] is False
 
     assert runtime.agent == "deep-agent-sentinel"
-    assert runtime.tools[0].name == "web_search"
+    assert runtime.tools[0].name == "tavily_search"
     assert captured["agent_kwargs"]["model"] == "gpt-5.2"
     assert callable(captured["agent_kwargs"]["backend"])
     assert captured["agent_kwargs"]["checkpointer"] is checkpointer_sentinel
@@ -176,8 +176,25 @@ async def test_create_deep_research_runtime_uses_single_deepagents_entry() -> No
             "model": "gpt-5.2-mini",
             "skills": ["/skills/"],
             "interrupt_on": {"write_file": True},
-        }
+        },
+        {
+            "name": "web",
+            "description": "网页来源子代理：负责 Tavily、Jina Reader、SearXNG 路线。",
+            "system_prompt": "你是深度研究助手。",
+            "tools": runtime.tools,
+            "model": "gpt-5.2-mini",
+            "skills": ["/skills/"],
+            "interrupt_on": {"write_file": True},
+        },
+        {
+            "name": "citation",
+            "description": "引用与报告子代理：负责 finalizer 前的 citation/report 收口。",
+            "system_prompt": "你是深度研究助手。",
+            "model": "gpt-5.2",
+            "skills": ["/skills/"],
+        },
     ]
+    assert runtime.tool_groups == {"web": ("tavily_search",), "paper": (), "citation": ()}
     assert runtime.make_run_config(thread_id="research-thread-1") == {
         "configurable": {"thread_id": "research-thread-1"}
     }

@@ -7,45 +7,45 @@
   - `full-refactor-deep-research/TASK_TODO_MEDIUM.md`
   - `full-refactor-deep-research/TASK_TODO_FINE.md`
   - `full-refactor-deep-research/PROJECT_EXECUTION_STATE.md`
-- Current Focus / Active Phase: Phase 2 - Deep Agents 单引擎运行时与来源路由 / 当前任务 = Task 5（待启动）
+- Current Focus / Active Phase: Phase 2 - Deep Agents 单引擎运行时与来源路由 / 当前任务 = Task 6（待启动）
 - Active Execution Wave:
-  - 为 Task 5 设计 source-aware provider 工具族红测
-  - 接入 Tavily 全功能 / Jina Reader / SearXNG / arXiv 工具实现
-  - 将 provider policy 从 runtime 固定策略推进到真实执行路径
+  - 为 Task 6 编写 `test_research_service.py` 红测
+  - 落地 event store / artifact store / ResearchService
+  - 串起 planner -> runtime -> finalizer 的服务层主路径
 - Last Verified Stop Point:
   - Phase 1 已完成并提交：`0c5fa63 feat(research): restore research persistence foundation`
   - `efc6693 feat(research): add research schema contracts`
   - `c3ccdf2 feat(research): add preflight research planner`
-  - Task 4 已完成：`backend/src/app/services/deep_research_runtime.py`、`backend/src/app/services/research_runtime_types.py`、`backend/tests/research/test_deep_research_runtime.py`
-  - `deepagents==0.4.12` 已接入并通过本地签名核对 `create_deep_agent(..., skills, memory, checkpointer, store, backend, interrupt_on, subagents)` 当前 API
-  - `uv run pytest tests/research/test_deep_research_runtime.py -q` -> `5 passed`
-  - `uv run pytest tests/research/test_models_runtime_schema.py tests/research/test_schemas_research.py tests/research/test_research_planner.py tests/research/test_deep_research_runtime.py -q` -> `18 passed`
-  - `uv run ruff check src/app/services/deep_research_runtime.py src/app/services/research_runtime_types.py tests/research/test_deep_research_runtime.py` -> `All checks passed!`
+  - Task 4 已完成并提交：`a6e6438 feat(research): add deep agents runtime skeleton`
+  - Task 5 已完成并待本次提交：research tool registry / research tools / source bundle / finalizer
+  - `uv run pytest tests/research/test_research_source_tooling.py -q` -> `5 passed`
+  - `uv run pytest tests/research/test_models_runtime_schema.py tests/research/test_schemas_research.py tests/research/test_research_planner.py tests/research/test_deep_research_runtime.py tests/research/test_research_source_tooling.py -q` -> `23 passed`
+  - `uv run ruff check src/app/agents/tool_calling/registry.py src/app/agents/tools/research_tools.py src/app/agents/tools/web_search_providers/searxng_provider.py src/app/services/deep_research_runtime.py src/app/services/research_runtime_types.py src/app/services/research_source_bundle.py src/app/services/research_finalizer.py tests/research/test_deep_research_runtime.py tests/research/test_research_source_tooling.py` -> `All checks passed!`
 - Latest Improvement / Regression Notes:
-  - 改进：Task 4 已把 research runtime 收敛到唯一 `create_deep_agent` 入口，并落地 CompositeBackend / skills / memory / interrupt_on / stream policy 固定策略
-  - 风险：provider policy 目前仍停留在 runtime 配置层，Tavily/Jina/SearXNG/arXiv 真实 source-aware 工具链尚待 Task 5 落地
-- Next Recommended Action: 启动 Task 5，先写 provider 工具族与 source-aware routing 红测
-- Current Blockers: 无硬阻塞；若依赖安装遇到网络/沙箱问题，按 require_escalated 继续执行
+  - 改进：Task 5 已把 runtime 从“只有单入口”推进到“具备 provider-specific tools、source bundle、finalizer、source-aware subagents”
+  - 风险：尚未有服务层把 planner/runtime/finalizer 与三表真正串起来
+- Next Recommended Action: 启动 Task 6，先写 `test_research_service.py` 红测
+- Current Blockers: 无硬阻塞；若后续依赖 / 测试遇到沙箱问题，按 require_escalated 继续
 - Assumptions Awaiting Confirmation:
-  - 研究模式 runtime 将直接 hard cut，不保留旧 research 兼容路径
-  - Task 5 将在不破坏 Task 4 单入口 harness 的前提下补齐 provider 工具族
+  - Task 6 将继续保持单路径 hard cut，不引入旧 research service 兼容层
+  - 当前 source bundle / finalizer 骨架足以支撑后续 service 层集成
 - Parked / Deferred Items:
-  - source-aware provider 真实调用与 finalizer，留给 Task 5/6
-  - API / frontend hard cut，留给 Phase 3+
+  - API / frontend / worker 接入，留给 Task 7+
+  - 真正的 SSE event 映射与 interrupt/resume HTTP 契约，留给 Task 7 / Task 8
 - Key Recent Decisions:
-  - 已归档 Phase 1 todo，并将 active planning files 刷新到 Phase 2
-  - Phase 2 仍保持“一次一任务、任务完成即提交”
+  - `deepagents==0.4.12` 作为当前 stable runtime 版本
+  - `arxiv==2.4.1` 作为论文 provider 客户端依赖
+  - research mode 继续 hard cut：无 MCP、无旧 run-centric fallback
 - Verification Evidence Reference:
-  - `uv run pytest tests/research/test_deep_research_runtime.py -q`
-  - `uv run pytest tests/research/test_models_runtime_schema.py tests/research/test_schemas_research.py tests/research/test_research_planner.py tests/research/test_deep_research_runtime.py -q`
-  - `uv run ruff check src/app/services/deep_research_runtime.py src/app/services/research_runtime_types.py tests/research/test_deep_research_runtime.py`
-  - 官方 Deep Agents 文档：customization / streaming / release policy / PyPI `deepagents`
+  - `uv run pytest tests/research/test_research_source_tooling.py -q`
+  - `uv run pytest tests/research/test_models_runtime_schema.py tests/research/test_schemas_research.py tests/research/test_research_planner.py tests/research/test_deep_research_runtime.py tests/research/test_research_source_tooling.py -q`
+  - `uv run ruff check src/app/agents/tool_calling/registry.py src/app/agents/tools/research_tools.py src/app/agents/tools/web_search_providers/searxng_provider.py src/app/services/deep_research_runtime.py src/app/services/research_runtime_types.py src/app/services/research_source_bundle.py src/app/services/research_finalizer.py tests/research/test_deep_research_runtime.py tests/research/test_research_source_tooling.py`
+  - 官方 Deep Agents 文档：customization / backends / streaming / subagents / release policy / PyPI `deepagents`
 - Related Files:
-  - `full-refactor-deep-research/PROJECT_PHASE_ROADMAP.md`
-  - `full-refactor-deep-research/TASK_TODO_MEDIUM.md`
-  - `full-refactor-deep-research/TASK_TODO_FINE.md`
-  - `backend/pyproject.toml`
-  - `backend/src/app/services/deep_research_runtime.py`
-  - `backend/src/app/services/research_runtime_types.py`
   - `backend/src/app/agents/tool_calling/registry.py`
+  - `backend/src/app/agents/tools/research_tools.py`
+  - `backend/src/app/services/deep_research_runtime.py`
+  - `backend/src/app/services/research_source_bundle.py`
+  - `backend/src/app/services/research_finalizer.py`
+  - `backend/tests/research/test_research_source_tooling.py`
 - Last Updated: 2026-03-29

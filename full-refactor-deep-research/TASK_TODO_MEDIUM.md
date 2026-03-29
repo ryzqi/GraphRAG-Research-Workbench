@@ -12,99 +12,98 @@
   - `TASK_TODO_MEDIUM.md`
   - `TASK_TODO_FINE.md`
   - `PROJECT_EXECUTION_STATE.md`
-- Project Modules: Deep Agents runtime 与 source-aware tooling；契约与会话编排
+- Project Modules: Deep Agents runtime；source-aware tooling；service / event / artifact orchestration
 - Brownfield Context / Codebase Map:
-  - Phase 1 已完成并提交：`research_sessions / research_events / research_artifacts` 三表、`schemas/research.py`、`research_planner.py`
-  - backend 已锁定 `deepagents==0.4.12`，并通过本地签名核对 `create_deep_agent(..., skills, memory, checkpointer, store, backend, interrupt_on, subagents)` 当前 API
-  - runtime 相关旧 research 服务/路由仍为空白，需要从最新官方 Deep Agents 用法直接 hard cut 新实现
-  - 需重点关注：`backend/src/app/agents/tool_calling/registry.py`、`backend/src/app/services/*`、`full-refactor-deep-research/design.md`
+  - Phase 1 已完成并提交：持久化三表、schema、planner
+  - Task 4 已完成并提交：`backend/src/app/services/deep_research_runtime.py`、`research_runtime_types.py`
+  - Task 5 已完成并待本次提交：`build_research_tool_registry`、`research_tools.py`、`research_source_bundle.py`、`research_finalizer.py`
+  - 当前尚未落地：`ResearchEventStore`、`ResearchArtifactStore`、`ResearchService`
 - Primary User / Stakeholder: 当前仓库维护者 / 毕设演示链路
-- Customer Problem / Desired Outcome: 把 Phase 1 的业务壳层接到唯一的 Deep Agents runtime harness，上游不再停留在“只有模型和契约”的半成品状态
-- Why Now / Decision Driver: 若不先完成 runtime 单入口与来源路由，后续 ResearchService / API / 前端都无法真正联通
-- Phase Roadmap Summary: 先完成 Task 4 runtime skeleton 与依赖锁定，再做 Task 5 source-aware routing，最后做 Task 6 service/persistence orchestration
+- Customer Problem / Desired Outcome: 在已具备 planner、runtime、source bundle、finalizer 骨架后，补齐真正把会话、事件、工件串起来的服务层
+- Why Now / Decision Driver: 没有 Task 6，Task 7 的 API / SSE / resume 仍然无法建立在真实 orchestration 之上
 - Current Phase: Phase 2 - Deep Agents 单引擎运行时与来源路由
-- Phase Goal: 完成 Task 4-6 的 runtime/service 主骨架，当前先完成 Task 4（Deep Agents 单引擎运行时）
+- Phase Goal: 完成 Task 6（研究会话编排与持久化服务）
 - Phase Scope:
-  - 包含：Deep Agents 依赖策略、runtime types、`create_deep_agent` 单入口、后端分层、研究模式工具装配约束、Task 4 测试
-  - 不包含：Task 7+ 当前 API / 前端改造
+  - 包含：event store、artifact store、ResearchService、状态迁移、幂等恢复测试
+  - 不包含：Task 7+ API / worker / frontend
 - Non-goals:
-  - 不保留旧 research engine / run-centric fallback
-  - 不在本轮把所有 API/worker/frontend 一并接上
+  - 不回退到旧 run-centric research runtime
+  - 不在此轮接通当前 API 路由与 SSE
 - Phase Deliverables:
-  - `backend/src/app/services/deep_research_runtime.py`
-  - `backend/src/app/services/research_runtime_types.py`
-  - 运行时依赖与装配策略
-  - `backend/tests/research/test_deep_research_runtime.py`
-- Active Execution Wave: Task 4 已完成；下一任务 = Task 5 source-aware routing
+  - `backend/src/app/services/research_event_store.py`（或等价）
+  - `backend/src/app/services/research_artifact_store.py`（或等价）
+  - `backend/src/app/services/research_service.py`
+  - `backend/tests/research/test_research_service.py`
+- Active Execution Wave: Task 5 已完成；下一任务 = Task 6 service/persistence orchestration
 - Entry Criteria:
-  - Phase 1 三个任务已提交：`0c5fa63` / `efc6693` / `c3ccdf2`
-  - 最新官方 Deep Agents 文档已核对，`create_deep_agent` / `stream(... version="v2", subgraphs=True)` / `interrupt_on + checkpointer` 为当前约束
+  - Phase 1 已完成
+  - Task 4 / Task 5 的 runtime 与 source-aware tooling 已通过定向验证
 - Exit Criteria / Done Definition:
-  - Task 4 代码与测试完成并提交
-  - 已锁定 `deepagents` 依赖策略，且 runtime 只保留单入口
+  - Task 6 代码与测试完成并提交
+  - 能串起 planner -> runtime -> finalizer 的服务层骨架
   - 定向 pytest / ruff 通过
-- Transition Notes / Next Phase Trigger: Task 4 提交后继续在 Phase 2 内推进 Task 5（source-aware routing）
-- Previous Phase Summary: Phase 1 已完成 Task 1-3，输出三表、schema 契约与 preflight planner，并归档旧 todo
+- Transition Notes / Next Phase Trigger: Task 6 提交后继续推进 Task 7（API / stream integration）
 
 ## Part 1: 当前阶段需求与范围
-### 1.1 锁定 Task 4 目标
-- [x] Task: 将 `tasks.md` Task 4 重写为可执行 runtime 目标
-- Goal: 明确本轮先解决依赖、runtime 单入口与中间件/后端装配，不抢跑 service/API
-- Done when: Task 4 边界与验收清晰
-- Deliverables: 当前执行目标说明
-- Notes: 以 `create_deep_agent` 为唯一运行时入口
+### 1.1 完成 Task 5 收口
+- [x] Task: 落地 provider-specific research tools、source bundle 与 finalizer
+- Goal: 把 runtime 从“只有单入口”推进到“具备 source-aware 基础能力”
+- Done when: research tool registry / subagents / finalizer / source bundle 已验证
+- Deliverables:
+  - `backend/src/app/agents/tools/research_tools.py`
+  - `backend/src/app/services/research_source_bundle.py`
+  - `backend/src/app/services/research_finalizer.py`
+  - `backend/tests/research/test_research_source_tooling.py`
+- Notes: Task 5 已完成并将在本次与 planning/state 一起提交
 
-### 1.2 确认 Task 4 约束与依赖
-- [x] Task: 汇总 Deep Agents 版本策略、现有 langchain/langgraph 依赖、研究模式工具装配入口与测试面
-- Goal: 避免运行时实现与依赖版本失配
-- Done when: 约束、依赖、风险已记录
-- Deliverables: 当前约束摘要
-- Notes: 已选用 stable `deepagents==0.4.12`；当前 0.4.12 实际签名已覆盖 Task 4 所需 API，无需切到 pre-release
+### 1.2 锁定 Task 6 目标
+- [ ] Task: 将 `tasks.md` Task 6 收敛为 event store + artifact store + ResearchService + 定向测试
+- Goal: 避免在服务层阶段提前把 API / worker / SSE 一并拉进来
+- Done when: Task 6 边界与验收清晰
+- Deliverables: Task 6 执行目标
+- Notes: 当前 phase 仍保持“一次只完成一个任务”
 
 ## Part 2: 当前阶段研究与计划
-### 2.1 复核 Task 4 上下文
-- [x] Task: 审查 `pyproject.toml`、tool registry、Phase 1 输出、官方 Deep Agents customization/backends/streaming 文档
-- Goal: 让 runtime 设计与本地 baseline、一手文档一致
-- Done when: 当前 task 的事实源已确认
-- Deliverables: 上下文摘要
-- Notes: 只依赖官方文档与本仓代码，不靠旧 research 残留猜测
+### 2.1 复核 Task 6 依赖上下文
+- [ ] Task: 审查 `research_session / research_event / research_artifact` 模型、planner、runtime、finalizer 与现有 DB/service 习惯
+- Goal: 让服务层实现贴合当前仓库模式
+- Done when: store/service 的职责边界明确
+- Deliverables: Task 6 上下文摘要
+- Notes: 只基于当前代码与已验证 stop point，不靠旧 research 方案猜测
 
-### 2.2 确立 Task 4 执行顺序
-- [x] Task: 采用“依赖/设计确认 -> failing test -> runtime types + runtime skeleton -> verify -> commit”顺序
-- Goal: 满足 requirement-to-delivery + TDD + git 提交流程
+### 2.2 确立 Task 6 执行顺序
+- [ ] Task: 采用“红测 -> event/artifact store -> ResearchService -> 绿测 -> 状态同步 -> 提交”顺序
+- Goal: 满足 TDD 与一次一任务提交纪律
 - Done when: 执行顺序稳定
-- Deliverables: Task 4 执行顺序
-- Notes: 完成后继续推进 Task 5
+- Deliverables: Task 6 执行顺序
+- Notes: Task 6 完成后再进入 Task 7
 
 ## Part 3: 当前阶段执行
-### 3.1 完成 Task 4 runtime 单入口
-- [x] Task: 落地 Deep Agents runtime skeleton、研究模式工具装配约束与后端分层配置
-- Goal: 恢复研究模式唯一 runtime 入口
-- Done when: `deep_research_runtime.py` / `research_runtime_types.py` 与测试完成，且无旧并行 runtime 残留
-- Deliverables: runtime 文件与定向测试
-- Notes: 本轮未发现需删除的旧 runtime 文件；当前以 `deep_research_runtime.py` 为唯一 research runtime 入口
+### 3.1 启动 Task 6 红测
+- [ ] Task: 新建 `backend/tests/research/test_research_service.py`
+- Goal: 先固定 planner -> runtime -> finalizer -> artifacts 的服务层合同
+- Done when: pytest 因缺失服务层实现而稳定失败
+- Deliverables: failing test
+- Notes: 红测需覆盖事件顺序、工件写入、幂等恢复骨架
 
-### 3.2 完成 Task 4 定向验证
-- [x] Task: 新增并通过 Task 4 对应测试
-- Goal: 证明单入口、禁用 MCP、后端分层、主/子代理模型与恢复配置真实存在
-- Done when: 先红后绿记录完整
-- Deliverables: 测试文件与验证输出
-- Notes: 已完成红测（缺少 `app.services.deep_research_runtime` 导致收集失败）-> 绿测（`5 passed`）
+### 3.2 落地 Task 6 服务层骨架
+- [ ] Task: 实现 event store、artifact store、ResearchService
+- Goal: 把现有 planner/runtime/finalizer 接成单一路径
+- Done when: 红测转绿
+- Deliverables: service/store 文件
+- Notes: 发现旧 research service 遗留则直接删
 
 ## Part 4: 验证与切换
-### 4.1 验证 Task 4 产物
-- [x] Task: 运行 Task 4 定向 pytest / ruff / 依赖检查
-- Goal: 为 git 提交提供新鲜证据
+### 4.1 验证 Task 6 产物
+- [ ] Task: 运行 Task 6 定向 pytest / ruff
+- Goal: 为下一次提交提供 fresh verification
 - Done when: 验证输出支持“已验证通过”
-- Deliverables:
-  - `uv run pytest tests/research/test_deep_research_runtime.py -q` -> `5 passed`
-  - `uv run pytest tests/research/test_models_runtime_schema.py tests/research/test_schemas_research.py tests/research/test_research_planner.py tests/research/test_deep_research_runtime.py -q` -> `18 passed`
-  - `uv run ruff check src/app/services/deep_research_runtime.py src/app/services/research_runtime_types.py tests/research/test_deep_research_runtime.py` -> `All checks passed!`
+- Deliverables: 验证记录
 - Notes: 若失败则继续修复
 
 ### 4.2 同步状态并提交
-- [x] Task: 更新 todo / state，完成 Task 4 git 提交，并锁定下一个任务为 Task 5
-- Goal: 保持一次一任务的执行纪律
+- [ ] Task: 更新 todo / state，完成 Task 6 git 提交，并锁定下一个任务为 Task 7
+- Goal: 保持执行节奏稳定
 - Done when: 已提交且下个任务明确
 - Deliverables: 提交记录与下一任务决策
-- Notes: 未提交前不得声称 Task 4 完成
+- Notes: 未提交前不得宣称 Task 6 完成
