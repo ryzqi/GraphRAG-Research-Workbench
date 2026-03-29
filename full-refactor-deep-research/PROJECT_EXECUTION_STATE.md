@@ -1,0 +1,43 @@
+# Project Execution State
+
+## Current State
+- Current Mode: Multi-phase
+- Artifact Policy / Active Planning Files:
+  - `full-refactor-deep-research/PROJECT_PHASE_ROADMAP.md`
+  - `full-refactor-deep-research/TASK_TODO_MEDIUM.md`
+  - `full-refactor-deep-research/TASK_TODO_FINE.md`
+  - `full-refactor-deep-research/PROJECT_EXECUTION_STATE.md`
+- Current Focus / Active Phase: Phase 1 - 研究域模型与契约底座 / 当前任务 = Task 1
+- Active Execution Wave:
+  - 更新 planning files 完成状态
+  - 执行 Task 1 git commit
+  - 提交后切换当前任务到 Task 2
+- Last Verified Stop Point:
+  - Task 1 已完成 RED -> GREEN：RED=`ModuleNotFoundError: No module named 'app.models.research_artifact'`
+  - `uv run pytest tests/research/test_models_runtime_schema.py -q` -> `5 passed`
+  - `uv run ruff check ...` -> `All checks passed!`
+  - `uv run alembic heads` -> `38f4aa0f8d91 (head)`
+- Latest Improvement / Regression Notes:
+- 改进：Task 1 已恢复三表 ORM、状态机 helper、base 注册与迁移；误生成的 `store` 表删除语句已手工去除
+- 风险：`deepagents` 依赖版本仍待进入 runtime 阶段时最终锁定
+- Next Recommended Action: git 提交 Task 1，并把 active task 切到 Task 2（研究 schema 契约）
+- Current Blockers: 无阻塞；后续若 uv / alembic 因沙箱受限，继续按已批准前缀执行
+- Assumptions Awaiting Confirmation:
+  - 本轮先采用 session 独立三表，不恢复 `AgentRunType.RESEARCH`
+  - `namespace` 在 event 层采用非空字符串并给默认主命名空间
+- Parked / Deferred Items:
+  - Deep Agents 依赖接入与版本锁定
+  - 前端 run-centric hard cut
+- Key Recent Decisions:
+  - 事实源优先级：本地代码/迁移 -> full-refactor 设计文档 -> 2026-03-29 官方 Deep Agents 文档
+  - 当前 phase 只做 Task 1，不抢跑 Task 2/3
+- Verification Evidence Reference:
+  - `uv run alembic heads && uv run alembic current`
+  - 官方 Deep Agents 文档：customization / streaming / release policy / PyPI `deepagents`
+- Related Files:
+  - `full-refactor-deep-research/PROJECT_PHASE_ROADMAP.md`
+  - `full-refactor-deep-research/TASK_TODO_MEDIUM.md`
+  - `full-refactor-deep-research/TASK_TODO_FINE.md`
+  - `full-refactor-deep-research/tasks.md`
+  - `full-refactor-deep-research/specs/research-persistence-model/spec.md`
+- Last Updated: 2026-03-29
