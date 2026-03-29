@@ -16,28 +16,30 @@
   - `PROJECT_EXECUTION_STATE.md`
 - Project Modules: Deep Agents runtime；source-aware tooling；service / persistence orchestration；API / worker / export；frontend workbench；observability / docs / release gate
 - Primary User / Stakeholder: 当前仓库维护者 / 毕设演示链路
-- Customer Problem / Desired Outcome: 在主链路已打通的基础上，继续把文档、契约与最终交付门禁统一到当前 `session_id` 单路径 research 事实源。
-- Why Now / Decision Driver: Task 11 已补齐 observability / replay / rollback，但若文档不同步，Task 13 的最终验证与交付结论仍会失真。
+- Customer Problem / Desired Outcome: 在主链路与文档事实源都已统一后，完成最终全量验证、demo 与启动 smoke，确保可以诚实宣称当前 Deep Research 主路径可交付。
+- Why Now / Decision Driver: Task 12 已同步文档与 demo 入口；若不继续完成 Task 13，全量测试、build 与启动结论仍然缺失。
 - Current Phase: Phase 5 - 可观测、文档同步与最终交付门禁
-- Phase Goal: 完成 Task 12（文档与契约同步）
+- Phase Goal: 完成 Task 13（最终验证与交付门禁）
 - Phase Scope:
-  - 包含：`proposal.md`、`design.md`、`README.md`、research API contract docs、demo script 文档入口
-  - 不包含：Task 13 的全量测试 / build / 启动实跑
+  - 包含：backend 全量 `pytest` / `ruff`、frontend `typecheck` / `build`、demo script 实跑、启动 smoke、gate 结论收口
+  - 不包含：新的 runtime 结构改造；除非验证失败，否则不再扩展文档范围
 - Non-goals:
   - 不恢复旧 `/api/v1/research/runs*`
-  - 不在此轮做新的 runtime 结构改造
+  - 不在此轮做新的 runtime 功能扩张
 - Phase Deliverables:
-  - 当前研究单路径术语统一文档
-  - `docs/api_contract_research.md`
-  - Task 11 observability / gate / replay / rollback 文档锚点
-- Active Execution Wave: Task 11 已完成；下一任务 = Task 12 docs sync
+  - backend / frontend 全量验证证据
+  - demo script 实跑证据
+  - 启动 smoke 与 gate 决议记录
+- Active Execution Wave: Task 12 已完成；下一任务 = Task 13 final verification
 - Entry Criteria:
   - Phase 4 已完成
-  - Task 11 trace / metrics / gate / replay / rollback 已验证
+  - Task 11 trace / metrics / gate / replay / rollback 已验证并提交
+  - Task 12 文档与 demo 入口已同步
 - Exit Criteria / Done Definition:
-  - Task 12 文档同步完成并提交
-  - 所有文档统一使用当前 research session contract 术语
-  - Task 13 可直接据此执行全量验证
+  - Task 13 全量验证完成并提交
+  - backend 全量测试与 ruff 通过
+  - frontend typecheck 与 build 通过
+  - demo script 与启动验证通过，并形成 gate 结论
 
 ## Part 1: 已完成任务收口
 ### 1.1 Task 10 完成记录
@@ -74,29 +76,50 @@
   - 默认 gate 阈值：quality `0.75` / p95 `120000ms` / session cost `2.0 USD`
   - rollback drill 当前为 dry-run，不执行破坏性 git / service 操作
 
+### 1.3 Task 12 完成记录
+- [x] Task: 同步 proposal / design / specs / README / docs / demo script 到当前 research session contract
+- Goal: 让 Task 13 的最终验证以单一路径事实源为准
+- Done when:
+  - README / architecture / API contract 均指向 `/api/v1/research/sessions*`
+  - demo script 指向当前会话化接口
+  - Deep Agents 文档快照已明确“无顶层 `subagent_model`，子代理模型落到 `subagents[*].model`”
+- Deliverables:
+  - `README.md`
+  - `docs/api_contract_research.md`
+  - `docs/architecture.md`
+  - `full-refactor-deep-research/proposal.md`
+  - `full-refactor-deep-research/design.md`
+  - `full-refactor-deep-research/tasks.md`
+  - `full-refactor-deep-research/deepagents-latest-usage-2026-03-26.md`
+  - `full-refactor-deep-research/deepagents-implementation-analysis-2026-03-26.md`
+  - `full-refactor-deep-research/specs/*/spec.md`
+  - `scripts/demo_research.ps1`
+- Verification:
+  - `pwsh -ExecutionPolicy Bypass -File .\scripts\demo_research.ps1 -DryRun` -> 输出当前会话化流程
+  - `rg -n "0\.5\.0a2|s\.jina\.ai|/api/v1/research/runs\*|/api/v1/research/runs|run_id\b|create_deep_agent\([^\n]*subagent_model|subagent_model=" ...` -> 仅剩有意保留的否定说明与 `gate_run_id`
+  - `uv run python -c "import inspect; from deepagents import create_deep_agent; print(inspect.signature(create_deep_agent))"` -> 不含顶层 `subagent_model`
+
 ## Part 2: 当前阶段目标
-### 2.1 锁定 Task 12 目标
-- [x] Task: 将 active todo 切换到 `tasks.md` Task 12（文档与契约同步）
-- Goal: 让后续工作以文档事实源驱动，不再混用旧术语
-- Done when: Phase 5 当前执行波次与 Task 12 边界清晰
-- Deliverables: Task 12 执行目标
+### 2.1 锁定 Task 13 目标
+- [x] Task: 将 active todo 切换到 `tasks.md` Task 13（最终验证与交付门禁）
+- Goal: 用 fresh verification 证明当前主路径可启动、可验证、可交付
+- Done when: Phase 5 当前执行波次与 Task 13 边界清晰
+- Deliverables: Task 13 执行目标
 - Notes: 继续保持“一次只完成一个任务”
 
 ## Part 3: 当前阶段研究与计划
-### 3.1 Task 12 输入事实源
-- [ ] Task: 汇总当前 docs / specs / README / design 中仍引用旧 research 术语的段落
-- Goal: 锁定需要同步的文档范围
-- Done when: Task 12 文档清单明确
+### 3.1 Task 13 输入事实源
+- [ ] Task: 固定当前验证矩阵与命令顺序
+- Goal: 避免在最终收口阶段遗漏 backend / frontend / demo / startup 任一关键环节
+- Done when: Task 13 验证矩阵明确
 - Deliverables:
-  - `proposal.md`
-  - `design.md`
-  - `README.md`
-  - `docs/api_contract_research.md`
-  - `specs/*/spec.md`
-- Notes: 以当前代码与 Task 11 产物为唯一事实源
+  - backend：`uv run pytest`、`uv run ruff check .`
+  - frontend：`npm run typecheck`、`npm run build`
+  - demo / startup：`scripts/demo_research.ps1`、实际启动链路
+- Notes: 以当前代码、Task 11 gate 工件、Task 12 文档事实源为准
 
-### 3.2 Task 12 执行顺序
-- [ ] Task: 采用“盘点旧术语 -> 更新文档 -> 交叉校对 API / gate / rollback 表述 -> 定向验证 -> 提交”顺序
-- Goal: 保持文档更新与当前实现一致
+### 3.2 Task 13 执行顺序
+- [ ] Task: 采用“backend 全量 -> frontend 构建 -> demo -> 启动 smoke -> gate 决议 -> 提交”顺序
+- Goal: 让失败定位保持单向收敛，避免混淆根因
 - Done when: 下一轮执行顺序稳定
-- Notes: Task 12 完成后进入 Task 13 全量验证
+- Notes: 若任一步失败，先修复再继续后续步骤

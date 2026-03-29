@@ -15,6 +15,19 @@ preface exists mainly to keep the file ASCII-friendly for tooling and patching o
 - 根路径 `/` 默认进入普通代理。
 - 顶部导航顺序：普通代理 → 知识库问答 → 知识库管理 → 深度研究 → MCP扩展。
 
+## 当前 Deep Research 主路径
+
+- 当前 Deep Research 以 `session_id` 为唯一业务主标识，接口统一为 `/api/v1/research/sessions*`。
+- 当前工件读取主路径为 `research_artifacts`，最终报告使用 `report_md` / `report_json`，可观测工件使用 `metrics_snapshot` / `gate_snapshot`。
+- 当前事件封套保留 `trace_id`、`phase`、`namespace`、`lc_agent_name`、`source_provider`，用于 timeline / replay / gate 审计。
+- 契约文档见：`docs/api_contract_research.md`
+- 演示脚本见：`scripts/demo_research.ps1`
+- dry-run 示例：
+
+```powershell
+pwsh -ExecutionPolicy Bypass -File .\scripts\demo_research.ps1 -DryRun
+```
+
 ## LLM 配置说明（重要）
 
 - LLM 主配置（供应商、Base URL、API Key、模型列表、全局生效模型）仅通过前端「模型配置」页面维护。

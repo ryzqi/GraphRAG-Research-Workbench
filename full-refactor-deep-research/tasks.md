@@ -34,7 +34,7 @@
 - [ ] 4.1 新建 `deep_research_runtime.py` 与 `research_runtime_types.py`，统一封装 `create_deep_agent` 运行时构建。
 - [ ] 4.2 在工具注册层增加“研究模式无 MCP”装配函数，并确保深度研究默认同时装配 Tavily、Jina Reader、SearXNG、arXiv 四类 provider。
 - [ ] 4.3 对齐当前 DeepAgents 中间件栈（TodoList / Filesystem / SubAgent / Summarization / PatchToolCalls），并在需要时启用 Memory / Skills / HITL。
-- [ ] 4.4 显式配置 `checkpointer`、`thread_id` 映射、`subagent_model`、`interrupt_on` 与大结果落盘策略。
+- [ ] 4.4 显式配置 `checkpointer`、`thread_id` 映射、子代理模型（落到 `subagents[*].model`）、`interrupt_on` 与大结果落盘策略。
 - [ ] 4.5 实现 `CompositeBackend` 分层路由：`/workspace|/scratch|/plans -> StateBackend`，`/memories|/skills -> StoreBackend`；预置 `AGENTS.md` 与技能目录。
 - [ ] 4.6 若研究需要执行命令，选型并接入官方 sandbox backend；禁止生产使用 `LocalShellBackend`。
 - [ ] 4.7 编写 `backend/tests/research/test_deep_research_runtime.py`，验证单入口、禁用 MCP、中间件装配、后端分层、落盘策略、主/子代理模型分层与恢复配置。
@@ -106,10 +106,10 @@
 
 ## 12. 文档与契约同步
 
-- [ ] 12.1 更新 `proposal.md`、`design.md`、`specs/*/spec.md` 与 `tasks.md`，统一为当前研究单路径术语。
-- [ ] 12.2 更新 `README.md`、`docs/architecture.md` 并新增 `docs/api_contract_research.md`。
-- [ ] 12.3 在契约文档中明确当前研究端点集合、事件封套、planner/runtime/finalizer 阶段边界、namespace streaming、`source_provider` 语义与错误码。
-- [ ] 12.4 编写 `scripts/demo_research.ps1`，覆盖 create session、plan preview、confirm、stream、interrupt、resume、final 全流程。
+- [x] 12.1 更新 `proposal.md`、`design.md`、`specs/*/spec.md` 与 `tasks.md`，统一为当前研究单路径术语，并补充 Deep Agents `subagents[*].model` 最新用法约束。
+- [x] 12.2 更新 `README.md`、`docs/architecture.md` 并新增 `docs/api_contract_research.md`。
+- [x] 12.3 在契约文档中明确当前研究端点集合、事件封套、planner/runtime/finalizer 阶段边界、namespace streaming、`source_provider` 语义与错误码。
+- [x] 12.4 编写 `scripts/demo_research.ps1`，覆盖 create session、plan preview、confirm、stream、interrupt、resume、final 全流程。
 
 ## 13. 最终验证与交付门禁
 

@@ -55,7 +55,7 @@
 - **source_bundle**：runtime 某阶段收拢后的来源包，包含选中证据、去重结果、`coverage_gaps` 与 `interim_summary`。
 - **event families**：研究事件统一归入 `research.plan.*`、`research.source.*`、`research.run.*`、`artifact.*`。
 - **namespace-aware streaming**：保留 main agent / subagent 命名空间的流式事件协议。
-- **subagent_model**：子代理默认模型配置，用于与主代理模型分层控成本。
+- **子代理模型配置**：仓库内可用 `subagent_model` 作为配置对象字段，但落地到 Deep Agents 时必须映射为 `subagents[*].model`，用于与主代理模型分层控成本。
 
 ## Search Provider Matrix
 
@@ -176,7 +176,7 @@
    - 原因：避免 prompt 膨胀，并与官方 context engineering 最佳实践对齐。
 
 24. **主 / 子代理模型默认分层**
-   - 决策：主代理使用较强模型；子代理允许使用更便宜的 `subagent_model`；finalizer 使用结构化输出稳定的模型。
+   - 决策：主代理使用较强模型；子代理通过 `subagents[*].model` 使用更便宜的独立模型；仓库内允许保留 `subagent_model` 作为配置别名，但不得误写为 `create_deep_agent` 顶层参数；finalizer 使用结构化输出稳定的模型。
    - 原因：兼顾复杂任务质量与成本门禁。
 
 25. **runtime 必须显式沉淀 source bundle / interim summary**
@@ -211,6 +211,7 @@
 - 性能门禁：关键路径 P95 延迟 `<= RESEARCH_GATE_MAX_P95_MS`（默认 `120000ms`）。
 - 成本门禁：单会话成本 `<= RESEARCH_GATE_MAX_SESSION_COST_USD`（默认 `2.0 USD`）。
 - 稳定性门禁：中断恢复 E2E、故障注入、事件回放全部通过。
+- 可观测工件：`metrics_snapshot` / `gate_snapshot` 必须可按 `session_id` 读取并用于审计。
 - 来源覆盖门禁：至少覆盖纯网页、纯论文、网页+论文混合三类任务。
 - 契约收口门禁：文档、任务和规格统一使用当前研究单路径术语。
 
@@ -225,7 +226,7 @@
 - Deep Agents Streaming: <https://docs.langchain.com/oss/python/deepagents/streaming>
 - Deep Agents Human-in-the-loop: <https://docs.langchain.com/oss/python/deepagents/human-in-the-loop>
 - Deep Agents Long-term memory: <https://docs.langchain.com/oss/python/deepagents/long-term-memory>
-- Deep Agents latest release (`deepagents==0.5.0a2`, 2026-03-23): <https://github.com/langchain-ai/deepagents/releases/tag/deepagents%3D%3D0.5.0a2>
+- Deep Agents repo baseline used in this codebase: `deepagents==0.4.12`（当前实现已按官方文档校准）
 - Tavily Credits & Pricing: <https://docs.tavily.com/documentation/api-credits>
 - Tavily Search / Extract / Crawl / Research: <https://docs.tavily.com/documentation/api-reference/endpoint/search>
 - Jina Reader README (`r.jina.ai`): <https://github.com/jina-ai/reader>

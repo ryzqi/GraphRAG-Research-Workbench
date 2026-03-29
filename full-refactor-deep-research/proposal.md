@@ -102,7 +102,7 @@
 ### Runtime & Artifacts
 - 研究运行时仅存在 `create_deep_agent` 单入口。
 - runtime 配置中明确存在 `checkpointer`，并保持 `thread_id` 与 `session_id` 的稳定关联。
-- 主代理与 `subagent_model` 分层配置可独立治理成本与并发。
+- 主代理与子代理模型分层配置可独立治理成本与并发；Deep Agents 落地时通过 `subagents[*].model` 显式声明，不能假设 `create_deep_agent` 存在顶层 `subagent_model` 参数。
 - preflight planner 与正式研究执行分离，未审批计划不得直接进入高成本外部研究。
 - 深度研究工具集内必须同时启用 Tavily、Jina Reader、SearXNG、arXiv 四条能力链路；不得在运行时裁剪为单 provider 模式。
 - Tavily 在深度研究模式下必须开放 `search`、`extract`、`crawl`、`research` 全功能。
@@ -110,6 +110,7 @@
 - `paper` 任务必须通过 Python `arxiv` 库执行 direct arXiv 检索，不得退化为 Tavily 域名过滤。
 - runtime 在 finalizer 前显式沉淀 `source_bundle`、`interim_summary`、`coverage_gaps`，供恢复、回放与诊断使用。
 - 研究 finalizer 稳定产出 `report_md` 与 `report_json`，后者包含 canonical citations、`source_provider` / `retrieval_method` 元数据与论文结构化元数据。
+- Task 11 后研究工件稳定补充 `metrics_snapshot` 与 `gate_snapshot`，用于发布门禁、事件回放诊断与 rollback 审计。
 - 研究模式工具集不包含 MCP 注入工具；执行能力若存在，仅经 sandbox backend 暴露。
 
 ### Frontend UX
@@ -173,7 +174,7 @@
 - Deep Agents Streaming: <https://docs.langchain.com/oss/python/deepagents/streaming>
 - Deep Agents Human-in-the-loop: <https://docs.langchain.com/oss/python/deepagents/human-in-the-loop>
 - Deep Agents Long-term memory: <https://docs.langchain.com/oss/python/deepagents/long-term-memory>
-- Deep Agents latest release (`deepagents==0.5.0a2`, 2026-03-23): <https://github.com/langchain-ai/deepagents/releases/tag/deepagents%3D%3D0.5.0a2>
+- Deep Agents repo baseline used in this codebase: `deepagents==0.4.12`（当前实现已按官方文档校准）
 - Tavily Credits & Pricing: <https://docs.tavily.com/documentation/api-credits>
 - Tavily Search / Extract / Crawl / Research: <https://docs.tavily.com/documentation/api-reference/endpoint/search>
 - Jina Reader README (`r.jina.ai`): <https://github.com/jina-ai/reader>

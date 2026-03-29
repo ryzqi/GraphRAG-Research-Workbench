@@ -7,11 +7,11 @@
   - `full-refactor-deep-research/TASK_TODO_MEDIUM.md`
   - `full-refactor-deep-research/TASK_TODO_FINE.md`
   - `full-refactor-deep-research/PROJECT_EXECUTION_STATE.md`
-- Current Focus / Active Phase: Phase 5 - 可观测、文档同步与最终交付门禁 / 当前任务 = Task 12（待启动）
+- Current Focus / Active Phase: Phase 5 - 可观测、文档同步与最终交付门禁 / 当前任务 = Task 13（待启动）
 - Active Execution Wave:
-  - 同步 `proposal.md` / `design.md` / `README.md` / research contract docs 到当前单路径术语
-  - 记录 Task 11 新增的 metrics / gate / replay / rollback 事实源
-  - 为 Task 13 的 demo / startup 验证准备统一文档入口
+  - 执行 backend 全量 `pytest` / `ruff`
+  - 执行 frontend `typecheck` / `build`
+  - 执行 demo script 与启动 smoke，并据此汇总最终 gate 结论
 - Last Verified Stop Point:
   - Phase 1 已完成并提交：`0c5fa63 feat(research): restore research persistence foundation`
   - `efc6693 feat(research): add research schema contracts`
@@ -23,19 +23,19 @@
   - Task 8 提交：`f290489 feat(research): add research artifact exports`
   - Task 9 提交：`5f429ee feat(research): cut frontend to session contract`
   - Task 10 提交：`a262b17 feat(research): add research workbench panels`
-  - Task 11 已完成（待本次提交）：
-    - `uv run pytest tests/research tests/api/test_research_endpoints.py -q` -> `48 passed`
-    - `uv run ruff check src/app/services/research_observability.py src/app/services/research_replay.py src/app/services/research_service.py src/app/worker/tasks/research.py src/app/schemas/research.py tests/research tests/api/test_research_endpoints.py` -> `All checks passed!`
-    - `npm run typecheck` -> `passed`
-    - `scripts/research_rollback_drill.ps1` -> generated `full-refactor-deep-research/research-rollback-drill-record.md`
+  - Task 11 提交：`d5448a3 feat(research): add observability gates and replay coverage`
+  - Task 12 已完成（待本次提交）：
+    - `pwsh -ExecutionPolicy Bypass -File .\scripts\demo_research.ps1 -DryRun` -> 输出当前 `/api/v1/research/sessions*` demo 流程
+    - `rg -n "0\.5\.0a2|s\.jina\.ai|/api/v1/research/runs\*|/api/v1/research/runs|run_id\b|create_deep_agent\([^\n]*subagent_model|subagent_model=" ...` -> 仅剩有意保留的否定说明、`gate_run_id` 与“无顶层 `subagent_model`”校准说明
+    - `uv run python -c "import inspect; from deepagents import create_deep_agent; print(inspect.signature(create_deep_agent))"` -> 已验证当前安装签名不含顶层 `subagent_model`
 - Latest Improvement / Regression Notes:
   - 改进：ResearchService 现在会落盘 `metrics_snapshot` / `gate_snapshot`，并打通 `trace_id` / `session_id` / `lc_agent_name` / `namespace`
   - 改进：新增故障注入分类、事件回放一致性检查、interrupt-resume E2E 契约测试
+  - 改进：文档、spec、README、demo script 与 Deep Agents 用法快照已统一到当前 session contract 与 `subagents[*].model` 事实源
   - 风险：当前 runtime 真实装配与应用启动验证尚未执行，留到 Task 13 统一收口
-- Next Recommended Action: 启动 Task 12（文档与契约同步），把 Task 11 新事实源同步进 proposal / design / README / API 合同文档
+- Next Recommended Action: 启动 Task 13（全量测试、build、demo 与启动验证）
 - Current Blockers: 无硬阻塞；最终启动验证仍待 Task 13
 - Assumptions Awaiting Confirmation:
-  - Task 12 继续保持单路径 hard cut，不恢复旧 run-centric 术语
   - Task 13 将以当前 `metrics_snapshot` / `gate_snapshot` 作为 release gate 事实源之一
 - Parked / Deferred Items:
   - 真实 runtime 线上 provider 联通与启动 smoke，留给 Task 13
@@ -52,6 +52,7 @@
   - `full-refactor-deep-research/research-rollback-runbook.md`
   - `full-refactor-deep-research/research-rollback-drill-record.md`
   - 官方 Deep Agents 文档：customization / overview / trace deep agents / interrupts / streaming
+  - 本地 `uv run python` 对 `create_deep_agent` 签名的 fresh verification
 - Related Files:
   - `backend/src/app/services/research_observability.py`
   - `backend/src/app/services/research_replay.py`
@@ -59,4 +60,4 @@
   - `backend/src/app/worker/tasks/research.py`
   - `scripts/research_rollback_drill.ps1`
   - `full-refactor-deep-research/research-rollback-runbook.md`
-- Last Updated: 2026-03-30
+- Last Updated: 2026-03-29

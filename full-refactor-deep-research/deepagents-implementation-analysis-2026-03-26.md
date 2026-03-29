@@ -88,7 +88,7 @@ API / Worker / DB / SSE / Audit / Gate
 **子代理（workers）**
 - 默认优先 general-purpose
 - 只有确有边界差异时才专门化：`kb`、`web`、`paper`、`citation`
-- 可以显式使用较便宜的 `subagent_model`
+- 可以显式使用较便宜的独立子代理模型，但必须最终落到 `subagents[*].model`
 
 **关键原因：**
 - Anthropic 证明了 breadth-first research 对 parallel workers 特别受益。
@@ -210,7 +210,7 @@ finalizer 之前，runtime 应先沉淀：
 1. **把 `checkpointer` 写成 runtime 必备基础设施，而非“需要 HITL 时再加”。**
 2. **把 `subgraphs=True` / `namespace` streaming 写入 API / frontend 契约。**
 3. **把 `memory vs skills` 分层写入 design defaults。**
-4. **把 `subagent_model` / model split 写入成本治理策略。**
+4. **把主/子代理模型分层（最终落到 `subagents[*].model`）写入成本治理策略。**
 5. **把 `research brief`、`source bundle`、`interim summary` 写入 artifacts / schema 设计。**
 
 ## 七、最终建议

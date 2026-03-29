@@ -15,13 +15,14 @@
 - Current Phase: Phase 5 - 可观测、文档同步与最终交付门禁
 - Current Phase Inputs:
   - Task 10 提交：`a262b17 feat(research): add research workbench panels`
-  - Task 11 当前工作树产物：observability / gate / replay / rollback / interrupt-resume E2E
+  - Task 11 提交：`d5448a3 feat(research): add observability gates and replay coverage`
+  - Task 12 当前工作树产物：文档 / specs / README / demo script 同步
   - 当前 research runtime 约束：`create_deep_agent` 单入口、`subgraphs=True`、`version="v2"`、无 MCP
-- Active Execution Wave: Task 11 已完成；下一任务 = Task 12 docs sync
-- Phase Goal: 完成 Task 12（文档与契约同步）
+- Active Execution Wave: Task 12 已完成；下一任务 = Task 13 全量验证
+- Phase Goal: 完成 Task 13（最终验证与交付门禁）
 - Phase Scope:
-  - 包含：proposal / design / docs / README / spec 的术语统一
-  - 不包含：Task 13 全量启动验证
+  - 包含：backend 全量 `pytest` / `ruff`、frontend `typecheck` / `build`、demo script、启动 smoke、gate 决议
+  - 不包含：新的 runtime 功能扩展；除非验证失败，否则不继续扩改文档
 - Non-goals:
   - 不恢复旧 run-centric 研究接口
   - 不在此轮追加新 runtime 功能
@@ -48,44 +49,66 @@
   - 研究事件封套已补 `lc_agent_name`
   - 失败路径已落 `research.run.failed` + fault metrics
 
+### 1.2 Task 12 文档同步闭环
+- [x] Task: 完成当前 research session contract 文档、spec 与 demo 入口同步
+- Goal: 让 Task 13 只围绕当前单路径事实源做验证
+- Inputs / Dependencies:
+  - `README.md`
+  - `docs/api_contract_research.md`
+  - `docs/architecture.md`
+  - `full-refactor-deep-research/proposal.md`
+  - `full-refactor-deep-research/design.md`
+  - `full-refactor-deep-research/tasks.md`
+  - `full-refactor-deep-research/specs/*/spec.md`
+  - `scripts/demo_research.ps1`
+- Output / Artifact:
+  - session contract 文档
+  - Deep Agents 最新用法快照
+  - demo script dry-run 入口
+- Done when:
+  - dry-run 能打印当前 `/api/v1/research/sessions*` 全流程
+  - 文档不再误写 `create_deep_agent(..., subagent_model=...)`
+  - docs/spec/README 统一引用 `metrics_snapshot` / `gate_snapshot`
+- Notes:
+  - Deep Agents 当前安装签名已 fresh verify：无顶层 `subagent_model`
+
 ## Part 2: 当前阶段研究与拆解
-### 2.1 Task 12 文档扫描
-- [ ] Task: 扫描 `proposal.md`、`design.md`、`README.md`、`docs/*`、`specs/*/spec.md` 中的旧 research 术语
-- Goal: 找出所有 run-centric / 旧兼容表述
+### 2.1 Task 13 验证矩阵
+- [x] Task: 固定 backend / frontend / demo / startup 的最终验证矩阵
+- Goal: 保证收口阶段的验证顺序稳定、无遗漏
 - Inputs / Dependencies:
   - `full-refactor-deep-research/tasks.md`
-  - `backend/src/app/schemas/research.py`
-  - `backend/src/app/services/research_observability.py`
-  - `scripts/research_rollback_drill.ps1`
-- Output / Artifact: Task 12 文档更新清单
-- Done when: 需要更新的文件与术语映射明确
-- Notes: 以当前代码、Task 11 门禁与 rollback 产物为唯一事实源
+  - `full-refactor-deep-research/PROJECT_EXECUTION_STATE.md`
+  - `scripts/demo_research.ps1`
+- Output / Artifact: Task 13 验证矩阵
+- Done when: backend / frontend / demo / startup 全部有明确命令
+- Notes: 以当前代码、Task 11 门禁与 Task 12 文档事实源为唯一事实源
 
-### 2.2 Task 12 写作顺序
-- [ ] Task: 先更新 contract / API / gate 文档，再更新 README / proposal / design / specs
-- Goal: 让高优先级事实源先统一
+### 2.2 Task 13 执行顺序
+- [x] Task: 采用“backend 全量 -> frontend 构建 -> demo -> 启动 smoke -> gate 决议”顺序
+- Goal: 保持根因定位单向收敛
 - Procedure / Implementation notes:
-  - 先写 `docs/api_contract_research.md`
-  - 再同步 proposal / design 的 phase / task / gate 描述
-  - 最后回扫 README 与 specs 中旧术语残留
-- Done when: 下一轮可按文件波次执行
-- Notes: 文档更新后需做最小 grep / 交叉校对
+  - 先跑 backend，保证核心服务契约稳定
+  - 再跑 frontend，避免前端构建失败掩盖后端问题
+  - 再做 demo 与启动 smoke，验证真实链路
+- Done when: 下一轮可按验证波次执行
+- Notes: 任一步失败都必须先修复，再继续下一步
 
 ## Part 3: 当前阶段执行
 ### 3.1 下一轮首个执行波次
-- [ ] Task: 建立 Task 12 的旧术语 -> 新术语映射表
-- Goal: 降低“文档写法不同步”的风险
+- [ ] Task: 执行 backend 全量验证
+- Goal: 先确认 research 主链路与测试基线无回归
 - Output / Artifact:
-  - `run_id` -> `session_id`
-  - `/api/v1/research/runs*` -> `/api/v1/research/sessions*`
-  - old run-centric runtime -> current Deep Agents runtime
-  - ad-hoc export path -> `research_artifacts` / `metrics_snapshot` / `gate_snapshot`
-- Done when: 可直接驱动文档批量替换与人工校对
+  - `cd backend; uv run pytest`
+  - `cd backend; uv run ruff check .`
+- Done when: backend 两条命令都有 fresh 结果
 
 ### 3.2 下一轮验证基线
-- [ ] Task: Task 12 完成后跑最小文档一致性检查
-- Goal: 防止更新后仍残留旧术语
+- [ ] Task: backend 通过后执行 frontend / demo / 启动 smoke
+- Goal: 证明 workbench、demo 与真实启动链路都与当前 session contract 对齐
 - Verification:
-  - `rg -n "/api/v1/research/runs|run-centric|run_id" full-refactor-deep-research README.md docs backend frontend`
-  - 必要时补充定向测试 / typecheck
-- Done when: 文档与代码术语一致
+  - `cd frontend; npm run typecheck`
+  - `cd frontend; npm run build`
+  - `pwsh -ExecutionPolicy Bypass -File .\scripts\demo_research.ps1`
+  - 实际启动链路 smoke
+- Done when: 全链路验证完成，且可汇总 gate 决议
