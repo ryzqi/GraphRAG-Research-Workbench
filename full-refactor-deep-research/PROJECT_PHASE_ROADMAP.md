@@ -8,7 +8,7 @@
 - Customer Problem / Desired Outcome: 恢复并重构深度研究主路径，使其以 `session_id` 为唯一业务事实源、以最新 Deep Agents 作为唯一 runtime harness，并最终可在当前前后端中稳定启动、执行、恢复与导出。
 - Why Now / Decision Driver: 旧 research backend 已在迁移 `a6b8c9d0e1f2_remove_research_stack.py` 中整体移除，而前端仍保留 run-centric 调用；继续堆兼容层会扩大债务，必须按单路径重建。
 - Overall Goal: 按 `full-refactor-deep-research/tasks.md` 落地当前研究单路径：`create session -> preflight planner -> confirm -> runtime -> finalizer -> artifacts`。
-- Current Active Phase: Phase 1 - 研究域模型与契约底座
+- Current Active Phase: Phase 2 - Deep Agents 单引擎运行时与来源路由
 - Overall Success Criteria:
   - 后端恢复 `research_sessions / research_events / research_artifacts` 三表，且迁移、模型、测试一致。
   - 研究运行时只保留 `create_deep_agent` 单入口，不保留旧 research engine / run-centric 兼容路径。
@@ -61,7 +61,7 @@
 
 ## Phase Roadmap
 ### Phase 1: 研究域模型与契约底座
-- Status: Active
+- Status: Completed
 - Objective: 先恢复三表模型、会话状态机、事件/工件唯一约束，并补齐研究契约与基础 planner。
 - Scope Boundary: 覆盖 `tasks.md` 的 Task 1-3；不进入 Deep Agents runtime、API 集成与前端改造。
 - Modules Involved: 后端研究域模型与持久化；契约与会话编排
@@ -71,7 +71,7 @@
 - Transition Notes: 完成后进入 Phase 2，并在进入前锁定 `deepagents` 依赖策略
 
 ### Phase 2: Deep Agents 单引擎运行时与来源路由
-- Status: Pending
+- Status: Active
 - Objective: 按最新官方 Deep Agents 用法接入统一 runtime、source-aware tools/subagents 与 finalizer。
 - Scope Boundary: 覆盖 `tasks.md` 的 Task 4-6；不改当前 API / 前端。
 - Modules Involved: Deep Agents runtime 与 source-aware tooling；契约与会话编排
@@ -111,11 +111,15 @@
 - Transition Notes: 项目完成
 
 ## Phase History / Change Log
+- 2026-03-29 / Phase 1 完成，切换到 Phase 2
+  - What changed: Task 1-3 已完成并分别提交；已归档 Phase 1 medium/fine todo，准备刷新 Phase 2 active planning files
+  - Why it changed: 三表、schema、planner 基础壳层已就绪，可以进入 runtime / source routing 实现
+  - Impact on current or future phases: Phase 2 将先解决 `deepagents` 依赖与 runtime 单入口问题，再继续 service / API 集成
 - 2026-03-29 / 初始化 roadmap
   - What changed: 将 `tasks.md` 重排为 5 个可连续执行阶段，并锁定 Phase 1 为当前 active phase
   - Why it changed: 用户要求一次只完成一个任务并逐任务提交，需要稳定的多阶段执行外壳
   - Impact on current or future phases: 所有后续切换都将以该 roadmap 为项目级唯一事实源
 
 ## Archive References
-- Phase archive path(s): `full-refactor-deep-research/archive/`
+- Phase archive path(s): `full-refactor-deep-research/archive/TASK_TODO_MEDIUM.phase-1-foundation.md`, `full-refactor-deep-research/archive/TASK_TODO_FINE.phase-1-foundation.md`
 - Notes about where historical phase todos, state snapshots, or verification artifacts were stored: phase 切换时归档旧 medium/fine todo，execution state 持续覆盖最新状态

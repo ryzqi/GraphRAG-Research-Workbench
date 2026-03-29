@@ -7,44 +7,39 @@
   - `full-refactor-deep-research/TASK_TODO_MEDIUM.md`
   - `full-refactor-deep-research/TASK_TODO_FINE.md`
   - `full-refactor-deep-research/PROJECT_EXECUTION_STATE.md`
-- Current Focus / Active Phase: Phase 1 - 研究域模型与契约底座 / 当前任务 = Task 3
+- Current Focus / Active Phase: Phase 2 - Deep Agents 单引擎运行时与来源路由 / 当前任务 = Task 4
 - Active Execution Wave:
-  - 更新 planning/state 完成 Task 3 记录
-  - 执行 Task 3 git commit
-  - 提交后归档 Phase 1 todo 并刷新 Phase 2 计划
+  - 核对 `deepagents` 版本策略与兼容性
+  - 写入 `backend/tests/research/test_deep_research_runtime.py` failing test
+  - 实现 `deep_research_runtime.py` 与 `research_runtime_types.py`
 - Last Verified Stop Point:
-  - Task 1 已完成 RED -> GREEN：RED=`ModuleNotFoundError: No module named 'app.models.research_artifact'`
-  - `uv run pytest tests/research/test_models_runtime_schema.py -q` -> `5 passed`
-  - Task 2 已完成 RED -> GREEN：RED=`ModuleNotFoundError: No module named 'app.schemas.research'`
-  - `uv run pytest tests/research/test_schemas_research.py -q` -> `5 passed`
-  - `uv run pytest tests/research/test_models_runtime_schema.py tests/research/test_schemas_research.py -q` -> `10 passed`
-  - Task 3 已完成 RED -> GREEN：RED=`ModuleNotFoundError: No module named 'app.services.research_planner'`
-  - `uv run pytest tests/research/test_research_planner.py -q` -> `3 passed`
+  - Phase 1 已完成并提交：`0c5fa63 feat(research): restore research persistence foundation`
+  - `efc6693 feat(research): add research schema contracts`
+  - `c3ccdf2 feat(research): add preflight research planner`
   - `uv run pytest tests/research/test_models_runtime_schema.py tests/research/test_schemas_research.py tests/research/test_research_planner.py -q` -> `13 passed`
-  - `uv run ruff check ...` -> `All checks passed!`
   - `uv run alembic heads` -> `38f4aa0f8d91 (head)`
-  - 提交记录：`0c5fa63 feat(research): restore research persistence foundation`；`efc6693 feat(research): add research schema contracts`
+  - 官方 Deep Agents 事实源已核对：customization / streaming / release policy / PyPI `deepagents`
 - Latest Improvement / Regression Notes:
-- 改进：Task 1 已恢复三表 ORM、状态机 helper、base 注册与迁移；误生成的 `store` 表删除语句已手工去除
-- 风险：`deepagents` 依赖版本仍待进入 runtime 阶段时最终锁定
-- Next Recommended Action: 提交 Task 3，然后归档 Phase 1 todo 并刷新 Phase 2（Deep Agents runtime）计划
-- Current Blockers: 无阻塞；后续若 uv / alembic 因沙箱受限，继续按已批准前缀执行
+  - 改进：Phase 1 已提供三表、schema、planner，Phase 2 可直接接 runtime
+  - 风险：`deepagents` stable / pre-release 版本取舍仍待锁定
+- Next Recommended Action: 先锁定 `deepagents` 依赖策略，再进入 Task 4 RED 测试
+- Current Blockers: 无硬阻塞；若依赖安装遇到网络/沙箱问题，按 require_escalated 继续执行
 - Assumptions Awaiting Confirmation:
-  - 本轮先采用 session 独立三表，不恢复 `AgentRunType.RESEARCH`
-  - `namespace` 在 event 层采用非空字符串并给默认主命名空间
+  - 当前官方文档所需核心 API 可由最小 `deepagents` 版本满足
+  - 研究模式 runtime 将直接 hard cut，不保留旧 research 兼容路径
 - Parked / Deferred Items:
-  - Deep Agents 依赖接入与版本锁定
-  - 前端 run-centric hard cut
+  - source-aware provider 真实调用与 finalizer，留给 Task 5/6
+  - API / frontend hard cut，留给 Phase 3+
 - Key Recent Decisions:
-  - 事实源优先级：本地代码/迁移 -> full-refactor 设计文档 -> 2026-03-29 官方 Deep Agents 文档
-  - Phase 1 维持一次一任务推进：Task 1 -> Task 2 -> Task 3
+  - 已归档 Phase 1 todo，并将 active planning files 刷新到 Phase 2
+  - Phase 2 仍保持“一次一任务、任务完成即提交”
 - Verification Evidence Reference:
-  - `uv run alembic heads && uv run alembic current`
+  - `uv run pytest tests/research/test_models_runtime_schema.py tests/research/test_schemas_research.py tests/research/test_research_planner.py -q`
   - 官方 Deep Agents 文档：customization / streaming / release policy / PyPI `deepagents`
 - Related Files:
   - `full-refactor-deep-research/PROJECT_PHASE_ROADMAP.md`
   - `full-refactor-deep-research/TASK_TODO_MEDIUM.md`
   - `full-refactor-deep-research/TASK_TODO_FINE.md`
-  - `full-refactor-deep-research/tasks.md`
-  - `full-refactor-deep-research/specs/research-persistence-model/spec.md`
+  - `backend/pyproject.toml`
+  - `backend/src/app/agents/tool_calling/registry.py`
 - Last Updated: 2026-03-29
