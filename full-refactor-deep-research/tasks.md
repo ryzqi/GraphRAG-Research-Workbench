@@ -54,11 +54,11 @@
 
 ## 6. 研究会话编排与持久化服务
 
-- [ ] 6.1 实现 `ResearchEventStore` 的 append-only 写入、序号递增与 `event_id` 幂等写入。
-- [ ] 6.2 实现 `ResearchArtifactStore`，打通 `plan_snapshot`、`research_brief`、中间 findings、`source_bundle`、`interim_summary`、`coverage_gaps`、最终工件更新，并持久化 `source_provider` / `retrieval_method` / `origin_url`。
-- [ ] 6.3 实现 `ResearchService`，串起 create session、planner、confirm、runtime、finalizer、interrupt/resume。
-- [ ] 6.4 实现恢复请求幂等与并发冲突处理，确保 `sequence` 连续与状态迁移合法。
-- [ ] 6.5 编写 `backend/tests/research/test_research_service.py`，验证事件顺序、planner -> runtime -> finalizer 转换、幂等恢复与工件产出。
+- [x] 6.1 实现 `ResearchEventStore` 的 append-only 写入、序号递增与 `event_id` 幂等写入。
+- [x] 6.2 实现 `ResearchArtifactStore`，打通 `plan_snapshot`、`research_brief`、中间 findings、`source_bundle`、`interim_summary`、`coverage_gaps`、最终工件更新，并持久化 `source_provider` / `retrieval_method` / `origin_url`。
+- [x] 6.3 实现 `ResearchService`，串起 create session、planner、confirm、runtime、finalizer、interrupt/resume。
+- [x] 6.4 实现恢复请求幂等与并发冲突处理，确保 `sequence` 连续与状态迁移合法。
+- [x] 6.5 编写 `backend/tests/research/test_research_service.py`，验证事件顺序、planner -> runtime -> finalizer 转换、幂等恢复与工件产出。
 
 ## 7. 当前端点集合与 Worker 集成
 
