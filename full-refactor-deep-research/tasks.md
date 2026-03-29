@@ -88,21 +88,21 @@
 
 ## 10. 前端事件驱动研究工作台
 
-- [ ] 10.1 新建 `ResearchTimeline`、`PlanPreviewPanel`、`InterruptDecisionPanel`、`ArtifactPanel` 核心组件。
-- [ ] 10.2 重构研究页面，接入 `research_brief`、来源路由摘要、namespace-aware 时间线、中断决策与双工件展示，并展示 Tavily / Jina Reader / SearXNG / arXiv provider 维度。
-- [ ] 10.3 为网页证据与论文证据增加差异化展示（标题、作者、发布日期、arXiv / PDF 链接），并对网页证据展示 `source_provider` 与 `origin_url`。
-- [ ] 10.4 实现 Markdown / JSON 安全渲染策略。
-- [ ] 10.5 在 timeline 中展示主代理 phase 与子代理 namespace 进度，并完成一次 planner -> confirm -> runtime -> interrupt -> resume -> final 联调验收。
+- [x] 10.1 新建 `ResearchTimeline`、`PlanPreviewPanel`、`InterruptDecisionPanel`、`ArtifactPanel` 核心组件。
+- [x] 10.2 重构研究页面，接入 `research_brief`、来源路由摘要、namespace-aware 时间线、中断决策与双工件展示，并展示 Tavily / Jina Reader / SearXNG / arXiv provider 维度。
+- [x] 10.3 为网页证据与论文证据增加差异化展示（标题、作者、发布日期、arXiv / PDF 链接），并对网页证据展示 `source_provider` 与 `origin_url`。
+- [x] 10.4 实现 Markdown / JSON 安全渲染策略。
+- [x] 10.5 在 timeline 中展示主代理 phase 与子代理 namespace 进度，并完成一次 planner -> confirm -> runtime -> interrupt -> resume -> final 联调验收。
 
 ## 11. 可观测、评测与故障注入
 
-- [ ] 11.1 打通 `trace_id` / `session_id` / `lc_agent_name` / `namespace` 关联，形成端到端 tracing。
-- [ ] 11.2 采集质量、延迟、成本三类核心指标，并拆分 `kb/web/paper/hybrid` 来源通道、`source_provider` 维度与主/子代理模型层级。
-- [ ] 11.3 建立研究评测基线与默认门禁阈值（`RESEARCH_GATE_*`）。
-- [ ] 11.4 新增故障注入测试（数据库抖动、Redis 不可用、Tavily / Jina Reader / SearXNG / arXiv 超时、429、实例不可达与响应格式异常）。
-- [ ] 11.5 新增事件回放测试，验证同一会话回放与终态一致性。
-- [ ] 11.6 编写回滚演练脚本与操作手册，并输出演练记录。
-- [ ] 11.7 新增 `backend/tests/research/test_e2e_interrupt_resume_contract.py`，验证中断恢复到 final 的契约闭环。
+- [x] 11.1 打通 `trace_id` / `session_id` / `lc_agent_name` / `namespace` 关联，形成端到端 tracing。
+- [x] 11.2 采集质量、延迟、成本三类核心指标，并拆分 `kb/web/paper/hybrid` 来源通道、`source_provider` 维度与主/子代理模型层级。
+- [x] 11.3 建立研究评测基线与默认门禁阈值（`RESEARCH_GATE_*`）。
+- [x] 11.4 新增故障注入测试（数据库抖动、Redis 不可用、Tavily / Jina Reader / SearXNG / arXiv 超时、429、实例不可达与响应格式异常）。
+- [x] 11.5 新增事件回放测试，验证同一会话回放与终态一致性。
+- [x] 11.6 编写回滚演练脚本与操作手册，并输出演练记录。
+- [x] 11.7 新增 `backend/tests/research/test_e2e_interrupt_resume_contract.py`，验证中断恢复到 final 的契约闭环。
 
 ## 12. 文档与契约同步
 

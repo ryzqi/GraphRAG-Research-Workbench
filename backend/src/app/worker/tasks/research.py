@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from datetime import datetime, timezone
 
 from app.core.settings import get_settings
 from app.models.research_session import ResearchSessionStatus
@@ -51,7 +50,9 @@ async def _run_research_session(session_id: str) -> None:
                 session = await service.get_session(session_uuid)
                 if session.status.is_terminal():
                     return
-                session.transition_to(ResearchSessionStatus.FAILED)
-                session.error_message = str(exc)
-                session.finished_at = datetime.now(timezone.utc)
+                await service.fail_session(
+                    session=session,
+                    exc=exc,
+                    phase=session.runtime_phase or "runtime",
+                )
                 await db.commit()

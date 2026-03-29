@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from uuid import uuid4
+
 from app.models.research_session import ResearchSession, ResearchSessionStatus
 from app.schemas.research import (
     ResearchPlanSnapshot,
@@ -8,6 +10,7 @@ from app.schemas.research import (
 )
 from app.services.research_event_store import ResearchEventStore
 from app.services.research_finalizer import ResearchFinalizer
+from app.services.research_observability import ResearchRuntimeRunResult
 from app.services.research_planner import ResearchPlanner
 from app.services.research_service import ResearchService
 from app.services.research_source_bundle import ResearchSourceBundleBuilder
@@ -31,12 +34,16 @@ class _FakeRuntimeRunner:
         *,
         session: ResearchSession,
         plan_snapshot: ResearchPlanSnapshot,
-    ):
-        return ResearchSourceBundleBuilder().build(
-            target_sources=plan_snapshot.target_sources,
-            citations=[],
-            findings=[f"已完成问题“{session.question}”的 runtime 执行。"],
-            required_web_providers=("tavily",),
+    ) -> ResearchRuntimeRunResult:
+        return ResearchRuntimeRunResult(
+            source_bundle=ResearchSourceBundleBuilder().build(
+                target_sources=plan_snapshot.target_sources,
+                citations=[],
+                findings=[f"已完成问题“{session.question}”的 runtime 执行。"],
+                required_web_providers=("tavily",),
+            ),
+            latency_ms=900,
+            total_cost_usd=0.0,
         )
 
 
@@ -79,6 +86,7 @@ async def test_execute_session_runs_runtime_finalizer_and_writes_final_artifacts
         finalizer=ResearchFinalizer(),
     )
     session = ResearchSession(
+        id=uuid4(),
         thread_id="research-session-2",
         question="解释 Jina Reader 在深度研究中的作用",
         allow_external=True,
@@ -111,8 +119,11 @@ async def test_execute_session_runs_runtime_finalizer_and_writes_final_artifacts
         "coverage_gaps",
         "report_json",
         "report_md",
+        "metrics_snapshot",
+        "gate_snapshot",
     ]
     assert final_result.report_json["question"] == "解释 Jina Reader 在深度研究中的作用"
+    assert (session.metrics or {})["gate"]["pass"] is False
 
 
 async def test_event_store_reuses_existing_event_for_same_event_id() -> None:
@@ -153,6 +164,7 @@ async def test_confirm_plan_queues_session_and_appends_confirmation_event() -> N
         finalizer=ResearchFinalizer(),
     )
     session = ResearchSession(
+        id=uuid4(),
         thread_id="research-session-confirm",
         question="确认计划",
         allow_external=True,
@@ -167,7 +179,11 @@ async def test_confirm_plan_queues_session_and_appends_confirmation_event() -> N
 
     assert session.status == ResearchSessionStatus.QUEUED
     assert session.events[0].event_type == "research.plan.confirmed"
-    assert session.events[0].payload == {"approved": True, "note": "继续执行"}
+    assert session.events[0].payload == {
+        "approved": True,
+        "note": "继续执行",
+        "lc_agent_name": "planner",
+    }
 
 
 async def test_interrupt_and_resume_session_are_stateful_and_idempotent() -> None:

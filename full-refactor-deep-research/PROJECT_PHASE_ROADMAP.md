@@ -8,7 +8,7 @@
 - Customer Problem / Desired Outcome: 恢复并重构深度研究主路径，使其以 `session_id` 为唯一业务事实源、以最新 Deep Agents 作为唯一 runtime harness，并最终可在当前前后端中稳定启动、执行、恢复与导出。
 - Why Now / Decision Driver: 旧 research backend 已在迁移 `a6b8c9d0e1f2_remove_research_stack.py` 中整体移除，而前端仍保留 run-centric 调用；继续堆兼容层会扩大债务，必须按单路径重建。
 - Overall Goal: 按 `full-refactor-deep-research/tasks.md` 落地当前研究单路径：`create session -> preflight planner -> confirm -> runtime -> finalizer -> artifacts`。
-- Current Active Phase: Phase 4 - 前端研究工作台 hard cut
+- Current Active Phase: Phase 5 - 可观测、文档同步与最终交付门禁
 - Overall Success Criteria:
   - 后端恢复 `research_sessions / research_events / research_artifacts` 三表，且迁移、模型、测试一致。
   - 研究运行时只保留 `create_deep_agent` 单入口，不保留旧 research engine / run-centric 兼容路径。
@@ -91,7 +91,7 @@
 - Transition Notes: 进入 Phase 4 时前端数据层可直接接入新协议
 
 ### Phase 4: 前端研究工作台 hard cut
-- Status: Active
+- Status: Completed
 - Objective: 让当前前端研究服务与工作台完全使用 session/event/artifact 契约。
 - Scope Boundary: 覆盖 `tasks.md` 的 Task 9-10；不做 observability gate。
 - Modules Involved: 前端研究数据层与工作台
@@ -101,7 +101,7 @@
 - Transition Notes: 进入 Phase 5 执行门禁、文档同步与最终启动
 
 ### Phase 5: 可观测、文档同步与最终交付门禁
-- Status: Pending
+- Status: Active
 - Objective: 补齐 tracing / gate / docs / demo 脚本，并完成全量测试与启动验证。
 - Scope Boundary: 覆盖 `tasks.md` 的 Task 11-13。
 - Modules Involved: 可观测、评测、启动与交付门禁；文档同步
@@ -111,6 +111,10 @@
 - Transition Notes: 项目完成
 
 ## Phase History / Change Log
+- 2026-03-30 / Phase 4 完成，切换到 Phase 5
+  - What changed: Task 10 前端 workbench 已完成并提交；Task 11 已落地 trace / metrics / gate、故障注入、事件回放、rollback drill 与 interrupt-resume E2E。
+  - Why it changed: 当前 research 主链路已同时具备页面工作台与最小可观测门禁，可以进入文档同步与最终交付收口。
+  - Impact on current or future phases: 当前 active todo 切到 Task 12，下一步是文档 / 契约同步，随后进入 Task 13 全量测试、build 与启动验证。
 - 2026-03-30 / Phase 3 完成，切换到 Phase 4
   - What changed: Task 7-8 当前 research API / worker / export 已全部提交，Task 9 已将 frontend research service / hooks / page 切到 session/event/artifact 契约。
   - Why it changed: 前端已具备接入当前研究会话协议的最小数据层，可以开始 workbench hard cut。
@@ -129,5 +133,5 @@
   - Impact on current or future phases: 所有后续切换都将以该 roadmap 为项目级唯一事实源
 
 ## Archive References
-- Phase archive path(s): `full-refactor-deep-research/archive/TASK_TODO_MEDIUM.phase-1-foundation.md`, `full-refactor-deep-research/archive/TASK_TODO_FINE.phase-1-foundation.md`
-- Notes about where historical phase todos, state snapshots, or verification artifacts were stored: phase 切换时归档旧 medium/fine todo，execution state 持续覆盖最新状态
+- Phase archive path(s): `full-refactor-deep-research/archive/TASK_TODO_MEDIUM.phase-1-foundation.md`, `full-refactor-deep-research/archive/TASK_TODO_FINE.phase-1-foundation.md`, `full-refactor-deep-research/archive/TASK_TODO_MEDIUM.phase-4-frontend-workbench.md`, `full-refactor-deep-research/archive/TASK_TODO_FINE.phase-4-frontend-workbench.md`
+- Notes about where historical phase todos, state snapshots, or verification artifacts were stored: phase 切换时归档旧 medium/fine todo，execution state 持续覆盖最新状态；Task 11 rollback drill 记录位于 `full-refactor-deep-research/research-rollback-drill-record.md`

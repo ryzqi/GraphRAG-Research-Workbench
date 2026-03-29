@@ -109,6 +109,7 @@ export interface ResearchEventEnvelope {
   source_provider?: string | null;
   retrieval_method?: string | null;
   origin_url?: string | null;
+  lc_agent_name?: string | null;
   subagent_name?: string | null;
 }
 

@@ -51,12 +51,14 @@ def test_research_event_envelope_requires_minimum_stream_fields() -> None:
         session_id=uuid4(),
         phase="planner",
         namespace="main",
-        payload={"summary": "plan ready"},
+        payload={"summary": "plan ready", "lc_agent_name": "planner"},
         trace_id="trace-123",
+        lc_agent_name="planner",
     )
 
     assert event.sequence == 1
     assert event.namespace == "main"
+    assert event.lc_agent_name == "planner"
 
     with pytest.raises(ValidationError):
         ResearchEventEnvelope(

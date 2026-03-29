@@ -387,6 +387,15 @@ class Settings(BaseSettings):
     web_research_timeout_seconds: float = Field(
         180.0, alias="WEB_RESEARCH_TIMEOUT_SECONDS"
     )
+    research_gate_min_quality_score: float = Field(
+        0.75, ge=0.0, le=1.0, alias="RESEARCH_GATE_MIN_QUALITY_SCORE"
+    )
+    research_gate_max_p95_ms: int = Field(
+        120_000, ge=1, alias="RESEARCH_GATE_MAX_P95_MS"
+    )
+    research_gate_max_session_cost_usd: float = Field(
+        2.0, ge=0.0, alias="RESEARCH_GATE_MAX_SESSION_COST_USD"
+    )
 
     # 检索配置
     # 普通问答路径默认收敛在较小候选集，复杂问题仍可通过 rerank/max_top_k 扩大召回窗口。

@@ -199,6 +199,7 @@ class ResearchEventEnvelope(BaseModel):
     source_provider: str | None = Field(default=None, max_length=64)
     retrieval_method: str | None = Field(default=None, max_length=64)
     origin_url: str | None = None
+    lc_agent_name: str | None = Field(default=None, max_length=128)
     subagent_name: str | None = Field(default=None, max_length=128)
 
     @field_validator(
@@ -210,6 +211,7 @@ class ResearchEventEnvelope(BaseModel):
         "source_provider",
         "retrieval_method",
         "origin_url",
+        "lc_agent_name",
         "subagent_name",
         mode="before",
     )
@@ -220,6 +222,7 @@ class ResearchEventEnvelope(BaseModel):
             "source_provider",
             "retrieval_method",
             "origin_url",
+            "lc_agent_name",
             "subagent_name",
         }:
             return _normalize_optional_text(value, field_name=info.field_name)

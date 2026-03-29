@@ -7,51 +7,56 @@
   - `full-refactor-deep-research/TASK_TODO_MEDIUM.md`
   - `full-refactor-deep-research/TASK_TODO_FINE.md`
   - `full-refactor-deep-research/PROJECT_EXECUTION_STATE.md`
-- Current Focus / Active Phase: Phase 4 - 前端研究工作台 hard cut / 当前任务 = Task 10（待启动）
+- Current Focus / Active Phase: Phase 5 - 可观测、文档同步与最终交付门禁 / 当前任务 = Task 12（待启动）
 - Active Execution Wave:
-  - 盘点 `ResearchPage` 与计划中的 workbench 组件边界
-  - 为 Task 10 准备组件 / 页面层红测或 type-level 基线
-  - 接通 timeline / plan preview / interrupt / artifact 面板
+  - 同步 `proposal.md` / `design.md` / `README.md` / research contract docs 到当前单路径术语
+  - 记录 Task 11 新增的 metrics / gate / replay / rollback 事实源
+  - 为 Task 13 的 demo / startup 验证准备统一文档入口
 - Last Verified Stop Point:
   - Phase 1 已完成并提交：`0c5fa63 feat(research): restore research persistence foundation`
   - `efc6693 feat(research): add research schema contracts`
   - `c3ccdf2 feat(research): add preflight research planner`
-  - Task 4 已完成并提交：`a6e6438 feat(research): add deep agents runtime skeleton`
-  - Task 5 已完成并提交：`dfbf457 feat(research): add source-aware research tooling`
+  - Task 4 提交：`a6e6438 feat(research): add deep agents runtime skeleton`
+  - Task 5 提交：`dfbf457 feat(research): add source-aware research tooling`
   - Task 6 提交：`a12593e feat(research): add research service orchestration`
   - Task 7 提交：`13d700f feat(research): add current research session endpoints`
-  - Task 8 提交：`a8d1a72 feat(research): add research artifact exports`
-  - Task 9 提交：`feat(research): cut frontend to session contract`
-  - `npx vitest run src/services/research.test.ts src/services/exports.test.ts` -> `8 passed`
-  - `npx vitest run src/services` -> `78 passed`
-  - `npm run typecheck` -> `passed`
+  - Task 8 提交：`f290489 feat(research): add research artifact exports`
+  - Task 9 提交：`5f429ee feat(research): cut frontend to session contract`
+  - Task 10 提交：`a262b17 feat(research): add research workbench panels`
+  - Task 11 已完成（待本次提交）：
+    - `uv run pytest tests/research tests/api/test_research_endpoints.py -q` -> `48 passed`
+    - `uv run ruff check src/app/services/research_observability.py src/app/services/research_replay.py src/app/services/research_service.py src/app/worker/tasks/research.py src/app/schemas/research.py tests/research tests/api/test_research_endpoints.py` -> `All checks passed!`
+    - `npm run typecheck` -> `passed`
+    - `scripts/research_rollback_drill.ps1` -> generated `full-refactor-deep-research/research-rollback-drill-record.md`
 - Latest Improvement / Regression Notes:
-  - 改进：Task 9 已把 frontend research service / hooks / page / export request 全部切到 `session_id` + `ResearchEventEnvelope` / `ResearchArtifactsResponse` 单路径，并删除旧 run-centric ResearchPage 沉淀入口
-  - 风险：timeline、plan preview、interrupt 决策与 artifact panels 仍待 Task 10 接通
-- Next Recommended Action: 启动 Task 10，先盘点 `frontend/src/views/ResearchPage.tsx` 与待新增 workbench 组件
-- Current Blockers: 无硬阻塞；若后续依赖 / 测试遇到沙箱问题，按 require_escalated 继续
+  - 改进：ResearchService 现在会落盘 `metrics_snapshot` / `gate_snapshot`，并打通 `trace_id` / `session_id` / `lc_agent_name` / `namespace`
+  - 改进：新增故障注入分类、事件回放一致性检查、interrupt-resume E2E 契约测试
+  - 风险：当前 runtime 真实装配与应用启动验证尚未执行，留到 Task 13 统一收口
+- Next Recommended Action: 启动 Task 12（文档与契约同步），把 Task 11 新事实源同步进 proposal / design / README / API 合同文档
+- Current Blockers: 无硬阻塞；最终启动验证仍待 Task 13
 - Assumptions Awaiting Confirmation:
-  - Task 10 继续保持单路径 hard cut，不恢复旧 run-centric 研究页逻辑
-  - 当前 data layer 已足以支撑 timeline / artifact / interrupt workbench 组件直接接入
+  - Task 12 继续保持单路径 hard cut，不恢复旧 run-centric 术语
+  - Task 13 将以当前 `metrics_snapshot` / `gate_snapshot` 作为 release gate 事实源之一
 - Parked / Deferred Items:
-  - frontend workbench / timeline，留给 Task 9 / Task 10
+  - 真实 runtime 线上 provider 联通与启动 smoke，留给 Task 13
 - Key Recent Decisions:
-  - `deepagents==0.4.12` 作为当前 stable runtime 版本
-  - `arxiv==2.4.1` 作为论文 provider 客户端依赖
-  - research mode 继续 hard cut：无 MCP、无旧 run-centric fallback
-  - Task 6 的恢复入口以 `resume_session(idempotency_key, resume_from_event_id, decisions)` 为唯一业务恢复接口
-  - Task 7 的 stream/artifacts 外部契约统一为 `ResearchEventEnvelope` / `ResearchArtifactsResponse`
-  - Task 8 的 research 导出统一走 `ExportType.RESEARCH` + `session_id`
-  - Task 9 的前端续流策略统一为 `Last-Event-ID` 优先，失败后回退 artifacts 快照 + 增量流重连
+  - `deepagents==0.4.12` 继续作为当前 stable runtime 版本基线
+  - Deep Agents 仍保持 `create_deep_agent` 单入口、`subgraphs=True`、`version="v2"`、无 MCP
+  - observability 默认门禁：`RESEARCH_GATE_MIN_QUALITY_SCORE=0.75`、`RESEARCH_GATE_MAX_P95_MS=120000`、`RESEARCH_GATE_MAX_SESSION_COST_USD=2.0`
+  - rollback drill 仅提供 dry-run 记录；真实回滚仍需人工审批
 - Verification Evidence Reference:
-  - `npx vitest run src/services/research.test.ts src/services/exports.test.ts`
-  - `npx vitest run src/services`
-  - `npm run typecheck`
-  - 官方 Deep Agents 文档：customization / backends / streaming / subagents / release policy / PyPI `deepagents`
+  - `backend/tests/research/test_research_observability.py`
+  - `backend/tests/research/test_research_fault_injection.py`
+  - `backend/tests/research/test_research_event_replay.py`
+  - `backend/tests/research/test_e2e_interrupt_resume_contract.py`
+  - `full-refactor-deep-research/research-rollback-runbook.md`
+  - `full-refactor-deep-research/research-rollback-drill-record.md`
+  - 官方 Deep Agents 文档：customization / overview / trace deep agents / interrupts / streaming
 - Related Files:
-  - `frontend/src/services/research.ts`
-  - `frontend/src/types/researchEvents.ts`
-  - `frontend/src/hooks/queries/useResearch.ts`
-  - `frontend/src/views/ResearchPage.tsx`
-  - `frontend/src/services/exports.ts`
+  - `backend/src/app/services/research_observability.py`
+  - `backend/src/app/services/research_replay.py`
+  - `backend/src/app/services/research_service.py`
+  - `backend/src/app/worker/tasks/research.py`
+  - `scripts/research_rollback_drill.ps1`
+  - `full-refactor-deep-research/research-rollback-runbook.md`
 - Last Updated: 2026-03-30
