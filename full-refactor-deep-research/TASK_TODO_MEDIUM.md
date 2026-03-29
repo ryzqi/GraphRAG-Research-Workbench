@@ -12,37 +12,37 @@
   - `TASK_TODO_MEDIUM.md`
   - `TASK_TODO_FINE.md`
   - `PROJECT_EXECUTION_STATE.md`
-- Project Modules: Deep Agents runtime；source-aware tooling；service / event / artifact orchestration
+- Project Modules: Deep Agents runtime；source-aware tooling；service / event / artifact orchestration；API / worker / export
 - Brownfield Context / Codebase Map:
   - Phase 1 已完成并提交：持久化三表、schema、planner
   - Task 4 已完成并提交：`backend/src/app/services/deep_research_runtime.py`、`research_runtime_types.py`
   - Task 5 已完成并提交：`build_research_tool_registry`、`research_tools.py`、`research_source_bundle.py`、`research_finalizer.py`
-  - Task 6 已完成并待本次提交：`ResearchEventStore`、`ResearchArtifactStore`、`ResearchService`
+  - Task 6 已完成并提交：`a12593e feat(research): add research service orchestration`
 - Primary User / Stakeholder: 当前仓库维护者 / 毕设演示链路
-- Customer Problem / Desired Outcome: 在已具备 planner、runtime、source bundle、finalizer 骨架后，补齐真正把会话、事件、工件串起来的服务层
-- Why Now / Decision Driver: 没有 Task 6，Task 7 的 API / SSE / resume 仍然无法建立在真实 orchestration 之上
+- Customer Problem / Desired Outcome: 在已具备 research session API / worker 后，补齐导出链路对 research artifacts 的单路径读取，避免继续混用旧 run-centric 导出事实源
+- Why Now / Decision Driver: 没有 Task 8，Task 13 的 demo / export 验证仍会卡在旧 research 导出路径上
 - Current Phase: Phase 2 - Deep Agents 单引擎运行时与来源路由
-- Phase Goal: 完成 Task 7（当前端点集合与 Worker 集成）
+- Phase Goal: 完成 Task 8（导出链路与工件读取）
 - Phase Scope:
-  - 包含：当前 research API router、service 接线、worker 调用、SSE/interrupt/resume HTTP 契约
-  - 不包含：Task 8+ exporter / frontend
+  - 包含：`research_exporter.py`、`export_service.py`、worker export 按 `session_id` 读取工件
+  - 不包含：Task 9+ frontend
 - Non-goals:
   - 不回退到旧 run-centric research runtime
   - 不在此轮触碰 frontend workbench
 - Phase Deliverables:
-  - `backend/src/app/api/v1/endpoints/research.py`
-  - `backend/src/app/api/v1/api.py`
-  - `backend/src/app/worker/tasks/research.py`
-  - `backend/tests/api/test_research_endpoints.py`
-- Active Execution Wave: Task 6 已完成；下一任务 = Task 7 endpoint/worker integration
+  - `backend/src/app/services/research_exporter.py`
+  - `backend/src/app/services/export_service.py`
+  - `backend/src/app/worker/tasks/export.py`
+  - `backend/tests/research/test_research_exporter.py`
+- Active Execution Wave: Task 7 已完成；下一任务 = Task 8 exporter/artifact read
 - Entry Criteria:
   - Phase 1 已完成
   - Task 4 / Task 5 的 runtime 与 source-aware tooling 已通过定向验证
 - Exit Criteria / Done Definition:
-  - Task 7 代码与测试完成并提交
-  - `/api/v1/research/*` 当前端点集合可用
+  - Task 8 代码与测试完成并提交
+  - export 链路按 `session_id` 读取 `report_md` / `report_json`
   - 定向 pytest / ruff 通过
-- Transition Notes / Next Phase Trigger: Task 7 提交后继续推进 Task 8（export / artifact read）
+- Transition Notes / Next Phase Trigger: Task 8 提交后继续推进 Task 9（frontend data layer）
 
 ## Part 1: 当前阶段需求与范围
 ### 1.1 Task 5 / Task 6 收口结果
@@ -59,11 +59,11 @@
   - 已补齐 `ResearchEventStore` / `ResearchArtifactStore` / `ResearchService`
   - 已新增 `research_brief`、`interim_findings` 工件与 plan confirm / interrupt / resume 服务接口
 
-### 1.2 锁定 Task 7 目标
-- [x] Task: 将当前执行波次切换到 `tasks.md` Task 7（research API / worker / SSE HTTP 契约）
-- Goal: 在已完成服务层后，只把当前接口与 worker 接到单一路径 research service 上
-- Done when: Task 7 边界与验收清晰
-- Deliverables: Task 7 执行目标
+### 1.2 锁定 Task 8 目标
+- [x] Task: 将当前执行波次切换到 `tasks.md` Task 8（export / artifact read）
+- Goal: 在已完成会话 API 后，让导出链路只读取 research artifacts，不再走旧 run-centric 读取
+- Done when: Task 8 边界与验收清晰
+- Deliverables: Task 8 执行目标
 - Notes: 继续保持“一次只完成一个任务”
 
 ## Part 2: 当前阶段研究与计划
@@ -77,46 +77,51 @@
   - `execute_session` 已写入 `source_bundle` + `interim_findings` + `interim_summary` + `coverage_gaps` + final reports
   - `confirm_plan` / `interrupt_session` / `resume_session` 已接到事件存储
 
-### 2.2 确立 Task 7 执行顺序
-- [x] Task: 采用“定位当前路由/worker -> Task 7 红测 -> research router / worker 改造 -> 绿测 -> 状态同步 -> 提交”顺序
+### 2.2 确立 Task 8 执行顺序
+- [x] Task: 采用“盘点 export 读取路径 -> Task 8 红测 -> exporter/export_service/worker 改造 -> 绿测 -> 状态同步 -> 提交”顺序
 - Goal: 满足 TDD 与一次一任务提交纪律
 - Done when: 执行顺序稳定
-- Deliverables: Task 7 执行顺序
-- Notes: 本次先完成 Task 6 提交，再启动 Task 7
+- Deliverables: Task 8 执行顺序
+- Notes: 本次先完成 Task 7 提交，再启动 Task 8
 
 ## Part 3: 当前阶段执行
-### 3.1 Task 6 红测完成记录
-- [x] Task: `backend/tests/research/test_research_service.py` 已覆盖 create / execute / event-idempotency / confirm / interrupt / resume
-- Goal: 先固定 planner -> runtime -> finalizer -> artifacts 的服务层合同
-- Done when: pytest 因缺失服务层实现稳定失败后已转绿
+### 3.1 Task 7 红测完成记录
+- [x] Task: `backend/tests/api/test_research_endpoints.py` 已覆盖 create / confirm-plan / stream / interrupt / resume / artifacts / route set
+- Goal: 先固定当前 research API / worker HTTP 契约
+- Done when: pytest 因 research router 缺失而稳定失败后已转绿
 - Deliverables: failing test -> passing test
-- Notes: 红测已验证缺失 `ResearchService` / confirm / interrupt / resume / event_id 幂等时会失败
+- Notes: 红测已验证 `/api/v1/research/*` 当前端点集合缺失时会失败
 
-### 3.2 落地 Task 6 服务层
-- [x] Task: 已实现 event store、artifact store、ResearchService
-- Goal: 把现有 planner/runtime/finalizer 接成单一路径
+### 3.2 落地 Task 7 API / worker 集成
+- [x] Task: 已实现 research router、api 接线、worker task、artifacts/stream 读取
+- Goal: 把当前 research 会话契约接回仓库公开入口
 - Done when: 红测转绿
 - Deliverables:
-  - `backend/src/app/services/research_event_store.py`
-  - `backend/src/app/services/research_artifact_store.py`
-  - `backend/src/app/services/research_service.py`
-  - `backend/tests/research/test_research_service.py`
-- Notes: 本轮未发现需删除的旧 research service 源文件
+  - `backend/src/app/api/v1/endpoints/research.py`
+  - `backend/src/app/api/v1/api.py`
+  - `backend/src/app/worker/tasks/research.py`
+  - `backend/src/app/schemas/research.py`
+  - `backend/tests/api/test_research_endpoints.py`
+- Notes:
+  - SSE 当前按 `ResearchEventEnvelope` 输出 `namespace` / `subagent_name` / `phase` / `source_provider`
+  - worker 只通过 `ResearchService` 读取 session / plan snapshot / execute_session
 
 ## Part 4: 验证与切换
-### 4.1 验证 Task 6 产物
-- [x] Task: 运行 Task 6 定向 pytest / ruff
+### 4.1 验证 Task 7 产物
+- [x] Task: 运行 Task 7 定向 pytest / ruff
 - Goal: 为下一次提交提供 fresh verification
 - Done when: 验证输出支持“已验证通过”
 - Deliverables:
-  - `uv run pytest tests/research/test_research_service.py -q` -> `5 passed`
-  - `uv run ruff check src/app/services/research_event_store.py src/app/services/research_artifact_store.py src/app/services/research_service.py tests/research/test_research_service.py` -> `All checks passed!`
-  - `uv run pytest tests/research/test_models_runtime_schema.py tests/research/test_schemas_research.py tests/research/test_research_planner.py tests/research/test_deep_research_runtime.py tests/research/test_research_source_tooling.py tests/research/test_research_service.py -q` -> `28 passed`
+  - `uv run pytest tests/api/test_research_endpoints.py -q` -> `3 passed`
+  - `uv run ruff check src/app/api/v1/api.py src/app/api/v1/endpoints/research.py src/app/schemas/research.py src/app/services/research_service.py src/app/worker/celery_app.py src/app/worker/tasks/research.py tests/api/test_research_endpoints.py` -> `All checks passed!`
+  - `uv run pytest tests/api/test_research_endpoints.py tests/research/test_models_runtime_schema.py tests/research/test_schemas_research.py tests/research/test_research_planner.py tests/research/test_deep_research_runtime.py tests/research/test_research_source_tooling.py tests/research/test_research_service.py -q` -> `31 passed`
 - Notes: 若提交前再有改动，需要重新跑 fresh verification
 
 ### 4.2 同步状态并提交
-- [ ] Task: 更新 todo / state，完成 Task 6 git 提交，并锁定下一个任务为 Task 7
+- [ ] Task: 更新 todo / state，完成 Task 7 git 提交，并锁定下一个任务为 Task 8
 - Goal: 保持执行节奏稳定
 - Done when: 已提交且下个任务明确
-- Deliverables: 提交记录与下一任务决策
-- Notes: 未提交前不得宣称 Task 6 完成
+- Deliverables:
+  - Task 7 提交记录
+  - 下一任务锁定为 Task 8（export / artifact read）
+- Notes: 未提交前不得宣称 Task 7 完成

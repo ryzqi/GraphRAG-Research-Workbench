@@ -277,7 +277,7 @@ class ResearchArtifactRead(BaseModel):
 
     artifact_key: str = Field(..., min_length=1, max_length=64)
     content_text: str | None = None
-    content_json: dict[str, Any] | None = None
+    content_json: dict[str, Any] | list[Any] | None = None
     citations: list[ResearchCanonicalCitation] = Field(default_factory=list)
     source_provider: str | None = Field(default=None, max_length=64)
     retrieval_method: str | None = Field(default=None, max_length=64)

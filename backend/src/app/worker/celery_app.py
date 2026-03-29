@@ -25,6 +25,7 @@ celery_app = Celery(
         "app.worker.tasks.index_rebuild_outbox_dispatcher",
         "app.worker.tasks.bootstrap_watchdog",
         "app.worker.tasks.kb_bootstrap_jobs",
+        "app.worker.tasks.research",
     ],
 )
 
@@ -79,6 +80,7 @@ def _build_celery_conf(cfg: Settings) -> dict[str, Any]:
             "app.worker.tasks.kb_bootstrap_jobs.run_kb_bootstrap_job": {
                 "queue": "default"
             },
+            "app.worker.tasks.research.run_research_session": {"queue": "default"},
             "app.worker.tasks.bootstrap_watchdog.fail_stale_bootstrap_jobs": {
                 "queue": "dispatch"
             },

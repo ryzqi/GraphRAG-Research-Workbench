@@ -62,13 +62,13 @@
 
 ## 7. 当前端点集合与 Worker 集成
 
-- [ ] 7.1 新建 `backend/src/app/api/v1/endpoints/research.py`，定义当前研究会话接口。
-- [ ] 7.2 在 `backend/src/app/api/v1/api.py` 接入研究 router，并明确 `/api/v1` 为当前公开研究命名空间。
-- [ ] 7.3 设计当前端点集合：`POST /api/v1/research/sessions`、`POST /api/v1/research/sessions/{session_id}/confirm-plan`、`GET /api/v1/research/sessions/{session_id}/stream`、`POST /api/v1/research/sessions/{session_id}/interrupt`、`POST /api/v1/research/sessions/{session_id}/resume`、`GET /api/v1/research/sessions/{session_id}/artifacts`。
-- [ ] 7.4 重写 `backend/src/app/worker/tasks/research.py`，使其只调用 `ResearchService`。
-- [ ] 7.5 将 SSE 映射统一建立在当前 graph stream contract 的 `GraphOutput` / `StreamPart` 结构之上，并保留 `namespace` / `subagent_name` / `phase` / `source_provider`。
-- [ ] 7.6 编写 `backend/tests/api/test_research_endpoints.py`，覆盖 create / confirm-plan / stream / interrupt / resume / artifacts 全流程。
-- [ ] 7.7 调整 `backend/tests/test_backend_research_removal_contract.py` 或等价测试，明确研究接口已按当前路由集合重新接入。
+- [x] 7.1 新建 `backend/src/app/api/v1/endpoints/research.py`，定义当前研究会话接口。
+- [x] 7.2 在 `backend/src/app/api/v1/api.py` 接入研究 router，并明确 `/api/v1` 为当前公开研究命名空间。
+- [x] 7.3 设计当前端点集合：`POST /api/v1/research/sessions`、`POST /api/v1/research/sessions/{session_id}/confirm-plan`、`GET /api/v1/research/sessions/{session_id}/stream`、`POST /api/v1/research/sessions/{session_id}/interrupt`、`POST /api/v1/research/sessions/{session_id}/resume`、`GET /api/v1/research/sessions/{session_id}/artifacts`。
+- [x] 7.4 重写 `backend/src/app/worker/tasks/research.py`，使其只调用 `ResearchService`。
+- [x] 7.5 将 SSE 映射统一建立在当前 graph stream contract 的 `GraphOutput` / `StreamPart` 结构之上，并保留 `namespace` / `subagent_name` / `phase` / `source_provider`。
+- [x] 7.6 编写 `backend/tests/api/test_research_endpoints.py`，覆盖 create / confirm-plan / stream / interrupt / resume / artifacts 全流程。
+- [x] 7.7 调整 `backend/tests/test_backend_research_removal_contract.py` 或等价测试，明确研究接口已按当前路由集合重新接入。
 
 ## 8. 导出链路与工件读取
 

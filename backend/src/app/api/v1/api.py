@@ -15,6 +15,7 @@ from app.api.v1.endpoints import (
     knowledge_updates,
     materials,
     model_config,
+    research,
     system,
 )
 
@@ -32,4 +33,5 @@ api_router.include_router(extensions.router, prefix="/extensions", tags=["Extens
 api_router.include_router(model_config.router, prefix="/model-config", tags=["ModelConfig"])
 api_router.include_router(knowledge_updates.router, prefix="/knowledge-updates", tags=["KnowledgeUpdates"])
 api_router.include_router(checkpoints.router, tags=["Checkpoints"])
+api_router.include_router(research.router, prefix="/research", tags=["Research"])
 api_router.include_router(system.router, tags=["System"])

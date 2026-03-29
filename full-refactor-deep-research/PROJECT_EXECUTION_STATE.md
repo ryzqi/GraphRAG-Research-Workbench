@@ -7,47 +7,47 @@
   - `full-refactor-deep-research/TASK_TODO_MEDIUM.md`
   - `full-refactor-deep-research/TASK_TODO_FINE.md`
   - `full-refactor-deep-research/PROJECT_EXECUTION_STATE.md`
-- Current Focus / Active Phase: Phase 2 - Deep Agents 单引擎运行时与来源路由 / 当前任务 = Task 7（待启动）
+- Current Focus / Active Phase: Phase 2 - Deep Agents 单引擎运行时与来源路由 / 当前任务 = Task 8（待启动）
 - Active Execution Wave:
-  - 盘点当前 API 路由结构与旧 research 接入点
-  - 为 Task 7 编写 `backend/tests/api/test_research_endpoints.py` 红测
-  - 落地 `backend/src/app/api/v1/endpoints/research.py`、接线 `api.py`、补齐 worker `research.py`
+  - 盘点 export / artifact read 当前读取路径
+  - 为 Task 8 编写 `backend/tests/research/test_research_exporter.py` 红测
+  - 重构 exporter / export_service / export worker 只按 `session_id` 读工件
 - Last Verified Stop Point:
   - Phase 1 已完成并提交：`0c5fa63 feat(research): restore research persistence foundation`
   - `efc6693 feat(research): add research schema contracts`
   - `c3ccdf2 feat(research): add preflight research planner`
   - Task 4 已完成并提交：`a6e6438 feat(research): add deep agents runtime skeleton`
   - Task 5 已完成并提交：`dfbf457 feat(research): add source-aware research tooling`
-  - Task 6 已完成并待本次提交：event/artifact store、ResearchService、Task 6 回归测试
-  - `uv run pytest tests/research/test_research_service.py -q` -> `5 passed`
-  - `uv run ruff check src/app/services/research_event_store.py src/app/services/research_artifact_store.py src/app/services/research_service.py tests/research/test_research_service.py` -> `All checks passed!`
-  - `uv run pytest tests/research/test_models_runtime_schema.py tests/research/test_schemas_research.py tests/research/test_research_planner.py tests/research/test_deep_research_runtime.py tests/research/test_research_source_tooling.py tests/research/test_research_service.py -q` -> `28 passed`
+  - Task 6 提交：`a12593e feat(research): add research service orchestration`
+  - Task 7 已完成并待本次提交：research router、api 接线、worker research task、API 回归测试
+  - `uv run pytest tests/api/test_research_endpoints.py -q` -> `3 passed`
+  - `uv run ruff check src/app/api/v1/api.py src/app/api/v1/endpoints/research.py src/app/schemas/research.py src/app/services/research_service.py src/app/worker/celery_app.py src/app/worker/tasks/research.py tests/api/test_research_endpoints.py` -> `All checks passed!`
+  - `uv run pytest tests/api/test_research_endpoints.py tests/research/test_models_runtime_schema.py tests/research/test_schemas_research.py tests/research/test_research_planner.py tests/research/test_deep_research_runtime.py tests/research/test_research_source_tooling.py tests/research/test_research_service.py -q` -> `31 passed`
 - Latest Improvement / Regression Notes:
-  - 改进：Task 6 已把 planner/runtime/finalizer 与三表串成单一路径，并补齐 `research_brief`、`interim_findings`、plan confirm / interrupt / resume 服务接口
-  - 风险：当前 research HTTP 路由与 worker 仍未接回仓库公开入口
-- Next Recommended Action: 启动 Task 7，先写 `backend/tests/api/test_research_endpoints.py` 红测
+  - 改进：Task 7 已把 `/api/v1/research/*` 当前端点集合与 worker research task 接回仓库公开入口，stream/artifacts 已统一回到 `ResearchEventEnvelope` / `ResearchArtifactsResponse`
+  - 风险：export 链路仍可能读取旧 run-centric research 产物
+- Next Recommended Action: 启动 Task 8，先写 `backend/tests/research/test_research_exporter.py` 红测
 - Current Blockers: 无硬阻塞；若后续依赖 / 测试遇到沙箱问题，按 require_escalated 继续
 - Assumptions Awaiting Confirmation:
-  - Task 7 继续保持单路径 hard cut，不恢复旧 `/api/v1/research/runs*` 或 `/api/v2/research/*`
-  - 当前 service 层接口已足以支撑 API / worker 集成
+  - Task 8 继续保持单路径 hard cut，不恢复旧 run-centric export 读取
+  - 当前 `report_md` / `report_json` 工件已足以支撑导出链路改造
 - Parked / Deferred Items:
-  - export / artifact read，留给 Task 8
   - frontend workbench / timeline，留给 Task 9 / Task 10
 - Key Recent Decisions:
   - `deepagents==0.4.12` 作为当前 stable runtime 版本
   - `arxiv==2.4.1` 作为论文 provider 客户端依赖
   - research mode 继续 hard cut：无 MCP、无旧 run-centric fallback
   - Task 6 的恢复入口以 `resume_session(idempotency_key, resume_from_event_id, decisions)` 为唯一业务恢复接口
+  - Task 7 的 stream/artifacts 外部契约统一为 `ResearchEventEnvelope` / `ResearchArtifactsResponse`
 - Verification Evidence Reference:
-  - `uv run pytest tests/research/test_research_service.py -q`
-  - `uv run ruff check src/app/services/research_event_store.py src/app/services/research_artifact_store.py src/app/services/research_service.py tests/research/test_research_service.py`
-  - `uv run pytest tests/research/test_models_runtime_schema.py tests/research/test_schemas_research.py tests/research/test_research_planner.py tests/research/test_deep_research_runtime.py tests/research/test_research_source_tooling.py tests/research/test_research_service.py -q`
+  - `uv run pytest tests/api/test_research_endpoints.py -q`
+  - `uv run ruff check src/app/api/v1/api.py src/app/api/v1/endpoints/research.py src/app/schemas/research.py src/app/services/research_service.py src/app/worker/celery_app.py src/app/worker/tasks/research.py tests/api/test_research_endpoints.py`
+  - `uv run pytest tests/api/test_research_endpoints.py tests/research/test_models_runtime_schema.py tests/research/test_schemas_research.py tests/research/test_research_planner.py tests/research/test_deep_research_runtime.py tests/research/test_research_source_tooling.py tests/research/test_research_service.py -q`
   - 官方 Deep Agents 文档：customization / backends / streaming / subagents / release policy / PyPI `deepagents`
 - Related Files:
-  - `backend/src/app/services/research_event_store.py`
-  - `backend/src/app/services/research_artifact_store.py`
   - `backend/src/app/services/research_service.py`
-  - `backend/tests/research/test_research_service.py`
+  - `backend/src/app/api/v1/endpoints/research.py`
   - `backend/src/app/api/v1/api.py`
-  - `backend/src/app/worker/tasks/`
+  - `backend/src/app/worker/tasks/research.py`
+  - `backend/tests/api/test_research_endpoints.py`
 - Last Updated: 2026-03-29
