@@ -21,7 +21,7 @@
 - Why Now / Decision Driver: runtime / API / frontend 后续工作都依赖稳定三表和契约底座
 - Phase Roadmap Summary: 先做模型/契约/planner 基础，再接 runtime、再接当前 API/前端、最后做门禁
 - Current Phase: Phase 1 - 研究域模型与契约底座
-- Phase Goal: 完成 Task 1-3 的基础壳层，本轮先完成 Task 1（研究域模型与迁移）
+- Phase Goal: 完成 Task 1-3 的基础壳层，当前正在推进 Task 2（研究 schema 契约）
 - Phase Scope:
   - 包含：三表 ORM、状态机约束、Alembic 迁移、Task 1 测试
   - 不包含：Deep Agents 依赖接入、运行时、API、前端、demo 启动
@@ -35,7 +35,7 @@
   - `backend/src/app/db/base.py` 注册
   - Alembic 新迁移
   - `backend/tests/research/test_models_runtime_schema.py`
-- Active Execution Wave: Task 1 提交收尾（同步状态 + git commit）
+- Active Execution Wave: Task 2 提交收尾（同步状态 + git commit）
 - Entry Criteria:
   - 最新官方 Deep Agents 文档已核对
   - 当前 Alembic head = `a6b8c9d0e1f2`
@@ -92,6 +92,13 @@
 - Deliverables: 测试文件与验证输出
 - Notes: RED=`ModuleNotFoundError: app.models.research_artifact`；GREEN=`5 passed`
 
+### 3.3 完成 Task 2 研究 schema 契约
+- [x] Task: 新建 `backend/src/app/schemas/research.py` 并补齐 Task 2 对应测试
+- Goal: 冻结 create session / plan snapshot / event envelope / interrupt-resume / artifacts 契约
+- Done when: `backend/tests/research/test_schemas_research.py` 先红后绿完成，且与 Task 1 不冲突
+- Deliverables: schema 文件与验证输出
+- Notes: RED=`ModuleNotFoundError: No module named 'app.schemas.research'`；GREEN=`5 passed`；联合回归=`10 passed`
+
 ## Part 4: 验证与切换
 ### 4.1 验证 Task 1 产物
 - [x] Task: 运行 Task 1 定向 pytest / Alembic 检查
@@ -101,8 +108,15 @@
 - Notes: `uv run pytest tests/research/test_models_runtime_schema.py -q` -> `5 passed`; `uv run ruff check ...` -> `All checks passed!`; `uv run alembic heads` -> `38f4aa0f8d91 (head)`
 
 ### 4.2 同步状态并提交
-- [ ] Task: 更新 todo / state，完成 Task 1 git 提交，并锁定下一个任务为 Task 2
+- [x] Task: 更新 todo / state，完成 Task 1 git 提交，并锁定下一个任务为 Task 2
 - Goal: 保持一次一任务的执行纪律
 - Done when: 已提交且下个任务明确
 - Deliverables: 提交记录与下一任务决策
-- Notes: 未提交前不得声称 Task 1 完成
+- Notes: 已提交 `0c5fa63 feat(research): restore research persistence foundation`；下一任务锁定为 `backend/src/app/schemas/research.py` 与 `backend/tests/research/test_schemas_research.py`
+
+### 4.3 提交 Task 2 并切换到 Task 3
+- [ ] Task: 完成 Task 2 git 提交，并将当前活动任务切到 preflight planner（Task 3）
+- Goal: 继续保持“一次一任务、任务完成即提交”
+- Done when: 已提交 Task 2，execution state 指向 Task 3
+- Deliverables: 提交记录与下一任务决策
+- Notes: 提交前不宣称 Task 2 完成

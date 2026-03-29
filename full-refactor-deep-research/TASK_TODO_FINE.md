@@ -28,7 +28,7 @@
   - `specs/research-persistence-model/spec.md`
   - 当前 Alembic head = `a6b8c9d0e1f2`
   - 当前 backend 中无 research ORM / schema / service 文件
-- Active Execution Wave: 3.5 同步状态并 git 提交
+- Active Execution Wave: Task 2 提交收尾
 - Phase Goal: 完成 Task 1（模型 / 迁移 / 测试 / 提交）
 - Phase Scope:
   - 包含：模型、迁移、定向测试、todo/state 更新、git 提交
@@ -141,14 +141,14 @@
 - Notes: 已额外执行 `uv run ruff check ...`，结果 `All checks passed!`
 
 ### 3.5 同步执行工件并 git 提交
-- [ ] Task: 更新 roadmap/todo/state 的完成状态，并提交 Task 1
+- [x] Task: 更新 roadmap/todo/state 的完成状态，并提交 Task 1
 - Goal: 满足“一次只完成一个任务，完成后 git 提交”
 - Inputs / Dependencies: 3.4 成功验证
 - Procedure / Implementation notes: 提交信息必须准确描述 Task 1
 - Output / Artifact: git commit
 - Done when: `git status` 干净或仅剩下一任务新改动
 - Verification: `git status --short`
-- Notes: 提交后才允许切换到 Task 2
+- Notes: 已提交 `0c5fa63 feat(research): restore research persistence foundation`
 
 ## Part 4: 验证与切换
 ### 4.1 验证本阶段已完成输出
@@ -162,11 +162,57 @@
 - Notes: 当前仅剩 Task 1 git 提交动作未完成
 
 ### 4.2 准备下一个任务
-- [ ] Task: 将 active execution wave 切到 Task 2，并写入 execution state
+- [x] Task: 将 active execution wave 切到 Task 2，并写入 execution state
 - Goal: 让下一轮从 Task 2 直接起步
 - Inputs / Dependencies: Task 1 已提交
 - Procedure / Implementation notes: 不刷新 phase todo，只更新 active wave
 - Output / Artifact: 下一任务就绪状态
 - Done when: 下一任务与阻塞点明确
 - Verification: `PROJECT_EXECUTION_STATE.md` 已更新
-- Notes: 下一任务默认是研究 schema 契约（Task 2）
+- Notes: 下一任务为研究 schema 契约（Task 2）
+
+### 4.3 Task 2 RED：新增 schema 契约测试
+- [x] Task: 新建 `backend/tests/research/test_schemas_research.py`
+- Goal: 先把研究契约要求锁进测试
+- Inputs / Dependencies: `tasks.md` Task 2、API streaming spec
+- Procedure / Implementation notes: 覆盖 `research_brief`、`target_sources`、最小事件封套、续流优先级、resume 幂等键、canonical citation
+- Output / Artifact: failing test
+- Done when: pytest 因缺少 `app.schemas.research` 稳定失败
+- Verification: `uv run pytest tests/research/test_schemas_research.py -q`
+- Notes: RED 结果为 `ModuleNotFoundError: No module named 'app.schemas.research'`
+
+### 4.4 Task 2 GREEN：实现研究 schema 契约
+- [x] Task: 新建 `backend/src/app/schemas/research.py`
+- Goal: 冻结 Task 2 所需的 request/response/event/citation/resume 契约
+- Inputs / Dependencies: failing test、现有 schema 风格、Task 2 约束
+- Procedure / Implementation notes:
+  - 创建 `ResearchPlanSnapshot`、`ResearchEventEnvelope`、`ResearchResumeRequest`、`ResearchStreamResumeParams`、`ResearchCanonicalCitation` 等模型
+  - 保持 `extra=\"forbid\"`
+  - 用 helper 统一做字符串归一化与空值校验
+- Output / Artifact: `schemas/research.py`
+- Done when: Task 2 测试转绿
+- Verification: `uv run pytest tests/research/test_schemas_research.py -q`
+- Notes: 续流规则明确为 `Last-Event-ID` 优先于 `resume_from_event_id`
+
+### 4.5 Task 2 联合验证
+- [x] Task: 跑 Task 1 + Task 2 组合回归与定向 ruff
+- Goal: 证明新 schema 未回归持久化底座
+- Inputs / Dependencies: Task 1 / Task 2 全部改动
+- Procedure / Implementation notes: 同时跑 research 两组 pytest
+- Output / Artifact: fresh verification
+- Done when: pytest 与 ruff 全部通过
+- Verification:
+  - `uv run pytest tests/research/test_schemas_research.py -q`
+  - `uv run pytest tests/research/test_models_runtime_schema.py tests/research/test_schemas_research.py -q`
+  - `uv run ruff check src/app/schemas/research.py tests/research/test_schemas_research.py`
+- Notes: GREEN=`5 passed`; 联合回归=`10 passed`; Ruff=`All checks passed!`
+
+### 4.6 提交 Task 2 并准备 Task 3
+- [ ] Task: 更新 planning/state，并提交 Task 2
+- Goal: 在进入 planner 前保留已验证 stop point
+- Inputs / Dependencies: 4.5 验证通过
+- Procedure / Implementation notes: 提交信息准确描述 schema 契约
+- Output / Artifact: git commit
+- Done when: Task 2 已提交，execution state 切到 Task 3
+- Verification: `git status --short`
+- Notes: 提交后下一任务为 `research_planner.py`
