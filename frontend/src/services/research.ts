@@ -4,63 +4,146 @@
 
 import { apiFetch } from './http';
 import { openSseStream } from './sse';
-import type { AgentMode, AgentRun } from './chats';
 import type { SseEvent } from '../lib/sse';
+import type {
+  ResearchArtifactsResponse,
+  ResearchInterruptRequest,
+  ResearchPlanConfirmRequest,
+  ResearchResumeAccepted,
+  ResearchResumeRequest,
+  ResearchSessionAccepted,
+  ResearchSessionCreateRequest,
+} from '../types/researchEvents';
 
-export interface ResearchRunCreateRequest {
-  question: string;
-  selected_kb_ids: string[];
-  allow_external?: boolean;
-  mode: AgentMode;
+export type {
+  ResearchArtifactRead,
+  ResearchArtifactsResponse,
+  ResearchCanonicalCitation,
+  ResearchEventEnvelope,
+  ResearchInterruptRequest,
+  ResearchPlanConfirmRequest,
+  ResearchPlanSnapshot,
+  ResearchPlanSubtask,
+  ResearchResumeAccepted,
+  ResearchResumeRequest,
+  ResearchSessionAccepted,
+  ResearchSessionCreateRequest,
+  ResearchSessionStatus,
+  ResearchSessionView,
+  ResearchSourceTarget,
+  ResearchSourceType,
+} from '../types/researchEvents';
+
+export interface ResearchStreamOptions {
+  signal?: AbortSignal;
+  lastEventId?: string | null;
+  resumeFromEventId?: string | null;
 }
 
-export interface ResearchReport {
-  id: string;
-  run_id: string;
-  content_md: string;
-  citations: Array<Record<string, unknown>>;
-  created_at: string;
+export function buildResearchStreamPath(
+  sessionId: string,
+  resumeFromEventId?: string | null
+): string {
+  const path = `/api/v1/research/sessions/${sessionId}/stream`;
+  if (!resumeFromEventId) {
+    return path;
+  }
+
+  const params = new URLSearchParams({
+    resume_from_event_id: resumeFromEventId,
+  });
+  return `${path}?${params.toString()}`;
 }
 
 /**
- * 发起深度研究
+ * 发起深度研究会话
  */
-export async function createResearchRun(data: ResearchRunCreateRequest): Promise<AgentRun> {
-  return apiFetch<AgentRun>('/api/v1/research/runs', {
+export async function createResearchSession(
+  data: ResearchSessionCreateRequest
+): Promise<ResearchSessionAccepted> {
+  return apiFetch<ResearchSessionAccepted>('/api/v1/research/sessions', {
     method: 'POST',
     body: JSON.stringify(data),
   });
 }
 
 /**
- * 获取研究状态
+ * 确认研究计划
  */
-export async function getResearchRun(runId: string): Promise<AgentRun> {
-  return apiFetch<AgentRun>(`/api/v1/research/runs/${runId}`);
+export async function confirmResearchPlan(
+  sessionId: string,
+  data: ResearchPlanConfirmRequest
+): Promise<ResearchSessionAccepted> {
+  return apiFetch<ResearchSessionAccepted>(
+    `/api/v1/research/sessions/${sessionId}/confirm-plan`,
+    {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }
+  );
 }
 
 /**
- * 取消研究任务
+ * 获取研究工件
  */
-export async function cancelResearchRun(runId: string): Promise<AgentRun> {
-  return apiFetch<AgentRun>(`/api/v1/research/runs/${runId}/cancel`, {
-    method: 'POST',
-  });
+export async function getResearchArtifacts(
+  sessionId: string
+): Promise<ResearchArtifactsResponse> {
+  return apiFetch<ResearchArtifactsResponse>(
+    `/api/v1/research/sessions/${sessionId}/artifacts`
+  );
 }
 
 /**
- * 获取研究报告
+ * 中断研究会话
  */
-export async function getResearchReport(runId: string): Promise<ResearchReport> {
-  return apiFetch<ResearchReport>(`/api/v1/research/runs/${runId}/report`);
+export async function interruptResearchSession(
+  sessionId: string,
+  data: ResearchInterruptRequest = {}
+): Promise<ResearchSessionAccepted> {
+  return apiFetch<ResearchSessionAccepted>(
+    `/api/v1/research/sessions/${sessionId}/interrupt`,
+    {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }
+  );
 }
 
 /**
- * 研究进度流
+ * 恢复研究会话
  */
-export async function streamResearchRun(
-  runId: string,
-  signal?: AbortSignal
+export async function resumeResearchSession(
+  sessionId: string,
+  data: ResearchResumeRequest
+): Promise<ResearchResumeAccepted> {
+  return apiFetch<ResearchResumeAccepted>(
+    `/api/v1/research/sessions/${sessionId}/resume`,
+    {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }
+  );
+}
+
+/**
+ * 研究事件流
+ */
+export async function streamResearchSession(
+  sessionId: string,
+  options: ResearchStreamOptions = {}
 ): Promise<AsyncIterable<SseEvent>> {
-  return openSseStream(`/api/v1/research/runs/${runId}/stream`, { method: 'GET' }, signal);
+  const headers: Record<string, string> = {};
+  if (options.lastEventId) {
+    headers['Last-Event-ID'] = options.lastEventId;
+  }
+
+  return openSseStream(
+    buildResearchStreamPath(sessionId, options.resumeFromEventId),
+    {
+      method: 'GET',
+      ...(Object.keys(headers).length > 0 ? { headers } : {}),
+    },
+    options.signal
+  );
 }

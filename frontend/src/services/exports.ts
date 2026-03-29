@@ -13,14 +13,17 @@ export type ExportStatus = 'queued' | 'running' | 'succeeded' | 'failed';
 
 export interface ExportCreateRequest {
   type: ExportType;
-  run_id: string;
+  run_id?: string;
+  session_id?: string;
 }
 
 export interface ExportJob {
   id: string;
   run_id?: string;
+  session_id?: string;
   status: ExportStatus;
   download_url: string | null;
+  error_code?: string | null;
   error_message: string | null;
   created_at: string;
 }

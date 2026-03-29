@@ -79,12 +79,12 @@
 
 ## 9. 前端数据层直接改造当前研究服务
 
-- [ ] 9.1 直接改造 `frontend/src/services/research.ts`，切到 `session_id` 驱动的研究会话契约。
-- [ ] 9.2 新建 `frontend/src/types/researchEvents.ts` 与 `frontend/src/hooks/queries/useResearch.ts`，保持单服务文件入口。
-- [ ] 9.3 让当前研究服务直接请求当前研究端点集合。
-- [ ] 9.4 实现统一流消费器：按 `event_id` 去重、按 `sequence` 重排、支持小窗口乱序容忍，并保留 `namespace` 与 `source_provider` 以分流主/子代理事件和 provider 事件。
-- [ ] 9.5 实现断线重连恢复策略（优先 `Last-Event-ID`，失败回退快照 + 增量流）。
-- [ ] 9.6 通过 `npm run typecheck` 验证当前研究服务与事件类型约束。
+- [x] 9.1 直接改造 `frontend/src/services/research.ts`，切到 `session_id` 驱动的研究会话契约。
+- [x] 9.2 新建 `frontend/src/types/researchEvents.ts` 与 `frontend/src/hooks/queries/useResearch.ts`，保持单服务文件入口。
+- [x] 9.3 让当前研究服务直接请求当前研究端点集合。
+- [x] 9.4 实现统一流消费器：按 `event_id` 去重、按 `sequence` 重排、支持小窗口乱序容忍，并保留 `namespace` 与 `source_provider` 以分流主/子代理事件和 provider 事件。
+- [x] 9.5 实现断线重连恢复策略（优先 `Last-Event-ID`，失败回退快照 + 增量流）。
+- [x] 9.6 通过 `npm run typecheck` 验证当前研究服务与事件类型约束。
 
 ## 10. 前端事件驱动研究工作台
 

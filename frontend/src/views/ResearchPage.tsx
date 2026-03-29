@@ -3,8 +3,7 @@
 /**
  * 深度研究页面
  */
-import { useCallback, useState } from 'react';
-import { useSWRConfig } from 'swr';
+import { useCallback, useMemo, useState } from 'react';
 import {
   Box,
   Container,
@@ -16,16 +15,16 @@ import {
 import DownloadIcon from '@mui/icons-material/Download';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import { KnowledgeBaseSelector } from '../components/KnowledgeBaseSelector';
-import { KnowledgeUpdateSubmit } from '../components/KnowledgeUpdateSubmit';
 import { Button } from '../components/ui/Button';
 import { ErrorAlert } from '../components/ui/ErrorAlert';
 import { LoadingSpinner } from '../components/ui/LoadingSpinner';
 import { PageHeader } from '../components/ui/PageHeader';
 import { StatusBadge } from '../components/ui/StatusBadge';
 import { createExport, pollExportUntilDone } from '../services/exports';
-import { researchKeys, useCreateResearchRun, useResearchReport, useResearchRun } from '../hooks/queries/useResearch';
+import { useCreateResearchSession, useResearchSession } from '../hooks/queries/useResearch';
 import { useSelectableKnowledgeBases } from '../hooks/queries/useKnowledgeBases';
 import { getErrorMessage } from '../lib/errorHandler';
+import type { ResearchCanonicalCitation, ResearchSessionStatus } from '../types/researchEvents';
 import { safeOpenDownloadUrl } from '../utils/urlValidation';
 
 export function ResearchPage() {
@@ -33,49 +32,65 @@ export function ResearchPage() {
   const knowledgeBasesQuery = useSelectableKnowledgeBases();
   const knowledgeBases = knowledgeBasesQuery.data ?? [];
 
-  const { mutate } = useSWRConfig();
-  const createRunMutation = useCreateResearchRun();
+  const createSessionMutation = useCreateResearchSession();
 
   const [selectedKbIds, setSelectedKbIds] = useState<string[]>([]);
   const [question, setQuestion] = useState('');
-  const [runId, setRunId] = useState<string | null>(null);
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [acceptedSession, setAcceptedSession] = useState<{
+    session_id: string;
+    status: ResearchSessionStatus;
+    plan_snapshot: {
+      research_brief: string;
+      complexity: 'simple' | 'comparative' | 'complex';
+      summary: string;
+      subtasks: Array<{
+        title: string;
+        description: string;
+        target_sources: Array<'kb' | 'web' | 'paper' | 'hybrid'>;
+      }>;
+      target_sources: Array<'kb' | 'web' | 'paper' | 'hybrid'>;
+      budget_guidance?: string | null;
+      confirmation_required: boolean;
+    } | null;
+  } | null>(null);
   const [exporting, setExporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const runQuery = useResearchRun(runId ?? undefined);
-  const run = runQuery.data;
+  const sessionQuery = useResearchSession(sessionId ?? undefined, acceptedSession);
+  const session = sessionQuery.data;
 
-  const reportQuery = useResearchReport(run?.status === 'succeeded' ? run.id : undefined);
-  const report = reportQuery.data;
-
-  const loading = createRunMutation.isPending;
+  const loading = createSessionMutation.isPending;
 
   const mergedError =
     error ??
-    (createRunMutation.error ? getErrorMessage(createRunMutation.error) : null) ??
+    (createSessionMutation.error ? getErrorMessage(createSessionMutation.error) : null) ??
     (knowledgeBasesQuery.error ? getErrorMessage(knowledgeBasesQuery.error) : null) ??
-    (runQuery.error ? getErrorMessage(runQuery.error) : null) ??
-    (reportQuery.error ? getErrorMessage(reportQuery.error) : null);
+    (sessionQuery.error ? getErrorMessage(sessionQuery.error) : null);
+
+  const citations = useMemo(() => {
+    const raw = session?.report_json?.citations;
+    if (!Array.isArray(raw)) {
+      return [] as ResearchCanonicalCitation[];
+    }
+    return raw as ResearchCanonicalCitation[];
+  }, [session?.report_json]);
 
   const handleCloseError = () => {
     if (error) {
       setError(null);
       return;
     }
-    if (createRunMutation.error) {
-      createRunMutation.reset();
+    if (createSessionMutation.error) {
+      createSessionMutation.reset();
       return;
     }
     if (knowledgeBasesQuery.error) {
       knowledgeBasesQuery.refetch();
       return;
     }
-    if (runQuery.error) {
-      runQuery.refetch();
-      return;
-    }
-    if (reportQuery.error) {
-      reportQuery.refetch();
+    if (sessionQuery.error) {
+      void sessionQuery.refetch();
     }
   };
 
@@ -92,32 +107,32 @@ export function ResearchPage() {
     }
 
     setError(null);
-    setRunId(null);
+    setSessionId(null);
+    setAcceptedSession(null);
 
     try {
-      const newRun = await createRunMutation.mutateAsync({
+      const newSession = await createSessionMutation.mutateAsync({
         question: question.trim(),
         selected_kb_ids: selectedKbIds,
         allow_external: false,
-        mode: 'single_agent',
+        require_confirmation: false,
       });
 
-      // 直接回填 SWR 缓存，避免额外请求并立即开始轮询。
-      await mutate(researchKeys.run(newRun.id), newRun, { revalidate: false });
-      setRunId(newRun.id);
+      setAcceptedSession(newSession);
+      setSessionId(newSession.session_id);
     } catch (e) {
       setError(getErrorMessage(e));
     }
-  }, [createRunMutation, mutate, question, selectedKbIds]);
+  }, [createSessionMutation, question, selectedKbIds]);
 
   const handleExport = useCallback(async () => {
-    if (!run) return;
+    if (!session) return;
 
     setExporting(true);
     setError(null);
 
     try {
-      const job = await createExport({ type: 'research', run_id: run.id });
+      const job = await createExport({ type: 'research', session_id: session.session_id });
       const completed = await pollExportUntilDone(job.id);
 
       if (completed.status === 'succeeded' && completed.download_url) {
@@ -132,30 +147,49 @@ export function ResearchPage() {
     } finally {
       setExporting(false);
     }
-  }, [run]);
+  }, [session]);
 
   const reset = useCallback(() => {
-    setRunId(null);
+    setSessionId(null);
+    setAcceptedSession(null);
     setQuestion('');
     setError(null);
   }, []);
 
-  const getStatusLabel = (status: string) => {
+  const getStatusPresentation = (status: ResearchSessionStatus) => {
     switch (status) {
+      case 'created':
+      case 'planning':
+      case 'awaiting_confirmation':
+        return { badge: 'pending' as const, label: '等待计划' };
+      case 'queued':
+        return { badge: 'queued' as const, label: '排队中...' };
       case 'running':
-        return '研究中...';
-      case 'succeeded':
-        return '已完成';
+        return { badge: 'running' as const, label: '研究中...' };
+      case 'interrupted':
+        return { badge: 'pending' as const, label: '已中断' };
+      case 'resuming':
+        return { badge: 'running' as const, label: '恢复中...' };
+      case 'finalizing':
+        return { badge: 'running' as const, label: '收口中...' };
+      case 'final':
+        return { badge: 'succeeded' as const, label: '已完成' };
+      case 'canceled':
+        return { badge: 'canceled' as const, label: '已取消' };
+      case 'timed_out':
+      case 'failed':
       default:
-        return '失败';
+        return { badge: 'failed' as const, label: '失败' };
     }
   };
+
+  const statusPresentation = session ? getStatusPresentation(session.status) : null;
 
   return (
     <Container maxWidth="md" sx={{ py: 3 }}>
       <PageHeader title="深度研究" />
 
-      {!runId ? (
+      {!sessionId ? (
         <Stack spacing={3}>
           <Typography variant="subtitle1" fontWeight={500}>
             选择知识库范围
@@ -192,7 +226,7 @@ export function ResearchPage() {
             开始研究
           </Button>
         </Stack>
-      ) : !run ? (
+      ) : !session ? (
         <LoadingSpinner text="加载研究任务..." />
       ) : (
         <Stack spacing={2}>
@@ -209,7 +243,7 @@ export function ResearchPage() {
             <Box>
               <Typography fontWeight={500}>研究问题</Typography>
               <Typography variant="body2" color="text.secondary">
-                {run.question}
+                {question.trim()}
               </Typography>
             </Box>
             <Button
@@ -227,38 +261,29 @@ export function ResearchPage() {
             <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 1.5 }}>
               <Typography fontWeight={500}>状态：</Typography>
               <StatusBadge
-                status={run.status as 'running' | 'succeeded' | 'failed'}
-                label={getStatusLabel(run.status)}
+                status={statusPresentation?.badge ?? 'pending'}
+                label={statusPresentation?.label ?? '等待中'}
               />
             </Stack>
 
-            {run.stage_summaries && Object.keys(run.stage_summaries).length > 0 && (
+            {session.plan_snapshot && (
               <Box>
                 <Typography variant="body2" fontWeight={500} sx={{ mb: 1 }}>
-                  阶段摘要
+                  计划摘要
                 </Typography>
                 <Box sx={{ fontSize: 13, color: 'text.secondary' }}>
-                  {Object.entries(run.stage_summaries).map(([stage, summary]) => (
-                    <Box key={stage} sx={{ mb: 0.5 }}>
-                      <Typography
-                        component="span"
-                        variant="body2"
-                        fontWeight={500}
-                      >
-                        {stage}：
-                      </Typography>
-                      {typeof summary === 'object'
-                        ? JSON.stringify(summary)
-                        : String(summary)}
-                    </Box>
-                  ))}
+                  <Box sx={{ mb: 0.5 }}>{session.plan_snapshot.research_brief}</Box>
+                  <Box sx={{ mb: 0.5 }}>摘要：{session.plan_snapshot.summary}</Box>
+                  <Box sx={{ mb: 0.5 }}>
+                    来源：{session.plan_snapshot.target_sources.join(' / ')}
+                  </Box>
                 </Box>
               </Box>
             )}
           </Paper>
 
           {/* 研究报告 */}
-          {report && (
+          {session.report_md && (
             <Paper variant="outlined" sx={{ p: 2 }}>
               <Stack
                 direction="row"
@@ -293,19 +318,21 @@ export function ResearchPage() {
                   overflowY: 'auto',
                 }}
               >
-                {report.content_md}
+                {session.report_md}
               </Paper>
 
-              {report.citations && report.citations.length > 0 && (
+              {citations.length > 0 && (
                 <Box sx={{ mt: 2 }}>
                   <Typography variant="body2" fontWeight={500} sx={{ mb: 1 }}>
-                    引用 ({report.citations.length})
+                    引用 ({citations.length})
                   </Typography>
                   <Box sx={{ fontSize: 13, color: 'text.secondary' }}>
-                    {report.citations.map((c, i) => {
+                    {citations.map((c, i) => {
                       const indexValue =
-                        typeof c.index === 'number' || typeof c.index === 'string' ? c.index : i + 1;
-                      const excerpt = typeof c.excerpt === 'string' ? c.excerpt : '';
+                        typeof c.source_id === 'string' && c.source_id.trim()
+                          ? c.source_id
+                          : i + 1;
+                      const excerpt = typeof c.title === 'string' ? c.title : c.origin_url ?? c.url ?? '';
 
                       return (
                         <Box key={i} sx={{ mb: 0.5 }}>
@@ -318,15 +345,6 @@ export function ResearchPage() {
               )}
             </Paper>
           )}
-
-          {/* 提交沉淀 */}
-          {run.status === 'succeeded' && (
-            <KnowledgeUpdateSubmit
-              runId={run.id}
-              kbIds={run.selected_kb_ids || []}
-              reportContent={report?.content_md}
-            />
-          )}
         </Stack>
       )}
 
@@ -334,5 +352,4 @@ export function ResearchPage() {
     </Container>
   );
 }
-
 

@@ -4,7 +4,7 @@ import {
   DEFAULT_EXPORT_POLL_INTERVAL_MS,
   DEFAULT_EXPORT_POLL_MAX_ATTEMPTS,
 } from '../constants/runtimeDefaults';
-import { pollExportUntilDone } from './exports';
+import { createExport, pollExportUntilDone } from './exports';
 import { apiFetch } from './http';
 
 vi.mock('./http', () => ({
@@ -62,5 +62,26 @@ describe('pollExportUntilDone', () => {
 
     await rejection;
     expect(apiFetchMock).toHaveBeenCalledTimes(DEFAULT_EXPORT_POLL_MAX_ATTEMPTS);
+  });
+});
+
+describe('createExport', () => {
+  const apiFetchMock = vi.mocked(apiFetch);
+
+  beforeEach(() => {
+    apiFetchMock.mockReset();
+    apiFetchMock.mockResolvedValue(makeExportJob('queued'));
+  });
+
+  it('sends session_id for research exports', async () => {
+    await createExport({ type: 'research', session_id: 'session-1' });
+
+    expect(apiFetchMock).toHaveBeenCalledWith('/api/v1/exports', {
+      method: 'POST',
+      body: JSON.stringify({
+        type: 'research',
+        session_id: 'session-1',
+      }),
+    });
   });
 });

@@ -8,7 +8,7 @@
 - Customer Problem / Desired Outcome: 恢复并重构深度研究主路径，使其以 `session_id` 为唯一业务事实源、以最新 Deep Agents 作为唯一 runtime harness，并最终可在当前前后端中稳定启动、执行、恢复与导出。
 - Why Now / Decision Driver: 旧 research backend 已在迁移 `a6b8c9d0e1f2_remove_research_stack.py` 中整体移除，而前端仍保留 run-centric 调用；继续堆兼容层会扩大债务，必须按单路径重建。
 - Overall Goal: 按 `full-refactor-deep-research/tasks.md` 落地当前研究单路径：`create session -> preflight planner -> confirm -> runtime -> finalizer -> artifacts`。
-- Current Active Phase: Phase 2 - Deep Agents 单引擎运行时与来源路由
+- Current Active Phase: Phase 4 - 前端研究工作台 hard cut
 - Overall Success Criteria:
   - 后端恢复 `research_sessions / research_events / research_artifacts` 三表，且迁移、模型、测试一致。
   - 研究运行时只保留 `create_deep_agent` 单入口，不保留旧 research engine / run-centric 兼容路径。
@@ -35,7 +35,7 @@
 - Parked / Deferred Threads:
   - Deep Agents 版本最终锁定与依赖升级，放到进入 runtime phase 时一起提交。
   - 前端 timeline 视觉细化放到 frontend/workbench phase，不在基础底座阶段展开。
-- Last Updated: 2026-03-29
+- Last Updated: 2026-03-30
 
 ## Module Map
 - Module / Domain 1: 后端研究域模型与持久化
@@ -71,7 +71,7 @@
 - Transition Notes: 完成后进入 Phase 2，并在进入前锁定 `deepagents` 依赖策略
 
 ### Phase 2: Deep Agents 单引擎运行时与来源路由
-- Status: Active
+- Status: Completed
 - Objective: 按最新官方 Deep Agents 用法接入统一 runtime、source-aware tools/subagents 与 finalizer。
 - Scope Boundary: 覆盖 `tasks.md` 的 Task 4-6；不改当前 API / 前端。
 - Modules Involved: Deep Agents runtime 与 source-aware tooling；契约与会话编排
@@ -81,7 +81,7 @@
 - Transition Notes: 进入 Phase 3 前删除旧 research 调用路径
 
 ### Phase 3: 当前 API / SSE / 导出集成
-- Status: Pending
+- Status: Completed
 - Objective: 把当前公开研究接口、Worker 与导出链路切到新 session-driven 契约。
 - Scope Boundary: 覆盖 `tasks.md` 的 Task 7-8；不做前端工作台视觉细化。
 - Modules Involved: 当前 API / SSE / 导出与前端研究工作台（数据层部分）
@@ -91,7 +91,7 @@
 - Transition Notes: 进入 Phase 4 时前端数据层可直接接入新协议
 
 ### Phase 4: 前端研究工作台 hard cut
-- Status: Pending
+- Status: Active
 - Objective: 让当前前端研究服务与工作台完全使用 session/event/artifact 契约。
 - Scope Boundary: 覆盖 `tasks.md` 的 Task 9-10；不做 observability gate。
 - Modules Involved: 前端研究数据层与工作台
@@ -111,6 +111,14 @@
 - Transition Notes: 项目完成
 
 ## Phase History / Change Log
+- 2026-03-30 / Phase 3 完成，切换到 Phase 4
+  - What changed: Task 7-8 当前 research API / worker / export 已全部提交，Task 9 已将 frontend research service / hooks / page 切到 session/event/artifact 契约。
+  - Why it changed: 前端已具备接入当前研究会话协议的最小数据层，可以开始 workbench hard cut。
+  - Impact on current or future phases: Phase 4 将继续完成 timeline / plan preview / interrupt / artifact panels，并联调主链路。
+- 2026-03-30 / Phase 2 完成，切换到 Phase 3
+  - What changed: Task 4-6 runtime、source-aware tooling 与 service orchestration 已完成并提交。
+  - Why it changed: 当前业务壳层已能稳定支撑 current API / export 接入。
+  - Impact on current or future phases: Phase 3 以当前 session-driven 公开端点为唯一事实源推进 API / export / frontend data layer。
 - 2026-03-29 / Phase 1 完成，切换到 Phase 2
   - What changed: Task 1-3 已完成并分别提交；已归档 Phase 1 medium/fine todo，准备刷新 Phase 2 active planning files
   - Why it changed: 三表、schema、planner 基础壳层已就绪，可以进入 runtime / source routing 实现

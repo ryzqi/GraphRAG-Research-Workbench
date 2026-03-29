@@ -21,10 +21,11 @@ export {
 } from './useChats';
 
 export {
-  useResearchRun,
-  useResearchReport,
-  useCreateResearchRun,
-  useCancelResearchRun,
+  useResearchSession,
+  useCreateResearchSession,
+  useConfirmResearchPlan,
+  useInterruptResearchSession,
+  useResumeResearchSession,
   researchKeys,
 } from './useResearch';
 

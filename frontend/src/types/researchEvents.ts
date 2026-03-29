@@ -1,0 +1,279 @@
+export type ResearchSessionStatus =
+  | 'created'
+  | 'planning'
+  | 'awaiting_confirmation'
+  | 'queued'
+  | 'running'
+  | 'interrupted'
+  | 'resuming'
+  | 'finalizing'
+  | 'final'
+  | 'failed'
+  | 'canceled'
+  | 'timed_out';
+
+export type ResearchSourceTarget = 'kb' | 'web' | 'paper' | 'hybrid';
+export type ResearchSourceType = 'kb' | 'web' | 'paper';
+
+export interface ResearchSessionCreateRequest {
+  question: string;
+  selected_kb_ids?: string[];
+  allow_external?: boolean;
+  plan_first?: boolean;
+  require_confirmation?: boolean | null;
+}
+
+export interface ResearchPlanSubtask {
+  title: string;
+  description: string;
+  target_sources: ResearchSourceTarget[];
+}
+
+export interface ResearchPlanSnapshot {
+  research_brief: string;
+  complexity: 'simple' | 'comparative' | 'complex';
+  summary: string;
+  subtasks: ResearchPlanSubtask[];
+  target_sources: ResearchSourceTarget[];
+  budget_guidance?: string | null;
+  confirmation_required: boolean;
+}
+
+export interface ResearchSessionAccepted {
+  session_id: string;
+  status: ResearchSessionStatus;
+  plan_snapshot: ResearchPlanSnapshot | null;
+}
+
+export interface ResearchPlanConfirmRequest {
+  approved?: boolean;
+  note?: string | null;
+}
+
+export interface ResearchInterruptRequest {
+  reason?: string | null;
+}
+
+export interface ResearchResumeRequest {
+  idempotency_key: string;
+  resume_from_event_id?: string | null;
+  decisions?: Array<Record<string, unknown>>;
+}
+
+export interface ResearchResumeAccepted {
+  status: 'accepted';
+  resume_from_event_id: string | null;
+  decision_count: number;
+}
+
+export interface ResearchCanonicalCitation {
+  source_type: ResearchSourceType;
+  source_provider: string;
+  retrieval_method: string;
+  source_id: string;
+  title?: string | null;
+  url?: string | null;
+  origin_url?: string | null;
+  arxiv_id?: string | null;
+  authors: string[];
+  published_at?: string | null;
+  pdf_url?: string | null;
+  accessed_at?: string | null;
+}
+
+export interface ResearchArtifactRead {
+  artifact_key: string;
+  content_text?: string | null;
+  content_json?: Record<string, unknown> | unknown[] | null;
+  citations: ResearchCanonicalCitation[];
+  source_provider?: string | null;
+  retrieval_method?: string | null;
+  origin_url?: string | null;
+}
+
+export interface ResearchArtifactsResponse {
+  session_id: string;
+  items: ResearchArtifactRead[];
+}
+
+export interface ResearchEventEnvelope {
+  event_id: string;
+  sequence: number;
+  timestamp: string;
+  event_type: string;
+  session_id: string;
+  phase: string;
+  namespace: string;
+  payload: Record<string, unknown>;
+  trace_id?: string | null;
+  source_provider?: string | null;
+  retrieval_method?: string | null;
+  origin_url?: string | null;
+  subagent_name?: string | null;
+}
+
+export interface ResearchStreamCursor {
+  lastEventId: string | null;
+  lastSequence: number;
+}
+
+export interface ResearchSessionView {
+  session_id: string;
+  status: ResearchSessionStatus;
+  plan_snapshot: ResearchPlanSnapshot | null;
+  events: ResearchEventEnvelope[];
+  artifacts: ResearchArtifactRead[];
+  last_event_id: string | null;
+  last_sequence: number;
+  report_md: string | null;
+  report_json: Record<string, unknown> | null;
+}
+
+const TERMINAL_RESEARCH_SESSION_STATUSES: ReadonlySet<ResearchSessionStatus> = new Set([
+  'final',
+  'failed',
+  'canceled',
+  'timed_out',
+]);
+
+function compareResearchEvents(
+  left: ResearchEventEnvelope,
+  right: ResearchEventEnvelope
+): number {
+  if (left.sequence !== right.sequence) {
+    return left.sequence - right.sequence;
+  }
+  return left.event_id.localeCompare(right.event_id);
+}
+
+export function mergeResearchEventEnvelopes(
+  existing: readonly ResearchEventEnvelope[],
+  incoming: readonly ResearchEventEnvelope[]
+): ResearchEventEnvelope[] {
+  const mergedById = new Map<string, ResearchEventEnvelope>();
+
+  for (const item of [...existing, ...incoming].sort(compareResearchEvents)) {
+    if (!mergedById.has(item.event_id)) {
+      mergedById.set(item.event_id, item);
+    }
+  }
+
+  return [...mergedById.values()].sort(compareResearchEvents);
+}
+
+export function buildResearchArtifactsByKey(
+  items: readonly ResearchArtifactRead[]
+): Record<string, ResearchArtifactRead> {
+  return Object.fromEntries(items.map((item) => [item.artifact_key, item]));
+}
+
+export function getResearchReportArtifacts(
+  items: readonly ResearchArtifactRead[]
+): {
+  reportMd: string | null;
+  reportJson: Record<string, unknown> | null;
+} {
+  const artifactByKey = buildResearchArtifactsByKey(items);
+  const reportMdArtifact = artifactByKey.report_md;
+  const reportJsonArtifact = artifactByKey.report_json;
+
+  return {
+    reportMd:
+      typeof reportMdArtifact?.content_text === 'string' &&
+      reportMdArtifact.content_text.trim()
+        ? reportMdArtifact.content_text
+        : null,
+    reportJson:
+      reportJsonArtifact &&
+      reportJsonArtifact.content_json &&
+      !Array.isArray(reportJsonArtifact.content_json) &&
+      typeof reportJsonArtifact.content_json === 'object'
+        ? (reportJsonArtifact.content_json as Record<string, unknown>)
+        : null,
+  };
+}
+
+export function getLatestResearchStreamCursor(
+  items: readonly ResearchEventEnvelope[]
+): ResearchStreamCursor {
+  if (items.length === 0) {
+    return {
+      lastEventId: null,
+      lastSequence: 0,
+    };
+  }
+
+  const lastItem = [...items].sort(compareResearchEvents).at(-1);
+  return {
+    lastEventId: lastItem?.event_id ?? null,
+    lastSequence: lastItem?.sequence ?? 0,
+  };
+}
+
+export function isTerminalResearchStatus(status: ResearchSessionStatus): boolean {
+  return TERMINAL_RESEARCH_SESSION_STATUSES.has(status);
+}
+
+export function deriveResearchStatus(params: {
+  acceptedStatus: ResearchSessionStatus;
+  events: readonly ResearchEventEnvelope[];
+  artifacts?: readonly ResearchArtifactRead[];
+}): ResearchSessionStatus {
+  const { acceptedStatus, events, artifacts = [] } = params;
+  const ordered = [...events].sort(compareResearchEvents);
+
+  for (let index = ordered.length - 1; index >= 0; index -= 1) {
+    const eventType = ordered[index]?.event_type;
+    switch (eventType) {
+      case 'research.final.completed':
+        return 'final';
+      case 'research.finalizer.started':
+        return 'finalizing';
+      case 'research.run.resume_requested':
+        return 'resuming';
+      case 'research.run.interrupted':
+        return 'interrupted';
+      case 'research.run.started':
+        return 'running';
+      case 'research.plan.rejected':
+        return 'canceled';
+      case 'research.plan.confirmed':
+        return 'queued';
+      default:
+        break;
+    }
+  }
+
+  const { reportMd, reportJson } = getResearchReportArtifacts(artifacts);
+  if (reportMd && reportJson) {
+    return 'final';
+  }
+
+  return acceptedStatus;
+}
+
+export function buildResearchSessionView(params: {
+  accepted: ResearchSessionAccepted;
+  events: readonly ResearchEventEnvelope[];
+  artifacts: readonly ResearchArtifactRead[];
+}): ResearchSessionView {
+  const orderedEvents = mergeResearchEventEnvelopes([], params.events);
+  const cursor = getLatestResearchStreamCursor(orderedEvents);
+  const { reportMd, reportJson } = getResearchReportArtifacts(params.artifacts);
+
+  return {
+    session_id: params.accepted.session_id,
+    status: deriveResearchStatus({
+      acceptedStatus: params.accepted.status,
+      events: orderedEvents,
+      artifacts: params.artifacts,
+    }),
+    plan_snapshot: params.accepted.plan_snapshot,
+    events: orderedEvents,
+    artifacts: [...params.artifacts],
+    last_event_id: cursor.lastEventId,
+    last_sequence: cursor.lastSequence,
+    report_md: reportMd,
+    report_json: reportJson,
+  };
+}

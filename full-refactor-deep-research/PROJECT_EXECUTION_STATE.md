@@ -7,11 +7,11 @@
   - `full-refactor-deep-research/TASK_TODO_MEDIUM.md`
   - `full-refactor-deep-research/TASK_TODO_FINE.md`
   - `full-refactor-deep-research/PROJECT_EXECUTION_STATE.md`
-- Current Focus / Active Phase: Phase 2 - Deep Agents 单引擎运行时与来源路由 / 当前任务 = Task 9（待启动）
+- Current Focus / Active Phase: Phase 4 - 前端研究工作台 hard cut / 当前任务 = Task 10（待启动）
 - Active Execution Wave:
-  - 盘点前端 research data layer 与现有 `research.ts`
-  - 为 Task 9 准备 type-level / query-level 红测
-  - 将前端 research service 切到 `session_id` + SSE 事件契约
+  - 盘点 `ResearchPage` 与计划中的 workbench 组件边界
+  - 为 Task 10 准备组件 / 页面层红测或 type-level 基线
+  - 接通 timeline / plan preview / interrupt / artifact 面板
 - Last Verified Stop Point:
   - Phase 1 已完成并提交：`0c5fa63 feat(research): restore research persistence foundation`
   - `efc6693 feat(research): add research schema contracts`
@@ -21,17 +21,18 @@
   - Task 6 提交：`a12593e feat(research): add research service orchestration`
   - Task 7 提交：`13d700f feat(research): add current research session endpoints`
   - Task 8 提交：`a8d1a72 feat(research): add research artifact exports`
-  - `uv run pytest tests/research/test_research_exporter.py -q` -> `4 passed`
-  - `uv run ruff check src/app/schemas/exports.py src/app/services/export_service.py src/app/services/exporters/research_exporter.py src/app/worker/tasks/export.py tests/research/test_research_exporter.py` -> `All checks passed!`
-  - `uv run pytest tests/api/test_research_endpoints.py tests/research/test_models_runtime_schema.py tests/research/test_schemas_research.py tests/research/test_research_planner.py tests/research/test_deep_research_runtime.py tests/research/test_research_source_tooling.py tests/research/test_research_service.py tests/research/test_research_exporter.py -q` -> `35 passed`
+  - Task 9 提交：`feat(research): cut frontend to session contract`
+  - `npx vitest run src/services/research.test.ts src/services/exports.test.ts` -> `8 passed`
+  - `npx vitest run src/services` -> `78 passed`
+  - `npm run typecheck` -> `passed`
 - Latest Improvement / Regression Notes:
-  - 改进：Task 8 已让 research 导出链路只按 `session_id` 读取 `report_md` / `report_json`，并补齐 `ARTIFACT_INCOMPLETE` 结构化错误码
-  - 风险：前端 data layer 仍未切到当前 `session_id` + SSE 契约
-- Next Recommended Action: 启动 Task 9，先盘点 `frontend/src/services/research.ts` 与相关 hooks/types
+  - 改进：Task 9 已把 frontend research service / hooks / page / export request 全部切到 `session_id` + `ResearchEventEnvelope` / `ResearchArtifactsResponse` 单路径，并删除旧 run-centric ResearchPage 沉淀入口
+  - 风险：timeline、plan preview、interrupt 决策与 artifact panels 仍待 Task 10 接通
+- Next Recommended Action: 启动 Task 10，先盘点 `frontend/src/views/ResearchPage.tsx` 与待新增 workbench 组件
 - Current Blockers: 无硬阻塞；若后续依赖 / 测试遇到沙箱问题，按 require_escalated 继续
 - Assumptions Awaiting Confirmation:
-  - Task 9 继续保持单路径 hard cut，不恢复旧 run-centric 前端研究服务
-  - 当前 research API / artifacts / stream 契约已足以支撑前端切换
+  - Task 10 继续保持单路径 hard cut，不恢复旧 run-centric 研究页逻辑
+  - 当前 data layer 已足以支撑 timeline / artifact / interrupt workbench 组件直接接入
 - Parked / Deferred Items:
   - frontend workbench / timeline，留给 Task 9 / Task 10
 - Key Recent Decisions:
@@ -41,15 +42,16 @@
   - Task 6 的恢复入口以 `resume_session(idempotency_key, resume_from_event_id, decisions)` 为唯一业务恢复接口
   - Task 7 的 stream/artifacts 外部契约统一为 `ResearchEventEnvelope` / `ResearchArtifactsResponse`
   - Task 8 的 research 导出统一走 `ExportType.RESEARCH` + `session_id`
+  - Task 9 的前端续流策略统一为 `Last-Event-ID` 优先，失败后回退 artifacts 快照 + 增量流重连
 - Verification Evidence Reference:
-  - `uv run pytest tests/research/test_research_exporter.py -q`
-  - `uv run ruff check src/app/schemas/exports.py src/app/services/export_service.py src/app/services/exporters/research_exporter.py src/app/worker/tasks/export.py tests/research/test_research_exporter.py`
-  - `uv run pytest tests/api/test_research_endpoints.py tests/research/test_models_runtime_schema.py tests/research/test_schemas_research.py tests/research/test_research_planner.py tests/research/test_deep_research_runtime.py tests/research/test_research_source_tooling.py tests/research/test_research_service.py tests/research/test_research_exporter.py -q`
+  - `npx vitest run src/services/research.test.ts src/services/exports.test.ts`
+  - `npx vitest run src/services`
+  - `npm run typecheck`
   - 官方 Deep Agents 文档：customization / backends / streaming / subagents / release policy / PyPI `deepagents`
 - Related Files:
-  - `backend/src/app/services/exporters/research_exporter.py`
-  - `backend/src/app/services/export_service.py`
-  - `backend/src/app/worker/tasks/export.py`
-  - `backend/src/app/schemas/exports.py`
-  - `backend/tests/research/test_research_exporter.py`
-- Last Updated: 2026-03-29
+  - `frontend/src/services/research.ts`
+  - `frontend/src/types/researchEvents.ts`
+  - `frontend/src/hooks/queries/useResearch.ts`
+  - `frontend/src/views/ResearchPage.tsx`
+  - `frontend/src/services/exports.ts`
+- Last Updated: 2026-03-30
