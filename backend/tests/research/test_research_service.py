@@ -203,9 +203,11 @@ async def test_submit_clarification_transitions_to_awaiting_confirmation() -> No
         answer="关注 LangGraph StateGraph 在代码审查场景的使用建议",
     )
 
+    assert session.question == "帮我研究一下 AI 编程工具"
     assert session.status == ResearchSessionStatus.AWAITING_CONFIRMATION
     assert plan_result.plan_snapshot is not None
     assert plan_result.clarification_request is None
+    assert "补充说明：" not in plan_result.plan_snapshot.research_brief
 
 
 async def test_interrupt_and_resume_session_are_stateful_and_idempotent() -> None:

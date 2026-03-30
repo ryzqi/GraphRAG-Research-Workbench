@@ -228,18 +228,20 @@ class ResearchService:
                 code="RESEARCH_CLARIFICATION_NOT_ALLOWED",
                 message="仅 clarifying 状态允许提交澄清",
             )
-        combined_question = f"{session.question}\n补充说明：{answer}"
-        session.question = combined_question
+        effective_question = self._build_effective_planning_question(
+            question=session.question,
+            answer=answer,
+        )
         await self._persist_clarification_answer(session=session, answer=answer)
         await self._event_store.append(
             session=session,
             event_type="research.clarification.submitted",
             phase="planner",
-            payload={"answer": answer, "question": combined_question},
+            payload={"answer": answer, "effective_question": effective_question},
             trace_id=session.trace_id,
         )
         plan_result = self._planner.build_plan(
-            ResearchSessionCreateRequest(question=combined_question)
+            ResearchSessionCreateRequest(question=effective_question)
         )
         if plan_result.clarification_request is not None:
             await self._persist_clarification_request(
@@ -273,6 +275,14 @@ class ResearchService:
         )
         session.transition_to(plan_result.next_status)
         return session, plan_result
+
+    @staticmethod
+    def _build_effective_planning_question(*, question: str, answer: str) -> str:
+        normalized_question = question.strip()
+        normalized_answer = answer.strip()
+        if not normalized_answer:
+            return normalized_question
+        return f"{normalized_question} {normalized_answer}".strip()
 
     async def execute_session(
         self,

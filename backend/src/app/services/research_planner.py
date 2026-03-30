@@ -65,16 +65,12 @@ _GENERIC_SCOPE_PATTERNS = (
     "编程工具",
     "ai 编程",
 )
-_SPECIFIC_SCENARIO_MARKERS = (
-    "场景",
-    "使用",
-    "建议",
-    "流程",
-    "方案",
-    "落地",
-    "最佳实践",
-    "指南",
-    "规范",
+_CONCRETE_SCOPE_PATTERNS = (
+    r"在.+场景",
+    r"使用场景",
+    r"用于.+",
+    r"针对.+",
+    r"面向.+",
 )
 _SPECIFIC_MARKERS = (
     "langgraph",
@@ -285,11 +281,10 @@ class ResearchPlanner:
         target_text = clarification_note or question
         target_normalized = target_text.lower()
 
-        if any(marker in target_normalized for marker in _SPECIFIC_MARKERS):
-            return None
-        if any(marker in target_normalized for marker in _SPECIFIC_SCENARIO_MARKERS):
-            return None
-        if any(pattern in target_normalized for pattern in _GENERIC_SCOPE_PATTERNS):
+        scope_is_generic = any(pattern in target_normalized for pattern in _GENERIC_SCOPE_PATTERNS)
+        if scope_is_generic:
+            if self._has_concrete_scope(target_text):
+                return None
             return ResearchClarificationRequest(
                 summary="当前问题过于宽泛，需要先补充研究范围。",
                 questions=[
@@ -300,4 +295,12 @@ class ResearchPlanner:
                     )
                 ],
             )
+        if any(marker in target_normalized for marker in _SPECIFIC_MARKERS):
+            return None
         return None
+
+    def _has_concrete_scope(self, text: str) -> bool:
+        for pattern in _CONCRETE_SCOPE_PATTERNS:
+            if re.search(pattern, text):
+                return True
+        return False

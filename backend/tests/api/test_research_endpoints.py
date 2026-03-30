@@ -106,10 +106,9 @@ class _FakeResearchService:
     ) -> tuple[ResearchSession, ResearchPlannerResult]:
         if session.status != ResearchSessionStatus.CLARIFYING:
             raise ValueError("clarification only allowed for clarifying session")
-        combined_question = f"{session.question}\n补充说明：{answer}"
-        session.question = combined_question
+        effective_question = f"{session.question} {answer}".strip()
         plan_result = self._planner.build_plan(
-            ResearchSessionCreateRequest(question=combined_question)
+            ResearchSessionCreateRequest(question=effective_question)
         )
         session.status = plan_result.next_status
         self.event_envelopes[session.id].append(
@@ -157,7 +156,7 @@ class _FakeResearchService:
                     session_id=session.id,
                     phase="planner",
                     namespace="main",
-                    payload={"question": combined_question},
+                    payload={"question": effective_question},
                 )
             )
             self.artifacts[session.id] = [
@@ -314,7 +313,7 @@ def test_api_router_exposes_current_research_routes() -> None:
     assert not any(path.startswith("/research/runs") for path in route_paths)
 
 
-def test_create_session_returns_plan_snapshot_and_dispatches_worker_when_auto_approved() -> None:
+def test_create_session_returns_plan_snapshot_and_does_not_dispatch_early() -> None:
     service = _FakeResearchService()
     db = _FakeAsyncSession()
     dispatched: list[str] = []

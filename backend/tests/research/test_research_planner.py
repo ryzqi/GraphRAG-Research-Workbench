@@ -117,3 +117,25 @@ def test_help_research_with_specific_scenario_should_not_trigger_clarification()
     assert result.clarification_request is None
     assert result.plan_snapshot is not None
     assert result.next_status == ResearchSessionStatus.AWAITING_CONFIRMATION
+
+
+def test_help_research_with_brand_but_generic_scope_still_clarifies() -> None:
+    planner = ResearchPlanner()
+    result = planner.build_plan(
+        ResearchSessionCreateRequest(question="帮我研究一下 OpenAI 的 AI 编程工具")
+    )
+
+    assert result.clarification_request is not None
+    assert result.plan_snapshot is None
+    assert result.next_status == ResearchSessionStatus.CLARIFYING
+
+
+def test_help_research_with_generic_usage_advice_still_clarifies() -> None:
+    planner = ResearchPlanner()
+    result = planner.build_plan(
+        ResearchSessionCreateRequest(question="帮我研究一下 AI 编程工具使用建议")
+    )
+
+    assert result.clarification_request is not None
+    assert result.plan_snapshot is None
+    assert result.next_status == ResearchSessionStatus.CLARIFYING
