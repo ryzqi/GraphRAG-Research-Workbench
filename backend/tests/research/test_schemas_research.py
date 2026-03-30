@@ -10,10 +10,12 @@ from app.schemas.research import (
     ResearchCanonicalCitation,
     ResearchEventEnvelope,
     ResearchPlanSnapshot,
+    ResearchSessionAccepted,
     ResearchResumeRequest,
     ResearchSourceTarget,
     ResearchStreamResumeParams,
 )
+from app.models.research_session import ResearchSessionStatus
 
 
 def test_research_plan_snapshot_supports_brief_and_target_sources() -> None:
@@ -108,3 +110,39 @@ def test_canonical_citation_supports_provider_and_paper_metadata() -> None:
 
     assert citation.source_provider == "arxiv"
     assert citation.authors == ["Alice", "Bob"]
+
+
+def test_web_citation_fills_origin_url_from_url_when_missing() -> None:
+    citation = ResearchCanonicalCitation(
+        source_type="web",
+        source_provider="workspace",
+        retrieval_method="read_file",
+        source_id="/workspace/context/api_contract_research.md",
+        title="api_contract_research.md",
+        url="file:///workspace/context/api_contract_research.md",
+    )
+
+    assert citation.origin_url == "file:///workspace/context/api_contract_research.md"
+
+
+def test_research_session_accepted_supports_clarification_request() -> None:
+    accepted = ResearchSessionAccepted.model_validate(
+        {
+            "session_id": "00000000-0000-0000-0000-000000000001",
+            "status": "clarifying",
+            "plan_snapshot": None,
+            "clarification_request": {
+                "summary": "研究目标仍然过宽，需要补充信息。",
+                "questions": [
+                    {
+                        "id": "scope",
+                        "question": "你要做个人选型还是团队采购？",
+                        "why_it_matters": "范围会直接决定研究维度。",
+                    }
+                ],
+            },
+        }
+    )
+
+    assert accepted.status == ResearchSessionStatus.CLARIFYING
+    assert accepted.clarification_request is not None

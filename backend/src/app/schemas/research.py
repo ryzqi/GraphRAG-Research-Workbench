@@ -32,10 +32,8 @@ def _normalize_required_text(value: Any, *, field_name: str) -> str:
 
 
 class ResearchSourceTarget(str, Enum):
-    KB = "kb"
     WEB = "web"
     PAPER = "paper"
-    HYBRID = "hybrid"
 
 
 class ResearchComplexity(str, Enum):
@@ -45,7 +43,6 @@ class ResearchComplexity(str, Enum):
 
 
 class ResearchSourceType(str, Enum):
-    KB = "kb"
     WEB = "web"
     PAPER = "paper"
 
@@ -54,8 +51,6 @@ class ResearchSessionCreateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     question: str = Field(..., min_length=1)
-    selected_kb_ids: list[uuid.UUID] | None = None
-    allow_external: bool = False
     plan_first: bool = True
     require_confirmation: bool | None = None
 
@@ -110,12 +105,38 @@ class ResearchPlanSnapshot(BaseModel):
         return _normalize_optional_text(value, field_name="budget_guidance")
 
 
+class ResearchClarificationQuestion(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str = Field(..., min_length=1, max_length=64)
+    question: str = Field(..., min_length=1)
+    why_it_matters: str = Field(..., min_length=1)
+
+    @field_validator("id", "question", "why_it_matters")
+    @classmethod
+    def _validate_question_fields(cls, value: str, info) -> str:  # type: ignore[no-untyped-def]
+        return _normalize_required_text(value, field_name=info.field_name)
+
+
+class ResearchClarificationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    summary: str = Field(..., min_length=1)
+    questions: list[ResearchClarificationQuestion] = Field(min_length=1)
+
+    @field_validator("summary")
+    @classmethod
+    def _validate_summary(cls, value: str) -> str:
+        return _normalize_required_text(value, field_name="summary")
+
+
 class ResearchSessionAccepted(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     session_id: uuid.UUID
     status: ResearchSessionStatus
     plan_snapshot: ResearchPlanSnapshot | None = None
+    clarification_request: ResearchClarificationRequest | None = None
 
 
 class ResearchPlanConfirmRequest(BaseModel):
@@ -177,6 +198,10 @@ class ResearchCanonicalCitation(BaseModel):
 
     @model_validator(mode="after")
     def validate_source_specific_fields(self) -> "ResearchCanonicalCitation":
+        if self.source_type == ResearchSourceType.WEB and not self.origin_url:
+            fallback_origin_url = self.url or self.source_id
+            if fallback_origin_url:
+                self.origin_url = fallback_origin_url
         if self.source_type == ResearchSourceType.WEB and not self.origin_url:
             raise ValueError("网页来源 citation 必须包含 origin_url")
         if self.source_type == ResearchSourceType.PAPER and self.arxiv_id and not self.pdf_url:
