@@ -7,6 +7,8 @@ import re
 from app.models.research_session import ResearchSessionStatus
 from app.schemas.research import (
     ResearchComplexity,
+    ResearchClarificationQuestion,
+    ResearchClarificationRequest,
     ResearchPlanSnapshot,
     ResearchPlanSubtask,
     ResearchSessionCreateRequest,
@@ -52,6 +54,13 @@ _COMPLEX_PATTERNS = (
     "落地建议",
     "2024-2026",
 )
+_UNCLEAR_PATTERNS = (
+    "研究一下",
+    "了解一下",
+    "介绍一下",
+    "帮我研究",
+    "帮忙研究",
+)
 
 
 class ResearchPlanner:
@@ -59,6 +68,15 @@ class ResearchPlanner:
 
     def build_plan(self, request: ResearchSessionCreateRequest) -> ResearchPlannerResult:
         question = request.question.strip()
+        clarification_request = self._maybe_build_clarification(question)
+        if clarification_request is not None:
+            return ResearchPlannerResult(
+                plan_snapshot=None,
+                clarification_request=clarification_request,
+                auto_approve=False,
+                next_status=ResearchSessionStatus.CLARIFYING,
+            )
+
         complexity = self._classify_complexity(question)
         target_sources = self._resolve_target_sources(
             question=question,
@@ -90,12 +108,9 @@ class ResearchPlanner:
         )
         return ResearchPlannerResult(
             plan_snapshot=plan_snapshot,
-            auto_approve=not confirmation_required,
-            next_status=(
-                ResearchSessionStatus.QUEUED
-                if not confirmation_required
-                else ResearchSessionStatus.AWAITING_CONFIRMATION
-            ),
+            clarification_request=None,
+            auto_approve=False,
+            next_status=ResearchSessionStatus.AWAITING_CONFIRMATION,
         )
 
     def _classify_complexity(self, question: str) -> ResearchComplexity:
@@ -188,7 +203,7 @@ class ResearchPlanner:
     ) -> bool:
         if request_override is not None:
             return bool(request_override)
-        return complexity in {ResearchComplexity.COMPARATIVE, ResearchComplexity.COMPLEX}
+        return True
 
     def _build_research_brief(
         self,
@@ -222,7 +237,7 @@ class ResearchPlanner:
 
     def _build_budget_hint(self, *, complexity: ResearchComplexity) -> str:
         if complexity == ResearchComplexity.SIMPLE:
-            return "低预算：单轮规划、单路线执行，默认可 auto-approve。"
+            return "低预算：单轮规划、单路线执行，确认后再进入执行。"
         if complexity == ResearchComplexity.COMPARATIVE:
             return "中预算：至少两个对比子任务，建议先确认计划再执行。"
         return "高预算：长时研究，建议先确认计划，并保留 interrupt / resume。"
@@ -231,3 +246,20 @@ class ResearchPlanner:
         separators = re.split(r"[，,。.;；\n]", question)
         meaningful = [part.strip() for part in separators if part.strip()]
         return len(meaningful) >= 3 or question.count("并") >= 2 or question.count("同时") >= 1
+
+    def _maybe_build_clarification(
+        self, question: str
+    ) -> ResearchClarificationRequest | None:
+        normalized = question.lower()
+        if any(pattern in normalized for pattern in _UNCLEAR_PATTERNS):
+            return ResearchClarificationRequest(
+                summary="当前问题过于宽泛，需要先补充研究范围。",
+                questions=[
+                    ResearchClarificationQuestion(
+                        id="scope",
+                        question="希望聚焦在哪类 AI 编程工具或具体使用场景？",
+                        why_it_matters="范围过大时无法确定检索重点与最终输出结构。",
+                    )
+                ],
+            )
+        return None

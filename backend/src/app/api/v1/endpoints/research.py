@@ -10,6 +10,7 @@ from fastapi.responses import StreamingResponse
 
 from app.api.deps import AsyncSessionDep
 from app.api.sse import SSE_HEADERS, encode_sse
+from app.models.research_session import ResearchSessionStatus
 from app.schemas.research import (
     ResearchArtifactsResponse,
     ResearchInterruptRequest,
@@ -72,12 +73,13 @@ async def create_research_session(
         thread_id=str(session_id),
     )
     await db.commit()
-    if plan_result.auto_approve:
+    if session.status == ResearchSessionStatus.QUEUED:
         _dispatch_research_session(request=request, session_id=session.id)
     return ResearchSessionAccepted(
         session_id=session.id,
         status=session.status,
         plan_snapshot=plan_result.plan_snapshot,
+        clarification_request=plan_result.clarification_request,
     )
 
 

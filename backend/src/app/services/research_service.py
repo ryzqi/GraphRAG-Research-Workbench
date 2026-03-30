@@ -19,6 +19,7 @@ from app.schemas.research import (
     ResearchArtifactRead,
     ResearchArtifactsResponse,
     ResearchCanonicalCitation,
+    ResearchClarificationRequest,
     ResearchEventEnvelope,
     ResearchPlanSnapshot,
     ResearchSessionCreateRequest,
@@ -117,8 +118,6 @@ class ResearchService:
             id=session_id,
             thread_id=thread_id,
             question=request.question,
-            selected_kb_ids=request.selected_kb_ids,
-            allow_external=request.allow_external,
             status=ResearchSessionStatus.CREATED,
             planner_phase="preflight",
         )
@@ -128,6 +127,19 @@ class ResearchService:
 
         session.transition_to(ResearchSessionStatus.PLANNING)
         plan_result = self._planner.build_plan(request)
+        if plan_result.clarification_request is not None:
+            await self._persist_clarification_request(
+                session=session,
+                clarification_request=plan_result.clarification_request,
+            )
+            session.transition_to(ResearchSessionStatus.CLARIFYING)
+            return session, plan_result
+
+        if plan_result.plan_snapshot is None:
+            raise bad_request(
+                code="RESEARCH_PLAN_SNAPSHOT_MISSING",
+                message="研究计划快照缺失",
+            )
         await self._artifact_store.upsert(
             session=session,
             artifact_key=plan_result.plan_artifact_key,
@@ -147,6 +159,26 @@ class ResearchService:
         )
         session.transition_to(plan_result.next_status)
         return session, plan_result
+
+    async def _persist_clarification_request(
+        self,
+        *,
+        session: ResearchSession,
+        clarification_request: ResearchClarificationRequest,
+    ) -> None:
+        payload = clarification_request.model_dump(mode="json")
+        await self._artifact_store.upsert(
+            session=session,
+            artifact_key="clarification_request",
+            content_json=payload,
+        )
+        await self._event_store.append(
+            session=session,
+            event_type="research.clarification.requested",
+            phase="planner",
+            payload=payload,
+            trace_id=session.trace_id,
+        )
 
     async def confirm_plan(
         self,
