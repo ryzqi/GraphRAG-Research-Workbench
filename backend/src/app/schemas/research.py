@@ -32,8 +32,10 @@ def _normalize_required_text(value: Any, *, field_name: str) -> str:
 
 
 class ResearchSourceTarget(str, Enum):
+    KB = "kb"
     WEB = "web"
     PAPER = "paper"
+    HYBRID = "hybrid"
 
 
 class ResearchComplexity(str, Enum):
@@ -43,6 +45,7 @@ class ResearchComplexity(str, Enum):
 
 
 class ResearchSourceType(str, Enum):
+    KB = "kb"
     WEB = "web"
     PAPER = "paper"
 
@@ -52,7 +55,6 @@ class ResearchSessionCreateRequest(BaseModel):
 
     question: str = Field(..., min_length=1)
     plan_first: bool = True
-    require_confirmation: bool | None = None
 
     @field_validator("question")
     @classmethod
@@ -198,10 +200,6 @@ class ResearchCanonicalCitation(BaseModel):
 
     @model_validator(mode="after")
     def validate_source_specific_fields(self) -> "ResearchCanonicalCitation":
-        if self.source_type == ResearchSourceType.WEB and not self.origin_url:
-            fallback_origin_url = self.url or self.source_id
-            if fallback_origin_url:
-                self.origin_url = fallback_origin_url
         if self.source_type == ResearchSourceType.WEB and not self.origin_url:
             raise ValueError("网页来源 citation 必须包含 origin_url")
         if self.source_type == ResearchSourceType.PAPER and self.arxiv_id and not self.pdf_url:

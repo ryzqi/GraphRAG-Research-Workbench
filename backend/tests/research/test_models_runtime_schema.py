@@ -25,8 +25,6 @@ def test_research_session_exposes_runtime_state_machine_fields() -> None:
 
     assert session_table.c.thread_id.unique is True
     assert session_table.c.thread_id.nullable is False
-    assert "selected_kb_ids" not in session_table.c
-    assert "allow_external" not in session_table.c
     assert session_table.c.planner_phase.nullable is True
     assert session_table.c.runtime_phase.nullable is True
     assert session_table.c.finalizer_phase.nullable is True
@@ -36,6 +34,8 @@ def test_research_session_exposes_runtime_state_machine_fields() -> None:
 def test_terminal_research_session_states_are_irreversible() -> None:
     session = ResearchSession(
         question="对比 deep agents research runtime 方案",
+        selected_kb_ids=[],
+        allow_external=True,
         status=ResearchSessionStatus.FINAL,
         thread_id="research-session-1",
     )
@@ -63,6 +63,8 @@ def test_research_session_transition_to_same_status_is_idempotent() -> None:
     session = ResearchSession(
         id=uuid4(),
         question="当前研究会话是否允许同态迁移",
+        selected_kb_ids=[],
+        allow_external=False,
         status=ResearchSessionStatus.CREATED,
         thread_id="research-session-2",
     )

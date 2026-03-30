@@ -112,19 +112,6 @@ def test_canonical_citation_supports_provider_and_paper_metadata() -> None:
     assert citation.authors == ["Alice", "Bob"]
 
 
-def test_web_citation_fills_origin_url_from_url_when_missing() -> None:
-    citation = ResearchCanonicalCitation(
-        source_type="web",
-        source_provider="workspace",
-        retrieval_method="read_file",
-        source_id="/workspace/context/api_contract_research.md",
-        title="api_contract_research.md",
-        url="file:///workspace/context/api_contract_research.md",
-    )
-
-    assert citation.origin_url == "file:///workspace/context/api_contract_research.md"
-
-
 def test_research_session_accepted_supports_clarification_request() -> None:
     accepted = ResearchSessionAccepted.model_validate(
         {
