@@ -5,6 +5,7 @@ import { openSseStream } from './sse';
 import {
   createResearchSession,
   confirmResearchPlan,
+  submitResearchClarification,
   type ResearchClarificationRequest,
   type ResearchEventEnvelope,
   type ResearchSessionAccepted,
@@ -78,6 +79,36 @@ describe('research service contract', () => {
         body: JSON.stringify({
           approved: true,
           note: '继续执行',
+        }),
+      }
+    );
+  });
+
+  it('submits clarification answers through the clarification endpoint', async () => {
+    apiFetchMock.mockResolvedValue({
+      session_id: 'session-1',
+      status: 'awaiting_confirmation',
+      plan_snapshot: {
+        research_brief: '比较三种研究入口的能力边界',
+        complexity: 'comparative',
+        summary: '先看规划，再确认执行。',
+        subtasks: [],
+        target_sources: ['web'],
+        confirmation_required: true,
+      },
+      clarification_request: null,
+    });
+
+    await submitResearchClarification('session-1', {
+      answer: '面向 20 人研发团队，输出选型建议与落地顺序。',
+    });
+
+    expect(apiFetchMock).toHaveBeenCalledWith(
+      '/api/v1/research/sessions/session-1/clarification',
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          answer: '面向 20 人研发团队，输出选型建议与落地顺序。',
         }),
       }
     );

@@ -10,7 +10,9 @@ import {
   getResearchArtifacts,
   interruptResearchSession,
   resumeResearchSession,
+  submitResearchClarification,
   streamResearchSession,
+  type ResearchClarificationSubmitRequest,
   type ResearchPlanConfirmRequest,
   type ResearchResumeRequest,
   type ResearchSessionAccepted,
@@ -244,6 +246,13 @@ export function useConfirmResearchPlan() {
     { sessionId: string; body: ResearchPlanConfirmRequest },
     ResearchSessionAccepted
   >(({ sessionId, body }) => confirmResearchPlan(sessionId, body));
+}
+
+export function useSubmitResearchClarification() {
+  return useApiMutation<
+    { sessionId: string; body: ResearchClarificationSubmitRequest },
+    ResearchSessionAccepted
+  >(({ sessionId, body }) => submitResearchClarification(sessionId, body));
 }
 
 export function useInterruptResearchSession() {

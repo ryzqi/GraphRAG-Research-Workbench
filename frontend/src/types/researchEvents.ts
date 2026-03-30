@@ -60,6 +60,10 @@ export interface ResearchPlanConfirmRequest {
   note?: string | null;
 }
 
+export interface ResearchClarificationSubmitRequest {
+  answer: string;
+}
+
 export interface ResearchInterruptRequest {
   reason?: string | null;
 }

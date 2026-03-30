@@ -21,6 +21,7 @@ vi.mock('react', async () => {
 
 const createResearchSessionMock = vi.fn();
 const confirmPlanMock = vi.fn();
+const submitClarificationMock = vi.fn();
 const interruptSessionMock = vi.fn();
 const resumeSessionMock = vi.fn();
 const refetchMock = vi.fn();
@@ -29,8 +30,23 @@ const hookState = {
   session: undefined as
     | {
         session_id: string;
-        status: 'running';
-        plan_snapshot: null;
+        status: 'clarifying' | 'awaiting_confirmation' | 'running';
+        plan_snapshot: {
+          research_brief: string;
+          complexity: 'simple' | 'comparative' | 'complex';
+          summary: string;
+          subtasks: [];
+          target_sources: ['web'];
+          confirmation_required: boolean;
+        } | null;
+        clarification_request: {
+          summary: string;
+          questions: Array<{
+            id: string;
+            question: string;
+            why_it_matters: string;
+          }>;
+        } | null;
         events: [];
         artifacts: [];
         last_event_id: null;
@@ -52,6 +68,12 @@ vi.mock('../hooks/queries/useResearch', () => ({
     isPending: false,
     error: null,
     mutateAsync: confirmPlanMock,
+    reset: vi.fn(),
+  }),
+  useSubmitResearchClarification: () => ({
+    isPending: false,
+    error: null,
+    mutateAsync: submitClarificationMock,
     reset: vi.fn(),
   }),
   useInterruptResearchSession: () => ({
@@ -97,6 +119,7 @@ describe('ResearchPage', () => {
       session_id: 'session-1',
       status: 'running',
       plan_snapshot: null,
+      clarification_request: null,
       events: [],
       artifacts: [],
       last_event_id: null,
@@ -109,9 +132,18 @@ describe('ResearchPage', () => {
     reactState.sequence = [
       ['比较调度路线', setState],
       ['session-1', setState],
-      [{ session_id: 'session-1', status: 'running', plan_snapshot: null }, setState],
+      [
+        {
+          session_id: 'session-1',
+          status: 'running',
+          plan_snapshot: null,
+          clarification_request: null,
+        },
+        setState,
+      ],
       [false, setState],
       [null, setState],
+      ['', setState],
       ['resume-1', setState],
       ['[{"action":"approve"}]', setState],
     ];
@@ -120,5 +152,106 @@ describe('ResearchPage', () => {
     const html = renderToStaticMarkup(createElement(ResearchPage));
 
     expect(html).toContain('研究工作台');
+  });
+
+  it('renders the planning thread with clarification questions instead of the workspace', () => {
+    hookState.session = {
+      session_id: 'session-clarifying',
+      status: 'clarifying',
+      plan_snapshot: null,
+      clarification_request: {
+        summary: '还需要补充研究上下文。',
+        questions: [
+          {
+            id: 'scope',
+            question: '你希望输出选型建议，还是迁移实施方案？',
+            why_it_matters: '目标不同，规划结构会不同。',
+          },
+        ],
+      },
+      events: [],
+      artifacts: [],
+      last_event_id: null,
+      last_sequence: 0,
+      report_md: null,
+      report_json: null,
+    };
+
+    const setState = vi.fn();
+    reactState.sequence = [
+      ['MCP 部署研究', setState],
+      ['session-clarifying', setState],
+      [
+        {
+          session_id: 'session-clarifying',
+          status: 'clarifying',
+          plan_snapshot: null,
+          clarification_request: hookState.session.clarification_request,
+        },
+        setState,
+      ],
+      [false, setState],
+      [null, setState],
+      ['面向 20 人研发团队。', setState],
+      ['resume-1', setState],
+      ['[{"action":"approve"}]', setState],
+    ];
+    reactState.index = 0;
+
+    const html = renderToStaticMarkup(createElement(ResearchPage));
+
+    expect(html).toContain('你希望输出选型建议，还是迁移实施方案？');
+    expect(html).toContain('提交补充信息');
+    expect(html).not.toContain('研究工作台');
+    expect(html).not.toContain('失败');
+  });
+
+  it('renders the planning thread with plan confirmation instead of the workspace', () => {
+    hookState.session = {
+      session_id: 'session-awaiting',
+      status: 'awaiting_confirmation',
+      plan_snapshot: {
+        research_brief: '比较三种研究入口的定位与边界',
+        complexity: 'comparative',
+        summary: '先澄清研究对象，再确认最终执行路径。',
+        subtasks: [],
+        target_sources: ['web'],
+        confirmation_required: true,
+      },
+      clarification_request: null,
+      events: [],
+      artifacts: [],
+      last_event_id: null,
+      last_sequence: 0,
+      report_md: null,
+      report_json: null,
+    };
+
+    const setState = vi.fn();
+    reactState.sequence = [
+      ['研究入口对比', setState],
+      ['session-awaiting', setState],
+      [
+        {
+          session_id: 'session-awaiting',
+          status: 'awaiting_confirmation',
+          plan_snapshot: hookState.session.plan_snapshot,
+          clarification_request: null,
+        },
+        setState,
+      ],
+      [false, setState],
+      [null, setState],
+      ['', setState],
+      ['resume-1', setState],
+      ['[{"action":"approve"}]', setState],
+    ];
+    reactState.index = 0;
+
+    const html = renderToStaticMarkup(createElement(ResearchPage));
+
+    expect(html).toContain('计划草案');
+    expect(html).toContain('确认计划并开始研究');
+    expect(html).not.toContain('研究工作台');
   });
 });

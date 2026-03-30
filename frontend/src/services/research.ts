@@ -7,6 +7,7 @@ import { openSseStream } from './sse';
 import type { SseEvent } from '../lib/sse';
 import type {
   ResearchArtifactsResponse,
+  ResearchClarificationSubmitRequest,
   ResearchInterruptRequest,
   ResearchPlanConfirmRequest,
   ResearchResumeAccepted,
@@ -21,6 +22,7 @@ export type {
   ResearchCanonicalCitation,
   ResearchClarificationQuestion,
   ResearchClarificationRequest,
+  ResearchClarificationSubmitRequest,
   ResearchEventEnvelope,
   ResearchInterruptRequest,
   ResearchPlanConfirmRequest,
@@ -83,6 +85,22 @@ export async function confirmResearchPlan(
 ): Promise<ResearchSessionAccepted> {
   return apiFetch<ResearchSessionAccepted>(
     `/api/v1/research/sessions/${sessionId}/confirm-plan`,
+    {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }
+  );
+}
+
+/**
+ * 提交澄清回答
+ */
+export async function submitResearchClarification(
+  sessionId: string,
+  data: ResearchClarificationSubmitRequest
+): Promise<ResearchSessionAccepted> {
+  return apiFetch<ResearchSessionAccepted>(
+    `/api/v1/research/sessions/${sessionId}/clarification`,
     {
       method: 'POST',
       body: JSON.stringify(data),

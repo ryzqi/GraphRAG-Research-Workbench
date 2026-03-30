@@ -28,12 +28,17 @@ describe('ResearchPlanningThread', () => {
           target_sources: ['web'],
           confirmation_required: true,
         },
+        clarificationDraft: '面向内部研发团队，输出选型建议。',
+        onClarificationDraftChange: () => undefined,
+        onSubmitClarification: () => undefined,
       })
     );
 
     expect(html).toContain('帮我研究适合 20 人团队的 MCP 部署方案');
     expect(html).toContain('你更关注内部研发团队，还是对外客户交付？');
     expect(html).toContain('受众不同，会影响部署复杂度、权限模型和评估重点。');
+    expect(html).toContain('补充你的回答');
+    expect(html).toContain('提交补充信息');
     expect(html).not.toContain('计划草案');
     expect(html).not.toContain('确认计划并开始研究');
   });

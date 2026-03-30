@@ -1,10 +1,11 @@
-import { Paper, Stack, Typography } from '@mui/material';
+import { Paper, Stack, TextField, Typography } from '@mui/material';
 
 import type {
   ResearchClarificationRequest,
   ResearchPlanSnapshot,
   ResearchSessionStatus,
 } from '../../types/researchEvents';
+import { Button } from '../ui/Button';
 import { PlanPreviewPanel } from './PlanPreviewPanel';
 
 interface ResearchPlanningThreadProps {
@@ -12,6 +13,10 @@ interface ResearchPlanningThreadProps {
   status: ResearchSessionStatus;
   clarificationRequest?: ResearchClarificationRequest | null;
   planSnapshot?: ResearchPlanSnapshot | null;
+  clarificationDraft?: string;
+  clarificationSubmitPending?: boolean;
+  onClarificationDraftChange?: ((value: string) => void) | undefined;
+  onSubmitClarification?: (() => void | Promise<void>) | undefined;
   confirmPending?: boolean;
   onConfirm?: (() => void | Promise<void>) | undefined;
 }
@@ -28,6 +33,10 @@ export function ResearchPlanningThread({
   status,
   clarificationRequest = null,
   planSnapshot = null,
+  clarificationDraft = '',
+  clarificationSubmitPending = false,
+  onClarificationDraftChange,
+  onSubmitClarification,
   confirmPending = false,
   onConfirm,
 }: ResearchPlanningThreadProps) {
@@ -80,6 +89,68 @@ export function ResearchPlanningThread({
                   </Typography>
                 </Typography>
               ))}
+            </Stack>
+            <Stack spacing={1.25}>
+              <Typography variant="body2" sx={{ color: 'rgba(226, 232, 240, 0.78)' }}>
+                补充你的回答
+              </Typography>
+              <TextField
+                fullWidth
+                multiline
+                minRows={4}
+                value={clarificationDraft}
+                onChange={(event) => onClarificationDraftChange?.(event.target.value)}
+                placeholder="补充研究范围、目标读者、输出形式或关键约束。"
+                slotProps={{
+                  input: {
+                    sx: {
+                      color: '#f8fafc',
+                      alignItems: 'flex-start',
+                      bgcolor: 'rgba(15, 23, 42, 0.72)',
+                      borderRadius: 3,
+                    },
+                  },
+                }}
+                sx={{
+                  '& .MuiOutlinedInput-root': {
+                    alignItems: 'flex-start',
+                    borderRadius: 3,
+                    '& fieldset': {
+                      borderColor: 'rgba(148, 163, 184, 0.24)',
+                    },
+                    '&:hover fieldset': {
+                      borderColor: 'rgba(226, 232, 240, 0.42)',
+                    },
+                    '&.Mui-focused fieldset': {
+                      borderColor: 'rgba(248, 250, 252, 0.72)',
+                    },
+                  },
+                  '& .MuiInputBase-input::placeholder': {
+                    color: 'rgba(226, 232, 240, 0.42)',
+                    opacity: 1,
+                  },
+                }}
+              />
+              <Button
+                variant="contained"
+                onClick={() => {
+                  void onSubmitClarification?.();
+                }}
+                loading={clarificationSubmitPending}
+                sx={{
+                  alignSelf: 'flex-start',
+                  minHeight: 40,
+                  px: 2,
+                  borderRadius: 999,
+                  bgcolor: '#f8fafc',
+                  color: '#020617',
+                  '&:hover': {
+                    bgcolor: '#e2e8f0',
+                  },
+                }}
+              >
+                提交补充信息
+              </Button>
             </Stack>
           </Stack>
         </Paper>
