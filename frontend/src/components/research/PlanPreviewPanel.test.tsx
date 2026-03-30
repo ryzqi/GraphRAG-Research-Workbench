@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { PlanPreviewPanel } from './PlanPreviewPanel';
 
 describe('PlanPreviewPanel', () => {
-  it('renders research brief, summary, target sources and confirmation hint', () => {
+  it('renders plan content with the new confirmation CTA wording', () => {
     const html = renderToStaticMarkup(
       createElement(PlanPreviewPanel, {
         status: 'awaiting_confirmation',
@@ -24,14 +24,15 @@ describe('PlanPreviewPanel', () => {
           budget_guidance: '优先论文，再补网页。',
           confirmation_required: true,
         },
+        onConfirm: () => undefined,
       })
     );
 
-    expect(html).toContain('研究计划');
+    expect(html).toContain('计划草案');
     expect(html).toContain('围绕铁路调度策略做深度研究');
     expect(html).toContain('先比较两种路线，再补网页证据。');
     expect(html).toContain('paper');
     expect(html).toContain('web');
-    expect(html).toContain('等待确认');
+    expect(html).toContain('确认计划并开始研究');
   });
 });

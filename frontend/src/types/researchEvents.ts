@@ -1,6 +1,7 @@
 export type ResearchSessionStatus =
   | 'created'
   | 'planning'
+  | 'clarifying'
   | 'awaiting_confirmation'
   | 'queued'
   | 'running'
@@ -12,15 +13,12 @@ export type ResearchSessionStatus =
   | 'canceled'
   | 'timed_out';
 
-export type ResearchSourceTarget = 'kb' | 'web' | 'paper' | 'hybrid';
-export type ResearchSourceType = 'kb' | 'web' | 'paper';
+export type ResearchSourceTarget = 'web' | 'paper';
+export type ResearchSourceType = 'web' | 'paper';
 
 export interface ResearchSessionCreateRequest {
   question: string;
-  selected_kb_ids?: string[];
-  allow_external?: boolean;
   plan_first?: boolean;
-  require_confirmation?: boolean | null;
 }
 
 export interface ResearchPlanSubtask {
@@ -39,10 +37,22 @@ export interface ResearchPlanSnapshot {
   confirmation_required: boolean;
 }
 
+export interface ResearchClarificationQuestion {
+  id: string;
+  question: string;
+  why_it_matters: string;
+}
+
+export interface ResearchClarificationRequest {
+  summary: string;
+  questions: ResearchClarificationQuestion[];
+}
+
 export interface ResearchSessionAccepted {
   session_id: string;
   status: ResearchSessionStatus;
   plan_snapshot: ResearchPlanSnapshot | null;
+  clarification_request: ResearchClarificationRequest | null;
 }
 
 export interface ResearchPlanConfirmRequest {
@@ -122,6 +132,7 @@ export interface ResearchSessionView {
   session_id: string;
   status: ResearchSessionStatus;
   plan_snapshot: ResearchPlanSnapshot | null;
+  clarification_request: ResearchClarificationRequest | null;
   events: ResearchEventEnvelope[];
   artifacts: ResearchArtifactRead[];
   last_event_id: string | null;
@@ -274,6 +285,7 @@ export function buildResearchSessionView(params: {
       artifacts: params.artifacts,
     }),
     plan_snapshot: params.accepted.plan_snapshot,
+    clarification_request: params.accepted.clarification_request,
     events: orderedEvents,
     artifacts: [...params.artifacts],
     last_event_id: cursor.lastEventId,

@@ -1,11 +1,14 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, expectTypeOf, it, vi } from 'vitest';
 
 import { apiFetch } from './http';
 import { openSseStream } from './sse';
 import {
   createResearchSession,
   confirmResearchPlan,
+  type ResearchClarificationRequest,
   type ResearchEventEnvelope,
+  type ResearchSessionAccepted,
+  type ResearchSessionStatus,
   getResearchArtifacts,
   streamResearchSession,
 } from './research';
@@ -45,18 +48,13 @@ describe('research service contract', () => {
 
     await createResearchSession({
       question: '请比较两种路线',
-      selected_kb_ids: ['kb-1'],
-      allow_external: true,
-      require_confirmation: false,
     });
 
     expect(apiFetchMock).toHaveBeenCalledWith('/api/v1/research/sessions', {
       method: 'POST',
       body: JSON.stringify({
         question: '请比较两种路线',
-        selected_kb_ids: ['kb-1'],
-        allow_external: true,
-        require_confirmation: false,
+        plan_first: true,
       }),
     });
   });
@@ -219,5 +217,38 @@ describe('deriveResearchStatus', () => {
         artifacts: [],
       })
     ).toBe('failed');
+  });
+});
+
+describe('research type contract', () => {
+  it('supports clarifying status and clarification payloads', () => {
+    expectTypeOf<Extract<ResearchSessionStatus, 'clarifying'>>().toEqualTypeOf<'clarifying'>();
+    expectTypeOf<ResearchClarificationRequest>().toMatchObjectType<{
+      summary: string;
+      questions: Array<{
+        id: string;
+        question: string;
+        why_it_matters: string;
+      }>;
+    }>();
+
+    const accepted: ResearchSessionAccepted = {
+      session_id: 'session-clarifying',
+      status: 'clarifying',
+      plan_snapshot: null,
+      clarification_request: {
+        summary: '研究范围还不够明确，需要先补充一点背景。',
+        questions: [
+          {
+            id: 'scope',
+            question: '你希望输出个人选型建议，还是团队采购建议？',
+            why_it_matters: '目标读者不同，会直接影响评估维度与结论粒度。',
+          },
+        ],
+      },
+    };
+
+    expect(accepted.status).toBe('clarifying');
+    expect(accepted.clarification_request?.questions[0]?.id).toBe('scope');
   });
 });

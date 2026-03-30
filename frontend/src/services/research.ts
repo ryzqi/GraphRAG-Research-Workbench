@@ -19,6 +19,8 @@ export type {
   ResearchArtifactRead,
   ResearchArtifactsResponse,
   ResearchCanonicalCitation,
+  ResearchClarificationQuestion,
+  ResearchClarificationRequest,
   ResearchEventEnvelope,
   ResearchInterruptRequest,
   ResearchPlanConfirmRequest,
@@ -61,9 +63,14 @@ export function buildResearchStreamPath(
 export async function createResearchSession(
   data: ResearchSessionCreateRequest
 ): Promise<ResearchSessionAccepted> {
+  const payload: ResearchSessionCreateRequest = {
+    question: data.question.trim(),
+    plan_first: true,
+  };
+
   return apiFetch<ResearchSessionAccepted>('/api/v1/research/sessions', {
     method: 'POST',
-    body: JSON.stringify(data),
+    body: JSON.stringify(payload),
   });
 }
 
