@@ -58,6 +58,23 @@ _UNCLEAR_PATTERNS = (
     "帮我研究",
     "帮忙研究",
 )
+_GENERIC_SCOPE_PATTERNS = (
+    "ai 编程工具",
+    "ai 工具",
+    "ai工具",
+    "编程工具",
+    "ai 编程",
+)
+_SPECIFIC_MARKERS = (
+    "langgraph",
+    "stategraph",
+    "langchain",
+    "openai",
+    "claude",
+    "gpt",
+    "copilot",
+    "cursor",
+)
 
 
 class ResearchPlanner:
@@ -248,7 +265,18 @@ class ResearchPlanner:
         self, question: str
     ) -> ResearchClarificationRequest | None:
         normalized = question.lower()
-        if any(pattern in normalized for pattern in _UNCLEAR_PATTERNS):
+        if not any(pattern in normalized for pattern in _UNCLEAR_PATTERNS):
+            return None
+
+        clarification_note = ""
+        if "补充说明：" in question:
+            clarification_note = question.split("补充说明：", 1)[1].strip()
+        target_text = clarification_note or question
+        target_normalized = target_text.lower()
+
+        if any(marker in target_normalized for marker in _SPECIFIC_MARKERS):
+            return None
+        if any(pattern in target_normalized for pattern in _GENERIC_SCOPE_PATTERNS):
             return ResearchClarificationRequest(
                 summary="当前问题过于宽泛，需要先补充研究范围。",
                 questions=[

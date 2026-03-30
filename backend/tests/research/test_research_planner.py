@@ -80,3 +80,27 @@ def test_specific_intro_request_should_not_trigger_clarification() -> None:
     assert result.clarification_request is None
     assert result.plan_snapshot is not None
     assert result.next_status == ResearchSessionStatus.AWAITING_CONFIRMATION
+
+
+def test_help_research_with_specific_subject_should_not_trigger_clarification() -> None:
+    planner = ResearchPlanner()
+    result = planner.build_plan(
+        ResearchSessionCreateRequest(question="帮我研究一下 LangGraph StateGraph 的核心概念")
+    )
+
+    assert result.clarification_request is None
+    assert result.plan_snapshot is not None
+    assert result.next_status == ResearchSessionStatus.AWAITING_CONFIRMATION
+
+
+def test_help_research_with_clarification_answer_should_not_loop() -> None:
+    planner = ResearchPlanner()
+    result = planner.build_plan(
+        ResearchSessionCreateRequest(
+            question="帮我研究一下 AI 编程工具\n补充说明：关注 LangGraph StateGraph 入门与使用场景"
+        )
+    )
+
+    assert result.clarification_request is None
+    assert result.plan_snapshot is not None
+    assert result.next_status == ResearchSessionStatus.AWAITING_CONFIRMATION
