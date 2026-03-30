@@ -2,7 +2,6 @@ import type { ResearchSessionCreateRequest } from '../services/research';
 
 export interface ResearchStartDraft {
   question: string;
-  requireConfirmation?: boolean;
 }
 
 export function validateResearchStartDraft(params: {

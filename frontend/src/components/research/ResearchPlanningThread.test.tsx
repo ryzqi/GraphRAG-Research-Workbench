@@ -20,12 +20,21 @@ describe('ResearchPlanningThread', () => {
             },
           ],
         },
+        planSnapshot: {
+          research_brief: '这份计划草案不该在 clarifying 阶段出现',
+          complexity: 'comparative',
+          summary: '只有 awaiting_confirmation 才允许出现计划消息。',
+          subtasks: [],
+          target_sources: ['web'],
+          confirmation_required: true,
+        },
       })
     );
 
     expect(html).toContain('帮我研究适合 20 人团队的 MCP 部署方案');
     expect(html).toContain('你更关注内部研发团队，还是对外客户交付？');
     expect(html).toContain('受众不同，会影响部署复杂度、权限模型和评估重点。');
+    expect(html).not.toContain('计划草案');
     expect(html).not.toContain('确认计划并开始研究');
   });
 

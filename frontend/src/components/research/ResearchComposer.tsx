@@ -5,11 +5,9 @@ import { Button } from '../ui/Button';
 
 interface ResearchComposerProps {
   question: string;
-  requireConfirmation?: boolean;
   loading: boolean;
   validationError: string | null;
   onQuestionChange: (value: string) => void;
-  onToggleRequireConfirmation?: (next: boolean) => void;
   onStart: () => void;
 }
 

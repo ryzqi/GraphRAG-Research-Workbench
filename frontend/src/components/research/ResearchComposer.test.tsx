@@ -1,3 +1,4 @@
+import type { ComponentProps } from 'react';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
@@ -20,5 +21,21 @@ describe('ResearchComposer', () => {
     expect(html).toContain('研究会先收敛问题，再进入正式执行');
     expect(html).toContain('生成研究计划');
     expect(html).not.toContain('执行前确认计划');
+  });
+
+  it('does not accept legacy confirmation toggle props', () => {
+    const props: ComponentProps<typeof ResearchComposer> = {
+      question: '比较两种方案',
+      loading: false,
+      validationError: null,
+      onQuestionChange: () => undefined,
+      onStart: () => undefined,
+      // @ts-expect-error Task 3 removes the legacy toggle contract
+      requireConfirmation: true,
+      // @ts-expect-error Task 3 removes the legacy toggle contract
+      onToggleRequireConfirmation: () => undefined,
+    };
+
+    expect(props.question).toBe('比较两种方案');
   });
 });

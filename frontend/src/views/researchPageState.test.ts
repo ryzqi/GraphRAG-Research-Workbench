@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   buildResearchStartRequest,
+  type ResearchStartDraft,
   validateResearchStartDraft,
 } from './researchPageState';
 
@@ -14,30 +15,25 @@ describe('researchPageState', () => {
     ).toBeNull();
   });
 
-  it.each([true, false])(
-    'builds a plan-first request payload regardless of requireConfirmation=%s',
-    (requireConfirmation) => {
-      expect(
-        buildResearchStartRequest({
-          question: ' 研究问题 ',
-          requireConfirmation,
-        })
-      ).toEqual({
-        question: '研究问题',
-        plan_first: true,
-      });
-    }
-  );
-
-  it('builds a plan-first request payload when no legacy draft flag is provided', () => {
+  it('builds a plan-first request payload', () => {
     expect(
       buildResearchStartRequest({
-        question: ' 另一条研究问题 ',
+        question: ' 研究问题 ',
       })
     ).toEqual({
-      question: '另一条研究问题',
+      question: '研究问题',
       plan_first: true,
     });
+  });
+
+  it('does not keep the legacy requireConfirmation draft field', () => {
+    const draft: ResearchStartDraft = {
+      question: '研究问题',
+      // @ts-expect-error Task 3 removes the legacy toggle contract
+      requireConfirmation: true,
+    };
+
+    expect(draft.question).toBe('研究问题');
   });
 
   it('rejects empty questions after trimming whitespace', () => {

@@ -85,7 +85,7 @@ export function ResearchPlanningThread({
         </Paper>
       ) : null}
 
-      {planSnapshot ? (
+      {status === 'awaiting_confirmation' && planSnapshot ? (
         <PlanPreviewPanel
           planSnapshot={planSnapshot}
           status={status}

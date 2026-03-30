@@ -4,29 +4,27 @@
  * 深度研究页面
  */
 import { useCallback, useMemo, useState } from 'react';
-import {
-  Box,
-  FormControlLabel,
-  Container,
-  Paper,
-  Stack,
-  Switch,
-  TextField,
-  Typography,
-} from '@mui/material';
+import { Container, Stack } from '@mui/material';
 import DownloadIcon from '@mui/icons-material/Download';
 import RefreshIcon from '@mui/icons-material/Refresh';
-import { KnowledgeBaseSelector } from '../components/KnowledgeBaseSelector';
 import { ArtifactPanel } from '../components/research/ArtifactPanel';
 import { InterruptDecisionPanel } from '../components/research/InterruptDecisionPanel';
 import { PlanPreviewPanel } from '../components/research/PlanPreviewPanel';
-import { ResearchTimeline } from '../components/research/ResearchTimeline';
+import { ResearchAdvancedEventsPanel } from '../components/research/ResearchAdvancedEventsPanel';
+import { ResearchCanvas } from '../components/research/ResearchCanvas';
+import { ResearchComposer } from '../components/research/ResearchComposer';
+import { ResearchSessionRail } from '../components/research/ResearchSessionRail';
+import { ResearchWorkspaceShell } from '../components/research/ResearchWorkspaceShell';
 import { Button } from '../components/ui/Button';
 import { ErrorAlert } from '../components/ui/ErrorAlert';
 import { LoadingSpinner } from '../components/ui/LoadingSpinner';
 import { PageHeader } from '../components/ui/PageHeader';
-import { StatusBadge } from '../components/ui/StatusBadge';
 import { createExport, pollExportUntilDone } from '../services/exports';
+import {
+  buildResearchCanvasModel,
+  buildResearchProgressFeed,
+  buildResearchSourceSummary,
+} from '../services/researchWorkbench';
 import {
   useConfirmResearchPlan,
   useCreateResearchSession,
@@ -34,7 +32,6 @@ import {
   useResearchSession,
   useResumeResearchSession,
 } from '../hooks/queries/useResearch';
-import { useSelectableKnowledgeBases } from '../hooks/queries/useKnowledgeBases';
 import { getErrorMessage } from '../lib/errorHandler';
 import type { ResearchSessionAccepted, ResearchSessionStatus } from '../types/researchEvents';
 import { safeOpenDownloadUrl } from '../utils/urlValidation';
@@ -44,23 +41,16 @@ import {
 } from './researchPageState';
 
 export function ResearchPage() {
-  // 使用 SWR 自动去重并缓存知识库列表。
-  const knowledgeBasesQuery = useSelectableKnowledgeBases();
-  const knowledgeBases = knowledgeBasesQuery.data ?? [];
-
   const createSessionMutation = useCreateResearchSession();
   const confirmPlanMutation = useConfirmResearchPlan();
   const interruptSessionMutation = useInterruptResearchSession();
   const resumeSessionMutation = useResumeResearchSession();
 
-  const [selectedKbIds, setSelectedKbIds] = useState<string[]>([]);
   const [question, setQuestion] = useState('');
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [acceptedSession, setAcceptedSession] = useState<ResearchSessionAccepted | null>(null);
   const [exporting, setExporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [allowExternal, setAllowExternal] = useState(true);
-  const [requireConfirmation, setRequireConfirmation] = useState(false);
   const [resumeIdempotencyKey, setResumeIdempotencyKey] = useState('resume-1');
   const [decisionDraft, setDecisionDraft] = useState('[{"action":"approve"}]');
 
@@ -75,7 +65,6 @@ export function ResearchPage() {
     (confirmPlanMutation.error ? getErrorMessage(confirmPlanMutation.error) : null) ??
     (interruptSessionMutation.error ? getErrorMessage(interruptSessionMutation.error) : null) ??
     (resumeSessionMutation.error ? getErrorMessage(resumeSessionMutation.error) : null) ??
-    (knowledgeBasesQuery.error ? getErrorMessage(knowledgeBasesQuery.error) : null) ??
     (sessionQuery.error ? getErrorMessage(sessionQuery.error) : null);
 
   const handleCloseError = () => {
@@ -99,26 +88,14 @@ export function ResearchPage() {
       resumeSessionMutation.reset();
       return;
     }
-    if (knowledgeBasesQuery.error) {
-      knowledgeBasesQuery.refetch();
-      return;
-    }
     if (sessionQuery.error) {
       void sessionQuery.refetch();
     }
   };
 
-  const toggleKb = useCallback((kbId: string) => {
-    setSelectedKbIds((prev) =>
-      prev.includes(kbId) ? prev.filter((id) => id !== kbId) : [...prev, kbId]
-    );
-  }, []);
-
   const startResearch = useCallback(async () => {
     const validationError = validateResearchStartDraft({
       question,
-      selectedKbIds,
-      allowExternal,
     });
     if (validationError) {
       setError(validationError);
@@ -133,9 +110,6 @@ export function ResearchPage() {
       const newSession = await createSessionMutation.mutateAsync(
         buildResearchStartRequest({
           question,
-          selectedKbIds,
-          allowExternal,
-          requireConfirmation,
         })
       );
 
@@ -145,7 +119,7 @@ export function ResearchPage() {
     } catch (e) {
       setError(getErrorMessage(e));
     }
-  }, [allowExternal, createSessionMutation, question, requireConfirmation, selectedKbIds]);
+  }, [createSessionMutation, question]);
 
   const handleConfirmPlan = useCallback(async () => {
     if (!sessionId) {
@@ -234,8 +208,6 @@ export function ResearchPage() {
     setAcceptedSession(null);
     setQuestion('');
     setError(null);
-    setAllowExternal(true);
-    setRequireConfirmation(false);
     setDecisionDraft('[{"action":"approve"}]');
     setResumeIdempotencyKey('resume-1');
   }, []);
@@ -268,169 +240,88 @@ export function ResearchPage() {
   };
 
   const statusPresentation = session ? getStatusPresentation(session.status) : null;
+  const progressItems = useMemo(
+    () => buildResearchProgressFeed(session?.events ?? []),
+    [session?.events]
+  );
+  const sourceSummary = useMemo(() => buildResearchSourceSummary(), []);
+  const canvasModel = useMemo(
+    () =>
+      buildResearchCanvasModel({
+        status: session?.status ?? 'created',
+        events: session?.events ?? [],
+        artifacts: session?.artifacts ?? [],
+        reportMd: session?.report_md ?? null,
+      }),
+    [session]
+  );
 
   return (
-    <Container maxWidth="md" sx={{ py: 3 }}>
+    <Container maxWidth="xl" sx={{ py: { xs: 2, md: 3 } }}>
       <PageHeader title="深度研究" />
 
       {!sessionId ? (
-        <Stack spacing={3}>
-          <Typography variant="subtitle1" fontWeight={500}>
-            选择知识库范围
-          </Typography>
-
-          <KnowledgeBaseSelector
-            knowledgeBases={knowledgeBases}
-            selectedIds={selectedKbIds}
-            onToggle={toggleKb}
-            loading={loading || knowledgeBasesQuery.isLoading}
-          />
-
-          <Box>
-            <Typography variant="body2" sx={{ mb: 1 }}>
-              研究问题
-            </Typography>
-            <TextField
-              fullWidth
-              multiline
-              rows={4}
-              placeholder="输入需要深度研究的问题..."
-              value={question}
-              onChange={(e) => setQuestion(e.target.value)}
-            />
-          </Box>
-
-          <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
-            <FormControlLabel
-              control={
-                <Switch
-                  size="small"
-                  checked={allowExternal}
-                  onChange={(event) => setAllowExternal(event.target.checked)}
-                />
-              }
-              label={
-                <Typography variant="body2" color="text.secondary">
-                  允许外部研究
-                </Typography>
-              }
-            />
-            <FormControlLabel
-              control={
-                <Switch
-                  size="small"
-                  checked={requireConfirmation}
-                  onChange={(event) => setRequireConfirmation(event.target.checked)}
-                />
-              }
-              label={
-                <Typography variant="body2" color="text.secondary">
-                  执行前需要确认计划
-                </Typography>
-              }
-            />
-          </Stack>
-
-          <Button
-            variant="contained"
-            onClick={startResearch}
-            disabled={
-              knowledgeBasesQuery.isLoading ||
-              Boolean(
-                validateResearchStartDraft({
-                  question,
-                  selectedKbIds,
-                  allowExternal,
-                })
-              )
-            }
-            loading={loading}
-            sx={{ alignSelf: 'flex-start' }}
-          >
-            开始研究
-          </Button>
-        </Stack>
+        <ResearchComposer
+          question={question}
+          loading={loading}
+          validationError={validateResearchStartDraft({
+            question,
+          })}
+          onQuestionChange={setQuestion}
+          onStart={startResearch}
+        />
       ) : !session ? (
         <LoadingSpinner text="加载研究任务..." />
       ) : (
-        <Stack spacing={2}>
-          <Paper
-            variant="outlined"
-            sx={{
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-              p: 1.5,
-              bgcolor: 'grey.50',
-            }}
-          >
-            <Box>
-              <Typography fontWeight={500}>研究问题</Typography>
-              <Typography variant="body2" color="text.secondary">
-                {question.trim()}
-              </Typography>
-            </Box>
-            <Button
-              variant="outlined"
-              size="small"
-              startIcon={<RefreshIcon />}
-              onClick={reset}
-            >
-              新研究
-            </Button>
-          </Paper>
-
-          {/* 状态与阶段摘要 */}
-          <Paper variant="outlined" sx={{ p: 2 }}>
-            <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 1.5 }}>
-              <Typography fontWeight={500}>状态：</Typography>
-              <StatusBadge
-                status={statusPresentation?.badge ?? 'pending'}
-                label={statusPresentation?.label ?? '等待中'}
-              />
-              {(session.status === 'running' || session.status === 'resuming') ? (
-                <Button
-                  variant="outlined"
-                  size="small"
-                  onClick={handleInterrupt}
-                  loading={interruptSessionMutation.isPending}
-                >
-                  请求中断
-                </Button>
-              ) : null}
-            </Stack>
-          </Paper>
-
-          <PlanPreviewPanel
-            planSnapshot={session.plan_snapshot}
-            status={session.status}
-            onConfirm={handleConfirmPlan}
-            confirmPending={confirmPlanMutation.isPending}
-          />
-
-          <ResearchTimeline events={session.events} />
-
-          <InterruptDecisionPanel
-            status={session.status}
-            resumeIdempotencyKey={resumeIdempotencyKey}
-            decisionDraft={decisionDraft}
-            onResumeIdempotencyKeyChange={setResumeIdempotencyKey}
-            onDecisionDraftChange={setDecisionDraft}
-            onResume={handleResume}
-            resumePending={resumeSessionMutation.isPending}
-          />
-
-          {session.report_md ? (
-            <Paper variant="outlined" sx={{ p: 2 }}>
-              <Stack
-                direction="row"
-                justifyContent="space-between"
-                alignItems="center"
-                sx={{ mb: 1.5 }}
-              >
-                <Typography variant="subtitle1" fontWeight={600}>
-                  研究报告
-                </Typography>
+        <ResearchWorkspaceShell
+          rail={
+            <ResearchSessionRail
+              question={question.trim()}
+              statusLabel={statusPresentation?.label ?? '等待中'}
+              statusTone={statusPresentation?.badge ?? 'pending'}
+              progressItems={progressItems}
+              sourceSummary={sourceSummary}
+              planPanel={
+                <PlanPreviewPanel
+                  planSnapshot={session.plan_snapshot}
+                  status={session.status}
+                  onConfirm={handleConfirmPlan}
+                  confirmPending={confirmPlanMutation.isPending}
+                />
+              }
+              interruptPanel={
+                <Stack spacing={1.5}>
+                  {(session.status === 'running' || session.status === 'resuming') ? (
+                    <Button
+                      variant="outlined"
+                      size="small"
+                      onClick={handleInterrupt}
+                      loading={interruptSessionMutation.isPending}
+                      startIcon={<RefreshIcon />}
+                      sx={{ alignSelf: 'flex-start' }}
+                    >
+                      请求中断
+                    </Button>
+                  ) : null}
+                  <InterruptDecisionPanel
+                    status={session.status}
+                    resumeIdempotencyKey={resumeIdempotencyKey}
+                    decisionDraft={decisionDraft}
+                    onResumeIdempotencyKeyChange={setResumeIdempotencyKey}
+                    onDecisionDraftChange={setDecisionDraft}
+                    onResume={handleResume}
+                    resumePending={resumeSessionMutation.isPending}
+                  />
+                </Stack>
+              }
+              advancedEventsPanel={<ResearchAdvancedEventsPanel events={session.events} />}
+              onReset={reset}
+            />
+          }
+          canvas={
+            <ResearchCanvas
+              model={canvasModel}
+              exportButton={
                 <Button
                   variant="contained"
                   color="success"
@@ -441,16 +332,17 @@ export function ResearchPage() {
                 >
                   导出报告
                 </Button>
-              </Stack>
-            </Paper>
-          ) : null}
-
-          <ArtifactPanel
-            reportMd={session.report_md}
-            reportJson={session.report_json}
-            artifacts={session.artifacts}
-          />
-        </Stack>
+              }
+              artifactPanel={
+                <ArtifactPanel
+                  reportMd={session.report_md}
+                  reportJson={session.report_json}
+                  artifacts={session.artifacts}
+                />
+              }
+            />
+          }
+        />
       )}
 
       <ErrorAlert error={mergedError} onClose={handleCloseError} />
