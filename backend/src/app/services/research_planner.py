@@ -39,6 +39,8 @@ _WEB_PATTERNS = (
     "新闻",
     "blog",
     "release",
+    "开源",
+    "实现",
 )
 _COMPLEX_PATTERNS = (
     "综述",
@@ -53,32 +55,35 @@ _COMPLEX_PATTERNS = (
 
 
 class ResearchPlanner:
-    """轻量计划器：只产出研究 brief / complexity / subtasks / routing。"""
+    """轻量计划器：只产出 research brief / complexity / subtasks / routing。"""
 
     def build_plan(self, request: ResearchSessionCreateRequest) -> ResearchPlannerResult:
         question = request.question.strip()
         complexity = self._classify_complexity(question)
-        target_source = self._resolve_target_source(
+        target_sources = self._resolve_target_sources(
             question=question,
-            has_kb=bool(request.selected_kb_ids),
-            allow_external=bool(request.allow_external),
+            complexity=complexity,
         )
         subtasks = self._build_subtasks(
             question=question,
             complexity=complexity,
-            target_source=target_source,
-            has_kb=bool(request.selected_kb_ids),
-            allow_external=bool(request.allow_external),
+            target_sources=target_sources,
         )
         confirmation_required = self._resolve_confirmation_requirement(
             complexity=complexity,
-            request_override=request.require_confirmation,
+            request_override=None,
         )
         plan_snapshot = ResearchPlanSnapshot(
-            research_brief=self._build_research_brief(question=question, target_source=target_source),
+            research_brief=self._build_research_brief(
+                question=question,
+                target_sources=target_sources,
+            ),
             complexity=complexity,
-            summary=self._build_summary(complexity=complexity, target_source=target_source),
-            target_sources=[target_source],
+            summary=self._build_summary(
+                complexity=complexity,
+                target_sources=target_sources,
+            ),
+            target_sources=target_sources,
             subtasks=subtasks,
             budget_guidance=self._build_budget_hint(complexity=complexity),
             confirmation_required=confirmation_required,
@@ -103,40 +108,35 @@ class ResearchPlanner:
             return ResearchComplexity.COMPLEX
         return ResearchComplexity.SIMPLE
 
-    def _resolve_target_source(
+    def _resolve_target_sources(
         self,
         *,
         question: str,
-        has_kb: bool,
-        allow_external: bool,
-    ) -> ResearchSourceTarget:
+        complexity: ResearchComplexity,
+    ) -> list[ResearchSourceTarget]:
         normalized = question.lower()
         mentions_paper = any(pattern in normalized for pattern in _PAPER_PATTERNS)
-        mentions_web = allow_external and any(pattern in normalized for pattern in _WEB_PATTERNS)
+        mentions_web = any(pattern in normalized for pattern in _WEB_PATTERNS)
 
-        if has_kb and allow_external and (mentions_paper or mentions_web or "结合" in normalized):
-            return ResearchSourceTarget.HYBRID
-        if has_kb and not allow_external:
-            return ResearchSourceTarget.KB
+        if mentions_paper and (mentions_web or complexity == ResearchComplexity.COMPLEX):
+            return [ResearchSourceTarget.PAPER, ResearchSourceTarget.WEB]
         if mentions_paper:
-            return ResearchSourceTarget.PAPER
-        return ResearchSourceTarget.WEB if allow_external else ResearchSourceTarget.KB
+            return [ResearchSourceTarget.PAPER]
+        return [ResearchSourceTarget.WEB]
 
     def _build_subtasks(
         self,
         *,
         question: str,
         complexity: ResearchComplexity,
-        target_source: ResearchSourceTarget,
-        has_kb: bool,
-        allow_external: bool,
+        target_sources: list[ResearchSourceTarget],
     ) -> list[ResearchPlanSubtask]:
         if complexity == ResearchComplexity.SIMPLE:
             return [
                 ResearchPlanSubtask(
                     title="锁定核心问题",
-                    description=f"围绕“{question}”整理直接回答所需的最小证据。",
-                    target_sources=[target_source],
+                    description=f"围绕“{question}”整理直接回答所需的最小外部证据。",
+                    target_sources=target_sources,
                 )
             ]
 
@@ -145,32 +145,25 @@ class ResearchPlanner:
                 ResearchPlanSubtask(
                     title="定义比较维度",
                     description="先明确比较对象、评价维度与结论形式。",
-                    target_sources=[target_source],
+                    target_sources=target_sources,
                 ),
                 ResearchPlanSubtask(
                     title="收集对比证据",
-                    description="按统一维度收集证据，避免运行时边查边改问题定义。",
-                    target_sources=[target_source],
+                    description="按统一维度收集网页/论文证据，避免运行时边查边改问题定义。",
+                    target_sources=target_sources,
                 ),
             ]
 
         subtasks: list[ResearchPlanSubtask] = []
-        if has_kb:
+        if ResearchSourceTarget.PAPER in target_sources:
             subtasks.append(
                 ResearchPlanSubtask(
-                    title="抽取内部基线",
-                    description="先从内部知识库确认已有结论、术语与约束，避免重复研究。",
-                    target_sources=[ResearchSourceTarget.KB],
+                    title="建立论文基线",
+                    description="优先收集论文 / 技术综述，形成稳定的研究主线。",
+                    target_sources=[ResearchSourceTarget.PAPER],
                 )
             )
-        subtasks.append(
-            ResearchPlanSubtask(
-                title="建立论文基线",
-                description="优先收集论文 / 技术综述，形成稳定的研究主线。",
-                target_sources=[ResearchSourceTarget.PAPER],
-            )
-        )
-        if allow_external:
+        if ResearchSourceTarget.WEB in target_sources:
             subtasks.append(
                 ResearchPlanSubtask(
                     title="补充网页上下文",
@@ -182,7 +175,7 @@ class ResearchPlanner:
             ResearchPlanSubtask(
                 title="整理最终回答结构",
                 description="在正式 runtime 前先固定最终回答需要覆盖的输出结构与边界。",
-                target_sources=[target_source],
+                target_sources=target_sources,
             )
         )
         return subtasks
@@ -201,29 +194,30 @@ class ResearchPlanner:
         self,
         *,
         question: str,
-        target_source: ResearchSourceTarget,
+        target_sources: list[ResearchSourceTarget],
     ) -> str:
-        source_hint = {
-            ResearchSourceTarget.KB: "以内部知识库为主",
-            ResearchSourceTarget.WEB: "以网页资料为主",
-            ResearchSourceTarget.PAPER: "以论文资料为主",
-            ResearchSourceTarget.HYBRID: "以论文/网页/内部知识混合路线为主",
-        }[target_source]
+        if target_sources == [ResearchSourceTarget.WEB]:
+            source_hint = "以网页资料为主"
+        elif target_sources == [ResearchSourceTarget.PAPER]:
+            source_hint = "以论文资料为主"
+        else:
+            source_hint = "以论文与网页资料联合路线为主"
         return f"{source_hint}，围绕问题“{question}”形成可执行研究边界与输出目标。"
 
     def _build_summary(
         self,
         *,
         complexity: ResearchComplexity,
-        target_source: ResearchSourceTarget,
+        target_sources: list[ResearchSourceTarget],
     ) -> str:
+        route_label = "/".join(item.value for item in target_sources)
         if complexity == ResearchComplexity.SIMPLE:
-            return f"简单问题，走 {target_source.value} 单路线即可。"
+            return f"简单问题，走 {route_label} 路线即可。"
         if complexity == ResearchComplexity.COMPARATIVE:
-            return f"比较型问题，先固定维度，再按 {target_source.value} 路线收集证据。"
+            return f"比较型问题，先固定维度，再按 {route_label} 路线收集证据。"
         return (
             "复杂问题，需要先固定 brief，再按阶段推进研究；"
-            f"当前建议主路线为 {target_source.value}。"
+            f"当前建议主路线为 {route_label}。"
         )
 
     def _build_budget_hint(self, *, complexity: ResearchComplexity) -> str:

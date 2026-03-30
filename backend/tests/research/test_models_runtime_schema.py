@@ -80,3 +80,16 @@ def test_research_session_status_allows_clarifying_before_confirmation() -> None
         ResearchSessionStatus.AWAITING_CONFIRMATION
     )
     assert not ResearchSessionStatus.CLARIFYING.can_transition_to(ResearchSessionStatus.RUNNING)
+
+
+def test_research_session_clarifying_cannot_transition_to_running() -> None:
+    session = ResearchSession(
+        question="需要补充研究澄清信息",
+        selected_kb_ids=[],
+        allow_external=False,
+        status=ResearchSessionStatus.CLARIFYING,
+        thread_id="research-session-clarify-1",
+    )
+
+    with pytest.raises(ValueError, match="非法状态迁移"):
+        session.transition_to(ResearchSessionStatus.RUNNING)

@@ -133,3 +133,64 @@ def test_research_session_accepted_supports_clarification_request() -> None:
 
     assert accepted.status == ResearchSessionStatus.CLARIFYING
     assert accepted.clarification_request is not None
+
+
+def test_research_session_accepted_rejects_missing_clarification_request() -> None:
+    with pytest.raises(ValidationError):
+        ResearchSessionAccepted.model_validate(
+            {
+                "session_id": "00000000-0000-0000-0000-000000000002",
+                "status": "clarifying",
+                "plan_snapshot": None,
+                "clarification_request": None,
+            }
+        )
+
+
+def test_research_session_accepted_rejects_empty_clarification_questions() -> None:
+    with pytest.raises(ValidationError):
+        ResearchSessionAccepted.model_validate(
+            {
+                "session_id": "00000000-0000-0000-0000-000000000003",
+                "status": "clarifying",
+                "plan_snapshot": None,
+                "clarification_request": {
+                    "summary": "需要补充信息。",
+                    "questions": [],
+                },
+            }
+        )
+
+
+@pytest.mark.parametrize("field_name", ["id", "question", "why_it_matters"])
+def test_research_session_accepted_rejects_blank_clarification_fields(field_name: str) -> None:
+    payload = {
+        "session_id": "00000000-0000-0000-0000-000000000004",
+        "status": "clarifying",
+        "plan_snapshot": None,
+        "clarification_request": {
+            "summary": "需要补充信息。",
+            "questions": [
+                {
+                    "id": "scope",
+                    "question": "你要做个人选型还是团队采购？",
+                    "why_it_matters": "范围会直接决定研究维度。",
+                }
+            ],
+        },
+    }
+    payload["clarification_request"]["questions"][0][field_name] = "  "
+
+    with pytest.raises(ValidationError):
+        ResearchSessionAccepted.model_validate(payload)
+
+
+def test_research_session_accepted_requires_plan_snapshot_when_awaiting_confirmation() -> None:
+    with pytest.raises(ValidationError):
+        ResearchSessionAccepted.model_validate(
+            {
+                "session_id": "00000000-0000-0000-0000-000000000005",
+                "status": "awaiting_confirmation",
+                "plan_snapshot": None,
+            }
+        )

@@ -7,7 +7,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
 
 from app.models.research_session import ResearchSessionStatus
 from app.utils.text_sanitization import has_visible_text
@@ -116,7 +116,7 @@ class ResearchClarificationQuestion(BaseModel):
 
     @field_validator("id", "question", "why_it_matters")
     @classmethod
-    def _validate_question_fields(cls, value: str, info) -> str:  # type: ignore[no-untyped-def]
+    def _validate_question_fields(cls, value: str, info: ValidationInfo) -> str:
         return _normalize_required_text(value, field_name=info.field_name)
 
 
@@ -139,6 +139,20 @@ class ResearchSessionAccepted(BaseModel):
     status: ResearchSessionStatus
     plan_snapshot: ResearchPlanSnapshot | None = None
     clarification_request: ResearchClarificationRequest | None = None
+
+    @model_validator(mode="after")
+    def _validate_status_payload(self) -> "ResearchSessionAccepted":
+        if (
+            self.status == ResearchSessionStatus.CLARIFYING
+            and self.clarification_request is None
+        ):
+            raise ValueError("clarifying 状态必须包含 clarification_request")
+        if (
+            self.status == ResearchSessionStatus.AWAITING_CONFIRMATION
+            and self.plan_snapshot is None
+        ):
+            raise ValueError("awaiting_confirmation 状态必须包含 plan_snapshot")
+        return self
 
 
 class ResearchPlanConfirmRequest(BaseModel):
