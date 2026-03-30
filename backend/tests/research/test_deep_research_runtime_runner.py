@@ -32,6 +32,16 @@ class _FakeAgent:
         return dict(self._result)
 
 
+class _FakeKbContextLoader:
+    def __init__(self, content: str | None) -> None:
+        self._content = content
+        self.calls: list[ResearchSession] = []
+
+    async def load(self, *, session: ResearchSession) -> str | None:
+        self.calls.append(session)
+        return self._content
+
+
 @pytest.mark.asyncio
 async def test_deep_research_runtime_runner_builds_source_bundle_from_structured_output() -> None:
     agent = _FakeAgent(
@@ -126,6 +136,90 @@ async def test_deep_research_runtime_runner_builds_source_bundle_from_structured
     ]
     assert request["files"]["/workspace/context/plan_snapshot.json"]["content"]
     assert config == {"configurable": {"thread_id": str(session_id)}}
+
+
+@pytest.mark.asyncio
+async def test_deep_research_runtime_runner_includes_kb_context_file_when_session_has_selected_kbs() -> None:
+    agent = _FakeAgent(
+        {
+            "structured_response": {
+                "findings": [
+                    "内部知识库给出了现有研究基线。",
+                    "运行时请求中已经显式注入 kb_context.md。",
+                ],
+                "citations": [
+                    {
+                        "source_type": "kb",
+                        "source_provider": "kb",
+                        "retrieval_method": "kb_retrieve",
+                        "source_id": "chunk-1",
+                        "title": "内部片段 1",
+                    },
+                    {
+                        "source_type": "web",
+                        "source_provider": "workspace",
+                        "retrieval_method": "read_file",
+                        "source_id": "/workspace/context/api_contract_research.md",
+                        "title": "api_contract_research.md",
+                        "url": "file:///workspace/context/api_contract_research.md",
+                        "origin_url": "file:///workspace/context/api_contract_research.md",
+                    },
+                ],
+            }
+        }
+    )
+    kb_context_loader = _FakeKbContextLoader("# KB context\n- source_id: chunk-1")
+    runtime = DeepResearchRuntime(
+        agent=agent,
+        config=ResearchRuntimeConfig(
+            primary_model="gpt-5.2",
+            subagent_model="gpt-5.2-mini",
+            system_prompt="你是深度研究助手。",
+        ),
+        tools=[],
+        tool_meta_by_name={},
+        tool_groups={"web": (), "paper": (), "citation": ()},
+    )
+    session_id = uuid.uuid4()
+    runner = DeepResearchRuntimeRunner(
+        runtime=runtime,
+        workspace_files={
+            "/workspace/context/api_contract_research.md": "# api contract",
+        },
+        kb_context_loader=kb_context_loader,
+    )
+    session = ResearchSession(
+        id=session_id,
+        thread_id=str(session_id),
+        question="结合内部知识库说明当前 deep research contract",
+        selected_kb_ids=[uuid.uuid4()],
+    )
+    plan_snapshot = ResearchPlanSnapshot(
+        research_brief="先读取内部知识库基线，再收口研究结论。",
+        complexity="complex",
+        summary="混合内部知识与 workspace 文档。",
+        target_sources=[ResearchSourceTarget.HYBRID],
+        subtasks=[
+            ResearchPlanSubtask(
+                title="读取内部知识",
+                description="把选中知识库的相关片段注入运行时。",
+                target_sources=[ResearchSourceTarget.KB],
+            )
+        ],
+        confirmation_required=True,
+    )
+
+    await runner.run_session(session=session, plan_snapshot=plan_snapshot)
+
+    request, _ = agent.calls[0]
+    prompt = request["messages"][0]["content"]
+    assert "/workspace/context/kb_context.md" in request["files"]
+    assert "\n".join(request["files"]["/workspace/context/kb_context.md"]["content"]) == (
+        "# KB context\n- source_id: chunk-1"
+    )
+    assert "/workspace/context/kb_context.md" in prompt
+    assert "source_type=kb" in prompt
+    assert kb_context_loader.calls == [session]
 
 
 @pytest.mark.asyncio

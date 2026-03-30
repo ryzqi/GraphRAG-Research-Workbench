@@ -234,6 +234,10 @@ export function deriveResearchStatus(params: {
         return 'resuming';
       case 'research.run.interrupted':
         return 'interrupted';
+      case 'research.run.timed_out':
+        return 'timed_out';
+      case 'research.run.failed':
+        return 'failed';
       case 'research.run.started':
         return 'running';
       case 'research.plan.rejected':

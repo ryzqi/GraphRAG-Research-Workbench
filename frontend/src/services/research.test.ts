@@ -5,10 +5,14 @@ import { openSseStream } from './sse';
 import {
   createResearchSession,
   confirmResearchPlan,
+  type ResearchEventEnvelope,
   getResearchArtifacts,
   streamResearchSession,
 } from './research';
-import { mergeResearchEventEnvelopes } from '../types/researchEvents';
+import {
+  deriveResearchStatus,
+  mergeResearchEventEnvelopes,
+} from '../types/researchEvents';
 
 vi.mock('./http', () => ({
   apiFetch: vi.fn(),
@@ -190,5 +194,30 @@ describe('mergeResearchEventEnvelopes', () => {
       retrieval_method: 'search',
       subagent_name: 'web',
     });
+  });
+});
+
+describe('deriveResearchStatus', () => {
+  it('maps research.run.failed to failed', () => {
+    const events: ResearchEventEnvelope[] = [
+      {
+        event_id: 'evt-0009',
+        sequence: 9,
+        timestamp: '2026-03-30T00:00:09Z',
+        event_type: 'research.run.failed',
+        session_id: 'session-1',
+        phase: 'runtime',
+        namespace: 'main',
+        payload: {},
+      },
+    ];
+
+    expect(
+      deriveResearchStatus({
+        acceptedStatus: 'queued',
+        events,
+        artifacts: [],
+      })
+    ).toBe('failed');
   });
 });

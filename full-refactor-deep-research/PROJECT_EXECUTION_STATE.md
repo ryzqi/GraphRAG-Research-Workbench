@@ -7,11 +7,12 @@
   - `full-refactor-deep-research/TASK_TODO_MEDIUM.md`
   - `full-refactor-deep-research/TASK_TODO_FINE.md`
   - `full-refactor-deep-research/PROJECT_EXECUTION_STATE.md`
-- Current Focus / Active Phase: Phase 5 - 可观测、文档同步与最终交付门禁 / 当前任务 = Task 13（已验证通过，待提交）
+- Current Focus / Active Phase: Phase 5 - 审查差异修复、文档同步与交付事实校正 / 当前任务 = Task 13 修复版（已完成回归验证，待提交）
 - Active Execution Wave:
-  - 已完成 backend 全量 `pytest` / `ruff`
-  - 已完成 frontend `typecheck` / `build`
-  - 已完成 demo script、启动 smoke 与 gate 决议收口
+  - 已完成前端入口修复：放开 `web-only / hybrid / require_confirmation`
+  - 已完成前端状态修复：补齐 `research.run.failed` / `research.run.timed_out`
+  - 已完成 runtime 最小 KB 对齐：`selected_kb_ids` 现在会注入 `/workspace/context/kb_context.md`
+  - 已完成 backend 全量 `pytest` / `ruff`，frontend `typecheck` / research `vitest` / `build`
 - Last Verified Stop Point:
   - Phase 1 已完成并提交：`0c5fa63 feat(research): restore research persistence foundation`
   - `efc6693 feat(research): add research schema contracts`
@@ -28,49 +29,58 @@
     - `pwsh -ExecutionPolicy Bypass -File .\scripts\demo_research.ps1 -DryRun` -> 输出当前 `/api/v1/research/sessions*` demo 流程
     - `rg -n "0\.5\.0a2|s\.jina\.ai|/api/v1/research/runs\*|/api/v1/research/runs|run_id\b|create_deep_agent\([^\n]*subagent_model|subagent_model=" ...` -> 仅剩有意保留的否定说明、`gate_run_id` 与“无顶层 `subagent_model`”校准说明
     - `uv run python -c "import inspect; from deepagents import create_deep_agent; print(inspect.signature(create_deep_agent))"` -> 已验证当前安装签名不含顶层 `subagent_model`
-  - Task 13 已完成（待本次提交）：
-    - `cd backend; uv run pytest` -> `78 passed`
+  - Task 13 修复版已完成当前回归验证（待本次提交）：
+    - `cd backend; uv run pytest tests/research tests/api/test_research_endpoints.py tests/worker/test_research_task.py -q` -> `54 passed`
+    - `cd backend; uv run pytest -q` -> `79 passed`
     - `cd backend; uv run ruff check .` -> `All checks passed!`
     - `cd frontend; npm run typecheck` -> `passed`
+    - `cd frontend; npx vitest run --pool threads src/services/research.test.ts src/views/researchPageState.test.ts src/components/research/ArtifactPanel.test.tsx src/components/research/InterruptDecisionPanel.test.tsx src/components/research/PlanPreviewPanel.test.tsx src/components/research/ResearchTimeline.test.tsx` -> `13 passed`
     - `cd frontend; npm run build` -> `passed`
-    - `pwsh -ExecutionPolicy Bypass -File .\scripts\demo_research.ps1 -BaseUrl http://127.0.0.1:8000 -TimeoutSec 90` -> planner/runtime/finalizer/artifacts 链路成功
-    - `http://127.0.0.1:8000/api/v1/ready` / `/docs` / `http://127.0.0.1:3000` -> `200`
 - Latest Improvement / Regression Notes:
   - 改进：ResearchService 现在会落盘 `metrics_snapshot` / `gate_snapshot`，并打通 `trace_id` / `session_id` / `lc_agent_name` / `namespace`
   - 改进：新增故障注入分类、事件回放一致性检查、interrupt-resume E2E 契约测试
   - 改进：文档、spec、README、demo script 与 Deep Agents 用法快照已统一到当前 session contract 与 `subagents[*].model` 事实源
-  - 改进：worker research task 现已真实装配 `build_deep_research_runtime_runner`，并补齐 structured response / workspace context / runtime 回归测试
+  - 改进：ResearchPage 现已显式暴露 `allow_external` / `require_confirmation`，不再被硬编码成 `KB-only + auto-approve`
+  - 改进：worker research task 现已装配 `db / milvus / embedding` 给 runtime runner；当 session 存在 `selected_kb_ids` 时会注入 `/workspace/context/kb_context.md`
+  - 改进：前端状态推导已补齐 `failed / timed_out` 终态，避免失败任务被错误展示为 `queued`
   - 改进：Deep Research runtime 现显式禁用 `use_previous_response_id`，避免 OpenAI `response_id not found` 触发 404
   - 回归已关闭：`ResearchArtifactStore` lazy load `MissingGreenlet`、research 任务错投 `default` 队列、runtime runner 未配置
-- Next Recommended Action: 更新 planning files 并提交 Task 13 收口补丁
-- Current Blockers: 无
+- Next Recommended Action: 复核修复补丁并提交；若要宣称外部 provider 全链路 release-ready，需单独补跑 live smoke
+- Current Blockers: 无（但外部 provider live smoke 仍未纳入本轮 fresh verification）
 - Assumptions Awaiting Confirmation:
-  - Task 13 将以当前 `metrics_snapshot` / `gate_snapshot` 作为 release gate 事实源之一
+  - 本轮仅把 `selected_kb_ids` 修到最小 `kb_context.md` 注入，不等价于完整 KB 子代理 / 动态 `kb_retrieve` 工具化
 - Parked / Deferred Items:
-  - demo 当前 provider 覆盖基于 workspace 文档语料；若后续要把 Tavily / Jina Reader / SearXNG / arXiv 全量联通纳入 release gate，需要单独补充外部 provider 专项验证
+  - demo / gate 当前主要覆盖 workspace 文档与最小 KB context 路线；若后续要把 Tavily / Jina Reader / SearXNG / arXiv 全量联通纳入 release gate，需要单独补充外部 provider 专项验证
+  - 完整 session 级 `kb_retrieve` / KB 子代理化仍是后续增强项，不在本轮修复范围
 - Key Recent Decisions:
   - `deepagents==0.4.12` 继续作为当前 stable runtime 版本基线
   - Deep Agents 仍保持 `create_deep_agent` 单入口、`subgraphs=True`、`version="v2"`、无 MCP
   - observability 默认门禁：`RESEARCH_GATE_MIN_QUALITY_SCORE=0.75`、`RESEARCH_GATE_MAX_P95_MS=120000`、`RESEARCH_GATE_MAX_SESSION_COST_USD=2.0`
   - rollback drill 仅提供 dry-run 记录；真实回滚仍需人工审批
-  - Task 13 发布决议：`gate_snapshot.pass = true`，当前 research 单路径可交付
+  - 当前 release 事实源以 fresh tests / build 为准；`gate_snapshot.pass` 不能单独外推为“全部 provider live path 已通过”
+  - 本轮对 KB 路线采用最小 `kb_context.md` 注入修复，不引入兼容层或额外动态 tool 装配
 - Verification Evidence Reference:
+  - `backend/tests/research/test_deep_research_runtime_runner.py`
   - `backend/tests/research/test_research_observability.py`
   - `backend/tests/research/test_research_fault_injection.py`
   - `backend/tests/research/test_research_event_replay.py`
   - `backend/tests/research/test_e2e_interrupt_resume_contract.py`
+  - `backend/tests/worker/test_research_task.py`
+  - `frontend/src/views/researchPageState.test.ts`
+  - `frontend/src/services/research.test.ts`
   - `full-refactor-deep-research/research-rollback-runbook.md`
   - `full-refactor-deep-research/research-rollback-drill-record.md`
   - 官方 Deep Agents 文档：customization / overview / trace deep agents / interrupts / streaming
   - 本地 `uv run python` 对 `create_deep_agent` 签名的 fresh verification
-  - `tmp/research-demo/07-stream-final.txt`
-  - `tmp/research-demo/08-artifacts.json`
 - Related Files:
   - `backend/src/app/services/deep_research_runtime.py`
   - `backend/src/app/services/research_observability.py`
   - `backend/src/app/services/research_replay.py`
   - `backend/src/app/services/research_service.py`
   - `backend/src/app/worker/tasks/research.py`
+  - `frontend/src/views/ResearchPage.tsx`
+  - `frontend/src/views/researchPageState.ts`
+  - `frontend/src/types/researchEvents.ts`
   - `scripts/research_rollback_drill.ps1`
   - `full-refactor-deep-research/research-rollback-runbook.md`
 - Last Updated: 2026-03-30

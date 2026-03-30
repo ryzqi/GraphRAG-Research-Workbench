@@ -6,9 +6,11 @@
 import { useCallback, useMemo, useState } from 'react';
 import {
   Box,
+  FormControlLabel,
   Container,
   Paper,
   Stack,
+  Switch,
   TextField,
   Typography,
 } from '@mui/material';
@@ -36,6 +38,10 @@ import { useSelectableKnowledgeBases } from '../hooks/queries/useKnowledgeBases'
 import { getErrorMessage } from '../lib/errorHandler';
 import type { ResearchSessionAccepted, ResearchSessionStatus } from '../types/researchEvents';
 import { safeOpenDownloadUrl } from '../utils/urlValidation';
+import {
+  buildResearchStartRequest,
+  validateResearchStartDraft,
+} from './researchPageState';
 
 export function ResearchPage() {
   // 使用 SWR 自动去重并缓存知识库列表。
@@ -53,6 +59,8 @@ export function ResearchPage() {
   const [acceptedSession, setAcceptedSession] = useState<ResearchSessionAccepted | null>(null);
   const [exporting, setExporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [allowExternal, setAllowExternal] = useState(true);
+  const [requireConfirmation, setRequireConfirmation] = useState(false);
   const [resumeIdempotencyKey, setResumeIdempotencyKey] = useState('resume-1');
   const [decisionDraft, setDecisionDraft] = useState('[{"action":"approve"}]');
 
@@ -107,8 +115,13 @@ export function ResearchPage() {
   }, []);
 
   const startResearch = useCallback(async () => {
-    if (selectedKbIds.length === 0 || !question.trim()) {
-      setError('请选择知识库并输入研究问题');
+    const validationError = validateResearchStartDraft({
+      question,
+      selectedKbIds,
+      allowExternal,
+    });
+    if (validationError) {
+      setError(validationError);
       return;
     }
 
@@ -117,12 +130,14 @@ export function ResearchPage() {
     setAcceptedSession(null);
 
     try {
-      const newSession = await createSessionMutation.mutateAsync({
-        question: question.trim(),
-        selected_kb_ids: selectedKbIds,
-        allow_external: false,
-        require_confirmation: false,
-      });
+      const newSession = await createSessionMutation.mutateAsync(
+        buildResearchStartRequest({
+          question,
+          selectedKbIds,
+          allowExternal,
+          requireConfirmation,
+        })
+      );
 
       setAcceptedSession(newSession);
       setSessionId(newSession.session_id);
@@ -130,7 +145,7 @@ export function ResearchPage() {
     } catch (e) {
       setError(getErrorMessage(e));
     }
-  }, [createSessionMutation, question, selectedKbIds]);
+  }, [allowExternal, createSessionMutation, question, requireConfirmation, selectedKbIds]);
 
   const handleConfirmPlan = useCallback(async () => {
     if (!sessionId) {
@@ -219,6 +234,8 @@ export function ResearchPage() {
     setAcceptedSession(null);
     setQuestion('');
     setError(null);
+    setAllowExternal(true);
+    setRequireConfirmation(false);
     setDecisionDraft('[{"action":"approve"}]');
     setResumeIdempotencyKey('resume-1');
   }, []);
@@ -283,10 +300,50 @@ export function ResearchPage() {
             />
           </Box>
 
+          <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
+            <FormControlLabel
+              control={
+                <Switch
+                  size="small"
+                  checked={allowExternal}
+                  onChange={(event) => setAllowExternal(event.target.checked)}
+                />
+              }
+              label={
+                <Typography variant="body2" color="text.secondary">
+                  允许外部研究
+                </Typography>
+              }
+            />
+            <FormControlLabel
+              control={
+                <Switch
+                  size="small"
+                  checked={requireConfirmation}
+                  onChange={(event) => setRequireConfirmation(event.target.checked)}
+                />
+              }
+              label={
+                <Typography variant="body2" color="text.secondary">
+                  执行前需要确认计划
+                </Typography>
+              }
+            />
+          </Stack>
+
           <Button
             variant="contained"
             onClick={startResearch}
-            disabled={knowledgeBasesQuery.isLoading || selectedKbIds.length === 0 || !question.trim()}
+            disabled={
+              knowledgeBasesQuery.isLoading ||
+              Boolean(
+                validateResearchStartDraft({
+                  question,
+                  selectedKbIds,
+                  allowExternal,
+                })
+              )
+            }
             loading={loading}
             sx={{ alignSelf: 'flex-start' }}
           >
