@@ -124,7 +124,6 @@ async def test_fail_session_records_fault_metrics_and_failure_event(
         id=uuid4(),
         thread_id="research-fault-session",
         question="验证故障注入分类",
-        allow_external=True,
         status=ResearchSessionStatus.RUNNING,
         trace_id="trace-research-fault",
     )
@@ -146,4 +145,3 @@ async def test_fail_session_records_fault_metrics_and_failure_event(
     if source_provider is not None:
         assert (session.metrics or {})["faults"]["by_source_provider"][source_provider]["count"] >= 1
     assert (session.metrics or {})["gate"]["pass"] is False
-

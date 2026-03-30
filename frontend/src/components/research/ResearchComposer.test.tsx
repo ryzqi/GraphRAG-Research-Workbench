@@ -1,7 +1,7 @@
 import type { ComponentProps } from 'react';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, expectTypeOf, it } from 'vitest';
 
 import { ResearchComposer } from './ResearchComposer';
 
@@ -24,18 +24,9 @@ describe('ResearchComposer', () => {
   });
 
   it('does not accept legacy confirmation toggle props', () => {
-    const props: ComponentProps<typeof ResearchComposer> = {
-      question: '比较两种方案',
-      loading: false,
-      validationError: null,
-      onQuestionChange: () => undefined,
-      onStart: () => undefined,
-      // @ts-expect-error Task 3 removes the legacy toggle contract
-      requireConfirmation: true,
-      // @ts-expect-error Task 3 removes the legacy toggle contract
-      onToggleRequireConfirmation: () => undefined,
-    };
+    type ComposerProps = ComponentProps<typeof ResearchComposer>;
 
-    expect(props.question).toBe('比较两种方案');
+    expectTypeOf<ComposerProps>().not.toHaveProperty('requireConfirmation');
+    expectTypeOf<ComposerProps>().not.toHaveProperty('onToggleRequireConfirmation');
   });
 });

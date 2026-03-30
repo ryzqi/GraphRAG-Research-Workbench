@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from time import perf_counter
@@ -17,26 +16,22 @@ from langchain.tools import BaseTool
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.store.memory import InMemoryStore
 from pydantic import BaseModel, Field, ValidationError
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.tool_calling.registry import (
     ToolMeta,
     build_research_tool_registry,
 )
 from app.core.settings import Settings
-from app.integrations.embedding_client import EmbeddingClient
 from app.integrations.chat_model_factory import create_chat_model
 from app.integrations.mcp_adapters import McpToolEntry
-from app.integrations.milvus_client import MilvusClient
 from app.integrations.redis_client import RedisClient
-from app.models.knowledge_base import KnowledgeBase
 from app.models.research_session import ResearchSession
 from app.models.tool_extension import ToolExtension
 from app.schemas.research import (
     ResearchCanonicalCitation,
     ResearchPlanSnapshot,
     ResearchSourceTarget,
+    ResearchSourceType,
 )
 from app.services.research_observability import ResearchRuntimeRunResult
 from app.services.research_runtime_types import (
@@ -45,7 +40,6 @@ from app.services.research_runtime_types import (
     ResearchRuntimeConfig,
     ResearchToolRegistryBundle,
 )
-from app.services.retrieval_service import RetrievalResult, RetrievalService
 from app.services.research_source_bundle import ResearchSourceBundleBuilder
 
 _REPO_ROOT = Path(__file__).resolve().parents[4]
@@ -76,12 +70,7 @@ _DEFAULT_RESEARCH_SYSTEM_PROMPT = """
    - retrieval_method=read_file
    - source_id 为 workspace 文件路径
    - url / origin_url 为对应的 file:// URL
-5. 如果引用 /workspace/context/kb_context.md 中的内部知识，统一使用：
-   - source_type=kb
-   - source_provider=kb
-   - retrieval_method=kb_retrieve
-   - source_id 为对应片段条目的 source_id
-6. 只保留当前实现语义；不要为旧 research 路径补兼容说明。
+5. 只保留当前实现语义；不要为旧 research 路径补兼容说明。
 """.strip()
 
 
@@ -90,110 +79,34 @@ class DeepResearchStructuredResponse(BaseModel):
     citations: list[ResearchCanonicalCitation] = Field(min_length=2)
 
 
-@dataclass(slots=True)
-class ResearchKbContextLoader:
-    db: AsyncSession
-    milvus: MilvusClient
-    embedding: EmbeddingClient
-    redis: RedisClient | None = None
-    top_k: int = 4
+def _normalize_structured_response_payload(payload: Any) -> Any:
+    if not isinstance(payload, dict):
+        return payload
 
-    async def load(self, *, session: ResearchSession) -> str | None:
-        selected_kb_ids = [uuid.UUID(str(kb_id)) for kb_id in (session.selected_kb_ids or [])]
-        if not selected_kb_ids:
-            return None
+    normalized = dict(payload)
+    raw_citations = normalized.get("citations")
+    if not isinstance(raw_citations, list):
+        return normalized
 
-        stmt = select(KnowledgeBase).where(KnowledgeBase.id.in_(selected_kb_ids))
-        kb_items = (await self.db.execute(stmt)).scalars().all()
-        kb_by_id = {item.id: item for item in kb_items}
+    normalized_citations: list[Any] = []
+    for item in raw_citations:
+        if not isinstance(item, dict):
+            normalized_citations.append(item)
+            continue
 
-        retrieval = RetrievalService(
-            self.db,
-            self.milvus,
-            self.embedding,
-            self.redis,
-        )
-        results = await retrieval.retrieve(
-            query=session.question,
-            kb_ids=selected_kb_ids,
-            top_k=max(1, int(self.top_k)),
-        )
-        return self._render_markdown(
-            question=session.question,
-            selected_kb_ids=selected_kb_ids,
-            kb_by_id=kb_by_id,
-            results=results,
-        )
+        citation = dict(item)
+        if citation.get("source_type") == ResearchSourceType.WEB.value:
+            origin_url = citation.get("origin_url")
+            if not (isinstance(origin_url, str) and origin_url.strip()):
+                fallback_origin_url = citation.get("url")
+                if not (isinstance(fallback_origin_url, str) and fallback_origin_url.strip()):
+                    fallback_origin_url = citation.get("source_id")
+                if isinstance(fallback_origin_url, str) and fallback_origin_url.strip():
+                    citation["origin_url"] = fallback_origin_url.strip()
+        normalized_citations.append(citation)
 
-    @staticmethod
-    def _render_locator(locator: dict[str, Any] | None) -> str | None:
-        if not isinstance(locator, dict) or not locator:
-            return None
-        return json.dumps(locator, ensure_ascii=False, sort_keys=True)
-
-    @classmethod
-    def _render_markdown(
-        cls,
-        *,
-        question: str,
-        selected_kb_ids: Sequence[uuid.UUID],
-        kb_by_id: dict[uuid.UUID, KnowledgeBase],
-        results: Sequence[RetrievalResult],
-    ) -> str:
-        lines = [
-            "# 内部知识库上下文",
-            "",
-            "> 如果引用本文件中的内部知识，请使用：source_type=kb, source_provider=kb, retrieval_method=kb_retrieve，并把 source_id 填成对应片段条目的 source_id。",
-            "",
-            f"当前问题：{question}",
-            "",
-            "## 选中知识库",
-        ]
-        for kb_id in selected_kb_ids:
-            kb = kb_by_id.get(kb_id)
-            if kb is None:
-                lines.append(f"- 未找到知识库元数据：{kb_id}")
-                continue
-            lines.append(f"- {kb.name} ({kb.id})")
-            if kb.description:
-                lines.append(f"  - description: {kb.description}")
-            lines.append(f"  - readiness: {kb.readiness.value}")
-            lines.append(f"  - status: {kb.status.value}")
-
-        lines.extend(["", "## 查询相关片段"])
-        if not results:
-            lines.append("- 未检索到与当前问题直接相关的内部片段；保留知识库元数据供 runtime 参考。")
-            return "\n".join(lines)
-
-        for index, result in enumerate(results, start=1):
-            chunk = result.chunk
-            kb = kb_by_id.get(chunk.kb_id)
-            excerpt = RetrievalService._result_excerpt(result) or "（空片段）"
-            lines.extend(
-                [
-                    "",
-                    f"### 片段 {index}",
-                    f"- source_id: {chunk.id}",
-                    f"- kb_id: {chunk.kb_id}",
-                    f"- kb_name: {kb.name if kb is not None else 'unknown'}",
-                    f"- material_id: {chunk.material_id}",
-                    f"- score: {float(result.score):.4f}",
-                ]
-            )
-            if chunk.heading_path:
-                lines.append(f"- heading_path: {chunk.heading_path}")
-            locator = cls._render_locator(chunk.locator)
-            if locator:
-                lines.append(f"- locator: {locator}")
-            lines.extend(
-                [
-                    "- excerpt:",
-                    "```text",
-                    excerpt,
-                    "```",
-                ]
-            )
-        return "\n".join(lines)
+    normalized["citations"] = normalized_citations
+    return normalized
 
 
 @dataclass(slots=True)
@@ -304,10 +217,7 @@ def resolve_source_subagent_route(
     target_sources: Sequence[ResearchSourceTarget],
 ) -> tuple[str, ...]:
     normalized = {item for item in target_sources}
-    if ResearchSourceTarget.HYBRID in normalized or (
-        ResearchSourceTarget.WEB in normalized
-        and ResearchSourceTarget.PAPER in normalized
-    ):
+    if ResearchSourceTarget.WEB in normalized and ResearchSourceTarget.PAPER in normalized:
         return ("paper", "web", "citation")
     if ResearchSourceTarget.PAPER in normalized:
         return ("paper", "citation")
@@ -416,16 +326,6 @@ def _build_runtime_prompt(
                 *[f"- {path}" for path in workspace_paths],
             ]
         )
-    if "/workspace/context/kb_context.md" in workspace_paths:
-        lines.extend(
-            [
-                "如果使用 /workspace/context/kb_context.md 中的内部知识片段，请确保 citation 满足：",
-                "- source_type=kb",
-                "- source_provider=kb",
-                "- retrieval_method=kb_retrieve",
-                "- source_id 使用该文件中对应片段条目的 source_id",
-            ]
-        )
     lines.extend(
         [
             "输出要求：",
@@ -443,7 +343,6 @@ def _build_runtime_request_files(
     workspace_files: dict[str, str],
     session: ResearchSession,
     plan_snapshot: ResearchPlanSnapshot,
-    kb_context: str | None = None,
 ) -> dict[str, dict[str, Any]]:
     request_files = {
         path: create_file_data(content)
@@ -453,8 +352,6 @@ def _build_runtime_request_files(
     request_files["/workspace/context/plan_snapshot.json"] = create_file_data(
         json.dumps(plan_snapshot.model_dump(mode="json"), ensure_ascii=False, indent=2)
     )
-    if kb_context and kb_context.strip():
-        request_files["/workspace/context/kb_context.md"] = create_file_data(kb_context)
     return request_files
 
 
@@ -462,7 +359,6 @@ def _build_runtime_request_files(
 class DeepResearchRuntimeRunner:
     runtime: DeepResearchRuntime
     workspace_files: dict[str, str]
-    kb_context_loader: ResearchKbContextLoader | None = None
 
     async def run_session(
         self,
@@ -470,12 +366,10 @@ class DeepResearchRuntimeRunner:
         session: ResearchSession,
         plan_snapshot: ResearchPlanSnapshot,
     ) -> ResearchRuntimeRunResult:
-        kb_context = await self._load_kb_context(session=session)
         request_files = _build_runtime_request_files(
             workspace_files=self.workspace_files,
             session=session,
             plan_snapshot=plan_snapshot,
-            kb_context=kb_context,
         )
         prompt = _build_runtime_prompt(
             session=session,
@@ -501,7 +395,9 @@ class DeepResearchRuntimeRunner:
         if structured_payload is None:
             raise RuntimeError("Deep Research runtime 未返回 structured_response")
         try:
-            structured = DeepResearchStructuredResponse.model_validate(structured_payload)
+            structured = DeepResearchStructuredResponse.model_validate(
+                _normalize_structured_response_payload(structured_payload)
+            )
         except ValidationError as exc:
             raise RuntimeError("Deep Research runtime structured_response 不符合契约") from exc
 
@@ -516,20 +412,12 @@ class DeepResearchRuntimeRunner:
             latency_ms=latency_ms,
         )
 
-    async def _load_kb_context(self, *, session: ResearchSession) -> str | None:
-        if self.kb_context_loader is None:
-            return None
-        return await self.kb_context_loader.load(session=session)
-
 
 async def build_deep_research_runtime_runner(
     *,
     settings: Settings,
-    db: AsyncSession | None = None,
     http_client: Any | None = None,
     redis: RedisClient | None = None,
-    milvus: MilvusClient | None = None,
-    embedding: EmbeddingClient | None = None,
 ) -> DeepResearchRuntimeRunner:
     runtime_config = ResearchRuntimeConfig(
         primary_model=create_chat_model(
@@ -557,16 +445,7 @@ async def build_deep_research_runtime_runner(
         checkpointer=MemorySaver(),
         store=InMemoryStore(),
     )
-    kb_context_loader = None
-    if db is not None and milvus is not None and embedding is not None:
-        kb_context_loader = ResearchKbContextLoader(
-            db=db,
-            milvus=milvus,
-            embedding=embedding,
-            redis=redis,
-        )
     return DeepResearchRuntimeRunner(
         runtime=runtime,
         workspace_files=_build_workspace_context_files(),
-        kb_context_loader=kb_context_loader,
     )

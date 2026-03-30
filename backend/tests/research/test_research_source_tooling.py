@@ -124,7 +124,7 @@ async def test_create_deep_research_runtime_builds_source_specialized_subagents(
     assert subagents[3]["model"] == "gpt-5.2"
 
 
-def test_resolve_source_subagent_route_handles_web_paper_and_hybrid() -> None:
+def test_resolve_source_subagent_route_handles_web_and_paper() -> None:
     assert resolve_source_subagent_route((ResearchSourceTarget.WEB,)) == (
         "web",
         "citation",
@@ -133,7 +133,7 @@ def test_resolve_source_subagent_route_handles_web_paper_and_hybrid() -> None:
         "paper",
         "citation",
     )
-    assert resolve_source_subagent_route((ResearchSourceTarget.HYBRID,)) == (
+    assert resolve_source_subagent_route((ResearchSourceTarget.PAPER, ResearchSourceTarget.WEB)) == (
         "paper",
         "web",
         "citation",

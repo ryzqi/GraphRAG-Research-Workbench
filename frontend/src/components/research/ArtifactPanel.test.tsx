@@ -48,7 +48,7 @@ describe('ArtifactPanel', () => {
       })
     );
 
-    expect(html).toContain('研究工件');
+    expect(html).toContain('证据与引用');
     expect(html).toContain('中间研究收口');
     expect(html).toContain('网页证据');
     expect(html).toContain('论文证据');

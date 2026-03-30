@@ -74,7 +74,6 @@ async def test_interrupt_resume_contract_reaches_final_with_consistent_replay() 
         id=uuid4(),
         thread_id="research-interrupt-resume-session",
         question="验证 interrupt -> resume -> final 契约",
-        allow_external=True,
         status=ResearchSessionStatus.AWAITING_CONFIRMATION,
     )
     plan_snapshot = ResearchPlanSnapshot(

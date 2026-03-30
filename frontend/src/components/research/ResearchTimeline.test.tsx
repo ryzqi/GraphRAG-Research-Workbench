@@ -41,7 +41,7 @@ describe('ResearchTimeline', () => {
       })
     );
 
-    expect(html).toContain('研究时间线');
+    expect(html).toContain('技术事件');
     expect(html.indexOf('research.plan.created')).toBeLessThan(html.indexOf('research.run.started'));
     expect(html).toContain('main');
     expect(html).toContain('web/researcher');

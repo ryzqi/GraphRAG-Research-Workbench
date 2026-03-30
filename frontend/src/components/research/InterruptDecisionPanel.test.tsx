@@ -19,7 +19,7 @@ describe('InterruptDecisionPanel', () => {
     );
 
     expect(html).toContain('中断决策');
-    expect(html).toContain('resume-1');
-    expect(html).toContain('继续执行');
+    expect(html).toContain('继续研究');
+    expect(html).toContain('高级决策');
   });
 });

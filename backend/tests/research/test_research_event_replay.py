@@ -73,7 +73,6 @@ async def test_replay_matches_terminal_session_state() -> None:
         id=uuid4(),
         thread_id="research-replay-session",
         question="验证事件回放与终态一致性",
-        allow_external=True,
         status=ResearchSessionStatus.QUEUED,
     )
     plan_snapshot = ResearchPlanSnapshot(
@@ -134,4 +133,3 @@ def test_replay_detects_sequence_gaps() -> None:
 
     assert replay_state.sequence_gaps == [2]
     assert replay_state.status == ResearchSessionStatus.RUNNING
-

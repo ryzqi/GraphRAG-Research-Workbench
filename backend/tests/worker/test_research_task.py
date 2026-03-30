@@ -49,8 +49,6 @@ async def test_run_research_session_builds_service_with_configured_runtime_runne
     settings = SimpleNamespace()
     http_client = object()
     redis = object()
-    milvus = object()
-    embedding_client = object()
     session_id = uuid.uuid4()
     session = SimpleNamespace(
         id=session_id,
@@ -67,8 +65,6 @@ async def test_run_research_session_builds_service_with_configured_runtime_runne
             sessionmaker=_Sessionmaker(db),
             http_client=http_client,
             redis=redis,
-            milvus=milvus,
-            embedding_client=embedding_client,
         )
 
     async def _fake_build_runtime_runner(**kwargs):  # type: ignore[no-untyped-def]
@@ -121,16 +117,13 @@ async def test_run_research_session_builds_service_with_configured_runtime_runne
         "with_engine": True,
         "with_http": True,
         "with_redis": True,
-        "with_milvus": True,
+        "with_milvus": False,
     }
     assert captured["build_research_service_runtime_runner"] is sentinel_runtime_runner
     assert captured["runtime_runner_kwargs"] == {
         "settings": settings,
-        "db": db,
         "http_client": http_client,
         "redis": redis,
-        "milvus": milvus,
-        "embedding": embedding_client,
     }
     assert captured["executed_session"] is session
     assert captured["executed_plan_snapshot"] == {"plan": "snapshot"}

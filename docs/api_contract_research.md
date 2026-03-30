@@ -22,10 +22,7 @@
 ```json
 {
   "question": "比较 Tavily、Jina Reader 与 SearXNG 在当前 research 工作台中的定位",
-  "selected_kb_ids": [],
-  "allow_external": true,
-  "plan_first": true,
-  "require_confirmation": true
+  "plan_first": true
 }
 ```
 
@@ -33,9 +30,32 @@
 
 - `session_id`
 - `status`
-- `plan_snapshot`（若 planner 已产生）
+- `status=clarifying` 时返回 `clarification_request`
+- `status=awaiting_confirmation` 时返回 `plan_snapshot`
 
-### 2. 确认研究计划
+说明：
+
+- `plan_first` 固定为 `true`，当前公开契约只支持 clarification-first / plan-first 路径。
+- 创建会话不会直接进入执行态；planner 会先返回澄清问题或待确认计划。
+
+### 2. 提交澄清回答
+
+- `POST /api/v1/research/sessions/{session_id}/clarification`
+
+请求体：
+
+```json
+{
+  "answer": "关注 LangGraph StateGraph 入门、适用边界与迁移建议"
+}
+```
+
+响应：
+
+- 若信息仍不足：`status=clarifying` + `clarification_request`
+- 若已可生成计划：`status=awaiting_confirmation` + `plan_snapshot`
+
+### 3. 确认研究计划
 
 - `POST /api/v1/research/sessions/{session_id}/confirm-plan`
 
@@ -48,7 +68,13 @@
 }
 ```
 
-### 3. 读取研究事件流
+说明：
+
+- `confirm-plan` 仅用于 `awaiting_confirmation` 阶段。
+- 只有在 `approved=true` 后，会话才会进入 `queued`，随后由 worker/runtime 推进到 `running`。
+- `clarifying` 阶段不能直接调用确认执行。
+
+### 4. 读取研究事件流
 
 - `GET /api/v1/research/sessions/{session_id}/stream`
 
@@ -57,7 +83,7 @@
 - `Last-Event-ID`：优先续流游标
 - `resume_from_event_id`：显式恢复游标
 
-### 4. 中断研究
+### 5. 中断研究
 
 - `POST /api/v1/research/sessions/{session_id}/interrupt`
 
@@ -69,7 +95,7 @@
 }
 ```
 
-### 5. 恢复研究
+### 6. 恢复研究
 
 - `POST /api/v1/research/sessions/{session_id}/resume`
 
@@ -88,7 +114,7 @@
 }
 ```
 
-### 6. 读取研究工件
+### 7. 读取研究工件
 
 - `GET /api/v1/research/sessions/{session_id}/artifacts`
 

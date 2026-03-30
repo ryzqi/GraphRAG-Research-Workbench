@@ -342,16 +342,13 @@ def _build_channel_metrics(
     citations: Sequence[ResearchCanonicalCitation],
 ) -> dict[str, dict[str, Any]]:
     citation_counts = {
-        "kb": 0,
         "web": 0,
         "paper": 0,
-        "hybrid": 0,
     }
     for citation in citations:
         citation_counts[citation.source_type.value] = (
             citation_counts.get(citation.source_type.value, 0) + 1
         )
-    citation_counts["hybrid"] = 1 if len({_citation_channel(item) for item in citations}) >= 2 else 0
     targeted = {item.value for item in target_sources}
     return {
         key: {
@@ -554,19 +551,11 @@ def _target_source_coverage_ratio(
     if not target_sources:
         return 0.0
     covered_channels = {_citation_channel(item) for item in citations}
-
-    def _covered(target: ResearchSourceTarget) -> bool:
-        if target == ResearchSourceTarget.HYBRID:
-            return len(covered_channels.intersection({"kb", "web", "paper"})) >= 2
-        return target.value in covered_channels
-
-    covered_count = sum(1 for item in target_sources if _covered(item))
+    covered_count = sum(1 for item in target_sources if item.value in covered_channels)
     return covered_count / len(target_sources)
 
 
 def _citation_channel(citation: ResearchCanonicalCitation) -> str:
-    if citation.source_type == ResearchSourceType.KB:
-        return "kb"
     if citation.source_type == ResearchSourceType.PAPER:
         return "paper"
     return "web"

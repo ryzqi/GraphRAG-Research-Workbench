@@ -35,7 +35,7 @@ export function ArtifactPanel({ reportMd, reportJson, artifacts }: ArtifactPanel
     <Paper variant="outlined" sx={{ p: 2 }}>
       <Stack spacing={2}>
         <Typography variant="subtitle1" fontWeight={600}>
-          研究工件
+          证据与引用
         </Typography>
 
         {(interimSummary || coverageGaps.length > 0) ? (

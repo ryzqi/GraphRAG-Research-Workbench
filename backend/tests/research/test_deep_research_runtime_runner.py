@@ -32,16 +32,6 @@ class _FakeAgent:
         return dict(self._result)
 
 
-class _FakeKbContextLoader:
-    def __init__(self, content: str | None) -> None:
-        self._content = content
-        self.calls: list[ResearchSession] = []
-
-    async def load(self, *, session: ResearchSession) -> str | None:
-        self.calls.append(session)
-        return self._content
-
-
 @pytest.mark.asyncio
 async def test_deep_research_runtime_runner_builds_source_bundle_from_structured_output() -> None:
     agent = _FakeAgent(
@@ -135,26 +125,21 @@ async def test_deep_research_runtime_runner_builds_source_bundle_from_structured
         "# api contract"
     ]
     assert request["files"]["/workspace/context/plan_snapshot.json"]["content"]
+    assert "/workspace/context/kb_context.md" not in request["files"]
+    assert "source_type=kb" not in request["messages"][0]["content"]
     assert config == {"configurable": {"thread_id": str(session_id)}}
 
 
 @pytest.mark.asyncio
-async def test_deep_research_runtime_runner_includes_kb_context_file_when_session_has_selected_kbs() -> None:
+async def test_deep_research_runtime_runner_fills_missing_origin_url_for_web_citations() -> None:
     agent = _FakeAgent(
         {
             "structured_response": {
                 "findings": [
-                    "内部知识库给出了现有研究基线。",
-                    "运行时请求中已经显式注入 kb_context.md。",
+                    "workspace 文档足以回答当前问题。",
+                    "缺失 origin_url 的 web citation 会在 runtime 侧补齐。",
                 ],
                 "citations": [
-                    {
-                        "source_type": "kb",
-                        "source_provider": "kb",
-                        "retrieval_method": "kb_retrieve",
-                        "source_id": "chunk-1",
-                        "title": "内部片段 1",
-                    },
                     {
                         "source_type": "web",
                         "source_provider": "workspace",
@@ -162,13 +147,19 @@ async def test_deep_research_runtime_runner_includes_kb_context_file_when_sessio
                         "source_id": "/workspace/context/api_contract_research.md",
                         "title": "api_contract_research.md",
                         "url": "file:///workspace/context/api_contract_research.md",
-                        "origin_url": "file:///workspace/context/api_contract_research.md",
+                    },
+                    {
+                        "source_type": "web",
+                        "source_provider": "workspace",
+                        "retrieval_method": "read_file",
+                        "source_id": "/workspace/context/research_readme.md",
+                        "title": "research_readme.md",
+                        "url": "file:///workspace/context/research_readme.md",
                     },
                 ],
             }
         }
     )
-    kb_context_loader = _FakeKbContextLoader("# KB context\n- source_id: chunk-1")
     runtime = DeepResearchRuntime(
         agent=agent,
         config=ResearchRuntimeConfig(
@@ -180,46 +171,40 @@ async def test_deep_research_runtime_runner_includes_kb_context_file_when_sessio
         tool_meta_by_name={},
         tool_groups={"web": (), "paper": (), "citation": ()},
     )
-    session_id = uuid.uuid4()
     runner = DeepResearchRuntimeRunner(
         runtime=runtime,
         workspace_files={
             "/workspace/context/api_contract_research.md": "# api contract",
+            "/workspace/context/research_readme.md": "# readme",
         },
-        kb_context_loader=kb_context_loader,
     )
+    session_id = uuid.uuid4()
     session = ResearchSession(
         id=session_id,
         thread_id=str(session_id),
-        question="结合内部知识库说明当前 deep research contract",
-        selected_kb_ids=[uuid.uuid4()],
+        question="当前 deep research contract 是什么？",
     )
     plan_snapshot = ResearchPlanSnapshot(
-        research_brief="先读取内部知识库基线，再收口研究结论。",
-        complexity="complex",
-        summary="混合内部知识与 workspace 文档。",
-        target_sources=[ResearchSourceTarget.HYBRID],
+        research_brief="读取 workspace 文档并生成最终研究结果。",
+        complexity="simple",
+        summary="以 workspace 文档为主收口 findings/citations。",
+        target_sources=[ResearchSourceTarget.WEB],
         subtasks=[
             ResearchPlanSubtask(
-                title="读取内部知识",
-                description="把选中知识库的相关片段注入运行时。",
-                target_sources=[ResearchSourceTarget.KB],
+                title="读取 workspace 文档",
+                description="围绕 contract 整理最小可验证证据。",
+                target_sources=[ResearchSourceTarget.WEB],
             )
         ],
-        confirmation_required=True,
+        confirmation_required=False,
     )
 
-    await runner.run_session(session=session, plan_snapshot=plan_snapshot)
+    result = await runner.run_session(session=session, plan_snapshot=plan_snapshot)
 
-    request, _ = agent.calls[0]
-    prompt = request["messages"][0]["content"]
-    assert "/workspace/context/kb_context.md" in request["files"]
-    assert "\n".join(request["files"]["/workspace/context/kb_context.md"]["content"]) == (
-        "# KB context\n- source_id: chunk-1"
-    )
-    assert "/workspace/context/kb_context.md" in prompt
-    assert "source_type=kb" in prompt
-    assert kb_context_loader.calls == [session]
+    assert [citation.origin_url for citation in result.source_bundle.citations] == [
+        "file:///workspace/context/api_contract_research.md",
+        "file:///workspace/context/research_readme.md",
+    ]
 
 
 @pytest.mark.asyncio

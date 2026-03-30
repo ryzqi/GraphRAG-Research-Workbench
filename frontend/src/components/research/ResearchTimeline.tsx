@@ -13,7 +13,7 @@ export function ResearchTimeline({ events }: ResearchTimelineProps) {
     <Paper variant="outlined" sx={{ p: 2 }}>
       <Stack spacing={1.5}>
         <Typography variant="subtitle1" fontWeight={600}>
-          研究时间线
+          技术事件
         </Typography>
 
         {orderedEvents.length === 0 ? (

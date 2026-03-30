@@ -111,7 +111,6 @@ async def test_execute_session_persists_trace_metrics_gate_and_trace_events() ->
         id=uuid4(),
         thread_id="research-observability-session",
         question="为 Deep Research 打通 tracing / metrics / gate",
-        allow_external=True,
         status=ResearchSessionStatus.QUEUED,
     )
     plan_snapshot = ResearchPlanSnapshot(

@@ -88,7 +88,4 @@ class ResearchSourceBundleBuilder:
                 citation.source_type.value,
                 str(citation.arxiv_id or citation.source_id),
             )
-        return (
-            citation.source_type.value,
-            str(citation.source_id),
-        )
+        return (citation.source_type.value, str(citation.source_id))

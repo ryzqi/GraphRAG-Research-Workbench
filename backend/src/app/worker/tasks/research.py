@@ -26,7 +26,7 @@ async def _run_research_session(session_id: str) -> None:
         with_engine=True,
         with_http=True,
         with_redis=True,
-        with_milvus=True,
+        with_milvus=False,
     ) as resources:
         sessionmaker = resources.sessionmaker
         if sessionmaker is None:  # pragma: no cover
@@ -35,11 +35,8 @@ async def _run_research_session(session_id: str) -> None:
         async with sessionmaker() as db:
             runtime_runner = await build_deep_research_runtime_runner(
                 settings=settings,
-                db=db,
                 http_client=resources.http_client,
                 redis=resources.redis,
-                milvus=resources.milvus,
-                embedding=resources.embedding_client,
             )
             service = build_research_service(db=db, runtime_runner=runtime_runner)
             session = await service.get_session(session_uuid)

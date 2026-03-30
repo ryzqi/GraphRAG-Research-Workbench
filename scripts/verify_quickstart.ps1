@@ -43,7 +43,7 @@ function Test-SearXngJsonSearch {
 }
 
 Write-Host "========================================" -ForegroundColor Cyan
-Write-Host "  多知识库知识代理系统 - 验收检查" -ForegroundColor Cyan
+Write-Host "  知识代理系统 - 验收检查" -ForegroundColor Cyan
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host ""
 
@@ -81,13 +81,12 @@ Write-Host ""
 Write-Host "5. 导出器检查" -ForegroundColor Yellow
 Write-Check "chat_exporter.py 存在" (Test-Path "backend/src/app/services/exporters/chat_exporter.py")
 Write-Check "research_exporter.py 存在" (Test-Path "backend/src/app/services/exporters/research_exporter.py")
-Write-Check "evaluation_exporter.py 存在" (Test-Path "backend/src/app/services/exporters/evaluation_exporter.py")
 Write-Host ""
 
 # 6. 检查文档
 Write-Host "6. 文档检查" -ForegroundColor Yellow
 Write-Check "architecture.md 存在" (Test-Path "docs/architecture.md")
-Write-Check "快速启动文档存在" (Test-Path "specs/001-multi-kb-agent-collab/quickstart.md")
+Write-Check "Research API 契约文档存在" (Test-Path "docs/api_contract_research.md")
 Write-Check "README.md 存在" (Test-Path "README.md")
 Write-Host ""
 
