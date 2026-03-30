@@ -104,3 +104,16 @@ def test_help_research_with_clarification_answer_should_not_loop() -> None:
     assert result.clarification_request is None
     assert result.plan_snapshot is not None
     assert result.next_status == ResearchSessionStatus.AWAITING_CONFIRMATION
+
+
+def test_help_research_with_specific_scenario_should_not_trigger_clarification() -> None:
+    planner = ResearchPlanner()
+    result = planner.build_plan(
+        ResearchSessionCreateRequest(
+            question="帮我研究一下 AI 编程工具在代码审查场景的使用建议"
+        )
+    )
+
+    assert result.clarification_request is None
+    assert result.plan_snapshot is not None
+    assert result.next_status == ResearchSessionStatus.AWAITING_CONFIRMATION

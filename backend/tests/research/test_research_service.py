@@ -59,7 +59,6 @@ async def test_create_session_persists_plan_snapshot_artifact_and_event() -> Non
     session, plan_result = await service.create_session(
         ResearchSessionCreateRequest(
             question="对比 Tavily 与 SearXNG 在深度研究网页检索中的优缺点",
-            allow_external=True,
         ),
         thread_id="research-session-1",
     )
@@ -89,7 +88,6 @@ async def test_execute_session_runs_runtime_finalizer_and_writes_final_artifacts
         id=uuid4(),
         thread_id="research-session-2",
         question="解释 Jina Reader 在深度研究中的作用",
-        allow_external=True,
         status=ResearchSessionStatus.QUEUED,
     )
     plan_snapshot = ResearchPlanSnapshot(
@@ -130,7 +128,6 @@ async def test_event_store_reuses_existing_event_for_same_event_id() -> None:
     session = ResearchSession(
         thread_id="research-session-events",
         question="验证 event store 幂等",
-        allow_external=False,
         status=ResearchSessionStatus.CREATED,
     )
     store = ResearchEventStore(db=_FakeAsyncSession())
@@ -167,7 +164,6 @@ async def test_confirm_plan_queues_session_and_appends_confirmation_event() -> N
         id=uuid4(),
         thread_id="research-session-confirm",
         question="确认计划",
-        allow_external=True,
         status=ResearchSessionStatus.AWAITING_CONFIRMATION,
     )
 
@@ -186,6 +182,32 @@ async def test_confirm_plan_queues_session_and_appends_confirmation_event() -> N
     }
 
 
+async def test_submit_clarification_transitions_to_awaiting_confirmation() -> None:
+    db = _FakeAsyncSession()
+    service = ResearchService(
+        db=db,
+        planner=ResearchPlanner(),
+        runtime_runner=_FakeRuntimeRunner(),
+        finalizer=ResearchFinalizer(),
+    )
+
+    session, _ = await service.create_session(
+        ResearchSessionCreateRequest(question="帮我研究一下 AI 编程工具"),
+        thread_id="research-session-clarify",
+    )
+
+    assert session.status == ResearchSessionStatus.CLARIFYING
+
+    session, plan_result = await service.submit_clarification(
+        session=session,
+        answer="关注 LangGraph StateGraph 在代码审查场景的使用建议",
+    )
+
+    assert session.status == ResearchSessionStatus.AWAITING_CONFIRMATION
+    assert plan_result.plan_snapshot is not None
+    assert plan_result.clarification_request is None
+
+
 async def test_interrupt_and_resume_session_are_stateful_and_idempotent() -> None:
     service = ResearchService(
         db=_FakeAsyncSession(),
@@ -196,7 +218,6 @@ async def test_interrupt_and_resume_session_are_stateful_and_idempotent() -> Non
     session = ResearchSession(
         thread_id="research-session-3",
         question="解释 interrupt / resume 语义",
-        allow_external=False,
         status=ResearchSessionStatus.RUNNING,
     )
 

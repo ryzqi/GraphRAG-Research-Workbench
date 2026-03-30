@@ -65,6 +65,17 @@ _GENERIC_SCOPE_PATTERNS = (
     "编程工具",
     "ai 编程",
 )
+_SPECIFIC_SCENARIO_MARKERS = (
+    "场景",
+    "使用",
+    "建议",
+    "流程",
+    "方案",
+    "落地",
+    "最佳实践",
+    "指南",
+    "规范",
+)
 _SPECIFIC_MARKERS = (
     "langgraph",
     "stategraph",
@@ -275,6 +286,8 @@ class ResearchPlanner:
         target_normalized = target_text.lower()
 
         if any(marker in target_normalized for marker in _SPECIFIC_MARKERS):
+            return None
+        if any(marker in target_normalized for marker in _SPECIFIC_SCENARIO_MARKERS):
             return None
         if any(pattern in target_normalized for pattern in _GENERIC_SCOPE_PATTERNS):
             return ResearchClarificationRequest(
