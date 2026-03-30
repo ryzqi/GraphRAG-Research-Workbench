@@ -229,7 +229,7 @@ class ResearchService:
                 message="仅 clarifying 状态允许提交澄清",
             )
         effective_question = self._build_effective_planning_question(
-            question=session.question,
+            session=session,
             answer=answer,
         )
         await self._persist_clarification_answer(session=session, answer=answer)
@@ -277,12 +277,27 @@ class ResearchService:
         return session, plan_result
 
     @staticmethod
-    def _build_effective_planning_question(*, question: str, answer: str) -> str:
-        normalized_question = question.strip()
-        normalized_answer = answer.strip()
-        if not normalized_answer:
+    def _build_effective_planning_question(
+        *,
+        session: ResearchSession,
+        answer: str,
+    ) -> str:
+        normalized_question = str(session.question or "").strip()
+        collected_answers: list[str] = []
+        for event in sorted(session.events, key=lambda item: item.sequence):
+            if event.event_type != "research.clarification.submitted":
+                continue
+            payload = event.payload
+            if not isinstance(payload, dict):
+                continue
+            raw_answer = payload.get("answer")
+            if isinstance(raw_answer, str) and raw_answer.strip():
+                collected_answers.append(raw_answer.strip())
+        if isinstance(answer, str) and answer.strip():
+            collected_answers.append(answer.strip())
+        if not collected_answers:
             return normalized_question
-        return f"{normalized_question} {normalized_answer}".strip()
+        return f"{normalized_question} {' '.join(collected_answers)}".strip()
 
     async def execute_session(
         self,

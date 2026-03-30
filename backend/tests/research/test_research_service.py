@@ -210,6 +210,48 @@ async def test_submit_clarification_transitions_to_awaiting_confirmation() -> No
     assert "补充说明：" not in plan_result.plan_snapshot.research_brief
 
 
+async def test_submit_clarification_accumulates_previous_answers() -> None:
+    db = _FakeAsyncSession()
+    service = ResearchService(
+        db=db,
+        planner=ResearchPlanner(),
+        runtime_runner=_FakeRuntimeRunner(),
+        finalizer=ResearchFinalizer(),
+    )
+
+    session, _ = await service.create_session(
+        ResearchSessionCreateRequest(question="帮我研究一下 AI 编程工具"),
+        thread_id="research-session-clarify-2",
+    )
+
+    assert session.status == ResearchSessionStatus.CLARIFYING
+
+    session, plan_result = await service.submit_clarification(
+        session=session,
+        answer="想了解入门选择",
+    )
+
+    assert session.question == "帮我研究一下 AI 编程工具"
+    assert plan_result.clarification_request is not None
+    assert plan_result.plan_snapshot is None
+    assert session.status == ResearchSessionStatus.CLARIFYING
+
+    session, plan_result = await service.submit_clarification(
+        session=session,
+        answer="关注 LangGraph StateGraph 在代码审查场景的使用建议",
+    )
+
+    assert session.question == "帮我研究一下 AI 编程工具"
+    assert session.status == ResearchSessionStatus.AWAITING_CONFIRMATION
+    assert plan_result.plan_snapshot is not None
+    assert plan_result.clarification_request is None
+    assert "想了解入门选择" in plan_result.plan_snapshot.research_brief
+    assert "关注 LangGraph StateGraph 在代码审查场景的使用建议" in (
+        plan_result.plan_snapshot.research_brief
+    )
+    assert "补充说明：" not in plan_result.plan_snapshot.research_brief
+
+
 async def test_interrupt_and_resume_session_are_stateful_and_idempotent() -> None:
     service = ResearchService(
         db=_FakeAsyncSession(),
