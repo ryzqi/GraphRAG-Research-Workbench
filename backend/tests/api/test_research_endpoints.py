@@ -34,6 +34,9 @@ class _FakeAsyncSession:
 
 
 class _FakeResearchService:
+    _CLARIFYING_QUESTIONS = {"帮我研究一下 AI 编程工具"}
+    _CLEARING_ANSWERS = {"关注 LangGraph StateGraph 入门与使用场景"}
+
     def __init__(self) -> None:
         self.sessions: dict[uuid.UUID, ResearchSession] = {}
         self.plan_snapshots: dict[uuid.UUID, ResearchPlanSnapshot] = {}
@@ -128,11 +131,7 @@ class _FakeResearchService:
         )
 
     @staticmethod
-    def _maybe_build_clarification_request(
-        question: str,
-    ) -> ResearchClarificationRequest | None:
-        if "帮我研究一下" not in question:
-            return None
+    def _build_clarification_request() -> ResearchClarificationRequest:
         return ResearchClarificationRequest(
             summary="当前问题过于宽泛，需要先补充研究范围。",
             questions=[
@@ -142,6 +141,118 @@ class _FakeResearchService:
                     why_it_matters="范围过大时无法确定检索重点与最终输出结构。",
                 )
             ],
+        )
+
+    @classmethod
+    def _maybe_build_clarification_request(
+        cls,
+        question: str,
+    ) -> ResearchClarificationRequest | None:
+        if question not in cls._CLARIFYING_QUESTIONS:
+            return None
+        return cls._build_clarification_request()
+
+    async def submit_clarification(
+        self,
+        *,
+        session: ResearchSession,
+        answer: str,
+    ) -> tuple[ResearchSession, ResearchPlannerResult]:
+        if session.status != ResearchSessionStatus.CLARIFYING:
+            raise ValueError("clarification only allowed for clarifying session")
+        combined_question = f"{session.question}\n补充说明：{answer}"
+        session.question = combined_question
+        still_clarifying = answer not in self._CLEARING_ANSWERS
+        if still_clarifying:
+            clarification_request = self._build_clarification_request()
+            self.event_envelopes[session.id].append(
+                ResearchEventEnvelope(
+                    event_id="evt-000002",
+                    sequence=2,
+                    timestamp="2026-03-29T00:00:30Z",
+                    event_type="research.clarification.submitted",
+                    session_id=session.id,
+                    phase="planner",
+                    namespace="main",
+                    payload={"answer": answer},
+                )
+            )
+            self.event_envelopes[session.id].append(
+                ResearchEventEnvelope(
+                    event_id="evt-000003",
+                    sequence=3,
+                    timestamp="2026-03-29T00:01:00Z",
+                    event_type="research.clarification.requested",
+                    session_id=session.id,
+                    phase="planner",
+                    namespace="main",
+                    payload=clarification_request.model_dump(mode="json"),
+                )
+            )
+            self.artifacts[session.id] = [
+                ResearchArtifactRead(
+                    artifact_key="clarification_request",
+                    content_json=clarification_request.model_dump(mode="json"),
+                )
+            ]
+            return session, ResearchPlannerResult(
+                plan_snapshot=None,
+                clarification_request=clarification_request,
+                auto_approve=False,
+                next_status=session.status,
+            )
+
+        plan_snapshot = ResearchPlanSnapshot(
+            research_brief=f"围绕“{combined_question}”执行研究。",
+            complexity="simple",
+            summary="先规划，再决定是否直接排队执行。",
+            target_sources=[ResearchSourceTarget.WEB],
+            subtasks=[
+                ResearchPlanSubtask(
+                    title="收集网页证据",
+                    description="验证 research API 当前端点契约。",
+                    target_sources=[ResearchSourceTarget.WEB],
+                )
+            ],
+            confirmation_required=True,
+        )
+        session.status = ResearchSessionStatus.AWAITING_CONFIRMATION
+        self.plan_snapshots[session.id] = plan_snapshot
+        self.event_envelopes[session.id].append(
+            ResearchEventEnvelope(
+                event_id="evt-000002",
+                sequence=2,
+                timestamp="2026-03-29T00:00:30Z",
+                event_type="research.clarification.submitted",
+                session_id=session.id,
+                phase="planner",
+                namespace="main",
+                payload={"answer": answer},
+            )
+        )
+        self.event_envelopes[session.id].append(
+            ResearchEventEnvelope(
+                event_id="evt-000003",
+                sequence=3,
+                timestamp="2026-03-29T00:01:00Z",
+                event_type="research.plan.created",
+                session_id=session.id,
+                phase="planner",
+                namespace="main",
+                payload={"question": combined_question},
+            )
+        )
+        self.artifacts[session.id] = [
+            ResearchArtifactRead(
+                artifact_key="plan_snapshot",
+                content_json=plan_snapshot.model_dump(mode="json"),
+            )
+        ]
+        return session, ResearchPlannerResult(
+            plan_snapshot=plan_snapshot,
+            clarification_request=None,
+            auto_approve=False,
+            next_status=session.status,
         )
 
     async def get_session(self, session_id: uuid.UUID) -> ResearchSession:
@@ -282,6 +393,7 @@ def test_api_router_exposes_current_research_routes() -> None:
 
     assert "/research/sessions" in route_paths
     assert "/research/sessions/{session_id}/confirm-plan" in route_paths
+    assert "/research/sessions/{session_id}/clarification" in route_paths
     assert "/research/sessions/{session_id}/stream" in route_paths
     assert "/research/sessions/{session_id}/interrupt" in route_paths
     assert "/research/sessions/{session_id}/resume" in route_paths
@@ -325,6 +437,50 @@ def test_create_session_returns_clarifying_status_without_dispatch_for_unclear_p
     payload = response.json()
     assert payload["status"] == "clarifying"
     assert payload["clarification_request"]["questions"][0]["id"] == "scope"
+    assert dispatched == []
+
+
+def test_clarification_submit_transitions_to_awaiting_confirmation_without_dispatch() -> None:
+    service = _FakeResearchService()
+    db = _FakeAsyncSession()
+    dispatched: list[str] = []
+
+    with _build_test_client(service=service, db=db, dispatched=dispatched) as client:
+        response = client.post(
+            "/api/v1/research/sessions",
+            json={"question": "帮我研究一下 AI 编程工具"},
+        )
+        session_id = response.json()["session_id"]
+
+        submit_response = client.post(
+            f"/api/v1/research/sessions/{session_id}/clarification",
+            json={"answer": "关注 LangGraph StateGraph 入门与使用场景"},
+        )
+
+    assert submit_response.status_code == 200
+    payload = submit_response.json()
+    assert payload["status"] == ResearchSessionStatus.AWAITING_CONFIRMATION.value
+    assert payload["plan_snapshot"]["research_brief"].startswith("围绕“帮我研究一下 AI 编程工具")
+    assert dispatched == []
+
+
+def test_confirm_plan_rejects_clarifying_session() -> None:
+    service = _FakeResearchService()
+    db = _FakeAsyncSession()
+    dispatched: list[str] = []
+
+    with _build_test_client(service=service, db=db, dispatched=dispatched) as client:
+        response = client.post(
+            "/api/v1/research/sessions",
+            json={"question": "帮我研究一下 AI 编程工具"},
+        )
+        session_id = response.json()["session_id"]
+        confirm_response = client.post(
+            f"/api/v1/research/sessions/{session_id}/confirm-plan",
+            json={"approved": True},
+        )
+
+    assert confirm_response.status_code == 400
     assert dispatched == []
 
 

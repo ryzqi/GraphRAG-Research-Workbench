@@ -180,6 +180,18 @@ class ResearchService:
             trace_id=session.trace_id,
         )
 
+    async def _persist_clarification_answer(
+        self,
+        *,
+        session: ResearchSession,
+        answer: str,
+    ) -> None:
+        await self._artifact_store.upsert(
+            session=session,
+            artifact_key="clarification_answer",
+            content_text=answer,
+        )
+
     async def confirm_plan(
         self,
         *,
@@ -187,6 +199,11 @@ class ResearchService:
         approved: bool,
         note: str | None = None,
     ) -> ResearchSession:
+        if session.status == ResearchSessionStatus.CLARIFYING:
+            raise bad_request(
+                code="RESEARCH_PLAN_CONFIRM_FORBIDDEN",
+                message="clarifying 状态不允许确认计划",
+            )
         event_type = "research.plan.confirmed" if approved else "research.plan.rejected"
         await self._event_store.append(
             session=session,
@@ -199,6 +216,63 @@ class ResearchService:
             ResearchSessionStatus.QUEUED if approved else ResearchSessionStatus.CANCELED
         )
         return session
+
+    async def submit_clarification(
+        self,
+        *,
+        session: ResearchSession,
+        answer: str,
+    ) -> tuple[ResearchSession, ResearchPlannerResult]:
+        if session.status != ResearchSessionStatus.CLARIFYING:
+            raise bad_request(
+                code="RESEARCH_CLARIFICATION_NOT_ALLOWED",
+                message="仅 clarifying 状态允许提交澄清",
+            )
+        combined_question = f"{session.question}\n补充说明：{answer}"
+        session.question = combined_question
+        await self._persist_clarification_answer(session=session, answer=answer)
+        await self._event_store.append(
+            session=session,
+            event_type="research.clarification.submitted",
+            phase="planner",
+            payload={"answer": answer, "question": combined_question},
+            trace_id=session.trace_id,
+        )
+        plan_result = self._planner.build_plan(
+            ResearchSessionCreateRequest(question=combined_question)
+        )
+        if plan_result.clarification_request is not None:
+            await self._persist_clarification_request(
+                session=session,
+                clarification_request=plan_result.clarification_request,
+            )
+            session.transition_to(ResearchSessionStatus.CLARIFYING)
+            return session, plan_result
+
+        if plan_result.plan_snapshot is None:
+            raise bad_request(
+                code="RESEARCH_PLAN_SNAPSHOT_MISSING",
+                message="研究计划快照缺失",
+            )
+        await self._artifact_store.upsert(
+            session=session,
+            artifact_key=plan_result.plan_artifact_key,
+            content_json=plan_result.artifact_payload,
+        )
+        await self._artifact_store.upsert(
+            session=session,
+            artifact_key="research_brief",
+            content_text=plan_result.plan_snapshot.research_brief,
+        )
+        await self._event_store.append(
+            session=session,
+            event_type="research.plan.created",
+            phase="planner",
+            payload={**plan_result.artifact_payload, "lc_agent_name": "planner"},
+            trace_id=session.trace_id,
+        )
+        session.transition_to(plan_result.next_status)
+        return session, plan_result
 
     async def execute_session(
         self,

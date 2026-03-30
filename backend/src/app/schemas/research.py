@@ -132,6 +132,17 @@ class ResearchClarificationRequest(BaseModel):
         return _normalize_required_text(value, field_name="summary")
 
 
+class ResearchClarificationSubmitRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    answer: str = Field(..., min_length=1)
+
+    @field_validator("answer")
+    @classmethod
+    def _validate_answer(cls, value: str) -> str:
+        return _normalize_required_text(value, field_name="answer")
+
+
 class ResearchSessionAccepted(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

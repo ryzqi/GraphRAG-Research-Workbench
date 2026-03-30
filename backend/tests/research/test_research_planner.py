@@ -69,3 +69,14 @@ def test_unclear_research_request_returns_clarification_instead_of_plan() -> Non
     assert result.plan_snapshot is None
     assert result.next_status == ResearchSessionStatus.CLARIFYING
     assert result.auto_approve is False
+
+
+def test_specific_intro_request_should_not_trigger_clarification() -> None:
+    planner = ResearchPlanner()
+    result = planner.build_plan(
+        ResearchSessionCreateRequest(question="介绍一下 LangGraph StateGraph 的核心概念")
+    )
+
+    assert result.clarification_request is None
+    assert result.plan_snapshot is not None
+    assert result.next_status == ResearchSessionStatus.AWAITING_CONFIRMATION

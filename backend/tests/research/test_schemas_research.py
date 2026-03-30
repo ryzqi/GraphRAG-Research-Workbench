@@ -9,6 +9,7 @@ from pydantic import ValidationError
 from app.schemas.research import (
     ResearchCanonicalCitation,
     ResearchEventEnvelope,
+    ResearchClarificationSubmitRequest,
     ResearchPlanSnapshot,
     ResearchSessionAccepted,
     ResearchResumeRequest,
@@ -194,3 +195,11 @@ def test_research_session_accepted_requires_plan_snapshot_when_awaiting_confirma
                 "plan_snapshot": None,
             }
         )
+
+
+def test_research_clarification_submit_requires_non_empty_answer() -> None:
+    payload = ResearchClarificationSubmitRequest(answer="补充使用场景与预算约束")
+    assert payload.answer == "补充使用场景与预算约束"
+
+    with pytest.raises(ValidationError):
+        ResearchClarificationSubmitRequest(answer="  ")

@@ -10,9 +10,11 @@ from fastapi.responses import StreamingResponse
 
 from app.api.deps import AsyncSessionDep
 from app.api.sse import SSE_HEADERS, encode_sse
+from app.core.errors import bad_request
 from app.models.research_session import ResearchSessionStatus
 from app.schemas.research import (
     ResearchArtifactsResponse,
+    ResearchClarificationSubmitRequest,
     ResearchInterruptRequest,
     ResearchPlanConfirmRequest,
     ResearchSessionAccepted,
@@ -95,6 +97,11 @@ async def confirm_research_plan(
 ) -> ResearchSessionAccepted:
     service = _get_research_service(request=request, db=db)
     session = await service.get_session(session_id)
+    if session.status == ResearchSessionStatus.CLARIFYING:
+        raise bad_request(
+            code="RESEARCH_PLAN_CONFIRM_FORBIDDEN",
+            message="clarifying 状态不允许确认计划",
+        )
     session = await service.confirm_plan(
         session=session,
         approved=body.approved,
@@ -107,6 +114,31 @@ async def confirm_research_plan(
         session_id=session.id,
         status=session.status,
         plan_snapshot=service.read_plan_snapshot(session),
+    )
+
+
+@router.post(
+    "/sessions/{session_id}/clarification",
+    response_model=ResearchSessionAccepted,
+)
+async def submit_research_clarification(
+    session_id: uuid.UUID,
+    db: AsyncSessionDep,
+    request: Request,
+    body: ResearchClarificationSubmitRequest,
+) -> ResearchSessionAccepted:
+    service = _get_research_service(request=request, db=db)
+    session = await service.get_session(session_id)
+    session, plan_result = await service.submit_clarification(
+        session=session,
+        answer=body.answer,
+    )
+    await db.commit()
+    return ResearchSessionAccepted(
+        session_id=session.id,
+        status=session.status,
+        plan_snapshot=plan_result.plan_snapshot,
+        clarification_request=plan_result.clarification_request,
     )
 
 
