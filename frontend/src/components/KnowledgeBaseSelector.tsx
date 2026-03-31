@@ -32,7 +32,7 @@ export function KnowledgeBaseSelector({
   emptyDescription = '请先创建知识库并导入资料',
 }: KnowledgeBaseSelectorProps) {
   const selectedIdSet = useMemo(() => new Set(selectedIds), [selectedIds]);
-  const datasetKey = useMemo(() => knowledgeBases.map((kb) => kb.id).join('|'), [knowledgeBases]);
+  const datasetKey = knowledgeBases.map((kb) => kb.id).join('|');
   const previousDatasetKeyRef = useRef(datasetKey);
   const [visibleCount, setVisibleCount] = useState(() =>
     createKnowledgeBaseVisibleCount(knowledgeBases.length)

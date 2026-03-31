@@ -37,11 +37,7 @@ export function EvidenceList({
   citationAnchorScopeId,
 }: EvidenceListProps) {
   const displayItems = useMemo(() => resolveEvidenceCardItems(evidence), [evidence]);
-
-  const normalizedActiveCitationId = useMemo(
-    () => normalizeCitationId(activeCitationId),
-    [activeCitationId]
-  );
+  const normalizedActiveCitationId = normalizeCitationId(activeCitationId);
 
   useEffect(() => {
     if (!normalizedActiveCitationId) {

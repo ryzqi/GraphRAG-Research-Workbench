@@ -202,31 +202,20 @@ export function ModelConfigPage() {
     [providerById]
   );
 
-  useEffect(() => {
-    if (enabledProviderIds.length === 0) {
-      return;
-    }
-    if (!enabledProviderIds.includes(activeProviderDraft)) {
-      setActiveProviderDraft(enabledProviderIds[0]);
-    }
-  }, [activeProviderDraft, enabledProviderIds]);
+  const effectiveActiveProviderDraft =
+    enabledProviderIds.length === 0 || enabledProviderIds.includes(activeProviderDraft)
+      ? activeProviderDraft
+      : enabledProviderIds[0];
 
   const activeProviderModels = useMemo(
-    () => providerById[activeProviderDraft]?.models ?? [],
-    [activeProviderDraft, providerById]
+    () => providerById[effectiveActiveProviderDraft]?.models ?? [],
+    [effectiveActiveProviderDraft, providerById]
   );
 
-  useEffect(() => {
-    if (activeProviderModels.length === 0) {
-      if (activeModelDraft) {
-        setActiveModelDraft('');
-      }
-      return;
-    }
-    if (!activeProviderModels.includes(activeModelDraft)) {
-      setActiveModelDraft(activeProviderModels[0]);
-    }
-  }, [activeModelDraft, activeProviderModels]);
+  const effectiveActiveModelDraft =
+    activeProviderModels.length === 0 || activeProviderModels.includes(activeModelDraft)
+      ? activeModelDraft
+      : activeProviderModels[0];
 
   const updateForm = <K extends keyof ProviderFormState>(
     provider: ModelProvider,
@@ -334,12 +323,12 @@ export function ModelConfigPage() {
   };
 
   const handleApplyActiveModel = () => {
-    const model = toOptionalText(activeModelDraft);
+    const model = toOptionalText(effectiveActiveModelDraft);
     if (!model) {
       setPageError('请选择全局生效模型');
       return;
     }
-    if (!enabledProviderIds.includes(activeProviderDraft)) {
+    if (!enabledProviderIds.includes(effectiveActiveProviderDraft)) {
       setPageError('当前供应商未启用，请先启用后再应用全局模型');
       return;
     }
@@ -348,7 +337,7 @@ export function ModelConfigPage() {
       return;
     }
     updateActiveMutation.mutate({
-      provider: activeProviderDraft,
+      provider: effectiveActiveProviderDraft,
       model,
     });
   };
@@ -420,7 +409,7 @@ export function ModelConfigPage() {
                   <Select
                     labelId='active-provider-label'
                     label='供应商'
-                    value={activeProviderDraft}
+                    value={effectiveActiveProviderDraft}
                     onChange={(e) => setActiveProviderDraft(e.target.value as ModelProvider)}
                   >
                     {PROVIDERS.map((provider) => {
@@ -439,7 +428,7 @@ export function ModelConfigPage() {
                   <Select
                     labelId='active-model-label'
                     label='模型'
-                    value={activeModelDraft}
+                    value={effectiveActiveModelDraft}
                     onChange={(e) => setActiveModelDraft(String(e.target.value))}
                     disabled={activeProviderModels.length === 0}
                   >
@@ -460,7 +449,7 @@ export function ModelConfigPage() {
                 <Button
                   variant='contained'
                   startIcon={<SettingsSuggestIcon />}
-                  disabled={enabledProviderIds.length === 0 || !activeModelDraft}
+                  disabled={enabledProviderIds.length === 0 || !effectiveActiveModelDraft}
                   loading={updateActiveMutation.isPending}
                   onClick={handleApplyActiveModel}
                   sx={{ minWidth: 180 }}

@@ -248,14 +248,14 @@ export function KbChatPage() {
   const [loadingSession, setLoadingSession] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [mobileTraceOpen, setMobileTraceOpen] = useState(false);
-  const [activeAssistantId, setActiveAssistantId] = useState<string | null>(null);
+  const [selectedAssistantId, setSelectedAssistantId] = useState<string | null>(null);
   const previousSessionIdRef = useRef<string | null>(sessionId);
 
   const resetSession = useCallback(() => {
     setSession(null);
     setMessages([]);
     setError(null);
-    setActiveAssistantId(null);
+    setSelectedAssistantId(null);
     setMobileTraceOpen(false);
   }, []);
 
@@ -315,15 +315,10 @@ export function KbChatPage() {
     [messages]
   );
 
-  useEffect(() => {
-    const nextActiveAssistantId = resolveActiveAssistantId(
-      assistantMessages,
-      activeAssistantId
-    );
-    if (nextActiveAssistantId !== activeAssistantId) {
-      setActiveAssistantId(nextActiveAssistantId);
-    }
-  }, [assistantMessages, activeAssistantId]);
+  const activeAssistantId = useMemo(
+    () => resolveActiveAssistantId(assistantMessages, selectedAssistantId),
+    [assistantMessages, selectedAssistantId]
+  );
 
   const activeAssistantMessage = useMemo(
     () =>
@@ -1516,7 +1511,7 @@ const applyUiEvent = useCallback(
                     scrollButtonAlign='right'
                     showScrollToBottom={false}
                     selectedAssistantId={activeAssistantMessage?.id ?? null}
-                    onAssistantSelect={setActiveAssistantId}
+                    onAssistantSelect={setSelectedAssistantId}
                   />
                 )
               }
