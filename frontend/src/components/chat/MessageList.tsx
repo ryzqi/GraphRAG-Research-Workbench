@@ -356,6 +356,15 @@ export function MessageList({
     setIsAtBottom(atBottom);
   }, []);
 
+  const handleScroll = useCallback(() => {
+    const container = containerRef.current;
+    if (!container) {
+      return;
+    }
+    setScrollTop(container.scrollTop);
+    updateIsAtBottom();
+  }, [updateIsAtBottom]);
+
   const measureRow = useCallback((messageId: string, node: HTMLDivElement | null) => {
     if (!node) {
       return;
@@ -395,6 +404,16 @@ export function MessageList({
   }, []);
 
   useEffect(() => {
+    const container = containerRef.current;
+    if (!container) {
+      return;
+    }
+    handleScroll();
+    container.addEventListener('scroll', handleScroll, { passive: true });
+    return () => container.removeEventListener('scroll', handleScroll);
+  }, [handleScroll]);
+
+  useEffect(() => {
     updateIsAtBottom();
   }, [messages.length, loading, updateIsAtBottom]);
 
@@ -418,11 +437,6 @@ export function MessageList({
   return (
     <Box
       ref={containerRef}
-      onScroll={(event) => {
-        const nextScrollTop = event.currentTarget.scrollTop;
-        setScrollTop(nextScrollTop);
-        updateIsAtBottom();
-      }}
       onWheelCapture={(event) => {
         if (wheelContainment === 'off') {
           return;

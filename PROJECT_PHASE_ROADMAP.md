@@ -8,7 +8,7 @@
 - Customer Problem / Desired Outcome: 在不改变视觉风格、配色与交互设计语言的前提下，系统性消除前端性能热点，降低首屏阻塞、缩小 bundle、减少不必要重渲染与运行时开销。
 - Why Now / Decision Driver: 用户明确要求按 Vercel React Best Practices 分大类逐项落地，并要求每个大类完成后独立提交，形成可审计演进历史。
 - Overall Goal: 依照 8 个性能类别依次完成前端性能优化，每个类别都保留“代码改动 + 直接验证 + 独立 git 提交”证据链。
-- Current Active Phase: Phase 3 - Server-Side Performance
+- Current Active Phase: Phase 4 - Client-Side Data Fetching
 - Overall Success Criteria:
   - 8 个大类别全部按顺序完成，中间不跳类、不混类。
   - 每个类别仅做性能相关优化，不改视觉风格、配色或产品设计。
@@ -49,7 +49,7 @@
 - Module / Domain 3: `frontend/src/components`
   - Responsibility: 可复用 UI / Chat / Research / Shell 组件
   - Key dependencies: MUI、React、Next dynamic/lazy
-  - Notes: Phase 2、5、6、8 的主要改动面
+  - Notes: Phase 2、4、5、6、8 的主要改动面
 - Module / Domain 4: `frontend/src/hooks` + `frontend/src/services`
   - Responsibility: 数据获取、SWR、流式会话控制、纯函数工具
   - Key dependencies: `swr`, `fetch`, route prefetch helpers
@@ -57,7 +57,7 @@
 - Module / Domain 5: `frontend/src/theme`
   - Responsibility: 主题定义与 provider 装配
   - Key dependencies: MUI theme system
-  - Notes: Phase 2 的 barrel import 热点
+  - Notes: Phase 2 与 Phase 4 的主题状态热路径
 
 ## Phase Roadmap
 ### Phase 1: Eliminating Waterfalls
@@ -68,7 +68,7 @@
 - Main Deliverables: route prefetch 解耦、延迟 await、并行化与 Suspense 边界落地、验证与 commit
 - Entry Conditions: 当前前端基线已完成初步审计；`npm run typecheck` 可运行
 - Completion Conditions: 当前可识别的首屏 waterfall 处理完成，验证通过并完成 commit
-- Transition Notes: 已完成并提交 `8e7e152`，切换至 Phase 2
+- Transition Notes: 已完成并提交 `8e7e152`
 
 ### Phase 2: Bundle Size Optimization
 - Status: Completed
@@ -78,27 +78,27 @@
 - Main Deliverables: bundle 热点代码分拆、动态加载、按需预取、第三方延后
 - Entry Conditions: Phase 1 已提交
 - Completion Conditions: 相关 bundle 反模式处理完成、验证完成并提交
-- Transition Notes: 已完成并提交 `7f5eee0`，并归档到 `archive/perf-phases/*.phase-02-bundle-size.md`
+- Transition Notes: 已完成并提交 `7f5eee0`
 
 ### Phase 3: Server-Side Performance
-- Status: Active
+- Status: Completed
 - Objective: 优化 RSC / server-side 数据路径、缓存与序列化边界。
-- Scope Boundary: 仅覆盖 3.1~3.9；本轮实际落点聚焦 3.3、3.4、3.8，并确认 3.1/3.2/3.5/3.9 当前无新增代码改动必要，3.6/3.7 继续沿用既有并行抓取。
+- Scope Boundary: 仅覆盖 3.1~3.9；实际落点聚焦 3.3、3.4、3.8，并确认 3.1/3.2/3.5/3.9 当前无新增代码改动必要，3.6/3.7 继续沿用既有并行抓取。
 - Modules Involved: `src/app`, `src/services`, `src/lib`
 - Main Deliverables: cache-friendly GET、共享 server prefetch cache、请求内去重、验证与 commit
 - Entry Conditions: Phase 2 已提交
 - Completion Conditions: server-side 热点处理完成并提交
-- Transition Notes: 完成后转入客户端数据获取阶段
+- Transition Notes: 已完成并提交 `7fd0750`，并归档到 `archive/perf-phases/*.phase-03-server-side.md`
 
 ### Phase 4: Client-Side Data Fetching
-- Status: Pending
+- Status: Active
 - Objective: 优化全局事件监听、SWR 去重与 localStorage 使用。
-- Scope Boundary: 仅覆盖 4.1~4.4
-- Modules Involved: `src/hooks`, `src/lib`, `src/views`, `src/components`
-- Main Deliverables: 客户端数据读取路径减噪与去重
+- Scope Boundary: 仅覆盖 4.1~4.4；本轮实际落点聚焦 4.1、4.2、4.3，并确认 4.4 当前仅有轻量主题模式 localStorage，暂无高价值代码改动。
+- Modules Involved: `src/hooks`, `src/views`, `src/components`, `src/theme`
+- Main Deliverables: 共享 reduced-motion 监听、passive scroll listener、SWR 化的 graph schema 查询、验证与 commit
 - Entry Conditions: Phase 3 已提交
 - Completion Conditions: client data fetching 热点处理完成并提交
-- Transition Notes: 转入重渲染优化阶段
+- Transition Notes: 完成后转入重渲染优化阶段
 
 ### Phase 5: Re-render Optimization
 - Status: Pending
@@ -146,20 +146,25 @@
   - Why it changed: 用户要求按类别分批执行并逐类提交
   - Impact on current or future phases: 后续每一类完成后都需要刷新 active todo 并归档上一阶段
 - 2026-03-31:
-  - What changed: Phase 1 完成并提交 `8e7e152`；当前活动阶段切换到 Phase 2
+  - What changed: Phase 1 完成并提交 `8e7e152`
   - Why it changed: 已满足首屏 waterfall 类别的完成条件
-  - Impact on current or future phases: 当前开始处理 bundle 体积相关热点
+  - Impact on current or future phases: 开始处理 bundle 热点
 - 2026-03-31:
-  - What changed: Phase 2 完成并提交 `7f5eee0`；当前活动阶段切换到 Phase 3
+  - What changed: Phase 2 完成并提交 `7f5eee0`
   - Why it changed: 已满足 bundle 类别的完成条件
-  - Impact on current or future phases: 当前开始处理 server prefetch、缓存与序列化边界
+  - Impact on current or future phases: 开始处理 server prefetch、缓存与序列化边界
 - 2026-03-31:
-  - What changed: Phase 3 已完成代码与验证收口，当前待提交独立 commit
-  - Why it changed: 已满足 cache-friendly GET、共享 server prefetch cache 与 React.cache 去重的阶段目标
-  - Impact on current or future phases: 提交后可切换到 Phase 4，不再回流扩项服务端预取链路
+  - What changed: Phase 3 完成并提交 `7fd0750`
+  - Why it changed: 已满足 server-side 类别的完成条件
+  - Impact on current or future phases: 当前开始处理客户端监听、SWR 去重与 localStorage 审计
+- 2026-03-31:
+  - What changed: Phase 4 已完成代码与验证收口，当前待提交独立 commit
+  - Why it changed: 已满足共享监听、passive scroll 与 SWR graph schema 的阶段目标
+  - Impact on current or future phases: 提交后可切换到 Phase 5，不再回流扩项客户端数据获取链路
 
 ## Archive References
 - Phase archive path(s): `archive/perf-phases/`
 - Notes about where historical phase todos, state snapshots, or verification artifacts were stored:
   - Phase 1: `*.phase-01-waterfalls.md`
   - Phase 2: `*.phase-02-bundle-size.md`
+  - Phase 3: `*.phase-03-server-side.md`

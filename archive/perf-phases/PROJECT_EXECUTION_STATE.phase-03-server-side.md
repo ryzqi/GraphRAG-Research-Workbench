@@ -1,0 +1,57 @@
+# Project Execution State
+
+## Current State
+- Current Mode: Multi-phase
+- Artifact Policy / Active Planning Files: `PROJECT_PHASE_ROADMAP.md`, `TASK_TODO_MEDIUM.md`, `TASK_TODO_FINE.md`, `PROJECT_EXECUTION_STATE.md`
+- Current Focus / Active Phase: Phase 3 - Server-Side Performance（已验证通过，已完成 commit `7fd0750`）
+- Eval Objective: 保持现有 server-prefetch 行为不变的前提下，减少服务端重复 GET、恢复 cache-friendly 请求签名，并把请求内去重逻辑收敛到共享模块。
+- Evaluation Surface / Fixed Baseline:
+  - `frontend/src/services/http.ts` 对所有请求都注入随机 `X-Request-Id`
+  - `frontend/src/services/serverFirstRoutePrefetch.ts` 直接调用原始 service GET，无共享 server cache layer
+  - `frontend/src/services/chats.ts`、`knowledgeBases.ts`、`ingestionBatches.ts`、`bootstrapSubmissions.ts` 的 GET helper 不支持 server-prefetch 专用 fetch 选项
+- Metric / Rubric:
+  - 可缓存的 server GET 可以关闭随机 request id header
+  - `serverPrefetchCache.ts` 提供共享的 `React.cache()` 包装层
+  - 静态元数据 GET 具备短 TTL revalidate，动态状态 GET 保持 `no-store`
+  - `serverFirstRoutePrefetch.ts` 统一走共享 server prefetch helper
+  - typecheck / eslint / targeted vitest / build 通过
+- Pass Threshold / Stop Condition: Phase 3 的 server-side 热点处理完成，并拿到对应验证证据
+- Active Execution Wave:
+  - 已完成：`apiFetch` 增加 `includeRequestIdHeader` 开关
+  - 已完成：新增 `serverPrefetchCache.ts`，集中管理 cache-friendly server GET
+  - 已完成：`serverFirstRoutePrefetch.ts` 改为共享的 server prefetch wrappers
+  - 已完成：Phase 3 验证闭环；当前仅待 git commit
+- Last Verified Stop Point:
+  - Phase 2 commit：`7f5eee0`
+  - Phase 3 verification：
+    - `npm run typecheck`
+    - `npx eslint src/services/http.ts src/services/http.test.ts src/services/chats.ts src/services/knowledgeBases.ts src/services/ingestionBatches.ts src/services/bootstrapSubmissions.ts src/services/serverPrefetchCache.ts src/services/serverFirstRoutePrefetch.ts`
+    - `npx vitest run src/services/http.test.ts src/services/routePrefetch.test.ts`（require_escalated；sandbox 内 `spawn EPERM`）
+    - `npm run build`（require_escalated；sandbox 内 `spawn EPERM`）
+- Latest Improvement / Regression Notes:
+  - `http.ts` 现在允许 cacheable server GET 关闭随机 `X-Request-Id`，避免把 Next/React 去重与缓存键打散。
+  - 新增 `serverPrefetchCache.ts`，将 server-prefetch 路径的 cache policy 与 `React.cache()` 包装统一收口到模块级常量与函数。
+  - `serverFirstRoutePrefetch.ts` 保持既有 `Promise.all` 并行抓取，只替换为共享 wrapper，不改返回结构。
+  - `knowledgeBases.ts` / `ingestionBatches.ts` / `bootstrapSubmissions.ts` / `chats.ts` 的 GET helper 现在可接收 server-only fetch 选项。
+  - 审计结论：3.1 当前无 server action；3.2 / 3.5 当前未发现重复 RSC props 序列化；3.6 / 3.7 既有并行抓取继续保留；3.9 当前无合适的非阻塞 side effect 可迁移到 `after()`。
+- Plateau / No-Signal Count: 0
+- Next Recommended Action: Phase 3 已完成并提交 `7fd0750`；当前文件保留为归档快照
+- Current Blockers: 无代码级 blocker；vitest/build 在沙箱内会触发 `spawn EPERM`，已通过提权完成验证
+- Assumptions Awaiting Confirmation:
+  - 对知识库元数据采用短 TTL server cache，比引入手写 LRU 更贴近 Next App Router 当前模型
+  - server-prefetch 动态状态（recent chats / ingestion state / latest batch / bootstrap job）仍应维持 `no-store`
+- Parked / Deferred Items:
+  - 自定义 LRU 暂不引入；若后续 Phase 3 之外还有明确热点，再按需评估
+  - `after()` 暂无明确落点，不为了覆盖规则而引入无业务价值的 side effect
+- Key Recent Decisions:
+  - 对 3.3 采用 Next data cache + revalidate，而不是手写 LRU
+  - 仅在 server-prefetch GET 上关闭 request id header；其他请求默认保留 tracing header
+  - 维持现有 fallback 结构，不改动 SWR key、RSC 页面结构与 UI 展示
+- Verification Evidence Reference:
+  - 2026-03-31 `npm run typecheck` 通过
+  - 2026-03-31 `npx eslint src/services/http.ts src/services/http.test.ts src/services/chats.ts src/services/knowledgeBases.ts src/services/ingestionBatches.ts src/services/bootstrapSubmissions.ts src/services/serverPrefetchCache.ts src/services/serverFirstRoutePrefetch.ts` 通过
+  - 2026-03-31 `npx vitest run src/services/http.test.ts src/services/routePrefetch.test.ts` 通过（require_escalated）
+  - 2026-03-31 `npm run build` 通过（require_escalated）
+- Related Files: `PROJECT_PHASE_ROADMAP.md`, `TASK_TODO_MEDIUM.md`, `TASK_TODO_FINE.md`, `frontend/src/services/http.ts`, `frontend/src/services/serverPrefetchCache.ts`, `frontend/src/services/serverFirstRoutePrefetch.ts`, `frontend/src/services/http.test.ts`
+- Last Updated: 2026-03-31
+

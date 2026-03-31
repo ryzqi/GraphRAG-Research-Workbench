@@ -10,179 +10,177 @@
   - `archive/perf-phases/TASK_TODO_MEDIUM.phase-02-bundle-size.md`
   - `archive/perf-phases/TASK_TODO_FINE.phase-02-bundle-size.md`
   - `archive/perf-phases/PROJECT_EXECUTION_STATE.phase-02-bundle-size.md`
+  - `archive/perf-phases/TASK_TODO_MEDIUM.phase-03-server-side.md`
+  - `archive/perf-phases/TASK_TODO_FINE.phase-03-server-side.md`
+  - `archive/perf-phases/PROJECT_EXECUTION_STATE.phase-03-server-side.md`
 - Project Mode: Multi-phase
 - Artifact Policy / Active Planning Files: `PROJECT_PHASE_ROADMAP.md`, `TASK_TODO_MEDIUM.md`, `TASK_TODO_FINE.md`, `PROJECT_EXECUTION_STATE.md`
-- Project Modules: `frontend/src/app`, `frontend/src/services`, `frontend/src/lib`
+- Project Modules: `frontend/src/hooks`, `frontend/src/components`, `frontend/src/views`, `frontend/src/theme`
 - Brownfield Context / Codebase Map:
-  - `frontend/src/services/http.ts`（当前对所有请求注入随机 `X-Request-Id`）
-  - `frontend/src/services/serverFirstRoutePrefetch.ts`（服务端预取入口）
-  - `frontend/src/services/chats.ts`（recent chats）
-  - `frontend/src/services/knowledgeBases.ts`（selectable / detail / ingestion state）
-  - `frontend/src/services/ingestionBatches.ts`（latest batch）
-  - `frontend/src/services/bootstrapSubmissions.ts`（bootstrap submission）
-  - `frontend/src/app/(chat)/*/page.tsx` 与 `frontend/src/app/(knowledge-bases)/*/page.tsx`（server prefetch 消费方）
+  - `frontend/src/hooks/usePrefersReducedMotion.ts`（新增长生命周期共享监听）
+  - `frontend/src/hooks/queries/useKbChatGraphSchema.ts`（新增长生命周期 SWR hook）
+  - `frontend/src/components/chat/useTypewriterStream.ts`
+  - `frontend/src/components/chat/MessageList.tsx`
+  - `frontend/src/views/KbChatPage.tsx`
+  - `frontend/src/theme/ThemeProvider.tsx`
 - Primary User / Stakeholder: 当前仓库前端维护者
-- Customer Problem / Desired Outcome: 服务端预取链路不应因为随机 header 与缺少共享 cache layer 而重复做相同 GET 工作
-- Why Now / Decision Driver: Phase 3 明确要求 server-side performance
-- Phase Roadmap Summary: 当前仅执行 Phase 3，完成后切换 Phase 4
-- Current Phase: Phase 3 - Server-Side Performance
+- Customer Problem / Desired Outcome: 客户端不应为每条消息单独挂同类监听，也不应在滚动热路径和可共享请求上维持不必要的手写逻辑
+- Why Now / Decision Driver: Phase 4 明确要求 client-side data fetching 优化
+- Phase Roadmap Summary: 当前仅执行 Phase 4，完成后切换 Phase 5
+- Current Phase: Phase 4 - Client-Side Data Fetching
 - Current Phase Inputs:
-  - Phase 2 commit `7f5eee0`
-  - `http.ts` / `serverFirstRoutePrefetch.ts` / 相关 GET helper 当前实现
-  - 既有 `Promise.all` 并行抓取边界
+  - Phase 3 commit `7fd0750`
+  - `useTypewriterStream.ts` / `MessageList.tsx` / `KbChatPage.tsx` 当前实现
+  - `ThemeProvider.tsx` 当前主题模式 localStorage 存储
 - Active Execution Wave:
-  - 收敛 cache-friendly GET 选项
-  - 引入共享 server prefetch cache
-  - 保留现有并行抓取并完成验证
-- Phase Goal: 让 server-prefetch 数据路径更稳定、更少重复工作且不改变客户端契约
+  - 共享 reduced-motion 监听
+  - passive scroll listener
+  - graph schema 的 SWR 化
+- Phase Goal: 让客户端监听与请求路径更轻、更可共享且不改变 UI 表现
 - Phase Scope:
-  - 包含：3.3、3.4、3.8 的代码落地；3.6/3.7 审计确认继续沿用；3.1/3.2/3.5/3.9 留痕说明
-  - 不包含：Phase 4 及之后内容
+  - 包含：4.1、4.2、4.3 的代码落地；4.4 的审计结论
+  - 不包含：Phase 5 及之后内容
 - Non-goals:
-  - 不新增 server action
-  - 不改动页面 UI、SWR key、接口字段与展示逻辑
+  - 不改动页面 UI、SWR 结果结构与主题行为
+  - 不为了覆盖规则而引入低价值 localStorage schema 迁移
 - Phase Deliverables:
-  - `ApiFetchOptions.includeRequestIdHeader`
-  - `serverPrefetchCache.ts`
-  - 相关 GET helper 的 server-only options 透传
-  - `serverFirstRoutePrefetch.ts` 的共享 wrapper 接线
-  - typecheck / eslint / targeted vitest / build 证据
-- Entry Criteria: Phase 2 已提交并归档
+  - `usePrefersReducedMotion.ts`
+  - `useKbChatGraphSchema.ts`
+  - `MessageList.tsx` passive scroll listener
+  - `KbChatPage.tsx` 的 SWR schema 查询
+  - typecheck / eslint / build 证据
+- Entry Criteria: Phase 3 已提交并归档
 - Phase Exit Criteria:
-  - 可缓存 server GET 不再默认带随机 request id header
-  - 共享 `React.cache()` wrapper 已落地
-  - server-prefetch 入口已统一走共享 cache layer
+  - 重复 reduced-motion 监听已共享化
+  - MessageList 的 scroll listener 为 passive
+  - graph schema 查询交由 SWR 去重
   - 验证完成并提交 commit
-- Eval Objective: 降低服务端重复 GET 与缓存键抖动
+- Eval Objective: 降低客户端重复监听与可共享请求的开销
 - Evaluation Surface / Baseline:
-  - `apiFetch` 为所有请求注入随机 `X-Request-Id`
-  - `serverFirstRoutePrefetch.ts` 直接依赖原始 GET service
-  - 无模块级 server prefetch cache 配置
-- Metric / Rubric: cache 边界更清晰、请求签名更稳定、验证通过
-- Pass Threshold / Stop Condition: Phase 3 所有目标文件完成并通过验证
-- Next Phase Trigger / Transition Notes: Phase 3 commit 完成后刷新为 Phase 4
-- Previous Phase Summary: Phase 2 已完成并归档
+  - `useTypewriterStream.ts` 每实例单独监听媒体查询
+  - `MessageList.tsx` 使用 React `onScroll`
+  - `KbChatPage.tsx` 用手写 effect 请求 schema
+  - `ThemeProvider.tsx` 仅持有单个轻量主题 token
+- Metric / Rubric: 共享监听边界清晰、滚动监听更轻、schema 请求更可复用、验证通过
+- Pass Threshold / Stop Condition: Phase 4 所有目标文件完成并通过验证
+- Next Phase Trigger / Transition Notes: Phase 4 commit 完成后刷新为 Phase 5
+- Previous Phase Summary: Phase 3 已完成并归档
 
 ## Part 1: Current phase requirement and scope
 ### 1.1 Capture the executable objective for this phase
-- [x] Task: 将 server-side performance 收敛为明确可执行的文件级任务
-- Goal: 避免把“服务端性能优化”扩成接口重构
-- Inputs / Dependencies: 目标源码、React/Next cache 使用约束
-- Procedure / Implementation notes: 只处理 server-prefetch 热点；无落点项用审计结论说明
+- [x] Task: 将 client-side data fetching 收敛为明确可执行的文件级任务
+- Goal: 避免把 Phase 4 扩成全局事件系统重构
+- Inputs / Dependencies: 目标源码、SWR 基础设施、滚动热路径
+- Procedure / Implementation notes: 只处理真实热路径；4.4 无高价值代码落点时如实记录
 - Output / Artifact: 可执行目标说明
-- Done when: 已明确改动文件与无落点规则
+- Done when: 已明确改动文件与无落点项
 - Verification: Medium todo 已同步
-- Notes: 3.3/3.4/3.8 为主要代码落点
+- Notes: 4.1/4.2/4.3 为主要代码落点
 
 ### 1.2 Enumerate current-phase dependencies and prerequisites
-- [x] Task: 列出 Phase 3 所需依赖与验证约束
+- [x] Task: 列出 Phase 4 所需依赖与验证约束
 - Goal: 让执行与验证保持一致
-- Inputs / Dependencies: typecheck / eslint / vitest / build、目标文件
-- Procedure / Implementation notes: 保持最小改动，优先复用现有 `Promise.all` 与 route prefetch 结构
+- Inputs / Dependencies: typecheck / eslint / build、目标文件
+- Procedure / Implementation notes: 保持最小改动，优先复用现有 SWR 与组件结构
 - Output / Artifact: 当前阶段依赖清单
 - Done when: 提权需求与验证命令明确
 - Verification: `PROJECT_EXECUTION_STATE.md` 已同步
-- Notes: vitest / build 仍需可能提权
+- Notes: build 仍需可能提权
 
 ## Part 2: Current phase research and decomposition
 ### 2.1 Inspect relevant context in detail for this phase
-- [x] Task: 固化 server-prefetch 热点审计结论
-- Goal: 对应真实服务端性能问题
-- Inputs / Dependencies: `http.ts`、`serverFirstRoutePrefetch.ts`、相关 GET helper
+- [x] Task: 固化 client-side data fetching 热点审计结论
+- Goal: 对应真实客户端热路径
+- Inputs / Dependencies: 目标 hooks / 组件 / 页面
 - Procedure / Implementation notes:
-  - 随机 `X-Request-Id` 会让同 URL/同 init 的 server GET 失去稳定缓存键
-  - route prefetch 当前缺少共享 `React.cache()` wrapper
-  - 现有 `Promise.all` 并行抓取已经覆盖 3.6 / 3.7 的主要要求
-  - 当前无 server action，因此 3.1 无新增代码落点
-- Output / Artifact: Phase 3 上下文图
+  - `useTypewriterStream` 在消息级实例中会重复注册 reduced-motion 监听
+  - `MessageList` 的 scroll listener 位于高频滚动路径
+  - `KbChatPage` 的 graph schema 请求可交给 SWR 去重
+  - 当前 localStorage 只有主题模式一个轻量 token，4.4 暂无高价值改动
+- Output / Artifact: Phase 4 上下文图
 - Done when: 每个目标项都能映射到具体文件
 - Verification: 目标文件已审阅
-- Notes: 不扩展到后端仓库与客户端数据层
+- Notes: 不扩展到非热点监听与主题偏好迁移
 
 ### 2.2 Break the current phase into executable units
-- [x] Task: 拆解 Phase 3 执行单元
+- [x] Task: 拆解 Phase 4 执行单元
 - Goal: 保持可跟踪
 - Inputs / Dependencies: baseline、目标文件
 - Procedure / Implementation notes:
-  - `http.ts` 增加 cache-friendly header 开关
-  - 相关 GET helper 支持 server-only fetch 选项透传
-  - 新增 `serverPrefetchCache.ts` 集中管理 cache policy 与 `React.cache()`
-  - `serverFirstRoutePrefetch.ts` 替换为共享 wrapper
-  - 跑 typecheck / eslint / vitest / build
+  - 新增共享 reduced-motion hook
+  - MessageList 改 passive scroll listener
+  - graph schema 新增 SWR hook 并接入 KbChatPage
+  - 跑 typecheck / eslint / build
 - Output / Artifact: 可执行分解
 - Done when: 每一步都有明确文件与验收点
 - Verification: 3.x/4.x 已细化
-- Notes: 优先复用现有数据结构与返回类型
+- Notes: 优先保留现有 UI 与数据结构
 
 ## Part 3: Current phase execution
 ### 3.1 Complete the first executable slice of this phase
-- [x] Task: 处理 cache-friendly GET 与共享 server cache 基础设施
-- Goal: 先建立稳定缓存键与共享 wrapper 基础
+- [x] Task: 处理共享监听与 passive scroll 热路径
+- Goal: 先消除重复监听并优化滚动热路径
 - Inputs / Dependencies:
-  - `frontend/src/services/http.ts`
-  - `frontend/src/services/chats.ts`
-  - `frontend/src/services/knowledgeBases.ts`
-  - `frontend/src/services/ingestionBatches.ts`
-  - `frontend/src/services/bootstrapSubmissions.ts`
-  - `frontend/src/services/serverPrefetchCache.ts`
+  - `frontend/src/hooks/usePrefersReducedMotion.ts`
+  - `frontend/src/components/chat/useTypewriterStream.ts`
+  - `frontend/src/components/chat/MessageList.tsx`
 - Procedure / Implementation notes:
-  - 增加 `includeRequestIdHeader`
-  - 让 GET helper 支持 server-only fetch 选项
-  - 用模块级常量 hoist cache policy，并用 `React.cache()` 包装
-- Output / Artifact: 稳定缓存键与共享 server cache 改动
-- Done when: server-prefetch 可缓存 GET 不再默认带随机 request id header
-- Verification: typecheck / eslint / http.test
+  - 用 `useSyncExternalStore` 建立共享 reduced-motion store
+  - `useTypewriterStream` 改复用共享 hook
+  - `MessageList` 改用 passive scroll listener
+- Output / Artifact: 共享监听与滚动热路径改动
+- Done when: reduced-motion 监听共享化；scroll listener 为 passive
+- Verification: typecheck / eslint / build
 - Notes:
-  - 已完成 `http.ts` header 开关
-  - 已完成相关 GET helper 透传选项
-  - 已完成 `serverPrefetchCache.ts` 模块级包装
+  - 已完成 `usePrefersReducedMotion.ts`
+  - 已完成 `useTypewriterStream.ts` 接线
+  - 已完成 `MessageList.tsx` passive scroll listener
 
 ### 3.2 Complete remaining executable slices of this phase
-- [x] Task: 接入 route prefetch、保留并行抓取并完成验证
-- Goal: 收口 Phase 3
+- [x] Task: 完成 graph schema 的 SWR 化、4.4 审计留痕与验证
+- Goal: 收口 Phase 4
 - Inputs / Dependencies:
-  - `frontend/src/services/serverFirstRoutePrefetch.ts`
-  - targeted tests / build / typecheck
+  - `frontend/src/hooks/queries/useKbChatGraphSchema.ts`
+  - `frontend/src/views/KbChatPage.tsx`
+  - typecheck / eslint / build
 - Procedure / Implementation notes:
-  - 将 route prefetch 默认实现切换到共享 wrapper
-  - 保留已有 `Promise.all` 并行抓取结构
-  - 运行验证并记录提权
-- Output / Artifact: route prefetch 接线、验证结果、commit
-- Done when: 默认 server-prefetch 路径已统一，验证完成
-- Verification: routePrefetch.test / build / typecheck
+  - graph schema 请求切换到 SWR
+  - 移除 KbChatPage 内的手写 effect/fetch
+  - 4.4 以审计结论记录，不做低价值 localStorage 改动
+- Output / Artifact: SWR 接线、验证结果、commit
+- Done when: graph schema 查询交由 SWR；验证完成
+- Verification: typecheck / eslint / build
 - Notes:
-  - 已完成 `serverFirstRoutePrefetch.ts` 接线
-  - 3.6 / 3.7 无需额外代码，沿用现有并行抓取
+  - 已完成 `useKbChatGraphSchema.ts`
+  - 已完成 `KbChatPage.tsx` 接线
   - 当前仅剩 git commit 动作
 
 ## Part 4: Verification and transition
 ### 4.1 Verify completed outputs for this phase
-- [x] Task: 运行与 Phase 3 结论直接相关的验证
-- Goal: 防止只改代码不验证 server-side 路径
-- Inputs / Dependencies: 完成后的代码、typecheck / eslint / vitest / build
+- [x] Task: 运行与 Phase 4 结论直接相关的验证
+- Goal: 防止只改代码不验证 client-side 路径
+- Inputs / Dependencies: 完成后的代码、typecheck / eslint / build
 - Procedure / Implementation notes:
   - 跑 `npm run typecheck`
   - 跑定向 `eslint`
-  - 跑定向 `vitest`
   - 跑 `npm run build`
-- Output / Artifact: Phase 3 验证记录
-- Done when: 验证足以支撑 server-side 优化结论
+- Output / Artifact: Phase 4 验证记录
+- Done when: 验证足以支撑 client data fetching 优化结论
 - Verification: 命令输出留痕
 - Notes:
   - `npm run typecheck` 通过
-  - `npx eslint src/services/http.ts src/services/http.test.ts src/services/chats.ts src/services/knowledgeBases.ts src/services/ingestionBatches.ts src/services/bootstrapSubmissions.ts src/services/serverPrefetchCache.ts src/services/serverFirstRoutePrefetch.ts` 通过
-  - `npx vitest run src/services/http.test.ts src/services/routePrefetch.test.ts` 通过（require_escalated）
+  - `npx eslint src/hooks/usePrefersReducedMotion.ts src/hooks/queries/useKbChatGraphSchema.ts src/components/chat/useTypewriterStream.ts src/components/chat/MessageList.tsx src/views/KbChatPage.tsx` 通过
   - `npm run build` 通过（require_escalated）
 
 ### 4.2 Reconcile phase completion and prepare the next step
-- [ ] Task: 更新状态、提交 Phase 3 commit，并准备切到 Phase 4
+- [ ] Task: 更新状态、提交 Phase 4 commit，并准备切到 Phase 5
 - Goal: 留下完整审计轨迹
 - Inputs / Dependencies: 已验证改动、git 工作区
 - Procedure / Implementation notes:
   - 更新 active planning files
   - 提交明确 commit
-  - 归档 Phase 3 计划
+  - 归档 Phase 4 计划
 - Output / Artifact: commit + 过渡决策
-- Done when: Phase 3 commit 完成，Phase 4 入口明确
+- Done when: Phase 4 commit 完成，Phase 5 入口明确
 - Verification: `git log -1 --stat`
-- Notes: 当前 planning files 已到完成态；提交当前 commit 后才可标记完成并刷新为 Phase 4
+- Notes: 当前 planning files 已到完成态；提交当前 commit 后才可标记完成并刷新为 Phase 5

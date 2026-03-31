@@ -3,54 +3,51 @@
 ## Current State
 - Current Mode: Multi-phase
 - Artifact Policy / Active Planning Files: `PROJECT_PHASE_ROADMAP.md`, `TASK_TODO_MEDIUM.md`, `TASK_TODO_FINE.md`, `PROJECT_EXECUTION_STATE.md`
-- Current Focus / Active Phase: Phase 3 - Server-Side Performance（已修改并验证，待提交 commit）
-- Eval Objective: 保持现有 server-prefetch 行为不变的前提下，减少服务端重复 GET、恢复 cache-friendly 请求签名，并把请求内去重逻辑收敛到共享模块。
+- Current Focus / Active Phase: Phase 4 - Client-Side Data Fetching（已修改并验证，待提交 commit）
+- Eval Objective: 在不改变 UI 与交互语义的前提下，减少客户端重复监听、让滚动监听更轻、并把可共享的图谱 schema 请求交给 SWR 去重。
 - Evaluation Surface / Fixed Baseline:
-  - `frontend/src/services/http.ts` 对所有请求都注入随机 `X-Request-Id`
-  - `frontend/src/services/serverFirstRoutePrefetch.ts` 直接调用原始 service GET，无共享 server cache layer
-  - `frontend/src/services/chats.ts`、`knowledgeBases.ts`、`ingestionBatches.ts`、`bootstrapSubmissions.ts` 的 GET helper 不支持 server-prefetch 专用 fetch 选项
+  - `frontend/src/components/chat/useTypewriterStream.ts` 为每个使用者单独挂 reduced-motion 监听
+  - `frontend/src/components/chat/MessageList.tsx` 通过 React `onScroll` 热路径更新滚动状态
+  - `frontend/src/views/KbChatPage.tsx` 用手写 `useEffect + getKbChatGraphSchema` 管理图谱 schema 请求
+  - `frontend/src/theme/ThemeProvider.tsx` 的 localStorage 仅存一个轻量主题模式 token
 - Metric / Rubric:
-  - 可缓存的 server GET 可以关闭随机 request id header
-  - `serverPrefetchCache.ts` 提供共享的 `React.cache()` 包装层
-  - 静态元数据 GET 具备短 TTL revalidate，动态状态 GET 保持 `no-store`
-  - `serverFirstRoutePrefetch.ts` 统一走共享 server prefetch helper
-  - typecheck / eslint / targeted vitest / build 通过
-- Pass Threshold / Stop Condition: Phase 3 的 server-side 热点处理完成，并拿到对应验证证据
+  - reduced-motion 监听被共享单例 hook 收口
+  - MessageList 使用 passive scroll listener
+  - KbChat graph schema 查询改为 SWR hook
+  - typecheck / eslint / build 通过
+- Pass Threshold / Stop Condition: Phase 4 的 client data fetching 热点处理完成，并拿到对应验证证据
 - Active Execution Wave:
-  - 已完成：`apiFetch` 增加 `includeRequestIdHeader` 开关
-  - 已完成：新增 `serverPrefetchCache.ts`，集中管理 cache-friendly server GET
-  - 已完成：`serverFirstRoutePrefetch.ts` 改为共享的 server prefetch wrappers
-  - 已完成：Phase 3 验证闭环；当前仅待 git commit
+  - 已完成：新增 `usePrefersReducedMotion.ts` 共享监听
+  - 已完成：`MessageList.tsx` 改为 passive scroll listener
+  - 已完成：新增 `useKbChatGraphSchema.ts` 并替换 `KbChatPage.tsx` 手写请求
+  - 已完成：Phase 4 验证闭环；当前仅待 git commit
 - Last Verified Stop Point:
-  - Phase 2 commit：`7f5eee0`
-  - Phase 3 verification：
+  - Phase 3 commit：`7fd0750`
+  - Phase 4 verification：
     - `npm run typecheck`
-    - `npx eslint src/services/http.ts src/services/http.test.ts src/services/chats.ts src/services/knowledgeBases.ts src/services/ingestionBatches.ts src/services/bootstrapSubmissions.ts src/services/serverPrefetchCache.ts src/services/serverFirstRoutePrefetch.ts`
-    - `npx vitest run src/services/http.test.ts src/services/routePrefetch.test.ts`（require_escalated；sandbox 内 `spawn EPERM`）
+    - `npx eslint src/hooks/usePrefersReducedMotion.ts src/hooks/queries/useKbChatGraphSchema.ts src/components/chat/useTypewriterStream.ts src/components/chat/MessageList.tsx src/views/KbChatPage.tsx`
     - `npm run build`（require_escalated；sandbox 内 `spawn EPERM`）
 - Latest Improvement / Regression Notes:
-  - `http.ts` 现在允许 cacheable server GET 关闭随机 `X-Request-Id`，避免把 Next/React 去重与缓存键打散。
-  - 新增 `serverPrefetchCache.ts`，将 server-prefetch 路径的 cache policy 与 `React.cache()` 包装统一收口到模块级常量与函数。
-  - `serverFirstRoutePrefetch.ts` 保持既有 `Promise.all` 并行抓取，只替换为共享 wrapper，不改返回结构。
-  - `knowledgeBases.ts` / `ingestionBatches.ts` / `bootstrapSubmissions.ts` / `chats.ts` 的 GET helper 现在可接收 server-only fetch 选项。
-  - 审计结论：3.1 当前无 server action；3.2 / 3.5 当前未发现重复 RSC props 序列化；3.6 / 3.7 既有并行抓取继续保留；3.9 当前无合适的非阻塞 side effect 可迁移到 `after()`。
+  - `usePrefersReducedMotion.ts` 通过 `useSyncExternalStore` 把 reduced-motion 媒体查询收敛成共享监听，避免消息级重复注册。
+  - `MessageList.tsx` 的滚动状态同步已改为 `addEventListener('scroll', ..., { passive: true })`。
+  - `useKbChatGraphSchema.ts` 用 SWR 管理 schema 查询，`KbChatPage.tsx` 移除了手写 effect/fetch 状态机。
+  - 审计结论：4.4 当前仅有主题模式一个极小 localStorage token，无更大、更热的数据结构，不为了覆盖规则强行改动用户偏好存储。
 - Plateau / No-Signal Count: 0
-- Next Recommended Action: 提交 Phase 3 commit，归档当前阶段 planning files，并刷新到 Phase 4
-- Current Blockers: 无代码级 blocker；vitest/build 在沙箱内会触发 `spawn EPERM`，已通过提权完成验证
+- Next Recommended Action: 提交 Phase 4 commit，归档当前阶段 planning files，并刷新到 Phase 5
+- Current Blockers: 无代码级 blocker；build 在沙箱内会触发 `spawn EPERM`，已通过提权完成验证
 - Assumptions Awaiting Confirmation:
-  - 对知识库元数据采用短 TTL server cache，比引入手写 LRU 更贴近 Next App Router 当前模型
-  - server-prefetch 动态状态（recent chats / ingestion state / latest batch / bootstrap job）仍应维持 `no-store`
+  - 对 reduced-motion 使用共享 `useSyncExternalStore` store，比在每个消息项内各自订阅更稳妥
+  - 主题模式 localStorage 当前不构成高价值性能热点，因此 4.4 以审计结论处理
 - Parked / Deferred Items:
-  - 自定义 LRU 暂不引入；若后续 Phase 3 之外还有明确热点，再按需评估
-  - `after()` 暂无明确落点，不为了覆盖规则而引入无业务价值的 side effect
+  - 若后续发现更重的 localStorage 数据结构，再在对应阶段单独处理
+  - 被动滚动监听仅在 MessageList 这一条热路径落地，其他非热点监听暂不扩项
 - Key Recent Decisions:
-  - 对 3.3 采用 Next data cache + revalidate，而不是手写 LRU
-  - 仅在 server-prefetch GET 上关闭 request id header；其他请求默认保留 tracing header
-  - 维持现有 fallback 结构，不改动 SWR key、RSC 页面结构与 UI 展示
+  - 4.1 只处理真正可能多实例挂载的 reduced-motion 监听
+  - 4.2 选择 MessageList 作为 scroll 热路径的最小落点
+  - 4.3 对 graph schema 请求采用 SWR，而不是继续维护手写 effect 状态机
 - Verification Evidence Reference:
   - 2026-03-31 `npm run typecheck` 通过
-  - 2026-03-31 `npx eslint src/services/http.ts src/services/http.test.ts src/services/chats.ts src/services/knowledgeBases.ts src/services/ingestionBatches.ts src/services/bootstrapSubmissions.ts src/services/serverPrefetchCache.ts src/services/serverFirstRoutePrefetch.ts` 通过
-  - 2026-03-31 `npx vitest run src/services/http.test.ts src/services/routePrefetch.test.ts` 通过（require_escalated）
+  - 2026-03-31 `npx eslint src/hooks/usePrefersReducedMotion.ts src/hooks/queries/useKbChatGraphSchema.ts src/components/chat/useTypewriterStream.ts src/components/chat/MessageList.tsx src/views/KbChatPage.tsx` 通过
   - 2026-03-31 `npm run build` 通过（require_escalated）
-- Related Files: `PROJECT_PHASE_ROADMAP.md`, `TASK_TODO_MEDIUM.md`, `TASK_TODO_FINE.md`, `frontend/src/services/http.ts`, `frontend/src/services/serverPrefetchCache.ts`, `frontend/src/services/serverFirstRoutePrefetch.ts`, `frontend/src/services/http.test.ts`
+- Related Files: `PROJECT_PHASE_ROADMAP.md`, `TASK_TODO_MEDIUM.md`, `TASK_TODO_FINE.md`, `frontend/src/hooks/usePrefersReducedMotion.ts`, `frontend/src/hooks/queries/useKbChatGraphSchema.ts`, `frontend/src/components/chat/useTypewriterStream.ts`, `frontend/src/components/chat/MessageList.tsx`, `frontend/src/views/KbChatPage.tsx`
 - Last Updated: 2026-03-31

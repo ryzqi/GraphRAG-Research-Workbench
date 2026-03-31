@@ -37,7 +37,6 @@ import {
   type ChatMessageResponse,
   type ChatSession,
   createChatSession,
-  getKbChatGraphSchema,
   isUnexpectedStreamEnd,
   resolveTerminalRunStatus,
   streamChatMessage,
@@ -51,6 +50,7 @@ import {
   type KbChatTraceStoreState,
 } from '../services/kbChatTraceStore';
 import { useSelectableKnowledgeBases } from '../hooks/queries/useKnowledgeBases';
+import { useKbChatGraphSchema } from '../hooks/queries/useKbChatGraphSchema';
 import { useRecentHistory } from '../hooks/useRecentHistory';
 import { WelcomeScreen } from '../components/chat/WelcomeScreen';
 import { KbChatInputPanel } from '../components/chat/KbChatInputPanel';
@@ -243,9 +243,6 @@ export function KbChatPage() {
   const [kbChatConfig, setKbChatConfig] = useState<KbChatConfig>(DEFAULT_KB_CHAT_CONFIG);
   const [session, setSession] = useState<ChatSession | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [graphSchema, setGraphSchema] = useState<KbGraphSchema | null>(null);
-  const clarificationStep = useMemo(() => resolveClarificationStep(graphSchema), [graphSchema]);
-  const finalizeNodeIds = useMemo(() => resolveFinalizeNodeIds(graphSchema), [graphSchema]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [loadingSession, setLoadingSession] = useState(false);
@@ -257,7 +254,6 @@ export function KbChatPage() {
   const resetSession = useCallback(() => {
     setSession(null);
     setMessages([]);
-    setGraphSchema(null);
     setError(null);
     setActiveAssistantId(null);
     setMobileTraceOpen(false);
@@ -286,16 +282,23 @@ export function KbChatPage() {
     previousSessionIdRef.current = sessionId;
   }, [resetSession, sessionId]);
 
+  const activeConfig = session?.kb_chat_config ?? kbChatConfig;
+  const graphSchemaQuery = useKbChatGraphSchema(session ? activeConfig : null);
+  const graphSchema = graphSchemaQuery.data ?? null;
+  const clarificationStep = useMemo(() => resolveClarificationStep(graphSchema), [graphSchema]);
+  const finalizeNodeIds = useMemo(() => resolveFinalizeNodeIds(graphSchema), [graphSchema]);
   const { upsertSession } = useRecentHistory();
 
-  const mergedError = error ?? (knowledgeBasesQuery.error ? getErrorMessage(knowledgeBasesQuery.error) : null);
+  const mergedError =
+    error ??
+    (knowledgeBasesQuery.error ? getErrorMessage(knowledgeBasesQuery.error) : null) ??
+    (graphSchemaQuery.error ? getErrorMessage(graphSchemaQuery.error) : null);
 
   const selectedKbNames = useMemo(() => {
     const map = new Map((knowledgeBases ?? []).map((kb) => [kb.id, kb.name]));
     return selectedKbIds.map((id) => map.get(id) ?? id);
   }, [knowledgeBases, selectedKbIds]);
 
-  const activeConfig = session?.kb_chat_config ?? kbChatConfig;
   const initialConfigErrors = useMemo(() => validateKbChatConfig(kbChatConfig), [kbChatConfig]);
   const parentChildLimitsEnabled = useMemo(
     () => hasSelectedParentChildKnowledgeBase(selectedKbIds, knowledgeBases),
@@ -329,30 +332,6 @@ export function KbChatPage() {
       null,
     [assistantMessages, activeAssistantId]
   );
-
-  useEffect(() => {
-    if (!session) {
-      setGraphSchema(null);
-      return;
-    }
-    let active = true;
-    const loadGraphSchema = async () => {
-      try {
-        const schema = await getKbChatGraphSchema(activeConfig);
-        if (active) {
-          setGraphSchema(schema);
-        }
-      } catch (e) {
-        if (active) {
-          setError(getErrorMessage(e));
-        }
-      }
-    };
-    void loadGraphSchema();
-    return () => {
-      active = false;
-    };
-  }, [activeConfig, session]);
 
   useEffect(() => {
     if (!isTabletOrDown) {
