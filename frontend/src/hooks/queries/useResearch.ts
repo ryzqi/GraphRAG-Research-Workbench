@@ -5,7 +5,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { parseSseJson } from '../../lib/sse';
 import { useApiMutation, useApiQuery } from '../../lib/swr';
 import {
-  confirmResearchPlan,
   createResearchSession,
   getResearchArtifacts,
   interruptResearchSession,
@@ -13,7 +12,6 @@ import {
   submitResearchClarification,
   streamResearchSession,
   type ResearchClarificationSubmitRequest,
-  type ResearchPlanConfirmRequest,
   type ResearchResumeRequest,
   type ResearchSessionAccepted,
   type ResearchSessionCreateRequest,
@@ -239,13 +237,6 @@ export function useCreateResearchSession() {
   return useApiMutation<ResearchSessionCreateRequest, ResearchSessionAccepted>(
     createResearchSession
   );
-}
-
-export function useConfirmResearchPlan() {
-  return useApiMutation<
-    { sessionId: string; body: ResearchPlanConfirmRequest },
-    ResearchSessionAccepted
-  >(({ sessionId, body }) => confirmResearchPlan(sessionId, body));
 }
 
 export function useSubmitResearchClarification() {

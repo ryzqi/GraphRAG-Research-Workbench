@@ -8,7 +8,7 @@ from enum import Enum
 from typing import TYPE_CHECKING
 
 import sqlalchemy as sa
-from sqlalchemy.dialects.postgresql import ARRAY, JSONB
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -79,6 +79,7 @@ _ALLOWED_RESEARCH_SESSION_TRANSITIONS: dict[
     ),
     ResearchSessionStatus.CLARIFYING: frozenset(
         {
+            ResearchSessionStatus.QUEUED,
             ResearchSessionStatus.AWAITING_CONFIRMATION,
             ResearchSessionStatus.CANCELED,
             ResearchSessionStatus.FAILED,
@@ -151,12 +152,6 @@ class ResearchSession(Base):
     )
     thread_id: Mapped[str] = mapped_column(sa.String(length=128), nullable=False, unique=True)
     question: Mapped[str] = mapped_column(sa.Text, nullable=False)
-    selected_kb_ids: Mapped[list[uuid.UUID] | None] = mapped_column(
-        ARRAY(sa.Uuid(as_uuid=True)), nullable=True
-    )
-    allow_external: Mapped[bool] = mapped_column(
-        sa.Boolean, nullable=False, default=False, server_default=sa.false()
-    )
     status: Mapped[ResearchSessionStatus] = mapped_column(
         enum_values(ResearchSessionStatus, name="research_session_status"),
         nullable=False,

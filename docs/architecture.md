@@ -14,12 +14,13 @@
 Deep Research 当前采用单路径会话化架构：
 
 1. `POST /api/v1/research/sessions`
-2. preflight planner 产出 `plan_snapshot` / `research_brief`
-3. `POST /confirm-plan`
-4. runtime 执行并写入 `research_events` / `research_artifacts`
-5. `POST /interrupt` / `POST /resume`
-6. finalizer 产出 `report_md` / `report_json`
-7. `GET /artifacts` 读取最终工件与 observability 工件
+2. LLM scoper 判断是否需要 `clarification_request`
+3. 若信息足够则直接产出 `plan_snapshot` / `research_brief` 并进入 runtime
+4. 若信息不足则先走 `POST /clarification`，补充后直接进入 runtime
+5. runtime 执行并写入 `research_events` / `research_artifacts`
+6. `POST /interrupt` / `POST /resume`
+7. finalizer 产出 `report_md` / `report_json`
+8. `GET /artifacts` 读取最终工件与 observability 工件
 
 ## Research 事实源
 

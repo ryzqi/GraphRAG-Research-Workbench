@@ -33,7 +33,6 @@ def test_research_plan_snapshot_supports_brief_and_target_sources() -> None:
             }
         ],
         budget_guidance="优先论文，必要时补网页。",
-        confirmation_required=True,
     )
 
     assert snapshot.research_brief.startswith("对 2024-2026 年")
@@ -42,7 +41,6 @@ def test_research_plan_snapshot_supports_brief_and_target_sources() -> None:
         ResearchSourceTarget.WEB,
     ]
     assert snapshot.subtasks[0].target_sources == [ResearchSourceTarget.PAPER]
-    assert snapshot.confirmation_required is True
 
 
 def test_research_event_envelope_requires_minimum_stream_fields() -> None:
@@ -186,12 +184,12 @@ def test_research_session_accepted_rejects_blank_clarification_fields(field_name
         ResearchSessionAccepted.model_validate(payload)
 
 
-def test_research_session_accepted_requires_plan_snapshot_when_awaiting_confirmation() -> None:
+def test_research_session_accepted_requires_plan_snapshot_when_queued() -> None:
     with pytest.raises(ValidationError):
         ResearchSessionAccepted.model_validate(
             {
                 "session_id": "00000000-0000-0000-0000-000000000005",
-                "status": "awaiting_confirmation",
+                "status": "queued",
                 "plan_snapshot": None,
             }
         )

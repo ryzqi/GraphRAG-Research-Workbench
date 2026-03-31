@@ -74,17 +74,15 @@ async def test_interrupt_resume_contract_reaches_final_with_consistent_replay() 
         id=uuid4(),
         thread_id="research-interrupt-resume-session",
         question="验证 interrupt -> resume -> final 契约",
-        status=ResearchSessionStatus.AWAITING_CONFIRMATION,
+        status=ResearchSessionStatus.QUEUED,
     )
     plan_snapshot = ResearchPlanSnapshot(
         research_brief="验证中断恢复闭环。",
         complexity="comparative",
         summary="确认 -> interrupt -> resume -> final。",
         target_sources=[ResearchSourceTarget.WEB],
-        confirmation_required=True,
     )
 
-    await service.confirm_plan(session=session, approved=True, note="继续执行")
     session.status = ResearchSessionStatus.RUNNING
     await service.interrupt_session(session=session, reason="等待人工确认")
     interrupt_event_id = session.events[-1].event_id

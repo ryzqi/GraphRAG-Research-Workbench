@@ -10,13 +10,11 @@ from fastapi.responses import StreamingResponse
 
 from app.api.deps import AsyncSessionDep
 from app.api.sse import SSE_HEADERS, encode_sse
-from app.core.errors import bad_request
 from app.models.research_session import ResearchSessionStatus
 from app.schemas.research import (
     ResearchArtifactsResponse,
     ResearchClarificationSubmitRequest,
     ResearchInterruptRequest,
-    ResearchPlanConfirmRequest,
     ResearchSessionAccepted,
     ResearchSessionCreateRequest,
     ResearchStreamResumeParams,
@@ -86,38 +84,6 @@ async def create_research_session(
 
 
 @router.post(
-    "/sessions/{session_id}/confirm-plan",
-    response_model=ResearchSessionAccepted,
-)
-async def confirm_research_plan(
-    session_id: uuid.UUID,
-    db: AsyncSessionDep,
-    request: Request,
-    body: ResearchPlanConfirmRequest,
-) -> ResearchSessionAccepted:
-    service = _get_research_service(request=request, db=db)
-    session = await service.get_session(session_id)
-    if session.status == ResearchSessionStatus.CLARIFYING:
-        raise bad_request(
-            code="RESEARCH_PLAN_CONFIRM_FORBIDDEN",
-            message="clarifying 状态不允许确认计划",
-        )
-    session = await service.confirm_plan(
-        session=session,
-        approved=body.approved,
-        note=body.note,
-    )
-    await db.commit()
-    if body.approved:
-        _dispatch_research_session(request=request, session_id=session.id)
-    return ResearchSessionAccepted(
-        session_id=session.id,
-        status=session.status,
-        plan_snapshot=service.read_plan_snapshot(session),
-    )
-
-
-@router.post(
     "/sessions/{session_id}/clarification",
     response_model=ResearchSessionAccepted,
 )
@@ -134,6 +100,8 @@ async def submit_research_clarification(
         answer=body.answer,
     )
     await db.commit()
+    if session.status == ResearchSessionStatus.QUEUED:
+        _dispatch_research_session(request=request, session_id=session.id)
     return ResearchSessionAccepted(
         session_id=session.id,
         status=session.status,

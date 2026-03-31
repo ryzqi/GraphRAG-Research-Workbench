@@ -2,16 +2,22 @@ from __future__ import annotations
 
 from uuid import uuid4
 
+import pytest
+
 from app.models.research_session import ResearchSession, ResearchSessionStatus
 from app.schemas.research import (
+    ResearchClarificationQuestion,
+    ResearchClarificationRequest,
+    ResearchComplexity,
     ResearchPlanSnapshot,
+    ResearchPlanSubtask,
     ResearchSessionCreateRequest,
     ResearchSourceTarget,
 )
 from app.services.research_event_store import ResearchEventStore
 from app.services.research_finalizer import ResearchFinalizer
 from app.services.research_observability import ResearchRuntimeRunResult
-from app.services.research_planner import ResearchPlanner
+from app.services.research_planner import ResearchPlanner, ResearchScoper
 from app.services.research_service import ResearchService
 from app.services.research_source_bundle import ResearchSourceBundleBuilder
 
@@ -47,25 +53,62 @@ class _FakeRuntimeRunner:
         )
 
 
-async def test_create_session_persists_plan_snapshot_artifact_and_event() -> None:
+class _SequenceScoper(ResearchScoper):
+    def __init__(self, outputs: list[ResearchClarificationRequest | ResearchPlanSnapshot]) -> None:
+        self.outputs = list(outputs)
+        self.questions: list[str] = []
+
+    async def scope(
+        self,
+        *,
+        question: str,
+    ) -> ResearchClarificationRequest | ResearchPlanSnapshot:
+        self.questions.append(question)
+        if not self.outputs:
+            raise AssertionError("missing scoper output")
+        return self.outputs.pop(0)
+
+
+def _build_plan_snapshot() -> ResearchPlanSnapshot:
+    return ResearchPlanSnapshot(
+        research_brief="围绕 LangGraph StateGraph 的核心概念与代码审查场景展开研究。",
+        complexity=ResearchComplexity.COMPARATIVE,
+        summary="先梳理核心概念，再对齐代码审查场景中的使用边界。",
+        target_sources=[ResearchSourceTarget.WEB],
+        subtasks=[
+            ResearchPlanSubtask(
+                title="核心概念",
+                description="整理 StateGraph 的关键抽象。",
+                target_sources=[ResearchSourceTarget.WEB],
+            ),
+            ResearchPlanSubtask(
+                title="代码审查场景",
+                description="聚焦代码审查场景下的价值与边界。",
+                target_sources=[ResearchSourceTarget.WEB],
+            ),
+        ],
+        budget_guidance="优先官方文档与可信实现资料。",
+    )
+
+
+@pytest.mark.asyncio
+async def test_create_session_persists_plan_snapshot_artifact_event_and_queues_immediately() -> None:
     db = _FakeAsyncSession()
     service = ResearchService(
         db=db,
-        planner=ResearchPlanner(),
+        planner=ResearchPlanner(scoper=_SequenceScoper([_build_plan_snapshot()])),
         runtime_runner=_FakeRuntimeRunner(),
         finalizer=ResearchFinalizer(),
     )
 
     session, plan_result = await service.create_session(
-        ResearchSessionCreateRequest(
-            question="对比 Tavily 与 SearXNG 在深度研究网页检索中的优缺点",
-        ),
+        ResearchSessionCreateRequest(question="对比 Tavily 与 SearXNG 在深度研究网页检索中的优缺点"),
         thread_id="research-session-1",
     )
 
     assert db.flushed is True
     assert session.thread_id == "research-session-1"
-    assert session.status == ResearchSessionStatus.AWAITING_CONFIRMATION
+    assert session.status == ResearchSessionStatus.QUEUED
     assert session.last_event_sequence == 1
     assert session.events[0].event_type == "research.plan.created"
     assert [artifact.artifact_key for artifact in session.artifacts] == [
@@ -73,14 +116,15 @@ async def test_create_session_persists_plan_snapshot_artifact_and_event() -> Non
         "research_brief",
     ]
     assert session.artifacts[1].content_text == plan_result.plan_snapshot.research_brief
-    assert plan_result.plan_snapshot.confirmation_required is True
+    assert plan_result.auto_approve is True
 
 
+@pytest.mark.asyncio
 async def test_execute_session_runs_runtime_finalizer_and_writes_final_artifacts() -> None:
     db = _FakeAsyncSession()
     service = ResearchService(
         db=db,
-        planner=ResearchPlanner(),
+        planner=ResearchPlanner(scoper=_SequenceScoper([_build_plan_snapshot()])),
         runtime_runner=_FakeRuntimeRunner(),
         finalizer=ResearchFinalizer(),
     )
@@ -95,7 +139,6 @@ async def test_execute_session_runs_runtime_finalizer_and_writes_final_artifacts
         complexity="simple",
         summary="优先网页工具，最后走 finalizer。",
         target_sources=[ResearchSourceTarget.WEB],
-        confirmation_required=False,
     )
 
     final_result = await service.execute_session(
@@ -124,6 +167,7 @@ async def test_execute_session_runs_runtime_finalizer_and_writes_final_artifacts
     assert (session.metrics or {})["gate"]["pass"] is False
 
 
+@pytest.mark.asyncio
 async def test_event_store_reuses_existing_event_for_same_event_id() -> None:
     session = ResearchSession(
         thread_id="research-session-events",
@@ -153,40 +197,27 @@ async def test_event_store_reuses_existing_event_for_same_event_id() -> None:
     assert session.events[0].payload == {"status": "first"}
 
 
-async def test_confirm_plan_queues_session_and_appends_confirmation_event() -> None:
-    service = ResearchService(
-        db=_FakeAsyncSession(),
-        planner=ResearchPlanner(),
-        runtime_runner=_FakeRuntimeRunner(),
-        finalizer=ResearchFinalizer(),
-    )
-    session = ResearchSession(
-        id=uuid4(),
-        thread_id="research-session-confirm",
-        question="确认计划",
-        status=ResearchSessionStatus.AWAITING_CONFIRMATION,
-    )
-
-    await service.confirm_plan(
-        session=session,
-        approved=True,
-        note="继续执行",
-    )
-
-    assert session.status == ResearchSessionStatus.QUEUED
-    assert session.events[0].event_type == "research.plan.confirmed"
-    assert session.events[0].payload == {
-        "approved": True,
-        "note": "继续执行",
-        "lc_agent_name": "planner",
-    }
-
-
-async def test_submit_clarification_transitions_to_awaiting_confirmation() -> None:
+@pytest.mark.asyncio
+async def test_submit_clarification_transitions_to_queued_and_persists_plan() -> None:
     db = _FakeAsyncSession()
+    scoper = _SequenceScoper(
+        [
+            ResearchClarificationRequest(
+                summary="需要先明确研究场景。",
+                questions=[
+                    ResearchClarificationQuestion(
+                        id="scope",
+                        question="你更关注入门学习还是代码审查场景？",
+                        why_it_matters="目标不同会影响研究结构。",
+                    )
+                ],
+            ),
+            _build_plan_snapshot(),
+        ]
+    )
     service = ResearchService(
         db=db,
-        planner=ResearchPlanner(),
+        planner=ResearchPlanner(scoper=scoper),
         runtime_runner=_FakeRuntimeRunner(),
         finalizer=ResearchFinalizer(),
     )
@@ -204,17 +235,46 @@ async def test_submit_clarification_transitions_to_awaiting_confirmation() -> No
     )
 
     assert session.question == "帮我研究一下 AI 编程工具"
-    assert session.status == ResearchSessionStatus.AWAITING_CONFIRMATION
+    assert session.status == ResearchSessionStatus.QUEUED
     assert plan_result.plan_snapshot is not None
     assert plan_result.clarification_request is None
-    assert "补充说明：" not in plan_result.plan_snapshot.research_brief
+    assert scoper.questions == [
+        "帮我研究一下 AI 编程工具",
+        "帮我研究一下 AI 编程工具 关注 LangGraph StateGraph 在代码审查场景的使用建议",
+    ]
 
 
-async def test_submit_clarification_accumulates_previous_answers() -> None:
+@pytest.mark.asyncio
+async def test_submit_clarification_accumulates_previous_answers_before_reaching_queued() -> None:
     db = _FakeAsyncSession()
+    scoper = _SequenceScoper(
+        [
+            ResearchClarificationRequest(
+                summary="需要先明确范围。",
+                questions=[
+                    ResearchClarificationQuestion(
+                        id="scope",
+                        question="你要做什么方向？",
+                        why_it_matters="需要锁定范围。",
+                    )
+                ],
+            ),
+            ResearchClarificationRequest(
+                summary="还需要补充具体场景。",
+                questions=[
+                    ResearchClarificationQuestion(
+                        id="scene",
+                        question="你要关注哪个具体场景？",
+                        why_it_matters="需要场景才能输出有用计划。",
+                    )
+                ],
+            ),
+            _build_plan_snapshot(),
+        ]
+    )
     service = ResearchService(
         db=db,
-        planner=ResearchPlanner(),
+        planner=ResearchPlanner(scoper=scoper),
         runtime_runner=_FakeRuntimeRunner(),
         finalizer=ResearchFinalizer(),
     )
@@ -231,7 +291,6 @@ async def test_submit_clarification_accumulates_previous_answers() -> None:
         answer="想了解入门选择",
     )
 
-    assert session.question == "帮我研究一下 AI 编程工具"
     assert plan_result.clarification_request is not None
     assert plan_result.plan_snapshot is None
     assert session.status == ResearchSessionStatus.CLARIFYING
@@ -241,21 +300,21 @@ async def test_submit_clarification_accumulates_previous_answers() -> None:
         answer="关注 LangGraph StateGraph 在代码审查场景的使用建议",
     )
 
-    assert session.question == "帮我研究一下 AI 编程工具"
-    assert session.status == ResearchSessionStatus.AWAITING_CONFIRMATION
+    assert session.status == ResearchSessionStatus.QUEUED
     assert plan_result.plan_snapshot is not None
     assert plan_result.clarification_request is None
-    assert "想了解入门选择" in plan_result.plan_snapshot.research_brief
-    assert "关注 LangGraph StateGraph 在代码审查场景的使用建议" in (
-        plan_result.plan_snapshot.research_brief
-    )
-    assert "补充说明：" not in plan_result.plan_snapshot.research_brief
+    assert scoper.questions == [
+        "帮我研究一下 AI 编程工具",
+        "帮我研究一下 AI 编程工具 想了解入门选择",
+        "帮我研究一下 AI 编程工具 想了解入门选择 关注 LangGraph StateGraph 在代码审查场景的使用建议",
+    ]
 
 
+@pytest.mark.asyncio
 async def test_interrupt_and_resume_session_are_stateful_and_idempotent() -> None:
     service = ResearchService(
         db=_FakeAsyncSession(),
-        planner=ResearchPlanner(),
+        planner=ResearchPlanner(scoper=_SequenceScoper([_build_plan_snapshot()])),
         runtime_runner=_FakeRuntimeRunner(),
         finalizer=ResearchFinalizer(),
     )

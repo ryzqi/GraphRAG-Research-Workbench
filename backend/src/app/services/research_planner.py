@@ -2,305 +2,253 @@
 
 from __future__ import annotations
 
-import re
+from typing import Literal, Protocol
 
+from langchain_core.messages import HumanMessage, SystemMessage
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+
+from app.core.settings import Settings, get_settings
+from app.integrations.chat_model_factory import create_chat_model
 from app.models.research_session import ResearchSessionStatus
 from app.schemas.research import (
-    ResearchComplexity,
     ResearchClarificationQuestion,
     ResearchClarificationRequest,
+    ResearchComplexity,
     ResearchPlanSnapshot,
     ResearchPlanSubtask,
     ResearchSessionCreateRequest,
     ResearchSourceTarget,
 )
+from app.services.query_rewrite_service import coerce_structured_result_payload
 from app.services.research_planner_types import ResearchPlannerResult
 
-_COMPARATIVE_PATTERNS = (
-    "对比",
-    "比较",
-    "优缺点",
-    "区别",
-    "vs",
-    "versus",
-    "benchmark",
-)
-_PAPER_PATTERNS = (
-    "论文",
-    "paper",
-    "arxiv",
-    "literature",
-    "survey",
-    "综述",
-)
-_WEB_PATTERNS = (
-    "网页",
-    "web",
-    "官网",
-    "最新",
-    "新闻",
-    "blog",
-    "release",
-    "开源",
-    "实现",
-)
-_COMPLEX_PATTERNS = (
-    "综述",
-    "路线图",
-    "roadmap",
-    "架构",
-    "architecture",
-    "多阶段",
-    "落地建议",
-    "2024-2026",
-)
-_UNCLEAR_PATTERNS = (
-    "帮我研究",
-    "帮忙研究",
-)
-_GENERIC_SCOPE_PATTERNS = (
-    "ai 编程工具",
-    "ai 工具",
-    "ai工具",
-    "编程工具",
-    "ai 编程",
-)
-_CONCRETE_SCOPE_PATTERNS = (
-    r"在.+场景",
-    r"使用场景",
-    r"用于.+",
-    r"针对.+",
-    r"面向.+",
-)
-_SPECIFIC_MARKERS = (
-    "langgraph",
-    "stategraph",
-    "langchain",
-    "openai",
-    "claude",
-    "gpt",
-    "copilot",
-    "cursor",
-)
+_SCOPER_SYSTEM_PROMPT = """你是当前仓库 Deep Research 的 pre-research scoper。
+
+你的任务不是开始研究，而是先判断“是否已经有足够信息可以直接开始研究”。
+
+严格规则：
+1. 只输出两种决策：
+   - clarify: 关键信息仍缺失，必须先追问
+   - proceed: 信息已足够，直接开始研究
+2. 只在“缺少信息会显著影响研究边界、检索重点或输出结构”时才追问。
+3. 不要要求用户“确认计划”“批准执行”“是否继续”。本系统不再有人工确认计划环节。
+4. clarify 时：
+   - 提供简洁 summary
+   - 提供 1 到 2 个高价值追问
+   - 问题必须具体、可直接回答，不能泛泛而谈
+5. proceed 时：
+   - 生成可执行的 research_brief
+   - complexity 只能是 simple / comparative / complex
+   - target_sources 只能使用 web / paper
+   - subtasks 提供 1 到 3 个，必须是可执行研究步骤
+   - summary 要概括研究主线，而不是请求确认
+6. 如果用户问题已经很具体，不要过度追问。
+7. 任何输出都必须贴合用户原问题，不要臆造额外目标。
+"""
+
+
+class ResearchScoper(Protocol):
+    async def scope(
+        self,
+        *,
+        question: str,
+    ) -> ResearchClarificationRequest | ResearchPlanSnapshot: ...
+
+
+class _ResearchScoperQuestionOutput(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    id: str = Field(default="q1", description="Stable question identifier.")
+    question: str = Field(description="Concrete clarifying question to ask the user.")
+    why_it_matters: str = Field(
+        description="Why this clarifying question materially affects research quality."
+    )
+
+
+class _ResearchScoperSubtaskOutput(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    title: str = Field(description="Short subtask title.")
+    description: str = Field(description="What this research subtask needs to accomplish.")
+    target_sources: list[str] = Field(
+        default_factory=list,
+        description="Suggested source targets for this subtask. Prefer web or paper.",
+    )
+
+
+class _ResearchScoperOutput(BaseModel):
+    """Research preflight scoper structured output."""
+
+    model_config = ConfigDict(
+        extra="forbid",
+        json_schema_extra={
+            "description": "Structured decision for whether deep research should ask clarifying questions or start immediately."
+        },
+    )
+
+    decision: Literal["clarify", "proceed"] = Field(
+        description="Whether to ask the user for more information or proceed directly into research."
+    )
+    summary: str = Field(
+        ...,
+        min_length=1,
+        description="User-facing summary of the decision. For proceed it summarizes the research plan; for clarify it explains why more information is needed.",
+    )
+    questions: list[_ResearchScoperQuestionOutput] = Field(
+        default_factory=list,
+        description="Clarifying questions to ask when decision is clarify. Leave empty when decision is proceed.",
+    )
+    research_brief: str | None = Field(
+        default=None,
+        description="Executable research brief when decision is proceed.",
+    )
+    complexity: str | None = Field(
+        default=None,
+        description="Research complexity classification when decision is proceed.",
+    )
+    target_sources: list[str] = Field(
+        default_factory=list,
+        description="Planned source targets when decision is proceed. Only use web or paper.",
+    )
+    subtasks: list[_ResearchScoperSubtaskOutput] = Field(
+        default_factory=list,
+        description="Executable research subtasks when decision is proceed.",
+    )
+    budget_guidance: str | None = Field(
+        default=None,
+        description="Optional guidance about expected research effort or budget.",
+    )
+
+    @model_validator(mode="after")
+    def _validate_shape(self) -> "_ResearchScoperOutput":
+        if self.decision == "clarify":
+            if not self.questions:
+                raise ValueError("clarify 决策必须提供 questions")
+            return self
+        if not self.research_brief:
+            raise ValueError("proceed 决策必须提供 research_brief")
+        if self.complexity is None:
+            raise ValueError("proceed 决策必须提供 complexity")
+        if not self.target_sources:
+            raise ValueError("proceed 决策必须提供 target_sources")
+        if not self.subtasks:
+            raise ValueError("proceed 决策必须提供 subtasks")
+        return self
+
+
+class LLMResearchScoper:
+    def __init__(self, *, settings: Settings | None = None) -> None:
+        self._settings = settings or get_settings()
+
+    async def scope(
+        self,
+        *,
+        question: str,
+    ) -> ResearchClarificationRequest | ResearchPlanSnapshot:
+        model = create_chat_model(settings=self._settings, use_previous_response_id=False)
+        structured_model = model.with_structured_output(
+            _ResearchScoperOutput,
+            method="function_calling",
+            include_raw=True,
+        )
+        result = await structured_model.ainvoke(
+            [
+                SystemMessage(content=_SCOPER_SYSTEM_PROMPT),
+                HumanMessage(
+                    content=(
+                        "请判断以下 deep research 用户问题是否需要先追问，再输出结构化结果。\n\n"
+                        f"用户问题：{question.strip()}"
+                    )
+                ),
+            ]
+        )
+        payload, reason = coerce_structured_result_payload(
+            result=result,
+            schema=_ResearchScoperOutput,
+        )
+        if payload is None:
+            raise RuntimeError(f"Research scoper structured output 解析失败: {reason or 'unknown'}")
+        if not isinstance(payload, _ResearchScoperOutput):
+            try:
+                payload = _ResearchScoperOutput.model_validate(payload)
+            except ValidationError as exc:
+                raise RuntimeError("Research scoper structured output 不符合契约") from exc
+
+        if payload.decision == "clarify":
+            return ResearchClarificationRequest(
+                summary=payload.summary,
+                questions=[
+                    ResearchClarificationQuestion(
+                        id=(item.id or f"q{index}").strip() or f"q{index}",
+                        question=item.question.strip(),
+                        why_it_matters=item.why_it_matters.strip(),
+                    )
+                    for index, item in enumerate(payload.questions, start=1)
+                ],
+            )
+        complexity = str(payload.complexity or "").strip().lower()
+        if complexity not in {item.value for item in ResearchComplexity}:
+            complexity = ResearchComplexity.COMPARATIVE.value
+
+        def _normalize_target_sources(items: list[str]) -> list[ResearchSourceTarget]:
+            normalized: list[ResearchSourceTarget] = []
+            for item in items:
+                candidate = str(item or "").strip().lower()
+                if candidate == ResearchSourceTarget.PAPER.value:
+                    normalized.append(ResearchSourceTarget.PAPER)
+                elif candidate == ResearchSourceTarget.WEB.value:
+                    normalized.append(ResearchSourceTarget.WEB)
+            if not normalized:
+                normalized.append(ResearchSourceTarget.WEB)
+            deduped: list[ResearchSourceTarget] = []
+            for item in normalized:
+                if item not in deduped:
+                    deduped.append(item)
+            return deduped
+
+        return ResearchPlanSnapshot(
+            research_brief=payload.research_brief.strip(),
+            complexity=ResearchComplexity(complexity),
+            summary=payload.summary,
+            subtasks=[
+                ResearchPlanSubtask(
+                    title=item.title.strip(),
+                    description=item.description.strip(),
+                    target_sources=_normalize_target_sources(item.target_sources),
+                )
+                for item in payload.subtasks
+            ],
+            target_sources=_normalize_target_sources(payload.target_sources),
+            budget_guidance=payload.budget_guidance,
+        )
 
 
 class ResearchPlanner:
-    """轻量计划器：只产出 research brief / complexity / subtasks / routing。"""
+    """LLM 驱动的 preflight planner：产出 clarification request 或 research plan。"""
 
-    def build_plan(self, request: ResearchSessionCreateRequest) -> ResearchPlannerResult:
+    def __init__(
+        self,
+        *,
+        scoper: ResearchScoper | None = None,
+        settings: Settings | None = None,
+    ) -> None:
+        self._settings = settings or get_settings()
+        self._scoper = scoper or LLMResearchScoper(settings=self._settings)
+
+    async def build_plan(self, request: ResearchSessionCreateRequest) -> ResearchPlannerResult:
         question = request.question.strip()
-        clarification_request = self._maybe_build_clarification(question)
-        if clarification_request is not None:
+        scoped = await self._scoper.scope(question=question)
+        if isinstance(scoped, ResearchClarificationRequest):
             return ResearchPlannerResult(
                 plan_snapshot=None,
-                clarification_request=clarification_request,
-                auto_approve=False,
+                clarification_request=scoped,
+                auto_approve=True,
                 next_status=ResearchSessionStatus.CLARIFYING,
             )
 
-        complexity = self._classify_complexity(question)
-        target_sources = self._resolve_target_sources(
-            question=question,
-            complexity=complexity,
-        )
-        subtasks = self._build_subtasks(
-            question=question,
-            complexity=complexity,
-            target_sources=target_sources,
-        )
-        confirmation_required = self._resolve_confirmation_requirement(
-            complexity=complexity,
-            request_override=None,
-        )
-        plan_snapshot = ResearchPlanSnapshot(
-            research_brief=self._build_research_brief(
-                question=question,
-                target_sources=target_sources,
-            ),
-            complexity=complexity,
-            summary=self._build_summary(
-                complexity=complexity,
-                target_sources=target_sources,
-            ),
-            target_sources=target_sources,
-            subtasks=subtasks,
-            budget_guidance=self._build_budget_hint(complexity=complexity),
-            confirmation_required=confirmation_required,
-        )
         return ResearchPlannerResult(
-            plan_snapshot=plan_snapshot,
+            plan_snapshot=scoped,
             clarification_request=None,
-            auto_approve=False,
-            next_status=ResearchSessionStatus.AWAITING_CONFIRMATION,
+            auto_approve=True,
+            next_status=ResearchSessionStatus.QUEUED,
         )
-
-    def _classify_complexity(self, question: str) -> ResearchComplexity:
-        normalized = question.lower()
-        if any(pattern in normalized for pattern in _COMPLEX_PATTERNS):
-            return ResearchComplexity.COMPLEX
-        if any(pattern in normalized for pattern in _COMPARATIVE_PATTERNS):
-            return ResearchComplexity.COMPARATIVE
-        if self._looks_multi_clause(normalized):
-            return ResearchComplexity.COMPLEX
-        return ResearchComplexity.SIMPLE
-
-    def _resolve_target_sources(
-        self,
-        *,
-        question: str,
-        complexity: ResearchComplexity,
-    ) -> list[ResearchSourceTarget]:
-        normalized = question.lower()
-        mentions_paper = any(pattern in normalized for pattern in _PAPER_PATTERNS)
-        mentions_web = any(pattern in normalized for pattern in _WEB_PATTERNS)
-
-        if mentions_paper and (mentions_web or complexity == ResearchComplexity.COMPLEX):
-            return [ResearchSourceTarget.PAPER, ResearchSourceTarget.WEB]
-        if mentions_paper:
-            return [ResearchSourceTarget.PAPER]
-        return [ResearchSourceTarget.WEB]
-
-    def _build_subtasks(
-        self,
-        *,
-        question: str,
-        complexity: ResearchComplexity,
-        target_sources: list[ResearchSourceTarget],
-    ) -> list[ResearchPlanSubtask]:
-        if complexity == ResearchComplexity.SIMPLE:
-            return [
-                ResearchPlanSubtask(
-                    title="锁定核心问题",
-                    description=f"围绕“{question}”整理直接回答所需的最小外部证据。",
-                    target_sources=target_sources,
-                )
-            ]
-
-        if complexity == ResearchComplexity.COMPARATIVE:
-            return [
-                ResearchPlanSubtask(
-                    title="定义比较维度",
-                    description="先明确比较对象、评价维度与结论形式。",
-                    target_sources=target_sources,
-                ),
-                ResearchPlanSubtask(
-                    title="收集对比证据",
-                    description="按统一维度收集网页/论文证据，避免运行时边查边改问题定义。",
-                    target_sources=target_sources,
-                ),
-            ]
-
-        subtasks: list[ResearchPlanSubtask] = []
-        if ResearchSourceTarget.PAPER in target_sources:
-            subtasks.append(
-                ResearchPlanSubtask(
-                    title="建立论文基线",
-                    description="优先收集论文 / 技术综述，形成稳定的研究主线。",
-                    target_sources=[ResearchSourceTarget.PAPER],
-                )
-            )
-        if ResearchSourceTarget.WEB in target_sources:
-            subtasks.append(
-                ResearchPlanSubtask(
-                    title="补充网页上下文",
-                    description="使用网页资料补充实现细节、版本差异与最新生态信息。",
-                    target_sources=[ResearchSourceTarget.WEB],
-                )
-            )
-        subtasks.append(
-            ResearchPlanSubtask(
-                title="整理最终回答结构",
-                description="在正式 runtime 前先固定最终回答需要覆盖的输出结构与边界。",
-                target_sources=target_sources,
-            )
-        )
-        return subtasks
-
-    def _resolve_confirmation_requirement(
-        self,
-        *,
-        complexity: ResearchComplexity,
-        request_override: bool | None,
-    ) -> bool:
-        if request_override is not None:
-            return bool(request_override)
-        return True
-
-    def _build_research_brief(
-        self,
-        *,
-        question: str,
-        target_sources: list[ResearchSourceTarget],
-    ) -> str:
-        if target_sources == [ResearchSourceTarget.WEB]:
-            source_hint = "以网页资料为主"
-        elif target_sources == [ResearchSourceTarget.PAPER]:
-            source_hint = "以论文资料为主"
-        else:
-            source_hint = "以论文与网页资料联合路线为主"
-        return f"{source_hint}，围绕问题“{question}”形成可执行研究边界与输出目标。"
-
-    def _build_summary(
-        self,
-        *,
-        complexity: ResearchComplexity,
-        target_sources: list[ResearchSourceTarget],
-    ) -> str:
-        route_label = "/".join(item.value for item in target_sources)
-        if complexity == ResearchComplexity.SIMPLE:
-            return f"简单问题，走 {route_label} 路线即可。"
-        if complexity == ResearchComplexity.COMPARATIVE:
-            return f"比较型问题，先固定维度，再按 {route_label} 路线收集证据。"
-        return (
-            "复杂问题，需要先固定 brief，再按阶段推进研究；"
-            f"当前建议主路线为 {route_label}。"
-        )
-
-    def _build_budget_hint(self, *, complexity: ResearchComplexity) -> str:
-        if complexity == ResearchComplexity.SIMPLE:
-            return "低预算：单轮规划、单路线执行，确认后再进入执行。"
-        if complexity == ResearchComplexity.COMPARATIVE:
-            return "中预算：至少两个对比子任务，建议先确认计划再执行。"
-        return "高预算：长时研究，建议先确认计划，并保留 interrupt / resume。"
-
-    def _looks_multi_clause(self, question: str) -> bool:
-        separators = re.split(r"[，,。.;；\n]", question)
-        meaningful = [part.strip() for part in separators if part.strip()]
-        return len(meaningful) >= 3 or question.count("并") >= 2 or question.count("同时") >= 1
-
-    def _maybe_build_clarification(
-        self, question: str
-    ) -> ResearchClarificationRequest | None:
-        normalized = question.lower()
-        if not any(pattern in normalized for pattern in _UNCLEAR_PATTERNS):
-            return None
-
-        clarification_note = ""
-        if "补充说明：" in question:
-            clarification_note = question.split("补充说明：", 1)[1].strip()
-        target_text = clarification_note or question
-        target_normalized = target_text.lower()
-
-        scope_is_generic = any(pattern in target_normalized for pattern in _GENERIC_SCOPE_PATTERNS)
-        if scope_is_generic:
-            if self._has_concrete_scope(target_text):
-                return None
-            return ResearchClarificationRequest(
-                summary="当前问题过于宽泛，需要先补充研究范围。",
-                questions=[
-                    ResearchClarificationQuestion(
-                        id="scope",
-                        question="希望聚焦在哪类 AI 编程工具或具体使用场景？",
-                        why_it_matters="范围过大时无法确定检索重点与最终输出结构。",
-                    )
-                ],
-            )
-        if any(marker in target_normalized for marker in _SPECIFIC_MARKERS):
-            return None
-        return None
-
-    def _has_concrete_scope(self, text: str) -> bool:
-        for pattern in _CONCRETE_SCOPE_PATTERNS:
-            if re.search(pattern, text):
-                return True
-        return False

@@ -9,7 +9,6 @@ import type {
   ResearchArtifactsResponse,
   ResearchClarificationSubmitRequest,
   ResearchInterruptRequest,
-  ResearchPlanConfirmRequest,
   ResearchResumeAccepted,
   ResearchResumeRequest,
   ResearchSessionAccepted,
@@ -25,7 +24,6 @@ export type {
   ResearchClarificationSubmitRequest,
   ResearchEventEnvelope,
   ResearchInterruptRequest,
-  ResearchPlanConfirmRequest,
   ResearchPlanSnapshot,
   ResearchPlanSubtask,
   ResearchResumeAccepted,
@@ -74,22 +72,6 @@ export async function createResearchSession(
     method: 'POST',
     body: JSON.stringify(payload),
   });
-}
-
-/**
- * 确认研究计划
- */
-export async function confirmResearchPlan(
-  sessionId: string,
-  data: ResearchPlanConfirmRequest
-): Promise<ResearchSessionAccepted> {
-  return apiFetch<ResearchSessionAccepted>(
-    `/api/v1/research/sessions/${sessionId}/confirm-plan`,
-    {
-      method: 'POST',
-      body: JSON.stringify(data),
-    }
-  );
 }
 
 /**

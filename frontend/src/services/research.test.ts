@@ -4,7 +4,6 @@ import { apiFetch } from './http';
 import { openSseStream } from './sse';
 import {
   createResearchSession,
-  confirmResearchPlan,
   submitResearchClarification,
   type ResearchClarificationRequest,
   type ResearchEventEnvelope,
@@ -44,7 +43,13 @@ describe('research service contract', () => {
     apiFetchMock.mockResolvedValue({
       session_id: 'session-1',
       status: 'queued',
-      plan_snapshot: null,
+      plan_snapshot: {
+        research_brief: '比较三种研究入口的能力边界',
+        complexity: 'comparative',
+        summary: '直接开始研究，不再等待人工确认。',
+        subtasks: [],
+        target_sources: ['web'],
+      },
     });
 
     await createResearchSession({
@@ -60,41 +65,16 @@ describe('research service contract', () => {
     });
   });
 
-  it('confirms plan through the current confirm-plan endpoint', async () => {
-    apiFetchMock.mockResolvedValue({
-      session_id: 'session-1',
-      status: 'queued',
-      plan_snapshot: null,
-    });
-
-    await confirmResearchPlan('session-1', {
-      approved: true,
-      note: '继续执行',
-    });
-
-    expect(apiFetchMock).toHaveBeenCalledWith(
-      '/api/v1/research/sessions/session-1/confirm-plan',
-      {
-        method: 'POST',
-        body: JSON.stringify({
-          approved: true,
-          note: '继续执行',
-        }),
-      }
-    );
-  });
-
   it('submits clarification answers through the clarification endpoint', async () => {
     apiFetchMock.mockResolvedValue({
       session_id: 'session-1',
-      status: 'awaiting_confirmation',
+      status: 'queued',
       plan_snapshot: {
         research_brief: '比较三种研究入口的能力边界',
         complexity: 'comparative',
-        summary: '先看规划，再确认执行。',
+        summary: '补充信息后直接开始研究。',
         subtasks: [],
         target_sources: ['web'],
-        confirmation_required: true,
       },
       clarification_request: null,
     });

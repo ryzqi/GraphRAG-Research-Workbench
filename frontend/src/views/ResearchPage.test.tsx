@@ -20,7 +20,6 @@ vi.mock('react', async () => {
 });
 
 const createResearchSessionMock = vi.fn();
-const confirmPlanMock = vi.fn();
 const submitClarificationMock = vi.fn();
 const interruptSessionMock = vi.fn();
 const resumeSessionMock = vi.fn();
@@ -30,14 +29,13 @@ const hookState = {
   session: undefined as
     | {
         session_id: string;
-        status: 'clarifying' | 'awaiting_confirmation' | 'running';
+        status: 'clarifying' | 'queued' | 'running';
         plan_snapshot: {
           research_brief: string;
           complexity: 'simple' | 'comparative' | 'complex';
           summary: string;
           subtasks: [];
           target_sources: ['web'];
-          confirmation_required: boolean;
         } | null;
         clarification_request: {
           summary: string;
@@ -62,12 +60,6 @@ vi.mock('../hooks/queries/useResearch', () => ({
     isPending: false,
     error: null,
     mutateAsync: createResearchSessionMock,
-    reset: vi.fn(),
-  }),
-  useConfirmResearchPlan: () => ({
-    isPending: false,
-    error: null,
-    mutateAsync: confirmPlanMock,
     reset: vi.fn(),
   }),
   useSubmitResearchClarification: () => ({
@@ -110,8 +102,9 @@ describe('ResearchPage', () => {
   it('renders the new composer before a session exists', () => {
     const html = renderToStaticMarkup(createElement(ResearchPage));
 
-    expect(html).toContain('先规划，再开始研究');
-    expect(html).toContain('生成研究计划');
+    expect(html).toContain('有问题，尽管问');
+    expect(html).toContain('开始研究');
+    expect(html).not.toContain('先规划，再开始研究');
   });
 
   it('renders the workspace shell when a session is active', () => {
@@ -146,12 +139,15 @@ describe('ResearchPage', () => {
       ['', setState],
       ['resume-1', setState],
       ['[{"action":"approve"}]', setState],
+      [true, setState],
     ];
     reactState.index = 0;
 
     const html = renderToStaticMarkup(createElement(ResearchPage));
 
-    expect(html).toContain('研究工作台');
+    expect(html).toContain('研究中…');
+    expect(html).toContain('收起侧栏');
+    expect(html).not.toContain('研究工作台');
   });
 
   it('renders the planning thread with clarification questions instead of the workspace', () => {
@@ -195,6 +191,7 @@ describe('ResearchPage', () => {
       ['面向 20 人研发团队。', setState],
       ['resume-1', setState],
       ['[{"action":"approve"}]', setState],
+      [true, setState],
     ];
     reactState.index = 0;
 
@@ -206,52 +203,4 @@ describe('ResearchPage', () => {
     expect(html).not.toContain('失败');
   });
 
-  it('renders the planning thread with plan confirmation instead of the workspace', () => {
-    hookState.session = {
-      session_id: 'session-awaiting',
-      status: 'awaiting_confirmation',
-      plan_snapshot: {
-        research_brief: '比较三种研究入口的定位与边界',
-        complexity: 'comparative',
-        summary: '先澄清研究对象，再确认最终执行路径。',
-        subtasks: [],
-        target_sources: ['web'],
-        confirmation_required: true,
-      },
-      clarification_request: null,
-      events: [],
-      artifacts: [],
-      last_event_id: null,
-      last_sequence: 0,
-      report_md: null,
-      report_json: null,
-    };
-
-    const setState = vi.fn();
-    reactState.sequence = [
-      ['研究入口对比', setState],
-      ['session-awaiting', setState],
-      [
-        {
-          session_id: 'session-awaiting',
-          status: 'awaiting_confirmation',
-          plan_snapshot: hookState.session.plan_snapshot,
-          clarification_request: null,
-        },
-        setState,
-      ],
-      [false, setState],
-      [null, setState],
-      ['', setState],
-      ['resume-1', setState],
-      ['[{"action":"approve"}]', setState],
-    ];
-    reactState.index = 0;
-
-    const html = renderToStaticMarkup(createElement(ResearchPage));
-
-    expect(html).toContain('计划草案');
-    expect(html).toContain('确认计划并开始研究');
-    expect(html).not.toContain('研究工作台');
-  });
 });

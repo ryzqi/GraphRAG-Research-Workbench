@@ -100,7 +100,6 @@ async def test_deep_research_runtime_runner_builds_source_bundle_from_structured
                 target_sources=[ResearchSourceTarget.WEB],
             )
         ],
-        confirmation_required=False,
     )
 
     result = await runner.run_session(session=session, plan_snapshot=plan_snapshot)
@@ -196,7 +195,6 @@ async def test_deep_research_runtime_runner_fills_missing_origin_url_for_web_cit
                 target_sources=[ResearchSourceTarget.WEB],
             )
         ],
-        confirmation_required=False,
     )
 
     result = await runner.run_session(session=session, plan_snapshot=plan_snapshot)

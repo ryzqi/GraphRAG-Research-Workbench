@@ -118,7 +118,6 @@ async def test_execute_session_persists_trace_metrics_gate_and_trace_events() ->
         complexity="comparative",
         summary="先跑网页来源，再汇总门禁。",
         target_sources=[ResearchSourceTarget.WEB],
-        confirmation_required=False,
     )
 
     await service.execute_session(

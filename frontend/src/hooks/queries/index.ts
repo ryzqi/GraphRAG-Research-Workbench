@@ -23,7 +23,6 @@ export {
 export {
   useResearchSession,
   useCreateResearchSession,
-  useConfirmResearchPlan,
   useInterruptResearchSession,
   useResumeResearchSession,
   researchKeys,

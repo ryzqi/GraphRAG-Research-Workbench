@@ -89,7 +89,6 @@ class ResearchPlanSnapshot(BaseModel):
     subtasks: list[ResearchPlanSubtask] = Field(default_factory=list)
     target_sources: list[ResearchSourceTarget] = Field(min_length=1)
     budget_guidance: str | None = None
-    confirmation_required: bool = False
 
     @field_validator("research_brief")
     @classmethod
@@ -159,23 +158,11 @@ class ResearchSessionAccepted(BaseModel):
         ):
             raise ValueError("clarifying 状态必须包含 clarification_request")
         if (
-            self.status == ResearchSessionStatus.AWAITING_CONFIRMATION
+            self.status == ResearchSessionStatus.QUEUED
             and self.plan_snapshot is None
         ):
-            raise ValueError("awaiting_confirmation 状态必须包含 plan_snapshot")
+            raise ValueError("queued 状态必须包含 plan_snapshot")
         return self
-
-
-class ResearchPlanConfirmRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    approved: bool = True
-    note: str | None = None
-
-    @field_validator("note")
-    @classmethod
-    def _validate_note(cls, value: str | None) -> str | None:
-        return _normalize_optional_text(value, field_name="note")
 
 
 class ResearchCanonicalCitation(BaseModel):

@@ -80,7 +80,6 @@ async def test_replay_matches_terminal_session_state() -> None:
         complexity="simple",
         summary="关注 terminal event 与 sequence 连续性。",
         target_sources=[ResearchSourceTarget.PAPER],
-        confirmation_required=False,
     )
 
     await service.execute_session(session=session, plan_snapshot=plan_snapshot)

@@ -31,12 +31,12 @@
 - `session_id`
 - `status`
 - `status=clarifying` 时返回 `clarification_request`
-- `status=awaiting_confirmation` 时返回 `plan_snapshot`
+- `status=queued` 时返回 `plan_snapshot`
 
 说明：
 
 - `plan_first` 固定为 `true`，当前公开契约只支持 clarification-first / plan-first 路径。
-- 创建会话不会直接进入执行态；planner 会先返回澄清问题或待确认计划。
+- 创建会话会先进入 LLM scoping；若信息足够则直接返回 `queued` 并开始研究，若不足则返回 `clarifying`。
 
 ### 2. 提交澄清回答
 
@@ -53,28 +53,14 @@
 响应：
 
 - 若信息仍不足：`status=clarifying` + `clarification_request`
-- 若已可生成计划：`status=awaiting_confirmation` + `plan_snapshot`
-
-### 3. 确认研究计划
-
-- `POST /api/v1/research/sessions/{session_id}/confirm-plan`
-
-请求体：
-
-```json
-{
-  "approved": true,
-  "note": "继续执行"
-}
-```
+- 若已可生成计划：`status=queued` + `plan_snapshot`
 
 说明：
 
-- `confirm-plan` 仅用于 `awaiting_confirmation` 阶段。
-- 只有在 `approved=true` 后，会话才会进入 `queued`，随后由 worker/runtime 推进到 `running`。
-- `clarifying` 阶段不能直接调用确认执行。
+- 当前链路不再暴露人工确认计划接口。
+- `plan_snapshot` 仍会返回并持久化，但只作为研究前计划展示与审计工件，不再阻塞执行。
 
-### 4. 读取研究事件流
+### 3. 读取研究事件流
 
 - `GET /api/v1/research/sessions/{session_id}/stream`
 
@@ -83,7 +69,7 @@
 - `Last-Event-ID`：优先续流游标
 - `resume_from_event_id`：显式恢复游标
 
-### 5. 中断研究
+### 4. 中断研究
 
 - `POST /api/v1/research/sessions/{session_id}/interrupt`
 
@@ -95,7 +81,7 @@
 }
 ```
 
-### 6. 恢复研究
+### 5. 恢复研究
 
 - `POST /api/v1/research/sessions/{session_id}/resume`
 
@@ -114,7 +100,7 @@
 }
 ```
 
-### 7. 读取研究工件
+### 6. 读取研究工件
 
 - `GET /api/v1/research/sessions/{session_id}/artifacts`
 

@@ -126,7 +126,7 @@ class ResearchService:
         ensure_research_trace_id(session)
 
         session.transition_to(ResearchSessionStatus.PLANNING)
-        plan_result = self._planner.build_plan(request)
+        plan_result = await self._planner.build_plan(request)
         if plan_result.clarification_request is not None:
             await self._persist_clarification_request(
                 session=session,
@@ -154,7 +154,12 @@ class ResearchService:
             session=session,
             event_type="research.plan.created",
             phase="planner",
-            payload={**plan_result.artifact_payload, "lc_agent_name": "planner"},
+            payload={
+                **plan_result.artifact_payload,
+                "lc_agent_name": "planner",
+                "decision_source": "llm_scoper",
+                "auto_start": True,
+            },
             trace_id=session.trace_id,
         )
         session.transition_to(plan_result.next_status)
@@ -192,31 +197,6 @@ class ResearchService:
             content_text=answer,
         )
 
-    async def confirm_plan(
-        self,
-        *,
-        session: ResearchSession,
-        approved: bool,
-        note: str | None = None,
-    ) -> ResearchSession:
-        if session.status == ResearchSessionStatus.CLARIFYING:
-            raise bad_request(
-                code="RESEARCH_PLAN_CONFIRM_FORBIDDEN",
-                message="clarifying 状态不允许确认计划",
-            )
-        event_type = "research.plan.confirmed" if approved else "research.plan.rejected"
-        await self._event_store.append(
-            session=session,
-            event_type=event_type,
-            phase="planner",
-            payload={"approved": approved, "note": note, "lc_agent_name": "planner"},
-            trace_id=session.trace_id,
-        )
-        session.transition_to(
-            ResearchSessionStatus.QUEUED if approved else ResearchSessionStatus.CANCELED
-        )
-        return session
-
     async def submit_clarification(
         self,
         *,
@@ -240,7 +220,7 @@ class ResearchService:
             payload={"answer": answer, "effective_question": effective_question},
             trace_id=session.trace_id,
         )
-        plan_result = self._planner.build_plan(
+        plan_result = await self._planner.build_plan(
             ResearchSessionCreateRequest(question=effective_question)
         )
         if plan_result.clarification_request is not None:
@@ -270,7 +250,12 @@ class ResearchService:
             session=session,
             event_type="research.plan.created",
             phase="planner",
-            payload={**plan_result.artifact_payload, "lc_agent_name": "planner"},
+            payload={
+                **plan_result.artifact_payload,
+                "lc_agent_name": "planner",
+                "decision_source": "llm_scoper",
+                "auto_start": True,
+            },
             trace_id=session.trace_id,
         )
         session.transition_to(plan_result.next_status)

@@ -19,7 +19,6 @@ import { ResearchWorkspaceShell } from '../components/research/ResearchWorkspace
 import { Button } from '../components/ui/Button';
 import { ErrorAlert } from '../components/ui/ErrorAlert';
 import { LoadingSpinner } from '../components/ui/LoadingSpinner';
-import { PageHeader } from '../components/ui/PageHeader';
 import { createExport, pollExportUntilDone } from '../services/exports';
 import {
   buildResearchCanvasModel,
@@ -27,7 +26,6 @@ import {
   buildResearchSourceSummary,
 } from '../services/researchWorkbench';
 import {
-  useConfirmResearchPlan,
   useCreateResearchSession,
   useInterruptResearchSession,
   useResearchSession,
@@ -44,7 +42,6 @@ import {
 
 export function ResearchPage() {
   const createSessionMutation = useCreateResearchSession();
-  const confirmPlanMutation = useConfirmResearchPlan();
   const submitClarificationMutation = useSubmitResearchClarification();
   const interruptSessionMutation = useInterruptResearchSession();
   const resumeSessionMutation = useResumeResearchSession();
@@ -57,6 +54,7 @@ export function ResearchPage() {
   const [clarificationDraft, setClarificationDraft] = useState('');
   const [resumeIdempotencyKey, setResumeIdempotencyKey] = useState('resume-1');
   const [decisionDraft, setDecisionDraft] = useState('[{"action":"approve"}]');
+  const [sidebarOpen, setSidebarOpen] = useState(true);
 
   const sessionQuery = useResearchSession(sessionId ?? undefined, acceptedSession);
   const session = sessionQuery.data;
@@ -66,7 +64,6 @@ export function ResearchPage() {
   const mergedError =
     error ??
     (createSessionMutation.error ? getErrorMessage(createSessionMutation.error) : null) ??
-    (confirmPlanMutation.error ? getErrorMessage(confirmPlanMutation.error) : null) ??
     (submitClarificationMutation.error
       ? getErrorMessage(submitClarificationMutation.error)
       : null) ??
@@ -81,10 +78,6 @@ export function ResearchPage() {
     }
     if (createSessionMutation.error) {
       createSessionMutation.reset();
-      return;
-    }
-    if (confirmPlanMutation.error) {
-      confirmPlanMutation.reset();
       return;
     }
     if (submitClarificationMutation.error) {
@@ -132,26 +125,6 @@ export function ResearchPage() {
       setError(getErrorMessage(e));
     }
   }, [createSessionMutation, question]);
-
-  const handleConfirmPlan = useCallback(async () => {
-    if (!sessionId) {
-      return;
-    }
-
-    setError(null);
-    try {
-      const nextAccepted = await confirmPlanMutation.mutateAsync({
-        sessionId,
-        body: {
-          approved: true,
-          note: '继续执行',
-        },
-      });
-      setAcceptedSession(nextAccepted);
-    } catch (caughtError) {
-      setError(getErrorMessage(caughtError));
-    }
-  }, [confirmPlanMutation, sessionId]);
 
   const handleSubmitClarification = useCallback(async () => {
     if (!sessionId) {
@@ -247,6 +220,7 @@ export function ResearchPage() {
     setClarificationDraft('');
     setDecisionDraft('[{"action":"approve"}]');
     setResumeIdempotencyKey('resume-1');
+    setSidebarOpen(true);
   }, []);
 
   const getStatusPresentation = (status: ResearchSessionStatus) => {
@@ -256,18 +230,16 @@ export function ResearchPage() {
         return { badge: 'pending' as const, label: '规划中' };
       case 'clarifying':
         return { badge: 'pending' as const, label: '待补充信息' };
-      case 'awaiting_confirmation':
-        return { badge: 'pending' as const, label: '待确认计划' };
       case 'queued':
-        return { badge: 'queued' as const, label: '排队中...' };
+        return { badge: 'queued' as const, label: '排队中…' };
       case 'running':
-        return { badge: 'running' as const, label: '研究中...' };
+        return { badge: 'running' as const, label: '研究中…' };
       case 'interrupted':
         return { badge: 'pending' as const, label: '已中断' };
       case 'resuming':
-        return { badge: 'running' as const, label: '恢复中...' };
+        return { badge: 'running' as const, label: '恢复中…' };
       case 'finalizing':
-        return { badge: 'running' as const, label: '收口中...' };
+        return { badge: 'running' as const, label: '收口中…' };
       case 'final':
         return { badge: 'succeeded' as const, label: '已完成' };
       case 'canceled':
@@ -307,9 +279,13 @@ export function ResearchPage() {
   );
 
   return (
-    <Container maxWidth="xl" sx={{ py: { xs: 2, md: 3 } }}>
-      <PageHeader title="深度研究" />
-
+    <Container
+      maxWidth="xl"
+      sx={{
+        py: { xs: 2, md: 3 },
+        minHeight: !sessionId ? { xs: 'calc(100vh - 96px)', md: 'calc(100vh - 120px)' } : undefined,
+      }}
+    >
       {!sessionId ? (
         <ResearchComposer
           question={question}
@@ -323,7 +299,7 @@ export function ResearchPage() {
       ) : !session ? (
         <LoadingSpinner text="加载研究任务..." />
       ) : !isExecutionStage ? (
-        <Stack spacing={2}>
+        <Stack spacing={3} sx={{ maxWidth: 920, mx: 'auto', pt: { xs: 2, md: 4 } }}>
           <Stack
             direction={{ xs: 'column', sm: 'row' }}
             justifyContent="space-between"
@@ -331,10 +307,10 @@ export function ResearchPage() {
             spacing={1.5}
           >
             <Stack spacing={0.5}>
-              <Typography variant="overline" sx={{ letterSpacing: '0.2em', color: 'text.secondary' }}>
-                planning thread
+              <Typography variant="overline" sx={{ letterSpacing: '0.18em', color: '#80868b' }}>
+                deep research
               </Typography>
-              <Typography variant="h5" fontWeight={600}>
+              <Typography variant="body2" color="text.secondary">
                 {statusPresentation?.label ?? '规划中'}
               </Typography>
             </Stack>
@@ -347,17 +323,17 @@ export function ResearchPage() {
             question={question}
             status={session.status}
             clarificationRequest={session.clarification_request}
-            planSnapshot={session.plan_snapshot}
             clarificationDraft={clarificationDraft}
             clarificationSubmitPending={submitClarificationMutation.isPending}
             onClarificationDraftChange={setClarificationDraft}
             onSubmitClarification={handleSubmitClarification}
-            onConfirm={handleConfirmPlan}
-            confirmPending={confirmPlanMutation.isPending}
           />
         </Stack>
       ) : (
         <ResearchWorkspaceShell
+          statusLine={statusPresentation?.label ?? '研究中…'}
+          sidebarOpen={sidebarOpen}
+          onToggleSidebar={() => setSidebarOpen((current) => !current)}
           rail={
             <ResearchSessionRail
               question={question.trim()}
@@ -366,12 +342,7 @@ export function ResearchPage() {
               progressItems={progressItems}
               sourceSummary={sourceSummary}
               planPanel={
-                <PlanPreviewPanel
-                  planSnapshot={session.plan_snapshot}
-                  status={session.status}
-                  onConfirm={handleConfirmPlan}
-                  confirmPending={confirmPlanMutation.isPending}
-                />
+                <PlanPreviewPanel planSnapshot={session.plan_snapshot} />
               }
               interruptPanel={
                 <Stack spacing={1.5}>

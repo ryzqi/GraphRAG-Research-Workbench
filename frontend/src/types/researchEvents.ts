@@ -2,7 +2,6 @@ export type ResearchSessionStatus =
   | 'created'
   | 'planning'
   | 'clarifying'
-  | 'awaiting_confirmation'
   | 'queued'
   | 'running'
   | 'interrupted'
@@ -34,7 +33,6 @@ export interface ResearchPlanSnapshot {
   subtasks: ResearchPlanSubtask[];
   target_sources: ResearchSourceTarget[];
   budget_guidance?: string | null;
-  confirmation_required: boolean;
 }
 
 export interface ResearchClarificationQuestion {
@@ -53,11 +51,6 @@ export interface ResearchSessionAccepted {
   status: ResearchSessionStatus;
   plan_snapshot: ResearchPlanSnapshot | null;
   clarification_request: ResearchClarificationRequest | null;
-}
-
-export interface ResearchPlanConfirmRequest {
-  approved?: boolean;
-  note?: string | null;
 }
 
 export interface ResearchClarificationSubmitRequest {

@@ -2,43 +2,36 @@ import { Paper, Stack, TextField, Typography } from '@mui/material';
 
 import type {
   ResearchClarificationRequest,
-  ResearchPlanSnapshot,
   ResearchSessionStatus,
 } from '../../types/researchEvents';
 import { Button } from '../ui/Button';
-import { PlanPreviewPanel } from './PlanPreviewPanel';
 
 interface ResearchPlanningThreadProps {
   question: string;
   status: ResearchSessionStatus;
   clarificationRequest?: ResearchClarificationRequest | null;
-  planSnapshot?: ResearchPlanSnapshot | null;
   clarificationDraft?: string;
   clarificationSubmitPending?: boolean;
   onClarificationDraftChange?: ((value: string) => void) | undefined;
   onSubmitClarification?: (() => void | Promise<void>) | undefined;
-  confirmPending?: boolean;
-  onConfirm?: (() => void | Promise<void>) | undefined;
 }
 
 const messageCardSx = {
   borderRadius: 4,
-  borderColor: 'rgba(148, 163, 184, 0.18)',
-  bgcolor: 'rgba(15, 23, 42, 0.82)',
-  color: '#f8fafc',
+  borderColor: 'rgba(223, 225, 229, 0.92)',
+  bgcolor: '#ffffff',
+  color: '#202124',
+  boxShadow: '0 1px 3px rgba(32, 33, 36, 0.08)',
 } as const;
 
 export function ResearchPlanningThread({
   question,
   status,
   clarificationRequest = null,
-  planSnapshot = null,
   clarificationDraft = '',
   clarificationSubmitPending = false,
   onClarificationDraftChange,
   onSubmitClarification,
-  confirmPending = false,
-  onConfirm,
 }: ResearchPlanningThreadProps) {
   const trimmedQuestion = question.trim();
 
@@ -48,30 +41,31 @@ export function ResearchPlanningThread({
         <Paper
           variant="outlined"
           sx={{
-            ...messageCardSx,
-            ml: { xs: 0, md: 8 },
-            bgcolor: '#111827',
+            borderRadius: 999,
+            borderColor: 'rgba(223, 225, 229, 0.92)',
+            bgcolor: '#ffffff',
+            color: '#202124',
+            boxShadow: '0 1px 6px rgba(32, 33, 36, 0.12)',
+            maxWidth: 860,
+            mx: 'auto',
           }}
         >
-          <Stack spacing={0.75} sx={{ p: 2 }}>
-            <Typography variant="overline" sx={{ color: 'rgba(226, 232, 240, 0.5)' }}>
-              user
-            </Typography>
-            <Typography variant="body1">{trimmedQuestion}</Typography>
-          </Stack>
+          <Typography variant="body1" sx={{ px: 2.5, py: 1.5 }}>
+            {trimmedQuestion}
+          </Typography>
         </Paper>
       ) : null}
 
       {status === 'clarifying' && clarificationRequest ? (
         <Paper variant="outlined" sx={messageCardSx}>
           <Stack spacing={1.25} sx={{ p: 2 }}>
-            <Typography variant="overline" sx={{ color: 'rgba(226, 232, 240, 0.5)' }}>
+            <Typography variant="overline" sx={{ color: '#80868b', letterSpacing: '0.18em' }}>
               assistant
             </Typography>
             <Typography variant="body1" fontWeight={600}>
               在开始规划前，还需要补充一点信息
             </Typography>
-            <Typography variant="body2" sx={{ color: 'rgba(226, 232, 240, 0.72)' }}>
+            <Typography variant="body2" sx={{ color: '#5f6368' }}>
               {clarificationRequest.summary}
             </Typography>
             <Stack component="ol" spacing={1.25} sx={{ pl: 2.5, m: 0 }}>
@@ -83,7 +77,7 @@ export function ResearchPlanningThread({
                   <Typography
                     component="span"
                     variant="body2"
-                    sx={{ display: 'block', mt: 0.5, color: 'rgba(226, 232, 240, 0.68)' }}
+                    sx={{ display: 'block', mt: 0.5, color: '#5f6368' }}
                   >
                     {item.why_it_matters}
                   </Typography>
@@ -91,7 +85,7 @@ export function ResearchPlanningThread({
               ))}
             </Stack>
             <Stack spacing={1.25}>
-              <Typography variant="body2" sx={{ color: 'rgba(226, 232, 240, 0.78)' }}>
+              <Typography variant="body2" sx={{ color: '#5f6368' }}>
                 补充你的回答
               </Typography>
               <TextField
@@ -104,9 +98,9 @@ export function ResearchPlanningThread({
                 slotProps={{
                   input: {
                     sx: {
-                      color: '#f8fafc',
+                      color: '#202124',
                       alignItems: 'flex-start',
-                      bgcolor: 'rgba(15, 23, 42, 0.72)',
+                      bgcolor: '#ffffff',
                       borderRadius: 3,
                     },
                   },
@@ -116,17 +110,17 @@ export function ResearchPlanningThread({
                     alignItems: 'flex-start',
                     borderRadius: 3,
                     '& fieldset': {
-                      borderColor: 'rgba(148, 163, 184, 0.24)',
+                      borderColor: 'rgba(223, 225, 229, 0.92)',
                     },
                     '&:hover fieldset': {
-                      borderColor: 'rgba(226, 232, 240, 0.42)',
+                      borderColor: 'rgba(154, 160, 166, 0.72)',
                     },
                     '&.Mui-focused fieldset': {
-                      borderColor: 'rgba(248, 250, 252, 0.72)',
+                      borderColor: '#1a73e8',
                     },
                   },
                   '& .MuiInputBase-input::placeholder': {
-                    color: 'rgba(226, 232, 240, 0.42)',
+                    color: '#80868b',
                     opacity: 1,
                   },
                 }}
@@ -140,12 +134,12 @@ export function ResearchPlanningThread({
                 sx={{
                   alignSelf: 'flex-start',
                   minHeight: 40,
-                  px: 2,
+                  px: 2.5,
                   borderRadius: 999,
-                  bgcolor: '#f8fafc',
-                  color: '#020617',
+                  bgcolor: '#1a73e8',
+                  color: '#ffffff',
                   '&:hover': {
-                    bgcolor: '#e2e8f0',
+                    bgcolor: '#1765cc',
                   },
                 }}
               >
@@ -154,15 +148,6 @@ export function ResearchPlanningThread({
             </Stack>
           </Stack>
         </Paper>
-      ) : null}
-
-      {status === 'awaiting_confirmation' && planSnapshot ? (
-        <PlanPreviewPanel
-          planSnapshot={planSnapshot}
-          status={status}
-          onConfirm={onConfirm}
-          confirmPending={confirmPending}
-        />
       ) : null}
     </Stack>
   );

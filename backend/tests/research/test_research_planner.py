@@ -1,141 +1,91 @@
 from __future__ import annotations
 
+import pytest
+
 from app.models.research_session import ResearchSessionStatus
-from app.schemas.research import ResearchComplexity, ResearchSessionCreateRequest, ResearchSourceTarget
-from app.services.research_planner import ResearchPlanner
+from app.schemas.research import (
+    ResearchClarificationQuestion,
+    ResearchClarificationRequest,
+    ResearchComplexity,
+    ResearchPlanSnapshot,
+    ResearchPlanSubtask,
+    ResearchSessionCreateRequest,
+    ResearchSourceTarget,
+)
+from app.services.research_planner import ResearchPlanner, ResearchScoper
 
 
-def test_simple_research_request_gets_auto_approved_web_plan() -> None:
-    planner = ResearchPlanner()
+class _StaticScoper(ResearchScoper):
+    def __init__(
+        self,
+        result: ResearchClarificationRequest | ResearchPlanSnapshot,
+    ) -> None:
+        self.result = result
+        self.questions: list[str] = []
 
-    plan = planner.build_plan(
-        ResearchSessionCreateRequest(
-            question="总结 LangGraph StateGraph 的核心概念",
+    async def scope(
+        self,
+        *,
+        question: str,
+    ) -> ResearchClarificationRequest | ResearchPlanSnapshot:
+        self.questions.append(question)
+        return self.result
+
+
+@pytest.mark.asyncio
+async def test_planner_returns_clarification_request_when_scoper_requires_more_context() -> None:
+    scoper = _StaticScoper(
+        ResearchClarificationRequest(
+            summary="研究范围还不够清楚，需要先补充目标场景。",
+            questions=[
+                ResearchClarificationQuestion(
+                    id="scope",
+                    question="你更关注个人使用建议，还是团队落地方案？",
+                    why_it_matters="目标不同会直接影响研究维度和输出结构。",
+                )
+            ],
         )
     )
+    planner = ResearchPlanner(scoper=scoper)
 
-    assert plan.plan_snapshot.complexity == ResearchComplexity.SIMPLE
-    assert plan.plan_snapshot.target_sources == [ResearchSourceTarget.WEB]
-    assert plan.plan_snapshot.confirmation_required is True
-    assert plan.auto_approve is False
-    assert plan.plan_artifact_key == "plan_snapshot"
-
-
-def test_comparative_research_request_requires_confirmation() -> None:
-    planner = ResearchPlanner()
-
-    plan = planner.build_plan(
-        ResearchSessionCreateRequest(
-            question="对比 Tavily 与 SearXNG 在深度研究网页检索中的优缺点",
-        )
-    )
-
-    assert plan.plan_snapshot.complexity == ResearchComplexity.COMPARATIVE
-    assert plan.plan_snapshot.target_sources == [ResearchSourceTarget.WEB]
-    assert plan.plan_snapshot.confirmation_required is True
-    assert plan.auto_approve is False
-    assert len(plan.plan_snapshot.subtasks) >= 2
-
-
-def test_complex_research_request_prioritizes_paper_and_web_route() -> None:
-    planner = ResearchPlanner()
-
-    plan = planner.build_plan(
-        ResearchSessionCreateRequest(
-            question="做一份 2024-2026 Deep Research agent 论文与开源实现综述，并总结落地建议",
-        )
-    )
-
-    assert plan.plan_snapshot.complexity == ResearchComplexity.COMPLEX
-    assert plan.plan_snapshot.target_sources == [
-        ResearchSourceTarget.PAPER,
-        ResearchSourceTarget.WEB,
-    ]
-    assert plan.plan_snapshot.confirmation_required is True
-    assert any(
-        ResearchSourceTarget.PAPER in subtask.target_sources
-        for subtask in plan.plan_snapshot.subtasks
-    )
-    assert plan.artifact_payload["research_brief"] == plan.plan_snapshot.research_brief
-
-
-def test_unclear_research_request_returns_clarification_instead_of_plan() -> None:
-    planner = ResearchPlanner()
-    result = planner.build_plan(
+    result = await planner.build_plan(
         ResearchSessionCreateRequest(question="帮我研究一下 AI 编程工具")
     )
 
+    assert scoper.questions == ["帮我研究一下 AI 编程工具"]
     assert result.clarification_request is not None
     assert result.plan_snapshot is None
     assert result.next_status == ResearchSessionStatus.CLARIFYING
-    assert result.auto_approve is False
+    assert result.auto_approve is True
 
 
-def test_specific_intro_request_should_not_trigger_clarification() -> None:
-    planner = ResearchPlanner()
-    result = planner.build_plan(
+@pytest.mark.asyncio
+async def test_planner_returns_queued_plan_snapshot_when_scoper_can_proceed() -> None:
+    scoper = _StaticScoper(
+        ResearchPlanSnapshot(
+            research_brief="围绕 LangGraph StateGraph 的核心概念与适用边界展开研究。",
+            complexity=ResearchComplexity.SIMPLE,
+            summary="直接整理核心概念、关键机制与典型适用场景。",
+            target_sources=[ResearchSourceTarget.WEB],
+            subtasks=[
+                ResearchPlanSubtask(
+                    title="梳理核心概念",
+                    description="整理 StateGraph 的关键抽象与运行模型。",
+                    target_sources=[ResearchSourceTarget.WEB],
+                )
+            ],
+            budget_guidance="优先官方文档与权威教程。",
+        )
+    )
+    planner = ResearchPlanner(scoper=scoper)
+
+    result = await planner.build_plan(
         ResearchSessionCreateRequest(question="介绍一下 LangGraph StateGraph 的核心概念")
     )
 
     assert result.clarification_request is None
     assert result.plan_snapshot is not None
-    assert result.next_status == ResearchSessionStatus.AWAITING_CONFIRMATION
+    assert result.plan_snapshot.target_sources == [ResearchSourceTarget.WEB]
+    assert result.next_status == ResearchSessionStatus.QUEUED
+    assert result.auto_approve is True
 
-
-def test_help_research_with_specific_subject_should_not_trigger_clarification() -> None:
-    planner = ResearchPlanner()
-    result = planner.build_plan(
-        ResearchSessionCreateRequest(question="帮我研究一下 LangGraph StateGraph 的核心概念")
-    )
-
-    assert result.clarification_request is None
-    assert result.plan_snapshot is not None
-    assert result.next_status == ResearchSessionStatus.AWAITING_CONFIRMATION
-
-
-def test_help_research_with_clarification_answer_should_not_loop() -> None:
-    planner = ResearchPlanner()
-    result = planner.build_plan(
-        ResearchSessionCreateRequest(
-            question="帮我研究一下 AI 编程工具\n补充说明：关注 LangGraph StateGraph 入门与使用场景"
-        )
-    )
-
-    assert result.clarification_request is None
-    assert result.plan_snapshot is not None
-    assert result.next_status == ResearchSessionStatus.AWAITING_CONFIRMATION
-
-
-def test_help_research_with_specific_scenario_should_not_trigger_clarification() -> None:
-    planner = ResearchPlanner()
-    result = planner.build_plan(
-        ResearchSessionCreateRequest(
-            question="帮我研究一下 AI 编程工具在代码审查场景的使用建议"
-        )
-    )
-
-    assert result.clarification_request is None
-    assert result.plan_snapshot is not None
-    assert result.next_status == ResearchSessionStatus.AWAITING_CONFIRMATION
-
-
-def test_help_research_with_brand_but_generic_scope_still_clarifies() -> None:
-    planner = ResearchPlanner()
-    result = planner.build_plan(
-        ResearchSessionCreateRequest(question="帮我研究一下 OpenAI 的 AI 编程工具")
-    )
-
-    assert result.clarification_request is not None
-    assert result.plan_snapshot is None
-    assert result.next_status == ResearchSessionStatus.CLARIFYING
-
-
-def test_help_research_with_generic_usage_advice_still_clarifies() -> None:
-    planner = ResearchPlanner()
-    result = planner.build_plan(
-        ResearchSessionCreateRequest(question="帮我研究一下 AI 编程工具使用建议")
-    )
-
-    assert result.clarification_request is not None
-    assert result.plan_snapshot is None
-    assert result.next_status == ResearchSessionStatus.CLARIFYING

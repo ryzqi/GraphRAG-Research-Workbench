@@ -31,11 +31,16 @@ def test_research_session_exposes_runtime_state_machine_fields() -> None:
     assert session_table.c.last_event_sequence.nullable is False
 
 
+def test_research_session_does_not_reintroduce_removed_kb_selection_columns() -> None:
+    session_table = ResearchSession.__table__
+
+    assert "selected_kb_ids" not in session_table.c
+    assert "allow_external" not in session_table.c
+
+
 def test_terminal_research_session_states_are_irreversible() -> None:
     session = ResearchSession(
         question="对比 deep agents research runtime 方案",
-        selected_kb_ids=[],
-        allow_external=True,
         status=ResearchSessionStatus.FINAL,
         thread_id="research-session-1",
     )
@@ -63,8 +68,6 @@ def test_research_session_transition_to_same_status_is_idempotent() -> None:
     session = ResearchSession(
         id=uuid4(),
         question="当前研究会话是否允许同态迁移",
-        selected_kb_ids=[],
-        allow_external=False,
         status=ResearchSessionStatus.CREATED,
         thread_id="research-session-2",
     )
@@ -74,19 +77,16 @@ def test_research_session_transition_to_same_status_is_idempotent() -> None:
     assert session.status == ResearchSessionStatus.CREATED
 
 
-def test_research_session_status_allows_clarifying_before_confirmation() -> None:
+def test_research_session_status_allows_clarifying_before_queueing() -> None:
     assert ResearchSessionStatus.PLANNING.can_transition_to(ResearchSessionStatus.CLARIFYING)
-    assert ResearchSessionStatus.CLARIFYING.can_transition_to(
-        ResearchSessionStatus.AWAITING_CONFIRMATION
-    )
+    assert ResearchSessionStatus.PLANNING.can_transition_to(ResearchSessionStatus.QUEUED)
+    assert ResearchSessionStatus.CLARIFYING.can_transition_to(ResearchSessionStatus.QUEUED)
     assert not ResearchSessionStatus.CLARIFYING.can_transition_to(ResearchSessionStatus.RUNNING)
 
 
 def test_research_session_clarifying_cannot_transition_to_running() -> None:
     session = ResearchSession(
         question="需要补充研究澄清信息",
-        selected_kb_ids=[],
-        allow_external=False,
         status=ResearchSessionStatus.CLARIFYING,
         thread_id="research-session-clarify-1",
     )
