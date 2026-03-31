@@ -44,7 +44,7 @@ def test_research_runtime_defaults_lock_single_entry_policy() -> None:
         "include_web_research": True,
         "include_mcp": False,
     }
-    assert config.large_result_policy.spill_path_prefix == "/workspace/runtime-spill/"
+    assert config.large_result_policy.spill_path_prefix == "/scratch/research-spill/"
     assert config.stream_policy.as_kwargs() == {"subgraphs": True, "version": "v2"}
 
 
