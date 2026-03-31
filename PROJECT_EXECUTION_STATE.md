@@ -3,49 +3,37 @@
 ## Current State
 - Current Mode: Multi-phase
 - Artifact Policy / Active Planning Files: `PROJECT_PHASE_ROADMAP.md`, `TASK_TODO_MEDIUM.md`, `TASK_TODO_FINE.md`, `PROJECT_EXECUTION_STATE.md`
-- Current Focus / Active Phase: Phase 8 - Advanced Patterns（已验证通过，待提交 commit）
-- Eval Objective: 在不改变 UI 与交互语义的前提下，将长期存在的控制对象初始化与 DOM 事件回调切到更稳定的高级模式，减少重复初始化与 effect 重新订阅。
-- Evaluation Surface / Fixed Baseline:
-  - `frontend/src/hooks/useGeneralChatController.ts` 与 `frontend/src/hooks/useKbChatSessionController.ts` 使用 `useRef(new ChatSessionRequestControl())`，会在每次 render 执行构造表达式
-  - `frontend/src/hooks/useModalAccessibility.ts` 的 `keydown` 监听依赖 `useCallback`，当 `isOpen` / `onClose` 变化时会走 effect 重新订阅
-- Metric / Rubric:
-  - `ChatSessionRequestControl` 改为 lazy init，只在首次需要时构造
-  - `useModalAccessibility()` 改为 `useEffectEvent` 驱动的稳定监听回调
-  - 保持原有对外 API 与交互语义不变
-  - typecheck / targeted eslint / build 通过
-- Pass Threshold / Stop Condition: Phase 8 的高级模式收口完成，并拿到对应验证证据后才允许宣称全部任务完成
-- Active Execution Wave:
-  - 已完成：`useGeneralChatController.ts` 与 `useKbChatSessionController.ts` 切换到 lazy ref 初始化
-  - 已完成：`useModalAccessibility.ts` 使用 `useEffectEvent` 稳定键盘事件回调
-  - 已完成：Phase 8 fresh verification
-  - 待执行：提交 commit、最终全链路验证与总结
-- Last Verified Stop Point:
-  - Phase 7 commit：`830477f`
-  - Phase 7 verification：
-    - `npm run typecheck`
-    - `npx eslint src/services/researchWorkbench.ts src/views/ResearchPage.tsx src/components/research/ArtifactPanel.tsx src/components/IngestionManifestEditor.tsx`
-    - `npx vitest run src/services/researchWorkbench.test.ts`
-    - `npm run build`（require_escalated）
-- Latest Improvement / Regression Notes:
-  - 当前修改聚焦 advanced patterns，不改变任何页面结构与样式。
-  - request-control 构造从“每次 render 执行表达式”改为“首次访问时构造”。
-  - 键盘监听切到 `useEffectEvent`，目标是减少 effect 重订阅而非改变交互行为。
-- Plateau / No-Signal Count: 0
-- Next Recommended Action: 提交 Phase 8 commit，然后执行最终全链路验证
-- Current Blockers: 无代码级 blocker；build 在沙箱内可能触发 `spawn EPERM`，如遇到需按既有方式提权
-- Assumptions Awaiting Confirmation:
-  - `ChatSessionRequestControl` 的 lazy init 不会影响现有请求控制语义
-  - `useEffectEvent` 适合作为当前 hook 中稳定 DOM 事件回调的最小落点
-- Parked / Deferred Items:
-  - 本轮未发现需要额外引入 `useLatest` / 自定义 handler ref 容器的更高价值热点
-  - 若后续出现更多跨 effect 的 DOM 事件监听，再统一复用相同模式
-- Key Recent Decisions:
-  - 8.1 选择请求控制器而非 UI state 作为“初始化一次”的最小落点
-  - 8.2/8.3 合并落在 `useModalAccessibility()`，避免为覆盖规则做低价值改动
-  - 不修改业务流控制，只处理初始化与监听稳定性
-- Verification Evidence Reference:
+- Current Focus / Active Phase: Completed（全部 8 个性能类别已完成）
+- Eval Objective: 在不改变 UI 风格、配色与设计语言的前提下，完成 8 个 Vercel React Best Practices 大类别的前端性能优化，并保留逐阶段可审计提交链。
+- Completion Summary:
+  - Phase 1 `8e7e152` — `perf(frontend): eliminate route prefetch waterfalls`
+  - Phase 2 `7f5eee0` — `perf(frontend): optimize bundle splitting for research and shell`
+  - Phase 3 `7fd0750` — `perf(frontend): stabilize server prefetch caching`
+  - Phase 4 `6df521f` — `perf(frontend): streamline client data fetching paths`
+  - Phase 5 `53a8dd2` — `perf(frontend): reduce avoidable rerenders`
+  - Phase 6 `567e1af` — `perf(frontend): improve rendering hotspots`
+  - Phase 7 `830477f` — `perf(frontend): reduce javascript hot-path overhead`
+  - Phase 8 `b281944` — `perf(frontend): apply advanced runtime patterns`
+- Final Verification Surface:
+  - `npm run typecheck`
+  - `npm run lint`
+  - `npx vitest run src/services/http.test.ts src/services/routePrefetch.test.ts src/services/researchWorkbench.test.ts`
+  - `npm run build`
+  - `git status --short`
+- Final Verification Evidence:
   - 2026-03-31 `npm run typecheck` 通过
-  - 2026-03-31 `npx eslint src/hooks/useModalAccessibility.ts src/hooks/useGeneralChatController.ts src/hooks/useKbChatSessionController.ts` 通过
+  - 2026-03-31 `npm run lint` 通过
+  - 2026-03-31 `npx vitest run src/services/http.test.ts src/services/routePrefetch.test.ts src/services/researchWorkbench.test.ts` 通过（3 files, 14 tests）
   - 2026-03-31 `npm run build` 通过（require_escalated；sandbox 内 `spawn EPERM`）
-- Related Files: `PROJECT_PHASE_ROADMAP.md`, `TASK_TODO_MEDIUM.md`, `TASK_TODO_FINE.md`, `frontend/src/hooks/useModalAccessibility.ts`, `frontend/src/hooks/useGeneralChatController.ts`, `frontend/src/hooks/useKbChatSessionController.ts`
+  - 2026-03-31 `git status --short` 空
+- Latest Improvement / Regression Notes:
+  - 最终 lint 验证时发现 `line-limit-exemptions.json` 仍指向已在 Phase 2 重命名的 `src/theme/index.ts`；已改为 `src/theme/md3Theme.ts` 以恢复 repo lint 健康度。
+  - 除上述 lint 配置同步外，本轮未再引入新的功能或视觉变更。
+- Current Blockers: 无
+- Next Recommended Action: 无；当前可进入人工评审 / 推送 / 合并流程
+- Verification Evidence Reference:
+  - `frontend/config/line-limit-exemptions.json`
+  - `git log --oneline -8`
+  - 最终验证命令输出
+- Related Files: `PROJECT_PHASE_ROADMAP.md`, `TASK_TODO_MEDIUM.md`, `TASK_TODO_FINE.md`, `archive/perf-phases/*`
 - Last Updated: 2026-03-31

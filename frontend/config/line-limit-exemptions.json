@@ -63,7 +63,7 @@
     "reason": "聊天服务模块拆分前临时豁免"
   },
   {
-    "path": "src/theme/index.ts",
+    "path": "src/theme/md3Theme.ts",
     "maxLines": 800,
     "expiresOn": "2026-06-30",
     "owner": "frontend",
