@@ -3,52 +3,51 @@
 ## Current State
 - Current Mode: Multi-phase
 - Artifact Policy / Active Planning Files: `PROJECT_PHASE_ROADMAP.md`, `TASK_TODO_MEDIUM.md`, `TASK_TODO_FINE.md`, `PROJECT_EXECUTION_STATE.md`
-- Current Focus / Active Phase: Phase 6 - Rendering Performance（已验证通过，待提交 commit）
-- Eval Objective: 在不改变 UI 风格与交互语义的前提下，减少长列表首屏绘制成本，缩小预期 hydration mismatch 的噪音面，并为跨域 API 请求补充早期连接提示。
+- Current Focus / Active Phase: Phase 7 - JavaScript Performance（已验证通过，待提交 commit）
+- Eval Objective: 在不改变 UI 与交互语义的前提下，减少重复数组遍历、重复排序与可缓存函数调用，收敛低中优先级的 JS 运行时开销。
 - Evaluation Surface / Fixed Baseline:
-  - `frontend/src/views/KbChatPage.tsx` 直接在 JSX 中渲染当前时间，属于预期 hydration mismatch 热点
-  - `frontend/src/views/ExtensionsPage.tsx` 直接在 render 阶段做 `toLocaleString()`，存在 locale/timezone mismatch 风险
-  - `frontend/src/views/KnowledgeBasesPage.tsx` 与 `frontend/src/components/research/ResearchProgressFeed.tsx` 的列表项尚未补 `content-visibility`
-  - `frontend/src/providers/AppProviders.tsx` 尚未对跨域 API origin 发出 React DOM resource hints
+  - `frontend/src/services/researchWorkbench.ts` 在 `ResearchPage` 中重复构建 progress feed，并对 artifacts 做多次查找
+  - `frontend/src/components/research/ArtifactPanel.tsx` 对同一 citations 数组做两次 `filter`
+  - `frontend/src/components/IngestionManifestEditor.tsx` 为 URL / file 数量做两次完整 `filter`
 - Metric / Rubric:
-  - 长列表项仅在接近视口时参与布局/绘制
-  - 预期的时间文本 mismatch 被局部抑制，而不是继续扩大到更高层
-  - 静态 `Intl.DateTimeFormat` 实例被 hoist，避免热路径反复创建
-  - `prefetchDNS` / `preconnect` 对 API origin 生效
-  - typecheck / targeted eslint / build 通过
-- Pass Threshold / Stop Condition: Phase 6 的渲染层热点处理完成，并拿到对应验证证据后才能提交并进入 Phase 7
+  - `ResearchPage` / `researchWorkbench` 避免对同一事件列表重复排序与映射
+  - citations / manifest entries 的类型统计改为单次遍历
+  - 保持现有行为与输出结构不变
+  - typecheck / targeted eslint / relevant tests / build 通过
+- Pass Threshold / Stop Condition: Phase 7 的 JS 热点处理完成，并拿到对应验证证据后才能提交并进入 Phase 8
 - Active Execution Wave:
-  - 已完成：`http.ts` 暴露 API origin，`AppProviders.tsx` 补充 React DOM resource hints
-  - 已完成：`KnowledgeBasesPage.tsx`、`ResearchProgressFeed.tsx`、`ExtensionsPage.tsx` 列表项补 `content-visibility`
-  - 已完成：`KbChatPage.tsx` 与 `ExtensionsPage.tsx` 的时间格式化 hoist，并在 leaf 节点抑制预期 hydration mismatch
-  - 已完成：Phase 6 fresh verification
-  - 待执行：提交 commit，并刷新到 Phase 7
+  - 已完成：`researchWorkbench.ts` 新增单次 artifacts 汇总，并允许复用预先计算的 progress feed
+  - 已完成：`ResearchPage.tsx` 复用 `progressItems`，避免 canvas model 再次排序事件
+  - 已完成：`ArtifactPanel.tsx` 与 `IngestionManifestEditor.tsx` 收敛为单次分类/计数遍历
+  - 已完成：Phase 7 fresh verification
+  - 待执行：提交 commit，并刷新到 Phase 8
 - Last Verified Stop Point:
-  - Phase 5 commit：`53a8dd2`
-  - Phase 5 verification：
+  - Phase 6 commit：`567e1af`
+  - Phase 6 verification：
     - `npm run typecheck`
-    - `npx eslint src/views/KbChatPage.tsx src/views/ModelConfigPage.tsx src/components/EvidenceList.tsx src/components/KnowledgeBaseSelector.tsx`
-    - `npm run build`（必要时 require_escalated）
+    - `npx eslint src/services/http.ts src/providers/AppProviders.tsx src/views/KbChatPage.tsx src/views/ExtensionsPage.tsx src/views/KnowledgeBasesPage.tsx src/components/research/ResearchProgressFeed.tsx`
+    - `npm run build`（require_escalated）
 - Latest Improvement / Regression Notes:
-  - 当前修改集中在 rendering 层，不改变现有视觉样式与交互入口。
-  - `AppProviders.tsx` 使用 React 19 `prefetchDNS` / `preconnect`，目标是跨域 API origin 的更早连接建立。
-  - `KbChatPage.tsx` 与 `ExtensionsPage.tsx` 改为静态 formatter + leaf `suppressHydrationWarning`，避免继续在热路径里重复创建 formatter。
+  - 当前修改聚焦 JS 微观性能，不变更任何视图结构与视觉表现。
+  - `ResearchPage` 继续复用现有 memo 边界，只减少重复计算。
+  - manifest 校验与 citation 分类仍保持原有输出语义。
 - Plateau / No-Signal Count: 0
-- Next Recommended Action: 提交 Phase 6 commit，然后切换 active planning docs 到 Phase 7
+- Next Recommended Action: 提交 Phase 7 commit，然后切换 active planning docs 到 Phase 8
 - Current Blockers: 无代码级 blocker；build 在沙箱内可能触发 `spawn EPERM`，如遇到需按既有方式提权
 - Assumptions Awaiting Confirmation:
-  - 当前部署形态下 API origin 与页面 origin 分离，`preconnect` 对首个 API 请求仍有收益
-  - KbChat / Extensions 的时间文本属于“预期不稳定文本”，使用 leaf 级 `suppressHydrationWarning` 比扩大 suppress 范围更稳妥
+  - `ResearchPage` 是 research workbench 中重复计算最明显的热路径之一
+  - URL / file 数量统计与 citation 分类改为单次遍历不会影响错误信息与渲染顺序
 - Parked / Deferred Items:
-  - 6.1/6.4/6.5/6.7/6.8/6.9/6.11 本轮暂未发现更高价值、且不改变行为语义的最小落点
-  - 如果后续发现脚本标签或更重的 SVG 动画热点，再在对应阶段补充
+  - 7.1/7.2/7.3/7.5/7.7/7.8/7.9/7.10/7.11/7.12/7.13/7.14 本轮暂未发现更高价值、且不改变行为语义的最小落点
+  - 若后续出现明确的 localStorage/sessionStorage 热点，再单独处理 7.5
 - Key Recent Decisions:
-  - 只把 `content-visibility` 扩展到真正可能增长的列表，而不是全站批量套用
-  - 时间文本 mismatch 只在 leaf 节点抑制，不继续扩大到布局容器
-  - resource hints 复用现有 `http.ts` 的 API base URL 事实源，不引入第二套 origin 配置
+  - 优先处理“同一数据在同一渲染周期内被重复遍历/重复排序”的热点
+  - 只在不改变返回结构的前提下做单次遍历优化
+  - `researchWorkbench.ts` 保持向后兼容的可选参数，以降低测试与调用方改动面
 - Verification Evidence Reference:
   - 2026-03-31 `npm run typecheck` 通过
-  - 2026-03-31 `npx eslint src/services/http.ts src/providers/AppProviders.tsx src/views/KbChatPage.tsx src/views/ExtensionsPage.tsx src/views/KnowledgeBasesPage.tsx src/components/research/ResearchProgressFeed.tsx` 通过
+  - 2026-03-31 `npx eslint src/services/researchWorkbench.ts src/views/ResearchPage.tsx src/components/research/ArtifactPanel.tsx src/components/IngestionManifestEditor.tsx` 通过
+  - 2026-03-31 `npx vitest run src/services/researchWorkbench.test.ts` 通过
   - 2026-03-31 `npm run build` 通过（require_escalated；sandbox 内 `spawn EPERM`）
-- Related Files: `PROJECT_PHASE_ROADMAP.md`, `TASK_TODO_MEDIUM.md`, `TASK_TODO_FINE.md`, `frontend/src/services/http.ts`, `frontend/src/providers/AppProviders.tsx`, `frontend/src/views/KbChatPage.tsx`, `frontend/src/views/ExtensionsPage.tsx`, `frontend/src/views/KnowledgeBasesPage.tsx`, `frontend/src/components/research/ResearchProgressFeed.tsx`
+- Related Files: `PROJECT_PHASE_ROADMAP.md`, `TASK_TODO_MEDIUM.md`, `TASK_TODO_FINE.md`, `frontend/src/services/researchWorkbench.ts`, `frontend/src/views/ResearchPage.tsx`, `frontend/src/components/research/ArtifactPanel.tsx`, `frontend/src/components/IngestionManifestEditor.tsx`
 - Last Updated: 2026-03-31

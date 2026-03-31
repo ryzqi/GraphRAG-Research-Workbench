@@ -8,7 +8,7 @@
 - Customer Problem / Desired Outcome: 在不改变视觉风格、配色与交互设计语言的前提下，系统性消除前端性能热点，降低首屏阻塞、缩小 bundle、减少不必要重渲染与运行时开销。
 - Why Now / Decision Driver: 用户明确要求按 Vercel React Best Practices 分大类逐项落地，并要求每个大类完成后独立提交，形成可审计演进历史。
 - Overall Goal: 依照 8 个性能类别依次完成前端性能优化，每个类别都保留“代码改动 + 直接验证 + 独立 git 提交”证据链。
-- Current Active Phase: Phase 6 - Rendering Performance
+- Current Active Phase: Phase 7 - JavaScript Performance
 - Overall Success Criteria:
   - 8 个大类别全部按顺序完成，中间不跳类、不混类。
   - 每个类别仅做性能相关优化，不改视觉风格、配色或产品设计。
@@ -49,7 +49,7 @@
 - Module / Domain 3: `frontend/src/components`
   - Responsibility: 可复用 UI / Chat / Research / Shell 组件
   - Key dependencies: MUI、React、Next dynamic/lazy
-  - Notes: Phase 2、4、5、6、8 的主要改动面
+  - Notes: Phase 2、4、5、6、7、8 的主要改动面
 - Module / Domain 4: `frontend/src/hooks` + `frontend/src/services`
   - Responsibility: 数据获取、SWR、流式会话控制、纯函数工具
   - Key dependencies: `swr`, `fetch`, route prefetch helpers
@@ -111,24 +111,24 @@
 - Transition Notes: 已完成并提交 `53a8dd2`
 
 ### Phase 6: Rendering Performance
-- Status: Active
+- Status: Completed
 - Objective: 优化 hydration、条件渲染、资源提示与长列表显示策略。
-- Scope Boundary: 仅覆盖 6.1~6.11；本轮实际落点优先聚焦 6.2、6.3、6.6、6.10，并审计 6.1/6.4/6.5/6.7/6.8/6.9/6.11 是否存在高价值最小改动。
+- Scope Boundary: 仅覆盖 6.1~6.11；实际落点聚焦 6.2、6.3、6.6、6.10，并审计其余规则的高价值最小落点。
 - Modules Involved: `src/app`, `src/providers`, `src/components`, `src/views`, `src/services`
 - Main Deliverables: 长列表 `content-visibility`、静态 formatter hoist、预期 hydration mismatch 抑制、React DOM resource hints、验证与 commit
 - Entry Conditions: Phase 5 已提交
 - Completion Conditions: rendering 反模式处理完成并提交
-- Transition Notes: 完成后转入 JS 运行时优化阶段
+- Transition Notes: 已完成并提交 `567e1af`，并归档到 `archive/perf-phases/*.phase-06-rendering.md`
 
 ### Phase 7: JavaScript Performance
-- Status: Pending
+- Status: Active
 - Objective: 收敛循环、查找、缓存与空闲调度等低中优先级热点。
-- Scope Boundary: 仅覆盖 7.1~7.14
-- Modules Involved: `src/services`, `src/hooks`, `src/lib`, `src/views`
-- Main Deliverables: JS 微观性能反模式收敛
+- Scope Boundary: 仅覆盖 7.1~7.14；本轮实际落点优先聚焦 7.4 与 7.6，并审计其余规则是否存在高价值最小改动。
+- Modules Involved: `src/services`, `src/hooks`, `src/lib`, `src/views`, `src/components`
+- Main Deliverables: JS 微观性能反模式收敛、验证与 commit
 - Entry Conditions: Phase 6 已提交
 - Completion Conditions: JS 性能项完成并提交
-- Transition Notes: 转入高级模式阶段
+- Transition Notes: 完成后转入高级模式阶段
 
 ### Phase 8: Advanced Patterns
 - Status: Pending
@@ -164,11 +164,15 @@
 - 2026-03-31:
   - What changed: Phase 5 完成并提交 `53a8dd2`
   - Why it changed: 已满足重渲染优化类别的完成条件
-  - Impact on current or future phases: 当前切换到 Rendering Performance
+  - Impact on current or future phases: 切换到 Rendering Performance
 - 2026-03-31:
-  - What changed: active planning files 刷新到 Phase 6
-  - Why it changed: 之前文档仍停留在 Phase 4，需与真实提交进度对齐
-  - Impact on current or future phases: 后续 Phase 6/7/8 将继续基于当前 active docs 推进
+  - What changed: Phase 6 完成并提交 `567e1af`
+  - Why it changed: 已满足 rendering performance 类别的完成条件
+  - Impact on current or future phases: 当前切换到 JavaScript Performance
+- 2026-03-31:
+  - What changed: active planning files 刷新到 Phase 7
+  - Why it changed: 需要从已完成的 rendering 阶段转入 JS 微观性能阶段
+  - Impact on current or future phases: 后续 Phase 7/8 将继续基于当前 active docs 推进
 
 ## Archive References
 - Phase archive path(s): `archive/perf-phases/`
@@ -178,3 +182,4 @@
   - Phase 3: `*.phase-03-server-side.md`
   - Phase 4: `*.phase-04-client-data.md`
   - Phase 5: `*.phase-05-rerender.md`
+  - Phase 6: `*.phase-06-rendering.md`

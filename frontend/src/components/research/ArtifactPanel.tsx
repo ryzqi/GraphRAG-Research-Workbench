@@ -27,8 +27,18 @@ export function ArtifactPanel({ reportMd, reportJson, artifacts }: ArtifactPanel
     ? (artifactByKey.coverage_gaps?.content_json as unknown[])
     : [];
   const citations = asCitationList(reportJson?.citations);
-  const webCitations = citations.filter((item) => item.source_type === 'web');
-  const paperCitations = citations.filter((item) => item.source_type === 'paper');
+  const webCitations: ResearchCanonicalCitation[] = [];
+  const paperCitations: ResearchCanonicalCitation[] = [];
+
+  for (const citation of citations) {
+    if (citation.source_type === 'web') {
+      webCitations.push(citation);
+      continue;
+    }
+    if (citation.source_type === 'paper') {
+      paperCitations.push(citation);
+    }
+  }
 
   return (
     <Paper

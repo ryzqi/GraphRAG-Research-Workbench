@@ -166,25 +166,12 @@ export function validateManifestDraftEntries(
   const globalErrors: string[] = [];
   const entryErrors: Record<string, string[]> = {};
   const normalizedValidEntries: NormalizedManifestDraftEntry[] = [];
-
-  const urlCount = entries.filter((entry) => entry.sourceType === 'url').length;
-  const fileCount = entries.filter((entry) => entry.sourceType === 'file').length;
+  let urlCount = 0;
+  let fileCount = 0;
 
   if (entries.length > MAX_MANIFEST_ENTRIES) {
     globalErrors.push(
       '单批次最多 ' + MAX_MANIFEST_ENTRIES + ' 个条目（当前 ' + entries.length + '）'
-    );
-  }
-
-  if (urlCount > MAX_URL_ENTRIES) {
-    globalErrors.push(
-      '单批次 URL 条目不能超过 ' + MAX_URL_ENTRIES + ' 个（当前 ' + urlCount + '）'
-    );
-  }
-
-  if (fileCount > MAX_FILE_ENTRIES) {
-    globalErrors.push(
-      '单批次文件条目不能超过 ' + MAX_FILE_ENTRIES + ' 个（当前 ' + fileCount + '）'
     );
   }
 
@@ -211,6 +198,7 @@ export function validateManifestDraftEntries(
     }
 
     if (entry.sourceType === 'url') {
+      urlCount += 1;
       const url = entry.url.trim();
       if (!url) {
         currentErrors.push('URL 不能为空');
@@ -228,6 +216,7 @@ export function validateManifestDraftEntries(
     }
 
     if (entry.sourceType === 'file') {
+      fileCount += 1;
       if (!entry.file) {
         currentErrors.push('请选择文件');
       } else {
@@ -253,6 +242,18 @@ export function validateManifestDraftEntries(
     if (currentErrors.length > 0) {
       entryErrors[entry.id] = dedupeStrings(currentErrors);
     }
+  }
+
+  if (urlCount > MAX_URL_ENTRIES) {
+    globalErrors.push(
+      '单批次 URL 条目不能超过 ' + MAX_URL_ENTRIES + ' 个（当前 ' + urlCount + '）'
+    );
+  }
+
+  if (fileCount > MAX_FILE_ENTRIES) {
+    globalErrors.push(
+      '单批次文件条目不能超过 ' + MAX_FILE_ENTRIES + ' 个（当前 ' + fileCount + '）'
+    );
   }
 
   return {

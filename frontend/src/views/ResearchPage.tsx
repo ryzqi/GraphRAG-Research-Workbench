@@ -299,8 +299,9 @@ export function ResearchPage() {
         events: session?.events ?? [],
         artifacts: session?.artifacts ?? [],
         reportMd: session?.report_md ?? null,
+        progressFeed: progressItems,
       }),
-    [session]
+    [progressItems, session]
   );
   const hasArtifactPanel = Boolean(
     session?.report_md || session?.report_json || (session?.artifacts.length ?? 0) > 0
