@@ -56,8 +56,8 @@ class ResearchBackendPolicy:
 class ResearchLargeResultPolicy:
     """大结果溢写策略。"""
 
-    spill_path_prefix: str = "/workspace/runtime-spill/"
-    max_inline_chars: int = 16_000
+    spill_path_prefix: str = "/scratch/research-spill/"
+    max_inline_chars: int = 6_000
 
 
 DEFAULT_RESEARCH_PROVIDER_IDS = (

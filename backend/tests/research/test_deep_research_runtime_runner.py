@@ -290,3 +290,80 @@ async def test_build_deep_research_runtime_runner_disables_previous_response_id_
         }
     )
     assert len(relaxed.citations) == 2
+
+
+@pytest.mark.asyncio
+async def test_runner_includes_workspace_bootstrap_files_in_agent_request() -> None:
+    agent = _FakeAgent(
+        {
+            "structured_response": {
+                "findings": [
+                    "Mission 与 Plan 文件应随 runtime request 一起发送。",
+                    "workspace bootstrap 文件要优先于外部检索被代理读取。",
+                ],
+                "citations": [
+                    {
+                        "source_type": "web",
+                        "source_provider": "workspace",
+                        "retrieval_method": "read_file",
+                        "source_id": "/workspace/research/session-1/00-mission.md",
+                        "title": "00-mission.md",
+                        "url": "file:///workspace/research/session-1/00-mission.md",
+                        "origin_url": "file:///workspace/research/session-1/00-mission.md",
+                    },
+                    {
+                        "source_type": "web",
+                        "source_provider": "workspace",
+                        "retrieval_method": "read_file",
+                        "source_id": "/workspace/research/session-1/01-plan.md",
+                        "title": "01-plan.md",
+                        "url": "file:///workspace/research/session-1/01-plan.md",
+                        "origin_url": "file:///workspace/research/session-1/01-plan.md",
+                    },
+                ],
+            }
+        }
+    )
+    runtime = DeepResearchRuntime(
+        agent=agent,
+        config=ResearchRuntimeConfig(
+            primary_model="gpt-5.2",
+            subagent_model="gpt-5.2-mini",
+            system_prompt="你是深度研究助手。",
+        ),
+        tools=[],
+        tool_meta_by_name={},
+        tool_groups={"web": (), "paper": (), "citation": ()},
+    )
+    runner = DeepResearchRuntimeRunner(
+        runtime=runtime,
+        workspace_files={
+            "/workspace/research/session-1/00-mission.md": "# Mission",
+            "/workspace/research/session-1/01-plan.md": "# Plan",
+        },
+    )
+    session_id = uuid.uuid4()
+    session = ResearchSession(
+        id=session_id,
+        thread_id="session-1",
+        question="把 workspace bootstrap 注入 runtime request",
+    )
+    plan_snapshot = ResearchPlanSnapshot(
+        research_brief="验证 mission/plan 文件会进入 runtime request。",
+        complexity="simple",
+        summary="读取 workspace bootstrap 文件并生成结构化结果。",
+        target_sources=[ResearchSourceTarget.WEB],
+        subtasks=[
+            ResearchPlanSubtask(
+                title="读取 Mission 与 Plan",
+                description="确认 request.files 包含 bootstrap markdown。",
+                target_sources=[ResearchSourceTarget.WEB],
+            )
+        ],
+    )
+
+    await runner.run_session(session=session, plan_snapshot=plan_snapshot)
+
+    request, _ = agent.calls[0]
+    assert "/workspace/research/session-1/00-mission.md" in request["files"]
+    assert "/workspace/research/session-1/01-plan.md" in request["files"]
