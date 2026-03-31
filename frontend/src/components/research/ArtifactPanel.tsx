@@ -1,6 +1,5 @@
 import { Box, Chip, Divider, Paper, Stack, Typography } from '@mui/material';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
+import { MarkdownContent } from '../chat/MarkdownContent';
 
 import {
   buildResearchArtifactsByKey,
@@ -82,9 +81,7 @@ export function ArtifactPanel({ reportMd, reportJson, artifacts }: ArtifactPanel
                 variant="outlined"
                 sx={{ p: 2, borderColor: 'rgba(223, 225, 229, 0.92)', bgcolor: '#f8f9fa' }}
               >
-                <ReactMarkdown remarkPlugins={[remarkGfm]} skipHtml>
-                  {reportMd}
-                </ReactMarkdown>
+                <MarkdownContent content={reportMd} />
               </Paper>
             </Stack>
           </>

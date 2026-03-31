@@ -3,46 +3,55 @@
 ## Current State
 - Current Mode: Multi-phase
 - Artifact Policy / Active Planning Files: `PROJECT_PHASE_ROADMAP.md`, `TASK_TODO_MEDIUM.md`, `TASK_TODO_FINE.md`, `PROJECT_EXECUTION_STATE.md`
-- Current Focus / Active Phase: Phase 1 - Eliminating Waterfalls (Completed)
-- Eval Objective: 先消除首屏 waterfall 与阻塞式 await，再用前端验证确认无回归
+- Current Focus / Active Phase: Phase 2 - Bundle Size Optimization（已验证通过，待切换 Phase 3）
+- Eval Objective: 让非关键模块退出初始 bundle，并保留用户可感知加载体验
 - Evaluation Surface / Fixed Baseline:
-  - 代码面：`frontend/src/app` 路由页 + `frontend/src/services/serverFirstRoutePrefetch.ts`
-  - 验证面：`npm run typecheck`
-  - 受限面：`npm run build`、默认 `npm run test:unit` 当前在沙箱下触发 `spawn EPERM`
+  - `frontend/.next/analyze/client.html`（Phase 2 baseline）
+  - `frontend/src/theme/ThemeProvider.tsx` -> `./index`
+  - `frontend/src/views/ResearchPage.tsx` 静态导入重面板
+  - `frontend/src/components/research/ArtifactPanel.tsx` 直接依赖 markdown 库
 - Metric / Rubric:
-  - 路由页不再在最外层同步 await prefetch 后才渲染
-  - 预取 promise 提前启动，await 延后到 Suspense 边界
-  - 相关改动最小且可解释
-- Pass Threshold / Stop Condition: Phase 1 的路由首屏 waterfall 优化完成，并拿到至少类型检查 + 定向测试/构建证据
+  - local barrel import 消失
+  - 研究页非关键面板改为 dynamic / conditional load
+  - Sidebar 支持 user-intent preload
+  - analyze/build/typecheck 通过
+- Pass Threshold / Stop Condition: Phase 2 的 bundle 优化完成，并拿到 analyze/build/typecheck 证据
 - Active Execution Wave:
-  - 汇总 Phase 1 验证证据
-  - 提交 Phase 1 commit
-  - 准备刷新到 Phase 2
+  - Phase 2 已完成：theme barrel import 消除
+  - Phase 2 已完成：研究页重面板改为按需动态加载
+  - Phase 2 已完成：Sidebar 用户意图预加载与 analyzer/build/typecheck 验证
 - Last Verified Stop Point:
-  - `npm run typecheck` 通过
--  - `npx eslint ...`（Phase 1 改动文件）通过
--  - `npx vitest run src/services/routePrefetch.test.ts` 通过（6 tests）
--  - `npm run build` 提权后通过
+  - Phase 1 commit：`8e7e152`
+  - Phase 2 verification：
+    - `npm run typecheck`
+    - `npx eslint src/theme/ThemeProvider.tsx src/theme/md3Theme.ts src/components/research/ArtifactPanel.tsx src/components/shell/GeminiShell.tsx src/views/ResearchPage.tsx`
+    - `npm run build`（require_escalated；sandbox 内 `spawn EPERM`）
+    - `npm run analyze`（require_escalated；sandbox 内 `spawn EPERM`）
 - Latest Improvement / Regression Notes:
-  - 新增 `RoutePrefetchBoundary`，将 route fallback 的 await 推迟到 Suspense 边界。
-  - 4 个 server-prefetch 路由已移除顶层 `await prefetch...`。
-  - add-documents 路由统一通过 helper 解析 search params，减少重复 await/解析逻辑。
+  - `ThemeProvider.tsx` 已改为直连 `md3Theme.ts`，本地 barrel import 已消除。
+  - `ResearchPage.tsx` 已将 `ArtifactPanel`、`ResearchAdvancedEventsPanel`、`InterruptDecisionPanel` 切到 dynamic import，且 `ArtifactPanel` 仅在存在报告/产物时才加载。
+  - `ArtifactPanel.tsx` 已移除对 `react-markdown` / `remark-gfm` 的直接静态依赖，改为复用 `MarkdownContent`。
+  - `GeminiShell.tsx` 已在移动端菜单按钮 hover/focus/touch/click 前预热 Sidebar chunk。
+  - 最新 `client.html` 显示 `ResearchAdvancedEventsPanel.tsx`、`InterruptDecisionPanel.tsx`、`ArtifactPanel.tsx` 均位于 `isInitialByEntrypoint:{}` 的独立 chunk。
 - Plateau / No-Signal Count: 0
-- Next Recommended Action: 提交 Phase 1 commit，然后归档 todo 并切换到 Phase 2 - Bundle Size Optimization
-- Current Blockers: 默认未提权时 build / vitest 仍受沙箱 spawn 限制
+- Next Recommended Action: 提交 Phase 2 commit，归档当前阶段 planning files，并刷新到 Phase 3
+- Current Blockers: 无代码级 blocker；build/analyze 在沙箱内仍会触发 `spawn EPERM`
 - Assumptions Awaiting Confirmation:
-  - Phase 1 以 App Router 首屏预取链路为主，是当前最直接的 waterfall 热点
-  - 用户允许先用最小可验证链路推进，再在需要时申请提权跑 build / tests
+  - Phase 2 已按当前 analyzer 热点完成最小充分收敛
+  - 后续若仍发现新的 bundle 热点，放到后续类别内再处理，不回流扩项 Phase 2
 - Parked / Deferred Items:
-  - 更细的运行时性能基准暂不引入
-  - Phase 2 及以后类别待当前类别提交后刷新
+  - 更广泛的 route 级 chunk 拆分暂不处理
+  - 若 analyzer 显示新热点，再在后续阶段收敛
 - Key Recent Decisions:
-  - 采用多阶段路线图，而不是一次性混改多个类别
-  - 优先从 `src/app` 首屏预取链路切入
+  - Phase 1 完成后先归档 todo，再刷新到 Phase 2
+  - Phase 2 只针对 analyzer 已确认热点做最小改动
+  - Phase 2 不追求“research route 完全无 Accordion 代码”，只确认重面板与 markdown 依赖已退出初始入口
 - Verification Evidence Reference:
-  - 2026-03-31 `npm run typecheck` pass
-  - 2026-03-31 `npx eslint <phase-1-files>` pass
-  - 2026-03-31 `npx vitest run src/services/routePrefetch.test.ts` pass
-  - 2026-03-31 `npm run build` pass（require_escalated）
-- Related Files: `PROJECT_PHASE_ROADMAP.md`, `TASK_TODO_MEDIUM.md`, `TASK_TODO_FINE.md`, `frontend/src/app/*`, `frontend/src/services/serverFirstRoutePrefetch.ts`
+  - 2026-03-31 Phase 1 commit `8e7e152`
+  - 2026-03-31 `npm run typecheck` 通过
+  - 2026-03-31 `npx eslint src/theme/ThemeProvider.tsx src/theme/md3Theme.ts src/components/research/ArtifactPanel.tsx src/components/shell/GeminiShell.tsx src/views/ResearchPage.tsx` 通过
+  - 2026-03-31 `npm run build` 通过（require_escalated）
+  - 2026-03-31 `npm run analyze` 通过（require_escalated）
+  - 2026-03-31 `frontend/.next/analyze/client.html` 显示 `ArtifactPanel.tsx` / `ResearchAdvancedEventsPanel.tsx` / `InterruptDecisionPanel.tsx` 均为独立非初始 chunk
+- Related Files: `PROJECT_PHASE_ROADMAP.md`, `TASK_TODO_MEDIUM.md`, `TASK_TODO_FINE.md`, `frontend/src/theme/*`, `frontend/src/views/ResearchPage.tsx`, `frontend/src/components/research/*`, `frontend/src/components/shell/GeminiShell.tsx`
 - Last Updated: 2026-03-31

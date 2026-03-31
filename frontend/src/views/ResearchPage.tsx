@@ -4,13 +4,11 @@
  * 深度研究页面
  */
 import { useCallback, useMemo, useState } from 'react';
+import dynamic from 'next/dynamic';
 import { Container, Stack, Typography } from '@mui/material';
 import DownloadIcon from '@mui/icons-material/Download';
 import RefreshIcon from '@mui/icons-material/Refresh';
-import { ArtifactPanel } from '../components/research/ArtifactPanel';
-import { InterruptDecisionPanel } from '../components/research/InterruptDecisionPanel';
 import { PlanPreviewPanel } from '../components/research/PlanPreviewPanel';
-import { ResearchAdvancedEventsPanel } from '../components/research/ResearchAdvancedEventsPanel';
 import { ResearchCanvas } from '../components/research/ResearchCanvas';
 import { ResearchComposer } from '../components/research/ResearchComposer';
 import { ResearchPlanningThread } from '../components/research/ResearchPlanningThread';
@@ -39,6 +37,33 @@ import {
   buildResearchStartRequest,
   validateResearchStartDraft,
 } from './researchPageState';
+
+const InterruptDecisionPanel = dynamic(
+  () =>
+    import('../components/research/InterruptDecisionPanel').then(
+      (mod) => mod.InterruptDecisionPanel
+    ),
+  {
+    loading: () => null,
+  }
+);
+
+const ArtifactPanel = dynamic(
+  () => import('../components/research/ArtifactPanel').then((mod) => mod.ArtifactPanel),
+  {
+    loading: () => <LoadingSpinner text='加载证据面板...' />,
+  }
+);
+
+const ResearchAdvancedEventsPanel = dynamic(
+  () =>
+    import('../components/research/ResearchAdvancedEventsPanel').then(
+      (mod) => mod.ResearchAdvancedEventsPanel
+    ),
+  {
+    loading: () => <LoadingSpinner text='加载高级事件...' />,
+  }
+);
 
 export function ResearchPage() {
   const createSessionMutation = useCreateResearchSession();
@@ -277,6 +302,9 @@ export function ResearchPage() {
       }),
     [session]
   );
+  const hasArtifactPanel = Boolean(
+    session?.report_md || session?.report_json || (session?.artifacts.length ?? 0) > 0
+  );
 
   return (
     <Container
@@ -389,11 +417,13 @@ export function ResearchPage() {
                 </Button>
               }
               artifactPanel={
-                <ArtifactPanel
-                  reportMd={session.report_md}
-                  reportJson={session.report_json}
-                  artifacts={session.artifacts}
-                />
+                hasArtifactPanel ? (
+                  <ArtifactPanel
+                    reportMd={session.report_md}
+                    reportJson={session.report_json}
+                    artifacts={session.artifacts}
+                  />
+                ) : null
               }
             />
           }

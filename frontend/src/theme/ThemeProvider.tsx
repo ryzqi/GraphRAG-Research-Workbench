@@ -13,7 +13,7 @@ import {
 } from 'react';
 import { ThemeProvider as MuiThemeProvider } from '@mui/material/styles';
 import CssBaseline from '@mui/material/CssBaseline';
-import { lightTheme, darkTheme } from './index';
+import { lightTheme, darkTheme } from './md3Theme';
 
 // 类型定义
 

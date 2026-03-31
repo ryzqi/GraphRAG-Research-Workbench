@@ -14,8 +14,10 @@ import type { SidebarProps } from './Sidebar';
 import { SIDEBAR_WIDTH_EXPANDED } from './constants';
 import { PageTransition } from '../ui/PageTransition';
 
+const loadSidebar = () => import('./Sidebar');
+
 const Sidebar = dynamic<SidebarProps>(
-  () => import('./Sidebar').then((mod) => mod.Sidebar),
+  () => loadSidebar().then((mod) => mod.Sidebar),
   {
     ssr: false,
     loading: () => (
@@ -63,7 +65,12 @@ export function GeminiShell({ children }: GeminiShellProps) {
   }, []);
 
   const handleMobileDrawerOpen = useCallback(() => {
+    void loadSidebar();
     setMobileDrawerOpen(true);
+  }, []);
+
+  const handleSidebarIntent = useCallback(() => {
+    void loadSidebar();
   }, []);
 
   const handleNewChat = useCallback(() => {
@@ -152,7 +159,14 @@ export function GeminiShell({ children }: GeminiShellProps) {
               zIndex: theme.zIndex.appBar,
             }}
           >
-            <IconButton onClick={handleMobileDrawerOpen} edge="start" aria-label="打开导航菜单">
+            <IconButton
+              onClick={handleMobileDrawerOpen}
+              onMouseEnter={handleSidebarIntent}
+              onFocus={handleSidebarIntent}
+              onTouchStart={handleSidebarIntent}
+              edge="start"
+              aria-label="打开导航菜单"
+            >
               <MenuIcon />
             </IconButton>
             <Typography variant="subtitle1" fontWeight={600} sx={{ ml: 0.5 }}>
