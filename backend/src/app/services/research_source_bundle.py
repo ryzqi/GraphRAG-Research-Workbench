@@ -30,6 +30,13 @@ class ResearchSourceBundleBuilder:
         findings: Sequence[str],
         required_web_providers: Sequence[str] = (),
     ) -> ResearchSourceBundle:
+        normalized_required_web_providers = tuple(
+            dict.fromkeys(
+                str(provider).strip()
+                for provider in required_web_providers
+                if str(provider).strip()
+            )
+        )
         normalized_citations = [
             self._normalize_citation(citation)
             for citation in citations
@@ -38,7 +45,7 @@ class ResearchSourceBundleBuilder:
         provider_counts = Counter(citation.source_provider for citation in normalized_citations)
         coverage_gaps = [
             f"缺少 provider 证据：{provider}"
-            for provider in required_web_providers
+            for provider in normalized_required_web_providers
             if provider not in provider_counts
         ]
         interim_summary = (

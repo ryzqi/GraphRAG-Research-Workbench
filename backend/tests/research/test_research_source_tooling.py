@@ -191,6 +191,55 @@ def test_source_bundle_builder_dedupes_origin_url_and_emits_provider_gaps() -> N
     assert "2 条去重证据" in bundle.interim_summary
 
 
+def test_source_bundle_builder_reports_missing_provider_gaps_for_comparative_plan() -> None:
+    builder = ResearchSourceBundleBuilder()
+    citations = [
+        ResearchCanonicalCitation(
+            source_type=ResearchSourceType.WEB,
+            source_provider="tavily",
+            retrieval_method="search",
+            source_id="https://example.com/tavily",
+            title="Tavily Result",
+            url="https://example.com/tavily",
+            origin_url="https://example.com/tavily",
+        ),
+        ResearchCanonicalCitation(
+            source_type=ResearchSourceType.WEB,
+            source_provider="jina_reader",
+            retrieval_method="read",
+            source_id="https://r.jina.ai/http://example.com/jina",
+            title="Jina Result",
+            url="https://r.jina.ai/http://example.com/jina",
+            origin_url="https://example.com/jina",
+        ),
+        ResearchCanonicalCitation(
+            source_type=ResearchSourceType.PAPER,
+            source_provider="arxiv",
+            retrieval_method="fetch",
+            source_id="arxiv:2501.00001",
+            title="Paper A",
+            url="https://arxiv.org/abs/2501.00001",
+            origin_url="https://arxiv.org/abs/2501.00001",
+            arxiv_id="2501.00001",
+            pdf_url="https://arxiv.org/pdf/2501.00001.pdf",
+        ),
+    ]
+    findings = [
+        "Tavily 适合广度搜索。",
+        "Jina Reader 适合正文读取。",
+        "论文证据可作为复杂研究的补充锚点。",
+    ]
+
+    bundle = builder.build(
+        target_sources=(ResearchSourceTarget.WEB, ResearchSourceTarget.PAPER),
+        citations=citations,
+        findings=findings,
+        required_web_providers=("tavily", "jina_reader", "searxng"),
+    )
+
+    assert "缺少 provider 证据：searxng" in bundle.coverage_gaps
+
+
 def test_research_finalizer_outputs_report_md_and_report_json() -> None:
     class _ReportPayload(BaseModel):
         question: str

@@ -42,6 +42,15 @@ from app.services.research_runtime_types import ResearchToolRegistryBundle
 from .utils import DEFAULT_TOOL_OUTPUT_MAX_CHARS, make_mcp_tool_name, truncate_tool_output
 from .web_tool_payloads import compact_builtin_external_output
 
+_RESEARCH_WEB_PROVIDER_BY_TOOL_NAME = {
+    "tavily_search": "tavily",
+    "tavily_extract": "tavily",
+    "tavily_crawl": "tavily",
+    "tavily_research": "tavily",
+    "jina_read": "jina_reader",
+    "searxng_search": "searxng",
+}
+
 
 @dataclass(frozen=True, slots=True)
 class ToolMeta:
@@ -64,6 +73,17 @@ def _stringify_output(output: object) -> str:
         return json.dumps(output, ensure_ascii=False)
     except TypeError:
         return str(output)
+
+
+def resolve_research_web_provider_ids(tool_names: Sequence[str]) -> tuple[str, ...]:
+    provider_ids: list[str] = []
+    for tool_name in tool_names:
+        provider_id = _RESEARCH_WEB_PROVIDER_BY_TOOL_NAME.get(str(tool_name))
+        if provider_id is None or provider_id in provider_ids:
+            continue
+        provider_ids.append(provider_id)
+    return tuple(provider_ids)
+
 
 def _sanitize_mcp_content(content: object) -> object:
     """将 MCP 工具输出清洗为适合 ToolMessage 的安全可序列化内容。
@@ -335,6 +355,7 @@ async def build_research_tool_registry(
         _add_tool(tool, is_external=False)
 
     tool_groups["web"] = tuple(web_tool_names)
+    tool_groups["web_provider_ids"] = resolve_research_web_provider_ids(web_tool_names)
     tool_groups["paper"] = tuple(paper_tool_names)
     tool_groups["citation"] = tuple()
 

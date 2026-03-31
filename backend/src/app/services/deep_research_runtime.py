@@ -20,6 +20,7 @@ from pydantic import BaseModel, Field, ValidationError
 from app.agents.tool_calling.registry import (
     ToolMeta,
     build_research_tool_registry,
+    resolve_research_web_provider_ids,
 )
 from app.core.settings import Settings
 from app.integrations.chat_model_factory import create_chat_model
@@ -34,6 +35,7 @@ from app.schemas.research import (
     ResearchSourceType,
 )
 from app.services.research_observability import ResearchRuntimeRunResult
+from app.services.research_query_mesh import select_required_web_providers
 from app.services.research_runtime_spill import spill_json_payload
 from app.services.research_runtime_types import (
     DEFAULT_RESEARCH_BACKEND_POLICY,
@@ -538,7 +540,13 @@ class DeepResearchRuntimeRunner:
             target_sources=plan_snapshot.target_sources,
             citations=structured.citations,
             findings=structured.findings,
-            required_web_providers=(),
+            required_web_providers=select_required_web_providers(
+                complexity=plan_snapshot.complexity.value,
+                available_providers=self.runtime.tool_groups.get(
+                    "web_provider_ids",
+                    resolve_research_web_provider_ids(self.runtime.tool_groups.get("web", ())),
+                ),
+            ),
         )
         return ResearchRuntimeRunResult(
             source_bundle=source_bundle,

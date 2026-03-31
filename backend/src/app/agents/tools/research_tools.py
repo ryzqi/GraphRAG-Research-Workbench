@@ -147,7 +147,7 @@ def build_tavily_research_tool(
 
 class SearxngSearchArgs(BaseModel):
     query: str = Field(..., description="搜索查询")
-    max_results: int = Field(default=5, ge=1, le=20)
+    max_results: int = Field(default=8, ge=1, le=20)
     time_range: str | None = Field(default=None, description="时间范围（day/week/month/year）")
     include_domains: list[str] | None = Field(default=None)
     exclude_domains: list[str] | None = Field(default=None)

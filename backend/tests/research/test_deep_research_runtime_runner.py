@@ -216,6 +216,84 @@ async def test_deep_research_runtime_runner_fills_missing_origin_url_for_web_cit
 
 
 @pytest.mark.asyncio
+async def test_deep_research_runtime_runner_enforces_required_web_provider_gaps_for_comparative_plan() -> None:
+    agent = _FakeAgent(
+        {
+            "structured_response": {
+                "findings": [
+                    "Tavily 负责广度召回。",
+                    "Jina Reader 负责正文读取。",
+                ],
+                "citations": [
+                    {
+                        "source_type": "web",
+                        "source_provider": "tavily",
+                        "retrieval_method": "search",
+                        "source_id": "https://example.com/tavily",
+                        "title": "Tavily Result",
+                        "url": "https://example.com/tavily",
+                        "origin_url": "https://example.com/tavily",
+                    },
+                    {
+                        "source_type": "web",
+                        "source_provider": "jina_reader",
+                        "retrieval_method": "read",
+                        "source_id": "https://r.jina.ai/http://example.com/jina",
+                        "title": "Jina Result",
+                        "url": "https://r.jina.ai/http://example.com/jina",
+                        "origin_url": "https://example.com/jina",
+                    },
+                ],
+            }
+        }
+    )
+    runtime = DeepResearchRuntime(
+        agent=agent,
+        config=ResearchRuntimeConfig(
+            primary_model="gpt-5.2",
+            subagent_model="gpt-5.2-mini",
+            system_prompt="你是深度研究助手。",
+        ),
+        tools=[],
+        tool_meta_by_name={},
+        tool_groups={
+            "web": ("tavily_search", "jina_read", "searxng_search"),
+            "web_provider_ids": ("tavily", "jina_reader", "searxng"),
+            "paper": (),
+            "citation": (),
+        },
+    )
+    runner = DeepResearchRuntimeRunner(
+        runtime=runtime,
+        workspace_files={"/workspace/context/api_contract_research.md": "# api contract"},
+    )
+    session_id = uuid.uuid4()
+    session = ResearchSession(
+        id=session_id,
+        thread_id=str(session_id),
+        question="对比多个 deep research provider 的证据覆盖",
+    )
+    session.artifacts = []
+    plan_snapshot = ResearchPlanSnapshot(
+        research_brief="比较多 provider 的 deep research evidence coverage。",
+        complexity="comparative",
+        summary="比较 Tavily、Jina Reader 与 SearXNG 的互补性。",
+        target_sources=[ResearchSourceTarget.WEB],
+        subtasks=[
+            ResearchPlanSubtask(
+                title="对比 provider coverage",
+                description="验证 comparative 计划要求至少 3 个 web providers。",
+                target_sources=[ResearchSourceTarget.WEB],
+            )
+        ],
+    )
+
+    result = await runner.run_session(session=session, plan_snapshot=plan_snapshot)
+
+    assert result.source_bundle.coverage_gaps == ["缺少 provider 证据：searxng"]
+
+
+@pytest.mark.asyncio
 async def test_build_deep_research_runtime_runner_disables_previous_response_id_replay(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -530,10 +530,10 @@ def _calculate_quality_score(
     findings: Sequence[str],
     coverage_gaps: Sequence[str],
 ) -> float:
-    citation_component = min(0.35, 0.175 * len(citations))
-    finding_component = min(0.25, 0.125 * len(findings))
-    coverage_component = max(0.0, 0.2 - 0.1 * len(coverage_gaps))
-    target_coverage_component = 0.2 * _target_source_coverage_ratio(
+    citation_component = min(0.3, 0.1 * len(citations))
+    finding_component = min(0.2, 0.1 * len(findings))
+    coverage_component = max(0.0, 0.25 - 0.05 * len(coverage_gaps))
+    target_coverage_component = 0.25 * _target_source_coverage_ratio(
         target_sources=plan_snapshot.target_sources,
         citations=citations,
     )
