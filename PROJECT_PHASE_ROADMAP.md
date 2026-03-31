@@ -8,7 +8,7 @@
 - Customer Problem / Desired Outcome: 在不改变视觉风格、配色与交互设计语言的前提下，系统性消除前端性能热点，降低首屏阻塞、缩小 bundle、减少不必要重渲染与运行时开销。
 - Why Now / Decision Driver: 用户明确要求按 Vercel React Best Practices 分大类逐项落地，并要求每个大类完成后独立提交，形成可审计演进历史。
 - Overall Goal: 依照 8 个性能类别依次完成前端性能优化，每个类别都保留“代码改动 + 直接验证 + 独立 git 提交”证据链。
-- Current Active Phase: Phase 7 - JavaScript Performance
+- Current Active Phase: Phase 8 - Advanced Patterns
 - Overall Success Criteria:
   - 8 个大类别全部按顺序完成，中间不跳类、不混类。
   - 每个类别仅做性能相关优化，不改视觉风格、配色或产品设计。
@@ -51,8 +51,8 @@
   - Key dependencies: MUI、React、Next dynamic/lazy
   - Notes: Phase 2、4、5、6、7、8 的主要改动面
 - Module / Domain 4: `frontend/src/hooks` + `frontend/src/services`
-  - Responsibility: 数据获取、SWR、流式会话控制、纯函数工具
-  - Key dependencies: `swr`, `fetch`, route prefetch helpers
+  - Responsibility: 数据获取、流式会话控制、纯函数工具、长期生命周期控制对象
+  - Key dependencies: `swr`, `fetch`, request control
   - Notes: Phase 3、4、7、8 的主要改动面
 - Module / Domain 5: `frontend/src/theme` + `frontend/src/providers`
   - Responsibility: 主题定义、全局 provider 装配、客户端启动阶段资源提示
@@ -121,24 +121,24 @@
 - Transition Notes: 已完成并提交 `567e1af`，并归档到 `archive/perf-phases/*.phase-06-rendering.md`
 
 ### Phase 7: JavaScript Performance
-- Status: Active
+- Status: Completed
 - Objective: 收敛循环、查找、缓存与空闲调度等低中优先级热点。
-- Scope Boundary: 仅覆盖 7.1~7.14；本轮实际落点优先聚焦 7.4 与 7.6，并审计其余规则是否存在高价值最小改动。
+- Scope Boundary: 仅覆盖 7.1~7.14；实际落点聚焦 7.4、7.6，并审计其余规则的高价值最小落点。
 - Modules Involved: `src/services`, `src/hooks`, `src/lib`, `src/views`, `src/components`
 - Main Deliverables: JS 微观性能反模式收敛、验证与 commit
 - Entry Conditions: Phase 6 已提交
 - Completion Conditions: JS 性能项完成并提交
-- Transition Notes: 完成后转入高级模式阶段
+- Transition Notes: 已完成并提交 `830477f`，并归档到 `archive/perf-phases/*.phase-07-javascript.md`
 
 ### Phase 8: Advanced Patterns
-- Status: Pending
+- Status: Active
 - Objective: 补齐初始化、事件处理与稳定引用类高级模式。
 - Scope Boundary: 仅覆盖 8.1~8.3
-- Modules Involved: `src/providers`, `src/hooks`, `src/views`
-- Main Deliverables: 高级性能模式收口、最终验证、最终提交
+- Modules Involved: `src/hooks`
+- Main Deliverables: lazy init、稳定事件回调、验证、最终提交
 - Entry Conditions: Phase 7 已提交
 - Completion Conditions: 高级模式项完成并提交，项目收尾
-- Transition Notes: 汇总全链路验证与剩余风险
+- Transition Notes: 完成后执行最终全链路验证与总结
 
 ## Phase History / Change Log
 - 2026-03-31:
@@ -168,11 +168,15 @@
 - 2026-03-31:
   - What changed: Phase 6 完成并提交 `567e1af`
   - Why it changed: 已满足 rendering performance 类别的完成条件
-  - Impact on current or future phases: 当前切换到 JavaScript Performance
+  - Impact on current or future phases: 切换到 JavaScript Performance
 - 2026-03-31:
-  - What changed: active planning files 刷新到 Phase 7
-  - Why it changed: 需要从已完成的 rendering 阶段转入 JS 微观性能阶段
-  - Impact on current or future phases: 后续 Phase 7/8 将继续基于当前 active docs 推进
+  - What changed: Phase 7 完成并提交 `830477f`
+  - Why it changed: 已满足 JavaScript performance 类别的完成条件
+  - Impact on current or future phases: 当前切换到 Advanced Patterns
+- 2026-03-31:
+  - What changed: active planning files 刷新到 Phase 8
+  - Why it changed: 需要从已完成的 JS 阶段转入 advanced patterns 收口阶段
+  - Impact on current or future phases: Phase 8 完成后可执行最终全链路验证与交付总结
 
 ## Archive References
 - Phase archive path(s): `archive/perf-phases/`
@@ -183,3 +187,4 @@
   - Phase 4: `*.phase-04-client-data.md`
   - Phase 5: `*.phase-05-rerender.md`
   - Phase 6: `*.phase-06-rendering.md`
+  - Phase 7: `*.phase-07-javascript.md`

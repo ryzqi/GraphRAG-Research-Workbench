@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback } from 'react';
+import { useEffect, useEffectEvent, useRef } from 'react';
 
 /**
  * 模态框可访问性 Hook，提供 ESC 关闭和焦点捕获。
@@ -10,15 +10,11 @@ export function useModalAccessibility(
   const modalRef = useRef<HTMLDivElement>(null);
   const previousActiveElement = useRef<Element | null>(null);
 
-  // 按 ESC 键关闭。
-  const handleKeyDown = useCallback(
-    (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && isOpen) {
-        onClose();
-      }
-    },
-    [isOpen, onClose]
-  );
+  const handleKeyDown = useEffectEvent((e: KeyboardEvent) => {
+    if (e.key === 'Escape' && isOpen) {
+      onClose();
+    }
+  });
 
   useEffect(() => {
     if (isOpen) {
@@ -37,7 +33,7 @@ export function useModalAccessibility(
         previousActiveElement.current.focus();
       }
     };
-  }, [isOpen, handleKeyDown]);
+  }, [isOpen]);
 
   return { modalRef };
 }

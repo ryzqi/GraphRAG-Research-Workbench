@@ -22,70 +22,69 @@
   - `archive/perf-phases/TASK_TODO_MEDIUM.phase-06-rendering.md`
   - `archive/perf-phases/TASK_TODO_FINE.phase-06-rendering.md`
   - `archive/perf-phases/PROJECT_EXECUTION_STATE.phase-06-rendering.md`
+  - `archive/perf-phases/TASK_TODO_MEDIUM.phase-07-javascript.md`
+  - `archive/perf-phases/TASK_TODO_FINE.phase-07-javascript.md`
+  - `archive/perf-phases/PROJECT_EXECUTION_STATE.phase-07-javascript.md`
 - Project Mode: Multi-phase
 - Artifact Policy / Active Planning Files: `PROJECT_PHASE_ROADMAP.md`, `TASK_TODO_MEDIUM.md`, `TASK_TODO_FINE.md`, `PROJECT_EXECUTION_STATE.md`
-- Project Modules: `frontend/src/services`, `frontend/src/views`, `frontend/src/components/research`, `frontend/src/components`
+- Project Modules: `frontend/src/hooks`
 - Brownfield Context / Codebase Map:
-  - `frontend/src/services/researchWorkbench.ts`（progress feed / artifacts 汇总）
-  - `frontend/src/views/ResearchPage.tsx`
-  - `frontend/src/components/research/ArtifactPanel.tsx`
-  - `frontend/src/components/IngestionManifestEditor.tsx`
+  - `frontend/src/hooks/useModalAccessibility.ts`
+  - `frontend/src/hooks/useGeneralChatController.ts`
+  - `frontend/src/hooks/useKbChatSessionController.ts`
 - Primary User / Stakeholder: 当前仓库前端维护者
-- Customer Problem / Desired Outcome: JS 运行时不应在同一渲染周期内对同一数据结构反复排序、过滤与计数。
-- Why Now / Decision Driver: Phase 7 明确要求 JavaScript Performance 优化
-- Phase Roadmap Summary: 当前仅执行 Phase 7，完成后切换 Phase 8
-- Current Phase: Phase 7 - JavaScript Performance
+- Customer Problem / Desired Outcome: 请求控制对象和 DOM 事件监听应使用更稳定的高级模式，减少 render 与 effect 周期中的额外开销。
+- Why Now / Decision Driver: Phase 8 明确要求 Advanced Patterns 收口
+- Phase Roadmap Summary: 当前仅执行 Phase 8，完成后进入最终验证与交付总结
+- Current Phase: Phase 8 - Advanced Patterns
 - Current Phase Inputs:
-  - Phase 6 commit `567e1af`
-  - `researchWorkbench.ts` / `ResearchPage.tsx` 当前实现
-  - `ArtifactPanel.tsx` / `IngestionManifestEditor.tsx` 当前遍历方式
+  - Phase 7 commit `830477f`
+  - `useGeneralChatController.ts` / `useKbChatSessionController.ts` 当前 `useRef(new ChatSessionRequestControl())`
+  - `useModalAccessibility.ts` 当前 `useCallback + addEventListener`
 - Active Execution Wave:
-  - research workbench 结果复用
-  - citations 单次分类
-  - manifest entries 单次计数
-- Phase Goal: 让 JS 层重复计算更少、更可控且不改变输出
+  - request control lazy init
+  - `useEffectEvent` 稳定 DOM 事件回调
+- Phase Goal: 让 advanced patterns 在最小范围内落地且不改变行为
 - Phase Scope:
-  - 包含：7.4、7.6 的代码落地；其余规则做审计
-  - 不包含：Phase 8 与项目收尾
+  - 包含：8.1、8.2、8.3 的代码落地
+  - 不包含：额外功能开发与样式调整
 - Non-goals:
-  - 不调整组件视觉表现
-  - 不引入新的缓存层或协议字段
+  - 不调整 modal 行为与快捷键
+  - 不引入新的公共抽象层
 - Phase Deliverables:
-  - `researchWorkbench.ts` / `ResearchPage.tsx` 的 progress feed 复用
-  - `ArtifactPanel.tsx` 的 citations 单次分类
-  - `IngestionManifestEditor.tsx` 的 manifest 单次计数
-  - typecheck / eslint / vitest / build 证据
-- Entry Criteria: Phase 6 已提交
+  - `useGeneralChatController.ts` / `useKbChatSessionController.ts` lazy init
+  - `useModalAccessibility.ts` 的 `useEffectEvent`
+  - typecheck / eslint / build 证据
+- Entry Criteria: Phase 7 已提交
 - Phase Exit Criteria:
-  - 重复 progress feed 计算已收敛
-  - 双 filter / 双计数已变为单次遍历
+  - request control 初始化只发生在首次需要时
+  - DOM 事件回调稳定化完成
   - 验证完成并提交 commit
-- Eval Objective: 降低 JS 层重复排序、过滤与计数的开销
+- Eval Objective: 用高级模式收口初始化与监听稳定性热点
 - Evaluation Surface / Baseline:
-  - `buildResearchCanvasModel()` 再次调用 `buildResearchProgressFeed()`
-  - `ArtifactPanel.tsx` 两次 `filter`
-  - `validateManifestDraftEntries()` 两次 `filter`
-- Metric / Rubric: 复用已算结果、单次遍历边界清晰、验证通过
-- Pass Threshold / Stop Condition: Phase 7 所有目标文件完成并通过验证
-- Next Phase Trigger / Transition Notes: Phase 7 commit 完成后刷新为 Phase 8
-- Previous Phase Summary: Phase 6 已完成并归档
+  - `useRef(new ChatSessionRequestControl())`
+  - `useCallback` 驱动的 `keydown` effect 监听
+- Metric / Rubric: lazy init 清晰、stable callback 清晰、验证通过
+- Pass Threshold / Stop Condition: Phase 8 所有目标文件完成并通过验证
+- Next Phase Trigger / Transition Notes: Phase 8 commit 完成后执行最终全链路验证
+- Previous Phase Summary: Phase 7 已完成并归档
 
 ## Part 1: Current phase requirement and scope
 ### 1.1 Capture the executable objective for this phase
-- [x] Task: 将 JavaScript Performance 收敛为明确可执行的文件级任务
-- Goal: 避免把 Phase 7 扩成泛泛的微优化清扫
-- Inputs / Dependencies: 目标源码、Research workbench、manifest 校验、artifact 渲染
-- Procedure / Implementation notes: 只处理已定位的重复计算；无高价值项如实记录
+- [x] Task: 将 Advanced Patterns 收敛为明确可执行的文件级任务
+- Goal: 避免把 Phase 8 扩成大范围 hooks 重构
+- Inputs / Dependencies: 目标 hooks、React 19 `useEffectEvent`
+- Procedure / Implementation notes: 只处理已定位的初始化与监听热点
 - Output / Artifact: 可执行目标说明
 - Done when: 已明确改动文件与审计结论
 - Verification: Medium todo 已同步
-- Notes: 7.4/7.6 为主要代码落点
+- Notes: 8.1/8.2/8.3 都有明确代码落点
 
 ### 1.2 Enumerate current-phase dependencies and prerequisites
-- [x] Task: 列出 Phase 7 所需依赖与验证约束
+- [x] Task: 列出 Phase 8 所需依赖与验证约束
 - Goal: 让执行与验证保持一致
-- Inputs / Dependencies: typecheck / eslint / vitest / build、目标文件
-- Procedure / Implementation notes: 保持最小改动，优先复用现有 memo 与测试
+- Inputs / Dependencies: typecheck / eslint / build、React 19
+- Procedure / Implementation notes: 保持最小改动，不改业务控制流
 - Output / Artifact: 当前阶段依赖清单
 - Done when: 验证命令与提权需求明确
 - Verification: `PROJECT_EXECUTION_STATE.md` 已同步
@@ -93,92 +92,85 @@
 
 ## Part 2: Current phase research and decomposition
 ### 2.1 Inspect relevant context in detail for this phase
-- [x] Task: 固化 JS 热点审计结论
-- Goal: 对应真实重复计算路径
-- Inputs / Dependencies: 目标 services / views / components
+- [x] Task: 固化 advanced patterns 热点审计结论
+- Goal: 对应真实初始化与事件监听路径
+- Inputs / Dependencies: 目标 hooks
 - Procedure / Implementation notes:
-  - `ResearchPage` 已先算 `progressItems`，但 canvas model 仍会再次排序事件
-  - `ArtifactPanel` 对同一 citations 数组两次过滤
-  - `validateManifestDraftEntries` 为 URL 与 file 数量各做一次完整过滤
-- Output / Artifact: Phase 7 上下文图
+  - 两个 session controller hook 都在 render 中执行 `new ChatSessionRequestControl()`
+  - modal accessibility 的 keydown 监听会跟随回调依赖走 effect 重订阅
+- Output / Artifact: Phase 8 上下文图
 - Done when: 每个目标项都能映射到具体文件
 - Verification: 目标文件已审阅
-- Notes: 其他规则暂未发现更高收益落点
+- Notes: 当前未发现更高价值的 handler-ref 热点
 
 ### 2.2 Break the current phase into executable units
-- [x] Task: 拆解 Phase 7 执行单元
+- [x] Task: 拆解 Phase 8 执行单元
 - Goal: 保持可跟踪
 - Inputs / Dependencies: baseline、目标文件
 - Procedure / Implementation notes:
-  - `researchWorkbench.ts` 复用 progress feed，并单次汇总 artifacts
-  - `ResearchPage.tsx` 传递已算的 `progressItems`
-  - `ArtifactPanel.tsx` / `IngestionManifestEditor.tsx` 单次遍历
-  - 跑 typecheck / eslint / vitest / build
+  - request control 改 lazy ref 初始化
+  - modal keydown 回调改 `useEffectEvent`
+  - 跑 typecheck / eslint / build
 - Output / Artifact: 可执行分解
 - Done when: 每一步都有明确文件与验收点
 - Verification: 3.x/4.x 已细化
-- Notes: 优先保持现有输出结构不变
+- Notes: 优先保持 hooks 对外 API 不变
 
 ## Part 3: Current phase execution
 ### 3.1 Complete the first executable slice of this phase
-- [x] Task: 处理 research workbench 的重复计算路径
-- Goal: 先消除同一页面中的重复排序与重复查找
+- [x] Task: 处理 request control 的 lazy init
+- Goal: 先消除 render 周期内的重复构造表达式
 - Inputs / Dependencies:
-  - `frontend/src/services/researchWorkbench.ts`
-  - `frontend/src/views/ResearchPage.tsx`
+  - `frontend/src/hooks/useGeneralChatController.ts`
+  - `frontend/src/hooks/useKbChatSessionController.ts`
 - Procedure / Implementation notes:
-  - 新增 artifacts 汇总 helper
-  - `buildResearchCanvasModel` 支持复用 `progressFeed`
-  - `ResearchPage` 传入已有 `progressItems`
-- Output / Artifact: progress feed 复用改动
-- Done when: research workbench 重复计算已收口
-- Verification: typecheck / eslint / vitest / build
+  - `useRef<... | null>(null)`
+  - 首次访问时显式构造 `ChatSessionRequestControl`
+- Output / Artifact: request control lazy init 改动
+- Done when: 两个 hook 都完成切换
+- Verification: typecheck / eslint / build
 - Notes: 已完成代码修改，当前仅待验证
 
 ### 3.2 Complete remaining executable slices of this phase
-- [x] Task: 完成 citations / manifest 的单次遍历优化
-- Goal: 收口 Phase 7
+- [x] Task: 完成 modal accessibility 的稳定事件回调
+- Goal: 收口 Phase 8
 - Inputs / Dependencies:
-  - `frontend/src/components/research/ArtifactPanel.tsx`
-  - `frontend/src/components/IngestionManifestEditor.tsx`
+  - `frontend/src/hooks/useModalAccessibility.ts`
 - Procedure / Implementation notes:
-  - citations 分类改为单次循环
-  - URL / file 计数改为单次循环
-  - 保持错误信息与显示顺序不变
-- Output / Artifact: 单次遍历改动
-- Done when: 双遍历已消除
-- Verification: typecheck / eslint / vitest / build
+  - 使用 `useEffectEvent`
+  - 将 effect 依赖收窄到 `isOpen`
+- Output / Artifact: stable callback 改动
+- Done when: keydown 监听回调稳定化
+- Verification: typecheck / eslint / build
 - Notes: 已完成代码修改，当前仅待验证与 commit
 
 ## Part 4: Verification and transition
 ### 4.1 Verify completed outputs for this phase
-- [x] Task: 运行与 Phase 7 结论直接相关的验证
-- Goal: 防止只改代码不验证 JS 热点
-- Inputs / Dependencies: 完成后的代码、typecheck / eslint / vitest / build
+- [x] Task: 运行与 Phase 8 结论直接相关的验证
+- Goal: 防止只改代码不验证 advanced patterns
+- Inputs / Dependencies: 完成后的代码、typecheck / eslint / build
 - Procedure / Implementation notes:
   - 跑 `npm run typecheck`
-  - 跑 `npx eslint src/services/researchWorkbench.ts src/views/ResearchPage.tsx src/components/research/ArtifactPanel.tsx src/components/IngestionManifestEditor.tsx`
-  - 跑 `npx vitest run src/services/researchWorkbench.test.ts`
+  - 跑 `npx eslint src/hooks/useModalAccessibility.ts src/hooks/useGeneralChatController.ts src/hooks/useKbChatSessionController.ts`
   - 跑 `npm run build`
-- Output / Artifact: Phase 7 验证记录
-- Done when: 验证足以支撑 JavaScript performance 优化结论
+- Output / Artifact: Phase 8 验证记录
+- Done when: 验证足以支撑 advanced patterns 优化结论
 - Verification: 命令输出留痕
 - Notes: 如 build 触发 `spawn EPERM`，需提权重跑
   - `npm run typecheck` 通过
-  - `npx eslint src/services/researchWorkbench.ts src/views/ResearchPage.tsx src/components/research/ArtifactPanel.tsx src/components/IngestionManifestEditor.tsx` 通过
-  - `npx vitest run src/services/researchWorkbench.test.ts` 通过
+  - `npx eslint src/hooks/useModalAccessibility.ts src/hooks/useGeneralChatController.ts src/hooks/useKbChatSessionController.ts` 通过
   - `npm run build` 通过（require_escalated；sandbox 内 `spawn EPERM`）
 
 ### 4.2 Reconcile phase completion and prepare the next step
-- [ ] Task: 更新状态、归档 Phase 7 计划、提交 Phase 7 commit，并准备切到 Phase 8
-- Goal: 留下完整审计轨迹
+- [ ] Task: 更新状态、归档 Phase 8 计划、提交 Phase 8 commit，并执行最终全链路验证
+- Goal: 留下完整审计轨迹并完成项目收尾
 - Inputs / Dependencies: 已验证改动、git 工作区
 - Procedure / Implementation notes:
   - 更新 active planning files
-  - 归档 Phase 7 planning docs
+  - 归档 Phase 8 planning docs
   - 提交明确 commit
-  - 刷新为 Phase 8
-- Output / Artifact: commit + 过渡决策
-- Done when: Phase 7 commit 完成，Phase 8 入口明确
+  - 执行最终验证
+- Output / Artifact: commit + 最终收尾决策
+- Done when: Phase 8 commit 完成，最终验证完成
 - Verification: `git log -1 --stat`
-- Notes: fresh verification 已完成；当前仅剩归档与 commit
+- Notes: fresh verification 已完成；当前仅剩归档、commit 与最终验证

@@ -87,7 +87,7 @@ export function useGeneralChatController() {
     () => buildChatSessionRequestKey({ scope: 'general', sessionId, contextId: pathname }),
     [pathname, sessionId]
   );
-  const requestControlRef = useRef(new ChatSessionRequestControl());
+  const requestControlRef = useRef<ChatSessionRequestControl | null>(null);
   const pendingBootstrapSessionIdRef = useRef<string | null>(null);
   const previousSessionIdRef = useRef<string | null>(sessionId);
   const streamAbortRef = useRef<AbortController | null>(null);
@@ -137,7 +137,11 @@ export function useGeneralChatController() {
       pendingBootstrapSessionIdRef.current = null;
       return;
     }
-    const requestControl = requestControlRef.current;
+    let requestControl = requestControlRef.current;
+    if (requestControl === null) {
+      requestControl = new ChatSessionRequestControl();
+      requestControlRef.current = requestControl;
+    }
     const request = requestControl.start(sessionRequestKey);
     const loadSession = async () => {
       setLoadingSession(true);

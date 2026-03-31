@@ -3,51 +3,49 @@
 ## Current State
 - Current Mode: Multi-phase
 - Artifact Policy / Active Planning Files: `PROJECT_PHASE_ROADMAP.md`, `TASK_TODO_MEDIUM.md`, `TASK_TODO_FINE.md`, `PROJECT_EXECUTION_STATE.md`
-- Current Focus / Active Phase: Phase 7 - JavaScript Performance（已验证通过，待提交 commit）
-- Eval Objective: 在不改变 UI 与交互语义的前提下，减少重复数组遍历、重复排序与可缓存函数调用，收敛低中优先级的 JS 运行时开销。
+- Current Focus / Active Phase: Phase 8 - Advanced Patterns（已验证通过，待提交 commit）
+- Eval Objective: 在不改变 UI 与交互语义的前提下，将长期存在的控制对象初始化与 DOM 事件回调切到更稳定的高级模式，减少重复初始化与 effect 重新订阅。
 - Evaluation Surface / Fixed Baseline:
-  - `frontend/src/services/researchWorkbench.ts` 在 `ResearchPage` 中重复构建 progress feed，并对 artifacts 做多次查找
-  - `frontend/src/components/research/ArtifactPanel.tsx` 对同一 citations 数组做两次 `filter`
-  - `frontend/src/components/IngestionManifestEditor.tsx` 为 URL / file 数量做两次完整 `filter`
+  - `frontend/src/hooks/useGeneralChatController.ts` 与 `frontend/src/hooks/useKbChatSessionController.ts` 使用 `useRef(new ChatSessionRequestControl())`，会在每次 render 执行构造表达式
+  - `frontend/src/hooks/useModalAccessibility.ts` 的 `keydown` 监听依赖 `useCallback`，当 `isOpen` / `onClose` 变化时会走 effect 重新订阅
 - Metric / Rubric:
-  - `ResearchPage` / `researchWorkbench` 避免对同一事件列表重复排序与映射
-  - citations / manifest entries 的类型统计改为单次遍历
-  - 保持现有行为与输出结构不变
-  - typecheck / targeted eslint / relevant tests / build 通过
-- Pass Threshold / Stop Condition: Phase 7 的 JS 热点处理完成，并拿到对应验证证据后才能提交并进入 Phase 8
+  - `ChatSessionRequestControl` 改为 lazy init，只在首次需要时构造
+  - `useModalAccessibility()` 改为 `useEffectEvent` 驱动的稳定监听回调
+  - 保持原有对外 API 与交互语义不变
+  - typecheck / targeted eslint / build 通过
+- Pass Threshold / Stop Condition: Phase 8 的高级模式收口完成，并拿到对应验证证据后才允许宣称全部任务完成
 - Active Execution Wave:
-  - 已完成：`researchWorkbench.ts` 新增单次 artifacts 汇总，并允许复用预先计算的 progress feed
-  - 已完成：`ResearchPage.tsx` 复用 `progressItems`，避免 canvas model 再次排序事件
-  - 已完成：`ArtifactPanel.tsx` 与 `IngestionManifestEditor.tsx` 收敛为单次分类/计数遍历
-  - 已完成：Phase 7 fresh verification
-  - 待执行：提交 commit，并刷新到 Phase 8
+  - 已完成：`useGeneralChatController.ts` 与 `useKbChatSessionController.ts` 切换到 lazy ref 初始化
+  - 已完成：`useModalAccessibility.ts` 使用 `useEffectEvent` 稳定键盘事件回调
+  - 已完成：Phase 8 fresh verification
+  - 待执行：提交 commit、最终全链路验证与总结
 - Last Verified Stop Point:
-  - Phase 6 commit：`567e1af`
-  - Phase 6 verification：
+  - Phase 7 commit：`830477f`
+  - Phase 7 verification：
     - `npm run typecheck`
-    - `npx eslint src/services/http.ts src/providers/AppProviders.tsx src/views/KbChatPage.tsx src/views/ExtensionsPage.tsx src/views/KnowledgeBasesPage.tsx src/components/research/ResearchProgressFeed.tsx`
+    - `npx eslint src/services/researchWorkbench.ts src/views/ResearchPage.tsx src/components/research/ArtifactPanel.tsx src/components/IngestionManifestEditor.tsx`
+    - `npx vitest run src/services/researchWorkbench.test.ts`
     - `npm run build`（require_escalated）
 - Latest Improvement / Regression Notes:
-  - 当前修改聚焦 JS 微观性能，不变更任何视图结构与视觉表现。
-  - `ResearchPage` 继续复用现有 memo 边界，只减少重复计算。
-  - manifest 校验与 citation 分类仍保持原有输出语义。
+  - 当前修改聚焦 advanced patterns，不改变任何页面结构与样式。
+  - request-control 构造从“每次 render 执行表达式”改为“首次访问时构造”。
+  - 键盘监听切到 `useEffectEvent`，目标是减少 effect 重订阅而非改变交互行为。
 - Plateau / No-Signal Count: 0
-- Next Recommended Action: 提交 Phase 7 commit，然后切换 active planning docs 到 Phase 8
+- Next Recommended Action: 提交 Phase 8 commit，然后执行最终全链路验证
 - Current Blockers: 无代码级 blocker；build 在沙箱内可能触发 `spawn EPERM`，如遇到需按既有方式提权
 - Assumptions Awaiting Confirmation:
-  - `ResearchPage` 是 research workbench 中重复计算最明显的热路径之一
-  - URL / file 数量统计与 citation 分类改为单次遍历不会影响错误信息与渲染顺序
+  - `ChatSessionRequestControl` 的 lazy init 不会影响现有请求控制语义
+  - `useEffectEvent` 适合作为当前 hook 中稳定 DOM 事件回调的最小落点
 - Parked / Deferred Items:
-  - 7.1/7.2/7.3/7.5/7.7/7.8/7.9/7.10/7.11/7.12/7.13/7.14 本轮暂未发现更高价值、且不改变行为语义的最小落点
-  - 若后续出现明确的 localStorage/sessionStorage 热点，再单独处理 7.5
+  - 本轮未发现需要额外引入 `useLatest` / 自定义 handler ref 容器的更高价值热点
+  - 若后续出现更多跨 effect 的 DOM 事件监听，再统一复用相同模式
 - Key Recent Decisions:
-  - 优先处理“同一数据在同一渲染周期内被重复遍历/重复排序”的热点
-  - 只在不改变返回结构的前提下做单次遍历优化
-  - `researchWorkbench.ts` 保持向后兼容的可选参数，以降低测试与调用方改动面
+  - 8.1 选择请求控制器而非 UI state 作为“初始化一次”的最小落点
+  - 8.2/8.3 合并落在 `useModalAccessibility()`，避免为覆盖规则做低价值改动
+  - 不修改业务流控制，只处理初始化与监听稳定性
 - Verification Evidence Reference:
   - 2026-03-31 `npm run typecheck` 通过
-  - 2026-03-31 `npx eslint src/services/researchWorkbench.ts src/views/ResearchPage.tsx src/components/research/ArtifactPanel.tsx src/components/IngestionManifestEditor.tsx` 通过
-  - 2026-03-31 `npx vitest run src/services/researchWorkbench.test.ts` 通过
+  - 2026-03-31 `npx eslint src/hooks/useModalAccessibility.ts src/hooks/useGeneralChatController.ts src/hooks/useKbChatSessionController.ts` 通过
   - 2026-03-31 `npm run build` 通过（require_escalated；sandbox 内 `spawn EPERM`）
-- Related Files: `PROJECT_PHASE_ROADMAP.md`, `TASK_TODO_MEDIUM.md`, `TASK_TODO_FINE.md`, `frontend/src/services/researchWorkbench.ts`, `frontend/src/views/ResearchPage.tsx`, `frontend/src/components/research/ArtifactPanel.tsx`, `frontend/src/components/IngestionManifestEditor.tsx`
+- Related Files: `PROJECT_PHASE_ROADMAP.md`, `TASK_TODO_MEDIUM.md`, `TASK_TODO_FINE.md`, `frontend/src/hooks/useModalAccessibility.ts`, `frontend/src/hooks/useGeneralChatController.ts`, `frontend/src/hooks/useKbChatSessionController.ts`
 - Last Updated: 2026-03-31

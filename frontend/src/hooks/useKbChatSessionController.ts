@@ -41,13 +41,17 @@ export function useKbChatSessionController(params: UseKbChatSessionControllerPar
     () => buildChatSessionRequestKey({ scope: 'kb', sessionId, contextId: pathname }),
     [pathname, sessionId]
   );
-  const requestControlRef = useRef(new ChatSessionRequestControl());
+  const requestControlRef = useRef<ChatSessionRequestControl | null>(null);
 
   useEffect(() => {
     if (!sessionId || !sessionRequestKey) {
       return;
     }
-    const requestControl = requestControlRef.current;
+    let requestControl = requestControlRef.current;
+    if (requestControl === null) {
+      requestControl = new ChatSessionRequestControl();
+      requestControlRef.current = requestControl;
+    }
     const request = requestControl.start(sessionRequestKey);
     const loadSession = async () => {
       setLoadingSession(true);
