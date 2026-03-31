@@ -13,174 +13,178 @@
   - `archive/perf-phases/TASK_TODO_MEDIUM.phase-03-server-side.md`
   - `archive/perf-phases/TASK_TODO_FINE.phase-03-server-side.md`
   - `archive/perf-phases/PROJECT_EXECUTION_STATE.phase-03-server-side.md`
+  - `archive/perf-phases/TASK_TODO_MEDIUM.phase-04-client-data.md`
+  - `archive/perf-phases/TASK_TODO_FINE.phase-04-client-data.md`
+  - `archive/perf-phases/PROJECT_EXECUTION_STATE.phase-04-client-data.md`
+  - `archive/perf-phases/TASK_TODO_MEDIUM.phase-05-rerender.md`
+  - `archive/perf-phases/TASK_TODO_FINE.phase-05-rerender.md`
+  - `archive/perf-phases/PROJECT_EXECUTION_STATE.phase-05-rerender.md`
 - Project Mode: Multi-phase
 - Artifact Policy / Active Planning Files: `PROJECT_PHASE_ROADMAP.md`, `TASK_TODO_MEDIUM.md`, `TASK_TODO_FINE.md`, `PROJECT_EXECUTION_STATE.md`
-- Project Modules: `frontend/src/hooks`, `frontend/src/components`, `frontend/src/views`, `frontend/src/theme`
+- Project Modules: `frontend/src/providers`, `frontend/src/services`, `frontend/src/views`, `frontend/src/components/research`
 - Brownfield Context / Codebase Map:
-  - `frontend/src/hooks/usePrefersReducedMotion.ts`（新增长生命周期共享监听）
-  - `frontend/src/hooks/queries/useKbChatGraphSchema.ts`（新增长生命周期 SWR hook）
-  - `frontend/src/components/chat/useTypewriterStream.ts`
-  - `frontend/src/components/chat/MessageList.tsx`
-  - `frontend/src/views/KbChatPage.tsx`
-  - `frontend/src/theme/ThemeProvider.tsx`
+  - `frontend/src/services/http.ts`（API base URL 唯一事实源）
+  - `frontend/src/providers/AppProviders.tsx`（全局 providers 入口）
+  - `frontend/src/views/KbChatPage.tsx`（会话头部时间文本）
+  - `frontend/src/views/ExtensionsPage.tsx`（扩展详情时间文本 + 左侧列表）
+  - `frontend/src/views/KnowledgeBasesPage.tsx`（知识库卡片网格）
+  - `frontend/src/components/research/ResearchProgressFeed.tsx`（研究进度列表）
 - Primary User / Stakeholder: 当前仓库前端维护者
-- Customer Problem / Desired Outcome: 客户端不应为每条消息单独挂同类监听，也不应在滚动热路径和可共享请求上维持不必要的手写逻辑
-- Why Now / Decision Driver: Phase 4 明确要求 client-side data fetching 优化
-- Phase Roadmap Summary: 当前仅执行 Phase 4，完成后切换 Phase 5
-- Current Phase: Phase 4 - Client-Side Data Fetching
+- Customer Problem / Desired Outcome: 渲染层不应在高频重渲染或长列表中持续做可避免的格式化、布局与连接准备工作。
+- Why Now / Decision Driver: Phase 6 明确要求 rendering performance 优化
+- Phase Roadmap Summary: 当前仅执行 Phase 6，完成后切换 Phase 7
+- Current Phase: Phase 6 - Rendering Performance
 - Current Phase Inputs:
-  - Phase 3 commit `7fd0750`
-  - `useTypewriterStream.ts` / `MessageList.tsx` / `KbChatPage.tsx` 当前实现
-  - `ThemeProvider.tsx` 当前主题模式 localStorage 存储
+  - Phase 5 commit `53a8dd2`
+  - `http.ts` 当前 API base URL 逻辑
+  - `KbChatPage.tsx` / `ExtensionsPage.tsx` 当前时间文本渲染方式
+  - `KnowledgeBasesPage.tsx` / `ResearchProgressFeed.tsx` / `ExtensionsPage.tsx` 当前列表渲染边界
 - Active Execution Wave:
-  - 共享 reduced-motion 监听
-  - passive scroll listener
-  - graph schema 的 SWR 化
-- Phase Goal: 让客户端监听与请求路径更轻、更可共享且不改变 UI 表现
+  - React DOM resource hints
+  - 时间 formatter hoist + leaf hydration mismatch suppress
+  - 长列表 `content-visibility`
+- Phase Goal: 让渲染热路径更轻、更可预测且不改变 UI 表现
 - Phase Scope:
-  - 包含：4.1、4.2、4.3 的代码落地；4.4 的审计结论
-  - 不包含：Phase 5 及之后内容
+  - 包含：6.2、6.3、6.6、6.10 的代码落地；其余规则做审计
+  - 不包含：Phase 7 及之后内容
 - Non-goals:
-  - 不改动页面 UI、SWR 结果结构与主题行为
-  - 不为了覆盖规则而引入低价值 localStorage schema 迁移
+  - 不调整配色、间距、排版与交互动线
+  - 不引入新的 hydration fallback 层或双轨渲染逻辑
 - Phase Deliverables:
-  - `usePrefersReducedMotion.ts`
-  - `useKbChatGraphSchema.ts`
-  - `MessageList.tsx` passive scroll listener
-  - `KbChatPage.tsx` 的 SWR schema 查询
+  - `http.ts` 的 API origin 导出
+  - `AppProviders.tsx` 的 React DOM resource hints
+  - `KbChatPage.tsx` / `ExtensionsPage.tsx` 的 formatter hoist + leaf suppress
+  - `KnowledgeBasesPage.tsx` / `ExtensionsPage.tsx` / `ResearchProgressFeed.tsx` 的 `content-visibility`
   - typecheck / eslint / build 证据
-- Entry Criteria: Phase 3 已提交并归档
+- Entry Criteria: Phase 5 已提交
 - Phase Exit Criteria:
-  - 重复 reduced-motion 监听已共享化
-  - MessageList 的 scroll listener 为 passive
-  - graph schema 查询交由 SWR 去重
+  - resource hints 已接线
+  - 时间文本 mismatch 已收口到 leaf 节点
+  - 长列表项惰性渲染已落地
   - 验证完成并提交 commit
-- Eval Objective: 降低客户端重复监听与可共享请求的开销
+- Eval Objective: 降低列表渲染和 hydration 噪音，缩短 API 首连准备路径
 - Evaluation Surface / Baseline:
-  - `useTypewriterStream.ts` 每实例单独监听媒体查询
-  - `MessageList.tsx` 使用 React `onScroll`
-  - `KbChatPage.tsx` 用手写 effect 请求 schema
-  - `ThemeProvider.tsx` 仅持有单个轻量主题 token
-- Metric / Rubric: 共享监听边界清晰、滚动监听更轻、schema 请求更可复用、验证通过
-- Pass Threshold / Stop Condition: Phase 4 所有目标文件完成并通过验证
-- Next Phase Trigger / Transition Notes: Phase 4 commit 完成后刷新为 Phase 5
-- Previous Phase Summary: Phase 3 已完成并归档
+  - `AppProviders.tsx` 缺少 `prefetchDNS` / `preconnect`
+  - `KbChatPage.tsx` 与 `ExtensionsPage.tsx` 在 render 阶段直接格式化时间
+  - 三处列表项缺少 `content-visibility`
+- Metric / Rubric: 资源提示边界清晰、formatter hoist、生效的 leaf suppress、列表惰性渲染、验证通过
+- Pass Threshold / Stop Condition: Phase 6 所有目标文件完成并通过验证
+- Next Phase Trigger / Transition Notes: Phase 6 commit 完成后刷新为 Phase 7
+- Previous Phase Summary: Phase 5 已完成并提交 `53a8dd2`
 
 ## Part 1: Current phase requirement and scope
 ### 1.1 Capture the executable objective for this phase
-- [x] Task: 将 client-side data fetching 收敛为明确可执行的文件级任务
-- Goal: 避免把 Phase 4 扩成全局事件系统重构
-- Inputs / Dependencies: 目标源码、SWR 基础设施、滚动热路径
-- Procedure / Implementation notes: 只处理真实热路径；4.4 无高价值代码落点时如实记录
+- [x] Task: 将 rendering performance 收敛为明确可执行的文件级任务
+- Goal: 避免把 Phase 6 扩成全局 hydration 重构
+- Inputs / Dependencies: 目标源码、React 19 resource hints、长列表页面
+- Procedure / Implementation notes: 只处理真实热路径；无高价值规则如实记录
 - Output / Artifact: 可执行目标说明
-- Done when: 已明确改动文件与无落点项
+- Done when: 已明确改动文件与审计结论
 - Verification: Medium todo 已同步
-- Notes: 4.1/4.2/4.3 为主要代码落点
+- Notes: 6.2/6.3/6.6/6.10 为主要代码落点
 
 ### 1.2 Enumerate current-phase dependencies and prerequisites
-- [x] Task: 列出 Phase 4 所需依赖与验证约束
+- [x] Task: 列出 Phase 6 所需依赖与验证约束
 - Goal: 让执行与验证保持一致
-- Inputs / Dependencies: typecheck / eslint / build、目标文件
-- Procedure / Implementation notes: 保持最小改动，优先复用现有 SWR 与组件结构
+- Inputs / Dependencies: typecheck / eslint / build、React 19、目标文件
+- Procedure / Implementation notes: 保持最小改动，复用现有 API base URL 事实源
 - Output / Artifact: 当前阶段依赖清单
-- Done when: 提权需求与验证命令明确
+- Done when: resource hints 与验证命令明确
 - Verification: `PROJECT_EXECUTION_STATE.md` 已同步
-- Notes: build 仍需可能提权
+- Notes: build 仍可能需提权
 
 ## Part 2: Current phase research and decomposition
 ### 2.1 Inspect relevant context in detail for this phase
-- [x] Task: 固化 client-side data fetching 热点审计结论
-- Goal: 对应真实客户端热路径
-- Inputs / Dependencies: 目标 hooks / 组件 / 页面
+- [x] Task: 固化 rendering 热点审计结论
+- Goal: 对应真实渲染路径
+- Inputs / Dependencies: 目标 views / providers / services
 - Procedure / Implementation notes:
-  - `useTypewriterStream` 在消息级实例中会重复注册 reduced-motion 监听
-  - `MessageList` 的 scroll listener 位于高频滚动路径
-  - `KbChatPage` 的 graph schema 请求可交给 SWR 去重
-  - 当前 localStorage 只有主题模式一个轻量 token，4.4 暂无高价值改动
-- Output / Artifact: Phase 4 上下文图
+  - `KbChatPage` 在 JSX 中直接输出当前时间
+  - `ExtensionsPage` 直接在 render 中 `toLocaleString()`
+  - 知识库卡片、扩展列表、研究进度列表都可能增长
+  - `AppProviders` 适合作为 resource hints 的全局接入点
+- Output / Artifact: Phase 6 上下文图
 - Done when: 每个目标项都能映射到具体文件
 - Verification: 目标文件已审阅
-- Notes: 不扩展到非热点监听与主题偏好迁移
+- Notes: 不扩展到无脚本、无 SVG 动画的页面
 
 ### 2.2 Break the current phase into executable units
-- [x] Task: 拆解 Phase 4 执行单元
+- [x] Task: 拆解 Phase 6 执行单元
 - Goal: 保持可跟踪
 - Inputs / Dependencies: baseline、目标文件
 - Procedure / Implementation notes:
-  - 新增共享 reduced-motion hook
-  - MessageList 改 passive scroll listener
-  - graph schema 新增 SWR hook 并接入 KbChatPage
+  - `http.ts` 暴露 API origin
+  - `AppProviders.tsx` 补 `prefetchDNS` / `preconnect`
+  - `KbChatPage.tsx` / `ExtensionsPage.tsx` hoist formatter 并在 leaf suppress
+  - 三个列表补 `content-visibility`
   - 跑 typecheck / eslint / build
 - Output / Artifact: 可执行分解
 - Done when: 每一步都有明确文件与验收点
 - Verification: 3.x/4.x 已细化
-- Notes: 优先保留现有 UI 与数据结构
+- Notes: 优先保持现有 UI 与文案不变
 
 ## Part 3: Current phase execution
 ### 3.1 Complete the first executable slice of this phase
-- [x] Task: 处理共享监听与 passive scroll 热路径
-- Goal: 先消除重复监听并优化滚动热路径
+- [x] Task: 完成 resource hints 与时间文本 hydration 收口
+- Goal: 先处理 API 首连与预期 mismatch 噪音
 - Inputs / Dependencies:
-  - `frontend/src/hooks/usePrefersReducedMotion.ts`
-  - `frontend/src/components/chat/useTypewriterStream.ts`
-  - `frontend/src/components/chat/MessageList.tsx`
+  - `frontend/src/services/http.ts`
+  - `frontend/src/providers/AppProviders.tsx`
+  - `frontend/src/views/KbChatPage.tsx`
+  - `frontend/src/views/ExtensionsPage.tsx`
 - Procedure / Implementation notes:
-  - 用 `useSyncExternalStore` 建立共享 reduced-motion store
-  - `useTypewriterStream` 改复用共享 hook
-  - `MessageList` 改用 passive scroll listener
-- Output / Artifact: 共享监听与滚动热路径改动
-- Done when: reduced-motion 监听共享化；scroll listener 为 passive
+  - 导出 API origin
+  - 用 React 19 `prefetchDNS` / `preconnect` 发出资源提示
+  - 模块级 hoist formatter
+  - 只在时间文本 leaf 节点使用 `suppressHydrationWarning`
+- Output / Artifact: resource hints、formatter hoist、leaf suppress
+- Done when: API origin 与时间文本热路径改动完成
 - Verification: typecheck / eslint / build
-- Notes:
-  - 已完成 `usePrefersReducedMotion.ts`
-  - 已完成 `useTypewriterStream.ts` 接线
-  - 已完成 `MessageList.tsx` passive scroll listener
+- Notes: 已完成代码修改，当前仅待验证
 
 ### 3.2 Complete remaining executable slices of this phase
-- [x] Task: 完成 graph schema 的 SWR 化、4.4 审计留痕与验证
-- Goal: 收口 Phase 4
+- [x] Task: 完成长列表 `content-visibility` 与审计留痕
+- Goal: 收口 Phase 6
 - Inputs / Dependencies:
-  - `frontend/src/hooks/queries/useKbChatGraphSchema.ts`
-  - `frontend/src/views/KbChatPage.tsx`
-  - typecheck / eslint / build
+  - `frontend/src/views/KnowledgeBasesPage.tsx`
+  - `frontend/src/views/ExtensionsPage.tsx`
+  - `frontend/src/components/research/ResearchProgressFeed.tsx`
 - Procedure / Implementation notes:
-  - graph schema 请求切换到 SWR
-  - 移除 KbChatPage 内的手写 effect/fetch
-  - 4.4 以审计结论记录，不做低价值 localStorage 改动
-- Output / Artifact: SWR 接线、验证结果、commit
-- Done when: graph schema 查询交由 SWR；验证完成
+  - 列表项补充 `contentVisibility: 'auto'`
+  - 结合 `containIntrinsicSize` 降低跳动
+  - 将无高价值规则记录为审计结论，不强行扩项
+- Output / Artifact: 列表项惰性渲染改动、审计结果
+- Done when: 列表热路径改动完成
 - Verification: typecheck / eslint / build
-- Notes:
-  - 已完成 `useKbChatGraphSchema.ts`
-  - 已完成 `KbChatPage.tsx` 接线
-  - 当前仅剩 git commit 动作
+- Notes: 已完成代码修改，当前仅待验证与 commit
 
 ## Part 4: Verification and transition
 ### 4.1 Verify completed outputs for this phase
-- [x] Task: 运行与 Phase 4 结论直接相关的验证
-- Goal: 防止只改代码不验证 client-side 路径
+- [x] Task: 运行与 Phase 6 结论直接相关的验证
+- Goal: 防止只改代码不验证 rendering 路径
 - Inputs / Dependencies: 完成后的代码、typecheck / eslint / build
 - Procedure / Implementation notes:
   - 跑 `npm run typecheck`
-  - 跑定向 `eslint`
+  - 跑 `npx eslint src/services/http.ts src/providers/AppProviders.tsx src/views/KbChatPage.tsx src/views/ExtensionsPage.tsx src/views/KnowledgeBasesPage.tsx src/components/research/ResearchProgressFeed.tsx`
   - 跑 `npm run build`
-- Output / Artifact: Phase 4 验证记录
-- Done when: 验证足以支撑 client data fetching 优化结论
+- Output / Artifact: Phase 6 验证记录
+- Done when: 验证足以支撑 rendering performance 优化结论
 - Verification: 命令输出留痕
-- Notes:
+- Notes: 如 build 触发 `spawn EPERM`，需提权重跑
   - `npm run typecheck` 通过
-  - `npx eslint src/hooks/usePrefersReducedMotion.ts src/hooks/queries/useKbChatGraphSchema.ts src/components/chat/useTypewriterStream.ts src/components/chat/MessageList.tsx src/views/KbChatPage.tsx` 通过
-  - `npm run build` 通过（require_escalated）
+  - `npx eslint src/services/http.ts src/providers/AppProviders.tsx src/views/KbChatPage.tsx src/views/ExtensionsPage.tsx src/views/KnowledgeBasesPage.tsx src/components/research/ResearchProgressFeed.tsx` 通过
+  - `npm run build` 通过（require_escalated；sandbox 内 `spawn EPERM`）
 
 ### 4.2 Reconcile phase completion and prepare the next step
-- [ ] Task: 更新状态、提交 Phase 4 commit，并准备切到 Phase 5
+- [ ] Task: 更新状态、归档 Phase 6 计划、提交 Phase 6 commit，并准备切到 Phase 7
 - Goal: 留下完整审计轨迹
 - Inputs / Dependencies: 已验证改动、git 工作区
 - Procedure / Implementation notes:
   - 更新 active planning files
+  - 归档 Phase 6 planning docs
   - 提交明确 commit
-  - 归档 Phase 4 计划
+  - 刷新为 Phase 7
 - Output / Artifact: commit + 过渡决策
-- Done when: Phase 4 commit 完成，Phase 5 入口明确
+- Done when: Phase 6 commit 完成，Phase 7 入口明确
 - Verification: `git log -1 --stat`
-- Notes: 当前 planning files 已到完成态；提交当前 commit 后才可标记完成并刷新为 Phase 5
+- Notes: fresh verification 已完成；当前仅剩归档与 commit

@@ -17,7 +17,13 @@ export function ResearchProgressFeed({ items }: { items: ResearchProgressItem[] 
           研究进度
         </Typography>
         {items.map((item) => (
-          <Box key={item.id}>
+          <Box
+            key={item.id}
+            sx={{
+              contentVisibility: 'auto',
+              containIntrinsicSize: '1px 88px',
+            }}
+          >
             <Typography fontWeight={500}>{item.title}</Typography>
             <Typography variant="body2" color="text.secondary">
               {item.phaseLabel}

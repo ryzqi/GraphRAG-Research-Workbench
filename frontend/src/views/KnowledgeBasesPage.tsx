@@ -281,6 +281,8 @@ export default function KnowledgeBasesPage() {
                 border: 1,
                 borderColor: 'divider',
                 overflow: 'hidden',
+                contentVisibility: 'auto',
+                containIntrinsicSize: '1px 168px',
               }}
               onClick={() => router.push('/knowledge-bases/' + kb.id)}
             >

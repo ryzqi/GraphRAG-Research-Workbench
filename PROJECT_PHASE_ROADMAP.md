@@ -8,7 +8,7 @@
 - Customer Problem / Desired Outcome: 在不改变视觉风格、配色与交互设计语言的前提下，系统性消除前端性能热点，降低首屏阻塞、缩小 bundle、减少不必要重渲染与运行时开销。
 - Why Now / Decision Driver: 用户明确要求按 Vercel React Best Practices 分大类逐项落地，并要求每个大类完成后独立提交，形成可审计演进历史。
 - Overall Goal: 依照 8 个性能类别依次完成前端性能优化，每个类别都保留“代码改动 + 直接验证 + 独立 git 提交”证据链。
-- Current Active Phase: Phase 4 - Client-Side Data Fetching
+- Current Active Phase: Phase 6 - Rendering Performance
 - Overall Success Criteria:
   - 8 个大类别全部按顺序完成，中间不跳类、不混类。
   - 每个类别仅做性能相关优化，不改视觉风格、配色或产品设计。
@@ -23,7 +23,7 @@
 - Overall Metric / Rubric:
   - 代码审计确认目标反模式被消除或显著减少。
   - `npm run typecheck` 通过。
-  - 与当前类别直接相关的 targeted tests / targeted lint / build 通过；若受沙箱限制阻断，需明确记录。
+  - 与当前类别直接相关的 targeted lint / targeted tests / build 通过；若受沙箱限制阻断，需明确记录。
 - Overall Pass Threshold / Stop Condition: 当前类别的目标反模式处理完成，且存在对应验证证据后，才允许进入下一类别。
 - Key Constraints:
   - 仅优化性能，不改风格、配色、整体设计。
@@ -31,21 +31,21 @@
   - 每完成一个大类别后必须 git commit。
   - 环境为 Windows + PowerShell；验证受当前沙箱对 spawn 的限制影响。
 - Key Risks / Unknowns:
-  - `next build`、`npm run analyze` 与默认 `vitest run` 在沙箱中可能存在 `spawn EPERM` 风险。
-  - 某些优化可能跨 server/client 边界，需要分阶段保持最小改动。
+  - `next build` 与部分测试命令在沙箱中可能存在 `spawn EPERM` 风险。
+  - 某些优化跨 server/client 边界，需要保持最小改动。
 - Parked / Deferred Threads:
   - 若某类别需要更重的性能基准工具，再按需引入，不预先扩项。
 - Last Updated: 2026-03-31
 
 ## Module Map
 - Module / Domain 1: `frontend/src/app`
-  - Responsibility: App Router 路由入口、服务端预取、首屏加载路径
-  - Key dependencies: `frontend/src/services/serverFirstRoutePrefetch.ts`, `frontend/src/components/providers/*`
+  - Responsibility: App Router 路由入口、SSR / hydration 边界、全局布局
+  - Key dependencies: `frontend/src/providers/*`, `frontend/src/components/shell/*`
   - Notes: Phase 1、3、6 的关键入口
 - Module / Domain 2: `frontend/src/views`
   - Responsibility: 页面级 client 组件与交互编排
   - Key dependencies: `frontend/src/hooks/*`, `frontend/src/components/*`
-  - Notes: Phase 2、4、5、6 的主要改动面
+  - Notes: Phase 2、4、5、6、7 的主要改动面
 - Module / Domain 3: `frontend/src/components`
   - Responsibility: 可复用 UI / Chat / Research / Shell 组件
   - Key dependencies: MUI、React、Next dynamic/lazy
@@ -53,11 +53,11 @@
 - Module / Domain 4: `frontend/src/hooks` + `frontend/src/services`
   - Responsibility: 数据获取、SWR、流式会话控制、纯函数工具
   - Key dependencies: `swr`, `fetch`, route prefetch helpers
-  - Notes: Phase 3、4、7 的主要改动面
-- Module / Domain 5: `frontend/src/theme`
-  - Responsibility: 主题定义与 provider 装配
-  - Key dependencies: MUI theme system
-  - Notes: Phase 2 与 Phase 4 的主题状态热路径
+  - Notes: Phase 3、4、7、8 的主要改动面
+- Module / Domain 5: `frontend/src/theme` + `frontend/src/providers`
+  - Responsibility: 主题定义、全局 provider 装配、客户端启动阶段资源提示
+  - Key dependencies: MUI theme system、React DOM resource hints
+  - Notes: Phase 2、4、6 的关键热路径
 
 ## Phase Roadmap
 ### Phase 1: Eliminating Waterfalls
@@ -88,37 +88,37 @@
 - Main Deliverables: cache-friendly GET、共享 server prefetch cache、请求内去重、验证与 commit
 - Entry Conditions: Phase 2 已提交
 - Completion Conditions: server-side 热点处理完成并提交
-- Transition Notes: 已完成并提交 `7fd0750`，并归档到 `archive/perf-phases/*.phase-03-server-side.md`
+- Transition Notes: 已完成并提交 `7fd0750`
 
 ### Phase 4: Client-Side Data Fetching
-- Status: Active
+- Status: Completed
 - Objective: 优化全局事件监听、SWR 去重与 localStorage 使用。
-- Scope Boundary: 仅覆盖 4.1~4.4；本轮实际落点聚焦 4.1、4.2、4.3，并确认 4.4 当前仅有轻量主题模式 localStorage，暂无高价值代码改动。
+- Scope Boundary: 仅覆盖 4.1~4.4；实际落点聚焦 4.1、4.2、4.3，并确认 4.4 当前仅有轻量主题模式 localStorage，暂无高价值代码改动。
 - Modules Involved: `src/hooks`, `src/views`, `src/components`, `src/theme`
 - Main Deliverables: 共享 reduced-motion 监听、passive scroll listener、SWR 化的 graph schema 查询、验证与 commit
 - Entry Conditions: Phase 3 已提交
 - Completion Conditions: client data fetching 热点处理完成并提交
-- Transition Notes: 完成后转入重渲染优化阶段
+- Transition Notes: 已完成并提交 `6df521f`，并归档到 `archive/perf-phases/*.phase-04-client-data.md`
 
 ### Phase 5: Re-render Optimization
-- Status: Pending
+- Status: Completed
 - Objective: 清理无效 memo/effect/state 订阅，降低不必要重渲染。
-- Scope Boundary: 仅覆盖 5.1~5.15
+- Scope Boundary: 仅覆盖 5.1~5.15；实际落点聚焦渲染期派生状态、移除 primitive `useMemo` 与收窄无意义同步 effect。
 - Modules Involved: `src/views`, `src/components`, `src/hooks`
 - Main Deliverables: 关键页面与组件的重渲染路径收敛
 - Entry Conditions: Phase 4 已提交
 - Completion Conditions: rerender 反模式处理完成并提交
-- Transition Notes: 转入渲染性能阶段
+- Transition Notes: 已完成并提交 `53a8dd2`
 
 ### Phase 6: Rendering Performance
-- Status: Pending
-- Objective: 优化 hydration、条件渲染、脚本加载与长列表显示策略。
-- Scope Boundary: 仅覆盖 6.1~6.11
-- Modules Involved: `src/app`, `src/components`, `src/views`
-- Main Deliverables: 渲染层热点优化与验证
+- Status: Active
+- Objective: 优化 hydration、条件渲染、资源提示与长列表显示策略。
+- Scope Boundary: 仅覆盖 6.1~6.11；本轮实际落点优先聚焦 6.2、6.3、6.6、6.10，并审计 6.1/6.4/6.5/6.7/6.8/6.9/6.11 是否存在高价值最小改动。
+- Modules Involved: `src/app`, `src/providers`, `src/components`, `src/views`, `src/services`
+- Main Deliverables: 长列表 `content-visibility`、静态 formatter hoist、预期 hydration mismatch 抑制、React DOM resource hints、验证与 commit
 - Entry Conditions: Phase 5 已提交
 - Completion Conditions: rendering 反模式处理完成并提交
-- Transition Notes: 转入 JS 运行时优化阶段
+- Transition Notes: 完成后转入 JS 运行时优化阶段
 
 ### Phase 7: JavaScript Performance
 - Status: Pending
@@ -156,11 +156,19 @@
 - 2026-03-31:
   - What changed: Phase 3 完成并提交 `7fd0750`
   - Why it changed: 已满足 server-side 类别的完成条件
-  - Impact on current or future phases: 当前开始处理客户端监听、SWR 去重与 localStorage 审计
+  - Impact on current or future phases: 切换到客户端监听、SWR 去重与 localStorage 审计
 - 2026-03-31:
-  - What changed: Phase 4 已完成代码与验证收口，当前待提交独立 commit
-  - Why it changed: 已满足共享监听、passive scroll 与 SWR graph schema 的阶段目标
-  - Impact on current or future phases: 提交后可切换到 Phase 5，不再回流扩项客户端数据获取链路
+  - What changed: Phase 4 完成并提交 `6df521f`，并补齐归档文件
+  - Why it changed: 已满足 client-side data fetching 类别的完成条件
+  - Impact on current or future phases: 可以进入重渲染优化
+- 2026-03-31:
+  - What changed: Phase 5 完成并提交 `53a8dd2`
+  - Why it changed: 已满足重渲染优化类别的完成条件
+  - Impact on current or future phases: 当前切换到 Rendering Performance
+- 2026-03-31:
+  - What changed: active planning files 刷新到 Phase 6
+  - Why it changed: 之前文档仍停留在 Phase 4，需与真实提交进度对齐
+  - Impact on current or future phases: 后续 Phase 6/7/8 将继续基于当前 active docs 推进
 
 ## Archive References
 - Phase archive path(s): `archive/perf-phases/`
@@ -168,3 +176,5 @@
   - Phase 1: `*.phase-01-waterfalls.md`
   - Phase 2: `*.phase-02-bundle-size.md`
   - Phase 3: `*.phase-03-server-side.md`
+  - Phase 4: `*.phase-04-client-data.md`
+  - Phase 5: `*.phase-05-rerender.md`

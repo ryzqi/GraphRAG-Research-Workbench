@@ -87,6 +87,13 @@ const KbChatFlowPanel = dynamic(
   { ssr: false }
 );
 
+const KB_CHAT_SESSION_TIME_FORMATTER = new Intl.DateTimeFormat('zh-CN', {
+  hour: '2-digit',
+  minute: '2-digit',
+  second: '2-digit',
+  hour12: false,
+});
+
 type TerminalRunStatus = 'succeeded' | 'failed' | 'canceled' | 'waiting_user';
 
 const DEFAULT_KB_CHAT_CONFIG: KbChatConfig = {
@@ -249,6 +256,9 @@ export function KbChatPage() {
   const [error, setError] = useState<string | null>(null);
   const [mobileTraceOpen, setMobileTraceOpen] = useState(false);
   const [selectedAssistantId, setSelectedAssistantId] = useState<string | null>(null);
+  const [sessionHeaderTimeLabel, setSessionHeaderTimeLabel] = useState(() =>
+    KB_CHAT_SESSION_TIME_FORMATTER.format(new Date())
+  );
   const previousSessionIdRef = useRef<string | null>(sessionId);
 
   const resetSession = useCallback(() => {
@@ -293,6 +303,10 @@ export function KbChatPage() {
     error ??
     (knowledgeBasesQuery.error ? getErrorMessage(knowledgeBasesQuery.error) : null) ??
     (graphSchemaQuery.error ? getErrorMessage(graphSchemaQuery.error) : null);
+
+  useEffect(() => {
+    setSessionHeaderTimeLabel(KB_CHAT_SESSION_TIME_FORMATTER.format(new Date()));
+  }, [session?.id]);
 
   const selectedKbNames = useMemo(() => {
     const map = new Map((knowledgeBases ?? []).map((kb) => [kb.id, kb.name]));
@@ -1389,7 +1403,7 @@ const applyUiEvent = useCallback(
             <Stack direction='row' spacing={1} alignItems='center'>
               <Chip size='small' color='primary' variant='outlined' label='知识库问答会话' />
               <Typography variant='caption' color='text.secondary'>
-                {new Date().toLocaleTimeString('zh-CN', { hour12: false })}
+                <span suppressHydrationWarning>{sessionHeaderTimeLabel}</span>
               </Typography>
             </Stack>
             <Stack direction='row' spacing={1}>

@@ -1,0 +1,31 @@
+# Project Execution State
+
+## Current State
+- Current Mode: Multi-phase
+- Current Focus / Active Phase: Phase 5 - Re-render Optimization（已验证并待切换到 Phase 6）
+- Eval Objective: 在不改变 UI 与交互语义的前提下，减少由派生状态同步、无效 `useMemo` 和多余 effect 造成的可避免重渲染。
+- Evaluation Surface / Fixed Baseline:
+  - `frontend/src/views/KbChatPage.tsx` 用 effect 同步 `activeAssistantId`
+  - `frontend/src/views/ModelConfigPage.tsx` 用 effect 同步 provider/model draft
+  - `frontend/src/components/EvidenceList.tsx` / `frontend/src/components/KnowledgeBaseSelector.tsx` 对 primitive 值使用 `useMemo`
+- Metric / Rubric:
+  - 派生状态改为渲染期计算
+  - primitive `useMemo` 被移除
+  - typecheck / targeted eslint / build 通过
+- Pass Threshold / Stop Condition: Phase 5 热点处理完成，并拿到验证证据
+- Active Execution Wave:
+  - 已完成：`KbChatPage.tsx` 改为渲染期派生 `activeAssistantId`
+  - 已完成：`ModelConfigPage.tsx` 去掉 provider/model draft 同步 effect
+  - 已完成：`EvidenceList.tsx` / `KnowledgeBaseSelector.tsx` 移除 primitive `useMemo`
+- Last Verified Stop Point:
+  - `npm run typecheck`
+  - `npx eslint src/views/KbChatPage.tsx src/views/ModelConfigPage.tsx src/components/EvidenceList.tsx src/components/KnowledgeBaseSelector.tsx`
+  - `npm run build`
+- Key Recent Decisions:
+  - 只处理已定位的重渲染热点
+  - 不把本阶段扩展为更大的状态管理重构
+- Verification Evidence Reference:
+  - 2026-03-31 `npm run typecheck` 通过
+  - 2026-03-31 定向 `eslint` 通过
+  - 2026-03-31 `npm run build` 通过
+- Last Updated: 2026-03-31

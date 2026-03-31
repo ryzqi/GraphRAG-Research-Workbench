@@ -58,6 +58,16 @@ import { PageHeader } from '../components/ui/PageHeader';
 type ListStatusFilter = 'all' | ExtensionStatus;
 type EditorMode = 'create' | 'edit';
 
+const EXTENSION_CREATED_AT_FORMATTER = new Intl.DateTimeFormat('zh-CN', {
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+  hour: '2-digit',
+  minute: '2-digit',
+  second: '2-digit',
+  hour12: false,
+});
+
 function getConnectionStatusLabel(status: ExtensionConnectionStatus): string {
   if (status === 'ok') return '连接正常';
   if (status === 'degraded') return '连接退化';
@@ -97,6 +107,9 @@ export function ExtensionsPage() {
 
   const selectedExtension =
     extensions.find((ext) => ext.id === selectedExtensionId) ?? null;
+  const selectedExtensionCreatedAtLabel = selectedExtension
+    ? EXTENSION_CREATED_AT_FORMATTER.format(new Date(selectedExtension.created_at))
+    : null;
 
   const toolsQuery = useExtensionTools(selectedExtension?.id);
   const toolResponse = toolsQuery.data;
@@ -300,6 +313,8 @@ export function ExtensionsPage() {
                         cursor: 'pointer',
                         borderColor: selected ? 'primary.main' : 'divider',
                         bgcolor: selected ? 'action.selected' : 'background.paper',
+                        contentVisibility: 'auto',
+                        containIntrinsicSize: '1px 84px',
                       }}
                       onClick={() => setSelectedExtensionId(ext.id)}
                     >
@@ -355,7 +370,8 @@ export function ExtensionsPage() {
                   <Box>
                     <Typography variant='h6'>{selectedExtension.name}</Typography>
                     <Typography variant='body2' color='text.secondary'>
-                      创建于 {new Date(selectedExtension.created_at).toLocaleString()}
+                      创建于{' '}
+                      <span suppressHydrationWarning>{selectedExtensionCreatedAtLabel}</span>
                     </Typography>
                   </Box>
                   <Stack direction='row' spacing={1}>

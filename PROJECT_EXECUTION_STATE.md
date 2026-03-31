@@ -3,51 +3,52 @@
 ## Current State
 - Current Mode: Multi-phase
 - Artifact Policy / Active Planning Files: `PROJECT_PHASE_ROADMAP.md`, `TASK_TODO_MEDIUM.md`, `TASK_TODO_FINE.md`, `PROJECT_EXECUTION_STATE.md`
-- Current Focus / Active Phase: Phase 4 - Client-Side Data Fetching（已修改并验证，待提交 commit）
-- Eval Objective: 在不改变 UI 与交互语义的前提下，减少客户端重复监听、让滚动监听更轻、并把可共享的图谱 schema 请求交给 SWR 去重。
+- Current Focus / Active Phase: Phase 6 - Rendering Performance（已验证通过，待提交 commit）
+- Eval Objective: 在不改变 UI 风格与交互语义的前提下，减少长列表首屏绘制成本，缩小预期 hydration mismatch 的噪音面，并为跨域 API 请求补充早期连接提示。
 - Evaluation Surface / Fixed Baseline:
-  - `frontend/src/components/chat/useTypewriterStream.ts` 为每个使用者单独挂 reduced-motion 监听
-  - `frontend/src/components/chat/MessageList.tsx` 通过 React `onScroll` 热路径更新滚动状态
-  - `frontend/src/views/KbChatPage.tsx` 用手写 `useEffect + getKbChatGraphSchema` 管理图谱 schema 请求
-  - `frontend/src/theme/ThemeProvider.tsx` 的 localStorage 仅存一个轻量主题模式 token
+  - `frontend/src/views/KbChatPage.tsx` 直接在 JSX 中渲染当前时间，属于预期 hydration mismatch 热点
+  - `frontend/src/views/ExtensionsPage.tsx` 直接在 render 阶段做 `toLocaleString()`，存在 locale/timezone mismatch 风险
+  - `frontend/src/views/KnowledgeBasesPage.tsx` 与 `frontend/src/components/research/ResearchProgressFeed.tsx` 的列表项尚未补 `content-visibility`
+  - `frontend/src/providers/AppProviders.tsx` 尚未对跨域 API origin 发出 React DOM resource hints
 - Metric / Rubric:
-  - reduced-motion 监听被共享单例 hook 收口
-  - MessageList 使用 passive scroll listener
-  - KbChat graph schema 查询改为 SWR hook
-  - typecheck / eslint / build 通过
-- Pass Threshold / Stop Condition: Phase 4 的 client data fetching 热点处理完成，并拿到对应验证证据
+  - 长列表项仅在接近视口时参与布局/绘制
+  - 预期的时间文本 mismatch 被局部抑制，而不是继续扩大到更高层
+  - 静态 `Intl.DateTimeFormat` 实例被 hoist，避免热路径反复创建
+  - `prefetchDNS` / `preconnect` 对 API origin 生效
+  - typecheck / targeted eslint / build 通过
+- Pass Threshold / Stop Condition: Phase 6 的渲染层热点处理完成，并拿到对应验证证据后才能提交并进入 Phase 7
 - Active Execution Wave:
-  - 已完成：新增 `usePrefersReducedMotion.ts` 共享监听
-  - 已完成：`MessageList.tsx` 改为 passive scroll listener
-  - 已完成：新增 `useKbChatGraphSchema.ts` 并替换 `KbChatPage.tsx` 手写请求
-  - 已完成：Phase 4 验证闭环；当前仅待 git commit
+  - 已完成：`http.ts` 暴露 API origin，`AppProviders.tsx` 补充 React DOM resource hints
+  - 已完成：`KnowledgeBasesPage.tsx`、`ResearchProgressFeed.tsx`、`ExtensionsPage.tsx` 列表项补 `content-visibility`
+  - 已完成：`KbChatPage.tsx` 与 `ExtensionsPage.tsx` 的时间格式化 hoist，并在 leaf 节点抑制预期 hydration mismatch
+  - 已完成：Phase 6 fresh verification
+  - 待执行：提交 commit，并刷新到 Phase 7
 - Last Verified Stop Point:
-  - Phase 3 commit：`7fd0750`
-  - Phase 4 verification：
+  - Phase 5 commit：`53a8dd2`
+  - Phase 5 verification：
     - `npm run typecheck`
-    - `npx eslint src/hooks/usePrefersReducedMotion.ts src/hooks/queries/useKbChatGraphSchema.ts src/components/chat/useTypewriterStream.ts src/components/chat/MessageList.tsx src/views/KbChatPage.tsx`
-    - `npm run build`（require_escalated；sandbox 内 `spawn EPERM`）
+    - `npx eslint src/views/KbChatPage.tsx src/views/ModelConfigPage.tsx src/components/EvidenceList.tsx src/components/KnowledgeBaseSelector.tsx`
+    - `npm run build`（必要时 require_escalated）
 - Latest Improvement / Regression Notes:
-  - `usePrefersReducedMotion.ts` 通过 `useSyncExternalStore` 把 reduced-motion 媒体查询收敛成共享监听，避免消息级重复注册。
-  - `MessageList.tsx` 的滚动状态同步已改为 `addEventListener('scroll', ..., { passive: true })`。
-  - `useKbChatGraphSchema.ts` 用 SWR 管理 schema 查询，`KbChatPage.tsx` 移除了手写 effect/fetch 状态机。
-  - 审计结论：4.4 当前仅有主题模式一个极小 localStorage token，无更大、更热的数据结构，不为了覆盖规则强行改动用户偏好存储。
+  - 当前修改集中在 rendering 层，不改变现有视觉样式与交互入口。
+  - `AppProviders.tsx` 使用 React 19 `prefetchDNS` / `preconnect`，目标是跨域 API origin 的更早连接建立。
+  - `KbChatPage.tsx` 与 `ExtensionsPage.tsx` 改为静态 formatter + leaf `suppressHydrationWarning`，避免继续在热路径里重复创建 formatter。
 - Plateau / No-Signal Count: 0
-- Next Recommended Action: 提交 Phase 4 commit，归档当前阶段 planning files，并刷新到 Phase 5
-- Current Blockers: 无代码级 blocker；build 在沙箱内会触发 `spawn EPERM`，已通过提权完成验证
+- Next Recommended Action: 提交 Phase 6 commit，然后切换 active planning docs 到 Phase 7
+- Current Blockers: 无代码级 blocker；build 在沙箱内可能触发 `spawn EPERM`，如遇到需按既有方式提权
 - Assumptions Awaiting Confirmation:
-  - 对 reduced-motion 使用共享 `useSyncExternalStore` store，比在每个消息项内各自订阅更稳妥
-  - 主题模式 localStorage 当前不构成高价值性能热点，因此 4.4 以审计结论处理
+  - 当前部署形态下 API origin 与页面 origin 分离，`preconnect` 对首个 API 请求仍有收益
+  - KbChat / Extensions 的时间文本属于“预期不稳定文本”，使用 leaf 级 `suppressHydrationWarning` 比扩大 suppress 范围更稳妥
 - Parked / Deferred Items:
-  - 若后续发现更重的 localStorage 数据结构，再在对应阶段单独处理
-  - 被动滚动监听仅在 MessageList 这一条热路径落地，其他非热点监听暂不扩项
+  - 6.1/6.4/6.5/6.7/6.8/6.9/6.11 本轮暂未发现更高价值、且不改变行为语义的最小落点
+  - 如果后续发现脚本标签或更重的 SVG 动画热点，再在对应阶段补充
 - Key Recent Decisions:
-  - 4.1 只处理真正可能多实例挂载的 reduced-motion 监听
-  - 4.2 选择 MessageList 作为 scroll 热路径的最小落点
-  - 4.3 对 graph schema 请求采用 SWR，而不是继续维护手写 effect 状态机
+  - 只把 `content-visibility` 扩展到真正可能增长的列表，而不是全站批量套用
+  - 时间文本 mismatch 只在 leaf 节点抑制，不继续扩大到布局容器
+  - resource hints 复用现有 `http.ts` 的 API base URL 事实源，不引入第二套 origin 配置
 - Verification Evidence Reference:
   - 2026-03-31 `npm run typecheck` 通过
-  - 2026-03-31 `npx eslint src/hooks/usePrefersReducedMotion.ts src/hooks/queries/useKbChatGraphSchema.ts src/components/chat/useTypewriterStream.ts src/components/chat/MessageList.tsx src/views/KbChatPage.tsx` 通过
-  - 2026-03-31 `npm run build` 通过（require_escalated）
-- Related Files: `PROJECT_PHASE_ROADMAP.md`, `TASK_TODO_MEDIUM.md`, `TASK_TODO_FINE.md`, `frontend/src/hooks/usePrefersReducedMotion.ts`, `frontend/src/hooks/queries/useKbChatGraphSchema.ts`, `frontend/src/components/chat/useTypewriterStream.ts`, `frontend/src/components/chat/MessageList.tsx`, `frontend/src/views/KbChatPage.tsx`
+  - 2026-03-31 `npx eslint src/services/http.ts src/providers/AppProviders.tsx src/views/KbChatPage.tsx src/views/ExtensionsPage.tsx src/views/KnowledgeBasesPage.tsx src/components/research/ResearchProgressFeed.tsx` 通过
+  - 2026-03-31 `npm run build` 通过（require_escalated；sandbox 内 `spawn EPERM`）
+- Related Files: `PROJECT_PHASE_ROADMAP.md`, `TASK_TODO_MEDIUM.md`, `TASK_TODO_FINE.md`, `frontend/src/services/http.ts`, `frontend/src/providers/AppProviders.tsx`, `frontend/src/views/KbChatPage.tsx`, `frontend/src/views/ExtensionsPage.tsx`, `frontend/src/views/KnowledgeBasesPage.tsx`, `frontend/src/components/research/ResearchProgressFeed.tsx`
 - Last Updated: 2026-03-31

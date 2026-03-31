@@ -38,12 +38,24 @@ const API_BASE_URL = (() => {
   return normalizeApiBaseUrl(raw);
 })();
 
+const API_ORIGIN = (() => {
+  try {
+    return new URL(API_BASE_URL).origin;
+  } catch {
+    return null;
+  }
+})();
+
 // 浏览器 fetch 没有内置超时；默认与后端常见的 30 秒慢路径预算保持一致，
 // 除非调用方显式覆盖。
 const DEFAULT_API_TIMEOUT_MS = 30_000;
 
 export function getApiBaseUrl(): string {
   return API_BASE_URL;
+}
+
+export function getApiOrigin(): string | null {
+  return API_ORIGIN;
 }
 
 function newRequestId(): string {
