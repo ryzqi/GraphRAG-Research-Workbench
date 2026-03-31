@@ -93,6 +93,17 @@ def _build_plan_snapshot() -> ResearchPlanSnapshot:
     )
 
 
+def _assert_session_bootstrap_artifacts(session: ResearchSession) -> None:
+    artifact_keys = [artifact.artifact_key for artifact in session.artifacts]
+    assert artifact_keys[-5:] == [
+        "mission_md",
+        "plan_md",
+        "query_map_md",
+        "coverage_md",
+        "report_draft_md",
+    ]
+
+
 @pytest.mark.asyncio
 async def test_create_session_persists_plan_snapshot_artifact_event_and_queues_immediately() -> None:
     db = _FakeAsyncSession()
@@ -122,6 +133,7 @@ async def test_create_session_persists_plan_snapshot_artifact_event_and_queues_i
         "coverage_md",
         "report_draft_md",
     ]
+    _assert_session_bootstrap_artifacts(session)
     assert session.artifacts[1].content_text == plan_result.plan_snapshot.research_brief
     assert plan_result.auto_approve is True
 
@@ -300,6 +312,7 @@ async def test_submit_clarification_transitions_to_queued_and_persists_plan() ->
     assert session.status == ResearchSessionStatus.QUEUED
     assert plan_result.plan_snapshot is not None
     assert plan_result.clarification_request is None
+    _assert_session_bootstrap_artifacts(session)
     assert scoper.questions == [
         "帮我研究一下 AI 编程工具",
         "帮我研究一下 AI 编程工具 关注 LangGraph StateGraph 在代码审查场景的使用建议",
@@ -365,6 +378,7 @@ async def test_submit_clarification_accumulates_previous_answers_before_reaching
     assert session.status == ResearchSessionStatus.QUEUED
     assert plan_result.plan_snapshot is not None
     assert plan_result.clarification_request is None
+    _assert_session_bootstrap_artifacts(session)
     assert scoper.questions == [
         "帮我研究一下 AI 编程工具",
         "帮我研究一下 AI 编程工具 想了解入门选择",

@@ -141,28 +141,10 @@ class ResearchService:
                 code="RESEARCH_PLAN_SNAPSHOT_MISSING",
                 message="研究计划快照缺失",
             )
-        await self._artifact_store.upsert(
+        await self._persist_planned_session_artifacts(
             session=session,
-            artifact_key=plan_result.plan_artifact_key,
-            content_json=plan_result.artifact_payload,
+            plan_result=plan_result,
         )
-        await self._artifact_store.upsert(
-            session=session,
-            artifact_key="research_brief",
-            content_text=plan_result.plan_snapshot.research_brief,
-        )
-        bootstrap_artifacts = build_workspace_bootstrap_artifacts(
-            session_id=session.id,
-            question=session.question,
-            plan_snapshot=plan_result.plan_snapshot,
-        )
-        for seed in bootstrap_artifacts.values():
-            await self._artifact_store.upsert(
-                session=session,
-                artifact_key=seed.artifact_key,
-                content_text=seed.content_text,
-                content_json=seed.content_json,
-            )
         await self._event_store.append(
             session=session,
             event_type="research.plan.created",
@@ -210,6 +192,41 @@ class ResearchService:
             content_text=answer,
         )
 
+    async def _persist_planned_session_artifacts(
+        self,
+        *,
+        session: ResearchSession,
+        plan_result: ResearchPlannerResult,
+    ) -> None:
+        plan_snapshot = plan_result.plan_snapshot
+        if plan_snapshot is None:
+            raise bad_request(
+                code="RESEARCH_PLAN_SNAPSHOT_MISSING",
+                message="研究计划快照缺失",
+            )
+        await self._artifact_store.upsert(
+            session=session,
+            artifact_key=plan_result.plan_artifact_key,
+            content_json=plan_result.artifact_payload,
+        )
+        await self._artifact_store.upsert(
+            session=session,
+            artifact_key="research_brief",
+            content_text=plan_snapshot.research_brief,
+        )
+        bootstrap_artifacts = build_workspace_bootstrap_artifacts(
+            session_id=session.id,
+            question=session.question,
+            plan_snapshot=plan_snapshot,
+        )
+        for seed in bootstrap_artifacts.values():
+            await self._artifact_store.upsert(
+                session=session,
+                artifact_key=seed.artifact_key,
+                content_text=seed.content_text,
+                content_json=seed.content_json,
+            )
+
     async def submit_clarification(
         self,
         *,
@@ -249,15 +266,9 @@ class ResearchService:
                 code="RESEARCH_PLAN_SNAPSHOT_MISSING",
                 message="研究计划快照缺失",
             )
-        await self._artifact_store.upsert(
+        await self._persist_planned_session_artifacts(
             session=session,
-            artifact_key=plan_result.plan_artifact_key,
-            content_json=plan_result.artifact_payload,
-        )
-        await self._artifact_store.upsert(
-            session=session,
-            artifact_key="research_brief",
-            content_text=plan_result.plan_snapshot.research_brief,
+            plan_result=plan_result,
         )
         await self._event_store.append(
             session=session,
