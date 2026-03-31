@@ -2,7 +2,7 @@
  * 知识库 API 封装
  */
 
-import { apiFetch } from './http';
+import { apiFetch, type ApiFetchOptions } from './http';
 import type { BatchStatus } from './ingestionBatches';
 import type { IndexRebuildJob } from './indexRebuilds';
 import type { ListResponse } from './types';
@@ -198,7 +198,7 @@ export async function listKnowledgeBases(params?: {
 export async function listSelectableKnowledgeBases(params?: {
   skip?: number;
   limit?: number;
-}): Promise<KnowledgeBaseListResponse> {
+}, options?: ApiFetchOptions): Promise<KnowledgeBaseListResponse> {
   const searchParams = new URLSearchParams();
   if (params?.skip !== undefined) {
     searchParams.set('skip', String(params.skip));
@@ -208,25 +208,31 @@ export async function listSelectableKnowledgeBases(params?: {
   }
   const query = searchParams.toString();
   return apiFetch<KnowledgeBaseListResponse>(
-    '/api/v1/knowledge-bases/selectable' + (query ? '?' + query : '')
+    '/api/v1/knowledge-bases/selectable' + (query ? '?' + query : ''),
+    options
   );
 }
 
 /**
  * 获取知识库详情
  */
-export async function getKnowledgeBase(kbId: string): Promise<KnowledgeBase> {
-  return apiFetch<KnowledgeBase>('/api/v1/knowledge-bases/' + kbId);
+export async function getKnowledgeBase(
+  kbId: string,
+  options?: ApiFetchOptions
+): Promise<KnowledgeBase> {
+  return apiFetch<KnowledgeBase>('/api/v1/knowledge-bases/' + kbId, options);
 }
 
 /**
  * 获取知识库 ingestion 状态
  */
 export async function getKnowledgeBaseIngestionState(
-  kbId: string
+  kbId: string,
+  options?: ApiFetchOptions
 ): Promise<KnowledgeBaseIngestionState> {
   return apiFetch<KnowledgeBaseIngestionState>(
-    '/api/v1/knowledge-bases/' + kbId + '/ingestion-state'
+    '/api/v1/knowledge-bases/' + kbId + '/ingestion-state',
+    options
   );
 }
 

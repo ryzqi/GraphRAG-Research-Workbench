@@ -1,0 +1,58 @@
+# Project Execution State
+
+## Current State
+- Current Mode: Multi-phase
+- Artifact Policy / Active Planning Files: `PROJECT_PHASE_ROADMAP.md`, `TASK_TODO_MEDIUM.md`, `TASK_TODO_FINE.md`, `PROJECT_EXECUTION_STATE.md`
+- Current Focus / Active Phase: Phase 2 - Bundle Size Optimization（已验证通过，已完成 commit `7f5eee0`）
+- Eval Objective: 让非关键模块退出初始 bundle，并保留用户可感知加载体验
+- Evaluation Surface / Fixed Baseline:
+  - `frontend/.next/analyze/client.html`（Phase 2 baseline）
+  - `frontend/src/theme/ThemeProvider.tsx` -> `./index`
+  - `frontend/src/views/ResearchPage.tsx` 静态导入重面板
+  - `frontend/src/components/research/ArtifactPanel.tsx` 直接依赖 markdown 库
+- Metric / Rubric:
+  - local barrel import 消失
+  - 研究页非关键面板改为 dynamic / conditional load
+  - Sidebar 支持 user-intent preload
+  - analyze/build/typecheck 通过
+- Pass Threshold / Stop Condition: Phase 2 的 bundle 优化完成，并拿到 analyze/build/typecheck 证据
+- Active Execution Wave:
+  - Phase 2 已完成：theme barrel import 消除
+  - Phase 2 已完成：研究页重面板改为按需动态加载
+  - Phase 2 已完成：Sidebar 用户意图预加载与 analyzer/build/typecheck 验证
+- Last Verified Stop Point:
+  - Phase 1 commit：`8e7e152`
+  - Phase 2 verification：
+    - `npm run typecheck`
+    - `npx eslint src/theme/ThemeProvider.tsx src/theme/md3Theme.ts src/components/research/ArtifactPanel.tsx src/components/shell/GeminiShell.tsx src/views/ResearchPage.tsx`
+    - `npm run build`（require_escalated；sandbox 内 `spawn EPERM`）
+    - `npm run analyze`（require_escalated；sandbox 内 `spawn EPERM`）
+- Latest Improvement / Regression Notes:
+  - `ThemeProvider.tsx` 已改为直连 `md3Theme.ts`，本地 barrel import 已消除。
+  - `ResearchPage.tsx` 已将 `ArtifactPanel`、`ResearchAdvancedEventsPanel`、`InterruptDecisionPanel` 切到 dynamic import，且 `ArtifactPanel` 仅在存在报告/产物时才加载。
+  - `ArtifactPanel.tsx` 已移除对 `react-markdown` / `remark-gfm` 的直接静态依赖，改为复用 `MarkdownContent`。
+  - `GeminiShell.tsx` 已在移动端菜单按钮 hover/focus/touch/click 前预热 Sidebar chunk。
+  - 最新 `client.html` 显示 `ResearchAdvancedEventsPanel.tsx`、`InterruptDecisionPanel.tsx`、`ArtifactPanel.tsx` 均位于 `isInitialByEntrypoint:{}` 的独立 chunk。
+- Plateau / No-Signal Count: 0
+- Next Recommended Action: Phase 2 已完成并提交 `7f5eee0`；当前文件保留为归档快照
+- Current Blockers: 无代码级 blocker；build/analyze 在沙箱内会触发 `spawn EPERM`，已通过提权完成验证
+- Assumptions Awaiting Confirmation:
+  - Phase 2 已按当前 analyzer 热点完成最小充分收敛
+  - 后续若仍发现新的 bundle 热点，放到后续类别内再处理，不回流扩项 Phase 2
+- Parked / Deferred Items:
+  - 更广泛的 route 级 chunk 拆分暂不处理
+  - 若 analyzer 显示新热点，再在后续阶段收敛
+- Key Recent Decisions:
+  - Phase 1 完成后先归档 todo，再刷新到 Phase 2
+  - Phase 2 只针对 analyzer 已确认热点做最小改动
+  - Phase 2 不追求“research route 完全无 Accordion 代码”，只确认重面板与 markdown 依赖已退出初始入口
+- Verification Evidence Reference:
+  - 2026-03-31 Phase 1 commit `8e7e152`
+  - 2026-03-31 `npm run typecheck` 通过
+  - 2026-03-31 `npx eslint src/theme/ThemeProvider.tsx src/theme/md3Theme.ts src/components/research/ArtifactPanel.tsx src/components/shell/GeminiShell.tsx src/views/ResearchPage.tsx` 通过
+  - 2026-03-31 `npm run build` 通过（require_escalated）
+  - 2026-03-31 `npm run analyze` 通过（require_escalated）
+  - 2026-03-31 `frontend/.next/analyze/client.html` 显示 `ArtifactPanel.tsx` / `ResearchAdvancedEventsPanel.tsx` / `InterruptDecisionPanel.tsx` 均为独立非初始 chunk
+- Related Files: `PROJECT_PHASE_ROADMAP.md`, `TASK_TODO_MEDIUM.md`, `TASK_TODO_FINE.md`, `frontend/src/theme/*`, `frontend/src/views/ResearchPage.tsx`, `frontend/src/components/research/*`, `frontend/src/components/shell/GeminiShell.tsx`
+- Last Updated: 2026-03-31
+

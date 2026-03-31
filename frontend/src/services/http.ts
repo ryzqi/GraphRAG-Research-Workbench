@@ -120,8 +120,9 @@ export async function fetchWithTimeout(
   }
 }
 
-interface ApiFetchOptions extends RequestInit {
+export interface ApiFetchOptions extends RequestInit {
   timeoutMs?: number;
+  includeRequestIdHeader?: boolean;
 }
 
 function buildBackendConnectivityHint(url: string): string {
@@ -138,7 +139,11 @@ export async function apiFetch<T>(path: string, init?: ApiFetchOptions): Promise
   if (!headers.has('Content-Type') && !(init?.body instanceof FormData)) {
     headers.set('Content-Type', 'application/json');
   }
-  headers.set('X-Request-Id', requestId);
+  // 对可缓存的服务端 GET，允许调用方关闭随机 request id header，
+  // 避免 Next/React 按 request init 去重与缓存时被无意义的唯一值打散。
+  if (init?.includeRequestIdHeader !== false) {
+    headers.set('X-Request-Id', requestId);
+  }
 
   const url = `${API_BASE_URL}${path}`;
 

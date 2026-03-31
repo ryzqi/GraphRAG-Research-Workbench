@@ -1,4 +1,4 @@
-import { apiFetch, fetchWithTimeout, HttpError } from './http';
+import { apiFetch, fetchWithTimeout, HttpError, type ApiFetchOptions } from './http';
 import type { EntryError } from './ingestionBatches';
 import type { KnowledgeBaseCreate } from './knowledgeBases';
 
@@ -149,8 +149,14 @@ export async function finalizeBootstrapSubmission(
   );
 }
 
-export async function getBootstrapSubmission(jobId: string): Promise<BootstrapSubmission> {
-  return apiFetch<BootstrapSubmission>(`/api/v1/knowledge-bases/bootstrap-submissions/${jobId}`);
+export async function getBootstrapSubmission(
+  jobId: string,
+  options?: ApiFetchOptions
+): Promise<BootstrapSubmission> {
+  return apiFetch<BootstrapSubmission>(
+    `/api/v1/knowledge-bases/bootstrap-submissions/${jobId}`,
+    options
+  );
 }
 
 export async function createBootstrapUploadSession(

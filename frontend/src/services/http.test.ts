@@ -67,4 +67,44 @@ describe('apiFetch error hints', () => {
     expect((error as HttpError).status).toBe(0);
     expect((error as HttpError).message).toContain('无法连接到后端服务');
   });
+
+  it('omits X-Request-Id when includeRequestIdHeader is false so cacheable GETs stay stable', async () => {
+    const fetchMock = vi
+      .fn<(...args: FetchCall) => Promise<Response>>()
+      .mockResolvedValue(
+        new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await apiFetch('/api/v1/cacheable', {
+      includeRequestIdHeader: false,
+      cache: 'force-cache',
+    });
+
+    const [, init] = fetchMock.mock.calls[0]!;
+    const headers = new Headers(init?.headers);
+    expect(headers.has('X-Request-Id')).toBe(false);
+    expect(init?.cache).toBe('force-cache');
+  });
+
+  it('keeps X-Request-Id by default for traced requests', async () => {
+    const fetchMock = vi
+      .fn<(...args: FetchCall) => Promise<Response>>()
+      .mockResolvedValue(
+        new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await apiFetch('/api/v1/traced');
+
+    const [, init] = fetchMock.mock.calls[0]!;
+    const headers = new Headers(init?.headers);
+    expect(headers.has('X-Request-Id')).toBe(true);
+  });
 });

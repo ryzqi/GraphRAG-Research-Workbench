@@ -2,7 +2,7 @@
  * 对话 API 封装
  */
 
-import { apiFetch } from './http';
+import { apiFetch, type ApiFetchOptions } from './http';
 import { openSseStream } from './sse';
 import type { SseEvent } from '../lib/sse';
 
@@ -481,9 +481,13 @@ export async function deleteChatSession(sessionId: string): Promise<void> {
 /**
  * 获取最近对话
  */
-export async function getRecentChats(limit = 20): Promise<RecentChatListResponse> {
+export async function getRecentChats(
+  limit = 20,
+  options?: ApiFetchOptions
+): Promise<RecentChatListResponse> {
   return apiFetch<RecentChatListResponse>(`/api/v1/chats/recent?limit=${limit}`, {
     cache: 'no-store',
+    ...options,
   });
 }
 

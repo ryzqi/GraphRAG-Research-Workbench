@@ -8,7 +8,7 @@
 - Customer Problem / Desired Outcome: 在不改变视觉风格、配色与交互设计语言的前提下，系统性消除前端性能热点，降低首屏阻塞、缩小 bundle、减少不必要重渲染与运行时开销。
 - Why Now / Decision Driver: 用户明确要求按 Vercel React Best Practices 分大类逐项落地，并要求每个大类完成后独立提交，形成可审计演进历史。
 - Overall Goal: 依照 8 个性能类别依次完成前端性能优化，每个类别都保留“代码改动 + 直接验证 + 独立 git 提交”证据链。
-- Current Active Phase: Phase 2 - Bundle Size Optimization（已完成，待切换到 Phase 3）
+- Current Active Phase: Phase 3 - Server-Side Performance
 - Overall Success Criteria:
   - 8 个大类别全部按顺序完成，中间不跳类、不混类。
   - 每个类别仅做性能相关优化，不改视觉风格、配色或产品设计。
@@ -78,17 +78,17 @@
 - Main Deliverables: bundle 热点代码分拆、动态加载、按需预取、第三方延后
 - Entry Conditions: Phase 1 已提交
 - Completion Conditions: 相关 bundle 反模式处理完成、验证完成并提交
-- Transition Notes: 已完成验证；下一步在独立 commit 后切换至服务端性能阶段
+- Transition Notes: 已完成并提交 `7f5eee0`，并归档到 `archive/perf-phases/*.phase-02-bundle-size.md`
 
 ### Phase 3: Server-Side Performance
-- Status: Pending
+- Status: Active
 - Objective: 优化 RSC / server-side 数据路径、缓存与序列化边界。
-- Scope Boundary: 仅覆盖 3.1~3.9
+- Scope Boundary: 仅覆盖 3.1~3.9；本轮实际落点聚焦 3.3、3.4、3.8，并确认 3.1/3.2/3.5/3.9 当前无新增代码改动必要，3.6/3.7 继续沿用既有并行抓取。
 - Modules Involved: `src/app`, `src/services`, `src/lib`
-- Main Deliverables: 请求内去重、跨请求缓存、序列化收敛、并行抓取
+- Main Deliverables: cache-friendly GET、共享 server prefetch cache、请求内去重、验证与 commit
 - Entry Conditions: Phase 2 已提交
 - Completion Conditions: server-side 热点处理完成并提交
-- Transition Notes: 转入客户端数据获取阶段
+- Transition Notes: 完成后转入客户端数据获取阶段
 
 ### Phase 4: Client-Side Data Fetching
 - Status: Pending
@@ -150,10 +150,16 @@
   - Why it changed: 已满足首屏 waterfall 类别的完成条件
   - Impact on current or future phases: 当前开始处理 bundle 体积相关热点
 - 2026-03-31:
-  - What changed: Phase 2 完成 bundle 优化收口，相关重面板与 markdown 依赖退出初始入口，当前待提交独立 commit
-  - Why it changed: 已满足本地 barrel import 消除、按需动态加载、意图预加载与验证通过的阶段条件
-  - Impact on current or future phases: 下一阶段可以专注服务端性能，不再回流扩项 bundle 热点
+  - What changed: Phase 2 完成并提交 `7f5eee0`；当前活动阶段切换到 Phase 3
+  - Why it changed: 已满足 bundle 类别的完成条件
+  - Impact on current or future phases: 当前开始处理 server prefetch、缓存与序列化边界
+- 2026-03-31:
+  - What changed: Phase 3 已完成代码与验证收口，当前待提交独立 commit
+  - Why it changed: 已满足 cache-friendly GET、共享 server prefetch cache 与 React.cache 去重的阶段目标
+  - Impact on current or future phases: 提交后可切换到 Phase 4，不再回流扩项服务端预取链路
 
 ## Archive References
 - Phase archive path(s): `archive/perf-phases/`
-- Notes about where historical phase todos, state snapshots, or verification artifacts were stored: Phase 1 已归档到 `archive/perf-phases/`；后续每个大类别完成后继续归档
+- Notes about where historical phase todos, state snapshots, or verification artifacts were stored:
+  - Phase 1: `*.phase-01-waterfalls.md`
+  - Phase 2: `*.phase-02-bundle-size.md`

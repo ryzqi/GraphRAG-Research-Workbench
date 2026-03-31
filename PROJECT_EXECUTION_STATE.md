@@ -3,55 +3,54 @@
 ## Current State
 - Current Mode: Multi-phase
 - Artifact Policy / Active Planning Files: `PROJECT_PHASE_ROADMAP.md`, `TASK_TODO_MEDIUM.md`, `TASK_TODO_FINE.md`, `PROJECT_EXECUTION_STATE.md`
-- Current Focus / Active Phase: Phase 2 - Bundle Size Optimization（已验证通过，待切换 Phase 3）
-- Eval Objective: 让非关键模块退出初始 bundle，并保留用户可感知加载体验
+- Current Focus / Active Phase: Phase 3 - Server-Side Performance（已修改并验证，待提交 commit）
+- Eval Objective: 保持现有 server-prefetch 行为不变的前提下，减少服务端重复 GET、恢复 cache-friendly 请求签名，并把请求内去重逻辑收敛到共享模块。
 - Evaluation Surface / Fixed Baseline:
-  - `frontend/.next/analyze/client.html`（Phase 2 baseline）
-  - `frontend/src/theme/ThemeProvider.tsx` -> `./index`
-  - `frontend/src/views/ResearchPage.tsx` 静态导入重面板
-  - `frontend/src/components/research/ArtifactPanel.tsx` 直接依赖 markdown 库
+  - `frontend/src/services/http.ts` 对所有请求都注入随机 `X-Request-Id`
+  - `frontend/src/services/serverFirstRoutePrefetch.ts` 直接调用原始 service GET，无共享 server cache layer
+  - `frontend/src/services/chats.ts`、`knowledgeBases.ts`、`ingestionBatches.ts`、`bootstrapSubmissions.ts` 的 GET helper 不支持 server-prefetch 专用 fetch 选项
 - Metric / Rubric:
-  - local barrel import 消失
-  - 研究页非关键面板改为 dynamic / conditional load
-  - Sidebar 支持 user-intent preload
-  - analyze/build/typecheck 通过
-- Pass Threshold / Stop Condition: Phase 2 的 bundle 优化完成，并拿到 analyze/build/typecheck 证据
+  - 可缓存的 server GET 可以关闭随机 request id header
+  - `serverPrefetchCache.ts` 提供共享的 `React.cache()` 包装层
+  - 静态元数据 GET 具备短 TTL revalidate，动态状态 GET 保持 `no-store`
+  - `serverFirstRoutePrefetch.ts` 统一走共享 server prefetch helper
+  - typecheck / eslint / targeted vitest / build 通过
+- Pass Threshold / Stop Condition: Phase 3 的 server-side 热点处理完成，并拿到对应验证证据
 - Active Execution Wave:
-  - Phase 2 已完成：theme barrel import 消除
-  - Phase 2 已完成：研究页重面板改为按需动态加载
-  - Phase 2 已完成：Sidebar 用户意图预加载与 analyzer/build/typecheck 验证
+  - 已完成：`apiFetch` 增加 `includeRequestIdHeader` 开关
+  - 已完成：新增 `serverPrefetchCache.ts`，集中管理 cache-friendly server GET
+  - 已完成：`serverFirstRoutePrefetch.ts` 改为共享的 server prefetch wrappers
+  - 已完成：Phase 3 验证闭环；当前仅待 git commit
 - Last Verified Stop Point:
-  - Phase 1 commit：`8e7e152`
-  - Phase 2 verification：
+  - Phase 2 commit：`7f5eee0`
+  - Phase 3 verification：
     - `npm run typecheck`
-    - `npx eslint src/theme/ThemeProvider.tsx src/theme/md3Theme.ts src/components/research/ArtifactPanel.tsx src/components/shell/GeminiShell.tsx src/views/ResearchPage.tsx`
+    - `npx eslint src/services/http.ts src/services/http.test.ts src/services/chats.ts src/services/knowledgeBases.ts src/services/ingestionBatches.ts src/services/bootstrapSubmissions.ts src/services/serverPrefetchCache.ts src/services/serverFirstRoutePrefetch.ts`
+    - `npx vitest run src/services/http.test.ts src/services/routePrefetch.test.ts`（require_escalated；sandbox 内 `spawn EPERM`）
     - `npm run build`（require_escalated；sandbox 内 `spawn EPERM`）
-    - `npm run analyze`（require_escalated；sandbox 内 `spawn EPERM`）
 - Latest Improvement / Regression Notes:
-  - `ThemeProvider.tsx` 已改为直连 `md3Theme.ts`，本地 barrel import 已消除。
-  - `ResearchPage.tsx` 已将 `ArtifactPanel`、`ResearchAdvancedEventsPanel`、`InterruptDecisionPanel` 切到 dynamic import，且 `ArtifactPanel` 仅在存在报告/产物时才加载。
-  - `ArtifactPanel.tsx` 已移除对 `react-markdown` / `remark-gfm` 的直接静态依赖，改为复用 `MarkdownContent`。
-  - `GeminiShell.tsx` 已在移动端菜单按钮 hover/focus/touch/click 前预热 Sidebar chunk。
-  - 最新 `client.html` 显示 `ResearchAdvancedEventsPanel.tsx`、`InterruptDecisionPanel.tsx`、`ArtifactPanel.tsx` 均位于 `isInitialByEntrypoint:{}` 的独立 chunk。
+  - `http.ts` 现在允许 cacheable server GET 关闭随机 `X-Request-Id`，避免把 Next/React 去重与缓存键打散。
+  - 新增 `serverPrefetchCache.ts`，将 server-prefetch 路径的 cache policy 与 `React.cache()` 包装统一收口到模块级常量与函数。
+  - `serverFirstRoutePrefetch.ts` 保持既有 `Promise.all` 并行抓取，只替换为共享 wrapper，不改返回结构。
+  - `knowledgeBases.ts` / `ingestionBatches.ts` / `bootstrapSubmissions.ts` / `chats.ts` 的 GET helper 现在可接收 server-only fetch 选项。
+  - 审计结论：3.1 当前无 server action；3.2 / 3.5 当前未发现重复 RSC props 序列化；3.6 / 3.7 既有并行抓取继续保留；3.9 当前无合适的非阻塞 side effect 可迁移到 `after()`。
 - Plateau / No-Signal Count: 0
-- Next Recommended Action: 提交 Phase 2 commit，归档当前阶段 planning files，并刷新到 Phase 3
-- Current Blockers: 无代码级 blocker；build/analyze 在沙箱内仍会触发 `spawn EPERM`
+- Next Recommended Action: 提交 Phase 3 commit，归档当前阶段 planning files，并刷新到 Phase 4
+- Current Blockers: 无代码级 blocker；vitest/build 在沙箱内会触发 `spawn EPERM`，已通过提权完成验证
 - Assumptions Awaiting Confirmation:
-  - Phase 2 已按当前 analyzer 热点完成最小充分收敛
-  - 后续若仍发现新的 bundle 热点，放到后续类别内再处理，不回流扩项 Phase 2
+  - 对知识库元数据采用短 TTL server cache，比引入手写 LRU 更贴近 Next App Router 当前模型
+  - server-prefetch 动态状态（recent chats / ingestion state / latest batch / bootstrap job）仍应维持 `no-store`
 - Parked / Deferred Items:
-  - 更广泛的 route 级 chunk 拆分暂不处理
-  - 若 analyzer 显示新热点，再在后续阶段收敛
+  - 自定义 LRU 暂不引入；若后续 Phase 3 之外还有明确热点，再按需评估
+  - `after()` 暂无明确落点，不为了覆盖规则而引入无业务价值的 side effect
 - Key Recent Decisions:
-  - Phase 1 完成后先归档 todo，再刷新到 Phase 2
-  - Phase 2 只针对 analyzer 已确认热点做最小改动
-  - Phase 2 不追求“research route 完全无 Accordion 代码”，只确认重面板与 markdown 依赖已退出初始入口
+  - 对 3.3 采用 Next data cache + revalidate，而不是手写 LRU
+  - 仅在 server-prefetch GET 上关闭 request id header；其他请求默认保留 tracing header
+  - 维持现有 fallback 结构，不改动 SWR key、RSC 页面结构与 UI 展示
 - Verification Evidence Reference:
-  - 2026-03-31 Phase 1 commit `8e7e152`
   - 2026-03-31 `npm run typecheck` 通过
-  - 2026-03-31 `npx eslint src/theme/ThemeProvider.tsx src/theme/md3Theme.ts src/components/research/ArtifactPanel.tsx src/components/shell/GeminiShell.tsx src/views/ResearchPage.tsx` 通过
+  - 2026-03-31 `npx eslint src/services/http.ts src/services/http.test.ts src/services/chats.ts src/services/knowledgeBases.ts src/services/ingestionBatches.ts src/services/bootstrapSubmissions.ts src/services/serverPrefetchCache.ts src/services/serverFirstRoutePrefetch.ts` 通过
+  - 2026-03-31 `npx vitest run src/services/http.test.ts src/services/routePrefetch.test.ts` 通过（require_escalated）
   - 2026-03-31 `npm run build` 通过（require_escalated）
-  - 2026-03-31 `npm run analyze` 通过（require_escalated）
-  - 2026-03-31 `frontend/.next/analyze/client.html` 显示 `ArtifactPanel.tsx` / `ResearchAdvancedEventsPanel.tsx` / `InterruptDecisionPanel.tsx` 均为独立非初始 chunk
-- Related Files: `PROJECT_PHASE_ROADMAP.md`, `TASK_TODO_MEDIUM.md`, `TASK_TODO_FINE.md`, `frontend/src/theme/*`, `frontend/src/views/ResearchPage.tsx`, `frontend/src/components/research/*`, `frontend/src/components/shell/GeminiShell.tsx`
+- Related Files: `PROJECT_PHASE_ROADMAP.md`, `TASK_TODO_MEDIUM.md`, `TASK_TODO_FINE.md`, `frontend/src/services/http.ts`, `frontend/src/services/serverPrefetchCache.ts`, `frontend/src/services/serverFirstRoutePrefetch.ts`, `frontend/src/services/http.test.ts`
 - Last Updated: 2026-03-31

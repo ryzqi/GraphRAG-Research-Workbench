@@ -3,7 +3,7 @@
  */
 
 import type { SseEvent } from '../lib/sse';
-import { apiFetch } from './http';
+import { apiFetch, type ApiFetchOptions } from './http';
 import { openSseStream } from './sse';
 
 export type ManifestSourceType = 'text' | 'url' | 'file';
@@ -120,9 +120,15 @@ export async function createIngestionBatch(
   });
 }
 
-export async function getLatestIngestionBatch(kbId: string): Promise<IngestionBatch | null> {
+export async function getLatestIngestionBatch(
+  kbId: string,
+  options?: ApiFetchOptions
+): Promise<IngestionBatch | null> {
   const query = new URLSearchParams({ kb_id: kbId, prefer_active: 'true' }).toString();
-  const payload = await apiFetch<IngestionBatch | null>(`/api/v1/ingestion-batches/latest?${query}`);
+  const payload = await apiFetch<IngestionBatch | null>(
+    `/api/v1/ingestion-batches/latest?${query}`,
+    options
+  );
   return payload ?? null;
 }
 

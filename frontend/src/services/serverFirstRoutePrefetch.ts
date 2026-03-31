@@ -13,6 +13,14 @@ import {
   type KnowledgeBase,
   type KnowledgeBaseIngestionState,
 } from './knowledgeBases';
+import {
+  getServerPrefetchBootstrapSubmission,
+  getServerPrefetchKnowledgeBase,
+  getServerPrefetchKnowledgeBaseIngestionState,
+  getServerPrefetchLatestIngestionBatch,
+  getServerPrefetchRecentChats,
+  getServerPrefetchSelectableKnowledgeBases,
+} from './serverPrefetchCache';
 
 function toRecentHistoryData(input: RecentChatListResponse) {
   return {
@@ -39,7 +47,7 @@ export async function prefetchGeneralChatRouteData(
   deps: GeneralChatPrefetchDeps = {}
 ): Promise<SWRFallback> {
   const fallback: SWRFallback = {};
-  const recent = await (deps.getRecentChatsFn ?? getRecentChats)(20).catch(() => null);
+  const recent = await (deps.getRecentChatsFn ?? getServerPrefetchRecentChats)(20).catch(() => null);
   if (recent) {
     appendSWRFallback(fallback, ['chats', 'recent', 20], toRecentHistoryData(recent));
   }
@@ -56,8 +64,10 @@ export async function prefetchKbChatRouteData(
 ): Promise<SWRFallback> {
   const fallback: SWRFallback = {};
   const [recent, selectable] = await Promise.all([
-    (deps.getRecentChatsFn ?? getRecentChats)(20).catch(() => null),
-    (deps.listSelectableKnowledgeBasesFn ?? listSelectableKnowledgeBases)().catch(() => null),
+    (deps.getRecentChatsFn ?? getServerPrefetchRecentChats)(20).catch(() => null),
+    (deps.listSelectableKnowledgeBasesFn ?? getServerPrefetchSelectableKnowledgeBases)().catch(
+      () => null
+    ),
   ]);
 
   if (recent) {
@@ -81,11 +91,15 @@ export async function prefetchKnowledgeBaseDetailRouteData(
 ): Promise<SWRFallback> {
   const fallback: SWRFallback = {};
   const [kb, ingestionState, latestBatch] = await Promise.all([
-    (deps.getKnowledgeBaseFn ?? getKnowledgeBase)(kbId).catch(() => null),
-    (deps.getKnowledgeBaseIngestionStateFn ?? getKnowledgeBaseIngestionState)(kbId).catch(
+    (deps.getKnowledgeBaseFn ?? getServerPrefetchKnowledgeBase)(kbId).catch(() => null),
+    (deps.getKnowledgeBaseIngestionStateFn ?? getServerPrefetchKnowledgeBaseIngestionState)(
+      kbId
+    ).catch(
       () => null
     ),
-    (deps.getLatestIngestionBatchFn ?? getLatestIngestionBatch)(kbId).catch(() => null),
+    (deps.getLatestIngestionBatchFn ?? getServerPrefetchLatestIngestionBatch)(kbId).catch(
+      () => null
+    ),
   ]);
 
   if (kb) {
@@ -113,10 +127,14 @@ export async function prefetchKnowledgeBaseAddDocumentsRouteData(
 ): Promise<SWRFallback> {
   const fallback: SWRFallback = {};
   const [kb, latestBatch, bootstrapJob] = await Promise.all([
-    (deps.getKnowledgeBaseFn ?? getKnowledgeBase)(kbId).catch(() => null),
-    (deps.getLatestIngestionBatchFn ?? getLatestIngestionBatch)(kbId).catch(() => null),
+    (deps.getKnowledgeBaseFn ?? getServerPrefetchKnowledgeBase)(kbId).catch(() => null),
+    (deps.getLatestIngestionBatchFn ?? getServerPrefetchLatestIngestionBatch)(kbId).catch(
+      () => null
+    ),
     jobId
-      ? (deps.getBootstrapSubmissionFn ?? getBootstrapSubmission)(jobId).catch(() => null)
+      ? (deps.getBootstrapSubmissionFn ?? getServerPrefetchBootstrapSubmission)(jobId).catch(
+          () => null
+        )
       : Promise.resolve(null),
   ]);
 
