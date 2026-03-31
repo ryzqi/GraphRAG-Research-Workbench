@@ -8,6 +8,7 @@ from typing import Iterable, Literal
 from app.schemas.research import ResearchPlanSnapshot
 
 ResearchComplexityLiteral = Literal["simple", "comparative", "complex"]
+_DEFAULT_REQUIRED_WEB_PROVIDERS = ("tavily", "jina_reader", "searxng")
 
 _REQUIRED_WEB_PROVIDER_COUNTS: dict[ResearchComplexityLiteral, int] = {
     "simple": 2,
@@ -100,9 +101,14 @@ def select_required_web_providers(
     complexity: ResearchComplexityLiteral,
     available_providers: Iterable[str],
 ) -> tuple[str, ...]:
-    unique_available = _unique_queries(available_providers)
+    normalized_available = _unique_queries(available_providers)
     required_count = _REQUIRED_WEB_PROVIDER_COUNTS[complexity]
-    return unique_available[:required_count]
+    required: list[str] = list(_DEFAULT_REQUIRED_WEB_PROVIDERS[:required_count])
+    for provider in normalized_available:
+        if provider in required:
+            continue
+        required.append(provider)
+    return tuple(required)
 
 
 def _unique_queries(values: Iterable[str]) -> tuple[str, ...]:

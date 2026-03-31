@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path, PurePosixPath
 from time import perf_counter
 from typing import Any, Sequence
@@ -35,7 +35,7 @@ from app.schemas.research import (
     ResearchSourceType,
 )
 from app.services.research_observability import ResearchRuntimeRunResult
-from app.services.research_query_mesh import select_required_web_providers
+from app.services.research_query_mesh import build_research_query_mesh, select_required_web_providers
 from app.services.research_runtime_spill import spill_json_payload
 from app.services.research_runtime_types import (
     DEFAULT_RESEARCH_BACKEND_POLICY,
@@ -347,6 +347,7 @@ def _build_runtime_prompt(
         f"research_brief：{plan_snapshot.research_brief}",
         f"target_sources：{', '.join(item.value for item in plan_snapshot.target_sources)}",
         f"route_hint：{route_hint}",
+        "query_mesh：/workspace/context/query_mesh.json",
     ]
     if workspace_paths:
         lines.extend(
@@ -373,6 +374,10 @@ def _build_runtime_request_files(
     session: ResearchSession,
     plan_snapshot: ResearchPlanSnapshot,
 ) -> dict[str, dict[str, Any]]:
+    query_mesh = build_research_query_mesh(
+        question=session.question,
+        plan_snapshot=plan_snapshot,
+    )
     request_files = {
         path: create_file_data(content)
         for path, content in workspace_files.items()
@@ -380,6 +385,9 @@ def _build_runtime_request_files(
     request_files["/workspace/context/session_question.txt"] = create_file_data(session.question)
     request_files["/workspace/context/plan_snapshot.json"] = create_file_data(
         json.dumps(plan_snapshot.model_dump(mode="json"), ensure_ascii=False, indent=2)
+    )
+    request_files["/workspace/context/query_mesh.json"] = create_file_data(
+        json.dumps(asdict(query_mesh), ensure_ascii=False, indent=2)
     )
     return request_files
 

@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 from app.schemas.research import ResearchPlanSnapshot, ResearchPlanSubtask, ResearchSourceTarget
-from app.services.research_query_mesh import build_research_query_mesh, evaluate_coverage_gate
+from app.services.research_query_mesh import (
+    build_research_query_mesh,
+    evaluate_coverage_gate,
+    select_required_web_providers,
+)
 
 
 def _comparative_plan() -> ResearchPlanSnapshot:
@@ -43,3 +47,12 @@ def test_evaluate_coverage_gate_blocks_complex_runs_without_enough_providers() -
     assert gate.passed is False
     assert "missing_web_provider_count" in gate.reasons
     assert "paper_source_missing" in gate.reasons
+
+
+def test_select_required_web_providers_does_not_hide_registry_shortage() -> None:
+    providers = select_required_web_providers(
+        complexity="comparative",
+        available_providers=("tavily", "jina_reader"),
+    )
+
+    assert providers == ("tavily", "jina_reader", "searxng")

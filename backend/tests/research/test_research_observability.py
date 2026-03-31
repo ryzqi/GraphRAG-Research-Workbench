@@ -11,10 +11,13 @@ from app.schemas.research import (
 )
 from app.services.research_finalizer import ResearchFinalizer
 from app.services.research_observability import (
+    ResearchGateThresholds,
     ResearchModelStat,
     ResearchProviderStat,
     ResearchRuntimeRunResult,
     ResearchTraceLink,
+    build_research_metrics,
+    evaluate_research_gate,
 )
 from app.services.research_planner import ResearchPlanner
 from app.services.research_service import ResearchService
@@ -134,7 +137,8 @@ async def test_execute_session_persists_trace_metrics_gate_and_trace_events() ->
     assert metrics["cost"]["session_cost_usd"] == 0.92
     assert metrics["providers"]["by_source_provider"]["tavily"]["count"] == 1
     assert metrics["models"]["by_lc_agent_name"]["web"]["cost_usd"] == 0.14
-    assert metrics["gate"]["pass"] is True
+    assert metrics["gate"]["pass"] is False
+    assert "coverage" in metrics["gate"]["violations"]
     assert metrics["replay"]["pass"] is True
 
     artifact_keys = [artifact.artifact_key for artifact in session.artifacts]
@@ -150,3 +154,60 @@ async def test_execute_session_persists_trace_metrics_gate_and_trace_events() ->
         and item.lc_agent_name == "web"
         for item in envelopes
     )
+
+
+def test_build_research_metrics_marks_coverage_gate_and_forces_gate_failure() -> None:
+    session = ResearchSession(
+        id=uuid4(),
+        thread_id="coverage-gate-session",
+        question="比较多 provider 的 deep research coverage",
+        status=ResearchSessionStatus.RUNNING,
+    )
+    plan_snapshot = ResearchPlanSnapshot(
+        research_brief="比较多 provider 的 deep research coverage。",
+        complexity="comparative",
+        summary="检查 provider coverage gate 是否进入真实 metrics/gate。",
+        target_sources=[ResearchSourceTarget.WEB],
+    )
+    citations = [
+        ResearchCanonicalCitation(
+            source_type=ResearchSourceType.WEB,
+            source_provider="tavily",
+            retrieval_method="search",
+            source_id=f"https://example.com/source-{index}",
+            title=f"Source {index}",
+            url=f"https://example.com/source-{index}",
+            origin_url=f"https://example.com/source-{index}",
+        )
+        for index in range(8)
+    ]
+    source_bundle = ResearchSourceBundleBuilder().build(
+        target_sources=plan_snapshot.target_sources,
+        citations=citations,
+        findings=[
+            "比较型研究应覆盖多个 web providers。",
+            "provider shortage 不能被质量分旁路掩盖。",
+        ],
+        required_web_providers=("tavily", "jina_reader", "searxng"),
+    )
+    runtime_result = ResearchRuntimeRunResult(
+        source_bundle=source_bundle,
+        latency_ms=1_000,
+        total_cost_usd=0.1,
+        quality_score=0.95,
+    )
+
+    metrics = build_research_metrics(
+        session=session,
+        plan_snapshot=plan_snapshot,
+        runtime_result=runtime_result,
+    )
+    gate = evaluate_research_gate(
+        metrics={**metrics, "replay": {"pass": True}},
+        thresholds=ResearchGateThresholds(),
+    )
+
+    assert metrics["coverage"]["pass"] is False
+    assert "missing_web_provider_count" in metrics["coverage"]["reasons"]
+    assert gate["pass"] is False
+    assert "coverage" in gate["violations"]

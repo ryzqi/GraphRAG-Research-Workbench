@@ -19,6 +19,7 @@ from app.schemas.research import (
     ResearchSourceTarget,
     ResearchSourceType,
 )
+from app.services.research_query_mesh import evaluate_coverage_gate
 from app.services.research_source_bundle import ResearchSourceBundle
 
 try:  # pragma: no cover - 依赖在运行环境中存在，这里只做导入兜底
@@ -145,6 +146,13 @@ def build_research_metrics(
 ) -> dict[str, Any]:
     source_bundle = runtime_result.source_bundle
     trace_links = build_trace_links(session=session, runtime_result=runtime_result)
+    source_types = {citation.source_type.value for citation in source_bundle.citations}
+    coverage_gate = evaluate_coverage_gate(
+        complexity=plan_snapshot.complexity.value,
+        provider_counts=source_bundle.provider_counts,
+        unique_source_count=len(source_bundle.citations),
+        source_types=source_types,
+    )
     quality_score = (
         float(runtime_result.quality_score)
         if runtime_result.quality_score is not None
@@ -173,6 +181,14 @@ def build_research_metrics(
                 target_sources=plan_snapshot.target_sources,
                 citations=source_bundle.citations,
             ),
+        },
+        "coverage": {
+            "pass": coverage_gate.passed,
+            "reasons": list(coverage_gate.reasons),
+            "provider_counts": dict(source_bundle.provider_counts),
+            "unique_source_count": len(source_bundle.citations),
+            "source_types": sorted(source_types),
+            "coverage_gaps": list(source_bundle.coverage_gaps),
         },
         "latency": _build_latency_metrics(
             session=session,
@@ -301,6 +317,8 @@ def evaluate_research_gate(
     replay = metrics.get("replay") if isinstance(metrics.get("replay"), dict) else {}
     replay_pass = replay.get("pass")
     fault_records = (metrics.get("faults") or {}).get("records") or []
+    coverage = metrics.get("coverage") if isinstance(metrics.get("coverage"), dict) else {}
+    coverage_pass = coverage.get("pass")
 
     violations: list[str] = []
     if quality is None:
@@ -315,6 +333,8 @@ def evaluate_research_gate(
         violations.append("session_cost_usd_missing")
     elif session_cost_usd > thresholds.max_session_cost_usd:
         violations.append("session_cost_usd")
+    if coverage_pass is False:
+        violations.append("coverage")
     if replay_pass is False:
         violations.append("replay_consistency")
     if fault_records:
@@ -332,6 +352,10 @@ def evaluate_research_gate(
             "quality_score": quality,
             "p95_ms": p95_ms,
             "session_cost_usd": session_cost_usd,
+        },
+        "coverage": {
+            "pass": coverage_pass,
+            "reasons": list(coverage.get("reasons") or []),
         },
     }
 

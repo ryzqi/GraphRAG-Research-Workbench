@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import uuid
 from types import SimpleNamespace
 from typing import Any
@@ -131,8 +132,15 @@ async def test_deep_research_runtime_runner_builds_source_bundle_from_structured
         "# api contract"
     ]
     assert request["files"]["/workspace/context/plan_snapshot.json"]["content"]
+    assert request["files"]["/workspace/context/query_mesh.json"]["content"]
+    query_mesh_payload = json.loads(
+        "\n".join(request["files"]["/workspace/context/query_mesh.json"]["content"])
+    )
+    assert query_mesh_payload["canonical_query"] == "概述当前 Deep Research session contract"
+    assert query_mesh_payload["verification_queries"]
     assert "/workspace/context/kb_context.md" not in request["files"]
     assert "source_type=kb" not in request["messages"][0]["content"]
+    assert "/workspace/context/query_mesh.json" in request["messages"][0]["content"]
     assert config == {"configurable": {"thread_id": str(session_id)}}
 
 
