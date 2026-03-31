@@ -40,6 +40,7 @@ from app.services.research_observability import (
 from app.services.research_planner import ResearchPlanner
 from app.services.research_planner_types import ResearchPlannerResult
 from app.services.research_replay import evaluate_research_replay_consistency
+from app.services.research_workspace_files import build_workspace_bootstrap_artifacts
 
 
 class ResearchRuntimeRunner(Protocol):
@@ -150,6 +151,18 @@ class ResearchService:
             artifact_key="research_brief",
             content_text=plan_result.plan_snapshot.research_brief,
         )
+        bootstrap_artifacts = build_workspace_bootstrap_artifacts(
+            session_id=session.id,
+            question=session.question,
+            plan_snapshot=plan_result.plan_snapshot,
+        )
+        for seed in bootstrap_artifacts.values():
+            await self._artifact_store.upsert(
+                session=session,
+                artifact_key=seed.artifact_key,
+                content_text=seed.content_text,
+                content_json=seed.content_json,
+            )
         await self._event_store.append(
             session=session,
             event_type="research.plan.created",

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from unittest.mock import AsyncMock, Mock
 from uuid import uuid4
 
 import pytest
@@ -18,6 +19,7 @@ from app.services.research_event_store import ResearchEventStore
 from app.services.research_finalizer import ResearchFinalizer
 from app.services.research_observability import ResearchRuntimeRunResult
 from app.services.research_planner import ResearchPlanner, ResearchScoper
+from app.services.research_planner_types import ResearchPlannerResult
 from app.services.research_service import ResearchService
 from app.services.research_source_bundle import ResearchSourceBundleBuilder
 
@@ -114,9 +116,69 @@ async def test_create_session_persists_plan_snapshot_artifact_event_and_queues_i
     assert [artifact.artifact_key for artifact in session.artifacts] == [
         "plan_snapshot",
         "research_brief",
+        "mission_md",
+        "plan_md",
+        "query_map_md",
+        "coverage_md",
+        "report_draft_md",
     ]
     assert session.artifacts[1].content_text == plan_result.plan_snapshot.research_brief
     assert plan_result.auto_approve is True
+
+
+@pytest.mark.asyncio
+async def test_create_session_persists_workspace_bootstrap_artifacts() -> None:
+    session_id = uuid4()
+    db = AsyncMock()
+    db.add = Mock()
+    db.flush = AsyncMock()
+    planner = AsyncMock()
+    runtime_runner = AsyncMock()
+    finalizer = AsyncMock()
+    event_store = AsyncMock()
+    artifact_store = AsyncMock()
+
+    planner.build_plan.return_value = ResearchPlannerResult(
+        plan_snapshot=ResearchPlanSnapshot(
+            research_brief="构建 Deep Research OS。",
+            complexity="complex",
+            summary="生成计划、覆盖矩阵与最终工作台。",
+            target_sources=[ResearchSourceTarget.WEB, ResearchSourceTarget.PAPER],
+            subtasks=[
+                ResearchPlanSubtask(
+                    title="生成研究计划",
+                    description="产出 plan.md 与 query-map.md。",
+                    target_sources=[ResearchSourceTarget.WEB],
+                )
+            ],
+        ),
+        clarification_request=None,
+        auto_approve=True,
+        next_status=ResearchSessionStatus.QUEUED,
+    )
+
+    service = ResearchService(
+        db=db,
+        planner=planner,
+        runtime_runner=runtime_runner,
+        finalizer=finalizer,
+        event_store=event_store,
+        artifact_store=artifact_store,
+    )
+
+    session, _ = await service.create_session(
+        ResearchSessionCreateRequest(question="把 Deep Research 重做成 OS"),
+        thread_id=str(session_id),
+        session_id=session_id,
+    )
+
+    persisted_keys = [
+        call.kwargs["artifact_key"] for call in artifact_store.upsert.await_args_list
+    ]
+    assert "mission_md" in persisted_keys
+    assert "plan_md" in persisted_keys
+    assert "coverage_md" in persisted_keys
+    assert session.status == ResearchSessionStatus.QUEUED
 
 
 @pytest.mark.asyncio
