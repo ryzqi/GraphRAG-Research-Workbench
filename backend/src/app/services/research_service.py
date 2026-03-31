@@ -395,6 +395,26 @@ class ResearchService:
             artifact_key="report_md",
             content_text=final_result.report_md,
         )
+        await self._artifact_store.upsert(
+            session=session,
+            artifact_key="claim_map_json",
+            content_json=final_result.report_json["claim_map"],
+        )
+        await self._artifact_store.upsert(
+            session=session,
+            artifact_key="coverage_matrix_json",
+            content_json=final_result.report_json["coverage_matrix"],
+        )
+        await self._artifact_store.upsert(
+            session=session,
+            artifact_key="conflicts_json",
+            content_json=final_result.report_json["conflicts"],
+        )
+        await self._artifact_store.upsert(
+            session=session,
+            artifact_key="source_ledger_json",
+            content_json=final_result.report_json["source_ledger"],
+        )
         session.transition_to(ResearchSessionStatus.FINAL)
         session.finished_at = datetime.now(timezone.utc)
         await self._event_store.append(
@@ -402,7 +422,14 @@ class ResearchService:
             event_type="research.final.completed",
             phase="finalizer",
             payload={
-                "artifact_keys": ["report_json", "report_md"],
+                "artifact_keys": [
+                    "report_json",
+                    "report_md",
+                    "claim_map_json",
+                    "coverage_matrix_json",
+                    "conflicts_json",
+                    "source_ledger_json",
+                ],
                 "lc_agent_name": "finalizer",
             },
             trace_id=session.trace_id,

@@ -234,11 +234,46 @@ async def test_execute_session_runs_runtime_finalizer_and_writes_final_artifacts
         "coverage_gaps",
         "report_json",
         "report_md",
+        "claim_map_json",
+        "coverage_matrix_json",
+        "conflicts_json",
+        "source_ledger_json",
         "metrics_snapshot",
         "gate_snapshot",
     ]
     assert final_result.report_json["question"] == "解释 Jina Reader 在深度研究中的作用"
+    assert "claim_map" in final_result.report_json
     assert (session.metrics or {})["gate"]["pass"] is False
+
+
+@pytest.mark.asyncio
+async def test_execute_session_persists_verification_artifacts_after_finalization() -> None:
+    db = _FakeAsyncSession()
+    service = ResearchService(
+        db=db,
+        planner=ResearchPlanner(scoper=_SequenceScoper([_build_plan_snapshot()])),
+        runtime_runner=_FakeRuntimeRunner(),
+        finalizer=ResearchFinalizer(),
+    )
+    session = ResearchSession(
+        id=uuid4(),
+        thread_id="research-session-verification",
+        question="验证 claim_map / coverage_matrix / source_ledger 持久化",
+        status=ResearchSessionStatus.QUEUED,
+    )
+    plan_snapshot = ResearchPlanSnapshot(
+        research_brief="验证 finalize 阶段输出新的 verification artifacts。",
+        complexity="simple",
+        summary="执行 runtime 后持久化 verification 工件。",
+        target_sources=[ResearchSourceTarget.WEB],
+    )
+
+    await service.execute_session(session=session, plan_snapshot=plan_snapshot)
+
+    artifact_keys = [artifact.artifact_key for artifact in session.artifacts]
+    assert "claim_map_json" in artifact_keys
+    assert "coverage_matrix_json" in artifact_keys
+    assert "source_ledger_json" in artifact_keys
 
 
 @pytest.mark.asyncio

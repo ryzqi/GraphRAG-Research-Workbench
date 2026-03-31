@@ -9,6 +9,7 @@ from pydantic import BaseModel
 
 from app.schemas.research import ResearchSourceTarget
 from app.services.research_source_bundle import ResearchSourceBundle
+from app.services.research_verification import build_verification_artifacts
 
 
 @dataclass(slots=True, frozen=True)
@@ -32,6 +33,12 @@ class ResearchFinalizer:
             citation.model_dump(mode="json")
             for citation in source_bundle.citations
         ]
+        verification = build_verification_artifacts(
+            findings=list(source_bundle.findings),
+            citations=list(source_bundle.citations),
+            coverage_gaps=list(source_bundle.coverage_gaps),
+            provider_counts=dict(source_bundle.provider_counts),
+        )
         report_md = self._build_report_md(
             question=question,
             source_bundle=source_bundle,
@@ -44,10 +51,22 @@ class ResearchFinalizer:
             "coverage_gaps": list(source_bundle.coverage_gaps),
             "provider_counts": dict(source_bundle.provider_counts),
             "citations": citations_payload,
+            "claim_map": verification.claim_map,
+            "coverage_matrix": verification.coverage_matrix,
+            "conflicts": verification.conflicts,
+            "source_ledger": verification.source_ledger,
             "report_md": report_md,
         }
         if response_format is not None:
-            report_json = response_format.model_validate(report_json).model_dump(mode="json")
+            validated_payload = response_format.model_validate(report_json).model_dump(mode="json")
+            report_json = {
+                **validated_payload,
+                "claim_map": verification.claim_map,
+                "coverage_matrix": verification.coverage_matrix,
+                "conflicts": verification.conflicts,
+                "source_ledger": verification.source_ledger,
+                "report_md": report_md,
+            }
         return ResearchFinalizerResult(
             report_md=report_md,
             report_json=report_json,

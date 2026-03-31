@@ -82,7 +82,20 @@ async def test_research_exporter_reads_report_artifacts_by_session_id() -> None:
             _artifact(
                 session_id=session_id,
                 artifact_key="report_json",
-                content_json={"question": "什么是 deep research?"},
+                content_json={
+                    "question": "什么是 deep research?",
+                    "claim_map": [{"claim": "deep research 需要证据", "verdict": "supported"}],
+                    "coverage_matrix": {"provider_counts": {"tavily": 1}},
+                    "conflicts": [],
+                    "source_ledger": [
+                        {
+                            "provider": "tavily",
+                            "origin_url": "https://example.com/a",
+                            "title": "A",
+                            "source_type": "web",
+                        }
+                    ],
+                },
             ),
             _artifact(
                 session_id=session_id,
