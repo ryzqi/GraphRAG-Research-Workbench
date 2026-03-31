@@ -17,6 +17,7 @@ from app.schemas.research import (
 from app.services.deep_research_runtime import (
     DeepResearchRuntime,
     DeepResearchRuntimeRunner,
+    DeepResearchStructuredResponseDraft,
     build_deep_research_runtime_runner,
 )
 from app.services.research_runtime_types import ResearchRuntimeConfig
@@ -133,30 +134,32 @@ async def test_deep_research_runtime_runner_builds_source_bundle_from_structured
 async def test_deep_research_runtime_runner_fills_missing_origin_url_for_web_citations() -> None:
     agent = _FakeAgent(
         {
-            "structured_response": {
-                "findings": [
-                    "workspace 文档足以回答当前问题。",
-                    "缺失 origin_url 的 web citation 会在 runtime 侧补齐。",
-                ],
-                "citations": [
-                    {
-                        "source_type": "web",
-                        "source_provider": "workspace",
-                        "retrieval_method": "read_file",
-                        "source_id": "/workspace/context/api_contract_research.md",
-                        "title": "api_contract_research.md",
-                        "url": "file:///workspace/context/api_contract_research.md",
-                    },
-                    {
-                        "source_type": "web",
-                        "source_provider": "workspace",
-                        "retrieval_method": "read_file",
-                        "source_id": "/workspace/context/research_readme.md",
-                        "title": "research_readme.md",
-                        "url": "file:///workspace/context/research_readme.md",
-                    },
-                ],
-            }
+            "structured_response": DeepResearchStructuredResponseDraft.model_validate(
+                {
+                    "findings": [
+                        "workspace 文档足以回答当前问题。",
+                        "缺失 origin_url 的 web citation 会在 runtime 侧补齐。",
+                    ],
+                    "citations": [
+                        {
+                            "source_type": "web",
+                            "source_provider": "workspace",
+                            "retrieval_method": "read_file",
+                            "source_id": "/workspace/context/api_contract_research.md",
+                            "title": "api_contract_research.md",
+                            "url": "file:///workspace/context/api_contract_research.md",
+                        },
+                        {
+                            "source_type": "web",
+                            "source_provider": "workspace",
+                            "retrieval_method": "read_file",
+                            "source_id": "/workspace/context/research_readme.md",
+                            "title": "research_readme.md",
+                            "url": "file:///workspace/context/research_readme.md",
+                        },
+                    ],
+                }
+            )
         }
     )
     runtime = DeepResearchRuntime(
@@ -259,3 +262,31 @@ async def test_build_deep_research_runtime_runner_disables_previous_response_id_
     assert isinstance(runner, DeepResearchRuntimeRunner)
     assert len(create_chat_model_calls) == 3
     assert all(call.get("use_previous_response_id") is False for call in create_chat_model_calls)
+    response_format = captured["runtime_kwargs"]["response_format"]
+    relaxed = response_format.model_validate(
+        {
+            "findings": [
+                "web citation 即使缺少 origin_url，也应该先允许进入 runtime 归一化。",
+                "runtime 后置校验会再补齐并收敛到严格契约。",
+            ],
+            "citations": [
+                {
+                    "source_type": "web",
+                    "source_provider": "workspace",
+                    "retrieval_method": "read_file",
+                    "source_id": "/workspace/context/api_contract_research.md",
+                    "title": "api_contract_research.md",
+                    "url": "file:///workspace/context/api_contract_research.md",
+                },
+                {
+                    "source_type": "web",
+                    "source_provider": "workspace",
+                    "retrieval_method": "read_file",
+                    "source_id": "/workspace/context/design.md",
+                    "title": "design.md",
+                    "url": "file:///workspace/context/design.md",
+                },
+            ],
+        }
+    )
+    assert len(relaxed.citations) == 2

@@ -79,7 +79,29 @@ class DeepResearchStructuredResponse(BaseModel):
     citations: list[ResearchCanonicalCitation] = Field(min_length=2)
 
 
+class DeepResearchCitationDraft(BaseModel):
+    source_type: ResearchSourceType
+    source_provider: str
+    retrieval_method: str
+    source_id: str
+    title: str | None = None
+    url: str | None = None
+    origin_url: str | None = None
+    arxiv_id: str | None = None
+    authors: list[str] = Field(default_factory=list)
+    published_at: str | None = None
+    pdf_url: str | None = None
+    accessed_at: str | None = None
+
+
+class DeepResearchStructuredResponseDraft(BaseModel):
+    findings: list[str] = Field(min_length=2)
+    citations: list[DeepResearchCitationDraft] = Field(min_length=2)
+
+
 def _normalize_structured_response_payload(payload: Any) -> Any:
+    if isinstance(payload, BaseModel):
+        payload = payload.model_dump(mode="json")
     if not isinstance(payload, dict):
         return payload
 
@@ -439,7 +461,10 @@ async def build_deep_research_runtime_runner(
     runtime = await create_deep_research_runtime(
         settings=settings,
         config=runtime_config,
-        response_format=DeepResearchStructuredResponse,
+        # 运行时先接受缺少 origin_url 的 citation 草稿，随后在 runner 侧统一补齐并
+        # 收敛到严格的 DeepResearchStructuredResponse 契约，避免模型输出因细小字段遗漏
+        # 被 runtime 提前拒绝。
+        response_format=DeepResearchStructuredResponseDraft,
         http_client=http_client,
         redis=redis,
         checkpointer=MemorySaver(),

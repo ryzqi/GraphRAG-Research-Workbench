@@ -62,6 +62,7 @@ describe('research service contract', () => {
         question: '请比较两种路线',
         plan_first: true,
       }),
+      timeoutMs: 300_000,
     });
   });
 
@@ -90,6 +91,7 @@ describe('research service contract', () => {
         body: JSON.stringify({
           answer: '面向 20 人研发团队，输出选型建议与落地顺序。',
         }),
+        timeoutMs: 300_000,
       }
     );
   });
