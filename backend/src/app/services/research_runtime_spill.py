@@ -24,8 +24,12 @@ def spill_json_payload(
     slug: str,
     payload: dict[str, Any] | list[Any],
     summary_lines: list[str],
+    path_prefix: str | None = None,
 ) -> SpillResult:
-    base_dir = f"{layout.scratch_root}/evidence/{provider}"
+    if path_prefix is None:
+        base_dir = f"{layout.scratch_root}/evidence/{provider}"
+    else:
+        base_dir = f"{path_prefix.rstrip('/')}/{provider}"
     summary_path = f"{base_dir}/{slug}.summary.md"
     raw_path = f"{base_dir}/{slug}.raw.json"
     summary_content = "# Evidence Summary\n\n" + "\n".join(summary_lines) + "\n"

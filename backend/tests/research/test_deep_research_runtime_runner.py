@@ -21,8 +21,11 @@ from app.services.deep_research_runtime import (
     DeepResearchStructuredResponseDraft,
     build_deep_research_runtime_runner,
 )
-from app.services.research_runtime_types import ResearchRuntimeConfig
-from app.services.research_workspace_files import build_research_workspace_layout
+from app.services.research_runtime_types import (
+    ResearchLargeResultPolicy,
+    ResearchRuntimeConfig,
+)
+from app.services.research_workspace_files import build_workspace_bootstrap_artifact_path_map
 
 
 class _FakeAgent:
@@ -91,6 +94,7 @@ async def test_deep_research_runtime_runner_builds_source_bundle_from_structured
         thread_id=str(session_id),
         question="概述当前 Deep Research session contract",
     )
+    session.artifacts = []
     plan_snapshot = ResearchPlanSnapshot(
         research_brief="围绕 session contract 生成最终研究结果。",
         complexity="simple",
@@ -188,6 +192,7 @@ async def test_deep_research_runtime_runner_fills_missing_origin_url_for_web_cit
         thread_id=str(session_id),
         question="当前 deep research contract 是什么？",
     )
+    session.artifacts = []
     plan_snapshot = ResearchPlanSnapshot(
         research_brief="读取 workspace 文档并生成最终研究结果。",
         complexity="simple",
@@ -297,7 +302,7 @@ async def test_build_deep_research_runtime_runner_disables_previous_response_id_
 @pytest.mark.asyncio
 async def test_runner_includes_workspace_bootstrap_files_in_agent_request() -> None:
     session_id = uuid.uuid4()
-    layout = build_research_workspace_layout(session_id)
+    workspace_path_map = build_workspace_bootstrap_artifact_path_map(session_id=session_id)
     agent = _FakeAgent(
         {
             "structured_response": {
@@ -310,19 +315,19 @@ async def test_runner_includes_workspace_bootstrap_files_in_agent_request() -> N
                         "source_type": "web",
                         "source_provider": "workspace",
                         "retrieval_method": "read_file",
-                        "source_id": layout.mission_path,
+                        "source_id": workspace_path_map["mission_md"],
                         "title": "00-mission.md",
-                        "url": f"file://{layout.mission_path}",
-                        "origin_url": f"file://{layout.mission_path}",
+                        "url": f"file://{workspace_path_map['mission_md']}",
+                        "origin_url": f"file://{workspace_path_map['mission_md']}",
                     },
                     {
                         "source_type": "web",
                         "source_provider": "workspace",
                         "retrieval_method": "read_file",
-                        "source_id": layout.plan_path,
+                        "source_id": workspace_path_map["plan_md"],
                         "title": "01-plan.md",
-                        "url": f"file://{layout.plan_path}",
-                        "origin_url": f"file://{layout.plan_path}",
+                        "url": f"file://{workspace_path_map['plan_md']}",
+                        "origin_url": f"file://{workspace_path_map['plan_md']}",
                     },
                 ],
             }
@@ -375,7 +380,172 @@ async def test_runner_includes_workspace_bootstrap_files_in_agent_request() -> N
     await runner.run_session(session=session, plan_snapshot=plan_snapshot)
 
     request, _ = agent.calls[0]
-    assert layout.mission_path in request["files"]
-    assert layout.plan_path in request["files"]
-    assert request["files"][layout.mission_path]["content"] == ["# Mission"]
-    assert request["files"][layout.plan_path]["content"] == ["# Plan"]
+    assert workspace_path_map["mission_md"] in request["files"]
+    assert workspace_path_map["plan_md"] in request["files"]
+    assert request["files"][workspace_path_map["mission_md"]]["content"] == ["# Mission"]
+    assert request["files"][workspace_path_map["plan_md"]]["content"] == ["# Plan"]
+
+
+@pytest.mark.asyncio
+async def test_runner_spills_oversized_bootstrap_artifact_using_large_result_policy() -> None:
+    session_id = uuid.uuid4()
+    workspace_path_map = build_workspace_bootstrap_artifact_path_map(session_id=session_id)
+    oversized_mission = "# Mission\n\n" + ("A" * 80)
+    spill_prefix = "/scratch/custom-runtime-spill/"
+    agent = _FakeAgent(
+        {
+            "structured_response": {
+                "findings": [
+                    "超长 Mission bootstrap 会被溢写到 spill 文件。",
+                    "workspace stub 会保留 spill 文件位置供代理继续读取。",
+                ],
+                "citations": [
+                    {
+                        "source_type": "web",
+                        "source_provider": "workspace",
+                        "retrieval_method": "read_file",
+                        "source_id": workspace_path_map["mission_md"],
+                        "title": "00-mission.md",
+                        "url": f"file://{workspace_path_map['mission_md']}",
+                        "origin_url": f"file://{workspace_path_map['mission_md']}",
+                    },
+                    {
+                        "source_type": "web",
+                        "source_provider": "workspace",
+                        "retrieval_method": "read_file",
+                        "source_id": "/workspace/context/api_contract_research.md",
+                        "title": "api_contract_research.md",
+                        "url": "file:///workspace/context/api_contract_research.md",
+                        "origin_url": "file:///workspace/context/api_contract_research.md",
+                    },
+                ],
+            }
+        }
+    )
+    runtime = DeepResearchRuntime(
+        agent=agent,
+        config=ResearchRuntimeConfig(
+            primary_model="gpt-5.2",
+            subagent_model="gpt-5.2-mini",
+            system_prompt="你是深度研究助手。",
+            large_result_policy=ResearchLargeResultPolicy(
+                spill_path_prefix=spill_prefix,
+                max_inline_chars=20,
+            ),
+        ),
+        tools=[],
+        tool_meta_by_name={},
+        tool_groups={"web": (), "paper": (), "citation": ()},
+    )
+    runner = DeepResearchRuntimeRunner(
+        runtime=runtime,
+        workspace_files={"/workspace/context/api_contract_research.md": "# api contract"},
+    )
+    session = ResearchSession(
+        id=session_id,
+        thread_id=str(session_id),
+        question="验证 oversized bootstrap spill",
+    )
+    session.artifacts = [
+        ResearchArtifact(
+            artifact_key="mission_md",
+            content_text=oversized_mission,
+        )
+    ]
+    plan_snapshot = ResearchPlanSnapshot(
+        research_brief="验证 oversized bootstrap 会按 policy 溢写。",
+        complexity="simple",
+        summary="读取 spill summary/raw 文件并保留 workspace stub。",
+        target_sources=[ResearchSourceTarget.WEB],
+        subtasks=[
+            ResearchPlanSubtask(
+                title="读取 Mission spill",
+                description="确认 request.files 中出现 workspace stub 与 spill files。",
+                target_sources=[ResearchSourceTarget.WEB],
+            )
+        ],
+    )
+
+    await runner.run_session(session=session, plan_snapshot=plan_snapshot)
+
+    request, _ = agent.calls[0]
+    spill_base = f"{spill_prefix.rstrip('/')}/{session_id}/workspace-bootstrap/00-mission"
+    summary_path = f"{spill_base}.summary.md"
+    raw_path = f"{spill_base}.raw.json"
+    assert workspace_path_map["mission_md"] in request["files"]
+    assert summary_path in request["files"]
+    assert raw_path in request["files"]
+    stub_content = "\n".join(request["files"][workspace_path_map["mission_md"]]["content"])
+    assert summary_path in stub_content
+    assert raw_path in stub_content
+    assert '"artifact_key": "mission_md"' in "\n".join(request["files"][raw_path]["content"])
+
+
+@pytest.mark.asyncio
+async def test_runner_requires_preloaded_session_artifacts() -> None:
+    agent = _FakeAgent(
+        {
+            "structured_response": {
+                "findings": ["a", "b"],
+                "citations": [
+                    {
+                        "source_type": "web",
+                        "source_provider": "workspace",
+                        "retrieval_method": "read_file",
+                        "source_id": "/workspace/context/api_contract_research.md",
+                        "title": "api_contract_research.md",
+                        "url": "file:///workspace/context/api_contract_research.md",
+                        "origin_url": "file:///workspace/context/api_contract_research.md",
+                    },
+                    {
+                        "source_type": "web",
+                        "source_provider": "workspace",
+                        "retrieval_method": "read_file",
+                        "source_id": "/workspace/context/design.md",
+                        "title": "design.md",
+                        "url": "file:///workspace/context/design.md",
+                        "origin_url": "file:///workspace/context/design.md",
+                    },
+                ],
+            }
+        }
+    )
+    runtime = DeepResearchRuntime(
+        agent=agent,
+        config=ResearchRuntimeConfig(
+            primary_model="gpt-5.2",
+            subagent_model="gpt-5.2-mini",
+            system_prompt="你是深度研究助手。",
+        ),
+        tools=[],
+        tool_meta_by_name={},
+        tool_groups={"web": (), "paper": (), "citation": ()},
+    )
+    runner = DeepResearchRuntimeRunner(
+        runtime=runtime,
+        workspace_files={"/workspace/context/api_contract_research.md": "# api contract"},
+    )
+    session_id = uuid.uuid4()
+    session = ResearchSession(
+        id=session_id,
+        thread_id=str(session_id),
+        question="验证 artifacts 预加载契约",
+    )
+    plan_snapshot = ResearchPlanSnapshot(
+        research_brief="未预加载 artifacts 时应 fail fast。",
+        complexity="simple",
+        summary="阻止 runtime 静默吞掉 bootstrap files。",
+        target_sources=[ResearchSourceTarget.WEB],
+        subtasks=[
+            ResearchPlanSubtask(
+                title="检查 preloaded artifacts",
+                description="如果 session.artifacts 未预加载，应立即报错。",
+                target_sources=[ResearchSourceTarget.WEB],
+            )
+        ],
+    )
+
+    with pytest.raises(RuntimeError, match="artifacts.*preload"):
+        await runner.run_session(session=session, plan_snapshot=plan_snapshot)
+
+    assert agent.calls == []

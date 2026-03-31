@@ -58,6 +58,24 @@ def build_research_workspace_layout(session_id: UUID | str) -> ResearchWorkspace
     )
 
 
+def build_workspace_bootstrap_artifact_path_map(
+    *,
+    session_id: UUID | str | None = None,
+    layout: ResearchWorkspaceLayout | None = None,
+) -> dict[str, str]:
+    if layout is None:
+        if session_id is None:
+            raise ValueError("session_id 或 layout 至少提供一个。")
+        layout = build_research_workspace_layout(session_id)
+    return {
+        "mission_md": layout.mission_path,
+        "plan_md": layout.plan_path,
+        "query_map_md": layout.query_map_path,
+        "coverage_md": layout.coverage_path,
+        "report_draft_md": layout.report_draft_path,
+    }
+
+
 def build_workspace_bootstrap_artifacts(
     *,
     session_id: UUID | str,
