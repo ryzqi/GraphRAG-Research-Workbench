@@ -1,7 +1,7 @@
-﻿import dynamic from 'next/dynamic';
+import dynamic from 'next/dynamic';
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
-import { RouteSWRFallbackProvider } from '@/components/providers/RouteSWRFallbackProvider';
-import { prefetchKnowledgeBaseAddDocumentsRouteData } from '@/services/serverFirstRoutePrefetch';
+import { RoutePrefetchBoundary } from '@/components/providers/RoutePrefetchBoundary';
+import { createKnowledgeBaseAddDocumentsFallbackPromise } from '@/services/routePrefetch';
 
 const KnowledgeBaseAddDocumentsPage = dynamic(
   () => import('@/views/KnowledgeBaseAddDocumentsPage').then((mod) => mod.default),
@@ -10,22 +10,18 @@ const KnowledgeBaseAddDocumentsPage = dynamic(
   }
 );
 
-export default async function Page({
+export default function Page({
   params,
   searchParams,
 }: {
   params: Promise<{ kbId: string }>;
   searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
 }) {
-  const { kbId } = await params;
-  const resolvedSearchParams = await searchParams;
-  const jobParam = resolvedSearchParams.job;
-  const jobId = Array.isArray(jobParam) ? jobParam[0] : jobParam;
-  const fallback = await prefetchKnowledgeBaseAddDocumentsRouteData(kbId, jobId);
+  const fallbackPromise = createKnowledgeBaseAddDocumentsFallbackPromise(params, searchParams);
 
   return (
-    <RouteSWRFallbackProvider fallback={fallback}>
+    <RoutePrefetchBoundary fallbackPromise={fallbackPromise}>
       <KnowledgeBaseAddDocumentsPage />
-    </RouteSWRFallbackProvider>
+    </RoutePrefetchBoundary>
   );
 }

@@ -1,7 +1,7 @@
-﻿import dynamic from 'next/dynamic';
+import dynamic from 'next/dynamic';
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
-import { RouteSWRFallbackProvider } from '@/components/providers/RouteSWRFallbackProvider';
-import { prefetchGeneralChatRouteData } from '@/services/serverFirstRoutePrefetch';
+import { RoutePrefetchBoundary } from '@/components/providers/RoutePrefetchBoundary';
+import { createGeneralChatFallbackPromise } from '@/services/routePrefetch';
 
 const GeneralChatPage = dynamic(
   () => import('@/views/GeneralChatPage').then((mod) => mod.GeneralChatPage),
@@ -10,12 +10,12 @@ const GeneralChatPage = dynamic(
   }
 );
 
-export default async function Page() {
-  const fallback = await prefetchGeneralChatRouteData();
+export default function Page() {
+  const fallbackPromise = createGeneralChatFallbackPromise();
 
   return (
-    <RouteSWRFallbackProvider fallback={fallback}>
+    <RoutePrefetchBoundary fallbackPromise={fallbackPromise}>
       <GeneralChatPage />
-    </RouteSWRFallbackProvider>
+    </RoutePrefetchBoundary>
   );
 }

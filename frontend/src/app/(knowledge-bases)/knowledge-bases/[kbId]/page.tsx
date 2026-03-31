@@ -1,7 +1,7 @@
-﻿import dynamic from 'next/dynamic';
+import dynamic from 'next/dynamic';
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
-import { RouteSWRFallbackProvider } from '@/components/providers/RouteSWRFallbackProvider';
-import { prefetchKnowledgeBaseDetailRouteData } from '@/services/serverFirstRoutePrefetch';
+import { RoutePrefetchBoundary } from '@/components/providers/RoutePrefetchBoundary';
+import { createKnowledgeBaseDetailFallbackPromise } from '@/services/routePrefetch';
 
 const KnowledgeBaseDetailPage = dynamic(
   () => import('@/views/KnowledgeBaseDetailPage').then((mod) => mod.default),
@@ -10,17 +10,16 @@ const KnowledgeBaseDetailPage = dynamic(
   }
 );
 
-export default async function Page({
+export default function Page({
   params,
 }: {
   params: Promise<{ kbId: string }>;
 }) {
-  const { kbId } = await params;
-  const fallback = await prefetchKnowledgeBaseDetailRouteData(kbId);
+  const fallbackPromise = createKnowledgeBaseDetailFallbackPromise(params);
 
   return (
-    <RouteSWRFallbackProvider fallback={fallback}>
+    <RoutePrefetchBoundary fallbackPromise={fallbackPromise}>
       <KnowledgeBaseDetailPage />
-    </RouteSWRFallbackProvider>
+    </RoutePrefetchBoundary>
   );
 }

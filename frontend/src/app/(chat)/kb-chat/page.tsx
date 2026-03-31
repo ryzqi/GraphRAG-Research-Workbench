@@ -1,7 +1,7 @@
-﻿import dynamic from 'next/dynamic';
+import dynamic from 'next/dynamic';
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
-import { RouteSWRFallbackProvider } from '@/components/providers/RouteSWRFallbackProvider';
-import { prefetchKbChatRouteData } from '@/services/serverFirstRoutePrefetch';
+import { RoutePrefetchBoundary } from '@/components/providers/RoutePrefetchBoundary';
+import { createKbChatFallbackPromise } from '@/services/routePrefetch';
 
 const KbChatPage = dynamic(
   () => import('@/views/KbChatPage').then((mod) => mod.KbChatPage),
@@ -10,12 +10,12 @@ const KbChatPage = dynamic(
   }
 );
 
-export default async function Page() {
-  const fallback = await prefetchKbChatRouteData();
+export default function Page() {
+  const fallbackPromise = createKbChatFallbackPromise();
 
   return (
-    <RouteSWRFallbackProvider fallback={fallback}>
+    <RoutePrefetchBoundary fallbackPromise={fallbackPromise}>
       <KbChatPage />
-    </RouteSWRFallbackProvider>
+    </RoutePrefetchBoundary>
   );
 }
