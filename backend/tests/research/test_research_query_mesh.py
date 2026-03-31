@@ -96,3 +96,16 @@ def test_evaluate_coverage_gate_does_not_count_arxiv_toward_web_provider_coverag
 
     assert gate.passed is False
     assert "missing_web_provider_count" in gate.reasons
+
+
+def test_evaluate_coverage_gate_allows_workspace_only_web_evidence_when_sources_are_sufficient() -> None:
+    gate = evaluate_coverage_gate(
+        complexity="simple",
+        provider_counts={"workspace": 5},
+        unique_source_count=5,
+        source_types={"web"},
+        target_sources={ResearchSourceTarget.WEB},
+    )
+
+    assert gate.passed is True
+    assert gate.reasons == ()

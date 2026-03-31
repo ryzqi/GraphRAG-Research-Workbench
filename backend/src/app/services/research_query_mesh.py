@@ -78,6 +78,11 @@ def evaluate_coverage_gate(
     required_sources = _REQUIRED_UNIQUE_SOURCE_COUNTS[complexity]
     reasons: list[str] = []
     target_source_values = {item.value for item in target_sources}
+    workspace_only_web_evidence = _is_workspace_only_web_evidence(
+        provider_counts=provider_counts,
+        source_types=source_types,
+        target_sources=target_sources,
+    )
     available_web_provider_count = len(
         [
             name
@@ -87,6 +92,7 @@ def evaluate_coverage_gate(
     )
     if (
         ResearchSourceTarget.WEB.value in target_source_values
+        and not workspace_only_web_evidence
         and available_web_provider_count < _REQUIRED_WEB_PROVIDER_COUNTS[complexity]
     ):
         reasons.append("missing_web_provider_count")
@@ -128,3 +134,15 @@ def _unique_queries(values: Iterable[str]) -> tuple[str, ...]:
         seen.add(normalized)
         deduped.append(normalized)
     return tuple(deduped)
+
+
+def _is_workspace_only_web_evidence(
+    *,
+    provider_counts: dict[str, int],
+    source_types: set[str],
+    target_sources: set[ResearchSourceTarget],
+) -> bool:
+    if ResearchSourceTarget.WEB not in target_sources or "web" not in source_types:
+        return False
+    nonzero_providers = {name for name, count in provider_counts.items() if count > 0}
+    return nonzero_providers == {"workspace"}

@@ -118,6 +118,7 @@ async def test_deep_research_runtime_runner_builds_source_bundle_from_structured
         "metrics_snapshot / gate_snapshot 会在 final 后持久化为 artifacts。",
     ]
     assert len(result.source_bundle.citations) == 2
+    assert result.source_bundle.coverage_gaps == []
     assert result.source_bundle.citations[0] == ResearchCanonicalCitation(
         source_type=ResearchSourceType.WEB,
         source_provider="workspace",

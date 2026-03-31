@@ -544,6 +544,15 @@ class DeepResearchRuntimeRunner:
         except ValidationError as exc:
             raise RuntimeError("Deep Research runtime structured_response 不符合契约") from exc
 
+        workspace_only_web_citations = (
+            bool(structured.citations)
+            and all(
+                citation.source_type == ResearchSourceType.WEB
+                and citation.source_provider == "workspace"
+                for citation in structured.citations
+            )
+        )
+
         source_bundle = ResearchSourceBundleBuilder().build(
             target_sources=plan_snapshot.target_sources,
             citations=structured.citations,
@@ -557,6 +566,7 @@ class DeepResearchRuntimeRunner:
                     ),
                 )
                 if ResearchSourceTarget.WEB in set(plan_snapshot.target_sources)
+                and not workspace_only_web_citations
                 else ()
             ),
         )

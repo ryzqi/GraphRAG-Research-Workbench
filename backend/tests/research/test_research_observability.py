@@ -263,3 +263,54 @@ def test_build_research_metrics_allows_paper_only_complex_plan() -> None:
 
     assert metrics["coverage"]["pass"] is True
     assert gate["pass"] is True
+
+
+def test_build_research_metrics_allows_workspace_only_web_path_when_evidence_is_sufficient() -> None:
+    session = ResearchSession(
+        id=uuid4(),
+        thread_id="workspace-web-session",
+        question="概述当前 Deep Research session contract",
+        status=ResearchSessionStatus.RUNNING,
+    )
+    plan_snapshot = ResearchPlanSnapshot(
+        research_brief="仅基于 workspace 文档回答当前 contract 问题。",
+        complexity="simple",
+        summary="workspace 文档足够时不应强制外部 web provider。",
+        target_sources=[ResearchSourceTarget.WEB],
+    )
+    citations = [
+        ResearchCanonicalCitation(
+            source_type=ResearchSourceType.WEB,
+            source_provider="workspace",
+            retrieval_method="read_file",
+            source_id=f"/workspace/context/doc-{index}.md",
+            title=f"Doc {index}",
+            url=f"file:///workspace/context/doc-{index}.md",
+            origin_url=f"file:///workspace/context/doc-{index}.md",
+        )
+        for index in range(5)
+    ]
+    source_bundle = ResearchSourceBundleBuilder().build(
+        target_sources=plan_snapshot.target_sources,
+        citations=citations,
+        findings=["workspace 证据一。", "workspace 证据二。"],
+        required_web_providers=(),
+    )
+    metrics = build_research_metrics(
+        session=session,
+        plan_snapshot=plan_snapshot,
+        runtime_result=ResearchRuntimeRunResult(
+            source_bundle=source_bundle,
+            latency_ms=800,
+            total_cost_usd=0.0,
+            quality_score=0.9,
+        ),
+    )
+    gate = evaluate_research_gate(
+        metrics={**metrics, "replay": {"pass": True}},
+        thresholds=ResearchGateThresholds(),
+    )
+
+    assert metrics["coverage"]["pass"] is True
+    assert metrics["coverage"]["reasons"] == []
+    assert gate["pass"] is True
