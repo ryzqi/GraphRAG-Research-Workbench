@@ -6,6 +6,7 @@ from typing import Any
 
 import pytest
 
+from app.models.research_artifact import ResearchArtifact
 from app.models.research_session import ResearchSession
 from app.schemas.research import (
     ResearchCanonicalCitation,
@@ -21,6 +22,7 @@ from app.services.deep_research_runtime import (
     build_deep_research_runtime_runner,
 )
 from app.services.research_runtime_types import ResearchRuntimeConfig
+from app.services.research_workspace_files import build_research_workspace_layout
 
 
 class _FakeAgent:
@@ -294,6 +296,8 @@ async def test_build_deep_research_runtime_runner_disables_previous_response_id_
 
 @pytest.mark.asyncio
 async def test_runner_includes_workspace_bootstrap_files_in_agent_request() -> None:
+    session_id = uuid.uuid4()
+    layout = build_research_workspace_layout(session_id)
     agent = _FakeAgent(
         {
             "structured_response": {
@@ -306,19 +310,19 @@ async def test_runner_includes_workspace_bootstrap_files_in_agent_request() -> N
                         "source_type": "web",
                         "source_provider": "workspace",
                         "retrieval_method": "read_file",
-                        "source_id": "/workspace/research/session-1/00-mission.md",
+                        "source_id": layout.mission_path,
                         "title": "00-mission.md",
-                        "url": "file:///workspace/research/session-1/00-mission.md",
-                        "origin_url": "file:///workspace/research/session-1/00-mission.md",
+                        "url": f"file://{layout.mission_path}",
+                        "origin_url": f"file://{layout.mission_path}",
                     },
                     {
                         "source_type": "web",
                         "source_provider": "workspace",
                         "retrieval_method": "read_file",
-                        "source_id": "/workspace/research/session-1/01-plan.md",
+                        "source_id": layout.plan_path,
                         "title": "01-plan.md",
-                        "url": "file:///workspace/research/session-1/01-plan.md",
-                        "origin_url": "file:///workspace/research/session-1/01-plan.md",
+                        "url": f"file://{layout.plan_path}",
+                        "origin_url": f"file://{layout.plan_path}",
                     },
                 ],
             }
@@ -337,17 +341,23 @@ async def test_runner_includes_workspace_bootstrap_files_in_agent_request() -> N
     )
     runner = DeepResearchRuntimeRunner(
         runtime=runtime,
-        workspace_files={
-            "/workspace/research/session-1/00-mission.md": "# Mission",
-            "/workspace/research/session-1/01-plan.md": "# Plan",
-        },
+        workspace_files={"/workspace/context/api_contract_research.md": "# api contract"},
     )
-    session_id = uuid.uuid4()
     session = ResearchSession(
         id=session_id,
-        thread_id="session-1",
+        thread_id=str(session_id),
         question="把 workspace bootstrap 注入 runtime request",
     )
+    session.artifacts = [
+        ResearchArtifact(
+            artifact_key="mission_md",
+            content_text="# Mission",
+        ),
+        ResearchArtifact(
+            artifact_key="plan_md",
+            content_text="# Plan",
+        ),
+    ]
     plan_snapshot = ResearchPlanSnapshot(
         research_brief="验证 mission/plan 文件会进入 runtime request。",
         complexity="simple",
@@ -365,5 +375,7 @@ async def test_runner_includes_workspace_bootstrap_files_in_agent_request() -> N
     await runner.run_session(session=session, plan_snapshot=plan_snapshot)
 
     request, _ = agent.calls[0]
-    assert "/workspace/research/session-1/00-mission.md" in request["files"]
-    assert "/workspace/research/session-1/01-plan.md" in request["files"]
+    assert layout.mission_path in request["files"]
+    assert layout.plan_path in request["files"]
+    assert request["files"][layout.mission_path]["content"] == ["# Mission"]
+    assert request["files"][layout.plan_path]["content"] == ["# Plan"]

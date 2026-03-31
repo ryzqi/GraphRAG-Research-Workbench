@@ -41,6 +41,7 @@ from app.services.research_runtime_types import (
     ResearchToolRegistryBundle,
 )
 from app.services.research_source_bundle import ResearchSourceBundleBuilder
+from app.services.research_workspace_files import build_research_workspace_layout
 
 _REPO_ROOT = Path(__file__).resolve().parents[4]
 _DEFAULT_WORKSPACE_CONTEXT_DOCS: tuple[tuple[str, Path], ...] = (
@@ -377,6 +378,33 @@ def _build_runtime_request_files(
     return request_files
 
 
+def _build_session_bootstrap_workspace_files(session: ResearchSession) -> dict[str, str]:
+    artifacts = session.__dict__.get("artifacts") or ()
+    if not artifacts:
+        return {}
+
+    layout = build_research_workspace_layout(session.id)
+    path_by_artifact_key = {
+        "mission_md": layout.mission_path,
+        "plan_md": layout.plan_path,
+        "query_map_md": layout.query_map_path,
+        "coverage_md": layout.coverage_path,
+        "report_draft_md": layout.report_draft_path,
+    }
+
+    workspace_files: dict[str, str] = {}
+    for artifact in artifacts:
+        artifact_key = getattr(artifact, "artifact_key", None)
+        workspace_path = path_by_artifact_key.get(artifact_key)
+        if workspace_path is None:
+            continue
+        content_text = getattr(artifact, "content_text", None)
+        if not isinstance(content_text, str):
+            continue
+        workspace_files[workspace_path] = content_text
+    return workspace_files
+
+
 @dataclass(slots=True)
 class DeepResearchRuntimeRunner:
     runtime: DeepResearchRuntime
@@ -388,8 +416,10 @@ class DeepResearchRuntimeRunner:
         session: ResearchSession,
         plan_snapshot: ResearchPlanSnapshot,
     ) -> ResearchRuntimeRunResult:
+        workspace_files = dict(self.workspace_files)
+        workspace_files.update(_build_session_bootstrap_workspace_files(session))
         request_files = _build_runtime_request_files(
-            workspace_files=self.workspace_files,
+            workspace_files=workspace_files,
             session=session,
             plan_snapshot=plan_snapshot,
         )
