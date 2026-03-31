@@ -23,17 +23,25 @@ export function ResearchCanvas({
   artifactPanel: ReactNode;
   exportButton: ReactNode;
 }) {
+  const sectionSx = {
+    p: { xs: 2.25, md: 3 },
+    borderRadius: 5,
+    borderColor: 'rgba(223, 225, 229, 0.92)',
+    bgcolor: '#ffffff',
+    boxShadow: '0 1px 3px rgba(32, 33, 36, 0.08)',
+  } as const;
+
   return (
-    <Stack spacing={2}>
-      <Paper variant="outlined" sx={{ p: 2.5, borderRadius: 4 }}>
-        <Typography variant="subtitle1" fontWeight={700}>
+    <Stack spacing={2.5}>
+      <Paper variant="outlined" sx={sectionSx}>
+        <Typography variant="overline" sx={{ color: '#80868b', letterSpacing: '0.16em' }}>
           {model.currentStepTitle}
         </Typography>
-        <Typography variant="body2" color="text.secondary">
+        <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
           {model.currentStepBody ?? '等待研究启动。'}
         </Typography>
       </Paper>
-      <Paper variant="outlined" sx={{ p: 2.5, borderRadius: 4 }}>
+      <Paper variant="outlined" sx={sectionSx}>
         <Typography variant="subtitle1" fontWeight={700}>
           {model.findingsTitle}
         </Typography>
@@ -44,9 +52,9 @@ export function ResearchCanvas({
           <Typography variant="body2" color="warning.main">
             {model.coverageGap}
           </Typography>
-        ) : null}
+          ) : null}
       </Paper>
-      <Paper variant="outlined" sx={{ p: 2.5, borderRadius: 4 }}>
+      <Paper variant="outlined" sx={sectionSx}>
         <Stack spacing={1.5}>
           <Stack direction="row" justifyContent="space-between" alignItems="center">
             <Typography variant="subtitle1" fontWeight={700}>

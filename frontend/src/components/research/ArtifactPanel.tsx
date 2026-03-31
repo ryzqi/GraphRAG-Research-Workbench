@@ -32,7 +32,16 @@ export function ArtifactPanel({ reportMd, reportJson, artifacts }: ArtifactPanel
   const paperCitations = citations.filter((item) => item.source_type === 'paper');
 
   return (
-    <Paper variant="outlined" sx={{ p: 2 }}>
+    <Paper
+      variant="outlined"
+      sx={{
+        p: { xs: 2, md: 2.5 },
+        borderRadius: 5,
+        borderColor: 'rgba(223, 225, 229, 0.92)',
+        bgcolor: '#ffffff',
+        boxShadow: '0 1px 3px rgba(32, 33, 36, 0.08)',
+      }}
+    >
       <Stack spacing={2}>
         <Typography variant="subtitle1" fontWeight={600}>
           证据与引用
@@ -69,7 +78,10 @@ export function ArtifactPanel({ reportMd, reportJson, artifacts }: ArtifactPanel
               <Typography variant="body2" fontWeight={500}>
                 Markdown
               </Typography>
-              <Paper variant="outlined" sx={{ p: 2, bgcolor: 'grey.50' }}>
+              <Paper
+                variant="outlined"
+                sx={{ p: 2, borderColor: 'rgba(223, 225, 229, 0.92)', bgcolor: '#f8f9fa' }}
+              >
                 <ReactMarkdown remarkPlugins={[remarkGfm]} skipHtml>
                   {reportMd}
                 </ReactMarkdown>
@@ -89,7 +101,8 @@ export function ArtifactPanel({ reportMd, reportJson, artifacts }: ArtifactPanel
                 variant="outlined"
                 sx={{
                   p: 2,
-                  bgcolor: 'grey.50',
+                  borderColor: 'rgba(223, 225, 229, 0.92)',
+                  bgcolor: '#f8f9fa',
                   overflowX: 'auto',
                   fontFamily: 'monospace',
                   whiteSpace: 'pre-wrap',

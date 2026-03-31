@@ -42,14 +42,24 @@ export function ResearchSessionRail({
   advancedEventsPanel: ReactNode;
   onReset: () => void;
 }) {
+  const sectionSx = {
+    p: 2,
+    borderRadius: 4,
+    borderColor: 'rgba(223, 225, 229, 0.92)',
+    bgcolor: '#ffffff',
+    boxShadow: '0 1px 3px rgba(32, 33, 36, 0.08)',
+  } as const;
+
   return (
-    <Stack spacing={2}>
-      <Paper variant="outlined" sx={{ p: 2, borderRadius: 3 }}>
+    <Stack spacing={1.5}>
+      <Paper variant="outlined" sx={sectionSx}>
         <Stack spacing={1.25}>
-          <Typography variant="subtitle1" fontWeight={600}>
-            当前研究
+          <Typography variant="overline" sx={{ color: '#80868b', letterSpacing: '0.18em' }}>
+            research
           </Typography>
-          <Typography variant="body2">{question}</Typography>
+          <Typography variant="body2" sx={{ color: '#202124' }}>
+            {question}
+          </Typography>
           <Stack direction="row" spacing={1} alignItems="center">
             <StatusBadge status={statusTone} label={statusLabel} />
             <Button variant="outlined" size="small" onClick={onReset}>

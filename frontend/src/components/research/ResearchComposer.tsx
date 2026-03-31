@@ -1,4 +1,5 @@
-import { Paper, Stack, TextField, Typography } from '@mui/material';
+import SearchIcon from '@mui/icons-material/Search';
+import { InputBase, Paper, Stack, Typography } from '@mui/material';
 
 import { ResearchPlanningHero } from './ResearchPlanningHero';
 import { Button } from '../ui/Button';
@@ -13,82 +14,38 @@ interface ResearchComposerProps {
 
 export function ResearchComposer(props: ResearchComposerProps) {
   return (
-    <Stack spacing={2.5}>
-      <ResearchPlanningHero />
-      <Paper
-        variant="outlined"
-        sx={{
-          p: { xs: 2, md: 3 },
-          borderRadius: 5,
-          borderColor: 'rgba(148, 163, 184, 0.2)',
-          bgcolor: '#101418',
-          color: '#f8fafc',
-          boxShadow: '0 28px 80px rgba(2, 6, 23, 0.28)',
-        }}
-      >
-        <Stack spacing={2.5}>
-          <Stack spacing={1}>
-            <Typography
-              variant="overline"
-              sx={{
-                letterSpacing: '0.24em',
-                color: 'rgba(226, 232, 240, 0.64)',
-              }}
-            >
-              research planning
-            </Typography>
-            <Typography variant="h5" fontWeight={600}>
-              用一句问题开启研究前规划
-            </Typography>
-            <Typography variant="body2" sx={{ color: 'rgba(226, 232, 240, 0.72)' }}>
-              计划阶段只呈现问题、必要澄清与计划消息。确认后，研究才会正式开始。
-            </Typography>
-          </Stack>
-          <TextField
+    <ResearchPlanningHero>
+      <Stack spacing={1.25}>
+        <Paper
+          variant="outlined"
+          sx={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 1.5,
+            px: { xs: 1.5, md: 2 },
+            py: 1,
+            borderRadius: 999,
+            borderColor: props.validationError ? 'error.main' : 'rgba(223, 225, 229, 0.96)',
+            bgcolor: '#ffffff',
+            boxShadow: '0 1px 6px rgba(32, 33, 36, 0.14)',
+          }}
+        >
+          <SearchIcon sx={{ color: '#9aa0a6' }} />
+          <InputBase
             fullWidth
             multiline
-            minRows={5}
+            minRows={1}
+            maxRows={6}
             value={props.question}
             onChange={(event) => props.onQuestionChange(event.target.value)}
-            placeholder="例如：比较 Tavily、Jina Reader 与 SearXNG 在深度研究入口中的定位与边界。"
-            error={Boolean(props.validationError)}
-            helperText={
-              props.validationError ??
-              '研究会先收敛问题，再进入正式执行。'
-            }
-            slotProps={{
-              input: {
-                sx: {
-                  color: '#f8fafc',
-                  alignItems: 'flex-start',
-                  bgcolor: 'rgba(15, 23, 42, 0.72)',
-                  borderRadius: 3,
-                },
-              },
-              formHelperText: {
-                sx: {
-                  color: props.validationError ? undefined : 'rgba(226, 232, 240, 0.64)',
-                  mx: 0,
-                  mt: 1,
-                },
-              },
-            }}
+            placeholder="有问题，尽管问"
+            inputProps={{ 'aria-label': '研究问题输入框' }}
             sx={{
-              '& .MuiOutlinedInput-root': {
-                alignItems: 'flex-start',
-                borderRadius: 3,
-                '& fieldset': {
-                  borderColor: 'rgba(148, 163, 184, 0.24)',
-                },
-                '&:hover fieldset': {
-                  borderColor: 'rgba(226, 232, 240, 0.42)',
-                },
-                '&.Mui-focused fieldset': {
-                  borderColor: 'rgba(248, 250, 252, 0.78)',
-                },
-              },
+              fontSize: { xs: 16, md: 18 },
+              lineHeight: 1.5,
+              color: '#202124',
               '& .MuiInputBase-input::placeholder': {
-                color: 'rgba(226, 232, 240, 0.42)',
+                color: '#80868b',
                 opacity: 1,
               },
             }}
@@ -98,21 +55,30 @@ export function ResearchComposer(props: ResearchComposerProps) {
             onClick={props.onStart}
             loading={props.loading}
             sx={{
-              alignSelf: 'flex-start',
-              minHeight: 44,
+              flexShrink: 0,
+              minWidth: { xs: 88, md: 104 },
+              minHeight: 42,
               px: 2.25,
               borderRadius: 999,
-              bgcolor: '#f8fafc',
-              color: '#020617',
+              bgcolor: '#1a73e8',
+              color: '#fff',
+              boxShadow: 'none',
               '&:hover': {
-                bgcolor: '#e2e8f0',
+                bgcolor: '#1765cc',
+                boxShadow: 'none',
               },
             }}
           >
-            生成研究计划
+            开始研究
           </Button>
-        </Stack>
-      </Paper>
-    </Stack>
+        </Paper>
+
+        {props.validationError ? (
+          <Typography variant="body2" color="error.main" sx={{ px: 2 }}>
+            {props.validationError}
+          </Typography>
+        ) : null}
+      </Stack>
+    </ResearchPlanningHero>
   );
 }
