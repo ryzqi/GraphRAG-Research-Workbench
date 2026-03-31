@@ -548,12 +548,16 @@ class DeepResearchRuntimeRunner:
             target_sources=plan_snapshot.target_sources,
             citations=structured.citations,
             findings=structured.findings,
-            required_web_providers=select_required_web_providers(
-                complexity=plan_snapshot.complexity.value,
-                available_providers=self.runtime.tool_groups.get(
-                    "web_provider_ids",
-                    resolve_research_web_provider_ids(self.runtime.tool_groups.get("web", ())),
-                ),
+            required_web_providers=(
+                select_required_web_providers(
+                    complexity=plan_snapshot.complexity.value,
+                    available_providers=self.runtime.tool_groups.get(
+                        "web_provider_ids",
+                        resolve_research_web_provider_ids(self.runtime.tool_groups.get("web", ())),
+                    ),
+                )
+                if ResearchSourceTarget.WEB in set(plan_snapshot.target_sources)
+                else ()
             ),
         )
         return ResearchRuntimeRunResult(

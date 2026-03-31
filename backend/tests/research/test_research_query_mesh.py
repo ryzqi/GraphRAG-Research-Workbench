@@ -42,6 +42,7 @@ def test_evaluate_coverage_gate_blocks_complex_runs_without_enough_providers() -
         provider_counts={"tavily": 3, "jina_reader": 1},
         unique_source_count=6,
         source_types={"web"},
+        target_sources={ResearchSourceTarget.WEB, ResearchSourceTarget.PAPER},
     )
 
     assert gate.passed is False
@@ -56,3 +57,42 @@ def test_select_required_web_providers_does_not_hide_registry_shortage() -> None
     )
 
     assert providers == ("tavily", "jina_reader", "searxng")
+
+
+def test_evaluate_coverage_gate_allows_paper_only_plan_without_web_provider_requirement() -> None:
+    gate = evaluate_coverage_gate(
+        complexity="complex",
+        provider_counts={"arxiv": 12},
+        unique_source_count=12,
+        source_types={"paper"},
+        target_sources={ResearchSourceTarget.PAPER},
+    )
+
+    assert gate.passed is True
+    assert gate.reasons == ()
+
+
+def test_evaluate_coverage_gate_allows_complex_web_only_plan_with_three_web_providers() -> None:
+    gate = evaluate_coverage_gate(
+        complexity="complex",
+        provider_counts={"tavily": 4, "jina_reader": 4, "searxng": 4},
+        unique_source_count=12,
+        source_types={"web"},
+        target_sources={ResearchSourceTarget.WEB},
+    )
+
+    assert gate.passed is True
+    assert gate.reasons == ()
+
+
+def test_evaluate_coverage_gate_does_not_count_arxiv_toward_web_provider_coverage() -> None:
+    gate = evaluate_coverage_gate(
+        complexity="comparative",
+        provider_counts={"tavily": 4, "jina_reader": 4, "arxiv": 4},
+        unique_source_count=12,
+        source_types={"web", "paper"},
+        target_sources={ResearchSourceTarget.WEB},
+    )
+
+    assert gate.passed is False
+    assert "missing_web_provider_count" in gate.reasons

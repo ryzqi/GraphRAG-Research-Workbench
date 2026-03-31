@@ -5,10 +5,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Iterable, Literal
 
-from app.schemas.research import ResearchPlanSnapshot
+from app.schemas.research import ResearchPlanSnapshot, ResearchSourceTarget
 
 ResearchComplexityLiteral = Literal["simple", "comparative", "complex"]
-_DEFAULT_REQUIRED_WEB_PROVIDERS = ("tavily", "jina_reader", "searxng")
+DEFAULT_REQUIRED_WEB_PROVIDERS = ("tavily", "jina_reader", "searxng")
 
 _REQUIRED_WEB_PROVIDER_COUNTS: dict[ResearchComplexityLiteral, int] = {
     "simple": 2,
@@ -73,22 +73,29 @@ def evaluate_coverage_gate(
     provider_counts: dict[str, int],
     unique_source_count: int,
     source_types: set[str],
+    target_sources: set[ResearchSourceTarget],
 ) -> CoverageGateResult:
-    required_web_providers = _REQUIRED_WEB_PROVIDER_COUNTS[complexity]
     required_sources = _REQUIRED_UNIQUE_SOURCE_COUNTS[complexity]
     reasons: list[str] = []
+    target_source_values = {item.value for item in target_sources}
     available_web_provider_count = len(
         [
             name
             for name, count in provider_counts.items()
-            if count > 0 and str(name).strip() and name != "workspace"
+            if count > 0 and name in DEFAULT_REQUIRED_WEB_PROVIDERS
         ]
     )
-    if available_web_provider_count < required_web_providers:
+    if (
+        ResearchSourceTarget.WEB.value in target_source_values
+        and available_web_provider_count < _REQUIRED_WEB_PROVIDER_COUNTS[complexity]
+    ):
         reasons.append("missing_web_provider_count")
     if unique_source_count < required_sources:
         reasons.append("unique_source_count_low")
-    if complexity == "complex" and "paper" not in source_types:
+    if (
+        ResearchSourceTarget.PAPER.value in target_source_values
+        and "paper" not in source_types
+    ):
         reasons.append("paper_source_missing")
     return CoverageGateResult(
         passed=not reasons,
@@ -103,7 +110,7 @@ def select_required_web_providers(
 ) -> tuple[str, ...]:
     normalized_available = _unique_queries(available_providers)
     required_count = _REQUIRED_WEB_PROVIDER_COUNTS[complexity]
-    required: list[str] = list(_DEFAULT_REQUIRED_WEB_PROVIDERS[:required_count])
+    required: list[str] = list(DEFAULT_REQUIRED_WEB_PROVIDERS[:required_count])
     for provider in normalized_available:
         if provider in required:
             continue

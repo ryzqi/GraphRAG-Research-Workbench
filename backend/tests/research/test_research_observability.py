@@ -211,3 +211,55 @@ def test_build_research_metrics_marks_coverage_gate_and_forces_gate_failure() ->
     assert "missing_web_provider_count" in metrics["coverage"]["reasons"]
     assert gate["pass"] is False
     assert "coverage" in gate["violations"]
+
+
+def test_build_research_metrics_allows_paper_only_complex_plan() -> None:
+    session = ResearchSession(
+        id=uuid4(),
+        thread_id="paper-only-session",
+        question="整理论文研究基线",
+        status=ResearchSessionStatus.RUNNING,
+    )
+    plan_snapshot = ResearchPlanSnapshot(
+        research_brief="只做论文来源研究。",
+        complexity="complex",
+        summary="paper-only 不应要求 web provider coverage。",
+        target_sources=[ResearchSourceTarget.PAPER],
+    )
+    citations = [
+        ResearchCanonicalCitation(
+            source_type=ResearchSourceType.PAPER,
+            source_provider="arxiv",
+            retrieval_method="fetch",
+            source_id=f"arxiv:2501.{index:05d}",
+            title=f"Paper {index}",
+            url=f"https://arxiv.org/abs/2501.{index:05d}",
+            origin_url=f"https://arxiv.org/abs/2501.{index:05d}",
+            arxiv_id=f"2501.{index:05d}",
+            pdf_url=f"https://arxiv.org/pdf/2501.{index:05d}.pdf",
+        )
+        for index in range(12)
+    ]
+    source_bundle = ResearchSourceBundleBuilder().build(
+        target_sources=plan_snapshot.target_sources,
+        citations=citations,
+        findings=["论文基线一。", "论文基线二。"],
+        required_web_providers=(),
+    )
+    metrics = build_research_metrics(
+        session=session,
+        plan_snapshot=plan_snapshot,
+        runtime_result=ResearchRuntimeRunResult(
+            source_bundle=source_bundle,
+            latency_ms=1000,
+            total_cost_usd=0.1,
+            quality_score=0.95,
+        ),
+    )
+    gate = evaluate_research_gate(
+        metrics={**metrics, "replay": {"pass": True}},
+        thresholds=ResearchGateThresholds(),
+    )
+
+    assert metrics["coverage"]["pass"] is True
+    assert gate["pass"] is True

@@ -302,6 +302,81 @@ async def test_deep_research_runtime_runner_enforces_required_web_provider_gaps_
 
 
 @pytest.mark.asyncio
+async def test_deep_research_runtime_runner_skips_web_provider_requirements_for_paper_only_plan() -> None:
+    agent = _FakeAgent(
+        {
+            "structured_response": {
+                "findings": [
+                    "Paper A 提供研究基线。",
+                    "Paper B 提供补充论据。",
+                ],
+                "citations": [
+                    {
+                        "source_type": "paper",
+                        "source_provider": "arxiv",
+                        "retrieval_method": "fetch",
+                        "source_id": "arxiv:2501.00001",
+                        "title": "Paper A",
+                        "url": "https://arxiv.org/abs/2501.00001",
+                        "origin_url": "https://arxiv.org/abs/2501.00001",
+                        "arxiv_id": "2501.00001",
+                        "pdf_url": "https://arxiv.org/pdf/2501.00001.pdf",
+                    },
+                    {
+                        "source_type": "paper",
+                        "source_provider": "arxiv",
+                        "retrieval_method": "fetch",
+                        "source_id": "arxiv:2501.00002",
+                        "title": "Paper B",
+                        "url": "https://arxiv.org/abs/2501.00002",
+                        "origin_url": "https://arxiv.org/abs/2501.00002",
+                        "arxiv_id": "2501.00002",
+                        "pdf_url": "https://arxiv.org/pdf/2501.00002.pdf",
+                    },
+                ],
+            }
+        }
+    )
+    runtime = DeepResearchRuntime(
+        agent=agent,
+        config=ResearchRuntimeConfig(
+            primary_model="gpt-5.2",
+            subagent_model="gpt-5.2-mini",
+            system_prompt="你是深度研究助手。",
+        ),
+        tools=[],
+        tool_meta_by_name={},
+        tool_groups={
+            "web": ("tavily_search", "jina_read", "searxng_search"),
+            "web_provider_ids": ("tavily", "jina_reader", "searxng"),
+            "paper": ("arxiv_search", "arxiv_fetch"),
+            "citation": (),
+        },
+    )
+    runner = DeepResearchRuntimeRunner(
+        runtime=runtime,
+        workspace_files={"/workspace/context/api_contract_research.md": "# api contract"},
+    )
+    session_id = uuid.uuid4()
+    session = ResearchSession(
+        id=session_id,
+        thread_id=str(session_id),
+        question="整理论文研究基线",
+    )
+    session.artifacts = []
+    plan_snapshot = ResearchPlanSnapshot(
+        research_brief="只基于论文做研究。",
+        complexity="complex",
+        summary="paper-only 不应要求 web provider。",
+        target_sources=[ResearchSourceTarget.PAPER],
+    )
+
+    result = await runner.run_session(session=session, plan_snapshot=plan_snapshot)
+
+    assert result.source_bundle.coverage_gaps == []
+
+
+@pytest.mark.asyncio
 async def test_build_deep_research_runtime_runner_disables_previous_response_id_replay(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

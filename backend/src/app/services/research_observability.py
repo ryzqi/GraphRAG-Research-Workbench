@@ -152,6 +152,7 @@ def build_research_metrics(
         provider_counts=source_bundle.provider_counts,
         unique_source_count=len(source_bundle.citations),
         source_types=source_types,
+        target_sources=set(plan_snapshot.target_sources),
     )
     quality_score = (
         float(runtime_result.quality_score)
