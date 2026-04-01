@@ -3,6 +3,6 @@ name: research_report_generate_invalid_schema_error_message
 description: "Report generate invalid schema error message"
 
 template: |
-  报告生成结果结构不合法，缺少必须字段或字段类型不匹配，已回退为保底模板。
+  报告生成结果结构不合法，缺少必须字段或字段类型不匹配，已回退为保底模板；请检查 sections、metadata 与 report_md 是否同时满足契约。
 
 variables: []

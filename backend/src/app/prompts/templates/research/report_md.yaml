@@ -9,7 +9,9 @@ template: |
   {question}
 
   ## Executive Summary
-  {interim_summary}{findings_section}{evidence_section}{coverage_gaps_section}{references_section}
+  {interim_summary}
+
+  {findings_section}{evidence_section}{coverage_gaps_section}{references_section}
 
 variables:
   - name: question

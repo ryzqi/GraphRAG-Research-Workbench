@@ -3,7 +3,7 @@ name: research_query_mesh_depth_fallback
 description: "Deep Research query mesh fallback depth query"
 
 template: |
-  {canonical_query} 详细证据 原始数据 一手材料
+  {canonical_query} 核心证据 原始来源 官方资料 数据细节
 
 variables:
   - name: canonical_query

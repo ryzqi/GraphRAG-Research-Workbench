@@ -3,6 +3,6 @@ name: research_report_generate_unknown_source
 description: "Report generate unknown citation source fallback"
 
 template: |
-  未标注来源
+  未标注来源（需补 source_id）
 
 variables: []

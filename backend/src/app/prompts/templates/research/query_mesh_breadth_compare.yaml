@@ -3,7 +3,7 @@ name: research_query_mesh_breadth_compare
 description: "Deep Research query mesh breadth compare query"
 
 template: |
-  {canonical_query} 官方资料 功能边界 设计差异
+  {canonical_query} 官方资料 关键能力边界 核心差异 对比维度
 
 variables:
   - name: canonical_query

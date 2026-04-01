@@ -5,9 +5,14 @@ description: "Deep Research workspace query map markdown"
 template: |
   # Query Map
 
-  - canonical
-  - breadth
-  - depth
-  - verification
+  ## Query Families
+  - canonical: 保留用户核心问题，作为总入口与最终对照
+  - breadth: 用于建立方案版图、能力边界、对比维度
+  - depth: 用于补核心证据、原始来源、数据细节
+  - verification: 用于核对口径差异、限制、反例与争议
+
+  ## Use Rules
+  - 先用 canonical / breadth 建立研究面，再用 depth / verification 收敛证据。
+  - 不要求每轮都执行全部查询；优先选择能关闭当前缺口的最小查询集。
 
 variables: []

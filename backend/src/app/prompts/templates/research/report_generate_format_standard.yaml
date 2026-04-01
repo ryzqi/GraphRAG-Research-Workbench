@@ -3,6 +3,6 @@ name: research_report_generate_format_standard
 description: "Report generate standard format instruction"
 
 template: |
-  标准模式：每个章节 2-3 段，要求同时写明结论标签、对应证据、冲突/限制与引用，总长度 800-1500 字。
+  标准模式：每个章节 2-3 段，要求同时写明结论标签、对应证据、冲突/限制、citation 序号与必要缺口，总长度 800-1500 字。
 
 variables: []

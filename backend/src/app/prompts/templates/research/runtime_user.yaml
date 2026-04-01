@@ -14,13 +14,16 @@ template: |
 
   研究过程要求：
   - 先消化 workspace 文档，再决定是否需要外部补证。
+  - 将 route_hint 与 query_mesh 视为候选检索计划；只选择能关闭当前主张、交叉验证任务或 coverage gap 的最小必要查询集。
   - 外部查询必须服务于某个未闭合主张、交叉验证任务或 coverage gap。
   - 引用优先级：官方/原始/同行评审 > 聚合转载 > 二手解读。
+  - 若只有弱证据或单一来源支持，不要把该判断写成确定性 finding。
 
   输出要求：
-  - findings 至少 2 条，必须是可验证的具体结论。
-  - citations 至少 2 条，必须与 findings 对应。
+  - findings 至少 2 条，必须是可验证的具体结论，且尽量保持一条 finding 只表达一个核心判断。
+  - citations 至少 2 条，必须与 findings 对应；结构化输出中也必须保留 citations。
   - 内部组织顺序遵循：结论 -> 证据 -> 冲突/限制 -> 缺口。
+  - 若证据冲突，请在 findings 中保留 contested / limitation 语义，不要强行合并。
   - 如果 workspace 文档足够回答，不要为了凑工具而调用外部 provider。
   - 如果 workspace 文档不足，可再调用 Tavily / Jina Reader / SearXNG / arXiv 工具补证据。
 

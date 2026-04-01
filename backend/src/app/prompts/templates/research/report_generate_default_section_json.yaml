@@ -3,6 +3,6 @@ name: research_report_generate_default_section_json
 description: "Report generate default section payload"
 
 template: |
-  {{"title": "摘要", "content": "未生成章节内容，请检查 evidence 与 citation 映射。"}}
+  {{"title": "摘要", "content": "未生成章节内容，请检查 evidence 与 citation 映射，并补写结论标签、限制与引用。"}}
 
 variables: []

@@ -17,12 +17,20 @@ template: |
   - 聚焦当前问题直接相关的研究边界，不扩展到无关实现细节。
   - 若时间范围、比较维度或成功指标未完全显式给出，采用最保守边界并在报告中标注。
 
+  ## Success Criteria
+  - 关键结论必须可核查，优先使用官方、原始或同行评审资料。
+  - 若存在冲突证据，必须保留限制、争议或 contested 语义。
+  - 研究结果应服务于最终可追溯报告，而不是仅输出素材堆砌。
+
   ## Default Assumptions
   - 默认保守假设：在不改变研究主线的前提下优先保持范围收敛。
   - Budget guidance: {budget_guidance}
 
   ## Target Sources
   - {target_sources_line}
+
+  ## Delivery Contract
+  - 输出需要能够支撑 findings、citations 与 coverage gaps 的后续收口。
 
 variables:
   - name: session_slug

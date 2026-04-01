@@ -3,8 +3,6 @@ name: research_report_evidence_section_md
 description: "Deep Research report evidence section markdown"
 
 template: |
-
-
   ## Evidence and Counter-Evidence
   {items_block}
 

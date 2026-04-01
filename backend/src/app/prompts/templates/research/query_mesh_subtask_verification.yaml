@@ -3,7 +3,7 @@ name: research_query_mesh_subtask_verification
 description: "Deep Research query mesh subtask verification query"
 
 template: |
-  {subtask_title} 一手资料 交叉验证 官方文档
+  {subtask_title} 一手资料 交叉验证 限制 条件
 
 variables:
   - name: subtask_title

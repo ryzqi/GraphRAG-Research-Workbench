@@ -3,6 +3,6 @@ name: research_report_generate_no_citations
 description: "Report generate no citations fallback"
 
 template: |
-  暂无可追溯引用；请在报告中明确说明证据不足。
+  暂无可追溯引用；请在报告中明确说明证据不足，并避免输出确定性结论。
 
 variables: []

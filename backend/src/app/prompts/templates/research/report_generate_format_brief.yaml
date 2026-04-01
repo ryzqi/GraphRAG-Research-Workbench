@@ -3,6 +3,6 @@ name: research_report_generate_format_brief
 description: "Report generate brief format instruction"
 
 template: |
-  简洁模式：每个章节 1-2 句话，优先保留结论标签、关键证据与主要限制，总长度不超过 500 字。
+  简洁模式：每个章节 1-2 句话，仍需保留结论标签、最关键证据、主要限制与 citation 序号，总长度不超过 500 字。
 
 variables: []
