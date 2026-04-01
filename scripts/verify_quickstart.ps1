@@ -88,6 +88,123 @@ function Get-SearXngDefaultEngines {
     return @($raw.Split(",") | ForEach-Object { $_.Trim().Trim('"').Trim("'") } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
 }
 
+function Get-SearXngKeepOnlyEngines {
+    param([string]$SettingsPath)
+
+    if (-not (Test-Path $SettingsPath)) {
+        return @()
+    }
+
+    $engines = New-Object System.Collections.Generic.List[string]
+    $insideKeepOnly = $false
+    foreach ($line in Get-Content -Path $SettingsPath -Encoding UTF8) {
+        if ($line -match '^\s*keep_only:\s*$') {
+            $insideKeepOnly = $true
+            continue
+        }
+
+        if (-not $insideKeepOnly) {
+            continue
+        }
+
+        if ($line -match '^\s*-\s*(.+?)\s*$') {
+            $engines.Add($Matches[1].Trim())
+            continue
+        }
+
+        if ($line -match '^\s*\S') {
+            break
+        }
+
+        if ($line.Trim().Length -eq 0) {
+            continue
+        }
+
+        break
+    }
+
+    return @($engines)
+}
+
+function Get-SearXngImageEngineCatalogCount {
+    param([string]$ContainerName = "mkb_searxng")
+
+    if (-not (Get-Command podman -ErrorAction SilentlyContinue)) {
+        return $null
+    }
+
+    try {
+        $count = & podman exec $ContainerName sh -lc "grep -c '^  - name:' /usr/local/searxng/searx/settings.yml"
+        if ($LASTEXITCODE -ne 0) {
+            return $null
+        }
+        $parsed = 0
+        if ([int]::TryParse(($count | Out-String).Trim(), [ref]$parsed)) {
+            return $parsed
+        }
+    } catch {
+        return $null
+    }
+
+    return $null
+}
+
+function Get-SearXngActiveEngineCount {
+    param(
+        [string]$BaseUrl,
+        [string]$EnvPath,
+        [string]$SettingsPath,
+        [string]$ContainerName = "mkb_searxng"
+    )
+
+    try {
+        $config = Invoke-RestMethod -Uri ($BaseUrl.TrimEnd('/') + "/config") -UseBasicParsing -TimeoutSec 10
+        $engines = @($config.engines)
+        if ($engines.Count -gt 0) {
+            $enabledCount = @($engines | Where-Object { $_.enabled -eq $true }).Count
+            return [PSCustomObject]@{
+                Count   = $enabledCount
+                Mode    = "runtime_config"
+                Message = "运行态 /config 显示当前启用了 $enabledCount / $($engines.Count) 个引擎。"
+            }
+        }
+    } catch {
+    }
+
+    $imageCatalogCount = Get-SearXngImageEngineCatalogCount -ContainerName $ContainerName
+    if ($imageCatalogCount -gt 0) {
+        $defaultEngines = Get-SearXngDefaultEngines -EnvPath $EnvPath
+        if ($defaultEngines.Count -gt 0) {
+            return [PSCustomObject]@{
+                Count   = $defaultEngines.Count
+                Mode    = "env_allowlist"
+                Message = "运行态 /config 暂不可读；按 .env 推导当前请求默认会显式指定 $($defaultEngines.Count) 个引擎。"
+            }
+        }
+
+        $keepOnlyEngines = Get-SearXngKeepOnlyEngines -SettingsPath $SettingsPath
+        if ($keepOnlyEngines.Count -gt 0) {
+            return [PSCustomObject]@{
+                Count   = $keepOnlyEngines.Count
+                Mode    = "keep_only"
+                Message = "运行态 /config 暂不可读；按 settings.yml 推导当前 keep_only 白名单为 $($keepOnlyEngines.Count) 个引擎。"
+            }
+        }
+
+        return [PSCustomObject]@{
+            Count   = $imageCatalogCount
+            Mode    = "full_default_catalog"
+            Message = "运行态 /config 暂不可读；按当前配置推导 SearXNG 将使用全量默认引擎集（镜像默认目录共 $imageCatalogCount 个引擎）。"
+        }
+    }
+
+    return [PSCustomObject]@{
+        Count   = $null
+        Mode    = "unknown"
+        Message = "未能推导当前活跃引擎数；请检查 /config、mkb_searxng 容器状态，并手动核对容器内 /usr/local/searxng/searx/settings.yml。"
+    }
+}
+
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host "  知识代理系统 - 验收检查" -ForegroundColor Cyan
 Write-Host "========================================" -ForegroundColor Cyan
@@ -142,9 +259,12 @@ if (-not $SkipInfra) {
 
     $searxngPort = if ($env:SEARXNG_PORT) { $env:SEARXNG_PORT } else { "18080" }
     $searxngBaseUrl = "http://127.0.0.1:$searxngPort"
+    $searxngSettingsPath = "infra/searxng/config/settings.yml"
     $searxngEngines = Get-SearXngDefaultEngines -EnvPath ".env"
     $searxngConfig = Test-Endpoint "$searxngBaseUrl/config" "SearXNG Config"
     Write-Check "SearXNG 配置页" $searxngConfig "请先运行: pwsh -ExecutionPolicy Bypass -File .\scripts\start_all.ps1"
+    $searxngActiveEngines = Get-SearXngActiveEngineCount -BaseUrl $searxngBaseUrl -EnvPath ".env" -SettingsPath $searxngSettingsPath
+    Write-Check "SearXNG 活跃引擎数" ($null -ne $searxngActiveEngines.Count -and $searxngActiveEngines.Count -gt 0) $searxngActiveEngines.Message
     $searxngSearch = Test-SearXngJsonSearch -BaseUrl $searxngBaseUrl -Engines $searxngEngines
     Write-Check "SearXNG JSON 搜索 API" $searxngSearch "请检查 infra/searxng/config/settings.yml 中 search.formats 是否包含 json；若 API 可访问但 results 为空且容器日志出现 ConnectTimeout/ConnectError，请检查 Podman 外网连通性或代理配置（例如宿主机代理是否可从容器访问）。"
 

@@ -3,18 +3,9 @@
 # - mounted into /etc/searxng
 # - keep default settings, override only project-specific parts
 # - enable JSON search API for programmatic usage
+# - enable the full default engine catalog, then rely on suspension / retries for fallback
 
-use_default_settings:
-  engines:
-    # 最小恢复：当前默认 general 引擎普遍 403/429/timeout，先收敛到已实测可返回结果的子集。
-    keep_only:
-      - bing
-      - github
-      - reddit
-      - searchmysite
-      - stackoverflow
-      - superuser
-      - youtube
+use_default_settings: true
 
 general:
   debug: false
@@ -25,7 +16,8 @@ search:
   autocomplete: ""
   favicon_resolver: ""
   default_lang: "auto"
-  # 403 / 429 后不要长时间挂死整台实例；先缩短恢复窗口，再靠多引擎兜底。
+  # 启用镜像默认引擎全集后，不再靠 keep_only 白名单收敛；
+  # 由短暂停用窗口把 403 / 429 / CAPTCHA 引擎临时摘出，让其余引擎继续返回结果。
   suspended_times:
     SearxEngineAccessDenied: 120
     SearxEngineTooManyRequests: 120
@@ -55,16 +47,17 @@ valkey:
 outgoing:
   # 方案A：把出网代理迁移到 SearXNG 自己的 outgoing.proxies，
   # 不再依赖容器级 HTTP_PROXY/HTTPS_PROXY；这样后续才能扩成代理池 + 重试。
-  # 当前只有 1 个代理出口，降低并发并略微提高超时，避免单代理被并发打爆后整批 0 结果。
+  # 当前只有 1 个代理出口，因此先用较低并发 + 重试兜底，避免单次上游故障导致整批 0 结果。
   request_timeout: 12.0
   max_request_timeout: 20.0
   extra_proxy_timeout: 10
   pool_connections: 20
   pool_maxsize: 10
-  retries: 1
+  retries: 2
   proxies:
     all://:
-      # 当前先接入 1 个已知可访问的宿主机代理；后续若有更多出口，继续往列表里追加。
+      # 当前先接入 1 个已知可访问的宿主机代理；后续若有更多出口，继续往列表里追加，
+      # 这样多引擎 + 多代理才能同时具备更强的出口级冗余。
       - http://192.168.3.49:7890
   # 当前代理链路下多处 TLS/ConnectTimeout，先关闭 HTTP/2，优先稳定。
   enable_http2: false
