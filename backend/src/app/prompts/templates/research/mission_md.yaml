@@ -1,0 +1,42 @@
+version: "1.0"
+name: research_mission_md
+description: "Deep Research workspace mission markdown"
+
+template: |
+  # Mission
+
+  - Session: `{session_slug}`
+
+  ## Research Goal
+  {question}
+
+  ## Research Brief
+  {research_brief}
+
+  ## Boundaries
+  - 聚焦当前问题直接相关的研究边界，不扩展到无关实现细节。
+  - 若时间范围、比较维度或成功指标未完全显式给出，采用最保守边界并在报告中标注。
+
+  ## Default Assumptions
+  - 默认保守假设：在不改变研究主线的前提下优先保持范围收敛。
+  - Budget guidance: {budget_guidance}
+
+  ## Target Sources
+  - {target_sources_line}
+
+variables:
+  - name: session_slug
+    type: string
+    required: true
+  - name: question
+    type: string
+    required: true
+  - name: research_brief
+    type: string
+    required: true
+  - name: target_sources_line
+    type: string
+    required: true
+  - name: budget_guidance
+    type: string
+    required: true

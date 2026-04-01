@@ -6,7 +6,8 @@ from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
 
-from app.schemas.research import ResearchPlanSnapshot
+from app.prompts import get_prompt_loader
+from app.schemas.research import ResearchPlanSnapshot, ResearchPlanSubtask
 
 RESEARCH_BOOTSTRAP_ARTIFACT_KEYS = (
     "mission_md",
@@ -37,6 +38,45 @@ class ResearchArtifactSeed:
     artifact_key: str
     content_text: str | None = None
     content_json: dict[str, Any] | list[Any] | None = None
+
+
+def _format_target_sources(plan_snapshot: ResearchPlanSnapshot) -> str:
+    return ", ".join(item.value for item in plan_snapshot.target_sources) or "web"
+
+
+def _describe_expected_evidence(subtask: ResearchPlanSubtask) -> str:
+    source_labels = ", ".join(item.value for item in subtask.target_sources) or "web"
+    return f"优先收集 {source_labels} 的官方资料、原始材料与可核查引用。"
+
+
+def _describe_verification_action(subtask: ResearchPlanSubtask) -> str:
+    if any(item.value == "paper" for item in subtask.target_sources):
+        return "至少进行一次官方资料交叉验证，并补搜论文、限制、争议与反例。"
+    return "至少进行一次官方资料交叉验证，并补搜限制、争议与反例。"
+
+
+def _build_subtasks_block(plan_snapshot: ResearchPlanSnapshot) -> str:
+    if not plan_snapshot.subtasks:
+        return (
+            "### 1. 等待 planner 生成子任务\n"
+            "- 任务目的：等待研究规划产出可执行子任务。\n"
+            "- 预期证据：至少一类高可信来源。\n"
+            "- 验证动作：完成后补做交叉验证与风险梳理。"
+        )
+
+    parts: list[str] = []
+    for index, item in enumerate(plan_snapshot.subtasks, start=1):
+        parts.append(
+            "\n".join(
+                [
+                    f"### {index}. {item.title}",
+                    f"- 任务目的：{item.description}",
+                    f"- 预期证据：{_describe_expected_evidence(item)}",
+                    f"- 验证动作：{_describe_verification_action(item)}",
+                ]
+            )
+        )
+    return "\n\n".join(parts)
 
 
 def build_research_workspace_layout(session_id: UUID | str) -> ResearchWorkspaceLayout:
@@ -83,37 +123,39 @@ def build_workspace_bootstrap_artifacts(
     plan_snapshot: ResearchPlanSnapshot,
 ) -> dict[str, ResearchArtifactSeed]:
     layout = build_research_workspace_layout(session_id)
-    subtasks = "\n".join(
-        f"- {item.title}: {item.description}" for item in plan_snapshot.subtasks
-    ) or "- 等待 planner 生成子任务"
+    prompts = get_prompt_loader()
+    subtasks_block = _build_subtasks_block(plan_snapshot)
     return {
         "mission_md": ResearchArtifactSeed(
             artifact_key="mission_md",
-            content_text=(
-                "# Mission\n\n"
-                f"- Session: `{layout.session_slug}`\n"
-                f"- Question: {question}\n"
-                f"- Brief: {plan_snapshot.research_brief}\n"
+            content_text=prompts.render(
+                "research/mission_md",
+                session_slug=layout.session_slug,
+                question=question,
+                research_brief=plan_snapshot.research_brief,
+                target_sources_line=_format_target_sources(plan_snapshot),
+                budget_guidance=plan_snapshot.budget_guidance
+                or "未显式提供，按最小必要补证执行。",
             ),
         ),
         "plan_md": ResearchArtifactSeed(
             artifact_key="plan_md",
-            content_text=(
-                "# Plan\n\n"
-                f"## Summary\n{plan_snapshot.summary}\n\n"
-                f"## Subtasks\n{subtasks}\n"
+            content_text=prompts.render(
+                "research/plan_md",
+                summary=plan_snapshot.summary,
+                subtasks_block=subtasks_block,
             ),
         ),
         "query_map_md": ResearchArtifactSeed(
             artifact_key="query_map_md",
-            content_text="# Query Map\n\n- canonical\n- breadth\n- depth\n- verification\n",
+            content_text=prompts.render("research/query_map_md"),
         ),
         "coverage_md": ResearchArtifactSeed(
             artifact_key="coverage_md",
-            content_text="# Coverage\n\n- status: pending\n- missing providers: []\n",
+            content_text=prompts.render("research/coverage_md"),
         ),
         "report_draft_md": ResearchArtifactSeed(
             artifact_key="report_draft_md",
-            content_text="# Report Draft\n\n## Executive Summary\n\n研究尚未开始。\n",
+            content_text=prompts.render("research/report_draft_md"),
         ),
     }

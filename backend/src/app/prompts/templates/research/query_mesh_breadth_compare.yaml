@@ -1,0 +1,11 @@
+version: "1.0"
+name: research_query_mesh_breadth_compare
+description: "Deep Research query mesh breadth compare query"
+
+template: |
+  {canonical_query} 官方资料 功能边界 设计差异
+
+variables:
+  - name: canonical_query
+    type: string
+    required: true

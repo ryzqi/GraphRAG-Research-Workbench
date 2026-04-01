@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Iterable, Literal
 
+from app.prompts import get_prompt_loader
 from app.schemas.research import ResearchPlanSnapshot, ResearchSourceTarget
 
 ResearchComplexityLiteral = Literal["simple", "comparative", "complex"]
@@ -41,22 +42,49 @@ def build_research_query_mesh(*, question: str, plan_snapshot: ResearchPlanSnaps
     if not canonical_query:
         raise ValueError("question 不能为空")
 
+    prompts = get_prompt_loader()
     breadth_queries = _unique_queries(
         [
             canonical_query,
-            f"{canonical_query} 官方方案 对比",
+            prompts.render(
+                "research/query_mesh_breadth_compare",
+                canonical_query=canonical_query,
+            ),
             plan_snapshot.research_brief,
         ]
     )
     depth_queries = _unique_queries(
-        [f"{item.title} 证据" for item in plan_snapshot.subtasks]
-        or [f"{canonical_query} 详细证据"]
+        [
+            prompts.render(
+                "research/query_mesh_depth_subtask_evidence",
+                subtask_title=item.title,
+            )
+            for item in plan_snapshot.subtasks
+        ]
+        or [
+            prompts.render(
+                "research/query_mesh_depth_fallback",
+                canonical_query=canonical_query,
+            )
+        ]
     )
     verification_queries = _unique_queries(
         [
-            f"{canonical_query} 官方文档 交叉验证",
-            f"{canonical_query} 限制 风险 争议",
-            *(f"{item.title} 官方文档 验证" for item in plan_snapshot.subtasks),
+            prompts.render(
+                "research/query_mesh_verification_crosscheck",
+                canonical_query=canonical_query,
+            ),
+            prompts.render(
+                "research/query_mesh_verification_risks",
+                canonical_query=canonical_query,
+            ),
+            *(
+                prompts.render(
+                    "research/query_mesh_subtask_verification",
+                    subtask_title=item.title,
+                )
+                for item in plan_snapshot.subtasks
+            ),
         ]
     )
     return ResearchQueryMesh(

@@ -1,0 +1,8 @@
+version: "1.0"
+name: research_report_generate_parse_error_message
+description: "Report generate parse error message"
+
+template: |
+  无法解析报告生成结果，请检查模型是否返回了唯一 JSON 对象。
+
+variables: []

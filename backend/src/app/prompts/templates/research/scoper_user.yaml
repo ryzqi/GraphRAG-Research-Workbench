@@ -1,0 +1,22 @@
+version: "1.0"
+name: research_scoper_user
+description: "Deep Research preflight scoper user prompt"
+
+template: |
+  请判断以下 deep research 用户问题是否需要先追问，再输出结构化结果。
+
+  用户问题：{question}
+
+  输出时请先识别：
+  - 当前研究对象是什么
+  - 是否存在隐含时间范围
+  - 是否带有比较/评估维度
+  - 是否隐含成功指标或受众/用途
+  - 最终需要什么输出形态
+
+  只有这些缺口会显著改变研究路径时，才进入 clarify。
+
+variables:
+  - name: question
+    type: string
+    required: true

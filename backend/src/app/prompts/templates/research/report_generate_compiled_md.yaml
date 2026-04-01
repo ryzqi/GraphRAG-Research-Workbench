@@ -1,0 +1,13 @@
+version: "1.0"
+name: research_report_generate_compiled_md
+description: "Report generate compiled markdown from sections"
+
+template: |
+  # 研究报告
+
+  {sections_markdown}
+
+variables:
+  - name: sections_markdown
+    type: string
+    required: true

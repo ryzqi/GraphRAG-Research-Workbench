@@ -1,0 +1,8 @@
+version: "1.0"
+name: research_report_generate_invalid_schema_error_message
+description: "Report generate invalid schema error message"
+
+template: |
+  报告生成结果结构不合法，缺少必须字段或字段类型不匹配，已回退为保底模板。
+
+variables: []

@@ -1,0 +1,26 @@
+version: "1.0"
+name: research_report_generate_fallback_md
+description: "Report generate fallback markdown"
+
+template: |
+  # 研究报告
+
+  ## 摘要
+  {error_message}
+
+  ## 关键发现
+  当前无法给出可靠研究发现。
+
+  ## 证据与反证
+  证据纪律未满足，请补充可追溯引用并重试。
+
+  ## 结论
+  当前输出仅为保底模板，不应视为最终研究结论。
+
+  ## 参考来源
+  暂无可追溯来源。
+
+variables:
+  - name: error_message
+    type: string
+    required: true

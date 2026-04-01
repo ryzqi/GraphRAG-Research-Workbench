@@ -1,0 +1,11 @@
+version: "1.0"
+name: research_query_mesh_depth_fallback
+description: "Deep Research query mesh fallback depth query"
+
+template: |
+  {canonical_query} 详细证据 原始数据 一手材料
+
+variables:
+  - name: canonical_query
+    type: string
+    required: true

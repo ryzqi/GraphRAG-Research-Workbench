@@ -1,0 +1,8 @@
+version: "1.0"
+name: research_report_generate_no_findings
+description: "Report generate no findings fallback"
+
+template: |
+  暂无可核查研究发现；请显式标注证据不足。
+
+variables: []

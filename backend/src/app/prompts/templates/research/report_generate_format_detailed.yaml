@@ -1,0 +1,8 @@
+version: "1.0"
+name: research_report_generate_format_detailed
+description: "Report generate detailed format instruction"
+
+template: |
+  详细模式：每个章节充分展开，覆盖证据、反证、coverage gaps 与引用映射，总长度 2000+ 字。
+
+variables: []

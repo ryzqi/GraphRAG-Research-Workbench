@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_valida
 
 from app.core.settings import Settings, get_settings
 from app.integrations.chat_model_factory import create_chat_model
+from app.prompts import get_prompt_loader
 from app.models.research_session import ResearchSessionStatus
 from app.schemas.research import (
     ResearchClarificationQuestion,
@@ -21,31 +22,6 @@ from app.schemas.research import (
 )
 from app.services.query_rewrite_service import coerce_structured_result_payload
 from app.services.research_planner_types import ResearchPlannerResult
-
-_SCOPER_SYSTEM_PROMPT = """你是当前仓库 Deep Research 的 pre-research scoper。
-
-你的任务不是开始研究，而是先判断“是否已经有足够信息可以直接开始研究”。
-
-严格规则：
-1. 只输出两种决策：
-   - clarify: 关键信息仍缺失，必须先追问
-   - proceed: 信息已足够，直接开始研究
-2. 只在“缺少信息会显著影响研究边界、检索重点或输出结构”时才追问。
-3. 不要要求用户“确认计划”“批准执行”“是否继续”。本系统不再有人工确认计划环节。
-4. clarify 时：
-   - 提供简洁 summary
-   - 提供 1 到 2 个高价值追问
-   - 问题必须具体、可直接回答，不能泛泛而谈
-5. proceed 时：
-   - 生成可执行的 research_brief
-   - complexity 只能是 simple / comparative / complex
-   - target_sources 只能使用 web / paper
-   - subtasks 提供 1 到 3 个，必须是可执行研究步骤
-   - summary 要概括研究主线，而不是请求确认
-6. 如果用户问题已经很具体，不要过度追问。
-7. 任何输出都必须贴合用户原问题，不要臆造额外目标。
-"""
-
 
 class ResearchScoper(Protocol):
     async def scope(
@@ -144,6 +120,7 @@ class _ResearchScoperOutput(BaseModel):
 class LLMResearchScoper:
     def __init__(self, *, settings: Settings | None = None) -> None:
         self._settings = settings or get_settings()
+        self._prompts = get_prompt_loader()
 
     async def scope(
         self,
@@ -158,11 +135,13 @@ class LLMResearchScoper:
         )
         result = await structured_model.ainvoke(
             [
-                SystemMessage(content=_SCOPER_SYSTEM_PROMPT),
+                SystemMessage(
+                    content=self._prompts.render_with_few_shot("research/scoper_system")
+                ),
                 HumanMessage(
-                    content=(
-                        "请判断以下 deep research 用户问题是否需要先追问，再输出结构化结果。\n\n"
-                        f"用户问题：{question.strip()}"
+                    content=self._prompts.render_with_few_shot(
+                        "research/scoper_user",
+                        question=question.strip(),
                     )
                 ),
             ]

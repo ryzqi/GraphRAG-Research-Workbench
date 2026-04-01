@@ -1,0 +1,15 @@
+version: "1.0"
+name: research_report_generate_section_md
+description: "Report generate single section markdown"
+
+template: |
+  ## {title}
+  {content}
+
+variables:
+  - name: title
+    type: string
+    required: true
+  - name: content
+    type: string
+    required: true

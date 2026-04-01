@@ -7,13 +7,13 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
-from typing import Literal
+from typing import Any, Literal
 
 from langchain.tools import BaseTool, tool as lc_tool
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from app.integrations.llm_client import ChatMessage, LLMClient
-from app.prompts import PromptLoader
+from app.prompts import PromptLoader, get_prompt_loader
 
 
 class ReportGenerateArgs(BaseModel):
@@ -58,46 +58,6 @@ class ReportGenerateResult(BaseModel):
     metadata: ReportMetadata
 
 
-REPORT_PROMPT = """你是一个研究报告撰写专家。请根据以下研究发现和证据，生成结构化的研究报告。
-
-## 研究问题
-{question}
-
-## 研究发现
-{findings}
-
-## 证据摘要
-{evidence_summary}
-
-## 引用来源
-{citations}
-
-## 报告格式要求
-{format_instruction}
-
-请生成 Markdown 格式的研究报告，包含以下章节：
-1. 摘要 - 简要概述研究结论
-2. 研究发现 - 详细阐述各项发现
-3. 证据分析 - 分析证据的充分性和冲突点（如有）
-4. 结论与建议 - 给出结论和下一步建议
-5. 参考来源 - 列出所有引用
-
-同时输出 JSON 格式的元数据，包含：
-- confidence_level: 结论置信度
-- evidence_count: 证据数量
-- has_conflicts: 是否存在冲突
-- generated_at: 生成时间
-
-只输出 JSON，不要其他内容。"""
-
-
-FORMAT_INSTRUCTIONS = {
-    "brief": "简洁模式：每个章节 1-2 句话，总长度不超过 500 字",
-    "standard": "标准模式：每个章节 2-3 段，总长度 800-1500 字",
-    "detailed": "详细模式：每个章节充分展开，包含所有细节，总长度 2000+ 字",
-}
-
-
 def _extract_json_object(text: str) -> dict | None:
     content = text.strip()
     if content.startswith("```"):
@@ -117,21 +77,67 @@ def _extract_json_object(text: str) -> dict | None:
     return None
 
 
-def _format_findings(findings: list[str]) -> str:
+def _render_text(template_key: str, *, prompts: PromptLoader | None = None, **kwargs: Any) -> str:
+    loader = prompts or get_prompt_loader()
+    return loader.render(template_key, **kwargs).strip()
+
+
+def _resolve_format_instruction(report_format: str, *, prompts: PromptLoader | None = None) -> str:
+    key_map = {
+        "brief": "research/report_generate_format_brief",
+        "standard": "research/report_generate_format_standard",
+        "detailed": "research/report_generate_format_detailed",
+    }
+    return _render_text(
+        key_map.get(report_format, "research/report_generate_format_standard"),
+        prompts=prompts,
+    )
+
+
+def _format_findings(findings: list[str], *, prompts: PromptLoader | None = None) -> str:
     if not findings:
-        return "无研究发现"
+        return _render_text("research/report_generate_no_findings", prompts=prompts)
     return "\n".join(f"- {f}" for f in findings)
 
 
-def _format_citations(citations: list[dict]) -> str:
+def _format_citations(citations: list[dict], *, prompts: PromptLoader | None = None) -> str:
     if not citations:
-        return "无引用来源"
+        return _render_text("research/report_generate_no_citations", prompts=prompts)
+    unknown_source = _render_text("research/report_generate_unknown_source", prompts=prompts)
     parts = []
     for i, citation in enumerate(citations, 1):
-        source = citation.get("source_id", citation.get("kb_id", "未知来源"))
+        source = citation.get("source_id", citation.get("kb_id", unknown_source))
         excerpt = str(citation.get("excerpt", citation.get("content", "")))[:100]
         parts.append(f"[{i}] {source}: {excerpt}...")
     return "\n".join(parts)
+
+
+def _parse_section_payloads(template_key: str, *, prompts: PromptLoader | None = None, **kwargs: Any) -> list[ReportSection]:
+    payload = json.loads(_render_text(template_key, prompts=prompts, **kwargs))
+    if isinstance(payload, dict):
+        payload = [payload]
+    return [ReportSection.model_validate(item) for item in payload]
+
+
+def _build_sections_markdown(
+    sections: list[ReportSection],
+    *,
+    prompts: PromptLoader | None = None,
+) -> str:
+    sections_markdown = "\n\n".join(
+        _render_text(
+            "research/report_generate_section_md",
+            prompts=prompts,
+            title=section.title,
+            content=section.content,
+        )
+        for section in sections
+    )
+    return _render_text(
+        "research/report_generate_compiled_md",
+        prompts=prompts,
+        sections_markdown=sections_markdown,
+    )
 
 
 def _build_fallback_result(
@@ -141,6 +147,7 @@ def _build_fallback_result(
     has_conflicts: bool,
     confidence_level: str,
     error_message: str,
+    prompts: PromptLoader | None = None,
 ) -> ReportGenerateResult:
     generated_at = datetime.now(timezone.utc).isoformat()
     safe_confidence: Literal["sufficient", "partial", "insufficient"]
@@ -149,28 +156,19 @@ def _build_fallback_result(
         if confidence_level in {"sufficient", "partial", "insufficient"}
         else "insufficient"
     )
-    report_md = (
-        "# 研究报告\n\n"
-        "## 摘要\n"
-        f"{error_message}\n\n"
-        "## 研究发现\n"
-        "暂无可用结构化结果。\n\n"
-        "## 证据分析\n"
-        "建议补充证据并重试。\n\n"
-        "## 结论与建议\n"
-        "当前输出采用保底模板，仅供流程继续执行。\n\n"
-        "## 参考来源\n"
-        "暂无。"
+    sections = _parse_section_payloads(
+        "research/report_generate_fallback_sections_json",
+        prompts=prompts,
+        error_message=error_message,
+    )
+    report_md = _render_text(
+        "research/report_generate_fallback_md",
+        prompts=prompts,
+        error_message=error_message,
     )
     return ReportGenerateResult(
         report_md=report_md,
-        sections=[
-            ReportSection(title="摘要", content=error_message),
-            ReportSection(title="研究发现", content="暂无可用结构化结果。"),
-            ReportSection(title="证据分析", content="建议补充证据并重试。"),
-            ReportSection(title="结论与建议", content="当前输出采用保底模板。"),
-            ReportSection(title="参考来源", content="暂无。"),
-        ],
+        sections=sections,
         metadata=ReportMetadata(
             confidence_level=safe_confidence,
             evidence_count=max(int(evidence_count), 0),
@@ -187,6 +185,7 @@ def _normalize_result(
     evidence_count: int,
     has_conflicts: bool,
     confidence_level: str,
+    prompts: PromptLoader | None = None,
 ) -> ReportGenerateResult:
     generated_at = datetime.now(timezone.utc).isoformat()
     normalized_sections = [
@@ -197,17 +196,13 @@ def _normalize_result(
         for section in result.sections
     ]
     if not normalized_sections:
-        normalized_sections = [
-            ReportSection(title="摘要", content="未生成章节内容。"),
-        ]
+        normalized_sections = _parse_section_payloads(
+            "research/report_generate_default_section_json",
+            prompts=prompts,
+        )
     report_md = (result.report_md or "").strip()
     if not report_md:
-        report_md = (
-            "# 研究报告\n\n"
-            + "\n\n".join(
-                f"## {section.title}\n{section.content}" for section in normalized_sections
-            )
-        )
+        report_md = _build_sections_markdown(normalized_sections, prompts=prompts)
     metadata = result.metadata
     confidence = metadata.confidence_level
     if confidence not in {"sufficient", "partial", "insufficient"}:
@@ -235,6 +230,7 @@ def _parse_llm_response(
     evidence_count: int,
     has_conflicts: bool,
     confidence_level: str,
+    prompts: PromptLoader | None = None,
 ) -> ReportGenerateResult:
     payload = _extract_json_object(response)
     if not isinstance(payload, dict):
@@ -243,7 +239,11 @@ def _parse_llm_response(
             evidence_count=evidence_count,
             has_conflicts=has_conflicts,
             confidence_level=confidence_level,
-            error_message="无法解析报告生成结果，请重试。",
+            error_message=_render_text(
+                "research/report_generate_parse_error_message",
+                prompts=prompts,
+            ),
+            prompts=prompts,
         )
     try:
         parsed = ReportGenerateResult.model_validate(payload)
@@ -253,7 +253,11 @@ def _parse_llm_response(
             evidence_count=evidence_count,
             has_conflicts=has_conflicts,
             confidence_level=confidence_level,
-            error_message="报告生成结果结构不合法，已回退为保底模板。",
+            error_message=_render_text(
+                "research/report_generate_invalid_schema_error_message",
+                prompts=prompts,
+            ),
+            prompts=prompts,
         )
     return _normalize_result(
         parsed,
@@ -261,6 +265,7 @@ def _parse_llm_response(
         evidence_count=evidence_count,
         has_conflicts=has_conflicts,
         confidence_level=confidence_level,
+        prompts=prompts,
     )
 
 
@@ -268,6 +273,8 @@ def build_report_generate_tool(
     llm: LLMClient, prompts: PromptLoader | None = None
 ) -> BaseTool:
     """构建报告生成工具。"""
+
+    prompt_loader = prompts or get_prompt_loader()
 
     async def _generate(
         question: str,
@@ -277,33 +284,25 @@ def build_report_generate_tool(
         report_format: str = "standard",
     ) -> str:
         citations = citations or []
-        findings_text = _format_findings(findings)
-        citations_text = _format_citations(citations)
+        findings_text = _format_findings(findings, prompts=prompt_loader)
+        citations_text = _format_citations(citations, prompts=prompt_loader)
         evidence_text = json.dumps(evidence_summary, ensure_ascii=False, indent=2)
-        format_instruction = FORMAT_INSTRUCTIONS.get(
-            report_format, FORMAT_INSTRUCTIONS["standard"]
+        format_instruction = _resolve_format_instruction(
+            report_format,
+            prompts=prompt_loader,
         )
         evidence_count = len(citations)
         has_conflicts = bool(evidence_summary.get("has_conflicts"))
         confidence_level = str(evidence_summary.get("confidence_level") or "partial")
 
-        if prompts:
-            prompt = prompts.render_with_few_shot(
-                "tools/report_generate",
-                question=question,
-                findings=findings_text,
-                evidence_summary=evidence_text,
-                citations=citations_text,
-                format_instruction=format_instruction,
-            )
-        else:
-            prompt = REPORT_PROMPT.format(
-                question=question,
-                findings=findings_text,
-                evidence_summary=evidence_text,
-                citations=citations_text,
-                format_instruction=format_instruction,
-            )
+        prompt = prompt_loader.render_with_few_shot(
+            "tools/report_generate",
+            question=question,
+            findings=findings_text,
+            evidence_summary=evidence_text,
+            citations=citations_text,
+            format_instruction=format_instruction,
+        )
 
         response = (
             await llm.chat_with_metrics(
@@ -316,6 +315,7 @@ def build_report_generate_tool(
             evidence_count=evidence_count,
             has_conflicts=has_conflicts,
             confidence_level=confidence_level,
+            prompts=prompt_loader,
         )
         return json.dumps(result.model_dump(mode="json"), ensure_ascii=False)
 

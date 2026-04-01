@@ -1,0 +1,20 @@
+version: "1.0"
+name: research_plan_md
+description: "Deep Research workspace plan markdown"
+
+template: |
+  # Plan
+
+  ## Summary
+  {summary}
+
+  ## Subtasks
+  {subtasks_block}
+
+variables:
+  - name: summary
+    type: string
+    required: true
+  - name: subtasks_block
+    type: string
+    required: true

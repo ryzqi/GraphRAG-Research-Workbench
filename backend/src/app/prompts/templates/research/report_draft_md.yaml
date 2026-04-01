@@ -1,0 +1,17 @@
+version: "1.0"
+name: research_report_draft_md
+description: "Deep Research workspace report draft markdown"
+
+template: |
+  # Report Draft
+
+  ## Executive Summary
+  研究尚未开始。
+
+  ## Findings
+  待生成。
+
+  ## Evidence and Counter-Evidence
+  待补充。
+
+variables: []

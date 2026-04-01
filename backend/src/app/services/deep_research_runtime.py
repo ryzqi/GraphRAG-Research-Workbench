@@ -28,6 +28,7 @@ from app.integrations.mcp_adapters import McpToolEntry
 from app.integrations.redis_client import RedisClient
 from app.models.research_session import ResearchSession
 from app.models.tool_extension import ToolExtension
+from app.prompts import get_prompt_loader
 from app.schemas.research import (
     ResearchCanonicalCitation,
     ResearchPlanSnapshot,
@@ -64,23 +65,6 @@ _DEFAULT_WORKSPACE_CONTEXT_DOCS: tuple[tuple[str, Path], ...] = (
         _REPO_ROOT / "README.md",
     ),
 )
-_DEFAULT_RESEARCH_SYSTEM_PROMPT = """
-你是当前仓库的 Deep Research runtime。
-
-执行规则：
-1. 先读取 /workspace/context 下已提供的仓库文档；只有这些文档不足以回答问题时，才调用外部 research tools。
-2. 结论必须直接锚定可核查证据；禁止编造 citation。
-3. 返回结构化结果时，至少给出 2 条 findings 与 2 条 citations。
-4. 如果引用 workspace 文档，统一使用：
-   - source_type=web
-   - source_provider=workspace
-   - retrieval_method=read_file
-   - source_id 为 workspace 文件路径
-   - url / origin_url 为对应的 file:// URL
-5. 只保留当前实现语义；不要为旧 research 路径补兼容说明。
-""".strip()
-
-
 class DeepResearchStructuredResponse(BaseModel):
     findings: list[str] = Field(min_length=2)
     citations: list[ResearchCanonicalCitation] = Field(min_length=2)
@@ -334,38 +318,26 @@ def _to_file_uri(path: str) -> str:
     return f"file://{normalized}"
 
 
+def _format_workspace_paths_block(workspace_paths: Sequence[str]) -> str:
+    return "\n".join(f"- {path}" for path in workspace_paths)
+
+
 def _build_runtime_prompt(
     *,
     session: ResearchSession,
     plan_snapshot: ResearchPlanSnapshot,
     workspace_paths: Sequence[str],
 ) -> str:
+    prompt_loader = get_prompt_loader()
     route_hint = ", ".join(resolve_source_subagent_route(plan_snapshot.target_sources))
-    lines = [
-        "请执行当前 deep research runtime，并返回结构化结果。",
-        f"问题：{session.question}",
-        f"research_brief：{plan_snapshot.research_brief}",
-        f"target_sources：{', '.join(item.value for item in plan_snapshot.target_sources)}",
-        f"route_hint：{route_hint}",
-        "query_mesh：/workspace/context/query_mesh.json",
-    ]
-    if workspace_paths:
-        lines.extend(
-            [
-                "优先阅读以下 workspace 文档：",
-                *[f"- {path}" for path in workspace_paths],
-            ]
-        )
-    lines.extend(
-        [
-            "输出要求：",
-            "- findings 至少 2 条，必须是可验证的具体结论。",
-            "- citations 至少 2 条，必须与 findings 对应。",
-            "- 如果 workspace 文档足够回答，不要为了凑工具而调用外部 provider。",
-            "- 如果 workspace 文档不足，可再调用 Tavily / Jina Reader / SearXNG / arXiv 工具补证据。",
-        ]
+    return prompt_loader.render_with_few_shot(
+        "research/runtime_user",
+        question=session.question,
+        research_brief=plan_snapshot.research_brief,
+        target_sources=", ".join(item.value for item in plan_snapshot.target_sources),
+        route_hint=route_hint,
+        workspace_paths_block=_format_workspace_paths_block(workspace_paths),
     )
-    return "\n".join(lines)
 
 
 def _build_runtime_request_files(
@@ -582,6 +554,7 @@ async def build_deep_research_runtime_runner(
     http_client: Any | None = None,
     redis: RedisClient | None = None,
 ) -> DeepResearchRuntimeRunner:
+    prompt_loader = get_prompt_loader()
     runtime_config = ResearchRuntimeConfig(
         primary_model=create_chat_model(
             settings=settings,
@@ -595,7 +568,7 @@ async def build_deep_research_runtime_runner(
             settings=settings,
             use_previous_response_id=False,
         ),
-        system_prompt=_DEFAULT_RESEARCH_SYSTEM_PROMPT,
+        system_prompt=prompt_loader.render_with_few_shot("research/runtime_system"),
         memory_paths=(),
         skill_paths=(),
     )

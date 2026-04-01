@@ -1,0 +1,32 @@
+version: "1.0"
+name: research_report_md
+description: "Deep Research final report markdown"
+
+template: |
+  # Research Report
+
+  ## Question
+  {question}
+
+  ## Executive Summary
+  {interim_summary}{findings_section}{evidence_section}{coverage_gaps_section}{references_section}
+
+variables:
+  - name: question
+    type: string
+    required: true
+  - name: interim_summary
+    type: string
+    required: true
+  - name: findings_section
+    type: string
+    required: false
+  - name: evidence_section
+    type: string
+    required: false
+  - name: coverage_gaps_section
+    type: string
+    required: false
+  - name: references_section
+    type: string
+    required: false

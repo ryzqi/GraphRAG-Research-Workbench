@@ -1,0 +1,42 @@
+version: "1.0"
+name: research_runtime_user
+description: "Deep Research runtime user prompt"
+
+template: |
+  请执行当前 deep research runtime，并返回结构化结果。
+  问题：{question}
+  research_brief：{research_brief}
+  target_sources：{target_sources}
+  route_hint：{route_hint}
+  query_mesh：/workspace/context/query_mesh.json
+  优先阅读以下 workspace 文档：
+  {workspace_paths_block}
+
+  研究过程要求：
+  - 先消化 workspace 文档，再决定是否需要外部补证。
+  - 外部查询必须服务于某个未闭合主张、交叉验证任务或 coverage gap。
+  - 引用优先级：官方/原始/同行评审 > 聚合转载 > 二手解读。
+
+  输出要求：
+  - findings 至少 2 条，必须是可验证的具体结论。
+  - citations 至少 2 条，必须与 findings 对应。
+  - 内部组织顺序遵循：结论 -> 证据 -> 冲突/限制 -> 缺口。
+  - 如果 workspace 文档足够回答，不要为了凑工具而调用外部 provider。
+  - 如果 workspace 文档不足，可再调用 Tavily / Jina Reader / SearXNG / arXiv 工具补证据。
+
+variables:
+  - name: question
+    type: string
+    required: true
+  - name: research_brief
+    type: string
+    required: true
+  - name: target_sources
+    type: string
+    required: true
+  - name: route_hint
+    type: string
+    required: true
+  - name: workspace_paths_block
+    type: string
+    required: false

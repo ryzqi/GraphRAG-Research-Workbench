@@ -1,0 +1,13 @@
+version: "1.0"
+name: research_query_map_md
+description: "Deep Research workspace query map markdown"
+
+template: |
+  # Query Map
+
+  - canonical
+  - breadth
+  - depth
+  - verification
+
+variables: []

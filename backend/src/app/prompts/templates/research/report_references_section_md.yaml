@@ -1,0 +1,14 @@
+version: "1.0"
+name: research_report_references_section_md
+description: "Deep Research report references section markdown"
+
+template: |
+
+
+  ## References
+  {items_block}
+
+variables:
+  - name: items_block
+    type: string
+    required: true

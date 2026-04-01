@@ -1,0 +1,24 @@
+version: "1.0"
+name: research_coverage_md
+description: "Deep Research workspace coverage markdown"
+
+template: |
+  # Coverage
+
+  - status: pending
+
+  ## Covered Providers
+  - pending
+
+  ## 未覆盖关键维度
+  - 官方资料覆盖待确认
+  - 一手论文或原始材料覆盖待确认
+  - 反证与争议覆盖待确认
+
+  ## 缺失原因
+  - 当前仅完成 bootstrap，占位信息尚未替换为真实证据结果。
+
+  ## 补证方向
+  - 优先补足高可信来源，再做交叉验证与反证搜索。
+
+variables: []

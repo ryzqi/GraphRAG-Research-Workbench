@@ -7,6 +7,7 @@ from typing import Any, Sequence
 
 from pydantic import BaseModel
 
+from app.prompts import get_prompt_loader
 from app.schemas.research import ResearchSourceTarget
 from app.services.research_source_bundle import ResearchSourceBundle
 from app.services.research_verification import build_verification_artifacts
@@ -20,6 +21,9 @@ class ResearchFinalizerResult:
 
 class ResearchFinalizer:
     """把 source bundle 收口为最终双产物。"""
+
+    def __init__(self) -> None:
+        self._prompts = get_prompt_loader()
 
     def finalize(
         self,
@@ -74,31 +78,60 @@ class ResearchFinalizer:
             report_json=report_json,
         )
 
-    @staticmethod
     def _build_report_md(
+        self,
         *,
         question: str,
         source_bundle: ResearchSourceBundle,
     ) -> str:
-        lines = [
-            "# Research Report",
-            "",
-            "## Question",
-            question,
-            "",
-            "## Interim Summary",
-            source_bundle.interim_summary,
+        findings_section = self._render_section(
+            template_key="research/report_findings_section_md",
+            items=[f"- {finding}" for finding in source_bundle.findings],
+        )
+        evidence_section = self._render_section(
+            template_key="research/report_evidence_section_md",
+            items=self._build_evidence_points(source_bundle),
+        )
+        coverage_gaps_section = self._render_section(
+            template_key="research/report_coverage_gaps_section_md",
+            items=[f"- {gap}" for gap in source_bundle.coverage_gaps],
+        )
+        references_section = self._render_section(
+            template_key="research/report_references_section_md",
+            items=[
+                f"- {str(citation.title or citation.source_id)}: "
+                f"{str(citation.origin_url or citation.url or citation.source_id)}"
+                for citation in source_bundle.citations
+            ],
+        )
+
+        return self._prompts.render(
+            "research/report_md",
+            question=question,
+            interim_summary=source_bundle.interim_summary,
+            findings_section=findings_section,
+            evidence_section=evidence_section,
+            coverage_gaps_section=coverage_gaps_section,
+            references_section=references_section,
+        )
+
+    def _build_evidence_points(
+        self,
+        source_bundle: ResearchSourceBundle,
+    ) -> list[str]:
+        providers = ", ".join(sorted(source_bundle.provider_counts)) or "none"
+        points = [
+            f"- 当前已汇总 {len(source_bundle.citations)} 条可追溯引用，覆盖 provider：{providers}。",
+            "- 所有核心结论均应回链到具体 citation；若证据存在冲突，应在正文中保留冲突描述而不是强行合并。",
         ]
-        if source_bundle.findings:
-            lines.extend(["", "## Findings"])
-            lines.extend(f"- {finding}" for finding in source_bundle.findings)
         if source_bundle.coverage_gaps:
-            lines.extend(["", "## Coverage Gaps"])
-            lines.extend(f"- {gap}" for gap in source_bundle.coverage_gaps)
-        if source_bundle.citations:
-            lines.extend(["", "## References"])
-            for citation in source_bundle.citations:
-                url = str(citation.origin_url or citation.url or citation.source_id)
-                title = str(citation.title or citation.source_id)
-                lines.append(f"- {title}: {url}")
-        return "\n".join(lines)
+            points.append("- 当前仍存在覆盖缺口，以下结论需结合 Coverage Gaps 一并阅读。")
+        return points
+
+    def _render_section(self, *, template_key: str, items: Sequence[str]) -> str:
+        if not items:
+            return ""
+        return self._prompts.render(
+            template_key,
+            items_block="\n".join(items),
+        )

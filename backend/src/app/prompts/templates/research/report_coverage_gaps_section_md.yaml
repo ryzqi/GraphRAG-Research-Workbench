@@ -1,0 +1,14 @@
+version: "1.0"
+name: research_report_coverage_gaps_section_md
+description: "Deep Research report coverage gaps section markdown"
+
+template: |
+
+
+  ## Coverage Gaps
+  {items_block}
+
+variables:
+  - name: items_block
+    type: string
+    required: true

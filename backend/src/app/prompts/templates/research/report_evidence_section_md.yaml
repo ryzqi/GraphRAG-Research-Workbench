@@ -1,0 +1,14 @@
+version: "1.0"
+name: research_report_evidence_section_md
+description: "Deep Research report evidence section markdown"
+
+template: |
+
+
+  ## Evidence and Counter-Evidence
+  {items_block}
+
+variables:
+  - name: items_block
+    type: string
+    required: true
