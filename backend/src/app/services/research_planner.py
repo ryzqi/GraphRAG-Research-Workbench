@@ -77,10 +77,15 @@ class _ResearchScoperSubtaskOutput(BaseModel):
 
 
 class _ResearchScoperOutput(BaseModel):
-    """Research preflight scoper structured output."""
+    """Research preflight scoper structured output.
+
+    这是 LLM/provider 边界上的传输 DTO，不是内部领域模型。
+    这里允许忽略顶层附加元数据，随后再映射为严格的
+    ResearchClarificationRequest / ResearchPlanSnapshot。
+    """
 
     model_config = ConfigDict(
-        extra="forbid",
+        extra="ignore",
         json_schema_extra={
             "description": "Structured decision for whether deep research should ask clarifying questions or start immediately."
         },

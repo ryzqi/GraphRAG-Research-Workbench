@@ -301,12 +301,35 @@ def _coerce_schema_from_json_like(
 
 
 def _extract_tool_call_payload(raw: object) -> tuple[object | None, str | None]:
-    tool_calls = getattr(raw, "tool_calls", None)
-    if isinstance(tool_calls, list) and tool_calls:
-        if len(tool_calls) > 1:
+    # LangChain 会把 provider 的函数调用结果放进 tool_calls，
+    # 也可能在参数解析失败时放进 invalid_tool_calls。两者都属于同一层
+    # transport payload，优先在这里统一提取，避免上层业务再做 provider 特判。
+    def _extract_from_langchain_tool_calls(calls: object) -> tuple[object | None, str | None]:
+        if not isinstance(calls, list) or not calls:
+            return None, None
+        if len(calls) > 1:
             return None, "multiple_structured_outputs"
-        if isinstance(tool_calls[0], dict) and "args" in tool_calls[0]:
-            return tool_calls[0].get("args"), None
+        call = calls[0]
+        if not isinstance(call, dict):
+            return None, None
+        if "args" in call:
+            return call.get("args"), None
+        function = call.get("function")
+        if isinstance(function, dict) and "arguments" in function:
+            return function.get("arguments"), None
+        return None, None
+
+    tool_payload, tool_payload_error = _extract_from_langchain_tool_calls(
+        getattr(raw, "tool_calls", None)
+    )
+    if tool_payload is not None or tool_payload_error is not None:
+        return tool_payload, tool_payload_error
+
+    invalid_tool_payload, invalid_tool_payload_error = _extract_from_langchain_tool_calls(
+        getattr(raw, "invalid_tool_calls", None)
+    )
+    if invalid_tool_payload is not None or invalid_tool_payload_error is not None:
+        return invalid_tool_payload, invalid_tool_payload_error
 
     content = getattr(raw, "content", None)
     if isinstance(content, list) and content:
