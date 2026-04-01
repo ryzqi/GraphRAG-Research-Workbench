@@ -17,6 +17,32 @@ interface ResearchArtifactSummary {
   coverageGap: string | null;
 }
 
+const RESEARCH_MARKDOWN_HEADING_REPLACEMENTS: ReadonlyArray<[RegExp, string]> = [
+  [/^# Research Report$/gm, '# 研究报告'],
+  [/^# Report Draft$/gm, '# 报告草稿'],
+  [/^# Mission$/gm, '# 研究任务'],
+  [/^# Plan$/gm, '# 研究计划'],
+  [/^# Coverage$/gm, '# 覆盖情况'],
+  [/^## Question$/gm, '## 问题'],
+  [/^## Executive Summary$/gm, '## 执行摘要'],
+  [/^## Findings$/gm, '## 关键发现'],
+  [/^## Evidence and Counter-Evidence$/gm, '## 证据与反证'],
+  [/^## Coverage Gaps$/gm, '## 覆盖缺口'],
+  [/^## References$/gm, '## 参考来源'],
+  [/^## Research Goal$/gm, '## 研究目标'],
+  [/^## Research Brief$/gm, '## 研究简报'],
+  [/^## Boundaries$/gm, '## 研究边界'],
+  [/^## Success Criteria$/gm, '## 成功标准'],
+  [/^## Default Assumptions$/gm, '## 默认假设'],
+  [/^## Target Sources$/gm, '## 目标来源'],
+  [/^## Delivery Contract$/gm, '## 交付约束'],
+  [/^## Summary$/gm, '## 摘要'],
+  [/^## Execution Rules$/gm, '## 执行规则'],
+  [/^## Subtasks$/gm, '## 子任务'],
+  [/^## Covered Providers$/gm, '## 已覆盖来源'],
+  [/^## Coverage Standards$/gm, '## 覆盖标准'],
+];
+
 export interface ResearchWorkspaceModel {
   contractErrors: string[];
   mission: {
@@ -87,8 +113,15 @@ function pushContractError(
 
 function readArtifactMarkdown(artifact: ResearchArtifactRead | undefined): string | null {
   return typeof artifact?.content_text === 'string' && artifact.content_text.trim().length > 0
-    ? artifact.content_text
+    ? localizeResearchMarkdown(artifact.content_text)
     : null;
+}
+
+function localizeResearchMarkdown(markdown: string): string {
+  return RESEARCH_MARKDOWN_HEADING_REPLACEMENTS.reduce(
+    (current, [pattern, replacement]) => current.replace(pattern, replacement),
+    markdown
+  );
 }
 
 function asStringList(value: unknown): string[] {
@@ -271,11 +304,141 @@ function countPlanSubtasks(planMarkdown: string | null): number {
   }
 
   const subtasksSection =
-    planMarkdown.match(/##\s+Subtasks\s*\n([\s\S]*?)(?:\n##\s+|\s*$)/i)?.[1] ?? '';
+    planMarkdown.match(/##\s+(?:Subtasks|子任务)\s*\n([\s\S]*?)(?:\n##\s+|\s*$)/i)?.[1] ?? '';
   return subtasksSection
     .split(/\r?\n/)
     .filter((line) => line.trimStart().startsWith('- '))
     .length;
+}
+
+function asStringRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || Array.isArray(value) || typeof value !== 'object') {
+    return null;
+  }
+  return value as Record<string, unknown>;
+}
+
+function readJsonStringField(value: Record<string, unknown>, key: string): string | null {
+  const item = value[key];
+  return typeof item === 'string' && item.trim().length > 0 ? item.trim() : null;
+}
+
+function readJsonStringListField(value: Record<string, unknown>, key: string): string[] {
+  return asStringList(value[key]);
+}
+
+function readReportJsonObject(value: unknown): Record<string, unknown> | null {
+  return asStringRecord(value);
+}
+
+function renderBulletSection(title: string, items: string[]): string {
+  if (items.length === 0) {
+    return '';
+  }
+  return `## ${title}\n${items.map((item) => `- ${item}`).join('\n')}`;
+}
+
+function renderParagraphSection(title: string, body: string | null): string {
+  if (!body) {
+    return '';
+  }
+  return `## ${title}\n${body}`;
+}
+
+function formatCitationLine(citation: Record<string, unknown>, index: number): string | null {
+  const title =
+    (typeof citation.title === 'string' && citation.title.trim()) ||
+    (typeof citation.source_id === 'string' && citation.source_id.trim()) ||
+    `来源 ${index + 1}`;
+  const href =
+    (typeof citation.origin_url === 'string' && citation.origin_url.trim()) ||
+    (typeof citation.url === 'string' && citation.url.trim()) ||
+    null;
+
+  return href ? `${title}：${href}` : title;
+}
+
+function buildReportMarkdownFromJson(reportJson: Record<string, unknown>): string | null {
+  const question = readJsonStringField(reportJson, 'question');
+  const summary = readJsonStringField(reportJson, 'summary');
+  const findings = readJsonStringListField(reportJson, 'findings');
+  const coverageGaps = readJsonStringListField(reportJson, 'coverage_gaps');
+  const citations = Array.isArray(reportJson.citations)
+    ? reportJson.citations
+        .flatMap((item, index) => {
+          const citation = asStringRecord(item);
+          if (!citation) {
+            return [];
+          }
+          const formatted = formatCitationLine(citation, index);
+          return formatted ? [formatted] : [];
+        })
+    : [];
+
+  const sections = [
+    renderParagraphSection('问题', question),
+    renderParagraphSection('执行摘要', summary),
+    renderBulletSection('关键发现', findings),
+    renderBulletSection('覆盖缺口', coverageGaps),
+    renderBulletSection('参考来源', citations),
+  ].filter((section) => section.length > 0);
+
+  if (sections.length === 0) {
+    return null;
+  }
+
+  return ['# 研究报告', ...sections].join('\n\n');
+}
+
+function parseJsonLikeMarkdown(markdown: string | null): Record<string, unknown> | null {
+  const trimmed = markdown?.trim();
+  if (!trimmed || (!trimmed.startsWith('{') && !trimmed.startsWith('['))) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(trimmed) as unknown;
+    return asStringRecord(parsed);
+  } catch {
+    return null;
+  }
+}
+
+function resolveReportMarkdown(
+  reportMd: string | null,
+  reportJson: Record<string, unknown> | null
+): string | null {
+  const jsonLikeReport = parseJsonLikeMarkdown(reportMd);
+  if (jsonLikeReport) {
+    return buildReportMarkdownFromJson(jsonLikeReport);
+  }
+
+  if (reportMd && reportMd.trim()) {
+    return localizeResearchMarkdown(reportMd);
+  }
+
+  if (reportJson) {
+    return buildReportMarkdownFromJson(reportJson);
+  }
+
+  return null;
+}
+
+function localizePhaseLabel(phase: string): string {
+  switch (phase) {
+    case 'runtime':
+      return '执行阶段';
+    case 'retrieval':
+      return '检索阶段';
+    case 'analysis':
+      return '分析阶段';
+    case 'finalizer':
+      return '收口阶段';
+    case 'planner':
+      return '规划阶段';
+    default:
+      return phase;
+  }
 }
 
 function summarizeResearchArtifacts(artifacts: ResearchArtifactRead[]): ResearchArtifactSummary {
@@ -331,6 +494,7 @@ function formatSystemEventTitle(event: ResearchEventEnvelope, summary: string | 
 function buildResearchTimelineItem(event: ResearchEventEnvelope): ResearchTimelineItem {
   const summary = readEventText(event.payload, 'summary');
   const finding = readEventText(event.payload, 'finding');
+  const phaseLabel = localizePhaseLabel(event.phase);
 
   if (event.origin_url) {
     return {
@@ -338,7 +502,7 @@ function buildResearchTimelineItem(event: ResearchEventEnvelope): ResearchTimeli
       kind: 'web_visit',
       title: summary ?? `访问 ${event.origin_url}`,
       body: finding,
-      phaseLabel: event.phase,
+      phaseLabel,
       providerLabel: event.source_provider ?? null,
       url: event.origin_url,
     };
@@ -350,7 +514,7 @@ function buildResearchTimelineItem(event: ResearchEventEnvelope): ResearchTimeli
       kind: 'intermediate_result',
       title: summary ?? '阶段性发现',
       body: finding,
-      phaseLabel: event.phase,
+      phaseLabel,
       providerLabel: event.source_provider ?? null,
       url: null,
     };
@@ -370,7 +534,7 @@ function buildResearchTimelineItem(event: ResearchEventEnvelope): ResearchTimeli
       kind: 'system_status',
       title: formatSystemEventTitle(event, summary),
       body: null,
-      phaseLabel: event.phase,
+      phaseLabel,
       providerLabel: event.source_provider ?? null,
       url: null,
     };
@@ -381,7 +545,7 @@ function buildResearchTimelineItem(event: ResearchEventEnvelope): ResearchTimeli
     kind: 'thought_summary',
     title: summary ?? '正在整理研究线索',
     body: null,
-    phaseLabel: event.phase,
+    phaseLabel,
     providerLabel: event.source_provider ?? null,
     url: null,
   };
@@ -399,6 +563,7 @@ export function buildResearchWorkspaceModel(
   const artifactByKey = buildResearchArtifactsByKey(artifacts);
   const { reportMd, reportJson } = getResearchReportArtifacts(artifacts);
   const planMarkdown = readArtifactMarkdown(artifactByKey.plan_md);
+  const normalizedReportMarkdown = resolveReportMarkdown(reportMd, reportJson);
   const contractErrors: string[] = [];
 
   return {
@@ -422,7 +587,7 @@ export function buildResearchWorkspaceModel(
       items: asResearchClaimMapEntries(artifactByKey.claim_map_json, contractErrors),
     },
     report: {
-      markdown: reportMd,
+      markdown: normalizedReportMarkdown,
       json: reportJson,
     },
   };
@@ -437,6 +602,7 @@ export function buildResearchPageViewModel(params: {
   const { interimSummary, coverageGap } = summarizeResearchArtifacts(params.artifacts);
   const workspaceModel = buildResearchWorkspaceModel(params.artifacts);
   const timelineItems = buildResearchTimelineItems(params.events);
+  const reportMarkdown = resolveReportMarkdown(params.reportMd, workspaceModel.report.json);
 
   if (interimSummary) {
     timelineItems.push({
@@ -451,8 +617,8 @@ export function buildResearchPageViewModel(params: {
   }
 
   return {
-    surface: params.reportMd ? 'final-report' : 'live-research',
-    timelineItems: params.reportMd ? [] : timelineItems,
+    surface: reportMarkdown ? 'final-report' : 'live-research',
+    timelineItems: reportMarkdown ? [] : timelineItems,
     evidenceDrawer: {
       contractErrors: workspaceModel.contractErrors,
       coverageGap,
@@ -462,9 +628,9 @@ export function buildResearchPageViewModel(params: {
       claims: workspaceModel.claims.items,
       conflicts: workspaceModel.evidence.conflicts,
     },
-    report: params.reportMd
+    report: reportMarkdown
       ? {
-          markdown: params.reportMd,
+          markdown: reportMarkdown,
         }
       : undefined,
   };

@@ -15,19 +15,20 @@ interface ResearchComposerProps {
 export function ResearchComposer(props: ResearchComposerProps) {
   return (
     <ResearchPlanningHero>
-      <Stack spacing={1.25}>
+      <Stack spacing={2}>
         <Paper
           variant="outlined"
           sx={{
             display: 'flex',
             alignItems: 'center',
             gap: 1.5,
-            px: { xs: 1.5, md: 2 },
-            py: 1,
-            borderRadius: 999,
-            borderColor: props.validationError ? 'error.main' : 'rgba(223, 225, 229, 0.96)',
-            bgcolor: '#ffffff',
-            boxShadow: '0 1px 6px rgba(32, 33, 36, 0.14)',
+            px: { xs: 1.75, md: 2.25 },
+            py: 1.25,
+            borderRadius: 6,
+            borderColor: props.validationError ? 'error.main' : 'rgba(210, 227, 252, 0.96)',
+            bgcolor: 'rgba(255,255,255,0.96)',
+            boxShadow: '0 22px 64px rgba(66, 133, 244, 0.10)',
+            backdropFilter: 'blur(16px)',
           }}
         >
           <SearchIcon sx={{ color: '#9aa0a6' }} />
@@ -44,6 +45,7 @@ export function ResearchComposer(props: ResearchComposerProps) {
               fontSize: { xs: 16, md: 18 },
               lineHeight: 1.5,
               color: '#202124',
+              py: 0.5,
               '& .MuiInputBase-input::placeholder': {
                 color: '#80868b',
                 opacity: 1,
@@ -56,16 +58,16 @@ export function ResearchComposer(props: ResearchComposerProps) {
             loading={props.loading}
             sx={{
               flexShrink: 0,
-              minWidth: { xs: 88, md: 104 },
-              minHeight: 42,
-              px: 2.25,
+              minWidth: { xs: 96, md: 116 },
+              minHeight: 46,
+              px: 2.5,
               borderRadius: 999,
               bgcolor: '#1a73e8',
               color: '#fff',
-              boxShadow: 'none',
+              boxShadow: '0 10px 22px rgba(26, 115, 232, 0.28)',
               '&:hover': {
                 bgcolor: '#1765cc',
-                boxShadow: 'none',
+                boxShadow: '0 12px 24px rgba(26, 115, 232, 0.32)',
               },
             }}
           >

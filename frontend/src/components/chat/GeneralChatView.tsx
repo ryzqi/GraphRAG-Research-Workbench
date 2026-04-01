@@ -9,7 +9,6 @@ import { ChatViewport } from './ChatViewport';
 import type {
   ChatSession,
   ToolApprovalRequest,
-  WebSearchProviderStatus,
   WebSearchStatus,
 } from '../../services/chats';
 import type { ChatMessage } from './MessageList';
@@ -25,28 +24,6 @@ const quickPrompts = [
   { label: '优化表达', value: '请把下面内容润色成更专业的表达：' },
   { label: '风险与下一步', value: '请列出潜在风险与下一步建议：' },
 ];
-
-function getProviderLabel(name: WebSearchProviderStatus['name']): string {
-  if (name === 'tavily') {
-    return 'Tavily';
-  }
-  if (name === 'searxng') {
-    return 'SearXNG';
-  }
-  return 'Jina Reader';
-}
-
-function getProviderChipLabel(provider: WebSearchProviderStatus): string {
-  const suffix =
-    !provider.verified
-      ? '未验证'
-      : provider.mode === 'healthy'
-        ? '正常'
-        : provider.mode === 'degraded'
-          ? '降级'
-          : '异常';
-  return `${getProviderLabel(provider.name)} ${suffix}`;
-}
 
 function getStatusLabel(webSearch: WebSearchStatus): string {
   if (!webSearch.configured) {
@@ -123,14 +100,6 @@ export function GeneralChatView({
   onToolApprovalSubmit,
   onSuggestionClick,
 }: GeneralChatViewProps) {
-  const sessionBadgeLabel = session
-    ? session.allow_external
-      ? 'MCP 已启用'
-      : 'MCP 未启用'
-    : allowExternal
-      ? 'MCP 将启用'
-      : 'MCP 已关闭';
-  const configuredProviders = webSearch.providers.filter((provider) => provider.configured);
   const webSearchStatusLabel = getStatusLabel(webSearch);
   const webSearchStatusColor = getStatusColor(
     webSearch.mode,
@@ -184,16 +153,6 @@ export function GeneralChatView({
             variant='outlined'
             color={webSearchStatusColor}
           />
-          {configuredProviders.map((provider) => (
-            <Chip
-              key={provider.name}
-              label={getProviderChipLabel(provider)}
-              size='small'
-              variant='outlined'
-              color={getStatusColor(provider.mode, provider.configured, provider.verified)}
-            />
-          ))}
-          <Chip label={sessionBadgeLabel} size='small' variant='outlined' />
         </Box>
       }
       renderMessages={({ bottomInset }) =>

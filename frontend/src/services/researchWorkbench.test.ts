@@ -116,7 +116,7 @@ const workspaceArtifacts: ResearchArtifactRead[] = [
   },
   {
     artifact_key: 'report_md',
-    content_text: '# Final Report\n\n结论已生成。',
+    content_text: '# 研究报告\n\n结论已生成。',
     citations: [],
   },
   {
@@ -131,30 +131,32 @@ const workspaceArtifacts: ResearchArtifactRead[] = [
 
 describe('buildResearchPageViewModel', () => {
   it('builds immersive live timeline items before report_md exists', () => {
-    expect(
-      buildResearchPageViewModel({
-        status: 'running',
-        events: runningEvents,
-        artifacts: interimArtifacts,
-        reportMd: null,
-      })
-    ).toMatchObject({
-      surface: 'live-research',
-      timelineItems: [
-        {
+    const model = buildResearchPageViewModel({
+      status: 'running',
+      events: runningEvents,
+      artifacts: interimArtifacts,
+      reportMd: null,
+    });
+
+    expect(model.surface).toBe('live-research');
+    expect(model.timelineItems).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
           kind: 'system_status',
           title: '开始调度研究',
-        },
-        {
+        }),
+        expect.objectContaining({
           kind: 'web_visit',
           title: '抓取到两篇网页证据',
           url: 'https://example.com/a',
-        },
-      ],
-      evidenceDrawer: {
-        coverageGap: '仍需补充一条公开网页案例。',
-      },
-    });
+        }),
+        expect.objectContaining({
+          kind: 'intermediate_result',
+          title: '阶段性发现',
+        }),
+      ])
+    );
+    expect(model.evidenceDrawer.coverageGap).toBe('仍需补充一条公开网页案例。');
   });
 
   it('promotes report_md to the pure report surface after finalization', () => {
@@ -181,13 +183,75 @@ describe('buildResearchPageViewModel', () => {
         artifacts: [
           {
             artifact_key: 'coverage_gaps',
-            content_json: ['缺少 provider 证据：tavily', '缺少论文交叉验证'],
+            content_json: ['缺少来源证据：tavily', '缺少论文交叉验证'],
             citations: [],
           },
         ],
         reportMd: null,
       }).evidenceDrawer.coverageGap
-    ).toBe('缺少 provider 证据：tavily\n缺少论文交叉验证');
+    ).toBe('缺少来源证据：tavily\n缺少论文交叉验证');
+  });
+
+  it('falls back to report_json and converts it to markdown instead of exposing raw json', () => {
+    expect(
+      buildResearchPageViewModel({
+        status: 'final',
+        events: [],
+        artifacts: [
+          {
+            artifact_key: 'report_json',
+            content_json: {
+              question: 'Gemini 风格研究页应该如何组织？',
+              summary: '已完成页面骨架、内容层级与正文渲染策略分析。',
+              findings: ['输入区应保留首页居中布局。', '最终报告正文应统一按 Markdown 渲染。'],
+              coverage_gaps: ['仍需补充一条最终态视觉回归用例。'],
+              citations: [
+                {
+                  title: 'Gemini UI 观察',
+                  origin_url: 'https://example.com/gemini',
+                },
+              ],
+            },
+            citations: [],
+          },
+        ],
+        reportMd: null,
+      })
+    ).toMatchObject({
+      surface: 'final-report',
+      report: {
+        markdown: expect.stringContaining('# 研究报告'),
+      },
+    });
+
+    const pageModel = buildResearchPageViewModel({
+      status: 'final',
+      events: [],
+      artifacts: [
+        {
+          artifact_key: 'report_json',
+          content_json: {
+            question: 'Gemini 风格研究页应该如何组织？',
+            summary: '已完成页面骨架、内容层级与正文渲染策略分析。',
+            findings: ['输入区应保留首页居中布局。', '最终报告正文应统一按 Markdown 渲染。'],
+            coverage_gaps: ['仍需补充一条最终态视觉回归用例。'],
+            citations: [
+              {
+                title: 'Gemini UI 观察',
+                origin_url: 'https://example.com/gemini',
+              },
+            ],
+          },
+          citations: [],
+        },
+      ],
+      reportMd: null,
+    });
+
+    expect(pageModel.report?.markdown).toContain('## 关键发现');
+    expect(pageModel.report?.markdown).toContain('## 参考来源');
+    expect(pageModel.report?.markdown).not.toContain('"question"');
+    expect(pageModel.report?.markdown).not.toContain('"findings"');
   });
 });
 
@@ -196,15 +260,15 @@ describe('buildResearchWorkspaceModel', () => {
     expect(buildResearchWorkspaceModel(workspaceArtifacts)).toEqual({
       contractErrors: [],
       mission: {
-        markdown: '# Mission\n\n- Brief: 研究 LangGraph Deep Research 工作流\n',
+        markdown: '# 研究任务\n\n- Brief: 研究 LangGraph Deep Research 工作流\n',
       },
       plan: {
         markdown:
-          '# Plan\n\n## Summary\n先梳理控制面，再补全证据账本。\n\n## Subtasks\n- Mission Control: 明确任务视图\n- Evidence Ledger: 对齐证据结构\n',
+          '# 研究计划\n\n## 摘要\n先梳理控制面，再补全证据账本。\n\n## 子任务\n- Mission Control: 明确任务视图\n- Evidence Ledger: 对齐证据结构\n',
         subtaskCount: 2,
       },
       coverage: {
-        markdown: '# Coverage\n\n- status: in_progress\n',
+        markdown: '# 覆盖情况\n\n- status: in_progress\n',
         matrix: {
           provider_counts: { tavily: 2, searxng: 1 },
           missing_providers: ['jina'],
@@ -245,7 +309,7 @@ describe('buildResearchWorkspaceModel', () => {
         ],
       },
       report: {
-        markdown: '# Final Report\n\n结论已生成。',
+        markdown: '# 研究报告\n\n结论已生成。',
         json: {
           question: '什么是 Deep Research OS？',
           citations: [],

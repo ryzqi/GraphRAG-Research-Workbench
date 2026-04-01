@@ -119,13 +119,13 @@ class ResearchFinalizer:
         self,
         source_bundle: ResearchSourceBundle,
     ) -> list[str]:
-        providers = ", ".join(sorted(source_bundle.provider_counts)) or "none"
+        providers = "、".join(sorted(source_bundle.provider_counts)) or "暂无"
         points = [
-            f"- 当前已汇总 {len(source_bundle.citations)} 条可追溯引用，覆盖 provider：{providers}。",
+            f"- 当前已汇总 {len(source_bundle.citations)} 条可追溯引用，已覆盖来源：{providers}。",
             "- 所有核心结论均应回链到具体 citation；若证据存在冲突，应在正文中保留冲突描述而不是强行合并。",
         ]
         if source_bundle.coverage_gaps:
-            points.append("- 当前仍存在覆盖缺口，以下结论需结合 Coverage Gaps 一并阅读。")
+            points.append("- 当前仍存在覆盖缺口，以下结论需结合“覆盖缺口”章节一并阅读。")
         return points
 
     def _render_section(self, *, template_key: str, items: Sequence[str]) -> str:

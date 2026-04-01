@@ -2,10 +2,18 @@
 
 from __future__ import annotations
 
+import json
 from typing import Literal, Protocol
 
 from langchain_core.messages import HumanMessage, SystemMessage
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 
 from app.core.settings import Settings, get_settings
 from app.integrations.chat_model_factory import create_chat_model
@@ -50,6 +58,13 @@ class _ResearchScoperSubtaskOutput(BaseModel):
         default_factory=list,
         description="Suggested source targets for this subtask. Prefer web or paper.",
     )
+
+    @field_validator("target_sources", mode="before")
+    @classmethod
+    def _normalize_nullable_target_sources(cls, value: object) -> object:
+        if value is None:
+            return []
+        return value
 
 
 class _ResearchScoperOutput(BaseModel):
@@ -99,6 +114,22 @@ class _ResearchScoperOutput(BaseModel):
         default=None,
         description="Optional guidance about expected research effort or budget.",
     )
+
+    @field_validator("questions", "target_sources", "subtasks", mode="before")
+    @classmethod
+    def _normalize_nullable_list_fields(cls, value: object) -> object:
+        if value is None:
+            return []
+        return value
+
+    @field_validator("research_brief", mode="before")
+    @classmethod
+    def _normalize_structured_research_brief(cls, value: object) -> object:
+        if value is None or isinstance(value, str):
+            return value
+        if isinstance(value, (dict, list)):
+            return json.dumps(value, ensure_ascii=False, indent=2)
+        return str(value)
 
     @model_validator(mode="after")
     def _validate_shape(self) -> "_ResearchScoperOutput":

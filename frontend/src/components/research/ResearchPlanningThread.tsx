@@ -17,11 +17,11 @@ interface ResearchPlanningThreadProps {
 }
 
 const messageCardSx = {
-  borderRadius: 4,
-  borderColor: 'rgba(223, 225, 229, 0.92)',
+  borderRadius: 6,
+  borderColor: 'rgba(210, 227, 252, 0.92)',
   bgcolor: '#ffffff',
   color: '#202124',
-  boxShadow: '0 1px 3px rgba(32, 33, 36, 0.08)',
+  boxShadow: '0 16px 40px rgba(66, 133, 244, 0.08)',
 } as const;
 
 export function ResearchPlanningThread({
@@ -41,30 +41,24 @@ export function ResearchPlanningThread({
         <Paper
           variant="outlined"
           sx={{
-            borderRadius: 999,
-            borderColor: 'rgba(223, 225, 229, 0.92)',
+            borderRadius: 6,
+            borderColor: 'rgba(210, 227, 252, 0.92)',
             bgcolor: '#ffffff',
             color: '#202124',
-            boxShadow: '0 1px 6px rgba(32, 33, 36, 0.12)',
+            boxShadow: '0 18px 44px rgba(66, 133, 244, 0.08)',
             maxWidth: 860,
             mx: 'auto',
           }}
         >
-          <Typography variant="body1" sx={{ px: 2.5, py: 1.5 }}>
-            {trimmedQuestion}
-          </Typography>
+          <Stack spacing={0.5} sx={{ px: 2.5, py: 1.75 }}>
+            <Typography variant="body1">{trimmedQuestion}</Typography>
+          </Stack>
         </Paper>
       ) : null}
 
       {status === 'clarifying' && clarificationRequest ? (
         <Paper variant="outlined" sx={messageCardSx}>
           <Stack spacing={1.25} sx={{ p: 2 }}>
-            <Typography variant="overline" sx={{ color: '#80868b', letterSpacing: '0.18em' }}>
-              assistant
-            </Typography>
-            <Typography variant="body1" fontWeight={600}>
-              在开始规划前，还需要补充一点信息
-            </Typography>
             <Typography variant="body2" sx={{ color: '#5f6368' }}>
               {clarificationRequest.summary}
             </Typography>
@@ -85,9 +79,6 @@ export function ResearchPlanningThread({
               ))}
             </Stack>
             <Stack spacing={1.25}>
-              <Typography variant="body2" sx={{ color: '#5f6368' }}>
-                补充你的回答
-              </Typography>
               <TextField
                 fullWidth
                 multiline

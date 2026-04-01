@@ -79,6 +79,11 @@ describe('ResearchPage', () => {
 
     expect(html).toContain('有问题，尽管问');
     expect(html).toContain('开始研究');
+    expect(html).not.toContain('Deep Research');
+    expect(html).not.toContain('用研究工作台，把问题拆清、证据拉齐、报告收口');
+    expect(html).not.toContain(
+      '对齐 Gemini 风格的轻量研究入口：先聚焦问题，再进入规划、执行与最终报告。'
+    );
     expect(html).not.toContain('先规划，再开始研究');
   });
 
@@ -174,7 +179,7 @@ describe('ResearchPage', () => {
     expect(html).toContain('比较调度路线');
     expect(html).toContain('抓取到两篇网页证据');
     expect(html).toContain('查看来源与证据');
-    expect(html).toContain('linear-gradient(180deg,#08101f 0%,#0f172a 52%,#111827 100%)');
+    expect(html).toContain('linear-gradient(180deg,#f7faff 0%,#eef4ff 45%,#f8fbff 100%)');
     expect(html).not.toContain('Mission Control');
     expect(html).not.toContain('Evidence Ledger');
     expect(html).not.toContain('收起侧栏');
@@ -230,6 +235,10 @@ describe('ResearchPage', () => {
 
     expect(html).toContain('你希望输出选型建议，还是迁移实施方案？');
     expect(html).toContain('提交补充信息');
+    expect(html).not.toContain('你的研究问题');
+    expect(html).not.toContain('研究助手');
+    expect(html).not.toContain('在开始规划前，还需要补充一点信息');
+    expect(html).not.toContain('补充你的回答');
     expect(html).not.toContain('Mission Control');
     expect(html).not.toContain('Evidence Ledger');
     expect(html).not.toContain('失败');
@@ -331,6 +340,70 @@ describe('ResearchPage', () => {
     expect(html).toContain('最终报告');
     expect(html).toContain('正式结论');
     expect(html).not.toContain('研究时间流');
+  });
+
+  it('renders markdown converted from report_json when report_md is missing', () => {
+    hookState.session = {
+      session_id: 'session-json-report',
+      status: 'final',
+      plan_snapshot: null,
+      clarification_request: null,
+      events: [],
+      artifacts: [
+        {
+          artifact_key: 'report_json',
+          content_json: {
+            question: '如何把 Deep Research 页面改成 Gemini 风格？',
+            summary: '已完成布局、中文化与正文渲染策略分析。',
+            findings: ['首页输入区应保留居中英雄区。', '最终报告正文必须统一经过 Markdown 渲染。'],
+            coverage_gaps: ['仍需补一条最终态视觉回归测试。'],
+            citations: [
+              {
+                title: 'Gemini 页面观察',
+                origin_url: 'https://example.com/gemini',
+              },
+            ],
+          },
+          citations: [],
+        },
+      ],
+      last_event_id: null,
+      last_sequence: 0,
+      report_md: null,
+      report_json: {
+        question: '如何把 Deep Research 页面改成 Gemini 风格？',
+      },
+    };
+
+    const setState = vi.fn();
+    reactState.sequence = [
+      ['Gemini 风格工作台改版', setState],
+      ['session-json-report', setState],
+      [
+        {
+          session_id: 'session-json-report',
+          status: 'final',
+          plan_snapshot: null,
+          clarification_request: null,
+        },
+        setState,
+      ],
+      [false, setState],
+      [null, setState],
+      ['', setState],
+      ['resume-1', setState],
+      ['[{"action":"approve"}]', setState],
+      [true, setState],
+    ];
+    reactState.index = 0;
+
+    const html = renderToStaticMarkup(createElement(ResearchPage));
+
+    expect(html).toContain('研究报告');
+    expect(html).toContain('关键发现');
+    expect(html).toContain('Gemini 页面观察');
+    expect(html).not.toContain('"question"');
+    expect(html).not.toContain('"findings"');
   });
 
 });

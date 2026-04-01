@@ -44,13 +44,13 @@ class ResearchSourceBundleBuilder:
         deduped = self._dedupe_citations(normalized_citations)
         provider_counts = Counter(citation.source_provider for citation in normalized_citations)
         coverage_gaps = [
-            f"缺少 provider 证据：{provider}"
+            f"缺少来源证据：{provider}"
             for provider in normalized_required_web_providers
             if provider not in provider_counts
         ]
         interim_summary = (
             f"已汇总 {len(deduped)} 条去重证据，"
-            f"覆盖 provider：{', '.join(sorted(provider_counts)) or 'none'}。"
+            f"已覆盖来源：{'、'.join(sorted(provider_counts)) or '暂无'}。"
         )
         return ResearchSourceBundle(
             target_sources=tuple(target_sources),

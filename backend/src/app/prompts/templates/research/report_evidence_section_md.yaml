@@ -3,7 +3,7 @@ name: research_report_evidence_section_md
 description: "Deep Research report evidence section markdown"
 
 template: |
-  ## Evidence and Counter-Evidence
+  ## 证据与反证
   {items_block}
 
 variables:

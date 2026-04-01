@@ -276,15 +276,15 @@ export function ResearchPage() {
     const missingCount = pageModel.evidenceDrawer.coverageMatrix.missing_providers.length;
 
     if (providerCount > 0 && missingCount > 0) {
-      return `Coverage ${providerCount} / gap ${missingCount}`;
+      return `已覆盖 ${providerCount} 个来源 / ${missingCount} 个缺口`;
     }
     if (providerCount > 0) {
-      return `Coverage ${providerCount} providers`;
+      return `已覆盖 ${providerCount} 个来源`;
     }
     if (missingCount > 0) {
-      return `Coverage gap ${missingCount}`;
+      return `待补 ${missingCount} 个缺口`;
     }
-    return 'Coverage warming up';
+    return '覆盖信息生成中';
   }, [pageModel.evidenceDrawer.coverageMatrix.missing_providers.length, pageModel.evidenceDrawer.coverageMatrix.provider_counts]);
 
   return (
@@ -317,7 +317,7 @@ export function ResearchPage() {
           >
             <Stack spacing={0.5}>
               <Typography variant="overline" sx={{ letterSpacing: '0.18em', color: '#80868b' }}>
-                deep research
+                研究规划
               </Typography>
               <Typography variant="body2" color="text.secondary">
                 {statusPresentation?.label ?? '规划中'}

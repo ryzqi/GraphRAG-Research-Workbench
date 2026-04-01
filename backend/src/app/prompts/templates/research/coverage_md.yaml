@@ -3,14 +3,14 @@ name: research_coverage_md
 description: "Deep Research workspace coverage markdown"
 
 template: |
-  # Coverage
+  # 覆盖情况
 
-  - status: pending
+  - 状态：待生成
 
-  ## Covered Providers
-  - pending
+  ## 已覆盖来源
+  - 待生成
 
-  ## Coverage Standards
+  ## 覆盖标准
   - 官方资料覆盖待确认
   - 一手论文或原始材料覆盖待确认
   - 反证与争议覆盖待确认

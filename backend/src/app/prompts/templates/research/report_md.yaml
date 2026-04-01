@@ -3,12 +3,12 @@ name: research_report_md
 description: "Deep Research final report markdown"
 
 template: |
-  # Research Report
+  # 研究报告
 
-  ## Question
+  ## 问题
   {question}
 
-  ## Executive Summary
+  ## 执行摘要
   {interim_summary}
 
   {findings_section}{evidence_section}{coverage_gaps_section}{references_section}

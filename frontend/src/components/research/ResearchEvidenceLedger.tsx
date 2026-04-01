@@ -37,6 +37,17 @@ function formatVerdict(verdict: ResearchClaimMapEntry['verdict']) {
   }
 }
 
+function formatSourceType(sourceType: ResearchSourceLedgerEntry['source_type']): string | null {
+  switch (sourceType) {
+    case 'web':
+      return '网页';
+    case 'paper':
+      return '论文';
+    default:
+      return null;
+  }
+}
+
 export function ResearchEvidenceLedger({
   contractErrors,
   coverageMarkdown,
@@ -59,7 +70,7 @@ export function ResearchEvidenceLedger({
   const isDark = tone === 'dark';
   const summaryParts = [
     `${sources.length} 个来源`,
-    `${claims.length} 条 claim`,
+    `${claims.length} 条结论`,
     conflicts.length > 0 ? `${conflicts.length} 个冲突` : null,
   ].filter(Boolean);
 
@@ -141,7 +152,7 @@ export function ResearchEvidenceLedger({
                       {source.title ?? source.origin_url ?? `来源 ${index + 1}`}
                     </Typography>
                     <Typography variant="caption" color={isDark ? alpha('#cbd5e1', 0.82) : 'text.secondary'}>
-                      {[source.provider, source.source_type, source.origin_url].filter(Boolean).join(' · ')}
+                      {[source.provider, formatSourceType(source.source_type), source.origin_url].filter(Boolean).join(' · ')}
                     </Typography>
                   </Stack>
                 ))
@@ -217,12 +228,12 @@ export function ResearchEvidenceLedger({
                 ))
               ) : (
                 <Typography variant="caption" color={isDark ? alpha('#cbd5e1', 0.82) : 'text.secondary'}>
-                  provider 计数尚未生成。
+                  来源覆盖统计尚未生成。
                 </Typography>
               )}
               {coverageMatrix.missing_providers.length > 0 ? (
                 <Typography variant="caption" color="warning.main">
-                  待补 provider：{coverageMatrix.missing_providers.join('、')}
+                  待补来源：{coverageMatrix.missing_providers.join('、')}
                 </Typography>
               ) : null}
               {coverageMarkdown ? <MarkdownContent content={coverageMarkdown} /> : null}

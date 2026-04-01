@@ -13,7 +13,7 @@ describe('ResearchCanvas', () => {
           title: '比较调度路线',
           statusLabel: '研究中…',
           statusTone: 'running',
-          coverageLabel: 'Coverage 2 / gap 1',
+          coverageLabel: '已覆盖 2 个来源 / 1 个缺口',
           timelineItems: [
             {
               id: 'evt-1',
@@ -66,8 +66,14 @@ describe('ResearchCanvas', () => {
     expect(html).toContain('访问 example.com');
     expect(html).toContain('查看来源与证据');
     expect(html).toContain('仍需补充一条公开网页案例');
-    expect(html).toContain('linear-gradient(180deg,#08101f 0%,#0f172a 52%,#111827 100%)');
-    expect(html).toContain('radial-gradient(circle at top,rgba(96,165,250,0.28) 0%,rgba(96,165,250,0) 38%)');
+    expect(html).toContain('linear-gradient(180deg,#f7faff 0%,#eef4ff 45%,#f8fbff 100%)');
+    expect(html).toContain('radial-gradient(circle at top,rgba(66,133,244,0.18) 0%,rgba(66,133,244,0) 42%)');
+    expect(html).not.toContain('live research');
+    expect(html).not.toContain('deep research stream');
+    expect(html).not.toContain('source trace');
+    expect(html).not.toContain('thinking');
+    expect(html).not.toContain('working answer');
+    expect(html).not.toContain('session state');
     expect(html).not.toContain('高级事件');
   });
 
@@ -79,7 +85,7 @@ describe('ResearchCanvas', () => {
           title: '比较调度路线',
           statusLabel: '已完成',
           statusTone: 'succeeded',
-          coverageLabel: 'Coverage 2 providers',
+          coverageLabel: '已覆盖 2 个来源',
           timelineItems: [],
           report: {
             markdown: '# 最终报告\n\n结论正文',
@@ -105,7 +111,8 @@ describe('ResearchCanvas', () => {
     expect(html).toContain('最终报告');
     expect(html).toContain('导出报告');
     expect(html).toContain('结论正文');
-    expect(html).toContain('linear-gradient(180deg,rgba(255,255,255,0.96) 0%,rgba(248,250,252,0.98) 100%)');
+    expect(html).toContain('linear-gradient(180deg,rgba(255,255,255,0.98) 0%,rgba(245,249,255,0.98) 100%)');
+    expect(html).not.toContain('final report');
     expect(html).not.toContain('研究时间流');
   });
 });

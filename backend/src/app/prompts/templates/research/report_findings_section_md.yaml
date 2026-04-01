@@ -3,7 +3,7 @@ name: research_report_findings_section_md
 description: "Deep Research report findings section markdown"
 
 template: |
-  ## Findings
+  ## 关键发现
   {items_block}
 
 variables:

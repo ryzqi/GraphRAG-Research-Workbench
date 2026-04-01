@@ -33,13 +33,59 @@ function Test-Endpoint {
 }
 
 function Test-SearXngJsonSearch {
-    param([string]$BaseUrl)
+    param(
+        [string]$BaseUrl,
+        [string[]]$Engines = @()
+    )
     try {
-        $resp = Invoke-RestMethod -Uri ($BaseUrl.TrimEnd('/') + "/search?q=OpenAI&format=json") -UseBasicParsing -Headers @{ "User-Agent" = "Mozilla/5.0 quickstart-check" } -TimeoutSec 15
+        $query = "q=OpenAI&format=json"
+        if ($Engines.Count -gt 0) {
+            $query += "&engines=" + [System.Uri]::EscapeDataString(($Engines -join ","))
+        }
+        $resp = Invoke-RestMethod -Uri ($BaseUrl.TrimEnd('/') + "/search?" + $query) -UseBasicParsing -Headers @{ "User-Agent" = "Mozilla/5.0 quickstart-check" } -TimeoutSec 15
         return @($resp.results).Count -gt 0
     } catch {
         return $false
     }
+}
+
+function Get-DotEnvValue {
+    param(
+        [string]$Path,
+        [string]$Key
+    )
+
+    if (-not (Test-Path $Path)) {
+        return $null
+    }
+
+    $prefix = "$Key="
+    foreach ($line in Get-Content -Path $Path -Encoding UTF8) {
+        if ($line.StartsWith($prefix)) {
+            return $line.Substring($prefix.Length).Trim()
+        }
+    }
+
+    return $null
+}
+
+function Get-SearXngDefaultEngines {
+    param([string]$EnvPath)
+
+    $raw = Get-DotEnvValue -Path $EnvPath -Key "SEARXNG_DEFAULT_ENGINES"
+    if ([string]::IsNullOrWhiteSpace($raw) -or $raw -eq "[]") {
+        return @()
+    }
+
+    try {
+        $parsed = $raw | ConvertFrom-Json
+        if ($parsed -is [System.Array]) {
+            return @($parsed | ForEach-Object { "$_".Trim() } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+        }
+    } catch {
+    }
+
+    return @($raw.Split(",") | ForEach-Object { $_.Trim().Trim('"').Trim("'") } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
 }
 
 Write-Host "========================================" -ForegroundColor Cyan
@@ -96,9 +142,10 @@ if (-not $SkipInfra) {
 
     $searxngPort = if ($env:SEARXNG_PORT) { $env:SEARXNG_PORT } else { "18080" }
     $searxngBaseUrl = "http://127.0.0.1:$searxngPort"
+    $searxngEngines = Get-SearXngDefaultEngines -EnvPath ".env"
     $searxngConfig = Test-Endpoint "$searxngBaseUrl/config" "SearXNG Config"
     Write-Check "SearXNG 配置页" $searxngConfig "请先运行: pwsh -ExecutionPolicy Bypass -File .\scripts\start_all.ps1"
-    $searxngSearch = Test-SearXngJsonSearch -BaseUrl $searxngBaseUrl
+    $searxngSearch = Test-SearXngJsonSearch -BaseUrl $searxngBaseUrl -Engines $searxngEngines
     Write-Check "SearXNG JSON 搜索 API" $searxngSearch "请检查 infra/searxng/config/settings.yml 中 search.formats 是否包含 json；若 API 可访问但 results 为空且容器日志出现 ConnectTimeout/ConnectError，请检查 Podman 外网连通性或代理配置（例如宿主机代理是否可从容器访问）。"
 
     # 后端接口

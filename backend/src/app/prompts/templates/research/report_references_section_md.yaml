@@ -3,7 +3,7 @@ name: research_report_references_section_md
 description: "Deep Research report references section markdown"
 
 template: |
-  ## References
+  ## 参考来源
   {items_block}
 
 variables:

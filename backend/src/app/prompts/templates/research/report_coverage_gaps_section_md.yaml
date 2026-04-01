@@ -3,7 +3,7 @@ name: research_report_coverage_gaps_section_md
 description: "Deep Research report coverage gaps section markdown"
 
 template: |
-  ## Coverage Gaps
+  ## 覆盖缺口
   {items_block}
 
 variables:

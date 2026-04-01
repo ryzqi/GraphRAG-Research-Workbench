@@ -6,110 +6,15 @@
 
 use_default_settings:
   engines:
-    # 方案A：维持“多引擎白名单”单一路径，按项目当前确认口径启用：
-    # - 全部 general / news / it / software wikis / q&a / science / wikimedia / web
-    # - uncategorized 中仅保守开启常见通用搜索 / 内容源
+    # 最小恢复：当前默认 general 引擎普遍 403/429/timeout，先收敛到已实测可返回结果的子集。
     keep_only:
-      - anaconda
-      - aol
-      - nixos wiki
-      - baidu
-      - baidu kaifa
-      - wikipedia
-      - bitbucket
-      - crowdview
-      - yep
-      - yep news
-      - docker hub
-      - encyclosearch
-      - wikidata
-      - duckduckgo news
-      - free software directory
-      - fynd
-      - gentoo
-      - habrahabr
-      - hoogle
-      - karmasearch
-      - karmasearch images
-      - karmasearch videos
-      - karmasearch news
-      - lobste.rs
-      - mdn
-      - mankier
-      - openairedatasets
-      - openairepublications
-      - packagist
-      - presearch
-      - presearch images
-      - presearch videos
-      - presearch news
-      - pub.dev
-      - quark
-      - qwant
-      - qwant news
-      - qwant images
-      - qwant videos
-      - searchmysite
-      - stackoverflow
-      - askubuntu
-      - superuser
-      - discuss.python
-      - caddy.community
-      - pi-hole.community
-      - startpage
-      - startpage news
-      - startpage images
-      - yandex
-      - brave
-      - brave.images
-      - brave.videos
-      - brave.news
-      - mojeek
-      - mojeek images
-      - mojeek news
-      - naver
-      - naver news
-      - rubygems
-      - wiby
-      - wikibooks
-      - wikinews
-      - wikiquote
-      - wikisource
-      - wikispecies
-      - wiktionary
-      - wikiversity
-      - wikivoyage
-      - wolframalpha
-      - yacy
-      - wikimini
-      - minecraft wiki
-      - google
-      - google images
-      - google news
-      - google videos
       - bing
-      - bing images
-      - bing news
-      - bing videos
-      - duckduckgo
       - github
       - reddit
+      - searchmysite
+      - stackoverflow
+      - superuser
       - youtube
-      - arxiv
-      - pubmed
-      - openstreetmap
-
-engines:
-  - name: aol
-    disabled: false
-  - name: brave
-    disabled: false
-    retry_on_http_error: 403
-  - name: mojeek
-    disabled: false
-    retry_on_http_error: 403
-  - name: wiby
-    disabled: false
 
 general:
   debug: false

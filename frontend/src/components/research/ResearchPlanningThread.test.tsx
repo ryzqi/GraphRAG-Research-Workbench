@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { ResearchPlanningThread } from './ResearchPlanningThread';
 
 describe('ResearchPlanningThread', () => {
-  it('renders clarification questions first and hides the confirmation CTA while clarifying', () => {
+  it('keeps only the question, clarification payload, and submit action while clarifying', () => {
     const html = renderToStaticMarkup(
       createElement(ResearchPlanningThread, {
         question: '帮我研究适合 20 人团队的 MCP 部署方案',
@@ -29,7 +29,10 @@ describe('ResearchPlanningThread', () => {
     expect(html).toContain('帮我研究适合 20 人团队的 MCP 部署方案');
     expect(html).toContain('你更关注内部研发团队，还是对外客户交付？');
     expect(html).toContain('受众不同，会影响部署复杂度、权限模型和评估重点。');
-    expect(html).toContain('补充你的回答');
+    expect(html).not.toContain('你的研究问题');
+    expect(html).not.toContain('研究助手');
+    expect(html).not.toContain('在开始规划前，还需要补充一点信息');
+    expect(html).not.toContain('补充你的回答');
     expect(html).toContain('提交补充信息');
     expect(html).not.toContain('计划草案');
   });

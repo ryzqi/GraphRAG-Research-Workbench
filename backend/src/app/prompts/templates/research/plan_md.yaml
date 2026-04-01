@@ -3,17 +3,17 @@ name: research_plan_md
 description: "Deep Research workspace plan markdown"
 
 template: |
-  # Plan
+  # 研究计划
 
-  ## Summary
+  ## 摘要
   {summary}
 
-  ## Execution Rules
+  ## 执行规则
   - 先完成高价值事实收集，再执行交叉验证，最后整理风险、限制与缺口。
   - 每个子任务都应对应明确的预期证据与验证动作。
   - 若研究过程中发现关键冲突，应优先回到验证链路而不是直接写结论。
 
-  ## Subtasks
+  ## 子任务
   {subtasks_block}
 
 variables:
