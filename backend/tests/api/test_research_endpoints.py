@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -10,9 +11,12 @@ from fastapi.testclient import TestClient
 from app.api.v1.api import api_router
 from app.core.errors import register_exception_handlers
 from app.db.session import get_db_session
+from app.models.research_artifact import ResearchArtifact
+from app.models.research_event import ResearchEvent
 from app.main import app as main_app
 from app.models.research_session import ResearchSession, ResearchSessionStatus
 from app.schemas.research import (
+    ResearchCanonicalCitation,
     ResearchArtifactRead,
     ResearchClarificationQuestion,
     ResearchClarificationRequest,
@@ -21,9 +25,15 @@ from app.schemas.research import (
     ResearchPlanSnapshot,
     ResearchPlanSubtask,
     ResearchSessionCreateRequest,
+    ResearchSourceTarget,
+    ResearchSourceType,
 )
+from app.services.research_finalizer import ResearchFinalizer
+from app.services.research_observability import ResearchRuntimeRunResult
 from app.services.research_planner import ResearchPlanner, ResearchScoper
 from app.services.research_planner_types import ResearchPlannerResult
+from app.services.research_service import ResearchService
+from app.services.research_source_bundle import ResearchSourceBundleBuilder
 
 
 class _FakeAsyncSession:
@@ -32,6 +42,44 @@ class _FakeAsyncSession:
 
     async def commit(self) -> None:
         self.commit_calls += 1
+
+
+class _ScalarResult:
+    def __init__(self, value: ResearchSession | None) -> None:
+        self._value = value
+
+    def scalar_one_or_none(self) -> ResearchSession | None:
+        return self._value
+
+
+class _StoredAsyncSession(_FakeAsyncSession):
+    def __init__(self) -> None:
+        super().__init__()
+        self._session: ResearchSession | None = None
+        self._artifacts: list[ResearchArtifact] = []
+        self._events: list[ResearchEvent] = []
+
+    def add(self, obj: object) -> None:
+        if isinstance(obj, ResearchSession):
+            self._session = obj
+            return
+        if self._session is None:
+            return
+        if isinstance(obj, ResearchArtifact):
+            self._artifacts.append(obj)
+            return
+        if isinstance(obj, ResearchEvent):
+            self._events.append(obj)
+
+    async def flush(self) -> None:
+        return None
+
+    async def execute(self, stmt):  # type: ignore[no-untyped-def]
+        del stmt
+        if self._session is not None:
+            self._session.artifacts = list(self._artifacts)
+            self._session.events = list(self._events)
+        return _ScalarResult(self._session)
 
 
 class _SequenceScoper(ResearchScoper):
@@ -46,6 +94,35 @@ class _SequenceScoper(ResearchScoper):
         if not self.outputs:
             raise AssertionError(f"missing scoper output for question: {question}")
         return self.outputs.pop(0)
+
+
+class _EndpointRuntimeRunner:
+    async def run_session(
+        self,
+        *,
+        session: ResearchSession,
+        plan_snapshot: ResearchPlanSnapshot,
+    ) -> ResearchRuntimeRunResult:
+        citation = ResearchCanonicalCitation(
+            source_type=ResearchSourceType.WEB,
+            source_provider="tavily",
+            retrieval_method="search",
+            source_id="https://example.com/research-os-smoke",
+            title="Research OS Smoke",
+            url="https://example.com/research-os-smoke",
+            origin_url="https://example.com/research-os-smoke",
+        )
+        bundle = ResearchSourceBundleBuilder().build(
+            target_sources=plan_snapshot.target_sources,
+            citations=[citation],
+            findings=[f"已完成问题“{session.question}”的 API smoke 执行。"],
+            required_web_providers=("tavily",),
+        )
+        return ResearchRuntimeRunResult(
+            source_bundle=bundle,
+            latency_ms=1500,
+            total_cost_usd=0.01,
+        )
 
 
 def _build_plan_snapshot(question: str) -> ResearchPlanSnapshot:
@@ -497,3 +574,52 @@ def test_stream_interrupt_resume_and_artifacts_flow_without_confirm_plan() -> No
         assert artifacts_response.json()["items"][0]["artifact_key"] == "plan_snapshot"
 
     assert db.commit_calls == 3
+
+
+def test_create_and_artifact_endpoints_expose_real_research_service_artifacts() -> None:
+    db = _StoredAsyncSession()
+    service = ResearchService(
+        db=db,
+        planner=ResearchPlanner(scoper=_SequenceScoper([_build_plan_snapshot("Research OS API smoke")])),
+        runtime_runner=_EndpointRuntimeRunner(),
+        finalizer=ResearchFinalizer(),
+    )
+    dispatched: list[str] = []
+
+    with _build_test_client(service=service, db=db, dispatched=dispatched) as client:
+        create_response = client.post(
+            "/api/v1/research/sessions",
+            json={"question": "验证 Research OS API smoke artifacts"},
+        )
+
+        assert create_response.status_code == 201
+        payload = create_response.json()
+        assert payload["status"] == ResearchSessionStatus.QUEUED.value
+
+        session_id = uuid.UUID(payload["session_id"])
+        session = asyncio.run(service.get_session(session_id))
+        plan_snapshot = ResearchPlanSnapshot.model_validate(payload["plan_snapshot"])
+        asyncio.run(service.execute_session(session=session, plan_snapshot=plan_snapshot))
+
+        artifacts_response = client.get(f"/api/v1/research/sessions/{session_id}/artifacts")
+
+    assert artifacts_response.status_code == 200
+    artifact_keys = {
+        item["artifact_key"]
+        for item in artifacts_response.json()["items"]
+    }
+    assert {
+        "mission_md",
+        "plan_md",
+        "query_map_md",
+        "coverage_md",
+        "report_draft_md",
+        "report_md",
+        "report_json",
+        "claim_map_json",
+        "coverage_matrix_json",
+        "conflicts_json",
+        "source_ledger_json",
+        "metrics_snapshot",
+        "gate_snapshot",
+    }.issubset(artifact_keys)

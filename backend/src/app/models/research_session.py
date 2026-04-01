@@ -23,7 +23,6 @@ class ResearchSessionStatus(str, Enum):
     CREATED = "created"
     PLANNING = "planning"
     CLARIFYING = "clarifying"
-    AWAITING_CONFIRMATION = "awaiting_confirmation"
     QUEUED = "queued"
     RUNNING = "running"
     INTERRUPTED = "interrupted"
@@ -69,7 +68,6 @@ _ALLOWED_RESEARCH_SESSION_TRANSITIONS: dict[
     ResearchSessionStatus.PLANNING: frozenset(
         {
             ResearchSessionStatus.CLARIFYING,
-            ResearchSessionStatus.AWAITING_CONFIRMATION,
             ResearchSessionStatus.QUEUED,
             ResearchSessionStatus.RUNNING,
             ResearchSessionStatus.CANCELED,
@@ -78,15 +76,6 @@ _ALLOWED_RESEARCH_SESSION_TRANSITIONS: dict[
         }
     ),
     ResearchSessionStatus.CLARIFYING: frozenset(
-        {
-            ResearchSessionStatus.QUEUED,
-            ResearchSessionStatus.AWAITING_CONFIRMATION,
-            ResearchSessionStatus.CANCELED,
-            ResearchSessionStatus.FAILED,
-            ResearchSessionStatus.TIMED_OUT,
-        }
-    ),
-    ResearchSessionStatus.AWAITING_CONFIRMATION: frozenset(
         {
             ResearchSessionStatus.QUEUED,
             ResearchSessionStatus.CANCELED,

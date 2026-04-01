@@ -74,7 +74,7 @@ def _artifact(
     )
 
 
-async def test_research_exporter_reads_report_artifacts_by_session_id() -> None:
+async def test_research_exporter_reads_report_markdown_even_with_richer_report_json() -> None:
     session_id = uuid.uuid4()
     exporter = ResearchExporter()
     session = _FakeAsyncSession(
@@ -84,9 +84,28 @@ async def test_research_exporter_reads_report_artifacts_by_session_id() -> None:
                 artifact_key="report_json",
                 content_json={
                     "question": "什么是 deep research?",
-                    "claim_map": [{"claim": "deep research 需要证据", "verdict": "supported"}],
+                    "claim_map": [
+                        {
+                            "claim": "deep research 需要证据",
+                            "verdict": "supported",
+                            "citation_indices": [0, 1],
+                        },
+                        {
+                            "claim": "deep research 没有 coverage gap",
+                            "verdict": "contested",
+                            "citation_indices": [1],
+                        },
+                    ],
                     "coverage_matrix": {"provider_counts": {"tavily": 1}},
-                    "conflicts": [],
+                    "conflicts": [
+                        {
+                            "claim": "deep research 没有 coverage gap",
+                            "verdict": "contested",
+                            "reason": "coverage_gap",
+                            "citation_indices": [1],
+                            "coverage_gaps": ["缺少 provider 证据：searxng"],
+                        }
+                    ],
                     "source_ledger": [
                         {
                             "provider": "tavily",

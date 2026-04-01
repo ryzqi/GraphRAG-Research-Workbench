@@ -88,6 +88,34 @@ export interface ResearchCanonicalCitation {
   accessed_at?: string | null;
 }
 
+export interface ResearchSourceLedgerEntry {
+  provider: string | null;
+  origin_url: string | null;
+  title: string | null;
+  source_type: ResearchSourceType | null;
+}
+
+export type ResearchClaimVerdict = 'supported' | 'contested' | 'insufficient';
+
+export interface ResearchClaimMapEntry {
+  claim: string;
+  verdict: ResearchClaimVerdict;
+  citation_indices: number[];
+}
+
+export interface ResearchConflictEntry {
+  claim: string | null;
+  verdict: ResearchClaimVerdict;
+  reason: string;
+  citation_indices: number[];
+  coverage_gaps: string[];
+}
+
+export interface ResearchCoverageMatrix {
+  provider_counts: Record<string, number>;
+  missing_providers: string[];
+}
+
 export interface ResearchArtifactRead {
   artifact_key: string;
   content_text?: string | null;
@@ -248,10 +276,6 @@ export function deriveResearchStatus(params: {
         return 'failed';
       case 'research.run.started':
         return 'running';
-      case 'research.plan.rejected':
-        return 'canceled';
-      case 'research.plan.confirmed':
-        return 'queued';
       default:
         break;
     }

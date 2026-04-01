@@ -8,11 +8,12 @@ import dynamic from 'next/dynamic';
 import { Container, Stack, Typography } from '@mui/material';
 import DownloadIcon from '@mui/icons-material/Download';
 import RefreshIcon from '@mui/icons-material/Refresh';
-import { PlanPreviewPanel } from '../components/research/PlanPreviewPanel';
+import { MissionControlBar } from '../components/research/MissionControlBar';
 import { ResearchCanvas } from '../components/research/ResearchCanvas';
 import { ResearchComposer } from '../components/research/ResearchComposer';
+import { ResearchEvidenceLedger } from '../components/research/ResearchEvidenceLedger';
+import { ResearchPlanRail } from '../components/research/ResearchPlanRail';
 import { ResearchPlanningThread } from '../components/research/ResearchPlanningThread';
-import { ResearchSessionRail } from '../components/research/ResearchSessionRail';
 import { ResearchWorkspaceShell } from '../components/research/ResearchWorkspaceShell';
 import { Button } from '../components/ui/Button';
 import { ErrorAlert } from '../components/ui/ErrorAlert';
@@ -21,7 +22,7 @@ import { createExport, pollExportUntilDone } from '../services/exports';
 import {
   buildResearchCanvasModel,
   buildResearchProgressFeed,
-  buildResearchSourceSummary,
+  buildResearchWorkspaceModel,
 } from '../services/researchWorkbench';
 import {
   useCreateResearchSession,
@@ -45,13 +46,6 @@ const InterruptDecisionPanel = dynamic(
     ),
   {
     loading: () => null,
-  }
-);
-
-const ArtifactPanel = dynamic(
-  () => import('../components/research/ArtifactPanel').then((mod) => mod.ArtifactPanel),
-  {
-    loading: () => <LoadingSpinner text='加载证据面板...' />,
   }
 );
 
@@ -291,7 +285,10 @@ export function ResearchPage() {
     () => buildResearchProgressFeed(session?.events ?? []),
     [session?.events]
   );
-  const sourceSummary = useMemo(() => buildResearchSourceSummary(), []);
+  const workspaceModel = useMemo(
+    () => buildResearchWorkspaceModel(session?.artifacts ?? []),
+    [session?.artifacts]
+  );
   const canvasModel = useMemo(
     () =>
       buildResearchCanvasModel({
@@ -303,9 +300,21 @@ export function ResearchPage() {
       }),
     [progressItems, session]
   );
-  const hasArtifactPanel = Boolean(
-    session?.report_md || session?.report_json || (session?.artifacts.length ?? 0) > 0
-  );
+  const coverageLabel = useMemo(() => {
+    const providerCount = Object.keys(workspaceModel.coverage.matrix.provider_counts).length;
+    const missingCount = workspaceModel.coverage.matrix.missing_providers.length;
+
+    if (providerCount > 0 && missingCount > 0) {
+      return `Coverage ${providerCount} / gap ${missingCount}`;
+    }
+    if (providerCount > 0) {
+      return `Coverage ${providerCount} providers`;
+    }
+    if (missingCount > 0) {
+      return `Coverage gap ${missingCount}`;
+    }
+    return 'Coverage warming up';
+  }, [workspaceModel.coverage.matrix.missing_providers.length, workspaceModel.coverage.matrix.provider_counts]);
 
   return (
     <Container
@@ -363,18 +372,15 @@ export function ResearchPage() {
           statusLine={statusPresentation?.label ?? '研究中…'}
           sidebarOpen={sidebarOpen}
           onToggleSidebar={() => setSidebarOpen((current) => !current)}
-          rail={
-            <ResearchSessionRail
+          missionControl={
+            <MissionControlBar
               question={question.trim()}
               statusLabel={statusPresentation?.label ?? '等待中'}
               statusTone={statusPresentation?.badge ?? 'pending'}
-              progressItems={progressItems}
-              sourceSummary={sourceSummary}
-              planPanel={
-                <PlanPreviewPanel planSnapshot={session.plan_snapshot} />
-              }
-              interruptPanel={
-                <Stack spacing={1.5}>
+              coverageLabel={coverageLabel}
+              missionMarkdown={workspaceModel.mission.markdown}
+              actions={
+                <>
                   {(session.status === 'running' || session.status === 'resuming') ? (
                     <Button
                       variant="outlined"
@@ -382,11 +388,24 @@ export function ResearchPage() {
                       onClick={handleInterrupt}
                       loading={interruptSessionMutation.isPending}
                       startIcon={<RefreshIcon />}
-                      sx={{ alignSelf: 'flex-start' }}
                     >
                       请求中断
                     </Button>
                   ) : null}
+                  <Button variant="outlined" size="small" onClick={reset}>
+                    新研究
+                  </Button>
+                </>
+              }
+            />
+          }
+          rail={
+            <ResearchPlanRail
+              planMarkdown={workspaceModel.plan.markdown}
+              subtaskCount={workspaceModel.plan.subtaskCount}
+              progressItems={progressItems}
+              controls={
+                <Stack spacing={1.5}>
                   <InterruptDecisionPanel
                     status={session.status}
                     resumeIdempotencyKey={resumeIdempotencyKey}
@@ -399,7 +418,6 @@ export function ResearchPage() {
                 </Stack>
               }
               advancedEventsPanel={<ResearchAdvancedEventsPanel events={session.events} />}
-              onReset={reset}
             />
           }
           canvas={
@@ -417,15 +435,16 @@ export function ResearchPage() {
                   导出报告
                 </Button>
               }
-              artifactPanel={
-                hasArtifactPanel ? (
-                  <ArtifactPanel
-                    reportMd={session.report_md}
-                    reportJson={session.report_json}
-                    artifacts={session.artifacts}
-                  />
-                ) : null
-              }
+            />
+          }
+          ledger={
+            <ResearchEvidenceLedger
+              contractErrors={workspaceModel.contractErrors}
+              coverageMarkdown={workspaceModel.coverage.markdown}
+              coverageMatrix={workspaceModel.coverage.matrix}
+              sources={workspaceModel.evidence.sources}
+              claims={workspaceModel.claims.items}
+              conflicts={workspaceModel.evidence.conflicts}
             />
           }
         />

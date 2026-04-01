@@ -182,7 +182,6 @@
   02-query-map.md
   03-coverage.md
   04-report-draft.md
-  05-final-report.md
 
 /scratch/research/<session_id>/
   notes/
@@ -210,6 +209,11 @@
     conflicts.json
     source-ledger.json
 ```
+
+最终收口后的报告不再额外落一个 `05-final-report.md` 工作区文件，而是统一由 finalizer 输出：
+
+- `report_md`
+- `report_json`
 
 ## 8.2 Markdown 文件规范
 
@@ -303,7 +307,7 @@ Markdown 文件应包含 front matter，至少包括：
 - `query_map_md`
 - `coverage_md`
 - `report_draft_md`
-- `final_report_md`
+- `report_md`
 - `claim_map_json`
 - `coverage_matrix_json`
 - `conflicts_json`

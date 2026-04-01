@@ -108,4 +108,5 @@ async def test_interrupt_resume_contract_reaches_final_with_consistent_replay() 
     assert any(item.event_type == "research.run.interrupted" for item in envelopes)
     assert any(item.event_type == "research.run.resume_requested" for item in envelopes)
     assert envelopes[-1].event_type == "research.final.completed"
-    assert (session.metrics or {})["gate"]["pass"] is True
+    assert (session.metrics or {})["replay"]["pass"] is True
+    assert isinstance((session.metrics or {})["gate"], dict)

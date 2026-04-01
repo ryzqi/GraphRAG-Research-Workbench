@@ -4,7 +4,7 @@ from types import SimpleNamespace
 from typing import Any, cast
 
 import app.services.deep_research_runtime as runtime_module
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from app.agents.tool_calling.registry import build_research_tool_registry
 from app.core.settings import Settings
 from app.schemas.research import ResearchCanonicalCitation, ResearchSourceTarget, ResearchSourceType
@@ -240,8 +240,10 @@ def test_source_bundle_builder_reports_missing_provider_gaps_for_comparative_pla
     assert "缺少 provider 证据：searxng" in bundle.coverage_gaps
 
 
-def test_research_finalizer_outputs_report_md_and_report_json() -> None:
+def test_research_finalizer_validates_strict_response_format_before_merging_verification_extras() -> None:
     class _ReportPayload(BaseModel):
+        model_config = ConfigDict(extra="forbid")
+
         question: str
         target_sources: list[str]
         summary: str
@@ -276,5 +278,42 @@ def test_research_finalizer_outputs_report_md_and_report_json() -> None:
 
     assert result.report_json["question"] == "解释 Jina Reader 在深度研究中的引用约束"
     assert result.report_json["citations"][0]["origin_url"] == "https://example.com/article-a"
+    assert result.report_json["claim_map"][0]["verdict"] == "contested"
     assert "Article A" in result.report_md
     assert "https://r.jina.ai/" not in result.report_md
+
+
+def test_research_finalizer_keeps_base_fields_when_response_format_is_narrow() -> None:
+    class _NarrowPayload(BaseModel):
+        model_config = ConfigDict(extra="forbid")
+
+        citations: list[dict[str, Any]]
+
+    citation = ResearchCanonicalCitation(
+        source_type=ResearchSourceType.WEB,
+        source_provider="tavily",
+        retrieval_method="search",
+        source_id="openai-plan",
+        title="OpenAI planner workflow",
+        url="https://example.com/openai-plan",
+        origin_url="https://example.com/openai-plan",
+    )
+    bundle = ResearchSourceBundleBuilder().build(
+        target_sources=(ResearchSourceTarget.WEB,),
+        citations=[citation],
+        findings=["OpenAI workflow 采用 planner + workspace。"],
+        required_web_providers=("tavily",),
+    )
+
+    result = ResearchFinalizer().finalize(
+        question="解释 OpenAI deep research workflow",
+        target_sources=(ResearchSourceTarget.WEB,),
+        source_bundle=bundle,
+        response_format=_NarrowPayload,
+    )
+
+    assert result.report_json["question"] == "解释 OpenAI deep research workflow"
+    assert result.report_json["summary"] == bundle.interim_summary
+    assert result.report_json["provider_counts"] == {"tavily": 1}
+    assert result.report_json["report_md"] == result.report_md
+    assert result.report_json["citations"][0]["origin_url"] == "https://example.com/openai-plan"

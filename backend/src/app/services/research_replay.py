@@ -95,8 +95,6 @@ def _next_status(
 ) -> ResearchSessionStatus:
     mapping = {
         "research.plan.created": ResearchSessionStatus.PLANNING,
-        "research.plan.confirmed": ResearchSessionStatus.QUEUED,
-        "research.plan.rejected": ResearchSessionStatus.CANCELED,
         "research.run.started": ResearchSessionStatus.RUNNING,
         "research.run.interrupted": ResearchSessionStatus.INTERRUPTED,
         "research.run.resume_requested": ResearchSessionStatus.RESUMING,

@@ -314,3 +314,111 @@ def test_build_research_metrics_allows_workspace_only_web_path_when_evidence_is_
     assert metrics["coverage"]["pass"] is True
     assert metrics["coverage"]["reasons"] == []
     assert gate["pass"] is True
+
+
+def test_build_research_metrics_rewards_target_source_coverage_in_quality_score() -> None:
+    session = ResearchSession(
+        id=uuid4(),
+        thread_id="target-coverage-quality-session",
+        question="比较 web 与 paper 的研究 coverage 质量",
+        status=ResearchSessionStatus.RUNNING,
+    )
+    plan_snapshot = ResearchPlanSnapshot(
+        research_brief="同时覆盖 web 与 paper 目标来源。",
+        complexity="complex",
+        summary="验证 quality score 会奖励 target source coverage。",
+        target_sources=[ResearchSourceTarget.WEB, ResearchSourceTarget.PAPER],
+    )
+    findings = ["发现一。", "发现二。"]
+    full_coverage_bundle = ResearchSourceBundleBuilder().build(
+        target_sources=plan_snapshot.target_sources,
+        citations=[
+            ResearchCanonicalCitation(
+                source_type=ResearchSourceType.WEB,
+                source_provider="tavily",
+                retrieval_method="search",
+                source_id="https://example.com/full-web",
+                title="Full Web",
+                url="https://example.com/full-web",
+                origin_url="https://example.com/full-web",
+            ),
+            ResearchCanonicalCitation(
+                source_type=ResearchSourceType.PAPER,
+                source_provider="arxiv",
+                retrieval_method="fetch",
+                source_id="arxiv:2501.00001",
+                title="Full Paper",
+                url="https://arxiv.org/abs/2501.00001",
+                origin_url="https://arxiv.org/abs/2501.00001",
+                arxiv_id="2501.00001",
+                pdf_url="https://arxiv.org/pdf/2501.00001.pdf",
+            ),
+            ResearchCanonicalCitation(
+                source_type=ResearchSourceType.WEB,
+                source_provider="workspace",
+                retrieval_method="read_file",
+                source_id="/workspace/context/report.md",
+                title="Workspace Report",
+                url="file:///workspace/context/report.md",
+                origin_url="file:///workspace/context/report.md",
+            ),
+        ],
+        findings=findings,
+        required_web_providers=(),
+    )
+    partial_coverage_bundle = ResearchSourceBundleBuilder().build(
+        target_sources=plan_snapshot.target_sources,
+        citations=[
+            ResearchCanonicalCitation(
+                source_type=ResearchSourceType.WEB,
+                source_provider="tavily",
+                retrieval_method="search",
+                source_id="https://example.com/partial-web",
+                title="Partial Web",
+                url="https://example.com/partial-web",
+                origin_url="https://example.com/partial-web",
+            ),
+            ResearchCanonicalCitation(
+                source_type=ResearchSourceType.WEB,
+                source_provider="workspace",
+                retrieval_method="read_file",
+                source_id="/workspace/context/notes.md",
+                title="Workspace Notes",
+                url="file:///workspace/context/notes.md",
+                origin_url="file:///workspace/context/notes.md",
+            ),
+            ResearchCanonicalCitation(
+                source_type=ResearchSourceType.WEB,
+                source_provider="jina_reader",
+                retrieval_method="search",
+                source_id="https://example.com/partial-web-2",
+                title="Partial Web 2",
+                url="https://example.com/partial-web-2",
+                origin_url="https://example.com/partial-web-2",
+            ),
+        ],
+        findings=findings,
+        required_web_providers=(),
+    )
+
+    full_score = build_research_metrics(
+        session=session,
+        plan_snapshot=plan_snapshot,
+        runtime_result=ResearchRuntimeRunResult(
+            source_bundle=full_coverage_bundle,
+            latency_ms=900,
+            total_cost_usd=0.1,
+        ),
+    )["quality"]["score"]
+    partial_score = build_research_metrics(
+        session=session,
+        plan_snapshot=plan_snapshot,
+        runtime_result=ResearchRuntimeRunResult(
+            source_bundle=partial_coverage_bundle,
+            latency_ms=900,
+            total_cost_usd=0.1,
+        ),
+    )["quality"]["score"]
+
+    assert full_score > partial_score
+    assert full_score >= 0.75

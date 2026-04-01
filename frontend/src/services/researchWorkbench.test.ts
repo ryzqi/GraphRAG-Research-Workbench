@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   buildResearchCanvasModel,
   buildResearchProgressFeed,
-  buildResearchSourceSummary,
+  buildResearchWorkspaceModel,
 } from './researchWorkbench';
 import type { ResearchArtifactRead, ResearchEventEnvelope } from '../types/researchEvents';
 
@@ -43,20 +43,92 @@ const interimArtifacts: ResearchArtifactRead[] = [
   },
   {
     artifact_key: 'coverage_gaps',
-    content_text: '仍需补充一条公开网页案例。',
+    content_json: ['仍需补充一条公开网页案例。'],
     citations: [],
   },
 ];
 
-describe('buildResearchSourceSummary', () => {
-  it('returns network-only source summary', () => {
-    expect(buildResearchSourceSummary()).toEqual({
-      heading: '研究来源',
-      modeLabel: '网络搜索深度研究',
-      helperText: '当前仅使用联网检索与外部资料完成研究。',
-    });
-  });
-});
+const workspaceArtifacts: ResearchArtifactRead[] = [
+  {
+    artifact_key: 'mission_md',
+    content_text: '# Mission\n\n- Brief: 研究 LangGraph Deep Research 工作流\n',
+    citations: [],
+  },
+  {
+    artifact_key: 'plan_md',
+    content_text:
+      '# Plan\n\n## Summary\n先梳理控制面，再补全证据账本。\n\n## Subtasks\n- Mission Control: 明确任务视图\n- Evidence Ledger: 对齐证据结构\n',
+    citations: [],
+  },
+  {
+    artifact_key: 'coverage_md',
+    content_text: '# Coverage\n\n- status: in_progress\n',
+    citations: [],
+  },
+  {
+    artifact_key: 'coverage_matrix_json',
+    content_json: {
+      provider_counts: { tavily: 2, searxng: 1 },
+      missing_providers: ['jina'],
+    },
+    citations: [],
+  },
+  {
+    artifact_key: 'source_ledger_json',
+    content_json: [
+      {
+        provider: 'tavily',
+        origin_url: 'https://example.com/a',
+        title: 'Source A',
+        source_type: 'web',
+      },
+      {
+        provider: 'arxiv',
+        origin_url: 'https://arxiv.org/abs/1234.5678',
+        title: 'Paper B',
+        source_type: 'paper',
+      },
+    ],
+    citations: [],
+  },
+  {
+    artifact_key: 'conflicts_json',
+    content_json: [
+      {
+        claim: 'Evidence Ledger 仍缺少冲突列表。',
+        verdict: 'contested',
+        reason: 'coverage_gap',
+        citation_indices: [1],
+        coverage_gaps: ['jina'],
+      },
+    ],
+    citations: [],
+  },
+  {
+    artifact_key: 'claim_map_json',
+    content_json: [
+      {
+        claim: 'Mission Control 需要 typed selectors。',
+        verdict: 'supported',
+        citation_indices: [0, 1],
+      },
+    ],
+    citations: [],
+  },
+  {
+    artifact_key: 'report_md',
+    content_text: '# Final Report\n\n结论已生成。',
+    citations: [],
+  },
+  {
+    artifact_key: 'report_json',
+    content_json: {
+      question: '什么是 Deep Research OS？',
+      citations: [],
+    },
+    citations: [],
+  },
+];
 
 describe('buildResearchCanvasModel', () => {
   it('shows progressive sections before report_md exists', () => {
@@ -73,6 +145,7 @@ describe('buildResearchCanvasModel', () => {
       findingsTitle: '阶段性发现',
       finalReportTitle: '最终报告',
       finalReportBody: null,
+      coverageGap: '仍需补充一条公开网页案例。',
     });
   });
 
@@ -86,6 +159,23 @@ describe('buildResearchCanvasModel', () => {
       }).mode
     ).toBe('final');
   });
+
+  it('reads coverage_gaps from content_json arrays emitted by backend artifacts', () => {
+    expect(
+      buildResearchCanvasModel({
+        status: 'running',
+        events: runningEvents,
+        artifacts: [
+          {
+            artifact_key: 'coverage_gaps',
+            content_json: ['缺少 provider 证据：tavily', '缺少论文交叉验证'],
+            citations: [],
+          },
+        ],
+        reportMd: null,
+      }).coverageGap
+    ).toBe('缺少 provider 证据：tavily\n缺少论文交叉验证');
+  });
 });
 
 describe('buildResearchProgressFeed', () => {
@@ -95,5 +185,123 @@ describe('buildResearchProgressFeed', () => {
       phaseLabel: 'retrieval',
       providerLabel: 'searxng',
     });
+  });
+});
+
+describe('buildResearchWorkspaceModel', () => {
+  it('hydrates mission, plan, coverage, evidence, claims, and report from typed artifacts', () => {
+    expect(buildResearchWorkspaceModel(workspaceArtifacts)).toEqual({
+      contractErrors: [],
+      mission: {
+        markdown: '# Mission\n\n- Brief: 研究 LangGraph Deep Research 工作流\n',
+      },
+      plan: {
+        markdown:
+          '# Plan\n\n## Summary\n先梳理控制面，再补全证据账本。\n\n## Subtasks\n- Mission Control: 明确任务视图\n- Evidence Ledger: 对齐证据结构\n',
+        subtaskCount: 2,
+      },
+      coverage: {
+        markdown: '# Coverage\n\n- status: in_progress\n',
+        matrix: {
+          provider_counts: { tavily: 2, searxng: 1 },
+          missing_providers: ['jina'],
+        },
+      },
+      evidence: {
+        sources: [
+          {
+            provider: 'tavily',
+            origin_url: 'https://example.com/a',
+            title: 'Source A',
+            source_type: 'web',
+          },
+          {
+            provider: 'arxiv',
+            origin_url: 'https://arxiv.org/abs/1234.5678',
+            title: 'Paper B',
+            source_type: 'paper',
+          },
+        ],
+        conflicts: [
+          {
+            claim: 'Evidence Ledger 仍缺少冲突列表。',
+            verdict: 'contested',
+            reason: 'coverage_gap',
+            citation_indices: [1],
+            coverage_gaps: ['jina'],
+          },
+        ],
+      },
+      claims: {
+        items: [
+          {
+            claim: 'Mission Control 需要 typed selectors。',
+            verdict: 'supported',
+            citation_indices: [0, 1],
+          },
+        ],
+      },
+      report: {
+        markdown: '# Final Report\n\n结论已生成。',
+        json: {
+          question: '什么是 Deep Research OS？',
+          citations: [],
+        },
+      },
+    });
+  });
+
+  it('records explicit contract errors when verification artifact json shapes drift', () => {
+    expect(
+      buildResearchWorkspaceModel([
+        {
+          artifact_key: 'source_ledger_json',
+          content_json: { provider: 'tavily' },
+          citations: [],
+        },
+        {
+          artifact_key: 'claim_map_json',
+          content_json: { claim: 'not-an-array' },
+          citations: [],
+        },
+        {
+          artifact_key: 'coverage_matrix_json',
+          content_json: ['not-an-object'],
+          citations: [],
+        },
+      ])
+    ).toMatchObject({
+      contractErrors: [
+        'coverage_matrix_json 格式无效：期望对象',
+        'source_ledger_json 格式无效：期望数组',
+        'claim_map_json 格式无效：期望数组',
+      ],
+      coverage: {
+        matrix: {
+          provider_counts: {},
+          missing_providers: [],
+        },
+      },
+      evidence: {
+        sources: [],
+        conflicts: [],
+      },
+      claims: {
+        items: [],
+      },
+    });
+  });
+
+  it('counts only bullet items inside the Subtasks section', () => {
+    expect(
+      buildResearchWorkspaceModel([
+        {
+          artifact_key: 'plan_md',
+          content_text:
+            '# Plan\n\n## Subtasks\n- 子任务 A\n- 子任务 B\n\n## Notes\n- 这不是子任务\n',
+          citations: [],
+        },
+      ]).plan.subtaskCount
+    ).toBe(2);
   });
 });

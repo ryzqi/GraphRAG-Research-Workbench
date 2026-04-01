@@ -78,6 +78,7 @@ def test_research_session_transition_to_same_status_is_idempotent() -> None:
 
 
 def test_research_session_status_allows_clarifying_before_queueing() -> None:
+    assert "awaiting_confirmation" not in {status.value for status in ResearchSessionStatus}
     assert ResearchSessionStatus.PLANNING.can_transition_to(ResearchSessionStatus.CLARIFYING)
     assert ResearchSessionStatus.PLANNING.can_transition_to(ResearchSessionStatus.QUEUED)
     assert ResearchSessionStatus.CLARIFYING.can_transition_to(ResearchSessionStatus.QUEUED)

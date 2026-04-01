@@ -114,7 +114,30 @@ describe('ResearchPage', () => {
       plan_snapshot: null,
       clarification_request: null,
       events: [],
-      artifacts: [],
+      artifacts: [
+        {
+          artifact_key: 'mission_md',
+          content_text: '# Mission\n\n比较调度路线',
+          citations: [],
+        },
+        {
+          artifact_key: 'plan_md',
+          content_text: '# Plan\n\n## Subtasks\n- 对齐控制面\n- 检查证据账本',
+          citations: [],
+        },
+        {
+          artifact_key: 'source_ledger_json',
+          content_json: [
+            {
+              provider: 'tavily',
+              title: '路线对比',
+              origin_url: 'https://example.com/routes',
+              source_type: 'web',
+            },
+          ],
+          citations: [],
+        },
+      ],
       last_event_id: null,
       last_sequence: 0,
       report_md: null,
@@ -146,8 +169,11 @@ describe('ResearchPage', () => {
     const html = renderToStaticMarkup(createElement(ResearchPage));
 
     expect(html).toContain('研究中…');
+    expect(html).toContain('Mission Control');
+    expect(html).toContain('Evidence Ledger');
+    expect(html).toContain('比较调度路线');
+    expect(html).toContain('路线对比');
     expect(html).toContain('收起侧栏');
-    expect(html).not.toContain('研究工作台');
   });
 
   it('renders the planning thread with clarification questions instead of the workspace', () => {
@@ -199,8 +225,64 @@ describe('ResearchPage', () => {
 
     expect(html).toContain('你希望输出选型建议，还是迁移实施方案？');
     expect(html).toContain('提交补充信息');
-    expect(html).not.toContain('研究工作台');
+    expect(html).not.toContain('Mission Control');
+    expect(html).not.toContain('Evidence Ledger');
     expect(html).not.toContain('失败');
+  });
+
+  it('shows an explicit contract error state instead of silently empty evidence sections', () => {
+    hookState.session = {
+      session_id: 'session-invalid-artifact',
+      status: 'running',
+      plan_snapshot: null,
+      clarification_request: null,
+      events: [],
+      artifacts: [
+        {
+          artifact_key: 'mission_md',
+          content_text: '# Mission\n\n检查 contract drift',
+          citations: [],
+        },
+        {
+          artifact_key: 'source_ledger_json',
+          content_json: {
+            provider: 'tavily',
+          },
+          citations: [],
+        },
+      ],
+      last_event_id: null,
+      last_sequence: 0,
+      report_md: null,
+      report_json: null,
+    };
+
+    const setState = vi.fn();
+    reactState.sequence = [
+      ['检查 contract drift', setState],
+      ['session-invalid-artifact', setState],
+      [
+        {
+          session_id: 'session-invalid-artifact',
+          status: 'running',
+          plan_snapshot: null,
+          clarification_request: null,
+        },
+        setState,
+      ],
+      [false, setState],
+      [null, setState],
+      ['', setState],
+      ['resume-1', setState],
+      ['[{"action":"approve"}]', setState],
+      [true, setState],
+    ];
+    reactState.index = 0;
+
+    const html = renderToStaticMarkup(createElement(ResearchPage));
+
+    expect(html).toContain('证据工件格式错误');
+    expect(html).toContain('source_ledger_json 格式无效：期望数组');
   });
 
 });

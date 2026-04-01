@@ -43,7 +43,7 @@ class ResearchFinalizer:
             question=question,
             source_bundle=source_bundle,
         )
-        report_json = {
+        report_json_base = {
             "question": question,
             "target_sources": [item.value for item in target_sources],
             "summary": source_bundle.interim_summary,
@@ -51,22 +51,24 @@ class ResearchFinalizer:
             "coverage_gaps": list(source_bundle.coverage_gaps),
             "provider_counts": dict(source_bundle.provider_counts),
             "citations": citations_payload,
+            "report_md": report_md,
+        }
+        verification_payload = {
             "claim_map": verification.claim_map,
             "coverage_matrix": verification.coverage_matrix,
             "conflicts": verification.conflicts,
             "source_ledger": verification.source_ledger,
-            "report_md": report_md,
         }
+        report_json = {**report_json_base, **verification_payload}
         if response_format is not None:
-            validated_payload = response_format.model_validate(report_json).model_dump(mode="json")
-            report_json = {
-                **validated_payload,
-                "claim_map": verification.claim_map,
-                "coverage_matrix": verification.coverage_matrix,
-                "conflicts": verification.conflicts,
-                "source_ledger": verification.source_ledger,
-                "report_md": report_md,
+            validation_input = {
+                field_name: report_json_base[field_name]
+                for field_name in response_format.model_fields
+                if field_name in report_json_base
             }
+            validated_payload = response_format.model_validate(validation_input).model_dump(mode="json")
+            report_json_base = {**report_json_base, **validated_payload}
+            report_json = {**report_json_base, **verification_payload}
         return ResearchFinalizerResult(
             report_md=report_md,
             report_json=report_json,

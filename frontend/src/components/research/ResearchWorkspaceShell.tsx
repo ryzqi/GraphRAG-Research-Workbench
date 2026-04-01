@@ -7,17 +7,22 @@ export function ResearchWorkspaceShell({
   statusLine,
   sidebarOpen,
   onToggleSidebar,
+  missionControl,
   rail,
   canvas,
+  ledger,
 }: {
   statusLine: string;
   sidebarOpen: boolean;
   onToggleSidebar: () => void;
+  missionControl: ReactNode;
   rail: ReactNode;
   canvas: ReactNode;
+  ledger: ReactNode;
 }) {
   return (
     <Stack spacing={2.5}>
+      <Box sx={{ minWidth: 0 }}>{missionControl}</Box>
       <Stack direction="row" justifyContent="space-between" alignItems="center" spacing={1.5}>
         <Typography
           variant="caption"
@@ -48,13 +53,16 @@ export function ResearchWorkspaceShell({
           gap: 2.5,
           gridTemplateColumns: {
             xs: '1fr',
-            lg: sidebarOpen ? 'minmax(0, 1fr) 320px' : 'minmax(0, 1fr)',
+            lg: sidebarOpen
+              ? 'minmax(260px, 300px) minmax(0, 1fr) minmax(300px, 340px)'
+              : 'minmax(0, 1fr) minmax(300px, 340px)',
           },
           alignItems: 'start',
         }}
       >
-        <Box sx={{ minWidth: 0 }}>{canvas}</Box>
         {sidebarOpen ? <Box sx={{ minWidth: 0 }}>{rail}</Box> : null}
+        <Box sx={{ minWidth: 0 }}>{canvas}</Box>
+        <Box sx={{ minWidth: 0 }}>{ledger}</Box>
       </Box>
     </Stack>
   );

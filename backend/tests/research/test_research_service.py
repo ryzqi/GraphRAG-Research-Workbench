@@ -104,6 +104,11 @@ def _assert_session_bootstrap_artifacts(session: ResearchSession) -> None:
     ]
 
 
+def _artifact_content_json(session: ResearchSession, artifact_key: str):  # type: ignore[no-untyped-def]
+    artifact = next(item for item in session.artifacts if item.artifact_key == artifact_key)
+    return artifact.content_json
+
+
 @pytest.mark.asyncio
 async def test_create_session_persists_plan_snapshot_artifact_event_and_queues_immediately() -> None:
     db = _FakeAsyncSession()
@@ -273,7 +278,36 @@ async def test_execute_session_persists_verification_artifacts_after_finalizatio
     artifact_keys = [artifact.artifact_key for artifact in session.artifacts]
     assert "claim_map_json" in artifact_keys
     assert "coverage_matrix_json" in artifact_keys
+    assert "conflicts_json" in artifact_keys
     assert "source_ledger_json" in artifact_keys
+    assert _artifact_content_json(session, "claim_map_json") == [
+        {
+            "claim": "已完成问题“验证 claim_map / coverage_matrix / source_ledger 持久化”的 runtime 执行。",
+            "verdict": "insufficient",
+            "citation_indices": [],
+        }
+    ]
+    assert _artifact_content_json(session, "conflicts_json") == [
+        {
+            "claim": "已完成问题“验证 claim_map / coverage_matrix / source_ledger 持久化”的 runtime 执行。",
+            "verdict": "insufficient",
+            "reason": "insufficient_evidence",
+            "citation_indices": [],
+            "coverage_gaps": [],
+        },
+        {
+            "claim": None,
+            "verdict": "contested",
+            "reason": "coverage_gap",
+            "citation_indices": [],
+            "coverage_gaps": ["缺少 provider 证据：tavily"],
+        },
+    ]
+    assert _artifact_content_json(session, "coverage_matrix_json") == {
+        "provider_counts": {},
+        "missing_providers": ["缺少 provider 证据：tavily"],
+    }
+    assert _artifact_content_json(session, "source_ledger_json") == []
 
 
 @pytest.mark.asyncio

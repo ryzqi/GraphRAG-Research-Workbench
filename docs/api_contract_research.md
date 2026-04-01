@@ -139,18 +139,49 @@
 
 ## 当前工件键
 
-当前 research artifacts 可能包含：
+当前 Deep Research OS artifacts 不再只包含旧的计划 / 报告列表，而是按阶段扩展为以下键集合：
 
+### 规划 / 澄清阶段
+
+- `clarification_request`
+- `clarification_answer`
 - `plan_snapshot`
 - `research_brief`
+
+### workspace bootstrap
+
+- `mission_md`
+- `plan_md`
+- `query_map_md`
+- `coverage_md`
+- `report_draft_md`
+
+### runtime / finalizer 产物
+
 - `source_bundle`
 - `interim_findings`
 - `interim_summary`
 - `coverage_gaps`
 - `report_json`
 - `report_md`
+
+### verification / ledger 产物
+
+- `claim_map_json`
+- `coverage_matrix_json`
+- `conflicts_json`
+- `source_ledger_json`
+
+### observability / gate 产物
+
 - `metrics_snapshot`
 - `gate_snapshot`
+
+说明：
+
+- `mission_md` / `plan_md` / `query_map_md` / `coverage_md` / `report_draft_md` 为 workspace bootstrap 工件，用于工作台主阅读区与 scratch 路径对齐。
+- `claim_map_json` / `coverage_matrix_json` / `conflicts_json` / `source_ledger_json` 为 finalizer verification ledger，供前端 evidence / claims / conflicts 展示与导出使用。
+- 对外读取入口仍统一为 `GET /api/v1/research/sessions/{session_id}/artifacts`，客户端按 `artifact_key` 分派。
 
 ### `metrics_snapshot`
 
@@ -189,16 +220,15 @@
 - `RESEARCH_ARTIFACT_MISSING`
 - `ARTIFACT_INCOMPLETE`
 
-## 当前演示脚本
+## 当前 smoke 脚本
 
-当前 demo 脚本：
-
-```powershell
-pwsh -ExecutionPolicy Bypass -File .\scripts\demo_research.ps1
-```
-
-仅校验脚本参数与流程时，可先执行：
+当前最小 smoke 入口：
 
 ```powershell
-pwsh -ExecutionPolicy Bypass -File .\scripts\demo_research.ps1 -DryRun
+pwsh -ExecutionPolicy Bypass -File .\scripts\smoke_research_os.ps1
 ```
+
+该脚本只串联：
+
+- backend：`uv run pytest tests\research\test_deep_research_runtime_runner.py tests\research\test_research_service.py -q`
+- frontend：`npx vitest run src\views\ResearchPage.test.tsx src\services\researchWorkbench.test.ts`
