@@ -8,22 +8,14 @@ import dynamic from 'next/dynamic';
 import { Container, Stack, Typography } from '@mui/material';
 import DownloadIcon from '@mui/icons-material/Download';
 import RefreshIcon from '@mui/icons-material/Refresh';
-import { MissionControlBar } from '../components/research/MissionControlBar';
 import { ResearchCanvas } from '../components/research/ResearchCanvas';
 import { ResearchComposer } from '../components/research/ResearchComposer';
-import { ResearchEvidenceLedger } from '../components/research/ResearchEvidenceLedger';
-import { ResearchPlanRail } from '../components/research/ResearchPlanRail';
 import { ResearchPlanningThread } from '../components/research/ResearchPlanningThread';
-import { ResearchWorkspaceShell } from '../components/research/ResearchWorkspaceShell';
 import { Button } from '../components/ui/Button';
 import { ErrorAlert } from '../components/ui/ErrorAlert';
 import { LoadingSpinner } from '../components/ui/LoadingSpinner';
 import { createExport, pollExportUntilDone } from '../services/exports';
-import {
-  buildResearchCanvasModel,
-  buildResearchProgressFeed,
-  buildResearchWorkspaceModel,
-} from '../services/researchWorkbench';
+import { buildResearchPageViewModel } from '../services/researchWorkbench';
 import {
   useCreateResearchSession,
   useInterruptResearchSession,
@@ -49,16 +41,6 @@ const InterruptDecisionPanel = dynamic(
   }
 );
 
-const ResearchAdvancedEventsPanel = dynamic(
-  () =>
-    import('../components/research/ResearchAdvancedEventsPanel').then(
-      (mod) => mod.ResearchAdvancedEventsPanel
-    ),
-  {
-    loading: () => <LoadingSpinner text='加载高级事件...' />,
-  }
-);
-
 export function ResearchPage() {
   const createSessionMutation = useCreateResearchSession();
   const submitClarificationMutation = useSubmitResearchClarification();
@@ -73,7 +55,6 @@ export function ResearchPage() {
   const [clarificationDraft, setClarificationDraft] = useState('');
   const [resumeIdempotencyKey, setResumeIdempotencyKey] = useState('resume-1');
   const [decisionDraft, setDecisionDraft] = useState('[{"action":"approve"}]');
-  const [sidebarOpen, setSidebarOpen] = useState(true);
 
   const sessionQuery = useResearchSession(sessionId ?? undefined, acceptedSession);
   const session = sessionQuery.data;
@@ -239,7 +220,6 @@ export function ResearchPage() {
     setClarificationDraft('');
     setDecisionDraft('[{"action":"approve"}]');
     setResumeIdempotencyKey('resume-1');
-    setSidebarOpen(true);
   }, []);
 
   const getStatusPresentation = (status: ResearchSessionStatus) => {
@@ -281,28 +261,19 @@ export function ResearchPage() {
     session?.status === 'failed' ||
     session?.status === 'canceled' ||
     session?.status === 'timed_out';
-  const progressItems = useMemo(
-    () => buildResearchProgressFeed(session?.events ?? []),
-    [session?.events]
-  );
-  const workspaceModel = useMemo(
-    () => buildResearchWorkspaceModel(session?.artifacts ?? []),
-    [session?.artifacts]
-  );
-  const canvasModel = useMemo(
+  const pageModel = useMemo(
     () =>
-      buildResearchCanvasModel({
+      buildResearchPageViewModel({
         status: session?.status ?? 'created',
         events: session?.events ?? [],
         artifacts: session?.artifacts ?? [],
         reportMd: session?.report_md ?? null,
-        progressFeed: progressItems,
       }),
-    [progressItems, session]
+    [session]
   );
   const coverageLabel = useMemo(() => {
-    const providerCount = Object.keys(workspaceModel.coverage.matrix.provider_counts).length;
-    const missingCount = workspaceModel.coverage.matrix.missing_providers.length;
+    const providerCount = Object.keys(pageModel.evidenceDrawer.coverageMatrix.provider_counts).length;
+    const missingCount = pageModel.evidenceDrawer.coverageMatrix.missing_providers.length;
 
     if (providerCount > 0 && missingCount > 0) {
       return `Coverage ${providerCount} / gap ${missingCount}`;
@@ -314,7 +285,7 @@ export function ResearchPage() {
       return `Coverage gap ${missingCount}`;
     }
     return 'Coverage warming up';
-  }, [workspaceModel.coverage.matrix.missing_providers.length, workspaceModel.coverage.matrix.provider_counts]);
+  }, [pageModel.evidenceDrawer.coverageMatrix.missing_providers.length, pageModel.evidenceDrawer.coverageMatrix.provider_counts]);
 
   return (
     <Container
@@ -368,86 +339,56 @@ export function ResearchPage() {
           />
         </Stack>
       ) : (
-        <ResearchWorkspaceShell
-          statusLine={statusPresentation?.label ?? '研究中…'}
-          sidebarOpen={sidebarOpen}
-          onToggleSidebar={() => setSidebarOpen((current) => !current)}
-          missionControl={
-            <MissionControlBar
-              question={question.trim()}
-              statusLabel={statusPresentation?.label ?? '等待中'}
-              statusTone={statusPresentation?.badge ?? 'pending'}
-              coverageLabel={coverageLabel}
-              missionMarkdown={workspaceModel.mission.markdown}
-              actions={
-                <>
-                  {(session.status === 'running' || session.status === 'resuming') ? (
-                    <Button
-                      variant="outlined"
-                      size="small"
-                      onClick={handleInterrupt}
-                      loading={interruptSessionMutation.isPending}
-                      startIcon={<RefreshIcon />}
-                    >
-                      请求中断
-                    </Button>
-                  ) : null}
-                  <Button variant="outlined" size="small" onClick={reset}>
-                    新研究
+        <Stack spacing={2.5}>
+          <ResearchCanvas
+            model={{
+              ...pageModel,
+              title: question.trim(),
+              statusLabel: statusPresentation?.label ?? '等待中',
+              statusTone: statusPresentation?.badge ?? 'pending',
+              coverageLabel,
+            }}
+            actions={
+              <Stack direction="row" spacing={1}>
+                {(session.status === 'running' || session.status === 'resuming') ? (
+                  <Button
+                    variant="outlined"
+                    size="small"
+                    onClick={handleInterrupt}
+                    loading={interruptSessionMutation.isPending}
+                    startIcon={<RefreshIcon />}
+                  >
+                    请求中断
                   </Button>
-                </>
-              }
-            />
-          }
-          rail={
-            <ResearchPlanRail
-              planMarkdown={workspaceModel.plan.markdown}
-              subtaskCount={workspaceModel.plan.subtaskCount}
-              progressItems={progressItems}
-              controls={
-                <Stack spacing={1.5}>
-                  <InterruptDecisionPanel
-                    status={session.status}
-                    resumeIdempotencyKey={resumeIdempotencyKey}
-                    decisionDraft={decisionDraft}
-                    onResumeIdempotencyKeyChange={setResumeIdempotencyKey}
-                    onDecisionDraftChange={setDecisionDraft}
-                    onResume={handleResume}
-                    resumePending={resumeSessionMutation.isPending}
-                  />
-                </Stack>
-              }
-              advancedEventsPanel={<ResearchAdvancedEventsPanel events={session.events} />}
-            />
-          }
-          canvas={
-            <ResearchCanvas
-              model={canvasModel}
-              exportButton={
-                <Button
-                  variant="contained"
-                  color="success"
-                  size="small"
-                  startIcon={<DownloadIcon />}
-                  onClick={handleExport}
-                  loading={exporting}
-                >
-                  导出报告
+                ) : null}
+                <Button variant="outlined" size="small" onClick={reset}>
+                  新研究
                 </Button>
-              }
-            />
-          }
-          ledger={
-            <ResearchEvidenceLedger
-              contractErrors={workspaceModel.contractErrors}
-              coverageMarkdown={workspaceModel.coverage.markdown}
-              coverageMatrix={workspaceModel.coverage.matrix}
-              sources={workspaceModel.evidence.sources}
-              claims={workspaceModel.claims.items}
-              conflicts={workspaceModel.evidence.conflicts}
-            />
-          }
-        />
+              </Stack>
+            }
+            exportButton={
+              <Button
+                variant="contained"
+                color="success"
+                size="small"
+                startIcon={<DownloadIcon />}
+                onClick={handleExport}
+                loading={exporting}
+              >
+                导出报告
+              </Button>
+            }
+          />
+          <InterruptDecisionPanel
+            status={session.status}
+            resumeIdempotencyKey={resumeIdempotencyKey}
+            decisionDraft={decisionDraft}
+            onResumeIdempotencyKeyChange={setResumeIdempotencyKey}
+            onDecisionDraftChange={setDecisionDraft}
+            onResume={handleResume}
+            resumePending={resumeSessionMutation.isPending}
+          />
+        </Stack>
       )}
 
       <ErrorAlert error={mergedError} onClose={handleCloseError} />

@@ -5,24 +5,12 @@ import type {
   ResearchConflictEntry,
   ResearchCoverageMatrix,
   ResearchEventEnvelope,
-  ResearchSourceLedgerEntry,
   ResearchSessionStatus,
+  ResearchSourceLedgerEntry,
   ResearchSourceType,
 } from '../types/researchEvents';
 
-import {
-  buildResearchArtifactsByKey,
-  getResearchReportArtifacts,
-} from '../types/researchEvents';
-
-export interface ResearchProgressFeedItem {
-  id: string;
-  title: string;
-  phaseLabel: string;
-  providerLabel: string | null;
-  sourceLabel: string | null;
-  finding: string | null;
-}
+import { buildResearchArtifactsByKey, getResearchReportArtifacts } from '../types/researchEvents';
 
 interface ResearchArtifactSummary {
   interimSummary: string | null;
@@ -52,6 +40,35 @@ export interface ResearchWorkspaceModel {
   report: {
     markdown: string | null;
     json: Record<string, unknown> | null;
+  };
+}
+
+export interface ResearchTimelineItem {
+  id: string;
+  kind: 'web_visit' | 'thought_summary' | 'intermediate_result' | 'system_status';
+  title: string;
+  body: string | null;
+  phaseLabel: string;
+  providerLabel: string | null;
+  url: string | null;
+}
+
+export interface ResearchEvidenceDrawerModel {
+  contractErrors: string[];
+  coverageGap: string | null;
+  coverageMarkdown: string | null;
+  coverageMatrix: ResearchCoverageMatrix;
+  sources: ResearchSourceLedgerEntry[];
+  claims: ResearchClaimMapEntry[];
+  conflicts: ResearchConflictEntry[];
+}
+
+export interface ResearchPageViewModel {
+  surface: 'live-research' | 'final-report';
+  timelineItems: ResearchTimelineItem[];
+  evidenceDrawer: ResearchEvidenceDrawerModel;
+  report?: {
+    markdown: string;
   };
 }
 
@@ -162,9 +179,7 @@ function asResearchSourceLedgerEntries(
         title: typeof entry.title === 'string' ? entry.title : null,
         source_type: asSourceType(entry.source_type),
       },
-    ].filter(
-      (entry) => entry.provider || entry.origin_url || entry.title || entry.source_type
-    );
+    ].filter((candidate) => candidate.provider || candidate.origin_url || candidate.title || candidate.source_type);
   });
 }
 
@@ -283,23 +298,99 @@ function summarizeResearchArtifacts(artifacts: ResearchArtifactRead[]): Research
   };
 }
 
-export function buildResearchProgressFeed(events: ResearchEventEnvelope[]): ResearchProgressFeedItem[] {
-  return [...events]
-    .sort((left, right) => right.sequence - left.sequence)
-    .map((event) => ({
+function readEventText(payload: Record<string, unknown>, key: 'summary' | 'finding'): string | null {
+  const value = payload[key];
+  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
+}
+
+function formatSystemEventTitle(event: ResearchEventEnvelope, summary: string | null): string {
+  if (summary) {
+    return summary;
+  }
+
+  switch (event.event_type) {
+    case 'research.run.started':
+      return '研究已启动';
+    case 'research.finalizer.started':
+      return '开始生成最终报告';
+    case 'research.final.completed':
+      return '最终报告已完成';
+    case 'research.run.interrupted':
+      return '研究已中断';
+    case 'research.run.resume_requested':
+      return '正在恢复研究';
+    case 'research.run.failed':
+      return '研究失败';
+    case 'research.run.timed_out':
+      return '研究已超时';
+    default:
+      return event.event_type;
+  }
+}
+
+function buildResearchTimelineItem(event: ResearchEventEnvelope): ResearchTimelineItem {
+  const summary = readEventText(event.payload, 'summary');
+  const finding = readEventText(event.payload, 'finding');
+
+  if (event.origin_url) {
+    return {
       id: event.event_id,
-      title:
-        typeof event.payload.summary === 'string' && event.payload.summary.trim().length > 0
-          ? event.payload.summary
-          : event.event_type,
+      kind: 'web_visit',
+      title: summary ?? `访问 ${event.origin_url}`,
+      body: finding,
       phaseLabel: event.phase,
       providerLabel: event.source_provider ?? null,
-      sourceLabel: event.origin_url ?? null,
-      finding:
-        typeof event.payload.finding === 'string' && event.payload.finding.trim().length > 0
-          ? event.payload.finding
-          : null,
-    }));
+      url: event.origin_url,
+    };
+  }
+
+  if (finding) {
+    return {
+      id: event.event_id,
+      kind: 'intermediate_result',
+      title: summary ?? '阶段性发现',
+      body: finding,
+      phaseLabel: event.phase,
+      providerLabel: event.source_provider ?? null,
+      url: null,
+    };
+  }
+
+  if (
+    event.event_type === 'research.run.started' ||
+    event.event_type === 'research.finalizer.started' ||
+    event.event_type === 'research.final.completed' ||
+    event.event_type === 'research.run.interrupted' ||
+    event.event_type === 'research.run.resume_requested' ||
+    event.event_type === 'research.run.failed' ||
+    event.event_type === 'research.run.timed_out'
+  ) {
+    return {
+      id: event.event_id,
+      kind: 'system_status',
+      title: formatSystemEventTitle(event, summary),
+      body: null,
+      phaseLabel: event.phase,
+      providerLabel: event.source_provider ?? null,
+      url: null,
+    };
+  }
+
+  return {
+    id: event.event_id,
+    kind: 'thought_summary',
+    title: summary ?? '正在整理研究线索',
+    body: null,
+    phaseLabel: event.phase,
+    providerLabel: event.source_provider ?? null,
+    url: null,
+  };
+}
+
+function buildResearchTimelineItems(events: ResearchEventEnvelope[]): ResearchTimelineItem[] {
+  return [...events]
+    .sort((left, right) => left.sequence - right.sequence)
+    .map(buildResearchTimelineItem);
 }
 
 export function buildResearchWorkspaceModel(
@@ -337,33 +428,44 @@ export function buildResearchWorkspaceModel(
   };
 }
 
-export function buildResearchCanvasModel(params: {
+export function buildResearchPageViewModel(params: {
   status: ResearchSessionStatus;
   events: ResearchEventEnvelope[];
   artifacts: ResearchArtifactRead[];
   reportMd: string | null;
-  progressFeed?: ResearchProgressFeedItem[];
-}): {
-  mode: 'final' | 'progressive';
-  currentStepTitle: string;
-  currentStepBody: string;
-  findingsTitle: string;
-  findingsBody: string | null;
-  finalReportTitle: string;
-  finalReportBody: string | null;
-  coverageGap: string | null;
-} {
+}): ResearchPageViewModel {
   const { interimSummary, coverageGap } = summarizeResearchArtifacts(params.artifacts);
-  const progressFeed = params.progressFeed ?? buildResearchProgressFeed(params.events);
+  const workspaceModel = buildResearchWorkspaceModel(params.artifacts);
+  const timelineItems = buildResearchTimelineItems(params.events);
+
+  if (interimSummary) {
+    timelineItems.push({
+      id: 'artifact-interim-summary',
+      kind: 'intermediate_result',
+      title: '阶段性发现',
+      body: interimSummary,
+      phaseLabel: params.status,
+      providerLabel: null,
+      url: null,
+    });
+  }
 
   return {
-    mode: params.reportMd ? 'final' : 'progressive',
-    currentStepTitle: '当前正在做什么',
-    currentStepBody: progressFeed[0]?.title ?? '等待研究启动。',
-    findingsTitle: '阶段性发现',
-    findingsBody: interimSummary,
-    finalReportTitle: '最终报告',
-    finalReportBody: params.reportMd,
-    coverageGap,
+    surface: params.reportMd ? 'final-report' : 'live-research',
+    timelineItems: params.reportMd ? [] : timelineItems,
+    evidenceDrawer: {
+      contractErrors: workspaceModel.contractErrors,
+      coverageGap,
+      coverageMarkdown: workspaceModel.coverage.markdown,
+      coverageMatrix: workspaceModel.coverage.matrix,
+      sources: workspaceModel.evidence.sources,
+      claims: workspaceModel.claims.items,
+      conflicts: workspaceModel.evidence.conflicts,
+    },
+    report: params.reportMd
+      ? {
+          markdown: params.reportMd,
+        }
+      : undefined,
   };
 }

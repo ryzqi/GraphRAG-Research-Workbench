@@ -1,8 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  buildResearchCanvasModel,
-  buildResearchProgressFeed,
+  buildResearchPageViewModel,
   buildResearchWorkspaceModel,
 } from './researchWorkbench';
 import type { ResearchArtifactRead, ResearchEventEnvelope } from '../types/researchEvents';
@@ -130,39 +129,53 @@ const workspaceArtifacts: ResearchArtifactRead[] = [
   },
 ];
 
-describe('buildResearchCanvasModel', () => {
-  it('shows progressive sections before report_md exists', () => {
+describe('buildResearchPageViewModel', () => {
+  it('builds immersive live timeline items before report_md exists', () => {
     expect(
-      buildResearchCanvasModel({
+      buildResearchPageViewModel({
         status: 'running',
         events: runningEvents,
         artifacts: interimArtifacts,
         reportMd: null,
       })
     ).toMatchObject({
-      mode: 'progressive',
-      currentStepTitle: '当前正在做什么',
-      findingsTitle: '阶段性发现',
-      finalReportTitle: '最终报告',
-      finalReportBody: null,
-      coverageGap: '仍需补充一条公开网页案例。',
+      surface: 'live-research',
+      timelineItems: [
+        {
+          kind: 'system_status',
+          title: '开始调度研究',
+        },
+        {
+          kind: 'web_visit',
+          title: '抓取到两篇网页证据',
+          url: 'https://example.com/a',
+        },
+      ],
+      evidenceDrawer: {
+        coverageGap: '仍需补充一条公开网页案例。',
+      },
     });
   });
 
-  it('promotes report_md to the primary reading surface after finalization', () => {
+  it('promotes report_md to the pure report surface after finalization', () => {
     expect(
-      buildResearchCanvasModel({
+      buildResearchPageViewModel({
         status: 'final',
         events: runningEvents,
         artifacts: interimArtifacts,
         reportMd: '# 最终报告\n\n结论正文',
-      }).mode
-    ).toBe('final');
+      })
+    ).toMatchObject({
+      surface: 'final-report',
+      report: {
+        markdown: '# 最终报告\n\n结论正文',
+      },
+    });
   });
 
   it('reads coverage_gaps from content_json arrays emitted by backend artifacts', () => {
     expect(
-      buildResearchCanvasModel({
+      buildResearchPageViewModel({
         status: 'running',
         events: runningEvents,
         artifacts: [
@@ -173,18 +186,8 @@ describe('buildResearchCanvasModel', () => {
           },
         ],
         reportMd: null,
-      }).coverageGap
+      }).evidenceDrawer.coverageGap
     ).toBe('缺少 provider 证据：tavily\n缺少论文交叉验证');
-  });
-});
-
-describe('buildResearchProgressFeed', () => {
-  it('returns human-readable progress items instead of raw event metadata', () => {
-    expect(buildResearchProgressFeed(runningEvents)[0]).toMatchObject({
-      title: '抓取到两篇网页证据',
-      phaseLabel: 'retrieval',
-      providerLabel: 'searxng',
-    });
   });
 });
 

@@ -1,6 +1,7 @@
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { ResearchSessionView } from '../types/researchEvents';
 
 const reactState = vi.hoisted(() => ({
   sequence: [] as Array<[unknown, (value: unknown) => void]>,
@@ -26,33 +27,7 @@ const resumeSessionMock = vi.fn();
 const refetchMock = vi.fn();
 
 const hookState = {
-  session: undefined as
-    | {
-        session_id: string;
-        status: 'clarifying' | 'queued' | 'running';
-        plan_snapshot: {
-          research_brief: string;
-          complexity: 'simple' | 'comparative' | 'complex';
-          summary: string;
-          subtasks: [];
-          target_sources: ['web'];
-        } | null;
-        clarification_request: {
-          summary: string;
-          questions: Array<{
-            id: string;
-            question: string;
-            why_it_matters: string;
-          }>;
-        } | null;
-        events: [];
-        artifacts: [];
-        last_event_id: null;
-        last_sequence: number;
-        report_md: null;
-        report_json: null;
-      }
-    | undefined,
+  session: undefined as ResearchSessionView | undefined,
 };
 
 vi.mock('../hooks/queries/useResearch', () => ({
@@ -107,13 +82,39 @@ describe('ResearchPage', () => {
     expect(html).not.toContain('先规划，再开始研究');
   });
 
-  it('renders the workspace shell when a session is active', () => {
+  it('renders the immersive research stream when a session is active', () => {
     hookState.session = {
       session_id: 'session-1',
       status: 'running',
       plan_snapshot: null,
       clarification_request: null,
-      events: [],
+      events: [
+        {
+          event_id: 'evt-1',
+          sequence: 1,
+          timestamp: '2026-03-30T10:00:02Z',
+          event_type: 'research.run.started',
+          session_id: 'session-1',
+          phase: 'runtime',
+          namespace: 'main',
+          payload: { summary: '开始调度研究' },
+          source_provider: 'tavily',
+          retrieval_method: 'search',
+        },
+        {
+          event_id: 'evt-2',
+          sequence: 2,
+          timestamp: '2026-03-30T10:00:03Z',
+          event_type: 'research.trace.recorded',
+          session_id: 'session-1',
+          phase: 'retrieval',
+          namespace: 'main',
+          payload: { summary: '抓取到两篇网页证据', finding: '两条路线在时效性上差异明显' },
+          source_provider: 'searxng',
+          retrieval_method: 'search',
+          origin_url: 'https://example.com/routes',
+        },
+      ],
       artifacts: [
         {
           artifact_key: 'mission_md',
@@ -169,11 +170,15 @@ describe('ResearchPage', () => {
     const html = renderToStaticMarkup(createElement(ResearchPage));
 
     expect(html).toContain('研究中…');
-    expect(html).toContain('Mission Control');
-    expect(html).toContain('Evidence Ledger');
+    expect(html).toContain('研究时间流');
     expect(html).toContain('比较调度路线');
-    expect(html).toContain('路线对比');
-    expect(html).toContain('收起侧栏');
+    expect(html).toContain('抓取到两篇网页证据');
+    expect(html).toContain('查看来源与证据');
+    expect(html).toContain('linear-gradient(180deg,#08101f 0%,#0f172a 52%,#111827 100%)');
+    expect(html).not.toContain('Mission Control');
+    expect(html).not.toContain('Evidence Ledger');
+    expect(html).not.toContain('收起侧栏');
+    expect(html).not.toContain('高级事件');
   });
 
   it('renders the planning thread with clarification questions instead of the workspace', () => {
@@ -283,6 +288,49 @@ describe('ResearchPage', () => {
 
     expect(html).toContain('证据工件格式错误');
     expect(html).toContain('source_ledger_json 格式无效：期望数组');
+  });
+
+  it('switches to a pure report page after the final report is generated', () => {
+    hookState.session = {
+      session_id: 'session-final',
+      status: 'final',
+      plan_snapshot: null,
+      clarification_request: null,
+      events: [],
+      artifacts: [],
+      last_event_id: null,
+      last_sequence: 0,
+      report_md: '# 最终报告\n\n正式结论',
+      report_json: { status: 'ok' },
+    };
+
+    const setState = vi.fn();
+    reactState.sequence = [
+      ['比较调度路线', setState],
+      ['session-final', setState],
+      [
+        {
+          session_id: 'session-final',
+          status: 'final',
+          plan_snapshot: null,
+          clarification_request: null,
+        },
+        setState,
+      ],
+      [false, setState],
+      [null, setState],
+      ['', setState],
+      ['resume-1', setState],
+      ['[{"action":"approve"}]', setState],
+      [true, setState],
+    ];
+    reactState.index = 0;
+
+    const html = renderToStaticMarkup(createElement(ResearchPage));
+
+    expect(html).toContain('最终报告');
+    expect(html).toContain('正式结论');
+    expect(html).not.toContain('研究时间流');
   });
 
 });
