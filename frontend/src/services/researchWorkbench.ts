@@ -478,10 +478,8 @@ function formatSystemEventTitle(event: ResearchEventEnvelope, summary: string | 
       return '开始生成最终报告';
     case 'research.final.completed':
       return '最终报告已完成';
-    case 'research.run.interrupted':
-      return '研究已中断';
-    case 'research.run.resume_requested':
-      return '正在恢复研究';
+    case 'research.run.stopped':
+      return '研究已停止';
     case 'research.run.failed':
       return '研究失败';
     case 'research.run.timed_out':
@@ -524,8 +522,7 @@ function buildResearchTimelineItem(event: ResearchEventEnvelope): ResearchTimeli
     event.event_type === 'research.run.started' ||
     event.event_type === 'research.finalizer.started' ||
     event.event_type === 'research.final.completed' ||
-    event.event_type === 'research.run.interrupted' ||
-    event.event_type === 'research.run.resume_requested' ||
+    event.event_type === 'research.run.stopped' ||
     event.event_type === 'research.run.failed' ||
     event.event_type === 'research.run.timed_out'
   ) {

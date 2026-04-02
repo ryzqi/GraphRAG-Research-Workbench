@@ -7,15 +7,17 @@ import { useApiMutation, useApiQuery } from '../../lib/swr';
 import {
   createResearchSession,
   getResearchArtifacts,
-  interruptResearchSession,
-  resumeResearchSession,
+  startResearchSession,
+  stopResearchSession,
   submitResearchClarification,
+  updateResearchPlan,
   streamResearchSession,
   type ResearchClarificationSubmitRequest,
-  type ResearchResumeRequest,
+  type ResearchPlanUpdateRequest,
   type ResearchSessionAccepted,
   type ResearchSessionCreateRequest,
   type ResearchSessionView,
+  type ResearchStopRequest,
 } from '../../services/research';
 import {
   buildResearchSessionView,
@@ -92,6 +94,8 @@ export function useResearchSession(
           artifacts: latestItems,
         });
         return isTerminalResearchStatus(nextView.status)
+          || nextView.status === 'clarifying'
+          || nextView.status === 'plan_ready'
           ? 0
           : ACTIVE_ARTIFACT_REFRESH_INTERVAL_MS;
       },
@@ -246,17 +250,23 @@ export function useSubmitResearchClarification() {
   >(({ sessionId, body }) => submitResearchClarification(sessionId, body));
 }
 
-export function useInterruptResearchSession() {
-  return useApiMutation<{ sessionId: string; reason?: string | null }, ResearchSessionAccepted>(
-    ({ sessionId, reason }) => interruptResearchSession(sessionId, { reason })
+export function useUpdateResearchPlan() {
+  return useApiMutation<
+    { sessionId: string; body: ResearchPlanUpdateRequest },
+    ResearchSessionAccepted
+  >(({ sessionId, body }) => updateResearchPlan(sessionId, body));
+}
+
+export function useStartResearchSession() {
+  return useApiMutation<{ sessionId: string }, ResearchSessionAccepted>(({ sessionId }) =>
+    startResearchSession(sessionId)
   );
 }
 
-export function useResumeResearchSession() {
-  return useApiMutation<
-    { sessionId: string; body: ResearchResumeRequest },
-    { status: 'accepted'; resume_from_event_id: string | null; decision_count: number }
-  >(({ sessionId, body }) => resumeResearchSession(sessionId, body));
+export function useStopResearchSession() {
+  return useApiMutation<{ sessionId: string; body?: ResearchStopRequest }, ResearchSessionAccepted>(
+    ({ sessionId, body }) => stopResearchSession(sessionId, body)
+  );
 }
 
 export { KEYS as researchKeys };

@@ -4,10 +4,8 @@
  * 深度研究页面
  */
 import { useCallback, useMemo, useState } from 'react';
-import dynamic from 'next/dynamic';
 import { Container, Stack, Typography } from '@mui/material';
 import DownloadIcon from '@mui/icons-material/Download';
-import RefreshIcon from '@mui/icons-material/Refresh';
 import { ResearchCanvas } from '../components/research/ResearchCanvas';
 import { ResearchComposer } from '../components/research/ResearchComposer';
 import { ResearchPlanningThread } from '../components/research/ResearchPlanningThread';
@@ -18,10 +16,11 @@ import { createExport, pollExportUntilDone } from '../services/exports';
 import { buildResearchPageViewModel } from '../services/researchWorkbench';
 import {
   useCreateResearchSession,
-  useInterruptResearchSession,
   useResearchSession,
-  useResumeResearchSession,
+  useStartResearchSession,
+  useStopResearchSession,
   useSubmitResearchClarification,
+  useUpdateResearchPlan,
 } from '../hooks/queries/useResearch';
 import { getErrorMessage } from '../lib/errorHandler';
 import type { ResearchSessionAccepted, ResearchSessionStatus } from '../types/researchEvents';
@@ -31,21 +30,12 @@ import {
   validateResearchStartDraft,
 } from './researchPageState';
 
-const InterruptDecisionPanel = dynamic(
-  () =>
-    import('../components/research/InterruptDecisionPanel').then(
-      (mod) => mod.InterruptDecisionPanel
-    ),
-  {
-    loading: () => null,
-  }
-);
-
 export function ResearchPage() {
   const createSessionMutation = useCreateResearchSession();
   const submitClarificationMutation = useSubmitResearchClarification();
-  const interruptSessionMutation = useInterruptResearchSession();
-  const resumeSessionMutation = useResumeResearchSession();
+  const updatePlanMutation = useUpdateResearchPlan();
+  const startSessionMutation = useStartResearchSession();
+  const stopSessionMutation = useStopResearchSession();
 
   const [question, setQuestion] = useState('');
   const [sessionId, setSessionId] = useState<string | null>(null);
@@ -53,13 +43,10 @@ export function ResearchPage() {
   const [exporting, setExporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [clarificationDraft, setClarificationDraft] = useState('');
-  const [resumeIdempotencyKey, setResumeIdempotencyKey] = useState('resume-1');
-  const [decisionDraft, setDecisionDraft] = useState('[{"action":"approve"}]');
+  const [planFeedbackDraft, setPlanFeedbackDraft] = useState('');
 
   const sessionQuery = useResearchSession(sessionId ?? undefined, acceptedSession);
   const session = sessionQuery.data;
-
-  const loading = createSessionMutation.isPending;
 
   const mergedError =
     error ??
@@ -67,8 +54,9 @@ export function ResearchPage() {
     (submitClarificationMutation.error
       ? getErrorMessage(submitClarificationMutation.error)
       : null) ??
-    (interruptSessionMutation.error ? getErrorMessage(interruptSessionMutation.error) : null) ??
-    (resumeSessionMutation.error ? getErrorMessage(resumeSessionMutation.error) : null) ??
+    (updatePlanMutation.error ? getErrorMessage(updatePlanMutation.error) : null) ??
+    (startSessionMutation.error ? getErrorMessage(startSessionMutation.error) : null) ??
+    (stopSessionMutation.error ? getErrorMessage(stopSessionMutation.error) : null) ??
     (sessionQuery.error ? getErrorMessage(sessionQuery.error) : null);
 
   const handleCloseError = () => {
@@ -84,12 +72,16 @@ export function ResearchPage() {
       submitClarificationMutation.reset();
       return;
     }
-    if (interruptSessionMutation.error) {
-      interruptSessionMutation.reset();
+    if (updatePlanMutation.error) {
+      updatePlanMutation.reset();
       return;
     }
-    if (resumeSessionMutation.error) {
-      resumeSessionMutation.reset();
+    if (startSessionMutation.error) {
+      startSessionMutation.reset();
+      return;
+    }
+    if (stopSessionMutation.error) {
+      stopSessionMutation.reset();
       return;
     }
     if (sessionQuery.error) {
@@ -120,9 +112,9 @@ export function ResearchPage() {
       setAcceptedSession(newSession);
       setSessionId(newSession.session_id);
       setClarificationDraft('');
-      setResumeIdempotencyKey(`resume-${Date.now()}`);
-    } catch (e) {
-      setError(getErrorMessage(e));
+      setPlanFeedbackDraft('');
+    } catch (caughtError) {
+      setError(getErrorMessage(caughtError));
     }
   }, [createSessionMutation, question]);
 
@@ -145,48 +137,66 @@ export function ResearchPage() {
       });
       setAcceptedSession(nextAccepted);
       setClarificationDraft('');
+      setPlanFeedbackDraft('');
     } catch (caughtError) {
       setError(getErrorMessage(caughtError));
     }
   }, [clarificationDraft, sessionId, submitClarificationMutation]);
 
-  const handleInterrupt = useCallback(async () => {
+  const handleUpdatePlan = useCallback(async () => {
+    if (!sessionId) {
+      return;
+    }
+
+    const feedback = planFeedbackDraft.trim();
+    if (!feedback) {
+      setError('请输入计划更新说明');
+      return;
+    }
+
+    setError(null);
+    try {
+      const nextAccepted = await updatePlanMutation.mutateAsync({
+        sessionId,
+        body: { feedback },
+      });
+      setAcceptedSession(nextAccepted);
+      setPlanFeedbackDraft('');
+    } catch (caughtError) {
+      setError(getErrorMessage(caughtError));
+    }
+  }, [planFeedbackDraft, sessionId, updatePlanMutation]);
+
+  const handleStartExecution = useCallback(async () => {
     if (!sessionId) {
       return;
     }
 
     setError(null);
     try {
-      const nextAccepted = await interruptSessionMutation.mutateAsync({
+      const nextAccepted = await startSessionMutation.mutateAsync({ sessionId });
+      setAcceptedSession(nextAccepted);
+    } catch (caughtError) {
+      setError(getErrorMessage(caughtError));
+    }
+  }, [sessionId, startSessionMutation]);
+
+  const handleStop = useCallback(async () => {
+    if (!sessionId) {
+      return;
+    }
+
+    setError(null);
+    try {
+      const nextAccepted = await stopSessionMutation.mutateAsync({
         sessionId,
-        reason: '前端请求中断，等待人工决策',
+        body: { reason: '用户主动停止当前研究' },
       });
       setAcceptedSession(nextAccepted);
     } catch (caughtError) {
       setError(getErrorMessage(caughtError));
     }
-  }, [interruptSessionMutation, sessionId]);
-
-  const handleResume = useCallback(async () => {
-    if (!sessionId) {
-      return;
-    }
-
-    setError(null);
-    try {
-      const decisions = JSON.parse(decisionDraft) as Array<Record<string, unknown>>;
-      await resumeSessionMutation.mutateAsync({
-        sessionId,
-        body: {
-          idempotency_key: resumeIdempotencyKey.trim() || `resume-${Date.now()}`,
-          resume_from_event_id: session?.last_event_id ?? undefined,
-          decisions,
-        },
-      });
-    } catch (caughtError) {
-      setError(getErrorMessage(caughtError));
-    }
-  }, [decisionDraft, resumeIdempotencyKey, resumeSessionMutation, session?.last_event_id, sessionId]);
+  }, [sessionId, stopSessionMutation]);
 
   const handleExport = useCallback(async () => {
     if (!session) return;
@@ -205,8 +215,8 @@ export function ResearchPage() {
       } else {
         setError(completed.error_message || '导出失败');
       }
-    } catch (e) {
-      setError(getErrorMessage(e));
+    } catch (caughtError) {
+      setError(getErrorMessage(caughtError));
     } finally {
       setExporting(false);
     }
@@ -218,8 +228,7 @@ export function ResearchPage() {
     setQuestion('');
     setError(null);
     setClarificationDraft('');
-    setDecisionDraft('[{"action":"approve"}]');
-    setResumeIdempotencyKey('resume-1');
+    setPlanFeedbackDraft('');
   }, []);
 
   const getStatusPresentation = (status: ResearchSessionStatus) => {
@@ -229,14 +238,12 @@ export function ResearchPage() {
         return { badge: 'pending' as const, label: '规划中' };
       case 'clarifying':
         return { badge: 'pending' as const, label: '待补充信息' };
+      case 'plan_ready':
+        return { badge: 'pending' as const, label: '等待开始' };
       case 'queued':
         return { badge: 'queued' as const, label: '排队中…' };
       case 'running':
         return { badge: 'running' as const, label: '研究中…' };
-      case 'interrupted':
-        return { badge: 'pending' as const, label: '已中断' };
-      case 'resuming':
-        return { badge: 'running' as const, label: '恢复中…' };
       case 'finalizing':
         return { badge: 'running' as const, label: '收口中…' };
       case 'final':
@@ -254,13 +261,12 @@ export function ResearchPage() {
   const isExecutionStage =
     session?.status === 'queued' ||
     session?.status === 'running' ||
-    session?.status === 'interrupted' ||
-    session?.status === 'resuming' ||
     session?.status === 'finalizing' ||
     session?.status === 'final' ||
     session?.status === 'failed' ||
     session?.status === 'canceled' ||
     session?.status === 'timed_out';
+
   const pageModel = useMemo(
     () =>
       buildResearchPageViewModel({
@@ -271,6 +277,7 @@ export function ResearchPage() {
       }),
     [session]
   );
+
   const coverageLabel = useMemo(() => {
     const providerCount = Object.keys(pageModel.evidenceDrawer.coverageMatrix.provider_counts).length;
     const missingCount = pageModel.evidenceDrawer.coverageMatrix.missing_providers.length;
@@ -298,7 +305,7 @@ export function ResearchPage() {
       {!sessionId ? (
         <ResearchComposer
           question={question}
-          loading={loading}
+          loading={createSessionMutation.isPending}
           validationError={validateResearchStartDraft({
             question,
           })}
@@ -332,10 +339,17 @@ export function ResearchPage() {
             question={question}
             status={session.status}
             clarificationRequest={session.clarification_request}
+            planSnapshot={session.plan_snapshot}
             clarificationDraft={clarificationDraft}
             clarificationSubmitPending={submitClarificationMutation.isPending}
+            planFeedbackDraft={planFeedbackDraft}
+            planUpdatePending={updatePlanMutation.isPending}
+            startPending={startSessionMutation.isPending}
             onClarificationDraftChange={setClarificationDraft}
             onSubmitClarification={handleSubmitClarification}
+            onPlanFeedbackDraftChange={setPlanFeedbackDraft}
+            onUpdatePlan={handleUpdatePlan}
+            onStartExecution={handleStartExecution}
           />
         </Stack>
       ) : (
@@ -350,15 +364,15 @@ export function ResearchPage() {
             }}
             actions={
               <Stack direction="row" spacing={1}>
-                {(session.status === 'running' || session.status === 'resuming') ? (
+                {(session.status === 'queued' ||
+                  session.status === 'running') ? (
                   <Button
                     variant="outlined"
                     size="small"
-                    onClick={handleInterrupt}
-                    loading={interruptSessionMutation.isPending}
-                    startIcon={<RefreshIcon />}
+                    onClick={handleStop}
+                    loading={stopSessionMutation.isPending}
                   >
-                    请求中断
+                    停止
                   </Button>
                 ) : null}
                 <Button variant="outlined" size="small" onClick={reset}>
@@ -378,15 +392,6 @@ export function ResearchPage() {
                 导出报告
               </Button>
             }
-          />
-          <InterruptDecisionPanel
-            status={session.status}
-            resumeIdempotencyKey={resumeIdempotencyKey}
-            decisionDraft={decisionDraft}
-            onResumeIdempotencyKeyChange={setResumeIdempotencyKey}
-            onDecisionDraftChange={setDecisionDraft}
-            onResume={handleResume}
-            resumePending={resumeSessionMutation.isPending}
           />
         </Stack>
       )}

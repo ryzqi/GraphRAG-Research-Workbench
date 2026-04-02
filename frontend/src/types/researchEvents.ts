@@ -2,10 +2,9 @@ export type ResearchSessionStatus =
   | 'created'
   | 'planning'
   | 'clarifying'
+  | 'plan_ready'
   | 'queued'
   | 'running'
-  | 'interrupted'
-  | 'resuming'
   | 'finalizing'
   | 'final'
   | 'failed'
@@ -57,20 +56,12 @@ export interface ResearchClarificationSubmitRequest {
   answer: string;
 }
 
-export interface ResearchInterruptRequest {
+export interface ResearchPlanUpdateRequest {
+  feedback: string;
+}
+
+export interface ResearchStopRequest {
   reason?: string | null;
-}
-
-export interface ResearchResumeRequest {
-  idempotency_key: string;
-  resume_from_event_id?: string | null;
-  decisions?: Array<Record<string, unknown>>;
-}
-
-export interface ResearchResumeAccepted {
-  status: 'accepted';
-  resume_from_event_id: string | null;
-  decision_count: number;
 }
 
 export interface ResearchCanonicalCitation {
@@ -266,10 +257,8 @@ export function deriveResearchStatus(params: {
         return 'final';
       case 'research.finalizer.started':
         return 'finalizing';
-      case 'research.run.resume_requested':
-        return 'resuming';
-      case 'research.run.interrupted':
-        return 'interrupted';
+      case 'research.run.stopped':
+        return 'canceled';
       case 'research.run.timed_out':
         return 'timed_out';
       case 'research.run.failed':

@@ -1,7 +1,7 @@
 /**
  * Markdown message renderer with lazy code block highlighting.
  */
-import { Suspense, lazy, useMemo } from 'react';
+import { Suspense, lazy, useEffect, useId, useMemo, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Typography, Link, Box } from '@mui/material';
@@ -100,6 +100,70 @@ function splitUnclosedFence(content: string) {
   };
 }
 
+function MermaidDiagram({ chart }: { chart: string }) {
+  const [svg, setSvg] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const diagramId = useId().replace(/:/g, '-');
+
+  useEffect(() => {
+    let cancelled = false;
+
+    void (async () => {
+      try {
+        const mermaidModule = await import('mermaid');
+        const mermaid = mermaidModule.default;
+        mermaid.initialize({
+          startOnLoad: false,
+          securityLevel: 'strict',
+        });
+        const { svg: renderedSvg } = await mermaid.render(`mermaid-${diagramId}`, chart);
+        if (!cancelled) {
+          setSvg(renderedSvg);
+          setError(null);
+        }
+      } catch (caughtError) {
+        if (!cancelled) {
+          setSvg(null);
+          setError(caughtError instanceof Error ? caughtError.message : 'Mermaid 渲染失败');
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [chart, diagramId]);
+
+  return (
+    <Box data-mermaid-diagram="true" sx={{ my: 2 }}>
+      {svg ? (
+        <Box sx={{ overflowX: 'auto' }} dangerouslySetInnerHTML={{ __html: svg }} />
+      ) : (
+        <Box
+          component="pre"
+          sx={{
+            m: 0,
+            p: 1.5,
+            borderRadius: 2,
+            bgcolor: 'action.hover',
+            fontFamily: 'monospace',
+            fontSize: '0.875em',
+            whiteSpace: 'pre-wrap',
+            wordBreak: 'break-word',
+          }}
+        >
+          {chart}
+        </Box>
+      )}
+      {error ? (
+        <Typography variant="caption" color="error" sx={{ mt: 1, display: 'block' }}>
+          {error}
+        </Typography>
+      ) : null}
+    </Box>
+  );
+}
+
 export function MarkdownContent({
   content,
   isStreaming = false,
@@ -182,6 +246,10 @@ export function MarkdownContent({
         }
 
         const code = String(children ?? '').replace(/\n$/, '');
+
+        if ((match?.[1] || '').toLowerCase() === 'mermaid') {
+          return <MermaidDiagram chart={code} />;
+        }
 
         return (
           <Suspense

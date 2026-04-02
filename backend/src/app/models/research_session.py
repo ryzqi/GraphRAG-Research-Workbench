@@ -23,10 +23,9 @@ class ResearchSessionStatus(str, Enum):
     CREATED = "created"
     PLANNING = "planning"
     CLARIFYING = "clarifying"
+    PLAN_READY = "plan_ready"
     QUEUED = "queued"
     RUNNING = "running"
-    INTERRUPTED = "interrupted"
-    RESUMING = "resuming"
     FINALIZING = "finalizing"
     FINAL = "final"
     FAILED = "failed"
@@ -68,6 +67,7 @@ _ALLOWED_RESEARCH_SESSION_TRANSITIONS: dict[
     ResearchSessionStatus.PLANNING: frozenset(
         {
             ResearchSessionStatus.CLARIFYING,
+            ResearchSessionStatus.PLAN_READY,
             ResearchSessionStatus.QUEUED,
             ResearchSessionStatus.RUNNING,
             ResearchSessionStatus.CANCELED,
@@ -77,6 +77,16 @@ _ALLOWED_RESEARCH_SESSION_TRANSITIONS: dict[
     ),
     ResearchSessionStatus.CLARIFYING: frozenset(
         {
+            ResearchSessionStatus.PLAN_READY,
+            ResearchSessionStatus.QUEUED,
+            ResearchSessionStatus.CANCELED,
+            ResearchSessionStatus.FAILED,
+            ResearchSessionStatus.TIMED_OUT,
+        }
+    ),
+    ResearchSessionStatus.PLAN_READY: frozenset(
+        {
+            ResearchSessionStatus.CLARIFYING,
             ResearchSessionStatus.QUEUED,
             ResearchSessionStatus.CANCELED,
             ResearchSessionStatus.FAILED,
@@ -93,25 +103,6 @@ _ALLOWED_RESEARCH_SESSION_TRANSITIONS: dict[
     ),
     ResearchSessionStatus.RUNNING: frozenset(
         {
-            ResearchSessionStatus.INTERRUPTED,
-            ResearchSessionStatus.FINALIZING,
-            ResearchSessionStatus.FINAL,
-            ResearchSessionStatus.CANCELED,
-            ResearchSessionStatus.FAILED,
-            ResearchSessionStatus.TIMED_OUT,
-        }
-    ),
-    ResearchSessionStatus.INTERRUPTED: frozenset(
-        {
-            ResearchSessionStatus.RESUMING,
-            ResearchSessionStatus.CANCELED,
-            ResearchSessionStatus.FAILED,
-            ResearchSessionStatus.TIMED_OUT,
-        }
-    ),
-    ResearchSessionStatus.RESUMING: frozenset(
-        {
-            ResearchSessionStatus.RUNNING,
             ResearchSessionStatus.FINALIZING,
             ResearchSessionStatus.FINAL,
             ResearchSessionStatus.CANCELED,
@@ -122,6 +113,7 @@ _ALLOWED_RESEARCH_SESSION_TRANSITIONS: dict[
     ResearchSessionStatus.FINALIZING: frozenset(
         {
             ResearchSessionStatus.FINAL,
+            ResearchSessionStatus.CANCELED,
             ResearchSessionStatus.FAILED,
             ResearchSessionStatus.TIMED_OUT,
         }
@@ -155,10 +147,6 @@ class ResearchSession(Base):
     last_event_sequence: Mapped[int] = mapped_column(
         sa.Integer, nullable=False, default=0, server_default="0"
     )
-    last_resume_idempotency_key: Mapped[str | None] = mapped_column(
-        sa.String(length=128), nullable=True
-    )
-    last_resume_response: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     metrics: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     error_message: Mapped[str | None] = mapped_column(sa.Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(

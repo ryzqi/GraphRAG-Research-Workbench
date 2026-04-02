@@ -8,15 +8,14 @@ import type { SseEvent } from '../lib/sse';
 import type {
   ResearchArtifactsResponse,
   ResearchClarificationSubmitRequest,
-  ResearchInterruptRequest,
-  ResearchResumeAccepted,
-  ResearchResumeRequest,
+  ResearchPlanUpdateRequest,
   ResearchSessionAccepted,
   ResearchSessionCreateRequest,
+  ResearchStopRequest,
 } from '../types/researchEvents';
 
-// Deep Research 的预规划接口会等待 scoper 判定，并且在可执行时继续排队调度；
-// 30 秒默认超时过短，用户在提交补充信息后容易被前端提前中断。
+// Deep Research 的预规划接口会等待 scoper 判定，并停在澄清/计划确认阶段；
+// 30 秒默认超时过短，用户在提交补充信息或更新计划后容易被前端提前中断。
 const RESEARCH_PLANNING_TIMEOUT_MS = 300_000;
 
 export type {
@@ -27,15 +26,14 @@ export type {
   ResearchClarificationRequest,
   ResearchClarificationSubmitRequest,
   ResearchEventEnvelope,
-  ResearchInterruptRequest,
+  ResearchPlanUpdateRequest,
   ResearchPlanSnapshot,
   ResearchPlanSubtask,
-  ResearchResumeAccepted,
-  ResearchResumeRequest,
   ResearchSessionAccepted,
   ResearchSessionCreateRequest,
   ResearchSessionStatus,
   ResearchSessionView,
+  ResearchStopRequest,
   ResearchSourceTarget,
   ResearchSourceType,
 } from '../types/researchEvents';
@@ -96,6 +94,23 @@ export async function submitResearchClarification(
   );
 }
 
+export async function updateResearchPlan(
+  sessionId: string,
+  data: ResearchPlanUpdateRequest
+): Promise<ResearchSessionAccepted> {
+  return apiFetch<ResearchSessionAccepted>(`/api/v1/research/sessions/${sessionId}/plan`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+    timeoutMs: RESEARCH_PLANNING_TIMEOUT_MS,
+  });
+}
+
+export async function startResearchSession(sessionId: string): Promise<ResearchSessionAccepted> {
+  return apiFetch<ResearchSessionAccepted>(`/api/v1/research/sessions/${sessionId}/start`, {
+    method: 'POST',
+  });
+}
+
 /**
  * 获取研究工件
  */
@@ -110,33 +125,14 @@ export async function getResearchArtifacts(
 /**
  * 中断研究会话
  */
-export async function interruptResearchSession(
+export async function stopResearchSession(
   sessionId: string,
-  data: ResearchInterruptRequest = {}
+  data: ResearchStopRequest = {}
 ): Promise<ResearchSessionAccepted> {
-  return apiFetch<ResearchSessionAccepted>(
-    `/api/v1/research/sessions/${sessionId}/interrupt`,
-    {
-      method: 'POST',
-      body: JSON.stringify(data),
-    }
-  );
-}
-
-/**
- * 恢复研究会话
- */
-export async function resumeResearchSession(
-  sessionId: string,
-  data: ResearchResumeRequest
-): Promise<ResearchResumeAccepted> {
-  return apiFetch<ResearchResumeAccepted>(
-    `/api/v1/research/sessions/${sessionId}/resume`,
-    {
-      method: 'POST',
-      body: JSON.stringify(data),
-    }
-  );
+  return apiFetch<ResearchSessionAccepted>(`/api/v1/research/sessions/${sessionId}/stop`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
 }
 
 /**
