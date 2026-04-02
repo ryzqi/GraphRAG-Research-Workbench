@@ -22,8 +22,9 @@ vi.mock('react', async () => {
 
 const createResearchSessionMock = vi.fn();
 const submitClarificationMock = vi.fn();
-const interruptSessionMock = vi.fn();
-const resumeSessionMock = vi.fn();
+const updatePlanMock = vi.fn();
+const startSessionMock = vi.fn();
+const stopSessionMock = vi.fn();
 const refetchMock = vi.fn();
 
 const hookState = {
@@ -43,16 +44,22 @@ vi.mock('../hooks/queries/useResearch', () => ({
     mutateAsync: submitClarificationMock,
     reset: vi.fn(),
   }),
-  useInterruptResearchSession: () => ({
+  useUpdateResearchPlan: () => ({
     isPending: false,
     error: null,
-    mutateAsync: interruptSessionMock,
+    mutateAsync: updatePlanMock,
     reset: vi.fn(),
   }),
-  useResumeResearchSession: () => ({
+  useStartResearchSession: () => ({
     isPending: false,
     error: null,
-    mutateAsync: resumeSessionMock,
+    mutateAsync: startSessionMock,
+    reset: vi.fn(),
+  }),
+  useStopResearchSession: () => ({
+    isPending: false,
+    error: null,
+    mutateAsync: stopSessionMock,
     reset: vi.fn(),
   }),
   useResearchSession: () => ({
@@ -242,6 +249,70 @@ describe('ResearchPage', () => {
     expect(html).not.toContain('Mission Control');
     expect(html).not.toContain('Evidence Ledger');
     expect(html).not.toContain('失败');
+  });
+
+  it('renders a plan review surface with update-plan and explicit start actions before execution', () => {
+    hookState.session = {
+      session_id: 'session-plan-ready',
+      status: 'plan_ready',
+      plan_snapshot: {
+        research_brief: '聚焦最近两年的 RAG 研究与工业实践',
+        complexity: 'comparative',
+        summary: '先核对检索范围与输出结构，再决定是否开始执行。',
+        subtasks: [
+          {
+            title: '检索近两年论文',
+            description: '优先顶会与期刊论文。',
+            target_sources: ['paper'],
+          },
+          {
+            title: '汇总工业界实践',
+            description: '补充公司博客与开源项目发布说明。',
+            target_sources: ['web'],
+          },
+        ],
+        target_sources: ['paper', 'web'],
+      },
+      clarification_request: null,
+      events: [],
+      artifacts: [],
+      last_event_id: null,
+      last_sequence: 0,
+      report_md: null,
+      report_json: null,
+    };
+
+    const setState = vi.fn();
+    reactState.sequence = [
+      ['当前RAG领域的最新进展', setState],
+      ['session-plan-ready', setState],
+      [
+        {
+          session_id: 'session-plan-ready',
+          status: 'plan_ready',
+          plan_snapshot: hookState.session.plan_snapshot,
+          clarification_request: null,
+        },
+        setState,
+      ],
+      [false, setState],
+      [null, setState],
+      ['', setState],
+      ['resume-1', setState],
+      ['[{"action":"approve"}]', setState],
+      [true, setState],
+    ];
+    reactState.index = 0;
+
+    const html = renderToStaticMarkup(createElement(ResearchPage));
+
+    expect(html).toContain('研究计划');
+    expect(html).toContain('检索近两年论文');
+    expect(html).toContain('汇总工业界实践');
+    expect(html).toContain('更新计划');
+    expect(html).toContain('开始');
+    expect(html).not.toContain('请求中断');
+    expect(html).not.toContain('研究时间流');
   });
 
   it('shows an explicit contract error state instead of silently empty evidence sections', () => {

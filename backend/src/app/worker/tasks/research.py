@@ -40,10 +40,7 @@ async def _run_research_session(session_id: str) -> None:
             )
             service = build_research_service(db=db, runtime_runner=runtime_runner)
             session = await service.get_session(session_uuid)
-            if session.status not in {
-                ResearchSessionStatus.QUEUED,
-                ResearchSessionStatus.RESUMING,
-            }:
+            if session.status != ResearchSessionStatus.QUEUED:
                 return
 
             try:

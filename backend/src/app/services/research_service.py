@@ -147,13 +147,13 @@ class ResearchService:
         )
         await self._event_store.append(
             session=session,
-            event_type="research.plan.created",
+            event_type="research.plan.ready",
             phase="planner",
             payload={
                 **plan_result.artifact_payload,
                 "lc_agent_name": "planner",
                 "decision_source": "llm_scoper",
-                "auto_start": True,
+                "auto_start": False,
             },
             trace_id=session.trace_id,
         )
@@ -272,18 +272,142 @@ class ResearchService:
         )
         await self._event_store.append(
             session=session,
-            event_type="research.plan.created",
+            event_type="research.plan.ready",
             phase="planner",
             payload={
                 **plan_result.artifact_payload,
                 "lc_agent_name": "planner",
                 "decision_source": "llm_scoper",
-                "auto_start": True,
+                "auto_start": False,
             },
             trace_id=session.trace_id,
         )
         session.transition_to(plan_result.next_status)
         return session, plan_result
+
+    async def update_plan(
+        self,
+        *,
+        session: ResearchSession,
+        feedback: str,
+    ) -> tuple[ResearchSession, ResearchPlannerResult]:
+        if session.status != ResearchSessionStatus.PLAN_READY:
+            raise bad_request(
+                code="RESEARCH_PLAN_UPDATE_NOT_ALLOWED",
+                message="仅 plan_ready 状态允许更新计划",
+            )
+        normalized_feedback = feedback.strip()
+        if not normalized_feedback:
+            raise bad_request(
+                code="RESEARCH_PLAN_UPDATE_FEEDBACK_MISSING",
+                message="更新计划需要提供 feedback",
+            )
+        await self._artifact_store.upsert(
+            session=session,
+            artifact_key="plan_feedback",
+            content_text=normalized_feedback,
+        )
+        await self._event_store.append(
+            session=session,
+            event_type="research.plan.update_requested",
+            phase="planner",
+            payload={"feedback": normalized_feedback, "lc_agent_name": "planner"},
+            trace_id=session.trace_id,
+        )
+        effective_question = self._build_effective_planning_question(
+            session=session,
+            answer=normalized_feedback,
+        )
+        plan_result = await self._planner.build_plan(
+            ResearchSessionCreateRequest(question=effective_question)
+        )
+        if plan_result.clarification_request is not None:
+            await self._persist_clarification_request(
+                session=session,
+                clarification_request=plan_result.clarification_request,
+            )
+            session.transition_to(ResearchSessionStatus.CLARIFYING)
+            return session, plan_result
+
+        if plan_result.plan_snapshot is None:
+            raise bad_request(
+                code="RESEARCH_PLAN_SNAPSHOT_MISSING",
+                message="研究计划快照缺失",
+            )
+        await self._persist_planned_session_artifacts(
+            session=session,
+            plan_result=plan_result,
+        )
+        await self._event_store.append(
+            session=session,
+            event_type="research.plan.updated",
+            phase="planner",
+            payload={
+                **plan_result.artifact_payload,
+                "feedback": normalized_feedback,
+                "lc_agent_name": "planner",
+                "decision_source": "llm_scoper",
+                "auto_start": False,
+            },
+            trace_id=session.trace_id,
+        )
+        session.transition_to(ResearchSessionStatus.PLAN_READY)
+        return session, plan_result
+
+    async def start_session(self, *, session: ResearchSession) -> ResearchSession:
+        if session.status != ResearchSessionStatus.PLAN_READY:
+            raise bad_request(
+                code="RESEARCH_START_NOT_ALLOWED",
+                message="仅 plan_ready 状态允许开始研究",
+            )
+        session.transition_to(ResearchSessionStatus.QUEUED)
+        await self._event_store.append(
+            session=session,
+            event_type="research.run.queued",
+            phase="planner",
+            payload={"lc_agent_name": "planner"},
+            trace_id=session.trace_id,
+        )
+        return session
+
+    async def stop_session(
+        self,
+        *,
+        session: ResearchSession,
+        reason: str | None = None,
+    ) -> ResearchSession:
+        normalized_reason = reason.strip() if isinstance(reason, str) else None
+        runtime_stop = session.status in {
+            ResearchSessionStatus.RUNNING,
+            ResearchSessionStatus.FINALIZING,
+        }
+        if session.status in {
+            ResearchSessionStatus.CREATED,
+            ResearchSessionStatus.PLANNING,
+            ResearchSessionStatus.CLARIFYING,
+            ResearchSessionStatus.PLAN_READY,
+            ResearchSessionStatus.QUEUED,
+            ResearchSessionStatus.RUNNING,
+            ResearchSessionStatus.FINALIZING,
+        }:
+            session.transition_to(ResearchSessionStatus.CANCELED)
+            await self._event_store.append(
+                session=session,
+                event_type="research.run.stopped",
+                phase="runtime" if runtime_stop else "planner",
+                payload={
+                    "reason": normalized_reason,
+                    "lc_agent_name": "deep-research" if runtime_stop else "planner",
+                },
+                trace_id=session.trace_id,
+            )
+            return session
+        if session.status == ResearchSessionStatus.CANCELED:
+            return session
+        raise bad_request(
+            code="RESEARCH_STOP_NOT_ALLOWED",
+            message="当前状态不允许停止研究",
+        )
 
     @staticmethod
     def _build_effective_planning_question(
@@ -450,56 +574,6 @@ class ResearchService:
         )
         await self._persist_metrics_artifacts(session=session, metrics=metrics)
         return final_result
-
-    async def interrupt_session(
-        self,
-        *,
-        session: ResearchSession,
-        reason: str | None = None,
-    ) -> ResearchSession:
-        session.transition_to(ResearchSessionStatus.INTERRUPTED)
-        await self._event_store.append(
-            session=session,
-            event_type="research.run.interrupted",
-            phase="runtime",
-            payload={"reason": reason, "lc_agent_name": "deep-research"},
-            trace_id=session.trace_id,
-        )
-        return session
-
-    async def resume_session(
-        self,
-        *,
-        session: ResearchSession,
-        idempotency_key: str,
-        resume_from_event_id: str | None = None,
-        decisions: list[dict] | None = None,
-    ) -> dict:
-        if session.last_resume_idempotency_key == idempotency_key:
-            return dict(session.last_resume_response or {})
-        session.transition_to(ResearchSessionStatus.RESUMING)
-        response = {
-            "status": "accepted",
-            "resume_from_event_id": resume_from_event_id,
-            "decision_count": len(decisions or []),
-        }
-        await self._event_store.append(
-            session=session,
-            event_id=f"resume:{idempotency_key}",
-            event_type="research.run.resume_requested",
-            phase="runtime",
-            payload={
-                "idempotency_key": idempotency_key,
-                "resume_from_event_id": resume_from_event_id,
-                "decisions": list(decisions or []),
-                "lc_agent_name": "deep-research",
-            },
-            trace_id=session.trace_id,
-            idempotency_key=idempotency_key,
-        )
-        session.last_resume_idempotency_key = idempotency_key
-        session.last_resume_response = response
-        return dict(response)
 
     async def fail_session(
         self,

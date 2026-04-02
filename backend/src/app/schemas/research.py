@@ -142,6 +142,28 @@ class ResearchClarificationSubmitRequest(BaseModel):
         return _normalize_required_text(value, field_name="answer")
 
 
+class ResearchPlanUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    feedback: str = Field(..., min_length=1)
+
+    @field_validator("feedback")
+    @classmethod
+    def _validate_feedback(cls, value: str) -> str:
+        return _normalize_required_text(value, field_name="feedback")
+
+
+class ResearchStopRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    reason: str | None = None
+
+    @field_validator("reason")
+    @classmethod
+    def _validate_reason(cls, value: str | None) -> str | None:
+        return _normalize_optional_text(value, field_name="reason")
+
+
 class ResearchSessionAccepted(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -162,6 +184,11 @@ class ResearchSessionAccepted(BaseModel):
             and self.plan_snapshot is None
         ):
             raise ValueError("queued 状态必须包含 plan_snapshot")
+        if (
+            self.status == ResearchSessionStatus.PLAN_READY
+            and self.plan_snapshot is None
+        ):
+            raise ValueError("plan_ready 状态必须包含 plan_snapshot")
         return self
 
 
@@ -279,35 +306,6 @@ class ResearchStreamResumeParams(BaseModel):
             last_event_id, field_name="Last-Event-ID"
         )
         return normalized_last_event_id or self.resume_from_event_id
-
-
-class ResearchInterruptRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    reason: str | None = None
-
-    @field_validator("reason")
-    @classmethod
-    def _validate_reason(cls, value: str | None) -> str | None:
-        return _normalize_optional_text(value, field_name="reason")
-
-
-class ResearchResumeRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    idempotency_key: str = Field(..., min_length=1, max_length=128)
-    resume_from_event_id: str | None = Field(default=None, max_length=128)
-    decisions: list[dict[str, Any]] = Field(default_factory=list)
-
-    @field_validator("idempotency_key", mode="before")
-    @classmethod
-    def _validate_idempotency_key(cls, value: Any) -> str:
-        return _normalize_required_text(value, field_name="idempotency_key")
-
-    @field_validator("resume_from_event_id", mode="before")
-    @classmethod
-    def _validate_resume_from_event_id(cls, value: Any) -> str | None:
-        return _normalize_optional_text(value, field_name="resume_from_event_id")
 
 
 class ResearchArtifactRead(BaseModel):

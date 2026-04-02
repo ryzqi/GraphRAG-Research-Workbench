@@ -14,11 +14,11 @@ from app.models.research_session import ResearchSessionStatus
 from app.schemas.research import (
     ResearchArtifactsResponse,
     ResearchClarificationSubmitRequest,
-    ResearchInterruptRequest,
+    ResearchPlanUpdateRequest,
     ResearchSessionAccepted,
     ResearchSessionCreateRequest,
+    ResearchStopRequest,
     ResearchStreamResumeParams,
-    ResearchResumeRequest,
 )
 from app.services.research_service import ResearchService, build_research_service
 
@@ -110,6 +110,50 @@ async def submit_research_clarification(
     )
 
 
+@router.post(
+    "/sessions/{session_id}/plan",
+    response_model=ResearchSessionAccepted,
+)
+async def update_research_plan(
+    session_id: uuid.UUID,
+    db: AsyncSessionDep,
+    request: Request,
+    body: ResearchPlanUpdateRequest,
+) -> ResearchSessionAccepted:
+    service = _get_research_service(request=request, db=db)
+    session = await service.get_session(session_id)
+    session, plan_result = await service.update_plan(session=session, feedback=body.feedback)
+    await db.commit()
+    return ResearchSessionAccepted(
+        session_id=session.id,
+        status=session.status,
+        plan_snapshot=plan_result.plan_snapshot,
+        clarification_request=plan_result.clarification_request,
+    )
+
+
+@router.post(
+    "/sessions/{session_id}/start",
+    response_model=ResearchSessionAccepted,
+)
+async def start_research_session(
+    session_id: uuid.UUID,
+    db: AsyncSessionDep,
+    request: Request,
+) -> ResearchSessionAccepted:
+    service = _get_research_service(request=request, db=db)
+    session = await service.get_session(session_id)
+    session = await service.start_session(session=session)
+    await db.commit()
+    _dispatch_research_session(request=request, session_id=session.id)
+    return ResearchSessionAccepted(
+        session_id=session.id,
+        status=session.status,
+        plan_snapshot=service.read_plan_snapshot(session),
+        clarification_request=None,
+    )
+
+
 @router.get("/sessions/{session_id}/stream")
 async def stream_research_session(
     session_id: uuid.UUID,
@@ -138,40 +182,20 @@ async def stream_research_session(
 
 
 @router.post(
-    "/sessions/{session_id}/interrupt",
+    "/sessions/{session_id}/stop",
     response_model=ResearchSessionAccepted,
 )
-async def interrupt_research_session(
+async def stop_research_session(
     session_id: uuid.UUID,
     db: AsyncSessionDep,
     request: Request,
-    body: ResearchInterruptRequest,
+    body: ResearchStopRequest,
 ) -> ResearchSessionAccepted:
     service = _get_research_service(request=request, db=db)
     session = await service.get_session(session_id)
-    session = await service.interrupt_session(session=session, reason=body.reason)
+    session = await service.stop_session(session=session, reason=body.reason)
     await db.commit()
     return ResearchSessionAccepted(session_id=session.id, status=session.status)
-
-
-@router.post("/sessions/{session_id}/resume")
-async def resume_research_session(
-    session_id: uuid.UUID,
-    db: AsyncSessionDep,
-    request: Request,
-    body: ResearchResumeRequest,
-) -> dict:
-    service = _get_research_service(request=request, db=db)
-    session = await service.get_session(session_id)
-    response = await service.resume_session(
-        session=session,
-        idempotency_key=body.idempotency_key,
-        resume_from_event_id=body.resume_from_event_id,
-        decisions=body.decisions,
-    )
-    await db.commit()
-    _dispatch_research_session(request=request, session_id=session.id)
-    return response
 
 
 @router.get(

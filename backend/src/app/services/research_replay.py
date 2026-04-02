@@ -94,12 +94,14 @@ def _next_status(
     event_type: str,
 ) -> ResearchSessionStatus:
     mapping = {
-        "research.plan.created": ResearchSessionStatus.PLANNING,
+        "research.clarification.requested": ResearchSessionStatus.CLARIFYING,
+        "research.plan.ready": ResearchSessionStatus.PLAN_READY,
+        "research.plan.updated": ResearchSessionStatus.PLAN_READY,
         "research.run.started": ResearchSessionStatus.RUNNING,
-        "research.run.interrupted": ResearchSessionStatus.INTERRUPTED,
-        "research.run.resume_requested": ResearchSessionStatus.RESUMING,
+        "research.run.stopped": ResearchSessionStatus.CANCELED,
         "research.finalizer.started": ResearchSessionStatus.FINALIZING,
         "research.final.completed": ResearchSessionStatus.FINAL,
         "research.run.failed": ResearchSessionStatus.FAILED,
+        "research.run.timed_out": ResearchSessionStatus.TIMED_OUT,
     }
     return mapping.get(event_type, status)

@@ -31,12 +31,12 @@
 - `session_id`
 - `status`
 - `status=clarifying` 时返回 `clarification_request`
-- `status=queued` 时返回 `plan_snapshot`
+- `status=plan_ready` 时返回 `plan_snapshot`
 
 说明：
 
 - `plan_first` 固定为 `true`，当前公开契约只支持 clarification-first / plan-first 路径。
-- 创建会话会先进入 LLM scoping；若信息足够则直接返回 `queued` 并开始研究，若不足则返回 `clarifying`。
+- 创建会话会先进入 LLM scoping；若信息足够则返回 `plan_ready` 等待用户显式开始，若不足则返回 `clarifying`。
 
 ### 2. 提交澄清回答
 
@@ -53,14 +53,46 @@
 响应：
 
 - 若信息仍不足：`status=clarifying` + `clarification_request`
-- 若已可生成计划：`status=queued` + `plan_snapshot`
+- 若已可生成计划：`status=plan_ready` + `plan_snapshot`
 
 说明：
 
-- 当前链路不再暴露人工确认计划接口。
-- `plan_snapshot` 仍会返回并持久化，但只作为研究前计划展示与审计工件，不再阻塞执行。
+- 澄清完成后不会自动执行，仍需用户显式开始。
 
-### 3. 读取研究事件流
+### 3. 更新研究计划
+
+- `POST /api/v1/research/sessions/{session_id}/plan`
+
+请求体：
+
+```json
+{
+  "feedback": "把工业界实践提前，并强调最终输出给技术负责人"
+}
+```
+
+响应：
+
+- `status=clarifying` + `clarification_request`
+- 或 `status=plan_ready` + `plan_snapshot`
+
+说明：
+
+- 当前接口用于用户在执行前更新研究计划，不会自动触发执行。
+
+### 4. 显式开始研究
+
+- `POST /api/v1/research/sessions/{session_id}/start`
+
+响应：
+
+- `status=queued` + `plan_snapshot`
+
+说明：
+
+- 只有 `plan_ready` 状态允许开始。
+
+### 5. 读取研究事件流
 
 - `GET /api/v1/research/sessions/{session_id}/stream`
 
@@ -69,38 +101,24 @@
 - `Last-Event-ID`：优先续流游标
 - `resume_from_event_id`：显式恢复游标
 
-### 4. 中断研究
+### 6. 停止研究
 
-- `POST /api/v1/research/sessions/{session_id}/interrupt`
-
-请求体：
-
-```json
-{
-  "reason": "等待人工确认"
-}
-```
-
-### 5. 恢复研究
-
-- `POST /api/v1/research/sessions/{session_id}/resume`
+- `POST /api/v1/research/sessions/{session_id}/stop`
 
 请求体：
 
 ```json
 {
-  "idempotency_key": "resume-demo-001",
-  "resume_from_event_id": "evt-000123",
-  "decisions": [
-    {
-      "action": "approve",
-      "scope": "research"
-    }
-  ]
+  "reason": "用户主动停止当前研究"
 }
 ```
 
-### 6. 读取研究工件
+说明：
+
+- 前端主流程只保留停止，不再暴露 resume 决策 UI。
+- stop 后统一返回 `status=canceled`，不再保留 `interrupted/resuming` 双轨状态。
+
+### 7. 读取研究工件
 
 - `GET /api/v1/research/sessions/{session_id}/artifacts`
 
@@ -145,6 +163,7 @@
 
 - `clarification_request`
 - `clarification_answer`
+- `plan_feedback`
 - `plan_snapshot`
 - `research_brief`
 

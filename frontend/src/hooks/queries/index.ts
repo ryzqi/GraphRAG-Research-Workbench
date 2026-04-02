@@ -23,8 +23,10 @@ export {
 export {
   useResearchSession,
   useCreateResearchSession,
-  useInterruptResearchSession,
-  useResumeResearchSession,
+  useSubmitResearchClarification,
+  useUpdateResearchPlan,
+  useStartResearchSession,
+  useStopResearchSession,
   researchKeys,
 } from './useResearch';
 
