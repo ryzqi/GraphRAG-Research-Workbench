@@ -53,7 +53,7 @@ function Import-DotEnv {
     }
 }
 
-function Ensure-Command {
+function Assert-Command {
     param(
         [Parameter(Mandatory = $true)][string]$Name,
         [string]$InstallHint = ""
@@ -93,7 +93,7 @@ function Start-Terminal {
     Start-Process -FilePath $terminalShell -ArgumentList "-NoProfile", "-NoExit", "-Command", $psCommand -WorkingDirectory $WorkingDirectory | Out-Null
 }
 
-function Normalize-ApiBaseUrl {
+function Resolve-ApiBaseUrl {
     param([string]$Raw)
 
     if (-not $Raw) { return "http://127.0.0.1:8000" }
@@ -167,7 +167,7 @@ function Wait-BackendReady {
     )
 
     $rawApiBase = if ($env:NEXT_PUBLIC_API_BASE_URL) { $env:NEXT_PUBLIC_API_BASE_URL } else { $env:VITE_API_BASE_URL }
-    $baseUrl = Normalize-ApiBaseUrl -Raw $rawApiBase
+    $baseUrl = Resolve-ApiBaseUrl -Raw $rawApiBase
     # /ready 会检查 Postgres 等关键依赖是否可用；比 /health 更能反映“前端可用”状态。
     $healthUrl = "$baseUrl/api/v1/ready"
     $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
@@ -370,7 +370,7 @@ Write-Host "加载环境变量 (.env) ..." -ForegroundColor Cyan
 Import-DotEnv -Path $envFile
 
 if (-not $env:NEXT_PUBLIC_API_BASE_URL -and $env:VITE_API_BASE_URL) {
-    $env:NEXT_PUBLIC_API_BASE_URL = Normalize-ApiBaseUrl -Raw $env:VITE_API_BASE_URL
+    $env:NEXT_PUBLIC_API_BASE_URL = Resolve-ApiBaseUrl -Raw $env:VITE_API_BASE_URL
     if ($Verbose) {
         Write-Host "检测到旧变量 VITE_API_BASE_URL，已映射到 NEXT_PUBLIC_API_BASE_URL=$($env:NEXT_PUBLIC_API_BASE_URL)" -ForegroundColor DarkGray
     }
@@ -395,7 +395,7 @@ if (-not $SkipInfra) {
 
 $needBackend = (-not $SkipBackend) -or (-not $SkipWorker) -or $RunSeed -or $shouldRunMigrate
 if ($needBackend) {
-    Ensure-Command -Name "uv" -InstallHint "pip install uv"
+    Assert-Command -Name "uv" -InstallHint "pip install uv"
     Push-Location $backendDir
     try {
         if (-not (Test-Path (Join-Path $backendDir ".venv"))) {
@@ -486,7 +486,7 @@ if (-not $SkipFrontend) {
         }
     }
 
-    Ensure-Command -Name "npm" -InstallHint "请安装 Node.js 20+ (包含 npm)"
+    Assert-Command -Name "npm" -InstallHint "请安装 Node.js 20+ (包含 npm)"
     Push-Location $frontendDir
     try {
         if (-not (Test-Path (Join-Path $frontendDir "node_modules"))) {

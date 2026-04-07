@@ -27,6 +27,8 @@ describe('ResearchComposer', () => {
     expect(html).not.toContain('先规划，再开始研究');
     expect(html).not.toContain('研究会先收敛问题，再进入正式执行');
     expect(html).not.toContain('执行前确认计划');
+    expect(html).not.toContain('linear-gradient(180deg,#f8fbff 0%,#eef4ff 48%,#f8fbff 100%)');
+    expect(html).not.toContain('max-width:880px');
   });
 
   it('does not accept legacy confirmation toggle props', () => {

@@ -136,6 +136,23 @@ def _map_probe_exception(
 
 
 def _has_probe_content(response: Any) -> bool:
+    reasoning_content = getattr(response, "reasoning_content", None)
+    if isinstance(reasoning_content, str) and reasoning_content.strip():
+        return True
+
+    additional_kwargs = getattr(response, "additional_kwargs", None)
+    if isinstance(additional_kwargs, dict):
+        direct_reasoning = additional_kwargs.get("reasoning_content")
+        if isinstance(direct_reasoning, str) and direct_reasoning.strip():
+            return True
+
+        reasoning = additional_kwargs.get("reasoning")
+        if isinstance(reasoning, dict):
+            for key in ("reasoning", "content", "text"):
+                value = reasoning.get(key)
+                if isinstance(value, str) and value.strip():
+                    return True
+
     content = getattr(response, "content", None)
     if isinstance(content, str):
         return bool(content.strip())

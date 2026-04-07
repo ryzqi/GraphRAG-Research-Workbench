@@ -17,7 +17,6 @@ export function createDefaultModelProviderFormState() {
     models: [] as string[],
     modelInput: '',
     apiKey: '',
-    clearApiKey: false,
     thinkingEnabled: true,
     thinkingLevel: 'high',
   };

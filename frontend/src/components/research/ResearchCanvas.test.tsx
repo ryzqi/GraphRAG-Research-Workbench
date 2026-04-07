@@ -66,8 +66,9 @@ describe('ResearchCanvas', () => {
     expect(html).toContain('访问 example.com');
     expect(html).toContain('查看来源与证据');
     expect(html).toContain('仍需补充一条公开网页案例');
-    expect(html).toContain('linear-gradient(180deg,#f7faff 0%,#eef4ff 45%,#f8fbff 100%)');
-    expect(html).toContain('radial-gradient(circle at top,rgba(66,133,244,0.18) 0%,rgba(66,133,244,0) 42%)');
+    expect(html).not.toContain('linear-gradient(180deg,#f7faff 0%,#eef4ff 45%,#f8fbff 100%)');
+    expect(html).not.toContain('radial-gradient(circle at top,rgba(66,133,244,0.18) 0%,rgba(66,133,244,0) 42%)');
+    expect(html).not.toContain('max-width:1040px');
     expect(html).not.toContain('live research');
     expect(html).not.toContain('deep research stream');
     expect(html).not.toContain('source trace');
@@ -112,6 +113,7 @@ describe('ResearchCanvas', () => {
     expect(html).toContain('导出报告');
     expect(html).toContain('结论正文');
     expect(html).toContain('linear-gradient(180deg,rgba(255,255,255,0.98) 0%,rgba(245,249,255,0.98) 100%)');
+    expect(html).not.toContain('max-width:1040px');
     expect(html).not.toContain('final report');
     expect(html).not.toContain('研究时间流');
   });

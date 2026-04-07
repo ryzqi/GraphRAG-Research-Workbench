@@ -35,5 +35,6 @@ describe('ResearchPlanningThread', () => {
     expect(html).not.toContain('补充你的回答');
     expect(html).toContain('提交补充信息');
     expect(html).not.toContain('计划草案');
+    expect(html).not.toContain('max-width:860px');
   });
 });

@@ -37,7 +37,6 @@ describe('formDefaults', () => {
       models: [],
       modelInput: '',
       apiKey: '',
-      clearApiKey: false,
       thinkingEnabled: true,
       thinkingLevel: 'high',
     });

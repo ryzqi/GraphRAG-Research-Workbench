@@ -99,6 +99,7 @@ uv run uvicorn app.main:app --host 127.0.0.1 --port 8000 --loop app.core.uvicorn
 
 - OpenAPI：`http://localhost:8000/docs`
 - 健康检查：`http://localhost:8000/api/v1/health`
+- Windows 下不要省略 `--loop app.core.uvicorn_loop:windows_selector_loop_factory`；默认事件循环会触发 psycopg 启动失败。
 
 ### 3) Worker + Beat
 

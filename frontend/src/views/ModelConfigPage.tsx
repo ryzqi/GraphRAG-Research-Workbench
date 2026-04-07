@@ -63,10 +63,16 @@ type ProviderFormState = {
   models: string[];
   modelInput: string;
   apiKey: string;
-  clearApiKey: boolean;
   thinkingEnabled: boolean;
   thinkingLevel: string;
 };
+
+type PendingProviderAction =
+  | {
+      provider: ModelProvider;
+      kind: 'save' | 'clear-api-key';
+    }
+  | null;
 
 type DraggingModelState = {
   provider: ModelProvider;
@@ -114,7 +120,6 @@ function buildForm(provider: ProviderConfigRead | undefined): ProviderFormState 
     models: normalizeModelNames(provider.models ?? []),
     modelInput: '',
     apiKey: '',
-    clearApiKey: false,
     thinkingEnabled: provider.thinking_enabled,
     thinkingLevel: provider.thinking_level ?? defaults.thinkingLevel,
   };
@@ -150,7 +155,7 @@ export function ModelConfigPage() {
     useState<ModelProvider>(DEFAULT_MODEL_PROVIDER);
   const [activeModelDraft, setActiveModelDraft] = useState('');
   const [pageError, setPageError] = useState<string | null>(null);
-  const [savingProvider, setSavingProvider] = useState<ModelProvider | null>(null);
+  const [pendingProviderAction, setPendingProviderAction] = useState<PendingProviderAction>(null);
   const [draggingModel, setDraggingModel] = useState<DraggingModelState>(null);
 
   const providerById = useMemo(() => providerMap(configQuery.data), [configQuery.data]);
@@ -216,6 +221,14 @@ export function ModelConfigPage() {
     activeProviderModels.length === 0 || activeProviderModels.includes(activeModelDraft)
       ? activeModelDraft
       : activeProviderModels[0];
+  const isSavingSelectedProvider =
+    updateProviderMutation.isPending &&
+    pendingProviderAction?.provider === selectedProvider &&
+    pendingProviderAction.kind === 'save';
+  const isClearingApiKeyForSelectedProvider =
+    updateProviderMutation.isPending &&
+    pendingProviderAction?.provider === selectedProvider &&
+    pendingProviderAction.kind === 'clear-api-key';
 
   const updateForm = <K extends keyof ProviderFormState>(
     provider: ModelProvider,
@@ -299,11 +312,9 @@ export function ModelConfigPage() {
     };
     if (form.apiKey.trim()) {
       payload.api_key = form.apiKey.trim();
-    } else if (form.clearApiKey) {
-      payload.api_key = '';
     }
 
-    setSavingProvider(provider);
+    setPendingProviderAction({ provider, kind: 'save' });
     void updateProviderMutation
       .mutateAsync({ provider, payload })
       .then(() => {
@@ -312,13 +323,37 @@ export function ModelConfigPage() {
           [provider]: {
             ...prev[provider],
             apiKey: '',
-            clearApiKey: false,
             modelInput: '',
           },
         }));
       })
       .finally(() => {
-        setSavingProvider((prev) => (prev === provider ? null : prev));
+        setPendingProviderAction((prev) =>
+          prev?.provider === provider && prev.kind === 'save' ? null : prev
+        );
+      });
+  };
+
+  const handleClearProviderApiKey = (provider: ModelProvider) => {
+    setPendingProviderAction({ provider, kind: 'clear-api-key' });
+    void updateProviderMutation
+      .mutateAsync({
+        provider,
+        payload: { api_key: '' },
+      })
+      .then(() => {
+        setForms((prev) => ({
+          ...prev,
+          [provider]: {
+            ...prev[provider],
+            apiKey: '',
+          },
+        }));
+      })
+      .finally(() => {
+        setPendingProviderAction((prev) =>
+          prev?.provider === provider && prev.kind === 'clear-api-key' ? null : prev
+        );
       });
   };
 
@@ -516,15 +551,19 @@ export function ModelConfigPage() {
                     : '未配置'
                 }
               />
-              <FormControlLabel
-                control={
-                  <Switch
-                    checked={selectedProviderForm.clearApiKey}
-                    onChange={(e) => updateForm(selectedProvider, 'clearApiKey', e.target.checked)}
-                  />
-                }
-                label='清空已保存 API Key'
-              />
+              {selectedProviderPersisted?.api_key_set ? (
+                <Button
+                  variant='outlined'
+                  color='error'
+                  startIcon={<DeleteOutlineIcon />}
+                  loading={isClearingApiKeyForSelectedProvider}
+                  disabled={updateProviderMutation.isPending && !isClearingApiKeyForSelectedProvider}
+                  onClick={() => handleClearProviderApiKey(selectedProvider)}
+                  sx={{ alignSelf: 'flex-start' }}
+                >
+                  清空已保存 API Key
+                </Button>
+              ) : null}
 
               <FormControlLabel
                 control={
@@ -629,8 +668,8 @@ export function ModelConfigPage() {
                 <Button
                   variant='contained'
                   startIcon={<SaveIcon />}
-                  loading={updateProviderMutation.isPending && savingProvider === selectedProvider}
-                  disabled={updateProviderMutation.isPending && savingProvider !== selectedProvider}
+                  loading={isSavingSelectedProvider}
+                  disabled={updateProviderMutation.isPending && !isSavingSelectedProvider}
                   onClick={() => handleSaveProvider(selectedProvider)}
                 >
                   保存配置

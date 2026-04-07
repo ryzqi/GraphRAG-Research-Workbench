@@ -92,6 +92,8 @@ describe('ResearchPage', () => {
       '对齐 Gemini 风格的轻量研究入口：先聚焦问题，再进入规划、执行与最终报告。'
     );
     expect(html).not.toContain('先规划，再开始研究');
+    expect(html).not.toContain('linear-gradient(180deg,#f8fbff 0%,#eef4ff 48%,#f8fbff 100%)');
+    expect(html).not.toContain('max-width:880px');
   });
 
   it('renders the immersive research stream when a session is active', () => {
@@ -186,7 +188,9 @@ describe('ResearchPage', () => {
     expect(html).toContain('比较调度路线');
     expect(html).toContain('抓取到两篇网页证据');
     expect(html).toContain('查看来源与证据');
-    expect(html).toContain('linear-gradient(180deg,#f7faff 0%,#eef4ff 45%,#f8fbff 100%)');
+    expect(html).not.toContain('linear-gradient(180deg,#f7faff 0%,#eef4ff 45%,#f8fbff 100%)');
+    expect(html).not.toContain('radial-gradient(circle at top,rgba(66,133,244,0.18) 0%,rgba(66,133,244,0) 42%)');
+    expect(html).not.toContain('max-width:1040px');
     expect(html).not.toContain('Mission Control');
     expect(html).not.toContain('Evidence Ledger');
     expect(html).not.toContain('收起侧栏');
@@ -246,6 +250,8 @@ describe('ResearchPage', () => {
     expect(html).not.toContain('研究助手');
     expect(html).not.toContain('在开始规划前，还需要补充一点信息');
     expect(html).not.toContain('补充你的回答');
+    expect(html).not.toContain('max-width:920px');
+    expect(html).not.toContain('max-width:860px');
     expect(html).not.toContain('Mission Control');
     expect(html).not.toContain('Evidence Ledger');
     expect(html).not.toContain('失败');
@@ -311,6 +317,8 @@ describe('ResearchPage', () => {
     expect(html).toContain('汇总工业界实践');
     expect(html).toContain('更新计划');
     expect(html).toContain('开始');
+    expect(html).not.toContain('max-width:920px');
+    expect(html).not.toContain('max-width:860px');
     expect(html).not.toContain('请求中断');
     expect(html).not.toContain('研究时间流');
   });
@@ -410,6 +418,7 @@ describe('ResearchPage', () => {
 
     expect(html).toContain('最终报告');
     expect(html).toContain('正式结论');
+    expect(html).not.toContain('max-width:1040px');
     expect(html).not.toContain('研究时间流');
   });
 

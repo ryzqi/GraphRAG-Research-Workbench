@@ -61,8 +61,6 @@ export function ResearchPlanningThread({
             bgcolor: '#ffffff',
             color: '#202124',
             boxShadow: '0 18px 44px rgba(66, 133, 244, 0.08)',
-            maxWidth: 860,
-            mx: 'auto',
           }}
         >
           <Stack spacing={0.5} sx={{ px: 2.5, py: 1.75 }}>

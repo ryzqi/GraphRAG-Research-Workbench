@@ -31,8 +31,6 @@ const panelSx = {
   boxShadow: '0 16px 40px rgba(94, 129, 244, 0.08)',
 } as const;
 
-const liveBackground = 'linear-gradient(180deg,#f7faff 0%,#eef4ff 45%,#f8fbff 100%)';
-const liveGlow = 'radial-gradient(circle at top,rgba(66,133,244,0.18) 0%,rgba(66,133,244,0) 42%)';
 const finalBackground =
   'linear-gradient(180deg,rgba(255,255,255,0.98) 0%,rgba(245,249,255,0.98) 100%)';
 
@@ -199,25 +197,6 @@ export function ResearchCanvas({
   actions: ReactNode;
 }) {
   const isLive = model.surface === 'live-research';
-  const rootSurfaceSx = isLive
-      ? {
-        position: 'relative',
-        overflow: 'hidden',
-        p: { xs: 1.5, md: 2 },
-        borderRadius: 7,
-        background: liveBackground,
-        boxShadow: '0 28px 90px rgba(66, 133, 244, 0.12)',
-        '&:before': {
-          content: '""',
-          position: 'absolute',
-          inset: 0,
-          background: liveGlow,
-          pointerEvents: 'none',
-        },
-      }
-    : {
-        p: { xs: 0.25, md: 0.5 },
-      };
 
   const headerSx = isLive
     ? {
@@ -236,7 +215,7 @@ export function ResearchCanvas({
       };
 
   return (
-    <Stack spacing={2.5} sx={{ maxWidth: 1040, mx: 'auto', ...rootSurfaceSx }}>
+    <Stack spacing={2.5} sx={{ width: '100%' }}>
       <Paper variant="outlined" sx={headerSx}>
         <Stack spacing={2}>
           <Stack

@@ -4,7 +4,7 @@
  * 深度研究页面
  */
 import { useCallback, useMemo, useState } from 'react';
-import { Container, Stack, Typography } from '@mui/material';
+import { Box, Stack, Typography } from '@mui/material';
 import DownloadIcon from '@mui/icons-material/Download';
 import { ResearchCanvas } from '../components/research/ResearchCanvas';
 import { ResearchComposer } from '../components/research/ResearchComposer';
@@ -295,9 +295,9 @@ export function ResearchPage() {
   }, [pageModel.evidenceDrawer.coverageMatrix.missing_providers.length, pageModel.evidenceDrawer.coverageMatrix.provider_counts]);
 
   return (
-    <Container
-      maxWidth="xl"
+    <Box
       sx={{
+        width: '100%',
         py: { xs: 2, md: 3 },
         minHeight: !sessionId ? { xs: 'calc(100vh - 96px)', md: 'calc(100vh - 120px)' } : undefined,
       }}
@@ -315,7 +315,7 @@ export function ResearchPage() {
       ) : !session ? (
         <LoadingSpinner text="加载研究任务..." />
       ) : !isExecutionStage ? (
-        <Stack spacing={3} sx={{ maxWidth: 920, mx: 'auto', pt: { xs: 2, md: 4 } }}>
+        <Stack spacing={3} sx={{ width: '100%', pt: { xs: 2, md: 4 } }}>
           <Stack
             direction={{ xs: 'column', sm: 'row' }}
             justifyContent="space-between"
@@ -397,6 +397,6 @@ export function ResearchPage() {
       )}
 
       <ErrorAlert error={mergedError} onClose={handleCloseError} />
-    </Container>
+    </Box>
   );
 }
