@@ -17,6 +17,7 @@ _DEFAULT_CHAT_OPENAI_MAX_RETRIES = 2
 _DEFAULT_NVIDIA_MAX_RETRIES = 0
 _NVIDIA_TIMEOUT_CAP_SECONDS = 60.0
 _OLLAMA_DEFAULT_BASE_URL = "http://127.0.0.1:11434"
+_TIMEOUT_UNSET = object()
 
 
 def _supports_ollama_reasoning_level(model_name: str) -> bool:
@@ -49,14 +50,9 @@ def _build_chat_openai_common_kwargs(
     model_name: str,
     api_key: str,
     base_url: str,
-    timeout_seconds: float | None = None,
+    timeout_seconds: float | None | object = _TIMEOUT_UNSET,
     max_retries: int | None = None,
 ) -> dict[str, Any]:
-    resolved_timeout = float(
-        cfg.llm_timeout_seconds if timeout_seconds is None else timeout_seconds
-    )
-    if provider == ModelProvider.NVIDIA:
-        resolved_timeout = min(resolved_timeout, _NVIDIA_TIMEOUT_CAP_SECONDS)
     resolved_max_retries = (
         _DEFAULT_NVIDIA_MAX_RETRIES
         if provider == ModelProvider.NVIDIA
@@ -68,9 +64,18 @@ def _build_chat_openai_common_kwargs(
         "model": model_name,
         "api_key": api_key,
         "base_url": base_url,
-        "timeout": resolved_timeout,
         "max_retries": resolved_max_retries,
     }
+    if timeout_seconds is _TIMEOUT_UNSET:
+        resolved_timeout = float(cfg.llm_timeout_seconds)
+        if provider == ModelProvider.NVIDIA:
+            resolved_timeout = min(resolved_timeout, _NVIDIA_TIMEOUT_CAP_SECONDS)
+        kwargs["timeout"] = resolved_timeout
+    elif timeout_seconds is not None:
+        resolved_timeout = float(timeout_seconds)
+        if provider == ModelProvider.NVIDIA:
+            resolved_timeout = min(resolved_timeout, _NVIDIA_TIMEOUT_CAP_SECONDS)
+        kwargs["timeout"] = resolved_timeout
     profile = build_chat_model_profile(cfg)
     if profile is not None:
         kwargs["profile"] = profile
@@ -122,7 +127,7 @@ def create_chat_model_from_runtime_config(
     model_name: str,
     settings: Settings | None = None,
     use_previous_response_id: bool | None = None,
-    timeout_seconds: float | None = None,
+    timeout_seconds: float | None | object = _TIMEOUT_UNSET,
     max_retries: int | None = None,
 ) -> Any:
     cfg = settings or get_settings()

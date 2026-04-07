@@ -46,6 +46,7 @@ export async function updateProviderConfig(
   return apiFetch<ModelConfigRead>(`/api/v1/model-config/providers/${provider}`, {
     method: 'PUT',
     body: JSON.stringify(payload),
+    timeoutMs: 0,
   });
 }
 
@@ -53,5 +54,6 @@ export async function updateActiveModel(payload: ActiveModelUpdate): Promise<Mod
   return apiFetch<ModelConfigRead>('/api/v1/model-config/active', {
     method: 'PUT',
     body: JSON.stringify(payload),
+    timeoutMs: 0,
   });
 }

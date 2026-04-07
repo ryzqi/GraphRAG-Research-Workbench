@@ -12,18 +12,21 @@ from app.core.settings import Settings, get_settings
 from app.integrations.chat_model_factory import create_chat_model_from_runtime_config
 from app.integrations.model_runtime_config import RuntimeProviderConfig
 
-_MODEL_PROBE_TIMEOUT_SECONDS = 20.0
 _MODEL_PROBE_MAX_RETRIES = 0
 _MODEL_PROBE_PROMPT = "只回复 OK"
 
 
 def _probe_details(
-    *, provider_cfg: RuntimeProviderConfig, model_name: str, extra: dict[str, Any] | None = None
+    *,
+    provider_cfg: RuntimeProviderConfig,
+    model_name: str,
+    timeout_seconds: float | None = None,
+    extra: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     return {
         "provider": provider_cfg.provider.value,
         "model": model_name,
-        "timeout_seconds": _MODEL_PROBE_TIMEOUT_SECONDS,
+        "timeout_seconds": timeout_seconds,
         **(extra or {}),
     }
 
@@ -50,8 +53,8 @@ def _map_probe_exception(
             return AppError(
                 code="MODEL_PROBE_TIMEOUT",
                 message=(
-                    f"模型健康检查超时：{provider_cfg.provider.value}/{model_name} 在 "
-                    f"{int(_MODEL_PROBE_TIMEOUT_SECONDS)} 秒内未返回响应。"
+                    f"模型健康检查超时：{provider_cfg.provider.value}/{model_name} "
+                    "长时间未返回响应。"
                     "该模型可能仅出现在目录中，但当前账号/路由下不可实际推理。"
                 ),
                 status_code=504,
@@ -179,7 +182,7 @@ async def probe_runtime_target(
         provider_cfg=provider_cfg,
         model_name=model_name,
         settings=cfg,
-        timeout_seconds=_MODEL_PROBE_TIMEOUT_SECONDS,
+        timeout_seconds=None,
         max_retries=_MODEL_PROBE_MAX_RETRIES,
     )
 

@@ -54,3 +54,111 @@ async def test_probe_runtime_target_accepts_reasoning_only_response(monkeypatch:
     )
 
     await probe_runtime_target(provider_cfg=provider_cfg, model_name="reasoner:latest")
+
+
+@pytest.mark.asyncio
+async def test_probe_runtime_target_does_not_pass_timeout_for_ollama(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured_kwargs: dict[str, object] = {}
+
+    class _FakeChatModel:
+        async def ainvoke(self, _messages: list[object]) -> AIMessage:
+            return AIMessage(content="OK")
+
+    def _fake_create_chat_model_from_runtime_config(**kwargs: object) -> _FakeChatModel:
+        captured_kwargs.update(kwargs)
+        return _FakeChatModel()
+
+    monkeypatch.setattr(
+        "app.integrations.model_health_probe.create_chat_model_from_runtime_config",
+        _fake_create_chat_model_from_runtime_config,
+    )
+
+    provider_cfg = RuntimeProviderConfig(
+        provider=ModelProvider.OLLAMA,
+        enabled=True,
+        base_url="http://127.0.0.1:11434",
+        api_key=None,
+        models=["gemma4:e2b"],
+        thinking_enabled=True,
+        thinking_level="high",
+    )
+
+    await probe_runtime_target(provider_cfg=provider_cfg, model_name="gemma4:e2b")
+
+    assert captured_kwargs["timeout_seconds"] is None
+    assert captured_kwargs["max_retries"] == 0
+
+
+@pytest.mark.asyncio
+async def test_probe_runtime_target_does_not_pass_timeout_for_openai(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured_kwargs: dict[str, object] = {}
+
+    class _FakeChatModel:
+        async def ainvoke(self, _messages: list[object]) -> AIMessage:
+            return AIMessage(content="OK")
+
+    def _fake_create_chat_model_from_runtime_config(**kwargs: object) -> _FakeChatModel:
+        captured_kwargs.update(kwargs)
+        return _FakeChatModel()
+
+    monkeypatch.setattr(
+        "app.integrations.model_health_probe.create_chat_model_from_runtime_config",
+        _fake_create_chat_model_from_runtime_config,
+    )
+
+    provider_cfg = RuntimeProviderConfig(
+        provider=ModelProvider.OPENAI,
+        enabled=True,
+        base_url="https://api.openai.com/v1",
+        api_key="test-key",
+        models=["gpt-4o-mini"],
+        thinking_enabled=True,
+        thinking_level="high",
+    )
+
+    await probe_runtime_target(provider_cfg=provider_cfg, model_name="gpt-4o-mini")
+
+    assert captured_kwargs["timeout_seconds"] is None
+    assert captured_kwargs["max_retries"] == 0
+
+
+@pytest.mark.asyncio
+async def test_probe_runtime_target_does_not_pass_timeout_for_nvidia(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured_kwargs: dict[str, object] = {}
+
+    class _FakeChatModel:
+        async def ainvoke(self, _messages: list[object]) -> AIMessage:
+            return AIMessage(content="OK")
+
+    def _fake_create_chat_model_from_runtime_config(**kwargs: object) -> _FakeChatModel:
+        captured_kwargs.update(kwargs)
+        return _FakeChatModel()
+
+    monkeypatch.setattr(
+        "app.integrations.model_health_probe.create_chat_model_from_runtime_config",
+        _fake_create_chat_model_from_runtime_config,
+    )
+
+    provider_cfg = RuntimeProviderConfig(
+        provider=ModelProvider.NVIDIA,
+        enabled=True,
+        base_url="https://integrate.api.nvidia.com/v1",
+        api_key="test-key",
+        models=["llama-3.1-nemotron-ultra-253b-v1"],
+        thinking_enabled=True,
+        thinking_level=None,
+    )
+
+    await probe_runtime_target(
+        provider_cfg=provider_cfg,
+        model_name="llama-3.1-nemotron-ultra-253b-v1",
+    )
+
+    assert captured_kwargs["timeout_seconds"] is None
+    assert captured_kwargs["max_retries"] == 0
