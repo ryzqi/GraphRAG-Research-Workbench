@@ -184,9 +184,10 @@ def create_chat_model_from_runtime_config(
         profile = build_chat_model_profile(cfg)
         if profile is not None:
             kwargs["profile"] = profile
-        if timeout_seconds is not None:
-            kwargs["sync_client_kwargs"] = {"timeout": timeout_seconds}
-            kwargs["async_client_kwargs"] = {"timeout": timeout_seconds}
+        if timeout_seconds is not _TIMEOUT_UNSET and timeout_seconds is not None:
+            resolved_timeout = float(timeout_seconds)
+            kwargs["sync_client_kwargs"] = {"timeout": resolved_timeout}
+            kwargs["async_client_kwargs"] = {"timeout": resolved_timeout}
         if provider_cfg.thinking_enabled:
             if _supports_ollama_reasoning_level(model_name):
                 kwargs["reasoning"] = provider_cfg.thinking_level or "high"
