@@ -17,6 +17,11 @@ down_revision = "f3a2c1d4e5b6"
 branch_labels = None
 depends_on = None
 
+RESEARCH_SESSIONS_BACKUP_TABLE = "migration_backup_research_sessions"
+RESEARCH_ARTIFACTS_BACKUP_TABLE = "migration_backup_research_artifacts"
+RESEARCH_EVENTS_BACKUP_TABLE = "migration_backup_research_events"
+RESEARCH_REPORTS_BACKUP_TABLE = "migration_backup_research_reports"
+
 
 def _replace_agent_run_type_enum(values: tuple[str, ...], temp_type_name: str) -> None:
     bind = op.get_bind()
@@ -36,8 +41,109 @@ def _replace_agent_run_type_enum(values: tuple[str, ...], temp_type_name: str) -
     op.execute(sa.text(f"ALTER TYPE {temp_type_name} RENAME TO agent_run_type"))
 
 
+def _table_exists(table_name: str) -> bool:
+    bind = op.get_bind()
+    exists = bind.execute(
+        sa.text("SELECT to_regclass(:table_name) IS NOT NULL"),
+        {"table_name": f"public.{table_name}"},
+    ).scalar()
+    return bool(exists)
+
+
+def _backup_research_history() -> None:
+    if _table_exists("research_sessions") and not _table_exists(RESEARCH_SESSIONS_BACKUP_TABLE):
+        op.execute(
+            sa.text(
+                f"""
+                CREATE TABLE {RESEARCH_SESSIONS_BACKUP_TABLE} AS
+                SELECT
+                    id,
+                    thread_id,
+                    question,
+                    selected_kb_ids,
+                    allow_external,
+                    status::text AS status_text,
+                    metrics,
+                    error_message,
+                    trace_id,
+                    last_event_sequence,
+                    last_resume_idempotency_key,
+                    last_resume_response,
+                    legacy_run_id,
+                    created_at,
+                    started_at,
+                    finished_at,
+                    updated_at
+                FROM research_sessions
+                """
+            )
+        )
+
+    if _table_exists("research_artifacts") and not _table_exists(RESEARCH_ARTIFACTS_BACKUP_TABLE):
+        op.execute(
+            sa.text(
+                f"""
+                CREATE TABLE {RESEARCH_ARTIFACTS_BACKUP_TABLE} AS
+                SELECT
+                    id,
+                    session_id,
+                    artifact_key,
+                    content_text,
+                    content_json,
+                    created_at,
+                    updated_at
+                FROM research_artifacts
+                """
+            )
+        )
+
+    if _table_exists("research_events") and not _table_exists(RESEARCH_EVENTS_BACKUP_TABLE):
+        op.execute(
+            sa.text(
+                f"""
+                CREATE TABLE {RESEARCH_EVENTS_BACKUP_TABLE} AS
+                SELECT
+                    id,
+                    session_id,
+                    event_id,
+                    sequence,
+                    event_type,
+                    payload,
+                    trace_id,
+                    idempotency_key,
+                    created_at
+                FROM research_events
+                """
+            )
+        )
+
+    if (
+        _table_exists("research_reports")
+        and _table_exists("research_sessions")
+        and not _table_exists(RESEARCH_REPORTS_BACKUP_TABLE)
+    ):
+        op.execute(
+            sa.text(
+                f"""
+                CREATE TABLE {RESEARCH_REPORTS_BACKUP_TABLE} AS
+                SELECT
+                    rr.id,
+                    rs.id AS session_id,
+                    rr.content_md,
+                    rr.citations,
+                    rr.created_at
+                FROM research_reports AS rr
+                LEFT JOIN research_sessions AS rs
+                    ON rs.legacy_run_id = rr.run_id
+                """
+            )
+        )
+
+
 def upgrade() -> None:
     bind = op.get_bind()
+
+    _backup_research_history()
 
     op.execute(
         sa.text(

@@ -17,6 +17,7 @@ class ModelProvider(str, Enum):
     OPENAI = "openai"
     OLLAMA = "ollama"
     NVIDIA = "nvidia"
+    ANTHROPIC = "anthropic"
 
 
 class ModelProviderConfig(Base):

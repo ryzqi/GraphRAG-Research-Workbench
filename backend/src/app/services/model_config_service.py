@@ -37,6 +37,7 @@ _PROVIDER_ORDER = [
     ModelProviderORM.OPENAI,
     ModelProviderORM.OLLAMA,
     ModelProviderORM.NVIDIA,
+    ModelProviderORM.ANTHROPIC,
 ]
 
 
@@ -96,13 +97,34 @@ def _default_base_url(_provider: ModelProviderORM) -> str | None:
 
 
 def _default_thinking_level(provider: ModelProviderORM) -> str | None:
-    if provider in {ModelProviderORM.OPENAI, ModelProviderORM.OLLAMA}:
+    if provider in {
+        ModelProviderORM.OPENAI,
+        ModelProviderORM.OLLAMA,
+        ModelProviderORM.ANTHROPIC,
+    }:
         return "high"
     return None
 
 
 def _default_models(_provider: ModelProviderORM) -> list[str]:
     return []
+
+
+def _normalize_provider_base_url(
+    provider: ModelProviderORM,
+    value: str | None,
+) -> str | None:
+    if value is None:
+        return None
+    raw = str(value).strip()
+    if not raw:
+        return None
+
+    normalized = raw.rstrip("/")
+    if provider == ModelProviderORM.ANTHROPIC and normalized.endswith("/v1/messages"):
+        normalized = normalized[: -len("/v1/messages")]
+    normalized = normalized.rstrip("/")
+    return normalized or None
 
 
 class ModelConfigService:
@@ -140,7 +162,7 @@ class ModelConfigService:
         if "enabled" in updates:
             row.enabled = bool(updates["enabled"])
         if "base_url" in updates:
-            row.base_url = updates["base_url"]
+            row.base_url = _normalize_provider_base_url(row.provider, updates["base_url"])
         if "models" in updates:
             row.models = _normalize_model_names(updates["models"])
         if "thinking_enabled" in updates:
@@ -302,6 +324,11 @@ class ModelConfigService:
             dirty = True
 
         for row in by_provider.values():
+            normalized_base_url = _normalize_provider_base_url(row.provider, row.base_url)
+            if normalized_base_url != row.base_url:
+                row.base_url = normalized_base_url
+                dirty = True
+
             current_models = row.models or []
             normalized_models = _normalize_model_names(current_models)
             if normalized_models != list(current_models):
@@ -366,6 +393,7 @@ class ModelConfigService:
         if not thinking_level and row.provider in {
             ModelProviderORM.OPENAI,
             ModelProviderORM.OLLAMA,
+            ModelProviderORM.ANTHROPIC,
         }:
             thinking_level = "high"
 

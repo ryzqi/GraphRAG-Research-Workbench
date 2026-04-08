@@ -47,7 +47,7 @@ def _map_probe_exception(
     model_name: str,
 ) -> AppError:
     mod = exc.__class__.__module__ or ""
-    if mod.startswith("openai"):
+    if mod.startswith(("openai", "anthropic")):
         exc_type = type(exc).__name__
         if exc_type == "APITimeoutError":
             return AppError(

@@ -49,12 +49,13 @@ import type {
   ProviderConfigUpdate,
 } from '../services/modelConfig';
 
-const PROVIDERS = ['openai', 'ollama', 'nvidia'] as const;
+const PROVIDERS = ['openai', 'ollama', 'nvidia', 'anthropic'] as const;
 
 const PROVIDER_LABEL: Record<ModelProvider, string> = {
   openai: 'OpenAI',
   ollama: 'Ollama',
   nvidia: 'NVIDIA',
+  anthropic: 'Anthropic',
 };
 
 type ProviderFormState = {
@@ -130,6 +131,7 @@ function providerMap(config: ModelConfigRead | undefined): Record<ModelProvider,
     openai: undefined,
     ollama: undefined,
     nvidia: undefined,
+    anthropic: undefined,
   };
   if (!config) {
     return base;
@@ -149,6 +151,7 @@ export function ModelConfigPage() {
     openai: createDefaultModelProviderFormState(),
     ollama: createDefaultModelProviderFormState(),
     nvidia: createDefaultModelProviderFormState(),
+    anthropic: createDefaultModelProviderFormState(),
   });
   const [selectedProvider, setSelectedProvider] = useState<ModelProvider>(DEFAULT_MODEL_PROVIDER);
   const [activeProviderDraft, setActiveProviderDraft] =
@@ -172,6 +175,7 @@ export function ModelConfigPage() {
       openai: buildForm(providerLookup.openai),
       ollama: buildForm(providerLookup.ollama),
       nvidia: buildForm(providerLookup.nvidia),
+      anthropic: buildForm(providerLookup.anthropic),
     });
     setSelectedProvider(config.active_provider);
     setActiveProviderDraft(config.active_provider);
@@ -533,9 +537,20 @@ export function ModelConfigPage() {
               <TextField
                 fullWidth
                 label='Base URL'
-                placeholder={selectedProvider === 'ollama' ? 'http://127.0.0.1:11434' : '可选'}
+                placeholder={
+                  selectedProvider === 'ollama'
+                    ? 'http://127.0.0.1:11434'
+                    : selectedProvider === 'anthropic'
+                      ? 'http://example 或 http://example/v1/messages'
+                      : '可选'
+                }
                 value={selectedProviderForm.baseUrl}
                 onChange={(e) => updateForm(selectedProvider, 'baseUrl', e.target.value)}
+                helperText={
+                  selectedProvider === 'anthropic'
+                    ? '支持填写服务根地址或完整 /v1/messages 地址；保存后会规范化为根地址。'
+                    : undefined
+                }
               />
 
               <TextField

@@ -17,6 +17,265 @@ down_revision: Union[str, Sequence[str], None] = 'a6b8c9d0e1f2'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
+RESEARCH_SESSIONS_BACKUP_TABLE = "migration_backup_research_sessions"
+RESEARCH_ARTIFACTS_BACKUP_TABLE = "migration_backup_research_artifacts"
+RESEARCH_EVENTS_BACKUP_TABLE = "migration_backup_research_events"
+RESEARCH_REPORTS_BACKUP_TABLE = "migration_backup_research_reports"
+
+
+def _table_exists(table_name: str) -> bool:
+    bind = op.get_bind()
+    exists = bind.execute(
+        sa.text("SELECT to_regclass(:table_name) IS NOT NULL"),
+        {"table_name": f"public.{table_name}"},
+    ).scalar()
+    return bool(exists)
+
+
+def _report_json_uuid_sql(column_name: str) -> str:
+    return (
+        "("
+        f"substr(md5({column_name}::text || '__report_json'), 1, 8) || '-' || "
+        f"substr(md5({column_name}::text || '__report_json'), 9, 4) || '-' || "
+        f"substr(md5({column_name}::text || '__report_json'), 13, 4) || '-' || "
+        f"substr(md5({column_name}::text || '__report_json'), 17, 4) || '-' || "
+        f"substr(md5({column_name}::text || '__report_json'), 21, 12)"
+        ")::uuid"
+    )
+
+
+def _restore_research_sessions_from_backup() -> None:
+    if not _table_exists(RESEARCH_SESSIONS_BACKUP_TABLE):
+        return
+
+    op.execute(
+        sa.text(
+            f"""
+            INSERT INTO research_sessions (
+                id,
+                thread_id,
+                question,
+                selected_kb_ids,
+                allow_external,
+                status,
+                planner_phase,
+                runtime_phase,
+                finalizer_phase,
+                trace_id,
+                last_event_sequence,
+                last_resume_idempotency_key,
+                last_resume_response,
+                metrics,
+                error_message,
+                created_at,
+                started_at,
+                finished_at,
+                updated_at
+            )
+            SELECT
+                id,
+                thread_id,
+                question,
+                selected_kb_ids,
+                allow_external,
+                CASE status_text
+                    WHEN 'interrupted' THEN 'running'
+                    WHEN 'resumed' THEN 'running'
+                    ELSE status_text
+                END::research_session_status,
+                NULL,
+                NULL,
+                NULL,
+                trace_id,
+                COALESCE(last_event_sequence, 0),
+                last_resume_idempotency_key,
+                last_resume_response,
+                metrics,
+                error_message,
+                created_at,
+                started_at,
+                finished_at,
+                updated_at
+            FROM {RESEARCH_SESSIONS_BACKUP_TABLE}
+            ON CONFLICT DO NOTHING
+            """
+        )
+    )
+
+
+def _restore_research_artifacts_from_backup() -> None:
+    if not _table_exists(RESEARCH_ARTIFACTS_BACKUP_TABLE):
+        return
+
+    op.execute(
+        sa.text(
+            f"""
+            INSERT INTO research_artifacts (
+                id,
+                session_id,
+                artifact_key,
+                content_text,
+                content_json,
+                source_type,
+                source_provider,
+                retrieval_method,
+                origin_url,
+                created_at,
+                updated_at
+            )
+            SELECT
+                id,
+                session_id,
+                artifact_key,
+                content_text,
+                content_json,
+                NULL,
+                NULL,
+                NULL,
+                NULL,
+                created_at,
+                updated_at
+            FROM {RESEARCH_ARTIFACTS_BACKUP_TABLE}
+            ON CONFLICT DO NOTHING
+            """
+        )
+    )
+
+
+def _restore_research_events_from_backup() -> None:
+    if not _table_exists(RESEARCH_EVENTS_BACKUP_TABLE):
+        return
+
+    op.execute(
+        sa.text(
+            f"""
+            INSERT INTO research_events (
+                id,
+                session_id,
+                event_id,
+                sequence,
+                event_type,
+                phase,
+                namespace,
+                payload,
+                trace_id,
+                idempotency_key,
+                created_at
+            )
+            SELECT
+                id,
+                session_id,
+                event_id,
+                sequence,
+                event_type,
+                'legacy',
+                'main',
+                payload,
+                trace_id,
+                idempotency_key,
+                created_at
+            FROM {RESEARCH_EVENTS_BACKUP_TABLE}
+            ON CONFLICT DO NOTHING
+            """
+        )
+    )
+
+
+def _restore_research_reports_from_backup() -> None:
+    if not _table_exists(RESEARCH_REPORTS_BACKUP_TABLE):
+        return
+
+    op.execute(
+        sa.text(
+            f"""
+            INSERT INTO research_artifacts (
+                id,
+                session_id,
+                artifact_key,
+                content_text,
+                content_json,
+                source_type,
+                source_provider,
+                retrieval_method,
+                origin_url,
+                created_at,
+                updated_at
+            )
+            SELECT
+                id,
+                session_id,
+                'report_md',
+                content_md,
+                NULL,
+                NULL,
+                NULL,
+                NULL,
+                NULL,
+                created_at,
+                created_at
+            FROM {RESEARCH_REPORTS_BACKUP_TABLE}
+            WHERE session_id IS NOT NULL
+            ON CONFLICT DO NOTHING
+            """
+        )
+    )
+    op.execute(
+        sa.text(
+            f"""
+            INSERT INTO research_artifacts (
+                id,
+                session_id,
+                artifact_key,
+                content_text,
+                content_json,
+                source_type,
+                source_provider,
+                retrieval_method,
+                origin_url,
+                created_at,
+                updated_at
+            )
+            SELECT
+                {_report_json_uuid_sql('id')},
+                session_id,
+                'report_json',
+                NULL,
+                jsonb_build_object(
+                    'legacy_report', true,
+                    'report_md', content_md,
+                    'citations', COALESCE(citations, '[]'::jsonb),
+                    'claim_map', '[]'::jsonb,
+                    'coverage_matrix', jsonb_build_object(
+                        'provider_counts', '{{}}'::jsonb,
+                        'missing_providers', '[]'::jsonb
+                    ),
+                    'conflicts', '[]'::jsonb,
+                    'source_ledger', '[]'::jsonb
+                ),
+                NULL,
+                NULL,
+                NULL,
+                NULL,
+                created_at,
+                created_at
+            FROM {RESEARCH_REPORTS_BACKUP_TABLE}
+            WHERE session_id IS NOT NULL
+            ON CONFLICT DO NOTHING
+            """
+        )
+    )
+
+
+def _drop_backup_tables() -> None:
+    for table_name in (
+        RESEARCH_REPORTS_BACKUP_TABLE,
+        RESEARCH_EVENTS_BACKUP_TABLE,
+        RESEARCH_ARTIFACTS_BACKUP_TABLE,
+        RESEARCH_SESSIONS_BACKUP_TABLE,
+    ):
+        if _table_exists(table_name):
+            op.execute(sa.text(f"DROP TABLE {table_name}"))
+
 
 def upgrade() -> None:
     """升级数据库结构。"""
@@ -101,6 +360,11 @@ def upgrade() -> None:
     )
     op.create_index(op.f('ix_research_events_session_id'), 'research_events', ['session_id'], unique=False)
     op.create_index(op.f('ix_research_events_trace_id'), 'research_events', ['trace_id'], unique=False)
+    _restore_research_sessions_from_backup()
+    _restore_research_artifacts_from_backup()
+    _restore_research_events_from_backup()
+    _restore_research_reports_from_backup()
+    _drop_backup_tables()
     # ### end Alembic commands ###
 
 

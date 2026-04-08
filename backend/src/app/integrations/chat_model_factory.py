@@ -13,7 +13,7 @@ from app.integrations.model_runtime_config import (
 )
 from app.models.model_config import ModelProvider
 
-_DEFAULT_CHAT_OPENAI_MAX_RETRIES = 2
+_DEFAULT_CHAT_PROVIDER_MAX_RETRIES = 2
 _DEFAULT_NVIDIA_MAX_RETRIES = 0
 _NVIDIA_TIMEOUT_CAP_SECONDS = 60.0
 _OLLAMA_DEFAULT_BASE_URL = "http://127.0.0.1:11434"
@@ -56,7 +56,7 @@ def _build_chat_openai_common_kwargs(
     resolved_max_retries = (
         _DEFAULT_NVIDIA_MAX_RETRIES
         if provider == ModelProvider.NVIDIA
-        else _DEFAULT_CHAT_OPENAI_MAX_RETRIES
+        else _DEFAULT_CHAT_PROVIDER_MAX_RETRIES
     )
     if max_retries is not None:
         resolved_max_retries = max(0, int(max_retries))
@@ -168,6 +168,37 @@ def create_chat_model_from_runtime_config(
                 "summary": "auto",
             }
         return ChatOpenAI(**kwargs)
+
+    if provider_cfg.provider == ModelProvider.ANTHROPIC:
+        api_key = _require_api_key(
+            provider_label="Anthropic",
+            api_key=provider_cfg.api_key,
+        )
+        base_url = _require_base_url(
+            provider_label="Anthropic",
+            base_url=provider_cfg.base_url,
+        )
+        from langchain_anthropic import ChatAnthropic
+
+        resolved_max_retries = _DEFAULT_CHAT_PROVIDER_MAX_RETRIES
+        if max_retries is not None:
+            resolved_max_retries = max(0, int(max_retries))
+        kwargs: dict[str, Any] = {
+            "model": model_name,
+            "api_key": api_key,
+            "base_url": base_url,
+            "max_retries": resolved_max_retries,
+        }
+        if timeout_seconds is _TIMEOUT_UNSET:
+            kwargs["timeout"] = float(cfg.llm_timeout_seconds)
+        elif timeout_seconds is not None:
+            kwargs["timeout"] = float(timeout_seconds)
+        profile = build_chat_model_profile(cfg)
+        if profile is not None:
+            kwargs["profile"] = profile
+        if provider_cfg.thinking_enabled and provider_cfg.thinking_level:
+            kwargs["effort"] = provider_cfg.thinking_level
+        return ChatAnthropic(**kwargs)
 
     if provider_cfg.provider == ModelProvider.OLLAMA:
         try:

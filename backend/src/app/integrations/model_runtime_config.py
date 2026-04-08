@@ -25,6 +25,7 @@ _PROVIDER_PRIORITY: tuple[ModelProvider, ...] = (
     ModelProvider.OPENAI,
     ModelProvider.OLLAMA,
     ModelProvider.NVIDIA,
+    ModelProvider.ANTHROPIC,
 )
 
 
@@ -209,6 +210,7 @@ class ModelRuntimeConfigManager:
             if not thinking_level and row.provider in {
                 ModelProvider.OPENAI,
                 ModelProvider.OLLAMA,
+                ModelProvider.ANTHROPIC,
             }:
                 thinking_level = "high"
 
@@ -274,7 +276,12 @@ class ModelRuntimeConfigManager:
                 models=[],
                 thinking_enabled=True,
                 thinking_level="high"
-                if provider in {ModelProvider.OPENAI, ModelProvider.OLLAMA}
+                if provider
+                in {
+                    ModelProvider.OPENAI,
+                    ModelProvider.OLLAMA,
+                    ModelProvider.ANTHROPIC,
+                }
                 else None,
             )
         return RuntimeModelSnapshot(

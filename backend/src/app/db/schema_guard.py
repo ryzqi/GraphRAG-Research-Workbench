@@ -12,6 +12,10 @@ INGESTION_STATUS_ENUM_NAMES: tuple[str, str] = (
 )
 
 
+class IngestionSchemaNotReadyError(RuntimeError):
+    """当数据库尚未初始化或缺少 ingestion 枚举时抛出。"""
+
+
 class IngestionSchemaMismatchError(RuntimeError):
     """当数据库中的 ingestion 枚举与应用契约不一致时抛出。"""
 
@@ -20,6 +24,12 @@ def validate_ingestion_enum_values(enum_values_by_name: Mapping[str, Sequence[st
     expected = set(EXPECTED_INGESTION_ENUM_VALUES)
     for enum_name in INGESTION_STATUS_ENUM_NAMES:
         labels = tuple(enum_values_by_name.get(enum_name, ()))
+        if not labels:
+            raise IngestionSchemaNotReadyError(
+                "Ingestion schema not ready: "
+                f"{enum_name} is missing or has no labels. "
+                "Please run alembic upgrade head."
+            )
         if set(labels) == expected and len(labels) == len(expected):
             continue
         raise IngestionSchemaMismatchError(

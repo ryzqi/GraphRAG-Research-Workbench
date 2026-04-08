@@ -7,7 +7,12 @@ const reactState = vi.hoisted(() => ({
   index: 0,
 }));
 
-const renderedButtons = vi.hoisted(() => [] as Array<Record<string, unknown>>);
+type ButtonProps = {
+  children?: unknown;
+  onClick?: () => void;
+};
+
+const renderedButtons = vi.hoisted(() => [] as Array<ButtonProps>);
 
 vi.mock('react', async () => {
   const actual = await vi.importActual<typeof import('react')>('react');
@@ -57,45 +62,13 @@ function createBaseConfig(): ModelConfigRead {
         api_key_masked: null,
         updated_at: '2026-04-07T10:00:00Z',
       },
-    ],
-    active_provider: 'openai',
-    active_model: 'gpt-4o-mini',
-    updated_at: '2026-04-07T10:00:00Z',
-  };
-}
-
-const queryState = vi.hoisted(() => ({
-  config: {
-    providers: [
       {
-        provider: 'openai',
-        enabled: true,
-        base_url: 'https://api.openai.com/v1',
-        models: ['gpt-4o-mini'],
+        provider: 'anthropic',
+        enabled: false,
+        base_url: 'http://example',
+        models: ['claude-sonnet-4-6'],
         thinking_enabled: true,
         thinking_level: 'high',
-        api_key_set: true,
-        api_key_masked: 'sk-***',
-        updated_at: '2026-04-07T10:00:00Z',
-      },
-      {
-        provider: 'ollama',
-        enabled: false,
-        base_url: 'http://127.0.0.1:11434',
-        models: ['qwen3:8b'],
-        thinking_enabled: true,
-        thinking_level: 'high',
-        api_key_set: false,
-        api_key_masked: null,
-        updated_at: '2026-04-07T10:00:00Z',
-      },
-      {
-        provider: 'nvidia',
-        enabled: false,
-        base_url: null,
-        models: ['nvidia/llama-3.1-nemotron-nano-vl-8b-v1'],
-        thinking_enabled: true,
-        thinking_level: null,
         api_key_set: false,
         api_key_masked: null,
         updated_at: '2026-04-07T10:00:00Z',
@@ -104,8 +77,14 @@ const queryState = vi.hoisted(() => ({
     active_provider: 'openai',
     active_model: 'gpt-4o-mini',
     updated_at: '2026-04-07T10:00:00Z',
-  } satisfies ModelConfigRead,
-}));
+  };
+}
+
+const queryState = vi.hoisted(
+  (): { config: ModelConfigRead } => ({
+    config: createBaseConfig(),
+  })
+);
 
 const updateProviderMutateAsyncMock = vi.fn();
 const updateProviderResetMock = vi.fn();
@@ -135,7 +114,7 @@ vi.mock('../hooks/queries/useModelConfig', () => ({
 }));
 
 vi.mock('../components/ui/Button', () => ({
-  Button: (props: Record<string, unknown>) => {
+  Button: (props: ButtonProps) => {
     renderedButtons.push(props);
     return null;
   },
@@ -157,7 +136,7 @@ function findButton(label: string) {
   return renderedButtons.find((props) => flattenChildren(props.children) === label);
 }
 
-function primeState() {
+function primeState(selectedProvider: 'openai' | 'anthropic' = 'openai') {
   const setForms = vi.fn();
   const setSelectedProvider = vi.fn();
   const setActiveProviderDraft = vi.fn();
@@ -199,10 +178,20 @@ function primeState() {
           thinkingEnabled: true,
           thinkingLevel: 'high',
         },
+        anthropic: {
+          enabled: false,
+          baseUrl: 'http://example',
+          models: ['claude-sonnet-4-6'],
+          modelInput: '',
+          apiKey: '',
+          clearApiKey: false,
+          thinkingEnabled: true,
+          thinkingLevel: 'high',
+        },
       },
       setForms,
     ],
-    ['openai', setSelectedProvider],
+    [selectedProvider, setSelectedProvider],
     ['openai', setActiveProviderDraft],
     ['gpt-4o-mini', setActiveModelDraft],
     [null, setPageError],
@@ -230,6 +219,15 @@ afterEach(() => {
 });
 
 describe('ModelConfigPage', () => {
+  it('renders anthropic provider label and endpoint hint', () => {
+    primeState('anthropic');
+
+    const html = renderToStaticMarkup(<ModelConfigPage />);
+
+    expect(html).toContain('Anthropic');
+    expect(html).toContain('/v1/messages');
+  });
+
   it('renders a dedicated clear button when the provider already has a saved API Key', () => {
     primeState();
 

@@ -91,4 +91,16 @@ describe('modelConfig service timeout policy', () => {
       timeoutMs: 0,
     });
   });
+
+  it('supports updating anthropic provider config', async () => {
+    const payload: ProviderConfigUpdate = { base_url: 'http://example/v1/messages' };
+
+    await updateProviderConfig('anthropic', payload);
+
+    expect(apiFetchMock).toHaveBeenCalledWith('/api/v1/model-config/providers/anthropic', {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+      timeoutMs: 0,
+    });
+  });
 });
