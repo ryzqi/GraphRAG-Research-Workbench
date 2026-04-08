@@ -6,6 +6,9 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+$uvHelperPath = Join-Path $PSScriptRoot "common\uv_env.ps1"
+. $uvHelperPath
+
 if (-not $Force) {
     throw "This script destroys local PostgreSQL/Milvus/Redis data. Re-run with -Force to continue."
 }
@@ -108,9 +111,9 @@ if (-not $SkipMigrate) {
     Write-Host "[4/5] Run backend migrations..." -ForegroundColor Yellow
     Push-Location $backendDir
     try {
-        & uv run alembic upgrade head
-        if ($LASTEXITCODE -ne 0) {
-            throw "alembic upgrade failed (exit=$LASTEXITCODE)."
+        Invoke-UvIsolated -WorkingDirectory $backendDir -Arguments @("run", "alembic", "upgrade", "head") | Out-Host
+        if ($script:LastUvExitCode -ne 0) {
+            throw "alembic upgrade failed (exit=$script:LastUvExitCode)."
         }
     }
     finally {

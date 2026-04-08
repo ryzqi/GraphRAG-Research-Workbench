@@ -59,6 +59,7 @@ pwsh -ExecutionPolicy Bypass -File .\scripts\start_all.ps1
 补充说明：
 
 - 默认跳过数据库迁移；首次建库或重置后请显式添加 `-RunMigrate`。
+- `scripts/start_all.ps1` 与 `scripts/reset_data.ps1` 会在执行 `uv` 前自动清理外部 `VIRTUAL_ENV / CONDA_PREFIX / PYTHONHOME / PYTHONPATH`，并固定使用当前项目 `backend/.venv`。
 - 若本地数据库仍来自旧迁移链，请先清理旧 schema，再执行 `cd backend; uv run alembic upgrade head`。
 - 一键启动后可用以下命令做最小验收：
 
@@ -96,6 +97,8 @@ Set-Location .\backend
 uv sync
 uv run uvicorn app.main:app --host 127.0.0.1 --port 8000 --loop app.core.uvicorn_loop:windows_selector_loop_factory
 ```
+
+- 手动排障时不要先激活其他 Python 虚拟环境；若当前终端已经激活，请先执行 `Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue` 与 `Remove-Item Env:CONDA_PREFIX -ErrorAction SilentlyContinue`。
 
 - OpenAPI：`http://localhost:8000/docs`
 - 健康检查：`http://localhost:8000/api/v1/health`

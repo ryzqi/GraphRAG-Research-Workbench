@@ -13,6 +13,9 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+$uvHelperPath = Join-Path $PSScriptRoot "common\uv_env.ps1"
+. $uvHelperPath
+
 $repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $backendDir = Join-Path $repoRoot "backend"
 $frontendDir = Join-Path $repoRoot "frontend"
@@ -69,7 +72,8 @@ function Start-Terminal {
     param(
         [Parameter(Mandatory = $true)][string]$Title,
         [Parameter(Mandatory = $true)][string]$WorkingDirectory,
-        [Parameter(Mandatory = $true)][string]$Command
+        [Parameter(Mandatory = $true)][string]$Command,
+        [string[]]$BootstrapCommands = @()
     )
 
     $terminalShell = "powershell"
@@ -83,6 +87,9 @@ function Start-Terminal {
     $scriptLines = @(
         "`$Host.UI.RawUI.WindowTitle = '$escapedTitle'"
     )
+    if ($BootstrapCommands.Count -gt 0) {
+        $scriptLines += $BootstrapCommands
+    }
     if ($Verbose) {
         $scriptLines += "Write-Host '执行:' -ForegroundColor Yellow"
         $scriptLines += "Write-Host '$escapedCommandLiteral' -ForegroundColor DarkYellow"
@@ -378,6 +385,7 @@ if (-not $env:NEXT_PUBLIC_API_BASE_URL -and $env:VITE_API_BASE_URL) {
 
 $env:PYTHONUNBUFFERED = "1"
 $shouldRunMigrate = $RunMigrate -and (-not $SkipMigrate)
+$uvBootstrapCommands = Get-UvIsolationScriptLines -ProjectEnvironment ".venv"
 if ($SkipMigrate -and $RunMigrate) {
     Write-Host "检测到 -RunMigrate 与 -SkipMigrate 同时传入，按 -SkipMigrate 优先，跳过迁移。" -ForegroundColor Yellow
 }
@@ -400,9 +408,9 @@ if ($needBackend) {
     try {
         if (-not (Test-Path (Join-Path $backendDir ".venv"))) {
             Write-Host "检测到缺少 backend/.venv，执行 uv sync 安装依赖..." -ForegroundColor Yellow
-            uv sync
-            if ($LASTEXITCODE -ne 0) {
-                throw "uv sync 失败（exit=$LASTEXITCODE）"
+            Invoke-UvIsolated -WorkingDirectory $backendDir -Arguments @("sync") | Out-Host
+            if ($script:LastUvExitCode -ne 0) {
+                throw "uv sync 失败（exit=$script:LastUvExitCode）"
             }
         }
         elseif ($Verbose) {
@@ -411,9 +419,9 @@ if ($needBackend) {
 
         if ($shouldRunMigrate) {
             Write-Host "执行数据库迁移 (alembic upgrade head)..." -ForegroundColor Yellow
-            uv run alembic upgrade head
-            if ($LASTEXITCODE -ne 0) {
-                throw "数据库迁移失败（exit=$LASTEXITCODE）。若本地数据库来自旧迁移链，请先重置 schema 后再执行 -RunMigrate。"
+            Invoke-UvIsolated -WorkingDirectory $backendDir -Arguments @("run", "alembic", "upgrade", "head") | Out-Host
+            if ($script:LastUvExitCode -ne 0) {
+                throw "数据库迁移失败（exit=$script:LastUvExitCode）。若本地数据库来自旧迁移链，请先重置 schema 后再执行 -RunMigrate。"
             }
         }
         else {
@@ -427,25 +435,25 @@ if ($needBackend) {
 
 if (-not $SkipBackend) {
     $backendCommand = Get-BackendApiCommand
-    Start-Terminal -Title "backend-api" -WorkingDirectory $backendDir -Command $backendCommand
+    Start-Terminal -Title "backend-api" -WorkingDirectory $backendDir -Command $backendCommand -BootstrapCommands $uvBootstrapCommands
 }
 
 if (-not $SkipWorker) {
     $beatCommand = Get-CeleryBeatCommand
-    Start-Terminal -Title "celery-beat" -WorkingDirectory $backendDir -Command $beatCommand
+    Start-Terminal -Title "celery-beat" -WorkingDirectory $backendDir -Command $beatCommand -BootstrapCommands $uvBootstrapCommands
 
     $dispatchWorkerNodeName = Resolve-CeleryNodeName -Template "worker.dispatch@%h"
     $coreWorkerNodeName = Resolve-CeleryNodeName -Template "worker.core@%h"
     $nonCoreWorkerNodeName = Resolve-CeleryNodeName -Template "worker.noncore@%h"
 
     $dispatchWorkerCommand = Get-CeleryWorkerCommand -Queues "dispatch" -NodeName $dispatchWorkerNodeName -PoolEnvVar "CELERY_DISPATCH_WORKER_POOL" -ConcurrencyEnvVar "CELERY_DISPATCH_WORKER_CONCURRENCY" -PrefetchEnvVar "CELERY_DISPATCH_WORKER_PREFETCH_MULTIPLIER" -DefaultConcurrency "2" -DefaultPrefetchMultiplier "1"
-    Start-Terminal -Title "celery-worker-dispatch" -WorkingDirectory $backendDir -Command $dispatchWorkerCommand
+    Start-Terminal -Title "celery-worker-dispatch" -WorkingDirectory $backendDir -Command $dispatchWorkerCommand -BootstrapCommands $uvBootstrapCommands
 
     $coreWorkerCommand = Get-CeleryWorkerCommand -Queues "ingestion,rebuild,default" -NodeName $coreWorkerNodeName -PoolEnvVar "CELERY_CORE_WORKER_POOL" -ConcurrencyEnvVar "CELERY_CORE_WORKER_CONCURRENCY" -PrefetchEnvVar "CELERY_CORE_WORKER_PREFETCH_MULTIPLIER" -DefaultPrefetchMultiplier "1"
-    Start-Terminal -Title "celery-worker-core" -WorkingDirectory $backendDir -Command $coreWorkerCommand
+    Start-Terminal -Title "celery-worker-core" -WorkingDirectory $backendDir -Command $coreWorkerCommand -BootstrapCommands $uvBootstrapCommands
 
     $nonCoreWorkerCommand = Get-CeleryWorkerCommand -Queues "research,export" -NodeName $nonCoreWorkerNodeName -PoolEnvVar "CELERY_NONCORE_WORKER_POOL" -ConcurrencyEnvVar "CELERY_NONCORE_WORKER_CONCURRENCY" -PrefetchEnvVar "CELERY_NONCORE_WORKER_PREFETCH_MULTIPLIER" -DefaultConcurrency "2" -DefaultPrefetchMultiplier "1"
-    Start-Terminal -Title "celery-worker-noncore" -WorkingDirectory $backendDir -Command $nonCoreWorkerCommand
+    Start-Terminal -Title "celery-worker-noncore" -WorkingDirectory $backendDir -Command $nonCoreWorkerCommand -BootstrapCommands $uvBootstrapCommands
 
     Write-Host "等待 Celery Worker 进程就绪（dispatch / core）..." -ForegroundColor Cyan
     Push-Location $backendDir
@@ -464,9 +472,9 @@ if ($RunSeed) {
     Write-Host "导入演示数据 (scripts/seed_demo_kb.py) ..." -ForegroundColor Yellow
     Push-Location $backendDir
     try {
-        uv run python scripts/seed_demo_kb.py
-        if ($LASTEXITCODE -ne 0) {
-            throw "导入演示数据失败（exit=$LASTEXITCODE）"
+        Invoke-UvIsolated -WorkingDirectory $backendDir -Arguments @("run", "python", "scripts/seed_demo_kb.py") | Out-Host
+        if ($script:LastUvExitCode -ne 0) {
+            throw "导入演示数据失败（exit=$script:LastUvExitCode）"
         }
     }
     finally {
