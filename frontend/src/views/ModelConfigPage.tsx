@@ -388,10 +388,6 @@ export function ModelConfigPage() {
         subtitle='每个供应商可维护多个模型。保存后即可用于全局生效模型选择。'
       />
 
-      <Alert severity='info' sx={{ mt: 0, mb: 2 }}>
-        LLM 主配置（供应商、Base URL、API Key、模型列表与全局生效模型）仅在本页面生效，不再从 .env 读取。
-      </Alert>
-
       <ErrorAlert error={mergedError} onClose={closeError} sx={{ mt: 0, mb: 2 }} />
 
       <Stack direction={{ xs: 'column', lg: 'row' }} spacing={2} alignItems='stretch'>

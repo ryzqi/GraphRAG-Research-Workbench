@@ -219,6 +219,14 @@ afterEach(() => {
 });
 
 describe('ModelConfigPage', () => {
+  it('does not render the deprecated env hint banner', () => {
+    primeState();
+
+    const html = renderToStaticMarkup(<ModelConfigPage />);
+
+    expect(html).not.toContain('LLM 主配置（供应商、Base URL、API Key、模型列表与全局生效模型）仅在本页面生效，不再从 .env 读取。');
+  });
+
   it('renders anthropic provider label and endpoint hint', () => {
     primeState('anthropic');
 

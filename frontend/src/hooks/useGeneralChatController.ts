@@ -10,6 +10,10 @@ import {
   shouldSkipGeneralChatHydration,
 } from '../services/generalChatSessionBehavior';
 import { resolveGeneralChatFinalContent } from '../services/generalChatFinalContent';
+import {
+  createStreamingAssistantMessage,
+  restartStreamingAssistantMessage,
+} from '../services/generalChatThinking';
 import { shouldResetChatStateOnSessionClear } from '../services/chatSessionNavigation';
 import {
   buildChatSessionRequestKey,
@@ -266,7 +270,7 @@ export function useGeneralChatController() {
     setMessages((prev) => [
       ...prev,
       userMessage,
-      { id: assistantId, role: 'assistant', content: '', think: '', isStreaming: true },
+      createStreamingAssistantMessage(assistantId, Date.now()),
     ]);
     setInput('');
     setLoading(true);
@@ -534,9 +538,8 @@ export function useGeneralChatController() {
       let streamAbortController: AbortController | null = null;
       try {
         updateMessage(pendingMessageId, (msg) => ({
-          ...msg,
+          ...restartStreamingAssistantMessage(msg, Date.now()),
           pendingToolApproval: undefined,
-          isStreaming: true,
         }));
         streamAbortController = new AbortController();
         streamAbortRef.current = streamAbortController;

@@ -7,7 +7,7 @@
 - `frontend/`：Next.js 前端。
 - `backend/`：FastAPI、Celery、数据接入与研究运行时。
 - `infra/`：Podman 基础设施、SearXNG 配置与本地数据目录。
-- `scripts/`：启动、验收、数据重置脚本。
+- `scripts/`：启动、验收与公共辅助脚本。
 - `docs/`：当前架构与 Research API 契约文档。
 
 ## 功能入口
@@ -59,7 +59,7 @@ pwsh -ExecutionPolicy Bypass -File .\scripts\start_all.ps1
 补充说明：
 
 - 默认跳过数据库迁移；首次建库或重置后请显式添加 `-RunMigrate`。
-- `scripts/start_all.ps1` 与 `scripts/reset_data.ps1` 会在执行 `uv` 前自动清理外部 `VIRTUAL_ENV / CONDA_PREFIX / PYTHONHOME / PYTHONPATH`，并固定使用当前项目 `backend/.venv`。
+- `scripts/start_all.ps1` 会在执行 `uv` 前自动清理外部 `VIRTUAL_ENV / CONDA_PREFIX / PYTHONHOME / PYTHONPATH`，并固定使用当前项目 `backend/.venv`。
 - 若本地数据库仍来自旧迁移链，请先清理旧 schema，再执行 `cd backend; uv run alembic upgrade head`。
 - 一键启动后可用以下命令做最小验收：
 
@@ -130,30 +130,6 @@ npm install
 npm run build
 npm run start
 ```
-
-## 重置本地数据（破坏性）
-
-彻底清空本地 PostgreSQL、Milvus、Redis 与 SearXNG 本地持久化数据：
-
-```powershell
-pwsh -ExecutionPolicy Bypass -File .\scripts\reset_data.ps1 -Force
-```
-
-仅清理不迁移：
-
-```powershell
-pwsh -ExecutionPolicy Bypass -File .\scripts\reset_data.ps1 -Force -SkipMigrate
-```
-
-该脚本会：
-
-- 执行 `podman compose down -v`
-- 清理 `infra/data/redis`、`infra/data/milvus`、`infra/data/etcd`
-- 清理 `infra/data/searxng`、`infra/data/searxng-valkey`
-- 重启基础依赖
-- 默认执行 `cd backend; uv run alembic upgrade head`
-
-> ⚠️ 会删除本地数据库、向量库、Redis 与 SearXNG 持久化数据，请勿在共享环境直接执行。
 
 ## 当前配置要点
 
