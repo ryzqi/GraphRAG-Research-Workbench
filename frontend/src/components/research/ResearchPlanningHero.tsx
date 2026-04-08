@@ -10,10 +10,10 @@ export function ResearchPlanningHero({ children }: { children: ReactNode }) {
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        py: { xs: 2, md: 3 },
+        py: { xs: 3, md: 5 },
       }}
     >
-      <Box sx={{ width: '100%' }}>{children}</Box>
+      <Box sx={{ width: '100%', maxWidth: 1120, mx: 'auto' }}>{children}</Box>
     </Box>
   );
 }

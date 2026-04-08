@@ -5,6 +5,11 @@ import type {
   ResearchPlanSnapshot,
   ResearchSessionStatus,
 } from '../../types/researchEvents';
+import {
+  researchWorkbenchCardSx,
+  researchWorkbenchColors,
+  researchWorkbenchEyebrowSx,
+} from './researchWorkbenchStyles';
 import { Button } from '../ui/Button';
 
 interface ResearchPlanningThreadProps {
@@ -25,11 +30,27 @@ interface ResearchPlanningThreadProps {
 }
 
 const messageCardSx = {
-  borderRadius: 6,
-  borderColor: 'rgba(210, 227, 252, 0.92)',
-  bgcolor: '#ffffff',
-  color: '#202124',
-  boxShadow: '0 16px 40px rgba(66, 133, 244, 0.08)',
+  ...researchWorkbenchCardSx,
+  overflow: 'hidden',
+} as const;
+
+const longFormTextSx = {
+  minWidth: 0,
+  whiteSpace: 'pre-wrap',
+  wordBreak: 'break-word',
+  overflowWrap: 'anywhere',
+} as const;
+
+const messageCardContentSx = {
+  px: { xs: 2.5, md: 3.5 },
+  py: { xs: 2.25, md: 3 },
+  minWidth: 0,
+} as const;
+
+const orderedListSx = {
+  pl: 2.5,
+  m: 0,
+  minWidth: 0,
 } as const;
 
 export function ResearchPlanningThread({
@@ -51,40 +72,54 @@ export function ResearchPlanningThread({
   const trimmedQuestion = question.trim();
 
   return (
-    <Stack spacing={1.5}>
+    <Stack spacing={2}>
       {trimmedQuestion ? (
-        <Paper
-          variant="outlined"
-          sx={{
-            borderRadius: 6,
-            borderColor: 'rgba(210, 227, 252, 0.92)',
-            bgcolor: '#ffffff',
-            color: '#202124',
-            boxShadow: '0 18px 44px rgba(66, 133, 244, 0.08)',
-          }}
-        >
-          <Stack spacing={0.5} sx={{ px: 2.5, py: 1.75 }}>
-            <Typography variant="body1">{trimmedQuestion}</Typography>
+        <Paper variant="outlined" sx={messageCardSx}>
+          <Stack spacing={1} sx={messageCardContentSx}>
+            <Typography variant="overline" sx={researchWorkbenchEyebrowSx}>
+              研究问题
+            </Typography>
+            <Typography variant="h5" sx={{ fontWeight: 700 }}>
+              {trimmedQuestion}
+            </Typography>
           </Stack>
         </Paper>
       ) : null}
 
       {status === 'clarifying' && clarificationRequest ? (
         <Paper variant="outlined" sx={messageCardSx}>
-          <Stack spacing={1.25} sx={{ p: 2 }}>
-            <Typography variant="body2" sx={{ color: '#5f6368' }}>
+          <Stack spacing={2} sx={messageCardContentSx}>
+            <Stack spacing={0.75}>
+              <Typography variant="overline" sx={researchWorkbenchEyebrowSx}>
+                待补充信息
+              </Typography>
+              <Typography variant="h6" fontWeight={700}>
+                补齐研究边界
+              </Typography>
+            </Stack>
+            <Typography variant="body2" sx={{ ...longFormTextSx, color: researchWorkbenchColors.mutedText }}>
               {clarificationRequest.summary}
             </Typography>
-            <Stack component="ol" spacing={1.25} sx={{ pl: 2.5, m: 0 }}>
+            <Stack component="ol" spacing={1.25} sx={orderedListSx}>
               {clarificationRequest.questions.map((item) => (
-                <Typography component="li" key={item.id} variant="body2">
-                  <Typography component="span" variant="body2" fontWeight={600}>
+                <Typography component="li" key={item.id} variant="body2" sx={longFormTextSx}>
+                  <Typography
+                    component="span"
+                    variant="body2"
+                    fontWeight={600}
+                    sx={longFormTextSx}
+                  >
                     {item.question}
                   </Typography>
                   <Typography
                     component="span"
                     variant="body2"
-                    sx={{ display: 'block', mt: 0.5, color: '#5f6368' }}
+                    sx={{
+                      ...longFormTextSx,
+                      display: 'block',
+                      mt: 0.5,
+                      color: researchWorkbenchColors.mutedText,
+                    }}
                   >
                     {item.why_it_matters}
                   </Typography>
@@ -102,29 +137,29 @@ export function ResearchPlanningThread({
                 slotProps={{
                   input: {
                     sx: {
-                      color: '#202124',
+                      color: researchWorkbenchColors.text,
                       alignItems: 'flex-start',
-                      bgcolor: '#ffffff',
-                      borderRadius: 3,
+                      bgcolor: researchWorkbenchColors.surface,
+                      borderRadius: 2.5,
                     },
                   },
                 }}
                 sx={{
                   '& .MuiOutlinedInput-root': {
                     alignItems: 'flex-start',
-                    borderRadius: 3,
+                    borderRadius: 2.5,
                     '& fieldset': {
-                      borderColor: 'rgba(223, 225, 229, 0.92)',
+                      borderColor: researchWorkbenchColors.border,
                     },
                     '&:hover fieldset': {
-                      borderColor: 'rgba(154, 160, 166, 0.72)',
+                      borderColor: researchWorkbenchColors.softBorder,
                     },
                     '&.Mui-focused fieldset': {
-                      borderColor: '#1a73e8',
+                      borderColor: researchWorkbenchColors.primary,
                     },
                   },
                   '& .MuiInputBase-input::placeholder': {
-                    color: '#80868b',
+                    color: researchWorkbenchColors.subtleText,
                     opacity: 1,
                   },
                 }}
@@ -137,13 +172,13 @@ export function ResearchPlanningThread({
                 loading={clarificationSubmitPending}
                 sx={{
                   alignSelf: 'flex-start',
-                  minHeight: 40,
-                  px: 2.5,
+                  minHeight: 42,
+                  px: 2.75,
                   borderRadius: 999,
-                  bgcolor: '#1a73e8',
+                  bgcolor: researchWorkbenchColors.primary,
                   color: '#ffffff',
                   '&:hover': {
-                    bgcolor: '#1765cc',
+                    bgcolor: researchWorkbenchColors.primaryHover,
                   },
                 }}
               >
@@ -156,12 +191,18 @@ export function ResearchPlanningThread({
 
       {status === 'plan_ready' && planSnapshot ? (
         <Paper variant="outlined" sx={messageCardSx}>
-          <Stack spacing={1.5} sx={{ p: 2 }}>
-            <Stack spacing={0.75}>
+          <Stack spacing={2} sx={messageCardContentSx}>
+            <Stack spacing={0.75} sx={{ minWidth: 0 }}>
+              <Typography variant="overline" sx={researchWorkbenchEyebrowSx}>
+                研究计划
+              </Typography>
               <Typography variant="h6" fontWeight={700}>
                 研究计划
               </Typography>
-              <Typography variant="body2" sx={{ color: '#5f6368' }}>
+              <Typography
+                variant="body2"
+                sx={{ ...longFormTextSx, color: researchWorkbenchColors.mutedText }}
+              >
                 {planSnapshot.summary}
               </Typography>
             </Stack>
@@ -172,19 +213,34 @@ export function ResearchPlanningThread({
                   size="small"
                   label={item === 'paper' ? '论文' : item === 'web' ? '网页' : item}
                   variant="outlined"
+                  sx={{
+                    borderColor: researchWorkbenchColors.border,
+                    color: researchWorkbenchColors.mutedText,
+                    backgroundColor: researchWorkbenchColors.surface,
+                  }}
                 />
               ))}
             </Stack>
-            <Stack component="ol" spacing={1.25} sx={{ pl: 2.5, m: 0 }}>
+            <Stack component="ol" spacing={1.25} sx={orderedListSx}>
               {planSnapshot.subtasks.map((item) => (
-                <Typography component="li" key={item.title} variant="body2">
-                  <Typography component="span" variant="body2" fontWeight={600}>
+                <Typography component="li" key={item.title} variant="body2" sx={longFormTextSx}>
+                  <Typography
+                    component="span"
+                    variant="body2"
+                    fontWeight={600}
+                    sx={longFormTextSx}
+                  >
                     {item.title}
                   </Typography>
                   <Typography
                     component="span"
                     variant="body2"
-                    sx={{ display: 'block', mt: 0.5, color: '#5f6368' }}
+                    sx={{
+                      ...longFormTextSx,
+                      display: 'block',
+                      mt: 0.5,
+                      color: researchWorkbenchColors.mutedText,
+                    }}
                   >
                     {item.description}
                   </Typography>
@@ -201,27 +257,42 @@ export function ResearchPlanningThread({
               slotProps={{
                 input: {
                   sx: {
-                    color: '#202124',
+                    color: researchWorkbenchColors.text,
                     alignItems: 'flex-start',
-                    bgcolor: '#ffffff',
-                    borderRadius: 3,
+                    bgcolor: researchWorkbenchColors.surface,
+                    borderRadius: 2.5,
                   },
                 },
               }}
               sx={{
                 '& .MuiOutlinedInput-root': {
                   alignItems: 'flex-start',
-                  borderRadius: 3,
+                  borderRadius: 2.5,
+                  '& fieldset': {
+                    borderColor: researchWorkbenchColors.border,
+                  },
+                  '&:hover fieldset': {
+                    borderColor: researchWorkbenchColors.softBorder,
+                  },
+                  '&.Mui-focused fieldset': {
+                    borderColor: researchWorkbenchColors.primary,
+                  },
                 },
               }}
             />
-            <Stack direction="row" spacing={1.25}>
+            <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.25}>
               <Button
                 variant="outlined"
                 onClick={() => {
                   void onUpdatePlan?.();
                 }}
                 loading={planUpdatePending}
+                sx={{
+                  minHeight: 42,
+                  borderRadius: 999,
+                  borderColor: researchWorkbenchColors.border,
+                  color: researchWorkbenchColors.text,
+                }}
               >
                 更新计划
               </Button>
@@ -232,13 +303,13 @@ export function ResearchPlanningThread({
                 }}
                 loading={startPending}
                 sx={{
-                  minHeight: 40,
-                  px: 2.5,
+                  minHeight: 42,
+                  px: 2.75,
                   borderRadius: 999,
-                  bgcolor: '#111111',
+                  bgcolor: researchWorkbenchColors.primary,
                   color: '#ffffff',
                   '&:hover': {
-                    bgcolor: '#000000',
+                    bgcolor: researchWorkbenchColors.primaryHover,
                   },
                 }}
               >

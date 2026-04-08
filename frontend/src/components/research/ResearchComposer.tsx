@@ -2,6 +2,11 @@ import SearchIcon from '@mui/icons-material/Search';
 import { InputBase, Paper, Stack, Typography } from '@mui/material';
 
 import { ResearchPlanningHero } from './ResearchPlanningHero';
+import {
+  researchWorkbenchCardSx,
+  researchWorkbenchColors,
+  researchWorkbenchEyebrowSx,
+} from './researchWorkbenchStyles';
 import { Button } from '../ui/Button';
 
 interface ResearchComposerProps {
@@ -15,23 +20,48 @@ interface ResearchComposerProps {
 export function ResearchComposer(props: ResearchComposerProps) {
   return (
     <ResearchPlanningHero>
-      <Stack spacing={2}>
+      <Stack spacing={{ xs: 2.5, md: 3 }}>
+        <Stack spacing={1} sx={{ maxWidth: 720 }}>
+          <Typography variant="overline" sx={researchWorkbenchEyebrowSx}>
+            Deep Research
+          </Typography>
+          <Typography
+            variant="h3"
+            sx={{
+              fontWeight: 700,
+              fontSize: { xs: '2rem', md: '3rem' },
+              lineHeight: 1.08,
+              color: researchWorkbenchColors.text,
+            }}
+          >
+            深度研究工作台
+          </Typography>
+          <Typography
+            variant="body1"
+            sx={{
+              maxWidth: 640,
+              color: researchWorkbenchColors.mutedText,
+              lineHeight: 1.7,
+            }}
+          >
+            把问题拆成计划、证据和最终结论。
+          </Typography>
+        </Stack>
+
         <Paper
           variant="outlined"
           sx={{
+            ...researchWorkbenchCardSx,
             display: 'flex',
             alignItems: 'center',
-            gap: 1.5,
-            px: { xs: 1.75, md: 2.25 },
-            py: 1.25,
-            borderRadius: 6,
-            borderColor: props.validationError ? 'error.main' : 'rgba(210, 227, 252, 0.96)',
-            bgcolor: 'rgba(255,255,255,0.96)',
-            boxShadow: '0 22px 64px rgba(66, 133, 244, 0.10)',
-            backdropFilter: 'blur(16px)',
+            gap: 2,
+            px: { xs: 2, md: 3 },
+            py: { xs: 1.5, md: 1.75 },
+            borderColor: props.validationError ? 'error.main' : researchWorkbenchColors.border,
+            maxWidth: 1120,
           }}
         >
-          <SearchIcon sx={{ color: '#9aa0a6' }} />
+          <SearchIcon sx={{ color: researchWorkbenchColors.subtleText }} />
           <InputBase
             fullWidth
             multiline
@@ -42,12 +72,12 @@ export function ResearchComposer(props: ResearchComposerProps) {
             placeholder="有问题，尽管问"
             inputProps={{ 'aria-label': '研究问题输入框' }}
             sx={{
-              fontSize: { xs: 16, md: 18 },
+              fontSize: { xs: 16, md: 20 },
               lineHeight: 1.5,
-              color: '#202124',
+              color: researchWorkbenchColors.text,
               py: 0.5,
               '& .MuiInputBase-input::placeholder': {
-                color: '#80868b',
+                color: researchWorkbenchColors.subtleText,
                 opacity: 1,
               },
             }}
@@ -60,14 +90,14 @@ export function ResearchComposer(props: ResearchComposerProps) {
               flexShrink: 0,
               minWidth: { xs: 96, md: 116 },
               minHeight: 46,
-              px: 2.5,
+              px: 3,
               borderRadius: 999,
-              bgcolor: '#1a73e8',
+              bgcolor: researchWorkbenchColors.primary,
               color: '#fff',
-              boxShadow: '0 10px 22px rgba(26, 115, 232, 0.28)',
+              boxShadow: 'none',
               '&:hover': {
-                bgcolor: '#1765cc',
-                boxShadow: '0 12px 24px rgba(26, 115, 232, 0.32)',
+                bgcolor: researchWorkbenchColors.primaryHover,
+                boxShadow: 'none',
               },
             }}
           >
@@ -76,7 +106,7 @@ export function ResearchComposer(props: ResearchComposerProps) {
         </Paper>
 
         {props.validationError ? (
-          <Typography variant="body2" color="error.main" sx={{ px: 2 }}>
+          <Typography variant="body2" color="error.main" sx={{ px: 1 }}>
             {props.validationError}
           </Typography>
         ) : null}

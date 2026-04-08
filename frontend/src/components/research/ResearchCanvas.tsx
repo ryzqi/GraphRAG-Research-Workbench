@@ -9,6 +9,12 @@ import type {
 import { StatusBadge } from '../ui/StatusBadge';
 import { MarkdownContent } from '../chat/MarkdownContent';
 import { ResearchEvidenceLedger } from './ResearchEvidenceLedger';
+import {
+  researchWorkbenchCardSx,
+  researchWorkbenchColors,
+  researchWorkbenchEyebrowSx,
+  researchWorkbenchInnerCardSx,
+} from './researchWorkbenchStyles';
 
 interface ResearchCanvasModel {
   surface: 'live-research' | 'final-report';
@@ -24,15 +30,12 @@ interface ResearchCanvasModel {
 }
 
 const panelSx = {
-  p: { xs: 2.25, md: 3 },
-  borderRadius: 6,
-  borderColor: 'rgba(210, 227, 252, 0.92)',
-  bgcolor: '#ffffff',
-  boxShadow: '0 16px 40px rgba(94, 129, 244, 0.08)',
+  ...researchWorkbenchCardSx,
+  p: { xs: 2.5, md: 3 },
 } as const;
 
 const finalBackground =
-  'linear-gradient(180deg,rgba(255,255,255,0.98) 0%,rgba(245,249,255,0.98) 100%)';
+  'linear-gradient(180deg,rgba(255,255,255,1) 0%,rgba(248,249,250,1) 100%)';
 
 function formatDomain(url: string | null): string | null {
   if (!url) {
@@ -86,43 +89,43 @@ function renderLiveItem(item: ResearchTimelineItem) {
       key={item.id}
       sx={{
         position: 'relative',
-        pl: { xs: 2.75, md: 3.5 },
+        pl: { xs: 2.5, md: 3.25 },
         '&:before': {
           content: '""',
           position: 'absolute',
-          left: { xs: 9, md: 14 },
-          top: 0,
-          bottom: -14,
-          width: 1,
-          background: alpha('#1a73e8', 0.18),
+          left: { xs: 10, md: 14 },
+          top: 6,
+          bottom: -10,
+          width: 2,
+          borderRadius: 999,
+          background: alpha(researchWorkbenchColors.primary, 0.14),
         },
         '&:after': {
           content: '""',
           position: 'absolute',
-          left: { xs: 4, md: 9 },
+          left: { xs: 4, md: 8 },
           top: 18,
-          width: 11,
-          height: 11,
+          width: 14,
+          height: 14,
           borderRadius: 999,
           background: accent,
-          boxShadow: `0 0 0 6px ${alpha(accent, 0.12)}`,
+          border: `3px solid ${researchWorkbenchColors.surface}`,
+          boxShadow: `0 0 0 4px ${alpha(accent, 0.12)}`,
         },
       }}
     >
       <Paper
         variant="outlined"
         sx={{
-          ...panelSx,
+          ...researchWorkbenchInnerCardSx,
           p: 2.25,
-          borderRadius: 5,
-          borderColor: alpha(accent, 0.16),
-          color: '#202124',
+          borderColor: alpha(accent, 0.18),
+          color: researchWorkbenchColors.text,
           background:
             item.kind === 'intermediate_result'
-              ? `linear-gradient(180deg, ${alpha('#ffffff', 0.98)} 0%, ${alpha(accent, 0.08)} 100%)`
-              : `linear-gradient(180deg, rgba(255,255,255,0.98) 0%, ${alpha(accent, 0.04)} 100%)`,
-          backdropFilter: 'blur(14px)',
-          boxShadow: `0 18px 44px ${alpha('#1a73e8', 0.08)}`,
+              ? `linear-gradient(180deg, ${alpha('#ffffff', 1)} 0%, ${alpha(accent, 0.06)} 100%)`
+              : researchWorkbenchColors.surface,
+          boxShadow: `0 8px 20px ${alpha('#3c4043', 0.06)}`,
         }}
       >
         <Stack spacing={1.1}>
@@ -147,9 +150,9 @@ function renderLiveItem(item: ResearchTimelineItem) {
                   variant="outlined"
                   sx={{
                     alignSelf: 'flex-start',
-                    color: '#5f6368',
-                    borderColor: 'rgba(210, 227, 252, 0.92)',
-                    background: '#ffffff',
+                    color: researchWorkbenchColors.mutedText,
+                    borderColor: researchWorkbenchColors.border,
+                    background: researchWorkbenchColors.surface,
                   }}
                 />
               ) : null}
@@ -187,6 +190,19 @@ function renderLiveItem(item: ResearchTimelineItem) {
   );
 }
 
+function renderSectionHeading(eyebrow: string, title: string) {
+  return (
+    <Stack spacing={0.5}>
+      <Typography variant="overline" sx={researchWorkbenchEyebrowSx}>
+        {eyebrow}
+      </Typography>
+      <Typography variant="h6" fontWeight={700}>
+        {title}
+      </Typography>
+    </Stack>
+  );
+}
+
 export function ResearchCanvas({
   model,
   exportButton,
@@ -201,23 +217,17 @@ export function ResearchCanvas({
   const headerSx = isLive
     ? {
         ...panelSx,
-        position: 'relative',
-        borderColor: 'rgba(210, 227, 252, 0.96)',
-        background: 'linear-gradient(180deg, rgba(255,255,255,0.96) 0%, rgba(244,248,255,0.98) 100%)',
-        color: '#202124',
-        backdropFilter: 'blur(18px)',
-        boxShadow: '0 18px 44px rgba(66, 133, 244, 0.08)',
+        background: finalBackground,
       }
     : {
         ...panelSx,
         background: finalBackground,
-        borderColor: 'rgba(226, 232, 240, 0.92)',
       };
 
   return (
-    <Stack spacing={2.5} sx={{ width: '100%' }}>
+    <Stack spacing={3} sx={{ width: '100%' }}>
       <Paper variant="outlined" sx={headerSx}>
-        <Stack spacing={2}>
+        <Stack spacing={2.5}>
           <Stack
             direction={{ xs: 'column', md: 'row' }}
             justifyContent="space-between"
@@ -225,18 +235,12 @@ export function ResearchCanvas({
             spacing={1.5}
           >
             <Stack spacing={0.75}>
-              <Typography
-                variant="overline"
-                sx={{
-                  color: isLive ? '#5f6368' : '#64748b',
-                  letterSpacing: '0.18em',
-                }}
-              >
-                {isLive ? '研究工作台' : '报告视图'}
+              <Typography variant="overline" sx={researchWorkbenchEyebrowSx}>
+                {isLive ? 'Research Workbench' : 'Final Report'}
               </Typography>
               <Typography
                 variant="h4"
-                sx={{ fontWeight: 700, color: isLive ? '#202124' : '#0f172a', maxWidth: 680 }}
+                sx={{ fontWeight: 700, color: researchWorkbenchColors.text, maxWidth: 760 }}
               >
                 {model.title || '未命名研究任务'}
               </Typography>
@@ -252,13 +256,13 @@ export function ResearchCanvas({
               sx={{
                 display: 'inline-flex',
                 alignItems: 'center',
-                minHeight: 32,
-                px: 1.5,
+                minHeight: 34,
+                px: 1.75,
                 borderRadius: 999,
-                bgcolor: isLive ? 'rgba(26, 115, 232, 0.08)' : 'rgba(26, 115, 232, 0.08)',
-                color: '#1967d2',
+                bgcolor: researchWorkbenchColors.accentBackground,
+                color: researchWorkbenchColors.primary,
                 fontWeight: 600,
-                border: '1px solid rgba(26, 115, 232, 0.12)',
+                border: `1px solid ${alpha(researchWorkbenchColors.primary, 0.14)}`,
               }}
             >
               {model.coverageLabel}
@@ -273,52 +277,35 @@ export function ResearchCanvas({
           sx={{
             ...panelSx,
             background: finalBackground,
-            borderColor: 'rgba(226, 232, 240, 0.92)',
-            boxShadow: '0 20px 48px rgba(148, 163, 184, 0.12)',
+            boxShadow: '0 10px 28px rgba(60, 64, 67, 0.08)',
           }}
         >
-          <Stack spacing={1.5}>
+          <Stack spacing={2}>
             <Stack direction="row" justifyContent="space-between" alignItems="center" spacing={1.5}>
-              <Typography variant="h5" fontWeight={700}>
-                最终报告
-              </Typography>
+              {renderSectionHeading('报告输出', '最终报告')}
               {exportButton}
             </Stack>
             <MarkdownContent content={model.report?.markdown ?? ''} />
           </Stack>
         </Paper>
       ) : (
-        <Stack spacing={2}>
+        <Stack spacing={2.5}>
           <Paper
             variant="outlined"
             sx={{
               ...panelSx,
-              position: 'relative',
               overflow: 'hidden',
-              borderColor: 'rgba(210, 227, 252, 0.96)',
-              background: 'linear-gradient(180deg, rgba(255,255,255,0.98) 0%, rgba(244,248,255,0.98) 100%)',
-              color: '#202124',
-              boxShadow: '0 18px 44px rgba(66, 133, 244, 0.08)',
+              background: finalBackground,
             }}
           >
-            <Stack spacing={1.5}>
-              <Stack spacing={0.45}>
-                <Typography
-                  variant="overline"
-                  sx={{ color: '#5f6368', letterSpacing: '0.18em' }}
-                >
-                  研究过程
-                </Typography>
-                <Typography variant="h6" fontWeight={700}>
-                  研究时间流
-                </Typography>
-              </Stack>
+            <Stack spacing={2}>
+              {renderSectionHeading('研究过程', '研究时间流')}
               {model.timelineItems.length > 0 ? (
-                <Stack spacing={1.5} sx={{ position: 'relative', py: 0.5 }}>
+                <Stack spacing={1.75} sx={{ position: 'relative', py: 0.25 }}>
                   {model.timelineItems.map(renderLiveItem)}
                 </Stack>
               ) : (
-                <Typography variant="body2" sx={{ color: '#5f6368' }}>
+                <Typography variant="body2" sx={{ color: researchWorkbenchColors.mutedText }}>
                   正在等待第一条研究事件…
                 </Typography>
               )}

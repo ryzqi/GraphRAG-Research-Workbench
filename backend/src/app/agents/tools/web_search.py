@@ -214,8 +214,8 @@ class WebResearchArgs(BaseModel):
     output_schema: dict | str | None = Field(
         default=None, description="结构化输出 schema（JSON）"
     )
-    citation_format: Literal["markdown", "text"] | None = Field(
-        default=None, description="引用格式（markdown/text）"
+    citation_format: Literal["numbered", "mla", "apa", "chicago"] | None = Field(
+        default=None, description="引用格式（numbered/mla/apa/chicago）"
     )
     model: str | None = Field(default=None, description="研究模型")
     stream: bool | None = Field(default=None, description="是否启用流式输出")
@@ -884,7 +884,7 @@ class TavilyGateway:
         )
         payload = _filter_none(
             {
-                "query": args.query,
+                "input": args.query,
                 "search_depth": args.search_depth or settings.web_search_default_search_depth,
                 "max_results": args.max_results or settings.web_search_default_max_results,
                 "time_range": args.time_range or settings.web_search_default_time_range,
@@ -941,16 +941,15 @@ class TavilyGateway:
                     timeout_seconds=timeout,
                 )
 
-            task_id = create_response.get("id")
+            request_id = create_response.get("request_id")
             status = create_response.get("status")
             result = create_response
-            if task_id and status not in {"completed", "failed", "error"}:
-                result = await self._poll_research(task_id, timeout, poll_interval)
+            if request_id and status not in {"completed", "failed", "error"}:
+                result = await self._poll_research(request_id, timeout, poll_interval)
 
-            results = _normalize_results(result.get("result", {}).get("sources", []))
-            report = None
-            if isinstance(result.get("result"), dict):
-                report = result.get("result", {}).get("content")
+            raw_sources = result.get("sources")
+            results = _normalize_results(raw_sources if isinstance(raw_sources, list) else [])
+            report = result.get("content") if isinstance(result.get("content"), str) else None
             output = _build_output(
                 context=context,
                 results=results,
@@ -987,17 +986,19 @@ class TavilyGateway:
         return output
 
     async def _poll_research(
-        self, task_id: str, timeout_seconds: float, poll_interval: float
+        self, request_id: str, timeout_seconds: float, poll_interval: float
     ) -> dict[str, Any]:
         deadline = time.monotonic() + timeout_seconds
         while True:
             if time.monotonic() >= deadline:
                 raise httpx.TimeoutException("Research polling timeout")
             try:
-                response = await self._call_tavily("get_research", id=task_id)
+                response = await self._call_tavily(
+                    "get_research", request_id=request_id
+                )
             except RuntimeError:
                 response = await self._call_tavily_http(
-                    method="GET", path=f"/research/{task_id}"
+                    method="GET", path=f"/research/{request_id}"
                 )
             status = response.get("status")
             if status in {"completed", "failed", "error"}:

@@ -61,3 +61,14 @@ packages = ["src/app"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+
+[tool.pyright]
+include = ["src", "tests"]
+venvPath = "."
+venv = ".venv"
+pythonVersion = "3.13"
+pythonPlatform = "Windows"
+executionEnvironments = [
+  { root = "src", extraPaths = ["src"] },
+  { root = "tests", extraPaths = ["src"] },
+]
