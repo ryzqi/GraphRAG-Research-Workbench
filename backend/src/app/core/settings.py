@@ -308,6 +308,9 @@ class Settings(BaseSettings):
     bootstrap_queued_timeout_seconds: int = Field(
         180, ge=1, alias="BOOTSTRAP_QUEUED_TIMEOUT_SECONDS"
     )
+    research_queued_timeout_seconds: int = Field(
+        180, ge=1, alias="RESEARCH_QUEUED_TIMEOUT_SECONDS"
+    )
     exports_presign_expire_seconds: int = Field(
         3600, alias="EXPORTS_PRESIGN_EXPIRE_SECONDS"
     )
@@ -375,7 +378,7 @@ class Settings(BaseSettings):
         "report", alias="WEB_RESEARCH_OUTPUT_FORMAT"
     )
     web_research_citation_format: str = Field(
-        "markdown", alias="WEB_RESEARCH_CITATION_FORMAT"
+        "numbered", alias="WEB_RESEARCH_CITATION_FORMAT"
     )
     web_research_output_schema: str | None = Field(
         None, alias="WEB_RESEARCH_OUTPUT_SCHEMA"

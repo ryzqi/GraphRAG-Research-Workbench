@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import AsyncIterator
+from typing import Protocol, cast
 
 from fastapi import APIRouter, Request, status
 from fastapi.responses import StreamingResponse
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import AsyncSessionDep
 from app.api.sse import SSE_HEADERS, encode_sse
-from app.models.research_session import ResearchSessionStatus
 from app.schemas.research import (
     ResearchArtifactsResponse,
     ResearchClarificationSubmitRequest,
@@ -25,24 +26,16 @@ from app.services.research_service import ResearchService, build_research_servic
 router = APIRouter()
 
 
-def _get_research_service(*, request: Request, db) -> ResearchService:
-    factory = getattr(request.app.state, "research_service_factory", None)
-    if callable(factory):
+class _ResearchServiceFactory(Protocol):
+    def __call__(self, *, db: AsyncSession, request: Request) -> ResearchService: ...
+
+
+def _get_research_service(*, request: Request, db: AsyncSession) -> ResearchService:
+    raw_factory = getattr(request.app.state, "research_service_factory", None)
+    if callable(raw_factory):
+        factory = cast(_ResearchServiceFactory, raw_factory)
         return factory(db=db, request=request)
     return build_research_service(db=db)
-
-
-def _dispatch_research_session(*, request: Request, session_id: uuid.UUID) -> None:
-    dispatcher = getattr(request.app.state, "research_dispatcher", None)
-    if callable(dispatcher):
-        dispatcher(str(session_id))
-        return
-
-    from app.worker.tasks.research import run_research_session
-
-    delay = getattr(run_research_session, "delay", None)
-    if callable(delay):
-        delay(str(session_id))
 
 
 async def _emit_research_events(
@@ -73,8 +66,6 @@ async def create_research_session(
         thread_id=str(session_id),
     )
     await db.commit()
-    if session.status == ResearchSessionStatus.QUEUED:
-        _dispatch_research_session(request=request, session_id=session.id)
     return ResearchSessionAccepted(
         session_id=session.id,
         status=session.status,
@@ -100,8 +91,6 @@ async def submit_research_clarification(
         answer=body.answer,
     )
     await db.commit()
-    if session.status == ResearchSessionStatus.QUEUED:
-        _dispatch_research_session(request=request, session_id=session.id)
     return ResearchSessionAccepted(
         session_id=session.id,
         status=session.status,
@@ -145,7 +134,6 @@ async def start_research_session(
     session = await service.get_session(session_id)
     session = await service.start_session(session=session)
     await db.commit()
-    _dispatch_research_session(request=request, session_id=session.id)
     return ResearchSessionAccepted(
         session_id=session.id,
         status=session.status,

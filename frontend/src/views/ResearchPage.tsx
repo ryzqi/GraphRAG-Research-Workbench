@@ -9,6 +9,10 @@ import DownloadIcon from '@mui/icons-material/Download';
 import { ResearchCanvas } from '../components/research/ResearchCanvas';
 import { ResearchComposer } from '../components/research/ResearchComposer';
 import { ResearchPlanningThread } from '../components/research/ResearchPlanningThread';
+import {
+  researchWorkbenchColors,
+  researchWorkbenchEyebrowSx,
+} from '../components/research/researchWorkbenchStyles';
 import { Button } from '../components/ui/Button';
 import { ErrorAlert } from '../components/ui/ErrorAlert';
 import { LoadingSpinner } from '../components/ui/LoadingSpinner';
@@ -22,7 +26,9 @@ import {
   useSubmitResearchClarification,
   useUpdateResearchPlan,
 } from '../hooks/queries/useResearch';
+import { useSystemQueueHealth } from '../hooks/queries/useSystemQueueHealth';
 import { getErrorMessage } from '../lib/errorHandler';
+import { buildQueueHealthHint } from '../services/queueHealthDiagnostics';
 import type { ResearchSessionAccepted, ResearchSessionStatus } from '../types/researchEvents';
 import { safeOpenDownloadUrl } from '../utils/urlValidation';
 import {
@@ -31,6 +37,7 @@ import {
 } from './researchPageState';
 
 export function ResearchPage() {
+  const QUEUE_HEALTH_TRIGGER_SECONDS = 30;
   const createSessionMutation = useCreateResearchSession();
   const submitClarificationMutation = useSubmitResearchClarification();
   const updatePlanMutation = useUpdateResearchPlan();
@@ -294,11 +301,48 @@ export function ResearchPage() {
     return '覆盖信息生成中';
   }, [pageModel.evidenceDrawer.coverageMatrix.missing_providers.length, pageModel.evidenceDrawer.coverageMatrix.provider_counts]);
 
+  const latestQueuedTimestamp = useMemo(() => {
+    const queuedEvents = (session?.events ?? []).filter(
+      (event) => event.event_type === 'research.run.queued'
+    );
+    return queuedEvents.at(-1)?.timestamp ?? null;
+  }, [session?.events]);
+  const queuedWaitingSeconds = useMemo(() => {
+    if (!latestQueuedTimestamp) {
+      return null;
+    }
+    const timestampMs = Date.parse(latestQueuedTimestamp);
+    if (Number.isNaN(timestampMs)) {
+      return null;
+    }
+    return Math.max(0, Math.floor((Date.now() - timestampMs) / 1000));
+  }, [latestQueuedTimestamp]);
+  const waitingResearchSession = session?.status === 'queued';
+  const queueHealthCheckEnabled =
+    waitingResearchSession && (queuedWaitingSeconds ?? 0) >= QUEUE_HEALTH_TRIGGER_SECONDS;
+  const queueHealthQuery = useSystemQueueHealth(Boolean(queueHealthCheckEnabled));
+  const queueHealthHint = useMemo(() => {
+    if (!queueHealthCheckEnabled) {
+      return null;
+    }
+    if (queueHealthQuery.error) {
+      return '队列健康检查失败，请确认后端与 Redis 可访问。';
+    }
+    return buildQueueHealthHint({
+      snapshot: queueHealthQuery.data,
+      waitingBootstrapBatch: false,
+      batchProcessing: false,
+      waitingResearchSession: true,
+    });
+  }, [queueHealthCheckEnabled, queueHealthQuery.data, queueHealthQuery.error]);
+
   return (
     <Box
       sx={{
         width: '100%',
-        py: { xs: 2, md: 3 },
+        px: { xs: 2, md: 4 },
+        py: { xs: 3, md: 4 },
+        bgcolor: researchWorkbenchColors.pageBackground,
         minHeight: !sessionId ? { xs: 'calc(100vh - 96px)', md: 'calc(100vh - 120px)' } : undefined,
       }}
     >
@@ -315,18 +359,21 @@ export function ResearchPage() {
       ) : !session ? (
         <LoadingSpinner text="加载研究任务..." />
       ) : !isExecutionStage ? (
-        <Stack spacing={3} sx={{ width: '100%', pt: { xs: 2, md: 4 } }}>
+        <Stack spacing={3} sx={{ width: '100%', maxWidth: 1120, mx: 'auto', pt: { xs: 1, md: 2 } }}>
           <Stack
             direction={{ xs: 'column', sm: 'row' }}
             justifyContent="space-between"
             alignItems={{ xs: 'flex-start', sm: 'center' }}
-            spacing={1.5}
+            spacing={2}
           >
-            <Stack spacing={0.5}>
-              <Typography variant="overline" sx={{ letterSpacing: '0.18em', color: '#80868b' }}>
+            <Stack spacing={0.75}>
+              <Typography variant="overline" sx={researchWorkbenchEyebrowSx}>
+                Deep Research
+              </Typography>
+              <Typography variant="h4" sx={{ fontWeight: 700, color: researchWorkbenchColors.text }}>
                 研究规划
               </Typography>
-              <Typography variant="body2" color="text.secondary">
+              <Typography variant="body2" sx={{ color: researchWorkbenchColors.mutedText }}>
                 {statusPresentation?.label ?? '规划中'}
               </Typography>
             </Stack>
@@ -353,7 +400,7 @@ export function ResearchPage() {
           />
         </Stack>
       ) : (
-        <Stack spacing={2.5}>
+        <Stack spacing={2.5} sx={{ width: '100%', maxWidth: 1120, mx: 'auto' }}>
           <ResearchCanvas
             model={{
               ...pageModel,
@@ -397,6 +444,7 @@ export function ResearchPage() {
       )}
 
       <ErrorAlert error={mergedError} onClose={handleCloseError} />
+      <ErrorAlert error={queueHealthHint} severity="warning" />
     </Box>
   );
 }

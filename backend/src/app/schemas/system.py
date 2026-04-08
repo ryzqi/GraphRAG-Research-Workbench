@@ -17,6 +17,7 @@ class QueueStateRead(BaseModel):
 class QueueStuckSummaryRead(BaseModel):
     bootstrap_queued_jobs: int = Field(0, ge=0)
     processing_docs_over_sla: int = Field(0, ge=0)
+    research_queued_sessions: int = Field(0, ge=0)
 
 
 class QueueHealthRead(BaseModel):
@@ -24,4 +25,3 @@ class QueueHealthRead(BaseModel):
     queues: dict[str, QueueStateRead]
     stuck_summary: QueueStuckSummaryRead
     timestamp: datetime
-

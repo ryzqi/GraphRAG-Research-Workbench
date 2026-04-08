@@ -17,6 +17,7 @@ from app.db.enums import enum_values
 if TYPE_CHECKING:
     from app.models.research_artifact import ResearchArtifact
     from app.models.research_event import ResearchEvent
+    from app.models.research_task_outbox import ResearchTaskOutbox
 
 
 class ResearchSessionStatus(str, Enum):
@@ -173,6 +174,12 @@ class ResearchSession(Base):
     )
     artifacts: Mapped[list["ResearchArtifact"]] = relationship(
         "ResearchArtifact",
+        back_populates="session",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+    task_outbox_entries: Mapped[list["ResearchTaskOutbox"]] = relationship(
+        "ResearchTaskOutbox",
         back_populates="session",
         cascade="all, delete-orphan",
         passive_deletes=True,

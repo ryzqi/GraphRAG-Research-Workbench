@@ -30,6 +30,7 @@ def import_all_models() -> None:
         research_artifact,
         research_event,
         research_session,
+        research_task_outbox,
         source_material,
         tool_extension,
     )

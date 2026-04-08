@@ -120,7 +120,6 @@ export async function createBootstrapSubmission(
   return apiFetch<BootstrapSubmissionCreateResponse>('/api/v1/knowledge-bases/bootstrap-submissions', {
     method: 'POST',
     body: JSON.stringify(data),
-    timeoutMs: 30_000,
   });
 }
 
@@ -132,7 +131,6 @@ export async function createBootstrapKnowledgeBase(
     {
       method: 'POST',
       body: JSON.stringify(data),
-      timeoutMs: 30_000,
     }
   );
 }
@@ -144,7 +142,6 @@ export async function finalizeBootstrapSubmission(
     `/api/v1/knowledge-bases/bootstrap-submissions/${jobId}/finalize`,
     {
       method: 'POST',
-      timeoutMs: 300_000,
     }
   );
 }
@@ -166,7 +163,6 @@ export async function createBootstrapUploadSession(
     `/api/v1/knowledge-bases/bootstrap-submissions/${jobId}/upload-session`,
     {
       method: 'POST',
-      timeoutMs: 30_000,
     }
   );
 }
@@ -184,7 +180,6 @@ export async function uploadBootstrapSubmissionFile(
     method: target.method || 'PUT',
     headers,
     body: file,
-    timeoutMs: 120_000,
   });
 
   if (!response.ok) {

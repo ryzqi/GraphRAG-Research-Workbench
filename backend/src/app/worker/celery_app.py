@@ -26,6 +26,7 @@ celery_app = Celery(
         "app.worker.tasks.bootstrap_watchdog",
         "app.worker.tasks.kb_bootstrap_jobs",
         "app.worker.tasks.research",
+        "app.worker.tasks.research_outbox_dispatcher",
     ],
 )
 
@@ -85,6 +86,9 @@ def _build_celery_conf(cfg: Settings) -> dict[str, Any]:
             "app.worker.tasks.bootstrap_watchdog.fail_stale_bootstrap_jobs": {
                 "queue": "dispatch"
             },
+            "app.worker.tasks.research_outbox_dispatcher.dispatch_research_outbox": {
+                "queue": "dispatch"
+            },
         },
         "timezone": "Asia/Shanghai",
         "beat_schedule": {
@@ -105,6 +109,11 @@ def _build_celery_conf(cfg: Settings) -> dict[str, Any]:
             },
             "index-rebuild-outbox-dispatcher": {
                 "task": "app.worker.tasks.index_rebuild_outbox_dispatcher.dispatch_index_rebuild_outbox",
+                "schedule": timedelta(seconds=15),
+                "kwargs": {"limit": DEFAULT_DISPATCH_BATCH_SIZE},
+            },
+            "research-outbox-dispatcher": {
+                "task": "app.worker.tasks.research_outbox_dispatcher.dispatch_research_outbox",
                 "schedule": timedelta(seconds=15),
                 "kwargs": {"limit": DEFAULT_DISPATCH_BATCH_SIZE},
             },

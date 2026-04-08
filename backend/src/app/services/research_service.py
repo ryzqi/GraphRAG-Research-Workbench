@@ -15,6 +15,11 @@ from app.core.errors import bad_request, not_found
 from app.models.research_artifact import ResearchArtifact
 from app.models.research_event import ResearchEvent
 from app.models.research_session import ResearchSession, ResearchSessionStatus
+from app.models.research_task_outbox import (
+    RESEARCH_SESSION_TASK_NAME,
+    ResearchTaskOutbox,
+    ResearchTaskOutboxStatus,
+)
 from app.schemas.research import (
     ResearchArtifactRead,
     ResearchArtifactsResponse,
@@ -91,6 +96,7 @@ class ResearchService:
             .options(
                 selectinload(ResearchSession.artifacts),
                 selectinload(ResearchSession.events),
+                selectinload(ResearchSession.task_outbox_entries),
             )
         )
         session = (await self._db.execute(stmt)).scalar_one_or_none()
@@ -158,6 +164,7 @@ class ResearchService:
             trace_id=session.trace_id,
         )
         session.transition_to(plan_result.next_status)
+        self._ensure_dispatch_outbox(session=session)
         return session, plan_result
 
     async def _persist_clarification_request(
@@ -283,6 +290,7 @@ class ResearchService:
             trace_id=session.trace_id,
         )
         session.transition_to(plan_result.next_status)
+        self._ensure_dispatch_outbox(session=session)
         return session, plan_result
 
     async def update_plan(
@@ -368,6 +376,7 @@ class ResearchService:
             payload={"lc_agent_name": "planner"},
             trace_id=session.trace_id,
         )
+        self._ensure_dispatch_outbox(session=session)
         return session
 
     async def stop_session(
@@ -431,6 +440,34 @@ class ResearchService:
         if not collected_answers:
             return normalized_question
         return f"{normalized_question} {' '.join(collected_answers)}".strip()
+
+    def _ensure_dispatch_outbox(self, *, session: ResearchSession) -> None:
+        if session.status != ResearchSessionStatus.QUEUED:
+            return
+        existing = next(
+            (
+                item
+                for item in session.task_outbox_entries
+                if item.task_name == RESEARCH_SESSION_TASK_NAME
+            ),
+            None,
+        )
+        if existing is not None:
+            if existing.status == ResearchTaskOutboxStatus.FAILED:
+                existing.status = ResearchTaskOutboxStatus.PENDING
+                existing.next_retry_at = None
+                existing.dispatched_at = None
+                existing.last_error = None
+            return
+
+        self._db.add(
+            ResearchTaskOutbox(
+                session_id=session.id,
+                task_name=RESEARCH_SESSION_TASK_NAME,
+                status=ResearchTaskOutboxStatus.PENDING,
+                payload={},
+            )
+        )
 
     async def execute_session(
         self,

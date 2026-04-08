@@ -46,10 +46,6 @@ const API_ORIGIN = (() => {
   }
 })();
 
-// 浏览器 fetch 没有内置超时；默认与后端常见的 30 秒慢路径预算保持一致，
-// 除非调用方显式覆盖。
-const DEFAULT_API_TIMEOUT_MS = 30_000;
-
 export function getApiBaseUrl(): string {
   return API_BASE_URL;
 }
@@ -63,29 +59,7 @@ function newRequestId(): string {
   return uuid ?? `req_${Date.now()}_${Math.random().toString(16).slice(2)}`;
 }
 
-function mergeSignals(
-  signalA: AbortSignal | null | undefined,
-  signalB: AbortSignal
-): AbortSignal {
-  if (!signalA) {
-    return signalB;
-  }
-  if (signalA.aborted) {
-    return signalA;
-  }
-  if (typeof AbortSignal.any === 'function') {
-    return AbortSignal.any([signalA, signalB]);
-  }
-
-  const controller = new AbortController();
-  const forwardAbort = () => controller.abort();
-  signalA.addEventListener('abort', forwardAbort, { once: true });
-  signalB.addEventListener('abort', forwardAbort, { once: true });
-  return controller.signal;
-}
-
 interface FetchWithTimeoutOptions extends RequestInit {
-  timeoutMs?: number;
   requestId?: string;
 }
 
@@ -94,30 +68,14 @@ export async function fetchWithTimeout(
   options?: FetchWithTimeoutOptions
 ): Promise<{ response: Response; requestId: string }> {
   const requestId = options?.requestId ?? newRequestId();
-  const timeoutMs = Math.max(0, options?.timeoutMs ?? DEFAULT_API_TIMEOUT_MS);
-
-  const timeoutController = new AbortController();
-  const signal = mergeSignals(options?.signal, timeoutController.signal);
-
-  let timeoutTriggered = false;
-  let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
-  if (timeoutMs > 0) {
-    timeoutHandle = setTimeout(() => {
-      timeoutTriggered = true;
-      timeoutController.abort();
-    }, timeoutMs);
-  }
+  const { requestId: _ignoredRequestId, ...fetchOptions } = options ?? {};
 
   try {
     const response = await fetch(input, {
-      ...options,
-      signal,
+      ...fetchOptions,
     });
     return { response, requestId };
   } catch (err) {
-    if (timeoutTriggered) {
-      throw new HttpError(`请求超时（${timeoutMs}ms）`, 408, { requestId });
-    }
     if ((err as { name?: string } | undefined)?.name === 'AbortError') {
       throw new HttpError('请求已取消', 499, { requestId });
     }
@@ -125,24 +83,15 @@ export async function fetchWithTimeout(
       requestId,
       body: err instanceof Error ? err.message : err,
     });
-  } finally {
-    if (timeoutHandle !== null) {
-      clearTimeout(timeoutHandle);
-    }
   }
 }
 
 export interface ApiFetchOptions extends RequestInit {
-  timeoutMs?: number;
   includeRequestIdHeader?: boolean;
 }
 
 function buildBackendConnectivityHint(url: string): string {
   return `无法连接到后端服务（${API_BASE_URL}）。请确认后端已启动并可访问：${url}，或在 frontend/.env.local 配置 NEXT_PUBLIC_API_BASE_URL。`;
-}
-
-function buildBackendTimeoutHint(url: string): string {
-  return `请求超时（后端慢/依赖慢）。请稍后重试并检查后端依赖状态：${url}`;
 }
 
 export async function apiFetch<T>(path: string, init?: ApiFetchOptions): Promise<T> {
@@ -165,15 +114,10 @@ export async function apiFetch<T>(path: string, init?: ApiFetchOptions): Promise
       ...init,
       headers,
       requestId,
-      timeoutMs: init?.timeoutMs,
     });
     response = result.response;
   } catch (err) {
     if (err instanceof HttpError) {
-      if (err.status === 408) {
-        const hint = buildBackendTimeoutHint(url);
-        throw new HttpError(hint, err.status, { requestId, body: err.body });
-      }
       if (err.status === 0 || err.status === 499) {
         const hint = buildBackendConnectivityHint(url);
         throw new HttpError(hint, err.status, { requestId, body: err.body });

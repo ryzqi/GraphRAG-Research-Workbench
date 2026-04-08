@@ -14,10 +14,6 @@ import type {
   ResearchStopRequest,
 } from '../types/researchEvents';
 
-// Deep Research 的预规划接口会等待 scoper 判定，并停在澄清/计划确认阶段；
-// 30 秒默认超时过短，用户在提交补充信息或更新计划后容易被前端提前中断。
-const RESEARCH_PLANNING_TIMEOUT_MS = 300_000;
-
 export type {
   ResearchArtifactRead,
   ResearchArtifactsResponse,
@@ -73,7 +69,6 @@ export async function createResearchSession(
   return apiFetch<ResearchSessionAccepted>('/api/v1/research/sessions', {
     method: 'POST',
     body: JSON.stringify(payload),
-    timeoutMs: RESEARCH_PLANNING_TIMEOUT_MS,
   });
 }
 
@@ -89,7 +84,6 @@ export async function submitResearchClarification(
     {
       method: 'POST',
       body: JSON.stringify(data),
-      timeoutMs: RESEARCH_PLANNING_TIMEOUT_MS,
     }
   );
 }
@@ -101,7 +95,6 @@ export async function updateResearchPlan(
   return apiFetch<ResearchSessionAccepted>(`/api/v1/research/sessions/${sessionId}/plan`, {
     method: 'POST',
     body: JSON.stringify(data),
-    timeoutMs: RESEARCH_PLANNING_TIMEOUT_MS,
   });
 }
 

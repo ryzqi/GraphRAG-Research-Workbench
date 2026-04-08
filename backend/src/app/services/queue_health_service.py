@@ -16,12 +16,13 @@ from app.core.settings import Settings, get_settings
 from app.integrations.redis_client import RedisClient
 from app.models.ingestion_batch import IngestionBatchDoc, IngestionDocStatus
 from app.models.kb_bootstrap_job import KBBootstrapJob, KBBootstrapJobStatus
+from app.models.research_session import ResearchSession, ResearchSessionStatus
 from app.schemas.system import QueueHealthRead, QueueStateRead, QueueStuckSummaryRead
 from app.worker.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
 
-REQUIRED_QUEUES: tuple[str, ...] = ("default", "dispatch", "ingestion")
+REQUIRED_QUEUES: tuple[str, ...] = ("default", "dispatch", "ingestion", "research")
 
 
 def _collect_consumer_counts(
@@ -137,6 +138,9 @@ class QueueHealthService:
         doc_deadline = now - timedelta(
             seconds=max(int(self._settings.ingestion_doc_queue_timeout_seconds), 1)
         )
+        research_deadline = now - timedelta(
+            seconds=max(int(self._settings.research_queued_timeout_seconds), 1)
+        )
 
         bootstrap_stmt = select(func.count(KBBootstrapJob.id)).where(
             KBBootstrapJob.status.in_(
@@ -148,11 +152,16 @@ class QueueHealthService:
             IngestionBatchDoc.status == IngestionDocStatus.PROCESSING,
             IngestionBatchDoc.updated_at <= doc_deadline,
         )
+        research_stmt = select(func.count(ResearchSession.id)).where(
+            ResearchSession.status == ResearchSessionStatus.QUEUED,
+            ResearchSession.updated_at <= research_deadline,
+        )
 
         bootstrap_count = int((await self._db.execute(bootstrap_stmt)).scalar_one() or 0)
         processing_doc_count = int((await self._db.execute(doc_stmt)).scalar_one() or 0)
+        research_count = int((await self._db.execute(research_stmt)).scalar_one() or 0)
         return QueueStuckSummaryRead(
             bootstrap_queued_jobs=bootstrap_count,
             processing_docs_over_sla=processing_doc_count,
+            research_queued_sessions=research_count,
         )
-
