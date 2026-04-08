@@ -328,7 +328,6 @@ class Settings(BaseSettings):
     web_search_api_key: str | None = Field(None, alias="WEB_SEARCH_API_KEY")
     web_search_cache_enabled: bool = Field(True, alias="WEB_SEARCH_CACHE_ENABLED")
     web_search_cache_ttl_seconds: int = Field(300, alias="WEB_SEARCH_CACHE_TTL_SECONDS")
-    web_search_timeout_seconds: float = Field(60.0, alias="WEB_SEARCH_TIMEOUT_SECONDS")
     web_search_retry_max: int = Field(2, alias="WEB_SEARCH_RETRY_MAX")
     web_search_retry_backoff_seconds: float = Field(
         1.5, alias="WEB_SEARCH_RETRY_BACKOFF_SECONDS"
@@ -350,14 +349,10 @@ class Settings(BaseSettings):
     web_search_include_usage: bool = Field(False, alias="WEB_SEARCH_INCLUDE_USAGE")
     jina_read_enabled: bool = Field(True, alias="JINA_READ_ENABLED")
     jina_read_base_url: str = Field("https://r.jina.ai", alias="JINA_READ_BASE_URL")
-    jina_read_timeout_seconds: float = Field(
-        20.0, alias="JINA_READ_TIMEOUT_SECONDS"
-    )
     searxng_search_enabled: bool = Field(True, alias="SEARXNG_SEARCH_ENABLED")
     searxng_search_base_url: str = Field(
         "http://127.0.0.1:18080", alias="SEARXNG_BASE_URL"
     )
-    searxng_timeout_seconds: float = Field(15.0, alias="SEARXNG_TIMEOUT_SECONDS")
     searxng_default_categories: list[str] = Field(
         default_factory=list, alias="SEARXNG_DEFAULT_CATEGORIES"
     )
@@ -386,9 +381,6 @@ class Settings(BaseSettings):
     web_research_model: str | None = Field(None, alias="WEB_RESEARCH_MODEL")
     web_research_poll_interval_seconds: float = Field(
         2.0, alias="WEB_RESEARCH_POLL_INTERVAL_SECONDS"
-    )
-    web_research_timeout_seconds: float = Field(
-        180.0, alias="WEB_RESEARCH_TIMEOUT_SECONDS"
     )
     research_gate_min_quality_score: float = Field(
         0.75, ge=0.0, le=1.0, alias="RESEARCH_GATE_MIN_QUALITY_SCORE"

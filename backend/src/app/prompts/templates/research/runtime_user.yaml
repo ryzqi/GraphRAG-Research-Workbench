@@ -25,7 +25,8 @@ template: |
   - 内部组织顺序遵循：结论 -> 证据 -> 冲突/限制 -> 缺口。
   - 若证据冲突，请在 findings 中保留 contested / limitation 语义，不要强行合并。
   - 如果 workspace 文档足够回答，不要为了凑工具而调用外部 provider。
-  - 如果 workspace 文档不足，可再调用 Tavily / Jina Reader / SearXNG / arXiv 工具补证据。
+  - 如果 workspace 文档不足，优先调用 `web_search` 做聚合搜索；该工具会同时使用 Tavily 与 SearXNG。
+  - 需要正文时再调用 `jina_read`；需要定向抽取/爬取时再调用 Tavily 抽取或爬取工具；论文走 `arxiv_*`。
 
 variables:
   - name: question

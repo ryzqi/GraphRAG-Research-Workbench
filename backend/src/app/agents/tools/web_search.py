@@ -57,6 +57,7 @@ logger = logging.getLogger(__name__)
 TAVILY_BASE_URL = "https://api.tavily.com"
 
 AsyncCall = Callable[[], Awaitable[dict[str, Any]]]
+_READ_PROVIDER_UNSET = object()
 
 
 class WebSearchArgs(BaseModel):
@@ -98,18 +99,12 @@ class WebSearchArgs(BaseModel):
     auto_parameters: bool | None = Field(
         default=None, description="是否启用自动参数优化"
     )
-    timeout_seconds: float | None = Field(
-        default=None, ge=1, description="单次请求超时（秒）"
-    )
 
 
 class JinaReadArgs(BaseModel):
     """Jina 页面读取参数。"""
 
     url: str = Field(..., description="要读取的绝对 URL")
-    timeout_seconds: float | None = Field(
-        default=None, ge=1, description="单次请求超时（秒）"
-    )
 
 
 class WebExtractArgs(BaseModel):
@@ -127,9 +122,6 @@ class WebExtractArgs(BaseModel):
         default=None, description="是否返回站点 favicon"
     )
     include_usage: bool | None = Field(default=None, description="是否返回用量")
-    timeout_seconds: float | None = Field(
-        default=None, ge=1, description="单次请求超时（秒）"
-    )
 
 
 class WebCrawlArgs(BaseModel):
@@ -164,9 +156,6 @@ class WebCrawlArgs(BaseModel):
         default=None, description="是否返回站点 favicon"
     )
     include_usage: bool | None = Field(default=None, description="是否返回用量")
-    timeout_seconds: float | None = Field(
-        default=None, ge=1, description="单次请求超时（秒）"
-    )
 
 
 class WebResearchArgs(BaseModel):
@@ -221,9 +210,6 @@ class WebResearchArgs(BaseModel):
     stream: bool | None = Field(default=None, description="是否启用流式输出")
     poll_interval_seconds: float | None = Field(
         default=None, ge=0, description="轮询间隔（秒）"
-    )
-    timeout_seconds: float | None = Field(
-        default=None, ge=1, description="研究超时（秒）"
     )
 
 
@@ -504,18 +490,12 @@ class TavilyGateway:
     async def _run_with_policy(
         self,
         func: AsyncCall,
-        *,
-        timeout_seconds: float | None,
     ) -> dict[str, Any]:
         async def _call_once() -> dict[str, Any]:
             await self._rate_limiter.acquire()
             if self._semaphore is None:
-                if timeout_seconds:
-                    return await asyncio.wait_for(func(), timeout=timeout_seconds)
                 return await func()
             async with self._semaphore:
-                if timeout_seconds:
-                    return await asyncio.wait_for(func(), timeout=timeout_seconds)
                 return await func()
 
         return await self._run_with_retries(_call_once)
@@ -553,12 +533,14 @@ class TavilyGateway:
             p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
         )
         if accepts_kwargs:
-            filtered = _filter_none(kwargs)
+            filtered = {
+                k: v for k, v in kwargs.items() if v is not None or k == "timeout"
+            }
         else:
             filtered = {
                 k: v
                 for k, v in kwargs.items()
-                if k in sig.parameters and v is not None
+                if k in sig.parameters and (v is not None or k == "timeout")
             }
         return await method(**filtered)
 
@@ -568,7 +550,6 @@ class TavilyGateway:
         method: str,
         path: str,
         json_payload: dict[str, Any] | None = None,
-        timeout_seconds: float | None = None,
     ) -> dict[str, Any]:
         if not self._api_key:
             raise RuntimeError("未配置 WEB_SEARCH_API_KEY，无法使用 Tavily Web 工具")
@@ -585,7 +566,7 @@ class TavilyGateway:
                     url,
                     json=json_payload,
                     headers=headers,
-                    timeout=timeout_seconds,
+                    timeout=None,
                 )
                 response.raise_for_status()
                 return response.json()
@@ -596,7 +577,7 @@ class TavilyGateway:
             url,
             json=json_payload,
             headers=headers,
-            timeout=timeout_seconds,
+            timeout=None,
         )
         response.raise_for_status()
         return response.json()
@@ -643,12 +624,14 @@ class TavilyGateway:
             cached["elapsed_ms"] = 0
             return cached
 
-        timeout = args.timeout_seconds or settings.web_search_timeout_seconds
         start = time.perf_counter()
         try:
             response = await self._run_with_policy(
-                lambda: self._call_tavily("search", **payload, timeout=timeout),
-                timeout_seconds=timeout,
+                lambda: self._call_tavily_http(
+                    method="POST",
+                    path="/search",
+                    json_payload=payload,
+                ),
             )
         except Exception as exc:
             if _should_degrade_search(payload, exc):
@@ -657,10 +640,11 @@ class TavilyGateway:
                 context.parameters = degraded_payload
                 try:
                     response = await self._run_with_policy(
-                        lambda: self._call_tavily(
-                            "search", **degraded_payload, timeout=timeout
+                        lambda: self._call_tavily_http(
+                            method="POST",
+                            path="/search",
+                            json_payload=degraded_payload,
                         ),
-                        timeout_seconds=timeout,
                     )
                 except Exception as exc2:
                     error = _format_tavily_error(
@@ -751,12 +735,10 @@ class TavilyGateway:
             cached["elapsed_ms"] = 0
             return cached
 
-        timeout = args.timeout_seconds or settings.web_search_timeout_seconds
         start = time.perf_counter()
         try:
             response = await self._run_with_policy(
-                lambda: self._call_tavily("extract", **payload, timeout=timeout),
-                timeout_seconds=timeout,
+                lambda: self._call_tavily("extract", **payload, timeout=None),
             )
             results = _normalize_results(response.get("results", []))
             if not results and response.get("content"):
@@ -831,12 +813,10 @@ class TavilyGateway:
             cached["elapsed_ms"] = 0
             return cached
 
-        timeout = args.timeout_seconds or settings.web_search_timeout_seconds
         start = time.perf_counter()
         try:
             response = await self._run_with_policy(
-                lambda: self._call_tavily("crawl", **payload, timeout=timeout),
-                timeout_seconds=timeout,
+                lambda: self._call_tavily("crawl", **payload, timeout=None),
             )
             results = _normalize_results(response.get("results", []))
             output = _build_output(
@@ -919,16 +899,12 @@ class TavilyGateway:
             cached["elapsed_ms"] = 0
             return cached
 
-        timeout = args.timeout_seconds or settings.web_research_timeout_seconds
-        poll_interval = (
-            args.poll_interval_seconds or settings.web_research_poll_interval_seconds
-        )
+        poll_interval = args.poll_interval_seconds or settings.web_research_poll_interval_seconds
         start = time.perf_counter()
         try:
             try:
                 create_response = await self._run_with_policy(
-                    lambda: self._call_tavily("research", **payload),
-                    timeout_seconds=timeout,
+                    lambda: self._call_tavily("research", **payload, timeout=None),
                 )
             except RuntimeError:
                 create_response = await self._run_with_policy(
@@ -936,16 +912,14 @@ class TavilyGateway:
                         method="POST",
                         path="/research",
                         json_payload=payload,
-                        timeout_seconds=timeout,
                     ),
-                    timeout_seconds=timeout,
                 )
 
             request_id = create_response.get("request_id")
             status = create_response.get("status")
             result = create_response
             if request_id and status not in {"completed", "failed", "error"}:
-                result = await self._poll_research(request_id, timeout, poll_interval)
+                result = await self._poll_research(request_id, poll_interval)
 
             raw_sources = result.get("sources")
             results = _normalize_results(raw_sources if isinstance(raw_sources, list) else [])
@@ -986,12 +960,9 @@ class TavilyGateway:
         return output
 
     async def _poll_research(
-        self, request_id: str, timeout_seconds: float, poll_interval: float
+        self, request_id: str, poll_interval: float
     ) -> dict[str, Any]:
-        deadline = time.monotonic() + timeout_seconds
         while True:
-            if time.monotonic() >= deadline:
-                raise httpx.TimeoutException("Research polling timeout")
             try:
                 response = await self._call_tavily(
                     "get_research", request_id=request_id
@@ -1036,7 +1007,6 @@ class TavilySearchProviderAdapter:
                     "include_favicon": kwargs.get("include_favicon"),
                     "include_usage": kwargs.get("include_usage"),
                     "auto_parameters": kwargs.get("auto_parameters"),
-                    "timeout_seconds": kwargs.get("timeout_seconds"),
                 }
             )
         )
@@ -1140,7 +1110,7 @@ def build_web_search_tool(
     redis: RedisClient | None = None,
     http_client: httpx.AsyncClient | None = None,
     search_providers: list[SearchProviderBackend] | None = None,
-    read_provider: ReadProvider | None = None,
+    read_provider: ReadProvider | None | object = _READ_PROVIDER_UNSET,
 ) -> BaseTool:
     """构建 Web 搜索工具。"""
     resolved_search_providers = (
@@ -1154,7 +1124,7 @@ def build_web_search_tool(
     )
     resolved_read_provider = (
         read_provider
-        if read_provider is not None
+        if read_provider is not _READ_PROVIDER_UNSET
         else (
             JinaReadProvider(settings=settings, http_client=http_client)
             if has_jina_read_provider(settings)
@@ -1195,7 +1165,6 @@ def build_web_search_tool(
         )
         normalized_include_domains = _normalize_domains(args.include_domains)
         normalized_exclude_domains = _normalize_domains(args.exclude_domains)
-        timeout_seconds = args.timeout_seconds or settings.web_search_timeout_seconds
         parameters = _filter_none(
             {
                 "query": args.query,
@@ -1212,7 +1181,6 @@ def build_web_search_tool(
                 "include_favicon": args.include_favicon,
                 "include_usage": include_usage,
                 "auto_parameters": auto_parameters,
-                "timeout_seconds": timeout_seconds,
             }
         )
         if not retrievers:
@@ -1244,7 +1212,6 @@ def build_web_search_tool(
             include_favicon=args.include_favicon,
             include_usage=include_usage,
             auto_parameters=auto_parameters,
-            timeout_seconds=timeout_seconds,
         )
         output["parameters"] = parameters
         output["total_found"] = len(output.get("results", []))
@@ -1289,7 +1256,6 @@ def build_jina_read_tool(
             )
         output = await provider.read(
             url=args.url,
-            timeout_seconds=args.timeout_seconds,
         )
         return json.dumps(output, ensure_ascii=False)
 
@@ -1366,37 +1332,3 @@ def build_web_crawl_tool(
         description="从站点起始 URL 爬取内容，可限定深度/广度/路径/域名。",
         args_schema=WebCrawlArgs,
     )(_crawl)
-
-
-def build_web_research_tool(
-    settings: Settings,
-    *,
-    redis: RedisClient | None = None,
-    http_client: httpx.AsyncClient | None = None,
-) -> BaseTool:
-    """构建 Web 研究工具。"""
-    client = WebSearchClient(settings, redis=redis, http_client=http_client)
-
-    async def _research(**kwargs: object) -> str:
-        try:
-            args = WebResearchArgs(**kwargs)
-        except Exception:
-            error = _format_validation_error("WEB_RESEARCH", "Web 研究参数错误")
-            return json.dumps(
-                _build_output(
-                    context=_TavilyCallContext(query=None, parameters={}),
-                    results=[],
-                    elapsed_ms=0,
-                    cache_hit=False,
-                    error=error,
-                ),
-                ensure_ascii=False,
-            )
-        output = await client.research(args)
-        return json.dumps(output, ensure_ascii=False)
-
-    return lc_tool(
-        "web_research",
-        description="面向复杂主题的研究任务，可生成报告或结构化输出。",
-        args_schema=WebResearchArgs,
-    )(_research)

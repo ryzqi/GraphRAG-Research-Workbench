@@ -59,10 +59,8 @@ class SearxngSearchProvider:
         self,
         *,
         params: dict[str, Any],
-        timeout_seconds: float | None = None,
     ) -> Any:
         url = f"{self._settings.searxng_search_base_url.rstrip('/')}/search"
-        timeout = timeout_seconds or self._settings.searxng_timeout_seconds
         headers = {"Accept": "application/json"}
         if self._http_client is None:
             client = create_http_client(self._settings)
@@ -71,7 +69,7 @@ class SearxngSearchProvider:
                     url,
                     params=params,
                     headers=headers,
-                    timeout=timeout,
+                    timeout=None,
                 )
                 response.raise_for_status()
                 return response.json()
@@ -81,7 +79,7 @@ class SearxngSearchProvider:
             url,
             params=params,
             headers=headers,
-            timeout=timeout,
+            timeout=None,
         )
         response.raise_for_status()
         return response.json()
@@ -97,7 +95,6 @@ class SearxngSearchProvider:
         categories: list[str] | None = None,
         engines: list[str] | None = None,
         language: str | None = None,
-        timeout_seconds: float | None = None,
         **_: Any,
     ) -> ProviderSearchResponse:
         start = time.perf_counter()
@@ -124,10 +121,7 @@ class SearxngSearchProvider:
             params["engines"] = ",".join(resolved_engines)
 
         try:
-            payload = await self._request_json(
-                params=params,
-                timeout_seconds=timeout_seconds,
-            )
+            payload = await self._request_json(params=params)
             raw_items = payload.get("results") if isinstance(payload, dict) else []
             results = [
                 NormalizedSearchResult(

@@ -20,7 +20,6 @@ from pydantic import BaseModel, Field, ValidationError
 from app.agents.tool_calling.registry import (
     ToolMeta,
     build_research_tool_registry,
-    resolve_research_web_provider_ids,
 )
 from app.core.settings import Settings
 from app.integrations.chat_model_factory import create_chat_model
@@ -529,10 +528,7 @@ class DeepResearchRuntimeRunner:
             required_web_providers=(
                 select_required_web_providers(
                     complexity=plan_snapshot.complexity.value,
-                    available_providers=self.runtime.tool_groups.get(
-                        "web_provider_ids",
-                        resolve_research_web_provider_ids(self.runtime.tool_groups.get("web", ())),
-                    ),
+                    available_providers=self.runtime.tool_groups["web_provider_ids"],
                 )
                 if ResearchSourceTarget.WEB in set(plan_snapshot.target_sources)
                 and not workspace_only_web_citations

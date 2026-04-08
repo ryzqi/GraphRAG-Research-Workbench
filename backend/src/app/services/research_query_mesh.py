@@ -9,7 +9,7 @@ from app.prompts import get_prompt_loader
 from app.schemas.research import ResearchPlanSnapshot, ResearchSourceTarget
 
 ResearchComplexityLiteral = Literal["simple", "comparative", "complex"]
-DEFAULT_REQUIRED_WEB_PROVIDERS = ("tavily", "jina_reader", "searxng")
+DEFAULT_REQUIRED_WEB_PROVIDERS = ("tavily", "searxng", "jina_reader")
 
 _REQUIRED_WEB_PROVIDER_COUNTS: dict[ResearchComplexityLiteral, int] = {
     "simple": 2,

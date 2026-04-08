@@ -15,23 +15,20 @@ import httpx
 from langchain.tools import BaseTool, tool as lc_tool
 
 from app.agents.tools.web_search import (
+    build_search_providers,
     build_jina_read_tool,
     has_jina_read_provider,
     has_web_extract_provider,
     has_web_search_provider,
     build_web_crawl_tool,
     build_web_extract_tool,
-    build_web_research_tool,
     build_web_search_tool,
 )
 from app.agents.tools.research_tools import (
     build_arxiv_fetch_tool,
     build_arxiv_search_tool,
-    build_searxng_search_tool,
     build_tavily_crawl_tool,
     build_tavily_extract_tool,
-    build_tavily_research_tool,
-    build_tavily_search_tool,
 )
 from app.core.settings import Settings
 from app.integrations.mcp_adapters import McpToolEntry, load_mcp_tools
@@ -41,15 +38,6 @@ from app.services.research_runtime_types import ResearchToolRegistryBundle
 
 from .utils import DEFAULT_TOOL_OUTPUT_MAX_CHARS, make_mcp_tool_name, truncate_tool_output
 from .web_tool_payloads import compact_builtin_external_output
-
-_RESEARCH_WEB_PROVIDER_BY_TOOL_NAME = {
-    "tavily_search": "tavily",
-    "tavily_extract": "tavily",
-    "tavily_crawl": "tavily",
-    "tavily_research": "tavily",
-    "jina_read": "jina_reader",
-    "searxng_search": "searxng",
-}
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,16 +61,6 @@ def _stringify_output(output: object) -> str:
         return json.dumps(output, ensure_ascii=False)
     except TypeError:
         return str(output)
-
-
-def resolve_research_web_provider_ids(tool_names: Sequence[str]) -> tuple[str, ...]:
-    provider_ids: list[str] = []
-    for tool_name in tool_names:
-        provider_id = _RESEARCH_WEB_PROVIDER_BY_TOOL_NAME.get(str(tool_name))
-        if provider_id is None or provider_id in provider_ids:
-            continue
-        provider_ids.append(provider_id)
-    return tuple(provider_ids)
 
 
 def _sanitize_mcp_content(content: object) -> object:
@@ -123,7 +101,6 @@ async def build_tool_registry(
     include_web_search: bool = True,
     include_web_extract: bool = False,
     include_web_crawl: bool = False,
-    include_web_research: bool = False,
     include_mcp: bool = True,
     tool_output_max_chars: int = DEFAULT_TOOL_OUTPUT_MAX_CHARS,
     redis: RedisClient | None = None,
@@ -207,12 +184,6 @@ async def build_tool_registry(
                     settings, redis=redis, http_client=http_client
                 )
             )
-        if include_web_research:
-            _wrap_external_tool(
-                build_web_research_tool(
-                    settings, redis=redis, http_client=http_client
-                )
-            )
 
     # MCP 扩展工具（外部工具，需要命名空间）
     if include_mcp and settings.mcp_enabled and extensions:
@@ -292,8 +263,9 @@ async def build_research_tool_registry(
 ) -> ResearchToolRegistryBundle:
     """构建 deep research 专用工具集。
 
-    研究模式默认 hard cut 到 provider-specific 工具：
-    Tavily 全功能、Jina Reader、SearXNG Search、arXiv Search/Fetch。
+    研究模式的网页搜索统一走聚合 `web_search` 工具，确保 Tavily 与
+    SearXNG 在搜索阶段同时参与；Jina Reader 与 Tavily 抽取/爬取保留
+    为补充工具。
     """
 
     del tool_output_max_chars  # 当前 research 工具直接返回结构化 JSON 字符串，不需要二次截断包装。
@@ -317,13 +289,33 @@ async def build_research_tool_registry(
 
     web_tool_names: list[str] = []
     paper_tool_names: list[str] = []
+    web_provider_ids: list[str] = []
 
-    if settings.web_search_api_key:
+    if has_web_search_provider(settings):
+        search_providers = build_search_providers(
+            settings,
+            redis=redis,
+            http_client=http_client,
+        )
+        web_search_tool = build_web_search_tool(
+            settings,
+            redis=redis,
+            http_client=http_client,
+            search_providers=search_providers,
+            read_provider=None,
+        )
+        _add_tool(web_search_tool)
+        web_tool_names.append(web_search_tool.name)
+        web_provider_ids.extend(
+            str(getattr(provider, "provider_name", "")).strip()
+            for provider in search_providers
+            if str(getattr(provider, "provider_name", "")).strip()
+        )
+
+    if has_web_extract_provider(settings):
         for tool in (
-            build_tavily_search_tool(settings, redis=redis, http_client=http_client),
             build_tavily_extract_tool(settings, redis=redis, http_client=http_client),
             build_tavily_crawl_tool(settings, redis=redis, http_client=http_client),
-            build_tavily_research_tool(settings, redis=redis, http_client=http_client),
         ):
             _add_tool(tool)
             web_tool_names.append(tool.name)
@@ -335,14 +327,7 @@ async def build_research_tool_registry(
         )
         _add_tool(jina_tool)
         web_tool_names.append(jina_tool.name)
-
-    if settings.searxng_search_enabled:
-        searxng_tool = build_searxng_search_tool(
-            settings,
-            http_client=http_client,
-        )
-        _add_tool(searxng_tool)
-        web_tool_names.append(searxng_tool.name)
+        web_provider_ids.append("jina_reader")
 
     for tool in (
         build_arxiv_search_tool(),
@@ -355,7 +340,7 @@ async def build_research_tool_registry(
         _add_tool(tool, is_external=False)
 
     tool_groups["web"] = tuple(web_tool_names)
-    tool_groups["web_provider_ids"] = resolve_research_web_provider_ids(web_tool_names)
+    tool_groups["web_provider_ids"] = tuple(dict.fromkeys(web_provider_ids))
     tool_groups["paper"] = tuple(paper_tool_names)
     tool_groups["citation"] = tuple()
 

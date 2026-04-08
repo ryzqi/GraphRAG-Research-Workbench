@@ -56,7 +56,7 @@ function flattenText(node: ReactNode): string {
 }
 
 describe('ResearchPlanningThread', () => {
-  it('uses the workbench summary card while keeping long text safe', () => {
+  it('removes the legacy oval shell while keeping long text safe', () => {
     const planSnapshot: ResearchPlanSnapshot = {
       research_brief: 'brief',
       complexity: 'complex',
@@ -84,11 +84,23 @@ describe('ResearchPlanningThread', () => {
       tree,
       (element) => element.type === Paper && element.props.variant === 'outlined'
     );
-    expect(paperCards[0]?.props.sx).toEqual(
-      expect.objectContaining({ borderRadius: 24, overflow: 'hidden' })
-    );
+    expect(
+      paperCards.some((element) =>
+        (element.props.sx as { borderRadius?: number; overflow?: string } | undefined)
+          ?.borderRadius === 24 &&
+        (element.props.sx as { borderRadius?: number; overflow?: string } | undefined)
+          ?.overflow === 'hidden'
+      )
+    ).toBe(false);
+    expect(
+      paperCards.some((element) =>
+        (element.props.sx as { borderRadius?: number } | undefined)?.borderRadius === 999
+      )
+    ).toBe(false);
     expect(flattenText(tree)).toContain('研究问题');
     expect(flattenText(tree)).toContain('研究计划');
+    expect(flattenText(tree)).toContain('开始');
+    expect(flattenText(tree)).toContain('更新计划');
 
     const summaryBlock = collectElements(
       tree,

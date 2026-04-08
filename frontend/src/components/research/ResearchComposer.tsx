@@ -58,7 +58,6 @@ export function ResearchComposer(props: ResearchComposerProps) {
             px: { xs: 2, md: 3 },
             py: { xs: 1.5, md: 1.75 },
             borderColor: props.validationError ? 'error.main' : researchWorkbenchColors.border,
-            maxWidth: 1120,
           }}
         >
           <SearchIcon sx={{ color: researchWorkbenchColors.subtleText }} />

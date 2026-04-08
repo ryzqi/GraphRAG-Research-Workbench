@@ -102,16 +102,6 @@ class ResearchRuntimeConfig:
         if self.command_execution_backend == "local_shell":
             raise ValueError("Deep Research runtime 禁止使用 LocalShellBackend。")
 
-    @property
-    def tool_registry_kwargs(self) -> dict[str, bool]:
-        return {
-            "include_web_search": True,
-            "include_web_extract": True,
-            "include_web_crawl": True,
-            "include_web_research": True,
-            "include_mcp": False,
-        }
-
 
 @dataclass(slots=True, frozen=True)
 class ResearchToolRegistryBundle:

@@ -10,7 +10,6 @@ from app.agents.tools.web_search import (
     WebSearchArgs,
     build_web_crawl_tool,
     build_web_extract_tool,
-    build_web_research_tool,
     build_web_search_tool,
 )
 
@@ -22,7 +21,6 @@ __all__ = [
     "WebCrawlArgs",
     "build_web_crawl_tool",
     "WebResearchArgs",
-    "build_web_research_tool",
     "KbRetrieveArgs",
     "build_kb_retrieve_tool",
     "ReportGenerateArgs",

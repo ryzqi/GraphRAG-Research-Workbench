@@ -342,7 +342,8 @@ export function ResearchPage() {
         width: '100%',
         px: { xs: 2, md: 4 },
         py: { xs: 3, md: 4 },
-        bgcolor: researchWorkbenchColors.pageBackground,
+        background:
+          'linear-gradient(180deg, #f8fbff 0%, #f4f7fb 42%, #eef3f9 100%)',
         minHeight: !sessionId ? { xs: 'calc(100vh - 96px)', md: 'calc(100vh - 120px)' } : undefined,
       }}
     >
@@ -359,12 +360,17 @@ export function ResearchPage() {
       ) : !session ? (
         <LoadingSpinner text="加载研究任务..." />
       ) : !isExecutionStage ? (
-        <Stack spacing={3} sx={{ width: '100%', maxWidth: 1120, mx: 'auto', pt: { xs: 1, md: 2 } }}>
+        <Stack spacing={4} sx={{ width: '100%', pt: { xs: 1, md: 1.5 }, minWidth: 0 }}>
           <Stack
             direction={{ xs: 'column', sm: 'row' }}
             justifyContent="space-between"
             alignItems={{ xs: 'flex-start', sm: 'center' }}
             spacing={2}
+            sx={{
+              pb: { xs: 2.5, md: 3 },
+              borderBottom: `1px solid ${researchWorkbenchColors.softBorder}`,
+              minWidth: 0,
+            }}
           >
             <Stack spacing={0.75}>
               <Typography variant="overline" sx={researchWorkbenchEyebrowSx}>
@@ -400,7 +406,7 @@ export function ResearchPage() {
           />
         </Stack>
       ) : (
-        <Stack spacing={2.5} sx={{ width: '100%', maxWidth: 1120, mx: 'auto' }}>
+        <Stack spacing={3} sx={{ width: '100%', minWidth: 0 }}>
           <ResearchCanvas
             model={{
               ...pageModel,

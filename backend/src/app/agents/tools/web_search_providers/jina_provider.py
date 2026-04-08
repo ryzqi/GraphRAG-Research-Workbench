@@ -34,20 +34,17 @@ class _JinaHttpMixin:
     async def _request_json(
         self,
         url: str,
-        *,
-        timeout_seconds: float | None = None,
     ) -> Any:
         headers = {"Accept": "application/json"}
-        timeout = timeout_seconds or self._settings.jina_read_timeout_seconds
         if self._http_client is None:
             client = create_http_client(self._settings)
             try:
-                response = await client.get(url, headers=headers, timeout=timeout)
+                response = await client.get(url, headers=headers, timeout=None)
                 response.raise_for_status()
                 return response.json()
             finally:
                 await client.aclose()
-        response = await self._http_client.get(url, headers=headers, timeout=timeout)
+        response = await self._http_client.get(url, headers=headers, timeout=None)
         response.raise_for_status()
         return response.json()
 
@@ -59,13 +56,10 @@ class JinaReadProvider(_JinaHttpMixin):
         self,
         *,
         url: str,
-        timeout_seconds: float | None = None,
     ) -> dict[str, Any]:
         request_url = f"{self._settings.jina_read_base_url.rstrip('/')}/{url}"
         try:
-            payload = await self._request_json(
-                request_url, timeout_seconds=timeout_seconds
-            )
+            payload = await self._request_json(request_url)
         except Exception as exc:
             return {
                 "url": url,

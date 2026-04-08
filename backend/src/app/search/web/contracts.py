@@ -41,5 +41,4 @@ class ReadProvider(Protocol):
         self,
         *,
         url: str,
-        timeout_seconds: float | None = None,
     ) -> dict[str, Any]: ...

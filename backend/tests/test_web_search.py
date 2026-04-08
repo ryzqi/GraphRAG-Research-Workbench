@@ -1,7 +1,23 @@
+import json
+
 import pytest
 from pydantic import ValidationError
 
-from app.agents.tools.web_search import WebResearchArgs, WebSearchClient
+from app.agents.tool_calling.registry import build_research_tool_registry
+from app.agents.tools.web_search import (
+    JinaReadArgs,
+    WebCrawlArgs,
+    WebExtractArgs,
+    WebResearchArgs,
+    WebSearchArgs,
+    WebSearchClient,
+    build_web_search_tool,
+)
+from app.agents.tools.web_search_providers.base import (
+    NormalizedSearchResult,
+    ProviderSearchReport,
+    ProviderSearchResponse,
+)
 from app.core.settings import Settings
 
 
@@ -10,6 +26,47 @@ def _build_settings() -> Settings:
         web_search_api_key="tvly-test",
         web_search_cache_enabled=False,
     )
+
+
+class _RecordingSearchProvider:
+    def __init__(self, provider_name: str) -> None:
+        self.provider_name = provider_name
+        self.calls: list[dict[str, object]] = []
+
+    async def search(self, **kwargs: object) -> ProviderSearchResponse:
+        self.calls.append(dict(kwargs))
+        query = str(kwargs["query"])
+        return ProviderSearchResponse(
+            provider=self.provider_name,  # type: ignore[arg-type]
+            results=[
+                NormalizedSearchResult(
+                    title=f"{self.provider_name} result",
+                    url=f"https://{self.provider_name}.example.com/{query}",
+                    snippet=f"{self.provider_name} snippet",
+                    source_provider=self.provider_name,  # type: ignore[arg-type]
+                )
+            ],
+            report=ProviderSearchReport(
+                provider=self.provider_name,  # type: ignore[arg-type]
+                ok=True,
+                result_count=1,
+                elapsed_ms=1,
+                error=None,
+            ),
+        )
+
+
+def test_search_related_models_do_not_expose_timeout_fields() -> None:
+    assert "web_search_timeout_seconds" not in Settings.model_fields
+    assert "jina_read_timeout_seconds" not in Settings.model_fields
+    assert "searxng_timeout_seconds" not in Settings.model_fields
+    assert "web_research_timeout_seconds" not in Settings.model_fields
+
+    assert "timeout_seconds" not in WebSearchArgs.model_fields
+    assert "timeout_seconds" not in JinaReadArgs.model_fields
+    assert "timeout_seconds" not in WebExtractArgs.model_fields
+    assert "timeout_seconds" not in WebCrawlArgs.model_fields
+    assert "timeout_seconds" not in WebResearchArgs.model_fields
 
 
 def test_web_research_args_accept_current_tavily_citation_formats() -> None:
@@ -130,10 +187,52 @@ async def test_research_http_fallback_uses_current_contract(monkeypatch: pytest.
     assert len(http_calls) == 1
     assert http_calls[0]["method"] == "POST"
     assert http_calls[0]["path"] == "/research"
-    assert http_calls[0]["timeout_seconds"] == 180.0
+    assert http_calls[0]["timeout_seconds"] is None
     assert http_calls[0]["json_payload"]["input"] == "查询 Tavily 版本"
     assert "query" not in http_calls[0]["json_payload"]
     assert http_calls[0]["json_payload"]["citation_format"] == "numbered"
     assert output["request_id"] == "req-http"
     assert output["report"] == "HTTP fallback 报告"
     assert output["results"][0]["url"] == "https://pypi.org/project/tavily-python/"
+
+
+@pytest.mark.asyncio
+async def test_web_search_aggregates_tavily_and_searxng_without_timeout_kwargs() -> None:
+    tavily_provider = _RecordingSearchProvider("tavily")
+    searxng_provider = _RecordingSearchProvider("searxng")
+    tool = build_web_search_tool(
+        _build_settings(),
+        search_providers=[tavily_provider, searxng_provider],
+        read_provider=None,
+    )
+
+    payload = json.loads(await tool.ainvoke({"query": "测试双 provider 搜索"}))
+
+    assert tavily_provider.calls
+    assert searxng_provider.calls
+    assert all("timeout_seconds" not in call for call in tavily_provider.calls)
+    assert all("timeout_seconds" not in call for call in searxng_provider.calls)
+    assert "timeout_seconds" not in payload["parameters"]
+    assert {"tavily", "searxng"}.issubset(
+        {item["provider"] for item in payload["provider_reports"]}
+    )
+
+
+@pytest.mark.asyncio
+async def test_research_registry_uses_aggregated_web_search_without_tavily_research() -> None:
+    bundle = await build_research_tool_registry(
+        settings=Settings(
+            web_search_api_key="tvly-test",
+            web_search_cache_enabled=False,
+            searxng_search_enabled=True,
+            jina_read_enabled=False,
+        )
+    )
+
+    tool_names = {tool.name for tool in bundle.tools}
+
+    assert "web_search" in tool_names
+    assert "tavily_research" not in tool_names
+    assert "tavily_search" not in tool_names
+    assert "searxng_search" not in tool_names
+    assert bundle.tool_groups["web_provider_ids"][:2] == ("tavily", "searxng")

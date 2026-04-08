@@ -31,7 +31,6 @@ async def enrich_documents(
     *,
     read_provider: ReadProvider | None,
     top_k: int = 2,
-    timeout_seconds: float | None = None,
 ) -> tuple[list[Document], dict[str, object] | None]:
     if read_provider is None or top_k <= 0:
         return list(documents), None
@@ -52,7 +51,7 @@ async def enrich_documents(
     for index in candidate_indexes:
         url = document_url(enriched[index])
         try:
-            payload = await read_provider.read(url=url, timeout_seconds=timeout_seconds)
+            payload = await read_provider.read(url=url)
         except Exception as exc:
             error_messages.append(f"{url}: {exc}")
             continue

@@ -14,11 +14,8 @@ from pydantic import BaseModel, Field
 from app.agents.tools.web_search import (
     WebCrawlArgs,
     WebExtractArgs,
-    WebResearchArgs,
-    WebSearchArgs,
     WebSearchClient,
 )
-from app.agents.tools.web_search_providers.searxng_provider import SearxngSearchProvider
 from app.core.settings import Settings
 
 
@@ -34,34 +31,6 @@ def _validation_error_output(*, code: str, message: str, **payload: Any) -> str:
         },
         ensure_ascii=False,
     )
-
-
-def build_tavily_search_tool(
-    settings: Settings,
-    *,
-    redis: Any | None = None,
-    http_client: httpx.AsyncClient | None = None,
-) -> BaseTool:
-    client = WebSearchClient(settings, redis=redis, http_client=http_client)
-
-    async def _search(**kwargs: object) -> str:
-        try:
-            args = WebSearchArgs(**kwargs)
-        except Exception:
-            return _validation_error_output(
-                code="TAVILY_SEARCH_BAD_REQUEST",
-                message="Tavily 搜索参数错误",
-                query=None,
-                results=[],
-            )
-        output = await client.search(args)
-        return json.dumps(output, ensure_ascii=False)
-
-    return lc_tool(
-        "tavily_search",
-        description="使用 Tavily 执行网页搜索。",
-        args_schema=WebSearchArgs,
-    )(_search)
 
 
 def build_tavily_extract_tool(
@@ -116,91 +85,6 @@ def build_tavily_crawl_tool(
         description="使用 Tavily 对站点做受控爬取。",
         args_schema=WebCrawlArgs,
     )(_crawl)
-
-
-def build_tavily_research_tool(
-    settings: Settings,
-    *,
-    redis: Any | None = None,
-    http_client: httpx.AsyncClient | None = None,
-) -> BaseTool:
-    client = WebSearchClient(settings, redis=redis, http_client=http_client)
-
-    async def _research(**kwargs: object) -> str:
-        try:
-            args = WebResearchArgs(**kwargs)
-        except Exception:
-            return _validation_error_output(
-                code="TAVILY_RESEARCH_BAD_REQUEST",
-                message="Tavily research 参数错误",
-                results=[],
-            )
-        output = await client.research(args)
-        return json.dumps(output, ensure_ascii=False)
-
-    return lc_tool(
-        "tavily_research",
-        description="使用 Tavily 的 research 端点生成研究型网页报告。",
-        args_schema=WebResearchArgs,
-    )(_research)
-
-
-class SearxngSearchArgs(BaseModel):
-    query: str = Field(..., description="搜索查询")
-    max_results: int = Field(default=8, ge=1, le=20)
-    time_range: str | None = Field(default=None, description="时间范围（day/week/month/year）")
-    include_domains: list[str] | None = Field(default=None)
-    exclude_domains: list[str] | None = Field(default=None)
-    categories: list[str] | None = Field(default=None)
-    engines: list[str] | None = Field(default=None)
-    language: str | None = Field(default=None)
-    timeout_seconds: float | None = Field(default=None, ge=1)
-
-
-def build_searxng_search_tool(
-    settings: Settings,
-    *,
-    http_client: httpx.AsyncClient | None = None,
-) -> BaseTool:
-    provider = SearxngSearchProvider(settings=settings, http_client=http_client)
-
-    async def _search(**kwargs: object) -> str:
-        try:
-            args = SearxngSearchArgs(**kwargs)
-        except Exception:
-            return _validation_error_output(
-                code="SEARXNG_SEARCH_BAD_REQUEST",
-                message="SearXNG 搜索参数错误",
-                query=None,
-                results=[],
-            )
-        response = await provider.search(
-            query=args.query,
-            max_results=args.max_results,
-            time_range=args.time_range,
-            include_domains=args.include_domains,
-            exclude_domains=args.exclude_domains,
-            categories=args.categories,
-            engines=args.engines,
-            language=args.language,
-            timeout_seconds=args.timeout_seconds,
-        )
-        payload = {
-            "query": args.query,
-            "parameters": args.model_dump(mode="json"),
-            "provider": response.provider,
-            "total_found": len(response.results),
-            "results": [item.model_dump(mode="json") for item in response.results],
-            "error": response.report.error,
-            "provider_report": response.report.model_dump(mode="json"),
-        }
-        return json.dumps(payload, ensure_ascii=False)
-
-    return lc_tool(
-        "searxng_search",
-        description="使用受控 SearXNG Search API 做网页搜索。",
-        args_schema=SearxngSearchArgs,
-    )(_search)
 
 
 class ArxivSearchArgs(BaseModel):

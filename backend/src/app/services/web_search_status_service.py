@@ -103,8 +103,6 @@ async def get_web_search_status(*, settings: Settings) -> WebSearchStatusRead:
 
 async def _probe_search_provider(
     provider: Any,
-    *,
-    timeout_seconds: float,
 ) -> WebSearchProviderStatusRead:
     provider_name = str(getattr(provider, "provider_name", "")).strip() or "tavily"
     start = time.perf_counter()
@@ -116,7 +114,6 @@ async def _probe_search_provider(
             include_answer=False,
             include_usage=False,
             auto_parameters=False,
-            timeout_seconds=timeout_seconds,
         )
     except Exception as exc:  # pragma: no cover - provider 自身异常由状态兜底
         logger.warning(
@@ -145,7 +142,6 @@ async def _probe_search_provider(
 async def _probe_jina_read_provider(
     *,
     settings: Settings,
-    timeout_seconds: float,
 ) -> WebSearchProviderStatusRead:
     if not has_jina_read_provider(settings):
         return _unconfigured_provider_status("jina_reader")
@@ -155,7 +151,6 @@ async def _probe_jina_read_provider(
     try:
         payload = await provider.read(
             url=_JINA_PROBE_URL,
-            timeout_seconds=timeout_seconds,
         )
     except Exception as exc:  # pragma: no cover - provider 自身异常由状态兜底
         logger.warning("Jina Reader 健康检查失败", extra={"error": str(exc)})
@@ -183,7 +178,6 @@ async def _probe_jina_read_provider(
 
 
 async def _probe_web_search_status(*, settings: Settings) -> WebSearchStatusRead:
-    timeout_seconds = min(float(settings.web_search_timeout_seconds), 5.0)
     providers_by_name = {
         name: _unconfigured_provider_status(name) for name in _PROVIDER_ORDER
     }
@@ -192,17 +186,13 @@ async def _probe_web_search_status(*, settings: Settings) -> WebSearchStatusRead
         return _empty_status(settings=settings)
 
     search_statuses = await asyncio.gather(
-        *[
-            _probe_search_provider(provider, timeout_seconds=timeout_seconds)
-            for provider in search_providers
-        ]
+        *[_probe_search_provider(provider) for provider in search_providers]
     )
     for status in search_statuses:
         providers_by_name[status.name] = status
 
     jina_status = await _probe_jina_read_provider(
         settings=settings,
-        timeout_seconds=timeout_seconds,
     )
     providers_by_name[jina_status.name] = jina_status
 

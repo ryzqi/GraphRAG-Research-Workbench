@@ -143,9 +143,9 @@ npm run start
 ### Web 搜索
 
 - 必填：`WEB_SEARCH_API_KEY`
-- 可选搜索源：`SEARXNG_SEARCH_ENABLED`、`SEARXNG_BASE_URL`、`SEARXNG_TIMEOUT_SECONDS`
-- 可选正文增强：`JINA_READ_ENABLED`、`JINA_READ_BASE_URL`、`JINA_READ_TIMEOUT_SECONDS`
-- 其余超时、重试、默认深度参数见 `.env.example`
+- 可选搜索源：`SEARXNG_SEARCH_ENABLED`、`SEARXNG_BASE_URL`
+- 可选正文增强：`JINA_READ_ENABLED`、`JINA_READ_BASE_URL`
+- 其余重试与默认深度参数见 `.env.example`
 
 ### KB Chat
 

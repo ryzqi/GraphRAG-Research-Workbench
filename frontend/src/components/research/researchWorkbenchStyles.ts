@@ -1,14 +1,19 @@
 export const researchWorkbenchColors = {
-  pageBackground: '#f8f9fa',
+  pageBackground: '#f4f7fb',
   surface: '#ffffff',
+  surfaceMuted: '#f7faff',
+  surfaceTint: '#edf4ff',
   primary: '#1a73e8',
   primaryHover: '#1765cc',
-  text: '#202124',
-  mutedText: '#5f6368',
-  subtleText: '#80868b',
-  border: 'rgba(218, 220, 224, 0.88)',
-  softBorder: 'rgba(218, 220, 224, 0.72)',
-  accentBackground: 'rgba(26, 115, 232, 0.08)',
+  text: '#1f2937',
+  mutedText: '#5b6678',
+  subtleText: '#8a94a6',
+  border: 'rgba(185, 194, 208, 0.62)',
+  softBorder: 'rgba(185, 194, 208, 0.34)',
+  strongBorder: 'rgba(109, 138, 184, 0.22)',
+  accentBackground: 'rgba(26, 115, 232, 0.1)',
+  rail: 'rgba(26, 115, 232, 0.18)',
+  shadow: '0 24px 60px rgba(31, 41, 55, 0.08)',
 } as const;
 
 export const researchWorkbenchCardSx = {
@@ -16,15 +21,31 @@ export const researchWorkbenchCardSx = {
   borderColor: researchWorkbenchColors.border,
   bgcolor: researchWorkbenchColors.surface,
   color: researchWorkbenchColors.text,
-  boxShadow: '0 10px 28px rgba(60, 64, 67, 0.08)',
+  boxShadow: researchWorkbenchColors.shadow,
 } as const;
 
 export const researchWorkbenchInnerCardSx = {
-  borderRadius: 20,
-  borderColor: researchWorkbenchColors.softBorder,
-  bgcolor: researchWorkbenchColors.surface,
+  borderRadius: 28,
+  borderColor: researchWorkbenchColors.strongBorder,
+  bgcolor: 'rgba(255, 255, 255, 0.88)',
   color: researchWorkbenchColors.text,
-  boxShadow: '0 6px 18px rgba(60, 64, 67, 0.06)',
+  boxShadow: '0 18px 44px rgba(31, 41, 55, 0.08)',
+  backdropFilter: 'blur(14px)',
+} as const;
+
+export const researchWorkbenchOpenPanelSx = {
+  borderRadius: 30,
+  border: `1px solid ${researchWorkbenchColors.softBorder}`,
+  bgcolor: 'rgba(255, 255, 255, 0.84)',
+  color: researchWorkbenchColors.text,
+  boxShadow: researchWorkbenchColors.shadow,
+  backdropFilter: 'blur(18px)',
+} as const;
+
+export const researchWorkbenchSectionDividerSx = {
+  borderTop: `1px solid ${researchWorkbenchColors.softBorder}`,
+  pt: { xs: 2.75, md: 3.25 },
+  minWidth: 0,
 } as const;
 
 export const researchWorkbenchEyebrowSx = {

@@ -3,14 +3,15 @@ import { isValidElement, type ReactElement, type ReactNode } from 'react';
 import { describe, expect, it } from 'vitest';
 
 import { ResearchCanvas } from './ResearchCanvas';
+import { ResearchEvidenceLedger } from './ResearchEvidenceLedger';
 
 function collectElements(
   node: ReactNode,
   predicate: (
-    element: ReactElement<{ children?: ReactNode; sx?: unknown; variant?: string }>
+    element: ReactElement<{ children?: ReactNode; sx?: unknown; variant?: string; tone?: string }>
   ) => boolean
-): ReactElement<{ children?: ReactNode; sx?: unknown; variant?: string }>[] {
-  const matches: ReactElement<{ children?: ReactNode; sx?: unknown; variant?: string }>[] = [];
+): ReactElement<{ children?: ReactNode; sx?: unknown; variant?: string; tone?: string }>[] {
+  const matches: ReactElement<{ children?: ReactNode; sx?: unknown; variant?: string; tone?: string }>[] = [];
 
   const visit = (current: ReactNode): void => {
     if (Array.isArray(current)) {
@@ -26,6 +27,7 @@ function collectElements(
       children?: ReactNode;
       sx?: unknown;
       variant?: string;
+      tone?: string;
     }>;
     if (predicate(element)) {
       matches.push(element);
@@ -55,7 +57,7 @@ function flattenText(node: ReactNode): string {
 }
 
 describe('ResearchCanvas', () => {
-  it('uses the new workbench header and rounded card system', () => {
+  it('uses the open canvas header and light evidence ledger', () => {
     const tree = ResearchCanvas({
       model: {
         surface: 'live-research',
@@ -94,6 +96,16 @@ describe('ResearchCanvas', () => {
       tree,
       (element) => element.type === Paper && element.props.variant === 'outlined'
     );
-    expect(paperCards[0]?.props.sx).toEqual(expect.objectContaining({ borderRadius: 24 }));
+    expect(
+      paperCards.some((element) =>
+        (element.props.sx as { borderRadius?: number } | undefined)?.borderRadius === 24
+      )
+    ).toBe(false);
+
+    const evidenceLedger = collectElements(
+      tree,
+      (element) => element.type === ResearchEvidenceLedger
+    )[0];
+    expect(evidenceLedger?.props.tone).not.toBe('dark');
   });
 });

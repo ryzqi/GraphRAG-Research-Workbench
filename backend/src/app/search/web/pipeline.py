@@ -45,7 +45,6 @@ class WebSearchPipeline:
         include_favicon: bool | None = None,
         include_usage: bool | None = None,
         auto_parameters: bool | None = None,
-        timeout_seconds: float | None = None,
         **_: Any,
     ) -> dict[str, Any]:
         start = perf_counter()
@@ -99,7 +98,6 @@ class WebSearchPipeline:
                         include_favicon=include_favicon,
                         include_usage=include_usage,
                         auto_parameters=auto_parameters,
-                        timeout_seconds=timeout_seconds,
                     )
                 except Exception as exc:
                     if provider_reports[retriever.provider_name]["error"] is None:
@@ -117,7 +115,6 @@ class WebSearchPipeline:
             fused,
             read_provider=self._read_provider,
             top_k=2,
-            timeout_seconds=timeout_seconds,
         )
         reranked = rerank_documents(enriched, query=query, max_results=max_results)
         reports = list(provider_reports.values())
