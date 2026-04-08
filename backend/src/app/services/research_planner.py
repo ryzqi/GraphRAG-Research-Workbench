@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from typing import Literal, Protocol
 
+from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import (
     BaseModel,
@@ -17,6 +18,8 @@ from pydantic import (
 
 from app.core.settings import Settings, get_settings
 from app.integrations.chat_model_factory import create_chat_model
+from app.integrations.model_runtime_config import ModelRuntimeConfigManager
+from app.models.model_config import ModelProvider
 from app.prompts import get_prompt_loader
 from app.models.research_session import ResearchSessionStatus
 from app.schemas.research import (
@@ -30,6 +33,14 @@ from app.schemas.research import (
 )
 from app.services.query_rewrite_service import coerce_structured_result_payload
 from app.services.research_planner_types import ResearchPlannerResult
+
+
+_DEFAULT_SCOPER_STRUCTURED_METHODS: tuple[str, ...] = ("function_calling",)
+_OLLAMA_SCOPER_STRUCTURED_METHODS: tuple[str, ...] = (
+    "function_calling",
+    "json_schema",
+)
+
 
 class ResearchScoper(Protocol):
     async def scope(
@@ -153,41 +164,68 @@ class LLMResearchScoper:
         self._settings = settings or get_settings()
         self._prompts = get_prompt_loader()
 
+    def _structured_output_methods(self) -> tuple[str, ...]:
+        try:
+            snapshot = ModelRuntimeConfigManager.get_snapshot(settings=self._settings)
+            provider = snapshot.active_provider_config().provider
+        except RuntimeError:
+            return _DEFAULT_SCOPER_STRUCTURED_METHODS
+        if provider == ModelProvider.OLLAMA:
+            return _OLLAMA_SCOPER_STRUCTURED_METHODS
+        return _DEFAULT_SCOPER_STRUCTURED_METHODS
+
+    async def _invoke_scoper_payload(
+        self,
+        *,
+        model: BaseChatModel,
+        question: str,
+    ) -> _ResearchScoperOutput:
+        messages = [
+            SystemMessage(content=self._prompts.render_with_few_shot("research/scoper_system")),
+            HumanMessage(
+                content=self._prompts.render_with_few_shot(
+                    "research/scoper_user",
+                    question=question.strip(),
+                )
+            ),
+        ]
+        failure_reasons: list[str] = []
+        last_validation_error: ValidationError | None = None
+        for method in self._structured_output_methods():
+            structured_model = model.with_structured_output(
+                _ResearchScoperOutput,
+                method=method,
+                include_raw=True,
+            )
+            result = await structured_model.ainvoke(messages)
+            payload, reason = coerce_structured_result_payload(
+                result=result,
+                schema=_ResearchScoperOutput,
+            )
+            if payload is None:
+                failure_reasons.append(f"{method}:{reason or 'unknown'}")
+                continue
+            if isinstance(payload, _ResearchScoperOutput):
+                return payload
+            try:
+                return _ResearchScoperOutput.model_validate(payload)
+            except ValidationError as exc:
+                last_validation_error = exc
+                failure_reasons.append(f"{method}:invalid_schema")
+        failure_detail = "; ".join(failure_reasons) or "unknown"
+        if last_validation_error is not None:
+            raise RuntimeError(
+                f"Research scoper structured output 解析失败: {failure_detail}"
+            ) from last_validation_error
+        raise RuntimeError(f"Research scoper structured output 解析失败: {failure_detail}")
+
     async def scope(
         self,
         *,
         question: str,
     ) -> ResearchClarificationRequest | ResearchPlanSnapshot:
         model = create_chat_model(settings=self._settings, use_previous_response_id=False)
-        structured_model = model.with_structured_output(
-            _ResearchScoperOutput,
-            method="function_calling",
-            include_raw=True,
-        )
-        result = await structured_model.ainvoke(
-            [
-                SystemMessage(
-                    content=self._prompts.render_with_few_shot("research/scoper_system")
-                ),
-                HumanMessage(
-                    content=self._prompts.render_with_few_shot(
-                        "research/scoper_user",
-                        question=question.strip(),
-                    )
-                ),
-            ]
-        )
-        payload, reason = coerce_structured_result_payload(
-            result=result,
-            schema=_ResearchScoperOutput,
-        )
-        if payload is None:
-            raise RuntimeError(f"Research scoper structured output 解析失败: {reason or 'unknown'}")
-        if not isinstance(payload, _ResearchScoperOutput):
-            try:
-                payload = _ResearchScoperOutput.model_validate(payload)
-            except ValidationError as exc:
-                raise RuntimeError("Research scoper structured output 不符合契约") from exc
+        payload = await self._invoke_scoper_payload(model=model, question=question)
 
         if payload.decision == "clarify":
             return ResearchClarificationRequest(
@@ -204,6 +242,9 @@ class LLMResearchScoper:
         complexity = str(payload.complexity or "").strip().lower()
         if complexity not in {item.value for item in ResearchComplexity}:
             complexity = ResearchComplexity.COMPARATIVE.value
+        research_brief = payload.research_brief
+        if research_brief is None:
+            raise RuntimeError("Research scoper proceed 决策缺少 research_brief")
 
         def _normalize_target_sources(items: list[str]) -> list[ResearchSourceTarget]:
             normalized: list[ResearchSourceTarget] = []
@@ -222,7 +263,7 @@ class LLMResearchScoper:
             return deduped
 
         return ResearchPlanSnapshot(
-            research_brief=payload.research_brief.strip(),
+            research_brief=research_brief.strip(),
             complexity=ResearchComplexity(complexity),
             summary=payload.summary,
             subtasks=[
