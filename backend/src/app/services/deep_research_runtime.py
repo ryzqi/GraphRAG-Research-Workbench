@@ -143,26 +143,23 @@ def build_research_run_config(*, thread_id: str) -> dict[str, Any]:
     return {"configurable": {"thread_id": thread_id}}
 
 
-def build_research_backend_factory(
+def build_research_backend(
     policy: ResearchBackendPolicy = DEFAULT_RESEARCH_BACKEND_POLICY,
-):
+) -> CompositeBackend:
     """构建 CompositeBackend，明确分离临时上下文与持久记忆/技能。"""
 
-    def _factory(runtime: Any) -> CompositeBackend:
-        state_backend = StateBackend(runtime)
-        store_backend = StoreBackend(runtime)
-        return CompositeBackend(
-            default=state_backend,
-            routes={
-                policy.workspace_root: state_backend,
-                policy.scratch_root: state_backend,
-                policy.plans_root: state_backend,
-                policy.memories_root: store_backend,
-                policy.skills_root: store_backend,
-            },
-        )
-
-    return _factory
+    state_backend = StateBackend()
+    store_backend = StoreBackend()
+    return CompositeBackend(
+        default=state_backend,
+        routes={
+            policy.workspace_root: state_backend,
+            policy.scratch_root: state_backend,
+            policy.plans_root: state_backend,
+            policy.memories_root: store_backend,
+            policy.skills_root: store_backend,
+        },
+    )
 
 
 def _select_tools_by_name(
@@ -288,7 +285,7 @@ async def create_deep_research_runtime(
         "memory": list(config.memory_paths),
         "checkpointer": resolved_checkpointer,
         "store": resolved_store,
-        "backend": build_research_backend_factory(config.backend_policy),
+        "backend": build_research_backend(config.backend_policy),
         "interrupt_on": dict(config.interrupt_on) if config.interrupt_on else None,
     }
     if response_format is not None:

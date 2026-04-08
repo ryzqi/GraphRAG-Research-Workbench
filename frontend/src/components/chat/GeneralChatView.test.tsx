@@ -167,4 +167,172 @@ describe('GeneralChatView', () => {
     expect(html).not.toContain('MCP 未启用');
     expect(html).not.toContain('MCP 已关闭');
   });
+
+  it('shows 正常 when at least one search provider is healthy even if overall mode is degraded', () => {
+    const html = renderToStaticMarkup(
+      createElement(GeneralChatView, {
+        session: null,
+        messages: [],
+        input: '',
+        loading: false,
+        error: null,
+        allowExternal: true,
+        webSearch: {
+          configured: true,
+          verified: true,
+          mode: 'degraded',
+          providers: [
+            {
+              name: 'tavily',
+              configured: true,
+              verified: true,
+              healthy: true,
+              mode: 'healthy',
+              latency_ms: 320,
+              error: null,
+            },
+            {
+              name: 'searxng',
+              configured: true,
+              verified: true,
+              healthy: false,
+              mode: 'down',
+              latency_ms: 280,
+              error: 'timeout',
+            },
+            {
+              name: 'jina_reader',
+              configured: true,
+              verified: true,
+              healthy: true,
+              mode: 'healthy',
+              latency_ms: 120,
+              error: null,
+            },
+          ],
+        },
+        hasPendingApproval: false,
+        isInputDisabled: false,
+        setAllowExternal: () => undefined,
+        setInput: () => undefined,
+        setError: () => undefined,
+        onSend: async () => undefined,
+        onToolApprovalSubmit: async () => undefined,
+        onSuggestionClick: () => undefined,
+      })
+    );
+
+    expect(html).toContain('联网正常');
+    expect(html).not.toContain('联网降级');
+    expect(html).not.toContain('联网异常');
+  });
+
+  it('shows 异常 when all search providers are down', () => {
+    const html = renderToStaticMarkup(
+      createElement(GeneralChatView, {
+        session: null,
+        messages: [],
+        input: '',
+        loading: false,
+        error: null,
+        allowExternal: true,
+        webSearch: {
+          configured: true,
+          verified: true,
+          mode: 'down',
+          providers: [
+            {
+              name: 'tavily',
+              configured: true,
+              verified: true,
+              healthy: false,
+              mode: 'down',
+              latency_ms: 320,
+              error: 'timeout',
+            },
+            {
+              name: 'searxng',
+              configured: true,
+              verified: true,
+              healthy: false,
+              mode: 'down',
+              latency_ms: 280,
+              error: 'timeout',
+            },
+          ],
+        },
+        hasPendingApproval: false,
+        isInputDisabled: false,
+        setAllowExternal: () => undefined,
+        setInput: () => undefined,
+        setError: () => undefined,
+        onSend: async () => undefined,
+        onToolApprovalSubmit: async () => undefined,
+        onSuggestionClick: () => undefined,
+      })
+    );
+
+    expect(html).toContain('联网异常');
+    expect(html).not.toContain('联网不可用');
+    expect(html).not.toContain('联网正常');
+  });
+
+  it('shows 异常 when only jina reader is healthy', () => {
+    const html = renderToStaticMarkup(
+      createElement(GeneralChatView, {
+        session: null,
+        messages: [],
+        input: '',
+        loading: false,
+        error: null,
+        allowExternal: true,
+        webSearch: {
+          configured: true,
+          verified: true,
+          mode: 'degraded',
+          providers: [
+            {
+              name: 'tavily',
+              configured: true,
+              verified: true,
+              healthy: false,
+              mode: 'down',
+              latency_ms: 320,
+              error: 'timeout',
+            },
+            {
+              name: 'searxng',
+              configured: true,
+              verified: true,
+              healthy: false,
+              mode: 'down',
+              latency_ms: 280,
+              error: 'timeout',
+            },
+            {
+              name: 'jina_reader',
+              configured: true,
+              verified: true,
+              healthy: true,
+              mode: 'healthy',
+              latency_ms: 120,
+              error: null,
+            },
+          ],
+        },
+        hasPendingApproval: false,
+        isInputDisabled: false,
+        setAllowExternal: () => undefined,
+        setInput: () => undefined,
+        setError: () => undefined,
+        onSend: async () => undefined,
+        onToolApprovalSubmit: async () => undefined,
+        onSuggestionClick: () => undefined,
+      })
+    );
+
+    expect(html).toContain('联网异常');
+    expect(html).not.toContain('联网正常');
+    expect(html).not.toContain('联网降级');
+  });
 });

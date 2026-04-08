@@ -129,7 +129,7 @@ services:
       NO_PROXY: "localhost,127.0.0.1,postgres,redis,minio,milvus,etcd,searxng,searxng_valkey,*.local,10.*,172.16.*,172.17.*,172.18.*,172.19.*,172.30.*,172.31.*,192.168.*"
 
   searxng:
-    image: docker.io/searxng/searxng:latest
+    image: docker.io/searxng/searxng:2026.4.7-08ef7a63d
     container_name: mkb_searxng
     restart: unless-stopped
     environment:

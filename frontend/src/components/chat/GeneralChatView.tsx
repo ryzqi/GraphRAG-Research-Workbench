@@ -25,40 +25,20 @@ const quickPrompts = [
   { label: '风险与下一步', value: '请列出潜在风险与下一步建议：' },
 ];
 
-function getStatusLabel(webSearch: WebSearchStatus): string {
-  if (!webSearch.configured) {
-    return '联网未配置';
-  }
-  if (!webSearch.verified) {
-    return '联网未验证';
-  }
-  if (webSearch.mode === 'healthy') {
-    return '联网正常';
-  }
-  if (webSearch.mode === 'degraded') {
-    return '联网降级';
-  }
-  return '联网不可用';
+const SEARCH_PROVIDER_NAMES = new Set(['tavily', 'searxng']);
+
+function hasHealthySearchProvider(webSearch: WebSearchStatus): boolean {
+  return webSearch.providers.some(
+    (provider) => SEARCH_PROVIDER_NAMES.has(provider.name) && provider.healthy
+  );
 }
 
-function getStatusColor(
-  mode: WebSearchStatus['mode'],
-  configured: boolean,
-  verified: boolean
-): 'default' | 'warning' | 'success' | 'error' {
-  if (!configured) {
-    return 'default';
-  }
-  if (!verified) {
-    return 'warning';
-  }
-  if (mode === 'healthy') {
-    return 'success';
-  }
-  if (mode === 'degraded') {
-    return 'warning';
-  }
-  return 'error';
+function getStatusLabel(webSearch: WebSearchStatus): string {
+  return hasHealthySearchProvider(webSearch) ? '联网正常' : '联网异常';
+}
+
+function getStatusColor(webSearch: WebSearchStatus): 'success' | 'error' {
+  return hasHealthySearchProvider(webSearch) ? 'success' : 'error';
 }
 
 interface GeneralChatViewProps {
@@ -101,11 +81,7 @@ export function GeneralChatView({
   onSuggestionClick,
 }: GeneralChatViewProps) {
   const webSearchStatusLabel = getStatusLabel(webSearch);
-  const webSearchStatusColor = getStatusColor(
-    webSearch.mode,
-    webSearch.configured,
-    webSearch.verified
-  );
+  const webSearchStatusColor = getStatusColor(webSearch);
 
   return (
     <ChatViewport
