@@ -7,7 +7,11 @@ from app.schemas.research import (
     ResearchPlanSnapshot,
     ResearchSourceTarget,
 )
-from app.services.deep_research_runtime import DeepResearchRuntimeRunner
+from app.prompts import get_prompt_loader
+from app.services.deep_research_runtime import (
+    DeepResearchRuntimeRunner,
+    _build_runtime_prompt,
+)
 from app.services.research_runtime_context import build_runtime_context_snapshot
 from app.services.research_runtime_skills import build_research_runtime_skill_files
 from app.services.research_runtime_types import ResearchRuntimeConfig
@@ -71,6 +75,28 @@ def test_build_runtime_context_snapshot_harvests_only_whitelisted_files() -> Non
     assert snapshot.claim_map_md.startswith("# 核心主张")
     assert snapshot.report_context_json["executive_summary"] == "summary"
     assert "/scratch/research/session-123/tmp/noise.txt" not in snapshot.files_snapshot
+
+
+def test_runtime_system_prompt_uses_explicit_xml_sections() -> None:
+    prompt = get_prompt_loader().render_with_few_shot("research/runtime_system")
+
+    assert "<instructions>" in prompt
+    assert "<citation_policy>" in prompt
+
+
+def test_runtime_user_prompt_places_static_rules_before_dynamic_task_block() -> None:
+    prompt = _build_runtime_prompt(
+        session=SimpleNamespace(question="What changed in HBM supply constraints?"),
+        plan_snapshot=_build_plan_snapshot(),
+        workspace_paths=("/workspace/context/runtime_context_guide.md",),
+    )
+
+    assert "<instructions>" in prompt
+    assert "<task_context>" in prompt
+    assert prompt.index("<instructions>") < prompt.index("<task_context>")
+    assert prompt.index("What changed in HBM supply constraints?") > prompt.index(
+        "<task_context>"
+    )
 
 
 async def test_runner_injects_runtime_skill_files_into_request() -> None:

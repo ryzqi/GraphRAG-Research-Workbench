@@ -114,3 +114,43 @@
 - 绿灯：
   - `cd F:\毕设\code\backend; uv run pytest tests/test_deep_research_runtime.py -q` -> `8 passed`
   - `cd F:\毕设\code\backend; uv run pytest tests/test_research_service.py -q` -> `3 passed`
+- 提交：
+  - `40c9573 feat: add deepagents runtime context wiring`
+
+## 2026-04-10 任务 3 外部调研：提示词 / 模板
+
+- Anthropic 官方 prompt engineering 建议：
+  - 用 XML tags / 明确分段，把 instructions、context、examples、output contract 区分开。
+  - 分离规则与数据，避免模型把动态任务载荷和静态指令混读。
+- OpenAI 官方 prompt caching / prompt engineering 建议：
+  - 稳定前缀放前面、动态变量放后面，更利于缓存命中与一致性。
+  - 结构化输出要求要单独成段，不要散落在任务描述中。
+
+## 2026-04-10 任务 3 当前实现差距假设
+
+- `runtime_user.yaml` 当前把 `question / research_brief / target_sources / route_hint / workspace_paths_block` 放在所有静态规则前面。
+- `runtime_system.yaml` 与 `runtime_user.yaml` 都是连续自然语言段落，缺少显式结构边界。
+- 这会同时影响：
+  - prompt 缓存友好度
+  - 模型对“固定规则 vs 本轮任务载荷”的区分清晰度
+
+## 2026-04-10 任务 3 已落地实现
+
+- `runtime_system.yaml`
+  - 增加 `<role>`、`<instructions>`、`<citation_policy>` 三段结构
+  - 把固定角色、执行规则、引用策略显式分层
+- `runtime_user.yaml`
+  - 增加 `<instructions>`、`<research_process>`、`<output_contract>`、`<task_context>` 四段结构
+  - 把静态研究规则和输出契约整体前置
+  - 把 `question / research_brief / target_sources / route_hint / query_mesh_path / priority_workspace_paths` 收敛到动态 `<task_context>` 末段
+
+## 2026-04-10 任务 3 验证证据
+
+- 红灯：
+  - `cd F:\毕设\code\backend; uv run pytest tests/test_deep_research_runtime.py -q`
+  - 新增测试失败：
+    - `test_runtime_system_prompt_uses_explicit_xml_sections`
+    - `test_runtime_user_prompt_places_static_rules_before_dynamic_task_block`
+- 绿灯：
+  - `cd F:\毕设\code\backend; uv run pytest tests/test_deep_research_runtime.py -q` -> `10 passed`
+  - `cd F:\毕设\code\backend; uv run pytest tests/test_research_finalizer.py -q` -> `1 passed`

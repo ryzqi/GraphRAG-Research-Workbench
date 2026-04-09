@@ -30,3 +30,15 @@
 - 已完成任务 2 绿灯验证：
   - `uv run pytest tests/test_deep_research_runtime.py -q` -> `8 passed`
   - `uv run pytest tests/test_research_service.py -q` -> `3 passed`
+- 已完成任务 2 提交：
+  - `40c9573 feat: add deepagents runtime context wiring`
+- 已切换到 Phase 3，开始检索深度研究 prompt/template 最佳实践并核对当前未提交实现。
+- 已完成任务 3 红灯测试：
+  - `uv run pytest tests/test_deep_research_runtime.py -q` 中新增 2 个测试失败，证明 runtime prompts 还没有 XML 分段，且 runtime_user 仍是“动态字段在前、静态规则在后”。
+- 已完成任务 3 实现：
+  - `runtime_system.yaml` 改为 `<role> / <instructions> / <citation_policy>` 分段
+  - `runtime_user.yaml` 改为 `<instructions> / <research_process> / <output_contract> / <task_context>` 分段
+  - `task_context` 现在位于静态规则之后，动态变量统一后置
+- 已完成任务 3 绿灯验证：
+  - `uv run pytest tests/test_deep_research_runtime.py -q` -> `10 passed`
+  - `uv run pytest tests/test_research_finalizer.py -q` -> `1 passed`

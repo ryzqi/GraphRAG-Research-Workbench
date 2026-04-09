@@ -31,7 +31,7 @@
 | Phase 0: 基线与规划 | completed | planning/spec/plan 文档落盘，仓库与搜索能力已验证 |
 | Phase 1: 上下文管理优化 | completed | 外部最佳实践完成、失败测试 -> 通过、代码提交 |
 | Phase 2: DeepAgents 优化 | completed | 外部最佳实践完成、失败测试 -> 通过、代码提交 |
-| Phase 3: Prompt/模板优化 | pending | 外部最佳实践完成、失败测试 -> 通过、代码提交 |
+| Phase 3: Prompt/模板优化 | completed | 外部最佳实践完成、失败测试 -> 通过、代码提交 |
 | Phase 4: 最终审查与收尾 | pending | 子代理审查完成，遗留问题处理完毕，给出最终状态 |
 
 ## 风险与边界

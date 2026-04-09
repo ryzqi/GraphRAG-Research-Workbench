@@ -3,24 +3,23 @@ name: research_runtime_user
 description: "Deep Research runtime user prompt"
 
 template: |
-  请执行当前 deep research runtime，并返回结构化结果。
-  问题：{question}
-  research_brief：{research_brief}
-  target_sources：{target_sources}
-  route_hint：{route_hint}
-  query_mesh：/workspace/context/query_mesh.json
-  优先阅读以下 workspace 文档：
-  {workspace_paths_block}
+  <instructions>
+  你需要执行当前 deep research runtime，并返回结构化结果。
 
-  研究过程要求：
-  - 先消化 workspace 文档，再决定是否需要外部补证。
+  <research_process>
+  - 先读取 mission、plan、query-map、coverage、claim-map、evidence-ledger、analysis-notes、report-outline、report-draft。
+  - 进入研究后立刻调用 `write_todos`，待办必须覆盖 claim、coverage gap、子代理委派与最终成稿准备。
+  - 先补齐 claim-map 与 evidence-ledger，再决定是否需要外部查询。
   - 将 route_hint 与 query_mesh 视为候选检索计划；只选择能关闭当前主张、交叉验证任务或 coverage gap 的最小必要查询集。
   - 外部查询必须服务于某个未闭合主张、交叉验证任务或 coverage gap。
+  - 研究过程中持续更新 analysis-notes、report-outline、report-draft，必要时补写 report-context.json。
   - workspace 文档只能作为 bootstrap 背景，不能作为满足 web/paper target_sources 的唯一最终证据。
   - 引用优先级：官方/原始/同行评审 > 聚合转载 > 二手解读。
   - 若只有弱证据或单一来源支持，不要把该判断写成确定性 finding。
+  - 最后才返回结构化结果；不要把原始搜索结果直接塞回主输出。
+  </research_process>
 
-  输出要求：
+  <output_contract>
   - findings 至少 2 条，必须是可验证的具体结论，且尽量保持一条 finding 只表达一个核心判断。
   - citations 至少 2 条，必须与 findings 对应；结构化输出中也必须保留 citations。
   - 内部组织顺序遵循：结论 -> 证据 -> 冲突/限制 -> 缺口。
@@ -29,6 +28,19 @@ template: |
   - 如果 target_sources 包含 paper，必须至少调用一次 `arxiv_search` 或 `arxiv_fetch`。
   - 对 `web_search` 命中的关键网页，优先再调用 `jina_read` 获取正文；需要定向抽取/爬取时再调用 Tavily 抽取或爬取工具。
   - 最终 citations 的 source_provider 必须使用 provider id，不要写成 LangChain官方文档 这类站点名。
+  </output_contract>
+  </instructions>
+
+  <task_context>
+  <question>{question}</question>
+  <research_brief>{research_brief}</research_brief>
+  <target_sources>{target_sources}</target_sources>
+  <route_hint>{route_hint}</route_hint>
+  <query_mesh_path>/workspace/context/query_mesh.json</query_mesh_path>
+  <priority_workspace_paths>
+  {workspace_paths_block}
+  </priority_workspace_paths>
+  </task_context>
 
 variables:
   - name: question
