@@ -77,10 +77,9 @@ class JinaReadProvider(_JinaHttpMixin):
             }
 
         if isinstance(payload, dict):
-            body = (
-                payload.get("data")
-                if isinstance(payload.get("data"), dict)
-                else payload
+            data_payload = payload.get("data")
+            body: dict[str, Any] = (
+                data_payload if isinstance(data_payload, dict) else payload
             )
             return {
                 "url": str(body.get("url") or url),

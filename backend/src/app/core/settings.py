@@ -4,6 +4,7 @@ import json
 import sys
 from functools import lru_cache
 from pathlib import Path
+from typing import Any
 from urllib.parse import quote, urlsplit, urlunsplit
 
 from pydantic import Field, field_validator, model_validator
@@ -147,6 +148,11 @@ class Settings(BaseSettings):
         populate_by_name=True,
     )
 
+    def __init__(self, **data: Any) -> None:
+        # BaseSettings 运行时会从环境变量与 .env 补齐默认值；显式 __init__
+        # 让静态类型系统接受“无参加载配置”的真实调用方式。
+        super().__init__(**data)
+
     app_name: str = "多知识库知识代理"
     app_env: str = Field("dev", alias="APP_ENV")
     app_log_level: str = Field("INFO", alias="APP_LOG_LEVEL")
@@ -154,6 +160,9 @@ class Settings(BaseSettings):
         default_factory=lambda: _DEV_LOCAL_CORS_ORIGINS.copy(),
         alias="APP_CORS_ALLOW_ORIGINS",
     )
+    jwt_secret_key: str = Field("REPLACE_ME", alias="JWT_SECRET_KEY")
+    jwt_algorithm: str = Field("HS256", alias="JWT_ALGORITHM")
+    jwt_expire_minutes: int = Field(60, ge=1, alias="JWT_EXPIRE_MINUTES")
 
     database_url: str = Field(
         _DEFAULT_DATABASE_URL,

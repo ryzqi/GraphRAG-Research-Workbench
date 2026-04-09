@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import uuid
 
+from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -131,10 +132,11 @@ class ExtensionService:
             return None
 
         update_data = data.model_dump(exclude_unset=True, mode="python")
+        transport_override = update_data.get("transport")
         target_transport = ExtensionTransport(
             (
-                update_data.get("transport").value
-                if update_data.get("transport") is not None
+                transport_override.value
+                if isinstance(transport_override, ExtensionTransport)
                 else ext.transport.value
             )
         )
@@ -167,7 +169,7 @@ class ExtensionService:
         if "observability_config" in update_data:
             obs = update_data.get("observability_config")
             ext.observability_config = (
-                obs.model_dump(mode="json") if hasattr(obs, "model_dump") else obs
+                obs.model_dump(mode="json") if isinstance(obs, BaseModel) else obs
             )
 
         try:

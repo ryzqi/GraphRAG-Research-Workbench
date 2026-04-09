@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Mapping, Sequence
 import re
 import time
 import uuid
@@ -42,6 +43,7 @@ from app.agents.kb_chat_agentic_state import (
     MergeSubqueryContextInput,
     RetrieveContextInput,
     RetrieveSubqueryContextInput,
+    SubqueryRun,
     TransformQueryInput,
     resolve_routing_decision,
 )
@@ -67,6 +69,7 @@ from ..tools.kb_retrieve import (
 )
 
 _EVIDENCE_LINE_RE = re.compile(r"^\[([^\[\]\n]{1,128})\]\s+", re.MULTILINE)
+StateView = Mapping[str, object]
 _INLINE_CITATION_RE = re.compile(r"\[([^\[\]\n]{1,128})\]|【([^【】\n]{1,128})】")
 _CITATION_ONLY_FAILURE_REASONS = {
     "missing_citations",
@@ -108,7 +111,7 @@ def _as_dict(value: object) -> dict[str, Any] | None:
     return None
 
 
-def _get_loop_counts(state: dict) -> dict[str, int]:
+def _get_loop_counts(state: StateView) -> dict[str, int]:
     raw = state.get("loop_counts")
     if not isinstance(raw, dict):
         return {"total_rounds": 0, "retrieval_retries": 0, "generation_retries": 0}
@@ -119,7 +122,7 @@ def _get_loop_counts(state: dict) -> dict[str, int]:
     }
 
 
-def _current_retrieval_round(state: dict) -> int:
+def _current_retrieval_round(state: StateView) -> int:
     loop_counts = _get_loop_counts(state)
     return max(int(loop_counts.get("retrieval_retries") or 0), 0)
 
@@ -146,7 +149,7 @@ def _pop_kb_invocation_meta(
     return meta if isinstance(meta, dict) else None
 
 
-def _resolve_subquery_specs(state: dict) -> list[dict[str, Any]]:
+def _resolve_subquery_specs(state: StateView) -> list[dict[str, Any]]:
     plan = state.get("decomposition_plan")
     if not isinstance(plan, dict):
         return []
@@ -214,7 +217,7 @@ def _runtime_context(runtime: Runtime[Any] | None) -> dict[str, Any]:
 
 
 def _resolve_kb_ids(
-    state: dict[str, Any], runtime: Runtime[Any] | None
+    state: StateView, runtime: Runtime[Any] | None
 ) -> list[str] | None:
     context = _runtime_context(runtime)
     kb_ids_ctx = context.get("kb_ids")
@@ -350,11 +353,11 @@ def _build_subquery_dispatch_plan(
             int(row.get("index") or 0),
         )
     )
-    selected_items = [
-        row.get("item")
-        for row in ranked_candidates[:max_branches]
-        if isinstance(row.get("item"), dict)
-    ]
+    selected_items: list[dict[str, Any]] = []
+    for row in ranked_candidates[:max_branches]:
+        row_item = row.get("item")
+        if isinstance(row_item, dict):
+            selected_items.append(row_item)
     send_tasks: list[Send] = []
     branch_kinds: dict[str, int] = {}
     selected_queries: list[str] = []
@@ -439,7 +442,7 @@ def _build_subquery_dispatch_plan(
 
 
 def _resolve_retrieval_budget_payload(
-    state: dict[str, Any],
+    state: StateView,
     settings: Settings,
     runtime: Runtime[Any] | None = None,
 ) -> dict[str, int]:
@@ -463,7 +466,7 @@ def _resolve_retrieval_budget_payload(
 
 def _compute_retrieval_diagnostics(
     *,
-    state: dict[str, Any],
+    state: StateView,
     final_context: str,
     evidence_count: int,
 ) -> dict[str, float]:
@@ -480,12 +483,8 @@ def _compute_retrieval_diagnostics(
     coverage = min(1.0, evidence_count / query_count)
 
     metrics = state.get("metrics")
-    retrieval_metrics = (
-        metrics.get("retrieval_layer")
-        if isinstance(metrics, dict)
-        and isinstance(metrics.get("retrieval_layer"), dict)
-        else {}
-    )
+    retrieval_layer = metrics.get("retrieval_layer") if isinstance(metrics, dict) else None
+    retrieval_metrics = retrieval_layer if isinstance(retrieval_layer, dict) else {}
     previous_evidence = int(retrieval_metrics.get("evidence_count") or 0)
     if evidence_count <= 0:
         novelty = 0.0
@@ -547,13 +546,13 @@ async def dispatch_subqueries(
 
 async def _invoke_kb_retrieve(
     *,
-    state: dict[str, Any],
+    state: StateView,
     query: str,
     settings: Settings,
     kb_tool: BaseTool,
     retrieval_round: int,
     runtime: Runtime[Any] | None = None,
-    query_items: list[dict[str, Any]] | None = None,
+    query_items: Sequence[Mapping[str, object]] | None = None,
 ) -> tuple[str, str | None, dict[str, Any]]:
     kb_ids = _resolve_kb_ids(state, runtime)
     retrieval_budget = _resolve_retrieval_budget_payload(
@@ -677,7 +676,7 @@ async def merge_subquery_context(
             continue
         if run_round is None and active_round > 0:
             continue
-        runs.append(run)
+        runs.append(dict(run))
     runs = sort_by_priority_then_index(runs)
 
     merged_parts: list[str] = []
@@ -792,7 +791,7 @@ async def merge_subquery_context(
 
 
 def _merge_stage_summary(
-    state: dict, key: str, summary: dict[str, Any]
+    state: StateView, key: str, summary: dict[str, Any]
 ) -> dict[str, Any]:
     stage_summaries = state.get("stage_summaries")
     if not isinstance(stage_summaries, dict):
@@ -806,7 +805,7 @@ def _merge_stage_summary(
     return {"stage_summaries": merged}
 
 
-def _merge_reflection(state: dict, patch: dict[str, Any]) -> dict[str, Any]:
+def _merge_reflection(state: StateView, patch: dict[str, Any]) -> dict[str, Any]:
     reflection = state.get("reflection")
     if not isinstance(reflection, dict):
         reflection = {}
@@ -814,7 +813,7 @@ def _merge_reflection(state: dict, patch: dict[str, Any]) -> dict[str, Any]:
 
 
 def _set_final_answer_for_exit(
-    state: dict, answer: str, *, reason: str
+    state: StateView, answer: str, *, reason: str
 ) -> dict[str, Any]:
     # ForceExit 节点优先使用 final_answer；这里显式设置，避免泄露历史 AIMessage。
     return {
@@ -823,7 +822,7 @@ def _set_final_answer_for_exit(
     }
 
 
-def _resolve_query_text(state: dict) -> str:
+def _resolve_query_text(state: StateView) -> str:
     return _as_str(
         state.get("normalized_query")
         or state.get("resolved_query")
@@ -1486,7 +1485,7 @@ async def kb_retrieve_context(
 
 
 async def generate_draft(
-    state: dict,
+    state: Mapping[str, object],
     *,
     settings: Settings,
     chat_model: BaseChatModel,

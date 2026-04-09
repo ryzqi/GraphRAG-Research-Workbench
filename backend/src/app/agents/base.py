@@ -9,8 +9,9 @@ import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Generic, TypeVar
+from typing import Any, Generic, TypeVar, cast
 
+from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import StateGraph
 
@@ -83,12 +84,12 @@ class BaseAgentGraph(ABC, Generic[StateT]):
         )
 
         try:
-            result = await compiled.ainvoke(state, config)
+            result = await compiled.ainvoke(state, cast(RunnableConfig | None, config))
             logger.info(
                 "Agent 执行完成",
                 extra={"agent_type": self.__class__.__name__},
             )
-            return result
+            return cast(StateT, result)
         except Exception as e:
             logger.error(
                 f"Agent 执行失败: {e}",

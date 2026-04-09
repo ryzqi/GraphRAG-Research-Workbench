@@ -8,6 +8,7 @@ from sqlalchemy.exc import IntegrityError
 from app.api.deps import AsyncSessionDep
 from app.core.errors import not_found
 from app.models.kb_bootstrap_job import KBBootstrapJob
+from app.schemas.ingestion_batches import EntryErrorRead
 from app.schemas.kb_bootstrap_jobs import (
     BootstrapCreateKnowledgeBaseRequest,
     BootstrapCreateKnowledgeBaseResponse,
@@ -50,7 +51,9 @@ def _to_read(
         total_entries=job.total_entries,
         accepted_entries=job.accepted_entries,
         failed_entries=job.failed_entries,
-        entry_errors=job.entry_errors or [],
+        entry_errors=[
+            EntryErrorRead.model_validate(item) for item in (job.entry_errors or [])
+        ],
         progress_message=job.progress_message,
         error_code=job.error_code,
         error_message=job.error_message,

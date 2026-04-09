@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 import random
 import time
@@ -135,7 +136,10 @@ class LLMClient:
         async def _call() -> object:
             ainvoke = getattr(chat_model, "ainvoke", None)
             if callable(ainvoke):
-                return await ainvoke(messages)
+                result = ainvoke(messages)
+                if inspect.isawaitable(result):
+                    return await result
+                return result
 
             invoke = getattr(chat_model, "invoke", None)
             if not callable(invoke):

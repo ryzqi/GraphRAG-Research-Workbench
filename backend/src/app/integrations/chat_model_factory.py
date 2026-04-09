@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from langchain_core.language_models.chat_models import BaseChatModel
+
 from app.core.model_config_errors import ModelConfigIncompleteError
 from app.core.settings import Settings, get_settings
 from app.integrations.langchain_profiles import build_chat_model_profile
@@ -18,6 +20,16 @@ _DEFAULT_NVIDIA_MAX_RETRIES = 0
 _NVIDIA_TIMEOUT_CAP_SECONDS = 60.0
 _OLLAMA_DEFAULT_BASE_URL = "http://127.0.0.1:11434"
 _TIMEOUT_UNSET = object()
+
+
+def _resolve_timeout_seconds(
+    timeout_seconds: float | None | object, default_timeout: float
+) -> float | None:
+    if timeout_seconds is _TIMEOUT_UNSET:
+        return float(default_timeout)
+    if isinstance(timeout_seconds, (int, float)):
+        return float(timeout_seconds)
+    return None
 
 
 def _supports_ollama_reasoning_level(model_name: str) -> bool:
@@ -66,13 +78,8 @@ def _build_chat_openai_common_kwargs(
         "base_url": base_url,
         "max_retries": resolved_max_retries,
     }
-    if timeout_seconds is _TIMEOUT_UNSET:
-        resolved_timeout = float(cfg.llm_timeout_seconds)
-        if provider == ModelProvider.NVIDIA:
-            resolved_timeout = min(resolved_timeout, _NVIDIA_TIMEOUT_CAP_SECONDS)
-        kwargs["timeout"] = resolved_timeout
-    elif timeout_seconds is not None:
-        resolved_timeout = float(timeout_seconds)
+    resolved_timeout = _resolve_timeout_seconds(timeout_seconds, cfg.llm_timeout_seconds)
+    if resolved_timeout is not None:
         if provider == ModelProvider.NVIDIA:
             resolved_timeout = min(resolved_timeout, _NVIDIA_TIMEOUT_CAP_SECONDS)
         kwargs["timeout"] = resolved_timeout
@@ -131,7 +138,7 @@ def create_chat_model_from_runtime_config(
     use_previous_response_id: bool | None = None,
     timeout_seconds: float | None | object = _TIMEOUT_UNSET,
     max_retries: int | None = None,
-) -> Any:
+) -> BaseChatModel:
     cfg = settings or get_settings()
     if not provider_cfg.enabled:
         raise RuntimeError(
@@ -195,10 +202,9 @@ def create_chat_model_from_runtime_config(
             "base_url": base_url,
             "max_retries": resolved_max_retries,
         }
-        if timeout_seconds is _TIMEOUT_UNSET:
-            kwargs["timeout"] = float(cfg.llm_timeout_seconds)
-        elif timeout_seconds is not None:
-            kwargs["timeout"] = float(timeout_seconds)
+        resolved_timeout = _resolve_timeout_seconds(timeout_seconds, cfg.llm_timeout_seconds)
+        if resolved_timeout is not None:
+            kwargs["timeout"] = resolved_timeout
         profile = build_chat_model_profile(cfg)
         if profile is not None:
             kwargs["profile"] = profile
@@ -221,8 +227,8 @@ def create_chat_model_from_runtime_config(
         profile = build_chat_model_profile(cfg)
         if profile is not None:
             kwargs["profile"] = profile
-        if timeout_seconds is not _TIMEOUT_UNSET and timeout_seconds is not None:
-            resolved_timeout = float(timeout_seconds)
+        resolved_timeout = _resolve_timeout_seconds(timeout_seconds, cfg.llm_timeout_seconds)
+        if resolved_timeout is not None:
             kwargs["sync_client_kwargs"] = {"timeout": resolved_timeout}
             kwargs["async_client_kwargs"] = {"timeout": resolved_timeout}
         if provider_cfg.thinking_enabled:
@@ -269,7 +275,7 @@ def create_chat_model(
     *,
     settings: Settings | None = None,
     use_previous_response_id: bool | None = None,
-) -> Any:
+) -> BaseChatModel:
     cfg = settings or get_settings()
     snapshot = ModelRuntimeConfigManager.get_snapshot(settings=cfg)
     try:

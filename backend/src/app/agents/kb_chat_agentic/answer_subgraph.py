@@ -11,6 +11,7 @@ import asyncio
 import logging
 import re
 import time
+from collections.abc import Mapping
 from typing import Any, Literal, TypedDict
 
 from langchain.messages import AIMessage, HumanMessage, SystemMessage
@@ -40,6 +41,7 @@ from app.agents.kb_chat_agentic.schemas import (
 from app.agents.kb_chat_agentic_state import (
     AnswerCommitInput,
     AnswerRepairInput,
+    AnswerReviewRun,
     AnswerReviewCitationInput,
     AnswerReviewDispatchInput,
     AnswerReviewFuseInput,
@@ -81,6 +83,7 @@ _REVIEW_CHECKS: tuple[Literal["citation", "answer"], ...] = (
     "citation",
     "answer",
 )
+StateView = Mapping[str, object]
 
 
 class KbChatAnswerSubgraphContext(TypedDict, total=False):
@@ -101,7 +104,7 @@ def _as_str(value: object) -> str:
     return str(value)
 
 
-def _get_loop_counts(state: dict[str, Any]) -> dict[str, int]:
+def _get_loop_counts(state: StateView) -> dict[str, int]:
     raw = state.get("loop_counts")
     if not isinstance(raw, dict):
         return {"total_rounds": 0, "retrieval_retries": 0, "generation_retries": 0}
@@ -112,7 +115,7 @@ def _get_loop_counts(state: dict[str, Any]) -> dict[str, int]:
     }
 
 
-def _current_review_round(state: dict[str, Any]) -> int:
+def _current_review_round(state: StateView) -> int:
     loop_counts = _get_loop_counts(state)
     return max(int(loop_counts.get("generation_retries") or 0), 0)
 
@@ -138,7 +141,7 @@ def _resolve_answer_subgraph_next_step(
 
 
 def _merge_stage_summary(
-    state: dict[str, Any],
+    state: StateView,
     key: str,
     summary: dict[str, Any],
     *,
@@ -156,7 +159,7 @@ def _merge_stage_summary(
 
 
 def _merge_subgraph_state(
-    state: dict[str, Any],
+    state: StateView,
     patch: dict[str, Any],
     *,
     updates: dict[str, Any] | None = None,
@@ -172,7 +175,7 @@ def _merge_subgraph_state(
     return {"answer_subgraph_state": {**merged, **patch}}
 
 
-def _resolve_query_text(state: dict[str, Any]) -> str:
+def _resolve_query_text(state: StateView) -> str:
     return _as_str(
         state.get("normalized_query")
         or state.get("resolved_query")
@@ -196,7 +199,7 @@ def _extract_evidence_labels(final_context: str) -> dict[str, str]:
 
 
 def _resolve_allowed_citation_labels(
-    state: dict[str, Any],
+    state: StateView,
     *,
     final_context: str,
 ) -> tuple[dict[str, str], str, str]:
@@ -257,7 +260,7 @@ def _ordered_unique_paragraph_ids(
 
 
 def _load_answer_paragraphs(
-    state: dict[str, Any],
+    state: StateView,
     *,
     draft_answer: str = "",
 ) -> list[AnswerParagraph]:
@@ -747,12 +750,12 @@ def _resolve_answer_review_details(
     return affected_ids, details
 
 
-def _extract_run_details(run: dict[str, Any]) -> dict[str, Any]:
+def _extract_run_details(run: Mapping[str, object]) -> dict[str, Any]:
     raw = run.get("details")
     return raw if isinstance(raw, dict) else {}
 
 
-def _extract_run_affected_paragraph_ids(run: dict[str, Any]) -> set[str]:
+def _extract_run_affected_paragraph_ids(run: Mapping[str, object]) -> set[str]:
     raw = run.get("affected_paragraph_ids")
     if not isinstance(raw, list):
         return set()
@@ -764,8 +767,8 @@ def _extract_run_affected_paragraph_ids(run: dict[str, Any]) -> set[str]:
 
 
 def _coalesce_paragraph_summary(
-    citation: dict[str, Any],
-    answer: dict[str, Any],
+    citation: Mapping[str, object],
+    answer: Mapping[str, object],
 ) -> tuple[dict[str, int], int, str]:
     answer_details = _extract_run_details(answer)
     citation_details = _extract_run_details(citation)
@@ -792,9 +795,13 @@ def _coalesce_paragraph_summary(
         "passed": max(total - failed, 0),
         "failed": failed,
     }
+    answer_repair_target = answer_details.get("repair_target_count")
+    citation_repair_target = citation_details.get("repair_target_count")
     repair_target_count = max(
-        int(answer_details.get("repair_target_count") or 0),
-        int(citation_details.get("repair_target_count") or 0),
+        int(answer_repair_target) if isinstance(answer_repair_target, (int, float)) else 0,
+        int(citation_repair_target)
+        if isinstance(citation_repair_target, (int, float))
+        else 0,
     )
     unsupported_scope_summary = (
         _as_str(
@@ -811,8 +818,8 @@ def _coalesce_paragraph_summary(
 def _is_repairable_review_failure(
     *,
     reason: str,
-    citation: dict[str, Any],
-    answer: dict[str, Any],
+    citation: Mapping[str, object],
+    answer: Mapping[str, object],
 ) -> bool:
     if reason == "incomplete":
         coverage_guardrail = _as_str(
@@ -829,26 +836,20 @@ def _is_repairable_review_failure(
     return unsupported_scope == "auxiliary_only"
 
 
-def _resolve_answer_review_details_from_state(state: dict[str, Any]) -> dict[str, Any]:
+def _resolve_answer_review_details_from_state(state: StateView) -> dict[str, Any]:
     reflection = state.get("reflection")
     reflection_obj = reflection if isinstance(reflection, dict) else {}
-    review_breakdown = (
-        reflection_obj.get("review_breakdown")
-        if isinstance(reflection_obj.get("review_breakdown"), dict)
-        else {}
-    )
-    answer_check = (
-        review_breakdown.get("answer")
-        if isinstance(review_breakdown.get("answer"), dict)
-        else {}
-    )
+    review_breakdown_raw = reflection_obj.get("review_breakdown")
+    review_breakdown = review_breakdown_raw if isinstance(review_breakdown_raw, dict) else {}
+    answer_check_raw = review_breakdown.get("answer")
+    answer_check = answer_check_raw if isinstance(answer_check_raw, dict) else {}
     details = answer_check.get("details")
     if isinstance(details, dict):
         return details
     return {}
 
 
-def _resolve_unsupported_scope_from_state(state: dict[str, Any]) -> str:
+def _resolve_unsupported_scope_from_state(state: StateView) -> str:
     review_details = _resolve_answer_review_details_from_state(state)
     unsupported_scope = _as_str(review_details.get("unsupported_scope")).strip()
     if unsupported_scope:
@@ -856,9 +857,9 @@ def _resolve_unsupported_scope_from_state(state: dict[str, Any]) -> str:
 
     stage_summaries = state.get("stage_summaries")
     answer_review_summary = (
-        stage_summaries.get("answer_review")
+        answer_review
         if isinstance(stage_summaries, dict)
-        and isinstance(stage_summaries.get("answer_review"), dict)
+        and isinstance((answer_review := stage_summaries.get("answer_review")), dict)
         else {}
     )
     return _as_str(answer_review_summary.get("unsupported_scope_summary")).strip()
@@ -874,7 +875,7 @@ def _count_unsupported_auxiliary_claims(paragraphs: list[AnswerParagraph]) -> in
 
 
 def _maybe_repair_auxiliary_only_paragraphs(
-    state: dict[str, Any],
+    state: StateView,
 ) -> tuple[list[dict[str, Any]], dict[str, Any], str] | None:
     reflection = state.get("reflection")
     reflection_obj = reflection if isinstance(reflection, dict) else {}
@@ -981,7 +982,7 @@ async def _judge_structured(
 def _resolve_subcheck(
     state: AnswerReviewFuseInput,
     check: str,
-) -> dict[str, Any] | None:
+) -> AnswerReviewRun | None:
     active_round = _current_review_round(state)
     runs = state.get("answer_review_runs")
     if not isinstance(runs, list):
@@ -1085,13 +1086,41 @@ async def _answer_review_citation(
         paragraphs,
         allowed_labels=evidence_labels,
     )
-    all_citations = paragraph_review["all_citations"]
-    valid_citations = paragraph_review["valid_citations"]
-    invalid_citations = paragraph_review["invalid_citations"]
-    missing_citations = paragraph_review["missing_citations"]
-    citation_mismatches = paragraph_review["citation_mismatches"]
-    affected_paragraph_ids = paragraph_review["affected_paragraph_ids"]
-    details = paragraph_review["details"]
+    all_citations = (
+        paragraph_review["all_citations"]
+        if isinstance(paragraph_review["all_citations"], list)
+        else []
+    )
+    valid_citations = (
+        paragraph_review["valid_citations"]
+        if isinstance(paragraph_review["valid_citations"], set)
+        else set()
+    )
+    invalid_citations = (
+        paragraph_review["invalid_citations"]
+        if isinstance(paragraph_review["invalid_citations"], set)
+        else set()
+    )
+    missing_citations = (
+        paragraph_review["missing_citations"]
+        if isinstance(paragraph_review["missing_citations"], list)
+        else []
+    )
+    citation_mismatches = (
+        paragraph_review["citation_mismatches"]
+        if isinstance(paragraph_review["citation_mismatches"], list)
+        else []
+    )
+    affected_paragraph_ids = (
+        paragraph_review["affected_paragraph_ids"]
+        if isinstance(paragraph_review["affected_paragraph_ids"], list)
+        else []
+    )
+    details = (
+        paragraph_review["details"]
+        if isinstance(paragraph_review["details"], dict)
+        else {}
+    )
     fallback_reason: str | None = None
     decision_source = "rule"
     if not draft:
@@ -1144,12 +1173,18 @@ async def _answer_review_citation(
             reason = judge.reason
             confidence = max(0.0, min(1.0, float(judge.confidence)))
             decision_source = "llm"
-            missing_citations = (
-                [] if passed else (judge.missing_citations or missing_citations)
+            judge_missing_citations = (
+                judge.missing_citations
+                if isinstance(judge.missing_citations, list)
+                else missing_citations
             )
-            affected_paragraph_ids = list(
-                judge.affected_paragraph_ids or affected_paragraph_ids
+            missing_citations = [] if passed else list(judge_missing_citations)
+            judge_affected_ids = (
+                judge.affected_paragraph_ids
+                if isinstance(judge.affected_paragraph_ids, list)
+                else affected_paragraph_ids
             )
+            affected_paragraph_ids = list(judge_affected_ids)
             if isinstance(judge.details, dict) and judge.details:
                 details = dict(judge.details)
         else:
@@ -1275,12 +1310,17 @@ async def _answer_review_llm_check(
         unsupported_claims=unsupported_claims,
     )
     if coverage_gap is not None:
+        repair_target_count_raw = coverage_gap.get("repair_target_count")
         guard_details = {
             "coverage_guardrail": coverage_gap.get("coverage_guardrail"),
             "missing_entities": coverage_gap.get("missing_entities") or [],
             "missing_terms": coverage_gap.get("missing_terms") or {},
             "required_dimensions": coverage_gap.get("required_dimensions") or [],
-            "repair_target_count": int(coverage_gap.get("repair_target_count") or 0),
+            "repair_target_count": (
+                int(repair_target_count_raw)
+                if isinstance(repair_target_count_raw, (int, float))
+                else 0
+            ),
         }
         details = {
             **details,
@@ -1300,11 +1340,9 @@ async def _answer_review_llm_check(
     if isinstance(judge, AnswerReviewSubDecision):
         if judge.affected_paragraph_ids:
             affected_paragraph_ids = list(judge.affected_paragraph_ids)
-        if isinstance(judge.details, dict) and judge.details:
-            details = {
-                **details,
-                **judge.details,
-            }
+        judge_details = judge.details if isinstance(judge.details, dict) else None
+        if judge_details:
+            details = {**details, **judge_details}
     result = {
         "review_round": review_round,
         "check": "answer",
@@ -1436,14 +1474,12 @@ async def _answer_review_fuse(
         "latency_ms": int((time.perf_counter() - start) * 1000),
         "completed_at": now_iso(),
     }
+    reflection = state.get("reflection")
+    reflection_update = reflection if isinstance(reflection, dict) else {}
     updates: dict[str, Any] = {
         "loop_counts": loop_counts_updates,
         "reflection": {
-            **(
-                state.get("reflection")
-                if isinstance(state.get("reflection"), dict)
-                else {}
-            ),
+            **reflection_update,
             "review_passed": passed,
             "action": action,
             "reason": reason,

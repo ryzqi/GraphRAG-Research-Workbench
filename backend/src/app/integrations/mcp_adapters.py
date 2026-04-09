@@ -8,11 +8,18 @@ import re
 import time
 from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Awaitable, Callable, Iterable
+from datetime import timedelta
+from typing import TYPE_CHECKING, Awaitable, Callable, Iterable, TypeAlias
 
 from langchain.tools import BaseTool
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from langchain_mcp_adapters.interceptors import MCPToolCallRequest, ToolCallInterceptor
+from langchain_mcp_adapters.sessions import (
+    SSEConnection,
+    StdioConnection,
+    StreamableHttpConnection,
+    WebsocketConnection,
+)
 from langchain_mcp_adapters.tools import load_mcp_tools as load_langchain_mcp_tools
 from mcp.types import CallToolResult, TextContent
 
@@ -32,6 +39,10 @@ _MAX_TOOL_ARGS_BYTES = 32 * 1024
 _MAX_AUDIT_SNIPPET_CHARS = 2000
 _MAX_STDIO_ARG_CHARS = 512
 _MAX_STDIO_ARGS = 64
+
+McpConnection: TypeAlias = (
+    StdioConnection | SSEConnection | StreamableHttpConnection | WebsocketConnection
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -357,42 +368,42 @@ class McpToolCallAuditInterceptor(ToolCallInterceptor):
 
 def build_mcp_server_params(
     extension: ToolExtension, settings: Settings
-) -> dict[str, object]:
+) -> McpConnection:
     """将 ToolExtension 转换为 MultiServerMCPClient 连接参数。"""
     transport = extension.transport
 
     if transport == ExtensionTransport.HTTP:
         url, headers = _resolve_http_headers(extension)
-        params: dict[str, object] = {
-            "transport": "http",
+        http_params: StreamableHttpConnection = {
+            "transport": "streamable_http",
             "url": url,
-            "timeout": _resolve_timeout_seconds(extension, settings),
+            "timeout": timedelta(seconds=_resolve_timeout_seconds(extension, settings)),
         }
         if headers:
-            params["headers"] = headers
-        return params
+            http_params["headers"] = headers
+        return http_params
 
     if transport == ExtensionTransport.STDIO:
         command, args, env, cwd = _resolve_stdio_connection_config(extension)
-        params: dict[str, object] = {
+        stdio_params: StdioConnection = {
             "transport": "stdio",
             "command": command,
             "args": args,
         }
         if env:
-            params["env"] = env
+            stdio_params["env"] = env
         if cwd:
-            params["cwd"] = cwd
-        return params
+            stdio_params["cwd"] = cwd
+        return stdio_params
 
     raise ValueError(f"不支持的传输类型: {extension.transport}")
 
 
 def build_mcp_connections(
     extensions: Iterable[ToolExtension], settings: Settings
-) -> dict[str, dict[str, object]]:
+) -> dict[str, McpConnection]:
     """批量构建 MCP 连接配置。"""
-    connections: dict[str, dict[str, object]] = {}
+    connections: dict[str, McpConnection] = {}
     for ext in extensions:
         try:
             connections[str(ext.id)] = build_mcp_server_params(ext, settings)

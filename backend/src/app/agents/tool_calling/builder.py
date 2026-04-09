@@ -62,10 +62,7 @@ class ToolCallingGraphBuilder:
             self._model_forced = (
                 chat_model.bind_tools(
                     self._tools,
-                    tool_choice={
-                        "type": "function",
-                        "function": {"name": force_tool_name},
-                    },
+                    tool_choice=force_tool_name,
                 )
                 if force_tool_name
                 else None
@@ -122,7 +119,7 @@ class ToolCallingGraphBuilder:
                 return msg
         return None
 
-    def _route_after_model(self, state: dict) -> str:
+    def _route_after_model(self, state: Any) -> str:
         messages = state.get(self._messages_key, [])
         last_ai = self._last_ai(messages if isinstance(messages, list) else [])
         if last_ai is None or not getattr(last_ai, "tool_calls", None):
@@ -139,12 +136,12 @@ class ToolCallingGraphBuilder:
 
         return "tools"
 
-    def _route_after_review(self, state: dict) -> str:
+    def _route_after_review(self, state: Any) -> str:
         if state.get("human_approved"):
             return "tools"
         return "model_no_tools"
 
-    async def _model_node(self, state: dict) -> dict[str, Any]:
+    async def _model_node(self, state: Any) -> dict[str, Any]:
         messages = state.get(self._messages_key, [])
         if not isinstance(messages, list):
             messages = []
@@ -180,7 +177,7 @@ class ToolCallingGraphBuilder:
             metrics = {}
 
         usage = getattr(ai_msg, "usage_metadata", None)
-        if hasattr(usage, "model_dump"):
+        if usage is not None and hasattr(usage, "model_dump"):
             usage_json = usage.model_dump()
         elif isinstance(usage, dict):
             usage_json = usage
@@ -211,7 +208,7 @@ class ToolCallingGraphBuilder:
             "metrics": metrics,
         }
 
-    async def _tools_node(self, state: dict) -> dict[str, Any]:
+    async def _tools_node(self, state: Any) -> dict[str, Any]:
         result = await self._tool_node.ainvoke(state)
         if not isinstance(result, dict):
             return {}
@@ -239,7 +236,7 @@ class ToolCallingGraphBuilder:
             "stage_summaries": stage_summaries,
         }
 
-    async def _human_review_node(self, state: dict) -> dict[str, Any]:
+    async def _human_review_node(self, state: Any) -> dict[str, Any]:
         messages = state.get(self._messages_key, [])
         if not isinstance(messages, list):
             messages = []
@@ -305,7 +302,7 @@ class ToolCallingGraphBuilder:
 
         return updates
 
-    async def _model_no_tools_node(self, state: dict) -> dict[str, Any]:
+    async def _model_no_tools_node(self, state: Any) -> dict[str, Any]:
         messages = state.get(self._messages_key, [])
         if not isinstance(messages, list):
             messages = []

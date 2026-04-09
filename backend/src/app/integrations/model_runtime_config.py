@@ -240,15 +240,18 @@ class ModelRuntimeConfigManager:
         )
 
         provider_cfg = providers[active_provider]
-        selection_matches_active = (
-            selection is not None and selection.active_provider == active_provider
-        )
+        selected_active_model: str | None = None
+        if (
+            selection is not None
+            and selection.active_provider == active_provider
+            and isinstance(selection.active_model, str)
+        ):
+            selected_active_model = selection.active_model
         active_model = (
-            selection.active_model.strip()
+            selected_active_model.strip()
             if (
-                selection_matches_active
-                and isinstance(selection.active_model, str)
-                and selection.active_model.strip() in provider_cfg.models
+                isinstance(selected_active_model, str)
+                and selected_active_model.strip() in provider_cfg.models
             )
             else None
         )

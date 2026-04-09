@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
+import inspect
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timedelta, timezone
 import logging
 from typing import Any
 
-import anyio
 from celery import Celery
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -105,10 +106,7 @@ class QueueHealthService:
 
     async def _get_consumer_counts(self) -> dict[str, int]:
         try:
-            payload = await anyio.to_thread.run_sync(
-                self._inspect_active_queues_sync,
-                abandon_on_cancel=True,
-            )
+            payload = await asyncio.to_thread(self._inspect_active_queues_sync)
         except Exception as exc:  # pragma: no cover - defensive guard
             logger.warning("Queue health inspect failed", extra={"error": str(exc)})
             return {}
@@ -125,7 +123,12 @@ class QueueHealthService:
         lengths: dict[str, int] = {}
         for queue_name in sorted(queue for queue in queues if queue):
             try:
-                value = await self._redis.llen(queue_name)
+                llen_result = self._redis.llen(queue_name)
+                value = (
+                    await llen_result
+                    if inspect.isawaitable(llen_result)
+                    else llen_result
+                )
             except Exception as exc:  # pragma: no cover - defensive guard
                 logger.warning(
                     "Queue health redis read failed",

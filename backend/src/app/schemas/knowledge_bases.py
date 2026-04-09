@@ -161,11 +161,19 @@ class ChildChunkConfig(BaseModel):
         return self
 
 
+def _default_parent_chunk_config() -> ParentChunkConfig:
+    return ParentChunkConfig(chunk_size=1200, chunk_overlap=120)
+
+
+def _default_child_chunk_config() -> ChildChunkConfig:
+    return ChildChunkConfig(chunk_size=240, chunk_overlap=40)
+
+
 class ParentChildConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    parent: ParentChunkConfig = Field(default_factory=ParentChunkConfig)
-    child: ChildChunkConfig = Field(default_factory=ChildChunkConfig)
+    parent: ParentChunkConfig = Field(default_factory=_default_parent_chunk_config)
+    child: ChildChunkConfig = Field(default_factory=_default_child_chunk_config)
 
     @model_validator(mode="after")
     def _validate_parent_child(self) -> "ParentChildConfig":
@@ -178,13 +186,27 @@ class ChunkingConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     markdown_heading: MarkdownHeadingConfig = Field(
-        default_factory=MarkdownHeadingConfig
+        default_factory=lambda: MarkdownHeadingConfig(
+            max_heading_level=3,
+            chunk_size=800,
+            chunk_overlap=160,
+        )
     )
     general_strategy: ChunkingStrategy = ChunkingStrategy.QUERY_DEPENDENT_MULTISCALE
     query_dependent_multiscale: QueryDependentMultiscaleChunkingConfig = Field(
         default_factory=QueryDependentMultiscaleChunkingConfig
     )
-    semantic: SemanticConfig = Field(default_factory=SemanticConfig)
+    semantic: SemanticConfig = Field(
+        default_factory=lambda: SemanticConfig(
+            min_tokens=80,
+            max_tokens=320,
+            threshold_mode=SemanticThresholdMode.PERCENTILE,
+            breakpoint_percentile=25,
+            similarity_threshold=0.7,
+            overlap_chars=96,
+            embedding_batch_size=64,
+        )
+    )
     parent_child: ParentChildConfig = Field(default_factory=ParentChildConfig)
 
     @model_validator(mode="after")
@@ -217,7 +239,9 @@ class IndexConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     chunking: ChunkingConfig = Field(default_factory=ChunkingConfig)
-    contextual: ContextualConfig = Field(default_factory=ContextualConfig)
+    contextual: ContextualConfig = Field(
+        default_factory=lambda: ContextualConfig(enabled=True, max_tokens=192, concurrency=2)
+    )
 
     @model_validator(mode="before")
     @classmethod

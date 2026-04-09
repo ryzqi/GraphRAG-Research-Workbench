@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import logging
+from importlib import import_module
 from contextlib import asynccontextmanager, contextmanager
 from typing import Any, AsyncIterator, Iterator
 
@@ -33,12 +34,16 @@ def init_tracing() -> None:
 
     try:
         from opentelemetry import trace
-        from opentelemetry.exporter.otlp.proto.http.trace_exporter import (
-            OTLPSpanExporter,
+        trace_exporter_module = import_module(
+            "opentelemetry.exporter.otlp.proto.http.trace_exporter"
         )
-        from opentelemetry.sdk.resources import Resource
-        from opentelemetry.sdk.trace import TracerProvider
-        from opentelemetry.sdk.trace.export import BatchSpanProcessor
+        sdk_resources_module = import_module("opentelemetry.sdk.resources")
+        sdk_trace_module = import_module("opentelemetry.sdk.trace")
+        sdk_trace_export_module = import_module("opentelemetry.sdk.trace.export")
+        OTLPSpanExporter = getattr(trace_exporter_module, "OTLPSpanExporter")
+        Resource = getattr(sdk_resources_module, "Resource")
+        TracerProvider = getattr(sdk_trace_module, "TracerProvider")
+        BatchSpanProcessor = getattr(sdk_trace_export_module, "BatchSpanProcessor")
 
         resource = Resource.create(
             {

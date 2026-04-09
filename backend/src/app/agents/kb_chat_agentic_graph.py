@@ -10,6 +10,7 @@ from functools import partial
 
 from langchain.tools import BaseTool
 from langchain_core.language_models.chat_models import BaseChatModel
+from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, StateGraph
 from langgraph.store.base import BaseStore
@@ -65,15 +66,23 @@ def _route_after_preprocess_subgraph(state: PreprocessRoutingInput) -> str:
 
 def build_kb_chat_run_config(
     *, thread_id: str | None, recursion_limit: int
-) -> dict[str, Any]:
+) -> RunnableConfig:
     """为 KB Chat 构建 LangGraph 调用配置。
 
     `recursion_limit` must stay at top-level config (not under `configurable`).
     """
-    config: dict[str, Any] = {"recursion_limit": int(recursion_limit)}
+    config: RunnableConfig = {"recursion_limit": int(recursion_limit)}
     if thread_id:
         config["configurable"] = {"thread_id": thread_id}
     return config
+
+
+def _coerce_int_setting(value: object, fallback: object, *, minimum: int) -> int:
+    if isinstance(value, int):
+        return max(minimum, value)
+    if isinstance(fallback, int):
+        return max(minimum, fallback)
+    return minimum
 
 
 def build_kb_chat_run_context(
@@ -116,19 +125,15 @@ def build_kb_chat_run_context(
         ],
         "runtime_config": runtime_config_payload,
         "message_budget": {
-            "max_candidates": int(
-                runtime_config_payload.get("parallel_retrieval_max_branches")
-                if isinstance(
-                    runtime_config_payload.get("parallel_retrieval_max_branches"), int
-                )
-                else getattr(settings, "kb_chat_parallel_retrieval_max_branches", 6)
+            "max_candidates": _coerce_int_setting(
+                runtime_config_payload.get("parallel_retrieval_max_branches"),
+                getattr(settings, "kb_chat_parallel_retrieval_max_branches", 6),
+                minimum=1,
             ),
-            "min_queries": int(
-                runtime_config_payload.get("parallel_retrieval_min_queries")
-                if isinstance(
-                    runtime_config_payload.get("parallel_retrieval_min_queries"), int
-                )
-                else getattr(settings, "kb_chat_parallel_retrieval_min_queries", 2)
+            "min_queries": _coerce_int_setting(
+                runtime_config_payload.get("parallel_retrieval_min_queries"),
+                getattr(settings, "kb_chat_parallel_retrieval_min_queries", 2),
+                minimum=1,
             ),
             "include_main": bool(
                 runtime_config_payload.get("parallel_retrieval_include_main")
@@ -1256,7 +1261,7 @@ class KbChatAgenticGraph:
             store=store,
         )
 
-    def make_run_config(self, thread_id: str | None = None) -> dict[str, Any]:
+    def make_run_config(self, thread_id: str | None = None) -> RunnableConfig:
         return build_kb_chat_run_config(
             thread_id=thread_id,
             recursion_limit=int(self._settings.kb_chat_graph_recursion_limit),
@@ -1286,7 +1291,7 @@ class KbChatAgenticGraph:
         thread_id: str | None = None,
         checkpointer: BaseCheckpointSaver | None = None,
         store: BaseStore | None = None,
-        run_context: dict[str, Any] | None = None,
+        run_context: KbChatGraphContext | None = None,
     ) -> dict[str, Any]:
         compiled = self.compile(checkpointer=checkpointer, store=store)
         config = self.make_run_config(thread_id=thread_id)

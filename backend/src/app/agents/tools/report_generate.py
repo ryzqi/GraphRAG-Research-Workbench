@@ -58,6 +58,16 @@ class ReportGenerateResult(BaseModel):
     metadata: ReportMetadata
 
 
+def _normalize_confidence_level(
+    value: str,
+) -> Literal["sufficient", "partial", "insufficient"]:
+    if value == "sufficient":
+        return "sufficient"
+    if value == "partial":
+        return "partial"
+    return "insufficient"
+
+
 def _extract_json_object(text: str) -> dict | None:
     content = text.strip()
     if content.startswith("```"):
@@ -162,12 +172,7 @@ def _build_fallback_result(
     prompts: PromptLoader | None = None,
 ) -> ReportGenerateResult:
     generated_at = datetime.now(timezone.utc).isoformat()
-    safe_confidence: Literal["sufficient", "partial", "insufficient"]
-    safe_confidence = (
-        confidence_level
-        if confidence_level in {"sufficient", "partial", "insufficient"}
-        else "insufficient"
-    )
+    safe_confidence = _normalize_confidence_level(confidence_level)
     sections = _parse_section_payloads(
         "research/report_generate_fallback_sections_json",
         prompts=prompts,
@@ -218,16 +223,12 @@ def _normalize_result(
     metadata = result.metadata
     confidence = metadata.confidence_level
     if confidence not in {"sufficient", "partial", "insufficient"}:
-        confidence = (
-            confidence_level
-            if confidence_level in {"sufficient", "partial", "insufficient"}
-            else "partial"
-        )
+        confidence = _normalize_confidence_level(confidence_level)
     return ReportGenerateResult(
         report_md=report_md,
         sections=normalized_sections,
         metadata=ReportMetadata(
-            confidence_level=confidence,
+            confidence_level=_normalize_confidence_level(confidence),
             evidence_count=max(int(metadata.evidence_count or evidence_count), 0),
             has_conflicts=bool(metadata.has_conflicts or has_conflicts),
             generated_at=generated_at,

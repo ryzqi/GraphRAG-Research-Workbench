@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections import Counter
+from collections import Counter, defaultdict
 from typing import Iterable
 
 from langchain_core.documents import Document
@@ -31,7 +31,7 @@ def fuse_documents(
     groups: Iterable[list[Document]], *, max_results: int
 ) -> list[Document]:
     unique_docs: dict[str, Document] = {}
-    fusion_scores: Counter[str] = Counter()
+    fusion_scores: dict[str, float] = defaultdict(float)
     overlap_counts: Counter[str] = Counter()
     first_seen_order: list[str] = []
 

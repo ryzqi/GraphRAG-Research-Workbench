@@ -13,6 +13,7 @@ from typing import Sequence
 
 import httpx
 from langchain.tools import BaseTool, tool as lc_tool
+from pydantic import BaseModel
 
 from app.agents.tools.web_search import (
     build_search_providers,
@@ -73,7 +74,7 @@ def _sanitize_mcp_content(content: object) -> object:
     - 删除 image / file 块中的大体积 base64 数据。
     - 可转换时优先把 pydantic 对象转成 dict。
     """
-    if hasattr(content, "model_dump"):
+    if isinstance(content, BaseModel):
         try:
             return content.model_dump()
         except Exception:

@@ -1334,7 +1334,7 @@ class IngestionBatchService:
         try:
             ips = [ipaddress.ip_address(host)]
         except ValueError:
-            ips = await anyio.to_thread.run_sync(self._resolve_host_ips, host)
+            ips = await asyncio.to_thread(self._resolve_host_ips, host)
 
         resolved_ips = [str(ip) for ip in ips]
         if not ips:

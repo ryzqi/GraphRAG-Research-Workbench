@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from operator import add
-from typing import Annotated, Any, Literal, TypedDict
+from typing import Annotated, Any, Literal, Mapping, TypeGuard, TypedDict, cast
 
 from langchain.messages import AnyMessage
 from langgraph.graph.message import add_messages
@@ -600,8 +601,12 @@ class ForceExitInput(TypedDict, total=False):
     stage_summaries: dict[str, Any]
 
 
+def _is_routing_decision(value: object) -> TypeGuard[RoutingDecision]:
+    return isinstance(value, dict)
+
+
 def merge_routing_decision(
-    state: dict[str, Any],
+    state: Mapping[str, object],
     phase: str,
     decision: RoutingDecision,
     *,
@@ -613,7 +618,9 @@ def merge_routing_decision(
     current = state.get("routing_decisions")
     if isinstance(current, dict):
         merged = {
-            key: value for key, value in current.items() if isinstance(value, dict)
+            str(key): cast(RoutingDecision, value)
+            for key, value in current.items()
+            if _is_routing_decision(value)
         }
     if isinstance(updates, dict):
         update_routing = updates.get("routing_decisions")
@@ -621,29 +628,31 @@ def merge_routing_decision(
             merged = {
                 **merged,
                 **{
-                    key: value
+                    str(key): cast(RoutingDecision, value)
                     for key, value in update_routing.items()
-                    if isinstance(value, dict)
+                    if _is_routing_decision(value)
                 },
             }
     existing = merged.get(phase)
-    if isinstance(existing, dict):
-        merged[phase] = {**existing, **decision}
+    if _is_routing_decision(existing):
+        merged[phase] = cast(RoutingDecision, {**existing, **decision})
     else:
-        merged[phase] = dict(decision)
+        merged[phase] = cast(RoutingDecision, dict(decision))
     return {"routing_decisions": merged}
 
 
-def resolve_routing_decision(state: dict[str, Any], phase: str) -> RoutingDecision:
+def resolve_routing_decision(
+    state: Mapping[str, object], phase: str
+) -> RoutingDecision:
     """从 state 中读取规范路由记录。"""
 
     routing = state.get("routing_decisions")
     if not isinstance(routing, dict):
         return {}
     decision = routing.get(phase)
-    if not isinstance(decision, dict):
+    if not _is_routing_decision(decision):
         return {}
-    return decision
+    return cast(RoutingDecision, decision)
 
 
 _TERMINAL_ROUTING_PHASE_ORDER: tuple[str, ...] = (
@@ -654,7 +663,7 @@ _TERMINAL_ROUTING_PHASE_ORDER: tuple[str, ...] = (
 
 
 def resolve_terminal_routing_decision(
-    state: dict[str, Any],
+    state: Mapping[str, object],
     *,
     next_nodes: set[str] | None = None,
 ) -> tuple[str | None, RoutingDecision]:

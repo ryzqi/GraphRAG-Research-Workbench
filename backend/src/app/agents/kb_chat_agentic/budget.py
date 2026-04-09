@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import datetime, timezone
 
 from app.core.settings import Settings
@@ -16,7 +17,9 @@ def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def ensure_budget_initialized(state: dict, settings: Settings) -> dict:
+def ensure_budget_initialized(
+    state: Mapping[str, object], settings: Settings
+) -> dict[str, dict[str, object]]:
     """若 state.metrics 中缺少预算元数据则补齐。"""
     _ = settings
     metrics = state.get("metrics")
@@ -34,7 +37,9 @@ def ensure_budget_initialized(state: dict, settings: Settings) -> dict:
     return {"metrics": metrics}
 
 
-def budget_exceeded(state: dict, settings: Settings) -> tuple[bool, str]:
+def budget_exceeded(
+    state: Mapping[str, object], settings: Settings
+) -> tuple[bool, str]:
     """返回 KB Chat 轮次 / 重试预算是否超限及原因。"""
 
     loop_counts = state.get("loop_counts")

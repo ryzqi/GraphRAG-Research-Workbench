@@ -27,6 +27,10 @@ from app.services.semantic_cache.policy import (
 logger = logging.getLogger(__name__)
 
 
+def _as_str_dict(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
 class SemanticCacheBackend(Protocol):
     async def lookup(
         self, request: SemanticCacheLookupRequest
@@ -90,7 +94,7 @@ class RedisVLSemanticCacheBackend:
             return None
 
         hit = hits[0]
-        metadata = hit.get("metadata") if isinstance(hit.get("metadata"), dict) else {}
+        metadata = _as_str_dict(hit.get("metadata"))
         inserted_at = hit.get("inserted_at")
         created_at = metadata.get("created_at")
         if not created_at and isinstance(inserted_at, (int, float)):
@@ -105,20 +109,20 @@ class RedisVLSemanticCacheBackend:
         except (TypeError, ValueError):
             vector_distance = 1.0
         score = distance_to_similarity_score(vector_distance)
+        raw_evidence = metadata.get("evidence")
+        evidence = (
+            [item for item in raw_evidence if isinstance(item, dict)]
+            if isinstance(raw_evidence, list)
+            else []
+        )
+        stage_summaries = _as_str_dict(metadata.get("stage_summaries"))
+        metrics = _as_str_dict(metadata.get("metrics"))
 
         return SemanticCacheHit(
             answer=str(hit.get("response") or "").strip(),
-            evidence=metadata.get("evidence")
-            if isinstance(metadata.get("evidence"), list)
-            else [],
-            stage_summaries=(
-                metadata.get("stage_summaries")
-                if isinstance(metadata.get("stage_summaries"), dict)
-                else {}
-            ),
-            metrics=metadata.get("metrics")
-            if isinstance(metadata.get("metrics"), dict)
-            else {},
+            evidence=evidence,
+            stage_summaries=stage_summaries,
+            metrics=metrics,
             score=score,
             threshold=request.similarity_threshold,
             ttl_seconds=request.ttl_seconds,

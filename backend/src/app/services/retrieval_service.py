@@ -12,7 +12,7 @@ import time
 import uuid
 from dataclasses import dataclass
 from pathlib import PurePosixPath, PureWindowsPath
-from typing import Any, Literal, cast
+from typing import Any, Literal, Sequence, cast
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -170,6 +170,21 @@ class RetrievalService:
         if deadline is None:
             return None
         return max(0.0, deadline - time.monotonic())
+
+    @staticmethod
+    def _int_from_object(value: object, default: int = 0) -> int:
+        if isinstance(value, bool):
+            return int(value)
+        if isinstance(value, int):
+            return value
+        if isinstance(value, float):
+            return int(value)
+        if isinstance(value, str):
+            try:
+                return int(value)
+            except ValueError:
+                return default
+        return default
 
     @staticmethod
     def _effective_timeout(
@@ -372,7 +387,7 @@ class RetrievalService:
         return len(match.group(1)), match.group(2).strip()
 
     @staticmethod
-    def _is_single_main_query(query_items: list[QueryItem]) -> bool:
+    def _is_single_main_query(query_items: Sequence[QueryItem]) -> bool:
         if len(query_items) != 1:
             return False
         item = query_items[0]
@@ -386,7 +401,7 @@ class RetrievalService:
         self,
         results: list[RetrievalResult],
         *,
-        query_items: list[QueryItem],
+        query_items: Sequence[QueryItem],
         top_n: int,
         timeout_seconds: float | None = None,
         hits_by_key: dict[tuple[str, str, str], list[QueryHitSource]] | None = None,
@@ -694,7 +709,7 @@ class RetrievalService:
         *,
         feature_flags: RetrievalFeatureFlags,
         runtime_overrides: RetrievalRuntimeOverrides,
-        kb_fingerprint: dict[str, dict] | None = None,
+        kb_fingerprint: dict[str, dict[str, object]] | None = None,
     ) -> dict:
         """构建稳定的策略指纹，用于生成检索缓存键。"""
         fingerprint = {
@@ -1323,7 +1338,7 @@ class RetrievalService:
     async def retrieve_layer(
         self,
         *,
-        query_items: list[QueryItem],
+        query_items: Sequence[QueryItem],
         kb_ids: list[uuid.UUID],
         top_n: int,
         per_query_top_k: int | None = None,
@@ -1340,7 +1355,7 @@ class RetrievalService:
         """
 
         deadline = self._make_deadline(timeout_seconds)
-        if deadline is not None and float(timeout_seconds) <= 0:
+        if timeout_seconds is not None and timeout_seconds <= 0:
             draft = self._empty_layer_draft(reason="timeout")
             self._last_layer_draft = draft
             return draft
@@ -1471,7 +1486,7 @@ class RetrievalService:
             local_hits_by_key: dict[tuple[str, str, str], list[QueryHitSource]] = {}
 
             def _build_query_result(
-                retrieval_hits: list[object],
+                retrieval_hits: Sequence[object],
                 *,
                 hit_count: int,
             ) -> tuple[
@@ -1693,7 +1708,7 @@ class RetrievalService:
                 )
 
         for result in fanout_results:
-            if isinstance(result, Exception):
+            if isinstance(result, BaseException):
                 continue
             (
                 _index,
@@ -2158,12 +2173,14 @@ class RetrievalService:
         return configs
 
     @staticmethod
-    def _build_kb_fingerprint(configs: dict[uuid.UUID, IndexConfig]) -> dict[str, dict]:
+    def _build_kb_fingerprint(
+        configs: dict[uuid.UUID, IndexConfig],
+    ) -> dict[str, dict[str, object]]:
         if not configs:
             return {}
-        fingerprint: dict[str, dict] = {}
+        fingerprint: dict[str, dict[str, object]] = {}
         for kb_id, cfg in configs.items():
-            item = {
+            item: dict[str, object] = {
                 "general_strategy": cfg.chunking.general_strategy.value,
             }
             if (
@@ -2471,7 +2488,7 @@ class RetrievalService:
             self._last_layer_draft = self._empty_layer_draft()
             return []
 
-        if deadline is not None and float(timeout_seconds) <= 0:
+        if timeout_seconds is not None and timeout_seconds <= 0:
             normalized_query = self._normalize_query(query)
             if top_k is None:
                 top_k = runtime_overrides.retrieval_top_k
@@ -2610,7 +2627,11 @@ class RetrievalService:
                     if timeout_value is not None and timeout_value <= 0:
                         return _timeout_return()
                     results = await self._apply_parent_child_strategy(
-                        results, kb_configs, timeout_seconds=timeout_value
+                        results,
+                        kb_configs,
+                        max_parents=runtime_overrides.parent_max_parents,
+                        max_children_per_parent=runtime_overrides.parent_max_children_per_parent,
+                        timeout_seconds=timeout_value,
                     )
                 except asyncio.TimeoutError:
                     return _timeout_return()
@@ -2702,12 +2723,11 @@ class RetrievalService:
             },
         )
         results = layer.results
-        total_hits = int(
+        total_hits = self._int_from_object(
             layer.stats.get("pre_min_score_candidates")
             or layer.stats.get("rrf_candidates")
-            or 0
         )
-        filtered_count = int(layer.stats.get("filtered_count") or 0)
+        filtered_count = self._int_from_object(layer.stats.get("filtered_count"))
 
         if not results:
             self._last_stats = RetrievalStats(

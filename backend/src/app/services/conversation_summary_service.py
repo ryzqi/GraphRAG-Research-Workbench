@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Callable, Any
@@ -152,16 +153,36 @@ class ConversationSummaryService:
         from langchain.messages import AIMessage, HumanMessage, SystemMessage
         from langmem.short_term import RunningSummary, summarize_messages
 
+        def _coerce_token_count(value: object) -> int:
+            if isinstance(value, bool):
+                return int(value)
+            if isinstance(value, int):
+                return value
+            if isinstance(value, float):
+                return int(value)
+            if isinstance(value, str):
+                try:
+                    return int(value)
+                except ValueError:
+                    return 0
+            return 0
+
         model = create_chat_model(settings=self._settings)
         summary_model = model.bind(max_tokens=self._settings.summary_max_tokens)
-        token_counter = getattr(model, "get_num_tokens_from_messages", None)
-        if token_counter is None:
+        raw_token_counter = getattr(model, "get_num_tokens_from_messages", None)
+        def _fallback_token_counter(msgs: Iterable[object]) -> int:
+            return sum(
+                count_tokens_approximately(getattr(m, "content", "") or "")
+                for m in msgs
+            )
 
-            def token_counter(msgs: list[object]) -> int:
-                return sum(
-                    count_tokens_approximately(getattr(m, "content", "") or "")
-                    for m in msgs
-                )
+        token_counter_fn: Callable[[Iterable[object]], int] = _fallback_token_counter
+        if callable(raw_token_counter):
+
+            def _model_token_counter(msgs: Iterable[object]) -> int:
+                return _coerce_token_count(raw_token_counter(msgs))
+
+            token_counter_fn = _model_token_counter
 
         lc_messages = []
         for msg in messages:
@@ -175,7 +196,11 @@ class ConversationSummaryService:
         running_summary = None
         if previous_summary:
             try:
-                running_summary = RunningSummary(summary=previous_summary)
+                running_summary = RunningSummary(
+                    summary=previous_summary,
+                    summarized_message_ids=set(),
+                    last_summarized_message_id=None,
+                )
             except Exception:
                 running_summary = None
 
@@ -183,7 +208,7 @@ class ConversationSummaryService:
             return summarize_messages(
                 lc_messages,
                 running_summary=running_summary,
-                token_counter=token_counter,
+                token_counter=token_counter_fn,
                 model=summary_model,
                 max_tokens=self._settings.summary_max_tokens,
                 max_tokens_before_summary=0,

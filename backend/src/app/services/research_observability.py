@@ -24,17 +24,20 @@ from app.services.research_source_bundle import ResearchSourceBundle
 
 try:  # pragma: no cover - 依赖在运行环境中存在，这里只做导入兜底
     from redis.exceptions import ConnectionError as RedisConnectionError
-    from redis.exceptions import RedisError, TimeoutError as RedisTimeoutError
+    from redis.exceptions import RedisError
+    from redis.exceptions import TimeoutError as RedisTimeoutError
+
+    _REDIS_ERROR_TYPES: tuple[type[Exception], ...] = (
+        RedisConnectionError,
+        RedisTimeoutError,
+        RedisError,
+    )
 except Exception:  # pragma: no cover
+    _REDIS_ERROR_TYPES = ()
 
-    class RedisError(Exception):
-        pass
 
-    class RedisConnectionError(RedisError):
-        pass
-
-    class RedisTimeoutError(RedisError):
-        pass
+def _as_dict(value: object) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
 
 
 @dataclass(slots=True, frozen=True)
@@ -230,7 +233,7 @@ def classify_research_fault(
     if isinstance(exc, (SATimeoutError, OperationalError)):
         category = "db_jitter"
         retryable = True
-    elif isinstance(exc, (RedisConnectionError, RedisTimeoutError, RedisError)):
+    elif _REDIS_ERROR_TYPES and isinstance(exc, _REDIS_ERROR_TYPES):
         category = "redis_unavailable"
         retryable = True
     elif isinstance(exc, httpx.HTTPStatusError):
@@ -268,15 +271,14 @@ def build_failure_metrics(
     existing_metrics: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     metrics = dict(existing_metrics or {})
-    trace_section = (
-        metrics.get("trace") if isinstance(metrics.get("trace"), dict) else {}
-    )
+    trace_section = _as_dict(metrics.get("trace"))
+    trace_links = trace_section.get("links") if isinstance(trace_section, dict) else None
     metrics["trace"] = {
         "trace_id": ensure_research_trace_id(session),
         "session_id": str(session.id),
         "thread_id": session.thread_id,
-        "links": trace_section.get("links")
-        if isinstance(trace_section.get("links"), list)
+        "links": trace_links
+        if isinstance(trace_links, list)
         else [
             {
                 "trace_id": ensure_research_trace_id(session),
@@ -312,9 +314,7 @@ def build_failure_metrics(
         else {"by_layer": {}, "by_lc_agent_name": {}}
     )
 
-    existing_faults = (
-        metrics.get("faults") if isinstance(metrics.get("faults"), dict) else {}
-    )
+    existing_faults = _as_dict(metrics.get("faults"))
     records = list(existing_faults.get("records") or [])
     records.append(dict(fault))
     metrics["faults"] = _build_fault_metrics(records)
@@ -327,17 +327,17 @@ def evaluate_research_gate(
     metrics: dict[str, Any],
     thresholds: ResearchGateThresholds,
 ) -> dict[str, Any]:
-    quality = _float_or_none((metrics.get("quality") or {}).get("score"))
-    p95_ms = _int_or_none((metrics.get("latency") or {}).get("p95_ms"))
-    session_cost_usd = _float_or_none(
-        (metrics.get("cost") or {}).get("session_cost_usd")
-    )
-    replay = metrics.get("replay") if isinstance(metrics.get("replay"), dict) else {}
+    quality_section = _as_dict(metrics.get("quality"))
+    latency_section = _as_dict(metrics.get("latency"))
+    cost_section = _as_dict(metrics.get("cost"))
+    faults_section = _as_dict(metrics.get("faults"))
+    quality = _float_or_none(quality_section.get("score"))
+    p95_ms = _int_or_none(latency_section.get("p95_ms"))
+    session_cost_usd = _float_or_none(cost_section.get("session_cost_usd"))
+    replay = _as_dict(metrics.get("replay"))
     replay_pass = replay.get("pass")
-    fault_records = (metrics.get("faults") or {}).get("records") or []
-    coverage = (
-        metrics.get("coverage") if isinstance(metrics.get("coverage"), dict) else {}
-    )
+    fault_records = faults_section.get("records") or []
+    coverage = _as_dict(metrics.get("coverage"))
     coverage_pass = coverage.get("pass")
 
     violations: list[str] = []

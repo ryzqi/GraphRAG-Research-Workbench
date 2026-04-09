@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import uuid
 from typing import BinaryIO
 
-import anyio
 from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -196,7 +196,7 @@ class MaterialService:
     ) -> SourceMaterial:
         """上传文件资料到 MinIO。"""
         settings = get_settings()
-        file_content = await anyio.to_thread.run_sync(file.read)
+        file_content = await asyncio.to_thread(file.read)
 
         # 验证文件大小和类型
         validate_file_upload(file_content, filename, content_type)

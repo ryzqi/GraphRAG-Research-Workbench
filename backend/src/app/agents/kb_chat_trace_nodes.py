@@ -777,7 +777,7 @@ def wrap_kb_chat_node_with_io(
         runtime_param and runtime_param.kind is inspect.Parameter.POSITIONAL_ONLY
     )
 
-    async def _wrapped(state: dict[str, Any], runtime: Runtime[Any]) -> Any:
+    async def _wrapped(state: Any, *, runtime: Runtime[Any]) -> Any:
         if not accepts_runtime:
 
             def executor() -> Any:

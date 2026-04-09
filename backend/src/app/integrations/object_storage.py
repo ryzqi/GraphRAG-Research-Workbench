@@ -6,16 +6,10 @@ from functools import partial
 from typing import Any, Callable
 
 import asyncio
-import anyio
-
 try:
     from minio import Minio
-    from minio.error import S3Error
 except Exception:  # pragma: no cover - optional dependency in lightweight test env
     Minio = None  # type: ignore[assignment]
-
-    class S3Error(Exception):  # type: ignore[no-redef]
-        code: str = "Unknown"
 
 
 from app.core.settings import get_settings
@@ -26,8 +20,8 @@ _BUCKET_LOCK: asyncio.Lock | None = None
 _BUCKET_LOCK_LOOP: asyncio.AbstractEventLoop | None = None
 
 
-def _is_not_found_error(exc: S3Error) -> bool:
-    return exc.code in {"NoSuchKey", "NoSuchBucket"}
+def _is_not_found_error(exc: Exception) -> bool:
+    return str(getattr(exc, "code", "")) in {"NoSuchKey", "NoSuchBucket"}
 
 
 def _get_bucket_lock() -> asyncio.Lock:
@@ -66,7 +60,7 @@ class ObjectStorage:
         *args: object,
         **kwargs: object,
     ) -> Any:
-        return await anyio.to_thread.run_sync(partial(func, *args, **kwargs))
+        return await asyncio.to_thread(partial(func, *args, **kwargs))
 
     async def ensure_buckets(self) -> None:
         def _ensure(bucket: str) -> None:
@@ -84,7 +78,7 @@ class ObjectStorage:
             if not pending:
                 return
             for bucket in pending:
-                await anyio.to_thread.run_sync(_ensure, bucket)
+                await self._run_client_call(_ensure, bucket)
                 _BUCKET_CACHE.add(bucket)
 
     async def presign_get(self, ref: ObjectRef) -> str:
@@ -130,7 +124,7 @@ class ObjectStorage:
                 content_type=content_type,
             )
 
-        await anyio.to_thread.run_sync(_put)
+        await self._run_client_call(_put)
 
     async def put_bytes(
         self, ref: ObjectRef, data: bytes, *, content_type: str | None = None
@@ -148,7 +142,7 @@ class ObjectStorage:
                 content_type=content_type or "application/octet-stream",
             )
 
-        await anyio.to_thread.run_sync(_put)
+        await self._run_client_call(_put)
 
     async def get_bytes(self, ref: ObjectRef) -> bytes:
         """从对象存储获取二进制数据。"""
@@ -161,7 +155,7 @@ class ObjectStorage:
                 response.close()
                 response.release_conn()
 
-        return await anyio.to_thread.run_sync(_get)
+        return bytes(await self._run_client_call(_get))
 
     async def get_size(self, ref: ObjectRef) -> int:
         """获取对象大小（字节）。"""
@@ -170,7 +164,7 @@ class ObjectStorage:
             stat = self._client.stat_object(ref.bucket, ref.object_name)
             return int(getattr(stat, "size", 0) or 0)
 
-        return await anyio.to_thread.run_sync(_stat)
+        return int(await self._run_client_call(_stat))
 
     async def exists(self, ref: ObjectRef) -> bool:
         """判断对象是否存在。"""
@@ -180,8 +174,8 @@ class ObjectStorage:
             return True
 
         try:
-            return await anyio.to_thread.run_sync(_exists)
-        except S3Error as exc:
+            return bool(await self._run_client_call(_exists))
+        except Exception as exc:
             if _is_not_found_error(exc):
                 return False
             raise
@@ -195,8 +189,8 @@ class ObjectStorage:
             self._client.remove_object(ref.bucket, ref.object_name)
 
         try:
-            await anyio.to_thread.run_sync(_remove)
-        except S3Error as exc:
+            await self._run_client_call(_remove)
+        except Exception as exc:
             if ignore_missing and _is_not_found_error(exc):
                 return
             raise
@@ -211,9 +205,12 @@ class ObjectStorage:
                 prefix=prefix,
                 recursive=True,
             ):
+                object_name = getattr(obj, "object_name", None)
+                if not isinstance(object_name, str) or not object_name:
+                    continue
                 try:
-                    self._client.remove_object(bucket, obj.object_name)
-                except S3Error as exc:
+                    self._client.remove_object(bucket, object_name)
+                except Exception as exc:
                     if _is_not_found_error(exc):
                         continue
                     raise
@@ -221,8 +218,8 @@ class ObjectStorage:
             return removed
 
         try:
-            return await anyio.to_thread.run_sync(_remove)
-        except S3Error as exc:
+            return int(await self._run_client_call(_remove))
+        except Exception as exc:
             if _is_not_found_error(exc):
                 return 0
             raise

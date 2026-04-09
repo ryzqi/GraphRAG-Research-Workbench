@@ -123,6 +123,16 @@ def _read_artifact_text(
     return normalized or None
 
 
+def _read_int(value: object) -> int | None:
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    return None
+
+
 def _build_hero_subtitle(
     *,
     status: ResearchSessionStatus,
@@ -487,20 +497,21 @@ def _build_report_metric_cards(
     quality_payload = metrics_payload.get("quality")
     cost_payload = metrics_payload.get("cost")
     coverage_payload = metrics_payload.get("coverage")
+    citation_count_raw = (
+        quality_payload.get("citation_count") if isinstance(quality_payload, dict) else None
+    )
+    finding_count_raw = (
+        quality_payload.get("finding_count") if isinstance(quality_payload, dict) else None
+    )
+    findings_payload = report_payload.get("findings")
     citation_count = (
-        int(quality_payload.get("citation_count"))
-        if isinstance(quality_payload, dict)
-        and isinstance(quality_payload.get("citation_count"), (int, float))
-        else 0
+        citation_count_value if (citation_count_value := _read_int(citation_count_raw)) is not None else 0
     )
     finding_count = (
-        int(quality_payload.get("finding_count"))
-        if isinstance(quality_payload, dict)
-        and isinstance(quality_payload.get("finding_count"), (int, float))
+        finding_count_value
+        if (finding_count_value := _read_int(finding_count_raw)) is not None
         else (
-            len(report_payload.get("findings"))
-            if isinstance(report_payload.get("findings"), list)
-            else 0
+            len(findings_payload) if isinstance(findings_payload, list) else 0
         )
     )
     gate_pass = gate_payload.get("pass")

@@ -12,7 +12,7 @@ import time
 from collections import deque
 from collections.abc import Awaitable
 from dataclasses import dataclass
-from typing import Any, Callable, Iterable, Literal, TYPE_CHECKING
+from typing import Any, Callable, Iterable, Literal, TYPE_CHECKING, cast
 
 import httpx
 from langchain.tools import BaseTool, tool as lc_tool
@@ -42,17 +42,15 @@ if TYPE_CHECKING:
     from tavily import AsyncTavilyClient
 
 try:
-    from tavily import (
-        BadRequestError,
-        ForbiddenError,
-        InvalidAPIKeyError,
-        TimeoutError as TavilyTimeoutError,
-        UsageLimitExceededError,
-    )
+    import tavily as _tavily
 except Exception:  # pragma: no cover - 依赖缺失时不阻断导入
-    BadRequestError = ForbiddenError = InvalidAPIKeyError = TavilyTimeoutError = (
-        UsageLimitExceededError
-    ) = ()  # type: ignore
+    _tavily = None
+
+BadRequestError = getattr(_tavily, "BadRequestError", ())
+ForbiddenError = getattr(_tavily, "ForbiddenError", ())
+InvalidAPIKeyError = getattr(_tavily, "InvalidAPIKeyError", ())
+TavilyTimeoutError = getattr(_tavily, "TimeoutError", ())
+UsageLimitExceededError = getattr(_tavily, "UsageLimitExceededError", ())
 
 logger = logging.getLogger(__name__)
 
@@ -1082,12 +1080,12 @@ def build_search_retrievers(
     for provider in providers:
         provider_name = str(getattr(provider, "provider_name", "")).strip()
         if provider_name == "tavily":
-            retrievers.append(TavilySearchRetriever(provider))
+            retrievers.append(cast(SearchRetriever, TavilySearchRetriever(provider)))
             continue
         if provider_name == "searxng":
-            retrievers.append(SearxngSearchRetriever(provider))
+            retrievers.append(cast(SearchRetriever, SearxngSearchRetriever(provider)))
             continue
-        retrievers.append(ProviderSearchRetriever(provider))
+        retrievers.append(cast(SearchRetriever, ProviderSearchRetriever(provider)))
     return retrievers
 
 
@@ -1127,15 +1125,17 @@ def build_web_search_tool(
             http_client=http_client,
         )
     )
-    resolved_read_provider = (
-        read_provider
-        if read_provider is not _READ_PROVIDER_UNSET
-        else (
-            JinaReadProvider(settings=settings, http_client=http_client)
+    if read_provider is _READ_PROVIDER_UNSET:
+        resolved_read_provider: ReadProvider | None = (
+            cast(
+                ReadProvider,
+                JinaReadProvider(settings=settings, http_client=http_client),
+            )
             if has_jina_read_provider(settings)
             else None
         )
-    )
+    else:
+        resolved_read_provider = cast(ReadProvider | None, read_provider)
     retrievers = build_search_retrievers(resolved_search_providers)
     pipeline = WebSearchPipeline(
         retrievers=retrievers,
@@ -1144,7 +1144,7 @@ def build_web_search_tool(
 
     async def _search(**kwargs: object) -> str:
         try:
-            args = WebSearchArgs(**kwargs)
+            args = WebSearchArgs.model_validate(kwargs)
         except Exception:
             error = _format_validation_error("WEB_SEARCH", "Web 搜索参数错误")
             return json.dumps(
@@ -1247,7 +1247,7 @@ def build_jina_read_tool(
 
     async def _read(**kwargs: object) -> str:
         try:
-            args = JinaReadArgs(**kwargs)
+            args = JinaReadArgs.model_validate(kwargs)
         except Exception:
             error = _format_validation_error("JINA_READ", "Jina 页面读取参数错误")
             return json.dumps(
@@ -1282,7 +1282,7 @@ def build_web_extract_tool(
 
     async def _extract(**kwargs: object) -> str:
         try:
-            args = WebExtractArgs(**kwargs)
+            args = WebExtractArgs.model_validate(kwargs)
         except Exception:
             error = _format_validation_error("WEB_EXTRACT", "Web 抽取参数错误")
             return json.dumps(
@@ -1316,7 +1316,7 @@ def build_web_crawl_tool(
 
     async def _crawl(**kwargs: object) -> str:
         try:
-            args = WebCrawlArgs(**kwargs)
+            args = WebCrawlArgs.model_validate(kwargs)
         except Exception:
             error = _format_validation_error("WEB_CRAWL", "Web 爬取参数错误")
             return json.dumps(

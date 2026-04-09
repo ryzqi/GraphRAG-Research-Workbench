@@ -37,7 +37,7 @@ class ResearchArtifact(Base):
     )
     artifact_key: Mapped[str] = mapped_column(sa.String(length=64), nullable=False)
     content_text: Mapped[str | None] = mapped_column(sa.Text, nullable=True)
-    content_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    content_json: Mapped[dict | list | None] = mapped_column(JSONB, nullable=True)
     source_type: Mapped[str | None] = mapped_column(sa.String(length=32), nullable=True)
     source_provider: Mapped[str | None] = mapped_column(
         sa.String(length=64), nullable=True

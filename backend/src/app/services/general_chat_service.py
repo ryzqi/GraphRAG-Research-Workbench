@@ -8,13 +8,16 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, cast
 from urllib.parse import urlparse
 
 import httpx
+from langchain.agents.middleware.summarization import ContextSize
 from langchain.messages import AIMessage, AnyMessage, HumanMessage, SystemMessage
+from langchain_core.runnables import RunnableConfig
 from langgraph.types import Command, Interrupt
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError, ProgrammingError
@@ -58,6 +61,7 @@ from app.schemas.chats import (
     ChatPendingToolApprovalResponse,
     ChatMessageRead,
     EvidenceItem,
+    EvidenceSourceKind as EvidenceItemSourceKind,
     PendingInterruptApproval,
     PendingToolCall,
     ToolApprovalRequest,
@@ -94,6 +98,10 @@ DEDUP_RUN_WAIT_TIMEOUT_SECONDS = 25.0
 DEDUP_POLL_INTERVAL_SECONDS = 0.5
 DEDUP_TABLE_NAME = "chat_request_dedup"
 _EXTERNAL_EVIDENCE_META_KEY = "_external_evidence_meta"
+
+
+def _as_str_dict(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
 
 
 def _extract_interrupt_message(payload: object) -> str | None:
@@ -595,7 +603,7 @@ class GeneralChatService:
                 locator = dict(locator)
                 locator.pop(_EXTERNAL_EVIDENCE_META_KEY, None)
         return EvidenceItem(
-            source_kind=row.source_kind,
+            source_kind=EvidenceItemSourceKind(row.source_kind.value),
             kb_id=row.kb_id,
             material_id=row.material_id,
             chunk_id=row.chunk_id,
@@ -821,10 +829,10 @@ class GeneralChatService:
     def _is_summary_message(msg: ChatMessage) -> bool:
         return bool((msg.meta or {}).get(SUMMARY_META_FLAG))
 
-    def _build_summary_trigger(self):
+    def _build_summary_trigger(self) -> ContextSize | list[ContextSize]:
         if self._settings.llm_max_input_tokens:
             return SUMMARY_TRIGGER
-        triggers: list[tuple[str, int]] = []
+        triggers: list[ContextSize] = []
         min_messages = self._settings.summary_trigger_min_messages
         min_tokens = self._settings.summary_trigger_min_tokens
         if min_messages > 0:
@@ -1256,11 +1264,7 @@ class GeneralChatService:
         stage_summaries = (
             run.stage_summaries if isinstance(run.stage_summaries, dict) else {}
         )
-        tool_approval = (
-            stage_summaries.get("tool_approval")
-            if isinstance(stage_summaries.get("tool_approval"), dict)
-            else {}
-        )
+        tool_approval = _as_str_dict(stage_summaries.get("tool_approval"))
         if tool_approval.get("pending") is not True:
             raise AppError(
                 code="NO_PENDING_APPROVAL",
@@ -1461,7 +1465,7 @@ class GeneralChatService:
                 original_history,
                 require_assistant_response_id=require_assistant_response_id,
             )
-            config = CheckpointManager.make_config(thread_id)
+            config = cast(RunnableConfig, CheckpointManager.make_config(thread_id))
             replay_metrics = self._build_replay_metrics(replay_decision)
 
             try:
@@ -1477,7 +1481,10 @@ class GeneralChatService:
                     summary_trigger=self._build_summary_trigger(),
                     hitl_interrupt_on=hitl_interrupt_on,
                 )
-                result = await agent.ainvoke({"messages": messages}, config)
+                result = await agent.ainvoke(
+                    cast(Any, {"messages": messages}),
+                    config,
+                )
             except Exception as invoke_exc:
                 if not self._should_recover_from_response_not_found(
                     invoke_exc, replay_decision
@@ -1511,7 +1518,7 @@ class GeneralChatService:
                     hitl_interrupt_on=hitl_interrupt_on,
                 )
                 result = await recovery_agent.ainvoke(
-                    {"messages": recovery_messages},
+                    cast(Any, {"messages": recovery_messages}),
                     config,
                 )
                 replay_metrics = self._build_replay_metrics(
@@ -1528,10 +1535,9 @@ class GeneralChatService:
                 pending_interrupts = self._build_pending_interrupt_approvals(
                     interrupts, tool_meta_by_name
                 )
+                result_messages = result.get("messages")
                 context_metrics = self._build_context_metrics(
-                    result.get("messages")
-                    if isinstance(result.get("messages"), list)
-                    else []
+                    result_messages if isinstance(result_messages, list) else []
                 )
 
                 run.stage_summaries = {
@@ -1606,7 +1612,7 @@ class GeneralChatService:
         user_content: str,
         request: object | None = None,
         client_request_id: str | None = None,
-    ) -> Any:
+    ) -> AsyncIterator[tuple[str, Any]]:
         """处理用户问题并生成答案（流式 SSE）。"""
         normalized_client_request_id = self._normalize_client_request_id(
             client_request_id
@@ -1744,7 +1750,7 @@ class GeneralChatService:
             hitl_interrupt_on = build_hitl_interrupt_on(tool_meta_by_name)
 
             system_prompt = self._prompts.render_with_few_shot("general_chat/system")
-            config = CheckpointManager.make_config(thread_id)
+            config = cast(RunnableConfig, CheckpointManager.make_config(thread_id))
             replay_metrics = self._build_replay_metrics(replay_decision)
 
             # SSE：meta 事件
@@ -1800,17 +1806,22 @@ class GeneralChatService:
 
                 try:
                     async for mode, chunk in agent.astream(
-                        {"messages": attempt_messages},
+                        cast(Any, {"messages": attempt_messages}),
                         config,
                         stream_mode=["messages", "updates"],
                     ):
                         if request is not None:
                             is_disconnected = getattr(request, "is_disconnected", None)
-                            if callable(is_disconnected) and await is_disconnected():
-                                run.status = AgentRunStatus.CANCELED
-                                run.finished_at = datetime.now(timezone.utc)
-                                await self._db.commit()
-                                return
+                            if callable(is_disconnected):
+                                disconnect_checker = cast(
+                                    Callable[[], Awaitable[bool]],
+                                    is_disconnected,
+                                )
+                                if await disconnect_checker():
+                                    run.status = AgentRunStatus.CANCELED
+                                    run.finished_at = datetime.now(timezone.utc)
+                                    await self._db.commit()
+                                    return
 
                         if mode == "messages":
                             token, _meta = chunk
@@ -2046,7 +2057,7 @@ class GeneralChatService:
                 summary_trigger=self._build_summary_trigger(),
                 hitl_interrupt_on=hitl_interrupt_on,
             )
-            config = CheckpointManager.make_config(thread_id)
+            config = cast(RunnableConfig, CheckpointManager.make_config(thread_id))
             result = await agent.ainvoke(Command(resume=resume_payload), config)
 
             if not isinstance(result, dict):
@@ -2058,10 +2069,9 @@ class GeneralChatService:
                     interrupts,
                     tool_meta_by_name,
                 )
+                result_messages = result.get("messages")
                 context_metrics = self._build_context_metrics(
-                    result.get("messages")
-                    if isinstance(result.get("messages"), list)
-                    else []
+                    result_messages if isinstance(result_messages, list) else []
                 )
 
                 run.stage_summaries = {
@@ -2124,7 +2134,7 @@ class GeneralChatService:
         run: AgentRun,
         approval: ToolApprovalRequest,
         request: object | None = None,
-    ) -> Any:
+    ) -> AsyncIterator[tuple[str, Any]]:
         """两阶段交互第 2 阶段：提交审批结果并恢复执行（流式 SSE）。"""
         set_run_id(str(run.id))
         try:
@@ -2184,7 +2194,7 @@ class GeneralChatService:
                 summary_trigger=self._build_summary_trigger(),
                 hitl_interrupt_on=hitl_interrupt_on,
             )
-            config = CheckpointManager.make_config(thread_id)
+            config = cast(RunnableConfig, CheckpointManager.make_config(thread_id))
 
             checkpoint_values = (checkpoint_tuple.checkpoint or {}).get(
                 "channel_values", {}
@@ -2218,11 +2228,16 @@ class GeneralChatService:
             ):
                 if request is not None:
                     is_disconnected = getattr(request, "is_disconnected", None)
-                    if callable(is_disconnected) and await is_disconnected():
-                        run.status = AgentRunStatus.CANCELED
-                        run.finished_at = datetime.now(timezone.utc)
-                        await self._db.commit()
-                        return
+                    if callable(is_disconnected):
+                        disconnect_checker = cast(
+                            Callable[[], Awaitable[bool]],
+                            is_disconnected,
+                        )
+                        if await disconnect_checker():
+                            run.status = AgentRunStatus.CANCELED
+                            run.finished_at = datetime.now(timezone.utc)
+                            await self._db.commit()
+                            return
 
                 if mode == "messages":
                     token, _meta = chunk

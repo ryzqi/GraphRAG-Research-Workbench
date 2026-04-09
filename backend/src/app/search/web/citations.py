@@ -9,8 +9,7 @@ from typing import Any
 
 from langchain.messages import ToolMessage
 
-from app.models.evidence import EvidenceSourceKind
-from app.schemas.chats import EvidenceItem
+from app.schemas.chats import EvidenceItem, EvidenceSourceKind
 
 from .documents import canonicalize_url, extract_domain
 
@@ -134,7 +133,7 @@ def _build_evidence_item(
         or "外部来源"
     )
     return EvidenceItem(
-        source_kind=EvidenceSourceKind.EXTERNAL,
+        source_kind=EvidenceSourceKind(EvidenceSourceKind.EXTERNAL.value),
         locator=locator,
         excerpt=excerpt,
         source_excerpt=source_excerpt,

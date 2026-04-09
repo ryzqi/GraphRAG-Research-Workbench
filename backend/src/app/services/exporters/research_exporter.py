@@ -41,4 +41,5 @@ class ResearchExporter:
                 },
             )
 
+        assert report_md is not None
         return str(report_md.content_text)

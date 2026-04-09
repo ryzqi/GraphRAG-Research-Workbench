@@ -12,8 +12,9 @@ import hashlib
 import json
 import re
 import time
+from collections.abc import Iterable, Mapping
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
 from langchain.messages import AIMessage, HumanMessage, SystemMessage
 from langgraph.runtime import Runtime
@@ -60,6 +61,7 @@ from .runtime_config import (
 
 _COMPLEXITY_CACHE_SCHEMA = "kb_chat_complexity_cache_v1"
 _COMPLEXITY_CACHE_KEY_PREFIX = "complexity"
+StateView = Mapping[str, object]
 
 
 def _get_last_human(messages: list[Any]) -> HumanMessage | None:
@@ -69,7 +71,7 @@ def _get_last_human(messages: list[Any]) -> HumanMessage | None:
     return None
 
 
-def _extract_user_input(state: dict) -> str:
+def _extract_user_input(state: StateView) -> str:
     user_input = state.get("user_input")
     if isinstance(user_input, str) and user_input.strip():
         return user_input
@@ -95,7 +97,7 @@ def _cache_kb_scope(kb_ids: list[str]) -> str:
 
 
 def _complexity_cache_namespace(
-    state: dict,
+    state: StateView,
     runtime: Runtime[Any] | None = None,
 ) -> tuple[str, ...]:
     context = _runtime_context(runtime) if runtime is not None else {}
@@ -167,7 +169,7 @@ def _unwrap_complexity_cache(raw: dict[str, Any]) -> dict[str, Any] | None:
 
 async def _read_complexity_cache(
     *,
-    state: dict,
+    state: StateView,
     runtime: Runtime[Any] | None,
     cache_key: str,
 ) -> dict[str, Any] | None:
@@ -186,7 +188,7 @@ async def _read_complexity_cache(
 
 async def _write_complexity_cache(
     *,
-    state: dict,
+    state: StateView,
     runtime: Runtime[Any] | None,
     cache_key: str,
     ttl_seconds: int,
@@ -248,7 +250,7 @@ def _safe_float(value: Any, *, default: float) -> float:
     return default
 
 
-def _resolve_prepare_strategy(state: dict[str, Any]) -> str:
+def _resolve_prepare_strategy(state: StateView) -> str:
     strategy_raw = state.get("query_strategy")
     strategy = str(strategy_raw).strip() if isinstance(strategy_raw, str) else ""
     if not strategy:
@@ -261,7 +263,7 @@ def _resolve_prepare_strategy(state: dict[str, Any]) -> str:
 
 def _resolve_prepare_budget(
     *,
-    state: dict[str, Any],
+    state: StateView,
     runtime: Runtime[Any],
     settings: Settings,
 ) -> dict[str, Any]:
@@ -292,7 +294,7 @@ def _resolve_prepare_budget(
 
 def resolve_prepare_budget(
     *,
-    state: dict[str, Any],
+    state: StateView,
     runtime: Runtime[Any],
     settings: Settings,
 ) -> dict[str, Any]:
@@ -774,7 +776,7 @@ def build_prepared_query_bundle(
 
 
 def _merge_stage_summary(
-    state: dict, key: str, summary: dict[str, Any], *, settings: Settings
+    state: StateView, key: str, summary: dict[str, Any], *, settings: Settings
 ) -> dict[str, Any]:
     stage_summaries = state.get("stage_summaries")
     if not isinstance(stage_summaries, dict):
@@ -945,20 +947,24 @@ async def _generate_summary_from_turns(
         return ""
     try:
         from langmem.short_term import summarize_messages
+        from langmem.short_term.summarization import TokenCounter
     except Exception:  # pragma: no cover
         return ""
 
     try:
         model = create_chat_model(settings=settings)
         summary_model = model.bind(max_tokens=settings.summary_max_tokens)
-        token_counter = getattr(model, "get_num_tokens_from_messages", None)
-        if token_counter is None:
-
-            def token_counter(msgs: list[object]) -> int:
+        token_counter_fn: TokenCounter
+        candidate_counter = getattr(model, "get_num_tokens_from_messages", None)
+        if callable(candidate_counter):
+            token_counter_fn = cast(TokenCounter, candidate_counter)
+        else:
+            def _fallback_token_counter(msgs: Iterable[Any]) -> int:
                 return sum(
                     count_tokens_approximately(getattr(m, "content", "") or "")
                     for m in msgs
                 )
+            token_counter_fn = _fallback_token_counter
     except Exception:  # pragma: no cover
         return ""
 
@@ -966,7 +972,7 @@ async def _generate_summary_from_turns(
         return summarize_messages(
             lc_messages,
             running_summary=None,
-            token_counter=token_counter,
+            token_counter=token_counter_fn,
             model=summary_model,
             max_tokens=settings.summary_max_tokens,
             max_tokens_before_summary=0,
@@ -1089,11 +1095,8 @@ async def merge_context(
     memory_snippet = ""
     if settings.memory_enabled and runtime.store is not None:
         context = _runtime_context(runtime)
-        keys = (
-            state.get("memory_keys")
-            if isinstance(state.get("memory_keys"), dict)
-            else {}
-        )
+        raw_memory_keys = state.get("memory_keys")
+        keys = raw_memory_keys if isinstance(raw_memory_keys, dict) else {}
         thread_id = str(context.get("thread_id") or keys.get("thread_id") or "").strip()
         user_id = resolve_kb_chat_store_user_id(
             user_id=context.get("user_id") or keys.get("user_id"),
@@ -1101,9 +1104,8 @@ async def merge_context(
         )
         kb_ids_raw = context.get("kb_ids")
         if not isinstance(kb_ids_raw, list):
-            kb_ids_raw = (
-                keys.get("kb_ids") if isinstance(keys.get("kb_ids"), list) else []
-            )
+            keys_kb_ids = keys.get("kb_ids")
+            kb_ids_raw = keys_kb_ids if isinstance(keys_kb_ids, list) else []
         kb_ids = [str(k) for k in kb_ids_raw if isinstance(k, str) and k.strip()]
         try:
             mem = await aget_kb_chat_memory(
@@ -1238,11 +1240,8 @@ async def coref_rewrite(state: CorefRewriteInput, settings: Settings) -> dict[st
     meta: dict[str, Any] = {}
     context_frame = state.get("context_frame")
     context_data = context_frame if isinstance(context_frame, dict) else {}
-    selected_turns = (
-        context_data.get("selected_turns")
-        if isinstance(context_data.get("selected_turns"), list)
-        else []
-    )
+    raw_selected_turns = context_data.get("selected_turns")
+    selected_turns = raw_selected_turns if isinstance(raw_selected_turns, list) else []
     summary_text = (
         str(context_data.get("summary_text"))
         if isinstance(context_data.get("summary_text"), str)
@@ -1255,16 +1254,20 @@ async def coref_rewrite(state: CorefRewriteInput, settings: Settings) -> dict[st
     )
     try:
         svc = QueryRewriteService(settings=settings)
+        recent_turns: list[dict[str, str]] = [
+            {
+                "role": str(item.get("role")).strip(),
+                "text": str(item.get("text")).strip(),
+            }
+            for item in selected_turns
+            if isinstance(item, dict)
+            and isinstance(item.get("role"), str)
+            and isinstance(item.get("text"), str)
+        ]
         result = await svc.resolve_reference(
             query,
             enabled=True,
-            recent_turns=[
-                item
-                for item in selected_turns
-                if isinstance(item, dict)
-                and isinstance(item.get("role"), str)
-                and isinstance(item.get("text"), str)
-            ],
+            recent_turns=recent_turns,
             summary_text=summary_text,
             memory_snippet=memory_snippet,
         )
@@ -1353,12 +1356,13 @@ async def ambiguity_check(
     coref_meta = state.get("reference_resolution_meta")
     if not isinstance(coref_meta, dict):
         coref_meta = state.get("coref_meta")
+    coref_meta_payload = dict(coref_meta) if isinstance(coref_meta, dict) else None
     try:
         svc = QueryRewriteService(settings=settings)
         result = await svc.ambiguity_check(
             query,
             enabled=True,
-            coref_meta=coref_meta if isinstance(coref_meta, dict) else None,
+            coref_meta=coref_meta_payload,
         )
         ambiguous = result.ambiguous
         reverse_question = result.reverse_question or ""
@@ -1487,10 +1491,9 @@ async def normalize_rewrite(
         rewritten = query
         rewritten_flag = False
 
+    raw_normalized_aliases = normalized_meta.get("aliases")
     normalized_aliases = (
-        normalized_meta.get("aliases")
-        if isinstance(normalized_meta.get("aliases"), list)
-        else []
+        raw_normalized_aliases if isinstance(raw_normalized_aliases, list) else []
     )
 
     stage_summaries = _merge_stage_summary(
@@ -1578,7 +1581,7 @@ def _complexity_level_for_strategy(strategy: str) -> str:
 
 async def _classify_query_strategy(
     *,
-    state: dict[str, Any],
+    state: StateView,
     settings: Settings,
     runtime: Runtime[Any] | None = None,
 ) -> dict[str, Any]:
@@ -1651,10 +1654,9 @@ async def _classify_query_strategy(
                     ).strip()
                     or COMPLEXITY_CLASSIFY_DECISION_VERSION
                 )
+                cached_risk_flags = cached.get("risk_flags")
                 raw_flags = (
-                    cached.get("risk_flags")
-                    if isinstance(cached.get("risk_flags"), list)
-                    else []
+                    cached_risk_flags if isinstance(cached_risk_flags, list) else []
                 )
                 risk_flags = [
                     str(flag).strip()
@@ -1997,7 +1999,7 @@ async def hyde(state: HydeInput, settings: Settings) -> dict[str, Any]:
     return {"hyde_docs": hyde_docs, "stage_summaries": stage_summaries}
 
 
-def _resolve_query_plan_original_query(state: dict[str, Any]) -> str:
+def _resolve_query_plan_original_query(state: StateView) -> str:
     original_query = state.get("resolved_query")
     if not isinstance(original_query, str) or not original_query.strip():
         original_query = state.get("coref_query")
@@ -2008,7 +2010,7 @@ def _resolve_query_plan_original_query(state: dict[str, Any]) -> str:
     return original_query.strip()
 
 
-def _resolve_query_plan_normalized_query(state: dict[str, Any]) -> str:
+def _resolve_query_plan_normalized_query(state: StateView) -> str:
     normalized = state.get("normalized_query")
     if not isinstance(normalized, str) or not normalized.strip():
         normalized = state.get("resolved_query")
@@ -2040,7 +2042,7 @@ def _build_query_plan_fallback_policy(
 
 def _build_query_plan_finalize_update(
     *,
-    state: dict[str, Any],
+    state: StateView,
     runtime: Runtime[Any],
     settings: Settings,
     latency_ms: int,
@@ -2097,13 +2099,22 @@ def _build_query_plan_finalize_update(
     }
     message_plan = _as_dict(bundle.get("message_plan")) or {}
     query_bundle = _as_dict(bundle.get("query_bundle")) or {}
-    query_items = (
-        bundle.get("query_items") if isinstance(bundle.get("query_items"), list) else []
-    )
+    raw_query_items = bundle.get("query_items")
+    query_items: list[Any] = raw_query_items if isinstance(raw_query_items, list) else []
     fallback_reason = str(prepare_diagnostics.get("fallback_reason") or "").strip()
     if fallback_reason.lower() == "none":
         fallback_reason = ""
     dedup_stats = _as_dict(query_bundle.get("dedup_stats")) or {}
+    stage_summaries_state = _as_dict(state.get("stage_summaries")) or {}
+    query_plan_summary = _as_dict(stage_summaries_state.get("query_plan")) or {}
+    raw_candidates = message_plan.get("candidates")
+    candidates: list[Any] = raw_candidates if isinstance(raw_candidates, list) else []
+    quality_signals = (
+        prepare_diagnostics.get("quality_signals")
+        if isinstance(prepare_diagnostics.get("quality_signals"), list)
+        else []
+    )
+    kind_breakdown = _as_dict(query_bundle.get("kind_breakdown")) or {}
     rejection_counts = {
         "fragment_rejected": 0,
         "duplicate_rejected": int(dedup_stats.get("duplicate_dropped") or 0),
@@ -2117,16 +2128,7 @@ def _build_query_plan_finalize_update(
     query_plan_result = ensure_json_safe(
         {
             "strategy": strategy,
-            "reasoning": (
-                _as_dict(state.get("stage_summaries") or {})
-                .get("query_plan", {})
-                .get("reasoning")
-                if isinstance(
-                    _as_dict(state.get("stage_summaries") or {}).get("query_plan"), dict
-                )
-                else ""
-            )
-            or "",
+            "reasoning": str(query_plan_summary.get("reasoning") or ""),
             "fallback_policy": _build_query_plan_fallback_policy(
                 strategy=strategy,
                 normalized_meta=normalized_meta,
@@ -2137,32 +2139,35 @@ def _build_query_plan_finalize_update(
         settings=settings,
         label="query_plan_result",
     )
-    query_plan_diagnostics = ensure_json_safe(
+    query_plan_diagnostics_payload = ensure_json_safe(
         {
-            "candidate_count": len(message_plan.get("candidates") or []),
+            "candidate_count": len(candidates),
             "selected_count": len(query_items),
             "fallback_reason": fallback_reason,
             "latency_ms": latency_ms,
             "rejection_counts": rejection_counts,
-            "quality_signals": prepare_diagnostics.get("quality_signals") or [],
-            "kind_breakdown": query_bundle.get("kind_breakdown") or {},
+            "quality_signals": quality_signals,
+            "kind_breakdown": kind_breakdown,
             "budget": _as_dict(message_plan.get("budget")) or budget,
         },
         settings=settings,
         label="query_plan_diagnostics",
     )
-    query_items = ensure_json_safe(query_items, settings=settings, label="query_items")
+    query_plan_diagnostics = _as_dict(query_plan_diagnostics_payload) or {}
+    safe_query_items = ensure_json_safe(
+        query_items, settings=settings, label="query_items"
+    )
     stage_summaries = _merge_stage_summary(
         state,
         "query_plan_finalize",
         {
             "strategy": strategy,
             "query_count": len(query_items),
-            "candidate_count": len(message_plan.get("candidates") or []),
+            "candidate_count": len(candidates),
             "selected_count": len(query_items),
             "rejection_counts": query_plan_diagnostics.get("rejection_counts") or {},
             "fallback_reason": fallback_reason or None,
-            "kind_breakdown": query_bundle.get("kind_breakdown") or {},
+            "kind_breakdown": kind_breakdown,
             "latency_ms": latency_ms,
             "completed_at": now_iso(),
         },
@@ -2171,8 +2176,8 @@ def _build_query_plan_finalize_update(
     return {
         "query_strategy": strategy,
         "query_plan_result": query_plan_result,
-        "query_plan_diagnostics": query_plan_diagnostics,
-        "query_items": query_items,
+        "query_plan_diagnostics": query_plan_diagnostics_payload,
+        "query_items": safe_query_items,
         "stage_summaries": stage_summaries,
     }
 
@@ -2268,10 +2273,11 @@ async def run_query_plan_scheme_b(
 
     current_state = dict(state)
     accumulated_updates: dict[str, Any] = {}
+    effective_runtime_typed = cast(Runtime[Any], effective_runtime)
 
     decision = await query_plan(
-        current_state,
-        runtime=effective_runtime,
+        cast(QueryPlanInput, current_state),
+        runtime=effective_runtime_typed,
         settings=settings,
     )
     decision_updates = _command_update_payload(decision)
@@ -2281,11 +2287,15 @@ async def run_query_plan_scheme_b(
 
     while next_node in {"decomposition", "generate_variants", "hyde"}:
         if next_node == "decomposition":
-            step_result = await decomposition(current_state, settings=settings)
+            step_result = await decomposition(
+                cast(DecompositionInput, current_state), settings=settings
+            )
         elif next_node == "generate_variants":
-            step_result = await generate_variants(current_state, settings=settings)
+            step_result = await generate_variants(
+                cast(GenerateVariantsInput, current_state), settings=settings
+            )
         else:
-            step_result = await hyde(current_state, settings=settings)
+            step_result = await hyde(cast(HydeInput, current_state), settings=settings)
 
         step_updates = _command_update_payload(step_result)
         accumulated_updates = _merge_query_plan_state(accumulated_updates, step_updates)
@@ -2295,7 +2305,7 @@ async def run_query_plan_scheme_b(
     finalize_latency_ms = 0
     finalize_updates = _build_query_plan_finalize_update(
         state=current_state,
-        runtime=effective_runtime,
+        runtime=effective_runtime_typed,
         settings=settings,
         latency_ms=finalize_latency_ms,
     )

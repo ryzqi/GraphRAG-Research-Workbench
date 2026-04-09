@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import time
 
-import anyio
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
@@ -46,7 +46,9 @@ async def _check_postgres(engine: AsyncEngine) -> None:
 
 
 async def _check_redis(redis: RedisClient) -> None:
-    await redis.ping()
+    ping_result = redis.ping()
+    if inspect.isawaitable(ping_result):
+        await ping_result
 
 
 async def _check_milvus(milvus: MilvusClient) -> None:
@@ -59,8 +61,7 @@ async def _check_minio() -> None:
     def _check() -> None:
         storage._client.bucket_exists(storage._settings.minio_bucket_uploads)
 
-    # 在线程 worker 中执行；abandon_on_cancel 可避免 SDK 阻塞时 readiness 卡住。
-    await anyio.to_thread.run_sync(_check, abandon_on_cancel=True)
+    await asyncio.to_thread(_check)
 
 
 @router.get("/ready")

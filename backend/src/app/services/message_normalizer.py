@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Sequence
 
 from langchain.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.messages import messages_from_dict
@@ -179,7 +179,9 @@ def _message_payload_dict(message: dict[str, Any]) -> dict[str, Any]:
     return message
 
 
-def _try_parse_langchain_message_dicts(messages: list[object]) -> list[object] | None:
+def _try_parse_langchain_message_dicts(
+    messages: list[object],
+) -> Sequence[object] | None:
     if not messages:
         return []
     if not all(isinstance(message, dict) for message in messages):

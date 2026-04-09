@@ -10,6 +10,8 @@ import json
 from collections.abc import Callable
 from typing import Any
 
+from pydantic import BaseModel
+
 from .utils import DEFAULT_TOOL_OUTPUT_MAX_CHARS, truncate_tool_output
 
 _ELLIPSIS = "…"
@@ -44,7 +46,7 @@ def compact_builtin_external_output(
 
 
 def _parse_json_like(output: object) -> Any | None:
-    if hasattr(output, "model_dump"):
+    if isinstance(output, BaseModel):
         try:
             output = output.model_dump()
         except Exception:
@@ -158,10 +160,14 @@ def _safe_int(value: object, default: int = 0) -> int:
         return int(value)
     if isinstance(value, int):
         return value
-    try:
+    if isinstance(value, float):
         return int(value)
-    except (TypeError, ValueError):
-        return default
+    if isinstance(value, str):
+        try:
+            return int(value)
+        except ValueError:
+            return default
+    return default
 
 
 def _compact_search_result(item: object, *, snippet_limit: int) -> dict[str, Any]:

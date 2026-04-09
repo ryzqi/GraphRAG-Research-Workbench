@@ -16,6 +16,7 @@ from app.models.knowledge_base import (
 )
 from app.models.source_material import SourceType
 from app.schemas.ingestion_batches import KnowledgeBaseIngestionStateRead
+from app.schemas.index_rebuilds import IndexRebuildJobRead
 from app.schemas.knowledge_bases import (
     ChunkingStrategy,
     KnowledgeBaseCreate,
@@ -285,7 +286,7 @@ async def update_index_config(
     await db.refresh(kb)
     return KnowledgeBaseIndexConfigUpdateResponse(
         knowledge_base=KnowledgeBaseRead.model_validate(kb),
-        rebuild_job=job,
+        rebuild_job=IndexRebuildJobRead.model_validate(job),
     )
 
 

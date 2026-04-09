@@ -176,7 +176,7 @@ class ChunkingEngine:
                 }
                 items.append(
                     ChunkItem(
-                        content=chunk["text"],
+                        content=str(chunk["text"]),
                         locator=_merge_locators(document.locator, locator),
                         metadata=_merge_metadata(document.metadata, metadata),
                     )

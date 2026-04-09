@@ -43,7 +43,7 @@ def build_tavily_extract_tool(
 
     async def _extract(**kwargs: object) -> str:
         try:
-            args = WebExtractArgs(**kwargs)
+            args = WebExtractArgs.model_validate(kwargs)
         except Exception:
             return _validation_error_output(
                 code="TAVILY_EXTRACT_BAD_REQUEST",
@@ -70,7 +70,7 @@ def build_tavily_crawl_tool(
 
     async def _crawl(**kwargs: object) -> str:
         try:
-            args = WebCrawlArgs(**kwargs)
+            args = WebCrawlArgs.model_validate(kwargs)
         except Exception:
             return _validation_error_output(
                 code="TAVILY_CRAWL_BAD_REQUEST",
@@ -136,7 +136,7 @@ def _serialize_arxiv_result(result: Any) -> dict[str, Any]:
 def build_arxiv_search_tool() -> BaseTool:
     async def _search(**kwargs: object) -> str:
         try:
-            args = ArxivSearchArgs(**kwargs)
+            args = ArxivSearchArgs.model_validate(kwargs)
         except Exception:
             return _validation_error_output(
                 code="ARXIV_SEARCH_BAD_REQUEST",
@@ -188,7 +188,7 @@ def build_arxiv_search_tool() -> BaseTool:
 def build_arxiv_fetch_tool() -> BaseTool:
     async def _fetch(**kwargs: object) -> str:
         try:
-            args = ArxivFetchArgs(**kwargs)
+            args = ArxivFetchArgs.model_validate(kwargs)
         except Exception:
             return _validation_error_output(
                 code="ARXIV_FETCH_BAD_REQUEST",

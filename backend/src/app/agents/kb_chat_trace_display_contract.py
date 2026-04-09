@@ -861,12 +861,12 @@ def _format_review_checks(
         if not isinstance(item, str) or not item.strip():
             continue
         check_name = _ANSWER_REVIEW_NODE_TO_CHECK.get(item, item)
-        result.append(
-            _REVIEW_CHECK_LABELS.get(
-                check_name,
-                _resolve_node_label(item, node_label_resolver=node_label_resolver),
-            )
+        label = _REVIEW_CHECK_LABELS.get(
+            check_name,
+            _resolve_node_label(item, node_label_resolver=node_label_resolver),
         )
+        if label is not None:
+            result.append(label)
     return result or None
 
 

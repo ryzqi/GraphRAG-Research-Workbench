@@ -72,6 +72,12 @@ class UnconfiguredResearchRuntimeRunner:
 
 
 class ResearchService:
+    @staticmethod
+    def _json_mapping_payload(value: object) -> dict[str, object]:
+        if not isinstance(value, dict):
+            return {}
+        return {str(key): item for key, item in value.items()}
+
     def __init__(
         self,
         *,
@@ -159,7 +165,11 @@ class ResearchService:
             event_type="research.plan.ready",
             phase="planner",
             payload={
-                **plan_result.artifact_payload,
+                **(
+                    plan_result.artifact_payload
+                    if isinstance(plan_result.artifact_payload, dict)
+                    else {}
+                ),
                 "lc_agent_name": "planner",
                 "decision_source": "llm_scoper",
                 "auto_start": False,
@@ -285,7 +295,11 @@ class ResearchService:
             event_type="research.plan.ready",
             phase="planner",
             payload={
-                **plan_result.artifact_payload,
+                **(
+                    plan_result.artifact_payload
+                    if isinstance(plan_result.artifact_payload, dict)
+                    else {}
+                ),
                 "lc_agent_name": "planner",
                 "decision_source": "llm_scoper",
                 "auto_start": False,
@@ -354,7 +368,11 @@ class ResearchService:
             event_type="research.plan.updated",
             phase="planner",
             payload={
-                **plan_result.artifact_payload,
+                **(
+                    plan_result.artifact_payload
+                    if isinstance(plan_result.artifact_payload, dict)
+                    else {}
+                ),
                 "feedback": normalized_feedback,
                 "lc_agent_name": "planner",
                 "decision_source": "llm_scoper",
@@ -743,7 +761,7 @@ class ResearchService:
         await self._artifact_store.upsert(
             session=session,
             artifact_key="gate_snapshot",
-            content_json=dict(metrics.get("gate") or {}),
+            content_json=self._json_mapping_payload(metrics.get("gate")),
         )
 
     @staticmethod

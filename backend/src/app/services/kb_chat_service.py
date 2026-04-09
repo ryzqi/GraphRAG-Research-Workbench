@@ -8,20 +8,22 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import hashlib
-import inspect
 import json
 import logging
 import math
 import uuid
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
-from langchain.messages import AIMessage, HumanMessage, SystemMessage
+from langchain.messages import AIMessage, AnyMessage, HumanMessage, SystemMessage
+from langchain_core.runnables import RunnableConfig
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.agents.kb_chat_agentic_graph import KbChatAgenticGraph, KbChatGraphContext
 from app.agents.kb_chat_agentic.json_safety import ensure_json_safe
 from app.agents.kb_chat_graph import build_kb_chat_graph
 from app.agents.kb_chat_memory import (
@@ -59,6 +61,7 @@ from app.schemas.chats import (
     KbChatConfig,
     ChatPendingUserClarificationResponse,
     EvidenceItem,
+    EvidenceSourceKind as EvidenceItemSourceKind,
     PendingClarification,
     SemanticCacheMeta,
     resolve_kb_chat_config,
@@ -95,6 +98,7 @@ from app.agents.kb_chat_contracts import (
     validate_event_envelope_v2,
 )
 from app.agents.kb_chat_agentic_state import (
+    KbChatInternalState,
     build_graph_input_state,
     resolve_terminal_routing_decision,
 )
@@ -155,6 +159,10 @@ def _gray_release_log_dir() -> Path:
     return Path(__file__).resolve().parents[3] / "logs" / "kb_chat_gray_release"
 
 
+def _as_str_dict(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
 @dataclass
 class _KbRetrievalBuffer:
     results: list
@@ -184,10 +192,10 @@ class _KbChatExecution:
     retrieval_results: list
     retrieval_meta: dict[str, Any]
     retrieval_buffer: _KbRetrievalBuffer
-    graph: object
-    compiled_graph: object | None
-    state: dict[str, Any]
-    run_context: dict[str, Any] | None
+    graph: KbChatAgenticGraph
+    compiled_graph: Any | None
+    state: KbChatInternalState
+    run_context: KbChatGraphContext | None
     resume_checkpoint_id: str | None
 
 
@@ -235,7 +243,7 @@ class KbChatService:
         tools: list,
         tool_meta_by_name: dict,
         kb_chat_config: KbChatConfig,
-    ):
+    ) -> KbChatAgenticGraph:
         """构建 KB Chat 图（agentic RAG 流程，已移除 legacy 实现）。"""
         return build_kb_chat_graph(
             chat_model=chat_model,
@@ -644,10 +652,10 @@ class KbChatService:
                     if isinstance(raw_node.get("metadata"), dict)
                     else {}
                 )
-                normalized_metadata = dict(metadata)
-                label = metadata.get("label")
-                phase = metadata.get("phase")
-                order = metadata.get("order")
+                normalized_metadata = _as_str_dict(metadata)
+                label = normalized_metadata.get("label")
+                phase = normalized_metadata.get("phase")
+                order = normalized_metadata.get("order")
                 nodes.append(
                     {
                         "id": node_id,
@@ -842,11 +850,7 @@ class KbChatService:
             if existing is None:
                 nodes_by_id[node_id] = {"id": node_id, "metadata": normalized_metadata}
                 return
-            existing_metadata = (
-                existing.get("metadata")
-                if isinstance(existing.get("metadata"), dict)
-                else {}
-            )
+            existing_metadata = _as_str_dict(existing.get("metadata"))
             for key, value in normalized_metadata.items():
                 if key not in existing_metadata:
                     existing_metadata[key] = value
@@ -960,9 +964,10 @@ class KbChatService:
     @staticmethod
     def _build_schema_drawable_graph(graph: object) -> dict[str, Any]:
         try:
-            compiled_graph = graph.compile().get_graph(xray=True).to_json()
+            graph_builder = cast(KbChatAgenticGraph, graph)
+            compiled_graph = graph_builder.compile().get_graph(xray=True).to_json()
             return KbChatService._build_drawable_graph_from_compiled_xray(
-                graph, compiled_graph
+                graph_builder, compiled_graph
             )
         except TypeError as exc:
             logger.warning(
@@ -1245,11 +1250,7 @@ class KbChatService:
         terminal_reason: str | None,
     ) -> float:
         routing = routing_decisions if isinstance(routing_decisions, dict) else {}
-        answer_subgraph = (
-            routing.get("answer_subgraph")
-            if isinstance(routing.get("answer_subgraph"), dict)
-            else {}
-        )
+        answer_subgraph = _as_str_dict(routing.get("answer_subgraph"))
         terminal_phase, terminal_route = resolve_terminal_routing_decision(
             {"routing_decisions": routing},
             next_nodes={"force_exit"},
@@ -1733,9 +1734,10 @@ class KbChatService:
 
         runtime_config_payload = kb_chat_config.model_dump(mode="json")
         selected_kb_ids = [str(kid) for kid in (session.selected_kb_ids or [])]
+        initial_messages: list[AnyMessage] = list(messages)
         state = make_initial_state(
             user_input=user_content,
-            messages=messages,
+            messages=initial_messages,
         )
         stage_summaries: dict[str, Any] = {}
         if checkpoint_tuple is not None:
@@ -1747,27 +1749,13 @@ class KbChatService:
             "context": context_metrics,
             "checkpoint_restore": checkpoint_restore_audit,
         }
-        make_run_context = getattr(graph, "make_run_context", None)
-        run_context = None
-        if callable(make_run_context):
-            run_context_kwargs = {
-                "thread_id": thread_id,
-                "state": state,
-                "user_id": resolved_user_id,
-                "kb_ids": selected_kb_ids,
-                "runtime_config": runtime_config_payload,
-            }
-            try:
-                supported_keys = set(inspect.signature(make_run_context).parameters)
-            except (TypeError, ValueError):
-                supported_keys = {"thread_id", "state"}
-            run_context = make_run_context(
-                **{
-                    key: value
-                    for key, value in run_context_kwargs.items()
-                    if key in supported_keys
-                }
-            )
+        run_context = graph.make_run_context(
+            thread_id=thread_id,
+            state=dict(state),
+            user_id=resolved_user_id,
+            kb_ids=selected_kb_ids,
+            runtime_config=runtime_config_payload,
+        )
         try:
             store = StoreManager.get_store()
         except Exception:
@@ -1962,11 +1950,7 @@ class KbChatService:
         stage_summaries: dict[str, Any],
         kb_scope: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        guardrails = (
-            metrics.get("guardrails")
-            if isinstance(metrics.get("guardrails"), dict)
-            else {}
-        )
+        guardrails = _as_str_dict(metrics.get("guardrails"))
         if isinstance(kb_scope, dict):
             guardrails["kb_scope"] = kb_scope
 
@@ -2556,16 +2540,8 @@ class KbChatService:
 
         if node == "answer_subgraph":
             answer_summary = node_summary if isinstance(node_summary, dict) else {}
-            routing = (
-                update.get("routing_decisions")
-                if isinstance(update.get("routing_decisions"), dict)
-                else {}
-            )
-            answer_route = (
-                routing.get("answer_subgraph")
-                if isinstance(routing.get("answer_subgraph"), dict)
-                else {}
-            )
+            routing = _as_str_dict(update.get("routing_decisions"))
+            answer_route = _as_str_dict(routing.get("answer_subgraph"))
             next_node = answer_route.get("next_node")
             reason = answer_route.get("reason") or answer_summary.get("reason")
             if isinstance(next_node, str) and next_node:
@@ -3432,15 +3408,12 @@ class KbChatService:
             stage_summaries=stage_summaries,
             metrics=metrics,
         )
-        gray_release_gate = (
-            metrics.get("gray_release_gate")
-            if isinstance(metrics.get("gray_release_gate"), dict)
-            else {}
-        )
+        gray_release_gate = _as_str_dict(metrics.get("gray_release_gate"))
+        finished_at = run.finished_at
         gray_release_gate = {
             **gray_release_gate,
             "source_run_id": str(run.id),
-            "evaluated_at": run.finished_at.isoformat(),
+            "evaluated_at": finished_at.isoformat() if finished_at is not None else None,
             "trigger_rollback": (
                 bool(
                     getattr(
@@ -3484,7 +3457,12 @@ class KbChatService:
                 ttl_seconds=cache_hit.ttl_seconds,
                 entry_id=cache_hit.entry_id,
                 schema_version=cache_hit.schema_version,
-                hit_type=cache_hit.hit_type or _SEMANTIC_CACHE_HIT_TYPE_STRONG,
+                hit_type=(
+                    _SEMANTIC_CACHE_HIT_TYPE_STRONG
+                    if cache_hit.hit_type == _SEMANTIC_CACHE_HIT_TYPE_STRONG
+                    or cache_hit.hit_type is None
+                    else None
+                ),
                 created_at=cache_hit.created_at,
             ),
             stage_summaries=run.stage_summaries
@@ -3598,7 +3576,7 @@ class KbChatService:
         request: object | None = None,
         run: AgentRun | None = None,
         sse_heartbeat_stats: SseHeartbeatStats | None = None,
-    ) -> Any:
+    ) -> AsyncIterator[tuple[str, Any]]:
         """处理用户问题并返回流式 SSE（状态与节点事件基于 LangGraph 原生流）。"""
         if run is None:
             await self._ensure_no_running_kb_chat_run(session_id=session.id)
@@ -3920,22 +3898,14 @@ class KbChatService:
                     checkpointer=CheckpointManager.get_checkpointer(),
                     store=store,
                 )
-            make_run_config = getattr(exec_ctx.graph, "make_run_config", None)
-            if callable(make_run_config):
-                config = make_run_config(thread_id=exec_ctx.thread_id)
-            else:
-                config = CheckpointManager.make_config(exec_ctx.thread_id)
+            config = exec_ctx.graph.make_run_config(thread_id=exec_ctx.thread_id)
             if exec_ctx.resume_checkpoint_id is not None:
-                configurable = (
-                    dict(config.get("configurable"))
-                    if isinstance(config.get("configurable"), dict)
-                    else {}
-                )
+                configurable = _as_str_dict(config.get("configurable"))
                 configurable["checkpoint_id"] = exec_ctx.resume_checkpoint_id
                 config = {**config, "configurable": configurable}
             stream = compiled.astream(
                 build_graph_input_state(exec_ctx.state),
-                config,
+                cast(RunnableConfig, config),
                 context=exec_ctx.run_context,
                 **self._build_graph_stream_options(),
             )
@@ -3957,7 +3927,9 @@ class KbChatService:
                 finally:
                     await queue.put(("done", None))
                     try:
-                        await stream.aclose()
+                        stream_aclose = getattr(stream, "aclose", None)
+                        if callable(stream_aclose):
+                            await cast(Awaitable[None], stream_aclose())
                     except Exception:
                         pass
 
@@ -3967,8 +3939,12 @@ class KbChatService:
                 is_disconnected = getattr(request, "is_disconnected", None)
                 if not callable(is_disconnected):
                     return
+                disconnect_checker = cast(
+                    Callable[[], Awaitable[bool]],
+                    is_disconnected,
+                )
                 while True:
-                    if await is_disconnected():
+                    if await disconnect_checker():
                         disconnect_event.set()
                         return
                     await asyncio.sleep(0.2)
@@ -4049,6 +4025,8 @@ class KbChatService:
 
                 kind, payload = queue_task.result()
                 if kind == "event":
+                    if not isinstance(payload, tuple) or len(payload) != 3:
+                        continue
                     mode, chunk, node_path = payload
 
                     if mode == "messages":
@@ -4258,7 +4236,9 @@ class KbChatService:
                     continue
 
                 if kind == "error":
-                    raise payload
+                    if isinstance(payload, BaseException):
+                        raise payload
+                    raise RuntimeError("KB Chat graph stream failed without exception payload")
                 if kind == "done":
                     break
 
@@ -4518,7 +4498,11 @@ class KbChatService:
                 "errterm": {
                     "reason": "stream_exception",
                     "message": error_summary,
-                    "at": run.finished_at.isoformat(),
+                    "at": (
+                        error_finished_at.isoformat()
+                        if (error_finished_at := run.finished_at) is not None
+                        else None
+                    ),
                 },
             }
             await self._db.commit()
@@ -4692,7 +4676,7 @@ class KbChatService:
                 )
                 evidence_items.append(
                     EvidenceItem(
-                        source_kind=source_kind.value,
+                        source_kind=EvidenceItemSourceKind(source_kind.value),
                         kb_id=kb_id,
                         material_id=material_id,
                         chunk_id=chunk_id,
@@ -4876,7 +4860,8 @@ class KbChatService:
         run.error_message = (
             None if status == AgentRunStatus.SUCCEEDED else (error_message or "")
         )
-        latency_ms = int((run.finished_at - started_at).total_seconds() * 1000)
+        finished_at = run.finished_at or datetime.now(timezone.utc)
+        latency_ms = int((finished_at - started_at).total_seconds() * 1000)
         route_consistency_rate = self._compute_route_consistency(
             query_strategy=query_strategy,
             routing_decisions=routing_decisions,
@@ -4913,7 +4898,7 @@ class KbChatService:
         }
         gray_release_gate = self._build_gray_release_gate(metrics)
         gray_release_gate["source_run_id"] = str(run.id)
-        gray_release_gate["evaluated_at"] = run.finished_at.isoformat()
+        gray_release_gate["evaluated_at"] = finished_at.isoformat()
         gray_release_gate["trigger_rollback"] = (
             bool(
                 getattr(
@@ -4967,18 +4952,16 @@ class KbChatService:
         )
         if semantic_cache_skip_reason is None:
             try:
+                cached_stage_summaries = _as_str_dict(run.stage_summaries)
+                cached_metrics = _as_str_dict(run.metrics)
                 await self._write_semantic_cache_entry(
                     session=session,
                     kb_chat_config=kb_chat_config,
                     question=str(run.question or "").strip(),
                     answer=extract_answer_text(answer),
                     evidence=evidence_items,
-                    stage_summaries=(
-                        run.stage_summaries
-                        if isinstance(run.stage_summaries, dict)
-                        else {}
-                    ),
-                    metrics=run.metrics if isinstance(run.metrics, dict) else {},
+                    stage_summaries=cached_stage_summaries,
+                    metrics=cached_metrics,
                 )
             except Exception as exc:  # pragma: no cover
                 logger.warning("语义缓存写入失败: %s", exc)

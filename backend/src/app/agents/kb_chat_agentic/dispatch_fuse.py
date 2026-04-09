@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 from langgraph.types import Send
 
 
-def make_send_task(node: str, payload: dict[str, Any], state: dict[str, Any]) -> Send:
+def make_send_task(
+    node: str, payload: dict[str, Any], state: Mapping[str, object]
+) -> Send:
     """仅附加扇出分支执行所需的局部状态。"""
 
     branch_state = {**payload}
@@ -38,7 +41,7 @@ def build_retrieval_payload(
     kb_ids: list[str],
     top_k: int,
     retrieval_round: int,
-    query_items: list[dict[str, Any]] | None = None,
+    query_items: Sequence[Mapping[str, object]] | None = None,
     per_query_top_k: int | None = None,
     global_candidates_limit: int | None = None,
     rerank_input_limit: int | None = None,

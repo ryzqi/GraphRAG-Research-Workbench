@@ -122,7 +122,8 @@ class SearxngSearchProvider:
 
         try:
             payload = await self._request_json(params=params)
-            raw_items = payload.get("results") if isinstance(payload, dict) else []
+            raw_items_obj = payload.get("results") if isinstance(payload, dict) else []
+            raw_items = raw_items_obj if isinstance(raw_items_obj, list) else []
             results = [
                 NormalizedSearchResult(
                     title=str(item.get("title") or ""),

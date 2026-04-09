@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterable, AsyncIterator
 from datetime import datetime, timezone
 import uuid
+from typing import Any
 
 from fastapi import APIRouter, Query, Request, Response, status
 from fastapi.responses import StreamingResponse
@@ -58,22 +59,22 @@ def _has_pending_kb_clarification(run: AgentRun) -> bool:
 
 
 async def _replay_stream_events(
-    first_item: tuple[str, object],
-    iterator: AsyncIterator[tuple[str, object]],
-) -> AsyncIterator[tuple[str, object]]:
+    first_item: tuple[str, Any],
+    iterator: AsyncIterator[tuple[str, Any]],
+) -> AsyncIterator[tuple[str, Any]]:
     yield first_item
     async for item in iterator:
         yield item
 
 
-async def _empty_stream_events() -> AsyncIterator[tuple[str, object]]:
+async def _empty_stream_events() -> AsyncIterator[tuple[str, Any]]:
     if False:
         yield ("", None)
 
 
 async def _prime_stream_events(
-    events: AsyncIterable[tuple[str, object]],
-) -> AsyncIterator[tuple[str, object]]:
+    events: AsyncIterable[tuple[str, Any]],
+) -> AsyncIterator[tuple[str, Any]]:
     iterator = aiter(events)
     try:
         first_item = await anext(iterator)

@@ -22,6 +22,7 @@ from app.agents.tool_calling.utils import (
     truncate_tool_output,
 )
 from app.core.settings import get_settings
+from app.schemas.query_enhancement import QueryItem, QuerySourceKind
 from app.services.context_builder import ContextBuilder
 from app.services.retrieval_service import RetrievalResult, RetrievalService
 
@@ -30,6 +31,22 @@ _KB_INVOCATION_REQUEST_ID: ContextVar[str | None] = ContextVar(
     "kb_retrieve_invocation_request_id",
     default=None,
 )
+
+
+def _normalize_query_source_kind(value: str) -> QuerySourceKind:
+    if value == "main":
+        return "main"
+    if value == "paraphrase":
+        return "paraphrase"
+    if value == "subquery":
+        return "subquery"
+    if value == "variant":
+        return "variant"
+    if value == "hyde":
+        return "hyde"
+    if value == "rewrite":
+        return "rewrite"
+    return "other"
 
 
 class KbRetrieveArgs(BaseModel):
@@ -120,12 +137,12 @@ def _normalize_query_items(
     *,
     query: str,
     query_items: list[dict[str, Any]] | None,
-) -> list[dict[str, Any]]:
+) -> list[QueryItem]:
     main_query = query.strip()
     if not main_query:
         return []
 
-    normalized: list[dict[str, Any]] = []
+    normalized: list[QueryItem] = []
     if isinstance(query_items, list):
         for raw in query_items:
             if not isinstance(raw, dict):
@@ -133,15 +150,19 @@ def _normalize_query_items(
             candidate_query = str(raw.get("query") or "").strip()
             if not candidate_query:
                 continue
-            item = {**raw}
-            item["query"] = candidate_query
-            item["kind"] = str(raw.get("kind") or "variant").strip() or "variant"
-            item["use_dense"] = bool(raw.get("use_dense", True))
-            item["use_bm25"] = bool(raw.get("use_bm25", True))
+            kind = _normalize_query_source_kind(
+                str(raw.get("kind") or "variant").strip().lower()
+            )
+            item: QueryItem = {
+                "query": candidate_query,
+                "kind": kind,
+                "use_dense": bool(raw.get("use_dense", True)),
+                "use_bm25": bool(raw.get("use_bm25", True)),
+            }
             normalized.append(item)
 
     # K2 契约：始终保留原始查询作为第一个 query item。
-    items = [
+    items: list[QueryItem] = [
         {
             "kind": "main",
             "query": main_query,
@@ -151,7 +172,7 @@ def _normalize_query_items(
         *normalized,
     ]
 
-    deduped: list[dict[str, Any]] = []
+    deduped: list[QueryItem] = []
     seen: set[tuple[str, bool, bool]] = set()
     for item in items:
         query_value = str(item.get("query") or "").strip()

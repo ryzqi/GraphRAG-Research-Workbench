@@ -27,21 +27,21 @@ class DocStatus(str, Enum):
 
 
 class ManifestTextEntry(BaseModel):
-    source_type: Literal[ManifestSourceType.TEXT.value] = ManifestSourceType.TEXT.value
+    source_type: Literal["text"] = ManifestSourceType.TEXT.value
     entry_id: str | None = Field(default=None, max_length=128)
     title: str | None = Field(default=None, max_length=500)
     text: str
 
 
 class ManifestUrlEntry(BaseModel):
-    source_type: Literal[ManifestSourceType.URL.value] = ManifestSourceType.URL.value
+    source_type: Literal["url"] = ManifestSourceType.URL.value
     entry_id: str | None = Field(default=None, max_length=128)
     title: str | None = Field(default=None, max_length=500)
     url: str
 
 
 class ManifestFileEntry(BaseModel):
-    source_type: Literal[ManifestSourceType.FILE.value] = ManifestSourceType.FILE.value
+    source_type: Literal["file"] = ManifestSourceType.FILE.value
     entry_id: str | None = Field(default=None, max_length=128)
     title: str | None = Field(default=None, max_length=500)
     material_id: uuid.UUID

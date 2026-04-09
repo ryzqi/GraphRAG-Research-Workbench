@@ -15,10 +15,12 @@ import logging
 import re
 import sys
 import time
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Iterable
+from typing import Any, Iterable, Protocol, cast
 
 from langchain.agents import create_agent
+from langchain_core.language_models.chat_models import BaseChatModel
 from pydantic import BaseModel, ValidationError
 
 from app.agents.kb_chat_agentic.schemas import (
@@ -105,6 +107,10 @@ class StructuredCallResult:
     success: bool = False
     reason: str | None = None
     latency_ms: int | None = None
+
+
+class _AsyncInvoker(Protocol):
+    async def ainvoke(self, input: object) -> object: ...
 
 
 @dataclass(slots=True)
@@ -990,13 +996,11 @@ def _render_recent_turns(turns: list[dict[str, str]] | None) -> str:
     return "\n".join(lines[:12])
 
 
-def _render_query_items(items: list[dict[str, object]] | None) -> list[str]:
-    if not isinstance(items, list):
+def _render_query_items(items: Sequence[Mapping[str, object]] | None) -> list[str]:
+    if items is None:
         return []
     lines: list[str] = []
     for index, item in enumerate(items, start=1):
-        if not isinstance(item, dict):
-            continue
         query = _normalize_whitespace(str(item.get("query") or ""))
         if not query:
             continue
@@ -1315,10 +1319,9 @@ def build_query_items(
             qn = _normalize_whitespace(q)
             if qn:
                 spec = specs_by_query.get(qn.casefold()) or {}
-                raw_tags = (
-                    spec.get("coverage_tags")
-                    if isinstance(spec.get("coverage_tags"), list)
-                    else []
+                raw_tags_obj = spec.get("coverage_tags")
+                raw_tags: list[object] = (
+                    raw_tags_obj if isinstance(raw_tags_obj, list) else []
                 )
                 coverage_tags = [
                     _normalize_whitespace(str(tag))
@@ -1397,10 +1400,10 @@ class QueryRewriteService:
     def __init__(self, settings: Settings | None = None) -> None:
         self._settings = settings if settings is not None else get_settings()
         self._prompts = get_prompt_loader()
-        self._structured_chat_model: object | None = None
-        self._structured_agents: dict[type[BaseModel], object] = {}
+        self._structured_chat_model: BaseChatModel | None = None
+        self._structured_agents: dict[type[BaseModel], _AsyncInvoker] = {}
 
-    def _get_structured_chat_model(self) -> object:
+    def _get_structured_chat_model(self) -> BaseChatModel:
         if self._structured_chat_model is None:
             self._structured_chat_model = create_chat_model(
                 settings=self._settings,
@@ -1408,15 +1411,18 @@ class QueryRewriteService:
             )
         return self._structured_chat_model
 
-    def _get_structured_agent(self, schema: type[BaseModel]) -> object:
+    def _get_structured_agent(self, schema: type[BaseModel]) -> _AsyncInvoker:
         agent = self._structured_agents.get(schema)
         if agent is not None:
             return agent
-        agent = create_agent(
-            model=self._get_structured_chat_model(),
-            tools=[],
-            system_prompt="",
-            response_format=schema,
+        agent = cast(
+            _AsyncInvoker,
+            create_agent(
+                model=self._get_structured_chat_model(),
+                tools=[],
+                system_prompt="",
+                response_format=schema,
+            ),
         )
         self._structured_agents[schema] = agent
         return agent
@@ -1581,7 +1587,7 @@ class QueryRewriteService:
     async def _invoke_structured(
         self,
         *,
-        agent: object,
+        agent: _AsyncInvoker,
         schema: type[BaseModel],
         user_prompt: str,
         max_tokens: int,
@@ -1589,11 +1595,7 @@ class QueryRewriteService:
         _ = max_tokens
         request = {"messages": [{"role": "user", "content": user_prompt}]}
         try:
-            ainvoke = getattr(agent, "ainvoke", None)
-            if callable(ainvoke):
-                result = await ainvoke(request)
-            else:
-                result = await asyncio.to_thread(agent.invoke, request)
+            result = await agent.ainvoke(request)
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -1632,11 +1634,13 @@ class QueryRewriteService:
         from langchain.messages import HumanMessage
 
         try:
-            model = self._get_structured_chat_model().bind(max_tokens=max_tokens)
-            structured_model = model.with_structured_output(
+            structured_model = cast(
+                _AsyncInvoker,
+                cast(Any, self._get_structured_chat_model().bind(max_tokens=max_tokens)).with_structured_output(
                 schema,
                 method="function_calling",
                 include_raw=True,
+                ),
             )
         except asyncio.CancelledError:
             raise
@@ -1670,11 +1674,7 @@ class QueryRewriteService:
 
         request = [HumanMessage(content=user_prompt)]
         try:
-            ainvoke = getattr(structured_model, "ainvoke", None)
-            if callable(ainvoke):
-                result = await ainvoke(request)
-            else:
-                result = await asyncio.to_thread(structured_model.invoke, request)
+            result = await structured_model.ainvoke(request)
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -2014,7 +2014,7 @@ class QueryRewriteService:
         question: str,
         normalized_query: str,
         complexity_level: str,
-        query_items: list[dict[str, object]] | None,
+        query_items: Sequence[Mapping[str, object]] | None,
         retry_count: int,
         failure_reason: str,
         max_top_k: int,
@@ -2022,7 +2022,7 @@ class QueryRewriteService:
     ) -> RetrievalPlanResult:
         """使用 LLM 规划检索预算；失败时回退到给定的兜底预算。"""
         start = time.perf_counter()
-        normalized_items = query_items if isinstance(query_items, list) else []
+        normalized_items = list(query_items) if query_items is not None else []
         query_count = max(
             1,
             sum(
@@ -2544,10 +2544,9 @@ class QueryRewriteService:
                         None,
                     )
                     if isinstance(matched, dict):
-                        raw_tags = (
-                            matched.get("coverage_tags")
-                            if isinstance(matched.get("coverage_tags"), list)
-                            else []
+                        raw_tags_obj = matched.get("coverage_tags")
+                        raw_tags: list[object] = (
+                            raw_tags_obj if isinstance(raw_tags_obj, list) else []
                         )
                         tags = [
                             _normalize_whitespace(str(tag))

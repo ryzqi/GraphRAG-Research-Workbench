@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 from langgraph.runtime import Runtime
 
@@ -22,7 +23,7 @@ def _runtime_config(runtime: Runtime[Any] | None) -> dict[str, Any]:
 
 
 def _state_int(
-    state: dict[str, Any],
+    state: Mapping[str, object],
     *,
     key: str,
     default: int,
@@ -66,7 +67,7 @@ def _state_float(
 
 
 def retrieval_top_k(
-    state: dict[str, Any],
+    state: Mapping[str, object],
     settings: Settings,
     runtime: Runtime[Any] | None = None,
 ) -> int:
@@ -87,7 +88,7 @@ def retrieval_top_k(
 
 
 def parallel_retrieval_min_queries(
-    state: dict[str, Any],
+    state: Mapping[str, object],
     settings: Settings,
     runtime: Runtime[Any] | None = None,
 ) -> int:
@@ -108,7 +109,7 @@ def parallel_retrieval_min_queries(
 
 
 def parallel_retrieval_max_branches(
-    state: dict[str, Any],
+    state: Mapping[str, object],
     settings: Settings,
     runtime: Runtime[Any] | None = None,
 ) -> int:
@@ -129,7 +130,7 @@ def parallel_retrieval_max_branches(
 
 
 def parallel_retrieval_include_main(
-    state: dict[str, Any],
+    state: Mapping[str, object],
     settings: Settings,
     runtime: Runtime[Any] | None = None,
 ) -> bool:

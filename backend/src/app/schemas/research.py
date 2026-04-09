@@ -123,7 +123,10 @@ class ResearchClarificationQuestion(BaseModel):
     @field_validator("id", "question", "why_it_matters")
     @classmethod
     def _validate_question_fields(cls, value: str, info: ValidationInfo) -> str:
-        return _normalize_required_text(value, field_name=info.field_name)
+        return _normalize_required_text(
+            value,
+            field_name=info.field_name or "research_clarification_question",
+        )
 
 
 class ResearchClarificationRequest(BaseModel):

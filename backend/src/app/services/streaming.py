@@ -4,7 +4,7 @@ import asyncio
 import json
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, AsyncIterator, Awaitable, Callable
+from typing import Any, AsyncIterator, Awaitable, Callable, cast
 
 from app.services.message_normalizer import extract_text_content
 
@@ -454,6 +454,8 @@ async def stream_snapshots(
             return
         if request is not None:
             is_disconnected = getattr(request, "is_disconnected", None)
-            if callable(is_disconnected) and await is_disconnected():
-                return
+            if callable(is_disconnected):
+                disconnect_checker = cast(Callable[[], Awaitable[bool]], is_disconnected)
+                if await disconnect_checker():
+                    return
         await asyncio.sleep(poll_interval)

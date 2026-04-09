@@ -4,6 +4,7 @@ import re
 import inspect
 import logging
 from dataclasses import dataclass
+from typing import Any, cast
 
 from app.core.settings import get_settings
 
@@ -184,47 +185,61 @@ class MilvusClient:
     def _build_schema(self, dim: int):
         self._require_schema_types()
 
-        analyzer_params = {"type": self._settings.milvus_text_analyzer}
+        collection_schema = cast(Any, CollectionSchema)
+        field_schema = cast(Any, FieldSchema)
+        data_type = cast(Any, DataType)
+        analyzer_params: dict[str, object] = {
+            "type": self._settings.milvus_text_analyzer
+        }
         if self._settings.milvus_text_analyzer_filters:
-            analyzer_params["filter"] = self._settings.milvus_text_analyzer_filters
+            analyzer_params["filter"] = list(self._settings.milvus_text_analyzer_filters)
 
         fields = [
-            FieldSchema(
+            field_schema(
                 name="chunk_id",
-                dtype=DataType.VARCHAR,
+                dtype=data_type.VARCHAR,
                 is_primary=True,
                 max_length=64,
             ),
-            FieldSchema(name="kb_id", dtype=DataType.VARCHAR, max_length=64),
-            FieldSchema(name="material_id", dtype=DataType.VARCHAR, max_length=64),
-            FieldSchema(name="chunk_role", dtype=DataType.VARCHAR, max_length=16),
-            FieldSchema(name="parent_chunk_id", dtype=DataType.VARCHAR, max_length=64),
-            FieldSchema(name="child_seq", dtype=DataType.INT32),
-            FieldSchema(
+            field_schema(name="kb_id", dtype=data_type.VARCHAR, max_length=64),
+            field_schema(name="material_id", dtype=data_type.VARCHAR, max_length=64),
+            field_schema(name="chunk_role", dtype=data_type.VARCHAR, max_length=16),
+            field_schema(
+                name="parent_chunk_id",
+                dtype=data_type.VARCHAR,
+                max_length=64,
+            ),
+            field_schema(name="child_seq", dtype=data_type.INT32),
+            field_schema(
                 name="content",
-                dtype=DataType.VARCHAR,
+                dtype=data_type.VARCHAR,
                 max_length=65535,
                 enable_analyzer=True,
                 analyzer_params=analyzer_params,
             ),
-            FieldSchema(name="context", dtype=DataType.VARCHAR, max_length=2048),
-            FieldSchema(name="locator", dtype=DataType.JSON),
-            FieldSchema(name="metadata", dtype=DataType.JSON),
-            FieldSchema(
+            field_schema(name="context", dtype=data_type.VARCHAR, max_length=2048),
+            field_schema(name="locator", dtype=data_type.JSON),
+            field_schema(name="metadata", dtype=data_type.JSON),
+            field_schema(
                 name=self._DEFAULT_VECTOR_FIELD,
-                dtype=DataType.FLOAT_VECTOR,
+                dtype=data_type.FLOAT_VECTOR,
                 dim=dim,
             ),
-            FieldSchema(name=self._SPARSE_FIELD, dtype=DataType.SPARSE_FLOAT_VECTOR),
+            field_schema(
+                name=self._SPARSE_FIELD,
+                dtype=data_type.SPARSE_FLOAT_VECTOR,
+            ),
         ]
 
         functions = None
         if self._bm25_supported():
             try:
+                function_cls = cast(Any, Function)
+                function_type = cast(Any, FunctionType)
                 functions = [
-                    Function(
+                    function_cls(
                         name="bm25_fn",
-                        function_type=FunctionType.BM25,
+                        function_type=function_type.BM25,
                         input_field_names=["content"],
                         output_field_names=[self._SPARSE_FIELD],
                     )
@@ -232,7 +247,7 @@ class MilvusClient:
             except Exception:
                 functions = None
 
-        return CollectionSchema(
+        return collection_schema(
             fields=fields,
             description="kb chunks with hybrid retrieval",
             functions=functions,

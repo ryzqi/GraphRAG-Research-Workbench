@@ -1,7 +1,7 @@
 [project]
 name = "multi-kb-agent"
 version = "0.1.0"
-description = "多知识库 + 多智能体协作知识代理系统（后端）"
+description = "多知识库 + 多智能体协作知识代理系统"
 readme = "../README.md"
 requires-python = ">=3.13"
 dependencies = [

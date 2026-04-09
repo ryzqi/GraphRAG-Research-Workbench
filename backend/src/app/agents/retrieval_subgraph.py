@@ -7,6 +7,7 @@ from collections import Counter
 from functools import partial
 import re
 import time
+from collections.abc import Mapping, Sequence
 from typing import Any, TypedDict
 
 from langchain.messages import HumanMessage, SystemMessage
@@ -65,7 +66,7 @@ class KbChatGraphContext(TypedDict, total=False):
     message_budget: dict[str, Any]
 
 
-def _resolve_query_count(state: dict[str, Any]) -> int:
+def _resolve_query_count(state: Mapping[str, Any]) -> int:
     query_items = state.get("query_items")
     if not isinstance(query_items, list):
         return 1
@@ -258,7 +259,7 @@ def _retrieval_budget_plan(
     }
 
 
-def _resolve_query_text(state: dict[str, Any]) -> str:
+def _resolve_query_text(state: Mapping[str, Any]) -> str:
     for key in (
         "normalized_query",
         "resolved_query",

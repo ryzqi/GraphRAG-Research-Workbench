@@ -8,6 +8,7 @@ from __future__ import annotations
 from contextlib import AbstractAsyncContextManager
 from typing import Any
 
+from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
 from app.core.settings import get_settings
@@ -19,6 +20,12 @@ class CheckpointManager:
     _checkpointer: AsyncPostgresSaver | None = None
     _checkpointer_ctx: AbstractAsyncContextManager[AsyncPostgresSaver] | None = None
     _initialized: bool = False
+
+    @staticmethod
+    def _string_key_dict(value: object) -> dict[str, Any]:
+        if not isinstance(value, dict):
+            return {}
+        return {str(key): item for key, item in value.items()}
 
     @classmethod
     async def initialize(cls) -> None:
@@ -53,7 +60,7 @@ class CheckpointManager:
         return cls._checkpointer
 
     @classmethod
-    def make_config(cls, thread_id: str) -> dict[str, Any]:
+    def make_config(cls, thread_id: str) -> RunnableConfig:
         """创建运行配置。"""
         return {"configurable": {"thread_id": thread_id}}
 
@@ -84,23 +91,26 @@ class CheckpointManager:
             if isinstance(channel_values.get("loop_counts"), dict)
             else {}
         )
+        stage_summary_map = CheckpointManager._string_key_dict(stage_summaries)
+        metric_map = CheckpointManager._string_key_dict(metrics)
+        loop_count_map = CheckpointManager._string_key_dict(loop_counts)
         messages = channel_values.get("messages")
         summary: dict[str, Any] = {
             "schema_version": channel_values.get("schema_version"),
             "field_count": len(channel_values),
             "field_names": sorted(str(key) for key in channel_values.keys()),
             "message_count": len(messages) if isinstance(messages, list) else 0,
-            "stage_summary_keys": sorted(str(key) for key in stage_summaries.keys()),
-            "metric_keys": sorted(str(key) for key in metrics.keys()),
+            "stage_summary_keys": sorted(str(key) for key in stage_summary_map.keys()),
+            "metric_keys": sorted(str(key) for key in metric_map.keys()),
             "loop_counts": {
-                "total_rounds": int(loop_counts.get("total_rounds") or 0),
-                "retrieval_retries": int(loop_counts.get("retrieval_retries") or 0),
-                "generation_retries": int(loop_counts.get("generation_retries") or 0),
+                "total_rounds": int(loop_count_map.get("total_rounds") or 0),
+                "retrieval_retries": int(loop_count_map.get("retrieval_retries") or 0),
+                "generation_retries": int(loop_count_map.get("generation_retries") or 0),
             },
         }
         checkpoint_restore = (
-            stage_summaries.get("checkpoint_restore")
-            if isinstance(stage_summaries.get("checkpoint_restore"), dict)
+            stage_summary_map.get("checkpoint_restore")
+            if isinstance(stage_summary_map.get("checkpoint_restore"), dict)
             else None
         )
         if checkpoint_restore is not None:

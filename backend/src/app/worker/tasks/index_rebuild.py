@@ -207,6 +207,8 @@ async def _run_index_rebuild_job(job_id: str) -> None:
             try:
                 milvus_client = resources.milvus
                 http_client = resources.http_client
+                if milvus_client is None:  # pragma: no cover - defensive
+                    return
                 embedding_client = resources.embedding_client or EmbeddingClient(
                     http_client=resources.embedding_http_client,
                     settings=settings,

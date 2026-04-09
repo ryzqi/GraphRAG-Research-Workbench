@@ -2,21 +2,27 @@
 
 from __future__ import annotations
 
-from typing import Any
+from collections.abc import Mapping
+from typing import Any, Literal
 
 from langchain.agents import create_agent
 from langchain.agents.middleware import (
     HumanInTheLoopMiddleware,
     SummarizationMiddleware,
 )
+from langchain.agents.middleware.human_in_the_loop import InterruptOnConfig
+from langchain.agents.middleware.summarization import ContextSize
 from langchain_core.language_models.chat_models import BaseChatModel
 
 from app.core.checkpoint import CheckpointManager
 from app.agents.tool_calling.utils import parse_mcp_tool_name
 
 SUMMARY_TRIGGER_FRACTION = 0.7
-SUMMARY_TRIGGER = ("fraction", SUMMARY_TRIGGER_FRACTION)
-SUMMARY_KEEP = ("messages", 20)
+SUMMARY_TRIGGER: tuple[Literal["fraction"], float] = (
+    "fraction",
+    SUMMARY_TRIGGER_FRACTION,
+)
+SUMMARY_KEEP: tuple[Literal["messages"], int] = ("messages", 20)
 
 
 def build_pending_tool_calls(
@@ -89,8 +95,8 @@ def build_general_chat_agent(
     chat_model: BaseChatModel,
     tools: list[Any],
     system_prompt: str,
-    summary_trigger: tuple[str, int] | tuple[str, float],
-    hitl_interrupt_on: dict[str, bool | dict[str, Any]] | None = None,
+    summary_trigger: ContextSize | list[ContextSize],
+    hitl_interrupt_on: Mapping[str, bool | InterruptOnConfig] | None = None,
 ):
     middleware: list[Any] = [
         SummarizationMiddleware(
@@ -102,7 +108,7 @@ def build_general_chat_agent(
     if hitl_interrupt_on:
         middleware.append(
             HumanInTheLoopMiddleware(
-                interrupt_on=hitl_interrupt_on,
+                interrupt_on=dict(hitl_interrupt_on),
                 description_prefix="外部工具调用待审批",
             )
         )

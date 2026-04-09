@@ -58,7 +58,12 @@ class ExtensionHttpConfig(BaseModel):
     url: str = Field(..., min_length=1, max_length=2048)
     protocol: ExtensionHttpProtocol = ExtensionHttpProtocol.STREAMABLE_HTTP
     headers: dict[str, str] = Field(default_factory=dict)
-    auth: HttpAuthConfig = Field(default_factory=HttpAuthConfig)
+    auth: HttpAuthConfig = Field(
+        default_factory=lambda: HttpAuthConfig(
+            type=ExtensionAuthType.NONE,
+            token=None,
+        )
+    )
     timeout_seconds: int | None = Field(None, ge=1, le=600)
 
     @model_validator(mode="after")

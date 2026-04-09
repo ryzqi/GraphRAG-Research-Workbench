@@ -99,7 +99,7 @@ class KnowledgeUpdateService:
             return None
 
         if req.status is not None:
-            proposal.status = req.status
+            proposal.status = ProposalStatus(req.status.value)
             if req.status in (ProposalStatus.APPROVED, ProposalStatus.REJECTED):
                 proposal.reviewed_at = datetime.now(timezone.utc)
         if req.reviewed_by is not None:
