@@ -17,3 +17,16 @@
 - 已完成任务 1 绿灯验证：
   - `uv run pytest tests/test_deep_research_runtime.py -q` -> `7 passed`
   - `uv run pytest tests/test_research_workspace_files.py -q` -> `2 passed`
+- 已完成任务 1 提交：
+  - `2c6a010 feat: clarify deep research runtime context layers`
+- 已切换到 Phase 2，开始检索 DeepAgents 官方最佳实践。
+- 已完成任务 2 红灯测试：
+  - `uv run pytest tests/test_deep_research_runtime.py -q` 中新增 `test_runner_passes_runtime_context_to_agent_invoke` 失败，失败点为 `captured["context"] is None`
+- 已完成任务 2 实现：
+  - 新增 `ResearchRuntimeContext`
+  - `create_deep_agent(...)` 现在显式声明 `context_schema`
+  - `run_session()` 现在通过 `context=` 传递 structured runtime context
+  - `_invoke_with_async_fallback()` 支持 kwarg 透传
+- 已完成任务 2 绿灯验证：
+  - `uv run pytest tests/test_deep_research_runtime.py -q` -> `8 passed`
+  - `uv run pytest tests/test_research_service.py -q` -> `3 passed`

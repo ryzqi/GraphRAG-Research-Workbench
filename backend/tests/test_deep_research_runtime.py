@@ -77,7 +77,7 @@ async def test_runner_injects_runtime_skill_files_into_request() -> None:
     captured: dict[str, object] = {}
 
     class _FakeAgent:
-        async def ainvoke(self, request, config):  # type: ignore[no-untyped-def]
+        async def ainvoke(self, request, config, **kwargs):  # type: ignore[no-untyped-def]
             captured["request"] = request
             captured["config"] = config
             return {
@@ -142,7 +142,7 @@ async def test_runner_injects_runtime_skill_files_into_request() -> None:
 
 async def test_runner_returns_runtime_context_snapshot_from_result_files() -> None:
     class _FakeAgent:
-        async def ainvoke(self, request, config):  # type: ignore[no-untyped-def]
+        async def ainvoke(self, request, config, **kwargs):  # type: ignore[no-untyped-def]
             layout = build_research_workspace_layout("session-123")
             return {
                 "structured_response": {
@@ -215,7 +215,7 @@ async def test_runner_injects_runtime_context_guide_file() -> None:
     captured: dict[str, object] = {}
 
     class _FakeAgent:
-        async def ainvoke(self, request, config):  # type: ignore[no-untyped-def]
+        async def ainvoke(self, request, config, **kwargs):  # type: ignore[no-untyped-def]
             captured["request"] = request
             return {
                 "structured_response": {
@@ -286,7 +286,7 @@ async def test_runner_prompt_lists_only_priority_context_files() -> None:
     captured: dict[str, object] = {}
 
     class _FakeAgent:
-        async def ainvoke(self, request, config):  # type: ignore[no-untyped-def]
+        async def ainvoke(self, request, config, **kwargs):  # type: ignore[no-untyped-def]
             captured["request"] = request
             return {
                 "structured_response": {
@@ -357,3 +357,75 @@ async def test_runner_prompt_lists_only_priority_context_files() -> None:
     assert "/skills/research-runtime/SKILL.md" not in prompt
     assert "/skills/research-reporting/SKILL.md" not in prompt
     assert "/scratch/research/session-123/raw/noise.json" not in prompt
+
+
+async def test_runner_passes_runtime_context_to_agent_invoke() -> None:
+    captured: dict[str, object] = {}
+
+    class _FakeAgent:
+        async def ainvoke(self, request, config, **kwargs):  # type: ignore[no-untyped-def]
+            captured["request"] = request
+            captured["config"] = config
+            captured["context"] = kwargs.get("context")
+            return {
+                "structured_response": {
+                    "findings": ["finding A", "finding B"],
+                    "citations": [
+                        {
+                            "source_type": "web",
+                            "source_provider": "tavily",
+                            "retrieval_method": "search",
+                            "source_id": "src-tavily",
+                            "title": "Source A",
+                            "url": "https://example.com/a",
+                            "origin_url": "https://example.com/a",
+                        },
+                        {
+                            "source_type": "web",
+                            "source_provider": "searxng",
+                            "retrieval_method": "search",
+                            "source_id": "src-searxng",
+                            "title": "Source B",
+                            "url": "https://example.com/b",
+                            "origin_url": "https://example.com/b",
+                        },
+                    ],
+                }
+            }
+
+    fake_model = object()
+    runtime = SimpleNamespace(
+        agent=_FakeAgent(),
+        config=ResearchRuntimeConfig(
+            primary_model=fake_model,
+            subagent_model=fake_model,
+            finalizer_model=fake_model,
+            system_prompt="runtime prompt",
+        ),
+        tool_groups={"web_provider_ids": ("tavily", "searxng")},
+        tools=[],
+        make_run_config=lambda *, thread_id: {"configurable": {"thread_id": thread_id}},
+    )
+    runner = DeepResearchRuntimeRunner(runtime=runtime, workspace_files={})
+    session = SimpleNamespace(
+        id="session-123",
+        thread_id="thread-123",
+        trace_id="trace-123",
+        question="How should DeepAgents runtime context be propagated?",
+        artifacts=[],
+    )
+
+    await runner.run_session(
+        session=session,
+        plan_snapshot=_build_plan_snapshot(),
+    )
+
+    runtime_context = captured["context"]
+    assert runtime_context is not None
+    assert runtime_context.session_id == "session-123"
+    assert runtime_context.thread_id == "thread-123"
+    assert runtime_context.trace_id == "trace-123"
+    assert runtime_context.target_sources == ("web",)
+    assert runtime_context.subagent_route == ("web", "citation")
+    assert runtime_context.workspace_root.endswith("/session-123")
+    assert runtime_context.scratch_root.endswith("/session-123")

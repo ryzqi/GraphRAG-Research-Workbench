@@ -55,6 +55,7 @@ from app.services.research_runtime_types import (
     DEFAULT_RESEARCH_BACKEND_POLICY,
     ResearchBackendPolicy,
     ResearchRuntimeConfig,
+    ResearchRuntimeContext,
     ResearchToolRegistryBundle,
 )
 from app.services.research_source_bundle import ResearchSourceBundleBuilder
@@ -126,17 +127,18 @@ def _coerce_sync_invoker(candidate: object) -> SyncInvoker | None:
 async def _invoke_with_async_fallback(
     target: object,
     *args: Any,
+    **kwargs: Any,
 ) -> object:
     ainvoke = _coerce_async_invoker(getattr(target, "ainvoke", None))
     if ainvoke is not None:
-        return await ainvoke(*args)
+        return await ainvoke(*args, **kwargs)
 
     invoke = _coerce_sync_invoker(getattr(target, "invoke", None))
     if invoke is None:
         raise RuntimeError(
             "Deep Research runtime target does not support invoke/ainvoke"
         )
-    return await asyncio.to_thread(invoke, *args)
+    return await asyncio.to_thread(invoke, *args, **kwargs)
 
 
 def _normalize_structured_response_payload(payload: Any) -> Any:
@@ -845,6 +847,23 @@ def build_research_run_config(*, thread_id: str) -> dict[str, Any]:
     return {"configurable": {"thread_id": thread_id}}
 
 
+def _build_runtime_context(
+    *,
+    session: ResearchSession,
+    plan_snapshot: ResearchPlanSnapshot,
+    layout: Any,
+) -> ResearchRuntimeContext:
+    return ResearchRuntimeContext(
+        session_id=str(session.id),
+        thread_id=str(session.thread_id),
+        trace_id=str(getattr(session, "trace_id", "") or "") or None,
+        target_sources=tuple(item.value for item in plan_snapshot.target_sources),
+        subagent_route=resolve_source_subagent_route(plan_snapshot.target_sources),
+        workspace_root=str(layout.workspace_root),
+        scratch_root=str(layout.scratch_root),
+    )
+
+
 def build_research_backend(
     policy: ResearchBackendPolicy = DEFAULT_RESEARCH_BACKEND_POLICY,
 ) -> CompositeBackend:
@@ -988,6 +1007,7 @@ async def create_deep_research_runtime(
         "checkpointer": resolved_checkpointer,
         "store": resolved_store,
         "backend": build_research_backend(config.backend_policy),
+        "context_schema": ResearchRuntimeContext,
         "interrupt_on": dict(config.interrupt_on) if config.interrupt_on else None,
     }
     if response_format is not None:
@@ -1207,8 +1227,18 @@ class DeepResearchRuntimeRunner:
             "files": request_files,
         }
         config = self.runtime.make_run_config(thread_id=session.thread_id)
+        runtime_context = _build_runtime_context(
+            session=session,
+            plan_snapshot=plan_snapshot,
+            layout=layout,
+        )
         started_at = perf_counter()
-        result = await _invoke_with_async_fallback(self.runtime.agent, request, config)
+        result = await _invoke_with_async_fallback(
+            self.runtime.agent,
+            request,
+            config,
+            context=runtime_context,
+        )
         latency_ms = int((perf_counter() - started_at) * 1000)
         if not isinstance(result, dict):
             raise RuntimeError("Deep Research runtime 返回类型不符合预期")

@@ -72,3 +72,45 @@
 - 绿灯：
   - `cd F:\毕设\code\backend; uv run pytest tests/test_deep_research_runtime.py -q` -> `7 passed`
   - `cd F:\毕设\code\backend; uv run pytest tests/test_research_workspace_files.py -q` -> `2 passed`
+- 提交：
+  - `2c6a010 feat: clarify deep research runtime context layers`
+
+## 2026-04-10 任务 2 外部调研：DeepAgents
+
+- DeepAgents 官方 `context engineering` / `subagents` / `overview` 文档的共同结论：
+  - `runtime context` 适合承载 per-run 静态配置，不会自动进入 prompt，但会自动传播给所有 subagents。
+  - 复杂任务应该把 session/thread/workspace 等元数据作为 structured context 传入，而不是依赖 prompt 或文件反向解析。
+  - 自定义 subagents 的上下文隔离价值，建立在主代理和子代理共享同一份 runtime context 之上。
+- DeepAgents 官方 changelog 里，当前版本已经强化了 backend / subagent / prompt caching 能力；说明当前项目继续沿用实例化 `StateBackend()/StoreBackend()` 是正确方向。
+
+## 2026-04-10 任务 2 当前实现差距假设
+
+- 当前项目虽然已经使用了 DeepAgents 的 backend、skills、subagents、checkpointer、store，但尚未使用 `context_schema` 与 `context=` 调用约定。
+- 这意味着：
+  - run-scoped 元数据没有通过 DeepAgents 官方推荐通道进入 harness
+  - 共享工具和 subagents 无法直接读取结构化 session/thread/workspace/route 信息
+  - 部分元数据只能依赖 prompt 或文件内容间接获得
+
+## 2026-04-10 任务 2 已落地实现
+
+- 在 `backend/src/app/services/research_runtime_types.py` 新增 `ResearchRuntimeContext` dataclass，承载：
+  - `session_id`
+  - `thread_id`
+  - `trace_id`
+  - `target_sources`
+  - `subagent_route`
+  - `workspace_root`
+  - `scratch_root`
+- 在 `backend/src/app/services/deep_research_runtime.py` 中：
+  - `_invoke_with_async_fallback()` 增加 `**kwargs` 透传
+  - `create_deep_research_runtime()` 给 `create_deep_agent(...)` 增加 `context_schema=ResearchRuntimeContext`
+  - `run_session()` 构建 `runtime_context` 并通过 `context=` 传给 `ainvoke/invoke`
+
+## 2026-04-10 任务 2 验证证据
+
+- 红灯：
+  - `cd F:\毕设\code\backend; uv run pytest tests/test_deep_research_runtime.py -q`
+  - 新增测试 `test_runner_passes_runtime_context_to_agent_invoke` 失败，证明当前 invoke 未传 `context`
+- 绿灯：
+  - `cd F:\毕设\code\backend; uv run pytest tests/test_deep_research_runtime.py -q` -> `8 passed`
+  - `cd F:\毕设\code\backend; uv run pytest tests/test_research_service.py -q` -> `3 passed`

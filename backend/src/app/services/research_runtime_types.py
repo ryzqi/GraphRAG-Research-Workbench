@@ -71,6 +71,19 @@ DEFAULT_RESEARCH_BACKEND_POLICY = ResearchBackendPolicy()
 DEFAULT_RESEARCH_LARGE_RESULT_POLICY = ResearchLargeResultPolicy()
 
 
+@dataclass(slots=True, frozen=True)
+class ResearchRuntimeContext:
+    """DeepAgents per-run runtime context."""
+
+    session_id: str
+    thread_id: str
+    trace_id: str | None
+    target_sources: tuple[str, ...]
+    subagent_route: tuple[str, ...]
+    workspace_root: str
+    scratch_root: str
+
+
 @dataclass(slots=True)
 class ResearchRuntimeConfig:
     """Deep Research runtime 固定配置。"""
@@ -83,7 +96,7 @@ class ResearchRuntimeConfig:
     name: str = "deep-research"
     include_mcp: bool = False
     provider_ids: tuple[ResearchProviderId, ...] = DEFAULT_RESEARCH_PROVIDER_IDS
-    memory_paths: tuple[str, ...] = ("/memories/AGENTS.md",)
+    memory_paths: tuple[str, ...] = ()
     skill_paths: tuple[str, ...] = ("/skills/",)
     interrupt_on: Mapping[str, bool | dict[str, Any]] = field(default_factory=dict)
     stream_policy: ResearchStreamPolicy = DEFAULT_RESEARCH_STREAM_POLICY
