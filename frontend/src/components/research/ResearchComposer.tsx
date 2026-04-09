@@ -19,16 +19,10 @@ interface ResearchComposerProps {
   onStart: () => void;
 }
 
-const briefingItems = [
-  { title: '边界先澄清', body: '先收窄研究问题，再组织计划与执行，避免报告在一开始就失焦。' },
-  { title: '计划后执行', body: '先展示研究计划，再决定是否进入执行阶段，减少黑箱式消耗。' },
-  { title: '证据可追溯', body: '最终报告会同时呈现来源账本、冲突与覆盖状态，不只给结论。' },
-];
-
 export function ResearchComposer(props: ResearchComposerProps) {
   return (
     <ResearchPlanningHero>
-      <Stack spacing={{ xs: 4.5, md: 5.5 }} sx={{ width: '100%', minWidth: 0, maxWidth: 1160, mx: 'auto' }}>
+        <Stack spacing={{ xs: 4.5, md: 5.5 }} sx={{ width: '100%', minWidth: 0, maxWidth: 920, mx: 'auto' }}>
         <Stack spacing={{ xs: 2.25, md: 2.75 }} sx={{ maxWidth: 920, mx: 'auto', width: '100%', textAlign: 'center' }}>
           <Typography
             variant="overline"
@@ -52,19 +46,6 @@ export function ResearchComposer(props: ResearchComposerProps) {
             }}
           >
             深度研究
-          </Typography>
-          <Typography
-            variant="body1"
-            sx={{
-              maxWidth: 760,
-              mx: 'auto',
-              color: researchWorkbenchColors.mutedText,
-              lineHeight: 1.8,
-              fontSize: { xs: '0.98rem', md: '1.04rem' },
-              fontFamily: researchBodyFont,
-            }}
-          >
-            从一个可验证的问题出发，先澄清边界，再生成研究计划，最后以可追溯证据和正式报告完成交付。
           </Typography>
         </Stack>
 
@@ -183,62 +164,6 @@ export function ResearchComposer(props: ResearchComposerProps) {
               {props.validationError}
             </Typography>
           ) : null}
-        </Box>
-
-        <Box
-          sx={{
-            display: 'grid',
-            gridTemplateColumns: { xs: '1fr', md: 'repeat(3, minmax(0, 1fr))' },
-            gap: 1.5,
-            minWidth: 0,
-          }}
-        >
-          {briefingItems.map((item, index) => (
-            <Paper
-              key={item.title}
-              sx={{
-                p: { xs: 2.25, md: 2.4 },
-                borderRadius: 3.5,
-                bgcolor: alpha('#ffffff', 0.84),
-                boxShadow: '0 14px 28px rgba(25, 28, 29, 0.05)',
-                backdropFilter: 'blur(12px)',
-              }}
-            >
-              <Stack spacing={1.1}>
-                <Typography
-                  variant="caption"
-                  sx={{
-                    color: researchWorkbenchColors.subtleText,
-                    letterSpacing: '0.14em',
-                    textTransform: 'uppercase',
-                    fontWeight: 700,
-                  }}
-                >
-                  0{index + 1}
-                </Typography>
-                <Typography
-                  variant="subtitle1"
-                  sx={{
-                    fontFamily: researchDisplayFont,
-                    fontWeight: 800,
-                    color: researchWorkbenchColors.text,
-                  }}
-                >
-                  {item.title}
-                </Typography>
-                <Typography
-                  variant="body2"
-                  sx={{
-                    color: researchWorkbenchColors.mutedText,
-                    lineHeight: 1.75,
-                    fontFamily: researchBodyFont,
-                  }}
-                >
-                  {item.body}
-                </Typography>
-              </Stack>
-            </Paper>
-          ))}
         </Box>
       </Stack>
     </ResearchPlanningHero>

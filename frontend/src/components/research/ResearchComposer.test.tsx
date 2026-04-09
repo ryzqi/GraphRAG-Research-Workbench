@@ -71,6 +71,7 @@ describe('ResearchComposer', () => {
 
     expect(flattenText(tree)).toContain('深度研究');
     expect(flattenText(tree)).toContain('开启研究');
+    expect(flattenText(tree)).not.toContain('从一个可验证的问题出发，先澄清边界，再生成研究计划，最后以可追溯证据和正式报告完成交付。');
     expect(flattenText(tree)).not.toContain('边界先澄清');
     expect(flattenText(tree)).not.toContain('计划后执行');
     expect(flattenText(tree)).not.toContain('证据可追溯');

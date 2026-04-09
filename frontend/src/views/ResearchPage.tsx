@@ -300,9 +300,7 @@ export function ResearchPage() {
         width: '100%',
         px: { xs: 2, md: 4 },
         py: { xs: 3, md: 4 },
-        background: !sessionId
-          ? 'linear-gradient(180deg, #fbfbfa 0%, #f6f6f3 100%)'
-          : 'linear-gradient(180deg, #f8fbff 0%, #f4f7fb 42%, #eef3f9 100%)',
+        background: !sessionId ? 'transparent' : 'linear-gradient(180deg, #f8fbff 0%, #f4f7fb 42%, #eef3f9 100%)',
         minHeight: !sessionId ? { xs: 'calc(100vh - 96px)', md: 'calc(100vh - 120px)' } : undefined,
       }}
     >
