@@ -81,13 +81,19 @@ class ObjectStorage:
                 await self._run_client_call(_ensure, bucket)
                 _BUCKET_CACHE.add(bucket)
 
-    async def presign_get(self, ref: ObjectRef) -> str:
+    async def presign_get(
+        self,
+        ref: ObjectRef,
+        *,
+        response_headers: dict[str, str] | None = None,
+    ) -> str:
         expires = timedelta(seconds=self._settings.exports_presign_expire_seconds)
         return await self._run_client_call(
             self._client.presigned_get_object,
             ref.bucket,
             ref.object_name,
             expires=expires,
+            response_headers=response_headers,
         )
 
     async def presign_put(

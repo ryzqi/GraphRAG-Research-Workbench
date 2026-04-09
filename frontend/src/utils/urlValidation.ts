@@ -25,13 +25,28 @@ export function isAllowedDownloadUrl(url: string): boolean {
 }
 
 /**
- * 安全地打开下载链接。
+ * 安全地触发浏览器下载。
  */
-export function safeOpenDownloadUrl(url: string): boolean {
+export function safeDownloadUrl(url: string): boolean {
   if (!isAllowedDownloadUrl(url)) {
     console.warn('下载链接来自不受信任的域名:', url);
     return false;
   }
-  window.open(url, '_blank', 'noopener,noreferrer');
+
+  if (typeof document === 'undefined' || !document.body) {
+    console.warn('当前环境不支持触发下载:', url);
+    return false;
+  }
+
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.rel = 'noopener noreferrer';
+  anchor.style.display = 'none';
+  document.body.appendChild(anchor);
+  try {
+    anchor.click();
+  } finally {
+    document.body.removeChild(anchor);
+  }
   return true;
 }

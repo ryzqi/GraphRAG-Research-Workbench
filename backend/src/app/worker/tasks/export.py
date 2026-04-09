@@ -19,6 +19,23 @@ def _should_skip_export_job_status(status: ExportStatus) -> bool:
     return status is not ExportStatus.QUEUED
 
 
+def _build_download_response_headers(
+    *,
+    export_type: str,
+    target_id: uuid.UUID,
+    content_type: str,
+    file_extension: str,
+) -> dict[str, str] | None:
+    if export_type != "research":
+        return None
+
+    filename = f"research-report-{target_id}.{file_extension}"
+    return {
+        "response-content-type": content_type,
+        "response-content-disposition": f'attachment; filename="{filename}"',
+    }
+
+
 @celery_app.task(name="app.worker.tasks.export.run_export")
 def run_export(export_id: str, export_type: str, target_id: str) -> None:
     asyncio.run(
@@ -59,8 +76,8 @@ async def _run_export(*, export_id: str, export_type: str, target_id: str) -> No
                 elif export_type == "research":
                     exporter = ResearchExporter()
                     content = await exporter.export(session, target_uuid)
-                    content_type = "text/markdown; charset=utf-8"
-                    ext = "md"
+                    content_type = "application/pdf"
+                    ext = "pdf"
                 else:
                     # 默认占位导出
                     content = (
@@ -77,8 +94,20 @@ async def _run_export(*, export_id: str, export_type: str, target_id: str) -> No
                     bucket=settings.minio_bucket_exports, object_name=object_name
                 )
 
-                await storage.put_text(ref, content, content_type=content_type)
-                job.download_url = await storage.presign_get(ref)
+                if isinstance(content, bytes):
+                    await storage.put_bytes(ref, content, content_type=content_type)
+                else:
+                    await storage.put_text(ref, content, content_type=content_type)
+
+                job.download_url = await storage.presign_get(
+                    ref,
+                    response_headers=_build_download_response_headers(
+                        export_type=export_type,
+                        target_id=target_uuid,
+                        content_type=content_type,
+                        file_extension=ext,
+                    ),
+                )
                 job.status = ExportStatus.SUCCEEDED
             except AppError as exc:
                 job.status = ExportStatus.FAILED

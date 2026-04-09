@@ -27,7 +27,7 @@ import { useSystemQueueHealth } from '../hooks/queries/useSystemQueueHealth';
 import { getErrorMessage } from '../lib/errorHandler';
 import { buildQueueHealthHint } from '../services/queueHealthDiagnostics';
 import type { ResearchSessionAccepted } from '../types/researchEvents';
-import { safeOpenDownloadUrl } from '../utils/urlValidation';
+import { safeDownloadUrl } from '../utils/urlValidation';
 import {
   buildResearchStartRequest,
   validateResearchStartDraft,
@@ -221,8 +221,8 @@ export function ResearchPage() {
       const completed = await pollExportUntilDone(job.id);
 
       if (completed.status === 'succeeded' && completed.download_url) {
-        if (!safeOpenDownloadUrl(completed.download_url)) {
-          setError('下载链接来自不受信任的域名');
+        if (!safeDownloadUrl(completed.download_url)) {
+          setError('无法触发下载，请稍后重试');
         }
       } else {
         setError(completed.error_message || '导出失败');
