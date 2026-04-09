@@ -45,7 +45,12 @@ from app.services.research_query_mesh import (
     build_research_query_mesh,
     select_required_web_providers,
 )
+from app.services.research_runtime_context import (
+    build_runtime_context_guide,
+    build_runtime_context_snapshot,
+)
 from app.services.research_runtime_spill import spill_json_payload
+from app.services.research_runtime_skills import build_research_runtime_skill_files
 from app.services.research_runtime_types import (
     DEFAULT_RESEARCH_BACKEND_POLICY,
     ResearchBackendPolicy,
@@ -1173,13 +1178,20 @@ class DeepResearchRuntimeRunner:
         session: ResearchSession,
         plan_snapshot: ResearchPlanSnapshot,
     ) -> ResearchRuntimeRunResult:
+        layout = build_research_workspace_layout(session.id)
         workspace_files = dict(self.workspace_files)
+        workspace_files.update(build_research_runtime_skill_files())
         workspace_files.update(
             _build_session_bootstrap_workspace_files(
                 session=session,
                 large_result_policy=self.runtime.config.large_result_policy,
             )
         )
+        context_guide = build_runtime_context_guide(
+            workspace_files=workspace_files,
+            layout=layout,
+        )
+        workspace_files[context_guide.path] = context_guide.content
         request_files = _build_runtime_request_files(
             workspace_files=workspace_files,
             session=session,
@@ -1188,7 +1200,7 @@ class DeepResearchRuntimeRunner:
         prompt = _build_runtime_prompt(
             session=session,
             plan_snapshot=plan_snapshot,
-            workspace_paths=sorted(request_files),
+            workspace_paths=context_guide.priority_paths,
         )
         request: dict[str, Any] = {
             "messages": [{"role": "user", "content": prompt}],
@@ -1295,8 +1307,13 @@ class DeepResearchRuntimeRunner:
                 else ()
             ),
         )
+        runtime_context_snapshot = build_runtime_context_snapshot(
+            result=result,
+            layout=layout,
+        )
         return ResearchRuntimeRunResult(
             source_bundle=source_bundle,
+            runtime_context_snapshot=runtime_context_snapshot,
             latency_ms=latency_ms,
         )
 
@@ -1325,8 +1342,6 @@ async def build_deep_research_runtime_runner(
             settings=settings
         ),
         system_prompt=prompt_loader.render_with_few_shot("research/runtime_system"),
-        memory_paths=(),
-        skill_paths=(),
     )
     runtime = await create_deep_research_runtime(
         settings=settings,
