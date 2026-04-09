@@ -6,7 +6,6 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
 from typing import Any, Literal
 
 from langchain.tools import BaseTool, tool as lc_tool
@@ -14,6 +13,11 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from app.integrations.llm_client import ChatMessage, LLMClient
 from app.prompts import PromptLoader, get_prompt_loader
+from app.services.research_report_compiler import (
+    ResearchCompiledSection,
+    compile_report_from_sections,
+    normalize_confidence_level,
+)
 
 
 class ReportGenerateArgs(BaseModel):
@@ -56,16 +60,6 @@ class ReportGenerateResult(BaseModel):
     report_md: str
     sections: list[ReportSection] = Field(default_factory=list)
     metadata: ReportMetadata
-
-
-def _normalize_confidence_level(
-    value: str,
-) -> Literal["sufficient", "partial", "insufficient"]:
-    if value == "sufficient":
-        return "sufficient"
-    if value == "partial":
-        return "partial"
-    return "insufficient"
 
 
 def _extract_json_object(text: str) -> dict | None:
@@ -141,27 +135,6 @@ def _parse_section_payloads(
     return [ReportSection.model_validate(item) for item in payload]
 
 
-def _build_sections_markdown(
-    sections: list[ReportSection],
-    *,
-    prompts: PromptLoader | None = None,
-) -> str:
-    sections_markdown = "\n\n".join(
-        _render_text(
-            "research/report_generate_section_md",
-            prompts=prompts,
-            title=section.title,
-            content=section.content,
-        )
-        for section in sections
-    )
-    return _render_text(
-        "research/report_generate_compiled_md",
-        prompts=prompts,
-        sections_markdown=sections_markdown,
-    )
-
-
 def _build_fallback_result(
     *,
     question: str,
@@ -171,27 +144,30 @@ def _build_fallback_result(
     error_message: str,
     prompts: PromptLoader | None = None,
 ) -> ReportGenerateResult:
-    generated_at = datetime.now(timezone.utc).isoformat()
-    safe_confidence = _normalize_confidence_level(confidence_level)
     sections = _parse_section_payloads(
         "research/report_generate_fallback_sections_json",
         prompts=prompts,
         error_message=error_message,
     )
-    report_md = _render_text(
-        "research/report_generate_fallback_md",
+    compiled = compile_report_from_sections(
+        sections=[
+            ResearchCompiledSection(title=section.title, content=section.content)
+            for section in sections
+        ],
+        report_md=_render_text(
+            "research/report_generate_fallback_md",
+            prompts=prompts,
+            error_message=error_message,
+        ),
+        evidence_count=evidence_count,
+        has_conflicts=has_conflicts,
+        confidence_level=confidence_level,
         prompts=prompts,
-        error_message=error_message,
     )
     return ReportGenerateResult(
-        report_md=report_md,
-        sections=sections,
-        metadata=ReportMetadata(
-            confidence_level=safe_confidence,
-            evidence_count=max(int(evidence_count), 0),
-            has_conflicts=bool(has_conflicts),
-            generated_at=generated_at,
-        ),
+        report_md=compiled.report_md,
+        sections=[ReportSection.model_validate(item) for item in compiled.sections],
+        metadata=ReportMetadata.model_validate(compiled.metadata),
     )
 
 
@@ -204,7 +180,7 @@ def _normalize_result(
     confidence_level: str,
     prompts: PromptLoader | None = None,
 ) -> ReportGenerateResult:
-    generated_at = datetime.now(timezone.utc).isoformat()
+    del question
     normalized_sections = [
         ReportSection(
             title=(section.title or "").strip() or "未命名章节",
@@ -217,22 +193,24 @@ def _normalize_result(
             "research/report_generate_default_section_json",
             prompts=prompts,
         )
-    report_md = (result.report_md or "").strip()
-    if not report_md:
-        report_md = _build_sections_markdown(normalized_sections, prompts=prompts)
-    metadata = result.metadata
-    confidence = metadata.confidence_level
-    if confidence not in {"sufficient", "partial", "insufficient"}:
-        confidence = _normalize_confidence_level(confidence_level)
-    return ReportGenerateResult(
-        report_md=report_md,
-        sections=normalized_sections,
-        metadata=ReportMetadata(
-            confidence_level=_normalize_confidence_level(confidence),
-            evidence_count=max(int(metadata.evidence_count or evidence_count), 0),
-            has_conflicts=bool(metadata.has_conflicts or has_conflicts),
-            generated_at=generated_at,
+    compiled = compile_report_from_sections(
+        sections=[
+            ResearchCompiledSection(title=section.title, content=section.content)
+            for section in normalized_sections
+        ],
+        report_md=(result.report_md or "").strip(),
+        evidence_count=evidence_count,
+        has_conflicts=bool(result.metadata.has_conflicts or has_conflicts),
+        confidence_level=(
+            result.metadata.confidence_level
+            or normalize_confidence_level(confidence_level)
         ),
+        prompts=prompts,
+    )
+    return ReportGenerateResult(
+        report_md=compiled.report_md,
+        sections=[ReportSection.model_validate(item) for item in compiled.sections],
+        metadata=ReportMetadata.model_validate(compiled.metadata),
     )
 
 

@@ -15,6 +15,7 @@ from app.schemas.research import (
 )
 from app.services.research_finalizer import ResearchFinalizerResult
 from app.services.research_observability import ResearchRuntimeRunResult
+from app.services.research_runtime_context import ResearchRuntimeContextSnapshot
 from app.services.research_service import ResearchService
 from app.services.research_source_bundle import ResearchSourceBundle
 
@@ -70,12 +71,14 @@ class _SpyFinalizer:
         question: str,
         target_sources: list[ResearchSourceTarget],
         source_bundle: ResearchSourceBundle,
+        runtime_context_snapshot: ResearchRuntimeContextSnapshot | None = None,
     ) -> ResearchFinalizerResult:
         self.calls.append(
             {
                 "question": question,
                 "target_sources": list(target_sources),
                 "source_bundle": source_bundle,
+                "runtime_context_snapshot": runtime_context_snapshot,
             }
         )
         return ResearchFinalizerResult(
@@ -122,6 +125,23 @@ def _build_runtime_result() -> ResearchRuntimeRunResult:
         source_bundle=source_bundle,
         latency_ms=250,
         quality_score=0.92,
+    )
+
+
+def _build_runtime_result_with_context() -> ResearchRuntimeRunResult:
+    runtime_result = _build_runtime_result()
+    return ResearchRuntimeRunResult(
+        source_bundle=runtime_result.source_bundle,
+        runtime_context_snapshot=ResearchRuntimeContextSnapshot(
+            claim_map_md="# 核心主张\n- Claim A",
+            evidence_ledger_md="# 证据账本\n- [1] Evidence",
+            analysis_notes_md="# 中间分析\n- Note",
+            report_outline_md="# 报告提纲\n- 核心结论",
+            report_context_json={"executive_summary": "summary"},
+            files_snapshot={"/workspace/research/session-123/05-claim-map.md": "# 核心主张"},
+        ),
+        latency_ms=runtime_result.latency_ms,
+        quality_score=runtime_result.quality_score,
     )
 
 
@@ -212,3 +232,28 @@ async def test_execute_session_keeps_finalizer_path_when_not_canceled() -> None:
         "conflicts_json",
         "source_ledger_json",
     }.issubset(artifact_keys)
+
+
+@pytest.mark.asyncio
+async def test_execute_session_persists_runtime_context_artifacts() -> None:
+    runtime_result = _build_runtime_result_with_context()
+    db = _FakeDb(committed_status=ResearchSessionStatus.RUNNING)
+    service, finalizer = _build_service(db=db, runtime_result=runtime_result)
+    session = _build_session()
+
+    result = await service.execute_session(
+        session=session,
+        plan_snapshot=_build_plan_snapshot(),
+    )
+
+    assert result is not None
+    artifact_keys = {artifact.artifact_key for artifact in session.artifacts}
+    assert {
+        "runtime_claim_map_md",
+        "runtime_evidence_ledger_md",
+        "runtime_analysis_notes_md",
+        "runtime_report_outline_md",
+        "runtime_report_context_json",
+        "runtime_files_snapshot_json",
+    }.issubset(artifact_keys)
+    assert finalizer.calls[0]["runtime_context_snapshot"] is not None

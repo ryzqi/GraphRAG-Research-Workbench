@@ -1,0 +1,15 @@
+version: "1.0"
+name: research_report_outline_md
+description: "Deep Research workspace report outline markdown"
+
+template: |
+  # Report Outline
+
+  ## 报告提纲
+  - 执行摘要
+  - 核心结论
+  - 证据与反证
+  - 覆盖缺口
+  - 结论与建议
+
+variables: []

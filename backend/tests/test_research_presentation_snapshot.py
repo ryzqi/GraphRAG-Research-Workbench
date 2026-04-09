@@ -125,3 +125,31 @@ def test_build_research_presentation_snapshot_adds_structured_report_blocks() ->
     assert snapshot["report"]["spotlight_cards"][0]["eyebrow"] == "NVIDIA"
     assert snapshot["report"]["outlook_cards"][0]["title"] == "研究启示 01"
     assert snapshot["report"]["references"][0].startswith("01.")
+
+
+def test_build_research_presentation_snapshot_ignores_extra_runtime_context_fields() -> None:
+    snapshot = build_research_presentation_snapshot(
+        session=_build_session(ResearchSessionStatus.FINAL),
+        events=[],
+        artifacts=[
+            _build_artifact(
+                "report_json",
+                content_json={
+                    "summary": "执行摘要",
+                    "findings": ["Claim A", "Claim B"],
+                    "sections": [{"title": "核心结论", "content": "Claim A"}],
+                    "metadata": {"confidence_level": "partial"},
+                    "runtime_context": {
+                        "executive_summary": "Claim A 得到部分支持"
+                    },
+                },
+            ),
+            _build_artifact(
+                "report_md",
+                content_text="# 研究报告\n\n## 核心结论\nClaim A",
+            ),
+        ],
+    )
+
+    assert snapshot["report"]["summary"] == "执行摘要"
+    assert snapshot["report"]["lead"] == "执行摘要"

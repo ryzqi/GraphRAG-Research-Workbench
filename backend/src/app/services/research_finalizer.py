@@ -9,6 +9,8 @@ from pydantic import BaseModel
 
 from app.prompts import get_prompt_loader
 from app.schemas.research import ResearchSourceTarget
+from app.services.research_report_compiler import compile_report_from_runtime_context
+from app.services.research_runtime_context import ResearchRuntimeContextSnapshot
 from app.services.research_source_bundle import ResearchSourceBundle
 from app.services.research_verification import build_verification_artifacts
 
@@ -31,6 +33,7 @@ class ResearchFinalizer:
         question: str,
         target_sources: Sequence[ResearchSourceTarget],
         source_bundle: ResearchSourceBundle,
+        runtime_context_snapshot: ResearchRuntimeContextSnapshot | None = None,
         response_format: type[BaseModel] | None = None,
     ) -> ResearchFinalizerResult:
         citations_payload = [
@@ -42,19 +45,40 @@ class ResearchFinalizer:
             coverage_gaps=list(source_bundle.coverage_gaps),
             provider_counts=dict(source_bundle.provider_counts),
         )
-        report_md = self._build_report_md(
+        compiled_report = compile_report_from_runtime_context(
             question=question,
             source_bundle=source_bundle,
+            runtime_context_snapshot=runtime_context_snapshot,
+            prompts=self._prompts,
+        )
+        report_md = (
+            compiled_report.report_md
+            if compiled_report is not None
+            else self._build_report_md(
+                question=question,
+                source_bundle=source_bundle,
+            )
+        )
+        report_summary = self._resolve_report_summary(
+            source_bundle=source_bundle,
+            runtime_context_snapshot=runtime_context_snapshot,
         )
         report_json_base = {
             "question": question,
             "target_sources": [item.value for item in target_sources],
-            "summary": source_bundle.interim_summary,
+            "summary": report_summary,
             "findings": list(source_bundle.findings),
             "coverage_gaps": list(source_bundle.coverage_gaps),
             "provider_counts": dict(source_bundle.provider_counts),
             "citations": citations_payload,
             "report_md": report_md,
+            "sections": compiled_report.sections if compiled_report is not None else [],
+            "metadata": compiled_report.metadata if compiled_report is not None else {},
+            "runtime_context": (
+                dict(runtime_context_snapshot.report_context_json)
+                if runtime_context_snapshot is not None
+                else {}
+            ),
         }
         verification_payload = {
             "claim_map": verification.claim_map,
@@ -78,6 +102,21 @@ class ResearchFinalizer:
             report_md=report_md,
             report_json=report_json,
         )
+
+    @staticmethod
+    def _resolve_report_summary(
+        *,
+        source_bundle: ResearchSourceBundle,
+        runtime_context_snapshot: ResearchRuntimeContextSnapshot | None,
+    ) -> str:
+        if runtime_context_snapshot is not None:
+            summary = str(
+                runtime_context_snapshot.report_context_json.get("executive_summary")
+                or ""
+            ).strip()
+            if summary:
+                return summary
+        return source_bundle.interim_summary
 
     def _build_report_md(
         self,

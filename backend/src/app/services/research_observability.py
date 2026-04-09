@@ -20,6 +20,7 @@ from app.schemas.research import (
     ResearchSourceType,
 )
 from app.services.research_query_mesh import evaluate_coverage_gate
+from app.services.research_runtime_context import ResearchRuntimeContextSnapshot
 from app.services.research_source_bundle import ResearchSourceBundle
 
 try:  # pragma: no cover - 依赖在运行环境中存在，这里只做导入兜底
@@ -72,6 +73,7 @@ class ResearchModelStat:
 @dataclass(slots=True, frozen=True)
 class ResearchRuntimeRunResult:
     source_bundle: ResearchSourceBundle
+    runtime_context_snapshot: ResearchRuntimeContextSnapshot | None = None
     trace_links: tuple[ResearchTraceLink, ...] = ()
     provider_stats: tuple[ResearchProviderStat, ...] = ()
     model_stats: tuple[ResearchModelStat, ...] = ()

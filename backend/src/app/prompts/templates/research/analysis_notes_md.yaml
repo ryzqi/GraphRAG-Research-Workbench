@@ -1,0 +1,17 @@
+version: "1.0"
+name: research_analysis_notes_md
+description: "Deep Research workspace analysis notes markdown"
+
+template: |
+  # Analysis Notes
+
+  ## 中间分析
+  - 待记录。
+
+  ## 工作假设
+  - 待补充。
+
+  ## 下一步
+  - 尚未开始。
+
+variables: []

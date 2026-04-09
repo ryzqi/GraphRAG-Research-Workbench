@@ -15,6 +15,10 @@ RESEARCH_BOOTSTRAP_ARTIFACT_KEYS = (
     "query_map_md",
     "coverage_md",
     "report_draft_md",
+    "claim_map_md",
+    "evidence_ledger_md",
+    "analysis_notes_md",
+    "report_outline_md",
 )
 
 
@@ -28,9 +32,15 @@ class ResearchWorkspaceLayout:
     query_map_path: str
     coverage_path: str
     report_draft_path: str
+    claim_map_md_path: str
+    evidence_ledger_md_path: str
+    analysis_notes_path: str
+    report_outline_path: str
     source_ledger_path: str
     claim_map_path: str
     conflicts_path: str
+    evidence_ledger_json_path: str
+    report_context_json_path: str
 
 
 @dataclass(slots=True, frozen=True)
@@ -92,9 +102,15 @@ def build_research_workspace_layout(session_id: UUID | str) -> ResearchWorkspace
         query_map_path=f"{workspace_root}/02-query-map.md",
         coverage_path=f"{workspace_root}/03-coverage.md",
         report_draft_path=f"{workspace_root}/04-report-draft.md",
+        claim_map_md_path=f"{workspace_root}/05-claim-map.md",
+        evidence_ledger_md_path=f"{workspace_root}/06-evidence-ledger.md",
+        analysis_notes_path=f"{workspace_root}/07-analysis-notes.md",
+        report_outline_path=f"{workspace_root}/08-report-outline.md",
         source_ledger_path=f"{scratch_root}/verification/source-ledger.json",
         claim_map_path=f"{scratch_root}/verification/claim-map.json",
         conflicts_path=f"{scratch_root}/verification/conflicts.json",
+        evidence_ledger_json_path=f"{scratch_root}/verification/evidence-ledger.json",
+        report_context_json_path=f"{scratch_root}/report/report-context.json",
     )
 
 
@@ -113,6 +129,10 @@ def build_workspace_bootstrap_artifact_path_map(
         "query_map_md": layout.query_map_path,
         "coverage_md": layout.coverage_path,
         "report_draft_md": layout.report_draft_path,
+        "claim_map_md": layout.claim_map_md_path,
+        "evidence_ledger_md": layout.evidence_ledger_md_path,
+        "analysis_notes_md": layout.analysis_notes_path,
+        "report_outline_md": layout.report_outline_path,
     }
 
 
@@ -157,5 +177,21 @@ def build_workspace_bootstrap_artifacts(
         "report_draft_md": ResearchArtifactSeed(
             artifact_key="report_draft_md",
             content_text=prompts.render("research/report_draft_md"),
+        ),
+        "claim_map_md": ResearchArtifactSeed(
+            artifact_key="claim_map_md",
+            content_text=prompts.render("research/claim_map_md"),
+        ),
+        "evidence_ledger_md": ResearchArtifactSeed(
+            artifact_key="evidence_ledger_md",
+            content_text=prompts.render("research/evidence_ledger_md"),
+        ),
+        "analysis_notes_md": ResearchArtifactSeed(
+            artifact_key="analysis_notes_md",
+            content_text=prompts.render("research/analysis_notes_md"),
+        ),
+        "report_outline_md": ResearchArtifactSeed(
+            artifact_key="report_outline_md",
+            content_text=prompts.render("research/report_outline_md"),
         ),
     }

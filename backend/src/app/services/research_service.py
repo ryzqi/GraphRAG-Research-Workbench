@@ -48,6 +48,7 @@ from app.services.research_presentation_snapshot import (
     build_research_presentation_snapshot,
 )
 from app.services.research_replay import evaluate_research_replay_consistency
+from app.services.research_runtime_context import ResearchRuntimeContextSnapshot
 from app.services.research_workspace_files import build_workspace_bootstrap_artifacts
 
 
@@ -246,6 +247,46 @@ class ResearchService:
                 content_text=seed.content_text,
                 content_json=seed.content_json,
             )
+
+    async def _persist_runtime_context_artifacts(
+        self,
+        *,
+        session: ResearchSession,
+        runtime_context_snapshot: ResearchRuntimeContextSnapshot | None,
+    ) -> None:
+        if runtime_context_snapshot is None:
+            return
+
+        await self._artifact_store.upsert(
+            session=session,
+            artifact_key="runtime_claim_map_md",
+            content_text=runtime_context_snapshot.claim_map_md,
+        )
+        await self._artifact_store.upsert(
+            session=session,
+            artifact_key="runtime_evidence_ledger_md",
+            content_text=runtime_context_snapshot.evidence_ledger_md,
+        )
+        await self._artifact_store.upsert(
+            session=session,
+            artifact_key="runtime_analysis_notes_md",
+            content_text=runtime_context_snapshot.analysis_notes_md,
+        )
+        await self._artifact_store.upsert(
+            session=session,
+            artifact_key="runtime_report_outline_md",
+            content_text=runtime_context_snapshot.report_outline_md,
+        )
+        await self._artifact_store.upsert(
+            session=session,
+            artifact_key="runtime_report_context_json",
+            content_json=runtime_context_snapshot.report_context_json,
+        )
+        await self._artifact_store.upsert(
+            session=session,
+            artifact_key="runtime_files_snapshot_json",
+            content_json=runtime_context_snapshot.files_snapshot,
+        )
 
     async def submit_clarification(
         self,
@@ -550,6 +591,10 @@ class ResearchService:
             artifact_key="coverage_gaps",
             content_json=list(source_bundle.coverage_gaps),
         )
+        await self._persist_runtime_context_artifacts(
+            session=session,
+            runtime_context_snapshot=runtime_result.runtime_context_snapshot,
+        )
 
         committed_status = await self._read_committed_session_status(session=session)
         if committed_status == ResearchSessionStatus.CANCELED:
@@ -576,6 +621,7 @@ class ResearchService:
             question=session.question,
             target_sources=plan_snapshot.target_sources,
             source_bundle=source_bundle,
+            runtime_context_snapshot=runtime_result.runtime_context_snapshot,
         )
         await self._artifact_store.upsert(
             session=session,
