@@ -168,9 +168,15 @@ class ResearchSessionAccepted(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     session_id: uuid.UUID
+    question: str = Field(..., min_length=1)
     status: ResearchSessionStatus
     plan_snapshot: ResearchPlanSnapshot | None = None
     clarification_request: ResearchClarificationRequest | None = None
+
+    @field_validator("question")
+    @classmethod
+    def _validate_question(cls, value: str) -> str:
+        return _normalize_required_text(value, field_name="question")
 
     @model_validator(mode="after")
     def _validate_status_payload(self) -> "ResearchSessionAccepted":

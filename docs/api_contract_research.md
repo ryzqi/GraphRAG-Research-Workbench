@@ -29,6 +29,7 @@
 响应：
 
 - `session_id`
+- `question`
 - `status`
 - `status=clarifying` 时返回 `clarification_request`
 - `status=plan_ready` 时返回 `plan_snapshot`
@@ -52,6 +53,7 @@
 
 响应：
 
+- `question`
 - 若信息仍不足：`status=clarifying` + `clarification_request`
 - 若已可生成计划：`status=plan_ready` + `plan_snapshot`
 
@@ -73,6 +75,7 @@
 
 响应：
 
+- `question`
 - `status=clarifying` + `clarification_request`
 - 或 `status=plan_ready` + `plan_snapshot`
 
@@ -86,6 +89,7 @@
 
 响应：
 
+- `question`
 - `status=queued` + `plan_snapshot`
 
 说明：
@@ -116,7 +120,7 @@
 说明：
 
 - 前端主流程只保留停止，不再暴露 resume 决策 UI。
-- stop 后统一返回 `status=canceled`，不再保留 `interrupted/resuming` 双轨状态。
+- stop 后统一返回 `question + status=canceled`，不再保留 `interrupted/resuming` 双轨状态。
 
 ### 7. 读取研究工件
 
@@ -196,11 +200,33 @@
 - `metrics_snapshot`
 - `gate_snapshot`
 
+### presentation 产物
+
+- `presentation_snapshot`
+
 说明：
 
 - `mission_md` / `plan_md` / `query_map_md` / `coverage_md` / `report_draft_md` 为 workspace bootstrap 工件，用于工作台主阅读区与 scratch 路径对齐。
 - `claim_map_json` / `coverage_matrix_json` / `conflicts_json` / `source_ledger_json` 为 finalizer verification ledger，供前端 evidence / claims / conflicts 展示与导出使用。
+- `presentation_snapshot` 为只读派生展示工件，不入库、不参与业务真值判断；由后端在读取 artifacts 响应时基于 `session.status + artifacts + events` 即时构造，供前端渲染澄清/计划/执行/报告四态页面。
 - 对外读取入口仍统一为 `GET /api/v1/research/sessions/{session_id}/artifacts`，客户端按 `artifact_key` 分派。
+
+### `presentation_snapshot`
+
+最小结构：
+
+- `surface`：`clarifying | planning | live | final`
+- `hero`：页面主标题、引导副标题
+- `rail.steps`：固定四步流程轨道
+- `clarification`：澄清问题卡片、已知上下文、输入占位
+- `plan`：研究摘要、编号步骤、主次 CTA 文案
+- `live`：阶段进度、活动摘要、覆盖标签
+- `report`：报告摘要、目录、摘要指标卡
+
+说明：
+
+- `presentation_snapshot` 不是新的业务事实源，只是前端展示优先消费的派生契约。
+- 底层业务真值仍是 `session.status`、SSE 事件封套与各类 artifacts。
 
 ### `metrics_snapshot`
 

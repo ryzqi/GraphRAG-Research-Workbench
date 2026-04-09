@@ -54,7 +54,8 @@ export function GeminiShell({ children }: GeminiShellProps) {
   const isKnowledgeWorkspacePage = /^\/knowledge-bases\/[^/]+(?:\/documents\/new)?$/.test(
     pathname
   );
-  const useFluidContent = isChatPage || isKnowledgeWorkspacePage;
+  const isResearchPage = pathname === '/research';
+  const useFluidContent = isChatPage || isKnowledgeWorkspacePage || isResearchPage;
 
   const handleToggleSidebar = useCallback(() => {
     setSidebarExpanded((prev) => !prev);

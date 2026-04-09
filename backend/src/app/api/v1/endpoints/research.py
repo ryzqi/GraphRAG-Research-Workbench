@@ -68,6 +68,7 @@ async def create_research_session(
     await db.commit()
     return ResearchSessionAccepted(
         session_id=session.id,
+        question=session.question,
         status=session.status,
         plan_snapshot=plan_result.plan_snapshot,
         clarification_request=plan_result.clarification_request,
@@ -93,6 +94,7 @@ async def submit_research_clarification(
     await db.commit()
     return ResearchSessionAccepted(
         session_id=session.id,
+        question=session.question,
         status=session.status,
         plan_snapshot=plan_result.plan_snapshot,
         clarification_request=plan_result.clarification_request,
@@ -115,6 +117,7 @@ async def update_research_plan(
     await db.commit()
     return ResearchSessionAccepted(
         session_id=session.id,
+        question=session.question,
         status=session.status,
         plan_snapshot=plan_result.plan_snapshot,
         clarification_request=plan_result.clarification_request,
@@ -136,6 +139,7 @@ async def start_research_session(
     await db.commit()
     return ResearchSessionAccepted(
         session_id=session.id,
+        question=session.question,
         status=session.status,
         plan_snapshot=service.read_plan_snapshot(session),
         clarification_request=None,
@@ -183,7 +187,11 @@ async def stop_research_session(
     session = await service.get_session(session_id)
     session = await service.stop_session(session=session, reason=body.reason)
     await db.commit()
-    return ResearchSessionAccepted(session_id=session.id, status=session.status)
+    return ResearchSessionAccepted(
+        session_id=session.id,
+        question=session.question,
+        status=session.status,
+    )
 
 
 @router.get(

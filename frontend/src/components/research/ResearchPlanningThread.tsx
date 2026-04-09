@@ -1,178 +1,57 @@
 import type { ReactNode } from 'react';
-import { Box, Chip, Stack, TextField, Typography } from '@mui/material';
+import { Box, Paper, Stack, TextField, Typography } from '@mui/material';
 import { alpha } from '@mui/material/styles';
 
-import type {
-  ResearchClarificationRequest,
-  ResearchPlanSnapshot,
-  ResearchSessionStatus,
-} from '../../types/researchEvents';
+import type { ResearchPageViewModel } from '../../services/researchWorkbench';
 import {
+  researchBodyFont,
+  researchDisplayFont,
   researchWorkbenchColors,
-  researchWorkbenchEyebrowSx,
   researchWorkbenchInnerCardSx,
-  researchWorkbenchOpenPanelSx,
 } from './researchWorkbenchStyles';
+import { ResearchShell } from './ResearchShell';
 import { Button } from '../ui/Button';
 
-interface ResearchPlanningThreadProps {
-  question: string;
-  status: ResearchSessionStatus;
-  clarificationRequest?: ResearchClarificationRequest | null;
-  planSnapshot?: ResearchPlanSnapshot | null;
-  clarificationDraft?: string;
-  clarificationSubmitPending?: boolean;
-  planFeedbackDraft?: string;
-  planUpdatePending?: boolean;
-  startPending?: boolean;
-  onClarificationDraftChange?: ((value: string) => void) | undefined;
-  onSubmitClarification?: (() => void | Promise<void>) | undefined;
-  onPlanFeedbackDraftChange?: ((value: string) => void) | undefined;
-  onUpdatePlan?: (() => void | Promise<void>) | undefined;
-  onStartExecution?: (() => void | Promise<void>) | undefined;
-}
-
 const longFormTextSx = {
-  minWidth: 0,
   whiteSpace: 'pre-wrap',
   wordBreak: 'break-word',
   overflowWrap: 'anywhere',
 } as const;
 
-const orderedListSx = {
-  pl: 2.5,
-  m: 0,
-  minWidth: 0,
-} as const;
-
-const railSectionSx = {
-  position: 'relative',
-  minWidth: 0,
-  pl: { xs: 4.5, md: 5.75 },
-} as const;
-
-const primaryPanelSx = {
-  ...researchWorkbenchOpenPanelSx,
-  px: { xs: 2.25, md: 2.75 },
-  py: { xs: 2.25, md: 2.75 },
-  minWidth: 0,
-  background: `linear-gradient(180deg, ${alpha('#ffffff', 0.94)} 0%, ${alpha(
-    researchWorkbenchColors.surfaceTint,
-    0.9
-  )} 100%)`,
-} as const;
-
-const secondaryPanelSx = {
+const panelSx = {
   ...researchWorkbenchInnerCardSx,
-  px: { xs: 2, md: 2.25 },
-  py: { xs: 1.75, md: 2 },
-  minWidth: 0,
-  background: `linear-gradient(180deg, ${alpha('#ffffff', 0.94)} 0%, ${alpha(
-    researchWorkbenchColors.surfaceMuted,
-    0.92
-  )} 100%)`,
+  p: { xs: 2.25, md: 2.75 },
+  borderRadius: 3.5,
 } as const;
 
-const chipSx = {
-  borderColor: researchWorkbenchColors.border,
-  color: researchWorkbenchColors.mutedText,
-  backgroundColor: alpha('#ffffff', 0.92),
+const asidePanelSx = {
+  ...researchWorkbenchInnerCardSx,
+  p: 2.25,
+  borderRadius: 3.5,
+  bgcolor: alpha(researchWorkbenchColors.surfaceMuted, 0.74),
 } as const;
 
-function buildPlanningStatusLabel(status: ResearchSessionStatus): string {
-  switch (status) {
-    case 'clarifying':
-      return '待补充信息';
-    case 'plan_ready':
-      return '规划已完成';
-    case 'planning':
-      return '正在规划';
-    default:
-      return '研究准备中';
-  }
-}
-
-function formatSourceLabel(source: string): string {
-  return source === 'paper' ? '论文' : source === 'web' ? '网页' : source;
-}
-
-function renderStageShell(params: {
-  accent: string;
-  eyebrow: string;
-  title: string;
-  tag: string;
-  children: ReactNode;
-}) {
-  const { accent, eyebrow, title, tag, children } = params;
-
+function renderToneChip(label: string) {
   return (
-    <Box sx={railSectionSx}>
-      <Box
-        sx={{
-          position: 'absolute',
-          left: { xs: 9, md: 13 },
-          top: 4,
-          bottom: 18,
-          width: 2,
-          borderRadius: 999,
-          background: alpha(accent, 0.18),
-        }}
-      />
-      <Box
-        sx={{
-          position: 'absolute',
-          left: { xs: 0, md: 4 },
-          top: 12,
-          width: 20,
-          height: 20,
-          borderRadius: 999,
-          background: accent,
-          border: `4px solid ${researchWorkbenchColors.pageBackground}`,
-          boxShadow: `0 0 0 6px ${alpha(accent, 0.12)}`,
-        }}
-      />
-
-      <Stack spacing={2.25} sx={{ minWidth: 0 }}>
-        <Stack
-          direction={{ xs: 'column', sm: 'row' }}
-          justifyContent="space-between"
-          alignItems={{ xs: 'flex-start', sm: 'flex-start' }}
-          spacing={1.25}
-          sx={{ minWidth: 0 }}
-        >
-          <Stack spacing={0.5} sx={{ minWidth: 0 }}>
-            <Typography variant="overline" sx={researchWorkbenchEyebrowSx}>
-              {eyebrow}
-            </Typography>
-            <Typography variant="h5" sx={{ fontWeight: 700, color: researchWorkbenchColors.text }}>
-              {title}
-            </Typography>
-          </Stack>
-          <Chip
-            size="small"
-            label={tag}
-            variant="outlined"
-            sx={{
-              alignSelf: 'flex-start',
-              borderColor: alpha(accent, 0.22),
-              color: accent,
-              background: alpha(accent, 0.08),
-              fontWeight: 700,
-            }}
-          />
-        </Stack>
-
-        {children}
-      </Stack>
+    <Box
+      sx={{
+        px: 1.1,
+        py: 0.55,
+        borderRadius: 999,
+        bgcolor: alpha(researchWorkbenchColors.primary, 0.08),
+        color: researchWorkbenchColors.primary,
+        fontSize: '0.78rem',
+        fontWeight: 700,
+      }}
+    >
+      {label}
     </Box>
   );
 }
 
 export function ResearchPlanningThread({
-  question,
-  status,
-  clarificationRequest = null,
-  planSnapshot = null,
+  model,
+  actions = null,
   clarificationDraft = '',
   clarificationSubmitPending = false,
   planFeedbackDraft = '',
@@ -183,350 +62,378 @@ export function ResearchPlanningThread({
   onPlanFeedbackDraftChange,
   onUpdatePlan,
   onStartExecution,
-}: ResearchPlanningThreadProps) {
-  const trimmedQuestion = question.trim();
+}: {
+  model: ResearchPageViewModel;
+  actions?: ReactNode;
+  clarificationDraft?: string;
+  clarificationSubmitPending?: boolean;
+  planFeedbackDraft?: string;
+  planUpdatePending?: boolean;
+  startPending?: boolean;
+  onClarificationDraftChange?: (value: string) => void;
+  onSubmitClarification?: () => void | Promise<void>;
+  onPlanFeedbackDraftChange?: (value: string) => void;
+  onUpdatePlan?: () => void | Promise<void>;
+  onStartExecution?: () => void | Promise<void>;
+}) {
+  const clarification = model.clarification;
+  const plan = model.plan;
+
+  const clarificationAside = clarification ? (
+    <>
+      <Paper sx={asidePanelSx}>
+        <Stack spacing={1}>
+          <Typography variant="subtitle2" sx={{ color: researchWorkbenchColors.subtleText }}>
+            研究输入摘要
+          </Typography>
+          <Typography
+            variant="body2"
+            sx={{ ...longFormTextSx, color: researchWorkbenchColors.mutedText, lineHeight: 1.75 }}
+          >
+            {clarification.knownContext}
+          </Typography>
+        </Stack>
+      </Paper>
+      <Paper sx={asidePanelSx}>
+        <Stack spacing={1.2}>
+          <Typography variant="subtitle2" sx={{ color: researchWorkbenchColors.subtleText }}>
+            本轮将影响
+          </Typography>
+          <Stack direction="row" flexWrap="wrap" useFlexGap gap={0.9}>
+            {renderToneChip('边界收敛')}
+            {renderToneChip('搜索路径')}
+            {renderToneChip('报告结构')}
+          </Stack>
+          <Typography
+            variant="body2"
+            sx={{ ...longFormTextSx, color: researchWorkbenchColors.mutedText, lineHeight: 1.75 }}
+          >
+            这些补充信息会直接改变后续研究来源、对比维度与最终报告的重点。
+          </Typography>
+        </Stack>
+      </Paper>
+    </>
+  ) : null;
+
+  const planSourceLabels =
+    plan?.steps.flatMap((item) => item.targetSources).filter((value, index, items) => items.indexOf(value) === index) ??
+    [];
+
+  const planningAside = plan ? (
+    <>
+      <Paper sx={asidePanelSx}>
+        <Stack spacing={1.2}>
+          <Typography variant="subtitle2" sx={{ color: researchWorkbenchColors.subtleText }}>
+            来源焦点
+          </Typography>
+          <Stack direction="row" flexWrap="wrap" useFlexGap gap={0.9}>
+            {planSourceLabels.length > 0
+              ? planSourceLabels.map((item) => (
+                  <Box
+                    key={item}
+                    sx={{
+                      px: 1.1,
+                      py: 0.6,
+                      borderRadius: 999,
+                      bgcolor: alpha(researchWorkbenchColors.primary, 0.08),
+                      color: researchWorkbenchColors.primary,
+                      fontSize: '0.78rem',
+                      fontWeight: 700,
+                    }}
+                  >
+                    {item}
+                  </Box>
+                ))
+              : renderToneChip('待补来源')}
+          </Stack>
+        </Stack>
+      </Paper>
+      <Paper sx={asidePanelSx}>
+        <Stack spacing={1}>
+          <Typography variant="subtitle2" sx={{ color: researchWorkbenchColors.subtleText }}>
+            执行约束
+          </Typography>
+          <Typography
+            variant="body2"
+            sx={{ ...longFormTextSx, color: researchWorkbenchColors.mutedText, lineHeight: 1.75 }}
+          >
+            计划确认后再执行，避免在高成本搜索和报告生成阶段重复返工。
+          </Typography>
+        </Stack>
+      </Paper>
+    </>
+  ) : null;
 
   return (
-    <Stack spacing={3.5} sx={{ minWidth: 0 }}>
-      {trimmedQuestion ? (
-        <Box
-          sx={{
-            display: 'grid',
-            gridTemplateColumns: {
-              xs: '1fr',
-              xl: 'minmax(0, 1.5fr) minmax(280px, 0.72fr)',
-            },
-            gap: 2.25,
-            minWidth: 0,
-          }}
-        >
-          <Stack spacing={1} sx={{ minWidth: 0 }}>
-            <Typography variant="overline" sx={researchWorkbenchEyebrowSx}>
-              研究问题
-            </Typography>
-            <Typography
-              variant="h4"
-              sx={{
-                ...longFormTextSx,
-                fontWeight: 700,
-                color: researchWorkbenchColors.text,
-                lineHeight: 1.18,
-              }}
-            >
-              {trimmedQuestion}
-            </Typography>
-          </Stack>
-
-          <Box sx={{ ...primaryPanelSx, alignSelf: 'start' }}>
-            <Stack spacing={0.75}>
+    <ResearchShell
+      hero={model.hero}
+      railSteps={model.railSteps}
+      actions={actions}
+      aside={model.surface === 'clarifying' ? clarificationAside : planningAside}
+    >
+      {model.surface === 'clarifying' && clarification ? (
+        <>
+          <Paper sx={panelSx}>
+            <Stack spacing={2} sx={{ minWidth: 0 }}>
               <Typography
-                variant="caption"
+                variant="h4"
                 sx={{
-                  color: researchWorkbenchColors.subtleText,
-                  letterSpacing: '0.14em',
-                  textTransform: 'uppercase',
+                  fontFamily: researchDisplayFont,
+                  fontWeight: 800,
+                  color: researchWorkbenchColors.text,
                 }}
               >
-                当前阶段
-              </Typography>
-              <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>
-                {buildPlanningStatusLabel(status)}
+                待确认的研究维度
               </Typography>
               <Typography
-                variant="body2"
-                sx={{ ...longFormTextSx, color: researchWorkbenchColors.mutedText, lineHeight: 1.7 }}
+                variant="body1"
+                sx={{ ...longFormTextSx, color: researchWorkbenchColors.mutedText, lineHeight: 1.8, fontFamily: researchBodyFont }}
               >
-                计划、证据和后续研究结果会沿右侧主区连续展开显示，不再被外层大容器挤压。
+                {clarification.summary}
               </Typography>
+              <Box
+                sx={{
+                  display: 'grid',
+                  gridTemplateColumns: { xs: '1fr', md: 'repeat(2, minmax(0, 1fr))' },
+                  gap: 1.5,
+                }}
+              >
+                {clarification.questionCards.map((item, index) => (
+                  <Paper
+                    key={item.id}
+                    sx={{
+                      p: 2.15,
+                      borderRadius: 3,
+                      bgcolor: alpha('#ffffff', 0.88),
+                      boxShadow: '0 12px 24px rgba(25, 28, 29, 0.04)',
+                    }}
+                  >
+                    <Stack spacing={0.95}>
+                      <Typography
+                        variant="caption"
+                        sx={{ color: researchWorkbenchColors.subtleText, letterSpacing: '0.14em' }}
+                      >
+                        Q0{index + 1}
+                      </Typography>
+                      <Typography variant="subtitle1" fontWeight={700} sx={longFormTextSx}>
+                        {item.title}
+                      </Typography>
+                      <Typography
+                        variant="body2"
+                        sx={{ ...longFormTextSx, color: researchWorkbenchColors.mutedText, lineHeight: 1.75 }}
+                      >
+                        {item.description}
+                      </Typography>
+                    </Stack>
+                  </Paper>
+                ))}
+              </Box>
             </Stack>
-          </Box>
-        </Box>
+          </Paper>
+
+          <Paper sx={{ ...panelSx, p: { xs: 1.7, md: 1.85 } }}>
+            <Stack spacing={1.15}>
+              <Typography variant="subtitle1" fontWeight={800}>
+                回复澄清问题
+              </Typography>
+              <TextField
+                fullWidth
+                multiline
+                minRows={3}
+                value={clarificationDraft}
+                onChange={(event) => onClarificationDraftChange?.(event.target.value)}
+                placeholder={clarification.inputPlaceholder}
+                slotProps={{
+                  input: {
+                    sx: {
+                      ...longFormTextSx,
+                      color: researchWorkbenchColors.text,
+                      alignItems: 'flex-start',
+                      bgcolor: alpha('#ffffff', 0.94),
+                      borderRadius: 2.5,
+                    },
+                  },
+                }}
+              />
+              <Stack direction={{ xs: 'column', md: 'row' }} spacing={1.25} justifyContent="flex-end">
+                <Button
+                  variant="contained"
+                  loading={clarificationSubmitPending}
+                  onClick={() => {
+                    void onSubmitClarification?.();
+                  }}
+                  sx={{
+                    minWidth: { md: 168 },
+                    minHeight: 46,
+                    borderRadius: 999,
+                    background: `linear-gradient(135deg, ${researchWorkbenchColors.primary} 0%, ${researchWorkbenchColors.primaryContainer} 100%)`,
+                    color: '#fff',
+                    boxShadow: 'none',
+                  }}
+                >
+                  {clarification.submitLabel}
+                </Button>
+              </Stack>
+            </Stack>
+          </Paper>
+        </>
       ) : null}
 
-      {status === 'clarifying' && clarificationRequest
-        ? renderStageShell({
-            accent: researchWorkbenchColors.primary,
-            eyebrow: '待补充信息',
-            title: '补齐研究边界',
-            tag: '澄清阶段',
-            children: (
-              <Box
+      {model.surface === 'planning' && plan ? (
+        <>
+          <Paper sx={panelSx}>
+            <Stack spacing={1.6} sx={{ minWidth: 0 }}>
+              <Typography
+                variant="h4"
                 sx={{
-                  display: 'grid',
-                  gridTemplateColumns: {
-                    xs: '1fr',
-                    xl: 'minmax(0, 1.35fr) minmax(320px, 0.92fr)',
-                  },
-                  gap: 2,
-                  minWidth: 0,
+                  fontFamily: researchDisplayFont,
+                  fontWeight: 800,
+                  color: researchWorkbenchColors.text,
                 }}
               >
-                <Stack spacing={2} sx={{ minWidth: 0 }}>
-                  <Box sx={primaryPanelSx}>
-                    <Stack spacing={1.5} sx={{ minWidth: 0 }}>
-                      <Typography
-                        variant="body2"
-                        sx={{ ...longFormTextSx, color: researchWorkbenchColors.mutedText, lineHeight: 1.72 }}
-                      >
-                        {clarificationRequest.summary}
-                      </Typography>
-                      <Stack component="ol" spacing={1.25} sx={orderedListSx}>
-                        {clarificationRequest.questions.map((item) => (
-                          <Typography component="li" key={item.id} variant="body2" sx={longFormTextSx}>
-                            <Typography component="span" variant="body2" fontWeight={700} sx={longFormTextSx}>
-                              {item.question}
-                            </Typography>
-                            <Typography
-                              component="span"
-                              variant="body2"
-                              sx={{
-                                ...longFormTextSx,
-                                display: 'block',
-                                mt: 0.5,
-                                color: researchWorkbenchColors.mutedText,
-                              }}
-                            >
-                              {item.why_it_matters}
-                            </Typography>
-                          </Typography>
-                        ))}
-                      </Stack>
-                    </Stack>
-                  </Box>
-                </Stack>
-
-                <Box sx={{ ...secondaryPanelSx, alignSelf: 'start' }}>
-                  <Stack spacing={1.5} sx={{ minWidth: 0 }}>
-                    <Typography variant="subtitle1" fontWeight={700}>
-                      回答补充问题
-                    </Typography>
-                    <TextField
-                      fullWidth
-                      multiline
-                      minRows={5}
-                      value={clarificationDraft}
-                      onChange={(event) => onClarificationDraftChange?.(event.target.value)}
-                      placeholder="补充研究范围、目标读者、输出形式或关键约束。"
-                      slotProps={{
-                        input: {
-                          sx: {
-                            color: researchWorkbenchColors.text,
-                            alignItems: 'flex-start',
-                            bgcolor: alpha('#ffffff', 0.92),
-                            borderRadius: 2.5,
-                          },
-                        },
-                      }}
-                      sx={{
-                        '& .MuiOutlinedInput-root': {
-                          alignItems: 'flex-start',
-                          borderRadius: 2.5,
-                          '& fieldset': {
-                            borderColor: researchWorkbenchColors.border,
-                          },
-                          '&:hover fieldset': {
-                            borderColor: researchWorkbenchColors.softBorder,
-                          },
-                          '&.Mui-focused fieldset': {
-                            borderColor: researchWorkbenchColors.primary,
-                          },
-                        },
-                        '& .MuiInputBase-input::placeholder': {
-                          color: researchWorkbenchColors.subtleText,
-                          opacity: 1,
-                        },
-                      }}
-                    />
-                    <Button
-                      variant="contained"
-                      onClick={() => {
-                        void onSubmitClarification?.();
-                      }}
-                      loading={clarificationSubmitPending}
-                      sx={{
-                        alignSelf: { xs: 'stretch', sm: 'flex-start' },
-                        minHeight: 44,
-                        px: 2.75,
-                        borderRadius: 2.5,
-                        bgcolor: researchWorkbenchColors.primary,
-                        color: '#ffffff',
-                        boxShadow: 'none',
-                        '&:hover': {
-                          bgcolor: researchWorkbenchColors.primaryHover,
-                          boxShadow: 'none',
-                        },
-                      }}
-                    >
-                      提交补充信息
-                    </Button>
-                  </Stack>
-                </Box>
-              </Box>
-            ),
-          })
-        : null}
-
-      {status === 'plan_ready' && planSnapshot
-        ? renderStageShell({
-            accent: '#7c3aed',
-            eyebrow: '研究计划',
-            title: '规划阶段',
-            tag: '规划已完成',
-            children: (
-              <Box
-                sx={{
-                  display: 'grid',
-                  gridTemplateColumns: {
-                    xs: '1fr',
-                    xl: 'minmax(0, 1.45fr) minmax(320px, 0.95fr)',
-                  },
-                  gap: 2,
-                  minWidth: 0,
-                }}
+                拟定研究计划
+              </Typography>
+              {plan.researchBrief ? (
+                <Typography
+                  variant="body2"
+                  sx={{ ...longFormTextSx, color: researchWorkbenchColors.subtleText, lineHeight: 1.75 }}
+                >
+                  {plan.researchBrief}
+                </Typography>
+              ) : null}
+              <Typography
+                variant="body1"
+                sx={{ ...longFormTextSx, color: researchWorkbenchColors.mutedText, lineHeight: 1.8 }}
               >
-                <Stack spacing={2} sx={{ minWidth: 0 }}>
-                  <Box sx={primaryPanelSx}>
-                    <Stack spacing={1.5} sx={{ minWidth: 0 }}>
-                      <Typography variant="subtitle1" fontWeight={700}>
-                        研究摘要
-                      </Typography>
+                {plan.summary}
+              </Typography>
+              <Stack spacing={1.5}>
+                {plan.steps.map((item) => (
+                  <Paper
+                    key={`${item.index}-${item.title}`}
+                    sx={{
+                      p: 2,
+                      borderRadius: 3,
+                      bgcolor: alpha('#ffffff', 0.84),
+                      boxShadow: '0 12px 24px rgba(25, 28, 29, 0.04)',
+                    }}
+                  >
+                    <Stack spacing={1.05} sx={{ minWidth: 0 }}>
+                      <Stack direction="row" spacing={1.2} alignItems="center">
+                        <Box
+                          sx={{
+                            width: 30,
+                            height: 30,
+                            borderRadius: '50%',
+                            bgcolor: alpha(researchWorkbenchColors.primary, 0.12),
+                            color: researchWorkbenchColors.primary,
+                            fontWeight: 800,
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            flexShrink: 0,
+                          }}
+                        >
+                          {item.index}
+                        </Box>
+                        <Typography variant="subtitle1" fontWeight={700} sx={longFormTextSx}>
+                          {item.title}
+                        </Typography>
+                      </Stack>
                       <Typography
                         variant="body2"
-                        sx={{ ...longFormTextSx, color: researchWorkbenchColors.mutedText, lineHeight: 1.72 }}
+                        sx={{ ...longFormTextSx, color: researchWorkbenchColors.mutedText }}
                       >
-                        {planSnapshot.summary}
+                        {item.description}
                       </Typography>
-                      <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap" sx={{ minWidth: 0 }}>
-                        {planSnapshot.target_sources.map((item) => (
-                          <Chip key={item} size="small" label={formatSourceLabel(item)} variant="outlined" sx={chipSx} />
+                      <Stack direction="row" spacing={0.9} flexWrap="wrap" useFlexGap>
+                        {item.targetSources.map((target) => (
+                          <Box
+                            key={`${item.index}-${target}`}
+                            sx={{
+                              px: 1.1,
+                              py: 0.55,
+                              borderRadius: 999,
+                              bgcolor: alpha(researchWorkbenchColors.primary, 0.08),
+                              color: researchWorkbenchColors.primary,
+                              fontSize: '0.78rem',
+                              fontWeight: 700,
+                            }}
+                          >
+                            {target}
+                          </Box>
                         ))}
                       </Stack>
                     </Stack>
-                  </Box>
+                  </Paper>
+                ))}
+              </Stack>
+            </Stack>
+          </Paper>
 
-                  <Box sx={secondaryPanelSx}>
-                    <Stack spacing={1.5} sx={{ minWidth: 0 }}>
-                      <Typography variant="subtitle1" fontWeight={700}>
-                        子任务拆解
-                      </Typography>
-                      <Stack component="ol" spacing={1.25} sx={orderedListSx}>
-                        {planSnapshot.subtasks.map((item) => (
-                          <Typography component="li" key={item.title} variant="body2" sx={longFormTextSx}>
-                            <Typography component="span" variant="body2" fontWeight={700} sx={longFormTextSx}>
-                              {item.title}
-                            </Typography>
-                            <Typography
-                              component="span"
-                              variant="body2"
-                              sx={{
-                                ...longFormTextSx,
-                                display: 'block',
-                                mt: 0.5,
-                                color: researchWorkbenchColors.mutedText,
-                              }}
-                            >
-                              {item.description}
-                            </Typography>
-                          </Typography>
-                        ))}
-                      </Stack>
-                    </Stack>
-                  </Box>
-                </Stack>
-
-                <Box sx={{ ...secondaryPanelSx, alignSelf: 'start' }}>
-                  <Stack spacing={1.5} sx={{ minWidth: 0 }}>
-                    <Typography variant="subtitle1" fontWeight={700}>
-                      调整计划或开始执行
-                    </Typography>
-                    <Typography
-                      variant="body2"
-                      sx={{ ...longFormTextSx, color: researchWorkbenchColors.mutedText }}
-                    >
-                      如果有新的重点、边界或输出要求，可以先补充；没有的话可以直接开始研究。
-                    </Typography>
-                    <TextField
-                      fullWidth
-                      multiline
-                      minRows={4}
-                      value={planFeedbackDraft}
-                      onChange={(event) => onPlanFeedbackDraftChange?.(event.target.value)}
-                      placeholder="如需更新计划，可补充新的关注点、输出要求或边界。"
-                      slotProps={{
-                        input: {
-                          sx: {
-                            color: researchWorkbenchColors.text,
-                            alignItems: 'flex-start',
-                            bgcolor: alpha('#ffffff', 0.92),
-                            borderRadius: 2.5,
-                          },
-                        },
-                      }}
-                      sx={{
-                        '& .MuiOutlinedInput-root': {
-                          alignItems: 'flex-start',
-                          borderRadius: 2.5,
-                          '& fieldset': {
-                            borderColor: researchWorkbenchColors.border,
-                          },
-                          '&:hover fieldset': {
-                            borderColor: researchWorkbenchColors.softBorder,
-                          },
-                          '&.Mui-focused fieldset': {
-                            borderColor: researchWorkbenchColors.primary,
-                          },
-                        },
-                        '& .MuiInputBase-input::placeholder': {
-                          color: researchWorkbenchColors.subtleText,
-                          opacity: 1,
-                        },
-                      }}
-                    />
-                    <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.25}>
-                      <Button
-                        variant="outlined"
-                        onClick={() => {
-                          void onUpdatePlan?.();
-                        }}
-                        loading={planUpdatePending}
-                        sx={{
-                          minHeight: 44,
-                          borderRadius: 2.5,
-                          borderColor: researchWorkbenchColors.border,
-                          color: researchWorkbenchColors.text,
-                          backgroundColor: alpha('#ffffff', 0.72),
-                        }}
-                      >
-                        更新计划
-                      </Button>
-                      <Button
-                        variant="contained"
-                        onClick={() => {
-                          void onStartExecution?.();
-                        }}
-                        loading={startPending}
-                        sx={{
-                          minHeight: 44,
-                          px: 2.75,
-                          borderRadius: 2.5,
-                          bgcolor: researchWorkbenchColors.primary,
-                          color: '#ffffff',
-                          boxShadow: 'none',
-                          '&:hover': {
-                            bgcolor: researchWorkbenchColors.primaryHover,
-                            boxShadow: 'none',
-                          },
-                        }}
-                      >
-                        开始
-                      </Button>
-                    </Stack>
-                  </Stack>
-                </Box>
-              </Box>
-            ),
-          })
-        : null}
-    </Stack>
+          <Paper sx={{ ...panelSx, p: { xs: 1.8, md: 1.95 } }}>
+            <Stack spacing={1.25}>
+              <Typography variant="subtitle1" fontWeight={800}>
+                微调计划后再执行
+              </Typography>
+              <TextField
+                fullWidth
+                multiline
+                minRows={3}
+                value={planFeedbackDraft}
+                onChange={(event) => onPlanFeedbackDraftChange?.(event.target.value)}
+                placeholder="如需更新计划，可补充新的关注点、输出要求或边界。"
+                slotProps={{
+                  input: {
+                    sx: {
+                      ...longFormTextSx,
+                      color: researchWorkbenchColors.text,
+                      alignItems: 'flex-start',
+                      bgcolor: alpha('#ffffff', 0.94),
+                      borderRadius: 2.5,
+                    },
+                  },
+                }}
+              />
+              <Stack direction={{ xs: 'column', md: 'row' }} spacing={1.25} justifyContent="flex-end">
+                <Button
+                  variant="outlined"
+                  loading={planUpdatePending}
+                  onClick={() => {
+                    void onUpdatePlan?.();
+                  }}
+                  sx={{
+                    minHeight: 44,
+                    borderRadius: 999,
+                    borderColor: alpha(researchWorkbenchColors.text, 0.12),
+                    color: researchWorkbenchColors.text,
+                    backgroundColor: alpha('#ffffff', 0.72),
+                  }}
+                >
+                  {plan.secondaryActionLabel}
+                </Button>
+                <Button
+                  variant="contained"
+                  loading={startPending}
+                  onClick={() => {
+                    void onStartExecution?.();
+                  }}
+                  sx={{
+                    minHeight: 44,
+                    px: 2.75,
+                    borderRadius: 999,
+                    background: `linear-gradient(135deg, ${researchWorkbenchColors.primary} 0%, ${researchWorkbenchColors.primaryContainer} 100%)`,
+                    color: '#fff',
+                    boxShadow: 'none',
+                  }}
+                >
+                  {plan.primaryActionLabel}
+                </Button>
+              </Stack>
+            </Stack>
+          </Paper>
+        </>
+      ) : null}
+    </ResearchShell>
   );
 }

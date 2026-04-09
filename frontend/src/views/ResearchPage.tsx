@@ -4,15 +4,12 @@
  * 深度研究页面
  */
 import { useCallback, useMemo, useState } from 'react';
-import { Box, Stack, Typography } from '@mui/material';
+import { Box, Stack } from '@mui/material';
 import DownloadIcon from '@mui/icons-material/Download';
 import { ResearchCanvas } from '../components/research/ResearchCanvas';
 import { ResearchComposer } from '../components/research/ResearchComposer';
 import { ResearchPlanningThread } from '../components/research/ResearchPlanningThread';
-import {
-  researchWorkbenchColors,
-  researchWorkbenchEyebrowSx,
-} from '../components/research/researchWorkbenchStyles';
+import { ResearchReportReader } from '../components/research/ResearchReportReader';
 import { Button } from '../components/ui/Button';
 import { ErrorAlert } from '../components/ui/ErrorAlert';
 import { LoadingSpinner } from '../components/ui/LoadingSpinner';
@@ -29,7 +26,7 @@ import {
 import { useSystemQueueHealth } from '../hooks/queries/useSystemQueueHealth';
 import { getErrorMessage } from '../lib/errorHandler';
 import { buildQueueHealthHint } from '../services/queueHealthDiagnostics';
-import type { ResearchSessionAccepted, ResearchSessionStatus } from '../types/researchEvents';
+import type { ResearchSessionAccepted } from '../types/researchEvents';
 import { safeOpenDownloadUrl } from '../utils/urlValidation';
 import {
   buildResearchStartRequest,
@@ -51,6 +48,7 @@ export function ResearchPage() {
   const [error, setError] = useState<string | null>(null);
   const [clarificationDraft, setClarificationDraft] = useState('');
   const [planFeedbackDraft, setPlanFeedbackDraft] = useState('');
+  const questionValidationError = error === '请输入研究问题' ? error : null;
 
   const sessionQuery = useResearchSession(sessionId ?? undefined, acceptedSession);
   const session = sessionQuery.data;
@@ -124,6 +122,13 @@ export function ResearchPage() {
       setError(getErrorMessage(caughtError));
     }
   }, [createSessionMutation, question]);
+
+  const handleQuestionChange = useCallback((value: string) => {
+    setQuestion(value);
+    if (questionValidationError) {
+      setError(null);
+    }
+  }, [questionValidationError]);
 
   const handleSubmitClarification = useCallback(async () => {
     if (!sessionId) {
@@ -238,68 +243,21 @@ export function ResearchPage() {
     setPlanFeedbackDraft('');
   }, []);
 
-  const getStatusPresentation = (status: ResearchSessionStatus) => {
-    switch (status) {
-      case 'created':
-      case 'planning':
-        return { badge: 'pending' as const, label: '规划中' };
-      case 'clarifying':
-        return { badge: 'pending' as const, label: '待补充信息' };
-      case 'plan_ready':
-        return { badge: 'pending' as const, label: '等待开始' };
-      case 'queued':
-        return { badge: 'queued' as const, label: '排队中…' };
-      case 'running':
-        return { badge: 'running' as const, label: '研究中…' };
-      case 'finalizing':
-        return { badge: 'running' as const, label: '收口中…' };
-      case 'final':
-        return { badge: 'succeeded' as const, label: '已完成' };
-      case 'canceled':
-        return { badge: 'canceled' as const, label: '已取消' };
-      case 'timed_out':
-      case 'failed':
-      default:
-        return { badge: 'failed' as const, label: '失败' };
-    }
-  };
-
-  const statusPresentation = session ? getStatusPresentation(session.status) : null;
-  const isExecutionStage =
-    session?.status === 'queued' ||
-    session?.status === 'running' ||
-    session?.status === 'finalizing' ||
-    session?.status === 'final' ||
-    session?.status === 'failed' ||
-    session?.status === 'canceled' ||
-    session?.status === 'timed_out';
+  const effectiveQuestion = session?.question ?? question;
 
   const pageModel = useMemo(
     () =>
       buildResearchPageViewModel({
+        question: effectiveQuestion,
         status: session?.status ?? 'created',
         events: session?.events ?? [],
         artifacts: session?.artifacts ?? [],
         reportMd: session?.report_md ?? null,
+        clarificationRequest: session?.clarification_request ?? null,
+        planSnapshot: session?.plan_snapshot ?? null,
       }),
-    [session]
+    [effectiveQuestion, session]
   );
-
-  const coverageLabel = useMemo(() => {
-    const providerCount = Object.keys(pageModel.evidenceDrawer.coverageMatrix.provider_counts).length;
-    const missingCount = pageModel.evidenceDrawer.coverageMatrix.missing_providers.length;
-
-    if (providerCount > 0 && missingCount > 0) {
-      return `已覆盖 ${providerCount} 个来源 / ${missingCount} 个缺口`;
-    }
-    if (providerCount > 0) {
-      return `已覆盖 ${providerCount} 个来源`;
-    }
-    if (missingCount > 0) {
-      return `待补 ${missingCount} 个缺口`;
-    }
-    return '覆盖信息生成中';
-  }, [pageModel.evidenceDrawer.coverageMatrix.missing_providers.length, pageModel.evidenceDrawer.coverageMatrix.provider_counts]);
 
   const latestQueuedTimestamp = useMemo(() => {
     const queuedEvents = (session?.events ?? []).filter(
@@ -342,8 +300,9 @@ export function ResearchPage() {
         width: '100%',
         px: { xs: 2, md: 4 },
         py: { xs: 3, md: 4 },
-        background:
-          'linear-gradient(180deg, #f8fbff 0%, #f4f7fb 42%, #eef3f9 100%)',
+        background: !sessionId
+          ? 'linear-gradient(180deg, #fbfbfa 0%, #f6f6f3 100%)'
+          : 'linear-gradient(180deg, #f8fbff 0%, #f4f7fb 42%, #eef3f9 100%)',
         minHeight: !sessionId ? { xs: 'calc(100vh - 96px)', md: 'calc(100vh - 120px)' } : undefined,
       }}
     >
@@ -351,102 +310,75 @@ export function ResearchPage() {
         <ResearchComposer
           question={question}
           loading={createSessionMutation.isPending}
-          validationError={validateResearchStartDraft({
-            question,
-          })}
-          onQuestionChange={setQuestion}
+          validationError={questionValidationError}
+          onQuestionChange={handleQuestionChange}
           onStart={startResearch}
         />
       ) : !session ? (
         <LoadingSpinner text="加载研究任务..." />
-      ) : !isExecutionStage ? (
-        <Stack spacing={4} sx={{ width: '100%', pt: { xs: 1, md: 1.5 }, minWidth: 0 }}>
-          <Stack
-            direction={{ xs: 'column', sm: 'row' }}
-            justifyContent="space-between"
-            alignItems={{ xs: 'flex-start', sm: 'center' }}
-            spacing={2}
-            sx={{
-              pb: { xs: 2.5, md: 3 },
-              borderBottom: `1px solid ${researchWorkbenchColors.softBorder}`,
-              minWidth: 0,
-            }}
-          >
-            <Stack spacing={0.75}>
-              <Typography variant="overline" sx={researchWorkbenchEyebrowSx}>
-                Deep Research
-              </Typography>
-              <Typography variant="h4" sx={{ fontWeight: 700, color: researchWorkbenchColors.text }}>
-                研究规划
-              </Typography>
-              <Typography variant="body2" sx={{ color: researchWorkbenchColors.mutedText }}>
-                {statusPresentation?.label ?? '规划中'}
-              </Typography>
-            </Stack>
+      ) : pageModel.surface === 'clarifying' || pageModel.surface === 'planning' ? (
+        <ResearchPlanningThread
+          model={pageModel}
+          actions={
             <Button variant="outlined" size="small" onClick={reset}>
               新研究
             </Button>
-          </Stack>
-
-          <ResearchPlanningThread
-            question={question}
-            status={session.status}
-            clarificationRequest={session.clarification_request}
-            planSnapshot={session.plan_snapshot}
-            clarificationDraft={clarificationDraft}
-            clarificationSubmitPending={submitClarificationMutation.isPending}
-            planFeedbackDraft={planFeedbackDraft}
-            planUpdatePending={updatePlanMutation.isPending}
-            startPending={startSessionMutation.isPending}
-            onClarificationDraftChange={setClarificationDraft}
-            onSubmitClarification={handleSubmitClarification}
-            onPlanFeedbackDraftChange={setPlanFeedbackDraft}
-            onUpdatePlan={handleUpdatePlan}
-            onStartExecution={handleStartExecution}
-          />
-        </Stack>
-      ) : (
-        <Stack spacing={3} sx={{ width: '100%', minWidth: 0 }}>
-          <ResearchCanvas
-            model={{
-              ...pageModel,
-              title: question.trim(),
-              statusLabel: statusPresentation?.label ?? '等待中',
-              statusTone: statusPresentation?.badge ?? 'pending',
-              coverageLabel,
-            }}
-            actions={
-              <Stack direction="row" spacing={1}>
-                {(session.status === 'queued' ||
-                  session.status === 'running') ? (
-                  <Button
-                    variant="outlined"
-                    size="small"
-                    onClick={handleStop}
-                    loading={stopSessionMutation.isPending}
-                  >
-                    停止
-                  </Button>
-                ) : null}
-                <Button variant="outlined" size="small" onClick={reset}>
-                  新研究
-                </Button>
-              </Stack>
-            }
-            exportButton={
-              <Button
-                variant="contained"
-                color="success"
-                size="small"
-                startIcon={<DownloadIcon />}
-                onClick={handleExport}
-                loading={exporting}
-              >
-                导出报告
+          }
+          clarificationDraft={clarificationDraft}
+          clarificationSubmitPending={submitClarificationMutation.isPending}
+          planFeedbackDraft={planFeedbackDraft}
+          planUpdatePending={updatePlanMutation.isPending}
+          startPending={startSessionMutation.isPending}
+          onClarificationDraftChange={setClarificationDraft}
+          onSubmitClarification={handleSubmitClarification}
+          onPlanFeedbackDraftChange={setPlanFeedbackDraft}
+          onUpdatePlan={handleUpdatePlan}
+          onStartExecution={handleStartExecution}
+        />
+      ) : pageModel.surface === 'final' ? (
+        <ResearchReportReader
+          model={pageModel}
+          actions={
+            <Stack direction="row" spacing={1}>
+              <Button variant="outlined" size="small" onClick={reset}>
+                新研究
               </Button>
-            }
-          />
-        </Stack>
+            </Stack>
+          }
+          exportButton={
+            <Button
+              variant="contained"
+              color="success"
+              size="small"
+              startIcon={<DownloadIcon />}
+              onClick={handleExport}
+              loading={exporting}
+            >
+              导出报告
+            </Button>
+          }
+        />
+      ) : (
+        <ResearchCanvas
+          model={pageModel}
+          actions={
+            <Stack direction="row" spacing={1}>
+              {(session.status === 'queued' || session.status === 'running') ? (
+                <Button
+                  variant="outlined"
+                  size="small"
+                  onClick={handleStop}
+                  loading={stopSessionMutation.isPending}
+                >
+                  停止
+                </Button>
+              ) : null}
+              <Button variant="outlined" size="small" onClick={reset}>
+                新研究
+              </Button>
+            </Stack>
+          }
+        />
       )}
 
       <ErrorAlert error={mergedError} onClose={handleCloseError} />

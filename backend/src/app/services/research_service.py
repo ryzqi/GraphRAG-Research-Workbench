@@ -44,6 +44,9 @@ from app.services.research_observability import (
 )
 from app.services.research_planner import ResearchPlanner
 from app.services.research_planner_types import ResearchPlannerResult
+from app.services.research_presentation_snapshot import (
+    build_research_presentation_snapshot,
+)
 from app.services.research_replay import evaluate_research_replay_consistency
 from app.services.research_workspace_files import build_workspace_bootstrap_artifacts
 
@@ -678,6 +681,17 @@ class ResearchService:
             )
             for artifact in sorted(session.artifacts, key=lambda item: item.artifact_key)
         ]
+        items.append(
+            ResearchArtifactRead(
+                artifact_key="presentation_snapshot",
+                content_json=build_research_presentation_snapshot(
+                    session=session,
+                    events=self.list_event_envelopes(session),
+                    artifacts=items,
+                ),
+                citations=[],
+            )
+        )
         return ResearchArtifactsResponse(session_id=session.id, items=items)
 
     async def _append_trace_events(

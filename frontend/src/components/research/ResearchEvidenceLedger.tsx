@@ -75,7 +75,6 @@ function formatSourceType(sourceType: ResearchSourceLedgerEntry['source_type']):
 }
 
 export function ResearchEvidenceLedger({
-  contractErrors,
   coverageMarkdown,
   coverageMatrix,
   sources,
@@ -83,7 +82,6 @@ export function ResearchEvidenceLedger({
   conflicts,
   coverageGap = null,
 }: {
-  contractErrors: string[];
   coverageMarkdown: string | null;
   coverageMatrix: ResearchCoverageMatrix;
   sources: ResearchSourceLedgerEntry[];
@@ -100,7 +98,6 @@ export function ResearchEvidenceLedger({
   return (
     <Accordion
       disableGutters
-      defaultExpanded={contractErrors.length > 0}
       sx={{
         ...sectionSx,
         '&:before': {
@@ -138,28 +135,6 @@ export function ResearchEvidenceLedger({
       </AccordionSummary>
       <AccordionDetails sx={{ px: { xs: 2.25, md: 2.75 }, pb: { xs: 2.25, md: 2.75 }, pt: 0 }}>
         <Stack spacing={1.5} sx={{ minWidth: 0 }}>
-          {contractErrors.length > 0 ? (
-            <Paper
-              variant="outlined"
-              sx={{
-                ...cardSx,
-                borderColor: 'rgba(211, 47, 47, 0.28)',
-                background: 'linear-gradient(180deg, rgba(255,255,255,0.98) 0%, rgba(255,235,238,0.94) 100%)',
-              }}
-            >
-              <Stack spacing={1} sx={{ minWidth: 0 }}>
-                <Typography variant="subtitle1" fontWeight={700} color="error.main">
-                  证据工件格式错误
-                </Typography>
-                {contractErrors.map((item) => (
-                  <Typography key={item} variant="body2" color="error.main" sx={longFormTextSx}>
-                    {item}
-                  </Typography>
-                ))}
-              </Stack>
-            </Paper>
-          ) : null}
-
           <Paper variant="outlined" sx={cardSx}>
             <Stack spacing={1.25} sx={{ minWidth: 0 }}>
               <Typography variant="subtitle1" fontWeight={700}>

@@ -22,6 +22,7 @@
 - 统一工件读取：`research_artifacts`
 - 最终报告：`report_md` / `report_json`
 - 可观测工件：`metrics_snapshot` / `gate_snapshot`
+- 前端展示优先消费：`presentation_snapshot`（只读派生展示工件，不替代底层业务真值）
 - 详细契约：`docs/api_contract_research.md`
 
 ## 模型配置

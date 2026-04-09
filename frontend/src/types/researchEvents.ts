@@ -11,8 +11,8 @@ export type ResearchSessionStatus =
   | 'canceled'
   | 'timed_out';
 
-export type ResearchSourceTarget = 'web' | 'paper';
-export type ResearchSourceType = 'web' | 'paper';
+export type ResearchSourceTarget = 'kb' | 'web' | 'paper' | 'hybrid';
+export type ResearchSourceType = 'kb' | 'web' | 'paper';
 
 export interface ResearchSessionCreateRequest {
   question: string;
@@ -47,6 +47,7 @@ export interface ResearchClarificationRequest {
 
 export interface ResearchSessionAccepted {
   session_id: string;
+  question: string;
   status: ResearchSessionStatus;
   plan_snapshot: ResearchPlanSnapshot | null;
   clarification_request: ResearchClarificationRequest | null;
@@ -122,6 +123,100 @@ export interface ResearchArtifactsResponse {
   items: ResearchArtifactRead[];
 }
 
+export interface ResearchPresentationHero {
+  eyebrow: string;
+  title: string;
+  subtitle: string;
+}
+
+export interface ResearchPresentationRailStep {
+  key: string;
+  label: string;
+  state: 'pending' | 'current' | 'complete';
+}
+
+export interface ResearchPresentationClarificationCard {
+  id: string;
+  title: string;
+  description: string;
+}
+
+export interface ResearchPresentationClarificationSection {
+  summary: string;
+  known_context: string;
+  input_placeholder: string;
+  submit_label: string;
+  question_cards: ResearchPresentationClarificationCard[];
+}
+
+export interface ResearchPresentationPlanStep {
+  index: number;
+  title: string;
+  description: string;
+  target_sources: string[];
+}
+
+export interface ResearchPresentationPlanSection {
+  research_brief: string;
+  summary: string;
+  steps: ResearchPresentationPlanStep[];
+  secondary_action: {
+    label: string;
+  };
+  primary_action: {
+    label: string;
+  };
+}
+
+export interface ResearchPresentationLiveActivity {
+  id: string;
+  event_type: string;
+  title: string;
+  body: string | null;
+  phase: string;
+}
+
+export interface ResearchPresentationLiveSection {
+  progress: {
+    label: string;
+    percent: number;
+    current_stage_label: string;
+  };
+  coverage_label: string;
+  activity: ResearchPresentationLiveActivity[];
+}
+
+export interface ResearchPresentationReportOutlineItem {
+  id: string;
+  title: string;
+  level: number;
+}
+
+export interface ResearchPresentationReportMetricCard {
+  label: string;
+  value: string;
+}
+
+export interface ResearchPresentationReportSection {
+  markdown: string;
+  summary: string;
+  highlights: string[];
+  outline: ResearchPresentationReportOutlineItem[];
+  metric_cards: ResearchPresentationReportMetricCard[];
+}
+
+export interface ResearchPresentationSnapshot {
+  surface: 'clarifying' | 'planning' | 'live' | 'final';
+  hero?: ResearchPresentationHero;
+  rail?: {
+    steps: ResearchPresentationRailStep[];
+  };
+  clarification?: ResearchPresentationClarificationSection | null;
+  plan?: ResearchPresentationPlanSection | null;
+  live?: ResearchPresentationLiveSection | null;
+  report?: ResearchPresentationReportSection | null;
+}
+
 export interface ResearchEventEnvelope {
   event_id: string;
   sequence: number;
@@ -146,6 +241,7 @@ export interface ResearchStreamCursor {
 
 export interface ResearchSessionView {
   session_id: string;
+  question: string;
   status: ResearchSessionStatus;
   plan_snapshot: ResearchPlanSnapshot | null;
   clarification_request: ResearchClarificationRequest | null;
@@ -289,6 +385,7 @@ export function buildResearchSessionView(params: {
 
   return {
     session_id: params.accepted.session_id,
+    question: params.accepted.question,
     status: deriveResearchStatus({
       acceptedStatus: params.accepted.status,
       events: orderedEvents,
