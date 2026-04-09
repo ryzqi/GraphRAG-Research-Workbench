@@ -3,7 +3,6 @@ import { isValidElement, type ComponentProps, type ReactElement, type ReactNode 
 import { describe, expect, it } from 'vitest';
 
 import { ResearchCanvas } from './ResearchCanvas';
-import { ResearchEvidenceLedger } from './ResearchEvidenceLedger';
 import { ResearchShell } from './ResearchShell';
 
 type ResearchShellProps = ComponentProps<typeof ResearchShell>;
@@ -89,6 +88,12 @@ describe('ResearchCanvas', () => {
             percent: 68,
             currentStageLabel: '执行研究',
           },
+          pipelineSteps: [
+            { key: 'collect', label: '数据收集', state: 'complete' },
+            { key: 'extract', label: '特征提取', state: 'complete' },
+            { key: 'model', label: '语义建模', state: 'current' },
+            { key: 'report', label: '结论生成', state: 'pending' },
+          ],
           coverageLabel: '已汇总 12 条引用',
           activity: [
             {
@@ -116,12 +121,16 @@ describe('ResearchCanvas', () => {
       actions: null,
     });
 
-    expect(flattenText(tree)).toContain('研究执行中');
-    expect(flattenText(tree)).toContain('阶段 03');
-    expect(flattenText(tree)).toContain('进度跟踪');
-    expect(flattenText(tree)).toContain('总体进度 68%');
-    expect(flattenText(tree)).toContain('运行状态');
+    expect(flattenText(tree)).toContain('研究进度实时追踪');
+    expect(flattenText(tree)).toContain('68%');
+    expect(flattenText(tree)).toContain('系统运行正常，已汇总 12 条引用');
+    expect(flattenText(tree)).toContain('数据收集');
+    expect(flattenText(tree)).toContain('特征提取');
+    expect(flattenText(tree)).toContain('语义建模');
+    expect(flattenText(tree)).toContain('结论生成');
     expect(flattenText(tree)).toContain('记录来源轨迹：searxng');
+    expect(flattenText(tree)).not.toContain('来源与证据');
+    expect(flattenText(tree)).not.toContain('研究时间流');
 
     const headerLabel = collectElements(
       tree,
@@ -136,11 +145,5 @@ describe('ResearchCanvas', () => {
       (element) => element.type === Paper
     );
     expect(paperCards.length).toBeGreaterThan(0);
-
-    const evidenceLedger = collectElements(
-      tree,
-      (element) => element.type === ResearchEvidenceLedger
-    )[0];
-    expect(evidenceLedger).toBeDefined();
   });
 });

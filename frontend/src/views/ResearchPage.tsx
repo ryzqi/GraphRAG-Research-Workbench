@@ -4,7 +4,7 @@
  * 深度研究页面
  */
 import { useCallback, useMemo, useState } from 'react';
-import { Box, Stack } from '@mui/material';
+import { Box } from '@mui/material';
 import DownloadIcon from '@mui/icons-material/Download';
 import { ResearchCanvas } from '../components/research/ResearchCanvas';
 import { ResearchComposer } from '../components/research/ResearchComposer';
@@ -234,15 +234,6 @@ export function ResearchPage() {
     }
   }, [session]);
 
-  const reset = useCallback(() => {
-    setSessionId(null);
-    setAcceptedSession(null);
-    setQuestion('');
-    setError(null);
-    setClarificationDraft('');
-    setPlanFeedbackDraft('');
-  }, []);
-
   const effectiveQuestion = session?.question ?? question;
 
   const pageModel = useMemo(
@@ -298,10 +289,10 @@ export function ResearchPage() {
     <Box
       sx={{
         width: '100%',
-        px: { xs: 2, md: 4 },
-        py: { xs: 3, md: 4 },
-        background: !sessionId ? 'transparent' : 'linear-gradient(180deg, #f8fbff 0%, #f4f7fb 42%, #eef3f9 100%)',
-        minHeight: !sessionId ? { xs: 'calc(100vh - 96px)', md: 'calc(100vh - 120px)' } : undefined,
+        minHeight: '100%',
+        display: 'flex',
+        flexDirection: 'column',
+        background: 'transparent',
       }}
     >
       {!sessionId ? (
@@ -317,11 +308,6 @@ export function ResearchPage() {
       ) : pageModel.surface === 'clarifying' || pageModel.surface === 'planning' ? (
         <ResearchPlanningThread
           model={pageModel}
-          actions={
-            <Button variant="outlined" size="small" onClick={reset}>
-              新研究
-            </Button>
-          }
           clarificationDraft={clarificationDraft}
           clarificationSubmitPending={submitClarificationMutation.isPending}
           planFeedbackDraft={planFeedbackDraft}
@@ -336,21 +322,17 @@ export function ResearchPage() {
       ) : pageModel.surface === 'final' ? (
         <ResearchReportReader
           model={pageModel}
-          actions={
-            <Stack direction="row" spacing={1}>
-              <Button variant="outlined" size="small" onClick={reset}>
-                新研究
-              </Button>
-            </Stack>
-          }
           exportButton={
             <Button
               variant="contained"
-              color="success"
-              size="small"
+              size="medium"
               startIcon={<DownloadIcon />}
               onClick={handleExport}
               loading={exporting}
+              sx={{
+                borderRadius: 2.6,
+                boxShadow: 'none',
+              }}
             >
               导出报告
             </Button>
@@ -360,21 +342,21 @@ export function ResearchPage() {
         <ResearchCanvas
           model={pageModel}
           actions={
-            <Stack direction="row" spacing={1}>
-              {(session.status === 'queued' || session.status === 'running') ? (
-                <Button
-                  variant="outlined"
-                  size="small"
-                  onClick={handleStop}
-                  loading={stopSessionMutation.isPending}
-                >
-                  停止
-                </Button>
-              ) : null}
-              <Button variant="outlined" size="small" onClick={reset}>
-                新研究
+            session.status === 'queued' || session.status === 'running' ? (
+              <Button
+                variant="outlined"
+                size="medium"
+                onClick={handleStop}
+                loading={stopSessionMutation.isPending}
+                sx={{
+                  borderRadius: 2.4,
+                  minWidth: 104,
+                  backgroundColor: '#ffffff',
+                }}
+              >
+                停止研究
               </Button>
-            </Stack>
+            ) : null
           }
         />
       )}

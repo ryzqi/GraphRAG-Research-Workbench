@@ -76,16 +76,44 @@ export interface ResearchLiveSectionModel {
     percent: number;
     currentStageLabel: string;
   };
+  pipelineSteps: Array<{
+    key: string;
+    label: string;
+    state: 'pending' | 'current' | 'complete';
+  }>;
   coverageLabel: string;
-  activity: Array<{ id: string; eventType: string; title: string; body: string | null; phase: string }>;
+  footerStatus?: string;
+  activity: Array<{
+    id: string;
+    eventType: string;
+    title: string;
+    body: string | null;
+    phase: string;
+    timeLabel?: string | null;
+    tone?: 'default' | 'live' | 'success' | 'warning';
+  }>;
   timelineItems: ResearchTimelineItem[];
 }
 
 export interface ResearchReportSectionModel {
   markdown: string;
   summary: string;
+  lead?: string;
+  badgeLabel?: string;
+  highlights?: string[];
   outline: Array<{ id: string; title: string; level: number }>;
   metricCards: Array<{ label: string; value: string }>;
+  chart?: {
+    title: string;
+    bars: Array<{
+      label: string;
+      value: number;
+      accent: 'primary' | 'secondary' | 'tertiary' | 'neutral';
+    }>;
+  } | null;
+  spotlightCards: Array<{ eyebrow?: string; title: string; description: string }>;
+  outlookCards: Array<{ title: string; description: string }>;
+  references: string[];
 }
 
 export interface ResearchPageViewModel {
@@ -406,22 +434,69 @@ function buildReportOutline(markdown: string): Array<{ id: string; title: string
     }));
 }
 
-function buildRecentActivityItems(
-  events: ResearchEventEnvelope[]
-): Array<{ id: string; eventType: string; title: string; body: string | null; phase: string }> {
-  return [...events]
-    .sort((a, b) => b.sequence - a.sequence)
-    .slice(0, 3)
-    .map((event) => {
+function formatRelativeTime(timestamp: string, referenceMs: number): string | null {
+  const currentMs = Date.parse(timestamp);
+  if (Number.isNaN(currentMs)) {
+    return null;
+  }
+  const diffSeconds = Math.max(0, Math.round((referenceMs - currentMs) / 1000));
+  if (diffSeconds <= 5) {
+    return 'Just now';
+  }
+  return `${diffSeconds}s ago`;
+}
+
+function buildLiveActivityCards(params: {
+  events: ResearchEventEnvelope[];
+  fallbackActivity?: Array<{ id: string; event_type: string; title: string; body: string | null; phase: string }>;
+}): Array<{
+  id: string;
+  eventType: string;
+  title: string;
+  body: string | null;
+  phase: string;
+  timeLabel?: string | null;
+  tone?: 'default' | 'live' | 'success' | 'warning';
+}> {
+  const recentEvents = [...params.events].sort((a, b) => b.sequence - a.sequence).slice(0, 3);
+  if (recentEvents.length > 0) {
+    const referenceMs = Date.parse(recentEvents[0]!.timestamp);
+    return recentEvents.map((event, index) => {
       const timelineItem = buildTimelineItem(event);
+      const tone =
+        event.event_type === 'research.run.started' || event.event_type === 'research.final.completed'
+          ? 'success'
+          : event.event_type === 'research.run.failed' ||
+              event.event_type === 'research.run.timed_out' ||
+              event.event_type === 'research.run.stopped'
+            ? 'warning'
+            : event.event_type === 'research.trace.recorded'
+              ? 'live'
+              : 'default';
       return {
         id: event.event_id,
         eventType: event.event_type,
         title: timelineItem.title,
         body: timelineItem.body,
         phase: event.phase,
+        timeLabel:
+          tone === 'live' && index === 0
+            ? 'LIVE'
+            : formatRelativeTime(event.timestamp, Number.isNaN(referenceMs) ? Date.now() : referenceMs),
+        tone,
       };
     });
+  }
+
+  return (params.fallbackActivity ?? []).slice(0, 3).map((item, index) => ({
+    id: item.id,
+    eventType: item.event_type,
+    title: item.title,
+    body: item.body,
+    phase: item.phase,
+    timeLabel: index === 0 ? 'LIVE' : 'Just now',
+    tone: item.event_type === 'research.trace.recorded' ? 'live' : 'default',
+  }));
 }
 
 function buildCoverageLabel(coverageMatrix: ResearchCoverageMatrix): string {
@@ -441,6 +516,37 @@ function buildCoverageLabel(coverageMatrix: ResearchCoverageMatrix): string {
   return '覆盖信息生成中';
 }
 
+function buildLivePipelineSteps(status: ResearchSessionStatus): Array<{
+  key: string;
+  label: string;
+  state: 'pending' | 'current' | 'complete';
+}> {
+  if (status === 'queued') {
+    return [
+      { key: 'collect', label: '数据收集', state: 'current' },
+      { key: 'extract', label: '特征提取', state: 'pending' },
+      { key: 'model', label: '语义建模', state: 'pending' },
+      { key: 'report', label: '结论生成', state: 'pending' },
+    ];
+  }
+
+  if (status === 'finalizing' || status === 'final') {
+    return [
+      { key: 'collect', label: '数据收集', state: 'complete' },
+      { key: 'extract', label: '特征提取', state: 'complete' },
+      { key: 'model', label: '语义建模', state: 'complete' },
+      { key: 'report', label: '结论生成', state: 'current' },
+    ];
+  }
+
+  return [
+    { key: 'collect', label: '数据收集', state: 'complete' },
+    { key: 'extract', label: '特征提取', state: 'complete' },
+    { key: 'model', label: '语义建模', state: 'current' },
+    { key: 'report', label: '结论生成', state: 'pending' },
+  ];
+}
+
 function buildReportMetricCards(evidenceDrawer: ResearchEvidenceDrawerModel): Array<{ label: string; value: string }> {
   const sourceCount = evidenceDrawer.sources.length;
   const claimCount = evidenceDrawer.claims.length;
@@ -454,6 +560,67 @@ function buildReportMetricCards(evidenceDrawer: ResearchEvidenceDrawerModel): Ar
       value: missingCount > 0 ? `待补 ${missingCount} 项` : '覆盖完成',
     },
   ];
+}
+
+function buildFallbackReportChart(
+  evidenceDrawer: ResearchEvidenceDrawerModel
+): ResearchReportSectionModel['chart'] {
+  const accents: Array<'primary' | 'secondary' | 'tertiary'> = ['primary', 'secondary', 'tertiary'];
+  const bars = Object.entries(evidenceDrawer.coverageMatrix.provider_counts)
+    .filter(([, value]) => typeof value === 'number')
+    .slice(0, 3)
+    .map(([label, value], index) => ({
+      label,
+      value,
+      accent: accents[index % accents.length],
+    }));
+
+  if (bars.length === 0) {
+    return null;
+  }
+
+  return {
+    title: '研究覆盖概览',
+    bars,
+  };
+}
+
+function buildFallbackSpotlightCards(
+  evidenceDrawer: ResearchEvidenceDrawerModel
+): ResearchReportSectionModel['spotlightCards'] {
+  return evidenceDrawer.sources.slice(0, 2).flatMap((item) => {
+    const description = item.title ?? item.origin_url;
+    if (!description) {
+      return [];
+    }
+    return [
+      {
+        eyebrow: item.provider ?? undefined,
+        title: '关键参与者',
+        description,
+      },
+    ];
+  });
+}
+
+function buildFallbackOutlookCards(highlights: string[]): ResearchReportSectionModel['outlookCards'] {
+  const source = highlights.length >= 4 ? highlights.slice(2, 4) : highlights.slice(0, 2);
+  return source.map((item, index) => ({
+    title: `研究启示 ${String(index + 1).padStart(2, '0')}`,
+    description: item,
+  }));
+}
+
+function buildFallbackReferences(
+  evidenceDrawer: ResearchEvidenceDrawerModel
+): ResearchReportSectionModel['references'] {
+  return evidenceDrawer.sources.slice(0, 5).flatMap((item, index) => {
+    const title = item.title ?? item.origin_url;
+    if (!title) {
+      return [];
+    }
+    return [`${String(index + 1).padStart(2, '0')}. ${title}`];
+  });
 }
 
 export function buildResearchPageViewModel(params: {
@@ -530,8 +697,31 @@ export function buildResearchPageViewModel(params: {
         report: {
           markdown: reportMarkdown ?? presentation.report?.markdown ?? '',
           summary: presentation.report?.summary ?? '',
+          lead: presentation.report?.lead ?? presentation.report?.summary ?? '',
+          badgeLabel: presentation.report?.badge_label ?? '已生成研究报告',
+          highlights: presentation.report?.highlights ?? [],
           outline: (presentation.report?.outline ?? []).map((item) => ({ id: item.id, title: item.title, level: item.level })),
           metricCards: (presentation.report?.metric_cards ?? []).map((item) => ({ label: item.label, value: item.value })),
+          chart: presentation.report?.chart
+            ? {
+                title: presentation.report.chart.title,
+                bars: presentation.report.chart.bars.map((item) => ({
+                  label: item.label,
+                  value: item.value,
+                  accent: item.accent,
+                })),
+              }
+            : null,
+          spotlightCards: (presentation.report?.spotlight_cards ?? []).map((item) => ({
+            eyebrow: item.eyebrow,
+            title: item.title,
+            description: item.description,
+          })),
+          outlookCards: (presentation.report?.outlook_cards ?? []).map((item) => ({
+            title: item.title,
+            description: item.description,
+          })),
+          references: presentation.report?.references ?? [],
         },
       };
     }
@@ -546,20 +736,28 @@ export function buildResearchPageViewModel(params: {
           percent: presentation.live?.progress.percent ?? 64,
           currentStageLabel: presentation.live?.progress.current_stage_label ?? '执行研究',
         },
+        pipelineSteps:
+          presentation.live?.pipeline_steps?.map((item) => ({
+            key: item.key,
+            label: item.label,
+            state: item.state,
+          })) ?? buildLivePipelineSteps(params.status),
         coverageLabel: presentation.live?.coverage_label ?? '覆盖信息生成中',
-        activity: (presentation.live?.activity ?? []).map((item) => ({
-          id: item.id,
-          eventType: item.event_type,
-          title: item.title,
-          body: item.body,
-          phase: item.phase,
-        })),
+        footerStatus: `系统运行正常，${presentation.live?.coverage_label ?? '正在收集研究证据'}`,
+        activity: buildLiveActivityCards({
+          events: params.events,
+          fallbackActivity: presentation.live?.activity ?? [],
+        }),
         timelineItems,
       },
     };
   }
 
   if (reportMarkdown) {
+    const fallbackHighlights =
+      reportJson && Array.isArray(reportJson.findings)
+        ? reportJson.findings.filter((item): item is string => typeof item === 'string')
+        : [];
     return {
       surface: 'final',
       hero: buildHero(params.question, '研究报告已生成，可直接阅读与导出。'),
@@ -568,8 +766,15 @@ export function buildResearchPageViewModel(params: {
       report: {
         markdown: reportMarkdown,
         summary: reportJson && typeof reportJson.summary === 'string' ? reportJson.summary : '研究报告已生成，可直接阅读与导出。',
+        lead: reportJson && typeof reportJson.summary === 'string' ? reportJson.summary : '研究报告已生成，可直接阅读与导出。',
+        badgeLabel: '已生成研究报告',
+        highlights: fallbackHighlights,
         outline: buildReportOutline(reportMarkdown),
         metricCards: buildReportMetricCards(evidenceDrawer),
+        chart: buildFallbackReportChart(evidenceDrawer),
+        spotlightCards: buildFallbackSpotlightCards(evidenceDrawer),
+        outlookCards: buildFallbackOutlookCards(fallbackHighlights),
+        references: buildFallbackReferences(evidenceDrawer),
       },
     };
   }
@@ -627,8 +832,10 @@ export function buildResearchPageViewModel(params: {
           : params.status === 'finalizing'
             ? { label: '报告生成中', percent: 88, currentStageLabel: '生成报告' }
             : { label: '研究执行中', percent: 64, currentStageLabel: '执行研究' },
+      pipelineSteps: buildLivePipelineSteps(params.status),
       coverageLabel: buildCoverageLabel(evidenceDrawer.coverageMatrix),
-      activity: buildRecentActivityItems(params.events),
+      footerStatus: `系统运行正常，${buildCoverageLabel(evidenceDrawer.coverageMatrix)}`,
+      activity: buildLiveActivityCards({ events: params.events }),
       timelineItems,
     },
   };

@@ -1,35 +1,35 @@
 export const researchWorkbenchColors = {
-  pageBackground: '#f8f9fa',
+  pageBackground: '#f6f8fc',
   surface: '#ffffff',
-  surfaceMuted: '#f3f4f5',
-  surfaceTint: '#e7edf5',
-  surfaceBase: '#edeeef',
-  primary: '#0058bd',
-  primaryHover: '#004ca3',
-  primaryContainer: '#2771df',
-  secondary: '#006e2c',
-  tertiary: '#b51b15',
-  text: '#191c1d',
-  mutedText: '#424753',
-  subtleText: '#727785',
-  border: 'rgba(114, 119, 133, 0.16)',
-  softBorder: 'rgba(114, 119, 133, 0.08)',
-  strongBorder: 'rgba(114, 119, 133, 0.2)',
-  accentBackground: 'rgba(0, 88, 189, 0.08)',
-  rail: 'rgba(0, 88, 189, 0.14)',
-  shadow: '0 24px 48px rgba(25, 28, 29, 0.06)',
-  ambientShadow: '0 16px 36px rgba(25, 28, 29, 0.05)',
-  glow: '0 0 0 4px rgba(39, 113, 223, 0.08)',
+  surfaceMuted: '#f2f5fb',
+  surfaceTint: '#edf2fb',
+  surfaceBase: '#e8eef8',
+  primary: '#1a66d9',
+  primaryHover: '#1258be',
+  primaryContainer: '#2f7be6',
+  secondary: '#12864f',
+  tertiary: '#c35a18',
+  text: '#1f2430',
+  mutedText: '#5e6577',
+  subtleText: '#8b93a7',
+  border: 'rgba(42, 57, 89, 0.1)',
+  softBorder: 'rgba(42, 57, 89, 0.06)',
+  strongBorder: 'rgba(42, 57, 89, 0.16)',
+  accentBackground: 'rgba(26, 102, 217, 0.08)',
+  rail: 'rgba(26, 102, 217, 0.14)',
+  shadow: '0 22px 54px rgba(32, 48, 86, 0.08)',
+  ambientShadow: '0 14px 32px rgba(32, 48, 86, 0.06)',
+  glow: '0 0 0 4px rgba(26, 102, 217, 0.12)',
 } as const;
 
 export const researchDisplayFont =
   '"Plus Jakarta Sans", "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif';
 
 export const researchBodyFont =
-  '"Inter", "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif';
+  '"Manrope", "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif';
 
 export const researchWorkbenchCardSx = {
-  borderRadius: 28,
+  borderRadius: 32,
   border: 'none',
   bgcolor: researchWorkbenchColors.surface,
   color: researchWorkbenchColors.text,
@@ -44,8 +44,8 @@ export const researchWorkbenchInnerCardSx = {
 
 export const researchWorkbenchOpenPanelSx = {
   ...researchWorkbenchCardSx,
-  bgcolor: 'rgba(248, 249, 250, 0.86)',
-  backdropFilter: 'blur(12px)',
+  bgcolor: 'rgba(255, 255, 255, 0.92)',
+  backdropFilter: 'blur(14px)',
 } as const;
 
 export const researchWorkbenchSectionDividerSx = {

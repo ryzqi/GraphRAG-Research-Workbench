@@ -88,13 +88,13 @@ describe('ResearchPlanningThread', () => {
           questionCards: [
             {
               id: 'region',
-              title: '更关注哪些地区？',
-              description: '地区范围会直接改变样本和政策比较维度。',
+              title: '您更关注哪些特定地区？',
+              description: '全球汇总，还是专注于中国、欧盟或北美等主要增长引擎？',
             },
             {
               id: 'policy',
-              title: '是否重点关注补贴政策？',
-              description: '这会影响研究重点和指标选择。',
+              title: '是否侧重于政策与补贴的影响？',
+              description: '例如美国 IRA 法案或欧盟反补贴调查对 2024 年市场份额的潜在重塑。',
             },
           ],
         },
@@ -113,12 +113,12 @@ describe('ResearchPlanningThread', () => {
       clarificationDraft: '',
     });
 
-    expect(flattenText(tree)).toContain('阶段 01');
-    expect(flattenText(tree)).toContain('澄清问题');
     expect(flattenText(tree)).toContain('待确认的研究维度');
-    expect(flattenText(tree)).toContain('更关注哪些地区？');
-    expect(flattenText(tree)).toContain('研究输入摘要');
+    expect(flattenText(tree)).toContain('您更关注哪些特定地区？');
+    expect(flattenText(tree)).toContain('当前的初步认知');
     expect(flattenText(tree)).toContain('提交补充信息');
+    expect(flattenText(tree)).not.toContain('研究输入摘要');
+    expect(flattenText(tree)).not.toContain('本轮将影响');
   });
 
   it('renders numbered plan steps and dual actions for plan_ready', () => {
@@ -140,13 +140,13 @@ describe('ResearchPlanningThread', () => {
           steps: [
             {
               index: 1,
-              title: '收集市场规模与销量数据',
-              description: '整理 2024 年主要地区销量、渗透率和增长率。',
+              title: '搜集主流市场数据',
+              description: '我们将通过检索国际能源署（IEA）和彭博新能源财经（BNEF）的最新报告，汇总 2024 年太阳能、风能及储能领域的容量增长与投资分布数据。',
               targetSources: ['网页', '知识库'],
             },
           ],
-          secondaryActionLabel: '更新计划',
-          primaryActionLabel: '开始研究',
+          secondaryActionLabel: '修改计划',
+          primaryActionLabel: '开始深度研究',
         },
         evidenceDrawer: {
           coverageGap: null,
@@ -163,21 +163,23 @@ describe('ResearchPlanningThread', () => {
       planFeedbackDraft: '',
     });
 
-    expect(flattenText(tree)).toContain('阶段 02');
     expect(flattenText(tree)).toContain('研究计划');
     expect(flattenText(tree)).toContain('拟定研究计划');
-    expect(flattenText(tree)).toContain('收集市场规模与销量数据');
-    expect(flattenText(tree)).toContain('来源焦点');
+    expect(flattenText(tree)).toContain('研究步骤详细方案');
+    expect(flattenText(tree)).toContain('搜集主流市场数据');
     expect(flattenText(tree)).toContain('网页');
     expect(flattenText(tree)).toContain('知识库');
-    expect(flattenText(tree)).toContain('更新计划');
-    expect(flattenText(tree)).toContain('开始研究');
+    expect(flattenText(tree)).toContain('修改计划');
+    expect(flattenText(tree)).toContain('开始深度研究');
+    expect(flattenText(tree)).not.toContain('来源焦点');
+    expect(flattenText(tree)).not.toContain('执行约束');
 
     const descriptionBlock = collectElements(
       tree,
       (element) =>
         element.type === Typography &&
-        flattenText(element.props.children) === '整理 2024 年主要地区销量、渗透率和增长率。'
+        flattenText(element.props.children) ===
+          '我们将通过检索国际能源署（IEA）和彭博新能源财经（BNEF）的最新报告，汇总 2024 年太阳能、风能及储能领域的容量增长与投资分布数据。'
     )[0];
     expect(descriptionBlock?.props.sx).toEqual(
       expect.objectContaining({

@@ -495,7 +495,7 @@ class ResearchService:
         *,
         session: ResearchSession,
         plan_snapshot: ResearchPlanSnapshot,
-    ) -> ResearchFinalizerResult:
+    ) -> ResearchFinalizerResult | None:
         ensure_research_trace_id(session)
         session.transition_to(ResearchSessionStatus.RUNNING)
         session.runtime_phase = "runtime"
@@ -550,6 +550,14 @@ class ResearchService:
             artifact_key="coverage_gaps",
             content_json=list(source_bundle.coverage_gaps),
         )
+
+        committed_status = await self._read_committed_session_status(session=session)
+        if committed_status == ResearchSessionStatus.CANCELED:
+            if session.status != ResearchSessionStatus.CANCELED:
+                session.transition_to(ResearchSessionStatus.CANCELED)
+            if session.finished_at is None:
+                session.finished_at = datetime.now(timezone.utc)
+            return None
 
         session.transition_to(ResearchSessionStatus.FINALIZING)
         session.finalizer_phase = "finalizer"
@@ -763,6 +771,31 @@ class ResearchService:
             artifact_key="gate_snapshot",
             content_json=self._json_mapping_payload(metrics.get("gate")),
         )
+
+    async def _read_committed_session_status(
+        self,
+        *,
+        session: ResearchSession,
+    ) -> ResearchSessionStatus | None:
+        if session.id is None or not callable(getattr(self._db, "scalar", None)):
+            return None
+
+        stmt = select(ResearchSession.status).where(ResearchSession.id == session.id)
+        no_autoflush = getattr(self._db, "no_autoflush", None)
+        if no_autoflush is None:
+            resolved_status = await self._db.scalar(stmt)
+        else:
+            with no_autoflush:
+                resolved_status = await self._db.scalar(stmt)
+
+        if isinstance(resolved_status, ResearchSessionStatus):
+            return resolved_status
+        if isinstance(resolved_status, str):
+            try:
+                return ResearchSessionStatus(resolved_status)
+            except ValueError:
+                return None
+        return None
 
     @staticmethod
     def _artifact_by_key(

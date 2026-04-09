@@ -13,6 +13,9 @@ __pycache__/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+.uv-cache/
+.uv_cache/
+.uv-cache-*/
 dist/
 build/
 .venv/
@@ -20,6 +23,7 @@ venv/
 
 # Node.js
 node_modules/
+.npm-cache/
 dist/
 build/
 *.log
