@@ -39,8 +39,12 @@ class ResearchArtifact(Base):
     content_text: Mapped[str | None] = mapped_column(sa.Text, nullable=True)
     content_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     source_type: Mapped[str | None] = mapped_column(sa.String(length=32), nullable=True)
-    source_provider: Mapped[str | None] = mapped_column(sa.String(length=64), nullable=True)
-    retrieval_method: Mapped[str | None] = mapped_column(sa.String(length=64), nullable=True)
+    source_provider: Mapped[str | None] = mapped_column(
+        sa.String(length=64), nullable=True
+    )
+    retrieval_method: Mapped[str | None] = mapped_column(
+        sa.String(length=64), nullable=True
+    )
     origin_url: Mapped[str | None] = mapped_column(sa.Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()
@@ -55,4 +59,3 @@ class ResearchArtifact(Base):
     session: Mapped["ResearchSession"] = relationship(
         "ResearchSession", back_populates="artifacts"
     )
-

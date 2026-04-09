@@ -50,7 +50,9 @@ try:
         UsageLimitExceededError,
     )
 except Exception:  # pragma: no cover - 依赖缺失时不阻断导入
-    BadRequestError = ForbiddenError = InvalidAPIKeyError = TavilyTimeoutError = UsageLimitExceededError = ()  # type: ignore
+    BadRequestError = ForbiddenError = InvalidAPIKeyError = TavilyTimeoutError = (
+        UsageLimitExceededError
+    ) = ()  # type: ignore
 
 logger = logging.getLogger(__name__)
 
@@ -79,9 +81,7 @@ class WebSearchArgs(BaseModel):
     include_domains: list[str] | None = Field(
         default=None, description="仅包含域名列表"
     )
-    exclude_domains: list[str] | None = Field(
-        default=None, description="排除域名列表"
-    )
+    exclude_domains: list[str] | None = Field(default=None, description="排除域名列表")
     include_raw_content: bool | Literal["markdown", "text"] | None = Field(
         default=None, description="是否返回原文（可选 markdown/text）"
     )
@@ -130,21 +130,11 @@ class WebCrawlArgs(BaseModel):
     url: str = Field(..., description="起始 URL")
     limit: int | None = Field(default=None, ge=1, le=100, description="最大抓取数量")
     max_depth: int | None = Field(default=None, ge=1, le=10, description="最大深度")
-    max_breadth: int | None = Field(
-        default=None, ge=1, le=100, description="最大广度"
-    )
-    select_paths: list[str] | None = Field(
-        default=None, description="包含路径前缀"
-    )
-    exclude_paths: list[str] | None = Field(
-        default=None, description="排除路径前缀"
-    )
-    select_domains: list[str] | None = Field(
-        default=None, description="包含域名列表"
-    )
-    exclude_domains: list[str] | None = Field(
-        default=None, description="排除域名列表"
-    )
+    max_breadth: int | None = Field(default=None, ge=1, le=100, description="最大广度")
+    select_paths: list[str] | None = Field(default=None, description="包含路径前缀")
+    exclude_paths: list[str] | None = Field(default=None, description="排除路径前缀")
+    select_domains: list[str] | None = Field(default=None, description="包含域名列表")
+    exclude_domains: list[str] | None = Field(default=None, description="排除域名列表")
     extract_depth: Literal["basic", "advanced"] | None = Field(
         default=None, description="抽取深度（basic/advanced）"
     )
@@ -165,9 +155,7 @@ class WebResearchArgs(BaseModel):
     search_depth: Literal["basic", "advanced"] | None = Field(
         default=None, description="搜索深度（basic/advanced）"
     )
-    max_results: int | None = Field(
-        default=None, ge=1, le=50, description="最大结果数"
-    )
+    max_results: int | None = Field(default=None, ge=1, le=50, description="最大结果数")
     time_range: str | None = Field(
         default=None, description="时间范围（day/week/month/year）"
     )
@@ -177,9 +165,7 @@ class WebResearchArgs(BaseModel):
     include_domains: list[str] | None = Field(
         default=None, description="仅包含域名列表"
     )
-    exclude_domains: list[str] | None = Field(
-        default=None, description="排除域名列表"
-    )
+    exclude_domains: list[str] | None = Field(default=None, description="排除域名列表")
     include_raw_content: bool | Literal["markdown", "text"] | None = Field(
         default=None, description="是否返回原文（可选 markdown/text）"
     )
@@ -425,7 +411,9 @@ class TavilyGateway:
         self._cache_ttl = settings.web_search_cache_ttl_seconds
         self._retry_max = settings.web_search_retry_max
         self._retry_backoff = settings.web_search_retry_backoff_seconds
-        self._rate_limiter = _LocalRateLimiter(settings.web_search_rate_limit_per_minute)
+        self._rate_limiter = _LocalRateLimiter(
+            settings.web_search_rate_limit_per_minute
+        )
         self._semaphore = (
             asyncio.Semaphore(settings.web_search_max_concurrency)
             if settings.web_search_max_concurrency > 0
@@ -515,7 +503,9 @@ class TavilyGateway:
     def _is_retryable(self, exc: Exception) -> bool:
         if isinstance(exc, UsageLimitExceededError):
             return True
-        if isinstance(exc, TavilyTimeoutError) or isinstance(exc, httpx.TimeoutException):
+        if isinstance(exc, TavilyTimeoutError) or isinstance(
+            exc, httpx.TimeoutException
+        ):
             return True
         status_code = _extract_status_code(exc)
         if status_code in {408, 425, 429, 500, 502, 503, 504}:
@@ -748,7 +738,8 @@ class TavilyGateway:
                 results=results,
                 elapsed_ms=int((time.perf_counter() - start) * 1000),
                 cache_hit=False,
-                total_found=response.get("total_results") or response.get("total_found"),
+                total_found=response.get("total_results")
+                or response.get("total_found"),
                 usage=response.get("usage"),
                 request_id=response.get("request_id"),
             )
@@ -792,7 +783,8 @@ class TavilyGateway:
                 "url": args.url,
                 "limit": args.limit or settings.web_crawl_default_limit,
                 "max_depth": args.max_depth or settings.web_crawl_default_max_depth,
-                "max_breadth": args.max_breadth or settings.web_crawl_default_max_breadth,
+                "max_breadth": args.max_breadth
+                or settings.web_crawl_default_max_breadth,
                 "select_paths": _normalize_domains(args.select_paths),
                 "exclude_paths": _normalize_domains(args.exclude_paths),
                 "select_domains": _normalize_domains(args.select_domains),
@@ -824,7 +816,8 @@ class TavilyGateway:
                 results=results,
                 elapsed_ms=int((time.perf_counter() - start) * 1000),
                 cache_hit=False,
-                total_found=response.get("total_results") or response.get("total_found"),
+                total_found=response.get("total_results")
+                or response.get("total_found"),
                 usage=response.get("usage"),
                 request_id=response.get("request_id"),
             )
@@ -865,8 +858,10 @@ class TavilyGateway:
         payload = _filter_none(
             {
                 "input": args.query,
-                "search_depth": args.search_depth or settings.web_search_default_search_depth,
-                "max_results": args.max_results or settings.web_search_default_max_results,
+                "search_depth": args.search_depth
+                or settings.web_search_default_search_depth,
+                "max_results": args.max_results
+                or settings.web_search_default_max_results,
                 "time_range": args.time_range or settings.web_search_default_time_range,
                 "topic": args.topic,
                 "include_domains": _normalize_domains(args.include_domains),
@@ -882,8 +877,10 @@ class TavilyGateway:
                     if args.auto_parameters is not None
                     else settings.web_search_auto_parameters
                 ),
-                "output_format": args.output_format or settings.web_research_output_format,
-                "output_schema": args.output_schema or settings.web_research_output_schema,
+                "output_format": args.output_format
+                or settings.web_research_output_format,
+                "output_schema": args.output_schema
+                or settings.web_research_output_schema,
                 "citation_format": args.citation_format
                 or settings.web_research_citation_format,
                 "model": args.model or settings.web_research_model,
@@ -899,7 +896,9 @@ class TavilyGateway:
             cached["elapsed_ms"] = 0
             return cached
 
-        poll_interval = args.poll_interval_seconds or settings.web_research_poll_interval_seconds
+        poll_interval = (
+            args.poll_interval_seconds or settings.web_research_poll_interval_seconds
+        )
         start = time.perf_counter()
         try:
             try:
@@ -922,8 +921,14 @@ class TavilyGateway:
                 result = await self._poll_research(request_id, poll_interval)
 
             raw_sources = result.get("sources")
-            results = _normalize_results(raw_sources if isinstance(raw_sources, list) else [])
-            report = result.get("content") if isinstance(result.get("content"), str) else None
+            results = _normalize_results(
+                raw_sources if isinstance(raw_sources, list) else []
+            )
+            report = (
+                result.get("content")
+                if isinstance(result.get("content"), str)
+                else None
+            )
             output = _build_output(
                 context=context,
                 results=results,

@@ -8,7 +8,10 @@ import time
 from dataclasses import dataclass
 
 from app.core.settings import Settings, get_settings
-from app.integrations.chat_model_factory import create_chat_model, get_active_model_identity
+from app.integrations.chat_model_factory import (
+    create_chat_model,
+    get_active_model_identity,
+)
 from app.prompts import get_prompt_loader
 
 logger = logging.getLogger(__name__)
@@ -58,9 +61,7 @@ class ContextualEmbeddingService:
         max_tokens: int | None = None,
     ) -> ContextResult:
         enabled_flag = (
-            self._settings.ingestion_contextual_enabled
-            if enabled is None
-            else enabled
+            self._settings.ingestion_contextual_enabled if enabled is None else enabled
         )
         if not enabled_flag:
             return ContextResult(context="", success=False, reason="disabled")

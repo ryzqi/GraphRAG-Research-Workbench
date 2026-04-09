@@ -50,7 +50,9 @@ async def _ensure_material_in_kb(
         )
 
 
-async def _ensure_chunk_browsing_unlocked(db: AsyncSessionDep, *, kb_id: uuid.UUID) -> None:
+async def _ensure_chunk_browsing_unlocked(
+    db: AsyncSessionDep, *, kb_id: uuid.UUID
+) -> None:
     ingestion_service = IngestionBatchService(db)
     active_batch = await ingestion_service.get_active_batch_for_kb(kb_id=kb_id)
     if active_batch is None:
@@ -109,12 +111,16 @@ async def list_materials_with_chunk_stats(
     await _ensure_kb_exists(db, kb_id)
 
     service = MaterialService(db)
-    rows, total = await service.list_by_kb_with_chunk_stats_page(kb_id, skip=skip, limit=limit)
+    rows, total = await service.list_by_kb_with_chunk_stats_page(
+        kb_id, skip=skip, limit=limit
+    )
     items = [
-        MaterialWithChunkStatsRead.model_validate({
-            **SourceMaterialRead.model_validate(material).model_dump(),
-            "chunk_count": chunk_count,
-        })
+        MaterialWithChunkStatsRead.model_validate(
+            {
+                **SourceMaterialRead.model_validate(material).model_dump(),
+                "chunk_count": chunk_count,
+            }
+        )
         for material, chunk_count in rows
     ]
     return MaterialWithChunkStatsListResponse(
@@ -213,9 +219,7 @@ async def create_material(
             kb_id=kb_id, title=body.title, text=body.text
         )
     else:
-        material = await service.create_url(
-            kb_id=kb_id, title=body.title, url=body.url
-        )
+        material = await service.create_url(kb_id=kb_id, title=body.title, url=body.url)
 
     return SourceMaterialRead.model_validate(material)
 

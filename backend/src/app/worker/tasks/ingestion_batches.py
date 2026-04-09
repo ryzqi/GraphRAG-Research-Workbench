@@ -74,7 +74,9 @@ def _raise_on_embedding_count_mismatch(
     )
 
 
-def _build_parent_id_by_ref(*, chunk_items: list, chunk_ids: list[uuid.UUID]) -> dict[int, str]:
+def _build_parent_id_by_ref(
+    *, chunk_items: list, chunk_ids: list[uuid.UUID]
+) -> dict[int, str]:
     parent_id_by_ref: dict[int, str] = {}
     parent_index = 0
     for idx, chunk_item in enumerate(chunk_items):
@@ -100,10 +102,7 @@ def _records_for_window(
     for record in records:
         size = record.get("window_size_tokens")
         overlap = record.get("window_overlap_tokens")
-        if (
-            size == chunk_size_tokens
-            and overlap == chunk_overlap_tokens
-        ):
+        if size == chunk_size_tokens and overlap == chunk_overlap_tokens:
             matched.append(record)
     return matched
 
@@ -139,7 +138,6 @@ async def _write_records_to_milvus(
                 material_id,
                 collection_name=collection_name,
             )
-
 
             window_records = _records_for_window(
                 records,
@@ -261,7 +259,9 @@ async def _run_ingestion_batch_doc(doc_id: str) -> None:
                 await service.commit()
 
                 if delay is not None:
-                    run_ingestion_batch_doc.apply_async(args=[str(doc.id)], countdown=delay)
+                    run_ingestion_batch_doc.apply_async(
+                        args=[str(doc.id)], countdown=delay
+                    )
             except AppError as exc:
                 logger.warning(
                     "Ingestion doc processing hit AppError",
@@ -290,7 +290,9 @@ async def _run_ingestion_batch_doc(doc_id: str) -> None:
                 await service.recalculate_batch_for_doc(doc=doc, reason="doc_failed")
                 await service.commit()
                 if delay is not None:
-                    run_ingestion_batch_doc.apply_async(args=[str(doc.id)], countdown=delay)
+                    run_ingestion_batch_doc.apply_async(
+                        args=[str(doc.id)], countdown=delay
+                    )
 
 
 async def _process_doc(*, doc, resources) -> _DocProcessOutcome:
@@ -337,7 +339,9 @@ async def _process_doc(*, doc, resources) -> _DocProcessOutcome:
             .limit(1)
         )
         snapshot_config = (await session.execute(snapshot_stmt)).scalar_one_or_none()
-        index_config = IndexConfig.model_validate(snapshot_config or kb.index_config or {})
+        index_config = IndexConfig.model_validate(
+            snapshot_config or kb.index_config or {}
+        )
 
         try:
             parsed = await parse_material(
@@ -384,7 +388,8 @@ async def _process_doc(*, doc, resources) -> _DocProcessOutcome:
         semantic_fallback_chunks = sum(
             1
             for item in chunk_items
-            if isinstance(item.metadata, dict) and item.metadata.get("semantic_fallback") is True
+            if isinstance(item.metadata, dict)
+            and item.metadata.get("semantic_fallback") is True
         )
         if not chunk_items:
             raise _ProcessingFailure(
@@ -465,8 +470,12 @@ async def _process_doc(*, doc, resources) -> _DocProcessOutcome:
             )
 
             records: list[dict] = []
-            for idx, (chunk_item, emb) in enumerate(zip(chunk_items, embeddings, strict=True)):
-                chunk_meta = chunk_item.metadata if isinstance(chunk_item.metadata, dict) else {}
+            for idx, (chunk_item, emb) in enumerate(
+                zip(chunk_items, embeddings, strict=True)
+            ):
+                chunk_meta = (
+                    chunk_item.metadata if isinstance(chunk_item.metadata, dict) else {}
+                )
                 records.append(
                     {
                         "chunk_id": str(chunk_ids[idx]),
@@ -483,7 +492,9 @@ async def _process_doc(*, doc, resources) -> _DocProcessOutcome:
                         "locator": chunk_item.locator or {},
                         "window_id": chunk_meta.get("window_id"),
                         "window_size_tokens": chunk_meta.get("window_size_tokens"),
-                        "window_overlap_tokens": chunk_meta.get("window_overlap_tokens"),
+                        "window_overlap_tokens": chunk_meta.get(
+                            "window_overlap_tokens"
+                        ),
                         "token_start": chunk_meta.get("token_start"),
                         "token_end": chunk_meta.get("token_end"),
                         "metadata": chunk_meta,

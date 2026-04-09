@@ -36,7 +36,11 @@ from app.integrations.redis_client import RedisClient
 from app.models.tool_extension import ToolExtension
 from app.services.research_runtime_types import ResearchToolRegistryBundle
 
-from .utils import DEFAULT_TOOL_OUTPUT_MAX_CHARS, make_mcp_tool_name, truncate_tool_output
+from .utils import (
+    DEFAULT_TOOL_OUTPUT_MAX_CHARS,
+    make_mcp_tool_name,
+    truncate_tool_output,
+)
 from .web_tool_payloads import compact_builtin_external_output
 
 
@@ -89,7 +93,6 @@ def _sanitize_mcp_content(content: object) -> object:
         else:
             sanitized.append(item)
     return sanitized
-
 
 
 async def build_tool_registry(
@@ -160,15 +163,11 @@ async def build_tool_registry(
     # 内置联网工具
     if include_web_search and has_web_search_provider(settings):
         _wrap_external_tool(
-            build_web_search_tool(
-                settings, redis=redis, http_client=http_client
-            )
+            build_web_search_tool(settings, redis=redis, http_client=http_client)
         )
     if include_web_extract and has_web_extract_provider(settings):
         _wrap_external_tool(
-            build_web_extract_tool(
-                settings, redis=redis, http_client=http_client
-            )
+            build_web_extract_tool(settings, redis=redis, http_client=http_client)
         )
     if has_jina_read_provider(settings):
         _wrap_external_tool(
@@ -180,9 +179,7 @@ async def build_tool_registry(
     if settings.web_search_api_key:
         if include_web_crawl:
             _wrap_external_tool(
-                build_web_crawl_tool(
-                    settings, redis=redis, http_client=http_client
-                )
+                build_web_crawl_tool(settings, redis=redis, http_client=http_client)
             )
 
     # MCP 扩展工具（外部工具，需要命名空间）
@@ -268,7 +265,9 @@ async def build_research_tool_registry(
     为补充工具。
     """
 
-    del tool_output_max_chars  # 当前 research 工具直接返回结构化 JSON 字符串，不需要二次截断包装。
+    del (
+        tool_output_max_chars
+    )  # 当前 research 工具直接返回结构化 JSON 字符串，不需要二次截断包装。
 
     tools: list[BaseTool] = []
     meta_by_name: dict[str, ToolMeta] = {}

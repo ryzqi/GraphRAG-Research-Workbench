@@ -30,5 +30,4 @@ class ParsedDocument:
 class DocumentParser(Protocol):
     """统一解析接口（便于替换实现与单测注入）。"""
 
-    async def parse(self, material: "SourceMaterial") -> ParsedDocument:
-        ...
+    async def parse(self, material: "SourceMaterial") -> ParsedDocument: ...

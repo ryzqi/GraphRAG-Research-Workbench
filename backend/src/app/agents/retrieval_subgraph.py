@@ -70,7 +70,9 @@ def _resolve_query_count(state: dict[str, Any]) -> int:
     if not isinstance(query_items, list):
         return 1
     count = sum(
-        1 for item in query_items if isinstance(item, dict) and str(item.get("query") or "").strip()
+        1
+        for item in query_items
+        if isinstance(item, dict) and str(item.get("query") or "").strip()
     )
     return max(1, count)
 
@@ -89,8 +91,8 @@ def _fallback_retrieval_budget(
 ) -> tuple[dict[str, int], dict[str, Any]]:
     complexity = str(state.get("complexity_level") or "simple")
     query_count = _resolve_query_count(state)
-    per_query_top_k, global_candidates_limit, rerank_input_limit = _budget_by_complexity(
-        complexity
+    per_query_top_k, global_candidates_limit, rerank_input_limit = (
+        _budget_by_complexity(complexity)
     )
     reflection = state.get("reflection")
     upstream_retry_signal = (
@@ -194,7 +196,9 @@ async def _retrieval_plan_node(
             question=query,
             normalized_query=query,
             complexity_level=str(diagnostics.get("complexity") or "simple"),
-            query_items=state.get("query_items") if isinstance(state.get("query_items"), list) else [],
+            query_items=state.get("query_items")
+            if isinstance(state.get("query_items"), list)
+            else [],
             retry_count=int(diagnostics.get("retry_count") or 0),
             failure_reason=str(diagnostics.get("upstream_retry_signal") or ""),
             max_top_k=int(settings.retrieval_max_top_k),
@@ -202,7 +206,9 @@ async def _retrieval_plan_node(
         )
         budget = result.budget if isinstance(result.budget, dict) else fallback_budget
         meta = result.meta if isinstance(result.meta, dict) else {}
-        planner_failure_reason = str(meta.get("fallback_reason") or result.reason or "") or None
+        planner_failure_reason = (
+            str(meta.get("fallback_reason") or result.reason or "") or None
+        )
         fallback_reason = planner_failure_reason
         fallback_used = bool(meta.get("fallback_used")) or bool(planner_failure_reason)
         reasoning = str(meta.get("reasoning") or "")
@@ -330,9 +336,7 @@ def _is_verbatim_subset(candidate_excerpt: str, source_excerpt: str) -> bool:
         if len(truncated_candidate) >= 12 and truncated_candidate in source:
             return True
 
-    paragraph_parts = [
-        part for part in _BLANK_LINE_RE.split(candidate) if part.strip()
-    ]
+    paragraph_parts = [part for part in _BLANK_LINE_RE.split(candidate) if part.strip()]
     if len(paragraph_parts) > 1 and _ordered_verbatim_subset(paragraph_parts, source):
         return True
 
@@ -360,7 +364,9 @@ def _recover_source_excerpt(candidate_excerpt: str, source_excerpt: str) -> str 
     if not source:
         return None
     matched_parts = [
-        part for part in _recoverable_verbatim_parts(candidate_excerpt) if part in source
+        part
+        for part in _recoverable_verbatim_parts(candidate_excerpt)
+        if part in source
     ]
     if len(matched_parts) >= 2:
         return source_excerpt
@@ -604,18 +610,26 @@ async def _compress_context(
             if fallback_reason is None and decision is None:
                 fallback_reason = "empty_structured_response"
 
-            if isinstance(decision, ContextCompressDecision) and decision.decision == "no_evidence":
+            if (
+                isinstance(decision, ContextCompressDecision)
+                and decision.decision == "no_evidence"
+            ):
                 compressed_context = "（未找到相关内容）"
                 compressed_evidence_items = []
                 compressed_citation_catalog = {}
-            elif isinstance(decision, ContextCompressDecision) and decision.decision == "keep_all":
+            elif (
+                isinstance(decision, ContextCompressDecision)
+                and decision.decision == "keep_all"
+            ):
                 compressed_context = final_context
                 compressed_evidence_items = list(current_evidence_items)
                 compressed_citation_catalog = dict(current_citation_catalog)
                 candidate_citation_ids = list(current_citation_catalog)
             elif isinstance(decision, ContextCompressDecision):
                 candidate_citation_ids = list(
-                    dict.fromkeys(item.citation_id.strip().upper() for item in decision.items)
+                    dict.fromkeys(
+                        item.citation_id.strip().upper() for item in decision.items
+                    )
                 )
                 if not candidate_citation_ids:
                     fallback_reason = "empty_compress_output"
@@ -651,7 +665,9 @@ async def _compress_context(
                                     current_evidence_items=current_evidence_items,
                                 )
                                 if unique_match is not None:
-                                    citation_id, source_item, matched_excerpt = unique_match
+                                    citation_id, source_item, matched_excerpt = (
+                                        unique_match
+                                    )
                                 elif isinstance(source_item, dict):
                                     source_excerpt = _normalize_newlines(
                                         str(source_item.get("excerpt") or "")
@@ -663,7 +679,10 @@ async def _compress_context(
                                 else:
                                     fallback_reason = "non_verbatim_subset"
                                     break
-                            if not isinstance(source_item, dict) or matched_excerpt is None:
+                            if (
+                                not isinstance(source_item, dict)
+                                or matched_excerpt is None
+                            ):
                                 fallback_reason = "non_verbatim_subset"
                                 break
                             rebuilt_items.append(
@@ -680,18 +699,28 @@ async def _compress_context(
                                 rebuilt_items=rebuilt_items,
                                 source_items_by_citation=by_citation_id,
                             )
-                            rebuilt_items, rebuilt_catalog = canonicalize_evidence_items(
-                                rebuilt_items,
-                                citation_catalog=current_citation_catalog,
+                            rebuilt_items, rebuilt_catalog = (
+                                canonicalize_evidence_items(
+                                    rebuilt_items,
+                                    citation_catalog=current_citation_catalog,
+                                )
                             )
                             candidate_context = build_evidence_context(rebuilt_items)
-                            if count_tokens_approximately(candidate_context) > input_tokens:
-                                if (
-                                    len(rebuilt_catalog) == len(current_citation_catalog)
-                                    and set(rebuilt_catalog) == set(current_citation_catalog)
+                            if (
+                                count_tokens_approximately(candidate_context)
+                                > input_tokens
+                            ):
+                                if len(rebuilt_catalog) == len(
+                                    current_citation_catalog
+                                ) and set(rebuilt_catalog) == set(
+                                    current_citation_catalog
                                 ):
-                                    compressed_evidence_items = list(current_evidence_items)
-                                    compressed_citation_catalog = dict(current_citation_catalog)
+                                    compressed_evidence_items = list(
+                                        current_evidence_items
+                                    )
+                                    compressed_citation_catalog = dict(
+                                        current_citation_catalog
+                                    )
                                     compressed_context = final_context
                                 else:
                                     fallback_reason = "non_compacting_output"
@@ -762,7 +791,9 @@ def build_retrieval_subgraph(
         context_schema=KbChatGraphContext,
     )
     retrieval_retry_policy = RetryPolicy(
-        max_attempts=max(2, int(getattr(settings, "kb_chat_max_retrieval_retries", 2)) + 1)
+        max_attempts=max(
+            2, int(getattr(settings, "kb_chat_max_retrieval_retries", 2)) + 1
+        )
     )
 
     def add_traced_node(
@@ -780,7 +811,9 @@ def build_retrieval_subgraph(
             retry_enabled=retry_policy is not None,
         )
         if retry_policy is None:
-            metadata["retry_disabled_reason"] = retry_disabled_reason or side_effect_type
+            metadata["retry_disabled_reason"] = (
+                retry_disabled_reason or side_effect_type
+            )
         graph.add_node(
             node_id,
             wrap_kb_chat_node_with_io(node_id, node_callable),

@@ -75,7 +75,9 @@ class QueryDependentMultiscaleChunkingConfig(BaseModel):
         for window in self.windows:
             key = (window.chunk_size_tokens, window.chunk_overlap_tokens)
             if key in seen:
-                raise ValueError("query_dependent_multiscale.windows contains duplicate windows")
+                raise ValueError(
+                    "query_dependent_multiscale.windows contains duplicate windows"
+                )
             seen.add(key)
 
             if previous_size is not None and window.chunk_size_tokens <= previous_size:
@@ -108,16 +110,26 @@ class SemanticConfig(BaseModel):
         if self.max_tokens < self.min_tokens:
             raise ValueError("max_tokens must be greater than or equal to min_tokens")
 
-        if self.threshold_mode in {
-            SemanticThresholdMode.PERCENTILE,
-            SemanticThresholdMode.HYBRID,
-        } and self.breakpoint_percentile is None:
-            raise ValueError("breakpoint_percentile is required for percentile/hybrid mode")
+        if (
+            self.threshold_mode
+            in {
+                SemanticThresholdMode.PERCENTILE,
+                SemanticThresholdMode.HYBRID,
+            }
+            and self.breakpoint_percentile is None
+        ):
+            raise ValueError(
+                "breakpoint_percentile is required for percentile/hybrid mode"
+            )
 
-        if self.threshold_mode in {
-            SemanticThresholdMode.FIXED,
-            SemanticThresholdMode.HYBRID,
-        } and self.similarity_threshold is None:
+        if (
+            self.threshold_mode
+            in {
+                SemanticThresholdMode.FIXED,
+                SemanticThresholdMode.HYBRID,
+            }
+            and self.similarity_threshold is None
+        ):
             raise ValueError("similarity_threshold is required for fixed/hybrid mode")
 
         return self
@@ -165,7 +177,9 @@ class ParentChildConfig(BaseModel):
 class ChunkingConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    markdown_heading: MarkdownHeadingConfig = Field(default_factory=MarkdownHeadingConfig)
+    markdown_heading: MarkdownHeadingConfig = Field(
+        default_factory=MarkdownHeadingConfig
+    )
     general_strategy: ChunkingStrategy = ChunkingStrategy.QUERY_DEPENDENT_MULTISCALE
     query_dependent_multiscale: QueryDependentMultiscaleChunkingConfig = Field(
         default_factory=QueryDependentMultiscaleChunkingConfig

@@ -49,7 +49,9 @@ class IndexRebuildService:
         now = datetime.now(timezone.utc)
         running_stmt = select(IndexRebuildJob).where(
             IndexRebuildJob.kb_id == kb.id,
-            IndexRebuildJob.status.in_([IndexRebuildStatus.QUEUED, IndexRebuildStatus.RUNNING]),
+            IndexRebuildJob.status.in_(
+                [IndexRebuildStatus.QUEUED, IndexRebuildStatus.RUNNING]
+            ),
         )
         running_result = await self._db.execute(running_stmt)
         for job in running_result.scalars().all():

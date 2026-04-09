@@ -72,7 +72,9 @@ def build_verification_artifacts(
         ]
         matched_claim_tokens = set()
         for index in citation_indices:
-            matched_claim_tokens.update(claim_tokens.intersection(citation_tokens[index]))
+            matched_claim_tokens.update(
+                claim_tokens.intersection(citation_tokens[index])
+            )
         uncovered_named_tokens = sorted(
             _named_tokens(finding).difference(matched_claim_tokens)
         )
@@ -101,7 +103,9 @@ def build_verification_artifacts(
                     uncovered_named_tokens=uncovered_named_tokens,
                 ),
                 "citation_indices": citation_indices,
-                "coverage_gaps": [coverage_gaps[index] for index in related_gap_indices],
+                "coverage_gaps": [
+                    coverage_gaps[index] for index in related_gap_indices
+                ],
             }
         )
     unresolved_coverage_gaps = [
@@ -174,7 +178,11 @@ def _determine_verdict(
     related_gap_indices: list[int],
     uncovered_named_tokens: list[str],
 ) -> str:
-    if len(citation_indices) >= 2 and not related_gap_indices and not uncovered_named_tokens:
+    if (
+        len(citation_indices) >= 2
+        and not related_gap_indices
+        and not uncovered_named_tokens
+    ):
         return "supported"
     if citation_indices:
         return "contested"

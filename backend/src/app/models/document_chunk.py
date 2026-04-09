@@ -40,7 +40,10 @@ class DocumentChunk(Base):
     embedding_text: Mapped[str] = mapped_column(sa.Text, nullable=False)
     context_text: Mapped[str | None] = mapped_column(sa.Text, nullable=True)
     context_status: Mapped[str] = mapped_column(
-        sa.String(24), nullable=False, default="not_enabled", server_default="not_enabled"
+        sa.String(24),
+        nullable=False,
+        default="not_enabled",
+        server_default="not_enabled",
     )
     context_error: Mapped[str | None] = mapped_column(sa.Text, nullable=True)
     context_attempts: Mapped[int] = mapped_column(
@@ -77,7 +80,9 @@ class DocumentChunk(Base):
     )
 
     __table_args__ = (
-        sa.Index("ix_document_chunks_kb_material_idx", "kb_id", "material_id", "chunk_index"),
+        sa.Index(
+            "ix_document_chunks_kb_material_idx", "kb_id", "material_id", "chunk_index"
+        ),
         sa.Index(
             "ix_document_chunks_kb_material_global_order",
             "kb_id",

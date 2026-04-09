@@ -230,9 +230,7 @@ class EmbeddingClient:
             return int(exc.response.status_code)
         return None
 
-    def _is_retryable_exc(
-        self, exc: Exception, *, policy: EmbeddingCallPolicy
-    ) -> bool:
+    def _is_retryable_exc(self, exc: Exception, *, policy: EmbeddingCallPolicy) -> bool:
         if isinstance(exc, EmbeddingDimensionMismatchError):
             return False
         if isinstance(exc, httpx.HTTPStatusError):
@@ -270,7 +268,9 @@ class EmbeddingClient:
             short_circuited=short_circuited,
         )
 
-    def _retry_delay_seconds(self, *, attempt: int, policy: EmbeddingCallPolicy) -> float:
+    def _retry_delay_seconds(
+        self, *, attempt: int, policy: EmbeddingCallPolicy
+    ) -> float:
         delay = policy.retry_base_delay_seconds * (2 ** max(0, attempt - 1))
         jitter_ratio = policy.retry_jitter_ratio
         if delay <= 0 or jitter_ratio <= 0:

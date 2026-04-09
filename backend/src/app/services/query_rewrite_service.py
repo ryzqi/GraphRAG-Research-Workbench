@@ -304,7 +304,9 @@ def _extract_tool_call_payload(raw: object) -> tuple[object | None, str | None]:
     # LangChain 会把 provider 的函数调用结果放进 tool_calls，
     # 也可能在参数解析失败时放进 invalid_tool_calls。两者都属于同一层
     # transport payload，优先在这里统一提取，避免上层业务再做 provider 特判。
-    def _extract_from_langchain_tool_calls(calls: object) -> tuple[object | None, str | None]:
+    def _extract_from_langchain_tool_calls(
+        calls: object,
+    ) -> tuple[object | None, str | None]:
         if not isinstance(calls, list) or not calls:
             return None, None
         if len(calls) > 1:
@@ -325,8 +327,8 @@ def _extract_tool_call_payload(raw: object) -> tuple[object | None, str | None]:
     if tool_payload is not None or tool_payload_error is not None:
         return tool_payload, tool_payload_error
 
-    invalid_tool_payload, invalid_tool_payload_error = _extract_from_langchain_tool_calls(
-        getattr(raw, "invalid_tool_calls", None)
+    invalid_tool_payload, invalid_tool_payload_error = (
+        _extract_from_langchain_tool_calls(getattr(raw, "invalid_tool_calls", None))
     )
     if invalid_tool_payload is not None or invalid_tool_payload_error is not None:
         return invalid_tool_payload, invalid_tool_payload_error
@@ -429,7 +431,9 @@ def _structured_result_debug_snapshot(result: object) -> dict[str, object]:
     tool_payload, tool_payload_error = _extract_tool_call_payload(raw)
     return {
         "result_type": "dict",
-        "parsed_type": type(result.get("parsed")).__name__ if result.get("parsed") is not None else None,
+        "parsed_type": type(result.get("parsed")).__name__
+        if result.get("parsed") is not None
+        else None,
         "parsed_preview": _debug_preview(result.get("parsed")),
         "parsing_error_type": (
             type(result.get("parsing_error")).__name__
@@ -440,7 +444,9 @@ def _structured_result_debug_snapshot(result: object) -> dict[str, object]:
         "raw_type": type(raw).__name__ if raw is not None else None,
         "raw_content_preview": _debug_preview(getattr(raw, "content", None)),
         "raw_tool_calls_preview": _debug_preview(getattr(raw, "tool_calls", None)),
-        "raw_additional_kwargs_preview": _debug_preview(getattr(raw, "additional_kwargs", None)),
+        "raw_additional_kwargs_preview": _debug_preview(
+            getattr(raw, "additional_kwargs", None)
+        ),
         "tool_payload_error": tool_payload_error,
         "tool_payload_preview": _debug_preview(tool_payload),
     }
@@ -542,9 +548,7 @@ _TROUBLESHOOT_KEYWORDS = (
     "troubleshoot",
     "debug",
 )
-_LEADING_COMPARE_PATTERNS = (
-    r"^(?:请)?(?:帮我)?(?:比较|对比|compare)\s*",
-)
+_LEADING_COMPARE_PATTERNS = (r"^(?:请)?(?:帮我)?(?:比较|对比|compare)\s*",)
 _TRAILING_COMPARE_PATTERNS = (
     r"(?:的)?(?:区别|差异|不同点|对比|比较|优缺点)\s*$",
     r"(?:differences?|comparison)\s*$",
@@ -652,7 +656,9 @@ def _looks_term_alias_query(query: str) -> bool:
     has_latin = re.search(r"[A-Za-z]", normalized) is not None
     if not has_latin:
         return False
-    if re.search(r"[A-Za-z][A-Za-z0-9+_.-]*\s*[／/]\s*[A-Za-z][A-Za-z0-9+_.-]*", normalized):
+    if re.search(
+        r"[A-Za-z][A-Za-z0-9+_.-]*\s*[／/]\s*[A-Za-z][A-Za-z0-9+_.-]*", normalized
+    ):
         return True
     if any(token in normalized for token in ("（", "）", "(", ")")):
         return True
@@ -747,7 +753,9 @@ def _extract_multi_target_entities_for_guardrail(question: str) -> list[str]:
 
     entities: list[str] = []
     for part in _ENTITY_SPLIT_RE.split(head):
-        entity = _QUESTION_PREFIX_RE.sub("", _normalize_whitespace(part).strip("：:；;，,。？? "))
+        entity = _QUESTION_PREFIX_RE.sub(
+            "", _normalize_whitespace(part).strip("：:；;，,。？? ")
+        )
         entity = re.sub(r"^(?:对比|比较)\s*", "", entity).strip()
         entity = re.sub(
             r"的?(?:职责|技术架构|架构|挑战|难点|瓶颈|适用场景|适用范围|场景|流程|步骤)$",
@@ -773,7 +781,9 @@ def _extract_required_dimension_keywords_for_guardrail(
     return required
 
 
-def _normalize_guardrail_reason(original_query: str, candidate_query: str) -> str | None:
+def _normalize_guardrail_reason(
+    original_query: str, candidate_query: str
+) -> str | None:
     original = _normalize_whitespace(original_query)
     candidate = _normalize_whitespace(candidate_query)
     if not original or not candidate or original == candidate:
@@ -784,7 +794,9 @@ def _normalize_guardrail_reason(original_query: str, candidate_query: str) -> st
         original_anchor_terms = [
             term for term in _TAXONOMY_QUERY_KEYWORDS if term in original
         ]
-        if original_anchor_terms and not any(term in candidate for term in original_anchor_terms):
+        if original_anchor_terms and not any(
+            term in candidate for term in original_anchor_terms
+        ):
             return "taxonomy_anchor_lost"
         if any(marker in original for marker in _TAXONOMY_ASK_MARKERS) and not any(
             marker in candidate for marker in _TAXONOMY_ASK_MARKERS
@@ -803,10 +815,15 @@ def _normalize_guardrail_reason(original_query: str, candidate_query: str) -> st
             ]
             if missing_entities:
                 return "multi_target_entity_lost"
-            required_dimensions = _extract_required_dimension_keywords_for_guardrail(original)
+            required_dimensions = _extract_required_dimension_keywords_for_guardrail(
+                original
+            )
             if required_dimensions:
                 for _, keywords in required_dimensions:
-                    if not any(_compact_guardrail_text(keyword) in compact_candidate for keyword in keywords):
+                    if not any(
+                        _compact_guardrail_text(keyword) in compact_candidate
+                        for keyword in keywords
+                    ):
                         return "multi_target_dimension_lost"
     if not _looks_stable_overview_query(original):
         return None
@@ -815,7 +832,9 @@ def _normalize_guardrail_reason(original_query: str, candidate_query: str) -> st
     original_anchor_terms = [
         term for term in _STABLE_OVERVIEW_KEYWORDS if term in original
     ]
-    if original_anchor_terms and not any(term in candidate for term in original_anchor_terms):
+    if original_anchor_terms and not any(
+        term in candidate for term in original_anchor_terms
+    ):
         return "stable_overview_anchor_lost"
     if any(marker in original for marker in _STABLE_OVERVIEW_ASK_MARKERS) and not any(
         marker in candidate for marker in _STABLE_OVERVIEW_ASK_MARKERS
@@ -831,7 +850,8 @@ def _looks_explicit_decomposition_query(query: str) -> bool:
     if any(token in normalized for token in ("分别", "各自")):
         return True
     if _looks_compare_or_multi_target(normalized) and any(
-        token in normalized for token in ("比较", "对比", "区别", "差异", "优缺点", "取舍")
+        token in normalized
+        for token in ("比较", "对比", "区别", "差异", "优缺点", "取舍")
     ):
         return True
     return False
@@ -932,7 +952,6 @@ def _sanitize_reverse_question(text: str) -> str:
     return f"{value.rstrip('。.!?,，；;')}？"
 
 
-
 def _strip_list_prefix(text: str) -> str:
     return re.sub(r"^\s*(?:[-*]+|\d+[.)])\s*", "", text).strip()
 
@@ -960,7 +979,13 @@ def _render_recent_turns(turns: list[dict[str, str]] | None) -> str:
         text = _normalize_whitespace(str(turn.get("text") or ""))
         if not text:
             continue
-        role = "user" if role_raw == "user" else "assistant" if role_raw == "assistant" else role_raw
+        role = (
+            "user"
+            if role_raw == "user"
+            else "assistant"
+            if role_raw == "assistant"
+            else role_raw
+        )
         lines.append(f"{role}: {text}" if role else text)
     return "\n".join(lines[:12])
 
@@ -989,6 +1014,7 @@ def _contains_coref_marker(query: str) -> bool:
         for marker in _COREF_MARKERS_EN
     )
 
+
 def _split_candidate_segments(text: str) -> list[str]:
     raw_segments = re.split(r"[，。；、,.!?;:\n]+", _normalize_whitespace(text))
     normalized: list[str] = []
@@ -1000,6 +1026,7 @@ def _split_candidate_segments(text: str) -> list[str]:
             continue
         normalized.append(value)
     return normalized
+
 
 def _apply_coref_candidate(query: str, candidate: str) -> tuple[str, str]:
     q = _normalize_whitespace(query)
@@ -1148,8 +1175,12 @@ def _rule_based_decomposition_candidates(query: str) -> list[dict[str, object]]:
 
     if len(candidates) < 2:
         fallback_focus = _clean_clause(q)
-        _append(f"{fallback_focus} 子问题 1", purpose="fallback_part_1", tags=["fallback"])
-        _append(f"{fallback_focus} 子问题 2", purpose="fallback_part_2", tags=["fallback"])
+        _append(
+            f"{fallback_focus} 子问题 1", purpose="fallback_part_1", tags=["fallback"]
+        )
+        _append(
+            f"{fallback_focus} 子问题 2", purpose="fallback_part_2", tags=["fallback"]
+        )
 
     normalized_specs: list[dict[str, object]] = []
     for idx, item in enumerate(candidates[:DECOMPOSITION_MAX_SUB_QUERIES], start=1):
@@ -1196,7 +1227,9 @@ def _normalize_multi_query_variants(
             continue
         normalized.append(candidate)
     distinct_from_original = [
-        candidate for candidate in normalized if _normalize_whitespace(candidate) != original
+        candidate
+        for candidate in normalized
+        if _normalize_whitespace(candidate) != original
     ]
     if len(distinct_from_original) < 2:
         invalid_reason = invalid_reason or "insufficient_distinct_queries"
@@ -1326,7 +1359,9 @@ def build_query_items(
 
     hyde_candidates: list[str] = []
     if hyde_docs:
-        hyde_candidates.extend([str(value) for value in hyde_docs if str(value).strip()])
+        hyde_candidates.extend(
+            [str(value) for value in hyde_docs if str(value).strip()]
+        )
     if hyde_doc:
         hyde_candidates.append(hyde_doc)
     hyde_candidates = _normalize_hyde_documents(hyde_candidates)
@@ -1428,7 +1463,9 @@ class QueryRewriteService:
     ) -> ComplexityRouteResult:
         normalized_query = _normalize_whitespace(query)
         normalized_risk = _normalize_whitespace(recall_risk or "").lower()
-        heuristic_compare_or_multi_target = _looks_compare_or_multi_target(normalized_query)
+        heuristic_compare_or_multi_target = _looks_compare_or_multi_target(
+            normalized_query
+        )
         heuristic_term_alias = _looks_term_alias_query(normalized_query)
         query_has_mixed_language = (
             re.search(r"[A-Za-z]", normalized_query) is not None
@@ -1509,9 +1546,14 @@ class QueryRewriteService:
                 failure_reason=None,
                 confidence=confidence,
                 risk_flags=_sanitize_risk_flags(
-                    [*current_risk_flags, "comparison" if is_comparison else "", "multi_target"]
+                    [
+                        *current_risk_flags,
+                        "comparison" if is_comparison else "",
+                        "multi_target",
+                    ]
                 ),
-                decision_version=decision_version or COMPLEXITY_CLASSIFY_DECISION_VERSION,
+                decision_version=decision_version
+                or COMPLEXITY_CLASSIFY_DECISION_VERSION,
                 latency_ms=latency_ms,
             )
 
@@ -1526,8 +1568,11 @@ class QueryRewriteService:
                 reasoning=_GUARDRAIL_COMPLEXITY_DIRECT_REASON,
                 failure_reason=None,
                 confidence=confidence,
-                risk_flags=_sanitize_risk_flags([*current_risk_flags, "stable_overview"]),
-                decision_version=decision_version or COMPLEXITY_CLASSIFY_DECISION_VERSION,
+                risk_flags=_sanitize_risk_flags(
+                    [*current_risk_flags, "stable_overview"]
+                ),
+                decision_version=decision_version
+                or COMPLEXITY_CLASSIFY_DECISION_VERSION,
                 latency_ms=latency_ms,
             )
 
@@ -1572,7 +1617,9 @@ class QueryRewriteService:
         try:
             payload = schema.model_validate(structured_payload)
         except ValidationError:
-            return StructuredCallResult(payload=None, success=False, reason="invalid_schema")
+            return StructuredCallResult(
+                payload=None, success=False, reason="invalid_schema"
+            )
         return StructuredCallResult(payload=payload, success=True)
 
     async def _invoke_model_structured(
@@ -1797,7 +1844,9 @@ class QueryRewriteService:
             needs_clarification = bool(payload.needs_clarification)
             reasoning = _normalize_whitespace(payload.reasoning or "")
             selected_mention = _normalize_whitespace(payload.selected_mention or "")
-            triggered = bool(payload.triggered or resolved_query != q or selected_mention)
+            triggered = bool(
+                payload.triggered or resolved_query != q or selected_mention
+            )
             return RewriteResult(
                 query=resolved_query,
                 rewritten=resolved_query != q,
@@ -1811,9 +1860,7 @@ class QueryRewriteService:
                     "reasoning": reasoning,
                     "needs_clarification": needs_clarification,
                     "clarification_hint": (
-                        _DEFAULT_CLARIFICATION_QUESTION
-                        if needs_clarification
-                        else ""
+                        _DEFAULT_CLARIFICATION_QUESTION if needs_clarification else ""
                     ),
                 },
             )
@@ -1870,11 +1917,15 @@ class QueryRewriteService:
             question=q,
         )
         fallback_reason = structured_result.reason or "llm_failed_fail_open"
-        if structured_result.success and isinstance(structured_result.payload, NormalizeDecision):
+        if structured_result.success and isinstance(
+            structured_result.payload, NormalizeDecision
+        ):
             payload = structured_result.payload
             candidate_query = _sanitize_query_text(payload.canonical_query)
-            if candidate_query and bool(payload.constraint_preserved) and not bool(
-                payload.drift_risk
+            if (
+                candidate_query
+                and bool(payload.constraint_preserved)
+                and not bool(payload.drift_risk)
             ):
                 recall_risk = payload.recall_risk
                 if recall_risk not in {"low", "medium", "high"}:
@@ -2026,7 +2077,10 @@ class QueryRewriteService:
             max_global_candidates = max(safe_max_top_k * 6, per_query_top_k)
             rerank_input_limit = max(
                 per_query_top_k,
-                min(int(payload.rerank_input_limit), max(max_global_candidates, safe_max_top_k * 4)),
+                min(
+                    int(payload.rerank_input_limit),
+                    max(max_global_candidates, safe_max_top_k * 4),
+                ),
             )
             global_candidates_limit = max(
                 rerank_input_limit,
@@ -2043,7 +2097,9 @@ class QueryRewriteService:
         latency_ms = int((time.perf_counter() - start) * 1000)
         return RetrievalPlanResult(
             budget=budget,
-            success=bool(structured_result.success and structured_result.payload is not None),
+            success=bool(
+                structured_result.success and structured_result.payload is not None
+            ),
             reason=fallback_reason or None,
             latency_ms=latency_ms,
             meta={
@@ -2187,7 +2243,9 @@ class QueryRewriteService:
         else:
             fallback_used = True
             ambiguous = self._is_ambiguous_heuristic(q)
-            failure_reason = structured_result.reason or "model_failed_guardrail_fallback"
+            failure_reason = (
+                structured_result.reason or "model_failed_guardrail_fallback"
+            )
             if ambiguous:
                 reason_code = (
                     "coref_uncertain" if coref_needs_clarification else "mixed"
@@ -2303,9 +2361,8 @@ class QueryRewriteService:
             memory_snippet=_normalize_whitespace(memory_snippet),
         )
         payload = structured_result.payload
-        if (
-            structured_result.success
-            and isinstance(payload, MergeContextResolutionDecision)
+        if structured_result.success and isinstance(
+            payload, MergeContextResolutionDecision
         ):
             summary = _normalize_whitespace(payload.summary_text)
             notes = _dedupe_keep_order(
@@ -2389,9 +2446,8 @@ class QueryRewriteService:
             user_prompt=prompt,
             max_tokens=256,
         )
-        if (
-            structured_result.success
-            and isinstance(structured_result.payload, ComplexityDecision)
+        if structured_result.success and isinstance(
+            structured_result.payload, ComplexityDecision
         ):
             payload = structured_result.payload
             strategy = str(payload.strategy or "direct").strip().lower()
@@ -2462,9 +2518,8 @@ class QueryRewriteService:
             max_tokens=256,
             question=q,
         )
-        if (
-            structured_result.success
-            and isinstance(structured_result.payload, DecompositionDecision)
+        if structured_result.success and isinstance(
+            structured_result.payload, DecompositionDecision
         ):
             payload = structured_result.payload
             spec_queries = [
@@ -2472,9 +2527,9 @@ class QueryRewriteService:
                 for spec in payload.sub_query_specs
                 if isinstance(spec, dict)
             ]
-            sub_queries = _dedupe_keep_order(
-                [*spec_queries, *payload.sub_queries]
-            )[:DECOMPOSITION_MAX_SUB_QUERIES]
+            sub_queries = _dedupe_keep_order([*spec_queries, *payload.sub_queries])[
+                :DECOMPOSITION_MAX_SUB_QUERIES
+            ]
             if len(sub_queries) >= 2:
                 latency_ms = int((time.perf_counter() - start) * 1000)
                 normalized_specs: list[dict[str, object]] = []
@@ -2484,8 +2539,7 @@ class QueryRewriteService:
                             spec
                             for spec in payload.sub_query_specs
                             if isinstance(spec, dict)
-                            and _normalize_whitespace(str(spec.get("query") or ""))
-                            == q
+                            and _normalize_whitespace(str(spec.get("query") or "")) == q
                         ),
                         None,
                     )
@@ -2621,13 +2675,14 @@ class QueryRewriteService:
             max_tokens=256,
             question=q,
         )
-        if (
-            structured_result.success
-            and isinstance(structured_result.payload, MultiQueryDecision)
+        if structured_result.success and isinstance(
+            structured_result.payload, MultiQueryDecision
         ):
-            fixed_variants, completed, invalid_reason = _coerce_fixed_multi_query_variants(
-                structured_result.payload.queries,
-                original_query=q,
+            fixed_variants, completed, invalid_reason = (
+                _coerce_fixed_multi_query_variants(
+                    structured_result.payload.queries,
+                    original_query=q,
+                )
             )
             latency_ms = int((time.perf_counter() - start) * 1000)
             if invalid_reason and not completed:
@@ -2672,7 +2727,9 @@ class QueryRewriteService:
         start = time.perf_counter()
         q = _normalize_whitespace(query)
         if not q:
-            return QueryListResult(queries=[], success=False, reason="empty", latency_ms=0)
+            return QueryListResult(
+                queries=[], success=False, reason="empty", latency_ms=0
+            )
 
         structured_result = await self._call_prompt_structured(
             "kb_chat/hyde",

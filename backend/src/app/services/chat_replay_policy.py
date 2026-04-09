@@ -27,8 +27,8 @@ def decide_replay_mode(
     thinking_enabled: bool,
 ) -> ReplayDecision:
     mode = ReplayMode(configured_mode)
-    supports_response_id_replay = (
-        provider == ModelProvider.OPENAI and bool(thinking_enabled)
+    supports_response_id_replay = provider == ModelProvider.OPENAI and bool(
+        thinking_enabled
     )
 
     if mode == ReplayMode.MANUAL:

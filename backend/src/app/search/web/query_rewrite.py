@@ -37,7 +37,10 @@ def build_search_query_plan(
     elif "langchain" in lowered and "site:docs.langchain.com" not in lowered:
         rewritten.append(f"site:docs.langchain.com {normalized}")
 
-    if any(keyword in lowered for keyword in _FRESHNESS_KEYWORDS) and "2026" not in normalized:
+    if (
+        any(keyword in lowered for keyword in _FRESHNESS_KEYWORDS)
+        and "2026" not in normalized
+    ):
         rewritten.append(f"{normalized} 2026")
 
     if exclude_domains:

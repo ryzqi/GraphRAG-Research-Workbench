@@ -29,7 +29,9 @@ STALE_RECOVERY_MESSAGE = "stale_dispatched_recovered"
 
 def _compute_retry_delay_seconds(*, attempts: int) -> int:
     bounded_attempt = max(1, min(attempts, 10))
-    return min(MAX_RETRY_BACKOFF_SECONDS, RETRY_BASE_SECONDS * (2 ** (bounded_attempt - 1)))
+    return min(
+        MAX_RETRY_BACKOFF_SECONDS, RETRY_BASE_SECONDS * (2 ** (bounded_attempt - 1))
+    )
 
 
 def _format_error(exc: Exception) -> str:
@@ -53,9 +55,13 @@ async def _recover_stale_dispatched_rows(
             IndexRebuildTaskOutbox.dispatched_at.is_not(None),
             IndexRebuildTaskOutbox.dispatched_at <= stale_before,
             IndexRebuildTaskOutbox.attempts < IndexRebuildTaskOutbox.max_attempts,
-            IndexRebuildJob.status.in_([IndexRebuildStatus.QUEUED, IndexRebuildStatus.RUNNING]),
+            IndexRebuildJob.status.in_(
+                [IndexRebuildStatus.QUEUED, IndexRebuildStatus.RUNNING]
+            ),
         )
-        .order_by(IndexRebuildTaskOutbox.dispatched_at.asc(), IndexRebuildTaskOutbox.id.asc())
+        .order_by(
+            IndexRebuildTaskOutbox.dispatched_at.asc(), IndexRebuildTaskOutbox.id.asc()
+        )
         .limit(limit)
         .with_for_update(skip_locked=True)
     )
@@ -67,28 +73,41 @@ async def _recover_stale_dispatched_rows(
         row.last_error = STALE_RECOVERY_MESSAGE
         logger.warning(
             "Recovered stale dispatched index rebuild outbox row",
-            extra={"outbox_id": str(row.id), "job_id": str(row.job_id), "attempts": row.attempts},
+            extra={
+                "outbox_id": str(row.id),
+                "job_id": str(row.job_id),
+                "attempts": row.attempts,
+            },
         )
     return len(rows)
 
 
-async def _claim_due_outbox_rows(*, session, limit: int) -> list[IndexRebuildTaskOutbox]:  # noqa: ANN001
+async def _claim_due_outbox_rows(
+    *, session, limit: int
+) -> list[IndexRebuildTaskOutbox]:  # noqa: ANN001
     now = datetime.now(timezone.utc)
     stmt = (
         select(IndexRebuildTaskOutbox)
         .join(IndexRebuildJob, IndexRebuildJob.id == IndexRebuildTaskOutbox.job_id)
         .where(
             IndexRebuildTaskOutbox.status.in_(
-                [IndexRebuildTaskOutboxStatus.PENDING, IndexRebuildTaskOutboxStatus.FAILED]
+                [
+                    IndexRebuildTaskOutboxStatus.PENDING,
+                    IndexRebuildTaskOutboxStatus.FAILED,
+                ]
             ),
             or_(
                 IndexRebuildTaskOutbox.next_retry_at.is_(None),
                 IndexRebuildTaskOutbox.next_retry_at <= now,
             ),
             IndexRebuildTaskOutbox.attempts < IndexRebuildTaskOutbox.max_attempts,
-            IndexRebuildJob.status.in_([IndexRebuildStatus.QUEUED, IndexRebuildStatus.RUNNING]),
+            IndexRebuildJob.status.in_(
+                [IndexRebuildStatus.QUEUED, IndexRebuildStatus.RUNNING]
+            ),
         )
-        .order_by(IndexRebuildTaskOutbox.created_at.asc(), IndexRebuildTaskOutbox.id.asc())
+        .order_by(
+            IndexRebuildTaskOutbox.created_at.asc(), IndexRebuildTaskOutbox.id.asc()
+        )
         .limit(limit)
         .with_for_update(skip_locked=True)
     )
@@ -105,7 +124,9 @@ def dispatch_index_rebuild_outbox(limit: int = DEFAULT_DISPATCH_BATCH_SIZE) -> N
     asyncio.run(_dispatch_index_rebuild_outbox(limit=limit))
 
 
-async def _dispatch_index_rebuild_outbox(*, limit: int = DEFAULT_DISPATCH_BATCH_SIZE) -> int:
+async def _dispatch_index_rebuild_outbox(
+    *, limit: int = DEFAULT_DISPATCH_BATCH_SIZE
+) -> int:
     settings = get_settings()
     safe_limit = max(int(limit or DEFAULT_DISPATCH_BATCH_SIZE), 1)
 
@@ -133,7 +154,9 @@ async def _dispatch_index_rebuild_outbox(*, limit: int = DEFAULT_DISPATCH_BATCH_
                     row.attempts += 1
                     try:
                         run_index_rebuild_job.delay(str(row.job_id))
-                    except Exception as exc:  # pragma: no cover - depends on broker state
+                    except (
+                        Exception
+                    ) as exc:  # pragma: no cover - depends on broker state
                         row.status = IndexRebuildTaskOutboxStatus.FAILED
                         row.dispatched_at = None
                         row.last_error = _format_error(exc)

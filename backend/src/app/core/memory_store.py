@@ -51,7 +51,9 @@ class StoreManager:
             raise ValueError(f"不支持的记忆后端类型: {settings.memory_store_backend}")
 
         try:
-            store_ctx = AsyncPostgresStore.from_conn_string(_resolve_store_url(settings))
+            store_ctx = AsyncPostgresStore.from_conn_string(
+                _resolve_store_url(settings)
+            )
             cls._store_ctx = store_ctx
             cls._store = await store_ctx.__aenter__()
             await cls._store.setup()
@@ -78,4 +80,3 @@ class StoreManager:
         if not cls._initialized or cls._store is None:
             raise RuntimeError("StoreManager 未初始化")
         return cls._store
-

@@ -16,7 +16,10 @@ from langchain.messages import AIMessage, HumanMessage, SystemMessage
 
 from app.core.model_config_errors import ModelConfigIncompleteError
 from app.core.settings import get_settings
-from app.integrations.chat_model_factory import create_chat_model, get_active_model_identity
+from app.integrations.chat_model_factory import (
+    create_chat_model,
+    get_active_model_identity,
+)
 from app.services.streaming import extract_answer_text
 
 logger = logging.getLogger(__name__)

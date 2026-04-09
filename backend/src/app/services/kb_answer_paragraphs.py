@@ -6,14 +6,25 @@ import re
 from collections.abc import Iterable
 
 from app.agents.kb_chat_agentic.schemas import AnswerParagraph
-from app.services.evidence_guardrails import is_stable_citation_id, normalize_citation_label
+from app.services.evidence_guardrails import (
+    is_stable_citation_id,
+    normalize_citation_label,
+)
 
 _CITATION_LABEL_RE = re.compile(r"\[([^\[\]\n]{1,128})\]|【([^【】\n]{1,128})】")
 _SPACE_BEFORE_PUNCTUATION_RE = re.compile(r"\s+([，。！？；：,.!?;:])")
 _MULTI_BLANK_LINE_RE = re.compile(r"\n{3,}")
 _TERMINAL_PUNCTUATION = ("。", "！", "？", "!", "?", "；", ";", "：", ":")
 _LEADING_PUNCTUATION = tuple("，。！？；：,.!?;:)]】）】")
-_HYPHEN_VARIANTS = ("\u2010", "\u2011", "\u2012", "\u2013", "\u2014", "\u2015", "\u2212")
+_HYPHEN_VARIANTS = (
+    "\u2010",
+    "\u2011",
+    "\u2012",
+    "\u2013",
+    "\u2014",
+    "\u2015",
+    "\u2212",
+)
 
 
 def _dedupe_preserve_order(values: Iterable[str]) -> list[str]:
@@ -47,7 +58,9 @@ def _strip_citation_labels(text: str) -> str:
         label = normalize_citation_label(match.group(1) or match.group(2) or "")
         return "" if is_stable_citation_id(label) else match.group(0)
 
-    return _clean_text(_CITATION_LABEL_RE.sub(_strip_if_stable, normalize_answer_text_variants(text)))
+    return _clean_text(
+        _CITATION_LABEL_RE.sub(_strip_if_stable, normalize_answer_text_variants(text))
+    )
 
 
 def _rebuild_text_from_claims(paragraph: AnswerParagraph) -> str:
@@ -94,9 +107,7 @@ def prune_unsupported_auxiliary_claims(
         kept_claims = [
             claim
             for claim in parsed.claims
-            if not (
-                claim.role == "auxiliary" and claim.support_status == "unsupported"
-            )
+            if not (claim.role == "auxiliary" and claim.support_status == "unsupported")
         ]
         updated = parsed.model_copy(update={"claims": kept_claims})
         if len(kept_claims) != len(parsed.claims):
@@ -113,7 +124,9 @@ def render_answer_paragraphs(
 ) -> str:
     rendered: list[str] = []
     for paragraph in paragraphs:
-        parsed = recalculate_paragraph_citation_ids(AnswerParagraph.model_validate(paragraph))
+        parsed = recalculate_paragraph_citation_ids(
+            AnswerParagraph.model_validate(paragraph)
+        )
         text = _strip_citation_labels(parsed.text)
         suffix = "".join(f"[{citation_id}]" for citation_id in parsed.citation_ids)
         if text or suffix:

@@ -95,7 +95,8 @@ def document_to_result(document: Document) -> dict[str, Any]:
         "url": str(metadata.get("url") or "").strip(),
         "snippet": str(document.page_content or "").strip(),
         "source": str(metadata.get("provider") or "").strip(),
-        "domain": str(metadata.get("domain") or "").strip() or extract_domain(str(metadata.get("url") or "")),
+        "domain": str(metadata.get("domain") or "").strip()
+        or extract_domain(str(metadata.get("url") or "")),
         "published_at": str(metadata.get("published_at") or "").strip() or None,
         "provider_rank": metadata.get("provider_rank"),
         "retrieval_query": str(metadata.get("retrieval_query") or "").strip(),

@@ -29,7 +29,9 @@ class SseHeartbeatStats:
             else time.perf_counter()
         )
         if self._last_sent_monotonic is not None:
-            gap_ms = max(0, int(round((now_value - self._last_sent_monotonic) * 1000.0)))
+            gap_ms = max(
+                0, int(round((now_value - self._last_sent_monotonic) * 1000.0))
+            )
             self.gap_ms_samples.append(gap_ms)
         self._last_sent_monotonic = now_value
         self.sent_count += 1
@@ -48,9 +50,11 @@ def format_sse(event: str, data: Any) -> str:
     """将事件编码为 SSE 文本。"""
     payload = _json_dumps(data)
     lines = payload.splitlines() or [""]
-    return "event: {event}\n".format(event=event) + "".join(
-        "data: {line}\n".format(line=line) for line in lines
-    ) + "\n"
+    return (
+        "event: {event}\n".format(event=event)
+        + "".join("data: {line}\n".format(line=line) for line in lines)
+        + "\n"
+    )
 
 
 def format_sse_comment(comment: str) -> str:
@@ -66,9 +70,7 @@ async def encode_sse(
     heartbeat_stats: SseHeartbeatStats | None = None,
 ) -> AsyncIterator[str]:
     """将事件序列转换为 SSE 字符串流。"""
-    heartbeat_enabled = (
-        heartbeat_interval is not None and heartbeat_interval > 0
-    )
+    heartbeat_enabled = heartbeat_interval is not None and heartbeat_interval > 0
     queue: asyncio.Queue[tuple[str, Any] | None] = asyncio.Queue()
 
     async def _drain_events() -> None:

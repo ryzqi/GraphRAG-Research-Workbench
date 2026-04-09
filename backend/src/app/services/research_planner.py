@@ -62,7 +62,9 @@ class _ResearchScoperSubtaskOutput(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     title: str = Field(description="Short subtask title.")
-    description: str = Field(description="What this research subtask needs to accomplish.")
+    description: str = Field(
+        description="What this research subtask needs to accomplish."
+    )
     target_sources: list[str] = Field(
         default_factory=list,
         description="Suggested source targets for this subtask. Prefer web or paper.",
@@ -316,11 +318,15 @@ class LLMResearchScoper:
                 question=question_text,
             )
         return [
-            SystemMessage(content=self._prompts.render_with_few_shot("research/scoper_system")),
+            SystemMessage(
+                content=self._prompts.render_with_few_shot("research/scoper_system")
+            ),
             HumanMessage(content=user_prompt),
         ]
 
-    def _build_decision_messages(self, *, question: str, method: str) -> list[SystemMessage | HumanMessage]:
+    def _build_decision_messages(
+        self, *, question: str, method: str
+    ) -> list[SystemMessage | HumanMessage]:
         return self._build_scoper_messages(
             question=question,
             method=method,
@@ -336,7 +342,9 @@ class LLMResearchScoper:
             example_json='{"decision": "proceed"}',
         )
 
-    def _build_clarify_messages(self, *, question: str, method: str) -> list[SystemMessage | HumanMessage]:
+    def _build_clarify_messages(
+        self, *, question: str, method: str
+    ) -> list[SystemMessage | HumanMessage]:
         return self._build_scoper_messages(
             question=question,
             method=method,
@@ -350,14 +358,16 @@ class LLMResearchScoper:
                 "questions 只允许 1 到 2 个问题，且每个问题只问一个关键变量。",
             ],
             example_json=(
-                '{\n'
+                "{\n"
                 '  "summary": "...",\n'
                 '  "questions": [{"id": "q1", "question": "...", "why_it_matters": "..."}]\n'
-                '}'
+                "}"
             ),
         )
 
-    def _build_proceed_messages(self, *, question: str, method: str) -> list[SystemMessage | HumanMessage]:
+    def _build_proceed_messages(
+        self, *, question: str, method: str
+    ) -> list[SystemMessage | HumanMessage]:
         return self._build_scoper_messages(
             question=question,
             method=method,
@@ -371,14 +381,14 @@ class LLMResearchScoper:
                 'complexity 只能是 "simple"、"comparative" 或 "complex"。',
             ],
             example_json=(
-                '{\n'
+                "{\n"
                 '  "summary": "...",\n'
                 '  "research_brief": "...",\n'
                 '  "complexity": "simple",\n'
                 '  "target_sources": ["web"],\n'
                 '  "subtasks": [{"title": "...", "description": "...", "target_sources": ["web"]}],\n'
                 '  "budget_guidance": "..."\n'
-                '}'
+                "}"
             ),
         )
 
@@ -550,10 +560,14 @@ class LLMResearchScoper:
         *,
         question: str,
     ) -> ResearchClarificationRequest | ResearchPlanSnapshot:
-        model = create_chat_model(settings=self._settings, use_previous_response_id=False)
+        model = create_chat_model(
+            settings=self._settings, use_previous_response_id=False
+        )
         method = self._structured_output_method()
         if method == "json_mode":
-            return await self._scope_via_json_mode(model=model, question=question, method=method)
+            return await self._scope_via_json_mode(
+                model=model, question=question, method=method
+            )
 
         payload = await self._invoke_scoper_payload(model=model, question=question)
 
@@ -594,7 +608,9 @@ class ResearchPlanner:
         self._settings = settings or get_settings()
         self._scoper = scoper or LLMResearchScoper(settings=self._settings)
 
-    async def build_plan(self, request: ResearchSessionCreateRequest) -> ResearchPlannerResult:
+    async def build_plan(
+        self, request: ResearchSessionCreateRequest
+    ) -> ResearchPlannerResult:
         question = request.question.strip()
         scoped = await self._scoper.scope(question=question)
         if isinstance(scoped, ResearchClarificationRequest):

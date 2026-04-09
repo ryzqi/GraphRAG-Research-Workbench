@@ -117,7 +117,9 @@ def get_active_model_identity(settings: Settings | None = None) -> tuple[str, st
         provider_models=provider_cfg.models,
     )
     if not provider_cfg.enabled:
-        raise RuntimeError(f"Active model provider is disabled: {provider_cfg.provider.value}")
+        raise RuntimeError(
+            f"Active model provider is disabled: {provider_cfg.provider.value}"
+        )
     return provider_cfg.provider.value, model_name
 
 
@@ -132,10 +134,14 @@ def create_chat_model_from_runtime_config(
 ) -> Any:
     cfg = settings or get_settings()
     if not provider_cfg.enabled:
-        raise RuntimeError(f"Active model provider is disabled: {provider_cfg.provider.value}")
+        raise RuntimeError(
+            f"Active model provider is disabled: {provider_cfg.provider.value}"
+        )
 
     if provider_cfg.provider == ModelProvider.OPENAI:
-        api_key = _require_api_key(provider_label="OpenAI", api_key=provider_cfg.api_key)
+        api_key = _require_api_key(
+            provider_label="OpenAI", api_key=provider_cfg.api_key
+        )
         base_url = _require_base_url(
             provider_label="OpenAI",
             base_url=provider_cfg.base_url,
@@ -229,7 +235,9 @@ def create_chat_model_from_runtime_config(
         return ChatOllama(**kwargs)
 
     if provider_cfg.provider == ModelProvider.NVIDIA:
-        api_key = _require_api_key(provider_label="NVIDIA", api_key=provider_cfg.api_key)
+        api_key = _require_api_key(
+            provider_label="NVIDIA", api_key=provider_cfg.api_key
+        )
         base_url = _require_base_url(
             provider_label="NVIDIA",
             base_url=provider_cfg.base_url,
@@ -271,7 +279,9 @@ def create_chat_model(
             "模型配置不完整：没有可用的已启用供应商，请前往模型配置页面补全"
         ) from exc
     if not provider_cfg.enabled:
-        raise RuntimeError(f"Active model provider is disabled: {provider_cfg.provider.value}")
+        raise RuntimeError(
+            f"Active model provider is disabled: {provider_cfg.provider.value}"
+        )
     model_name = _resolve_model_name(
         provider=provider_cfg.provider,
         snapshot_model=snapshot.active_model,

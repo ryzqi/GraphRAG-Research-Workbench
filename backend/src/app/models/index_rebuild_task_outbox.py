@@ -38,7 +38,9 @@ class IndexRebuildTaskOutbox(Base):
         server_default=sa.text("'{}'::jsonb"),
     )
     status: Mapped[IndexRebuildTaskOutboxStatus] = mapped_column(
-        enum_values(IndexRebuildTaskOutboxStatus, name="index_rebuild_task_outbox_status"),
+        enum_values(
+            IndexRebuildTaskOutboxStatus, name="index_rebuild_task_outbox_status"
+        ),
         nullable=False,
         default=IndexRebuildTaskOutboxStatus.PENDING,
     )
@@ -74,7 +76,9 @@ class IndexRebuildTaskOutbox(Base):
     )
 
     __table_args__ = (
-        sa.UniqueConstraint("job_id", "task_name", name="uq_index_rebuild_outbox_job_task"),
+        sa.UniqueConstraint(
+            "job_id", "task_name", name="uq_index_rebuild_outbox_job_task"
+        ),
         sa.Index(
             "ix_index_rebuild_outbox_status_next_retry_created",
             "status",

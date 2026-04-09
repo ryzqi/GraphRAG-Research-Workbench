@@ -240,9 +240,7 @@ async def list_recent_chats(
     result = await db.execute(stmt)
     items: list[ChatSessionRecentRead] = []
     for session, last_message_at, last_user_content in result.all():
-        title = session.title or (
-            (last_user_content[:30] if last_user_content else None)
-        )
+        title = session.title or (last_user_content[:30] if last_user_content else None)
         items.append(
             ChatSessionRecentRead(
                 id=session.id,
@@ -343,7 +341,9 @@ async def create_chat_message(
     session_id: uuid.UUID,
     body: ChatMessageCreate,
 ) -> (
-    ChatAnswerResponse | ChatPendingToolApprovalResponse | ChatPendingUserClarificationResponse
+    ChatAnswerResponse
+    | ChatPendingToolApprovalResponse
+    | ChatPendingUserClarificationResponse
 ):
     """发送消息并获得回答。"""
     session = await db.get(ChatSession, session_id)
@@ -372,7 +372,9 @@ async def create_chat_message(
             client_request_id=body.client_request_id,
         )
     else:
-        raise bad_request(code="CHAT_UNSUPPORTED_SESSION_TYPE", message="不支持的会话类型")
+        raise bad_request(
+            code="CHAT_UNSUPPORTED_SESSION_TYPE", message="不支持的会话类型"
+        )
 
     if getattr(result, "status", None) in {
         "pending_tool_approval",
@@ -428,7 +430,9 @@ async def create_chat_message_stream(
             client_request_id=body.client_request_id,
         )
     else:
-        raise bad_request(code="CHAT_UNSUPPORTED_SESSION_TYPE", message="不支持的会话类型")
+        raise bad_request(
+            code="CHAT_UNSUPPORTED_SESSION_TYPE", message="不支持的会话类型"
+        )
 
     return StreamingResponse(
         encode_sse(
@@ -484,7 +488,9 @@ async def resume_general_chat(
     if not session:
         raise not_found("会话不存在", code="CHAT_SESSION_NOT_FOUND")
     if session.session_type != ChatSessionType.GENERAL_CHAT:
-        raise bad_request(code="CHAT_NOT_GENERAL_CHAT", message="仅普通代理支持恢复执行")
+        raise bad_request(
+            code="CHAT_NOT_GENERAL_CHAT", message="仅普通代理支持恢复执行"
+        )
 
     run = await db.get(AgentRun, run_id)
     if not run or run.session_id != session.id:
@@ -581,7 +587,9 @@ async def resume_general_chat_stream(
     if not session:
         raise not_found("会话不存在", code="CHAT_SESSION_NOT_FOUND")
     if session.session_type != ChatSessionType.GENERAL_CHAT:
-        raise bad_request(code="CHAT_NOT_GENERAL_CHAT", message="仅普通代理支持恢复执行")
+        raise bad_request(
+            code="CHAT_NOT_GENERAL_CHAT", message="仅普通代理支持恢复执行"
+        )
 
     run = await db.get(AgentRun, run_id)
     if not run or run.session_id != session.id:

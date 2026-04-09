@@ -31,9 +31,11 @@ class ChatExporter:
         if run.session_id:
             chat_session = await session.get(ChatSession, run.session_id)
             if chat_session:
-                stmt = select(ChatMessage).where(
-                    ChatMessage.session_id == run.session_id
-                ).order_by(ChatMessage.created_at)
+                stmt = (
+                    select(ChatMessage)
+                    .where(ChatMessage.session_id == run.session_id)
+                    .order_by(ChatMessage.created_at)
+                )
                 result = await session.execute(stmt)
                 messages = list(result.scalars().all())
 
@@ -70,9 +72,11 @@ class ChatExporter:
             lines.append("## 对话历史")
             lines.append("")
             for msg in messages:
-                role_label = {"user": "用户", "assistant": "助手", "system": "系统"}.get(
-                    msg.role.value, msg.role.value
-                )
+                role_label = {
+                    "user": "用户",
+                    "assistant": "助手",
+                    "system": "系统",
+                }.get(msg.role.value, msg.role.value)
                 lines.append(f"### {role_label} ({msg.created_at.isoformat()})")
                 lines.append("")
                 lines.append(msg.content)
@@ -89,11 +93,14 @@ class ChatExporter:
 
         # 证据列表
         if evidence_list:
+
             def _citation_label(locator: dict | None, index: int) -> str:
                 if isinstance(locator, dict):
                     raw = locator.get("citation_label")
                     if isinstance(raw, str):
-                        label = " ".join(raw.replace("[", " ").replace("]", " ").split())
+                        label = " ".join(
+                            raw.replace("[", " ").replace("]", " ").split()
+                        )
                         if label:
                             return label
                     filename = locator.get("filename")
@@ -117,7 +124,9 @@ class ChatExporter:
                 if ev.material_id:
                     lines.append(f"- **资料 ID**: {ev.material_id}")
                 if ev.locator:
-                    lines.append(f"- **定位**: {json.dumps(ev.locator, ensure_ascii=False)}")
+                    lines.append(
+                        f"- **定位**: {json.dumps(ev.locator, ensure_ascii=False)}"
+                    )
                 lines.append(f"- **摘录**: {ev.excerpt[:300]}...")
                 lines.append("")
 

@@ -203,7 +203,9 @@ class ChunkPersistenceService:
                     "chunking_strategy": self._resolve_chunking_strategy(chunk_item),
                     "heading_path": self._resolve_heading_path(chunk_item),
                     "global_chunk_order": idx,
-                    "window_id": self._resolve_int_from_metadata(chunk_item, "window_id"),
+                    "window_id": self._resolve_int_from_metadata(
+                        chunk_item, "window_id"
+                    ),
                     "window_size_tokens": self._resolve_int_from_metadata(
                         chunk_item,
                         "window_size_tokens",
@@ -212,13 +214,23 @@ class ChunkPersistenceService:
                         chunk_item,
                         "window_overlap_tokens",
                     ),
-                    "token_start": self._resolve_int_from_metadata(chunk_item, "token_start"),
-                    "token_end": self._resolve_int_from_metadata(chunk_item, "token_end"),
+                    "token_start": self._resolve_int_from_metadata(
+                        chunk_item, "token_start"
+                    ),
+                    "token_end": self._resolve_int_from_metadata(
+                        chunk_item, "token_end"
+                    ),
                     "source_kind": self._resolve_source_kind(chunk_item),
-                    "source_page_start": self._resolve_source_page(chunk_item, "page_start"),
-                    "source_page_end": self._resolve_source_page(chunk_item, "page_end"),
+                    "source_page_start": self._resolve_source_page(
+                        chunk_item, "page_start"
+                    ),
+                    "source_page_end": self._resolve_source_page(
+                        chunk_item, "page_end"
+                    ),
                     "locator": chunk_item.locator,
-                    "content_hash": hashlib.sha256(raw_text.encode("utf-8")).hexdigest(),
+                    "content_hash": hashlib.sha256(
+                        raw_text.encode("utf-8")
+                    ).hexdigest(),
                     "token_count": count_tokens(raw_text),
                 }
             )

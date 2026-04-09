@@ -94,4 +94,6 @@ async def ready(request: Request) -> JSONResponse:
 
     degraded = any(not bool(r.get("ok")) for k, r in results.items() if k != "postgres")
     status = "degraded" if degraded else "ready"
-    return JSONResponse(status_code=200, content={"status": status, "dependencies": results})
+    return JSONResponse(
+        status_code=200, content={"status": status, "dependencies": results}
+    )

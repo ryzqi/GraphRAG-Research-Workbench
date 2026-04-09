@@ -500,7 +500,9 @@ class ResearchService:
         source_bundle = runtime_result.source_bundle
         await self._append_trace_events(
             session=session,
-            trace_links=build_trace_links(session=session, runtime_result=runtime_result),
+            trace_links=build_trace_links(
+                session=session, runtime_result=runtime_result
+            ),
         )
         await self._artifact_store.upsert(
             session=session,
@@ -645,7 +647,9 @@ class ResearchService:
             session=session,
             fault=fault,
             thresholds=self._gate_thresholds,
-            existing_metrics=session.metrics if isinstance(session.metrics, dict) else None,
+            existing_metrics=session.metrics
+            if isinstance(session.metrics, dict)
+            else None,
         )
         await self._persist_metrics_artifacts(session=session, metrics=metrics)
         return session
@@ -659,7 +663,9 @@ class ResearchService:
         events = sorted(session.events, key=lambda item: item.sequence)
         after_sequence = 0
         if after_event_id is not None:
-            matched = next((item for item in events if item.event_id == after_event_id), None)
+            matched = next(
+                (item for item in events if item.event_id == after_event_id), None
+            )
             if matched is not None:
                 after_sequence = matched.sequence
         return [
@@ -668,7 +674,9 @@ class ResearchService:
             if event.sequence > after_sequence
         ]
 
-    def build_artifacts_response(self, session: ResearchSession) -> ResearchArtifactsResponse:
+    def build_artifacts_response(
+        self, session: ResearchSession
+    ) -> ResearchArtifactsResponse:
         items = [
             ResearchArtifactRead(
                 artifact_key=artifact.artifact_key,
@@ -679,7 +687,9 @@ class ResearchService:
                 retrieval_method=artifact.retrieval_method,
                 origin_url=artifact.origin_url,
             )
-            for artifact in sorted(session.artifacts, key=lambda item: item.artifact_key)
+            for artifact in sorted(
+                session.artifacts, key=lambda item: item.artifact_key
+            )
         ]
         items.append(
             ResearchArtifactRead(
@@ -737,7 +747,9 @@ class ResearchService:
         )
 
     @staticmethod
-    def _artifact_by_key(session: ResearchSession, artifact_key: str) -> ResearchArtifact:
+    def _artifact_by_key(
+        session: ResearchSession, artifact_key: str
+    ) -> ResearchArtifact:
         artifact = next(
             (item for item in session.artifacts if item.artifact_key == artifact_key),
             None,
@@ -750,7 +762,9 @@ class ResearchService:
         return artifact
 
     @staticmethod
-    def _extract_artifact_citations(artifact: ResearchArtifact) -> list[ResearchCanonicalCitation]:
+    def _extract_artifact_citations(
+        artifact: ResearchArtifact,
+    ) -> list[ResearchCanonicalCitation]:
         payload = artifact.content_json
         if not isinstance(payload, dict):
             return []
@@ -776,7 +790,9 @@ class ResearchService:
         lc_agent_name = payload.get("lc_agent_name")
         subagent_name = payload.get("subagent_name")
         if not isinstance(subagent_name, str) or not subagent_name.strip():
-            subagent_name = ResearchService._subagent_name_from_namespace(event.namespace)
+            subagent_name = ResearchService._subagent_name_from_namespace(
+                event.namespace
+            )
         return ResearchEventEnvelope(
             event_id=event.event_id,
             sequence=event.sequence,
@@ -787,8 +803,12 @@ class ResearchService:
             namespace=event.namespace,
             payload=payload,
             trace_id=event.trace_id,
-            source_provider=source_provider if isinstance(source_provider, str) else None,
-            retrieval_method=retrieval_method if isinstance(retrieval_method, str) else None,
+            source_provider=source_provider
+            if isinstance(source_provider, str)
+            else None,
+            retrieval_method=retrieval_method
+            if isinstance(retrieval_method, str)
+            else None,
             origin_url=origin_url if isinstance(origin_url, str) else None,
             lc_agent_name=lc_agent_name if isinstance(lc_agent_name, str) else None,
             subagent_name=subagent_name if isinstance(subagent_name, str) else None,

@@ -213,7 +213,9 @@ def _runtime_context(runtime: Runtime[Any] | None) -> dict[str, Any]:
     return context if isinstance(context, dict) else {}
 
 
-def _resolve_kb_ids(state: dict[str, Any], runtime: Runtime[Any] | None) -> list[str] | None:
+def _resolve_kb_ids(
+    state: dict[str, Any], runtime: Runtime[Any] | None
+) -> list[str] | None:
     context = _runtime_context(runtime)
     kb_ids_ctx = context.get("kb_ids")
     if isinstance(kb_ids_ctx, list):
@@ -295,7 +297,9 @@ def _build_subquery_dispatch_plan(
                 )
 
     if strategy == "direct":
-        non_main = [item for item in candidate_items if _as_str(item.get("kind")) != "main"]
+        non_main = [
+            item for item in candidate_items if _as_str(item.get("kind")) != "main"
+        ]
         if not non_main:
             return "retrieve", {
                 "mode": "single_retrieve",
@@ -362,9 +366,7 @@ def _build_subquery_dispatch_plan(
         spec = spec_map.get(query.casefold()) or {}
         item_priority = item.get("priority")
         raw_priority = (
-            item_priority
-            if isinstance(item_priority, int)
-            else spec.get("priority")
+            item_priority if isinstance(item_priority, int) else spec.get("priority")
         )
         if isinstance(raw_priority, int):
             priority = raw_priority
@@ -408,7 +410,9 @@ def _build_subquery_dispatch_plan(
         }
         branch_kinds[kind] = int(branch_kinds.get(kind, 0)) + 1
         selected_queries.append(query)
-        send_tasks.append(make_send_task("retrieve_subquery", {"subquery_task": subquery_task}, state))
+        send_tasks.append(
+            make_send_task("retrieve_subquery", {"subquery_task": subquery_task}, state)
+        )
     if not send_tasks:
         return "retrieve", {
             "mode": "single_retrieve",
@@ -433,6 +437,7 @@ def _build_subquery_dispatch_plan(
         "rank_strategy": "quality_first",
     }
 
+
 def _resolve_retrieval_budget_payload(
     state: dict[str, Any],
     settings: Settings,
@@ -447,8 +452,7 @@ def _resolve_retrieval_budget_payload(
         budget.get("global_candidates_limit") or max(default_top_k * 2, per_query_top_k)
     )
     rerank_input_limit = int(
-        budget.get("rerank_input_limit")
-        or max(default_top_k, per_query_top_k)
+        budget.get("rerank_input_limit") or max(default_top_k, per_query_top_k)
     )
     return {
         "per_query_top_k": max(1, per_query_top_k),
@@ -478,7 +482,8 @@ def _compute_retrieval_diagnostics(
     metrics = state.get("metrics")
     retrieval_metrics = (
         metrics.get("retrieval_layer")
-        if isinstance(metrics, dict) and isinstance(metrics.get("retrieval_layer"), dict)
+        if isinstance(metrics, dict)
+        and isinstance(metrics.get("retrieval_layer"), dict)
         else {}
     )
     previous_evidence = int(retrieval_metrics.get("evidence_count") or 0)
@@ -491,7 +496,8 @@ def _compute_retrieval_diagnostics(
             0.0,
             min(
                 1.0,
-                (evidence_count - previous_evidence) / max(evidence_count, previous_evidence),
+                (evidence_count - previous_evidence)
+                / max(evidence_count, previous_evidence),
             ),
         )
 
@@ -619,7 +625,9 @@ async def retrieve_subquery_context(
     kind = _as_str(task.get("kind")).strip() or "other"
     if isinstance(query_item, dict):
         kind = _as_str(query_item.get("kind")).strip() or kind
-    retrieval_count = len(evidence_items) if evidence_items else _extract_evidence_count(context_text)
+    retrieval_count = (
+        len(evidence_items) if evidence_items else _extract_evidence_count(context_text)
+    )
 
     return {
         "subquery_runs": [
@@ -709,8 +717,14 @@ async def merge_subquery_context(
     if evidence_items:
         final_context = canonical_context
     else:
-        final_context = "\n\n".join(merged_parts).strip() if merged_parts else "（未找到相关内容）"
-    evidence_count = len(evidence_items) if evidence_items else _extract_evidence_count(final_context)
+        final_context = (
+            "\n\n".join(merged_parts).strip() if merged_parts else "（未找到相关内容）"
+        )
+    evidence_count = (
+        len(evidence_items)
+        if evidence_items
+        else _extract_evidence_count(final_context)
+    )
     retrieval_diagnostics = _compute_retrieval_diagnostics(
         state=state,
         final_context=final_context,
@@ -775,6 +789,7 @@ async def merge_subquery_context(
             },
         ),
     }
+
 
 def _merge_stage_summary(
     state: dict, key: str, summary: dict[str, Any]
@@ -870,7 +885,10 @@ def _extract_required_dimensions(question: str) -> list[str]:
     normalized = _as_str(question).strip()
     dimensions: list[str] = []
     for label, keywords in _QUESTION_DIMENSION_KEYWORDS:
-        if any(keyword in normalized for keyword in keywords) and label not in dimensions:
+        if (
+            any(keyword in normalized for keyword in keywords)
+            and label not in dimensions
+        ):
             dimensions.append(label)
     return dimensions
 
@@ -1054,7 +1072,9 @@ def _detect_draft_coverage_gap(
             continue
         terms = required_term_map.get(entity) or []
         missing_for_entity = [
-            term for term in terms if _compact_answer_coverage_text(term) not in compact_answer
+            term
+            for term in terms
+            if _compact_answer_coverage_text(term) not in compact_answer
         ]
         if missing_for_entity:
             missing_terms[entity] = missing_for_entity
@@ -1074,7 +1094,9 @@ def _format_draft_coverage_gap(gap: dict[str, object] | None) -> str:
     lines = ["当前草稿存在以下覆盖缺口："]
     missing_entities = gap.get("missing_entities")
     if isinstance(missing_entities, list) and missing_entities:
-        lines.append(f"- 缺少实体覆盖：{' / '.join(_as_str(entity) for entity in missing_entities)}")
+        lines.append(
+            f"- 缺少实体覆盖：{' / '.join(_as_str(entity) for entity in missing_entities)}"
+        )
     missing_terms = gap.get("missing_terms")
     if isinstance(missing_terms, dict):
         for entity, terms in missing_terms.items():
@@ -1134,11 +1156,14 @@ async def _attempt_local_plain_text_draft_repair(
     repaired_payloads = [paragraph.model_dump() for paragraph in projected]
     repaired_render_meta = _build_answer_render_meta(projected)
     repaired_draft = render_answer_paragraphs(repaired_payloads).strip()
-    if _detect_draft_coverage_gap(
-        question=question,
-        draft=repaired_draft,
-        final_context=final_context,
-    ) is not None:
+    if (
+        _detect_draft_coverage_gap(
+            question=question,
+            draft=repaired_draft,
+            final_context=final_context,
+        )
+        is not None
+    ):
         return None
     return repaired_payloads, repaired_render_meta, repaired_draft
 
@@ -1169,7 +1194,8 @@ def _merge_draft_structured_reason(
     if decision_reason is None:
         return payload_reason
     if (
-        payload_reason in {"invalid_schema", "structured_parse_failed", "multiple_structured_outputs"}
+        payload_reason
+        in {"invalid_schema", "structured_parse_failed", "multiple_structured_outputs"}
         and decision_reason == "empty_structured_response"
     ):
         return payload_reason
@@ -1234,10 +1260,12 @@ async def _invoke_draft_structured(
             decision_reason=decision_reason,
         )
         if decision is not None:
-            paragraphs = _normalize_answer_paragraphs([
-                AnswerParagraph.model_validate(paragraph)
-                for paragraph in decision.paragraphs
-            ])
+            paragraphs = _normalize_answer_paragraphs(
+                [
+                    AnswerParagraph.model_validate(paragraph)
+                    for paragraph in decision.paragraphs
+                ]
+            )
             paragraph_payloads = [paragraph.model_dump() for paragraph in paragraphs]
             render_meta = _build_answer_render_meta(paragraphs)
             draft = render_answer_paragraphs(paragraph_payloads).strip()
@@ -1302,7 +1330,9 @@ def _extract_inline_citation_ids(text: str) -> list[str]:
 
 
 def _strip_inline_citations(text: str) -> str:
-    stripped = _INLINE_CITATION_RE.sub("", normalize_answer_text_variants(_as_str(text)))
+    stripped = _INLINE_CITATION_RE.sub(
+        "", normalize_answer_text_variants(_as_str(text))
+    )
     stripped = re.sub(r"[ \t]+\n", "\n", stripped)
     stripped = re.sub(r"\n{3,}", "\n\n", stripped)
     return stripped.strip()
@@ -1318,9 +1348,7 @@ def _project_plain_text_answer_to_paragraphs(
         return []
 
     raw_blocks = [
-        block.strip()
-        for block in re.split(r"\n\s*\n", cleaned_answer)
-        if block.strip()
+        block.strip() for block in re.split(r"\n\s*\n", cleaned_answer) if block.strip()
     ]
     if not raw_blocks:
         raw_blocks = [cleaned_answer]
@@ -1384,7 +1412,9 @@ async def kb_retrieve_context(
         kb_tool=kb_tool,
         retrieval_round=retrieval_round,
         runtime=runtime,
-        query_items=query_items if isinstance(query_items, list) and query_items else None,
+        query_items=query_items
+        if isinstance(query_items, list) and query_items
+        else None,
     )
     meta_dict = retrieval_meta if isinstance(retrieval_meta, dict) else {}
     evidence_items, citation_catalog, canonical_context = resolve_structured_evidence(
@@ -1393,7 +1423,11 @@ async def kb_retrieve_context(
     )
     if evidence_items:
         final_context = canonical_context
-    evidence_count = len(evidence_items) if evidence_items else _extract_evidence_count(final_context)
+    evidence_count = (
+        len(evidence_items)
+        if evidence_items
+        else _extract_evidence_count(final_context)
+    )
     if retrieval_reason is None and evidence_count <= 0:
         retrieval_reason = "no_evidence"
     retrieval_diagnostics = _compute_retrieval_diagnostics(
@@ -1427,9 +1461,9 @@ async def kb_retrieve_context(
             "branch_count": 1,
             "rank_strategy": "quality_first",
             "selected_queries": [query] if query else [],
-                "reason": retrieval_reason or "ok",
-                "diagnostics": retrieval_diagnostics,
-            },
+            "reason": retrieval_reason or "ok",
+            "diagnostics": retrieval_diagnostics,
+        },
         "metrics": metrics,
         "retrieval_diagnostics": retrieval_diagnostics,
         **_merge_stage_summary(
@@ -1563,15 +1597,22 @@ async def generate_draft(
             try:
                 plain_model = chat_model.bind(max_tokens=1024)
                 plain_msg = await plain_model.ainvoke(
-                    [SystemMessage(content=system_prompt), HumanMessage(content=plain_user)]
+                    [
+                        SystemMessage(content=system_prompt),
+                        HumanMessage(content=plain_user),
+                    ]
                 )
-                candidate = extract_answer_text(getattr(plain_msg, "content", "")).strip()
+                candidate = extract_answer_text(
+                    getattr(plain_msg, "content", "")
+                ).strip()
                 projected = _project_plain_text_answer_to_paragraphs(
                     candidate,
                     allowed_citation_ids=_extract_allowed_citation_ids(final_context),
                 )
                 if projected:
-                    paragraph_payloads = [paragraph.model_dump() for paragraph in projected]
+                    paragraph_payloads = [
+                        paragraph.model_dump() for paragraph in projected
+                    ]
                     render_meta = _build_answer_render_meta(projected)
                     draft = render_answer_paragraphs(paragraph_payloads).strip()
                     structured_reason = (
@@ -1644,6 +1685,7 @@ async def generate_draft(
         **summary_updates,
     }
 
+
 async def transform_query_for_retry(
     state: TransformQueryInput,
     *,
@@ -1707,7 +1749,9 @@ async def transform_query_for_retry(
         original_resolved_query = _as_str(state.get("rewrite_input_query")).strip()
     if not original_resolved_query:
         original_resolved_query = current
-    original_coref_query = _as_str(state.get("coref_query")).strip() or original_resolved_query
+    original_coref_query = (
+        _as_str(state.get("coref_query")).strip() or original_resolved_query
+    )
     rewrite_input_query = (
         _as_str(state.get("rewrite_input_query")).strip()
         or original_resolved_query
@@ -1736,7 +1780,9 @@ async def transform_query_for_retry(
         settings=settings,
     )
     query_items = ensure_json_safe(
-        plan_updates.get("query_items") if isinstance(plan_updates.get("query_items"), list) else [],
+        plan_updates.get("query_items")
+        if isinstance(plan_updates.get("query_items"), list)
+        else [],
         settings=settings,
         label="transform_query.query_items",
     )
@@ -1806,7 +1852,9 @@ async def transform_query_for_retry(
                 "normalization_source": str(normalized_meta.get("source") or ""),
                 "query_plan_strategy": query_strategy,
                 "query_plan_items_count": len(query_items),
-                "query_plan_fallback_reason": query_plan_diagnostics.get("fallback_reason"),
+                "query_plan_fallback_reason": query_plan_diagnostics.get(
+                    "fallback_reason"
+                ),
                 "latency_ms": int((time.perf_counter() - start) * 1000),
                 "completed_at": now_iso(),
             },
@@ -1814,7 +1862,9 @@ async def transform_query_for_retry(
     }
 
 
-def route_after_answer_review(state: AnswerRoutingDecisionInput, settings: Settings) -> str:
+def route_after_answer_review(
+    state: AnswerRoutingDecisionInput, settings: Settings
+) -> str:
     """在 AnswerReview 后路由到 END、transform_query 或 force_exit。"""
     routing = resolve_routing_decision(state, "answer_subgraph")
     next_node = _as_str(routing.get("next_node")).strip()
@@ -1829,6 +1879,3 @@ def route_after_answer_review(state: AnswerRoutingDecisionInput, settings: Setti
     ):
         return "force_exit"
     return "transform_query"
-
-
-

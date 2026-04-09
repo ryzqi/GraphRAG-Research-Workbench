@@ -8,12 +8,14 @@ from fastapi import HTTPException, status
 MAX_FILE_SIZE = 50 * 1024 * 1024
 
 # 允许的 MIME 类型白名单（规范化后）
-ALLOWED_MIME_TYPES = frozenset({
-    "application/pdf",
-    "text/plain",
-    "text/markdown",
-    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-})
+ALLOWED_MIME_TYPES = frozenset(
+    {
+        "application/pdf",
+        "text/plain",
+        "text/markdown",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    }
+)
 
 # MIME 类型别名归一化
 MIME_TYPE_ALIASES = {
@@ -22,10 +24,12 @@ MIME_TYPE_ALIASES = {
 }
 
 # 浏览器在无法识别类型时常见的兜底 MIME，需结合扩展名校验放行
-GENERIC_MIME_TYPES = frozenset({
-    "application/octet-stream",
-    "binary/octet-stream",
-})
+GENERIC_MIME_TYPES = frozenset(
+    {
+        "application/octet-stream",
+        "binary/octet-stream",
+    }
+)
 
 # 允许的文件扩展名
 ALLOWED_EXTENSIONS = frozenset({".pdf", ".txt", ".md", ".docx"})
@@ -52,7 +56,10 @@ def validate_file_upload(
     if len(content) > MAX_FILE_SIZE:
         raise HTTPException(
             status_code=status.HTTP_413_CONTENT_TOO_LARGE,
-            detail={"code": "FILE_TOO_LARGE", "message": f"文件大小超过限制 ({MAX_FILE_SIZE // 1024 // 1024}MB)"},
+            detail={
+                "code": "FILE_TOO_LARGE",
+                "message": f"文件大小超过限制 ({MAX_FILE_SIZE // 1024 // 1024}MB)",
+            },
         )
 
     # 校验文件扩展名
@@ -74,5 +81,8 @@ def validate_file_upload(
     ):
         raise HTTPException(
             status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
-            detail={"code": "INVALID_MIME_TYPE", "message": f"不支持的 MIME 类型: {content_type}"},
+            detail={
+                "code": "INVALID_MIME_TYPE",
+                "message": f"不支持的 MIME 类型: {content_type}",
+            },
         )

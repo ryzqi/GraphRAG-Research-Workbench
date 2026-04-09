@@ -58,7 +58,9 @@ def build_scope(
     )
 
 
-def build_context(*, question: str, pre_context: dict[str, Any]) -> SemanticCacheContext:
+def build_context(
+    *, question: str, pre_context: dict[str, Any]
+) -> SemanticCacheContext:
     if is_contextual_query(question):
         return SemanticCacheContext(
             mode="contextual",
@@ -75,7 +77,9 @@ def is_contextual_query(question: str) -> bool:
 
 
 def build_context_signature(pre_context: dict[str, Any]) -> str:
-    summary_text = sanitize_visible_text(str(pre_context.get("summary_text") or "")) or ""
+    summary_text = (
+        sanitize_visible_text(str(pre_context.get("summary_text") or "")) or ""
+    )
     recent_turns_raw = pre_context.get("recent_turns")
     recent_turns: list[dict[str, str]] = []
     if isinstance(recent_turns_raw, list):

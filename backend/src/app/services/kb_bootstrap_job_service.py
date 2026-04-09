@@ -83,7 +83,9 @@ class KBBootstrapJobService:
         if kb is None:
             raise AppError(code="KB_NOT_FOUND", message="知识库不存在", status_code=404)
 
-        payload_entries, upload_manifest = await self._normalize_payload_entries(kb=kb, entries=req.entries)
+        payload_entries, upload_manifest = await self._normalize_payload_entries(
+            kb=kb, entries=req.entries
+        )
         has_pending_uploads = len(upload_manifest) > 0
 
         job = KBBootstrapJob(
@@ -131,10 +133,14 @@ class KBBootstrapJobService:
             upload_progress=self.get_upload_progress(job),
         )
 
-    async def create_upload_session(self, *, job_id: uuid.UUID) -> BootstrapUploadSessionResult:
+    async def create_upload_session(
+        self, *, job_id: uuid.UUID
+    ) -> BootstrapUploadSessionResult:
         job = await self._db.get(KBBootstrapJob, job_id)
         if job is None:
-            raise AppError(code="KB_BOOTSTRAP_JOB_NOT_FOUND", message="任务不存在", status_code=404)
+            raise AppError(
+                code="KB_BOOTSTRAP_JOB_NOT_FOUND", message="任务不存在", status_code=404
+            )
         if job.status != KBBootstrapJobStatus.QUEUED_UPLOAD:
             raise AppError(
                 code="KB_BOOTSTRAP_UPLOAD_SESSION_NOT_ALLOWED",
@@ -152,7 +158,9 @@ class KBBootstrapJobService:
     async def finalize_submission(self, *, job_id: uuid.UUID) -> KBBootstrapJob:
         job = await self._db.get(KBBootstrapJob, job_id)
         if job is None:
-            raise AppError(code="KB_BOOTSTRAP_JOB_NOT_FOUND", message="任务不存在", status_code=404)
+            raise AppError(
+                code="KB_BOOTSTRAP_JOB_NOT_FOUND", message="任务不存在", status_code=404
+            )
 
         if job.status in {KBBootstrapJobStatus.RUNNING, KBBootstrapJobStatus.COMPLETED}:
             return job
@@ -171,12 +179,19 @@ class KBBootstrapJobService:
         if job.status != KBBootstrapJobStatus.QUEUED_UPLOAD:
             return job
 
-        checked_manifest, missing_entry_ids = await self._validate_upload_manifest(upload_manifest)
+        checked_manifest, missing_entry_ids = await self._validate_upload_manifest(
+            upload_manifest
+        )
 
         locked_job = await self._get_submission_for_update(job_id)
         if locked_job is None:
-            raise AppError(code="KB_BOOTSTRAP_JOB_NOT_FOUND", message="任务不存在", status_code=404)
-        if locked_job.status in {KBBootstrapJobStatus.RUNNING, KBBootstrapJobStatus.COMPLETED}:
+            raise AppError(
+                code="KB_BOOTSTRAP_JOB_NOT_FOUND", message="任务不存在", status_code=404
+            )
+        if locked_job.status in {
+            KBBootstrapJobStatus.RUNNING,
+            KBBootstrapJobStatus.COMPLETED,
+        }:
             return locked_job
         if locked_job.status == KBBootstrapJobStatus.FAILED:
             raise AppError(
@@ -228,10 +243,14 @@ class KBBootstrapJobService:
     async def get_submission(self, *, job_id: uuid.UUID) -> KBBootstrapJob | None:
         return await self._db.get(KBBootstrapJob, job_id)
 
-    async def build_upload_targets(self, *, job: KBBootstrapJob) -> list[BootstrapUploadTarget]:
+    async def build_upload_targets(
+        self, *, job: KBBootstrapJob
+    ) -> list[BootstrapUploadTarget]:
         return await self._build_upload_targets(job)
 
-    def get_upload_progress(self, job: KBBootstrapJob) -> BootstrapSubmissionUploadProgress:
+    def get_upload_progress(
+        self, job: KBBootstrapJob
+    ) -> BootstrapSubmissionUploadProgress:
         upload_manifest = self._normalize_upload_manifest(job.upload_manifest)
         total_files = len(upload_manifest)
         if total_files == 0:
@@ -260,7 +279,9 @@ class KBBootstrapJobService:
         storage = self._get_storage()
 
         async def _check_item(item: dict[str, Any]) -> str | None:
-            object_ref = ObjectRef(bucket=item["bucket"], object_name=item["object_key"])
+            object_ref = ObjectRef(
+                bucket=item["bucket"], object_name=item["object_key"]
+            )
             exists = await storage.exists(object_ref)
             if not exists:
                 item["upload_status"] = "missing"
@@ -278,7 +299,9 @@ class KBBootstrapJobService:
 
         missing_entry_ids = [
             entry_id
-            for entry_id in await asyncio.gather(*(_check_item(item) for item in checked_manifest))
+            for entry_id in await asyncio.gather(
+                *(_check_item(item) for item in checked_manifest)
+            )
             if entry_id is not None
         ]
         return checked_manifest, missing_entry_ids
@@ -288,8 +311,12 @@ class KBBootstrapJobService:
         result = await self._db.execute(stmt)
         return result.scalar_one_or_none()
 
-    async def _get_submission_for_update(self, job_id: uuid.UUID) -> KBBootstrapJob | None:
-        stmt = select(KBBootstrapJob).where(KBBootstrapJob.id == job_id).with_for_update()
+    async def _get_submission_for_update(
+        self, job_id: uuid.UUID
+    ) -> KBBootstrapJob | None:
+        stmt = (
+            select(KBBootstrapJob).where(KBBootstrapJob.id == job_id).with_for_update()
+        )
         result = await self._db.execute(stmt)
         return result.scalar_one_or_none()
 
@@ -371,7 +398,9 @@ class KBBootstrapJobService:
 
         return normalized_entries, upload_manifest
 
-    async def _build_upload_targets(self, job: KBBootstrapJob) -> list[BootstrapUploadTarget]:
+    async def _build_upload_targets(
+        self, job: KBBootstrapJob
+    ) -> list[BootstrapUploadTarget]:
         if job.status != KBBootstrapJobStatus.QUEUED_UPLOAD:
             return []
 
@@ -379,12 +408,15 @@ class KBBootstrapJobService:
         pending_manifest = [
             item
             for item in upload_manifest
-            if str(item.get("upload_status") or "pending") in {"pending", "missing", "size_mismatch"}
+            if str(item.get("upload_status") or "pending")
+            in {"pending", "missing", "size_mismatch"}
         ]
         if not pending_manifest:
             return []
 
-        expires_seconds = max(int(self._settings.bootstrap_upload_presign_expire_seconds), 60)
+        expires_seconds = max(
+            int(self._settings.bootstrap_upload_presign_expire_seconds), 60
+        )
         expires_at = datetime.now(timezone.utc) + timedelta(seconds=expires_seconds)
 
         storage = self._get_storage()
@@ -408,7 +440,9 @@ class KBBootstrapJobService:
                 expires_at=expires_at,
             )
 
-        targets = await asyncio.gather(*(_build_target(item) for item in pending_manifest))
+        targets = await asyncio.gather(
+            *(_build_target(item) for item in pending_manifest)
+        )
         return list(targets)
 
     def _get_storage(self) -> ObjectStorage:
@@ -531,7 +565,13 @@ class KBBootstrapJobService:
             bucket = str(item.get("bucket") or "").strip()
             object_key = str(item.get("object_key") or "").strip()
             filename = str(item.get("filename") or "").strip()
-            if not entry_id or not material_id or not bucket or not object_key or not filename:
+            if (
+                not entry_id
+                or not material_id
+                or not bucket
+                or not object_key
+                or not filename
+            ):
                 continue
             normalized.append(
                 {
@@ -544,7 +584,8 @@ class KBBootstrapJobService:
                     "content_type": str(item.get("content_type") or "").strip() or None,
                     "size_bytes": int(item.get("size_bytes") or 0),
                     "sha256": str(item.get("sha256") or "").strip().lower() or None,
-                    "upload_status": str(item.get("upload_status") or "pending").strip() or "pending",
+                    "upload_status": str(item.get("upload_status") or "pending").strip()
+                    or "pending",
                 }
             )
         return normalized
@@ -554,7 +595,9 @@ class KBBootstrapJobService:
         digest = str(manifest_item.get("sha256") or "").strip().lower()
         if digest:
             return digest[:32]
-        fallback = f"{manifest_item.get('bucket', '')}/{manifest_item.get('object_key', '')}"
+        fallback = (
+            f"{manifest_item.get('bucket', '')}/{manifest_item.get('object_key', '')}"
+        )
         if not fallback.strip("/"):
             return None
         return hashlib.sha256(fallback.encode("utf-8")).hexdigest()[:32]

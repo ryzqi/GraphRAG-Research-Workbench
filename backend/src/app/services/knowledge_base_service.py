@@ -91,7 +91,9 @@ class KnowledgeBaseService:
         skip: int = 0,
         limit: int = 100,
     ) -> tuple[list[KnowledgeBase], int]:
-        return await self.list_page(skip=skip, limit=limit, status=KnowledgeBaseStatus.ACTIVE)
+        return await self.list_page(
+            skip=skip, limit=limit, status=KnowledgeBaseStatus.ACTIVE
+        )
 
     async def get_by_id(self, kb_id: uuid.UUID) -> KnowledgeBase | None:
         return await self._db.get(KnowledgeBase, kb_id)

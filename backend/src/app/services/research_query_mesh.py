@@ -37,7 +37,9 @@ class CoverageGateResult:
     reasons: tuple[str, ...]
 
 
-def build_research_query_mesh(*, question: str, plan_snapshot: ResearchPlanSnapshot) -> ResearchQueryMesh:
+def build_research_query_mesh(
+    *, question: str, plan_snapshot: ResearchPlanSnapshot
+) -> ResearchQueryMesh:
     canonical_query = str(question).strip()
     if not canonical_query:
         raise ValueError("question 不能为空")

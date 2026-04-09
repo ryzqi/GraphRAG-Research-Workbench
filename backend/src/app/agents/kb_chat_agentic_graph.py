@@ -63,7 +63,9 @@ def _route_after_preprocess_subgraph(state: PreprocessRoutingInput) -> str:
     return "retrieval_subgraph"
 
 
-def build_kb_chat_run_config(*, thread_id: str | None, recursion_limit: int) -> dict[str, Any]:
+def build_kb_chat_run_config(
+    *, thread_id: str | None, recursion_limit: int
+) -> dict[str, Any]:
     """为 KB Chat 构建 LangGraph 调用配置。
 
     `recursion_limit` must stay at top-level config (not under `configurable`).
@@ -90,7 +92,9 @@ def build_kb_chat_run_context(
     if not isinstance(memory_keys, dict):
         memory_keys = {}
     runtime_config_payload = (
-        runtime_config if isinstance(runtime_config, dict) else state_obj.get("runtime_config")
+        runtime_config
+        if isinstance(runtime_config, dict)
+        else state_obj.get("runtime_config")
     )
     if not isinstance(runtime_config_payload, dict):
         runtime_config_payload = {}
@@ -106,23 +110,31 @@ def build_kb_chat_run_context(
         "thread_id": resolved_thread_id,
         "user_id": resolved_user_id,
         "kb_ids": [
-            str(item) for item in kb_ids_payload if isinstance(item, str) and item.strip()
+            str(item)
+            for item in kb_ids_payload
+            if isinstance(item, str) and item.strip()
         ],
         "runtime_config": runtime_config_payload,
         "message_budget": {
             "max_candidates": int(
                 runtime_config_payload.get("parallel_retrieval_max_branches")
-                if isinstance(runtime_config_payload.get("parallel_retrieval_max_branches"), int)
+                if isinstance(
+                    runtime_config_payload.get("parallel_retrieval_max_branches"), int
+                )
                 else getattr(settings, "kb_chat_parallel_retrieval_max_branches", 6)
             ),
             "min_queries": int(
                 runtime_config_payload.get("parallel_retrieval_min_queries")
-                if isinstance(runtime_config_payload.get("parallel_retrieval_min_queries"), int)
+                if isinstance(
+                    runtime_config_payload.get("parallel_retrieval_min_queries"), int
+                )
                 else getattr(settings, "kb_chat_parallel_retrieval_min_queries", 2)
             ),
             "include_main": bool(
                 runtime_config_payload.get("parallel_retrieval_include_main")
-                if isinstance(runtime_config_payload.get("parallel_retrieval_include_main"), bool)
+                if isinstance(
+                    runtime_config_payload.get("parallel_retrieval_include_main"), bool
+                )
                 else getattr(settings, "kb_chat_parallel_retrieval_include_main", True)
             ),
         },
@@ -295,7 +307,13 @@ def _pick_context_frame_turns(snapshot: dict[str, Any], key: str) -> list[str] |
         if not item_dict:
             continue
         role_raw = _non_empty_text(item_dict.get("role")) or ""
-        role = "用户" if role_raw == "user" else "助手" if role_raw == "assistant" else role_raw
+        role = (
+            "用户"
+            if role_raw == "user"
+            else "助手"
+            if role_raw == "assistant"
+            else role_raw
+        )
         text = _non_empty_text(item_dict.get("text"))
         if not text:
             continue
@@ -434,14 +452,26 @@ def _build_node_input_display_items(
             items,
             key="normalized_query",
             label="规范化问题",
-            value=_pick_text(snapshot, "normalized_query", "resolved_query", "coref_query", "user_input"),
+            value=_pick_text(
+                snapshot,
+                "normalized_query",
+                "resolved_query",
+                "coref_query",
+                "user_input",
+            ),
         )
     elif node_name == "query_plan_finalize":
         _append_display_item(
             items,
             key="normalized_query",
             label="主问题",
-            value=_pick_text(snapshot, "normalized_query", "resolved_query", "coref_query", "user_input"),
+            value=_pick_text(
+                snapshot,
+                "normalized_query",
+                "resolved_query",
+                "coref_query",
+                "user_input",
+            ),
         )
         _append_display_item(
             items,
@@ -518,14 +548,26 @@ def _build_node_input_display_items(
                 items,
                 key="normalized_query",
                 label="检索问题",
-                value=_pick_text(snapshot, "normalized_query", "resolved_query", "coref_query", "user_input"),
+                value=_pick_text(
+                    snapshot,
+                    "normalized_query",
+                    "resolved_query",
+                    "coref_query",
+                    "user_input",
+                ),
             )
     elif node_name == "transform_query":
         _append_display_item(
             items,
             key="normalized_query",
             label="当前问题",
-            value=_pick_text(snapshot, "normalized_query", "resolved_query", "coref_query", "user_input"),
+            value=_pick_text(
+                snapshot,
+                "normalized_query",
+                "resolved_query",
+                "coref_query",
+                "user_input",
+            ),
         )
         _append_display_item(
             items,
@@ -1085,6 +1127,7 @@ def _build_node_output_display_items(
 def _wrap_node_with_io(node_name: str, node_callable: Any):
     return shared_wrap_node_with_io(node_name, node_callable)
 
+
 class KbChatAgenticGraph:
     """Agentic KB Chat 图：preprocess → retrieval → reflection → answer。"""
 
@@ -1100,7 +1143,9 @@ class KbChatAgenticGraph:
         settings = get_settings()
         self._settings = settings
         transform_retry_policy = RetryPolicy(
-            max_attempts=max(2, int(getattr(settings, "kb_chat_max_retrieval_retries", 2)) + 1)
+            max_attempts=max(
+                2, int(getattr(settings, "kb_chat_max_retrieval_retries", 2)) + 1
+            )
         )
 
         def node_metadata(
@@ -1116,7 +1161,9 @@ class KbChatAgenticGraph:
                 retry_enabled=retry_policy is not None,
             )
             if retry_policy is None:
-                metadata["retry_disabled_reason"] = retry_disabled_reason or side_effect_type
+                metadata["retry_disabled_reason"] = (
+                    retry_disabled_reason or side_effect_type
+                )
             return metadata
 
         graph = StateGraph(
@@ -1126,7 +1173,9 @@ class KbChatAgenticGraph:
             output_schema=KbChatOutputState,
         )
 
-        kb_tool = next((t for t in tools if getattr(t, "name", None) == "kb_retrieve"), None)
+        kb_tool = next(
+            (t for t in tools if getattr(t, "name", None) == "kb_retrieve"), None
+        )
         if kb_tool is None:
             raise RuntimeError("kb_retrieve tool is required for agentic KB chat")
 
@@ -1136,7 +1185,9 @@ class KbChatAgenticGraph:
             kb_tool=kb_tool,
             chat_model=chat_model,
         )
-        answer_subgraph = build_answer_subgraph(settings=settings, chat_model=chat_model)
+        answer_subgraph = build_answer_subgraph(
+            settings=settings, chat_model=chat_model
+        )
         graph.add_node(
             "preprocess_subgraph",
             _wrap_node_with_io("preprocess_subgraph", preprocess_subgraph),
@@ -1246,4 +1297,3 @@ class KbChatAgenticGraph:
             context=context,
         )
         return cast(dict[str, Any], result)
-

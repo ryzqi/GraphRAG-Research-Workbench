@@ -79,6 +79,7 @@ class ResearchRuntimeConfig:
     subagent_model: Any
     system_prompt: str
     finalizer_model: Any | None = None
+    finalizer_structured_method: str = "function_calling"
     name: str = "deep-research"
     include_mcp: bool = False
     provider_ids: tuple[ResearchProviderId, ...] = DEFAULT_RESEARCH_PROVIDER_IDS
@@ -87,7 +88,9 @@ class ResearchRuntimeConfig:
     interrupt_on: Mapping[str, bool | dict[str, Any]] = field(default_factory=dict)
     stream_policy: ResearchStreamPolicy = DEFAULT_RESEARCH_STREAM_POLICY
     backend_policy: ResearchBackendPolicy = DEFAULT_RESEARCH_BACKEND_POLICY
-    large_result_policy: ResearchLargeResultPolicy = DEFAULT_RESEARCH_LARGE_RESULT_POLICY
+    large_result_policy: ResearchLargeResultPolicy = (
+        DEFAULT_RESEARCH_LARGE_RESULT_POLICY
+    )
     subagent_name: str = "general-purpose"
     subagent_description: str = "通用深度研究子代理，负责隔离多步资料搜集与综合。"
     command_execution_backend: str | None = None

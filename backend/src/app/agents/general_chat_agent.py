@@ -5,7 +5,10 @@ from __future__ import annotations
 from typing import Any
 
 from langchain.agents import create_agent
-from langchain.agents.middleware import HumanInTheLoopMiddleware, SummarizationMiddleware
+from langchain.agents.middleware import (
+    HumanInTheLoopMiddleware,
+    SummarizationMiddleware,
+)
 from langchain_core.language_models.chat_models import BaseChatModel
 
 from app.core.checkpoint import CheckpointManager

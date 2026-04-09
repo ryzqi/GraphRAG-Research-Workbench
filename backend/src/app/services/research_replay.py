@@ -70,7 +70,11 @@ def evaluate_research_replay_consistency(
         violations.append("last_sequence_mismatch")
     if replay_state.sequence_gaps:
         violations.append("sequence_gap")
-    if session.trace_id and replay_state.trace_ids and replay_state.trace_ids != [session.trace_id]:
+    if (
+        session.trace_id
+        and replay_state.trace_ids
+        and replay_state.trace_ids != [session.trace_id]
+    ):
         violations.append("trace_id_mismatch")
 
     return {

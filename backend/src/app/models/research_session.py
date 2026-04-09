@@ -132,7 +132,9 @@ class ResearchSession(Base):
     id: Mapped[uuid.UUID] = mapped_column(
         sa.Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
-    thread_id: Mapped[str] = mapped_column(sa.String(length=128), nullable=False, unique=True)
+    thread_id: Mapped[str] = mapped_column(
+        sa.String(length=128), nullable=False, unique=True
+    )
     question: Mapped[str] = mapped_column(sa.Text, nullable=False)
     status: Mapped[ResearchSessionStatus] = mapped_column(
         enum_values(ResearchSessionStatus, name="research_session_status"),
@@ -141,10 +143,18 @@ class ResearchSession(Base):
         server_default=ResearchSessionStatus.CREATED.value,
         index=True,
     )
-    planner_phase: Mapped[str | None] = mapped_column(sa.String(length=64), nullable=True)
-    runtime_phase: Mapped[str | None] = mapped_column(sa.String(length=64), nullable=True)
-    finalizer_phase: Mapped[str | None] = mapped_column(sa.String(length=64), nullable=True)
-    trace_id: Mapped[str | None] = mapped_column(sa.String(length=128), nullable=True, index=True)
+    planner_phase: Mapped[str | None] = mapped_column(
+        sa.String(length=64), nullable=True
+    )
+    runtime_phase: Mapped[str | None] = mapped_column(
+        sa.String(length=64), nullable=True
+    )
+    finalizer_phase: Mapped[str | None] = mapped_column(
+        sa.String(length=64), nullable=True
+    )
+    trace_id: Mapped[str | None] = mapped_column(
+        sa.String(length=128), nullable=True, index=True
+    )
     last_event_sequence: Mapped[int] = mapped_column(
         sa.Integer, nullable=False, default=0, server_default="0"
     )

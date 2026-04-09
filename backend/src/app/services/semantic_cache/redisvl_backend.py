@@ -28,17 +28,23 @@ logger = logging.getLogger(__name__)
 
 
 class SemanticCacheBackend(Protocol):
-    async def lookup(self, request: SemanticCacheLookupRequest) -> SemanticCacheHit | None: ...
+    async def lookup(
+        self, request: SemanticCacheLookupRequest
+    ) -> SemanticCacheHit | None: ...
 
     async def store(self, request: SemanticCacheStoreRequest) -> None: ...
 
 
 class _ProvidedVectorizer(BaseVectorizer):
     def __init__(self, dims: int, dtype: str = "float32") -> None:
-        super().__init__(model="kb_chat_external_embedding", dims=int(dims), dtype=dtype)
+        super().__init__(
+            model="kb_chat_external_embedding", dims=int(dims), dtype=dtype
+        )
 
     def _embed(self, content: Any = "", **kwargs) -> list[float]:
-        raise RuntimeError("必须显式提供 question_vector，禁止 RedisVL 内部自行生成 embedding")
+        raise RuntimeError(
+            "必须显式提供 question_vector，禁止 RedisVL 内部自行生成 embedding"
+        )
 
     def _embed_many(
         self,
@@ -47,7 +53,9 @@ class _ProvidedVectorizer(BaseVectorizer):
         batch_size: int = 10,
         **kwargs,
     ) -> list[list[float]]:
-        raise RuntimeError("必须显式提供 question_vector，禁止 RedisVL 内部自行生成 embedding")
+        raise RuntimeError(
+            "必须显式提供 question_vector，禁止 RedisVL 内部自行生成 embedding"
+        )
 
 
 class RedisVLSemanticCacheBackend:
@@ -57,7 +65,9 @@ class RedisVLSemanticCacheBackend:
         self._lock = asyncio.Lock()
         self._unavailable_reason: str | None = None
 
-    async def lookup(self, request: SemanticCacheLookupRequest) -> SemanticCacheHit | None:
+    async def lookup(
+        self, request: SemanticCacheLookupRequest
+    ) -> SemanticCacheHit | None:
         cache = await self._ensure_cache(len(request.question_vector))
         if cache is None:
             return None
@@ -84,35 +94,47 @@ class RedisVLSemanticCacheBackend:
         inserted_at = hit.get("inserted_at")
         created_at = metadata.get("created_at")
         if not created_at and isinstance(inserted_at, (int, float)):
-            created_at = datetime.fromtimestamp(inserted_at, tz=timezone.utc).isoformat()
+            created_at = datetime.fromtimestamp(
+                inserted_at, tz=timezone.utc
+            ).isoformat()
         raw_vector_distance = hit.get("vector_distance")
         try:
-            vector_distance = float(raw_vector_distance) if raw_vector_distance is not None else 1.0
+            vector_distance = (
+                float(raw_vector_distance) if raw_vector_distance is not None else 1.0
+            )
         except (TypeError, ValueError):
             vector_distance = 1.0
         score = distance_to_similarity_score(vector_distance)
 
         return SemanticCacheHit(
             answer=str(hit.get("response") or "").strip(),
-            evidence=metadata.get("evidence") if isinstance(metadata.get("evidence"), list) else [],
+            evidence=metadata.get("evidence")
+            if isinstance(metadata.get("evidence"), list)
+            else [],
             stage_summaries=(
                 metadata.get("stage_summaries")
                 if isinstance(metadata.get("stage_summaries"), dict)
                 else {}
             ),
-            metrics=metadata.get("metrics") if isinstance(metadata.get("metrics"), dict) else {},
+            metrics=metadata.get("metrics")
+            if isinstance(metadata.get("metrics"), dict)
+            else {},
             score=score,
             threshold=request.similarity_threshold,
             ttl_seconds=request.ttl_seconds,
             entry_id=str(hit.get("entry_id") or "").strip() or None,
             schema_version=str(metadata.get("schema_version") or "").strip()
             or SEMANTIC_CACHE_SCHEMA_VERSION,
-            hit_type=str(metadata.get("hit_type") or "").strip() or SEMANTIC_CACHE_HIT_TYPE_STRONG,
+            hit_type=str(metadata.get("hit_type") or "").strip()
+            or SEMANTIC_CACHE_HIT_TYPE_STRONG,
             created_at=str(created_at or "").strip() or None,
             context_fingerprint=(
-                request.context.signature if request.context.mode == "contextual" else None
+                request.context.signature
+                if request.context.mode == "contextual"
+                else None
             ),
-            kb_version=str(metadata.get("kb_version") or "").strip() or request.scope.kb_version,
+            kb_version=str(metadata.get("kb_version") or "").strip()
+            or request.scope.kb_version,
         )
 
     async def store(self, request: SemanticCacheStoreRequest) -> None:
@@ -201,7 +223,13 @@ class RedisVLSemanticCacheBackend:
             ),
             ttl=max(
                 0,
-                int(getattr(self._settings, "kb_chat_semantic_cache_ttl_seconds", 24 * 60 * 60)),
+                int(
+                    getattr(
+                        self._settings,
+                        "kb_chat_semantic_cache_ttl_seconds",
+                        24 * 60 * 60,
+                    )
+                ),
             ),
             vectorizer=_ProvidedVectorizer(dims=dims),
             filterable_fields=[

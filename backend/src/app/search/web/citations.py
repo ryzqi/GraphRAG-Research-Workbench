@@ -165,7 +165,9 @@ def _upsert_search_result(
     excerpt = (
         existing.excerpt
         if existing and existing.excerpt.strip()
-        else _trim_text(item.get("snippet") or item.get("content"), limit=_EXCERPT_LIMIT)
+        else _trim_text(
+            item.get("snippet") or item.get("content"), limit=_EXCERPT_LIMIT
+        )
     )
     items_by_url[url] = _build_evidence_item(
         url=url,
@@ -305,12 +307,18 @@ def _split_reference_block(answer: str) -> tuple[str, list[tuple[str, str]]]:
         return "", []
     marker = f"\n{_REFERENCE_HEADING}\n"
     inline_marker = f"{_REFERENCE_HEADING}\n"
-    split_token = marker if marker in normalized else inline_marker if normalized.startswith(inline_marker) else None
+    split_token = (
+        marker
+        if marker in normalized
+        else inline_marker
+        if normalized.startswith(inline_marker)
+        else None
+    )
     if split_token is None:
         return normalized, []
 
     if split_token == inline_marker and normalized.startswith(inline_marker):
-        body = normalized[len(inline_marker):]
+        body = normalized[len(inline_marker) :]
         prefix = ""
     else:
         prefix, body = normalized.split(marker, 1)
@@ -323,7 +331,9 @@ def _split_reference_block(answer: str) -> tuple[str, list[tuple[str, str]]]:
     return prefix.rstrip(), existing
 
 
-def append_compact_citations_to_answer(answer: str, items: Sequence[EvidenceItem]) -> str:
+def append_compact_citations_to_answer(
+    answer: str, items: Sequence[EvidenceItem]
+) -> str:
     compact_entries = _build_compact_entries(items)
     prefix, existing_entries = _split_reference_block(answer)
     merged_pairs: list[tuple[str, str]] = []
@@ -347,7 +357,13 @@ def append_compact_citations_to_answer(answer: str, items: Sequence[EvidenceItem
         return prefix
 
     block = "\n".join(
-        [_REFERENCE_HEADING, *[f"[{index}] {domain} - {title}" for index, (domain, title) in enumerate(merged_pairs, start=1)]]
+        [
+            _REFERENCE_HEADING,
+            *[
+                f"[{index}] {domain} - {title}"
+                for index, (domain, title) in enumerate(merged_pairs, start=1)
+            ],
+        ]
     )
     if prefix:
         return f"{prefix}\n\n{block}"

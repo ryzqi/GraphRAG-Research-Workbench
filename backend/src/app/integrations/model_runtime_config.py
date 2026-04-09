@@ -54,7 +54,9 @@ def _provider_priority(provider: ModelProvider) -> int:
 def _ordered_provider_configs(
     providers: dict[ModelProvider, "RuntimeProviderConfig"],
 ) -> list["RuntimeProviderConfig"]:
-    ordered = sorted(providers.values(), key=lambda item: _provider_priority(item.provider))
+    ordered = sorted(
+        providers.values(), key=lambda item: _provider_priority(item.provider)
+    )
     return ordered
 
 
@@ -232,7 +234,9 @@ class ModelRuntimeConfigManager:
             )
         active_provider = _resolve_active_provider(
             providers=providers,
-            requested_provider=selection.active_provider if selection is not None else None,
+            requested_provider=selection.active_provider
+            if selection is not None
+            else None,
         )
 
         provider_cfg = providers[active_provider]

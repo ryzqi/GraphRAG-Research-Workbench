@@ -30,6 +30,7 @@ celery_app = Celery(
     ],
 )
 
+
 def _resolve_optional_time_limit(seconds: int) -> int | None:
     return seconds if seconds > 0 else None
 
@@ -77,7 +78,9 @@ def _build_celery_conf(cfg: Settings) -> dict[str, Any]:
             "app.worker.tasks.ingestion_watchdog.fail_stale_processing_docs": {
                 "queue": "dispatch"
             },
-            "app.worker.tasks.index_rebuild.run_index_rebuild_job": {"queue": "rebuild"},
+            "app.worker.tasks.index_rebuild.run_index_rebuild_job": {
+                "queue": "rebuild"
+            },
             "app.worker.tasks.export.run_export": {"queue": "export"},
             "app.worker.tasks.kb_bootstrap_jobs.run_kb_bootstrap_job": {
                 "queue": "default"

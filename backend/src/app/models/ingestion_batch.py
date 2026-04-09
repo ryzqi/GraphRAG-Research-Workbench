@@ -154,7 +154,9 @@ class IngestionBatchDoc(Base):
     chunk_count: Mapped[int] = mapped_column(
         sa.Integer, nullable=False, default=0, server_default=sa.text("0")
     )
-    context_failed_chunks: Mapped[list[dict] | None] = mapped_column(JSONB, nullable=True)
+    context_failed_chunks: Mapped[list[dict] | None] = mapped_column(
+        JSONB, nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()
     )
@@ -165,7 +167,9 @@ class IngestionBatchDoc(Base):
         onupdate=sa.func.now(),
     )
 
-    batch: Mapped["IngestionBatch"] = relationship("IngestionBatch", back_populates="docs")
+    batch: Mapped["IngestionBatch"] = relationship(
+        "IngestionBatch", back_populates="docs"
+    )
 
     __table_args__ = (
         sa.UniqueConstraint(

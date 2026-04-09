@@ -51,7 +51,9 @@ def force_exit_node(state: ForceExitInput, settings: Settings) -> dict[str, Any]
     else:
         exceeded, why = budget_exceeded(state, settings)
         reflection_reason = str(reflection_obj.get("reason") or "").strip().lower()
-        reason = route_reason or (why if exceeded else (reflection_reason or "force_exit"))
+        reason = route_reason or (
+            why if exceeded else (reflection_reason or "force_exit")
+        )
 
     final_answer = state.get("final_answer")
     draft_answer = state.get("draft_answer")

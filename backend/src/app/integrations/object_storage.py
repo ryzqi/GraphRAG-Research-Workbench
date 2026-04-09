@@ -7,6 +7,7 @@ from typing import Any, Callable
 
 import asyncio
 import anyio
+
 try:
     from minio import Minio
     from minio.error import S3Error
@@ -15,6 +16,7 @@ except Exception:  # pragma: no cover - optional dependency in lightweight test 
 
     class S3Error(Exception):  # type: ignore[no-redef]
         code: str = "Unknown"
+
 
 from app.core.settings import get_settings
 
@@ -112,7 +114,9 @@ class ObjectStorage:
             expires=expires,
         )
 
-    async def put_text(self, ref: ObjectRef, content: str, *, content_type: str = "text/plain") -> None:
+    async def put_text(
+        self, ref: ObjectRef, content: str, *, content_type: str = "text/plain"
+    ) -> None:
         data = content.encode("utf-8")
 
         def _put() -> None:
@@ -128,7 +132,9 @@ class ObjectStorage:
 
         await anyio.to_thread.run_sync(_put)
 
-    async def put_bytes(self, ref: ObjectRef, data: bytes, *, content_type: str | None = None) -> None:
+    async def put_bytes(
+        self, ref: ObjectRef, data: bytes, *, content_type: str | None = None
+    ) -> None:
         """上传二进制数据到对象存储。"""
 
         def _put() -> None:
@@ -180,7 +186,9 @@ class ObjectStorage:
                 return False
             raise
 
-    async def remove_object(self, ref: ObjectRef, *, ignore_missing: bool = True) -> None:
+    async def remove_object(
+        self, ref: ObjectRef, *, ignore_missing: bool = True
+    ) -> None:
         """删除单个对象。"""
 
         def _remove() -> None:

@@ -27,7 +27,9 @@ from app.integrations.model_runtime_config import ModelRuntimeConfigManager
 from app.integrations.milvus_client import create_milvus_client
 from app.integrations.redis_client import close_redis_client, create_redis_client
 from app.integrations.rerank_client import RerankClient
-from app.services.agent_run_recovery import recover_stale_interactive_agent_runs_on_startup
+from app.services.agent_run_recovery import (
+    recover_stale_interactive_agent_runs_on_startup,
+)
 
 settings = get_settings()
 configure_logging(settings.app_log_level)
@@ -61,7 +63,9 @@ async def lifespan(app: FastAPI):
         http_client=app.state.embedding_http_client,
         settings=settings,
     )
-    app.state.rerank_client = RerankClient(settings=settings, http_client=app.state.http_client)
+    app.state.rerank_client = RerankClient(
+        settings=settings, http_client=app.state.http_client
+    )
     app.state.milvus_client = create_milvus_client()
     app.state.redis = create_redis_client(settings)
     yield

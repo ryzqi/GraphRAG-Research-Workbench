@@ -21,7 +21,11 @@ from app.services.ingestion_batch_service import IngestionBatchService
 router = APIRouter()
 
 
-@router.post("", response_model=IngestionBatchSubmitResponse, status_code=status.HTTP_202_ACCEPTED)
+@router.post(
+    "",
+    response_model=IngestionBatchSubmitResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
 async def create_ingestion_batch(
     db: AsyncSessionDep,
     body: IngestionBatchCreateRequest,

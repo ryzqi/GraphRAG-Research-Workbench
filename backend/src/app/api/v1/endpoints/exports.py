@@ -13,7 +13,9 @@ router = APIRouter()
 
 
 @router.post("", response_model=ExportJob, status_code=202)
-async def create_export(req: ExportCreateRequest, session: AsyncSessionDep) -> ExportJob:
+async def create_export(
+    req: ExportCreateRequest, session: AsyncSessionDep
+) -> ExportJob:
     job = await ExportService().create_export(session, req)
     return ExportJob.model_validate(job)
 

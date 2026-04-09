@@ -19,6 +19,7 @@ def make_send_task(node: str, payload: dict[str, Any], state: dict[str, Any]) ->
         branch_state["retrieval_budget"] = retrieval_budget
     return Send(node, branch_state)
 
+
 def sort_by_priority_then_index(runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """按稳定顺序排列扇出结果，保证合并输出可复现。"""
 

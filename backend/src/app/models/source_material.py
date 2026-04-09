@@ -63,6 +63,4 @@ class SourceMaterial(Base):
         "DocumentChunk", back_populates="material", lazy="selectin"
     )
 
-    __table_args__ = (
-        sa.Index("ix_source_materials_kb_hash", "kb_id", "content_hash"),
-    )
+    __table_args__ = (sa.Index("ix_source_materials_kb_hash", "kb_id", "content_hash"),)

@@ -36,8 +36,7 @@ _UPLOAD_MIME_TO_KIND: dict[str, str] = {
 def _has_meaningful_content(doc: ParsedDocument) -> bool:
     text_ok = bool(doc.text and doc.text.strip())
     chunk_ok = any(
-        bool(chunk.text and chunk.text.strip())
-        for chunk in (doc.chunks or [])
+        bool(chunk.text and chunk.text.strip()) for chunk in (doc.chunks or [])
     )
     return text_ok or chunk_ok
 
@@ -80,7 +79,9 @@ def _infer_upload_kind(*, mime_type: str | None, extension: str | None) -> str |
 
 def _extract_minio_ref(uri: str) -> tuple[str, str]:
     if not uri.startswith("minio://"):
-        raise ParseError(error_code="INVALID_URI", message="UPLOAD 资料 uri 不是 minio://")
+        raise ParseError(
+            error_code="INVALID_URI", message="UPLOAD 资料 uri 不是 minio://"
+        )
 
     uri_parts = uri[8:].split("/", 1)
     if len(uri_parts) != 2:
@@ -88,7 +89,9 @@ def _extract_minio_ref(uri: str) -> tuple[str, str]:
 
     bucket, object_name = uri_parts
     if not bucket or not object_name:
-        raise ParseError(error_code="INVALID_URI", message="UPLOAD 资料 uri 缺少 bucket/object_name")
+        raise ParseError(
+            error_code="INVALID_URI", message="UPLOAD 资料 uri 缺少 bucket/object_name"
+        )
     return bucket, object_name
 
 
@@ -97,7 +100,9 @@ def _material_filename_from_object_name(object_name: str) -> str:
     return object_name.split("/")[-1] if object_name else ""
 
 
-def _page_blocks_from_middle_json(page: dict[str, Any]) -> tuple[str, list[dict[str, Any]]]:
+def _page_blocks_from_middle_json(
+    page: dict[str, Any],
+) -> tuple[str, list[dict[str, Any]]]:
     para_blocks = page.get("para_blocks")
     if isinstance(para_blocks, list) and para_blocks:
         return "para_blocks", [b for b in para_blocks if isinstance(b, dict)]
@@ -160,7 +165,9 @@ def _collect_chunks_from_mineru_block(
         )
 
 
-def extract_pdf_chunks_from_middle_json(middle_json: dict[str, Any]) -> list[ParsedChunk]:
+def extract_pdf_chunks_from_middle_json(
+    middle_json: dict[str, Any],
+) -> list[ParsedChunk]:
     """从 MinerU middle.json 中提取 block=chunk 的切片（用于 PDF locator）。"""
     pdf_info = middle_json.get("pdf_info")
     if not isinstance(pdf_info, list):
@@ -243,10 +250,15 @@ async def parse_material(
         if not material.uri:
             raise ParseError(error_code="INVALID_URL", message="URL 资料缺少 uri")
         if http_client is None:
-            raise ParseError(error_code="MISSING_HTTP_CLIENT", message="URL 解析缺少 http_client")
+            raise ParseError(
+                error_code="MISSING_HTTP_CLIENT", message="URL 解析缺少 http_client"
+            )
         doc = await _parse_url(material.uri, http_client=http_client, settings=cfg)
         doc.mime_type = doc.mime_type or material.mime_type
-        doc.metadata = {**(doc.metadata or {}), "source_type": material.source_type.value}
+        doc.metadata = {
+            **(doc.metadata or {}),
+            "source_type": material.source_type.value,
+        }
         return _ensure_non_empty(doc)
 
     if material.source_type == SourceType.UPLOAD:
@@ -261,7 +273,9 @@ async def parse_material(
 
         st = storage or ObjectStorage()
         await st.ensure_buckets()
-        content_bytes = await st.get_bytes(ObjectRef(bucket=bucket, object_name=object_name))
+        content_bytes = await st.get_bytes(
+            ObjectRef(bucket=bucket, object_name=object_name)
+        )
 
         if kind in (None, "txt"):
             text = _decode_text_bytes(content_bytes)
@@ -289,7 +303,10 @@ async def parse_material(
             doc = await _parse_docx(content_bytes)
             doc.mime_type = material.mime_type or "text/markdown"
             doc.locator = {"filename": filename} if filename else None
-            doc.metadata = {**(doc.metadata or {}), "source_type": material.source_type.value}
+            doc.metadata = {
+                **(doc.metadata or {}),
+                "source_type": material.source_type.value,
+            }
             return _ensure_non_empty(doc)
 
         if kind == "pdf":
@@ -297,7 +314,9 @@ async def parse_material(
             try:
                 doc = await _parse_pdf_with_mineru(content_bytes, settings=cfg)
                 if not _has_meaningful_content(doc):
-                    raise ParseError(error_code="MINERU_EMPTY_RESULT", message="MinerU 解析结果为空")
+                    raise ParseError(
+                        error_code="MINERU_EMPTY_RESULT", message="MinerU 解析结果为空"
+                    )
             except ParseError as exc:
                 mineru_error = exc
                 fallback_enabled = bool(getattr(cfg, "pdf_fallback_enabled", True))
@@ -311,7 +330,10 @@ async def parse_material(
 
             doc.mime_type = material.mime_type or "application/pdf"
             doc.locator = {"filename": filename} if filename else None
-            metadata = {**(doc.metadata or {}), "source_type": material.source_type.value}
+            metadata = {
+                **(doc.metadata or {}),
+                "source_type": material.source_type.value,
+            }
             if mineru_error is not None:
                 metadata.setdefault("mineru_error_code", mineru_error.error_code)
                 metadata.setdefault("mineru_error_message", mineru_error.message)
@@ -323,7 +345,10 @@ async def parse_material(
             message=f"不支持的上传文件类型：mime_type={material.mime_type!r} extension={extension!r}",
         )
 
-    raise ParseError(error_code="UNSUPPORTED_SOURCE_TYPE", message=f"不支持的 source_type={material.source_type!r}")
+    raise ParseError(
+        error_code="UNSUPPORTED_SOURCE_TYPE",
+        message=f"不支持的 source_type={material.source_type!r}",
+    )
 
 
 async def _parse_docx(content_bytes: bytes) -> ParsedDocument:
@@ -396,18 +421,27 @@ async def _parse_docx(content_bytes: bytes) -> ParsedDocument:
         return "\n".join(lines).strip()
 
     text = await asyncio.to_thread(_parse_sync)
-    return ParsedDocument(text=text, mime_type="text/markdown", locator=None, metadata=None, chunks=None)
+    return ParsedDocument(
+        text=text, mime_type="text/markdown", locator=None, metadata=None, chunks=None
+    )
 
 
-async def _parse_url(url: str, *, http_client: httpx.AsyncClient, settings: Settings) -> ParsedDocument:
+async def _parse_url(
+    url: str, *, http_client: httpx.AsyncClient, settings: Settings
+) -> ParsedDocument:
     parsed = urlparse(url)
     if parsed.scheme not in {"http", "https"}:
-        raise ParseError(error_code="INVALID_URL_SCHEME", message=f"不支持的 URL scheme: {parsed.scheme!r}")
+        raise ParseError(
+            error_code="INVALID_URL_SCHEME",
+            message=f"不支持的 URL scheme: {parsed.scheme!r}",
+        )
 
     # 这些配置项建议按需开放配置；默认值由 Settings 提供，缺失时再走兜底。
     max_redirects = getattr(settings, "ingestion_url_max_redirects", 3)
     max_bytes = getattr(settings, "ingestion_url_max_bytes", 20 * 1024 * 1024)
-    user_agent = getattr(settings, "ingestion_url_user_agent", "multi-kb-agent/ingestion")
+    user_agent = getattr(
+        settings, "ingestion_url_user_agent", "multi-kb-agent/ingestion"
+    )
 
     headers = {"User-Agent": user_agent}
 
@@ -512,7 +546,9 @@ async def _parse_url(url: str, *, http_client: httpx.AsyncClient, settings: Sett
 def _resolve_mineru_options(settings: Settings) -> tuple[str, str, bool, bool]:
     lang = str(getattr(settings, "mineru_lang", "ch") or "ch").strip() or "ch"
 
-    parse_method = str(getattr(settings, "mineru_parse_method", "auto") or "auto").strip().lower()
+    parse_method = (
+        str(getattr(settings, "mineru_parse_method", "auto") or "auto").strip().lower()
+    )
     if parse_method not in {"auto", "txt", "ocr"}:
         parse_method = "auto"
 
@@ -521,7 +557,9 @@ def _resolve_mineru_options(settings: Settings) -> tuple[str, str, bool, bool]:
     return lang, parse_method, formula_enable, table_enable
 
 
-async def _parse_pdf_with_mineru(content_bytes: bytes, *, settings: Settings) -> ParsedDocument:
+async def _parse_pdf_with_mineru(
+    content_bytes: bytes, *, settings: Settings
+) -> ParsedDocument:
     """使用 MinerU Python API 解析 PDF，返回 block=chunk 的 chunks 与全文。"""
     lang, parse_method, formula_enable, table_enable = _resolve_mineru_options(settings)
 
@@ -564,7 +602,13 @@ async def _parse_pdf_with_mineru(content_bytes: bytes, *, settings: Settings) ->
             ) from exc
 
         try:
-            infer_results, all_image_lists, all_pdf_docs, lang_list, ocr_enabled_list = doc_analyze(
+            (
+                infer_results,
+                all_image_lists,
+                all_pdf_docs,
+                lang_list,
+                ocr_enabled_list,
+            ) = doc_analyze(
                 [pdf_bytes],
                 [lang],
                 parse_method=parse_method,
@@ -625,7 +669,10 @@ async def _parse_pdf_with_mineru(content_bytes: bytes, *, settings: Settings) ->
             ) from exc
 
         if not isinstance(middle_json, dict):
-            raise ParseError(error_code="MINERU_BAD_OUTPUT", message="MinerU 输出 middle_json 非 dict")
+            raise ParseError(
+                error_code="MINERU_BAD_OUTPUT",
+                message="MinerU 输出 middle_json 非 dict",
+            )
         return middle_json
 
     middle_json = await asyncio.to_thread(_parse_sync)

@@ -56,7 +56,9 @@ class ToolCallingGraphBuilder:
         # LLM：由同一模型派生不同 tool_choice 版本。
         if self._tools:
             self._model_auto = chat_model.bind_tools(self._tools)
-            self._model_no_tools = chat_model.bind_tools(self._tools, tool_choice="none")
+            self._model_no_tools = chat_model.bind_tools(
+                self._tools, tool_choice="none"
+            )
             self._model_forced = (
                 chat_model.bind_tools(
                     self._tools,
@@ -108,7 +110,6 @@ class ToolCallingGraphBuilder:
             graph.add_edge("tools", "model")
 
         return graph
-
 
     @staticmethod
     def _now_iso() -> str:
@@ -195,7 +196,9 @@ class ToolCallingGraphBuilder:
         }
 
         pending_tool_calls = (
-            extract_pending_tool_calls([ai_msg], self._tool_meta_by_name, external_only=True)
+            extract_pending_tool_calls(
+                [ai_msg], self._tool_meta_by_name, external_only=True
+            )
             if self._require_human_review
             else []
         )
@@ -215,7 +218,9 @@ class ToolCallingGraphBuilder:
 
         new_messages = result.get(self._messages_key, [])
         tool_msgs = [m for m in new_messages if isinstance(m, ToolMessage)]
-        succeeded = sum(1 for m in tool_msgs if getattr(m, "status", "success") == "success")
+        succeeded = sum(
+            1 for m in tool_msgs if getattr(m, "status", "success") == "success"
+        )
 
         stage_summaries = state.get("stage_summaries")
         if not isinstance(stage_summaries, dict):
@@ -271,8 +276,16 @@ class ToolCallingGraphBuilder:
             tool_calls = getattr(last_ai, "tool_calls", None) or []
             canceled: list[ToolMessage] = []
             for call in tool_calls:
-                name = call.get("name") if isinstance(call, dict) else getattr(call, "name", None)
-                call_id = call.get("id") if isinstance(call, dict) else getattr(call, "id", None)
+                name = (
+                    call.get("name")
+                    if isinstance(call, dict)
+                    else getattr(call, "name", None)
+                )
+                call_id = (
+                    call.get("id")
+                    if isinstance(call, dict)
+                    else getattr(call, "id", None)
+                )
                 if not name or not call_id:
                     continue
                 meta = self._tool_meta_by_name.get(str(name))

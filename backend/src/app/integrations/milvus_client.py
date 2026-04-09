@@ -32,10 +32,13 @@ except Exception:  # pragma: no cover
 
 logger = logging.getLogger(__name__)
 
+
 def _escape_string(value: str) -> str:
     """转义字符串中的特殊字符，防止注入攻击。"""
 
     return re.sub(r'(["\\\'])', r"\\\1", value)
+
+
 @dataclass(slots=True)
 class MilvusSearchHit:
     chunk_id: str
@@ -137,9 +140,7 @@ class MilvusClient:
     ) -> None:
         if self._field_cache is not None:
             return
-        self._field_cache = await self._describe_fields(
-            collection_name=collection_name
-        )
+        self._field_cache = await self._describe_fields(collection_name=collection_name)
 
     def _required_fields(self) -> set[str]:
         return {
@@ -174,7 +175,11 @@ class MilvusClient:
             raise RuntimeError("pymilvus 缺少 schema 相关类型，请升级 pymilvus")
 
     def _bm25_supported(self) -> bool:
-        return Function is not None and FunctionType is not None and hasattr(FunctionType, "BM25")
+        return (
+            Function is not None
+            and FunctionType is not None
+            and hasattr(FunctionType, "BM25")
+        )
 
     def _build_schema(self, dim: int):
         self._require_schema_types()
@@ -193,9 +198,7 @@ class MilvusClient:
             FieldSchema(name="kb_id", dtype=DataType.VARCHAR, max_length=64),
             FieldSchema(name="material_id", dtype=DataType.VARCHAR, max_length=64),
             FieldSchema(name="chunk_role", dtype=DataType.VARCHAR, max_length=16),
-            FieldSchema(
-                name="parent_chunk_id", dtype=DataType.VARCHAR, max_length=64
-            ),
+            FieldSchema(name="parent_chunk_id", dtype=DataType.VARCHAR, max_length=64),
             FieldSchema(name="child_seq", dtype=DataType.INT32),
             FieldSchema(
                 name="content",
@@ -236,7 +239,9 @@ class MilvusClient:
             enable_dynamic_field=True,
         )
 
-    def _build_filter_expr(self, kb_ids: list[str], extra_expr: str | None = None) -> str | None:
+    def _build_filter_expr(
+        self, kb_ids: list[str], extra_expr: str | None = None
+    ) -> str | None:
         """为 Milvus 构建安全的过滤表达式。
 
         - Always enforces kb_id scope when provided.
@@ -246,7 +251,7 @@ class MilvusClient:
 
         expr = None
         if kb_ids:
-            escaped_ids = [f"\"{_escape_string(kid)}\"" for kid in kb_ids]
+            escaped_ids = [f'"{_escape_string(kid)}"' for kid in kb_ids]
             expr = f"kb_id in [{', '.join(escaped_ids)}]"
 
         extra = (extra_expr or "").strip()
@@ -267,7 +272,9 @@ class MilvusClient:
         has_collection = getattr(self._client, "has_collection", None)
         create_collection = getattr(self._client, "create_collection", None)
         if has_collection is None or create_collection is None:
-            raise RuntimeError("pymilvus API 不匹配：缺少 has_collection/create_collection")
+            raise RuntimeError(
+                "pymilvus API 不匹配：缺少 has_collection/create_collection"
+            )
 
         target_collection = collection_name or self._collection
         exists = await has_collection(collection_name=target_collection)
@@ -374,9 +381,13 @@ class MilvusClient:
                         chunk_id=str(chunk_id),
                         score=score,
                         kb_id=str(kb_id) if kb_id is not None else None,
-                        material_id=str(material_id) if material_id is not None else None,
+                        material_id=str(material_id)
+                        if material_id is not None
+                        else None,
                         chunk_role=str(chunk_role) if chunk_role is not None else None,
-                        parent_chunk_id=str(parent_chunk_id) if parent_chunk_id is not None else None,
+                        parent_chunk_id=str(parent_chunk_id)
+                        if parent_chunk_id is not None
+                        else None,
                         child_seq=int(child_seq) if child_seq is not None else None,
                         content=str(content) if content is not None else None,
                         context=str(context) if context is not None else None,
@@ -401,7 +412,9 @@ class MilvusClient:
 
         hybrid_search = getattr(self._client, "hybrid_search", None)
         if hybrid_search is None or AnnSearchRequest is None:
-            raise RuntimeError("pymilvus API 不匹配：缺少 hybrid_search/AnnSearchRequest")
+            raise RuntimeError(
+                "pymilvus API 不匹配：缺少 hybrid_search/AnnSearchRequest"
+            )
 
         target_collection = collection_name or self._collection
         await self._load_field_cache(collection_name=target_collection)
@@ -568,7 +581,7 @@ class MilvusClient:
         """删除指定资料的所有向量记录。"""
 
         await self.delete_by_expr(
-            f"material_id == \"{_escape_string(material_id)}\"",
+            f'material_id == "{_escape_string(material_id)}"',
             collection_name=collection_name,
         )
 
@@ -581,7 +594,7 @@ class MilvusClient:
         """删除指定知识库的所有向量记录。"""
 
         await self.delete_by_expr(
-            f"kb_id == \"{_escape_string(kb_id)}\"",
+            f'kb_id == "{_escape_string(kb_id)}"',
             collection_name=collection_name,
         )
 
@@ -618,7 +631,7 @@ class MilvusClient:
             return
 
         escaped = [_escape_string(cid) for cid in chunk_ids]
-        quoted = ", ".join(f"\"{cid}\"" for cid in escaped)
+        quoted = ", ".join(f'"{cid}"' for cid in escaped)
         target_collection = collection_name or self._collection
         await delete(
             collection_name=target_collection,
@@ -645,7 +658,7 @@ class MilvusClient:
         self._assert_schema_compatible()
 
         escaped = [_escape_string(cid) for cid in chunk_ids]
-        quoted = ", ".join(f"\"{cid}\"" for cid in escaped)
+        quoted = ", ".join(f'"{cid}"' for cid in escaped)
         fields = output_fields or self._default_output_fields()
         res = await query(
             collection_name=target_collection,
@@ -660,4 +673,3 @@ class MilvusClient:
 def create_milvus_client() -> MilvusClient:
     """创建 Milvus 客户端实例。"""
     return MilvusClient()
-

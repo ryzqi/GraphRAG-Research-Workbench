@@ -20,7 +20,9 @@ class IngestionSchemaMismatchError(RuntimeError):
     """当数据库中的 ingestion 枚举与应用契约不一致时抛出。"""
 
 
-def validate_ingestion_enum_values(enum_values_by_name: Mapping[str, Sequence[str]]) -> None:
+def validate_ingestion_enum_values(
+    enum_values_by_name: Mapping[str, Sequence[str]],
+) -> None:
     expected = set(EXPECTED_INGESTION_ENUM_VALUES)
     for enum_name in INGESTION_STATUS_ENUM_NAMES:
         labels = tuple(enum_values_by_name.get(enum_name, ()))

@@ -132,8 +132,7 @@ class SearxngSearchProvider:
                     score=item.get("score")
                     if isinstance(item.get("score"), int | float)
                     else None,
-                    published_at=item.get("publishedDate")
-                    or item.get("published_at"),
+                    published_at=item.get("publishedDate") or item.get("published_at"),
                     domain=extract_domain(str(item.get("url") or "")),
                 )
                 for item in raw_items
@@ -155,7 +154,9 @@ class SearxngSearchProvider:
             error = build_provider_error(
                 code="SEARXNG_SEARCH_UPSTREAM_ERROR",
                 message="SearXNG 搜索暂时不可用，请稍后重试",
-                retryable=isinstance(exc, (httpx.TimeoutException, httpx.HTTPStatusError)),
+                retryable=isinstance(
+                    exc, (httpx.TimeoutException, httpx.HTTPStatusError)
+                ),
                 detail=str(exc),
                 status_code=_extract_status_code(exc),
             )

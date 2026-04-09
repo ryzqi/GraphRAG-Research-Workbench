@@ -1,0 +1,10 @@
+{
+  "dependencies": {
+    "pyright": "^1.1.408"
+  },
+  "_npx": {
+    "packages": [
+      "pyright"
+    ]
+  }
+}

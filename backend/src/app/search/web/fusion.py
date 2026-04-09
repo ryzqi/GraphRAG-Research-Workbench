@@ -27,7 +27,9 @@ def _document_priority(document: Document) -> tuple[float, float, int]:
     )
 
 
-def fuse_documents(groups: Iterable[list[Document]], *, max_results: int) -> list[Document]:
+def fuse_documents(
+    groups: Iterable[list[Document]], *, max_results: int
+) -> list[Document]:
     unique_docs: dict[str, Document] = {}
     fusion_scores: Counter[str] = Counter()
     overlap_counts: Counter[str] = Counter()

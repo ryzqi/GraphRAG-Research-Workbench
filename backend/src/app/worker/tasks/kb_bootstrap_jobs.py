@@ -45,7 +45,10 @@ async def _run_kb_bootstrap_job(job_id: str) -> None:
             if job is None:
                 return
 
-            if job.status in {KBBootstrapJobStatus.COMPLETED, KBBootstrapJobStatus.FAILED}:
+            if job.status in {
+                KBBootstrapJobStatus.COMPLETED,
+                KBBootstrapJobStatus.FAILED,
+            }:
                 return
             if job.status == KBBootstrapJobStatus.QUEUED_UPLOAD:
                 return
@@ -58,7 +61,9 @@ async def _run_kb_bootstrap_job(job_id: str) -> None:
 
             payload_entries = job.payload_entries or []
             try:
-                entries = TypeAdapter(list[ManifestEntry]).validate_python(payload_entries)
+                entries = TypeAdapter(list[ManifestEntry]).validate_python(
+                    payload_entries
+                )
             except Exception as exc:
                 await session.rollback()
                 job = await session.get(KBBootstrapJob, job_uuid)
@@ -84,7 +89,9 @@ async def _run_kb_bootstrap_job(job_id: str) -> None:
                 job.status = KBBootstrapJobStatus.COMPLETED
                 job.accepted_entries = response.accepted_docs
                 job.failed_entries = response.failed_docs
-                job.entry_errors = [err.model_dump(mode="json") for err in response.entry_errors]
+                job.entry_errors = [
+                    err.model_dump(mode="json") for err in response.entry_errors
+                ]
                 job.error_code = None
                 job.error_message = None
                 job.progress_message = "批次已创建，文档处理中"
@@ -99,7 +106,11 @@ async def _run_kb_bootstrap_job(job_id: str) -> None:
                 job.error_code = exc.code
                 job.error_message = exc.message
                 job.entry_errors = entry_errors
-                job.failed_entries = len(entry_errors) if entry_errors is not None else len(payload_entries)
+                job.failed_entries = (
+                    len(entry_errors)
+                    if entry_errors is not None
+                    else len(payload_entries)
+                )
                 job.progress_message = "任务失败"
             except Exception as exc:  # pragma: no cover
                 await session.rollback()

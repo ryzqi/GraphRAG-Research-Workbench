@@ -85,7 +85,9 @@ def _extract_user_input(state: dict) -> str:
 
 
 def _cache_kb_scope(kb_ids: list[str]) -> str:
-    normalized = sorted(str(k).strip() for k in kb_ids if isinstance(k, str) and str(k).strip())
+    normalized = sorted(
+        str(k).strip() for k in kb_ids if isinstance(k, str) and str(k).strip()
+    )
     if not normalized:
         return "kb_all"
     digest = hashlib.sha1(",".join(normalized).encode("utf-8")).hexdigest()[:12]
@@ -108,7 +110,9 @@ def _complexity_cache_namespace(
     if not isinstance(kb_ids_raw, list):
         kb_ids_raw = memory.get("kb_ids")
     kb_ids = kb_ids_raw if isinstance(kb_ids_raw, list) else []
-    kb_ids_str = [str(k).strip() for k in kb_ids if isinstance(k, str) and str(k).strip()]
+    kb_ids_str = [
+        str(k).strip() for k in kb_ids if isinstance(k, str) and str(k).strip()
+    ]
     return ("kb_chat", "complexity_cache", user_id, _cache_kb_scope(kb_ids_str))
 
 
@@ -126,7 +130,8 @@ def _complexity_cache_key(
         "recall_risk": recall_risk.strip().lower(),
         "has_multi_target": bool(has_multi_target),
         "is_comparison": bool(is_comparison),
-        "decision_version": decision_version.strip() or COMPLEXITY_CLASSIFY_DECISION_VERSION,
+        "decision_version": decision_version.strip()
+        or COMPLEXITY_CLASSIFY_DECISION_VERSION,
         "cache_key_version": cache_key_version.strip() or "v1",
     }
     raw = json.dumps(payload, ensure_ascii=False, sort_keys=True)
@@ -134,7 +139,9 @@ def _complexity_cache_key(
     return f"{_COMPLEXITY_CACHE_KEY_PREFIX}:{digest}"
 
 
-def _wrap_cache_with_ttl(payload: dict[str, Any], *, ttl_seconds: int) -> dict[str, Any]:
+def _wrap_cache_with_ttl(
+    payload: dict[str, Any], *, ttl_seconds: int
+) -> dict[str, Any]:
     created_at = now_iso()
     return {
         "schema": _COMPLEXITY_CACHE_SCHEMA,
@@ -166,7 +173,9 @@ async def _read_complexity_cache(
 ) -> dict[str, Any] | None:
     if runtime is None or runtime.store is None:
         return None
-    item = await runtime.store.aget(_complexity_cache_namespace(state, runtime), cache_key)
+    item = await runtime.store.aget(
+        _complexity_cache_namespace(state, runtime), cache_key
+    )
     if item is None:
         return None
     value = getattr(item, "value", None)
@@ -323,7 +332,9 @@ def _constraint_term_groups(meta: dict[str, Any] | None) -> dict[str, list[str]]
     return {
         "entities": _normalize_meta_values(meta, "entities", limit=4),
         "time_constraints": _normalize_meta_values(meta, "time_constraints", limit=3),
-        "metric_constraints": _normalize_meta_values(meta, "metric_constraints", limit=4),
+        "metric_constraints": _normalize_meta_values(
+            meta, "metric_constraints", limit=4
+        ),
         "scope_constraints": _normalize_meta_values(meta, "scope_constraints", limit=4),
     }
 
@@ -632,11 +643,7 @@ def build_prepared_query_bundle(
         str(row.get("kind") or "") == "main" for row in selected_rows
     ):
         main_row = next(
-            (
-                row
-                for row in filtered_rows
-                if str(row.get("kind") or "") == "main"
-            ),
+            (row for row in filtered_rows if str(row.get("kind") or "") == "main"),
             None,
         )
         if main_row is not None:
@@ -884,7 +891,10 @@ def _render_display_context(
             role = "用户" if turn.get("role") == "user" else "助手"
             text = turn.get("text", "").strip()
             if text:
-                if role == "用户" and _normalize_for_compare(text) == normalized_question:
+                if (
+                    role == "用户"
+                    and _normalize_for_compare(text) == normalized_question
+                ):
                     continue
                 lines.append(f"{role}: {text}")
         if lines:
@@ -1038,7 +1048,11 @@ def _needs_conflict_resolution(*, summary_text: str, memory_snippet: str) -> boo
         return False
     summary_numbers = set(re.findall(r"\d+", summary_text))
     memory_numbers = set(re.findall(r"\d+", memory_snippet))
-    return bool(summary_numbers and memory_numbers and summary_numbers.isdisjoint(memory_numbers))
+    return bool(
+        summary_numbers
+        and memory_numbers
+        and summary_numbers.isdisjoint(memory_numbers)
+    )
 
 
 async def merge_context(
@@ -1087,7 +1101,9 @@ async def merge_context(
         )
         kb_ids_raw = context.get("kb_ids")
         if not isinstance(kb_ids_raw, list):
-            kb_ids_raw = keys.get("kb_ids") if isinstance(keys.get("kb_ids"), list) else []
+            kb_ids_raw = (
+                keys.get("kb_ids") if isinstance(keys.get("kb_ids"), list) else []
+            )
         kb_ids = [str(k) for k in kb_ids_raw if isinstance(k, str) and k.strip()]
         try:
             mem = await aget_kb_chat_memory(
@@ -1114,7 +1130,9 @@ async def merge_context(
     llm_resolve_reason: str | None = None
     fallback_used = False
     keep_memory = True
-    if _needs_conflict_resolution(summary_text=summary_text, memory_snippet=memory_snippet):
+    if _needs_conflict_resolution(
+        summary_text=summary_text, memory_snippet=memory_snippet
+    ):
         llm_resolve_used = True
         try:
             svc = QueryRewriteService(settings=settings)
@@ -1277,7 +1295,11 @@ async def coref_rewrite(state: CorefRewriteInput, settings: Settings) -> dict[st
             "input_chars": len(query.strip()),
             "output_chars": len(rewritten.strip()),
             "changed_ratio": (
-                round(abs(len(rewritten.strip()) - len(query.strip())) / len(query.strip()), 4)
+                round(
+                    abs(len(rewritten.strip()) - len(query.strip()))
+                    / len(query.strip()),
+                    4,
+                )
                 if query.strip()
                 else 0.0
             ),
@@ -1307,7 +1329,9 @@ async def coref_rewrite(state: CorefRewriteInput, settings: Settings) -> dict[st
     }
 
 
-async def ambiguity_check(state: AmbiguityCheckInput, settings: Settings) -> dict[str, Any]:
+async def ambiguity_check(
+    state: AmbiguityCheckInput, settings: Settings
+) -> dict[str, Any]:
     """使用模型优先决策执行歧义检查，并生成结构化澄清载荷。"""
     start = time.perf_counter()
     query = state.get("resolved_query")
@@ -1464,7 +1488,9 @@ async def normalize_rewrite(
         rewritten_flag = False
 
     normalized_aliases = (
-        normalized_meta.get("aliases") if isinstance(normalized_meta.get("aliases"), list) else []
+        normalized_meta.get("aliases")
+        if isinstance(normalized_meta.get("aliases"), list)
+        else []
     )
 
     stage_summaries = _merge_stage_summary(
@@ -1474,16 +1500,25 @@ async def normalize_rewrite(
             "rewritten": rewritten_flag,
             "normalization_source": normalization_source,
             "fallback_reason": fallback_reason or None,
-            "guardrail_reason": str(normalized_meta.get("guardrail_reason") or "") or None,
-            "alias_count": len([a for a in normalized_aliases if isinstance(a, str) and a.strip()]),
-            "constraint_preserved": bool(normalized_meta.get("constraint_preserved", True)),
+            "guardrail_reason": str(normalized_meta.get("guardrail_reason") or "")
+            or None,
+            "alias_count": len(
+                [a for a in normalized_aliases if isinstance(a, str) and a.strip()]
+            ),
+            "constraint_preserved": bool(
+                normalized_meta.get("constraint_preserved", True)
+            ),
             "drift_risk": bool(normalized_meta.get("drift_risk", False)),
             "recall_risk": str(normalized_meta.get("recall_risk") or "medium"),
             "input_source": input_source,
             "input_chars": len(query.strip()),
             "output_chars": len(rewritten.strip()),
             "changed_ratio": (
-                round(abs(len(rewritten.strip()) - len(query.strip())) / len(query.strip()), 4)
+                round(
+                    abs(len(rewritten.strip()) - len(query.strip()))
+                    / len(query.strip()),
+                    4,
+                )
                 if query.strip()
                 else 0.0
             ),
@@ -1594,7 +1629,9 @@ async def _classify_query_strategy(
                 cached = None
                 cache_status = "read_error"
             if isinstance(cached, dict):
-                candidate_strategy = str(cached.get("strategy") or "direct").strip().lower()
+                candidate_strategy = (
+                    str(cached.get("strategy") or "direct").strip().lower()
+                )
                 strategy = (
                     candidate_strategy
                     if candidate_strategy in {"direct", "decomposition", "multi_query"}
@@ -1607,9 +1644,13 @@ async def _classify_query_strategy(
                     4,
                 )
                 failure_reason = None
-                decision_version = str(
-                    cached.get("decision_version") or COMPLEXITY_CLASSIFY_DECISION_VERSION
-                ).strip() or COMPLEXITY_CLASSIFY_DECISION_VERSION
+                decision_version = (
+                    str(
+                        cached.get("decision_version")
+                        or COMPLEXITY_CLASSIFY_DECISION_VERSION
+                    ).strip()
+                    or COMPLEXITY_CLASSIFY_DECISION_VERSION
+                )
                 raw_flags = (
                     cached.get("risk_flags")
                     if isinstance(cached.get("risk_flags"), list)
@@ -1648,7 +1689,9 @@ async def _classify_query_strategy(
             ).strip()
             if not decision_version:
                 decision_version = COMPLEXITY_CLASSIFY_DECISION_VERSION
-            raw_flags = decision.risk_flags if isinstance(decision.risk_flags, list) else []
+            raw_flags = (
+                decision.risk_flags if isinstance(decision.risk_flags, list) else []
+            )
             risk_flags = [
                 str(flag).strip()
                 for flag in raw_flags
@@ -1666,7 +1709,12 @@ async def _classify_query_strategy(
                     runtime=runtime,
                     cache_key=cache_key,
                     ttl_seconds=max(
-                        0, int(getattr(settings, "kb_chat_complexity_cache_ttl_seconds", 120))
+                        0,
+                        int(
+                            getattr(
+                                settings, "kb_chat_complexity_cache_ttl_seconds", 120
+                            )
+                        ),
                     ),
                     payload={
                         "strategy": strategy,
@@ -1834,6 +1882,7 @@ async def decomposition(state: DecompositionInput, settings: Settings) -> Comman
         goto="hyde",
     )
 
+
 async def generate_variants(
     state: GenerateVariantsInput,
     settings: Settings,
@@ -1881,6 +1930,7 @@ async def generate_variants(
         goto="hyde",
     )
 
+
 async def hyde(state: HydeInput, settings: Settings) -> dict[str, Any]:
     """HyDE 节点（LLM 驱动，带安全兜底）。"""
     start = time.perf_counter()
@@ -1914,7 +1964,9 @@ async def hyde(state: HydeInput, settings: Settings) -> dict[str, Any]:
     try:
         svc = QueryRewriteService(settings=settings)
         result = await svc.hyde(query)
-        hyde_docs = [item for item in result.queries if isinstance(item, str) and item.strip()]
+        hyde_docs = [
+            item for item in result.queries if isinstance(item, str) and item.strip()
+        ]
         success = result.success
         reason = result.reason
     except Exception:  # pragma: no cover
@@ -1923,7 +1975,8 @@ async def hyde(state: HydeInput, settings: Settings) -> dict[str, Any]:
         reason = "error"
     loop_counts = state.get("loop_counts")
     retry_regenerated = (
-        isinstance(loop_counts, dict) and int(loop_counts.get("retrieval_retries") or 0) > 0
+        isinstance(loop_counts, dict)
+        and int(loop_counts.get("retrieval_retries") or 0) > 0
     )
 
     stage_summaries = _merge_stage_summary(
@@ -2016,7 +2069,9 @@ def _build_query_plan_finalize_update(
     multi_queries_raw = state.get("multi_queries")
     if not isinstance(multi_queries_raw, list):
         multi_queries_raw = []
-    multi_queries = [query for query in multi_queries_raw if isinstance(query, str) and query.strip()]
+    multi_queries = [
+        query for query in multi_queries_raw if isinstance(query, str) and query.strip()
+    ]
 
     hyde_docs_raw = state.get("hyde_docs")
     if not isinstance(hyde_docs_raw, list):
@@ -2063,8 +2118,12 @@ def _build_query_plan_finalize_update(
         {
             "strategy": strategy,
             "reasoning": (
-                _as_dict(state.get("stage_summaries") or {}).get("query_plan", {}).get("reasoning")
-                if isinstance(_as_dict(state.get("stage_summaries") or {}).get("query_plan"), dict)
+                _as_dict(state.get("stage_summaries") or {})
+                .get("query_plan", {})
+                .get("reasoning")
+                if isinstance(
+                    _as_dict(state.get("stage_summaries") or {}).get("query_plan"), dict
+                )
                 else ""
             )
             or "",
@@ -2117,6 +2176,7 @@ def _build_query_plan_finalize_update(
         "stage_summaries": stage_summaries,
     }
 
+
 async def query_plan_finalize(
     state: QueryPlanFinalizeInput,
     runtime: Runtime[Any],
@@ -2131,7 +2191,9 @@ async def query_plan_finalize(
         settings=settings,
         latency_ms=int((time.perf_counter() - start) * 1000),
     )
-    fallback_reason = str(update["query_plan_diagnostics"].get("fallback_reason") or "none")
+    fallback_reason = str(
+        update["query_plan_diagnostics"].get("fallback_reason") or "none"
+    )
     outer_next_node = "retrieval_subgraph"
     action = "none"
     reason = "query_planned"
@@ -2167,7 +2229,9 @@ async def query_plan_finalize(
     return Command(update=update, goto="preprocess_exit")
 
 
-def _merge_query_plan_state(base: dict[str, Any], patch: dict[str, Any]) -> dict[str, Any]:
+def _merge_query_plan_state(
+    base: dict[str, Any], patch: dict[str, Any]
+) -> dict[str, Any]:
     merged = {**base, **patch}
     for key in ("stage_summaries", "routing_decisions", "reflection"):
         base_value = base.get(key)

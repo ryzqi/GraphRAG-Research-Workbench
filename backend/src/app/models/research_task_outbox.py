@@ -24,7 +24,9 @@ class ResearchTaskOutboxStatus(str, Enum):
 class ResearchTaskOutbox(Base):
     __tablename__ = "research_task_outbox"
 
-    id: Mapped[uuid.UUID] = mapped_column(sa.Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id: Mapped[uuid.UUID] = mapped_column(
+        sa.Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
     session_id: Mapped[uuid.UUID] = mapped_column(
         sa.Uuid(as_uuid=True),
         sa.ForeignKey("research_sessions.id", ondelete="CASCADE"),
@@ -54,8 +56,12 @@ class ResearchTaskOutbox(Base):
         default=20,
         server_default=sa.text("20"),
     )
-    next_retry_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True), nullable=True)
-    dispatched_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True), nullable=True)
+    next_retry_at: Mapped[datetime | None] = mapped_column(
+        sa.DateTime(timezone=True), nullable=True
+    )
+    dispatched_at: Mapped[datetime | None] = mapped_column(
+        sa.DateTime(timezone=True), nullable=True
+    )
     last_error: Mapped[str | None] = mapped_column(sa.Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         sa.DateTime(timezone=True),
@@ -72,7 +78,9 @@ class ResearchTaskOutbox(Base):
     session = relationship("ResearchSession", back_populates="task_outbox_entries")
 
     __table_args__ = (
-        sa.UniqueConstraint("session_id", "task_name", name="uq_research_task_outbox_session_task"),
+        sa.UniqueConstraint(
+            "session_id", "task_name", name="uq_research_task_outbox_session_task"
+        ),
         sa.Index(
             "ix_research_task_outbox_status_next_retry_created",
             "status",

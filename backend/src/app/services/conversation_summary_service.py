@@ -63,9 +63,7 @@ class ConversationSummaryService:
         result = await self._db.execute(stmt)
         return result.scalars().first()
 
-    async def maybe_update_summary(
-        self, session_id
-    ) -> SummaryUpdateResult | None:
+    async def maybe_update_summary(self, session_id) -> SummaryUpdateResult | None:
         if not self._settings.summary_enabled:
             return None
 
@@ -158,6 +156,7 @@ class ConversationSummaryService:
         summary_model = model.bind(max_tokens=self._settings.summary_max_tokens)
         token_counter = getattr(model, "get_num_tokens_from_messages", None)
         if token_counter is None:
+
             def token_counter(msgs: list[object]) -> int:
                 return sum(
                     count_tokens_approximately(getattr(m, "content", "") or "")
@@ -195,7 +194,9 @@ class ConversationSummaryService:
         summary_text = None
         running = getattr(result, "running_summary", None)
         if running is not None:
-            summary_text = getattr(running, "summary", None) or getattr(running, "text", None)
+            summary_text = getattr(running, "summary", None) or getattr(
+                running, "text", None
+            )
 
         if not summary_text:
             summary_text = self._extract_summary_from_messages(

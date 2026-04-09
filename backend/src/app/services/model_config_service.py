@@ -162,7 +162,9 @@ class ModelConfigService:
         if "enabled" in updates:
             row.enabled = bool(updates["enabled"])
         if "base_url" in updates:
-            row.base_url = _normalize_provider_base_url(row.provider, updates["base_url"])
+            row.base_url = _normalize_provider_base_url(
+                row.provider, updates["base_url"]
+            )
         if "models" in updates:
             row.models = _normalize_model_names(updates["models"])
         if "thinking_enabled" in updates:
@@ -324,7 +326,9 @@ class ModelConfigService:
             dirty = True
 
         for row in by_provider.values():
-            normalized_base_url = _normalize_provider_base_url(row.provider, row.base_url)
+            normalized_base_url = _normalize_provider_base_url(
+                row.provider, row.base_url
+            )
             if normalized_base_url != row.base_url:
                 row.base_url = normalized_base_url
                 dirty = True

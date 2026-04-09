@@ -24,7 +24,9 @@ def build_research_presentation_snapshot(
 ) -> dict[str, Any]:
     artifact_by_key = {item.artifact_key: item for item in artifacts}
     surface = _resolve_surface(session.status)
-    clarification_payload = _read_artifact_object(artifact_by_key, "clarification_request")
+    clarification_payload = _read_artifact_object(
+        artifact_by_key, "clarification_request"
+    )
     plan_payload = _read_artifact_object(artifact_by_key, "plan_snapshot")
     report_payload = _read_artifact_object(artifact_by_key, "report_json")
     metrics_payload = _read_artifact_object(artifact_by_key, "metrics_snapshot")
@@ -129,9 +131,13 @@ def _build_hero_subtitle(
     report_payload: dict[str, Any],
 ) -> str:
     if status == ResearchSessionStatus.CLARIFYING:
-        return str(clarification_payload.get("summary") or "请先补齐研究边界，再开始深度研究。")
+        return str(
+            clarification_payload.get("summary") or "请先补齐研究边界，再开始深度研究。"
+        )
     if status == ResearchSessionStatus.PLAN_READY:
-        return str(plan_payload.get("summary") or "研究计划已生成，可继续调整后开始执行。")
+        return str(
+            plan_payload.get("summary") or "研究计划已生成，可继续调整后开始执行。"
+        )
     if status == ResearchSessionStatus.QUEUED:
         return "研究任务已进入执行队列，正在等待资源调度。"
     if status == ResearchSessionStatus.RUNNING:
@@ -139,7 +145,9 @@ def _build_hero_subtitle(
     if status == ResearchSessionStatus.FINALIZING:
         return "正在收口证据并生成最终报告。"
     if status == ResearchSessionStatus.FINAL:
-        return str(report_payload.get("summary") or "研究报告已生成，可直接阅读与导出。")
+        return str(
+            report_payload.get("summary") or "研究报告已生成，可直接阅读与导出。"
+        )
     if status == ResearchSessionStatus.FAILED:
         return "研究执行失败，请检查错误后重新发起。"
     if status == ResearchSessionStatus.CANCELED:
@@ -243,7 +251,9 @@ def _build_plan_section(*, plan_payload: dict[str, Any]) -> dict[str, Any]:
                     "index": index,
                     "title": title,
                     "description": description,
-                    "target_sources": target_sources if isinstance(target_sources, list) else [],
+                    "target_sources": target_sources
+                    if isinstance(target_sources, list)
+                    else [],
                 }
             )
 
@@ -502,9 +512,7 @@ def _build_report_metric_cards(
         {"label": "覆盖状态", "value": "通过" if gate_pass else "待补证"},
     ]
     session_cost = (
-        cost_payload.get("session_cost_usd")
-        if isinstance(cost_payload, dict)
-        else None
+        cost_payload.get("session_cost_usd") if isinstance(cost_payload, dict) else None
     )
     if isinstance(session_cost, (int, float)):
         metric_cards.append(

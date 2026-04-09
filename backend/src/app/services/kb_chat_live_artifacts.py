@@ -90,7 +90,10 @@ def _extract_final_answer(events: list[ParsedSseEvent]) -> str:
                 value = _stringify_value(payload.get(key))
                 if value:
                     return value
-        if event.event == "node_io" and payload.get("node_name") in {"answer_commit", "force_exit"}:
+        if event.event == "node_io" and payload.get("node_name") in {
+            "answer_commit",
+            "force_exit",
+        }:
             for key in ("final_answer", "draft_answer"):
                 value = _stringify_value(payload.get(key))
                 if value:
@@ -127,7 +130,9 @@ def render_case_markdown(
         if event.event != "node_io" or not isinstance(event.payload, dict):
             continue
         payload = event.payload
-        node_name = str(payload.get("node_name") or payload.get("node_id") or "").strip()
+        node_name = str(
+            payload.get("node_name") or payload.get("node_id") or ""
+        ).strip()
         phase = str(payload.get("phase") or "").strip() or "unknown"
         if not node_name:
             continue

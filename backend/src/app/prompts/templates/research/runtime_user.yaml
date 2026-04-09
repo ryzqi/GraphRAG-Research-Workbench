@@ -16,6 +16,7 @@ template: |
   - 先消化 workspace 文档，再决定是否需要外部补证。
   - 将 route_hint 与 query_mesh 视为候选检索计划；只选择能关闭当前主张、交叉验证任务或 coverage gap 的最小必要查询集。
   - 外部查询必须服务于某个未闭合主张、交叉验证任务或 coverage gap。
+  - workspace 文档只能作为 bootstrap 背景，不能作为满足 web/paper target_sources 的唯一最终证据。
   - 引用优先级：官方/原始/同行评审 > 聚合转载 > 二手解读。
   - 若只有弱证据或单一来源支持，不要把该判断写成确定性 finding。
 
@@ -24,9 +25,10 @@ template: |
   - citations 至少 2 条，必须与 findings 对应；结构化输出中也必须保留 citations。
   - 内部组织顺序遵循：结论 -> 证据 -> 冲突/限制 -> 缺口。
   - 若证据冲突，请在 findings 中保留 contested / limitation 语义，不要强行合并。
-  - 如果 workspace 文档足够回答，不要为了凑工具而调用外部 provider。
-  - 如果 workspace 文档不足，优先调用 `web_search` 做聚合搜索；该工具会同时使用 Tavily 与 SearXNG。
-  - 需要正文时再调用 `jina_read`；需要定向抽取/爬取时再调用 Tavily 抽取或爬取工具；论文走 `arxiv_*`。
+  - 如果 target_sources 包含 web，必须至少调用一次 `web_search`。
+  - 如果 target_sources 包含 paper，必须至少调用一次 `arxiv_search` 或 `arxiv_fetch`。
+  - 对 `web_search` 命中的关键网页，优先再调用 `jina_read` 获取正文；需要定向抽取/爬取时再调用 Tavily 抽取或爬取工具。
+  - 最终 citations 的 source_provider 必须使用 provider id，不要写成 LangChain官方文档 这类站点名。
 
 variables:
   - name: question

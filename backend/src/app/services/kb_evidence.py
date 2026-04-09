@@ -30,7 +30,10 @@ def normalize_stable_citation_id(value: object) -> str | None:
 
 
 def stable_citation_sort_key(citation_id: str) -> tuple[int, str]:
-    normalized = normalize_stable_citation_id(citation_id) or _as_text(citation_id).strip().upper()
+    normalized = (
+        normalize_stable_citation_id(citation_id)
+        or _as_text(citation_id).strip().upper()
+    )
     digits = normalized[1:] if normalized.startswith("S") else ""
     if digits.isdigit():
         return int(digits), normalized
@@ -134,7 +137,9 @@ def canonicalize_evidence_items(
     for index, raw in enumerate(evidence_items, 1):
         if not isinstance(raw, dict):
             continue
-        citation_id = normalize_stable_citation_id(raw.get("citation_id")) or f"S{index}"
+        citation_id = (
+            normalize_stable_citation_id(raw.get("citation_id")) or f"S{index}"
+        )
         excerpt = _as_text(raw.get("excerpt")).strip()
         if not excerpt:
             continue

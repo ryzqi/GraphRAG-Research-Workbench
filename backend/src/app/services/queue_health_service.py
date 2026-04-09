@@ -83,13 +83,17 @@ class QueueHealthService:
     async def get_queue_health(self) -> QueueHealthRead:
         now = datetime.now(timezone.utc)
         consumer_counts = await self._get_consumer_counts()
-        queue_lengths = await self._get_queue_lengths(queues=set(REQUIRED_QUEUES) | set(consumer_counts))
+        queue_lengths = await self._get_queue_lengths(
+            queues=set(REQUIRED_QUEUES) | set(consumer_counts)
+        )
         queue_states = _build_queue_states(
             consumer_counts=consumer_counts,
             queue_lengths=queue_lengths,
             required_queues=REQUIRED_QUEUES,
         )
-        workers_online = any(state.consumer_count > 0 for state in queue_states.values())
+        workers_online = any(
+            state.consumer_count > 0 for state in queue_states.values()
+        )
 
         stuck_summary = await self._get_stuck_summary(now=now)
         return QueueHealthRead(
@@ -157,7 +161,9 @@ class QueueHealthService:
             ResearchSession.updated_at <= research_deadline,
         )
 
-        bootstrap_count = int((await self._db.execute(bootstrap_stmt)).scalar_one() or 0)
+        bootstrap_count = int(
+            (await self._db.execute(bootstrap_stmt)).scalar_one() or 0
+        )
         processing_doc_count = int((await self._db.execute(doc_stmt)).scalar_one() or 0)
         research_count = int((await self._db.execute(research_stmt)).scalar_one() or 0)
         return QueueStuckSummaryRead(

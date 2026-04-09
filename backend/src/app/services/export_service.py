@@ -15,7 +15,9 @@ class ExportService:
     def __init__(self, celery: Celery | None = None) -> None:
         self._celery = celery or celery_app
 
-    async def create_export(self, session: AsyncSession, req: ExportCreateRequest) -> ExportJob:
+    async def create_export(
+        self, session: AsyncSession, req: ExportCreateRequest
+    ) -> ExportJob:
         target_id: uuid.UUID | None
         if req.type == ExportType.RESEARCH:
             target_id = req.session_id
@@ -42,5 +44,7 @@ class ExportService:
         )
         return job
 
-    async def get_export(self, session: AsyncSession, export_id: uuid.UUID) -> ExportJob | None:
+    async def get_export(
+        self, session: AsyncSession, export_id: uuid.UUID
+    ) -> ExportJob | None:
         return await session.get(ExportJob, export_id)

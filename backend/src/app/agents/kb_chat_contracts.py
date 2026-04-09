@@ -67,7 +67,16 @@ def validate_event_envelope_v2(
     def add_warning(key: str, message: str) -> None:
         warnings[key] = message
 
-    required = ("version", "type", "event_id", "seq", "ts", "run", "attempt", "node_path")
+    required = (
+        "version",
+        "type",
+        "event_id",
+        "seq",
+        "ts",
+        "run",
+        "attempt",
+        "node_path",
+    )
     for key in required:
         if key not in event:
             add_warning(key, f"missing required envelope field: {key}")

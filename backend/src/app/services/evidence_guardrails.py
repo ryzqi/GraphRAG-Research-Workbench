@@ -4,9 +4,7 @@ from __future__ import annotations
 
 import re
 
-_CITATION_BLOCK_RE = re.compile(
-    r"\[([^\[\]\n]{1,128})\]|【([^【】\n]{1,128})】"
-)
+_CITATION_BLOCK_RE = re.compile(r"\[([^\[\]\n]{1,128})\]|【([^【】\n]{1,128})】")
 _CITATION_SPLIT_RE = re.compile(r"[,\uFF0C;\uFF1B\u3001]+")
 _MULTI_SPACE_RE = re.compile(r"[ \t]{2,}")
 _STABLE_CITATION_ID_RE = re.compile(r"^S[1-9]\d*$", re.IGNORECASE)
@@ -24,10 +22,7 @@ def _collapse_spaces(text: str) -> str:
 
 def normalize_citation_label(label: str) -> str:
     cleaned = (
-        label.replace("[", " ")
-        .replace("]", " ")
-        .replace("【", " ")
-        .replace("】", " ")
+        label.replace("[", " ").replace("]", " ").replace("【", " ").replace("】", " ")
     )
     return " ".join(cleaned.split()).strip()
 
@@ -48,7 +43,9 @@ def resolve_kb_refusal_answer(*, reason: str | None = None) -> str:
     }:
         return "根据现有资料无法回答该问题。"
     if reason_key in {"severe_conflict", "conflict_retry_exhausted"}:
-        return "当前检索证据存在明显冲突，暂无法给出稳定结论。请补充时间范围或口径后重试。"
+        return (
+            "当前检索证据存在明显冲突，暂无法给出稳定结论。请补充时间范围或口径后重试。"
+        )
     if reason_key == "fallback_closed":
         return "根据现有资料无法回答该问题（未通过证据校验）。"
     return _RETRY_EXHAUSTED_NO_ANSWER

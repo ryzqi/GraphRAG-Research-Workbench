@@ -54,7 +54,11 @@ class KbChatSemanticCacheService:
     def ttl_seconds(self) -> int:
         return max(
             0,
-            int(getattr(self._settings, "kb_chat_semantic_cache_ttl_seconds", 24 * 60 * 60)),
+            int(
+                getattr(
+                    self._settings, "kb_chat_semantic_cache_ttl_seconds", 24 * 60 * 60
+                )
+            ),
         )
 
     async def lookup(
@@ -79,7 +83,9 @@ class KbChatSemanticCacheService:
             question=normalized_question,
             question_vector=vector,
             scope=scope,
-            context=build_context(question=normalized_question, pre_context=pre_context),
+            context=build_context(
+                question=normalized_question, pre_context=pre_context
+            ),
             similarity_threshold=self.similarity_threshold(),
             ttl_seconds=self.ttl_seconds(),
         )
@@ -116,7 +122,9 @@ class KbChatSemanticCacheService:
             answer=normalized_answer,
             question_vector=vector,
             scope=scope,
-            context=build_context(question=normalized_question, pre_context=pre_context),
+            context=build_context(
+                question=normalized_question, pre_context=pre_context
+            ),
             evidence=evidence,
             citation_ids=list(citation_ids),
             evidence_fingerprint=list(evidence_fingerprint),

@@ -23,7 +23,9 @@ class KBBootstrapJobStatus(str, Enum):
 class KBBootstrapJob(Base):
     __tablename__ = "kb_bootstrap_jobs"
 
-    id: Mapped[uuid.UUID] = mapped_column(sa.Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id: Mapped[uuid.UUID] = mapped_column(
+        sa.Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
     kb_id: Mapped[uuid.UUID] = mapped_column(
         sa.Uuid(as_uuid=True),
         sa.ForeignKey("knowledge_bases.id", ondelete="CASCADE"),
@@ -37,7 +39,9 @@ class KBBootstrapJob(Base):
         index=True,
     )
     request_id: Mapped[str | None] = mapped_column(sa.String(length=128), nullable=True)
-    requested_by: Mapped[str | None] = mapped_column(sa.String(length=128), nullable=True)
+    requested_by: Mapped[str | None] = mapped_column(
+        sa.String(length=128), nullable=True
+    )
     status: Mapped[KBBootstrapJobStatus] = mapped_column(
         enum_values(KBBootstrapJobStatus, name="kb_bootstrap_job_status"),
         nullable=False,
@@ -86,7 +90,13 @@ class KBBootstrapJob(Base):
         server_default=sa.func.now(),
         onupdate=sa.func.now(),
     )
-    started_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True), nullable=True)
-    finished_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True), nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(
+        sa.DateTime(timezone=True), nullable=True
+    )
+    finished_at: Mapped[datetime | None] = mapped_column(
+        sa.DateTime(timezone=True), nullable=True
+    )
 
-    __table_args__ = (sa.UniqueConstraint("request_id", name="uq_kb_bootstrap_jobs_request_id"),)
+    __table_args__ = (
+        sa.UniqueConstraint("request_id", name="uq_kb_bootstrap_jobs_request_id"),
+    )

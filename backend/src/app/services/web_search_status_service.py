@@ -200,10 +200,7 @@ async def _probe_web_search_status(*, settings: Settings) -> WebSearchStatusRead
         providers_by_name[name]
         for name in _PROVIDER_ORDER
         if providers_by_name[name].configured
-        and (
-            name == "jina_reader"
-            or name in _SEARCH_PROVIDER_NAMES
-        )
+        and (name == "jina_reader" or name in _SEARCH_PROVIDER_NAMES)
     ]
     overall_status = build_overall_web_search_status(participating_providers)
     return WebSearchStatusRead(

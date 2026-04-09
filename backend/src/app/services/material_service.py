@@ -22,7 +22,9 @@ class MaterialService:
         self._db = db
         self._storage = ObjectStorage()
 
-    async def list_by_kb(self, kb_id: uuid.UUID, skip: int = 0, limit: int = 100) -> list[SourceMaterial]:
+    async def list_by_kb(
+        self, kb_id: uuid.UUID, skip: int = 0, limit: int = 100
+    ) -> list[SourceMaterial]:
         """列出知识库下的所有资料。"""
         stmt = (
             select(SourceMaterial)
@@ -142,9 +144,7 @@ class MaterialService:
         """根据 ID 获取资料。"""
         return await self._db.get(SourceMaterial, material_id)
 
-    async def get_by_ids(
-        self, material_ids: list[uuid.UUID]
-    ) -> list[SourceMaterial]:
+    async def get_by_ids(self, material_ids: list[uuid.UUID]) -> list[SourceMaterial]:
         """根据 ID 列表获取资料。"""
         if not material_ids:
             return []

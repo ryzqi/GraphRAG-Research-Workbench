@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from functools import lru_cache
+
 try:  # pragma: no cover
     import tiktoken
 except Exception:  # pragma: no cover

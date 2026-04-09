@@ -62,8 +62,7 @@ def _raise_on_index_rebuild_embedding_count_mismatch(
         },
     )
     raise RuntimeError(
-        "EMBEDDING_COUNT_MISMATCH: "
-        f"expected={expected_count}, actual={actual_count}"
+        f"EMBEDDING_COUNT_MISMATCH: expected={expected_count}, actual={actual_count}"
     )
 
 
@@ -77,10 +76,7 @@ def _records_for_window(
     for record in records:
         size = record.get("window_size_tokens")
         overlap = record.get("window_overlap_tokens")
-        if (
-            size == chunk_size_tokens
-            and overlap == chunk_overlap_tokens
-        ):
+        if size == chunk_size_tokens and overlap == chunk_overlap_tokens:
             matched.append(record)
     return matched
 
@@ -242,8 +238,12 @@ async def _run_index_rebuild_job(job_id: str) -> None:
                     .order_by(KBConfigSnapshot.version.desc())
                     .limit(1)
                 )
-                snapshot_config = (await session.execute(snapshot_stmt)).scalar_one_or_none()
-                index_config = IndexConfig.model_validate(snapshot_config or kb.index_config or {})
+                snapshot_config = (
+                    await session.execute(snapshot_stmt)
+                ).scalar_one_or_none()
+                index_config = IndexConfig.model_validate(
+                    snapshot_config or kb.index_config or {}
+                )
 
                 # 清理该知识库的旧向量与旧分块。
                 await _prepare_rebuild_collections(
@@ -328,7 +328,9 @@ async def _run_index_rebuild_job(job_id: str) -> None:
                         max_attempts=3,
                     )
                     contexts = [item.context for item in context_results]
-                    fallback_count = sum(1 for item in context_results if item.status == "fallback")
+                    fallback_count = sum(
+                        1 for item in context_results if item.status == "fallback"
+                    )
                     stats["context_fallback_chunks"] += fallback_count
 
                     embedding_inputs = build_embedding_inputs(
@@ -366,7 +368,9 @@ async def _run_index_rebuild_job(job_id: str) -> None:
                             context_texts=contexts,
                             context_statuses=[item.status for item in context_results],
                             context_errors=[item.error for item in context_results],
-                            context_attempts=[item.attempts for item in context_results],
+                            context_attempts=[
+                                item.attempts for item in context_results
+                            ],
                         )
 
                         parent_id_by_ref: dict[int, str] = {}
@@ -381,12 +385,17 @@ async def _run_index_rebuild_job(job_id: str) -> None:
                             zip(chunk_items, embeddings, strict=True)
                         ):
                             parent_chunk_id = ""
-                            if chunk_item.chunk_role == "child" and chunk_item.parent_ref is not None:
+                            if (
+                                chunk_item.chunk_role == "child"
+                                and chunk_item.parent_ref is not None
+                            ):
                                 parent_chunk_id = parent_id_by_ref.get(
                                     chunk_item.parent_ref, ""
                                 )
                             chunk_meta = (
-                                chunk_item.metadata if isinstance(chunk_item.metadata, dict) else {}
+                                chunk_item.metadata
+                                if isinstance(chunk_item.metadata, dict)
+                                else {}
                             )
                             milvus_records.append(
                                 {
@@ -400,8 +409,12 @@ async def _run_index_rebuild_job(job_id: str) -> None:
                                     "context": contexts[idx] if contexts else "",
                                     "locator": chunk_item.locator or {},
                                     "window_id": chunk_meta.get("window_id"),
-                                    "window_size_tokens": chunk_meta.get("window_size_tokens"),
-                                    "window_overlap_tokens": chunk_meta.get("window_overlap_tokens"),
+                                    "window_size_tokens": chunk_meta.get(
+                                        "window_size_tokens"
+                                    ),
+                                    "window_overlap_tokens": chunk_meta.get(
+                                        "window_overlap_tokens"
+                                    ),
                                     "token_start": chunk_meta.get("token_start"),
                                     "token_end": chunk_meta.get("token_end"),
                                     "metadata": chunk_meta,

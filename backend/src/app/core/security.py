@@ -24,7 +24,9 @@ def create_access_token(subject: str, expires_delta: timedelta | None = None) ->
         expires_delta or timedelta(minutes=settings.jwt_expire_minutes)
     )
     payload = {"sub": subject, "exp": expire}
-    return jwt.encode(payload, settings.jwt_secret_key, algorithm=settings.jwt_algorithm)
+    return jwt.encode(
+        payload, settings.jwt_secret_key, algorithm=settings.jwt_algorithm
+    )
 
 
 def decode_token(token: str) -> TokenPayload | None:

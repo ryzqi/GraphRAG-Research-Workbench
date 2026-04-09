@@ -14,4 +14,3 @@ class ParseError(Exception):
 
     def __str__(self) -> str:  # pragma: no cover
         return f"{self.error_code}: {self.message}"
-

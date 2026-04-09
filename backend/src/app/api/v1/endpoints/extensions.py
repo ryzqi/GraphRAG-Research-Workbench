@@ -106,9 +106,13 @@ async def get_extension_tools(
     ext = await service.get_extension(extension_id)
     if not ext:
         raise not_found("扩展不存在", code="EXTENSION_NOT_FOUND")
-    items, total, connection_status, last_error, latency_ms = await service.get_tools_page(
-        extension_id, skip=skip, limit=limit
-    )
+    (
+        items,
+        total,
+        connection_status,
+        last_error,
+        latency_ms,
+    ) = await service.get_tools_page(extension_id, skip=skip, limit=limit)
     return ToolDescriptorListResponse(
         items=items,
         page=PageMeta(

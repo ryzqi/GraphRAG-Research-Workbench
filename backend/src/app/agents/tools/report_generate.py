@@ -77,12 +77,16 @@ def _extract_json_object(text: str) -> dict | None:
     return None
 
 
-def _render_text(template_key: str, *, prompts: PromptLoader | None = None, **kwargs: Any) -> str:
+def _render_text(
+    template_key: str, *, prompts: PromptLoader | None = None, **kwargs: Any
+) -> str:
     loader = prompts or get_prompt_loader()
     return loader.render(template_key, **kwargs).strip()
 
 
-def _resolve_format_instruction(report_format: str, *, prompts: PromptLoader | None = None) -> str:
+def _resolve_format_instruction(
+    report_format: str, *, prompts: PromptLoader | None = None
+) -> str:
     key_map = {
         "brief": "research/report_generate_format_brief",
         "standard": "research/report_generate_format_standard",
@@ -94,16 +98,22 @@ def _resolve_format_instruction(report_format: str, *, prompts: PromptLoader | N
     )
 
 
-def _format_findings(findings: list[str], *, prompts: PromptLoader | None = None) -> str:
+def _format_findings(
+    findings: list[str], *, prompts: PromptLoader | None = None
+) -> str:
     if not findings:
         return _render_text("research/report_generate_no_findings", prompts=prompts)
     return "\n".join(f"- {f}" for f in findings)
 
 
-def _format_citations(citations: list[dict], *, prompts: PromptLoader | None = None) -> str:
+def _format_citations(
+    citations: list[dict], *, prompts: PromptLoader | None = None
+) -> str:
     if not citations:
         return _render_text("research/report_generate_no_citations", prompts=prompts)
-    unknown_source = _render_text("research/report_generate_unknown_source", prompts=prompts)
+    unknown_source = _render_text(
+        "research/report_generate_unknown_source", prompts=prompts
+    )
     parts = []
     for i, citation in enumerate(citations, 1):
         source = citation.get("source_id", citation.get("kb_id", unknown_source))
@@ -112,7 +122,9 @@ def _format_citations(citations: list[dict], *, prompts: PromptLoader | None = N
     return "\n".join(parts)
 
 
-def _parse_section_payloads(template_key: str, *, prompts: PromptLoader | None = None, **kwargs: Any) -> list[ReportSection]:
+def _parse_section_payloads(
+    template_key: str, *, prompts: PromptLoader | None = None, **kwargs: Any
+) -> list[ReportSection]:
     payload = json.loads(_render_text(template_key, prompts=prompts, **kwargs))
     if isinstance(payload, dict):
         payload = [payload]

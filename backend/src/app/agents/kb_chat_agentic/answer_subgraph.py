@@ -249,7 +249,11 @@ def _ordered_unique_paragraph_ids(
     paragraphs: list[AnswerParagraph],
     paragraph_ids: set[str],
 ) -> list[str]:
-    return [paragraph.paragraph_id for paragraph in paragraphs if paragraph.paragraph_id in paragraph_ids]
+    return [
+        paragraph.paragraph_id
+        for paragraph in paragraphs
+        if paragraph.paragraph_id in paragraph_ids
+    ]
 
 
 def _load_answer_paragraphs(
@@ -271,7 +275,8 @@ def _load_answer_paragraphs(
     fallback_citation_ids = [
         citation_id
         for citation_id in (
-            _normalize_citation_id(raw_label) for raw_label in _extract_citations(draft_answer)
+            _normalize_citation_id(raw_label)
+            for raw_label in _extract_citations(draft_answer)
         )
         if citation_id
     ]
@@ -485,7 +490,8 @@ def _detect_required_original_term_gap(
     requires_original_terms = any(
         dimension in required_dimensions for dimension in ("职责", "技术架构")
     ) or any(
-        keyword in normalized_question for keyword in ("模型名称", "组件名称", "术语", "名词清单")
+        keyword in normalized_question
+        for keyword in ("模型名称", "组件名称", "术语", "名词清单")
     )
     if not requires_original_terms:
         return None
@@ -521,7 +527,9 @@ def _detect_required_original_term_gap(
             continue
         terms = required_term_map.get(entity) or []
         missing_for_entity = [
-            term for term in terms if _compact_answer_coverage_text(term) not in compact_answer
+            term
+            for term in terms
+            if _compact_answer_coverage_text(term) not in compact_answer
         ]
         if not missing_for_entity:
             continue
@@ -542,7 +550,8 @@ def _detect_required_original_term_gap(
         ordered_affected_ids = [
             paragraph.paragraph_id
             for paragraph in paragraphs
-            if isinstance(paragraph.paragraph_id, str) and paragraph.paragraph_id.strip()
+            if isinstance(paragraph.paragraph_id, str)
+            and paragraph.paragraph_id.strip()
         ][-1:]
 
     return {
@@ -560,9 +569,7 @@ def _project_answer_text_to_paragraphs(answer: str) -> list[AnswerParagraph]:
     if not cleaned_answer:
         return []
     raw_blocks = [
-        block.strip()
-        for block in re.split(r"\n\s*\n", cleaned_answer)
-        if block.strip()
+        block.strip() for block in re.split(r"\n\s*\n", cleaned_answer) if block.strip()
     ]
     if not raw_blocks:
         raw_blocks = [cleaned_answer]
@@ -571,7 +578,8 @@ def _project_answer_text_to_paragraphs(answer: str) -> list[AnswerParagraph]:
         citation_ids = [
             citation_id
             for citation_id in (
-                _normalize_citation_id(raw_label) for raw_label in _extract_citations(block)
+                _normalize_citation_id(raw_label)
+                for raw_label in _extract_citations(block)
             )
             if citation_id
         ]
@@ -624,7 +632,9 @@ def _review_paragraph_citations(
                 paragraph_valid_labels.add(canonical)
 
         main_claims = [
-            claim for claim in paragraph.claims if claim.role == "main" and claim.claim_text.strip()
+            claim
+            for claim in paragraph.claims
+            if claim.role == "main" and claim.claim_text.strip()
         ]
         if (
             paragraph.text.strip()
@@ -702,7 +712,9 @@ def _review_paragraph_citations(
             extra={
                 "invalid_citation_count": len(invalid_citations),
                 "missing_citation_count": len(list(dict.fromkeys(missing_citations))),
-                "citation_mismatch_count": len(list(dict.fromkeys(citation_mismatches))),
+                "citation_mismatch_count": len(
+                    list(dict.fromkeys(citation_mismatches))
+                ),
             },
         ),
     }
@@ -722,7 +734,9 @@ def _resolve_answer_review_details(
         or any(claim.support_status == "unsupported" for claim in paragraph.claims)
     }
     affected_ids = unsupported_ids if reason == "unsupported_claims" else []
-    repair_target_ids = set(unsupported_ids) if unsupported_scope == "auxiliary_only" else set()
+    repair_target_ids = (
+        set(unsupported_ids) if unsupported_scope == "auxiliary_only" else set()
+    )
     details = _build_review_details(
         paragraphs,
         failed_paragraph_ids=failed_ids,
@@ -768,9 +782,9 @@ def _coalesce_paragraph_summary(
 
     answer_counts = _counts_from(answer_details)
     citation_counts = _counts_from(citation_details)
-    affected_ids = _extract_run_affected_paragraph_ids(citation) | _extract_run_affected_paragraph_ids(
-        answer
-    )
+    affected_ids = _extract_run_affected_paragraph_ids(
+        citation
+    ) | _extract_run_affected_paragraph_ids(answer)
     total = max(answer_counts["total"], citation_counts["total"], len(affected_ids))
     failed = max(answer_counts["failed"], citation_counts["failed"], len(affected_ids))
     counts = {
@@ -782,12 +796,15 @@ def _coalesce_paragraph_summary(
         int(answer_details.get("repair_target_count") or 0),
         int(citation_details.get("repair_target_count") or 0),
     )
-    unsupported_scope_summary = _as_str(
-        answer_details.get(
-            "unsupported_scope",
-            citation_details.get("unsupported_scope", "none"),
-        )
-    ).strip() or "none"
+    unsupported_scope_summary = (
+        _as_str(
+            answer_details.get(
+                "unsupported_scope",
+                citation_details.get("unsupported_scope", "none"),
+            )
+        ).strip()
+        or "none"
+    )
     return counts, repair_target_count, unsupported_scope_summary
 
 
@@ -806,7 +823,9 @@ def _is_repairable_review_failure(
         return False
     if reason != "unsupported_claims":
         return True
-    unsupported_scope = _as_str(_extract_run_details(answer).get("unsupported_scope")).strip()
+    unsupported_scope = _as_str(
+        _extract_run_details(answer).get("unsupported_scope")
+    ).strip()
     return unsupported_scope == "auxiliary_only"
 
 
@@ -819,7 +838,9 @@ def _resolve_answer_review_details_from_state(state: dict[str, Any]) -> dict[str
         else {}
     )
     answer_check = (
-        review_breakdown.get("answer") if isinstance(review_breakdown.get("answer"), dict) else {}
+        review_breakdown.get("answer")
+        if isinstance(review_breakdown.get("answer"), dict)
+        else {}
     )
     details = answer_check.get("details")
     if isinstance(details, dict):
@@ -1123,13 +1144,19 @@ async def _answer_review_citation(
             reason = judge.reason
             confidence = max(0.0, min(1.0, float(judge.confidence)))
             decision_source = "llm"
-            missing_citations = [] if passed else (judge.missing_citations or missing_citations)
-            affected_paragraph_ids = list(judge.affected_paragraph_ids or affected_paragraph_ids)
+            missing_citations = (
+                [] if passed else (judge.missing_citations or missing_citations)
+            )
+            affected_paragraph_ids = list(
+                judge.affected_paragraph_ids or affected_paragraph_ids
+            )
             if isinstance(judge.details, dict) and judge.details:
                 details = dict(judge.details)
         else:
             passed = (
-                _as_str(getattr(settings, "kb_chat_grader_fail_policy", "closed")).strip().lower()
+                _as_str(getattr(settings, "kb_chat_grader_fail_policy", "closed"))
+                .strip()
+                .lower()
                 == "open"
             )
             reason = "passed" if passed else "missing_citations"
@@ -1313,7 +1340,9 @@ async def _answer_review(
     chat_model: BaseChatModel,
 ) -> dict[str, Any]:
     _ = runtime
-    return await _answer_review_llm_check(state, settings=settings, chat_model=chat_model)
+    return await _answer_review_llm_check(
+        state, settings=settings, chat_model=chat_model
+    )
 
 
 async def _answer_review_fuse(
@@ -1350,7 +1379,9 @@ async def _answer_review_fuse(
             if not bool(current.get("passed")):
                 reason = _as_str(current.get("reason")).strip() or "fallback_closed"
                 break
-    avg_confidence = sum(float(item.get("confidence") or 0.0) for item in checks) / max(1, len(checks))
+    avg_confidence = sum(float(item.get("confidence") or 0.0) for item in checks) / max(
+        1, len(checks)
+    )
     fallback_reason = next(
         (
             _as_str(item.get("fallback_reason")).strip()
@@ -1393,7 +1424,9 @@ async def _answer_review_fuse(
         "review_breakdown": by_check,
         "review_risk_level": review_risk_level,
         "review_confidence": round(max(0.0, min(1.0, avg_confidence)), 4),
-        "review_decision_source": "mixed" if len(decision_sources) > 1 else (next(iter(decision_sources)) if decision_sources else "unknown"),
+        "review_decision_source": "mixed"
+        if len(decision_sources) > 1
+        else (next(iter(decision_sources)) if decision_sources else "unknown"),
         "paragraph_review_counts": paragraph_review_counts,
         "paragraph_pass_count": int(paragraph_review_counts.get("passed") or 0),
         "repair_target_count": repair_target_count,
@@ -1406,7 +1439,11 @@ async def _answer_review_fuse(
     updates: dict[str, Any] = {
         "loop_counts": loop_counts_updates,
         "reflection": {
-            **(state.get("reflection") if isinstance(state.get("reflection"), dict) else {}),
+            **(
+                state.get("reflection")
+                if isinstance(state.get("reflection"), dict)
+                else {}
+            ),
             "review_passed": passed,
             "action": action,
             "reason": reason,
@@ -1422,7 +1459,9 @@ async def _answer_review_fuse(
     }
     updates = {
         **updates,
-        **_merge_stage_summary(state, "answer_review_fuse", stage_summary, updates=updates),
+        **_merge_stage_summary(
+            state, "answer_review_fuse", stage_summary, updates=updates
+        ),
     }
     updates = {
         **updates,
@@ -1518,7 +1557,9 @@ async def _answer_repair(
     )
     source_render_meta = state.get("answer_render_meta")
     if not isinstance(source_render_meta, dict) and source_paragraphs:
-        source_render_meta = _build_answer_render_meta_from_paragraphs(source_paragraphs)
+        source_render_meta = _build_answer_render_meta_from_paragraphs(
+            source_paragraphs
+        )
     reflection = state.get("reflection")
     reflection_obj = reflection if isinstance(reflection, dict) else {}
 
@@ -1530,11 +1571,14 @@ async def _answer_repair(
     removed_auxiliary_claim_count = 0
     deterministic_repair = _maybe_repair_auxiliary_only_paragraphs(state)
     if deterministic_repair is not None:
-        repaired_paragraphs, repaired_render_meta, repaired_answer = deterministic_repair
+        repaired_paragraphs, repaired_render_meta, repaired_answer = (
+            deterministic_repair
+        )
         fallback_reason = "deterministic_auxiliary_prune"
         repair_mode = "deterministic_auxiliary_prune"
         repaired_models = [
-            AnswerParagraph.model_validate(paragraph) for paragraph in repaired_paragraphs
+            AnswerParagraph.model_validate(paragraph)
+            for paragraph in repaired_paragraphs
         ]
         removed_auxiliary_claim_count = max(
             _count_unsupported_auxiliary_claims(source_paragraphs)
@@ -1601,7 +1645,8 @@ async def _answer_repair(
                             "candidate_preview": candidate[:1600],
                             "source_paragraph_count": len(source_paragraphs),
                             "source_citation_count": sum(
-                                len(paragraph.citation_ids) for paragraph in source_paragraphs
+                                len(paragraph.citation_ids)
+                                for paragraph in source_paragraphs
                             ),
                         },
                     )
@@ -1641,7 +1686,9 @@ async def _answer_repair(
         updates["answer_paragraphs"] = repaired_paragraphs
         updates["answer_render_meta"] = repaired_render_meta
     effective_render_meta = (
-        repaired_render_meta if isinstance(repaired_render_meta, dict) else source_render_meta
+        repaired_render_meta
+        if isinstance(repaired_render_meta, dict)
+        else source_render_meta
     )
     rerendered_paragraph_count = (
         int(repaired_render_meta.get("paragraph_count") or 0)
@@ -1713,10 +1760,8 @@ async def _answer_commit(
     degrade_reason: str | None = None
     reflection_patch: dict[str, Any] = {}
 
-    if (
-        not review_passed
-        and loop_counts["generation_retries"]
-        >= int(settings.kb_chat_max_generation_retries)
+    if not review_passed and loop_counts["generation_retries"] >= int(
+        settings.kb_chat_max_generation_retries
     ):
         next_step = "force_exit"
         degrade_reason = "max_generation_retries"
@@ -1735,7 +1780,9 @@ async def _answer_commit(
         reflection_patch = {"action": "none"}
 
     merged_reflection = {**reflection_obj, **reflection_patch}
-    committed_answer = _as_str(state.get("final_answer") or state.get("draft_answer")).strip()
+    committed_answer = _as_str(
+        state.get("final_answer") or state.get("draft_answer")
+    ).strip()
     final_answer = committed_answer
     if not final_answer and next_step == "force_exit":
         final_answer = resolve_kb_refusal_answer(reason=degrade_reason or reason)
@@ -1785,7 +1832,9 @@ async def _answer_commit(
                 "reason_code": _as_str(merged_reflection.get("reason_code")).strip(),
                 "decision_source": "answer_commit",
                 "retry_budget_snapshot": {
-                    "generation_retries": int(loop_counts.get("generation_retries") or 0),
+                    "generation_retries": int(
+                        loop_counts.get("generation_retries") or 0
+                    ),
                     "retrieval_retries": int(loop_counts.get("retrieval_retries") or 0),
                 },
                 "round_id": _current_review_round(state),
@@ -1833,7 +1882,9 @@ def build_answer_subgraph(
         context_schema=KbChatAnswerSubgraphContext,
     )
     generation_retry_policy = RetryPolicy(
-        max_attempts=max(2, int(getattr(settings, "kb_chat_max_generation_retries", 2)) + 1)
+        max_attempts=max(
+            2, int(getattr(settings, "kb_chat_max_generation_retries", 2)) + 1
+        )
     )
 
     def add_traced_node(
@@ -1851,7 +1902,9 @@ def build_answer_subgraph(
             retry_enabled=retry_policy is not None,
         )
         if retry_policy is None:
-            metadata["retry_disabled_reason"] = retry_disabled_reason or side_effect_type
+            metadata["retry_disabled_reason"] = (
+                retry_disabled_reason or side_effect_type
+            )
         graph.add_node(
             node_id,
             wrap_kb_chat_node_with_io(node_id, node_callable),
@@ -1914,7 +1967,9 @@ def build_answer_subgraph(
     )
     add_traced_node(
         "answer_repair",
-        lambda s, runtime: _answer_repair(s, runtime, settings=settings, chat_model=chat_model),
+        lambda s, runtime: _answer_repair(
+            s, runtime, settings=settings, chat_model=chat_model
+        ),
         side_effect_type="llm",
         retry_policy=generation_retry_policy,
     )

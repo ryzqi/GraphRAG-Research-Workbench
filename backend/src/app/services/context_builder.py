@@ -34,7 +34,9 @@ class ContextBuilder:
         *,
         history: list[LLMMessage],
         summary_text: str | None,
-    ) -> tuple[list[LLMMessage], dict[str, dict[str, int]], dict[str, dict[str, int | bool]]]:
+    ) -> tuple[
+        list[LLMMessage], dict[str, dict[str, int]], dict[str, dict[str, int | bool]]
+    ]:
         summary_usage = {"tokens": 0, "chars": 0}
         summary_truncation = {"truncated": False, "dropped_tokens": 0}
         summary_message: LLMMessage | None = None
@@ -46,15 +48,23 @@ class ContextBuilder:
             if truncated:
                 summary_truncation = {
                     "truncated": True,
-                    "dropped_tokens": max(count_tokens_approximately(summary_text) - summary_tokens, 0),
+                    "dropped_tokens": max(
+                        count_tokens_approximately(summary_text) - summary_tokens, 0
+                    ),
                 }
             summary_usage = {"tokens": summary_tokens, "chars": len(summary_content)}
-            summary_message = LLMMessage(role="system", content=f"对话摘要：\n{summary_content}")
+            summary_message = LLMMessage(
+                role="system", content=f"对话摘要：\n{summary_content}"
+            )
 
         history_messages, history_usage, history_truncation = self._truncate_history(
             history,
-            max_messages=self._normalize_budget(self._settings.context_history_max_messages),
-            max_tokens=self._normalize_budget(self._settings.context_history_max_tokens),
+            max_messages=self._normalize_budget(
+                self._settings.context_history_max_messages
+            ),
+            max_tokens=self._normalize_budget(
+                self._settings.context_history_max_tokens
+            ),
         )
 
         messages = [summary_message] if summary_message else []
@@ -74,11 +84,16 @@ class ContextBuilder:
         self, results: list[RetrievalResult]
     ) -> tuple[str, list[RetrievalResult], dict[str, int], dict[str, int | bool]]:
         if not results:
-            return "（未找到相关内容）", [], {"tokens": 0, "chars": 0, "items": 0}, {
-                "truncated": False,
-                "dropped_items": 0,
-                "dropped_tokens": 0,
-            }
+            return (
+                "（未找到相关内容）",
+                [],
+                {"tokens": 0, "chars": 0, "items": 0},
+                {
+                    "truncated": False,
+                    "dropped_items": 0,
+                    "dropped_tokens": 0,
+                },
+            )
 
         included: list[RetrievalResult] = []
         used_tokens = 0
@@ -120,11 +135,15 @@ class ContextBuilder:
         self, tool_results: list[dict]
     ) -> tuple[str, dict[str, int], dict[str, int | bool]]:
         if not tool_results:
-            return "", {"tokens": 0, "chars": 0, "items": 0}, {
-                "truncated": False,
-                "dropped_items": 0,
-                "dropped_tokens": 0,
-            }
+            return (
+                "",
+                {"tokens": 0, "chars": 0, "items": 0},
+                {
+                    "truncated": False,
+                    "dropped_items": 0,
+                    "dropped_tokens": 0,
+                },
+            )
 
         max_tokens = self._normalize_budget(self._settings.context_tool_max_tokens)
         included: list[str] = []
@@ -202,10 +221,16 @@ class ContextBuilder:
         }
 
         budgets = {
-            "history_messages": self._normalize_budget(self._settings.context_history_max_messages),
-            "history_tokens": self._normalize_budget(self._settings.context_history_max_tokens),
+            "history_messages": self._normalize_budget(
+                self._settings.context_history_max_messages
+            ),
+            "history_tokens": self._normalize_budget(
+                self._settings.context_history_max_tokens
+            ),
             "summary_tokens": self._normalize_budget(self._settings.summary_max_tokens),
-            "tool_tokens": self._normalize_budget(self._settings.context_tool_max_tokens),
+            "tool_tokens": self._normalize_budget(
+                self._settings.context_tool_max_tokens
+            ),
         }
 
         return {
@@ -240,11 +265,15 @@ class ContextBuilder:
         max_tokens: int | None,
     ) -> tuple[list[LLMMessage], dict[str, int], dict[str, int | bool]]:
         if not history:
-            return [], {"tokens": 0, "chars": 0, "messages": 0}, {
-                "truncated": False,
-                "dropped_messages": 0,
-                "dropped_tokens": 0,
-            }
+            return (
+                [],
+                {"tokens": 0, "chars": 0, "messages": 0},
+                {
+                    "truncated": False,
+                    "dropped_messages": 0,
+                    "dropped_tokens": 0,
+                },
+            )
 
         total_tokens = sum(count_tokens_approximately(m.content) for m in history)
 

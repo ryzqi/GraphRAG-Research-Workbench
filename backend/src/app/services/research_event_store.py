@@ -36,7 +36,11 @@ class ResearchEventStore:
             )
         if existing is None and idempotency_key is not None:
             existing = next(
-                (item for item in session.events if item.idempotency_key == idempotency_key),
+                (
+                    item
+                    for item in session.events
+                    if item.idempotency_key == idempotency_key
+                ),
                 None,
             )
         if existing is not None:
@@ -45,7 +49,8 @@ class ResearchEventStore:
         session.last_event_sequence = int(session.last_event_sequence or 0) + 1
         event = ResearchEvent(
             session=session,
-            event_id=event_id or f"evt-{session.last_event_sequence:06d}-{uuid.uuid4().hex[:8]}",
+            event_id=event_id
+            or f"evt-{session.last_event_sequence:06d}-{uuid.uuid4().hex[:8]}",
             sequence=session.last_event_sequence,
             event_type=event_type,
             phase=phase,

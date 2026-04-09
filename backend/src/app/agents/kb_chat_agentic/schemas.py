@@ -202,7 +202,9 @@ class HyDEBatchDecision(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    hypothetical_documents: list[str] = Field(default_factory=list, min_length=1, max_length=8)
+    hypothetical_documents: list[str] = Field(
+        default_factory=list, min_length=1, max_length=8
+    )
 
 
 class RetrievalPlanDecision(BaseModel):

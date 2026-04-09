@@ -39,19 +39,41 @@ def _score_document(document: Document, *, query_terms: set[str]) -> float:
     overlap_bonus = 0.9 * max(int(metadata.get("overlap_count") or 1) - 1, 0)
     searchable = f"{metadata.get('title') or ''} {document.page_content or ''}".lower()
     lexical_bonus = sum(0.08 for term in query_terms if term in searchable)
-    domain = str(metadata.get("domain") or extract_domain(str(metadata.get("url") or "")) or "")
-    authority_bonus = 0.45 if any(
-        domain == suffix or domain.endswith(f".{suffix}") for suffix in _HIGH_AUTHORITY_DOMAIN_SUFFIXES
-    ) else 0.0
+    domain = str(
+        metadata.get("domain") or extract_domain(str(metadata.get("url") or "")) or ""
+    )
+    authority_bonus = (
+        0.45
+        if any(
+            domain == suffix or domain.endswith(f".{suffix}")
+            for suffix in _HIGH_AUTHORITY_DOMAIN_SUFFIXES
+        )
+        else 0.0
+    )
     freshness_bonus = 0.12 if metadata.get("published_at") else 0.0
-    social_penalty = 0.35 if any(
-        domain == suffix or domain.endswith(f".{suffix}") for suffix in _LOW_QUALITY_DOMAIN_SUFFIXES
-    ) else 0.0
+    social_penalty = (
+        0.35
+        if any(
+            domain == suffix or domain.endswith(f".{suffix}")
+            for suffix in _LOW_QUALITY_DOMAIN_SUFFIXES
+        )
+        else 0.0
+    )
     enriched_bonus = 0.15 if metadata.get("enriched") else 0.0
-    return fusion_score + overlap_bonus + lexical_bonus + authority_bonus + freshness_bonus + enriched_bonus - social_penalty
+    return (
+        fusion_score
+        + overlap_bonus
+        + lexical_bonus
+        + authority_bonus
+        + freshness_bonus
+        + enriched_bonus
+        - social_penalty
+    )
 
 
-def rerank_documents(documents: Sequence[Document], *, query: str, max_results: int) -> list[Document]:
+def rerank_documents(
+    documents: Sequence[Document], *, query: str, max_results: int
+) -> list[Document]:
     query_terms = _extract_query_terms(query)
     ranked = sorted(
         documents,

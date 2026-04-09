@@ -154,7 +154,10 @@ def _content_is_unreplayable(content: object) -> bool:
             return True
         if block_type in _UNSAFE_RESPONSE_ITEM_TYPES:
             return True
-        if block_type not in _SAFE_CONTENT_BLOCK_TYPES and block_type not in _TEXT_BLOCK_TYPES:
+        if (
+            block_type not in _SAFE_CONTENT_BLOCK_TYPES
+            and block_type not in _TEXT_BLOCK_TYPES
+        ):
             return True
     return False
 

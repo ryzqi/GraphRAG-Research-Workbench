@@ -67,7 +67,11 @@ KB_CHAT_NODE_METADATA: dict[str, dict[str, Any]] = {
     "retrieval_plan": {"label": "检索预算规划", "phase": "retrieve", "order": 12},
     "dispatch_subqueries": {"label": "子查询派发", "phase": "retrieve", "order": 13},
     "retrieve_subquery": {"label": "子查询检索", "phase": "retrieve", "order": 14},
-    "merge_subquery_context": {"label": "子查询上下文合并", "phase": "retrieve", "order": 15},
+    "merge_subquery_context": {
+        "label": "子查询上下文合并",
+        "phase": "retrieve",
+        "order": 15,
+    },
     "retrieve": {"label": "知识检索", "phase": "retrieve", "order": 16},
     "context_compress": {"label": "上下文压缩", "phase": "retrieve", "order": 17},
     "transform_query": {"label": "查询改写", "phase": "retrieve", "order": 18},
@@ -88,7 +92,6 @@ _NODE_SUMMARY_KEY_MAP: dict[str, str] = {
     "draft_generate": "generator",
     "answer_commit": "answer_subgraph",
 }
-
 
 
 def resolve_kb_chat_node_metadata(node_id: str) -> dict[str, Any]:
@@ -172,7 +175,9 @@ def _sanitize_snapshot_value(value: Any, state: dict[str, bool]) -> Any:
         ]
         if len(value) > TRACE_SNAPSHOT_ARRAY_LIMIT:
             state["truncated"] = True
-            sanitized_items.append(f"...(+{len(value) - TRACE_SNAPSHOT_ARRAY_LIMIT} items)")
+            sanitized_items.append(
+                f"...(+{len(value) - TRACE_SNAPSHOT_ARRAY_LIMIT} items)"
+            )
         return sanitized_items
     if isinstance(value, str):
         preview = _truncate_preview(value)
@@ -205,11 +210,7 @@ def _pick_string_list(snapshot: dict[str, Any], *keys: str) -> list[str] | None:
         raw = snapshot.get(key)
         if not isinstance(raw, list):
             continue
-        items = [
-            item.strip()
-            for item in raw
-            if isinstance(item, str) and item.strip()
-        ]
+        items = [item.strip() for item in raw if isinstance(item, str) and item.strip()]
         if items:
             return items
     return None
@@ -237,7 +238,13 @@ def _pick_context_frame_turns(snapshot: dict[str, Any], key: str) -> list[str] |
         if not record:
             continue
         role_raw = _non_empty_text(record.get("role")) or ""
-        role = "用户" if role_raw == "user" else "助手" if role_raw == "assistant" else role_raw
+        role = (
+            "用户"
+            if role_raw == "user"
+            else "助手"
+            if role_raw == "assistant"
+            else role_raw
+        )
         text = _non_empty_text(record.get("text"))
         if not text:
             continue
@@ -247,7 +254,11 @@ def _pick_context_frame_turns(snapshot: dict[str, Any], key: str) -> list[str] |
 
 def _resolve_current_subquery_run(snapshot: dict[str, Any]) -> dict[str, Any]:
     runs = snapshot.get("subquery_runs")
-    candidates = [item for item in runs if isinstance(item, dict)] if isinstance(runs, list) else []
+    candidates = (
+        [item for item in runs if isinstance(item, dict)]
+        if isinstance(runs, list)
+        else []
+    )
     if not candidates:
         return {}
 
@@ -268,7 +279,9 @@ def _resolve_current_subquery_run(snapshot: dict[str, Any]) -> dict[str, Any]:
     return candidates[-1]
 
 
-def _append_display_item(items: list[dict[str, Any]], *, key: str, label: str, value: Any) -> None:
+def _append_display_item(
+    items: list[dict[str, Any]], *, key: str, label: str, value: Any
+) -> None:
     if isinstance(value, bool):
         items.append({"key": key, "label": label, "value": "是" if value else "否"})
     elif isinstance(value, (int, float)):
@@ -278,12 +291,16 @@ def _append_display_item(items: list[dict[str, Any]], *, key: str, label: str, v
         if text:
             items.append({"key": key, "label": label, "value": text})
     elif isinstance(value, list):
-        lines = [str(item) for item in value if isinstance(item, str) and str(item).strip()]
+        lines = [
+            str(item) for item in value if isinstance(item, str) and str(item).strip()
+        ]
         if lines:
             items.append({"key": key, "label": label, "value": lines})
 
 
-def _append_if_missing(items: list[dict[str, Any]], *, key: str, label: str, value: Any) -> None:
+def _append_if_missing(
+    items: list[dict[str, Any]], *, key: str, label: str, value: Any
+) -> None:
     if any(item.get("key") == key for item in items):
         return
     _append_display_item(items, key=key, label=label, value=value)
@@ -297,7 +314,12 @@ def _build_snapshot_summary(snapshot: Any) -> dict[str, Any]:
             "key_count": len(snapshot),
             "preview_keys": list(snapshot.keys())[:TRACE_SNAPSHOT_PREVIEW_KEY_LIMIT],
         }
-        for text_key in ("user_input", "normalized_query", "draft_answer", "final_answer"):
+        for text_key in (
+            "user_input",
+            "normalized_query",
+            "draft_answer",
+            "final_answer",
+        ):
             text = snapshot.get(text_key)
             if isinstance(text, str):
                 summary[f"{text_key}_chars"] = len(text)
@@ -391,7 +413,9 @@ def _resolve_node_label_for_display(node_name: str | None) -> str | None:
     return label.strip() if isinstance(label, str) and label.strip() else None
 
 
-def _build_node_input_display_items(*, node_name: str, input_snapshot: Any) -> list[dict[str, Any]]:
+def _build_node_input_display_items(
+    *, node_name: str, input_snapshot: Any
+) -> list[dict[str, Any]]:
     return _build_contract_input_display_items(
         node_name=node_name,
         snapshot=input_snapshot,
@@ -457,7 +481,11 @@ def _command_trace(result: Any) -> dict[str, Any] | None:
         for item in goto:
             if isinstance(item, str) and item.strip():
                 targets.append(item.strip())
-            elif isinstance(item, Send) and isinstance(item.node, str) and item.node.strip():
+            elif (
+                isinstance(item, Send)
+                and isinstance(item.node, str)
+                and item.node.strip()
+            ):
                 targets.append(item.node.strip())
         if targets:
             trace["goto_targets"] = targets
@@ -491,8 +519,12 @@ async def _trace_async(
     except Exception:
         writer = None
 
-    input_builder = _resolve_display_builder(build_input_display_items, _build_node_input_display_items)
-    output_builder = _resolve_display_builder(build_output_display_items, _build_node_output_display_items)
+    input_builder = _resolve_display_builder(
+        build_input_display_items, _build_node_input_display_items
+    )
+    output_builder = _resolve_display_builder(
+        build_output_display_items, _build_node_output_display_items
+    )
 
     include_snapshots = _should_include_trace_snapshot(state)
     input_snapshot = _to_json_compatible(state)
@@ -501,7 +533,9 @@ async def _trace_async(
         input_snapshot,
         include_snapshot=include_snapshots,
     )
-    display_input_items = input_builder(node_name=node_name, input_snapshot=input_snapshot)
+    display_input_items = input_builder(
+        node_name=node_name, input_snapshot=input_snapshot
+    )
     started_at = datetime.now(timezone.utc)
 
     if callable(writer):
@@ -521,14 +555,18 @@ async def _trace_async(
 
     try:
         maybe_result = executor()
-        result = await maybe_result if inspect.isawaitable(maybe_result) else maybe_result
+        result = (
+            await maybe_result if inspect.isawaitable(maybe_result) else maybe_result
+        )
         merged_snapshot = _merge_result_snapshot(input_snapshot, result)
         output_summary = _build_snapshot_summary(merged_snapshot)
         output_snapshot_payload, output_snapshot_meta = sanitize_snapshot_for_stream(
             merged_snapshot,
             include_snapshot=include_snapshots,
         )
-        display_output_items = output_builder(node_name=node_name, output_snapshot=merged_snapshot)
+        display_output_items = output_builder(
+            node_name=node_name, output_snapshot=merged_snapshot
+        )
         if callable(writer):
             payload = {
                 **_build_event_base_payload(node_name),
@@ -538,7 +576,12 @@ async def _trace_async(
                 "output_summary": output_summary,
                 "input_snapshot_meta": input_snapshot_meta,
                 "output_snapshot_meta": output_snapshot_meta,
-                "latency_ms": max(0, int((datetime.now(timezone.utc) - started_at).total_seconds() * 1000)),
+                "latency_ms": max(
+                    0,
+                    int(
+                        (datetime.now(timezone.utc) - started_at).total_seconds() * 1000
+                    ),
+                ),
                 "ts": _to_iso_now(),
             }
             if input_snapshot_payload is not None:
@@ -560,7 +603,12 @@ async def _trace_async(
                 "input_summary": input_summary,
                 "input_snapshot_meta": input_snapshot_meta,
                 "error_summary": str(exc),
-                "latency_ms": max(0, int((datetime.now(timezone.utc) - started_at).total_seconds() * 1000)),
+                "latency_ms": max(
+                    0,
+                    int(
+                        (datetime.now(timezone.utc) - started_at).total_seconds() * 1000
+                    ),
+                ),
                 "ts": _to_iso_now(),
                 "display_output_items": output_builder(
                     node_name=node_name,
@@ -625,6 +673,7 @@ def _bind_traced_runnable_metadata(
 
 
 if RunnableCallable is None:  # pragma: no cover - defensive compatibility
+
     class _KbChatFallbackTracedRunnable(Runnable[Any, Any]):
         def __init__(
             self,
@@ -655,6 +704,7 @@ if RunnableCallable is None:  # pragma: no cover - defensive compatibility
             return await self._ainvoke(input, config=config, **kwargs)
 
 else:
+
     class _KbChatRunnableCallableTraced(RunnableCallable):
         def __init__(
             self,
@@ -678,6 +728,7 @@ else:
                 build_input_display_items=build_input_display_items,
                 build_output_display_items=build_output_display_items,
             )
+
 
 def _create_traced_runnable(
     *,
@@ -728,12 +779,15 @@ def wrap_kb_chat_node_with_io(
 
     async def _wrapped(state: dict[str, Any], runtime: Runtime[Any]) -> Any:
         if not accepts_runtime:
+
             def executor() -> Any:
                 return node_callable(state)
         elif runtime_is_positional_only:
+
             def executor() -> Any:
                 return node_callable(state, runtime)
         else:
+
             def executor() -> Any:
                 return node_callable(state, runtime=runtime)
 

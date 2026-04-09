@@ -120,7 +120,10 @@ class IngestionBatchService:
         if len(entries) > MAX_MANIFEST_ENTRIES:
             raise ingestion_error(
                 "MANIFEST_LIMIT_EXCEEDED",
-                details={"max_entries": MAX_MANIFEST_ENTRIES, "total_entries": len(entries)},
+                details={
+                    "max_entries": MAX_MANIFEST_ENTRIES,
+                    "total_entries": len(entries),
+                },
             )
 
         kb = await self._db.get(KnowledgeBase, kb_id)
@@ -137,7 +140,11 @@ class IngestionBatchService:
         if not prepared_entries:
             raise ingestion_error(
                 "MANIFEST_ALL_ENTRIES_FAILED",
-                details={"entry_errors": [err.model_dump(mode="json") for err in entry_errors]},
+                details={
+                    "entry_errors": [
+                        err.model_dump(mode="json") for err in entry_errors
+                    ]
+                },
             )
 
         batch: IngestionBatch | None = None
@@ -226,7 +233,9 @@ class IngestionBatchService:
             batch_id=batch_id,
             populate_existing=True,
         )
-        snapshot_payload = IngestionBatchRead.model_validate(batch).model_dump(mode="json")
+        snapshot_payload = IngestionBatchRead.model_validate(batch).model_dump(
+            mode="json"
+        )
         yield "snapshot", snapshot_payload
 
         if batch.status in terminal_statuses:
@@ -245,10 +254,14 @@ class IngestionBatchService:
                     batch_id=batch_id,
                     populate_existing=True,
                 )
-                payload = IngestionBatchRead.model_validate(batch).model_dump(mode="json")
+                payload = IngestionBatchRead.model_validate(batch).model_dump(
+                    mode="json"
+                )
                 snapshot_key = self._batch_snapshot_key(batch)
                 event_count = await self._get_event_count(batch_id=batch_id)
-                changed = snapshot_key != last_snapshot_key or event_count != last_event_count
+                changed = (
+                    snapshot_key != last_snapshot_key or event_count != last_event_count
+                )
 
                 if changed:
                     if batch.status in terminal_statuses:
@@ -261,10 +274,13 @@ class IngestionBatchService:
                     continue
 
                 if monotonic() - last_emit_at >= heartbeat_interval:
-                    yield "heartbeat", {
-                        "batch_id": str(batch_id),
-                        "ts": datetime.now(timezone.utc).isoformat(),
-                    }
+                    yield (
+                        "heartbeat",
+                        {
+                            "batch_id": str(batch_id),
+                            "ts": datetime.now(timezone.utc).isoformat(),
+                        },
+                    )
                     last_emit_at = monotonic()
         except asyncio.CancelledError:
             return
@@ -333,7 +349,9 @@ class IngestionBatchService:
                 ignored_docs += 1
                 continue
 
-            await self._set_doc_status(doc, IngestionDocStatus.PROCESSING, reason="manual_retry")
+            await self._set_doc_status(
+                doc, IngestionDocStatus.PROCESSING, reason="manual_retry"
+            )
             doc.retryable = True
             doc.error_code = None
             doc.error_message = None
@@ -363,10 +381,14 @@ class IngestionBatchService:
             ignored_docs=ignored_docs,
         )
 
-    async def cancel_batch(self, *, batch_id: uuid.UUID) -> IngestionBatchCancelResponse:
+    async def cancel_batch(
+        self, *, batch_id: uuid.UUID
+    ) -> IngestionBatchCancelResponse:
         batch = await self._get_batch_or_raise(batch_id=batch_id, for_update=True)
         if batch.status != IngestionBatchStatus.PROCESSING:
-            raise ingestion_error("BATCH_STATUS_CONFLICT", details={"status": batch.status.value})
+            raise ingestion_error(
+                "BATCH_STATUS_CONFLICT", details={"status": batch.status.value}
+            )
 
         canceled_docs = 0
         for doc in list(batch.docs):
@@ -375,7 +397,9 @@ class IngestionBatchService:
             doc.retryable = False
             doc.error_code = DOC_CANCELED_ERROR_CODE
             doc.error_message = "批次已取消"
-            await self._set_doc_status(doc, IngestionDocStatus.COMPLETED, reason="batch_cancel")
+            await self._set_doc_status(
+                doc, IngestionDocStatus.COMPLETED, reason="batch_cancel"
+            )
             canceled_docs += 1
 
         await self._recalculate_batch(batch, reason="batch_cancel")
@@ -419,7 +443,9 @@ class IngestionBatchService:
             )
 
         doc.retry_count += 1
-        await self._set_doc_status(doc, IngestionDocStatus.PROCESSING, reason="doc_start")
+        await self._set_doc_status(
+            doc, IngestionDocStatus.PROCESSING, reason="doc_start"
+        )
         doc.retryable = doc.retry_count < MAX_DOC_ATTEMPTS
 
     async def mark_doc_succeeded(
@@ -434,7 +460,9 @@ class IngestionBatchService:
         doc.retryable = False
         doc.error_code = None
         doc.error_message = None
-        await self._set_doc_status(doc, IngestionDocStatus.COMPLETED, reason="doc_succeeded")
+        await self._set_doc_status(
+            doc, IngestionDocStatus.COMPLETED, reason="doc_succeeded"
+        )
 
     async def mark_doc_failed(
         self,
@@ -454,17 +482,23 @@ class IngestionBatchService:
             doc.retryable = True
             doc.error_code = error_code
             doc.error_message = error_message
-            await self._set_doc_status(doc, IngestionDocStatus.PROCESSING, reason="auto_retry")
+            await self._set_doc_status(
+                doc, IngestionDocStatus.PROCESSING, reason="auto_retry"
+            )
             auto_retry_delay = delay
         else:
             doc.retryable = retryable and within_attempt_limit
             doc.error_code = error_code
             doc.error_message = error_message
-            await self._set_doc_status(doc, IngestionDocStatus.COMPLETED, reason="doc_failed")
+            await self._set_doc_status(
+                doc, IngestionDocStatus.COMPLETED, reason="doc_failed"
+            )
 
         return auto_retry_delay
 
-    async def recalculate_batch_for_doc(self, *, doc: IngestionBatchDoc, reason: str) -> None:
+    async def recalculate_batch_for_doc(
+        self, *, doc: IngestionBatchDoc, reason: str
+    ) -> None:
         batch = await self._get_batch_or_raise(
             batch_id=doc.batch_id,
             for_update=True,
@@ -497,7 +531,9 @@ class IngestionBatchService:
             .where(IngestionBatch.kb_id == kb.id, IngestionBatch.is_bootstrap.is_(True))
             .limit(1)
         )
-        has_bootstrap = (await self._db.execute(bootstrap_stmt)).scalar_one_or_none() is not None
+        has_bootstrap = (
+            await self._db.execute(bootstrap_stmt)
+        ).scalar_one_or_none() is not None
 
         batch = IngestionBatch(
             kb_id=kb.id,
@@ -514,7 +550,9 @@ class IngestionBatchService:
 
         docs: list[IngestionBatchDoc] = []
         for prepared in prepared_entries:
-            material_id = await self._materialize_source_material(kb_id=kb.id, prepared=prepared)
+            material_id = await self._materialize_source_material(
+                kb_id=kb.id, prepared=prepared
+            )
             doc = IngestionBatchDoc(
                 batch_id=batch.id,
                 kb_id=kb.id,
@@ -575,26 +613,44 @@ class IngestionBatchService:
         file_count = 0
 
         for idx, entry in enumerate(entries, start=1):
-            entry_id = (getattr(entry, "entry_id", None) or f"entry_{idx}").strip() or f"entry_{idx}"
+            entry_id = (
+                getattr(entry, "entry_id", None) or f"entry_{idx}"
+            ).strip() or f"entry_{idx}"
             source_type = ManifestSourceType(entry.source_type)
 
             try:
                 if isinstance(entry, ManifestTextEntry):
-                    prepared = await self._prepare_text_entry(kb=kb, entry=entry, entry_id=entry_id)
+                    prepared = await self._prepare_text_entry(
+                        kb=kb, entry=entry, entry_id=entry_id
+                    )
                 elif isinstance(entry, ManifestUrlEntry):
                     url_count += 1
                     if url_count > MAX_URL_ENTRIES:
-                        raise ingestion_error("MANIFEST_LIMIT_EXCEEDED", details={"max_url_entries": MAX_URL_ENTRIES})
-                    prepared = await self._prepare_url_entry(kb=kb, entry=entry, entry_id=entry_id)
+                        raise ingestion_error(
+                            "MANIFEST_LIMIT_EXCEEDED",
+                            details={"max_url_entries": MAX_URL_ENTRIES},
+                        )
+                    prepared = await self._prepare_url_entry(
+                        kb=kb, entry=entry, entry_id=entry_id
+                    )
                 elif isinstance(entry, ManifestFileEntry):
                     file_count += 1
                     if file_count > MAX_FILE_ENTRIES:
-                        raise ingestion_error("MANIFEST_LIMIT_EXCEEDED", details={"max_file_entries": MAX_FILE_ENTRIES})
-                    prepared = await self._prepare_file_entry(kb=kb, entry=entry, entry_id=entry_id)
+                        raise ingestion_error(
+                            "MANIFEST_LIMIT_EXCEEDED",
+                            details={"max_file_entries": MAX_FILE_ENTRIES},
+                        )
+                    prepared = await self._prepare_file_entry(
+                        kb=kb, entry=entry, entry_id=entry_id
+                    )
                 else:  # pragma: no cover
                     raise ingestion_error("MANIFEST_ALL_ENTRIES_FAILED")
             except AppError as exc:
-                entry_errors.append(self._entry_error_from_app_error(entry_id=entry_id, source_type=source_type, exc=exc))
+                entry_errors.append(
+                    self._entry_error_from_app_error(
+                        entry_id=entry_id, source_type=source_type, exc=exc
+                    )
+                )
                 continue
 
             if prepared.fingerprint in fingerprints_seen:
@@ -683,11 +739,19 @@ class IngestionBatchService:
             raise ingestion_error("URL_SCHEME_NOT_ALLOWED", details={"url": entry.url})
 
         timeout_seconds = max(
-            float(getattr(self._settings, "ingestion_url_timeout_seconds", _DEFAULT_URL_TIMEOUT_SECONDS)),
+            float(
+                getattr(
+                    self._settings,
+                    "ingestion_url_timeout_seconds",
+                    _DEFAULT_URL_TIMEOUT_SECONDS,
+                )
+            ),
             1.0,
         )
         async with httpx.AsyncClient(timeout=timeout_seconds) as client:
-            final_url = await self._validate_url_security(url=canonical_url, client=client)
+            final_url = await self._validate_url_security(
+                url=canonical_url, client=client
+            )
 
         fingerprint = hashlib.sha256(final_url.encode("utf-8")).hexdigest()
         return _PreparedEntry(
@@ -730,7 +794,11 @@ class IngestionBatchService:
         if size is not None and size > MAX_FILE_SIZE_BYTES:
             raise ingestion_error(
                 "FILE_SIZE_EXCEEDED",
-                details={"material_id": str(entry.material_id), "size": size, "max_size": MAX_FILE_SIZE_BYTES},
+                details={
+                    "material_id": str(entry.material_id),
+                    "size": size,
+                    "max_size": MAX_FILE_SIZE_BYTES,
+                },
             )
 
         base = material.content_hash or str(material.id)
@@ -897,7 +965,9 @@ class IngestionBatchService:
             stmt = stmt.with_for_update()
         batch = (await self._db.execute(stmt)).scalar_one_or_none()
         if batch is None:
-            raise ingestion_error("BATCH_NOT_FOUND", details={"batch_id": str(batch_id)})
+            raise ingestion_error(
+                "BATCH_NOT_FOUND", details={"batch_id": str(batch_id)}
+            )
         return batch
 
     async def _set_doc_status(
@@ -985,7 +1055,9 @@ class IngestionBatchService:
         succeeded = sum(1 for doc in docs if self._is_doc_succeeded(doc))
         failed = sum(1 for doc in docs if self._is_doc_failed(doc))
         canceled = sum(1 for doc in docs if self._is_doc_canceled(doc))
-        processing = sum(1 for doc in docs if doc.status == IngestionDocStatus.PROCESSING)
+        processing = sum(
+            1 for doc in docs if doc.status == IngestionDocStatus.PROCESSING
+        )
 
         batch.total_docs = total
         batch.succeeded_docs = succeeded
@@ -1029,10 +1101,7 @@ class IngestionBatchService:
 
     @classmethod
     def _is_doc_succeeded(cls, doc: IngestionBatchDoc) -> bool:
-        return (
-            doc.status == IngestionDocStatus.COMPLETED
-            and doc.error_code is None
-        )
+        return doc.status == IngestionDocStatus.COMPLETED and doc.error_code is None
 
     async def _apply_readiness(self, *, batch: IngestionBatch) -> None:
         kb = await self._db.get(KnowledgeBase, batch.kb_id)
@@ -1049,7 +1118,10 @@ class IngestionBatchService:
             else:
                 kb.readiness = KnowledgeBaseReadiness.NOT_READY
             kb.readiness_updated_at = datetime.now(timezone.utc)
-        if batch.status == IngestionBatchStatus.COMPLETED and batch.succeeded_chunks >= 1:
+        if (
+            batch.status == IngestionBatchStatus.COMPLETED
+            and batch.succeeded_chunks >= 1
+        ):
             await touch_kb_updated_at(self._db, batch.kb_id)
 
     async def _append_event(
@@ -1072,7 +1144,9 @@ class IngestionBatchService:
         )
 
     async def _get_event_count(self, *, batch_id: uuid.UUID) -> int:
-        stmt = select(func.count(IngestionEvent.id)).where(IngestionEvent.batch_id == batch_id)
+        stmt = select(func.count(IngestionEvent.id)).where(
+            IngestionEvent.batch_id == batch_id
+        )
         result = await self._db.execute(stmt)
         value = result.scalar_one()
         return int(value or 0)
@@ -1113,14 +1187,20 @@ class IngestionBatchService:
 
     def _build_blocked_cidr_rules(self) -> tuple[_BlockedCidrRule, ...]:
         rules: list[_BlockedCidrRule] = []
-        configured_v4 = [raw for raw in getattr(self._settings, "ingestion_url_blocked_cidrs_v4", [])]
-        configured_v6 = [raw for raw in getattr(self._settings, "ingestion_url_blocked_cidrs_v6", [])]
+        configured_v4 = [
+            raw for raw in getattr(self._settings, "ingestion_url_blocked_cidrs_v4", [])
+        ]
+        configured_v6 = [
+            raw for raw in getattr(self._settings, "ingestion_url_blocked_cidrs_v6", [])
+        ]
 
         if not configured_v4 and not configured_v6:
             configured_v4 = list(_FALLBACK_BLOCKED_CIDRS_V4)
             configured_v6 = list(_FALLBACK_BLOCKED_CIDRS_V6)
 
-        configured: list[tuple[str, str]] = [(raw, "private_or_local_cidr") for raw in configured_v4]
+        configured: list[tuple[str, str]] = [
+            (raw, "private_or_local_cidr") for raw in configured_v4
+        ]
         configured.extend((raw, "private_or_local_cidr") for raw in configured_v6)
         for raw, reason in configured:
             text = raw.strip()
@@ -1133,15 +1213,23 @@ class IngestionBatchService:
                 continue
             rules.append(_BlockedCidrRule(network=network, reason=reason))
         if not rules:
-            logger.warning("No valid ingestion URL blocked CIDRs configured; fallback to safe defaults")
+            logger.warning(
+                "No valid ingestion URL blocked CIDRs configured; fallback to safe defaults"
+            )
             for raw in [*_FALLBACK_BLOCKED_CIDRS_V4, *_FALLBACK_BLOCKED_CIDRS_V6]:
                 network = ipaddress.ip_network(raw, strict=False)
-                rules.append(_BlockedCidrRule(network=network, reason="private_or_local_cidr"))
+                rules.append(
+                    _BlockedCidrRule(network=network, reason="private_or_local_cidr")
+                )
         return tuple(rules)
 
-    def _build_metadata_blocked_ips(self) -> frozenset[ipaddress.IPv4Address | ipaddress.IPv6Address]:
+    def _build_metadata_blocked_ips(
+        self,
+    ) -> frozenset[ipaddress.IPv4Address | ipaddress.IPv6Address]:
         blocked_ips: set[ipaddress.IPv4Address | ipaddress.IPv6Address] = set()
-        configured = list(getattr(self._settings, "ingestion_url_metadata_blocklist", []))
+        configured = list(
+            getattr(self._settings, "ingestion_url_metadata_blocklist", [])
+        )
         if not configured:
             configured = list(_FALLBACK_METADATA_BLOCKED_IPS)
         for raw in configured:
@@ -1151,12 +1239,15 @@ class IngestionBatchService:
             try:
                 blocked_ips.add(ipaddress.ip_address(text))
             except ValueError:
-                logger.warning("Ignore invalid ingestion URL metadata blocked IP: %s", text)
+                logger.warning(
+                    "Ignore invalid ingestion URL metadata blocked IP: %s", text
+                )
         if not blocked_ips:
-            logger.warning("No valid ingestion URL metadata blocked IP configured; fallback to safe defaults")
+            logger.warning(
+                "No valid ingestion URL metadata blocked IP configured; fallback to safe defaults"
+            )
             blocked_ips = {
-                ipaddress.ip_address(raw)
-                for raw in _FALLBACK_METADATA_BLOCKED_IPS
+                ipaddress.ip_address(raw) for raw in _FALLBACK_METADATA_BLOCKED_IPS
             }
         return frozenset(blocked_ips)
 
@@ -1184,17 +1275,27 @@ class IngestionBatchService:
             return "unspecified"
         return None
 
-    async def _validate_url_security(self, *, url: str, client: httpx.AsyncClient) -> str:
+    async def _validate_url_security(
+        self, *, url: str, client: httpx.AsyncClient
+    ) -> str:
         current = url
         max_redirects = max(
-            int(getattr(self._settings, "ingestion_url_max_redirects", _DEFAULT_URL_REDIRECTS)),
+            int(
+                getattr(
+                    self._settings,
+                    "ingestion_url_max_redirects",
+                    _DEFAULT_URL_REDIRECTS,
+                )
+            ),
             0,
         )
         for redirect_hops in range(max_redirects + 1):
             parsed = urlparse(current)
             host = parsed.hostname
             if not host:
-                raise ingestion_error("URL_SCHEME_NOT_ALLOWED", details={"url": current})
+                raise ingestion_error(
+                    "URL_SCHEME_NOT_ALLOWED", details={"url": current}
+                )
 
             try:
                 await self._assert_host_safe(host)
@@ -1262,13 +1363,17 @@ class IngestionBatchService:
                     "host": host,
                     "resolved_ips": resolved_ips,
                     "blocked_ips": blocked_ips,
-                    "blocked_reason": blocked_reasons[0] if len(blocked_reasons) == 1 else "multiple",
+                    "blocked_reason": blocked_reasons[0]
+                    if len(blocked_reasons) == 1
+                    else "multiple",
                     "blocked_reasons": blocked_reasons,
                 },
             )
 
     @staticmethod
-    def _resolve_host_ips(host: str) -> list[ipaddress.IPv4Address | ipaddress.IPv6Address]:
+    def _resolve_host_ips(
+        host: str,
+    ) -> list[ipaddress.IPv4Address | ipaddress.IPv6Address]:
         addresses: list[ipaddress.IPv4Address | ipaddress.IPv6Address] = []
         for info in socket.getaddrinfo(host, None):
             raw = info[4][0]
@@ -1319,7 +1424,9 @@ class IngestionBatchService:
 
         storage = ObjectStorage()
         try:
-            return await storage.get_size(ObjectRef(bucket=bucket, object_name=object_name))
+            return await storage.get_size(
+                ObjectRef(bucket=bucket, object_name=object_name)
+            )
         except Exception:
             return None
 
@@ -1327,4 +1434,6 @@ class IngestionBatchService:
     def _is_bootstrap_conflict(exc: IntegrityError) -> bool:
         orig = getattr(exc, "orig", None)
         message = str(orig or exc).lower()
-        return "uq_ingestion_batches_bootstrap_kb" in message or "is_bootstrap" in message
+        return (
+            "uq_ingestion_batches_bootstrap_kb" in message or "is_bootstrap" in message
+        )

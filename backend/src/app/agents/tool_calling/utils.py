@@ -29,7 +29,6 @@ def _sanitize_tool_token(token: str) -> str:
     return _TOOL_TOKEN_RE.sub("_", token)
 
 
-
 def make_mcp_tool_name(extension_id: str, tool_name: str) -> str:
     """生成 MCP 工具的命名空间名称。
 
@@ -56,7 +55,6 @@ def parse_mcp_tool_name(name: str) -> tuple[str, str] | None:
     if len(parts) != 2 or not parts[0] or not parts[1]:
         return None
     return parts[0], parts[1]
-
 
 
 def truncate_tool_output(
@@ -95,7 +93,6 @@ def _get_last_ai_message(messages: Sequence[AnyMessage]) -> AIMessage | None:
     return None
 
 
-
 def extract_pending_tool_calls(
     messages: Sequence[AnyMessage],
     tool_meta_by_name: dict[str, ToolMeta],
@@ -110,8 +107,12 @@ def extract_pending_tool_calls(
     calls = getattr(ai, "tool_calls", None) or []
     pending: list[dict] = []
     for call in calls:
-        name = call.get("name") if isinstance(call, dict) else getattr(call, "name", None)
-        args = call.get("args") if isinstance(call, dict) else getattr(call, "args", None)
+        name = (
+            call.get("name") if isinstance(call, dict) else getattr(call, "name", None)
+        )
+        args = (
+            call.get("args") if isinstance(call, dict) else getattr(call, "args", None)
+        )
         if not name or not isinstance(name, str):
             continue
 
@@ -150,9 +151,19 @@ def extract_tool_results(
             continue
         calls = getattr(msg, "tool_calls", None) or []
         for call in calls:
-            name = call.get("name") if isinstance(call, dict) else getattr(call, "name", None)
-            args = call.get("args") if isinstance(call, dict) else getattr(call, "args", None)
-            call_id = call.get("id") if isinstance(call, dict) else getattr(call, "id", None)
+            name = (
+                call.get("name")
+                if isinstance(call, dict)
+                else getattr(call, "name", None)
+            )
+            args = (
+                call.get("args")
+                if isinstance(call, dict)
+                else getattr(call, "args", None)
+            )
+            call_id = (
+                call.get("id") if isinstance(call, dict) else getattr(call, "id", None)
+            )
             if not name or not isinstance(name, str) or not call_id:
                 continue
 

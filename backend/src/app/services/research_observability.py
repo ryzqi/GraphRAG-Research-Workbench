@@ -26,6 +26,7 @@ try:  # pragma: no cover - 依赖在运行环境中存在，这里只做导入�
     from redis.exceptions import ConnectionError as RedisConnectionError
     from redis.exceptions import RedisError, TimeoutError as RedisTimeoutError
 except Exception:  # pragma: no cover
+
     class RedisError(Exception):
         pass
 
@@ -83,7 +84,9 @@ class ResearchGateThresholds:
     max_session_cost_usd: float = 2.0
 
 
-def build_research_gate_thresholds(settings: Settings | None = None) -> ResearchGateThresholds:
+def build_research_gate_thresholds(
+    settings: Settings | None = None,
+) -> ResearchGateThresholds:
     if settings is None:
         return ResearchGateThresholds()
     return ResearchGateThresholds(
@@ -114,7 +117,9 @@ def build_trace_links(
         lc_agent_name = str(link.lc_agent_name or "").strip() or "deep-research"
         resolved_trace_id = str(link.trace_id or trace_id)
         source_provider = (
-            str(link.source_provider).strip() if link.source_provider is not None else None
+            str(link.source_provider).strip()
+            if link.source_provider is not None
+            else None
         )
         key = (namespace, lc_agent_name, resolved_trace_id, source_provider)
         deduped[key] = {
@@ -195,7 +200,9 @@ def build_research_metrics(
             session=session,
             runtime_latency_ms=runtime_result.latency_ms,
         ),
-        "cost": _build_cost_metrics(runtime_result.model_stats, runtime_result.total_cost_usd),
+        "cost": _build_cost_metrics(
+            runtime_result.model_stats, runtime_result.total_cost_usd
+        ),
         "providers": _build_provider_metrics(
             citations=source_bundle.citations,
             provider_stats=runtime_result.provider_stats,
@@ -261,7 +268,9 @@ def build_failure_metrics(
     existing_metrics: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     metrics = dict(existing_metrics or {})
-    trace_section = metrics.get("trace") if isinstance(metrics.get("trace"), dict) else {}
+    trace_section = (
+        metrics.get("trace") if isinstance(metrics.get("trace"), dict) else {}
+    )
     metrics["trace"] = {
         "trace_id": ensure_research_trace_id(session),
         "session_id": str(session.id),
@@ -280,9 +289,13 @@ def build_failure_metrics(
         ],
     }
     metrics["quality"] = (
-        metrics.get("quality") if isinstance(metrics.get("quality"), dict) else {"score": 0.0}
+        metrics.get("quality")
+        if isinstance(metrics.get("quality"), dict)
+        else {"score": 0.0}
     )
-    metrics["latency"] = _build_latency_metrics(session=session, runtime_latency_ms=None)
+    metrics["latency"] = _build_latency_metrics(
+        session=session, runtime_latency_ms=None
+    )
     metrics["cost"] = (
         metrics.get("cost")
         if isinstance(metrics.get("cost"), dict)
@@ -299,7 +312,9 @@ def build_failure_metrics(
         else {"by_layer": {}, "by_lc_agent_name": {}}
     )
 
-    existing_faults = metrics.get("faults") if isinstance(metrics.get("faults"), dict) else {}
+    existing_faults = (
+        metrics.get("faults") if isinstance(metrics.get("faults"), dict) else {}
+    )
     records = list(existing_faults.get("records") or [])
     records.append(dict(fault))
     metrics["faults"] = _build_fault_metrics(records)
@@ -314,11 +329,15 @@ def evaluate_research_gate(
 ) -> dict[str, Any]:
     quality = _float_or_none((metrics.get("quality") or {}).get("score"))
     p95_ms = _int_or_none((metrics.get("latency") or {}).get("p95_ms"))
-    session_cost_usd = _float_or_none((metrics.get("cost") or {}).get("session_cost_usd"))
+    session_cost_usd = _float_or_none(
+        (metrics.get("cost") or {}).get("session_cost_usd")
+    )
     replay = metrics.get("replay") if isinstance(metrics.get("replay"), dict) else {}
     replay_pass = replay.get("pass")
     fault_records = (metrics.get("faults") or {}).get("records") or []
-    coverage = metrics.get("coverage") if isinstance(metrics.get("coverage"), dict) else {}
+    coverage = (
+        metrics.get("coverage") if isinstance(metrics.get("coverage"), dict) else {}
+    )
     coverage_pass = coverage.get("pass")
 
     violations: list[str] = []
@@ -438,10 +457,12 @@ def _build_provider_metrics(
         else:
             entry["failure_count"] += 1
         if stat.latency_ms is not None:
-            latency_totals[stat.source_provider] = latency_totals.get(stat.source_provider, 0) + int(
-                stat.latency_ms
+            latency_totals[stat.source_provider] = latency_totals.get(
+                stat.source_provider, 0
+            ) + int(stat.latency_ms)
+            latency_counts[stat.source_provider] = (
+                latency_counts.get(stat.source_provider, 0) + 1
             )
-            latency_counts[stat.source_provider] = latency_counts.get(stat.source_provider, 0) + 1
 
     for provider, entry in aggregated.items():
         if stat_counts.get(provider):
@@ -521,7 +542,11 @@ def _build_latency_metrics(
         if runtime_latency_ms is not None
         else session_latency_ms
     )
-    p95_ms = resolved_runtime_latency_ms if resolved_runtime_latency_ms is not None else session_latency_ms
+    p95_ms = (
+        resolved_runtime_latency_ms
+        if resolved_runtime_latency_ms is not None
+        else session_latency_ms
+    )
     return {
         "runtime_latency_ms": resolved_runtime_latency_ms,
         "session_latency_ms": session_latency_ms,
@@ -563,7 +588,10 @@ def _calculate_quality_score(
         citations=citations,
     )
     return round(
-        citation_component + finding_component + coverage_component + target_coverage_component,
+        citation_component
+        + finding_component
+        + coverage_component
+        + target_coverage_component,
         4,
     )
 

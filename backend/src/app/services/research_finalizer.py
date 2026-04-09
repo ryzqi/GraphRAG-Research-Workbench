@@ -34,8 +34,7 @@ class ResearchFinalizer:
         response_format: type[BaseModel] | None = None,
     ) -> ResearchFinalizerResult:
         citations_payload = [
-            citation.model_dump(mode="json")
-            for citation in source_bundle.citations
+            citation.model_dump(mode="json") for citation in source_bundle.citations
         ]
         verification = build_verification_artifacts(
             findings=list(source_bundle.findings),
@@ -70,7 +69,9 @@ class ResearchFinalizer:
                 for field_name in response_format.model_fields
                 if field_name in report_json_base
             }
-            validated_payload = response_format.model_validate(validation_input).model_dump(mode="json")
+            validated_payload = response_format.model_validate(
+                validation_input
+            ).model_dump(mode="json")
             report_json_base = {**report_json_base, **validated_payload}
             report_json = {**report_json_base, **verification_payload}
         return ResearchFinalizerResult(
@@ -125,7 +126,9 @@ class ResearchFinalizer:
             "- 所有核心结论均应回链到具体 citation；若证据存在冲突，应在正文中保留冲突描述而不是强行合并。",
         ]
         if source_bundle.coverage_gaps:
-            points.append("- 当前仍存在覆盖缺口，以下结论需结合“覆盖缺口”章节一并阅读。")
+            points.append(
+                "- 当前仍存在覆盖缺口，以下结论需结合“覆盖缺口”章节一并阅读。"
+            )
         return points
 
     def _render_section(self, *, template_key: str, items: Sequence[str]) -> str:

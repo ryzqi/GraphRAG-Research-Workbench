@@ -27,7 +27,9 @@ def _is_bootstrap_job_overdue(
 
 
 @celery_app.task(name="app.worker.tasks.bootstrap_watchdog.fail_stale_bootstrap_jobs")
-def fail_stale_bootstrap_jobs(limit: int = DEFAULT_BOOTSTRAP_WATCHDOG_BATCH_SIZE) -> None:
+def fail_stale_bootstrap_jobs(
+    limit: int = DEFAULT_BOOTSTRAP_WATCHDOG_BATCH_SIZE,
+) -> None:
     asyncio.run(_fail_stale_bootstrap_jobs(limit=limit))
 
 
@@ -79,4 +81,3 @@ async def _fail_stale_bootstrap_jobs(
                 processed += 1
             await session.commit()
         return processed
-

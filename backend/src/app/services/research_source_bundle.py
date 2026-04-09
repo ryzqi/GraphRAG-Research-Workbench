@@ -6,7 +6,11 @@ from collections import Counter
 from dataclasses import dataclass
 from typing import Sequence
 
-from app.schemas.research import ResearchCanonicalCitation, ResearchSourceTarget, ResearchSourceType
+from app.schemas.research import (
+    ResearchCanonicalCitation,
+    ResearchSourceTarget,
+    ResearchSourceType,
+)
 
 
 @dataclass(slots=True, frozen=True)
@@ -38,11 +42,12 @@ class ResearchSourceBundleBuilder:
             )
         )
         normalized_citations = [
-            self._normalize_citation(citation)
-            for citation in citations
+            self._normalize_citation(citation) for citation in citations
         ]
         deduped = self._dedupe_citations(normalized_citations)
-        provider_counts = Counter(citation.source_provider for citation in normalized_citations)
+        provider_counts = Counter(
+            citation.source_provider for citation in normalized_citations
+        )
         coverage_gaps = [
             f"缺少来源证据：{provider}"
             for provider in normalized_required_web_providers

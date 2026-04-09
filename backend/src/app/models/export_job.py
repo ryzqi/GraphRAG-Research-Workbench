@@ -21,8 +21,12 @@ class ExportStatus(str, Enum):
 class ExportJob(Base):
     __tablename__ = "export_jobs"
 
-    id: Mapped[uuid.UUID] = mapped_column(sa.Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    run_id: Mapped[uuid.UUID | None] = mapped_column(sa.Uuid(as_uuid=True), nullable=True)
+    id: Mapped[uuid.UUID] = mapped_column(
+        sa.Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    run_id: Mapped[uuid.UUID | None] = mapped_column(
+        sa.Uuid(as_uuid=True), nullable=True
+    )
     session_id: Mapped[uuid.UUID | None] = mapped_column(
         sa.Uuid(as_uuid=True), nullable=True, index=True
     )

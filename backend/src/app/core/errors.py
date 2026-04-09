@@ -17,7 +17,9 @@ from app.core.settings import get_settings
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_NOT_READY_MESSAGE = "数据库未初始化/未迁移：请执行数据库迁移（alembic upgrade head）"
+SCHEMA_NOT_READY_MESSAGE = (
+    "数据库未初始化/未迁移：请执行数据库迁移（alembic upgrade head）"
+)
 INGESTION_STATUS_ENUM_NAMES = ("ingestion_batch_status", "ingestion_doc_status")
 
 
@@ -37,7 +39,9 @@ def _is_ingestion_enum_schema_mismatch(reason: str) -> bool:
     )
 
 
-def _classify_dbapi_error(*, reason: str, connection_invalidated: bool) -> tuple[int, str, str]:
+def _classify_dbapi_error(
+    *, reason: str, connection_invalidated: bool
+) -> tuple[int, str, str]:
     if _is_schema_missing(reason) or _is_ingestion_enum_schema_mismatch(reason):
         return 503, "DATABASE_SCHEMA_NOT_READY", SCHEMA_NOT_READY_MESSAGE
     if connection_invalidated:
@@ -244,7 +248,9 @@ def register_exception_handlers(app: FastAPI) -> None:
         )
         return _apply_cors_headers(request, res)
 
-    async def _db_unavailable_response(request: Request, exc: Exception) -> JSONResponse:
+    async def _db_unavailable_response(
+        request: Request, exc: Exception
+    ) -> JSONResponse:
         # DB 故障在开发环境中很常见（未启动 infra / 端口冲突 / 未迁移）。
         # 统一转换为 503，避免前端看到“500 内部错误”而难以定位。
         logger.warning("Database error", extra={"error": str(exc)})
@@ -282,7 +288,9 @@ def register_exception_handlers(app: FastAPI) -> None:
             connection_invalidated=bool(getattr(exc, "connection_invalidated", False)),
         )
 
-        logger.warning("Database DBAPIError", extra={"error": reason, "status_code": status_code})
+        logger.warning(
+            "Database DBAPIError", extra={"error": reason, "status_code": status_code}
+        )
 
         details = None
         if get_settings().app_env == "dev":

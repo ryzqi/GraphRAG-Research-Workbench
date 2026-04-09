@@ -53,8 +53,12 @@ async def list_knowledge_bases(
     db: AsyncSessionDep,
     skip: Annotated[int, Query(ge=0, description="跳过记录数")] = 0,
     limit: Annotated[int, Query(ge=1, le=100, description="返回记录数")] = 100,
-    status: Annotated[KnowledgeBaseStatusFilter, Query(description="按状态过滤")] = KnowledgeBaseStatusFilter.ACTIVE,
-    readiness: Annotated[KnowledgeBaseReadinessFilter, Query(description="按 readiness 过滤")] = KnowledgeBaseReadinessFilter.ALL,
+    status: Annotated[
+        KnowledgeBaseStatusFilter, Query(description="按状态过滤")
+    ] = KnowledgeBaseStatusFilter.ACTIVE,
+    readiness: Annotated[
+        KnowledgeBaseReadinessFilter, Query(description="按 readiness 过滤")
+    ] = KnowledgeBaseReadinessFilter.ALL,
 ) -> KnowledgeBaseListResponse:
     """列出知识库（默认 active；可按 readiness 二次过滤）。"""
 
@@ -152,7 +156,9 @@ async def create_knowledge_base(
 
 
 @router.get("/{kb_id}", response_model=KnowledgeBaseRead)
-async def get_knowledge_base(db: AsyncSessionDep, kb_id: uuid.UUID) -> KnowledgeBaseRead:
+async def get_knowledge_base(
+    db: AsyncSessionDep, kb_id: uuid.UUID
+) -> KnowledgeBaseRead:
     service = KnowledgeBaseService(db)
     kb = await service.get_by_id(kb_id)
     if not kb:
@@ -307,7 +313,9 @@ async def delete_knowledge_base(
 
 
 @router.post("/{kb_id}/archive", response_model=KnowledgeBaseRead)
-async def archive_knowledge_base(db: AsyncSessionDep, kb_id: uuid.UUID) -> KnowledgeBaseRead:
+async def archive_knowledge_base(
+    db: AsyncSessionDep, kb_id: uuid.UUID
+) -> KnowledgeBaseRead:
     service = KnowledgeBaseService(db)
     kb = await service.get_by_id(kb_id)
     if not kb:

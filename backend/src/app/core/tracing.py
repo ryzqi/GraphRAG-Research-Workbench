@@ -40,10 +40,14 @@ def init_tracing() -> None:
         from opentelemetry.sdk.trace import TracerProvider
         from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
-        resource = Resource.create({
-            "service.name": getattr(settings, "otel_service_name", "multi-kb-agent"),
-            "service.version": "0.1.0",
-        })
+        resource = Resource.create(
+            {
+                "service.name": getattr(
+                    settings, "otel_service_name", "multi-kb-agent"
+                ),
+                "service.version": "0.1.0",
+            }
+        )
 
         provider = TracerProvider(resource=resource)
 

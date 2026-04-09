@@ -475,8 +475,12 @@ class RetrievalService:
                 chunk_role="default",
                 parent_chunk_id=None,
                 child_seq=None,
-                chunk_index=row.chunk_index if isinstance(row.chunk_index, int) else None,
-                heading_path=row.heading_path if isinstance(row.heading_path, str) else None,
+                chunk_index=row.chunk_index
+                if isinstance(row.chunk_index, int)
+                else None,
+                heading_path=row.heading_path
+                if isinstance(row.heading_path, str)
+                else None,
                 global_chunk_order=row_order,
             )
             expanded.append(
@@ -535,7 +539,8 @@ class RetrievalService:
                 .where(
                     DocumentChunk.kb_id == seed.kb_id,
                     DocumentChunk.material_id == seed.material_id,
-                    DocumentChunk.global_chunk_order >= int(seed.global_chunk_order) - radius,
+                    DocumentChunk.global_chunk_order
+                    >= int(seed.global_chunk_order) - radius,
                     DocumentChunk.global_chunk_order <= int(seed.global_chunk_order),
                 )
                 .order_by(DocumentChunk.global_chunk_order.asc())
@@ -613,8 +618,10 @@ class RetrievalService:
             .where(
                 DocumentChunk.kb_id == seed.kb_id,
                 DocumentChunk.material_id == seed.material_id,
-                DocumentChunk.global_chunk_order >= int(seed.global_chunk_order) - radius,
-                DocumentChunk.global_chunk_order <= int(seed.global_chunk_order) + radius,
+                DocumentChunk.global_chunk_order
+                >= int(seed.global_chunk_order) - radius,
+                DocumentChunk.global_chunk_order
+                <= int(seed.global_chunk_order) + radius,
             )
             .order_by(DocumentChunk.global_chunk_order.asc())
         )
@@ -999,7 +1006,8 @@ class RetrievalService:
                 cached = await self._redis.get(cache_key)
             except Exception as exc:  # pragma: no cover
                 logger.warning(
-                    "Embedding cache read failed; skip cache.", extra={"error": str(exc)}
+                    "Embedding cache read failed; skip cache.",
+                    extra={"error": str(exc)},
                 )
                 cached = None
             if cached:
@@ -1039,7 +1047,8 @@ class RetrievalService:
                 )
             except Exception as exc:  # pragma: no cover
                 logger.warning(
-                    "Embedding cache write failed; skip cache.", extra={"error": str(exc)}
+                    "Embedding cache write failed; skip cache.",
+                    extra={"error": str(exc)},
                 )
 
         return embeddings[0]
@@ -1155,7 +1164,8 @@ class RetrievalService:
                 cached = await self._redis.get(cache_key)
             except Exception as exc:  # pragma: no cover
                 logger.warning(
-                    "Rewrite cache read failed; continue rewrite flow.", extra={"error": str(exc)}
+                    "Rewrite cache read failed; continue rewrite flow.",
+                    extra={"error": str(exc)},
                 )
             if cached:
                 return RewriteResult(
@@ -1274,7 +1284,10 @@ class RetrievalService:
     ) -> list[str]:
         names: set[str] = set()
         for cfg in configs.values():
-            if cfg.chunking.general_strategy != ChunkingStrategy.QUERY_DEPENDENT_MULTISCALE:
+            if (
+                cfg.chunking.general_strategy
+                != ChunkingStrategy.QUERY_DEPENDENT_MULTISCALE
+            ):
                 continue
             for window in cfg.chunking.query_dependent_multiscale.windows:
                 names.add(
@@ -1298,7 +1311,10 @@ class RetrievalService:
             if cfg is None:
                 default_kb_ids.append(str(kb_id))
                 continue
-            if cfg.chunking.general_strategy == ChunkingStrategy.QUERY_DEPENDENT_MULTISCALE:
+            if (
+                cfg.chunking.general_strategy
+                == ChunkingStrategy.QUERY_DEPENDENT_MULTISCALE
+            ):
                 multiscale_kb_ids.append(str(kb_id))
             else:
                 default_kb_ids.append(str(kb_id))
@@ -1529,7 +1545,9 @@ class RetrievalService:
                     )
                     return []
 
-            async def _run_sparse_fallback(reason: str) -> tuple[
+            async def _run_sparse_fallback(
+                reason: str,
+            ) -> tuple[
                 int,
                 int,
                 dict[tuple[str, str, str], RetrievedChunk],
@@ -1552,6 +1570,7 @@ class RetrievalService:
                             )
                         )
                 return _build_query_result(sparse_hits, hit_count=len(sparse_hits))
+
             try:
                 remaining = self._remaining_seconds(deadline)
                 if remaining is not None and remaining <= 0:
@@ -1629,9 +1648,7 @@ class RetrievalService:
                     return []
 
             hybrid_hits: list[dict] = []
-            hybrid_hits.extend(
-                await _safe_hybrid(kb_id_values=default_kb_id_strs)
-            )
+            hybrid_hits.extend(await _safe_hybrid(kb_id_values=default_kb_id_strs))
             if multiscale_kb_id_strs:
                 for collection_name in multiscale_collections:
                     hybrid_hits.extend(
@@ -1837,14 +1854,17 @@ class RetrievalService:
                     timeout_seconds=dedup_timeout,
                 )
             except asyncio.TimeoutError:
-                logger.warning("Semantic-similarity dedupe timed out; skip this dedupe step.")
+                logger.warning(
+                    "Semantic-similarity dedupe timed out; skip this dedupe step."
+                )
                 dedup_similarity_reason = "dedupe:timeout"
                 optional_embedding_skips.append(dedup_similarity_reason)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
                 logger.warning(
-                    "Semantic-similarity dedupe failed; keep original candidates.", extra={"error": str(exc)}
+                    "Semantic-similarity dedupe failed; keep original candidates.",
+                    extra={"error": str(exc)},
                 )
                 dedup_similarity_reason = self._embedding_failure_reason(
                     exc,
@@ -1889,9 +1909,11 @@ class RetrievalService:
             rerank_latency_ms = latency_ms
             candidate_results = (ordered if applied else candidates_for_rerank)[:top_n]
             if applied:
-                candidate_results, rerank_filtered_count = self._apply_stage_score_cutoff(
-                    candidate_results,
-                    stage="rerank",
+                candidate_results, rerank_filtered_count = (
+                    self._apply_stage_score_cutoff(
+                        candidate_results,
+                        stage="rerank",
+                    )
                 )
             final_results = candidate_results
         else:
@@ -1909,7 +1931,9 @@ class RetrievalService:
                         timeout_seconds=timeout_value,
                     )
             except asyncio.TimeoutError:
-                logger.warning("Heading-path context enrichment timed out; keep original excerpts")
+                logger.warning(
+                    "Heading-path context enrichment timed out; keep original excerpts"
+                )
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
@@ -1983,7 +2007,9 @@ class RetrievalService:
                 "optional_embedding_skips": optional_embedding_skips,
                 "hyde_requested_count": hyde_requested_total,
                 "hyde_used_count": hyde_used_total,
-                "hyde_aggregation": HYDE_AGGREGATION if hyde_requested_total > 0 else None,
+                "hyde_aggregation": HYDE_AGGREGATION
+                if hyde_requested_total > 0
+                else None,
                 "hyde_embedding_fallback": (
                     hyde_aggregation_reason if hyde_requested_total > 0 else None
                 ),
@@ -2057,12 +2083,17 @@ class RetrievalService:
         except asyncio.TimeoutError:
             if hard_timeout:
                 raise
-            logger.warning("Rerank timed out; fallback to original order.", extra={"timeout": timeout_value})
+            logger.warning(
+                "Rerank timed out; fallback to original order.",
+                extra={"timeout": timeout_value},
+            )
             return results, False, "timeout", None
         except asyncio.CancelledError:
             raise
         except Exception as exc:
-            logger.warning("Rerank failed; fallback to original order.", extra={"error": str(exc)})
+            logger.warning(
+                "Rerank failed; fallback to original order.", extra={"error": str(exc)}
+            )
             return results, False, "error", None
         latency_ms = int((time.perf_counter() - start_time) * 1000)
         if not rerank_results:
@@ -2094,7 +2125,9 @@ class RetrievalService:
             return {}
 
         configs: dict[uuid.UUID, IndexConfig] = {}
-        snapshot_stmt = select(KBConfigSnapshot.kb_id, KBConfigSnapshot.config_json).where(
+        snapshot_stmt = select(
+            KBConfigSnapshot.kb_id, KBConfigSnapshot.config_json
+        ).where(
             KBConfigSnapshot.kb_id.in_(kb_ids),
             KBConfigSnapshot.is_active.is_(True),
         )
@@ -2133,7 +2166,10 @@ class RetrievalService:
             item = {
                 "general_strategy": cfg.chunking.general_strategy.value,
             }
-            if cfg.chunking.general_strategy == ChunkingStrategy.QUERY_DEPENDENT_MULTISCALE:
+            if (
+                cfg.chunking.general_strategy
+                == ChunkingStrategy.QUERY_DEPENDENT_MULTISCALE
+            ):
                 item["query_dependent_multiscale"] = {
                     "windows": [
                         {
@@ -2334,7 +2370,8 @@ class RetrievalService:
         multiscale_kb_ids = {
             kb_id
             for kb_id, cfg in kb_configs.items()
-            if cfg.chunking.general_strategy == ChunkingStrategy.QUERY_DEPENDENT_MULTISCALE
+            if cfg.chunking.general_strategy
+            == ChunkingStrategy.QUERY_DEPENDENT_MULTISCALE
         }
         if not multiscale_kb_ids:
             return results
@@ -2537,7 +2574,10 @@ class RetrievalService:
             except asyncio.TimeoutError:
                 return _timeout_return()
             except Exception as exc:  # pragma: no cover
-                logger.warning("Retrieval cache read failed; continue without cache.", extra={"error": str(exc)})
+                logger.warning(
+                    "Retrieval cache read failed; continue without cache.",
+                    extra={"error": str(exc)},
+                )
                 cached = None
             if cached:
                 timeout_value = self._effective_timeout(
@@ -2558,9 +2598,7 @@ class RetrievalService:
                     if timeout_value is not None and timeout_value <= 0:
                         return _timeout_return()
                     await self._run_with_timeout(
-                        self._hydrate_chunks_from_postgres(
-                            [r.chunk for r in results]
-                        ),
+                        self._hydrate_chunks_from_postgres([r.chunk for r in results]),
                         timeout_value,
                     )
                 except asyncio.TimeoutError:
@@ -2583,9 +2621,7 @@ class RetrievalService:
                     if timeout_value is not None and timeout_value <= 0:
                         return _timeout_return()
                     await self._run_with_timeout(
-                        self._ensure_chunk_citation_labels(
-                            [r.chunk for r in results]
-                        ),
+                        self._ensure_chunk_citation_labels([r.chunk for r in results]),
                         timeout_value,
                     )
                 except asyncio.TimeoutError:
@@ -2706,7 +2742,10 @@ class RetrievalService:
                     ex=self._settings.retrieval_cache_ttl_seconds,
                 )
             except Exception as exc:  # pragma: no cover
-                logger.warning("Retrieval cache write failed; skip cache.", extra={"error": str(exc)})
+                logger.warning(
+                    "Retrieval cache write failed; skip cache.",
+                    extra={"error": str(exc)},
+                )
 
         self._last_stats = RetrievalStats(
             query=query,

@@ -64,6 +64,7 @@ def _state_float(
             return float(value)
     return float(default)
 
+
 def retrieval_top_k(
     state: dict[str, Any],
     settings: Settings,
@@ -97,7 +98,9 @@ def parallel_retrieval_min_queries(
             _state_int(
                 state,
                 key="parallel_retrieval_min_queries",
-                default=int(getattr(settings, "kb_chat_parallel_retrieval_min_queries", 2)),
+                default=int(
+                    getattr(settings, "kb_chat_parallel_retrieval_min_queries", 2)
+                ),
                 runtime=runtime,
             ),
         ),
@@ -116,7 +119,9 @@ def parallel_retrieval_max_branches(
             _state_int(
                 state,
                 key="parallel_retrieval_max_branches",
-                default=int(getattr(settings, "kb_chat_parallel_retrieval_max_branches", 6)),
+                default=int(
+                    getattr(settings, "kb_chat_parallel_retrieval_max_branches", 6)
+                ),
                 runtime=runtime,
             ),
         ),

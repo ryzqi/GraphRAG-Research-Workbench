@@ -27,7 +27,9 @@ MAX_ERROR_MESSAGE_LENGTH = 2000
 DEFAULT_STALE_DISPATCHED_SECONDS = 60 * 60
 STALE_RECOVERY_MESSAGE = "stale_dispatched_recovered"
 DISPATCH_EXHAUSTED_ERROR_CODE = "DOC_DISPATCH_EXHAUSTED"
-DISPATCH_EXHAUSTED_ERROR_MESSAGE = "文档调度重试已耗尽，已自动结束，请检查 dispatch/ingestion worker 状态"
+DISPATCH_EXHAUSTED_ERROR_MESSAGE = (
+    "文档调度重试已耗尽，已自动结束，请检查 dispatch/ingestion worker 状态"
+)
 FINALIZABLE_EXHAUSTED_STATUSES = (
     IngestionTaskOutboxStatus.PENDING,
     IngestionTaskOutboxStatus.FAILED,
@@ -36,7 +38,9 @@ FINALIZABLE_EXHAUSTED_STATUSES = (
 
 def _compute_retry_delay_seconds(*, attempts: int) -> int:
     bounded_attempt = max(1, min(attempts, 10))
-    return min(MAX_RETRY_BACKOFF_SECONDS, RETRY_BASE_SECONDS * (2 ** (bounded_attempt - 1)))
+    return min(
+        MAX_RETRY_BACKOFF_SECONDS, RETRY_BASE_SECONDS * (2 ** (bounded_attempt - 1))
+    )
 
 
 def _format_error(exc: Exception) -> str:
@@ -157,11 +161,19 @@ def dispatch_ingestion_outbox(limit: int = DEFAULT_DISPATCH_BATCH_SIZE) -> None:
     asyncio.run(_dispatch_ingestion_outbox(limit=limit))
 
 
-async def _dispatch_ingestion_outbox(*, limit: int = DEFAULT_DISPATCH_BATCH_SIZE) -> int:
+async def _dispatch_ingestion_outbox(
+    *, limit: int = DEFAULT_DISPATCH_BATCH_SIZE
+) -> int:
     settings = get_settings()
     safe_limit = max(int(limit or DEFAULT_DISPATCH_BATCH_SIZE), 1)
     stale_seconds = max(
-        int(getattr(settings, "ingestion_outbox_stale_dispatched_seconds", DEFAULT_STALE_DISPATCHED_SECONDS)),
+        int(
+            getattr(
+                settings,
+                "ingestion_outbox_stale_dispatched_seconds",
+                DEFAULT_STALE_DISPATCHED_SECONDS,
+            )
+        ),
         1,
     )
 
@@ -197,7 +209,9 @@ async def _dispatch_ingestion_outbox(*, limit: int = DEFAULT_DISPATCH_BATCH_SIZE
                     row.attempts += 1
                     try:
                         run_ingestion_batch_doc.delay(str(row.doc_id))
-                    except Exception as exc:  # pragma: no cover - depends on broker state
+                    except (
+                        Exception
+                    ) as exc:  # pragma: no cover - depends on broker state
                         row.status = IngestionTaskOutboxStatus.FAILED
                         row.dispatched_at = None
                         row.last_error = _format_error(exc)

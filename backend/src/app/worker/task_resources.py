@@ -17,7 +17,11 @@ from app.integrations.http_client import (
 )
 from app.integrations.model_runtime_config import ModelRuntimeConfigManager
 from app.integrations.milvus_client import MilvusClient, create_milvus_client
-from app.integrations.redis_client import RedisClient, close_redis_client, create_redis_client
+from app.integrations.redis_client import (
+    RedisClient,
+    close_redis_client,
+    create_redis_client,
+)
 
 
 @dataclass(slots=True)

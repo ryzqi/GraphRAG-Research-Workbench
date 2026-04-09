@@ -59,9 +59,15 @@ _AMBIGUITY_TECHNICAL_REASONS: set[str] = {
 _AMBIGUITY_DEFAULT_REASON_TRUE = "问题缺少关键信息，需先澄清后再检索。"
 _AMBIGUITY_DEFAULT_REASON_FALSE = "未命中需澄清信号，可直接继续检索。"
 _QUERY_PLAN_REASON_DIRECT = "未命中复杂问题信号，按主问题并辅以 HyDE 补强检索。"
-_QUERY_PLAN_REASON_MULTI_QUERY = "目标单一但召回风险较高，先做多路查询扩展，再进入 HyDE 补强。"
-_QUERY_PLAN_REASON_DECOMPOSITION = "命中比较或多目标信号，先做问题拆解，再进入 HyDE 补强。"
-_QUERY_PLAN_REASON_DECOMPOSITION_GENERIC = "问题涉及多步骤或多视角信息，先做问题拆解，再进入 HyDE 补强。"
+_QUERY_PLAN_REASON_MULTI_QUERY = (
+    "目标单一但召回风险较高，先做多路查询扩展，再进入 HyDE 补强。"
+)
+_QUERY_PLAN_REASON_DECOMPOSITION = (
+    "命中比较或多目标信号，先做问题拆解，再进入 HyDE 补强。"
+)
+_QUERY_PLAN_REASON_DECOMPOSITION_GENERIC = (
+    "问题涉及多步骤或多视角信息，先做问题拆解，再进入 HyDE 补强。"
+)
 
 _BUSINESS_LABEL_FALLBACKS: dict[str, str] = {
     "__end__": "结束",
@@ -252,11 +258,7 @@ def _pick_string_list(snapshot: Mapping[str, Any], *keys: str) -> list[str] | No
         raw = snapshot.get(key)
         if not isinstance(raw, list):
             continue
-        items = [
-            item.strip()
-            for item in raw
-            if isinstance(item, str) and item.strip()
-        ]
+        items = [item.strip() for item in raw if isinstance(item, str) and item.strip()]
         if items:
             return items
     return None
@@ -266,7 +268,9 @@ def _get_context_frame(snapshot: Mapping[str, Any]) -> dict[str, Any] | None:
     return _as_dict(snapshot.get("context_frame"))
 
 
-def _pick_context_frame_turns(snapshot: Mapping[str, Any], key: str) -> list[str] | None:
+def _pick_context_frame_turns(
+    snapshot: Mapping[str, Any], key: str
+) -> list[str] | None:
     frame = _get_context_frame(snapshot)
     raw = frame.get(key) if frame else None
     if not isinstance(raw, list):
@@ -277,7 +281,13 @@ def _pick_context_frame_turns(snapshot: Mapping[str, Any], key: str) -> list[str
         if not record:
             continue
         role_raw = _non_empty_text(record.get("role")) or ""
-        role = "用户" if role_raw == "user" else "助手" if role_raw == "assistant" else role_raw
+        role = (
+            "用户"
+            if role_raw == "user"
+            else "助手"
+            if role_raw == "assistant"
+            else role_raw
+        )
         text = _non_empty_text(record.get("text"))
         if not text:
             continue
@@ -287,14 +297,19 @@ def _pick_context_frame_turns(snapshot: Mapping[str, Any], key: str) -> list[str
 
 def _summary_for_node(snapshot: Mapping[str, Any], node_name: str) -> dict[str, Any]:
     stage_summaries = _as_dict(snapshot.get("stage_summaries")) or {}
-    return _as_dict(stage_summaries.get(_NODE_SUMMARY_KEY_MAP.get(node_name, node_name))) or {}
+    return (
+        _as_dict(stage_summaries.get(_NODE_SUMMARY_KEY_MAP.get(node_name, node_name)))
+        or {}
+    )
 
 
 def _resolve_trace_command(snapshot: Mapping[str, Any]) -> dict[str, Any]:
     return _as_dict(snapshot.get("__trace_command__")) or {}
 
 
-def _resolve_routing_decision(snapshot: Mapping[str, Any], phase: str) -> dict[str, Any]:
+def _resolve_routing_decision(
+    snapshot: Mapping[str, Any], phase: str
+) -> dict[str, Any]:
     routing = _as_dict(snapshot.get("routing_decisions")) or {}
     return _as_dict(routing.get(phase)) or {}
 
@@ -324,7 +339,10 @@ def _resolve_ambiguity_reason(
             return mapped
 
     summary_reason = _pick_text(summary, "reason")
-    if summary_reason and summary_reason.strip().lower() not in _AMBIGUITY_TECHNICAL_REASONS:
+    if (
+        summary_reason
+        and summary_reason.strip().lower() not in _AMBIGUITY_TECHNICAL_REASONS
+    ):
         return summary_reason
 
     return (
@@ -342,16 +360,22 @@ def _resolve_query_plan_reason(
 ) -> str:
     reasoning = _pick_text(summary, "reasoning")
     if not reasoning and not _pick_text(summary, "failure_reason"):
-        reasoning = _pick_text(_as_dict(snapshot.get("query_plan_result")) or {}, "reasoning")
+        reasoning = _pick_text(
+            _as_dict(snapshot.get("query_plan_result")) or {}, "reasoning"
+        )
     if reasoning:
         return reasoning
 
     raw_strategy = (
-        _pick_text(summary, "strategy")
-        or _pick_text(snapshot, "query_strategy")
-        or _pick_text(summary, "goto")
-        or ""
-    ).strip().lower()
+        (
+            _pick_text(summary, "strategy")
+            or _pick_text(snapshot, "query_strategy")
+            or _pick_text(summary, "goto")
+            or ""
+        )
+        .strip()
+        .lower()
+    )
     if raw_strategy == "decomposition":
         if bool(summary.get("is_comparison")) or bool(summary.get("has_multi_target")):
             return _QUERY_PLAN_REASON_DECOMPOSITION
@@ -374,18 +398,28 @@ def _resolve_doc_gate_round(snapshot: Mapping[str, Any]) -> int | None:
     return None
 
 
-def _resolve_doc_gate_run(snapshot: Mapping[str, Any], node_name: str) -> dict[str, Any]:
+def _resolve_doc_gate_run(
+    snapshot: Mapping[str, Any], node_name: str
+) -> dict[str, Any]:
     gate = _DOC_GATE_NODE_TO_GATE.get(node_name)
     if not gate:
         return {}
     active_round = _resolve_doc_gate_round(snapshot)
     runs = snapshot.get("doc_gate_runs")
-    candidates = [item for item in runs if isinstance(item, dict)] if isinstance(runs, list) else []
+    candidates = (
+        [item for item in runs if isinstance(item, dict)]
+        if isinstance(runs, list)
+        else []
+    )
     for item in reversed(candidates):
         if str(item.get("gate") or "") != gate:
             continue
         round_value = item.get("round")
-        if active_round is None or not isinstance(round_value, int) or round_value == active_round:
+        if (
+            active_round is None
+            or not isinstance(round_value, int)
+            or round_value == active_round
+        ):
             return item
     return {}
 
@@ -406,13 +440,19 @@ def _resolve_answer_review_round(snapshot: Mapping[str, Any]) -> int | None:
     return None
 
 
-def _resolve_answer_review_run(snapshot: Mapping[str, Any], node_name: str) -> dict[str, Any]:
+def _resolve_answer_review_run(
+    snapshot: Mapping[str, Any], node_name: str
+) -> dict[str, Any]:
     check = _ANSWER_REVIEW_NODE_TO_CHECK.get(node_name)
     if not check:
         return {}
     active_round = _resolve_answer_review_round(snapshot)
     runs = snapshot.get("answer_review_runs")
-    candidates = [item for item in runs if isinstance(item, dict)] if isinstance(runs, list) else []
+    candidates = (
+        [item for item in runs if isinstance(item, dict)]
+        if isinstance(runs, list)
+        else []
+    )
     for item in reversed(candidates):
         if str(item.get("check") or "") != check:
             continue
@@ -428,7 +468,11 @@ def _resolve_answer_review_run(snapshot: Mapping[str, Any], node_name: str) -> d
 
 def _resolve_current_subquery_run(snapshot: Mapping[str, Any]) -> dict[str, Any]:
     runs = snapshot.get("subquery_runs")
-    candidates = [item for item in runs if isinstance(item, dict)] if isinstance(runs, list) else []
+    candidates = (
+        [item for item in runs if isinstance(item, dict)]
+        if isinstance(runs, list)
+        else []
+    )
     if not candidates:
         return {}
 
@@ -473,7 +517,9 @@ def _extract_query_texts_by_kind(
     raw_items = snapshot.get("query_items")
     if not isinstance(raw_items, list):
         return None
-    allowed = {kind.strip().lower() for kind in kinds if isinstance(kind, str) and kind.strip()}
+    allowed = {
+        kind.strip().lower() for kind in kinds if isinstance(kind, str) and kind.strip()
+    }
     if not allowed:
         return None
     items: list[str] = []
@@ -640,12 +686,16 @@ def _build_input_value_map(
         "sub_queries": _resolve_sub_queries_display(snapshot),
         "multi_queries": _resolve_multi_queries_display(snapshot),
         "final_answer": _pick_text(snapshot, "final_answer"),
-        "retrieved_evidence": _format_evidence_for_node(node_name=node_name, snapshot=snapshot),
+        "retrieved_evidence": _format_evidence_for_node(
+            node_name=node_name, snapshot=snapshot
+        ),
     }
     if node_name in {"merge_subquery_context", "context_compress"}:
         values["retrieved_evidence"] = _format_evidence_from_snapshot(snapshot)
     if node_name == "retrieve_subquery":
-        values["subquery"] = _pick_text(current_subquery_run, "query") or values["subquery"]
+        values["subquery"] = (
+            _pick_text(current_subquery_run, "query") or values["subquery"]
+        )
     if node_name == "answer_review_fuse":
         values["review_results"] = _format_review_results(snapshot)
     return values
@@ -685,7 +735,9 @@ def _build_output_value_map(
             "rewrite_input_query",
             "user_input",
         ),
-        "clarification_prompt": _pick_text(snapshot, "final_answer", "clarification_prompt"),
+        "clarification_prompt": _pick_text(
+            snapshot, "final_answer", "clarification_prompt"
+        ),
         "multi_queries": _resolve_multi_queries_display(snapshot),
         "sub_queries": _resolve_sub_queries_display(snapshot),
         "hyde_docs": _resolve_hyde_docs_display(snapshot),
@@ -697,25 +749,35 @@ def _build_output_value_map(
             snapshot=snapshot,
             node_label_resolver=node_label_resolver,
         ),
-        "retrieved_evidence": _format_evidence_for_node(node_name=node_name, snapshot=snapshot),
+        "retrieved_evidence": _format_evidence_for_node(
+            node_name=node_name, snapshot=snapshot
+        ),
         "merged_evidence": _format_evidence_from_snapshot(snapshot),
         "compressed_evidence": _format_compressed_evidence(snapshot),
-        "review_checks": _format_review_checks(snapshot, node_label_resolver=node_label_resolver),
+        "review_checks": _format_review_checks(
+            snapshot, node_label_resolver=node_label_resolver
+        ),
         "draft_answer": _pick_text(snapshot, "draft_answer"),
         "repaired_answer": _pick_text(snapshot, "repaired_answer", "final_answer"),
-        "final_answer": _pick_text(snapshot, "final_answer", "best_answer", "draft_answer"),
+        "final_answer": _pick_text(
+            snapshot, "final_answer", "best_answer", "draft_answer"
+        ),
         "error_summary": _non_empty_text(error_summary),
     }
     if node_name == "transform_query" and summary.get("rewritten") is False:
         values["normalized_query"] = None
     if node_name == "answer_commit":
-        values["final_answer"] = _pick_text(snapshot, "final_answer", "best_answer", "draft_answer")
+        values["final_answer"] = _pick_text(
+            snapshot, "final_answer", "best_answer", "draft_answer"
+        )
     if node_name == "force_exit":
         values["next_node_label"] = "结束"
     return values
 
 
-def _items_from_contract(contract: list[str], values: Mapping[str, Any]) -> list[DisplayItem]:
+def _items_from_contract(
+    contract: list[str], values: Mapping[str, Any]
+) -> list[DisplayItem]:
     items: list[DisplayItem] = []
     for key in contract:
         _append_display_item(items, key=key, value=values.get(key))
@@ -728,7 +790,11 @@ def _items_from_contract(contract: list[str], values: Mapping[str, Any]) -> list
 def _append_display_item(items: list[DisplayItem], *, key: str, value: Any) -> None:
     if isinstance(value, bool):
         items.append(
-            {"key": key, "label": _DISPLAY_LABELS[key], "value": "是" if value else "否"}
+            {
+                "key": key,
+                "label": _DISPLAY_LABELS[key],
+                "value": "是" if value else "否",
+            }
         )
         return
     if isinstance(value, (int, float)):
@@ -750,7 +816,9 @@ def _resolve_exit_action(snapshot: Mapping[str, Any]) -> str | None:
     return _pick_text(reflection, "action") or _pick_text(snapshot, "exit_action")
 
 
-def _resolve_planned_query_count(snapshot: Mapping[str, Any], summary: Mapping[str, Any]) -> int | None:
+def _resolve_planned_query_count(
+    snapshot: Mapping[str, Any], summary: Mapping[str, Any]
+) -> int | None:
     raw = summary.get("query_count")
     if isinstance(raw, int):
         return raw
@@ -814,7 +882,11 @@ def _format_gate_results(snapshot: Mapping[str, Any]) -> list[str] | None:
             if not isinstance(item, dict) or str(item.get("gate") or "") != gate:
                 continue
             round_value = item.get("round")
-            if active_round is None or not isinstance(round_value, int) or round_value == active_round:
+            if (
+                active_round is None
+                or not isinstance(round_value, int)
+                or round_value == active_round
+            ):
                 match = item
                 break
         if not match:
@@ -839,7 +911,11 @@ def _format_review_results(snapshot: Mapping[str, Any]) -> list[str] | None:
             if not isinstance(item, dict) or str(item.get("check") or "") != check:
                 continue
             round_value = item.get("review_round")
-            if active_round is None or not isinstance(round_value, int) or round_value == active_round:
+            if (
+                active_round is None
+                or not isinstance(round_value, int)
+                or round_value == active_round
+            ):
                 match = item
                 break
         if not match:
@@ -852,7 +928,9 @@ def _format_review_results(snapshot: Mapping[str, Any]) -> list[str] | None:
     return result or None
 
 
-def _format_evidence_for_node(*, node_name: str, snapshot: Mapping[str, Any]) -> list[str] | None:
+def _format_evidence_for_node(
+    *, node_name: str, snapshot: Mapping[str, Any]
+) -> list[str] | None:
     if node_name == "retrieve_subquery":
         run = _resolve_current_subquery_run(snapshot)
         return _format_evidence_value(run.get("context"))
@@ -910,7 +988,9 @@ def _format_evidence_value(value: Any) -> list[str] | None:
                 "document_name",
                 "document_title",
             )
-            body = _pick_text(record, "excerpt", "chunk_content", "content", "text", "body")
+            body = _pick_text(
+                record, "excerpt", "chunk_content", "content", "text", "body"
+            )
             items.append(_format_evidence_entry(title, body))
         return items or ["未检索到相关证据"]
     record = _as_dict(value)
@@ -929,10 +1009,7 @@ def _parse_evidence_blocks(text: str) -> list[str]:
 
 
 def _format_evidence_entry(title: str | None, body: str | None) -> str:
-    return (
-        f"文档名：{title or '未命名文档'}\n"
-        f"Chunk 内容：{body or '正文缺失'}"
-    )
+    return f"文档名：{title or '未命名文档'}\nChunk 内容：{body or '正文缺失'}"
 
 
 def _single_item_list(value: str | None) -> list[str] | None:
@@ -991,9 +1068,15 @@ def _resolve_decision_triplet(
         route = _resolve_routing_decision(snapshot, "preprocess")
         raw = _pick_text(route, "next_node", "action") or _pick_text(trace, "goto")
         decision = _humanize_decision(raw) or (
-            f"进入{next_node_label}" if next_node_label and next_node_label != "结束" else "结束当前流程"
+            f"进入{next_node_label}"
+            if next_node_label and next_node_label != "结束"
+            else "结束当前流程"
         )
-        reason = _pick_text(route, "reason") or _pick_text(summary, "reason") or default_reason
+        reason = (
+            _pick_text(route, "reason")
+            or _pick_text(summary, "reason")
+            or default_reason
+        )
         return decision, reason, next_node_label or "下游节点未知"
 
     if node_name == "retrieval_subgraph":
@@ -1003,9 +1086,18 @@ def _resolve_decision_triplet(
 
     if node_name == "answer_subgraph":
         routing = _resolve_routing_decision(snapshot, "answer_subgraph")
-        raw = _pick_text(routing, "next_node", "action") or _pick_text(summary, "next_step") or _pick_text(trace, "goto")
+        raw = (
+            _pick_text(routing, "next_node", "action")
+            or _pick_text(summary, "next_step")
+            or _pick_text(trace, "goto")
+        )
         decision = _answer_route_decision_text(raw)
-        reason = _pick_text(routing, "reason") or _pick_text(summary, "reason") or _pick_text(reflection, "reason") or default_reason
+        reason = (
+            _pick_text(routing, "reason")
+            or _pick_text(summary, "reason")
+            or _pick_text(reflection, "reason")
+            or default_reason
+        )
         return decision, reason, next_node_label or "下游节点未知"
 
     if node_name in {
@@ -1014,12 +1106,24 @@ def _resolve_decision_triplet(
     }:
         run = _resolve_answer_review_run(snapshot, node_name)
         passed = run.get("passed")
-        decision = "通过" if passed is True else "未通过" if passed is False else "未返回明确结论"
+        decision = (
+            "通过"
+            if passed is True
+            else "未通过"
+            if passed is False
+            else "未返回明确结论"
+        )
         reason = _pick_text(run, "reason") or default_reason
-        return decision, reason, next_node_label or _resolve_node_label(
-            "answer_review_fuse",
-            node_label_resolver=node_label_resolver,
-        ) or "下游节点未知"
+        return (
+            decision,
+            reason,
+            next_node_label
+            or _resolve_node_label(
+                "answer_review_fuse",
+                node_label_resolver=node_label_resolver,
+            )
+            or "下游节点未知",
+        )
 
     if node_name == "answer_review_fuse":
         passed = summary.get("passed")
@@ -1034,14 +1138,21 @@ def _resolve_decision_triplet(
         return decision, reason, next_node_label or "下游节点未知"
 
     if node_name == "force_exit":
-        reason = _pick_text(summary, "reason") or _pick_text(reflection, "reason") or default_reason
+        reason = (
+            _pick_text(summary, "reason")
+            or _pick_text(reflection, "reason")
+            or default_reason
+        )
         return None, reason, "结束"
 
     decision = _humanize_decision(
-        _pick_text(summary, "decision", "action", "goto")
-        or _pick_text(trace, "goto")
+        _pick_text(summary, "decision", "action", "goto") or _pick_text(trace, "goto")
     )
-    reason = _pick_text(summary, "reason") or _pick_text(reflection, "reason") or default_reason
+    reason = (
+        _pick_text(summary, "reason")
+        or _pick_text(reflection, "reason")
+        or default_reason
+    )
     return decision, reason, next_node_label
 
 
@@ -1148,7 +1259,9 @@ def _answer_route_decision_text(raw: str | None) -> str:
         "transform_query": "需要继续检索",
         "force_exit": "结束当前回答",
     }
-    return mapping.get((raw or "").strip().lower(), _humanize_decision(raw) or "继续处理")
+    return mapping.get(
+        (raw or "").strip().lower(), _humanize_decision(raw) or "继续处理"
+    )
 
 
 def _humanize_decision(raw: str | None) -> str | None:

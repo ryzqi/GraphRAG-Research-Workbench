@@ -7,7 +7,14 @@ from datetime import datetime
 from enum import Enum
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationInfo,
+    field_validator,
+    model_validator,
+)
 
 from app.models.research_session import ResearchSessionStatus
 from app.utils.text_sanitization import has_visible_text
@@ -185,10 +192,7 @@ class ResearchSessionAccepted(BaseModel):
             and self.clarification_request is None
         ):
             raise ValueError("clarifying 状态必须包含 clarification_request")
-        if (
-            self.status == ResearchSessionStatus.QUEUED
-            and self.plan_snapshot is None
-        ):
+        if self.status == ResearchSessionStatus.QUEUED and self.plan_snapshot is None:
             raise ValueError("queued 状态必须包含 plan_snapshot")
         if (
             self.status == ResearchSessionStatus.PLAN_READY
@@ -247,7 +251,11 @@ class ResearchCanonicalCitation(BaseModel):
     def validate_source_specific_fields(self) -> "ResearchCanonicalCitation":
         if self.source_type == ResearchSourceType.WEB and not self.origin_url:
             raise ValueError("网页来源 citation 必须包含 origin_url")
-        if self.source_type == ResearchSourceType.PAPER and self.arxiv_id and not self.pdf_url:
+        if (
+            self.source_type == ResearchSourceType.PAPER
+            and self.arxiv_id
+            and not self.pdf_url
+        ):
             raise ValueError("论文 citation 提供 arxiv_id 时必须同时提供 pdf_url")
         return self
 

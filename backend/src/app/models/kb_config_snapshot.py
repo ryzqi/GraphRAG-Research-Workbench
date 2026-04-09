@@ -42,7 +42,9 @@ class KBConfigSnapshot(Base):
     )
 
     __table_args__ = (
-        sa.UniqueConstraint("kb_id", "version", name="uq_kb_config_snapshots_kb_version"),
+        sa.UniqueConstraint(
+            "kb_id", "version", name="uq_kb_config_snapshots_kb_version"
+        ),
         sa.Index(
             "uq_kb_config_snapshots_active",
             "kb_id",

@@ -282,7 +282,9 @@ class Settings(BaseSettings):
     embedding_model: str = Field("text-embedding-3-small", alias="EMBEDDING_MODEL")
     embedding_timeout_seconds: float = Field(30.0, alias="EMBEDDING_TIMEOUT_SECONDS")
     embedding_dim: int | None = Field(None, alias="EMBEDDING_DIM")
-    embedding_retry_max_retries: int = Field(2, ge=0, alias="EMBEDDING_RETRY_MAX_RETRIES")
+    embedding_retry_max_retries: int = Field(
+        2, ge=0, alias="EMBEDDING_RETRY_MAX_RETRIES"
+    )
     embedding_retry_base_delay_seconds: float = Field(
         0.2, ge=0.0, alias="EMBEDDING_RETRY_BASE_DELAY_SECONDS"
     )
@@ -356,9 +358,7 @@ class Settings(BaseSettings):
     searxng_default_categories: list[str] = Field(
         default_factory=list, alias="SEARXNG_DEFAULT_CATEGORIES"
     )
-    searxng_default_language: str | None = Field(
-        None, alias="SEARXNG_DEFAULT_LANGUAGE"
-    )
+    searxng_default_language: str | None = Field(None, alias="SEARXNG_DEFAULT_LANGUAGE")
     searxng_default_engines: list[str] = Field(
         default_factory=list, alias="SEARXNG_DEFAULT_ENGINES"
     )
@@ -400,9 +400,7 @@ class Settings(BaseSettings):
     retrieval_cache_ttl_seconds: int = Field(300, alias="RETRIEVAL_CACHE_TTL_SECONDS")
     retrieval_cache_enabled: bool = Field(True, alias="RETRIEVAL_CACHE_ENABLED")
     retrieval_min_score: float | None = Field(0.2, alias="RETRIEVAL_MIN_SCORE")
-    retrieval_raw_min_score: float | None = Field(
-        None, alias="RETRIEVAL_RAW_MIN_SCORE"
-    )
+    retrieval_raw_min_score: float | None = Field(None, alias="RETRIEVAL_RAW_MIN_SCORE")
     retrieval_rank_fusion_min_score: float | None = Field(
         None, alias="RETRIEVAL_RANK_FUSION_MIN_SCORE"
     )
@@ -458,9 +456,7 @@ class Settings(BaseSettings):
     kb_chat_decomposition_enabled: bool = Field(
         True, alias="KB_CHAT_DECOMPOSITION_ENABLED"
     )
-    kb_chat_multi_query_enabled: bool = Field(
-        True, alias="KB_CHAT_MULTI_QUERY_ENABLED"
-    )
+    kb_chat_multi_query_enabled: bool = Field(True, alias="KB_CHAT_MULTI_QUERY_ENABLED")
     kb_chat_max_clarification_rounds: int = Field(
         1, alias="KB_CHAT_MAX_CLARIFICATION_ROUNDS"
     )
@@ -563,7 +559,9 @@ class Settings(BaseSettings):
     mineru_table_enable: bool = Field(True, alias="MINERU_TABLE_ENABLE")
     pdf_fallback_enabled: bool = Field(True, alias="PDF_FALLBACK_ENABLED")
     pdf_fallback_max_pages: int = Field(500, ge=1, alias="PDF_FALLBACK_MAX_PAGES")
-    pdf_fallback_min_text_chars: int = Field(20, ge=0, alias="PDF_FALLBACK_MIN_TEXT_CHARS")
+    pdf_fallback_min_text_chars: int = Field(
+        20, ge=0, alias="PDF_FALLBACK_MIN_TEXT_CHARS"
+    )
 
     # OpenTelemetry 配置
     otel_enabled: bool = Field(False, alias="OTEL_ENABLED")
@@ -718,9 +716,7 @@ class Settings(BaseSettings):
         raw = "responses/v1" if v is None else str(v)
         normalized = raw.strip().lower()
         if normalized not in {"v0", "v1", "responses/v1"}:
-            raise ValueError(
-                "LLM_OUTPUT_VERSION must be one of: v0, v1, responses/v1"
-            )
+            raise ValueError("LLM_OUTPUT_VERSION must be one of: v0, v1, responses/v1")
         return normalized
 
     @field_validator("general_chat_replay_mode", mode="before")
@@ -773,9 +769,9 @@ def validate_startup_settings(settings: Settings) -> None:
     ):
         problems.append("REDIS_URL 使用默认示例配置")
 
-    if _normalize_url_for_compare(settings.celery_broker_url) == _normalize_url_for_compare(
-        _DEFAULT_CELERY_BROKER_URL
-    ):
+    if _normalize_url_for_compare(
+        settings.celery_broker_url
+    ) == _normalize_url_for_compare(_DEFAULT_CELERY_BROKER_URL):
         problems.append("CELERY_BROKER_URL 使用默认示例配置")
 
     if _normalize_url_for_compare(

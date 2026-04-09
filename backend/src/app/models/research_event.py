@@ -51,11 +51,16 @@ class ResearchEvent(Base):
         server_default="main",
     )
     payload: Mapped[dict] = mapped_column(JSONB, nullable=False)
-    trace_id: Mapped[str | None] = mapped_column(sa.String(length=128), nullable=True, index=True)
-    idempotency_key: Mapped[str | None] = mapped_column(sa.String(length=128), nullable=True)
+    trace_id: Mapped[str | None] = mapped_column(
+        sa.String(length=128), nullable=True, index=True
+    )
+    idempotency_key: Mapped[str | None] = mapped_column(
+        sa.String(length=128), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()
     )
 
-    session: Mapped["ResearchSession"] = relationship("ResearchSession", back_populates="events")
-
+    session: Mapped["ResearchSession"] = relationship(
+        "ResearchSession", back_populates="events"
+    )

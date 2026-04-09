@@ -68,7 +68,9 @@ def build_preprocess_subgraph(*, settings: Settings):
         context_schema=KbChatGraphContext,
     )
     llm_retry_policy = RetryPolicy(
-        max_attempts=max(2, int(getattr(settings, "kb_chat_max_generation_retries", 2)) + 1)
+        max_attempts=max(
+            2, int(getattr(settings, "kb_chat_max_generation_retries", 2)) + 1
+        )
     )
 
     def add_traced_node(
@@ -86,7 +88,9 @@ def build_preprocess_subgraph(*, settings: Settings):
             retry_enabled=retry_policy is not None,
         )
         if retry_policy is None:
-            metadata["retry_disabled_reason"] = retry_disabled_reason or side_effect_type
+            metadata["retry_disabled_reason"] = (
+                retry_disabled_reason or side_effect_type
+            )
         graph.add_node(
             node_id,
             wrap_kb_chat_node_with_io(node_id, node_callable),
@@ -153,7 +157,9 @@ def build_preprocess_subgraph(*, settings: Settings):
         partial(query_plan_finalize, settings=settings),
         side_effect_type="deterministic_rule",
     )
-    add_traced_node("preprocess_exit", _preprocess_exit, side_effect_type="deterministic_rule")
+    add_traced_node(
+        "preprocess_exit", _preprocess_exit, side_effect_type="deterministic_rule"
+    )
 
     graph.set_entry_point("merge_context")
     graph.add_edge("merge_context", "resolve_reference")

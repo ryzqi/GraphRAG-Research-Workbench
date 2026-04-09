@@ -44,7 +44,9 @@ async def _emit_research_events(
     session,
     after_event_id: str | None,
 ) -> AsyncIterator[tuple[str, object]]:
-    for envelope in service.list_event_envelopes(session, after_event_id=after_event_id):
+    for envelope in service.list_event_envelopes(
+        session, after_event_id=after_event_id
+    ):
         yield "research.event", envelope.model_dump(mode="json")
 
 
@@ -113,7 +115,9 @@ async def update_research_plan(
 ) -> ResearchSessionAccepted:
     service = _get_research_service(request=request, db=db)
     session = await service.get_session(session_id)
-    session, plan_result = await service.update_plan(session=session, feedback=body.feedback)
+    session, plan_result = await service.update_plan(
+        session=session, feedback=body.feedback
+    )
     await db.commit()
     return ResearchSessionAccepted(
         session_id=session.id,
@@ -155,7 +159,9 @@ async def stream_research_session(
 ) -> StreamingResponse:
     service = _get_research_service(request=request, db=db)
     session = await service.get_session(session_id)
-    resume_params = ResearchStreamResumeParams(resume_from_event_id=resume_from_event_id)
+    resume_params = ResearchStreamResumeParams(
+        resume_from_event_id=resume_from_event_id
+    )
     after_event_id = resume_params.effective_after_event_id(
         last_event_id=request.headers.get("Last-Event-ID")
     )

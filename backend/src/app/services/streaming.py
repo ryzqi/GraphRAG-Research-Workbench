@@ -208,7 +208,11 @@ def extract_stream_delta(
 
     # 2. 检查工具调用
     tool_call_chunks = getattr(token, "tool_call_chunks", None)
-    if tool_call_chunks and isinstance(tool_call_chunks, list) and len(tool_call_chunks) > 0:
+    if (
+        tool_call_chunks
+        and isinstance(tool_call_chunks, list)
+        and len(tool_call_chunks) > 0
+    ):
         for chunk in tool_call_chunks:
             if not isinstance(chunk, dict):
                 continue
@@ -397,6 +401,7 @@ class StreamState:
         if "human_approved" in update:
             self.human_approved = update.get("human_approved")
 
+
 def extract_message_text(token: object) -> str:
     """从 LLM token chunk 中提取文本。"""
     if token is None:
@@ -408,6 +413,7 @@ def extract_message_text(token: object) -> str:
     if isinstance(content, str):
         return content
     return extract_text_content(content, include_output_text=True)
+
 
 def apply_updates_chunk(state: StreamState, chunk: dict[str, Any]) -> list[Any]:
     """合并 updates chunk，返回 interrupt 列表。"""
@@ -422,6 +428,7 @@ def apply_updates_chunk(state: StreamState, chunk: dict[str, Any]) -> list[Any]:
         if isinstance(update, dict):
             state.apply_update(update)
     return interrupts
+
 
 async def stream_snapshots(
     fetcher: Callable[[], Awaitable[Any]],

@@ -30,7 +30,10 @@ from app.agents.general_chat_agent import (
 )
 from app.agents.tool_calling.registry import build_tool_registry
 from app.agents.tools.system_time import build_system_time_tool
-from app.agents.tools.web_search import has_web_extract_provider, has_web_search_provider
+from app.agents.tools.web_search import (
+    has_web_extract_provider,
+    has_web_search_provider,
+)
 from app.core.checkpoint import CheckpointManager
 from app.core.errors import AppError
 from app.core.logging import set_run_id
@@ -173,9 +176,7 @@ def _build_interrupt_entries(interrupts: list[object]) -> list[dict[str, Any]]:
         raw_requests = payload.get("action_requests")
         action_requests: list[dict[str, Any]] = []
         if isinstance(raw_requests, list):
-            action_requests = [
-                item for item in raw_requests if isinstance(item, dict)
-            ]
+            action_requests = [item for item in raw_requests if isinstance(item, dict)]
         interrupt_id = _extract_interrupt_id(interrupt) or f"interrupt_{index + 1}"
         entries.append(
             {
@@ -296,9 +297,7 @@ class GeneralChatService:
         )
 
     @asynccontextmanager
-    async def _load_runtime_tool_registry_for_session(
-        self, *, session: ChatSession
-    ):
+    async def _load_runtime_tool_registry_for_session(self, *, session: ChatSession):
         include_mcp = bool(session.allow_external and self._settings.mcp_enabled)
         include_web_search = has_web_search_provider(self._settings)
         include_web_extract = has_web_extract_provider(self._settings)
@@ -409,9 +408,7 @@ class GeneralChatService:
     async def _wait_for_dedup_binding(
         self, *, dedup: ChatRequestDedup
     ) -> ChatRequestDedup | None:
-        deadline = (
-            datetime.now(timezone.utc).timestamp() + DEDUP_ATTACH_TIMEOUT_SECONDS
-        )
+        deadline = datetime.now(timezone.utc).timestamp() + DEDUP_ATTACH_TIMEOUT_SECONDS
         while datetime.now(timezone.utc).timestamp() < deadline:
             refreshed_stmt = (
                 select(ChatRequestDedup)
@@ -520,7 +517,9 @@ class GeneralChatService:
             .order_by(ChatMessage.created_at.asc())
             .limit(1)
         )
-        next_user_created_at = (await self._db.execute(next_user_stmt)).scalar_one_or_none()
+        next_user_created_at = (
+            await self._db.execute(next_user_stmt)
+        ).scalar_one_or_none()
 
         assistant_stmt = (
             select(ChatMessage)
@@ -566,7 +565,9 @@ class GeneralChatService:
         )
 
     @staticmethod
-    def _serialize_external_evidence_locator(item: EvidenceItem) -> dict[str, Any] | None:
+    def _serialize_external_evidence_locator(
+        item: EvidenceItem,
+    ) -> dict[str, Any] | None:
         locator = dict(item.locator) if isinstance(item.locator, dict) else {}
         meta: dict[str, str] = {}
         if item.source_excerpt:
@@ -660,7 +661,9 @@ class GeneralChatService:
         checkpoint_tuple = await CheckpointManager.get_state(str(session.id))
         if checkpoint_tuple is None:
             return None
-        pending_interrupts_raw = _extract_pending_interrupts(checkpoint_tuple.pending_writes)
+        pending_interrupts_raw = _extract_pending_interrupts(
+            checkpoint_tuple.pending_writes
+        )
         if not pending_interrupts_raw:
             return None
 
@@ -702,7 +705,11 @@ class GeneralChatService:
         session: ChatSession,
         dedup: ChatRequestDedup,
     ) -> ChatAnswerResponse | ChatPendingToolApprovalResponse:
-        bound = dedup if dedup.run_id is not None else await self._wait_for_dedup_binding(dedup=dedup)
+        bound = (
+            dedup
+            if dedup.run_id is not None
+            else await self._wait_for_dedup_binding(dedup=dedup)
+        )
         if bound is None or bound.run_id is None:
             raise AppError(
                 code="CHAT_REQUEST_STATE_INVALID",
@@ -856,8 +863,9 @@ class GeneralChatService:
             status_code = getattr(response, "status_code", None)
 
         if isinstance(status_code, int):
-            if status_code == 404 and GeneralChatService._is_previous_response_not_found_error(
-                exc
+            if (
+                status_code == 404
+                and GeneralChatService._is_previous_response_not_found_error(exc)
             ):
                 return AppError(
                     code="CHAT_REPLAY_STATE_EXPIRED",
@@ -1091,7 +1099,9 @@ class GeneralChatService:
         }
 
         next_metrics = {
-            "latency_ms": int((datetime.now(timezone.utc) - started_at).total_seconds() * 1000),
+            "latency_ms": int(
+                (datetime.now(timezone.utc) - started_at).total_seconds() * 1000
+            ),
             "context": context_metrics,
             **replay_metrics,
             **(stream_state.metrics if isinstance(stream_state.metrics, dict) else {}),
@@ -1126,15 +1136,26 @@ class GeneralChatService:
                 status_code=400,
             )
 
-        missing = [interrupt_id for interrupt_id in pending_ids if interrupt_id not in requested_map]
+        missing = [
+            interrupt_id
+            for interrupt_id in pending_ids
+            if interrupt_id not in requested_map
+        ]
         pending_id_set = set(pending_ids)
-        extra = [interrupt_id for interrupt_id in requested_map if interrupt_id not in pending_id_set]
+        extra = [
+            interrupt_id
+            for interrupt_id in requested_map
+            if interrupt_id not in pending_id_set
+        ]
         if missing or extra:
             raise AppError(
                 code="TOOL_APPROVAL_PAYLOAD_INVALID",
                 message="审批请求与当前待审批中断不匹配",
                 status_code=400,
-                details={"missing_interrupt_ids": missing, "extra_interrupt_ids": extra},
+                details={
+                    "missing_interrupt_ids": missing,
+                    "extra_interrupt_ids": extra,
+                },
             )
 
         decision_map: dict[str, dict[str, Any]] = {}
@@ -1194,9 +1215,7 @@ class GeneralChatService:
 
     async def _ensure_no_running_general_run(self, *, session_id: uuid.UUID) -> None:
         await self._db.execute(
-            select(ChatSession.id)
-            .where(ChatSession.id == session_id)
-            .with_for_update()
+            select(ChatSession.id).where(ChatSession.id == session_id).with_for_update()
         )
         running = await self._get_running_general_run(session_id=session_id)
         if running is None:
@@ -1215,9 +1234,7 @@ class GeneralChatService:
         run: AgentRun,
     ) -> None:
         await self._db.execute(
-            select(ChatSession.id)
-            .where(ChatSession.id == session.id)
-            .with_for_update()
+            select(ChatSession.id).where(ChatSession.id == session.id).with_for_update()
         )
         running = await self._get_running_general_run(
             session_id=session.id,
@@ -1236,7 +1253,9 @@ class GeneralChatService:
                 status_code=409,
                 details={"run_id": str(running.id)},
             )
-        stage_summaries = run.stage_summaries if isinstance(run.stage_summaries, dict) else {}
+        stage_summaries = (
+            run.stage_summaries if isinstance(run.stage_summaries, dict) else {}
+        )
         tool_approval = (
             stage_summaries.get("tool_approval")
             if isinstance(stage_summaries.get("tool_approval"), dict)
@@ -1278,8 +1297,9 @@ class GeneralChatService:
         exc: Exception,
         replay_decision: ReplayDecision,
     ) -> bool:
-        return replay_decision.allow_recovery and cls._is_previous_response_not_found_error(
-            exc
+        return (
+            replay_decision.allow_recovery
+            and cls._is_previous_response_not_found_error(exc)
         )
 
     @staticmethod
@@ -1338,7 +1358,9 @@ class GeneralChatService:
         client_request_id: str | None = None,
     ) -> ChatAnswerResponse | ChatPendingToolApprovalResponse:
         """处理用户问题并生成答案（使用 create_agent）。"""
-        normalized_client_request_id = self._normalize_client_request_id(client_request_id)
+        normalized_client_request_id = self._normalize_client_request_id(
+            client_request_id
+        )
         dedup_record: ChatRequestDedup | None = None
         if normalized_client_request_id:
             dedup_record, claimed = await self._claim_request_dedup(
@@ -1348,7 +1370,9 @@ class GeneralChatService:
             if not claimed:
                 if dedup_record is None:  # pragma: no cover - defensive
                     raise RuntimeError("Missing dedup record for replay path")
-                return await self._replay_dedup_request(session=session, dedup=dedup_record)
+                return await self._replay_dedup_request(
+                    session=session, dedup=dedup_record
+                )
 
         try:
             await self._ensure_no_running_general_run(session_id=session.id)
@@ -1364,7 +1388,9 @@ class GeneralChatService:
         history: list[AnyMessage] = []
         existing_messages = None
         if checkpoint_tuple is not None:
-            checkpoint_values = (checkpoint_tuple.checkpoint or {}).get("channel_values", {})
+            checkpoint_values = (checkpoint_tuple.checkpoint or {}).get(
+                "channel_values", {}
+            )
             existing_messages = checkpoint_values.get("messages")
             if checkpoint_messages_require_reset(
                 existing_messages,
@@ -1380,7 +1406,11 @@ class GeneralChatService:
                 await CheckpointManager.delete_thread(thread_id)
                 checkpoint_tuple = None
                 existing_messages = None
-        if checkpoint_tuple is None or not isinstance(existing_messages, list) or not existing_messages:
+        if (
+            checkpoint_tuple is None
+            or not isinstance(existing_messages, list)
+            or not existing_messages
+        ):
             history = await self._load_history(session.id, limit=None)
         original_history = list(history)
 
@@ -1419,9 +1449,10 @@ class GeneralChatService:
 
         try:
             # 统一工具注册（内置 + MCP）
-            tools, tool_meta_by_name = await self._open_runtime_tool_registry_for_session(
-                session=session
-            )
+            (
+                tools,
+                tool_meta_by_name,
+            ) = await self._open_runtime_tool_registry_for_session(session=session)
             hitl_interrupt_on = build_hitl_interrupt_on(tool_meta_by_name)
 
             # 构造初始 messages（历史 + 用户问题）
@@ -1498,7 +1529,9 @@ class GeneralChatService:
                     interrupts, tool_meta_by_name
                 )
                 context_metrics = self._build_context_metrics(
-                    result.get("messages") if isinstance(result.get("messages"), list) else []
+                    result.get("messages")
+                    if isinstance(result.get("messages"), list)
+                    else []
                 )
 
                 run.stage_summaries = {
@@ -1511,8 +1544,7 @@ class GeneralChatService:
                     metrics = {}
                 run.metrics = {
                     "latency_ms": int(
-                        (datetime.now(timezone.utc) - started_at).total_seconds()
-                        * 1000
+                        (datetime.now(timezone.utc) - started_at).total_seconds() * 1000
                     ),
                     "context": context_metrics,
                     **replay_metrics,
@@ -1576,7 +1608,9 @@ class GeneralChatService:
         client_request_id: str | None = None,
     ) -> Any:
         """处理用户问题并生成答案（流式 SSE）。"""
-        normalized_client_request_id = self._normalize_client_request_id(client_request_id)
+        normalized_client_request_id = self._normalize_client_request_id(
+            client_request_id
+        )
         dedup_record: ChatRequestDedup | None = None
         if normalized_client_request_id:
             dedup_record, claimed = await self._claim_request_dedup(
@@ -1592,20 +1626,26 @@ class GeneralChatService:
                         dedup=dedup_record,
                     )
                 except AppError as app_error:
-                    yield "error", {
-                        "code": app_error.code,
-                        "message": app_error.message,
-                        "details": app_error.details,
-                    }
+                    yield (
+                        "error",
+                        {
+                            "code": app_error.code,
+                            "message": app_error.message,
+                            "details": app_error.details,
+                        },
+                    )
                     return
-                yield "meta", {
-                    "run_id": str(replay.run.id),
-                    "session_id": str(session.id),
-                    "session_type": session.session_type.value,
-                    "thread_id": str(session.id),
-                    "mode": session.mode.value,
-                    "dedup_hit": True,
-                }
+                yield (
+                    "meta",
+                    {
+                        "run_id": str(replay.run.id),
+                        "session_id": str(session.id),
+                        "session_type": session.session_type.value,
+                        "thread_id": str(session.id),
+                        "mode": session.mode.value,
+                        "dedup_hit": True,
+                    },
+                )
                 if replay.status == "pending_tool_approval":
                     yield "interrupt", replay.model_dump(mode="json")
                 else:
@@ -1623,17 +1663,22 @@ class GeneralChatService:
         try:
             replay_decision = self._resolve_replay_decision()
         except ModelConfigIncompleteError as exc:
-            yield "error", {
-                "code": "MODEL_CONFIG_INCOMPLETE",
-                "message": str(exc),
-            }
+            yield (
+                "error",
+                {
+                    "code": "MODEL_CONFIG_INCOMPLETE",
+                    "message": str(exc),
+                },
+            )
             return
         require_assistant_response_id = replay_decision.require_assistant_response_id
         checkpoint_tuple = await CheckpointManager.get_state(thread_id)
         history: list[AnyMessage] = []
         existing_messages = None
         if checkpoint_tuple is not None:
-            checkpoint_values = (checkpoint_tuple.checkpoint or {}).get("channel_values", {})
+            checkpoint_values = (checkpoint_tuple.checkpoint or {}).get(
+                "channel_values", {}
+            )
             existing_messages = checkpoint_values.get("messages")
             if checkpoint_messages_require_reset(
                 existing_messages,
@@ -1649,7 +1694,11 @@ class GeneralChatService:
                 await CheckpointManager.delete_thread(thread_id)
                 checkpoint_tuple = None
                 existing_messages = None
-        if checkpoint_tuple is None or not isinstance(existing_messages, list) or not existing_messages:
+        if (
+            checkpoint_tuple is None
+            or not isinstance(existing_messages, list)
+            or not existing_messages
+        ):
             history = await self._load_history(session.id, limit=None)
         original_history = list(history)
 
@@ -1688,9 +1737,10 @@ class GeneralChatService:
 
         try:
             # 统一工具注册（内置 + MCP）
-            tools, tool_meta_by_name = await self._open_runtime_tool_registry_for_session(
-                session=session
-            )
+            (
+                tools,
+                tool_meta_by_name,
+            ) = await self._open_runtime_tool_registry_for_session(session=session)
             hitl_interrupt_on = build_hitl_interrupt_on(tool_meta_by_name)
 
             system_prompt = self._prompts.render_with_few_shot("general_chat/system")
@@ -1698,13 +1748,16 @@ class GeneralChatService:
             replay_metrics = self._build_replay_metrics(replay_decision)
 
             # SSE：meta 事件
-            yield "meta", {
-                "run_id": str(run.id),
-                "session_id": str(session.id),
-                "session_type": session.session_type.value,
-                "thread_id": thread_id,
-                "mode": session.mode.value,
-            }
+            yield (
+                "meta",
+                {
+                    "run_id": str(run.id),
+                    "session_id": str(session.id),
+                    "session_type": session.session_type.value,
+                    "thread_id": thread_id,
+                    "mode": session.mode.value,
+                },
+            )
 
             current_decision = replay_decision
             attempt = 0
@@ -1773,20 +1826,25 @@ class GeneralChatService:
                                     and isinstance(_meta.get("langgraph_node"), str)
                                     else None
                                 )
-                                yield "messages", {
-                                    "run_id": str(run.id),
-                                    "node": node_name,
-                                    "deltas": [delta.to_dict() for delta in deltas],
-                                    "ts": datetime.now(timezone.utc).isoformat(),
-                                }
+                                yield (
+                                    "messages",
+                                    {
+                                        "run_id": str(run.id),
+                                        "node": node_name,
+                                        "deltas": [delta.to_dict() for delta in deltas],
+                                        "ts": datetime.now(timezone.utc).isoformat(),
+                                    },
+                                )
                             continue
 
                         if mode == "updates" and isinstance(chunk, dict):
                             interrupts = apply_updates_chunk(stream_state, chunk)
                             if interrupts:
-                                pending_interrupts = self._build_pending_interrupt_approvals(
-                                    interrupts,
-                                    tool_meta_by_name,
+                                pending_interrupts = (
+                                    self._build_pending_interrupt_approvals(
+                                        interrupts,
+                                        tool_meta_by_name,
+                                    )
                                 )
                                 context_metrics = self._build_context_metrics(
                                     stream_state.messages
@@ -1799,7 +1857,9 @@ class GeneralChatService:
                                 }
                                 run.metrics = {
                                     "latency_ms": int(
-                                        (datetime.now(timezone.utc) - started_at).total_seconds()
+                                        (
+                                            datetime.now(timezone.utc) - started_at
+                                        ).total_seconds()
                                         * 1000
                                     ),
                                     "context": context_metrics,
@@ -1871,7 +1931,9 @@ class GeneralChatService:
                             recovered=True,
                             recovery_reason="previous_response_id_not_found",
                         )
-                        recovery_history = await self._load_history(session.id, limit=None)
+                        recovery_history = await self._load_history(
+                            session.id, limit=None
+                        )
                         original_history = self._drop_trailing_user_message(
                             recovery_history,
                             user_content=user_content,
@@ -1885,10 +1947,13 @@ class GeneralChatService:
             await self._persist_failed_run(run=run, error=e)
 
             if isinstance(e, ModelConfigIncompleteError):
-                yield "error", {
-                    "code": "MODEL_CONFIG_INCOMPLETE",
-                    "message": str(e),
-                }
+                yield (
+                    "error",
+                    {
+                        "code": "MODEL_CONFIG_INCOMPLETE",
+                        "message": str(e),
+                    },
+                )
                 return
 
             mapped = self._map_llm_exception(e)
@@ -1900,17 +1965,23 @@ class GeneralChatService:
                         "upstream_status_code": getattr(e, "status_code", None),
                     },
                 )
-                yield "error", {
-                    "code": mapped.code,
-                    "message": mapped.message,
-                    "details": mapped.details,
-                }
+                yield (
+                    "error",
+                    {
+                        "code": mapped.code,
+                        "message": mapped.message,
+                        "details": mapped.details,
+                    },
+                )
                 return
 
-            yield "error", {
-                "code": "CHAT_STREAM_FAILED",
-                "message": str(e),
-            }
+            yield (
+                "error",
+                {
+                    "code": "CHAT_STREAM_FAILED",
+                    "message": str(e),
+                },
+            )
         finally:
             await self._close_runtime_tool_registry()
             set_run_id(None)
@@ -1946,9 +2017,10 @@ class GeneralChatService:
                 )
 
             # 为恢复执行重新构建 agent（状态由 checkpointer 提供）
-            tools, tool_meta_by_name = await self._open_runtime_tool_registry_for_session(
-                session=session
-            )
+            (
+                tools,
+                tool_meta_by_name,
+            ) = await self._open_runtime_tool_registry_for_session(session=session)
             hitl_interrupt_on = build_hitl_interrupt_on(tool_meta_by_name)
             pending_interrupts = self._build_pending_interrupt_approvals(
                 pending_interrupts_raw,
@@ -2060,26 +2132,33 @@ class GeneralChatService:
             thread_id = str(session.id)
             checkpoint_tuple = await CheckpointManager.get_state(thread_id)
             if checkpoint_tuple is None:
-                yield "error", {
-                    "code": "CHECKPOINT_NOT_FOUND",
-                    "message": "检查点不存在，无法恢复执行",
-                }
+                yield (
+                    "error",
+                    {
+                        "code": "CHECKPOINT_NOT_FOUND",
+                        "message": "检查点不存在，无法恢复执行",
+                    },
+                )
                 return
 
             pending_interrupts_raw = _extract_pending_interrupts(
                 checkpoint_tuple.pending_writes
             )
             if not pending_interrupts_raw:
-                yield "error", {
-                    "code": "NO_PENDING_APPROVAL",
-                    "message": "当前会话没有待审批的工具调用",
-                }
+                yield (
+                    "error",
+                    {
+                        "code": "NO_PENDING_APPROVAL",
+                        "message": "当前会话没有待审批的工具调用",
+                    },
+                )
                 return
 
             # 为恢复执行重新构建 agent（状态由 checkpointer 提供）
-            tools, tool_meta_by_name = await self._open_runtime_tool_registry_for_session(
-                session=session
-            )
+            (
+                tools,
+                tool_meta_by_name,
+            ) = await self._open_runtime_tool_registry_for_session(session=session)
             hitl_interrupt_on = build_hitl_interrupt_on(tool_meta_by_name)
             pending_interrupts = self._build_pending_interrupt_approvals(
                 pending_interrupts_raw,
@@ -2107,7 +2186,9 @@ class GeneralChatService:
             )
             config = CheckpointManager.make_config(thread_id)
 
-            checkpoint_values = (checkpoint_tuple.checkpoint or {}).get("channel_values", {})
+            checkpoint_values = (checkpoint_tuple.checkpoint or {}).get(
+                "channel_values", {}
+            )
             existing_messages = checkpoint_values.get("messages", [])
             stream_state = StreamState(
                 messages=list(existing_messages)
@@ -2118,14 +2199,17 @@ class GeneralChatService:
                 metrics={},
             )
 
-            yield "meta", {
-                "run_id": str(run.id),
-                "session_id": str(session.id),
-                "session_type": session.session_type.value,
-                "thread_id": thread_id,
-                "mode": session.mode.value,
-                "resumed": True,
-            }
+            yield (
+                "meta",
+                {
+                    "run_id": str(run.id),
+                    "session_id": str(session.id),
+                    "session_type": session.session_type.value,
+                    "thread_id": thread_id,
+                    "mode": session.mode.value,
+                    "resumed": True,
+                },
+            )
 
             async for mode, chunk in agent.astream(
                 Command(resume=resume_payload),
@@ -2153,20 +2237,25 @@ class GeneralChatService:
                             and isinstance(_meta.get("langgraph_node"), str)
                             else None
                         )
-                        yield "messages", {
-                            "run_id": str(run.id),
-                            "node": node_name,
-                            "deltas": [delta.to_dict() for delta in deltas],
-                            "ts": datetime.now(timezone.utc).isoformat(),
-                        }
+                        yield (
+                            "messages",
+                            {
+                                "run_id": str(run.id),
+                                "node": node_name,
+                                "deltas": [delta.to_dict() for delta in deltas],
+                                "ts": datetime.now(timezone.utc).isoformat(),
+                            },
+                        )
                     continue
 
                 if mode == "updates" and isinstance(chunk, dict):
                     interrupts = apply_updates_chunk(stream_state, chunk)
                     if interrupts:
-                        next_pending_interrupts = self._build_pending_interrupt_approvals(
-                            interrupts,
-                            tool_meta_by_name,
+                        next_pending_interrupts = (
+                            self._build_pending_interrupt_approvals(
+                                interrupts,
+                                tool_meta_by_name,
+                            )
                         )
                         context_metrics = self._build_context_metrics(
                             stream_state.messages
@@ -2180,12 +2269,19 @@ class GeneralChatService:
                         run.metrics = {
                             **(run.metrics if isinstance(run.metrics, dict) else {}),
                             "latency_ms": int(
-                                (datetime.now(timezone.utc) - (run.started_at or datetime.now(timezone.utc))).total_seconds()
+                                (
+                                    datetime.now(timezone.utc)
+                                    - (run.started_at or datetime.now(timezone.utc))
+                                ).total_seconds()
                                 * 1000
                             ),
                             "context": context_metrics,
                             **replay_metrics,
-                            **(stream_state.metrics if isinstance(stream_state.metrics, dict) else {}),
+                            **(
+                                stream_state.metrics
+                                if isinstance(stream_state.metrics, dict)
+                                else {}
+                            ),
                         }
                         await self._db.commit()
                         await self._db.refresh(run)
@@ -2232,10 +2328,13 @@ class GeneralChatService:
             await self._persist_failed_run(run=run, error=e)
 
             if isinstance(e, ModelConfigIncompleteError):
-                yield "error", {
-                    "code": "MODEL_CONFIG_INCOMPLETE",
-                    "message": str(e),
-                }
+                yield (
+                    "error",
+                    {
+                        "code": "MODEL_CONFIG_INCOMPLETE",
+                        "message": str(e),
+                    },
+                )
                 return
 
             mapped = self._map_llm_exception(e)
@@ -2247,17 +2346,23 @@ class GeneralChatService:
                         "upstream_status_code": getattr(e, "status_code", None),
                     },
                 )
-                yield "error", {
-                    "code": mapped.code,
-                    "message": mapped.message,
-                    "details": mapped.details,
-                }
+                yield (
+                    "error",
+                    {
+                        "code": mapped.code,
+                        "message": mapped.message,
+                        "details": mapped.details,
+                    },
+                )
                 return
 
-            yield "error", {
-                "code": "CHAT_STREAM_FAILED",
-                "message": str(e),
-            }
+            yield (
+                "error",
+                {
+                    "code": "CHAT_STREAM_FAILED",
+                    "message": str(e),
+                },
+            )
         finally:
             await self._close_runtime_tool_registry()
             set_run_id(None)

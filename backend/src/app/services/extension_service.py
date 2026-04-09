@@ -161,7 +161,9 @@ class ExtensionService:
         if "status" in update_data and update_data.get("status") is not None:
             ext.status = ExtensionStatus(update_data["status"].value)
         ext.http_config = http_config.model_dump(mode="json") if http_config else None
-        ext.stdio_config = stdio_config.model_dump(mode="json") if stdio_config else None
+        ext.stdio_config = (
+            stdio_config.model_dump(mode="json") if stdio_config else None
+        )
         if "observability_config" in update_data:
             obs = update_data.get("observability_config")
             ext.observability_config = (
@@ -192,7 +194,9 @@ class ExtensionService:
         await self._db.commit()
         return True
 
-    async def get_tools(self, extension_id: uuid.UUID) -> tuple[
+    async def get_tools(
+        self, extension_id: uuid.UUID
+    ) -> tuple[
         list[ToolDescriptor],
         ExtensionConnectionStatus,
         str | None,
@@ -233,7 +237,9 @@ class ExtensionService:
         *,
         skip: int = 0,
         limit: int = 100,
-    ) -> tuple[list[ToolDescriptor], int, ExtensionConnectionStatus, str | None, int | None]:
+    ) -> tuple[
+        list[ToolDescriptor], int, ExtensionConnectionStatus, str | None, int | None
+    ]:
         """分页获取扩展提供的工具列表。"""
         tools, status, last_error, latency_ms = await self.get_tools(extension_id)
         tools_sorted = sorted(tools, key=lambda t: t.name)
@@ -247,7 +253,9 @@ class ExtensionService:
         http_config: ExtensionHttpConfig | dict | None,
         stdio_config: ExtensionStdioConfig | dict | None,
     ) -> tuple[ExtensionHttpConfig | None, ExtensionStdioConfig | None]:
-        parsed_http = self._parse_http_config(http_config) if http_config is not None else None
+        parsed_http = (
+            self._parse_http_config(http_config) if http_config is not None else None
+        )
         parsed_stdio = (
             self._parse_stdio_config(stdio_config) if stdio_config is not None else None
         )

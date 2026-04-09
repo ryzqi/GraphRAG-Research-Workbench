@@ -228,6 +228,7 @@ class AnswerReviewRun(TypedDict, total=False):
 
 # 图状态 schema
 
+
 class KbChatInputState(TypedDict):
     """单轮 KB Chat 的最小公开输入。"""
 
@@ -556,6 +557,7 @@ class AnswerReviewFuseInput(TypedDict, total=False):
     draft_answer: str
     stage_summaries: dict[str, Any]
 
+
 class AnswerRepairInput(TypedDict, total=False):
     user_input: str
     rewrite_input_query: str
@@ -610,7 +612,9 @@ def merge_routing_decision(
     merged: dict[str, RoutingDecision] = {}
     current = state.get("routing_decisions")
     if isinstance(current, dict):
-        merged = {key: value for key, value in current.items() if isinstance(value, dict)}
+        merged = {
+            key: value for key, value in current.items() if isinstance(value, dict)
+        }
     if isinstance(updates, dict):
         update_routing = updates.get("routing_decisions")
         if isinstance(update_routing, dict):
@@ -689,7 +693,9 @@ def make_initial_state(
     }
 
 
-def build_graph_input_state(state: dict[str, Any] | KbChatInputState) -> KbChatInputState:
+def build_graph_input_state(
+    state: dict[str, Any] | KbChatInputState,
+) -> KbChatInputState:
     """将任意 / 内部状态投影为公开图输入 schema。"""
 
     messages = state.get("messages") if isinstance(state, dict) else None

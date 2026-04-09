@@ -36,7 +36,10 @@ from app.core.logging import set_run_id
 from app.core.memory_store import StoreManager
 from app.core.settings import get_settings
 from app.integrations.embedding_client import EmbeddingClient
-from app.integrations.chat_model_factory import create_chat_model, get_active_model_identity
+from app.integrations.chat_model_factory import (
+    create_chat_model,
+    get_active_model_identity,
+)
 from app.integrations.llm_client import ChatMessage as LLMMessage
 from app.integrations.llm_client import LLMClient
 from app.integrations.milvus_client import MilvusClient
@@ -242,7 +245,9 @@ class KbChatService:
         )
 
     def _resolve_session_kb_chat_config(self, session: ChatSession) -> KbChatConfig:
-        raw = session.kb_chat_config if isinstance(session.kb_chat_config, dict) else None
+        raw = (
+            session.kb_chat_config if isinstance(session.kb_chat_config, dict) else None
+        )
         return resolve_kb_chat_config(raw=raw, settings=self._settings)
 
     @staticmethod
@@ -316,11 +321,17 @@ class KbChatService:
             turns.append({"role": role, "content": content})
         if normalized_answer and turns:
             last_turn = turns[-1]
-            if last_turn["role"] == "assistant" and last_turn["content"] == normalized_answer:
+            if (
+                last_turn["role"] == "assistant"
+                and last_turn["content"] == normalized_answer
+            ):
                 turns.pop()
         if normalized_question and turns:
             last_turn = turns[-1]
-            if last_turn["role"] == "user" and last_turn["content"] == normalized_question:
+            if (
+                last_turn["role"] == "user"
+                and last_turn["content"] == normalized_question
+            ):
                 turns.pop()
         max_items = max(0, int(max_turns)) * 2
         if max_items > 0 and len(turns) > max_items:
@@ -395,12 +406,16 @@ class KbChatService:
 
     @staticmethod
     def _semantic_cache_source_run_id(metrics: dict[str, Any]) -> str | None:
-        gray_release_gate = metrics.get("gray_release_gate") if isinstance(metrics, dict) else None
+        gray_release_gate = (
+            metrics.get("gray_release_gate") if isinstance(metrics, dict) else None
+        )
         if isinstance(gray_release_gate, dict):
             source_run_id = gray_release_gate.get("source_run_id")
             if isinstance(source_run_id, str) and source_run_id.strip():
                 return source_run_id.strip()
-        semantic_cache_meta = metrics.get("semantic_cache") if isinstance(metrics, dict) else None
+        semantic_cache_meta = (
+            metrics.get("semantic_cache") if isinstance(metrics, dict) else None
+        )
         if isinstance(semantic_cache_meta, dict):
             source_run_id = semantic_cache_meta.get("source_run_id")
             if isinstance(source_run_id, str) and source_run_id.strip():
@@ -409,7 +424,9 @@ class KbChatService:
 
     @staticmethod
     def _semantic_config_fingerprint(config: KbChatConfig) -> str:
-        raw = json.dumps(config.model_dump(mode="json"), ensure_ascii=False, sort_keys=True)
+        raw = json.dumps(
+            config.model_dump(mode="json"), ensure_ascii=False, sort_keys=True
+        )
         return hashlib.sha1(raw.encode("utf-8")).hexdigest()
 
     async def _semantic_kb_version(self, session: ChatSession) -> str:
@@ -435,9 +452,7 @@ class KbChatService:
             payload[idx] = {
                 "id": kb_id,
                 "updated_at": (
-                    updated_at.isoformat()
-                    if isinstance(updated_at, datetime)
-                    else ""
+                    updated_at.isoformat() if isinstance(updated_at, datetime) else ""
                 ),
             }
         payload_raw = json.dumps(payload, ensure_ascii=False, sort_keys=True)
@@ -548,7 +563,9 @@ class KbChatService:
             evidence=[item.model_dump(mode="json") for item in evidence],
             citation_ids=citation_ids,
             evidence_fingerprint=evidence_fingerprint,
-            stage_summaries=stage_summaries if isinstance(stage_summaries, dict) else {},
+            stage_summaries=stage_summaries
+            if isinstance(stage_summaries, dict)
+            else {},
             metrics=metrics if isinstance(metrics, dict) else {},
             source_run_id=self._semantic_cache_source_run_id(
                 metrics if isinstance(metrics, dict) else {}
@@ -634,7 +651,9 @@ class KbChatService:
                 nodes.append(
                     {
                         "id": node_id,
-                        "label": label if isinstance(label, str) and label.strip() else node_id,
+                        "label": label
+                        if isinstance(label, str) and label.strip()
+                        else node_id,
                         "phase": phase if isinstance(phase, str) else None,
                         "order": order if isinstance(order, int) else None,
                         "metadata": normalized_metadata,
@@ -652,7 +671,10 @@ class KbChatService:
                 target = raw_edge.get("target")
                 if not isinstance(source, str) or not isinstance(target, str):
                     continue
-                if source in {"__start__", "__end__"} or target in {"__start__", "__end__"}:
+                if source in {"__start__", "__end__"} or target in {
+                    "__start__",
+                    "__end__",
+                }:
                     continue
                 edges.append(
                     {
@@ -663,7 +685,9 @@ class KbChatService:
                 )
 
         node_order_index = {
-            node["id"]: idx for idx, node in enumerate(nodes) if isinstance(node.get("id"), str)
+            node["id"]: idx
+            for idx, node in enumerate(nodes)
+            if isinstance(node.get("id"), str)
         }
         edges.sort(
             key=lambda edge: (
@@ -681,9 +705,9 @@ class KbChatService:
             "edges": edges,
         }
         payload_hash = hashlib.sha256(
-            json.dumps(hash_source, ensure_ascii=False, sort_keys=True, default=str).encode(
-                "utf-8"
-            )
+            json.dumps(
+                hash_source, ensure_ascii=False, sort_keys=True, default=str
+            ).encode("utf-8")
         ).hexdigest()
 
         return {"version": "1.1", "hash": payload_hash, "nodes": nodes, "edges": edges}
@@ -765,7 +789,9 @@ class KbChatService:
             )
         )
         node_order_index = {
-            str(node.get("id")): index for index, node in enumerate(nodes) if isinstance(node.get("id"), str)
+            str(node.get("id")): index
+            for index, node in enumerate(nodes)
+            if isinstance(node.get("id"), str)
         }
         edges.sort(
             key=lambda edge: (
@@ -817,7 +843,9 @@ class KbChatService:
                 nodes_by_id[node_id] = {"id": node_id, "metadata": normalized_metadata}
                 return
             existing_metadata = (
-                existing.get("metadata") if isinstance(existing.get("metadata"), dict) else {}
+                existing.get("metadata")
+                if isinstance(existing.get("metadata"), dict)
+                else {}
             )
             for key, value in normalized_metadata.items():
                 if key not in existing_metadata:
@@ -847,7 +875,9 @@ class KbChatService:
                 }
             )
 
-        raw_nodes = compiled_graph.get("nodes") if isinstance(compiled_graph, dict) else None
+        raw_nodes = (
+            compiled_graph.get("nodes") if isinstance(compiled_graph, dict) else None
+        )
         if isinstance(raw_nodes, list):
             for raw_node in raw_nodes:
                 if not isinstance(raw_node, dict):
@@ -867,7 +897,9 @@ class KbChatService:
             if node_id in wrapper_node_ids or node_id in nodes_by_id:
                 append_node(node_id, metadata)
 
-        raw_edges = compiled_graph.get("edges") if isinstance(compiled_graph, dict) else None
+        raw_edges = (
+            compiled_graph.get("edges") if isinstance(compiled_graph, dict) else None
+        )
         if isinstance(raw_edges, list):
             for raw_edge in raw_edges:
                 if not isinstance(raw_edge, dict):
@@ -880,7 +912,11 @@ class KbChatService:
                     continue
                 source_wrapper, source_node_id = split_node_id(raw_source)
                 target_wrapper, target_node_id = split_node_id(raw_target)
-                if source_wrapper and target_wrapper and source_wrapper == target_wrapper:
+                if (
+                    source_wrapper
+                    and target_wrapper
+                    and source_wrapper == target_wrapper
+                ):
                     source = source_node_id
                     target = target_node_id
                 elif source_wrapper is None and target_wrapper is None:
@@ -930,11 +966,13 @@ class KbChatService:
             )
         except TypeError as exc:
             logger.warning(
-                "LangGraph drawable export failed; fallback to builder topology: %s", exc
+                "LangGraph drawable export failed; fallback to builder topology: %s",
+                exc,
             )
         except Exception as exc:  # pragma: no cover - defensive fallback
             logger.warning(
-                "LangGraph drawable export errored; fallback to builder topology: %s", exc
+                "LangGraph drawable export errored; fallback to builder topology: %s",
+                exc,
             )
 
         return KbChatService._build_drawable_graph_from_builder(graph)
@@ -1145,7 +1183,9 @@ class KbChatService:
         *,
         current_latency_ms: int,
     ) -> float:
-        window_size = int(getattr(self._settings, "kb_chat_gray_release_window_size", 200))
+        window_size = int(
+            getattr(self._settings, "kb_chat_gray_release_window_size", 200)
+        )
         stmt = (
             select(AgentRun.metrics)
             .where(
@@ -1215,7 +1255,9 @@ class KbChatService:
             next_nodes={"force_exit"},
         )
         next_step = str(answer_subgraph.get("next_node") or "")
-        has_force_exit = isinstance(terminal_reason, str) and bool(terminal_reason.strip())
+        has_force_exit = isinstance(terminal_reason, str) and bool(
+            terminal_reason.strip()
+        )
         if not next_step and not has_force_exit:
             return 100.0
         if next_step == "END":
@@ -1244,7 +1286,9 @@ class KbChatService:
     def _build_gray_release_gate(metrics: dict[str, Any]) -> dict[str, Any]:
         route = KbChatService._safe_rate(metrics.get("route_consistency_rate"))
         final = KbChatService._safe_rate(metrics.get("final_state_consistency_rate"))
-        clarification = KbChatService._safe_rate(metrics.get("clarification_consistency_rate"))
+        clarification = KbChatService._safe_rate(
+            metrics.get("clarification_consistency_rate")
+        )
         p95_increase = float(metrics.get("p95_latency_increase_pct") or 0.0)
         drift_rate = float(metrics.get("protocol_required_field_drift_rate") or 0.0)
         violations: list[str] = []
@@ -1280,9 +1324,9 @@ class KbChatService:
             dict(stage_summaries) if isinstance(stage_summaries, dict) else {}
         )
         metric_values = dict(metrics) if isinstance(metrics, dict) else {}
-        route_consistency_rate = self._safe_rate(
-            metric_values.get("route_consistency_rate")
-        ) or 100.0
+        route_consistency_rate = (
+            self._safe_rate(metric_values.get("route_consistency_rate")) or 100.0
+        )
         final_state_consistency_rate = 100.0
         clarification_consistency_rate = self._compute_clarification_consistency(
             metrics=metric_values,
@@ -1369,7 +1413,9 @@ class KbChatService:
             additional_kwargs = getattr(message, "additional_kwargs", None)
             if tool_calls:
                 continue
-            if isinstance(additional_kwargs, dict) and additional_kwargs.get("tool_calls"):
+            if isinstance(additional_kwargs, dict) and additional_kwargs.get(
+                "tool_calls"
+            ):
                 continue
             sanitized.append(message)
         return sanitized
@@ -1391,9 +1437,13 @@ class KbChatService:
         if not schema_supported:
             legacy_fields.append("schema_version")
         raw_messages = state.get("messages")
-        if isinstance(raw_messages, list) and len(raw_messages) != len(sanitized_messages):
+        if isinstance(raw_messages, list) and len(raw_messages) != len(
+            sanitized_messages
+        ):
             legacy_fields.append("messages_filtered")
-        reset_fields = sorted(field for field in _KB_CHAT_CHECKPOINT_RESET_FIELDS if field in state)
+        reset_fields = sorted(
+            field for field in _KB_CHAT_CHECKPOINT_RESET_FIELDS if field in state
+        )
         return _CheckpointRestorePlan(
             messages=sanitized_messages,
             reset_fields=reset_fields,
@@ -1444,9 +1494,7 @@ class KbChatService:
 
     async def _ensure_no_running_kb_chat_run(self, *, session_id: uuid.UUID) -> None:
         await self._db.execute(
-            select(ChatSession.id)
-            .where(ChatSession.id == session_id)
-            .with_for_update()
+            select(ChatSession.id).where(ChatSession.id == session_id).with_for_update()
         )
         running = await self._get_running_kb_chat_run(session_id=session_id)
         if running is None:
@@ -1465,9 +1513,7 @@ class KbChatService:
         run: AgentRun,
     ) -> None:
         await self._db.execute(
-            select(ChatSession.id)
-            .where(ChatSession.id == session.id)
-            .with_for_update()
+            select(ChatSession.id).where(ChatSession.id == session.id).with_for_update()
         )
         running = await self._get_running_kb_chat_run(session_id=session.id)
         if running is None:
@@ -1492,7 +1538,9 @@ class KbChatService:
         run: AgentRun | None = None,
     ) -> _KbChatExecution:
         resume_requested = run is not None
-        started_at = run.started_at if run and run.started_at else datetime.now(timezone.utc)
+        started_at = (
+            run.started_at if run and run.started_at else datetime.now(timezone.utc)
+        )
         thread_id = str(session.id)
         checkpoint_tuple = await CheckpointManager.get_state(thread_id)
         checkpoint_restore = _CheckpointRestorePlan(
@@ -1503,12 +1551,12 @@ class KbChatService:
         )
         checkpoint_id: str | None = None
         if checkpoint_tuple is not None:
-            raw_values = (checkpoint_tuple.checkpoint or {}).get(
-                "channel_values", {}
-            )
+            raw_values = (checkpoint_tuple.checkpoint or {}).get("channel_values", {})
             checkpoint_restore = self._sanitize_checkpoint_state(raw_values)
             raw_checkpoint_id = (checkpoint_tuple.checkpoint or {}).get("id")
-            checkpoint_id = str(raw_checkpoint_id) if isinstance(raw_checkpoint_id, str) else None
+            checkpoint_id = (
+                str(raw_checkpoint_id) if isinstance(raw_checkpoint_id, str) else None
+            )
 
         use_checkpoint_messages = (
             run is not None
@@ -1652,7 +1700,11 @@ class KbChatService:
         )
         resolved_user_id = self._resolve_kb_chat_user_id(session)
         reset_fields = list(checkpoint_restore.reset_fields)
-        if checkpoint_tuple is not None and not use_checkpoint_messages and checkpoint_restore.messages:
+        if (
+            checkpoint_tuple is not None
+            and not use_checkpoint_messages
+            and checkpoint_restore.messages
+        ):
             reset_fields.append("messages")
         checkpoint_restore_audit = self._build_checkpoint_restore_audit(
             checkpoint_id=checkpoint_id,
@@ -1814,7 +1866,9 @@ class KbChatService:
         gray_release_indicators = {
             "route_consistency_rate": metrics.get("route_consistency_rate"),
             "final_state_consistency_rate": metrics.get("final_state_consistency_rate"),
-            "clarification_consistency_rate": metrics.get("clarification_consistency_rate"),
+            "clarification_consistency_rate": metrics.get(
+                "clarification_consistency_rate"
+            ),
             "p95_latency_increase_pct": metrics.get("p95_latency_increase_pct"),
             "protocol_required_field_drift_rate": metrics.get(
                 "protocol_required_field_drift_rate"
@@ -1874,7 +1928,9 @@ class KbChatService:
         truncated_count = max(0, int(node_io_snapshot_truncated_count))
         custom_unhandled = max(0, int(custom_event_unhandled_count))
         heartbeat_sent_count = (
-            heartbeat_stats.sent_count if isinstance(heartbeat_stats, SseHeartbeatStats) else 0
+            heartbeat_stats.sent_count
+            if isinstance(heartbeat_stats, SseHeartbeatStats)
+            else 0
         )
         heartbeat_gaps = (
             heartbeat_stats.gap_ms_samples
@@ -1885,7 +1941,9 @@ class KbChatService:
             KbChatService._calc_percentile(heartbeat_gaps, 0.95),
             4,
         )
-        protocol_drift_rate = round((drift_count / emit_total) * 100.0, 4) if emit_total > 0 else 0.0
+        protocol_drift_rate = (
+            round((drift_count / emit_total) * 100.0, 4) if emit_total > 0 else 0.0
+        )
         return {
             "protocol_emit_total": emit_total,
             "protocol_required_field_drift_count": drift_count,
@@ -1905,7 +1963,9 @@ class KbChatService:
         kb_scope: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         guardrails = (
-            metrics.get("guardrails") if isinstance(metrics.get("guardrails"), dict) else {}
+            metrics.get("guardrails")
+            if isinstance(metrics.get("guardrails"), dict)
+            else {}
         )
         if isinstance(kb_scope, dict):
             guardrails["kb_scope"] = kb_scope
@@ -1941,7 +2001,11 @@ class KbChatService:
         base_metrics = (
             stream_state.metrics
             if stream_state is not None
-            else (exec_ctx.state.get("metrics") if isinstance(exec_ctx.state, dict) else {})
+            else (
+                exec_ctx.state.get("metrics")
+                if isinstance(exec_ctx.state, dict)
+                else {}
+            )
         )
         base_stage_summaries = (
             stream_state.stage_summaries
@@ -2054,7 +2118,10 @@ class KbChatService:
             reason = str(terminal_route.get("reason") or "").strip().lower()
             if reason and reason not in {"passed", "none"}:
                 return reason
-            if str(terminal_route.get("next_node") or "").strip().lower() == "force_exit":
+            if (
+                str(terminal_route.get("next_node") or "").strip().lower()
+                == "force_exit"
+            ):
                 return "force_exit"
         if isinstance(degrade_reason, str) and degrade_reason.strip():
             return degrade_reason.strip().lower()
@@ -2132,10 +2199,14 @@ class KbChatService:
         review_passed = (
             reflection.get("review_passed")
             if isinstance(reflection, dict) and not terminal_force_exit
-            else False if terminal_force_exit else None
+            else False
+            if terminal_force_exit
+            else None
         )
         answer_text = extract_answer_text(answer).strip()
-        canonical_best_answer = extract_answer_text(best_answer).strip() if best_answer else ""
+        canonical_best_answer = (
+            extract_answer_text(best_answer).strip() if best_answer else ""
+        )
         best_answer_matches = (
             not terminal_force_exit
             and bool(canonical_best_answer)
@@ -2203,7 +2274,11 @@ class KbChatService:
             for key, label in stage_label_map.items()
             if key in stage_summaries and isinstance(stage_summaries.get(key), dict)
         ]
-        executed_text = " -> ".join(executed[:8]) if executed else "问题理解 -> 检索证据 -> 回答校验"
+        executed_text = (
+            " -> ".join(executed[:8])
+            if executed
+            else "问题理解 -> 检索证据 -> 回答校验"
+        )
 
         kb_count = len(selected_kb_ids or [])
         suggestions = [
@@ -2253,15 +2328,24 @@ class KbChatService:
             return "refusal_answer"
         if not isinstance(evidence, list) or not evidence:
             return "missing_evidence"
-        raw_citation_ids = metrics.get("citation_ids") if isinstance(metrics, dict) else None
-        citation_ids = [
-            str(item).strip().upper()
-            for item in raw_citation_ids
-            if isinstance(item, str) and is_stable_citation_id(str(item).strip().upper())
-        ] if isinstance(raw_citation_ids, list) else []
+        raw_citation_ids = (
+            metrics.get("citation_ids") if isinstance(metrics, dict) else None
+        )
+        citation_ids = (
+            [
+                str(item).strip().upper()
+                for item in raw_citation_ids
+                if isinstance(item, str)
+                and is_stable_citation_id(str(item).strip().upper())
+            ]
+            if isinstance(raw_citation_ids, list)
+            else []
+        )
         if not citation_ids:
             return "missing_citation_ids"
-        evidence_fingerprint = KbChatService._semantic_cache_evidence_fingerprint(evidence)
+        evidence_fingerprint = KbChatService._semantic_cache_evidence_fingerprint(
+            evidence
+        )
         if not evidence_fingerprint:
             return "missing_evidence_fingerprint"
         answer_review_summary = (
@@ -2425,7 +2509,9 @@ class KbChatService:
             list_key = "sub_queries" if node == "decomposition" else "multi_queries"
             values = update.get(list_key)
             if isinstance(values, list):
-                io_summary["query_count"] = len([v for v in values if isinstance(v, str)])
+                io_summary["query_count"] = len(
+                    [v for v in values if isinstance(v, str)]
+                )
 
         if node == "hyde":
             hyde_docs = update.get("hyde_docs")
@@ -2514,7 +2600,9 @@ class KbChatService:
             current_step_status_override
             if isinstance(current_step_status_override, str)
             and current_step_status_override
-            else stage_status.get(current_step_id) if current_step_id else None
+            else stage_status.get(current_step_id)
+            if current_step_id
+            else None
         )
         current_attempt = (
             stage_attempts.get(current_step_id) if current_step_id else None
@@ -2745,6 +2833,7 @@ class KbChatService:
         event: Any,
     ) -> tuple[str, Any, list[str] | None] | None:
         """规范化 LangGraph v2 StreamPart 或旧版 tuple 流输出。"""
+
         def _to_node_path(value: Any) -> list[str] | None:
             if isinstance(value, tuple):
                 path = [str(item) for item in value if isinstance(item, str) and item]
@@ -2903,7 +2992,9 @@ class KbChatService:
             return None
 
         raw_attempt = KbChatService._safe_non_negative_int(payload.get("attempt"))
-        attempt = raw_attempt if isinstance(raw_attempt, int) and raw_attempt > 0 else None
+        attempt = (
+            raw_attempt if isinstance(raw_attempt, int) and raw_attempt > 0 else None
+        )
         previous_attempt = stream_state.stage_attempts.get(node_name, 0)
         if phase == "start":
             stream_state.stage_attempts[node_name] = (
@@ -2934,7 +3025,11 @@ class KbChatService:
     ) -> str | None:
         node_name = payload.get("node") or payload.get("step_id")
         status = payload.get("status")
-        if not isinstance(node_name, str) or not node_name or not isinstance(status, str):
+        if (
+            not isinstance(node_name, str)
+            or not node_name
+            or not isinstance(status, str)
+        ):
             return None
 
         previous_attempt = stream_state.stage_attempts.get(node_name, 0)
@@ -3013,7 +3108,9 @@ class KbChatService:
 
     @staticmethod
     def _extract_citation_title(item: dict[str, Any], *, fallback_index: int) -> str:
-        material_title = KbChatService._normalize_optional_text(item.get("material_title"))
+        material_title = KbChatService._normalize_optional_text(
+            item.get("material_title")
+        )
         if material_title:
             return material_title
 
@@ -3023,7 +3120,9 @@ class KbChatService:
 
         locator = item.get("locator")
         if isinstance(locator, dict):
-            locator_material_title = KbChatService._extract_locator_material_title(locator)
+            locator_material_title = KbChatService._extract_locator_material_title(
+                locator
+            )
             if locator_material_title:
                 return locator_material_title
             label = locator.get("citation_label")
@@ -3107,7 +3206,9 @@ class KbChatService:
             item = citation_catalog[citation_id]
             title = cls._extract_citation_title(item, fallback_index=idx)
             locator = item.get("locator")
-            page_hint = cls._extract_citation_page_hint(locator if isinstance(locator, dict) else None)
+            page_hint = cls._extract_citation_page_hint(
+                locator if isinstance(locator, dict) else None
+            )
             if page_hint:
                 lines.append(f"[{citation_id}] {title}（{page_hint}）")
             else:
@@ -3166,9 +3267,12 @@ class KbChatService:
         metrics: dict[str, Any],
     ) -> ChatPendingUserClarificationResponse:
         now = datetime.now(timezone.utc)
-        round_count = self._clarification_round_count(
-            run.metrics if isinstance(run.metrics, dict) else None
-        ) + 1
+        round_count = (
+            self._clarification_round_count(
+                run.metrics if isinstance(run.metrics, dict) else None
+            )
+            + 1
+        )
         payload_dict = (
             pending_clarification.model_dump(mode="json")
             if isinstance(pending_clarification, PendingClarification)
@@ -3212,7 +3316,9 @@ class KbChatService:
             thread_id=str(session.id),
             message=message,
             pending_clarification=pending_clarification,
-            stage_summaries=run.stage_summaries if isinstance(run.stage_summaries, dict) else None,
+            stage_summaries=run.stage_summaries
+            if isinstance(run.stage_summaries, dict)
+            else None,
             metrics=run.metrics if isinstance(run.metrics, dict) else None,
             run=AgentRunRead.model_validate(run),
         )
@@ -3266,13 +3372,8 @@ class KbChatService:
                 if str(item.source_kind) == EvidenceSourceKind.KB.value
                 else EvidenceSourceKind.EXTERNAL
             )
-            if (
-                source_kind == EvidenceSourceKind.KB
-                and (
-                    item.kb_id is None
-                    or item.material_id is None
-                    or item.chunk_id is None
-                )
+            if source_kind == EvidenceSourceKind.KB and (
+                item.kb_id is None or item.material_id is None or item.chunk_id is None
             ):
                 continue
             if item.chunk_id is not None and item.chunk_id in seen_evidence_chunk_ids:
@@ -3293,7 +3394,11 @@ class KbChatService:
                 seen_evidence_chunk_ids.add(item.chunk_id)
 
         stage_summaries = {
-            **(cache_hit.stage_summaries if isinstance(cache_hit.stage_summaries, dict) else {}),
+            **(
+                cache_hit.stage_summaries
+                if isinstance(cache_hit.stage_summaries, dict)
+                else {}
+            ),
             "retry_cache": self._build_retry_cache_metrics({}),
             "semantic_cache": {
                 "hit": True,
@@ -3328,7 +3433,9 @@ class KbChatService:
             metrics=metrics,
         )
         gray_release_gate = (
-            metrics.get("gray_release_gate") if isinstance(metrics.get("gray_release_gate"), dict) else {}
+            metrics.get("gray_release_gate")
+            if isinstance(metrics.get("gray_release_gate"), dict)
+            else {}
         )
         gray_release_gate = {
             **gray_release_gate,
@@ -3352,7 +3459,9 @@ class KbChatService:
             settings=self._settings,
             label="stage_summaries",
         )
-        run.metrics = ensure_json_safe(metrics, settings=self._settings, label="metrics")
+        run.metrics = ensure_json_safe(
+            metrics, settings=self._settings, label="metrics"
+        )
 
         assistant_msg = ChatMessage(
             session_id=session.id,
@@ -3378,7 +3487,9 @@ class KbChatService:
                 hit_type=cache_hit.hit_type or _SEMANTIC_CACHE_HIT_TYPE_STRONG,
                 created_at=cache_hit.created_at,
             ),
-            stage_summaries=run.stage_summaries if isinstance(run.stage_summaries, dict) else None,
+            stage_summaries=run.stage_summaries
+            if isinstance(run.stage_summaries, dict)
+            else None,
             metrics=run.metrics if isinstance(run.metrics, dict) else None,
             run=AgentRunRead.model_validate(run),
         )
@@ -3599,7 +3710,10 @@ class KbChatService:
                         assistant_message=cached_response.assistant_message.model_dump(
                             mode="json"
                         ),
-                        evidence=[item.model_dump(mode="json") for item in cached_response.evidence],
+                        evidence=[
+                            item.model_dump(mode="json")
+                            for item in cached_response.evidence
+                        ],
                         stage_summaries=(
                             cached_response.stage_summaries
                             if isinstance(cached_response.stage_summaries, dict)
@@ -3659,11 +3773,17 @@ class KbChatService:
             nonlocal protocol_drift_total
             nonlocal protocol_salvage_total
             protocol_emit_total += 1
-            resolved_node_name = node_name if isinstance(node_name, str) and node_name else None
+            resolved_node_name = (
+                node_name if isinstance(node_name, str) and node_name else None
+            )
             drift_delta = 0
             salvage_used = False
             if event_type in {"messages", "updates", "node_io", "step"}:
-                if resolved_node_name is None and isinstance(node_path, list) and node_path:
+                if (
+                    resolved_node_name is None
+                    and isinstance(node_path, list)
+                    and node_path
+                ):
                     resolved_node_name = node_path[-1]
                     drift_delta += 1
                     salvage_used = True
@@ -3671,7 +3791,10 @@ class KbChatService:
                 node_name=resolved_node_name,
                 node_path=node_path,
             )
-            if not isinstance(payload.get("ts"), str) or not str(payload.get("ts") or "").strip():
+            if (
+                not isinstance(payload.get("ts"), str)
+                or not str(payload.get("ts") or "").strip()
+            ):
                 drift_delta += 1
                 salvage_used = True
             protocol_drift_total += drift_delta
@@ -3722,7 +3845,9 @@ class KbChatService:
                 current_step_status_override=current_step_status_override,
             )
             event_attempt = (
-                payload.get("attempt") if isinstance(payload.get("attempt"), int) else None
+                payload.get("attempt")
+                if isinstance(payload.get("attempt"), int)
+                else None
             )
             return _emit_enveloped(
                 event_type="state",
@@ -3850,7 +3975,9 @@ class KbChatService:
 
             graph_task = asyncio.create_task(_run_graph())
             disconnect_task = (
-                asyncio.create_task(_monitor_disconnect()) if request is not None else None
+                asyncio.create_task(_monitor_disconnect())
+                if request is not None
+                else None
             )
 
             while True:
@@ -3949,7 +4076,11 @@ class KbChatService:
                                 and isinstance(token_meta.get("langgraph_node"), str)
                                 else None
                             )
-                            if node_name is None and isinstance(node_path, list) and node_path:
+                            if (
+                                node_name is None
+                                and isinstance(node_path, list)
+                                and node_path
+                            ):
                                 node_name = node_path[-1]
                             yield _emit_enveloped(
                                 event_type="messages",
@@ -3973,7 +4104,11 @@ class KbChatService:
                             ),
                             None,
                         )
-                        if candidate_node is None and isinstance(node_path, list) and node_path:
+                        if (
+                            candidate_node is None
+                            and isinstance(node_path, list)
+                            and node_path
+                        ):
                             candidate_node = node_path[-1]
                         interrupts = apply_updates_chunk(stream_state, chunk)
                         candidate, candidate_source = self._extract_last_good_answer(
@@ -4021,7 +4156,9 @@ class KbChatService:
                             payload=step_payload,
                             node_name=node_name,
                             node_path=node_path or [],
-                            attempt=event_attempt if isinstance(event_attempt, int) else None,
+                            attempt=event_attempt
+                            if isinstance(event_attempt, int)
+                            else None,
                         )
                         yield _emit_state(
                             run_status=AgentRunStatus.RUNNING.value,
@@ -4055,7 +4192,9 @@ class KbChatService:
                             if custom_event_type not in KB_CHAT_CUSTOM_EVENT_TYPES:
                                 custom_event_unhandled_count += 1
                             emitted_event_type = (
-                                "node_io" if custom_event_type == "node_io" else "custom"
+                                "node_io"
+                                if custom_event_type == "node_io"
+                                else "custom"
                             )
                             event_attempt = (
                                 payload_dict.get("attempt")
@@ -4083,9 +4222,15 @@ class KbChatService:
                                         node_name=node_name,
                                         node_path=node_path,
                                     )
-                                for meta_key in ("input_snapshot_meta", "output_snapshot_meta"):
+                                for meta_key in (
+                                    "input_snapshot_meta",
+                                    "output_snapshot_meta",
+                                ):
                                     meta = payload_dict.get(meta_key)
-                                    if isinstance(meta, dict) and meta.get("truncated") is True:
+                                    if (
+                                        isinstance(meta, dict)
+                                        and meta.get("truncated") is True
+                                    ):
                                         node_io_snapshot_truncated_count += 1
                             yield _emit_enveloped(
                                 event_type=emitted_event_type,
@@ -4098,7 +4243,9 @@ class KbChatService:
                                 error_message = (
                                     payload_dict.get("error_summary")
                                     if payload_dict.get("phase") == "error"
-                                    and isinstance(payload_dict.get("error_summary"), str)
+                                    and isinstance(
+                                        payload_dict.get("error_summary"), str
+                                    )
                                     else None
                                 )
                                 yield _emit_state(
@@ -4135,7 +4282,11 @@ class KbChatService:
                 heartbeat_stats=sse_heartbeat_stats,
             )
             stream_state.metrics = {
-                **(stream_state.metrics if isinstance(stream_state.metrics, dict) else {}),
+                **(
+                    stream_state.metrics
+                    if isinstance(stream_state.metrics, dict)
+                    else {}
+                ),
                 **protocol_metrics,
             }
 
@@ -4157,10 +4308,12 @@ class KbChatService:
                 else None,
             )
 
-            clarification_message, pending_clarification = self._extract_clarification_pending(
-                clarification_payload=stream_state.clarification_payload,
-                answer=answer,
-                reflection=stream_state.reflection,
+            clarification_message, pending_clarification = (
+                self._extract_clarification_pending(
+                    clarification_payload=stream_state.clarification_payload,
+                    answer=answer,
+                    reflection=stream_state.reflection,
+                )
             )
             candidate, candidate_source = self._extract_last_good_answer(
                 answer=answer,
@@ -4170,7 +4323,9 @@ class KbChatService:
                 last_good_answer = candidate
                 last_good_answer_source = candidate_source
 
-            terminal_candidate = "out202" if clarification_message is not None else "status"
+            terminal_candidate = (
+                "out202" if clarification_message is not None else "status"
+            )
             yield _emit_enveloped(
                 event_type="stream_end",
                 payload={
@@ -4232,7 +4387,9 @@ class KbChatService:
                             ),
                             message=pending_response.message,
                             pending_clarification=(
-                                pending_response.pending_clarification.model_dump(mode="json")
+                                pending_response.pending_clarification.model_dump(
+                                    mode="json"
+                                )
                                 if pending_response.pending_clarification is not None
                                 else None
                             ),
@@ -4312,8 +4469,12 @@ class KbChatService:
                 self._build_terminal_event_payload(
                     status=final_response.status,
                     run_payload=run_payload,
-                    assistant_message=final_response.assistant_message.model_dump(mode="json"),
-                    evidence=[item.model_dump(mode="json") for item in final_response.evidence],
+                    assistant_message=final_response.assistant_message.model_dump(
+                        mode="json"
+                    ),
+                    evidence=[
+                        item.model_dump(mode="json") for item in final_response.evidence
+                    ],
                     stage_summaries=(
                         final_response.stage_summaries
                         if isinstance(final_response.stage_summaries, dict)
@@ -4351,7 +4512,9 @@ class KbChatService:
             error_summary = e.message if isinstance(e, AppError) else str(e)
             run.error_message = error_summary
             run.stage_summaries = {
-                **(run.stage_summaries if isinstance(run.stage_summaries, dict) else {}),
+                **(
+                    run.stage_summaries if isinstance(run.stage_summaries, dict) else {}
+                ),
                 "errterm": {
                     "reason": "stream_exception",
                     "message": error_summary,
@@ -4391,7 +4554,6 @@ class KbChatService:
             set_run_id(None)
 
     async def _finalize_run(
-
         self,
         *,
         session: ChatSession,
@@ -4537,7 +4699,9 @@ class KbChatService:
                         locator=locator,
                         excerpt=excerpt,
                         source_excerpt=source_excerpt,
-                        citation_id=citation_id if is_stable_citation_id(citation_id) else None,
+                        citation_id=citation_id
+                        if is_stable_citation_id(citation_id)
+                        else None,
                         citation_title=self._normalize_optional_text(
                             it.get("citation_title")
                         ),
@@ -4570,7 +4734,9 @@ class KbChatService:
                 if material_title:
                     item["material_title"] = material_title
 
-            locator = item.get("locator") if isinstance(item.get("locator"), dict) else None
+            locator = (
+                item.get("locator") if isinstance(item.get("locator"), dict) else None
+            )
             if self._extract_locator_material_title(locator):
                 item["material_title"] = self._extract_locator_material_title(locator)
 
@@ -4622,7 +4788,9 @@ class KbChatService:
                     return normalized
             return None
 
-        allowed_labels: list[str] = sorted(citation_catalog, key=stable_citation_sort_key)
+        allowed_labels: list[str] = sorted(
+            citation_catalog, key=stable_citation_sort_key
+        )
         if not allowed_labels:
             seen_labels: set[str] = set()
             for item in evidence_items:
@@ -4747,7 +4915,11 @@ class KbChatService:
         gray_release_gate["source_run_id"] = str(run.id)
         gray_release_gate["evaluated_at"] = run.finished_at.isoformat()
         gray_release_gate["trigger_rollback"] = (
-            bool(getattr(self._settings, "kb_chat_gray_release_auto_rollback_enabled", True))
+            bool(
+                getattr(
+                    self._settings, "kb_chat_gray_release_auto_rollback_enabled", True
+                )
+            )
             and gray_release_gate.get("pass") is False
         )
         metrics["gray_release_gate"] = gray_release_gate
@@ -4789,7 +4961,9 @@ class KbChatService:
             answer=answer,
             evidence=evidence_items,
             metrics=run.metrics if isinstance(run.metrics, dict) else {},
-            stage_summaries=run.stage_summaries if isinstance(run.stage_summaries, dict) else {},
+            stage_summaries=run.stage_summaries
+            if isinstance(run.stage_summaries, dict)
+            else {},
         )
         if semantic_cache_skip_reason is None:
             try:
@@ -4800,7 +4974,9 @@ class KbChatService:
                     answer=extract_answer_text(answer),
                     evidence=evidence_items,
                     stage_summaries=(
-                        run.stage_summaries if isinstance(run.stage_summaries, dict) else {}
+                        run.stage_summaries
+                        if isinstance(run.stage_summaries, dict)
+                        else {}
                     ),
                     metrics=run.metrics if isinstance(run.metrics, dict) else {},
                 )
@@ -4816,7 +4992,9 @@ class KbChatService:
                 threshold=self._semantic_cache_threshold(),
                 ttl_seconds=self._semantic_cache_ttl_seconds(),
             ),
-            stage_summaries=run.stage_summaries if isinstance(run.stage_summaries, dict) else None,
+            stage_summaries=run.stage_summaries
+            if isinstance(run.stage_summaries, dict)
+            else None,
             metrics=run.metrics if isinstance(run.metrics, dict) else None,
             run=AgentRunRead.model_validate(run),
         )

@@ -8,12 +8,20 @@ from typing import Any
 _request_id_ctx: contextvars.ContextVar[str | None] = contextvars.ContextVar(
     "request_id", default=None
 )
-_run_id_ctx: contextvars.ContextVar[str | None] = contextvars.ContextVar("run_id", default=None)
+_run_id_ctx: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "run_id", default=None
+)
 
 # 敏感字段模式
 _SENSITIVE_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     # API Key / Token（常见格式）
-    (re.compile(r"(api[_-]?key|token|secret|password|credential)[\"']?\s*[:=]\s*[\"']?[\w\-\.]+", re.I), r"\1=***REDACTED***"),
+    (
+        re.compile(
+            r"(api[_-]?key|token|secret|password|credential)[\"']?\s*[:=]\s*[\"']?[\w\-\.]+",
+            re.I,
+        ),
+        r"\1=***REDACTED***",
+    ),
     # Bearer Token
     (re.compile(r"Bearer\s+[\w\-\.]+", re.I), "Bearer ***REDACTED***"),
     # 邮箱地址
@@ -79,10 +87,19 @@ def redact(value: Any) -> Any:
     return result
 
 
-def redact_dict(data: dict[str, Any], sensitive_keys: set[str] | None = None) -> dict[str, Any]:
+def redact_dict(
+    data: dict[str, Any], sensitive_keys: set[str] | None = None
+) -> dict[str, Any]:
     """对字典中的敏感键值进行脱敏。"""
     if sensitive_keys is None:
-        sensitive_keys = {"api_key", "token", "secret", "password", "credential", "authorization"}
+        sensitive_keys = {
+            "api_key",
+            "token",
+            "secret",
+            "password",
+            "credential",
+            "authorization",
+        }
     result: dict[str, Any] = {}
     for k, v in data.items():
         if k.lower() in sensitive_keys:

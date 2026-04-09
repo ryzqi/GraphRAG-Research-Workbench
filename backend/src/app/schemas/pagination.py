@@ -12,4 +12,3 @@ class PageMeta(BaseModel):
     limit: int = Field(..., ge=1, le=100, description="返回记录数")
     total: int = Field(..., ge=0, description="满足条件的总记录数（精确）")
     has_more: bool = Field(..., description="是否还有下一页")
-

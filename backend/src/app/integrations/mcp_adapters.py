@@ -98,9 +98,13 @@ def _resolve_timeout_seconds(extension: ToolExtension, settings: Settings) -> in
         else int(settings.mcp_stdio_timeout_seconds)
     )
     if extension.transport == ExtensionTransport.HTTP:
-        config = extension.http_config if isinstance(extension.http_config, dict) else {}
+        config = (
+            extension.http_config if isinstance(extension.http_config, dict) else {}
+        )
     else:
-        config = extension.stdio_config if isinstance(extension.stdio_config, dict) else {}
+        config = (
+            extension.stdio_config if isinstance(extension.stdio_config, dict) else {}
+        )
     value = config.get("timeout_seconds")
     if value is None:
         return default_timeout
@@ -114,7 +118,9 @@ def _resolve_timeout_seconds(extension: ToolExtension, settings: Settings) -> in
 def _resolve_stdio_connection_config(
     extension: ToolExtension,
 ) -> tuple[str, list[str], dict[str, str], str | None]:
-    config = extension.stdio_config if isinstance(extension.stdio_config, dict) else None
+    config = (
+        extension.stdio_config if isinstance(extension.stdio_config, dict) else None
+    )
     if not isinstance(config, dict):
         raise ValueError("stdio_config 缺失")
     command = str(config.get("command", "")).strip()
@@ -202,7 +208,9 @@ class McpToolCallAuditInterceptor(ToolCallInterceptor):
                 },
             )
             return CallToolResult(
-                content=[TextContent(type="text", text="MCP 未启用，已跳过外部工具调用。")],
+                content=[
+                    TextContent(type="text", text="MCP 未启用，已跳过外部工具调用。")
+                ],
                 isError=False,
             )
 
@@ -227,9 +235,9 @@ class McpToolCallAuditInterceptor(ToolCallInterceptor):
 
         # 参数校验：必须可 JSON 序列化，且避免超大 payload
         try:
-            args_bytes = json.dumps(request.args, ensure_ascii=False, default=str).encode(
-                "utf-8"
-            )
+            args_bytes = json.dumps(
+                request.args, ensure_ascii=False, default=str
+            ).encode("utf-8")
         except TypeError as exc:
             logger.warning(
                 "Invalid MCP tool args, skip tool call",
@@ -241,7 +249,9 @@ class McpToolCallAuditInterceptor(ToolCallInterceptor):
                 },
             )
             return CallToolResult(
-                content=[TextContent(type="text", text="MCP 工具参数无效，已跳过执行。")],
+                content=[
+                    TextContent(type="text", text="MCP 工具参数无效，已跳过执行。")
+                ],
                 isError=False,
             )
 
@@ -256,7 +266,9 @@ class McpToolCallAuditInterceptor(ToolCallInterceptor):
                 },
             )
             return CallToolResult(
-                content=[TextContent(type="text", text="MCP 工具参数过大，已跳过执行。")],
+                content=[
+                    TextContent(type="text", text="MCP 工具参数过大，已跳过执行。")
+                ],
                 isError=False,
             )
 
@@ -318,7 +330,9 @@ class McpToolCallAuditInterceptor(ToolCallInterceptor):
                 },
             )
             return CallToolResult(
-                content=[TextContent(type="text", text="MCP 工具调用失败，已跳过该工具。")],
+                content=[
+                    TextContent(type="text", text="MCP 工具调用失败，已跳过该工具。")
+                ],
                 isError=False,
             )
 

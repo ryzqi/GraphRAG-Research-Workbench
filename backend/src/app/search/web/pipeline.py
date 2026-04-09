@@ -81,7 +81,9 @@ class WebSearchPipeline:
         for rewritten_query in query_plan.rewritten_queries:
             for retriever in self._retrievers:
                 provider_start = perf_counter()
-                provider_reports[retriever.provider_name]["provider"] = retriever.provider_name
+                provider_reports[retriever.provider_name]["provider"] = (
+                    retriever.provider_name
+                )
                 try:
                     documents = await retriever.aretrieve(
                         rewritten_query,
@@ -102,15 +104,23 @@ class WebSearchPipeline:
                 except Exception as exc:
                     if provider_reports[retriever.provider_name]["error"] is None:
                         provider_reports[retriever.provider_name]["error"] = str(exc)
-                    provider_reports[retriever.provider_name]["elapsed_ms"] += int((perf_counter() - provider_start) * 1000)
+                    provider_reports[retriever.provider_name]["elapsed_ms"] += int(
+                        (perf_counter() - provider_start) * 1000
+                    )
                     continue
                 provider_reports[retriever.provider_name]["ok"] = True
                 provider_reports[retriever.provider_name]["error"] = None
-                provider_reports[retriever.provider_name]["result_count"] += len(documents)
-                provider_reports[retriever.provider_name]["elapsed_ms"] += int((perf_counter() - provider_start) * 1000)
+                provider_reports[retriever.provider_name]["result_count"] += len(
+                    documents
+                )
+                provider_reports[retriever.provider_name]["elapsed_ms"] += int(
+                    (perf_counter() - provider_start) * 1000
+                )
                 collected_groups.append(documents)
 
-        fused = fuse_documents(collected_groups, max_results=max(max_results * 3, max_results))
+        fused = fuse_documents(
+            collected_groups, max_results=max(max_results * 3, max_results)
+        )
         enriched, enrichment_report = await enrich_documents(
             fused,
             read_provider=self._read_provider,

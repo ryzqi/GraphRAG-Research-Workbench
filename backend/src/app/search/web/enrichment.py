@@ -22,8 +22,13 @@ def _should_enrich(document: Document) -> bool:
     snippet = str(document.page_content or "").strip()
     if len(snippet) < _SNIPPET_MIN_LENGTH:
         return True
-    domain = str(document.metadata.get("domain") or extract_domain(document_url(document)) or "")
-    return any(domain == suffix or domain.endswith(f".{suffix}") for suffix in _LOW_QUALITY_DOMAIN_SUFFIXES)
+    domain = str(
+        document.metadata.get("domain") or extract_domain(document_url(document)) or ""
+    )
+    return any(
+        domain == suffix or domain.endswith(f".{suffix}")
+        for suffix in _LOW_QUALITY_DOMAIN_SUFFIXES
+    )
 
 
 async def enrich_documents(
@@ -36,7 +41,9 @@ async def enrich_documents(
         return list(documents), None
 
     enriched = list(documents)
-    candidate_indexes = [index for index, document in enumerate(enriched) if _should_enrich(document)][:top_k]
+    candidate_indexes = [
+        index for index, document in enumerate(enriched) if _should_enrich(document)
+    ][:top_k]
     if not candidate_indexes:
         return enriched, {
             "provider": getattr(read_provider, "provider_name", "jina_reader"),

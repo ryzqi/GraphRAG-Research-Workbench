@@ -98,12 +98,18 @@ class ChunkingEngine:
         if _is_pdf_blocks(document):
             strategy = index_config.chunking.general_strategy
             if strategy == ChunkingStrategy.QUERY_DEPENDENT_MULTISCALE:
-                return self._split_pdf_query_dependent_multiscale(document, index_config)
+                return self._split_pdf_query_dependent_multiscale(
+                    document, index_config
+                )
             if strategy == ChunkingStrategy.MAX_MIN_SEMANTIC:
                 return await self._split_pdf_semantic(document, index_config)
 
-            chunk_size, overlap = _first_query_dependent_multiscale_window_chars(index_config)
-            aggregated = _aggregate_pdf_blocks(document.chunks or [], chunk_size, overlap)
+            chunk_size, overlap = _first_query_dependent_multiscale_window_chars(
+                index_config
+            )
+            aggregated = _aggregate_pdf_blocks(
+                document.chunks or [], chunk_size, overlap
+            )
             items: list[ChunkItem] = []
             for block in aggregated:
                 sub_doc = ParsedDocument(
@@ -285,8 +291,8 @@ class ChunkingEngine:
                 batch = sentences[start_idx : start_idx + batch_size]
                 vectors.extend(await embedding.embed(texts=batch, stage="chunking"))
         except Exception as exc:
-            chunk_size_tokens, chunk_overlap_tokens = _first_query_dependent_multiscale_window(
-                index_config
+            chunk_size_tokens, chunk_overlap_tokens = (
+                _first_query_dependent_multiscale_window(index_config)
             )
             logger.warning(
                 "Semantic chunking failed, fallback to first query-dependent multiscale window",
@@ -354,7 +360,11 @@ class ChunkingEngine:
             if should_flush:
                 if current.strip():
                     chunks.append(current.strip())
-                current = _apply_overlap(chunks[-1], sentence, overlap_chars) if chunks else sentence
+                current = (
+                    _apply_overlap(chunks[-1], sentence, overlap_chars)
+                    if chunks
+                    else sentence
+                )
                 current_tokens = max(count_tokens(current, model=tokenizer_model), 1)
                 continue
 
@@ -431,7 +441,9 @@ class ChunkingEngine:
             # 第 2 阶段：仅在各 section 内部切分，不跨 section 边界。
             if len(section) > chunk_size:
                 if recursive_splitter is not None:
-                    sub_chunks = [c.strip() for c in recursive_splitter.split_text(section)]
+                    sub_chunks = [
+                        c.strip() for c in recursive_splitter.split_text(section)
+                    ]
                     sub_chunks = [c for c in sub_chunks if c]
                 else:
                     sub_chunks = _split_sliding_window(section, chunk_size, overlap)
@@ -473,7 +485,9 @@ class ChunkingEngine:
         child_overlap = index_config.chunking.parent_child.child.chunk_overlap
 
         for parent_idx, parent in enumerate(parent_chunks):
-            child_chunks = _split_sliding_window(parent.content, child_size, child_overlap)
+            child_chunks = _split_sliding_window(
+                parent.content, child_size, child_overlap
+            )
             for child_idx, child_text in enumerate(child_chunks):
                 child_meta = _merge_metadata(
                     parent.metadata, {"chunking_strategy": "parent_child"}
@@ -541,7 +555,12 @@ def _should_split_on_period(
 
     prev_char = text[-2] if len(text) >= 2 else ""
     next_char = _next_non_space_char(source, period_index + 1)
-    if len(token) == 1 and prev_char.isalpha() and isinstance(next_char, str) and next_char.isalpha():
+    if (
+        len(token) == 1
+        and prev_char.isalpha()
+        and isinstance(next_char, str)
+        and next_char.isalpha()
+    ):
         return False
 
     if prev_char.isdigit() and isinstance(next_char, str) and next_char.isdigit():
@@ -570,7 +589,9 @@ def _next_non_space_char(text: str, start_index: int) -> str | None:
     return None
 
 
-def _first_query_dependent_multiscale_window(index_config: IndexConfig) -> tuple[int, int]:
+def _first_query_dependent_multiscale_window(
+    index_config: IndexConfig,
+) -> tuple[int, int]:
     windows = index_config.chunking.query_dependent_multiscale.windows
     if windows:
         window = windows[0]
@@ -671,7 +692,9 @@ def _resolve_semantic_threshold(
     if threshold_mode == SemanticThresholdMode.FIXED:
         return fixed_threshold
 
-    candidates = [value for value in (percentile_value, fixed_threshold) if value is not None]
+    candidates = [
+        value for value in (percentile_value, fixed_threshold) if value is not None
+    ]
     if not candidates:
         return None
     return min(candidates)
@@ -718,7 +741,9 @@ def _enforce_semantic_max_tokens(
 
         overlap_tokens = 0
         if overlap_chars > 0:
-            overlap_tokens = count_tokens(chunk_text[-overlap_chars:], model=tokenizer_model)
+            overlap_tokens = count_tokens(
+                chunk_text[-overlap_chars:], model=tokenizer_model
+            )
             overlap_tokens = max(0, min(overlap_tokens, max_tokens - 1))
 
         pieces = split_text_to_token_budget(
@@ -802,7 +827,11 @@ def _merge_metadata(
 
 
 def _is_markdown(document: ParsedDocument) -> bool:
-    return (document.mime_type or "").lower() in {"text/markdown", "text/md", "markdown"}
+    return (document.mime_type or "").lower() in {
+        "text/markdown",
+        "text/md",
+        "markdown",
+    }
 
 
 def _is_pdf_blocks(document: ParsedDocument) -> bool:
@@ -942,7 +971,6 @@ def _aggregate_pdf_blocks_by_tokens(
             idx = j
 
     return aggregated
-
 
 
 def _aggregate_pdf_blocks(

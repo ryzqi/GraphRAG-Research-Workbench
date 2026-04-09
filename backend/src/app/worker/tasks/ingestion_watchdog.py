@@ -13,7 +13,10 @@ from app.models.ingestion_task_outbox import (
     IngestionTaskOutbox,
     IngestionTaskOutboxStatus,
 )
-from app.services.ingestion_batch_service import INGESTION_DOC_TASK_NAME, IngestionBatchService
+from app.services.ingestion_batch_service import (
+    INGESTION_DOC_TASK_NAME,
+    IngestionBatchService,
+)
 from app.worker.celery_app import celery_app
 from app.worker.task_resources import managed_task_resources
 
@@ -21,7 +24,9 @@ DEFAULT_DOC_WATCHDOG_BATCH_SIZE = 100
 DOC_QUEUE_TIMEOUT_ERROR_CODE = "DOC_QUEUE_TIMEOUT"
 DOC_DISPATCH_EXHAUSTED_ERROR_CODE = "DOC_DISPATCH_EXHAUSTED"
 DOC_QUEUE_TIMEOUT_MESSAGE = "文档处理超时，已自动结束，请检查 ingestion worker 状态"
-DOC_DISPATCH_EXHAUSTED_MESSAGE = "文档调度重试已耗尽，已自动结束，请检查 dispatch/ingestion worker 状态"
+DOC_DISPATCH_EXHAUSTED_MESSAGE = (
+    "文档调度重试已耗尽，已自动结束，请检查 dispatch/ingestion worker 状态"
+)
 
 
 def _resolve_doc_timeout_error_code(*, attempts: int, max_attempts: int) -> str:
@@ -64,7 +69,9 @@ async def _fail_stale_processing_docs(
                     IngestionBatchDoc.status == IngestionDocStatus.PROCESSING,
                     IngestionBatchDoc.updated_at <= stale_before,
                 )
-                .order_by(IngestionBatchDoc.updated_at.asc(), IngestionBatchDoc.id.asc())
+                .order_by(
+                    IngestionBatchDoc.updated_at.asc(), IngestionBatchDoc.id.asc()
+                )
                 .limit(safe_limit)
                 .with_for_update(skip_locked=True)
             )
@@ -85,7 +92,10 @@ async def _fail_stale_processing_docs(
                         IngestionTaskOutbox.doc_id == doc.id,
                         IngestionTaskOutbox.task_name == INGESTION_DOC_TASK_NAME,
                     )
-                    .order_by(IngestionTaskOutbox.created_at.desc(), IngestionTaskOutbox.id.desc())
+                    .order_by(
+                        IngestionTaskOutbox.created_at.desc(),
+                        IngestionTaskOutbox.id.desc(),
+                    )
                     .limit(1)
                     .with_for_update()
                 )
@@ -96,7 +106,9 @@ async def _fail_stale_processing_docs(
                     attempts=attempts,
                     max_attempts=max_attempts,
                 )
-                error_message = _resolve_doc_timeout_error_message(error_code=error_code)
+                error_message = _resolve_doc_timeout_error_message(
+                    error_code=error_code
+                )
 
                 await service.mark_doc_failed(
                     doc=doc,
@@ -118,4 +130,3 @@ async def _fail_stale_processing_docs(
             await session.commit()
 
         return processed
-

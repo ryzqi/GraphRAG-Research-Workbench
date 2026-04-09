@@ -19,4 +19,3 @@ async def get_queue_health(
         redis=request.app.state.redis,
     )
     return await service.get_queue_health()
-

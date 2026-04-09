@@ -22,7 +22,9 @@ class IngestionTaskOutboxStatus(str, Enum):
 class IngestionTaskOutbox(Base):
     __tablename__ = "ingestion_task_outbox"
 
-    id: Mapped[uuid.UUID] = mapped_column(sa.Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id: Mapped[uuid.UUID] = mapped_column(
+        sa.Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
     doc_id: Mapped[uuid.UUID] = mapped_column(
         sa.Uuid(as_uuid=True),
         sa.ForeignKey("ingestion_batch_docs.id", ondelete="CASCADE"),
@@ -58,8 +60,12 @@ class IngestionTaskOutbox(Base):
         default=20,
         server_default=sa.text("20"),
     )
-    next_retry_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True), nullable=True)
-    dispatched_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True), nullable=True)
+    next_retry_at: Mapped[datetime | None] = mapped_column(
+        sa.DateTime(timezone=True), nullable=True
+    )
+    dispatched_at: Mapped[datetime | None] = mapped_column(
+        sa.DateTime(timezone=True), nullable=True
+    )
     last_error: Mapped[str | None] = mapped_column(sa.Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         sa.DateTime(timezone=True),
@@ -74,7 +80,9 @@ class IngestionTaskOutbox(Base):
     )
 
     __table_args__ = (
-        sa.UniqueConstraint("doc_id", "task_name", name="uq_ingestion_task_outbox_doc_task"),
+        sa.UniqueConstraint(
+            "doc_id", "task_name", name="uq_ingestion_task_outbox_doc_task"
+        ),
         sa.Index(
             "ix_ingestion_task_outbox_status_next_retry_created",
             "status",

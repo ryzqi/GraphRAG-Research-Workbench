@@ -29,7 +29,9 @@ STALE_RECOVERY_MESSAGE = "stale_dispatched_recovered"
 
 def _compute_retry_delay_seconds(*, attempts: int) -> int:
     bounded_attempt = max(1, min(attempts, 10))
-    return min(MAX_RETRY_BACKOFF_SECONDS, RETRY_BASE_SECONDS * (2 ** (bounded_attempt - 1)))
+    return min(
+        MAX_RETRY_BACKOFF_SECONDS, RETRY_BASE_SECONDS * (2 ** (bounded_attempt - 1))
+    )
 
 
 def _format_error(exc: Exception) -> str:
@@ -67,7 +69,11 @@ async def _recover_stale_dispatched_rows(
         row.last_error = STALE_RECOVERY_MESSAGE
         logger.warning(
             "Recovered stale dispatched research outbox row",
-            extra={"outbox_id": str(row.id), "session_id": str(row.session_id), "attempts": row.attempts},
+            extra={
+                "outbox_id": str(row.id),
+                "session_id": str(row.session_id),
+                "attempts": row.attempts,
+            },
         )
     return len(rows)
 
@@ -98,7 +104,9 @@ async def _claim_due_outbox_rows(*, session, limit: int) -> list[ResearchTaskOut
     return rows
 
 
-@celery_app.task(name="app.worker.tasks.research_outbox_dispatcher.dispatch_research_outbox")
+@celery_app.task(
+    name="app.worker.tasks.research_outbox_dispatcher.dispatch_research_outbox"
+)
 def dispatch_research_outbox(limit: int = DEFAULT_DISPATCH_BATCH_SIZE) -> None:
     asyncio.run(_dispatch_research_outbox(limit=limit))
 
@@ -128,7 +136,9 @@ async def _dispatch_research_outbox(*, limit: int = DEFAULT_DISPATCH_BATCH_SIZE)
                     row.attempts += 1
                     try:
                         run_research_session.delay(str(row.session_id))
-                    except Exception as exc:  # pragma: no cover - depends on broker state
+                    except (
+                        Exception
+                    ) as exc:  # pragma: no cover - depends on broker state
                         row.status = ResearchTaskOutboxStatus.FAILED
                         row.dispatched_at = None
                         row.last_error = _format_error(exc)

@@ -21,7 +21,9 @@ def _should_skip_export_job_status(status: ExportStatus) -> bool:
 
 @celery_app.task(name="app.worker.tasks.export.run_export")
 def run_export(export_id: str, export_type: str, target_id: str) -> None:
-    asyncio.run(_run_export(export_id=export_id, export_type=export_type, target_id=target_id))
+    asyncio.run(
+        _run_export(export_id=export_id, export_type=export_type, target_id=target_id)
+    )
 
 
 async def _run_export(*, export_id: str, export_type: str, target_id: str) -> None:
