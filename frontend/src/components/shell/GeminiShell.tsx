@@ -187,12 +187,16 @@ export function GeminiShell({ children }: GeminiShellProps) {
               ? 0
               : isKnowledgeWorkspacePage
                 ? { xs: 1.5, sm: 2, md: 2.5 }
-                : { xs: 2, sm: 3, md: 4 },
+                : isResearchPage
+                  ? 0
+                  : { xs: 2, sm: 3, md: 4 },
             py: isChatPage
               ? 0
               : isKnowledgeWorkspacePage
                 ? { xs: 1.5, md: 2 }
-                : 3,
+                : isResearchPage
+                  ? 0
+                  : 3,
             maxWidth: useFluidContent ? '100%' : 1200,
             mx: useFluidContent ? 0 : 'auto',
             width: '100%',

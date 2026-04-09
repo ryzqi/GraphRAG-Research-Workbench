@@ -176,6 +176,12 @@ export interface ResearchPresentationLiveActivity {
   phase: string;
 }
 
+export interface ResearchPresentationPipelineStep {
+  key: string;
+  label: string;
+  state: 'pending' | 'current' | 'complete';
+}
+
 export interface ResearchPresentationLiveSection {
   progress: {
     label: string;
@@ -183,6 +189,7 @@ export interface ResearchPresentationLiveSection {
     current_stage_label: string;
   };
   coverage_label: string;
+  pipeline_steps?: ResearchPresentationPipelineStep[];
   activity: ResearchPresentationLiveActivity[];
 }
 
@@ -197,12 +204,35 @@ export interface ResearchPresentationReportMetricCard {
   value: string;
 }
 
+export interface ResearchPresentationReportChartBar {
+  label: string;
+  value: number;
+  accent: 'primary' | 'secondary' | 'tertiary' | 'neutral';
+}
+
+export interface ResearchPresentationReportChart {
+  title: string;
+  bars: ResearchPresentationReportChartBar[];
+}
+
+export interface ResearchPresentationReportCard {
+  eyebrow?: string;
+  title: string;
+  description: string;
+}
+
 export interface ResearchPresentationReportSection {
+  badge_label?: string;
   markdown: string;
   summary: string;
+  lead?: string;
   highlights: string[];
   outline: ResearchPresentationReportOutlineItem[];
   metric_cards: ResearchPresentationReportMetricCard[];
+  chart?: ResearchPresentationReportChart | null;
+  spotlight_cards?: ResearchPresentationReportCard[];
+  outlook_cards?: ResearchPresentationReportCard[];
+  references?: string[];
 }
 
 export interface ResearchPresentationSnapshot {

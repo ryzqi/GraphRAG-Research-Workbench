@@ -11,5 +11,6 @@ describe('GeminiShell fluid content rules', () => {
     expect(source).toMatch(/isResearchPage/);
     expect(source).toMatch(/pathname === '\/research'/);
     expect(source).toMatch(/useFluidContent = isChatPage \|\| isKnowledgeWorkspacePage \|\| isResearchPage/);
+    expect(source).toMatch(/: isResearchPage\s*\?\s*0/);
   });
 });

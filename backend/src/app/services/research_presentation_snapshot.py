@@ -31,6 +31,7 @@ def build_research_presentation_snapshot(
     report_payload = _read_artifact_object(artifact_by_key, "report_json")
     metrics_payload = _read_artifact_object(artifact_by_key, "metrics_snapshot")
     gate_payload = _read_artifact_object(artifact_by_key, "gate_snapshot")
+    source_ledger_payload = _read_artifact_array(artifact_by_key, "source_ledger_json")
     report_markdown = _read_artifact_text(artifact_by_key, "report_md")
 
     hero_subtitle = _build_hero_subtitle(
@@ -78,6 +79,7 @@ def build_research_presentation_snapshot(
                 report_payload=report_payload,
                 metrics_payload=metrics_payload,
                 gate_payload=gate_payload,
+                source_ledger_payload=source_ledger_payload,
             )
             if surface == "final"
             else None
@@ -121,6 +123,17 @@ def _read_artifact_text(
         return None
     normalized = content.strip()
     return normalized or None
+
+
+def _read_artifact_array(
+    artifact_by_key: dict[str, ResearchArtifactRead],
+    artifact_key: str,
+) -> list[dict[str, Any]]:
+    value = artifact_by_key.get(artifact_key)
+    payload = value.content_json if value is not None else None
+    if not isinstance(payload, list):
+        return []
+    return [item for item in payload if isinstance(item, dict)]
 
 
 def _read_int(value: object) -> int | None:
@@ -300,6 +313,7 @@ def _build_live_section(
 
     return {
         "progress": progress,
+        "pipeline_steps": _build_live_pipeline_steps(status=status),
         "activity": activity,
         "coverage_label": (
             f"已汇总 {int(citation_count)} 条引用"
@@ -307,6 +321,40 @@ def _build_live_section(
             else "正在收集研究证据"
         ),
     }
+
+
+def _build_live_pipeline_steps(
+    *, status: ResearchSessionStatus
+) -> list[dict[str, str]]:
+    states = {
+        "collect": "pending",
+        "extract": "pending",
+        "model": "pending",
+        "report": "pending",
+    }
+    if status == ResearchSessionStatus.QUEUED:
+        states["collect"] = "current"
+    elif status in {
+        ResearchSessionStatus.RUNNING,
+        ResearchSessionStatus.FAILED,
+        ResearchSessionStatus.CANCELED,
+        ResearchSessionStatus.TIMED_OUT,
+    }:
+        states["collect"] = "complete"
+        states["extract"] = "complete"
+        states["model"] = "current"
+    elif status in {ResearchSessionStatus.FINALIZING, ResearchSessionStatus.FINAL}:
+        states["collect"] = "complete"
+        states["extract"] = "complete"
+        states["model"] = "complete"
+        states["report"] = "current"
+
+    return [
+        {"key": "collect", "label": "数据收集", "state": states["collect"]},
+        {"key": "extract", "label": "特征提取", "state": states["extract"]},
+        {"key": "model", "label": "语义建模", "state": states["model"]},
+        {"key": "report", "label": "结论生成", "state": states["report"]},
+    ]
 
 
 def _build_live_progress(*, status: ResearchSessionStatus) -> dict[str, Any]:
@@ -449,18 +497,33 @@ def _build_report_section(
     report_payload: dict[str, Any],
     metrics_payload: dict[str, Any],
     gate_payload: dict[str, Any],
+    source_ledger_payload: list[dict[str, Any]],
 ) -> dict[str, Any]:
     findings = report_payload.get("findings")
     summary = report_payload.get("summary")
     return {
+        "badge_label": "已生成研究报告",
         "markdown": report_markdown or "",
         "summary": str(summary or "").strip(),
+        "lead": str(summary or "").strip(),
         "highlights": findings if isinstance(findings, list) else [],
         "outline": _build_report_outline(report_markdown),
         "metric_cards": _build_report_metric_cards(
             metrics_payload=metrics_payload,
             gate_payload=gate_payload,
             report_payload=report_payload,
+        ),
+        "chart": _build_report_chart(
+            metrics_payload=metrics_payload,
+            report_payload=report_payload,
+        ),
+        "spotlight_cards": _build_report_spotlight_cards(
+            source_ledger_payload=source_ledger_payload
+        ),
+        "outlook_cards": _build_report_outlook_cards(report_payload=report_payload),
+        "references": _build_report_references(
+            report_payload=report_payload,
+            source_ledger_payload=source_ledger_payload,
         ),
     }
 
@@ -530,3 +593,117 @@ def _build_report_metric_cards(
             {"label": "会话成本", "value": f"${float(session_cost):.2f}"}
         )
     return metric_cards
+
+
+def _build_report_chart(
+    *,
+    metrics_payload: dict[str, Any],
+    report_payload: dict[str, Any],
+) -> dict[str, Any] | None:
+    provider_counts = report_payload.get("provider_counts")
+    bars: list[dict[str, Any]] = []
+    accents = ("primary", "secondary", "tertiary")
+    if isinstance(provider_counts, dict):
+        for index, (label, value) in enumerate(provider_counts.items()):
+            numeric = _read_int(value)
+            if numeric is None:
+                continue
+            bars.append(
+                {
+                    "label": str(label).strip(),
+                    "value": numeric,
+                    "accent": accents[index % len(accents)],
+                }
+            )
+            if len(bars) >= 3:
+                break
+    if not bars:
+        quality_payload = metrics_payload.get("quality")
+        if isinstance(quality_payload, dict):
+            fallback_pairs = [
+                ("引用数", quality_payload.get("citation_count")),
+                ("关键发现", quality_payload.get("finding_count")),
+            ]
+            for index, (label, value) in enumerate(fallback_pairs):
+                numeric = _read_int(value)
+                if numeric is None:
+                    continue
+                bars.append(
+                    {
+                        "label": label,
+                        "value": numeric,
+                        "accent": accents[index % len(accents)],
+                    }
+                )
+    if not bars:
+        return None
+    return {"title": "研究覆盖概览", "bars": bars}
+
+
+def _build_report_spotlight_cards(
+    *, source_ledger_payload: list[dict[str, Any]]
+) -> list[dict[str, str]]:
+    cards: list[dict[str, str]] = []
+    for item in source_ledger_payload[:2]:
+        eyebrow = str(item.get("provider") or "").strip() or "重点对象"
+        title = "关键参与者"
+        description = str(item.get("title") or item.get("origin_url") or "").strip()
+        if not description:
+            continue
+        cards.append(
+            {
+                "eyebrow": eyebrow,
+                "title": title,
+                "description": description,
+            }
+        )
+    return cards
+
+
+def _build_report_outlook_cards(*, report_payload: dict[str, Any]) -> list[dict[str, str]]:
+    findings = report_payload.get("findings")
+    if not isinstance(findings, list):
+        return []
+    normalized = [
+        str(item).strip()
+        for item in findings
+        if isinstance(item, str) and str(item).strip()
+    ]
+    source_items = normalized[2:4] if len(normalized) >= 4 else normalized[:2]
+    return [
+        {
+            "title": f"研究启示 {index:02d}",
+            "description": item,
+        }
+        for index, item in enumerate(source_items, start=1)
+    ]
+
+
+def _build_report_references(
+    *,
+    report_payload: dict[str, Any],
+    source_ledger_payload: list[dict[str, Any]],
+) -> list[str]:
+    references: list[str] = []
+    citations = report_payload.get("citations")
+    if isinstance(citations, list):
+        for index, item in enumerate(citations, start=1):
+            if not isinstance(item, dict):
+                continue
+            title = str(
+                item.get("title")
+                or item.get("source_id")
+                or item.get("origin_url")
+                or ""
+            ).strip()
+            if not title:
+                continue
+            references.append(f"{index:02d}. {title}")
+    if references:
+        return references
+    for index, item in enumerate(source_ledger_payload, start=1):
+        title = str(item.get("title") or item.get("origin_url") or "").strip()
+        if not title:
+            continue
+        references.append(f"{index:02d}. {title}")
+    return references

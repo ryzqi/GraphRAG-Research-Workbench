@@ -61,12 +61,35 @@ describe('buildResearchPageViewModel', () => {
             report: {
               markdown: '# 研究报告\n\n## 市场概况\n内容 A',
               summary: '生成式 AI 正在重塑半导体供应链。',
+              lead: '本研究聚合公开财报与供应链线索，重点关注 GPU、HBM 与先进封装对行业周期的再定价。',
+              badge_label: '已生成研究报告',
               outline: [{ id: 'section-1', title: '市场概况', level: 2 }],
               metric_cards: [
                 { label: '引用数', value: '12' },
                 { label: '关键发现', value: '3' },
                 { label: '覆盖状态', value: '通过' },
               ],
+              chart: {
+                title: '研究覆盖概览',
+                bars: [
+                  { label: 'GPU', value: 68, accent: 'primary' },
+                  { label: 'HBM', value: 52, accent: 'secondary' },
+                ],
+              },
+              spotlight_cards: [
+                {
+                  eyebrow: 'NVIDIA',
+                  title: '关键参与者',
+                  description: 'Blackwell 周期和 CUDA 生态仍在拉动 2024 年 AI 资本开支预期。',
+                },
+              ],
+              outlook_cards: [
+                {
+                  title: '光子芯片技术',
+                  description: '异构算力与高带宽互连仍是未来两个季度最值得持续跟踪的变量。',
+                },
+              ],
+              references: ['01. IEA 半导体与算力追踪报告 2024'],
             },
           },
         }),
@@ -79,6 +102,71 @@ describe('buildResearchPageViewModel', () => {
     expect(model.railSteps[3]?.state).toBe('current');
     expect(model.report?.outline[0]?.title).toBe('市场概况');
     expect(model.report?.metricCards[0]?.label).toBe('引用数');
+    expect(model.report?.badgeLabel).toBe('已生成研究报告');
+    expect(model.report?.chart?.bars[0]?.label).toBe('GPU');
+    expect(model.report?.spotlightCards[0]?.eyebrow).toBe('NVIDIA');
+    expect(model.report?.outlookCards[0]?.title).toBe('光子芯片技术');
+    expect(model.report?.references[0]).toBe('01. IEA 半导体与算力追踪报告 2024');
+  });
+
+  it('maps pipeline steps from presentation_snapshot live payload', () => {
+    const model = buildResearchPageViewModel({
+      question: '2024年全球电动汽车市场格局与补贴政策深度分析报告',
+      status: 'running',
+      events: [buildEvent(1, 'research.trace.recorded', { summary: '正在整理研究线索' })],
+      artifacts: [
+        buildArtifact('presentation_snapshot', {
+          content_json: {
+            surface: 'live',
+            hero: {
+              eyebrow: 'Deep Research',
+              title: '2024年全球电动汽车市场格局与补贴政策深度分析报告',
+              subtitle: '正在整合研究线索、证据与中间发现。',
+            },
+            rail: {
+              steps: [
+                { key: 'clarify', label: '澄清问题', state: 'complete' },
+                { key: 'plan', label: '研究计划', state: 'complete' },
+                { key: 'run', label: '执行研究', state: 'current' },
+                { key: 'report', label: '输出报告', state: 'pending' },
+              ],
+            },
+            live: {
+              progress: {
+                label: '研究执行中',
+                percent: 68,
+                current_stage_label: '语义建模',
+              },
+              coverage_label: '已汇总 12 条引用',
+              pipeline_steps: [
+                { key: 'collect', label: '数据收集', state: 'complete' },
+                { key: 'extract', label: '特征提取', state: 'complete' },
+                { key: 'model', label: '语义建模', state: 'current' },
+                { key: 'report', label: '结论生成', state: 'pending' },
+              ],
+              activity: [
+                {
+                  id: 'a-1',
+                  event_type: 'research.trace.recorded',
+                  title: '记录来源轨迹：searxng',
+                  body: '最近活跃链路：searxng / web-search',
+                  phase: 'runtime',
+                },
+              ],
+            },
+          },
+        }),
+      ],
+      reportMd: null,
+    });
+
+    expect(model.surface).toBe('live');
+    expect(model.live?.pipelineSteps).toEqual([
+      { key: 'collect', label: '数据收集', state: 'complete' },
+      { key: 'extract', label: '特征提取', state: 'complete' },
+      { key: 'model', label: '语义建模', state: 'current' },
+      { key: 'report', label: '结论生成', state: 'pending' },
+    ]);
   });
 
   it('falls back to legacy timeline construction when presentation_snapshot is missing', () => {
