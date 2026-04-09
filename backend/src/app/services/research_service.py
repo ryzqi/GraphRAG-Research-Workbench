@@ -279,6 +279,11 @@ class ResearchService:
         )
         await self._artifact_store.upsert(
             session=session,
+            artifact_key="runtime_report_draft_md",
+            content_text=runtime_context_snapshot.report_draft_md,
+        )
+        await self._artifact_store.upsert(
+            session=session,
             artifact_key="runtime_report_context_json",
             content_json=runtime_context_snapshot.report_context_json,
         )

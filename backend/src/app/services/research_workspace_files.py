@@ -39,7 +39,6 @@ class ResearchWorkspaceLayout:
     source_ledger_path: str
     claim_map_path: str
     conflicts_path: str
-    evidence_ledger_json_path: str
     report_context_json_path: str
 
 
@@ -109,7 +108,6 @@ def build_research_workspace_layout(session_id: UUID | str) -> ResearchWorkspace
         source_ledger_path=f"{scratch_root}/verification/source-ledger.json",
         claim_map_path=f"{scratch_root}/verification/claim-map.json",
         conflicts_path=f"{scratch_root}/verification/conflicts.json",
-        evidence_ledger_json_path=f"{scratch_root}/verification/evidence-ledger.json",
         report_context_json_path=f"{scratch_root}/report/report-context.json",
     )
 

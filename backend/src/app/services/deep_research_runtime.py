@@ -1340,6 +1340,7 @@ class DeepResearchRuntimeRunner:
         runtime_context_snapshot = build_runtime_context_snapshot(
             result=result,
             layout=layout,
+            baseline_files=workspace_files,
         )
         return ResearchRuntimeRunResult(
             source_bundle=source_bundle,

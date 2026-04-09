@@ -96,6 +96,9 @@ def build_runtime_context_guide(
         "- `/workspace/context/*` and `/workspace/research/*` are the primary context layer.",
         "- `/skills/*` are procedural instructions. Read them only when the task requires their behavior.",
         "- `/scratch/*` files are spillover or raw payloads. Treat them as on-demand details, not first-pass context.",
+        "",
+        "## Runtime Output Targets",
+        f"- Persist `report-context.json` to `{layout.report_context_json_path}`.",
     ]
     if skill_paths:
         lines.extend(
@@ -153,11 +156,15 @@ def _parse_report_context_payload(raw_text: str) -> dict[str, Any]:
 
 
 def build_runtime_context_snapshot(
-    *, result: dict[str, Any], layout: ResearchWorkspaceLayout
+    *,
+    result: dict[str, Any],
+    layout: ResearchWorkspaceLayout,
+    baseline_files: Mapping[str, str] | None = None,
 ) -> ResearchRuntimeContextSnapshot | None:
     files = result.get("files")
     if not isinstance(files, dict):
         return None
+    baseline = baseline_files or {}
 
     whitelist = {
         layout.claim_map_md_path,
@@ -173,6 +180,9 @@ def build_runtime_context_snapshot(
             continue
         text = _coerce_file_text(payload)
         if text:
+            baseline_text = baseline.get(path)
+            if isinstance(baseline_text, str) and text.strip() == baseline_text.strip():
+                continue
             extracted[path] = text
 
     if not extracted:

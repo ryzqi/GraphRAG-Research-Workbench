@@ -28,6 +28,23 @@ def _build_plan_snapshot() -> ResearchPlanSnapshot:
     )
 
 
+def _extract_file_text(payload: object) -> str:
+    if not isinstance(payload, dict):
+        return ""
+    content = payload.get("content")
+    if isinstance(content, str):
+        return content
+    value = payload.get("value")
+    if isinstance(value, dict):
+        text = value.get("text")
+        if isinstance(text, str):
+            return text
+    text = payload.get("text")
+    if isinstance(text, str):
+        return text
+    return ""
+
+
 def test_research_runtime_config_defaults_enable_skills_but_not_memory() -> None:
     fake_model = object()
     config = ResearchRuntimeConfig(
@@ -75,6 +92,24 @@ def test_build_runtime_context_snapshot_harvests_only_whitelisted_files() -> Non
     assert snapshot.claim_map_md.startswith("# 核心主张")
     assert snapshot.report_context_json["executive_summary"] == "summary"
     assert "/scratch/research/session-123/tmp/noise.txt" not in snapshot.files_snapshot
+
+
+def test_build_runtime_context_snapshot_ignores_unmodified_seeded_files() -> None:
+    layout = build_research_workspace_layout("session-123")
+    seeded_claim_map = get_prompt_loader().render("research/claim_map_md")
+    result = {
+        "files": {
+            layout.claim_map_md_path: {"value": {"text": seeded_claim_map}},
+        }
+    }
+
+    snapshot = build_runtime_context_snapshot(
+        result=result,
+        layout=layout,
+        baseline_files={layout.claim_map_md_path: seeded_claim_map},
+    )
+
+    assert snapshot is None
 
 
 def test_runtime_system_prompt_uses_explicit_xml_sections() -> None:
@@ -306,6 +341,8 @@ async def test_runner_injects_runtime_context_guide_file() -> None:
     request_files = request["files"]
     assert isinstance(request_files, dict)
     assert "/workspace/context/runtime_context_guide.md" in request_files
+    guide_text = _extract_file_text(request_files["/workspace/context/runtime_context_guide.md"])
+    assert "/scratch/research/session-123/report/report-context.json" in guide_text
 
 
 async def test_runner_prompt_lists_only_priority_context_files() -> None:
@@ -383,6 +420,75 @@ async def test_runner_prompt_lists_only_priority_context_files() -> None:
     assert "/skills/research-runtime/SKILL.md" not in prompt
     assert "/skills/research-reporting/SKILL.md" not in prompt
     assert "/scratch/research/session-123/raw/noise.json" not in prompt
+
+
+async def test_runner_ignores_unchanged_seeded_runtime_files() -> None:
+    seeded_claim_map = get_prompt_loader().render("research/claim_map_md")
+    seeded_report_draft = get_prompt_loader().render("research/report_draft_md")
+
+    class _FakeAgent:
+        async def ainvoke(self, request, config, **kwargs):  # type: ignore[no-untyped-def]
+            return {
+                "structured_response": {
+                    "findings": ["发现 A", "发现 B"],
+                    "citations": [
+                        {
+                            "source_type": "web",
+                            "source_provider": "tavily",
+                            "retrieval_method": "search",
+                            "source_id": "src-tavily",
+                            "title": "来源 A",
+                            "url": "https://example.com/a",
+                            "origin_url": "https://example.com/a",
+                        },
+                        {
+                            "source_type": "web",
+                            "source_provider": "searxng",
+                            "retrieval_method": "search",
+                            "source_id": "src-searxng",
+                            "title": "来源 B",
+                            "url": "https://example.com/b",
+                            "origin_url": "https://example.com/b",
+                        },
+                    ],
+                },
+                "files": request["files"],
+            }
+
+    fake_model = object()
+    runtime = SimpleNamespace(
+        agent=_FakeAgent(),
+        config=ResearchRuntimeConfig(
+            primary_model=fake_model,
+            subagent_model=fake_model,
+            finalizer_model=fake_model,
+            system_prompt="runtime prompt",
+        ),
+        tool_groups={"web_provider_ids": ("tavily", "searxng")},
+        tools=[],
+        make_run_config=lambda *, thread_id: {"configurable": {"thread_id": thread_id}},
+    )
+    layout = build_research_workspace_layout("session-123")
+    runner = DeepResearchRuntimeRunner(
+        runtime=runtime,
+        workspace_files={
+            layout.claim_map_md_path: seeded_claim_map,
+            layout.report_draft_path: seeded_report_draft,
+        },
+    )
+    session = SimpleNamespace(
+        id="session-123",
+        thread_id="thread-123",
+        question="验证未修改 scaffold 不应污染 runtime snapshot",
+        artifacts=[],
+    )
+
+    run_result = await runner.run_session(
+        session=session,
+        plan_snapshot=_build_plan_snapshot(),
+    )
+
+    assert run_result.runtime_context_snapshot is None
 
 
 async def test_runner_passes_runtime_context_to_agent_invoke() -> None:

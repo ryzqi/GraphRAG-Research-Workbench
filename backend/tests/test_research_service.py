@@ -137,6 +137,7 @@ def _build_runtime_result_with_context() -> ResearchRuntimeRunResult:
             evidence_ledger_md="# 证据账本\n- [1] Evidence",
             analysis_notes_md="# 中间分析\n- Note",
             report_outline_md="# 报告提纲\n- 核心结论",
+            report_draft_md="# 报告草稿\n- Draft",
             report_context_json={"executive_summary": "summary"},
             files_snapshot={"/workspace/research/session-123/05-claim-map.md": "# 核心主张"},
         ),
@@ -253,6 +254,7 @@ async def test_execute_session_persists_runtime_context_artifacts() -> None:
         "runtime_evidence_ledger_md",
         "runtime_analysis_notes_md",
         "runtime_report_outline_md",
+        "runtime_report_draft_md",
         "runtime_report_context_json",
         "runtime_files_snapshot_json",
     }.issubset(artifact_keys)
