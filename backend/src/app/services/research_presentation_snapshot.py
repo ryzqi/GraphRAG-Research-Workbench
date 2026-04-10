@@ -28,6 +28,9 @@ def build_research_presentation_snapshot(
         artifact_by_key, "clarification_request"
     )
     plan_payload = _read_artifact_object(artifact_by_key, "plan_snapshot")
+    plan_progress_payload = _read_artifact_object(
+        artifact_by_key, "plan_progress_snapshot"
+    )
     report_payload = _read_artifact_object(artifact_by_key, "report_json")
     metrics_payload = _read_artifact_object(artifact_by_key, "metrics_snapshot")
     gate_payload = _read_artifact_object(artifact_by_key, "gate_snapshot")
@@ -68,6 +71,8 @@ def build_research_presentation_snapshot(
             _build_live_section(
                 status=session.status,
                 events=events,
+                plan_payload=plan_payload,
+                plan_progress_payload=plan_progress_payload,
                 metrics_payload=metrics_payload,
             )
             if surface == "live"
@@ -300,9 +305,16 @@ def _build_live_section(
     *,
     status: ResearchSessionStatus,
     events: Sequence[ResearchEventEnvelope],
+    plan_payload: dict[str, Any],
+    plan_progress_payload: dict[str, Any],
     metrics_payload: dict[str, Any],
 ) -> dict[str, Any]:
-    progress = _build_live_progress(status=status)
+    plan_steps = _build_live_plan_steps(
+        status=status,
+        plan_payload=plan_payload,
+        plan_progress_payload=plan_progress_payload,
+    )
+    progress = _build_live_progress(status=status, plan_steps=plan_steps)
     activity = _build_live_activity(events=events, status=status)
     quality_payload = metrics_payload.get("quality")
     citation_count = (
@@ -313,7 +325,7 @@ def _build_live_section(
 
     return {
         "progress": progress,
-        "pipeline_steps": _build_live_pipeline_steps(status=status),
+        "plan_steps": plan_steps,
         "activity": activity,
         "coverage_label": (
             f"已汇总 {int(citation_count)} 条引用"
@@ -323,52 +335,127 @@ def _build_live_section(
     }
 
 
-def _build_live_pipeline_steps(
-    *, status: ResearchSessionStatus
+def _normalize_plan_step_state(value: object) -> str:
+    if value in {"pending", "current", "complete", "failed", "canceled"}:
+        return str(value)
+    return "pending"
+
+
+def _build_live_plan_steps(
+    *,
+    status: ResearchSessionStatus,
+    plan_payload: dict[str, Any],
+    plan_progress_payload: dict[str, Any],
 ) -> list[dict[str, str]]:
+    progress_steps = plan_progress_payload.get("steps")
+    normalized_steps: list[dict[str, str]] = []
+    if isinstance(progress_steps, list):
+        for index, item in enumerate(progress_steps, start=1):
+            if not isinstance(item, dict):
+                continue
+            label = str(item.get("title") or "").strip()
+            if not label:
+                continue
+            normalized_steps.append(
+                {
+                    "key": f"plan-step-{index}",
+                    "label": label,
+                    "state": _normalize_plan_step_state(item.get("status")),
+                }
+            )
+    if normalized_steps:
+        return normalized_steps
+
+    raw_steps = plan_payload.get("subtasks")
+    if isinstance(raw_steps, list):
+        for index, item in enumerate(raw_steps, start=1):
+            if not isinstance(item, dict):
+                continue
+            label = str(item.get("title") or "").strip()
+            if not label:
+                continue
+            state = "pending"
+            if status in {ResearchSessionStatus.FINALIZING, ResearchSessionStatus.FINAL}:
+                state = "complete"
+            elif status == ResearchSessionStatus.CANCELED:
+                state = "canceled" if index == 1 else "pending"
+            elif status in {ResearchSessionStatus.FAILED, ResearchSessionStatus.TIMED_OUT}:
+                state = "failed" if index == 1 else "pending"
+            elif status in {ResearchSessionStatus.QUEUED, ResearchSessionStatus.RUNNING}:
+                state = "current" if index == 1 else "pending"
+            normalized_steps.append(
+                {"key": f"plan-step-{index}", "label": label, "state": state}
+            )
+        if normalized_steps:
+            return normalized_steps
+
+    generic_steps = [
+        ("plan-step-1", "进入执行队列"),
+        ("plan-step-2", "执行研究"),
+        ("plan-step-3", "生成报告"),
+    ]
     states = {
-        "collect": "pending",
-        "extract": "pending",
-        "model": "pending",
-        "report": "pending",
+        "plan-step-1": "pending",
+        "plan-step-2": "pending",
+        "plan-step-3": "pending",
     }
     if status == ResearchSessionStatus.QUEUED:
-        states["collect"] = "current"
-    elif status in {
-        ResearchSessionStatus.RUNNING,
-        ResearchSessionStatus.FAILED,
-        ResearchSessionStatus.CANCELED,
-        ResearchSessionStatus.TIMED_OUT,
-    }:
-        states["collect"] = "complete"
-        states["extract"] = "complete"
-        states["model"] = "current"
+        states["plan-step-1"] = "current"
+    elif status == ResearchSessionStatus.RUNNING:
+        states["plan-step-1"] = "complete"
+        states["plan-step-2"] = "current"
     elif status in {ResearchSessionStatus.FINALIZING, ResearchSessionStatus.FINAL}:
-        states["collect"] = "complete"
-        states["extract"] = "complete"
-        states["model"] = "complete"
-        states["report"] = "current"
-
+        states["plan-step-1"] = "complete"
+        states["plan-step-2"] = "complete"
+        states["plan-step-3"] = "current"
+    elif status == ResearchSessionStatus.CANCELED:
+        states["plan-step-1"] = "canceled"
+    elif status in {ResearchSessionStatus.FAILED, ResearchSessionStatus.TIMED_OUT}:
+        states["plan-step-1"] = "failed"
     return [
-        {"key": "collect", "label": "数据收集", "state": states["collect"]},
-        {"key": "extract", "label": "特征提取", "state": states["extract"]},
-        {"key": "model", "label": "语义建模", "state": states["model"]},
-        {"key": "report", "label": "结论生成", "state": states["report"]},
+        {"key": key, "label": label, "state": states[key]}
+        for key, label in generic_steps
     ]
 
 
-def _build_live_progress(*, status: ResearchSessionStatus) -> dict[str, Any]:
+def _build_live_progress(
+    *,
+    status: ResearchSessionStatus,
+    plan_steps: Sequence[dict[str, str]],
+) -> dict[str, Any]:
+    total_steps = len(plan_steps)
+    completed_step_count = sum(
+        1 for item in plan_steps if item.get("state") == "complete"
+    )
+    current_step = next(
+        (
+            item
+            for item in plan_steps
+            if item.get("state") in {"current", "failed", "canceled"}
+        ),
+        None,
+    )
+    current_stage_label = (
+        str(current_step.get("label") or "").strip()
+        if isinstance(current_step, dict)
+        else ""
+    )
+    progress_percent = (
+        int(round((completed_step_count / total_steps) * 100))
+        if total_steps > 0
+        else 0
+    )
     if status == ResearchSessionStatus.QUEUED:
         return {
             "label": "研究准备中",
-            "percent": 28,
-            "current_stage_label": "进入执行队列",
+            "percent": progress_percent,
+            "current_stage_label": current_stage_label or "进入执行队列",
         }
     if status == ResearchSessionStatus.RUNNING:
         return {
             "label": "研究执行中",
-            "percent": 64,
-            "current_stage_label": "执行研究",
+            "percent": progress_percent,
+            "current_stage_label": current_stage_label or "执行研究",
         }
     if status == ResearchSessionStatus.FINALIZING:
         return {
@@ -379,25 +466,25 @@ def _build_live_progress(*, status: ResearchSessionStatus) -> dict[str, Any]:
     if status == ResearchSessionStatus.FAILED:
         return {
             "label": "研究失败",
-            "percent": 100,
-            "current_stage_label": "研究失败",
+            "percent": progress_percent,
+            "current_stage_label": current_stage_label or "研究失败",
         }
     if status == ResearchSessionStatus.CANCELED:
         return {
             "label": "研究已停止",
-            "percent": 100,
-            "current_stage_label": "研究已停止",
+            "percent": progress_percent,
+            "current_stage_label": current_stage_label or "研究已停止",
         }
     if status == ResearchSessionStatus.TIMED_OUT:
         return {
             "label": "研究超时",
-            "percent": 100,
-            "current_stage_label": "研究超时",
+            "percent": progress_percent,
+            "current_stage_label": current_stage_label or "研究超时",
         }
     return {
         "label": "执行研究",
-        "percent": 60,
-        "current_stage_label": "执行研究",
+        "percent": progress_percent,
+        "current_stage_label": current_stage_label or "执行研究",
     }
 
 
@@ -433,6 +520,9 @@ def _build_live_activity(
 
 
 def _build_activity_title(event: ResearchEventEnvelope) -> str:
+    summary = event.payload.get("summary")
+    if isinstance(summary, str) and summary.strip():
+        return summary.strip()
     if event.event_type == "research.trace.recorded":
         source_provider = event.payload.get("source_provider")
         if isinstance(source_provider, str) and source_provider.strip():
@@ -454,6 +544,9 @@ def _build_activity_title(event: ResearchEventEnvelope) -> str:
 
 
 def _build_activity_body(event: ResearchEventEnvelope) -> str:
+    finding = event.payload.get("finding")
+    if isinstance(finding, str) and finding.strip():
+        return finding.strip()
     if event.event_type == "research.run.started":
         return "深度研究运行时已启动，开始执行证据收集与分析。"
     if event.event_type == "research.run.queued":

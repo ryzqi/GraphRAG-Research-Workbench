@@ -86,13 +86,13 @@ describe('ResearchCanvas', () => {
           progress: {
             label: '研究执行中',
             percent: 68,
-            currentStageLabel: '执行研究',
+            currentStageLabel: '语义建模',
           },
-          pipelineSteps: [
-            { key: 'collect', label: '数据收集', state: 'complete' },
-            { key: 'extract', label: '特征提取', state: 'complete' },
-            { key: 'model', label: '语义建模', state: 'current' },
-            { key: 'report', label: '结论生成', state: 'pending' },
+          planSteps: [
+            { key: 'plan-step-1', label: '数据收集', state: 'complete' },
+            { key: 'plan-step-2', label: '特征提取', state: 'complete' },
+            { key: 'plan-step-3', label: '语义建模', state: 'current' },
+            { key: 'plan-step-4', label: '结论生成', state: 'pending' },
           ],
           coverageLabel: '已汇总 12 条引用',
           activity: [
@@ -123,6 +123,7 @@ describe('ResearchCanvas', () => {
 
     expect(flattenText(tree)).toContain('研究进度实时追踪');
     expect(flattenText(tree)).toContain('68%');
+    expect(flattenText(tree)).toContain('当前计划步骤：语义建模');
     expect(flattenText(tree)).toContain('系统运行正常，已汇总 12 条引用');
     expect(flattenText(tree)).toContain('数据收集');
     expect(flattenText(tree)).toContain('特征提取');

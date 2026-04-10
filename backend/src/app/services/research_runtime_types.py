@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Mapping
+from typing import TYPE_CHECKING, Any, Literal, Mapping
 
 from langchain.tools import BaseTool
 
@@ -69,6 +69,7 @@ DEFAULT_RESEARCH_PROVIDER_IDS = (
 DEFAULT_RESEARCH_STREAM_POLICY = ResearchStreamPolicy()
 DEFAULT_RESEARCH_BACKEND_POLICY = ResearchBackendPolicy()
 DEFAULT_RESEARCH_LARGE_RESULT_POLICY = ResearchLargeResultPolicy()
+ResearchPlanProgressStatus = Literal["current", "complete", "failed", "canceled"]
 
 
 @dataclass(slots=True, frozen=True)
@@ -82,6 +83,15 @@ class ResearchRuntimeContext:
     subagent_route: tuple[str, ...]
     workspace_root: str
     scratch_root: str
+
+
+@dataclass(slots=True, frozen=True)
+class ResearchPlanProgressUpdate:
+    """Deep Research runtime 上报的计划步骤更新。"""
+
+    step_index: int
+    status: ResearchPlanProgressStatus
+    message: str | None = None
 
 
 @dataclass(slots=True)

@@ -136,18 +136,36 @@ export function ResearchCanvas({
             />
           </Box>
 
+          <Typography
+            variant="body2"
+            sx={{
+              color: researchWorkbenchColors.subtleText,
+              fontFamily: researchBodyFont,
+            }}
+          >
+            当前计划步骤：{live.progress.currentStageLabel}
+          </Typography>
+
           <Stack direction="row" justifyContent="space-between" spacing={1.1}>
-            {live.pipelineSteps.map((step) => (
+            {live.planSteps.map((step) => (
               <Typography
                 key={step.key}
                 variant="caption"
                 sx={{
                   flex: 1,
                   textAlign:
-                    step.key === 'model' ? 'center' : step.key === 'report' ? 'right' : 'left',
+                    live.planSteps.length <= 1
+                      ? 'left'
+                      : step === live.planSteps[0]
+                        ? 'left'
+                        : step === live.planSteps[live.planSteps.length - 1]
+                          ? 'right'
+                          : 'center',
                   color:
                     step.state === 'current'
                       ? researchWorkbenchColors.primary
+                      : step.state === 'failed' || step.state === 'canceled'
+                        ? researchWorkbenchColors.tertiary
                       : step.state === 'complete'
                         ? researchWorkbenchColors.mutedText
                         : alpha(researchWorkbenchColors.subtleText, 0.72),

@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from types import SimpleNamespace
+from typing import cast
+
+from langchain.tools import ToolRuntime
 
 from app.schemas.research import (
     ResearchComplexity,
@@ -10,11 +14,17 @@ from app.schemas.research import (
 from app.prompts import get_prompt_loader
 from app.services.deep_research_runtime import (
     DeepResearchRuntimeRunner,
+    _PlanProgressCallbackRegistry,
+    _build_update_plan_progress_tool,
     _build_runtime_prompt,
 )
 from app.services.research_runtime_context import build_runtime_context_snapshot
 from app.services.research_runtime_skills import build_research_runtime_skill_files
-from app.services.research_runtime_types import ResearchRuntimeConfig
+from app.services.research_runtime_types import (
+    ResearchPlanProgressUpdate,
+    ResearchRuntimeConfig,
+    ResearchRuntimeContext,
+)
 from app.services.research_workspace_files import build_research_workspace_layout
 
 
@@ -64,6 +74,7 @@ def test_build_research_runtime_skill_files_returns_runtime_and_reporting_skill(
     assert "/skills/research-runtime/SKILL.md" in files
     assert "/skills/research-reporting/SKILL.md" in files
     assert "write_todos" in files["/skills/research-runtime/SKILL.md"]
+    assert "update_plan_progress" in files["/skills/research-runtime/SKILL.md"]
     assert "report-context.json" in files["/skills/research-reporting/SKILL.md"]
 
 
@@ -127,11 +138,57 @@ def test_runtime_user_prompt_places_static_rules_before_dynamic_task_block() -> 
     )
 
     assert "<instructions>" in prompt
+    assert "update_plan_progress" in prompt
     assert "<task_context>" in prompt
     assert prompt.index("<instructions>") < prompt.index("<task_context>")
     assert prompt.index("What changed in HBM supply constraints?") > prompt.index(
         "<task_context>"
     )
+
+
+async def test_update_plan_progress_tool_dispatches_registered_callback() -> None:
+    captured: list[ResearchPlanProgressUpdate] = []
+    registry = _PlanProgressCallbackRegistry()
+
+    async def _callback(update: ResearchPlanProgressUpdate) -> None:
+        captured.append(update)
+
+    registry.register("session-123", _callback)
+    tool = _build_update_plan_progress_tool(registry)
+    coroutine = tool.coroutine
+    assert callable(coroutine)
+
+    runtime = ToolRuntime(
+        state={},
+        context=ResearchRuntimeContext(
+            session_id="session-123",
+            thread_id="thread-123",
+            trace_id="trace-123",
+            target_sources=("web",),
+            subagent_route=("web", "citation"),
+            workspace_root="/workspace/research/session-123",
+            scratch_root="/scratch/research/session-123",
+        ),
+        config={"configurable": {"thread_id": "thread-123"}},
+        stream_writer=cast(Callable[[object], None], lambda _payload: None),
+        tool_call_id=None,
+        store=None,
+    )
+
+    await coroutine(
+        step_index=2,
+        status="complete",
+        message="第一步事实收集已完成",
+        runtime=runtime,
+    )
+
+    assert captured == [
+        ResearchPlanProgressUpdate(
+            step_index=2,
+            status="complete",
+            message="第一步事实收集已完成",
+        )
+    ]
 
 
 async def test_runner_injects_runtime_skill_files_into_request() -> None:

@@ -179,7 +179,7 @@ export interface ResearchPresentationLiveActivity {
 export interface ResearchPresentationPipelineStep {
   key: string;
   label: string;
-  state: 'pending' | 'current' | 'complete';
+  state: 'pending' | 'current' | 'complete' | 'failed' | 'canceled';
 }
 
 export interface ResearchPresentationLiveSection {
@@ -189,7 +189,7 @@ export interface ResearchPresentationLiveSection {
     current_stage_label: string;
   };
   coverage_label: string;
-  pipeline_steps?: ResearchPresentationPipelineStep[];
+  plan_steps?: ResearchPresentationPipelineStep[];
   activity: ResearchPresentationLiveActivity[];
 }
 

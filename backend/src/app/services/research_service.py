@@ -49,7 +49,11 @@ from app.services.research_presentation_snapshot import (
 )
 from app.services.research_replay import evaluate_research_replay_consistency
 from app.services.research_runtime_context import ResearchRuntimeContextSnapshot
+from app.services.research_runtime_types import ResearchPlanProgressUpdate
 from app.services.research_workspace_files import build_workspace_bootstrap_artifacts
+
+PLAN_PROGRESS_ARTIFACT_KEY = "plan_progress_snapshot"
+PLAN_PROGRESS_EVENT_TYPE = "research.plan_progress.updated"
 
 
 class ResearchRuntimeRunner(Protocol):
@@ -58,6 +62,7 @@ class ResearchRuntimeRunner(Protocol):
         *,
         session: ResearchSession,
         plan_snapshot: ResearchPlanSnapshot,
+        plan_progress_callback=None,
     ) -> ResearchRuntimeRunResult: ...
 
 
@@ -67,8 +72,9 @@ class UnconfiguredResearchRuntimeRunner:
         *,
         session: ResearchSession,
         plan_snapshot: ResearchPlanSnapshot,
+        plan_progress_callback=None,
     ) -> ResearchRuntimeRunResult:
-        del session, plan_snapshot
+        del session, plan_snapshot, plan_progress_callback
         raise RuntimeError("Research runtime runner 未配置")
 
 
@@ -122,6 +128,32 @@ class ResearchService:
                 code="RESEARCH_PLAN_SNAPSHOT_MISSING",
                 message="研究计划快照不存在或格式无效",
             )
+        return ResearchPlanSnapshot.model_validate(payload)
+
+    def _read_plan_progress_payload(
+        self, session: ResearchSession
+    ) -> dict[str, object] | None:
+        artifact = next(
+            (
+                item
+                for item in session.artifacts
+                if item.artifact_key == PLAN_PROGRESS_ARTIFACT_KEY
+            ),
+            None,
+        )
+        payload = artifact.content_json if artifact is not None else None
+        return payload if isinstance(payload, dict) else None
+
+    def _try_read_plan_snapshot(
+        self, session: ResearchSession
+    ) -> ResearchPlanSnapshot | None:
+        artifact = next(
+            (item for item in session.artifacts if item.artifact_key == "plan_snapshot"),
+            None,
+        )
+        payload = artifact.content_json if artifact is not None else None
+        if not isinstance(payload, dict):
+            return None
         return ResearchPlanSnapshot.model_validate(payload)
 
     async def create_session(
@@ -234,6 +266,15 @@ class ResearchService:
             session=session,
             artifact_key="research_brief",
             content_text=plan_snapshot.research_brief,
+        )
+        await self._artifact_store.upsert(
+            session=session,
+            artifact_key=PLAN_PROGRESS_ARTIFACT_KEY,
+            content_json=self._build_plan_progress_snapshot(
+                plan_snapshot,
+                current_step_index=None,
+                completed_step_count=0,
+            ),
         )
         bootstrap_artifacts = build_workspace_bootstrap_artifacts(
             session_id=session.id,
@@ -435,6 +476,7 @@ class ResearchService:
                 code="RESEARCH_START_NOT_ALLOWED",
                 message="仅 plan_ready 状态允许开始研究",
             )
+        plan_snapshot = self.read_plan_snapshot(session)
         session.transition_to(ResearchSessionStatus.QUEUED)
         await self._event_store.append(
             session=session,
@@ -442,6 +484,13 @@ class ResearchService:
             phase="planner",
             payload={"lc_agent_name": "planner"},
             trace_id=session.trace_id,
+        )
+        await self._persist_plan_progress_snapshot(
+            session=session,
+            plan_snapshot=plan_snapshot,
+            phase="planner",
+            current_step_index=1 if plan_snapshot.subtasks else None,
+            completed_step_count=0,
         )
         self._ensure_dispatch_outbox(session=session)
         return session
@@ -466,6 +515,14 @@ class ResearchService:
             ResearchSessionStatus.RUNNING,
             ResearchSessionStatus.FINALIZING,
         }:
+            plan_snapshot = self._try_read_plan_snapshot(session)
+            if plan_snapshot is not None:
+                await self._persist_terminal_plan_progress_snapshot(
+                    session=session,
+                    plan_snapshot=plan_snapshot,
+                    phase="runtime" if runtime_stop else "planner",
+                    terminal_state="canceled",
+                )
             session.transition_to(ResearchSessionStatus.CANCELED)
             await self._event_store.append(
                 session=session,
@@ -556,10 +613,25 @@ class ResearchService:
             },
             trace_id=session.trace_id,
         )
+        await self._persist_plan_progress_snapshot(
+            session=session,
+            plan_snapshot=plan_snapshot,
+            phase="runtime",
+            current_step_index=1 if plan_snapshot.subtasks else None,
+            completed_step_count=0,
+        )
 
         runtime_result = await self._runtime_runner.run_session(
             session=session,
             plan_snapshot=plan_snapshot,
+            plan_progress_callback=(
+                self._build_runtime_plan_progress_callback(
+                    session=session,
+                    plan_snapshot=plan_snapshot,
+                )
+                if plan_snapshot.subtasks
+                else None
+            ),
         )
         source_bundle = runtime_result.source_bundle
         await self._append_trace_events(
@@ -611,6 +683,13 @@ class ResearchService:
 
         session.transition_to(ResearchSessionStatus.FINALIZING)
         session.finalizer_phase = "finalizer"
+        await self._persist_plan_progress_snapshot(
+            session=session,
+            plan_snapshot=plan_snapshot,
+            phase="finalizer",
+            current_step_index=None,
+            completed_step_count=len(plan_snapshot.subtasks),
+        )
         await self._event_store.append(
             session=session,
             event_type="research.finalizer.started",
@@ -704,6 +783,14 @@ class ResearchService:
     ) -> ResearchSession:
         ensure_research_trace_id(session)
         if not session.status.is_terminal():
+            plan_snapshot = self._try_read_plan_snapshot(session)
+            if plan_snapshot is not None:
+                await self._persist_terminal_plan_progress_snapshot(
+                    session=session,
+                    plan_snapshot=plan_snapshot,
+                    phase=phase,
+                    terminal_state="failed",
+                )
             session.transition_to(ResearchSessionStatus.FAILED)
         session.error_message = str(exc)
         session.finished_at = datetime.now(timezone.utc)
@@ -878,6 +965,270 @@ class ResearchService:
             for item in raw_citations
             if isinstance(item, dict)
         ]
+
+    @staticmethod
+    def _plan_progress_updated_at() -> str:
+        return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+    @staticmethod
+    def _normalize_plan_progress_index(
+        value: object,
+        *,
+        total_steps: int,
+    ) -> int | None:
+        if not isinstance(value, int):
+            return None
+        if value < 1 or value > total_steps:
+            return None
+        return value
+
+    @staticmethod
+    def _extract_plan_progress_position(
+        payload: dict[str, object] | None,
+        *,
+        total_steps: int,
+    ) -> tuple[int | None, int]:
+        if payload is None:
+            return (1 if total_steps > 0 else None, 0)
+
+        raw_completed = payload.get("completed_step_count")
+        completed = raw_completed if isinstance(raw_completed, int) else 0
+        completed = max(0, min(completed, total_steps))
+
+        current = ResearchService._normalize_plan_progress_index(
+            payload.get("current_step_index"),
+            total_steps=total_steps,
+        )
+        if current is None and completed < total_steps:
+            current = completed + 1 if total_steps > 0 else None
+        if current is not None and current <= completed:
+            current = None
+        return current, completed
+
+    @staticmethod
+    def _build_plan_progress_snapshot(
+        plan_snapshot: ResearchPlanSnapshot,
+        *,
+        current_step_index: int | None,
+        completed_step_count: int,
+        active_step_status: str = "current",
+    ) -> dict[str, object]:
+        total_steps = len(plan_snapshot.subtasks)
+        bounded_completed = max(0, min(completed_step_count, total_steps))
+        bounded_current = ResearchService._normalize_plan_progress_index(
+            current_step_index, total_steps=total_steps
+        )
+        if bounded_current is not None and bounded_current <= bounded_completed:
+            bounded_current = None
+
+        steps: list[dict[str, object]] = []
+        for index, subtask in enumerate(plan_snapshot.subtasks, start=1):
+            if index <= bounded_completed:
+                status = "complete"
+            elif bounded_current is not None and index == bounded_current:
+                status = active_step_status
+            else:
+                status = "pending"
+            steps.append(
+                {
+                    "index": index,
+                    "title": subtask.title,
+                    "description": subtask.description,
+                    "target_sources": [item.value for item in subtask.target_sources],
+                    "status": status,
+                }
+            )
+
+        return {
+            "steps": steps,
+            "current_step_index": bounded_current,
+            "completed_step_count": bounded_completed,
+            "updated_at": ResearchService._plan_progress_updated_at(),
+        }
+
+    @staticmethod
+    def _lc_agent_name_for_phase(phase: str) -> str:
+        if phase == "planner":
+            return "planner"
+        if phase == "finalizer":
+            return "finalizer"
+        return "deep-research"
+
+    @staticmethod
+    def _build_plan_progress_summary(snapshot: dict[str, object]) -> str:
+        steps = snapshot.get("steps")
+        if not isinstance(steps, list):
+            return "研究计划步骤已更新。"
+
+        current_step = next(
+            (
+                item
+                for item in steps
+                if isinstance(item, dict)
+                and item.get("status") in {"current", "failed", "canceled"}
+            ),
+            None,
+        )
+        if isinstance(current_step, dict):
+            title = str(current_step.get("title") or "").strip()
+            status = str(current_step.get("status") or "")
+            if status == "failed":
+                return f"当前计划步骤失败：{title}" if title else "当前计划步骤失败。"
+            if status == "canceled":
+                return f"当前计划步骤已停止：{title}" if title else "当前计划步骤已停止。"
+            return f"当前计划步骤：{title}" if title else "当前计划步骤已更新。"
+
+        completed = snapshot.get("completed_step_count")
+        if isinstance(completed, int) and completed == len(steps) and len(steps) > 0:
+            return "研究计划步骤已全部完成，正在生成报告。"
+        return "研究计划步骤已更新。"
+
+    @staticmethod
+    def _normalize_plan_progress_message(value: object) -> str | None:
+        if not isinstance(value, str):
+            return None
+        normalized = value.strip()
+        return normalized or None
+
+    @staticmethod
+    def _plan_progress_snapshot_equals(
+        left: dict[str, object] | None,
+        right: dict[str, object],
+    ) -> bool:
+        if left is None:
+            return False
+        return (
+            left.get("steps") == right.get("steps")
+            and left.get("current_step_index") == right.get("current_step_index")
+            and left.get("completed_step_count") == right.get("completed_step_count")
+        )
+
+    async def _persist_plan_progress_snapshot(
+        self,
+        *,
+        session: ResearchSession,
+        plan_snapshot: ResearchPlanSnapshot,
+        phase: str,
+        current_step_index: int | None,
+        completed_step_count: int,
+        active_step_status: str = "current",
+        event_message: str | None = None,
+        emit_event: bool = True,
+    ) -> dict[str, object]:
+        normalized_message = self._normalize_plan_progress_message(event_message)
+        existing_payload = self._read_plan_progress_payload(session)
+        snapshot = self._build_plan_progress_snapshot(
+            plan_snapshot,
+            current_step_index=current_step_index,
+            completed_step_count=completed_step_count,
+            active_step_status=active_step_status,
+        )
+        if (
+            self._plan_progress_snapshot_equals(existing_payload, snapshot)
+            and normalized_message is None
+        ):
+            return existing_payload if existing_payload is not None else snapshot
+        await self._artifact_store.upsert(
+            session=session,
+            artifact_key=PLAN_PROGRESS_ARTIFACT_KEY,
+            content_json=snapshot,
+        )
+        summary = normalized_message or self._build_plan_progress_summary(snapshot)
+        if emit_event:
+            await self._event_store.append(
+                session=session,
+                event_type=PLAN_PROGRESS_EVENT_TYPE,
+                phase=phase,
+                payload={
+                    **snapshot,
+                    "summary": summary,
+                    "message": normalized_message,
+                    "lc_agent_name": self._lc_agent_name_for_phase(phase),
+                },
+                trace_id=session.trace_id,
+            )
+        return snapshot
+
+    async def _persist_terminal_plan_progress_snapshot(
+        self,
+        *,
+        session: ResearchSession,
+        plan_snapshot: ResearchPlanSnapshot,
+        phase: str,
+        terminal_state: str,
+    ) -> dict[str, object]:
+        existing_payload = self._read_plan_progress_payload(session)
+        current_step_index, completed_step_count = self._extract_plan_progress_position(
+            existing_payload,
+            total_steps=len(plan_snapshot.subtasks),
+        )
+        return await self._persist_plan_progress_snapshot(
+            session=session,
+            plan_snapshot=plan_snapshot,
+            phase=phase,
+            current_step_index=current_step_index,
+            completed_step_count=completed_step_count,
+            active_step_status=terminal_state,
+        )
+
+    async def _advance_runtime_plan_progress(
+        self,
+        *,
+        session: ResearchSession,
+        plan_snapshot: ResearchPlanSnapshot,
+        update: ResearchPlanProgressUpdate,
+    ) -> dict[str, object]:
+        total_steps = len(plan_snapshot.subtasks)
+        step_index = self._normalize_plan_progress_index(
+            update.step_index,
+            total_steps=total_steps,
+        )
+        if step_index is None:
+            raise RuntimeError(
+                f"计划步骤索引超出范围: {update.step_index}/{total_steps}"
+            )
+
+        existing_payload = self._read_plan_progress_payload(session)
+        _, completed_step_count = self._extract_plan_progress_position(
+            existing_payload,
+            total_steps=total_steps,
+        )
+
+        current_step_index: int | None = step_index
+        active_step_status = update.status
+        if update.status == "complete":
+            completed_step_count = max(completed_step_count, step_index)
+            current_step_index = (
+                completed_step_count + 1
+                if completed_step_count < total_steps
+                else None
+            )
+            active_step_status = "current"
+
+        return await self._persist_plan_progress_snapshot(
+            session=session,
+            plan_snapshot=plan_snapshot,
+            phase="runtime",
+            current_step_index=current_step_index,
+            completed_step_count=completed_step_count,
+            active_step_status=active_step_status,
+            event_message=update.message,
+        )
+
+    def _build_runtime_plan_progress_callback(
+        self,
+        *,
+        session: ResearchSession,
+        plan_snapshot: ResearchPlanSnapshot,
+    ):
+        async def _callback(update: ResearchPlanProgressUpdate) -> None:
+            await self._advance_runtime_plan_progress(
+                session=session,
+                plan_snapshot=plan_snapshot,
+                update=update,
+            )
+
+        return _callback
 
     @staticmethod
     def _build_event_envelope(

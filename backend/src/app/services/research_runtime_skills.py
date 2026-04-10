@@ -16,9 +16,10 @@ description: Use this skill for deep research runtime tasks that require claim-f
 
 1. Read mission, plan, query-map, coverage, claim-map, evidence-ledger, analysis-notes, report-outline, and report-draft before any external search.
 2. Call `write_todos` immediately after reading the scaffold. Todos must cover claims, coverage gaps, subagent delegation, and report completion.
-3. Update claim-map, evidence-ledger, analysis-notes, report-outline, and report-draft continuously during the run.
-4. Use external search only to close unresolved claims, cross-check evidence, or remove coverage gaps.
-5. Return concise structured findings and citations instead of raw tool dumps.
+3. Before starting a plan subtask, call `update_plan_progress(step_index=<1-based index>, status="current")`; after finishing it, call `update_plan_progress(..., status="complete")`. If a subtask fails or is stopped, call the same tool with `failed` or `canceled`.
+4. Update claim-map, evidence-ledger, analysis-notes, report-outline, and report-draft continuously during the run.
+5. Use external search only to close unresolved claims, cross-check evidence, or remove coverage gaps.
+6. Return concise structured findings and citations instead of raw tool dumps.
 """,
         "/skills/research-reporting/SKILL.md": """---
 name: research-reporting

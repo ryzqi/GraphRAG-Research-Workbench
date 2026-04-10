@@ -70,16 +70,18 @@ export interface ResearchPlanSectionModel {
   primaryActionLabel: string;
 }
 
+type ResearchLiveStepState = 'pending' | 'current' | 'complete' | 'failed' | 'canceled';
+
 export interface ResearchLiveSectionModel {
   progress: {
     label: string;
     percent: number;
     currentStageLabel: string;
   };
-  pipelineSteps: Array<{
+  planSteps: Array<{
     key: string;
     label: string;
-    state: 'pending' | 'current' | 'complete';
+    state: ResearchLiveStepState;
   }>;
   coverageLabel: string;
   footerStatus?: string;
@@ -516,35 +518,106 @@ function buildCoverageLabel(coverageMatrix: ResearchCoverageMatrix): string {
   return '覆盖信息生成中';
 }
 
-function buildLivePipelineSteps(status: ResearchSessionStatus): Array<{
+function buildLivePlanSteps(params: {
+  status: ResearchSessionStatus;
+  planSnapshot?: ResearchPlanSnapshot | null;
+}): Array<{
   key: string;
   label: string;
-  state: 'pending' | 'current' | 'complete';
+  state: ResearchLiveStepState;
 }> {
+  const { status, planSnapshot } = params;
+  const planSteps: Array<{ key: string; label: string; state: ResearchLiveStepState }> = (
+    planSnapshot?.subtasks ?? []
+  ).map((item, index) => ({
+    key: `plan-step-${index + 1}`,
+    label: item.title,
+    state:
+      status === 'finalizing' || status === 'final'
+        ? 'complete'
+        : status === 'canceled'
+          ? index === 0
+            ? 'canceled'
+            : 'pending'
+          : status === 'failed' || status === 'timed_out'
+            ? index === 0
+              ? 'failed'
+              : 'pending'
+            : index === 0
+              ? 'current'
+              : 'pending',
+  }));
+  if (planSteps.length > 0) {
+    return planSteps;
+  }
+
   if (status === 'queued') {
     return [
-      { key: 'collect', label: '数据收集', state: 'current' },
-      { key: 'extract', label: '特征提取', state: 'pending' },
-      { key: 'model', label: '语义建模', state: 'pending' },
-      { key: 'report', label: '结论生成', state: 'pending' },
+      { key: 'plan-step-1', label: '进入执行队列', state: 'current' },
+      { key: 'plan-step-2', label: '执行研究', state: 'pending' },
+      { key: 'plan-step-3', label: '生成报告', state: 'pending' },
     ];
   }
 
   if (status === 'finalizing' || status === 'final') {
     return [
-      { key: 'collect', label: '数据收集', state: 'complete' },
-      { key: 'extract', label: '特征提取', state: 'complete' },
-      { key: 'model', label: '语义建模', state: 'complete' },
-      { key: 'report', label: '结论生成', state: 'current' },
+      { key: 'plan-step-1', label: '进入执行队列', state: 'complete' },
+      { key: 'plan-step-2', label: '执行研究', state: 'complete' },
+      { key: 'plan-step-3', label: '生成报告', state: 'current' },
     ];
   }
 
   return [
-    { key: 'collect', label: '数据收集', state: 'complete' },
-    { key: 'extract', label: '特征提取', state: 'complete' },
-    { key: 'model', label: '语义建模', state: 'current' },
-    { key: 'report', label: '结论生成', state: 'pending' },
+    { key: 'plan-step-1', label: '进入执行队列', state: 'complete' },
+    { key: 'plan-step-2', label: '执行研究', state: 'current' },
+    { key: 'plan-step-3', label: '生成报告', state: 'pending' },
   ];
+}
+
+function resolveCurrentPlanStepLabel(
+  planSteps: Array<{
+    key: string;
+    label: string;
+    state: ResearchLiveStepState;
+  }>
+): string | null {
+  const currentStep = planSteps.find((item) =>
+    item.state === 'current' || item.state === 'failed' || item.state === 'canceled'
+  );
+  return currentStep?.label ?? null;
+}
+
+function buildLiveProgress(params: {
+  status: ResearchSessionStatus;
+  planSteps: Array<{
+    key: string;
+    label: string;
+    state: ResearchLiveStepState;
+  }>;
+}): ResearchLiveSectionModel['progress'] {
+  const { status, planSteps } = params;
+  const totalSteps = planSteps.length;
+  const completedStepCount = planSteps.filter((item) => item.state === 'complete').length;
+  const currentStageLabel = resolveCurrentPlanStepLabel(planSteps);
+  const planPercent =
+    totalSteps > 0 ? Math.round((completedStepCount / totalSteps) * 100) : 0;
+
+  if (status === 'queued') {
+    return { label: '研究准备中', percent: planPercent, currentStageLabel: currentStageLabel ?? '进入执行队列' };
+  }
+  if (status === 'finalizing') {
+    return { label: '报告生成中', percent: 88, currentStageLabel: '生成报告' };
+  }
+  if (status === 'failed') {
+    return { label: '研究失败', percent: planPercent, currentStageLabel: currentStageLabel ?? '研究失败' };
+  }
+  if (status === 'canceled') {
+    return { label: '研究已停止', percent: planPercent, currentStageLabel: currentStageLabel ?? '研究已停止' };
+  }
+  if (status === 'timed_out') {
+    return { label: '研究超时', percent: planPercent, currentStageLabel: currentStageLabel ?? '研究超时' };
+  }
+  return { label: '研究执行中', percent: planPercent, currentStageLabel: currentStageLabel ?? '执行研究' };
 }
 
 function buildReportMetricCards(evidenceDrawer: ResearchEvidenceDrawerModel): Array<{ label: string; value: string }> {
@@ -730,26 +803,34 @@ export function buildResearchPageViewModel(params: {
       hero,
       railSteps,
       evidenceDrawer,
-      live: {
-        progress: {
-          label: presentation.live?.progress.label ?? '研究执行中',
-          percent: presentation.live?.progress.percent ?? 64,
-          currentStageLabel: presentation.live?.progress.current_stage_label ?? '执行研究',
-        },
-        pipelineSteps:
-          presentation.live?.pipeline_steps?.map((item) => ({
+      live: (() => {
+        const planSteps =
+          presentation.live?.plan_steps?.map((item) => ({
             key: item.key,
             label: item.label,
             state: item.state,
-          })) ?? buildLivePipelineSteps(params.status),
-        coverageLabel: presentation.live?.coverage_label ?? '覆盖信息生成中',
-        footerStatus: `系统运行正常，${presentation.live?.coverage_label ?? '正在收集研究证据'}`,
-        activity: buildLiveActivityCards({
-          events: params.events,
-          fallbackActivity: presentation.live?.activity ?? [],
-        }),
-        timelineItems,
-      },
+          })) ?? buildLivePlanSteps({ status: params.status, planSnapshot: params.planSnapshot });
+        const fallbackProgress = buildLiveProgress({
+          status: params.status,
+          planSteps,
+        });
+        return {
+          progress: {
+            label: presentation.live?.progress.label ?? fallbackProgress.label,
+            percent: presentation.live?.progress.percent ?? fallbackProgress.percent,
+            currentStageLabel:
+              presentation.live?.progress.current_stage_label ?? fallbackProgress.currentStageLabel,
+          },
+          planSteps,
+          coverageLabel: presentation.live?.coverage_label ?? '覆盖信息生成中',
+          footerStatus: `系统运行正常，${presentation.live?.coverage_label ?? '正在收集研究证据'}`,
+          activity: buildLiveActivityCards({
+            events: params.events,
+            fallbackActivity: presentation.live?.activity ?? [],
+          }),
+          timelineItems,
+        };
+      })(),
     };
   }
 
@@ -826,13 +907,17 @@ export function buildResearchPageViewModel(params: {
     railSteps: buildRailSteps(params.status),
     evidenceDrawer,
     live: {
-      progress:
-        params.status === 'queued'
-          ? { label: '研究准备中', percent: 28, currentStageLabel: '进入执行队列' }
-          : params.status === 'finalizing'
-            ? { label: '报告生成中', percent: 88, currentStageLabel: '生成报告' }
-            : { label: '研究执行中', percent: 64, currentStageLabel: '执行研究' },
-      pipelineSteps: buildLivePipelineSteps(params.status),
+      progress: buildLiveProgress({
+        status: params.status,
+        planSteps: buildLivePlanSteps({
+          status: params.status,
+          planSnapshot: params.planSnapshot,
+        }),
+      }),
+      planSteps: buildLivePlanSteps({
+        status: params.status,
+        planSnapshot: params.planSnapshot,
+      }),
       coverageLabel: buildCoverageLabel(evidenceDrawer.coverageMatrix),
       footerStatus: `系统运行正常，${buildCoverageLabel(evidenceDrawer.coverageMatrix)}`,
       activity: buildLiveActivityCards({ events: params.events }),

@@ -109,7 +109,7 @@ describe('buildResearchPageViewModel', () => {
     expect(model.report?.references[0]).toBe('01. IEA 半导体与算力追踪报告 2024');
   });
 
-  it('maps pipeline steps from presentation_snapshot live payload', () => {
+  it('maps plan steps from presentation_snapshot live payload', () => {
     const model = buildResearchPageViewModel({
       question: '2024年全球电动汽车市场格局与补贴政策深度分析报告',
       status: 'running',
@@ -134,15 +134,14 @@ describe('buildResearchPageViewModel', () => {
             live: {
               progress: {
                 label: '研究执行中',
-                percent: 68,
+                percent: 50,
                 current_stage_label: '语义建模',
               },
               coverage_label: '已汇总 12 条引用',
-              pipeline_steps: [
-                { key: 'collect', label: '数据收集', state: 'complete' },
-                { key: 'extract', label: '特征提取', state: 'complete' },
-                { key: 'model', label: '语义建模', state: 'current' },
-                { key: 'report', label: '结论生成', state: 'pending' },
+              plan_steps: [
+                { key: 'plan-step-1', label: '梳理主要市场补贴政策', state: 'complete' },
+                { key: 'plan-step-2', label: '语义建模', state: 'current' },
+                { key: 'plan-step-3', label: '生成结论', state: 'pending' },
               ],
               activity: [
                 {
@@ -161,12 +160,12 @@ describe('buildResearchPageViewModel', () => {
     });
 
     expect(model.surface).toBe('live');
-    expect(model.live?.pipelineSteps).toEqual([
-      { key: 'collect', label: '数据收集', state: 'complete' },
-      { key: 'extract', label: '特征提取', state: 'complete' },
-      { key: 'model', label: '语义建模', state: 'current' },
-      { key: 'report', label: '结论生成', state: 'pending' },
+    expect(model.live?.planSteps).toEqual([
+      { key: 'plan-step-1', label: '梳理主要市场补贴政策', state: 'complete' },
+      { key: 'plan-step-2', label: '语义建模', state: 'current' },
+      { key: 'plan-step-3', label: '生成结论', state: 'pending' },
     ]);
+    expect(model.live?.progress.currentStageLabel).toBe('语义建模');
   });
 
   it('falls back to legacy timeline construction when presentation_snapshot is missing', () => {

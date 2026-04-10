@@ -53,6 +53,51 @@ def test_build_research_presentation_snapshot_adds_live_pipeline_steps() -> None
         events=[_build_event(1, "research.run.started")],
         artifacts=[
             _build_artifact(
+                "plan_snapshot",
+                content_json={
+                    "research_brief": "围绕补贴政策和销量趋势做对比研究",
+                    "complexity": "simple",
+                    "summary": "先收集政策，再比对销量与区域差异。",
+                    "subtasks": [
+                        {
+                            "title": "梳理主要市场补贴政策",
+                            "description": "整理中国、欧盟、美国的补贴政策和调整窗口。",
+                            "target_sources": ["web"],
+                        },
+                        {
+                            "title": "比对销量与市场份额",
+                            "description": "结合销量、份额和区域结构识别政策影响。",
+                            "target_sources": ["web", "paper"],
+                        },
+                    ],
+                    "target_sources": ["web", "paper"],
+                },
+            ),
+            _build_artifact(
+                "plan_progress_snapshot",
+                content_json={
+                    "steps": [
+                        {
+                            "index": 1,
+                            "title": "梳理主要市场补贴政策",
+                            "description": "整理中国、欧盟、美国的补贴政策和调整窗口。",
+                            "target_sources": ["web"],
+                            "status": "complete",
+                        },
+                        {
+                            "index": 2,
+                            "title": "比对销量与市场份额",
+                            "description": "结合销量、份额和区域结构识别政策影响。",
+                            "target_sources": ["web", "paper"],
+                            "status": "current",
+                        },
+                    ],
+                    "current_step_index": 2,
+                    "completed_step_count": 1,
+                    "updated_at": "2026-04-10T09:00:00Z",
+                },
+            ),
+            _build_artifact(
                 "metrics_snapshot",
                 content_json={
                     "quality": {"citation_count": 12},
@@ -62,12 +107,20 @@ def test_build_research_presentation_snapshot_adds_live_pipeline_steps() -> None
     )
 
     assert snapshot["surface"] == "live"
-    assert snapshot["live"]["pipeline_steps"] == [
-        {"key": "collect", "label": "数据收集", "state": "complete"},
-        {"key": "extract", "label": "特征提取", "state": "complete"},
-        {"key": "model", "label": "语义建模", "state": "current"},
-        {"key": "report", "label": "结论生成", "state": "pending"},
+    assert snapshot["live"]["plan_steps"] == [
+        {
+            "key": "plan-step-1",
+            "label": "梳理主要市场补贴政策",
+            "state": "complete",
+        },
+        {
+            "key": "plan-step-2",
+            "label": "比对销量与市场份额",
+            "state": "current",
+        },
     ]
+    assert snapshot["live"]["progress"]["current_stage_label"] == "比对销量与市场份额"
+    assert snapshot["live"]["progress"]["percent"] == 50
 
 
 def test_build_research_presentation_snapshot_adds_structured_report_blocks() -> None:
