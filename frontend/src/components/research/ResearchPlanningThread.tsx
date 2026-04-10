@@ -4,7 +4,7 @@ import AutoAwesomeRoundedIcon from '@mui/icons-material/AutoAwesomeRounded';
 import EditNoteRoundedIcon from '@mui/icons-material/EditNoteRounded';
 import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
 import PlayArrowRoundedIcon from '@mui/icons-material/PlayArrowRounded';
-import type { ReactNode } from 'react';
+import type { MouseEvent as ReactMouseEvent, ReactNode } from 'react';
 import { Box, IconButton, InputBase, Paper, Stack, Typography } from '@mui/material';
 import { alpha } from '@mui/material/styles';
 
@@ -84,6 +84,11 @@ function renderBottomDock({
   onSubmit?: () => void | Promise<void>;
   disabled?: boolean;
 }) {
+  const handleSubmitMouseDown = (event: ReactMouseEvent<HTMLButtonElement>) => {
+    // 保持焦点停留在输入框，避免底部输入 dock 在点击时触发滚动跳变。
+    event.preventDefault();
+  };
+
   return (
     <Paper
       sx={{
@@ -121,6 +126,7 @@ function renderBottomDock({
         />
         <IconButton
           disabled={disabled}
+          onMouseDown={handleSubmitMouseDown}
           onClick={() => {
             void onSubmit?.();
           }}

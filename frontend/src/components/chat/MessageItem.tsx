@@ -3,6 +3,7 @@
  * Gemini 风格：左对齐布局，实心圆点光标，透气设计
  */
 import { Suspense, lazy, memo, useState, useCallback, useEffect, useRef } from 'react';
+import type { MouseEvent as ReactMouseEvent } from 'react';
 import { Box, Paper, Stack, Tooltip, Typography, Chip, TextField, keyframes } from '@mui/material';
 import { alpha } from '@mui/material/styles';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
@@ -526,6 +527,11 @@ interface ClarificationCardProps {
   onSubmit: (content: string) => void;
 }
 
+function preventButtonFocusScroll(event: ReactMouseEvent<HTMLButtonElement>) {
+  // 保持焦点停留在输入框，避免滚动容器先滚动导致首击丢失。
+  event.preventDefault();
+}
+
 export function ClarificationCard({
   message,
   pendingClarification,
@@ -713,6 +719,7 @@ export function ClarificationCard({
           </Typography>
           <Button
             variant="contained"
+            onMouseDown={preventButtonFocusScroll}
             onClick={handleSubmit}
             loading={loading}
             disabled={!hasContent}
@@ -726,5 +733,3 @@ export function ClarificationCard({
     </Paper>
   );
 }
-
-
