@@ -94,11 +94,6 @@ class ResearchFinalizer:
                 if runtime_context_snapshot is not None
                 else []
             ),
-            "agent_runs": (
-                list(runtime_context_snapshot.agent_runs_json)
-                if runtime_context_snapshot is not None
-                else []
-            ),
         }
         verification_payload = {
             "claim_map": verification.claim_map,

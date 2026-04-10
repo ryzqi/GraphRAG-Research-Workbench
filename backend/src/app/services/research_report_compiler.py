@@ -89,7 +89,6 @@ def compile_report_from_runtime_context(
             bool(runtime_context_snapshot.task_graph_json),
             bool(runtime_context_snapshot.claim_bundles_json),
             bool(runtime_context_snapshot.section_briefs_json),
-            bool(runtime_context_snapshot.agent_runs_json),
         )
     )
     if not has_material:
@@ -110,7 +109,6 @@ def compile_report_from_runtime_context(
             title="研究方法与执行路径",
             content=_join_blocks(
                 _format_task_graph_summary(runtime_context_snapshot.task_graph_json),
-                _format_agent_runs(runtime_context_snapshot.agent_runs_json),
             ),
         ),
         ResearchCompiledSection(
@@ -291,27 +289,6 @@ def _format_task_graph_summary(task_graph: Mapping[str, Any]) -> str:
             continue
         details = [token for token in [task_kind, status] if token]
         lines.append(f"- {title}" + (f" ({' / '.join(details)})" if details else ""))
-    return "\n".join(lines) if len(lines) > 1 else ""
-
-
-def _format_agent_runs(agent_runs: Sequence[Mapping[str, Any]]) -> str:
-    if not agent_runs:
-        return ""
-    lines = ["代理执行分工："]
-    for item in agent_runs:
-        agent_label = str(item.get("agent_label") or "").strip()
-        status = str(item.get("status") or "").strip()
-        completed = item.get("completed_task_count")
-        active = item.get("active_task_count")
-        if not agent_label:
-            continue
-        counts: list[str] = []
-        if isinstance(completed, int):
-            counts.append(f"completed={completed}")
-        if isinstance(active, int):
-            counts.append(f"active={active}")
-        details = [token for token in [status, *counts] if token]
-        lines.append(f"- {agent_label}" + (f" ({', '.join(details)})" if details else ""))
     return "\n".join(lines) if len(lines) > 1 else ""
 
 

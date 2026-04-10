@@ -31,7 +31,6 @@ class ResearchRuntimeContextSnapshot:
     task_graph_json: dict[str, Any] = field(default_factory=dict)
     claim_bundles_json: list[dict[str, Any]] = field(default_factory=list)
     section_briefs_json: list[dict[str, Any]] = field(default_factory=list)
-    agent_runs_json: list[dict[str, Any]] = field(default_factory=list)
     live_board_json: dict[str, Any] = field(default_factory=dict)
     files_snapshot: dict[str, str] = field(default_factory=dict)
 
@@ -203,7 +202,6 @@ def build_runtime_context_snapshot(
         layout.task_graph_path,
         layout.claim_bundles_path,
         layout.section_briefs_path,
-        layout.agent_runs_path,
         layout.live_board_path,
     }
     extracted: dict[str, str] = {}
@@ -236,9 +234,6 @@ def build_runtime_context_snapshot(
         ),
         section_briefs_json=_parse_json_array_payload(
             extracted.get(layout.section_briefs_path, "")
-        ),
-        agent_runs_json=_parse_json_array_payload(
-            extracted.get(layout.agent_runs_path, "")
         ),
         live_board_json=_parse_json_object_payload(
             extracted.get(layout.live_board_path, "")

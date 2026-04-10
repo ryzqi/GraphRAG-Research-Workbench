@@ -89,12 +89,6 @@ export interface ResearchLiveSectionModel {
     agentLabel: string | null;
     parallelGroup: string | null;
   }>;
-  agentRuns?: Array<{
-    agentLabel: string;
-    status: string | null;
-    completedTaskCount: number;
-    activeTaskCount: number;
-  }>;
   planSteps: Array<{
     key: string;
     label: string;
@@ -108,7 +102,6 @@ export interface ResearchLiveSectionModel {
     title: string;
     body: string | null;
     phase: string;
-    timeLabel?: string | null;
     tone?: 'default' | 'live' | 'success' | 'warning';
   }>;
   timelineItems: ResearchTimelineItem[];
@@ -440,18 +433,6 @@ function buildReportOutline(markdown: string): Array<{ id: string; title: string
     }));
 }
 
-function formatRelativeTime(timestamp: string, referenceMs: number): string | null {
-  const currentMs = Date.parse(timestamp);
-  if (Number.isNaN(currentMs)) {
-    return null;
-  }
-  const diffSeconds = Math.max(0, Math.round((referenceMs - currentMs) / 1000));
-  if (diffSeconds <= 5) {
-    return 'Just now';
-  }
-  return `${diffSeconds}s ago`;
-}
-
 function buildLiveActivityCards(params: {
   events: ResearchEventEnvelope[];
   fallbackActivity?: Array<{ id: string; event_type: string; title: string; body: string | null; phase: string }>;
@@ -461,13 +442,11 @@ function buildLiveActivityCards(params: {
   title: string;
   body: string | null;
   phase: string;
-  timeLabel?: string | null;
   tone?: 'default' | 'live' | 'success' | 'warning';
 }> {
   const recentEvents = [...params.events].sort((a, b) => b.sequence - a.sequence).slice(0, 3);
   if (recentEvents.length > 0) {
-    const referenceMs = Date.parse(recentEvents[0]!.timestamp);
-    return recentEvents.map((event, index) => {
+    return recentEvents.map((event) => {
       const timelineItem = buildTimelineItem(event);
       const tone =
         event.event_type === 'research.run.started' || event.event_type === 'research.final.completed'
@@ -485,22 +464,17 @@ function buildLiveActivityCards(params: {
         title: timelineItem.title,
         body: timelineItem.body,
         phase: event.phase,
-        timeLabel:
-          tone === 'live' && index === 0
-            ? 'LIVE'
-            : formatRelativeTime(event.timestamp, Number.isNaN(referenceMs) ? Date.now() : referenceMs),
         tone,
       };
     });
   }
 
-  return (params.fallbackActivity ?? []).slice(0, 3).map((item, index) => ({
+  return (params.fallbackActivity ?? []).slice(0, 3).map((item) => ({
     id: item.id,
     eventType: item.event_type,
     title: item.title,
     body: item.body,
     phase: item.phase,
-    timeLabel: index === 0 ? 'LIVE' : 'Just now',
     tone: item.event_type === 'research.trace.recorded' ? 'live' : 'default',
   }));
 }
@@ -536,21 +510,6 @@ function normalizeParallelTasks(
     agentLabel: item.agent_label ?? null,
     parallelGroup: item.parallel_group ?? null,
   }));
-}
-
-function normalizeAgentRuns(
-  value:
-    | ResearchPresentationSnapshot['live']
-    | null
-    | undefined
-): ResearchLiveSectionModel['agentRuns'] {
-  const runs = (value?.agent_runs ?? []).map((item) => ({
-    agentLabel: item.agent_label,
-    status: item.status ?? null,
-    completedTaskCount: item.completed_task_count ?? 0,
-    activeTaskCount: item.active_task_count ?? 0,
-  }));
-  return runs.length > 0 ? runs : undefined;
 }
 
 function buildLivePlanSteps(params: {
@@ -777,7 +736,6 @@ export function buildResearchPageViewModel(params: {
           currentTaskLabel: presentation.live?.current_task_label ?? undefined,
           currentTaskKind: presentation.live?.current_task_kind ?? undefined,
           parallelTasks: normalizeParallelTasks(presentation.live),
-          agentRuns: normalizeAgentRuns(presentation.live),
           planSteps,
           coverageLabel: presentation.live?.coverage_label ?? '覆盖信息生成中',
           footerStatus: `系统运行正常，${presentation.live?.coverage_label ?? '正在收集研究证据'}`,

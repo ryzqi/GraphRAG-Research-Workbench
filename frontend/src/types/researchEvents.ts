@@ -200,12 +200,6 @@ export interface ResearchPresentationLiveSection {
     agent_label?: string | null;
     parallel_group?: string | null;
   }>;
-  agent_runs?: Array<{
-    agent_label: string;
-    status?: string | null;
-    completed_task_count?: number;
-    active_task_count?: number;
-  }>;
   plan_steps?: ResearchPresentationPipelineStep[];
   activity: ResearchPresentationLiveActivity[];
 }

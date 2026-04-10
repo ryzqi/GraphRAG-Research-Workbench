@@ -350,9 +350,6 @@ def _build_live_section(
         "parallel_tasks": _read_live_board_task_items(
             live_board_payload.get("parallel_tasks")
         ),
-        "agent_runs": _read_live_board_agent_runs(
-            live_board_payload.get("agent_runs")
-        ),
     }
 
 
@@ -638,28 +635,6 @@ def _read_live_board_task_items(value: object) -> list[dict[str, Any]]:
                 "agent_label": str(item.get("agent_label") or "").strip() or None,
                 "parallel_group": str(item.get("parallel_group") or "").strip()
                 or None,
-            }
-        )
-    return items
-
-
-def _read_live_board_agent_runs(value: object) -> list[dict[str, Any]]:
-    if not isinstance(value, list):
-        return []
-    items: list[dict[str, Any]] = []
-    for item in value:
-        if not isinstance(item, dict):
-            continue
-        agent_label = str(item.get("agent_label") or "").strip()
-        if not agent_label:
-            continue
-        items.append(
-            {
-                "agent_label": agent_label,
-                "status": str(item.get("status") or "").strip() or None,
-                "completed_task_count": _read_int(item.get("completed_task_count"))
-                or 0,
-                "active_task_count": _read_int(item.get("active_task_count")) or 0,
             }
         )
     return items

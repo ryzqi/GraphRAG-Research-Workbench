@@ -55,7 +55,6 @@ from app.services.research_runtime_types import (
     ResearchRuntimeActivityUpdate,
 )
 from app.services.research_workspace_files import (
-    build_runtime_agent_runs_payload,
     build_runtime_live_board_payload,
     build_runtime_task_graph_payload,
     build_workspace_bootstrap_artifacts,
@@ -64,7 +63,6 @@ from app.services.research_workspace_files import (
 PLAN_PROGRESS_ARTIFACT_KEY = "plan_progress_snapshot"
 PLAN_PROGRESS_EVENT_TYPE = "research.plan_progress.updated"
 RUNTIME_TASK_GRAPH_ARTIFACT_KEY = "runtime_task_graph_json"
-RUNTIME_AGENT_RUNS_ARTIFACT_KEY = "runtime_agent_runs_json"
 RUNTIME_LIVE_BOARD_ARTIFACT_KEY = "runtime_live_board_json"
 
 
@@ -359,11 +357,6 @@ class ResearchService:
         )
         await self._artifact_store.upsert(
             session=session,
-            artifact_key=RUNTIME_AGENT_RUNS_ARTIFACT_KEY,
-            content_json=runtime_context_snapshot.agent_runs_json,
-        )
-        await self._artifact_store.upsert(
-            session=session,
             artifact_key=RUNTIME_LIVE_BOARD_ARTIFACT_KEY,
             content_json=runtime_context_snapshot.live_board_json,
         )
@@ -403,7 +396,6 @@ class ResearchService:
         )
         live_board = build_runtime_live_board_payload(plan_snapshot=plan_snapshot)
         live_board["updated_at"] = self._runtime_live_board_updated_at()
-        agent_runs = build_runtime_agent_runs_payload()
         await self._artifact_store.upsert(
             session=session,
             artifact_key=RUNTIME_TASK_GRAPH_ARTIFACT_KEY,
@@ -413,11 +405,6 @@ class ResearchService:
             session=session,
             artifact_key=RUNTIME_LIVE_BOARD_ARTIFACT_KEY,
             content_json=live_board,
-        )
-        await self._artifact_store.upsert(
-            session=session,
-            artifact_key=RUNTIME_AGENT_RUNS_ARTIFACT_KEY,
-            content_json=agent_runs,
         )
 
     async def _persist_runtime_activity_update(
@@ -479,63 +466,6 @@ class ResearchService:
             *recent_activity,
         ][:8]
 
-        existing_agent_runs = self._read_json_artifact(
-            session, RUNTIME_AGENT_RUNS_ARTIFACT_KEY
-        )
-        agent_label = update.subagent_name or update.agent_name
-        agent_runs_by_label: dict[str, dict[str, object]] = {}
-        if isinstance(existing_agent_runs, list):
-            for item in existing_agent_runs:
-                if not isinstance(item, dict):
-                    continue
-                label = str(item.get("agent_label") or "").strip()
-                if label:
-                    agent_runs_by_label[label] = dict(item)
-        current_agent_run = agent_runs_by_label.setdefault(
-            agent_label,
-            {
-                "agent_label": agent_label,
-                "status": "ready",
-                "completed_task_count": 0,
-                "active_task_count": 0,
-            },
-        )
-        if update.status in {"started", "in_progress"}:
-            current_agent_run["status"] = "running"
-        elif update.status == "completed":
-            current_agent_run["status"] = "complete"
-            completed_task_count = current_agent_run.get("completed_task_count")
-            normalized_completed_task_count = (
-                completed_task_count
-                if isinstance(completed_task_count, int)
-                else 0
-            )
-            current_agent_run["completed_task_count"] = (
-                normalized_completed_task_count + 1
-            )
-        else:
-            current_agent_run["status"] = update.status
-
-        active_task_count_by_label: dict[str, int] = {}
-        for item in active_tasks.values():
-            label = str(item.get("agent_label") or "").strip()
-            if not label:
-                continue
-            active_task_count_by_label[label] = (
-                active_task_count_by_label.get(label, 0) + 1
-            )
-        for label, item in agent_runs_by_label.items():
-            item["active_task_count"] = active_task_count_by_label.get(label, 0)
-            active_task_count = item.get("active_task_count")
-            normalized_active_task_count = (
-                active_task_count if isinstance(active_task_count, int) else 0
-            )
-            if (
-                normalized_active_task_count == 0
-                and item.get("status") == "running"
-            ):
-                item["status"] = "idle"
-
         next_live_board: dict[str, object] = {
             **live_board,
             "current_agent_label": (
@@ -560,7 +490,6 @@ class ResearchService:
             ),
             "status_message": update.message or update.title,
             "parallel_tasks": list(active_tasks.values()),
-            "agent_runs": list(agent_runs_by_label.values()),
             "recent_activity": recent_activity,
             "updated_at": self._runtime_live_board_updated_at(),
         }
@@ -568,11 +497,6 @@ class ResearchService:
             session=session,
             artifact_key=RUNTIME_LIVE_BOARD_ARTIFACT_KEY,
             content_json=next_live_board,
-        )
-        await self._artifact_store.upsert(
-            session=session,
-            artifact_key=RUNTIME_AGENT_RUNS_ARTIFACT_KEY,
-            content_json=list(agent_runs_by_label.values()),
         )
         return next_live_board
 
@@ -1542,7 +1466,6 @@ class ResearchService:
         merged = dict(report_json)
         runtime_artifact_map = {
             "task_graph": RUNTIME_TASK_GRAPH_ARTIFACT_KEY,
-            "agent_runs": RUNTIME_AGENT_RUNS_ARTIFACT_KEY,
             "live_board": RUNTIME_LIVE_BOARD_ARTIFACT_KEY,
             "claim_bundles": "runtime_claim_bundles_json",
             "section_briefs": "runtime_section_briefs_json",

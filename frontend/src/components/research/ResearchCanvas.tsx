@@ -239,28 +239,6 @@ export function ResearchCanvas({
             </Paper>
           ) : null}
 
-          {live.agentRuns && live.agentRuns.length > 0 ? (
-            <Stack direction={{ xs: 'column', md: 'row' }} spacing={1}>
-              {live.agentRuns.map((agentRun) => (
-                <Paper
-                  key={agentRun.agentLabel}
-                  sx={{
-                    flex: 1,
-                    borderRadius: 2.8,
-                    px: 1.3,
-                    py: 1.15,
-                    bgcolor: alpha(researchWorkbenchColors.surfaceMuted, 0.85),
-                    boxShadow: 'none',
-                  }}
-                >
-                  <Typography variant="body2" sx={{ fontWeight: 700 }}>
-                    {`${agentRun.agentLabel}${agentRun.status === 'running' ? '运行中' : agentRun.status ?? ''}${agentRun.completedTaskCount}/${agentRun.completedTaskCount + agentRun.activeTaskCount}`}
-                  </Typography>
-                </Paper>
-              ))}
-            </Stack>
-          ) : null}
-
           <Paper
             sx={{
               borderRadius: 3,
@@ -317,17 +295,6 @@ export function ResearchCanvas({
                       </Typography>
                     ) : null}
                   </Stack>
-
-                  <Typography
-                    variant="caption"
-                    sx={{
-                      flexShrink: 0,
-                      color: item.timeLabel === 'LIVE' ? researchWorkbenchColors.primary : researchWorkbenchColors.subtleText,
-                      fontWeight: item.timeLabel === 'LIVE' ? 800 : 600,
-                    }}
-                  >
-                    {item.timeLabel ?? 'Just now'}
-                  </Typography>
                 </Stack>
               ))}
             </Stack>

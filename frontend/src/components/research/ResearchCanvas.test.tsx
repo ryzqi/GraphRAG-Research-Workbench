@@ -101,14 +101,6 @@ describe('ResearchCanvas', () => {
               parallelGroup: 'claim-1',
             },
           ],
-          agentRuns: [
-            {
-              agentLabel: 'web',
-              status: 'running',
-              completedTaskCount: 0,
-              activeTaskCount: 1,
-            },
-          ],
           planSteps: [
             { key: 'plan-step-1', label: '数据收集', state: 'complete' },
             { key: 'plan-step-2', label: '特征提取', state: 'complete' },
@@ -153,10 +145,13 @@ describe('ResearchCanvas', () => {
     expect(flattenText(tree)).toContain('特征提取');
     expect(flattenText(tree)).toContain('语义建模');
     expect(flattenText(tree)).toContain('结论生成');
-    expect(flattenText(tree)).toContain('web运行中0/1');
+    expect(flattenText(tree)).not.toContain('web运行中0/1');
     expect(flattenText(tree)).toContain('记录来源轨迹：searxng');
     expect(flattenText(tree)).not.toContain('来源与证据');
     expect(flattenText(tree)).not.toContain('研究时间流');
+    expect(flattenText(tree)).not.toContain('LIVE');
+    expect(flattenText(tree)).not.toContain('Just now');
+    expect(flattenText(tree)).not.toContain('ago');
 
     const headerLabel = collectElements(
       tree,

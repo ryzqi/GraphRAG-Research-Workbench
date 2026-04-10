@@ -252,12 +252,8 @@ describe('buildResearchPageViewModel', () => {
         parallelGroup: 'claim-1',
       },
     ]);
-    expect(model.live?.agentRuns?.[0]).toEqual({
-      agentLabel: 'web',
-      status: 'running',
-      completedTaskCount: 0,
-      activeTaskCount: 1,
-    });
+    expect(model.live).not.toHaveProperty('agentRuns');
+    expect(model.live?.activity[0]).not.toHaveProperty('timeLabel');
   });
 
   it('falls back to legacy timeline construction when presentation_snapshot is missing', () => {
@@ -283,6 +279,7 @@ describe('buildResearchPageViewModel', () => {
     expect(model.live?.timelineItems).toHaveLength(2);
     expect(model.live?.timelineItems[0]?.title).toBe('研究已启动');
     expect(model.live?.coverageLabel).toBe('已覆盖 2 个来源 / 1 个待补缺口');
+    expect(model.live?.activity[0]).not.toHaveProperty('timeLabel');
   });
 
   it('derives report metric cards from evidence artifacts when final snapshot is missing', () => {

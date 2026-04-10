@@ -40,7 +40,6 @@ class ResearchWorkspaceLayout:
     task_graph_path: str
     claim_bundles_path: str
     section_briefs_path: str
-    agent_runs_path: str
     live_board_path: str
     source_ledger_path: str
     claim_map_path: str
@@ -114,8 +113,7 @@ def build_research_workspace_layout(session_id: UUID | str) -> ResearchWorkspace
         task_graph_path=f"{workspace_root}/09-task-graph.json",
         claim_bundles_path=f"{workspace_root}/10-claim-bundles.json",
         section_briefs_path=f"{workspace_root}/11-section-briefs.json",
-        agent_runs_path=f"{workspace_root}/12-agent-runs.json",
-        live_board_path=f"{workspace_root}/13-live-board.json",
+        live_board_path=f"{workspace_root}/12-live-board.json",
         source_ledger_path=f"{scratch_root}/verification/source-ledger.json",
         claim_map_path=f"{scratch_root}/verification/claim-map.json",
         conflicts_path=f"{scratch_root}/verification/conflicts.json",
@@ -145,7 +143,6 @@ def build_workspace_bootstrap_artifact_path_map(
         "task_graph_json": layout.task_graph_path,
         "claim_bundles_json": layout.claim_bundles_path,
         "section_briefs_json": layout.section_briefs_path,
-        "agent_runs_json": layout.agent_runs_path,
         "live_board_json": layout.live_board_path,
     }
 
@@ -275,17 +272,6 @@ def build_runtime_claim_bundles_payload() -> list[dict[str, Any]]:
     return []
 
 
-def build_runtime_agent_runs_payload() -> list[dict[str, Any]]:
-    return [
-        {
-            "agent_label": "deep-research",
-            "status": "ready",
-            "completed_task_count": 0,
-            "active_task_count": 0,
-        }
-    ]
-
-
 def build_runtime_live_board_payload(
     *,
     plan_snapshot: ResearchPlanSnapshot,
@@ -315,7 +301,6 @@ def build_runtime_live_board_payload(
         ),
         "status_message": "主代理正在初始化研究任务图。",
         "parallel_tasks": [],
-        "agent_runs": build_runtime_agent_runs_payload(),
         "recent_activity": [],
     }
 
@@ -342,11 +327,6 @@ def build_runtime_orchestration_scaffold_files(
         ),
         layout.section_briefs_path: json.dumps(
             build_runtime_section_briefs_payload(plan_snapshot=plan_snapshot),
-            ensure_ascii=False,
-            indent=2,
-        ),
-        layout.agent_runs_path: json.dumps(
-            build_runtime_agent_runs_payload(),
             ensure_ascii=False,
             indent=2,
         ),
