@@ -100,22 +100,9 @@ export interface ResearchLiveSectionModel {
 export interface ResearchReportSectionModel {
   markdown: string;
   summary: string;
-  lead?: string;
   badgeLabel?: string;
-  highlights?: string[];
   outline: Array<{ id: string; title: string; level: number }>;
   metricCards: Array<{ label: string; value: string }>;
-  chart?: {
-    title: string;
-    bars: Array<{
-      label: string;
-      value: number;
-      accent: 'primary' | 'secondary' | 'tertiary' | 'neutral';
-    }>;
-  } | null;
-  spotlightCards: Array<{ eyebrow?: string; title: string; description: string }>;
-  outlookCards: Array<{ title: string; description: string }>;
-  references: string[];
 }
 
 export interface ResearchPageViewModel {
@@ -635,67 +622,6 @@ function buildReportMetricCards(evidenceDrawer: ResearchEvidenceDrawerModel): Ar
   ];
 }
 
-function buildFallbackReportChart(
-  evidenceDrawer: ResearchEvidenceDrawerModel
-): ResearchReportSectionModel['chart'] {
-  const accents: Array<'primary' | 'secondary' | 'tertiary'> = ['primary', 'secondary', 'tertiary'];
-  const bars = Object.entries(evidenceDrawer.coverageMatrix.provider_counts)
-    .filter(([, value]) => typeof value === 'number')
-    .slice(0, 3)
-    .map(([label, value], index) => ({
-      label,
-      value,
-      accent: accents[index % accents.length],
-    }));
-
-  if (bars.length === 0) {
-    return null;
-  }
-
-  return {
-    title: '研究覆盖概览',
-    bars,
-  };
-}
-
-function buildFallbackSpotlightCards(
-  evidenceDrawer: ResearchEvidenceDrawerModel
-): ResearchReportSectionModel['spotlightCards'] {
-  return evidenceDrawer.sources.slice(0, 2).flatMap((item) => {
-    const description = item.title ?? item.origin_url;
-    if (!description) {
-      return [];
-    }
-    return [
-      {
-        eyebrow: item.provider ?? undefined,
-        title: '关键参与者',
-        description,
-      },
-    ];
-  });
-}
-
-function buildFallbackOutlookCards(highlights: string[]): ResearchReportSectionModel['outlookCards'] {
-  const source = highlights.length >= 4 ? highlights.slice(2, 4) : highlights.slice(0, 2);
-  return source.map((item, index) => ({
-    title: `研究启示 ${String(index + 1).padStart(2, '0')}`,
-    description: item,
-  }));
-}
-
-function buildFallbackReferences(
-  evidenceDrawer: ResearchEvidenceDrawerModel
-): ResearchReportSectionModel['references'] {
-  return evidenceDrawer.sources.slice(0, 5).flatMap((item, index) => {
-    const title = item.title ?? item.origin_url;
-    if (!title) {
-      return [];
-    }
-    return [`${String(index + 1).padStart(2, '0')}. ${title}`];
-  });
-}
-
 export function buildResearchPageViewModel(params: {
   question: string;
   status: ResearchSessionStatus;
@@ -770,31 +696,9 @@ export function buildResearchPageViewModel(params: {
         report: {
           markdown: reportMarkdown ?? presentation.report?.markdown ?? '',
           summary: presentation.report?.summary ?? '',
-          lead: presentation.report?.lead ?? presentation.report?.summary ?? '',
           badgeLabel: presentation.report?.badge_label ?? '已生成研究报告',
-          highlights: presentation.report?.highlights ?? [],
           outline: (presentation.report?.outline ?? []).map((item) => ({ id: item.id, title: item.title, level: item.level })),
           metricCards: (presentation.report?.metric_cards ?? []).map((item) => ({ label: item.label, value: item.value })),
-          chart: presentation.report?.chart
-            ? {
-                title: presentation.report.chart.title,
-                bars: presentation.report.chart.bars.map((item) => ({
-                  label: item.label,
-                  value: item.value,
-                  accent: item.accent,
-                })),
-              }
-            : null,
-          spotlightCards: (presentation.report?.spotlight_cards ?? []).map((item) => ({
-            eyebrow: item.eyebrow,
-            title: item.title,
-            description: item.description,
-          })),
-          outlookCards: (presentation.report?.outlook_cards ?? []).map((item) => ({
-            title: item.title,
-            description: item.description,
-          })),
-          references: presentation.report?.references ?? [],
         },
       };
     }
@@ -835,10 +739,6 @@ export function buildResearchPageViewModel(params: {
   }
 
   if (reportMarkdown) {
-    const fallbackHighlights =
-      reportJson && Array.isArray(reportJson.findings)
-        ? reportJson.findings.filter((item): item is string => typeof item === 'string')
-        : [];
     return {
       surface: 'final',
       hero: buildHero(params.question, '研究报告已生成，可直接阅读与导出。'),
@@ -847,15 +747,9 @@ export function buildResearchPageViewModel(params: {
       report: {
         markdown: reportMarkdown,
         summary: reportJson && typeof reportJson.summary === 'string' ? reportJson.summary : '研究报告已生成，可直接阅读与导出。',
-        lead: reportJson && typeof reportJson.summary === 'string' ? reportJson.summary : '研究报告已生成，可直接阅读与导出。',
         badgeLabel: '已生成研究报告',
-        highlights: fallbackHighlights,
         outline: buildReportOutline(reportMarkdown),
         metricCards: buildReportMetricCards(evidenceDrawer),
-        chart: buildFallbackReportChart(evidenceDrawer),
-        spotlightCards: buildFallbackSpotlightCards(evidenceDrawer),
-        outlookCards: buildFallbackOutlookCards(fallbackHighlights),
-        references: buildFallbackReferences(evidenceDrawer),
       },
     };
   }

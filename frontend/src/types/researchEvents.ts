@@ -204,35 +204,12 @@ export interface ResearchPresentationReportMetricCard {
   value: string;
 }
 
-export interface ResearchPresentationReportChartBar {
-  label: string;
-  value: number;
-  accent: 'primary' | 'secondary' | 'tertiary' | 'neutral';
-}
-
-export interface ResearchPresentationReportChart {
-  title: string;
-  bars: ResearchPresentationReportChartBar[];
-}
-
-export interface ResearchPresentationReportCard {
-  eyebrow?: string;
-  title: string;
-  description: string;
-}
-
 export interface ResearchPresentationReportSection {
   badge_label?: string;
   markdown: string;
   summary: string;
-  lead?: string;
-  highlights: string[];
   outline: ResearchPresentationReportOutlineItem[];
   metric_cards: ResearchPresentationReportMetricCard[];
-  chart?: ResearchPresentationReportChart | null;
-  spotlight_cards?: ResearchPresentationReportCard[];
-  outlook_cards?: ResearchPresentationReportCard[];
-  references?: string[];
 }
 
 export interface ResearchPresentationSnapshot {

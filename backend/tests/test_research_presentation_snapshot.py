@@ -172,12 +172,13 @@ def test_build_research_presentation_snapshot_adds_structured_report_blocks() ->
 
     assert snapshot["surface"] == "final"
     assert snapshot["report"]["badge_label"] == "已生成研究报告"
-    assert snapshot["report"]["lead"] == "生成式 AI 正在重塑半导体供应链。"
-    assert snapshot["report"]["chart"]["title"] == "研究覆盖概览"
-    assert snapshot["report"]["chart"]["bars"][0]["label"] == "GPU"
-    assert snapshot["report"]["spotlight_cards"][0]["eyebrow"] == "NVIDIA"
-    assert snapshot["report"]["outlook_cards"][0]["title"] == "研究启示 01"
-    assert snapshot["report"]["references"][0].startswith("01.")
+    assert snapshot["report"]["summary"] == "生成式 AI 正在重塑半导体供应链。"
+    assert "lead" not in snapshot["report"]
+    assert "highlights" not in snapshot["report"]
+    assert "chart" not in snapshot["report"]
+    assert "spotlight_cards" not in snapshot["report"]
+    assert "outlook_cards" not in snapshot["report"]
+    assert "references" not in snapshot["report"]
 
 
 def test_build_research_presentation_snapshot_ignores_extra_runtime_context_fields() -> None:
@@ -205,4 +206,4 @@ def test_build_research_presentation_snapshot_ignores_extra_runtime_context_fiel
     )
 
     assert snapshot["report"]["summary"] == "执行摘要"
-    assert snapshot["report"]["lead"] == "执行摘要"
+    assert "lead" not in snapshot["report"]

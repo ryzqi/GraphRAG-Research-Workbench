@@ -61,7 +61,6 @@ describe('buildResearchPageViewModel', () => {
             report: {
               markdown: '# 研究报告\n\n## 市场概况\n内容 A',
               summary: '生成式 AI 正在重塑半导体供应链。',
-              lead: '本研究聚合公开财报与供应链线索，重点关注 GPU、HBM 与先进封装对行业周期的再定价。',
               badge_label: '已生成研究报告',
               outline: [{ id: 'section-1', title: '市场概况', level: 2 }],
               metric_cards: [
@@ -103,10 +102,14 @@ describe('buildResearchPageViewModel', () => {
     expect(model.report?.outline[0]?.title).toBe('市场概况');
     expect(model.report?.metricCards[0]?.label).toBe('引用数');
     expect(model.report?.badgeLabel).toBe('已生成研究报告');
-    expect(model.report?.chart?.bars[0]?.label).toBe('GPU');
-    expect(model.report?.spotlightCards[0]?.eyebrow).toBe('NVIDIA');
-    expect(model.report?.outlookCards[0]?.title).toBe('光子芯片技术');
-    expect(model.report?.references[0]).toBe('01. IEA 半导体与算力追踪报告 2024');
+    expect(model.report?.summary).toBe('生成式 AI 正在重塑半导体供应链。');
+    const reportRecord = (model.report ?? null) as Record<string, unknown> | null;
+    expect(reportRecord?.chart).toBeUndefined();
+    expect(reportRecord?.spotlightCards).toBeUndefined();
+    expect(reportRecord?.outlookCards).toBeUndefined();
+    expect(reportRecord?.references).toBeUndefined();
+    expect(reportRecord?.highlights).toBeUndefined();
+    expect(reportRecord?.lead).toBeUndefined();
   });
 
   it('maps plan steps from presentation_snapshot live payload', () => {
@@ -230,5 +233,12 @@ describe('buildResearchPageViewModel', () => {
       { label: '关键结论', value: '2' },
       { label: '证据状态', value: '覆盖完成' },
     ]);
+    const reportRecord = (model.report ?? null) as Record<string, unknown> | null;
+    expect(reportRecord?.chart).toBeUndefined();
+    expect(reportRecord?.spotlightCards).toBeUndefined();
+    expect(reportRecord?.outlookCards).toBeUndefined();
+    expect(reportRecord?.references).toBeUndefined();
+    expect(reportRecord?.highlights).toBeUndefined();
+    expect(reportRecord?.lead).toBeUndefined();
   });
 });

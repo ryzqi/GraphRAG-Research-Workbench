@@ -14,6 +14,7 @@ interface MarkdownContentProps {
   content: string;
   isStreaming?: boolean;
   onCitationClick?: (citationId: string) => void;
+  h2Ids?: string[];
 }
 
 const INLINE_CITATION_RE = /\[S([1-9]\d*)\]/gi;
@@ -168,6 +169,7 @@ export function MarkdownContent({
   content,
   isStreaming = false,
   onCitationClick,
+  h2Ids,
 }: MarkdownContentProps) {
   const { safeContent, pendingContent } = isStreaming
     ? splitUnclosedFence(content)
@@ -176,24 +178,40 @@ export function MarkdownContent({
   const remarkPlugins = useMemo(() => [remarkGfm, citationLinkPlugin], []);
 
   const markdownComponents = useMemo(
-    () => ({
+    () => {
+      let h2Index = 0;
+      return {
       p: ({ children }: { children?: React.ReactNode }) => (
         <Typography variant="body1" sx={{ mb: 1.5, lineHeight: 1.7, '&:last-child': { mb: 0 } }}>
           {children}
         </Typography>
       ),
       h1: ({ children }: { children?: React.ReactNode }) => (
-        <Typography variant="h5" fontWeight={600} sx={{ mt: 3, mb: 1.5 }}>
+        <Typography component="h1" variant="h5" fontWeight={600} sx={{ mt: 3, mb: 1.5 }}>
           {children}
         </Typography>
       ),
-      h2: ({ children }: { children?: React.ReactNode }) => (
-        <Typography variant="h6" fontWeight={600} sx={{ mt: 2.5, mb: 1 }}>
-          {children}
-        </Typography>
-      ),
+      h2: ({ children }: { children?: React.ReactNode }) => {
+        const headingId = h2Ids?.[h2Index] ?? undefined;
+        h2Index += 1;
+        return (
+          <Typography
+            component="h2"
+            id={headingId}
+            variant="h6"
+            fontWeight={600}
+            sx={{
+              mt: 2.5,
+              mb: 1,
+              scrollMarginTop: { xs: 112, md: 136 },
+            }}
+          >
+            {children}
+          </Typography>
+        );
+      },
       h3: ({ children }: { children?: React.ReactNode }) => (
-        <Typography variant="subtitle1" fontWeight={600} sx={{ mt: 2, mb: 1 }}>
+        <Typography component="h3" variant="subtitle1" fontWeight={600} sx={{ mt: 2, mb: 1 }}>
           {children}
         </Typography>
       ),
@@ -372,8 +390,9 @@ export function MarkdownContent({
           {children}
         </Typography>
       ),
-    }),
-    [onCitationClick]
+    };
+    },
+    [h2Ids, onCitationClick]
   );
 
   if (!safeContent && !pendingContent) {

@@ -1,5 +1,6 @@
 import AutoAwesomeRoundedIcon from '@mui/icons-material/AutoAwesomeRounded';
 import type { ReactNode } from 'react';
+import { useEffect, useEffectEvent, useMemo, useState } from 'react';
 import { Box, Paper, Stack, Typography } from '@mui/material';
 import { alpha } from '@mui/material/styles';
 
@@ -12,6 +13,35 @@ import {
   researchWorkbenchColors,
   researchWorkbenchInnerCardSx,
 } from './researchWorkbenchStyles';
+
+type ReportOutlineItem = NonNullable<ResearchPageViewModel['report']>['outline'][number];
+type ReportOutlineAnchor = ReportOutlineItem & { anchorId: string };
+
+const ACTIVE_SECTION_TOP = 160;
+
+export function buildReportOutlineAnchors(outline: ReportOutlineItem[]): ReportOutlineAnchor[] {
+  return outline.map((item) => ({
+    ...item,
+    anchorId: `report-${item.id}`,
+  }));
+}
+
+export function resolveActiveReportSection(
+  sections: Array<{ anchorId: string; top: number }>,
+  threshold = ACTIVE_SECTION_TOP
+): string | null {
+  if (sections.length === 0) {
+    return null;
+  }
+
+  let activeAnchorId = sections[0]?.anchorId ?? null;
+  for (const section of sections) {
+    if (section.top <= threshold) {
+      activeAnchorId = section.anchorId;
+    }
+  }
+  return activeAnchorId;
+}
 
 export function ResearchReportReader({
   model,
@@ -27,67 +57,97 @@ export function ResearchReportReader({
     return null;
   }
 
-  const chartAccentMap = {
-    primary: researchWorkbenchColors.primary,
-    secondary: researchWorkbenchColors.secondary,
-    tertiary: researchWorkbenchColors.tertiary,
-    neutral: researchWorkbenchColors.subtleText,
-  } as const;
+  const outlineAnchors = useMemo(() => buildReportOutlineAnchors(report.outline), [report.outline]);
+  const [activeSectionId, setActiveSectionId] = useState<string | null>(outlineAnchors[0]?.anchorId ?? null);
+
+  useEffect(() => {
+    setActiveSectionId(outlineAnchors[0]?.anchorId ?? null);
+  }, [outlineAnchors]);
+
+  const syncActiveSection = useEffectEvent(() => {
+    if (typeof document === 'undefined' || outlineAnchors.length === 0) {
+      return;
+    }
+
+    const measuredSections = outlineAnchors.flatMap((item) => {
+      const element = document.getElementById(item.anchorId);
+      if (!element) {
+        return [];
+      }
+      return [{ anchorId: item.anchorId, top: element.getBoundingClientRect().top }];
+    });
+
+    const nextActiveSectionId = resolveActiveReportSection(measuredSections);
+    if (!nextActiveSectionId) {
+      return;
+    }
+
+    setActiveSectionId((current) => (current === nextActiveSectionId ? current : nextActiveSectionId));
+  });
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || outlineAnchors.length === 0) {
+      return;
+    }
+
+    let frame = 0;
+    const scheduleSync = () => {
+      if (frame) {
+        return;
+      }
+      frame = window.requestAnimationFrame(() => {
+        frame = 0;
+        syncActiveSection();
+      });
+    };
+
+    scheduleSync();
+    window.addEventListener('scroll', scheduleSync, { passive: true });
+    window.addEventListener('resize', scheduleSync);
+    return () => {
+      if (frame) {
+        window.cancelAnimationFrame(frame);
+      }
+      window.removeEventListener('scroll', scheduleSync);
+      window.removeEventListener('resize', scheduleSync);
+    };
+  }, [outlineAnchors, syncActiveSection]);
+
+  const handleOutlineClick = useEffectEvent((anchorId: string) => {
+    if (typeof document === 'undefined') {
+      return;
+    }
+    const target = document.getElementById(anchorId);
+    if (!target) {
+      return;
+    }
+    setActiveSectionId(anchorId);
+    target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
 
   return (
     <ResearchShell
-      badgeLabel="深度研究结果已生成"
+      badgeLabel={null}
       headline={model.hero.title}
       subheadline={null}
       heroIcon={<AutoAwesomeRoundedIcon sx={{ fontSize: 22 }} />}
       heroMaxWidth={1320}
-      bodyMaxWidth={1580}
+      bodyMaxWidth={2200}
     >
-      <Stack direction={{ xs: 'column', xl: 'row' }} spacing={{ xs: 2.5, xl: 4.5 }} alignItems="flex-start">
-        {report.outline.length > 0 ? (
-          <Paper
-            sx={{
-              ...researchWorkbenchInnerCardSx,
-              width: { xs: '100%', xl: 216 },
-              p: { xs: 1.5, md: 1.8 },
-              borderRadius: 3.25,
-              bgcolor: alpha('#ffffff', 0.9),
-              position: { xl: 'sticky' },
-              top: { xl: 20 },
-            }}
-          >
-            <Stack spacing={1}>
-              {report.outline.map((item) => (
-                <Typography
-                  key={item.id}
-                  variant="body2"
-                  sx={{
-                    color: researchWorkbenchColors.mutedText,
-                    fontFamily: researchBodyFont,
-                    lineHeight: 1.6,
-                  }}
-                >
-                  {item.title}
-                </Typography>
-              ))}
-            </Stack>
-          </Paper>
-        ) : null}
-
-        <Box sx={{ flex: 1, minWidth: 0, display: 'flex', justifyContent: 'center' }}>
+      <Stack direction={{ xs: 'column', xl: 'row' }} spacing={{ xs: 2.5, xl: 3.2 }} alignItems="stretch">
+        <Box sx={{ flex: 1, minWidth: 0 }}>
           <Paper
             sx={{
               ...researchWorkbenchInnerCardSx,
               width: '100%',
-              maxWidth: 620,
               borderRadius: 4,
-              p: { xs: 2.1, md: 2.6 },
+              p: { xs: 2.1, md: 2.8, xl: 3.25 },
               bgcolor: '#ffffff',
             }}
           >
-            <Stack spacing={2.2}>
+            <Stack spacing={2.4}>
               <Stack direction="row" justifyContent="space-between" alignItems="flex-start" spacing={1.5}>
-                <Stack spacing={0.75}>
+                <Stack spacing={0.75} sx={{ minWidth: 0 }}>
                   <Typography
                     variant="caption"
                     sx={{
@@ -106,6 +166,7 @@ export function ResearchReportReader({
                       color: researchWorkbenchColors.text,
                       lineHeight: 1.03,
                       letterSpacing: '-0.05em',
+                      overflowWrap: 'anywhere',
                     }}
                   >
                     {model.hero.title}
@@ -114,7 +175,7 @@ export function ResearchReportReader({
                 {exportButton}
               </Stack>
 
-              {report.lead ? (
+              {report.summary ? (
                 <Typography
                   variant="body2"
                   sx={{
@@ -123,7 +184,7 @@ export function ResearchReportReader({
                     fontFamily: researchBodyFont,
                   }}
                 >
-                  {report.lead}
+                  {report.summary}
                 </Typography>
               ) : null}
 
@@ -131,7 +192,7 @@ export function ResearchReportReader({
                 <Box
                   sx={{
                     display: 'grid',
-                    gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
+                    gridTemplateColumns: { xs: '1fr', sm: 'repeat(3, minmax(0, 1fr))' },
                     gap: 1,
                   }}
                 >
@@ -166,163 +227,80 @@ export function ResearchReportReader({
                 </Box>
               ) : null}
 
-              {report.summary ? (
-                <Typography
-                  variant="body2"
-                  sx={{
-                    color: researchWorkbenchColors.mutedText,
-                    lineHeight: 1.8,
-                    fontFamily: researchBodyFont,
-                  }}
-                >
-                  {report.summary}
-                </Typography>
-              ) : null}
-
-              {report.chart ? (
-                <Paper
-                  sx={{
-                    borderRadius: 3,
-                    p: 1.6,
-                    boxShadow: 'none',
-                    bgcolor: alpha(researchWorkbenchColors.surfaceMuted, 0.9),
-                  }}
-                >
-                  <Stack spacing={1.1}>
-                    <Typography variant="subtitle2" sx={{ fontWeight: 700, color: researchWorkbenchColors.text }}>
-                      {report.chart.title}
-                    </Typography>
-                    <Stack direction="row" spacing={1.1} alignItems="flex-end" sx={{ minHeight: 150 }}>
-                      {report.chart.bars.map((item) => (
-                        <Stack key={item.label} spacing={0.6} alignItems="center" sx={{ flex: 1 }}>
-                          <Box
-                            sx={{
-                              width: '100%',
-                              maxWidth: 72,
-                              height: `${Math.max(20, item.value)}px`,
-                              borderRadius: '14px 14px 10px 10px',
-                              bgcolor: alpha(chartAccentMap[item.accent], 0.24),
-                              border: `1px solid ${alpha(chartAccentMap[item.accent], 0.2)}`,
-                            }}
-                          />
-                          <Typography variant="caption" sx={{ color: researchWorkbenchColors.mutedText }}>
-                            {item.label}
-                          </Typography>
-                        </Stack>
-                      ))}
-                    </Stack>
-                  </Stack>
-                </Paper>
-              ) : null}
-
-              {report.spotlightCards.length > 0 ? (
-                <Stack spacing={1.15}>
-                  <Typography variant="subtitle1" sx={{ fontWeight: 800, color: researchWorkbenchColors.text }}>
-                    关键参与者
-                  </Typography>
-                  {report.spotlightCards.map((item) => (
-                    <Paper
-                      key={`${item.eyebrow ?? 'card'}-${item.description}`}
-                      sx={{
-                        borderRadius: 3,
-                        p: 1.4,
-                        boxShadow: 'none',
-                        bgcolor: alpha(researchWorkbenchColors.surfaceMuted, 0.72),
-                      }}
-                    >
-                      <Stack spacing={0.55}>
-                        {item.eyebrow ? (
-                          <Typography variant="caption" sx={{ color: researchWorkbenchColors.subtleText }}>
-                            {item.eyebrow}
-                          </Typography>
-                        ) : null}
-                        <Typography variant="subtitle2" sx={{ fontWeight: 800, color: researchWorkbenchColors.text }}>
-                          {item.title}
-                        </Typography>
-                        <Typography
-                          variant="body2"
-                          sx={{
-                            color: researchWorkbenchColors.mutedText,
-                            lineHeight: 1.8,
-                            fontFamily: researchBodyFont,
-                          }}
-                        >
-                          {item.description}
-                        </Typography>
-                      </Stack>
-                    </Paper>
-                  ))}
-                </Stack>
-              ) : null}
-
-              {report.outlookCards.length > 0 ? (
-                <Stack spacing={1}>
-                  <Typography variant="subtitle1" sx={{ fontWeight: 800, color: researchWorkbenchColors.text }}>
-                    未来展望
-                  </Typography>
-                  <Box
-                    sx={{
-                      display: 'grid',
-                      gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, minmax(0, 1fr))' },
-                      gap: 1,
-                    }}
-                  >
-                    {report.outlookCards.map((item) => (
-                      <Paper
-                        key={item.title}
-                        sx={{
-                          borderRadius: 3,
-                          p: 1.35,
-                          boxShadow: 'none',
-                          bgcolor: alpha(researchWorkbenchColors.surfaceMuted, 0.72),
-                        }}
-                      >
-                        <Stack spacing={0.55}>
-                          <Typography variant="subtitle2" sx={{ fontWeight: 800, color: researchWorkbenchColors.text }}>
-                            {item.title}
-                          </Typography>
-                          <Typography
-                            variant="body2"
-                            sx={{
-                              color: researchWorkbenchColors.mutedText,
-                              lineHeight: 1.75,
-                              fontFamily: researchBodyFont,
-                            }}
-                          >
-                            {item.description}
-                          </Typography>
-                        </Stack>
-                      </Paper>
-                    ))}
-                  </Box>
-                </Stack>
-              ) : null}
-
-              <MarkdownContent content={report.markdown} />
-
-              {report.references.length > 0 ? (
-                <Stack spacing={0.7}>
-                  <Typography variant="subtitle2" sx={{ fontWeight: 700, color: researchWorkbenchColors.text }}>
-                    参考资料
-                  </Typography>
-                  {report.references.map((item) => (
-                    <Typography
-                      key={item}
-                      variant="body2"
-                      sx={{
-                        color: researchWorkbenchColors.mutedText,
-                        lineHeight: 1.75,
-                        fontFamily: researchBodyFont,
-                      }}
-                    >
-                      {item}
-                    </Typography>
-                  ))}
-                </Stack>
-              ) : null}
+              <MarkdownContent content={report.markdown} h2Ids={outlineAnchors.map((item) => item.anchorId)} />
             </Stack>
           </Paper>
         </Box>
+
+        {outlineAnchors.length > 0 ? (
+          <Paper
+            sx={{
+              ...researchWorkbenchInnerCardSx,
+              width: { xs: '100%', xl: 296 },
+              flexShrink: 0,
+              p: { xs: 1.5, md: 1.8 },
+              borderRadius: 3.25,
+              bgcolor: alpha('#ffffff', 0.9),
+              position: { xl: 'sticky' },
+              top: { xl: 24 },
+              alignSelf: { xl: 'flex-start' },
+            }}
+          >
+            <Stack spacing={1.2}>
+              <Typography
+                variant="caption"
+                sx={{
+                  color: researchWorkbenchColors.subtleText,
+                  letterSpacing: '0.08em',
+                  fontWeight: 800,
+                }}
+              >
+                报告目录
+              </Typography>
+
+              {outlineAnchors.map((item) => {
+                const isActive = item.anchorId === activeSectionId;
+                return (
+                  <Box
+                    key={item.anchorId}
+                    component="button"
+                    type="button"
+                    onClick={() => handleOutlineClick(item.anchorId)}
+                    aria-current={isActive ? 'true' : undefined}
+                    sx={{
+                      width: '100%',
+                      border: 'none',
+                      outline: 'none',
+                      textAlign: 'left',
+                      cursor: 'pointer',
+                      borderRadius: 2.4,
+                      px: 1.15,
+                      py: 1,
+                      bgcolor: isActive ? alpha(researchWorkbenchColors.primary, 0.1) : 'transparent',
+                      boxShadow: 'none',
+                      transition: 'background-color 120ms ease, color 120ms ease',
+                      '&:hover': {
+                        bgcolor: alpha(researchWorkbenchColors.primary, 0.08),
+                      },
+                    }}
+                  >
+                    <Typography
+                      variant="body2"
+                      sx={{
+                        color: isActive ? researchWorkbenchColors.text : researchWorkbenchColors.mutedText,
+                        fontFamily: researchBodyFont,
+                        fontWeight: isActive ? 700 : 500,
+                        lineHeight: 1.6,
+                      }}
+                    >
+                      {item.title}
+                    </Typography>
+                  </Box>
+                );
+              })}
+            </Stack>
+          </Paper>
+        ) : null}
       </Stack>
     </ResearchShell>
   );
