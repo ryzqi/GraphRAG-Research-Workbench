@@ -11,6 +11,13 @@ from app.models.research_artifact import ResearchArtifact
 from app.models.research_session import ResearchSession
 
 
+def normalize_optional_artifact_text(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = value.strip()
+    return normalized or None
+
+
 class ResearchArtifactStore:
     def __init__(self, db: AsyncSession) -> None:
         self._db = db
@@ -57,10 +64,12 @@ class ResearchArtifactStore:
             else:
                 existing.session_id = session.id
             self._db.add(existing)
-        existing.content_text = content_text
+        existing.content_text = normalize_optional_artifact_text(content_text)
         existing.content_json = content_json
-        existing.source_type = source_type
-        existing.source_provider = source_provider
-        existing.retrieval_method = retrieval_method
-        existing.origin_url = origin_url
+        existing.source_type = normalize_optional_artifact_text(source_type)
+        existing.source_provider = normalize_optional_artifact_text(source_provider)
+        existing.retrieval_method = normalize_optional_artifact_text(
+            retrieval_method
+        )
+        existing.origin_url = normalize_optional_artifact_text(origin_url)
         return existing

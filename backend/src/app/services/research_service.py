@@ -30,7 +30,10 @@ from app.schemas.research import (
     ResearchPlanSnapshot,
     ResearchSessionCreateRequest,
 )
-from app.services.research_artifact_store import ResearchArtifactStore
+from app.services.research_artifact_store import (
+    ResearchArtifactStore,
+    normalize_optional_artifact_text,
+)
 from app.services.research_event_store import ResearchEventStore
 from app.services.research_finalizer import ResearchFinalizer, ResearchFinalizerResult
 from app.services.research_observability import (
@@ -1029,12 +1032,16 @@ class ResearchService:
         items = [
             ResearchArtifactRead(
                 artifact_key=artifact.artifact_key,
-                content_text=artifact.content_text,
+                content_text=normalize_optional_artifact_text(artifact.content_text),
                 content_json=artifact.content_json,
                 citations=self._extract_artifact_citations(artifact),
-                source_provider=artifact.source_provider,
-                retrieval_method=artifact.retrieval_method,
-                origin_url=artifact.origin_url,
+                source_provider=normalize_optional_artifact_text(
+                    artifact.source_provider
+                ),
+                retrieval_method=normalize_optional_artifact_text(
+                    artifact.retrieval_method
+                ),
+                origin_url=normalize_optional_artifact_text(artifact.origin_url),
             )
             for artifact in sorted(
                 session.artifacts, key=lambda item: item.artifact_key
