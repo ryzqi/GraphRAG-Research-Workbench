@@ -73,7 +73,6 @@ def compile_report_from_runtime_context(
     runtime_context_snapshot: ResearchRuntimeContextSnapshot | None,
     prompts: PromptLoader | None = None,
 ) -> ResearchCompiledReport | None:
-    del question
     if runtime_context_snapshot is None:
         return None
 
@@ -89,6 +88,8 @@ def compile_report_from_runtime_context(
             bool(runtime_context_snapshot.task_graph_json),
             bool(runtime_context_snapshot.claim_bundles_json),
             bool(runtime_context_snapshot.section_briefs_json),
+            bool(runtime_context_snapshot.live_board_json),
+            bool(runtime_context_snapshot.todos_json),
         )
     )
     if not has_material:
@@ -106,15 +107,26 @@ def compile_report_from_runtime_context(
 
     sections = [
         ResearchCompiledSection(
-            title="研究方法与执行路径",
+            title="研究问题与执行路径",
             content=_join_blocks(
+                f"研究问题：{question}",
                 _format_task_graph_summary(runtime_context_snapshot.task_graph_json),
+                _format_todos_summary(runtime_context_snapshot.todos_json),
+                _format_runtime_activity_summary(runtime_context_snapshot.live_board_json),
+                _format_bullets(
+                    "方法提示",
+                    _normalize_string_list(report_context.get("methodology_notes")),
+                ),
             ),
         ),
         ResearchCompiledSection(
             title="核心结论",
             content=_join_blocks(
                 executive_summary,
+                _format_bullets(
+                    "关键要点",
+                    _normalize_string_list(report_context.get("key_takeaways")),
+                ),
                 _format_bullets("已验证发现", source_bundle.findings),
                 _format_claim_bundle_summary(
                     runtime_context_snapshot.claim_bundles_json
@@ -126,25 +138,34 @@ def compile_report_from_runtime_context(
             title="分主题分析",
             content=_join_blocks(
                 _format_section_briefs(runtime_context_snapshot.section_briefs_json),
+                _format_section_status(report_context.get("section_status")),
                 _trim_leading_heading(runtime_context_snapshot.report_outline_md),
                 _trim_leading_heading(runtime_context_snapshot.report_draft_md),
                 _trim_leading_heading(runtime_context_snapshot.analysis_notes_md),
             ),
         ),
         ResearchCompiledSection(
-            title="证据与反证",
+            title="证据、反证与验证",
             content=_join_blocks(
                 _format_claim_bundle_details(
                     runtime_context_snapshot.claim_bundles_json
                 ),
                 _trim_leading_heading(runtime_context_snapshot.evidence_ledger_md),
+                _format_bullets(
+                    "验证说明",
+                    _normalize_string_list(report_context.get("verification_notes")),
+                ),
                 _format_citations_block(source_bundle),
             ),
         ),
         ResearchCompiledSection(
-            title="结论与建议",
+            title="风险、缺口与建议",
             content=_join_blocks(
                 f"当前置信度：{_format_confidence_label(confidence_level)}。",
+                _format_bullets(
+                    "推荐动作",
+                    _normalize_string_list(report_context.get("recommended_actions")),
+                ),
                 _format_bullets(
                     "待解问题",
                     _normalize_string_list(report_context.get("open_questions")),
@@ -285,9 +306,10 @@ def _format_task_graph_summary(task_graph: Mapping[str, Any]) -> str:
         title = str(item.get("title") or "").strip()
         task_kind = str(item.get("task_kind") or "").strip()
         status = str(item.get("status") or "").strip()
+        owner = str(item.get("owner") or "").strip()
         if not title:
             continue
-        details = [token for token in [task_kind, status] if token]
+        details = [token for token in [task_kind, status, owner] if token]
         lines.append(f"- {title}" + (f" ({' / '.join(details)})" if details else ""))
     return "\n".join(lines) if len(lines) > 1 else ""
 
@@ -300,6 +322,9 @@ def _format_section_briefs(section_briefs: Sequence[Mapping[str, Any]]) -> str:
         title = str(item.get("title") or "").strip()
         summary = str(item.get("summary") or "").strip()
         brief_markdown = _trim_leading_heading(str(item.get("brief_markdown") or ""))
+        must_cover = _normalize_string_list(item.get("must_cover"))
+        evidence_targets = _normalize_string_list(item.get("evidence_targets"))
+        counterpoints = _normalize_string_list(item.get("counterpoints"))
         open_questions = _normalize_string_list(item.get("open_questions"))
         citation_indices = item.get("citation_indices")
         citation_block = (
@@ -312,6 +337,9 @@ def _format_section_briefs(section_briefs: Sequence[Mapping[str, Any]]) -> str:
                 f"### {title}" if title else "",
                 summary,
                 brief_markdown,
+                _format_bullets("必须覆盖", must_cover),
+                _format_bullets("证据目标", evidence_targets),
+                _format_bullets("反向检查", counterpoints),
                 _format_bullets("待补问题", open_questions),
                 citation_block,
             )
@@ -340,7 +368,9 @@ def _format_claim_bundle_details(claim_bundles: Sequence[Mapping[str, Any]]) -> 
         claim = str(item.get("claim") or "").strip()
         status = str(item.get("status") or "").strip()
         evidence = _normalize_string_list(item.get("evidence"))
+        counter_evidence = _normalize_string_list(item.get("counter_evidence"))
         limitations = _normalize_string_list(item.get("limitations"))
+        open_questions = _normalize_string_list(item.get("open_questions"))
         citation_indices = item.get("citation_indices")
         citation_block = (
             "引用索引：" + ", ".join(str(value) for value in citation_indices)
@@ -352,11 +382,64 @@ def _format_claim_bundle_details(claim_bundles: Sequence[Mapping[str, Any]]) -> 
                 f"### {claim}" if claim else "",
                 f"状态：{status}" if status else "",
                 _format_bullets("支撑证据", evidence),
+                _format_bullets("反向证据", counter_evidence),
                 _format_bullets("限制与反证", limitations),
+                _format_bullets("开放问题", open_questions),
                 citation_block,
             )
         )
     return "\n\n".join(block for block in blocks if block)
+
+
+def _format_todos_summary(todos: Sequence[Mapping[str, Any]]) -> str:
+    if not todos:
+        return ""
+    lines = ["待办执行："]
+    for item in todos:
+        content = str(item.get("content") or "").strip()
+        status = str(item.get("status") or "").strip()
+        if not content:
+            continue
+        prefix = f"[{status}] " if status else ""
+        lines.append(f"- {prefix}{content}")
+    return "\n".join(lines) if len(lines) > 1 else ""
+
+
+def _format_runtime_activity_summary(live_board: Mapping[str, Any]) -> str:
+    recent_activity = live_board.get("recent_activity")
+    if not isinstance(recent_activity, list) or not recent_activity:
+        return ""
+    lines = ["最近活动："]
+    for item in recent_activity:
+        if not isinstance(item, Mapping):
+            continue
+        title = str(item.get("title") or "").strip()
+        status = str(item.get("status") or "").strip()
+        agent_label = str(item.get("agent_label") or "").strip()
+        message = str(item.get("message") or "").strip()
+        summary = message or title
+        if not summary:
+            continue
+        details = [token for token in [agent_label, status] if token]
+        lines.append(f"- {summary}" + (f" ({' / '.join(details)})" if details else ""))
+    return "\n".join(lines) if len(lines) > 1 else ""
+
+
+def _format_section_status(value: Any) -> str:
+    if not isinstance(value, list) or not value:
+        return ""
+    lines = ["章节状态："]
+    for item in value:
+        if not isinstance(item, Mapping):
+            continue
+        title = str(item.get("title") or "").strip()
+        status = str(item.get("status") or "").strip()
+        owner = str(item.get("owner") or "").strip()
+        if not title:
+            continue
+        details = [token for token in [status, owner] if token]
+        lines.append(f"- {title}" + (f" ({' / '.join(details)})" if details else ""))
+    return "\n".join(lines) if len(lines) > 1 else ""
 
 
 def _trim_leading_heading(value: str) -> str:

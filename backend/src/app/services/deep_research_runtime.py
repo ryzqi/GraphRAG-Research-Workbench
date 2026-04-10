@@ -1109,6 +1109,47 @@ def _select_tools_by_name(
     return [tool for tool in tools if tool.name in wanted]
 
 
+def _build_role_specific_subagent_prompt(
+    *,
+    base_prompt: str,
+    name: str,
+    description: str,
+) -> str:
+    role_map = {
+        "web": (
+            "你是网页来源子代理。优先用网页搜索、正文读取和抽取工具补齐官方/原始网页证据。"
+            " 进入任务后先读取 handoff packet，只回答当前 claim 所需的网页证据、限制与 citation 候选。"
+        ),
+        "paper": (
+            "你是论文来源子代理。优先补齐论文、预印本与技术报告证据。"
+            " 进入任务后先读取 handoff packet，只返回与当前 claim 直接相关的论文发现、限制与 citation 候选。"
+        ),
+        "claim-verifier": (
+            "你是 claim 验证子代理。围绕单个 claim 收集支撑证据、反证、限制与开放问题。"
+            " 先更新 claim-bundles，再决定是否继续搜索。"
+        ),
+        "section-writer": (
+            "你是章节写作子代理，只消费已验证工件。"
+            " 负责把 claim bundle、evidence ledger 和 section brief 扩写成可审计章节，不得越过未闭合证据直接下结论。"
+        ),
+        "citation": (
+            "你是引用与报告子代理。"
+            " 负责 citation 审计、执行摘要、关键要点、建议与 report-context 收口，确保最终报告中的结论、引用索引与限制一致。"
+        ),
+    }
+    role_instruction = role_map.get(name)
+    if not role_instruction:
+        return base_prompt
+    return (
+        f"{base_prompt.strip()}\n\n"
+        "## Subagent Role\n"
+        f"- 名称：{name}\n"
+        f"- 描述：{description}\n"
+        f"- 角色要求：{role_instruction}\n"
+        "- 每次接手任务前先读取 handoff packet（委派包），并只完成当前子任务。"
+    ).strip()
+
+
 def _build_source_specialized_subagents(
     *,
     config: ResearchRuntimeConfig,
@@ -1141,7 +1182,11 @@ def _build_source_specialized_subagents(
         subagent: dict[str, Any] = {
             "name": name,
             "description": description,
-            "system_prompt": config.system_prompt,
+            "system_prompt": _build_role_specific_subagent_prompt(
+                base_prompt=config.system_prompt,
+                name=name,
+                description=description,
+            ),
             "model": config.subagent_model,
         }
         if group_tools:
@@ -1155,7 +1200,11 @@ def _build_source_specialized_subagents(
     citation_subagent: dict[str, Any] = {
         "name": "citation",
         "description": "引用与报告子代理：负责 finalizer 前的 citation/report 收口。",
-        "system_prompt": config.system_prompt,
+        "system_prompt": _build_role_specific_subagent_prompt(
+            base_prompt=config.system_prompt,
+            name="citation",
+            description="引用与报告子代理：负责 finalizer 前的 citation/report 收口。",
+        ),
         "model": config.finalizer_model,
     }
     if resolved_skill_paths:
@@ -1195,8 +1244,8 @@ async def create_deep_research_runtime(
 ) -> DeepResearchRuntime:
     """构建 Deep Agents research runtime。
 
-    当前仅落地单入口 harness 与固定运行策略；
-    source-aware provider 细化与 finalizer 留待后续任务继续扩展。
+    单入口 research harness，负责把工具、子代理、技能、上下文后端与
+    runtime context contract 组装为可执行的 Deep Agents runtime。
     """
 
     registry_bundle: ResearchToolRegistryBundle = await build_research_tool_registry(

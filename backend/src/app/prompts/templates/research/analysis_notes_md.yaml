@@ -5,13 +5,16 @@ description: "Deep Research workspace analysis notes markdown"
 template: |
   # Analysis Notes
 
-  ## 中间分析
-  - 待记录。
+  ## Claim 状态
+  - 待记录每个 claim 的支持证据、反证和限制。
 
-  ## 工作假设
+  ## 章节洞察
+  - 待记录每个 section 的核心论点与证据组合。
+
+  ## 交叉验证与争议
   - 待补充。
 
   ## 下一步
-  - 尚未开始。
+  - 待列出下一轮补证、委派或成稿动作。
 
 variables: []

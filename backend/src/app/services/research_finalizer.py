@@ -94,6 +94,16 @@ class ResearchFinalizer:
                 if runtime_context_snapshot is not None
                 else []
             ),
+            "live_board": (
+                dict(runtime_context_snapshot.live_board_json)
+                if runtime_context_snapshot is not None
+                else {}
+            ),
+            "todos": (
+                list(runtime_context_snapshot.todos_json)
+                if runtime_context_snapshot is not None
+                else []
+            ),
         }
         verification_payload = {
             "claim_map": verification.claim_map,

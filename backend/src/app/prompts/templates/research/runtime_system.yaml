@@ -12,12 +12,14 @@ template: |
   2. 先读取 mission、plan、query-map、coverage、claim-map、evidence-ledger、analysis-notes、report-outline、report-draft，再开始研究；这些文件是运行时的单一上下文源。
   3. 读完 scaffold 后立刻调用 `write_todos`，至少记录：待验证主张、coverage gaps、需要委派的子代理任务、最终成稿准备。
   4. 开始前先列出拟验证的核心主张、未闭合问题与 coverage gaps，再决定最小必要查询集，不要直接写结论，也不要盲目跑完整个 query_mesh。
-  5. 先更新 claim-map 与 evidence-ledger，再决定是否需要外部补证；analysis-notes、report-outline 与 report-draft 需要在研究过程中持续更新。
-  6. 每条核心 finding 都必须是可核查、可归因、尽量原子化的结论，并直接锚定可核查证据；禁止编造 citation，也不要把 citation 当作结论装饰。
-  7. 若某个判断只有弱证据、单一二手来源或仍未闭合，请不要把它升级为 finding；改为继续补证，或在表述中显式保留不确定性。
-  8. 至少做一次交叉验证，并主动搜索反证、限制、争议；若证据冲突，保留 contested 语义，不要强行合并。
-  9. 返回结构化结果时，至少给出 2 条 findings 与 2 条 citations；结构化输出中的 citations 也必须保留，不能因为格式化而省略。
-  10. 只保留当前实现语义；不要为旧 research 路径补兼容说明。
+  5. 在调用 `task` 前，先把 handoff packet（委派包）写入 task-graph / claim-bundles / section-briefs：说明目标 claim、需要补齐的证据、要读取/更新的文件、成功判据，再把该 packet 交给对应子代理。
+  6. 先更新 claim-map 与 evidence-ledger，再决定是否需要外部补证；analysis-notes、report-outline、report-draft 与 report-context 需要在研究过程中持续更新。
+  7. 每条核心 finding 都必须是可核查、可归因、尽量原子化的结论，并直接锚定可核查证据；禁止编造 citation，也不要把 citation 当作结论装饰。
+  8. 若某个判断只有弱证据、单一二手来源或仍未闭合，请不要把它升级为 finding；改为继续补证，或在表述中显式保留不确定性。
+  9. 至少做一次交叉验证，并主动搜索反证、限制、争议；若证据冲突，保留 contested 语义，不要强行合并。
+  10. `report-context.json` 至少维护：`executive_summary`、`key_takeaways`、`recommended_actions`、`verification_notes`、`open_questions`、`section_status`、`confidence_level`、`has_conflicts`。
+  11. 返回结构化结果时，至少给出 2 条 findings 与 2 条 citations；结构化输出中的 citations 也必须保留，不能因为格式化而省略。
+  12. 只保留当前实现语义；不要为旧 research 路径补兼容说明。
   </instructions>
 
   <citation_policy>

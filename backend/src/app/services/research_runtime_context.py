@@ -32,6 +32,7 @@ class ResearchRuntimeContextSnapshot:
     claim_bundles_json: list[dict[str, Any]] = field(default_factory=list)
     section_briefs_json: list[dict[str, Any]] = field(default_factory=list)
     live_board_json: dict[str, Any] = field(default_factory=dict)
+    todos_json: list[dict[str, Any]] = field(default_factory=list)
     files_snapshot: dict[str, str] = field(default_factory=dict)
 
 
@@ -73,6 +74,7 @@ def _build_priority_context_paths(
         (
             RUNTIME_CONTEXT_GUIDE_PATH,
             *_RUNTIME_REQUEST_CONTEXT_PATHS,
+            layout.report_context_json_path,
             *context_paths,
             *session_scaffold_paths,
         )
@@ -98,6 +100,7 @@ def build_runtime_context_guide(
         "",
         "## Layering Rules",
         "- `/workspace/context/*` and `/workspace/research/*` are the primary context layer.",
+        f"- `{layout.report_context_json_path}` is also a primary context file because it carries the report contract and current synthesis state.",
         "- `/skills/*` are procedural instructions. Read them only when the task requires their behavior.",
         "- `/scratch/*` files are spillover or raw payloads. Treat them as on-demand details, not first-pass context.",
         "",
@@ -181,6 +184,25 @@ def _parse_json_array_payload(raw_text: str) -> list[dict[str, Any]]:
     return [item for item in payload if isinstance(item, dict)]
 
 
+def _parse_todos_payload(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    todos: list[dict[str, Any]] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        content = str(item.get("content") or "").strip()
+        status = str(item.get("status") or "").strip()
+        if not content:
+            continue
+        todo = dict(item)
+        todo["content"] = content
+        if status:
+            todo["status"] = status
+        todos.append(todo)
+    return todos
+
+
 def build_runtime_context_snapshot(
     *,
     result: dict[str, Any],
@@ -191,6 +213,7 @@ def build_runtime_context_snapshot(
     if not isinstance(files, dict):
         return None
     baseline = baseline_files or {}
+    todos = _parse_todos_payload(result.get("todos"))
 
     whitelist = {
         layout.claim_map_md_path,
@@ -215,7 +238,7 @@ def build_runtime_context_snapshot(
                 continue
             extracted[path] = text
 
-    if not extracted:
+    if not extracted and not todos:
         return None
 
     report_context_payload = extracted.get(layout.report_context_json_path, "")
@@ -238,5 +261,6 @@ def build_runtime_context_snapshot(
         live_board_json=_parse_json_object_payload(
             extracted.get(layout.live_board_path, "")
         ),
+        todos_json=todos,
         files_snapshot=extracted,
     )
