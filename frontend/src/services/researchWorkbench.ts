@@ -78,6 +78,23 @@ export interface ResearchLiveSectionModel {
     percent: number;
     currentStageLabel: string;
   };
+  currentAgentLabel?: string;
+  currentTaskLabel?: string;
+  currentTaskKind?: string;
+  parallelTasks: Array<{
+    id: string;
+    label: string;
+    taskKind: string | null;
+    status: string | null;
+    agentLabel: string | null;
+    parallelGroup: string | null;
+  }>;
+  agentRuns?: Array<{
+    agentLabel: string;
+    status: string | null;
+    completedTaskCount: number;
+    activeTaskCount: number;
+  }>;
   planSteps: Array<{
     key: string;
     label: string;
@@ -505,6 +522,37 @@ function buildCoverageLabel(coverageMatrix: ResearchCoverageMatrix): string {
   return '覆盖信息生成中';
 }
 
+function normalizeParallelTasks(
+  value:
+    | ResearchPresentationSnapshot['live']
+    | null
+    | undefined
+): ResearchLiveSectionModel['parallelTasks'] {
+  return (value?.parallel_tasks ?? []).map((item) => ({
+    id: item.task_id,
+    label: item.title,
+    taskKind: item.task_kind ?? null,
+    status: item.status ?? null,
+    agentLabel: item.agent_label ?? null,
+    parallelGroup: item.parallel_group ?? null,
+  }));
+}
+
+function normalizeAgentRuns(
+  value:
+    | ResearchPresentationSnapshot['live']
+    | null
+    | undefined
+): ResearchLiveSectionModel['agentRuns'] {
+  const runs = (value?.agent_runs ?? []).map((item) => ({
+    agentLabel: item.agent_label,
+    status: item.status ?? null,
+    completedTaskCount: item.completed_task_count ?? 0,
+    activeTaskCount: item.active_task_count ?? 0,
+  }));
+  return runs.length > 0 ? runs : undefined;
+}
+
 function buildLivePlanSteps(params: {
   status: ResearchSessionStatus;
   planSnapshot?: ResearchPlanSnapshot | null;
@@ -725,6 +773,11 @@ export function buildResearchPageViewModel(params: {
             currentStageLabel:
               presentation.live?.progress.current_stage_label ?? fallbackProgress.currentStageLabel,
           },
+          currentAgentLabel: presentation.live?.current_agent_label ?? undefined,
+          currentTaskLabel: presentation.live?.current_task_label ?? undefined,
+          currentTaskKind: presentation.live?.current_task_kind ?? undefined,
+          parallelTasks: normalizeParallelTasks(presentation.live),
+          agentRuns: normalizeAgentRuns(presentation.live),
           planSteps,
           coverageLabel: presentation.live?.coverage_label ?? '覆盖信息生成中',
           footerStatus: `系统运行正常，${presentation.live?.coverage_label ?? '正在收集研究证据'}`,
@@ -808,6 +861,7 @@ export function buildResearchPageViewModel(params: {
           planSnapshot: params.planSnapshot,
         }),
       }),
+      parallelTasks: [],
       planSteps: buildLivePlanSteps({
         status: params.status,
         planSnapshot: params.planSnapshot,

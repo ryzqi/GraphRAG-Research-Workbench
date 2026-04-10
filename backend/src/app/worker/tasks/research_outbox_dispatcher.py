@@ -39,14 +39,34 @@ def _format_error(exc: Exception) -> str:
     return text[:MAX_ERROR_MESSAGE_LENGTH]
 
 
+def _resolve_stale_dispatched_seconds(settings: object) -> int:
+    explicit_value = getattr(
+        settings,
+        "research_outbox_stale_dispatched_seconds",
+        None,
+    )
+    if isinstance(explicit_value, int) and explicit_value > 0:
+        return explicit_value
+
+    visibility_timeout = getattr(
+        settings,
+        "celery_broker_visibility_timeout_seconds",
+        STALE_DISPATCHED_SECONDS,
+    )
+    if isinstance(visibility_timeout, int) and visibility_timeout > 0:
+        return visibility_timeout
+    return STALE_DISPATCHED_SECONDS
+
+
 async def _recover_stale_dispatched_rows(
     *,
     session,  # noqa: ANN001
     limit: int,
+    stale_dispatched_seconds: int = STALE_DISPATCHED_SECONDS,
     now: datetime | None = None,
 ) -> int:
     current_time = now or datetime.now(timezone.utc)
-    stale_before = current_time - timedelta(seconds=STALE_DISPATCHED_SECONDS)
+    stale_before = current_time - timedelta(seconds=stale_dispatched_seconds)
     stmt = (
         select(ResearchTaskOutbox)
         .join(ResearchSession, ResearchSession.id == ResearchTaskOutbox.session_id)
@@ -114,6 +134,7 @@ def dispatch_research_outbox(limit: int = DEFAULT_DISPATCH_BATCH_SIZE) -> None:
 async def _dispatch_research_outbox(*, limit: int = DEFAULT_DISPATCH_BATCH_SIZE) -> int:
     settings = get_settings()
     safe_limit = max(int(limit or DEFAULT_DISPATCH_BATCH_SIZE), 1)
+    stale_seconds = _resolve_stale_dispatched_seconds(settings)
 
     async with managed_task_resources(settings=settings, with_engine=True) as resources:
         sessionmaker = resources.sessionmaker
@@ -123,7 +144,11 @@ async def _dispatch_research_outbox(*, limit: int = DEFAULT_DISPATCH_BATCH_SIZE)
         dispatched_rows = 0
         async with sessionmaker() as session:
             while True:
-                await _recover_stale_dispatched_rows(session=session, limit=safe_limit)
+                await _recover_stale_dispatched_rows(
+                    session=session,
+                    limit=safe_limit,
+                    stale_dispatched_seconds=stale_seconds,
+                )
                 rows = await _claim_due_outbox_rows(session=session, limit=safe_limit)
                 if not rows:
                     await session.rollback()

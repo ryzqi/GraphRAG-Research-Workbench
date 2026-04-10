@@ -146,6 +146,37 @@ export function ResearchCanvas({
             当前计划步骤：{live.progress.currentStageLabel}
           </Typography>
 
+          {live.currentAgentLabel || live.currentTaskLabel ? (
+            <Paper
+              sx={{
+                borderRadius: 3,
+                px: { xs: 1.4, md: 1.65 },
+                py: { xs: 1.25, md: 1.4 },
+                bgcolor: alpha(researchWorkbenchColors.primary, 0.05),
+                boxShadow: 'none',
+              }}
+            >
+              <Stack spacing={0.7}>
+                {live.currentAgentLabel ? (
+                  <Typography variant="body2" sx={{ fontWeight: 700 }}>
+                    当前代理：{live.currentAgentLabel}
+                  </Typography>
+                ) : null}
+                {live.currentTaskLabel ? (
+                  <Typography
+                    variant="body2"
+                    sx={{
+                      color: researchWorkbenchColors.mutedText,
+                      fontFamily: researchBodyFont,
+                    }}
+                  >
+                    当前任务：{live.currentTaskLabel}
+                  </Typography>
+                ) : null}
+              </Stack>
+            </Paper>
+          ) : null}
+
           <Stack direction="row" justifyContent="space-between" spacing={1.1}>
             {live.planSteps.map((step) => (
               <Typography
@@ -176,6 +207,59 @@ export function ResearchCanvas({
               </Typography>
             ))}
           </Stack>
+
+          {live.parallelTasks.length > 0 ? (
+            <Paper
+              sx={{
+                borderRadius: 3,
+                px: { xs: 1.4, md: 1.65 },
+                py: { xs: 1.3, md: 1.45 },
+                bgcolor: alpha(researchWorkbenchColors.primaryContainer, 0.18),
+                boxShadow: 'none',
+              }}
+            >
+              <Stack spacing={0.95}>
+                <Typography variant="subtitle2" sx={{ fontWeight: 800 }}>
+                  并行任务
+                </Typography>
+                {live.parallelTasks.map((task) => (
+                  <Typography
+                    key={task.id}
+                    variant="body2"
+                    sx={{
+                      color: researchWorkbenchColors.mutedText,
+                      fontFamily: researchBodyFont,
+                    }}
+                  >
+                    {task.agentLabel ? `${task.agentLabel} · ` : ''}
+                    {task.label}
+                  </Typography>
+                ))}
+              </Stack>
+            </Paper>
+          ) : null}
+
+          {live.agentRuns && live.agentRuns.length > 0 ? (
+            <Stack direction={{ xs: 'column', md: 'row' }} spacing={1}>
+              {live.agentRuns.map((agentRun) => (
+                <Paper
+                  key={agentRun.agentLabel}
+                  sx={{
+                    flex: 1,
+                    borderRadius: 2.8,
+                    px: 1.3,
+                    py: 1.15,
+                    bgcolor: alpha(researchWorkbenchColors.surfaceMuted, 0.85),
+                    boxShadow: 'none',
+                  }}
+                >
+                  <Typography variant="body2" sx={{ fontWeight: 700 }}>
+                    {`${agentRun.agentLabel}${agentRun.status === 'running' ? '运行中' : agentRun.status ?? ''}${agentRun.completedTaskCount}/${agentRun.completedTaskCount + agentRun.activeTaskCount}`}
+                  </Typography>
+                </Paper>
+              ))}
+            </Stack>
+          ) : null}
 
           <Paper
             sx={{

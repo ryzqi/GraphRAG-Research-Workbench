@@ -88,6 +88,27 @@ describe('ResearchCanvas', () => {
             percent: 68,
             currentStageLabel: '语义建模',
           },
+          currentAgentLabel: 'web',
+          currentTaskLabel: '验证 claim 1 的网页证据',
+          currentTaskKind: 'claim',
+          parallelTasks: [
+            {
+              id: 'claim-1-web',
+              label: '验证 claim 1 的网页证据',
+              taskKind: 'claim',
+              status: 'started',
+              agentLabel: 'web',
+              parallelGroup: 'claim-1',
+            },
+          ],
+          agentRuns: [
+            {
+              agentLabel: 'web',
+              status: 'running',
+              completedTaskCount: 0,
+              activeTaskCount: 1,
+            },
+          ],
           planSteps: [
             { key: 'plan-step-1', label: '数据收集', state: 'complete' },
             { key: 'plan-step-2', label: '特征提取', state: 'complete' },
@@ -124,11 +145,15 @@ describe('ResearchCanvas', () => {
     expect(flattenText(tree)).toContain('研究进度实时追踪');
     expect(flattenText(tree)).toContain('68%');
     expect(flattenText(tree)).toContain('当前计划步骤：语义建模');
+    expect(flattenText(tree)).toContain('当前代理：web');
+    expect(flattenText(tree)).toContain('当前任务：验证 claim 1 的网页证据');
+    expect(flattenText(tree)).toContain('并行任务');
     expect(flattenText(tree)).toContain('系统运行正常，已汇总 12 条引用');
     expect(flattenText(tree)).toContain('数据收集');
     expect(flattenText(tree)).toContain('特征提取');
     expect(flattenText(tree)).toContain('语义建模');
     expect(flattenText(tree)).toContain('结论生成');
+    expect(flattenText(tree)).toContain('web运行中0/1');
     expect(flattenText(tree)).toContain('记录来源轨迹：searxng');
     expect(flattenText(tree)).not.toContain('来源与证据');
     expect(flattenText(tree)).not.toContain('研究时间流');

@@ -79,6 +79,26 @@ class ResearchFinalizer:
                 if runtime_context_snapshot is not None
                 else {}
             ),
+            "task_graph": (
+                dict(runtime_context_snapshot.task_graph_json)
+                if runtime_context_snapshot is not None
+                else {}
+            ),
+            "claim_bundles": (
+                list(runtime_context_snapshot.claim_bundles_json)
+                if runtime_context_snapshot is not None
+                else []
+            ),
+            "section_briefs": (
+                list(runtime_context_snapshot.section_briefs_json)
+                if runtime_context_snapshot is not None
+                else []
+            ),
+            "agent_runs": (
+                list(runtime_context_snapshot.agent_runs_json)
+                if runtime_context_snapshot is not None
+                else []
+            ),
         }
         verification_payload = {
             "claim_map": verification.claim_map,

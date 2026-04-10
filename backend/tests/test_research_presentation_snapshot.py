@@ -123,6 +123,64 @@ def test_build_research_presentation_snapshot_adds_live_pipeline_steps() -> None
     assert snapshot["live"]["progress"]["percent"] == 50
 
 
+def test_build_research_presentation_snapshot_includes_live_board_agent_and_parallel_tasks() -> None:
+    snapshot = build_research_presentation_snapshot(
+        session=_build_session(ResearchSessionStatus.RUNNING),
+        events=[_build_event(1, "research.runtime.activity")],
+        artifacts=[
+            _build_artifact(
+                "plan_snapshot",
+                content_json={
+                    "research_brief": "围绕补贴政策和销量趋势做对比研究",
+                    "complexity": "simple",
+                    "summary": "先收集政策，再比对销量与区域差异。",
+                    "subtasks": [
+                        {
+                            "title": "梳理主要市场补贴政策",
+                            "description": "整理中国、欧盟、美国的补贴政策和调整窗口。",
+                            "target_sources": ["web"],
+                        }
+                    ],
+                    "target_sources": ["web"],
+                },
+            ),
+            _build_artifact(
+                "runtime_live_board_json",
+                content_json={
+                    "current_agent_label": "web",
+                    "current_task_id": "claim-1-web",
+                    "current_task_label": "验证 claim 1 的网页证据",
+                    "current_task_kind": "claim",
+                    "status_message": "web 子代理开始抓取来源",
+                    "parallel_tasks": [
+                        {
+                            "task_id": "claim-1-web",
+                            "title": "验证 claim 1 的网页证据",
+                            "task_kind": "claim",
+                            "status": "started",
+                            "agent_label": "web",
+                            "parallel_group": "claim-1",
+                        }
+                    ],
+                    "agent_runs": [
+                        {
+                            "agent_label": "web",
+                            "status": "running",
+                            "completed_task_count": 0,
+                            "active_task_count": 1,
+                        }
+                    ],
+                },
+            ),
+        ],
+    )
+
+    assert snapshot["live"]["current_agent_label"] == "web"
+    assert snapshot["live"]["current_task_label"] == "验证 claim 1 的网页证据"
+    assert snapshot["live"]["parallel_tasks"][0]["task_id"] == "claim-1-web"
+    assert snapshot["live"]["agent_runs"][0]["agent_label"] == "web"
+
+
 def test_build_research_presentation_snapshot_adds_structured_report_blocks() -> None:
     snapshot = build_research_presentation_snapshot(
         session=_build_session(ResearchSessionStatus.FINAL),

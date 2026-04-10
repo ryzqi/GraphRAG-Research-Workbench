@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
@@ -36,6 +37,11 @@ class ResearchWorkspaceLayout:
     evidence_ledger_md_path: str
     analysis_notes_path: str
     report_outline_path: str
+    task_graph_path: str
+    claim_bundles_path: str
+    section_briefs_path: str
+    agent_runs_path: str
+    live_board_path: str
     source_ledger_path: str
     claim_map_path: str
     conflicts_path: str
@@ -105,6 +111,11 @@ def build_research_workspace_layout(session_id: UUID | str) -> ResearchWorkspace
         evidence_ledger_md_path=f"{workspace_root}/06-evidence-ledger.md",
         analysis_notes_path=f"{workspace_root}/07-analysis-notes.md",
         report_outline_path=f"{workspace_root}/08-report-outline.md",
+        task_graph_path=f"{workspace_root}/09-task-graph.json",
+        claim_bundles_path=f"{workspace_root}/10-claim-bundles.json",
+        section_briefs_path=f"{workspace_root}/11-section-briefs.json",
+        agent_runs_path=f"{workspace_root}/12-agent-runs.json",
+        live_board_path=f"{workspace_root}/13-live-board.json",
         source_ledger_path=f"{scratch_root}/verification/source-ledger.json",
         claim_map_path=f"{scratch_root}/verification/claim-map.json",
         conflicts_path=f"{scratch_root}/verification/conflicts.json",
@@ -131,6 +142,11 @@ def build_workspace_bootstrap_artifact_path_map(
         "evidence_ledger_md": layout.evidence_ledger_md_path,
         "analysis_notes_md": layout.analysis_notes_path,
         "report_outline_md": layout.report_outline_path,
+        "task_graph_json": layout.task_graph_path,
+        "claim_bundles_json": layout.claim_bundles_path,
+        "section_briefs_json": layout.section_briefs_path,
+        "agent_runs_json": layout.agent_runs_path,
+        "live_board_json": layout.live_board_path,
     }
 
 
@@ -191,5 +207,152 @@ def build_workspace_bootstrap_artifacts(
         "report_outline_md": ResearchArtifactSeed(
             artifact_key="report_outline_md",
             content_text=prompts.render("research/report_outline_md"),
+        ),
+    }
+
+
+def build_runtime_task_graph_payload(
+    *,
+    question: str,
+    plan_snapshot: ResearchPlanSnapshot,
+) -> dict[str, Any]:
+    tasks: list[dict[str, Any]] = []
+    subtasks = list(plan_snapshot.subtasks)
+    if not subtasks:
+        subtasks = [
+            ResearchPlanSubtask(
+                title="初始化研究任务图",
+                description="主代理先拆解 claim、来源和章节任务，再决定并行分发。",
+                target_sources=plan_snapshot.target_sources,
+            )
+        ]
+    for index, subtask in enumerate(subtasks, start=1):
+        task_id = f"subtask-{index}"
+        tasks.append(
+            {
+                "task_id": task_id,
+                "title": subtask.title,
+                "description": subtask.description,
+                "task_kind": "subtask",
+                "status": "pending",
+                "owner": "supervisor",
+                "parallel_group": task_id,
+                "target_sources": [item.value for item in subtask.target_sources],
+                "depends_on": [f"subtask-{index - 1}"] if index > 1 else [],
+                "can_parallelize": len(subtask.target_sources) > 1,
+            }
+        )
+    return {
+        "question": question,
+        "execution_mode": "quality_first",
+        "tasks": tasks,
+    }
+
+
+def build_runtime_section_briefs_payload(
+    *,
+    plan_snapshot: ResearchPlanSnapshot,
+) -> list[dict[str, Any]]:
+    briefs: list[dict[str, Any]] = []
+    for index, subtask in enumerate(plan_snapshot.subtasks, start=1):
+        briefs.append(
+            {
+                "section_id": f"section-{index}",
+                "task_id": f"subtask-{index}",
+                "title": subtask.title,
+                "status": "pending",
+                "target_sources": [item.value for item in subtask.target_sources],
+                "summary": "",
+                "brief_markdown": "",
+                "open_questions": [],
+                "citation_indices": [],
+            }
+        )
+    return briefs
+
+
+def build_runtime_claim_bundles_payload() -> list[dict[str, Any]]:
+    return []
+
+
+def build_runtime_agent_runs_payload() -> list[dict[str, Any]]:
+    return [
+        {
+            "agent_label": "deep-research",
+            "status": "ready",
+            "completed_task_count": 0,
+            "active_task_count": 0,
+        }
+    ]
+
+
+def build_runtime_live_board_payload(
+    *,
+    plan_snapshot: ResearchPlanSnapshot,
+) -> dict[str, Any]:
+    task_graph = build_runtime_task_graph_payload(
+        question="",
+        plan_snapshot=plan_snapshot,
+    )
+    tasks = task_graph.get("tasks")
+    first_task = tasks[0] if isinstance(tasks, list) and tasks else None
+    return {
+        "current_agent_label": "deep-research",
+        "current_task_id": (
+            str(first_task.get("task_id") or "").strip()
+            if isinstance(first_task, dict)
+            else None
+        ),
+        "current_task_label": (
+            str(first_task.get("title") or "").strip()
+            if isinstance(first_task, dict)
+            else None
+        ),
+        "current_task_kind": (
+            str(first_task.get("task_kind") or "").strip()
+            if isinstance(first_task, dict)
+            else None
+        ),
+        "status_message": "主代理正在初始化研究任务图。",
+        "parallel_tasks": [],
+        "agent_runs": build_runtime_agent_runs_payload(),
+        "recent_activity": [],
+    }
+
+
+def build_runtime_orchestration_scaffold_files(
+    *,
+    question: str,
+    plan_snapshot: ResearchPlanSnapshot,
+    layout: ResearchWorkspaceLayout,
+) -> dict[str, str]:
+    return {
+        layout.task_graph_path: json.dumps(
+            build_runtime_task_graph_payload(
+                question=question,
+                plan_snapshot=plan_snapshot,
+            ),
+            ensure_ascii=False,
+            indent=2,
+        ),
+        layout.claim_bundles_path: json.dumps(
+            build_runtime_claim_bundles_payload(),
+            ensure_ascii=False,
+            indent=2,
+        ),
+        layout.section_briefs_path: json.dumps(
+            build_runtime_section_briefs_payload(plan_snapshot=plan_snapshot),
+            ensure_ascii=False,
+            indent=2,
+        ),
+        layout.agent_runs_path: json.dumps(
+            build_runtime_agent_runs_payload(),
+            ensure_ascii=False,
+            indent=2,
+        ),
+        layout.live_board_path: json.dumps(
+            build_runtime_live_board_payload(plan_snapshot=plan_snapshot),
+            ensure_ascii=False,
+            indent=2,
         ),
     }

@@ -55,6 +55,44 @@ def test_research_finalizer_prefers_runtime_context_for_rich_report() -> None:
             "has_conflicts": True,
             "confidence_level": "partial",
         },
+        task_graph_json={
+            "tasks": [
+                {
+                    "task_id": "subtask-1",
+                    "title": "验证供应链瓶颈",
+                    "task_kind": "subtask",
+                    "status": "complete",
+                }
+            ]
+        },
+        claim_bundles_json=[
+            {
+                "claim_id": "claim-1",
+                "claim": "HBM 供应仍然紧张。",
+                "status": "supported",
+                "evidence": ["官方白皮书支持。", "论文侧数据支持。"],
+                "limitations": ["成本侧拐点尚未闭合。"],
+                "citation_indices": [1, 2],
+            }
+        ],
+        section_briefs_json=[
+            {
+                "section_id": "section-1",
+                "title": "供应链瓶颈",
+                "summary": "供给瓶颈仍主要集中在先进封装与 HBM。",
+                "brief_markdown": "## 供应链瓶颈\n先进封装与 HBM 产能仍是主约束。",
+                "open_questions": ["成本拐点时间仍未闭合"],
+                "citation_indices": [1, 2],
+            }
+        ],
+        agent_runs_json=[
+            {
+                "agent_label": "web",
+                "status": "complete",
+                "completed_task_count": 2,
+                "active_task_count": 0,
+            }
+        ],
     )
 
     result = finalizer.finalize(
@@ -65,9 +103,15 @@ def test_research_finalizer_prefers_runtime_context_for_rich_report() -> None:
     )
 
     assert "## 核心结论" in result.report_md
+    assert "## 研究方法与执行路径" in result.report_md
     assert "## 分主题分析" in result.report_md
+    assert "供应链瓶颈" in result.report_md
     assert "## 结论与建议" in result.report_md
     assert result.report_json["metadata"]["confidence_level"] == "partial"
+    assert result.report_json["task_graph"]["tasks"][0]["task_id"] == "subtask-1"
+    assert result.report_json["claim_bundles"][0]["claim_id"] == "claim-1"
+    assert result.report_json["section_briefs"][0]["title"] == "供应链瓶颈"
+    assert result.report_json["agent_runs"][0]["agent_label"] == "web"
     assert result.report_json["runtime_context"]["executive_summary"].startswith(
         "Claim A"
     )

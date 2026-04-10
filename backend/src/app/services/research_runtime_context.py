@@ -28,6 +28,11 @@ class ResearchRuntimeContextSnapshot:
     report_outline_md: str = ""
     report_draft_md: str = ""
     report_context_json: dict[str, Any] = field(default_factory=dict)
+    task_graph_json: dict[str, Any] = field(default_factory=dict)
+    claim_bundles_json: list[dict[str, Any]] = field(default_factory=list)
+    section_briefs_json: list[dict[str, Any]] = field(default_factory=list)
+    agent_runs_json: list[dict[str, Any]] = field(default_factory=list)
+    live_board_json: dict[str, Any] = field(default_factory=dict)
     files_snapshot: dict[str, str] = field(default_factory=dict)
 
 
@@ -155,6 +160,28 @@ def _parse_report_context_payload(raw_text: str) -> dict[str, Any]:
     return payload if isinstance(payload, dict) else {}
 
 
+def _parse_json_object_payload(raw_text: str) -> dict[str, Any]:
+    if not raw_text.strip():
+        return {}
+    try:
+        payload = json.loads(raw_text)
+    except json.JSONDecodeError:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _parse_json_array_payload(raw_text: str) -> list[dict[str, Any]]:
+    if not raw_text.strip():
+        return []
+    try:
+        payload = json.loads(raw_text)
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(payload, list):
+        return []
+    return [item for item in payload if isinstance(item, dict)]
+
+
 def build_runtime_context_snapshot(
     *,
     result: dict[str, Any],
@@ -173,6 +200,11 @@ def build_runtime_context_snapshot(
         layout.report_outline_path,
         layout.report_draft_path,
         layout.report_context_json_path,
+        layout.task_graph_path,
+        layout.claim_bundles_path,
+        layout.section_briefs_path,
+        layout.agent_runs_path,
+        layout.live_board_path,
     }
     extracted: dict[str, str] = {}
     for path, payload in files.items():
@@ -196,5 +228,20 @@ def build_runtime_context_snapshot(
         report_outline_md=extracted.get(layout.report_outline_path, ""),
         report_draft_md=extracted.get(layout.report_draft_path, ""),
         report_context_json=_parse_report_context_payload(report_context_payload),
+        task_graph_json=_parse_json_object_payload(
+            extracted.get(layout.task_graph_path, "")
+        ),
+        claim_bundles_json=_parse_json_array_payload(
+            extracted.get(layout.claim_bundles_path, "")
+        ),
+        section_briefs_json=_parse_json_array_payload(
+            extracted.get(layout.section_briefs_path, "")
+        ),
+        agent_runs_json=_parse_json_array_payload(
+            extracted.get(layout.agent_runs_path, "")
+        ),
+        live_board_json=_parse_json_object_payload(
+            extracted.get(layout.live_board_path, "")
+        ),
         files_snapshot=extracted,
     )

@@ -9,7 +9,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path, PurePosixPath
 from time import perf_counter
 from types import SimpleNamespace
-from typing import Any, cast
+from typing import Any, TypeGuard, cast
 
 from deepagents import create_deep_agent
 from deepagents.backends import CompositeBackend, StateBackend, StoreBackend
@@ -54,6 +54,8 @@ from app.services.research_runtime_skills import build_research_runtime_skill_fi
 from app.services.research_runtime_types import (
     DEFAULT_RESEARCH_BACKEND_POLICY,
     ResearchBackendPolicy,
+    ResearchRuntimeActivityStatus,
+    ResearchRuntimeActivityUpdate,
     ResearchPlanProgressStatus,
     ResearchPlanProgressUpdate,
     ResearchRuntimeConfig,
@@ -62,6 +64,7 @@ from app.services.research_runtime_types import (
 )
 from app.services.research_source_bundle import ResearchSourceBundleBuilder
 from app.services.research_workspace_files import (
+    build_runtime_orchestration_scaffold_files,
     build_research_workspace_layout,
     build_workspace_bootstrap_artifact_path_map,
 )
@@ -84,6 +87,12 @@ _DEFAULT_WORKSPACE_CONTEXT_DOCS: tuple[tuple[str, Path], ...] = (
 )
 _DEFAULT_RECOVERY_STRUCTURED_METHOD = "function_calling"
 _OLLAMA_RECOVERY_STRUCTURED_METHOD = "json_mode"
+_MISSING_STRUCTURED_RESPONSE_CONTINUE_LIMIT = 2
+_MISSING_STRUCTURED_RESPONSE_CONTINUE_PROMPT = (
+    "继续当前 deep research。不要停留在“研究已启动”或阶段性说明。"
+    "请完成仍处于进行中或待完成的 todos/subtasks，继续调用必要工具或子代理，"
+    "并返回最终 structured_response，至少包含 2 条 findings 和 2 条 citations。"
+)
 
 AsyncInvoker = Callable[..., Awaitable[object]]
 SyncInvoker = Callable[..., object]
@@ -196,6 +205,30 @@ def _normalize_plan_progress_message(value: object) -> str | None:
     return normalized or None
 
 
+def _result_has_pending_todos(result: dict[str, Any]) -> bool:
+    todos = result.get("todos")
+    return isinstance(todos, list) and len(todos) > 0
+
+
+def _is_runtime_result_mapping(value: object) -> TypeGuard[dict[str, Any]]:
+    return isinstance(value, dict)
+
+
+def _build_missing_structured_response_continue_request(
+    *,
+    request_files: dict[str, FileData],
+) -> dict[str, Any]:
+    return {
+        "messages": [
+            {
+                "role": "user",
+                "content": _MISSING_STRUCTURED_RESPONSE_CONTINUE_PROMPT,
+            }
+        ],
+        "files": request_files,
+    }
+
+
 class _PlanProgressCallbackRegistry:
     def __init__(self) -> None:
         self._callbacks: dict[
@@ -212,6 +245,11 @@ class _PlanProgressCallbackRegistry:
     def unregister(self, session_id: str) -> None:
         self._callbacks.pop(session_id, None)
 
+    def sole_session_id(self) -> str | None:
+        if len(self._callbacks) != 1:
+            return None
+        return next(iter(self._callbacks))
+
     async def dispatch(
         self,
         *,
@@ -226,13 +264,63 @@ class _PlanProgressCallbackRegistry:
         await callback(update)
 
 
+class _RuntimeActivityCallbackRegistry:
+    def __init__(self) -> None:
+        self._callbacks: dict[
+            str, Callable[[ResearchRuntimeActivityUpdate], Awaitable[None]]
+        ] = {}
+
+    def register(
+        self,
+        session_id: str,
+        callback: Callable[[ResearchRuntimeActivityUpdate], Awaitable[None]],
+    ) -> None:
+        self._callbacks[session_id] = callback
+
+    def unregister(self, session_id: str) -> None:
+        self._callbacks.pop(session_id, None)
+
+    def sole_session_id(self) -> str | None:
+        if len(self._callbacks) != 1:
+            return None
+        return next(iter(self._callbacks))
+
+    async def dispatch(
+        self,
+        *,
+        session_id: str,
+        update: ResearchRuntimeActivityUpdate,
+    ) -> None:
+        callback = self._callbacks.get(session_id)
+        if callback is None:
+            raise RuntimeError(
+                f"Deep Research runtime 未找到 session={session_id} 的活动回调"
+            )
+        await callback(update)
+
+
 class _UpdatePlanProgressInput(BaseModel):
     step_index: int = Field(ge=1)
     status: ResearchPlanProgressStatus
     message: str | None = None
 
 
-def _runtime_context_session_id(runtime: ToolRuntime | None) -> str:
+class _RecordRuntimeActivityInput(BaseModel):
+    task_id: str = Field(min_length=1)
+    title: str = Field(min_length=1)
+    task_kind: str = Field(min_length=1)
+    status: ResearchRuntimeActivityStatus
+    agent_name: str = Field(min_length=1)
+    subagent_name: str | None = None
+    parallel_group: str | None = None
+    message: str | None = None
+
+
+def _runtime_context_session_id(
+    runtime: ToolRuntime | None,
+    *,
+    fallback_session_id: str | None = None,
+) -> str:
     context = getattr(runtime, "context", None)
     if isinstance(context, ResearchRuntimeContext):
         return context.session_id
@@ -240,6 +328,8 @@ def _runtime_context_session_id(runtime: ToolRuntime | None) -> str:
         value = context.get("session_id")
         if isinstance(value, str) and value.strip():
             return value.strip()
+    if isinstance(fallback_session_id, str) and fallback_session_id.strip():
+        return fallback_session_id.strip()
     raise RuntimeError("Deep Research runtime context 缺少 session_id")
 
 
@@ -255,7 +345,10 @@ def _build_update_plan_progress_tool(
     ) -> str:
         """更新当前 deep research 计划步骤状态，step_index 必须对应原计划中的 1-based 子任务序号。"""
 
-        session_id = _runtime_context_session_id(runtime)
+        session_id = _runtime_context_session_id(
+            runtime,
+            fallback_session_id=registry.sole_session_id(),
+        )
         update = ResearchPlanProgressUpdate(
             step_index=step_index,
             status=status,
@@ -265,6 +358,53 @@ def _build_update_plan_progress_tool(
         return f"计划步骤 {step_index} 已更新为 {status}。"
 
     return _update_plan_progress
+
+
+def _build_record_runtime_activity_tool(
+    registry: _RuntimeActivityCallbackRegistry,
+) -> BaseTool:
+    @lc_tool("record_runtime_activity", args_schema=_RecordRuntimeActivityInput)
+    async def _record_runtime_activity(  # type: ignore[misc]
+        task_id: str,
+        title: str,
+        task_kind: str,
+        status: ResearchRuntimeActivityStatus,
+        agent_name: str,
+        subagent_name: str | None = None,
+        parallel_group: str | None = None,
+        message: str | None = None,
+        runtime: ToolRuntime | None = None,
+    ) -> str:
+        """记录 runtime 当前 agent、任务与并行分组进展。"""
+
+        session_id = _runtime_context_session_id(
+            runtime,
+            fallback_session_id=registry.sole_session_id(),
+        )
+        await registry.dispatch(
+            session_id=session_id,
+            update=ResearchRuntimeActivityUpdate(
+                task_id=task_id.strip(),
+                title=title.strip(),
+                task_kind=task_kind.strip(),
+                status=status,
+                agent_name=agent_name.strip(),
+                subagent_name=(
+                    subagent_name.strip()
+                    if isinstance(subagent_name, str) and subagent_name.strip()
+                    else None
+                ),
+                parallel_group=(
+                    parallel_group.strip()
+                    if isinstance(parallel_group, str) and parallel_group.strip()
+                    else None
+                ),
+                message=_normalize_plan_progress_message(message),
+            ),
+        )
+        return f"任务活动已记录：{title}"
+
+    return _record_runtime_activity
 
 
 def _recover_structured_response_payload(result: dict[str, Any]) -> Any | None:
@@ -992,17 +1132,20 @@ def _build_source_specialized_subagents(
     for name, description in (
         ("web", "网页来源子代理：负责 Tavily、Jina Reader、SearXNG 路线。"),
         ("paper", "论文来源子代理：负责 arXiv 搜索与论文基线构建。"),
+        ("claim-verifier", "claim 验证子代理：围绕单个 claim 做证据收集、反证和置信度判断。"),
+        ("section-writer", "章节写作子代理：只消费已验证工件，负责扩写章节简报与报告草稿。"),
     ):
         group_tools = _select_tools_by_name(tools, tool_names=tool_groups.get(name, ()))
-        if not group_tools:
+        if not group_tools and name in {"web", "paper"}:
             continue
         subagent: dict[str, Any] = {
             "name": name,
             "description": description,
             "system_prompt": config.system_prompt,
-            "tools": group_tools,
             "model": config.subagent_model,
         }
+        if group_tools:
+            subagent["tools"] = group_tools
         if resolved_skill_paths:
             subagent["skills"] = list(resolved_skill_paths)
         if config.interrupt_on:
@@ -1029,12 +1172,12 @@ def resolve_source_subagent_route(
         ResearchSourceTarget.WEB in normalized
         and ResearchSourceTarget.PAPER in normalized
     ):
-        return ("paper", "web", "citation")
+        return ("paper", "web", "claim-verifier", "section-writer", "citation")
     if ResearchSourceTarget.PAPER in normalized:
-        return ("paper", "citation")
+        return ("paper", "claim-verifier", "section-writer", "citation")
     if ResearchSourceTarget.WEB in normalized:
-        return ("web", "citation")
-    return ("citation",)
+        return ("web", "claim-verifier", "section-writer", "citation")
+    return ("claim-verifier", "section-writer", "citation")
 
 
 async def create_deep_research_runtime(
@@ -1272,6 +1415,25 @@ class DeepResearchRuntimeRunner:
     runtime: DeepResearchRuntime
     workspace_files: dict[str, str]
     plan_progress_registry: _PlanProgressCallbackRegistry | None = None
+    runtime_activity_registry: _RuntimeActivityCallbackRegistry | None = None
+
+    async def _recover_structured_payload(
+        self,
+        *,
+        result: dict[str, Any],
+        session: ResearchSession,
+        plan_snapshot: ResearchPlanSnapshot,
+    ) -> Any | None:
+        structured_payload = _recover_structured_response_payload(result)
+        if structured_payload is not None:
+            return structured_payload
+        return await _synthesize_structured_response_from_result(
+            result=result,
+            session=session,
+            plan_snapshot=plan_snapshot,
+            model=self.runtime.config.finalizer_model,
+            structured_method=self.runtime.config.finalizer_structured_method,
+        )
 
     async def run_session(
         self,
@@ -1280,10 +1442,21 @@ class DeepResearchRuntimeRunner:
         plan_snapshot: ResearchPlanSnapshot,
         plan_progress_callback: Callable[[ResearchPlanProgressUpdate], Awaitable[None]]
         | None = None,
+        runtime_activity_callback: Callable[
+            [ResearchRuntimeActivityUpdate], Awaitable[None]
+        ]
+        | None = None,
     ) -> ResearchRuntimeRunResult:
         layout = build_research_workspace_layout(session.id)
         workspace_files = dict(self.workspace_files)
         workspace_files.update(build_research_runtime_skill_files())
+        workspace_files.update(
+            build_runtime_orchestration_scaffold_files(
+                question=session.question,
+                plan_snapshot=plan_snapshot,
+                layout=layout,
+            )
+        )
         workspace_files.update(
             _build_session_bootstrap_workspace_files(
                 session=session,
@@ -1323,6 +1496,13 @@ class DeepResearchRuntimeRunner:
                 str(session.id),
                 plan_progress_callback,
             )
+        if runtime_activity_callback is not None:
+            if self.runtime_activity_registry is None:
+                raise RuntimeError("Deep Research runtime 未配置活动回调注册器")
+            self.runtime_activity_registry.register(
+                str(session.id),
+                runtime_activity_callback,
+            )
         try:
             result = await _invoke_with_async_fallback(
                 self.runtime.agent,
@@ -1330,22 +1510,47 @@ class DeepResearchRuntimeRunner:
                 config,
                 context=runtime_context,
             )
-        finally:
-            if plan_progress_callback is not None and self.plan_progress_registry is not None:
-                self.plan_progress_registry.unregister(str(session.id))
-        latency_ms = int((perf_counter() - started_at) * 1000)
-        if not isinstance(result, dict):
-            raise RuntimeError("Deep Research runtime 返回类型不符合预期")
-
-        structured_payload = _recover_structured_response_payload(result)
-        if structured_payload is None:
-            structured_payload = await _synthesize_structured_response_from_result(
+            if not _is_runtime_result_mapping(result):
+                raise RuntimeError("Deep Research runtime 返回类型不符合预期")
+            structured_payload = await self._recover_structured_payload(
                 result=result,
                 session=session,
                 plan_snapshot=plan_snapshot,
-                model=self.runtime.config.finalizer_model,
-                structured_method=self.runtime.config.finalizer_structured_method,
             )
+            continuation_count = 0
+            while (
+                structured_payload is None
+                and continuation_count < _MISSING_STRUCTURED_RESPONSE_CONTINUE_LIMIT
+                and _result_has_pending_todos(result)
+            ):
+                continuation_count += 1
+                result = await _invoke_with_async_fallback(
+                    self.runtime.agent,
+                    _build_missing_structured_response_continue_request(
+                        request_files=request_files,
+                    ),
+                    config,
+                    context=runtime_context,
+                )
+                if not _is_runtime_result_mapping(result):
+                    raise RuntimeError("Deep Research runtime 返回类型不符合预期")
+                structured_payload = await self._recover_structured_payload(
+                    result=result,
+                    session=session,
+                    plan_snapshot=plan_snapshot,
+                )
+        finally:
+            if plan_progress_callback is not None and self.plan_progress_registry is not None:
+                self.plan_progress_registry.unregister(str(session.id))
+            if (
+                runtime_activity_callback is not None
+                and self.runtime_activity_registry is not None
+            ):
+                self.runtime_activity_registry.unregister(str(session.id))
+        latency_ms = int((perf_counter() - started_at) * 1000)
+        if not _is_runtime_result_mapping(result):
+            raise RuntimeError("Deep Research runtime 返回类型不符合预期")
+
         if structured_payload is None:
             result_snapshot = _build_runtime_result_snapshot(result)
             raise RuntimeError(
@@ -1451,6 +1656,7 @@ async def build_deep_research_runtime_runner(
 ) -> DeepResearchRuntimeRunner:
     prompt_loader = get_prompt_loader()
     plan_progress_registry = _PlanProgressCallbackRegistry()
+    runtime_activity_registry = _RuntimeActivityCallbackRegistry()
     runtime_config = ResearchRuntimeConfig(
         primary_model=create_chat_model(
             settings=settings,
@@ -1480,10 +1686,14 @@ async def build_deep_research_runtime_runner(
         redis=redis,
         checkpointer=MemorySaver(),
         store=InMemoryStore(),
-        extra_tools=[_build_update_plan_progress_tool(plan_progress_registry)],
+        extra_tools=[
+            _build_update_plan_progress_tool(plan_progress_registry),
+            _build_record_runtime_activity_tool(runtime_activity_registry),
+        ],
     )
     return DeepResearchRuntimeRunner(
         runtime=runtime,
         workspace_files=_build_workspace_context_files(),
         plan_progress_registry=plan_progress_registry,
+        runtime_activity_registry=runtime_activity_registry,
     )

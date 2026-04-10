@@ -86,6 +86,10 @@ def compile_report_from_runtime_context(
             runtime_context_snapshot.report_outline_md.strip(),
             runtime_context_snapshot.report_draft_md.strip(),
             bool(report_context),
+            bool(runtime_context_snapshot.task_graph_json),
+            bool(runtime_context_snapshot.claim_bundles_json),
+            bool(runtime_context_snapshot.section_briefs_json),
+            bool(runtime_context_snapshot.agent_runs_json),
         )
     )
     if not has_material:
@@ -103,16 +107,27 @@ def compile_report_from_runtime_context(
 
     sections = [
         ResearchCompiledSection(
+            title="研究方法与执行路径",
+            content=_join_blocks(
+                _format_task_graph_summary(runtime_context_snapshot.task_graph_json),
+                _format_agent_runs(runtime_context_snapshot.agent_runs_json),
+            ),
+        ),
+        ResearchCompiledSection(
             title="核心结论",
             content=_join_blocks(
                 executive_summary,
                 _format_bullets("已验证发现", source_bundle.findings),
+                _format_claim_bundle_summary(
+                    runtime_context_snapshot.claim_bundles_json
+                ),
                 _trim_leading_heading(runtime_context_snapshot.claim_map_md),
             ),
         ),
         ResearchCompiledSection(
             title="分主题分析",
             content=_join_blocks(
+                _format_section_briefs(runtime_context_snapshot.section_briefs_json),
                 _trim_leading_heading(runtime_context_snapshot.report_outline_md),
                 _trim_leading_heading(runtime_context_snapshot.report_draft_md),
                 _trim_leading_heading(runtime_context_snapshot.analysis_notes_md),
@@ -121,6 +136,9 @@ def compile_report_from_runtime_context(
         ResearchCompiledSection(
             title="证据与反证",
             content=_join_blocks(
+                _format_claim_bundle_details(
+                    runtime_context_snapshot.claim_bundles_json
+                ),
                 _trim_leading_heading(runtime_context_snapshot.evidence_ledger_md),
                 _format_citations_block(source_bundle),
             ),
@@ -256,6 +274,112 @@ def _format_citation_list(source_bundle: ResearchSourceBundle) -> str:
         title = str(citation.title or citation.source_id)
         parts.append(f"{index:02d}. {title} | {citation.source_provider} | {location}")
     return "\n".join(parts)
+
+
+def _format_task_graph_summary(task_graph: Mapping[str, Any]) -> str:
+    tasks = task_graph.get("tasks")
+    if not isinstance(tasks, list) or not tasks:
+        return ""
+    lines = ["本轮研究按任务图执行："]
+    for item in tasks:
+        if not isinstance(item, Mapping):
+            continue
+        title = str(item.get("title") or "").strip()
+        task_kind = str(item.get("task_kind") or "").strip()
+        status = str(item.get("status") or "").strip()
+        if not title:
+            continue
+        details = [token for token in [task_kind, status] if token]
+        lines.append(f"- {title}" + (f" ({' / '.join(details)})" if details else ""))
+    return "\n".join(lines) if len(lines) > 1 else ""
+
+
+def _format_agent_runs(agent_runs: Sequence[Mapping[str, Any]]) -> str:
+    if not agent_runs:
+        return ""
+    lines = ["代理执行分工："]
+    for item in agent_runs:
+        agent_label = str(item.get("agent_label") or "").strip()
+        status = str(item.get("status") or "").strip()
+        completed = item.get("completed_task_count")
+        active = item.get("active_task_count")
+        if not agent_label:
+            continue
+        counts: list[str] = []
+        if isinstance(completed, int):
+            counts.append(f"completed={completed}")
+        if isinstance(active, int):
+            counts.append(f"active={active}")
+        details = [token for token in [status, *counts] if token]
+        lines.append(f"- {agent_label}" + (f" ({', '.join(details)})" if details else ""))
+    return "\n".join(lines) if len(lines) > 1 else ""
+
+
+def _format_section_briefs(section_briefs: Sequence[Mapping[str, Any]]) -> str:
+    if not section_briefs:
+        return ""
+    blocks: list[str] = []
+    for item in section_briefs:
+        title = str(item.get("title") or "").strip()
+        summary = str(item.get("summary") or "").strip()
+        brief_markdown = _trim_leading_heading(str(item.get("brief_markdown") or ""))
+        open_questions = _normalize_string_list(item.get("open_questions"))
+        citation_indices = item.get("citation_indices")
+        citation_block = (
+            "引用索引：" + ", ".join(str(value) for value in citation_indices)
+            if isinstance(citation_indices, list) and citation_indices
+            else ""
+        )
+        blocks.append(
+            _join_blocks(
+                f"### {title}" if title else "",
+                summary,
+                brief_markdown,
+                _format_bullets("待补问题", open_questions),
+                citation_block,
+            )
+        )
+    return "\n\n".join(block for block in blocks if block)
+
+
+def _format_claim_bundle_summary(claim_bundles: Sequence[Mapping[str, Any]]) -> str:
+    if not claim_bundles:
+        return ""
+    lines = ["关键 claim 收口："]
+    for item in claim_bundles:
+        claim = str(item.get("claim") or "").strip()
+        status = str(item.get("status") or "").strip()
+        if not claim:
+            continue
+        lines.append(f"- {claim}" + (f" ({status})" if status else ""))
+    return "\n".join(lines) if len(lines) > 1 else ""
+
+
+def _format_claim_bundle_details(claim_bundles: Sequence[Mapping[str, Any]]) -> str:
+    if not claim_bundles:
+        return ""
+    blocks: list[str] = []
+    for item in claim_bundles:
+        claim = str(item.get("claim") or "").strip()
+        status = str(item.get("status") or "").strip()
+        evidence = _normalize_string_list(item.get("evidence"))
+        limitations = _normalize_string_list(item.get("limitations"))
+        citation_indices = item.get("citation_indices")
+        citation_block = (
+            "引用索引：" + ", ".join(str(value) for value in citation_indices)
+            if isinstance(citation_indices, list) and citation_indices
+            else ""
+        )
+        blocks.append(
+            _join_blocks(
+                f"### {claim}" if claim else "",
+                f"状态：{status}" if status else "",
+                _format_bullets("支撑证据", evidence),
+                _format_bullets("限制与反证", limitations),
+                citation_block,
+            )
+        )
+    return "\n\n".join(block for block in blocks if block)
 
 
 def _trim_leading_heading(value: str) -> str:

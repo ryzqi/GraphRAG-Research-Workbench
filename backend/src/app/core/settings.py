@@ -192,6 +192,9 @@ class Settings(BaseSettings):
     celery_broker_visibility_timeout_seconds: int = Field(
         7_200, ge=1, alias="CELERY_BROKER_VISIBILITY_TIMEOUT_SECONDS"
     )
+    research_outbox_stale_dispatched_seconds: int | None = Field(
+        None, ge=1, alias="RESEARCH_OUTBOX_STALE_DISPATCHED_SECONDS"
+    )
     celery_task_soft_time_limit_seconds: int = Field(
         0, ge=0, alias="CELERY_TASK_SOFT_TIME_LIMIT_SECONDS"
     )

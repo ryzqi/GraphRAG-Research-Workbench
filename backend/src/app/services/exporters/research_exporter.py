@@ -11,7 +11,7 @@ from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import mm
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.cidfonts import UnicodeCIDFont
-from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
+from reportlab.platypus import Flowable, Paragraph, SimpleDocTemplate, Spacer
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -117,7 +117,7 @@ class ResearchExporter:
             firstLineIndent=-8,
         )
 
-        story: list[Paragraph | Spacer] = []
+        story: list[Flowable] = []
         for raw_line in report_md.splitlines():
             line = raw_line.strip()
             if not line:

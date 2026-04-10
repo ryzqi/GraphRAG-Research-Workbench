@@ -31,6 +31,9 @@ def build_research_presentation_snapshot(
     plan_progress_payload = _read_artifact_object(
         artifact_by_key, "plan_progress_snapshot"
     )
+    live_board_payload = _read_artifact_object(
+        artifact_by_key, "runtime_live_board_json"
+    )
     report_payload = _read_artifact_object(artifact_by_key, "report_json")
     metrics_payload = _read_artifact_object(artifact_by_key, "metrics_snapshot")
     gate_payload = _read_artifact_object(artifact_by_key, "gate_snapshot")
@@ -72,6 +75,7 @@ def build_research_presentation_snapshot(
                 events=events,
                 plan_payload=plan_payload,
                 plan_progress_payload=plan_progress_payload,
+                live_board_payload=live_board_payload,
                 metrics_payload=metrics_payload,
             )
             if surface == "live"
@@ -305,6 +309,7 @@ def _build_live_section(
     events: Sequence[ResearchEventEnvelope],
     plan_payload: dict[str, Any],
     plan_progress_payload: dict[str, Any],
+    live_board_payload: dict[str, Any],
     metrics_payload: dict[str, Any],
 ) -> dict[str, Any]:
     plan_steps = _build_live_plan_steps(
@@ -329,6 +334,24 @@ def _build_live_section(
             f"已汇总 {int(citation_count)} 条引用"
             if isinstance(citation_count, (int, float))
             else "正在收集研究证据"
+        ),
+        "current_agent_label": str(
+            live_board_payload.get("current_agent_label") or ""
+        ).strip()
+        or None,
+        "current_task_label": str(
+            live_board_payload.get("current_task_label") or ""
+        ).strip()
+        or None,
+        "current_task_kind": str(
+            live_board_payload.get("current_task_kind") or ""
+        ).strip()
+        or None,
+        "parallel_tasks": _read_live_board_task_items(
+            live_board_payload.get("parallel_tasks")
+        ),
+        "agent_runs": _read_live_board_agent_runs(
+            live_board_payload.get("agent_runs")
         ),
     }
 
@@ -529,6 +552,11 @@ def _build_activity_title(event: ResearchEventEnvelope) -> str:
         if isinstance(lc_agent_name, str) and lc_agent_name.strip():
             return f"记录代理轨迹：{lc_agent_name.strip()}"
         return "记录研究轨迹"
+    if event.event_type == "research.runtime.activity":
+        title = event.payload.get("title")
+        if isinstance(title, str) and title.strip():
+            return title.strip()
+        return "记录运行时任务活动"
     mapping = {
         "research.run.started": "研究已启动",
         "research.run.queued": "研究已进入队列",
@@ -564,6 +592,14 @@ def _build_activity_body(event: ResearchEventEnvelope) -> str:
         if tokens:
             return f"最近活跃链路：{' / '.join(tokens)}"
         return "记录到新的研究链路轨迹。"
+    if event.event_type == "research.runtime.activity":
+        message = event.payload.get("message")
+        if isinstance(message, str) and message.strip():
+            return message.strip()
+        current_task_label = event.payload.get("current_task_label")
+        if isinstance(current_task_label, str) and current_task_label.strip():
+            return f"当前任务：{current_task_label.strip()}"
+        return "运行时任务活动已更新。"
     error_message = event.payload.get("error")
     if isinstance(error_message, str) and error_message.strip():
         return error_message.strip()
@@ -580,6 +616,53 @@ def _build_status_activity_title(status: ResearchSessionStatus) -> str:
         ResearchSessionStatus.TIMED_OUT: "研究执行超时",
     }
     return mapping.get(status, "研究状态更新")
+
+
+def _read_live_board_task_items(value: object) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    items: list[dict[str, Any]] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        task_id = str(item.get("task_id") or "").strip()
+        title = str(item.get("title") or "").strip()
+        if not task_id or not title:
+            continue
+        items.append(
+            {
+                "task_id": task_id,
+                "title": title,
+                "task_kind": str(item.get("task_kind") or "").strip() or None,
+                "status": str(item.get("status") or "").strip() or None,
+                "agent_label": str(item.get("agent_label") or "").strip() or None,
+                "parallel_group": str(item.get("parallel_group") or "").strip()
+                or None,
+            }
+        )
+    return items
+
+
+def _read_live_board_agent_runs(value: object) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    items: list[dict[str, Any]] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        agent_label = str(item.get("agent_label") or "").strip()
+        if not agent_label:
+            continue
+        items.append(
+            {
+                "agent_label": agent_label,
+                "status": str(item.get("status") or "").strip() or None,
+                "completed_task_count": _read_int(item.get("completed_task_count"))
+                or 0,
+                "active_task_count": _read_int(item.get("active_task_count")) or 0,
+            }
+        )
+    return items
 
 
 def _build_report_section(

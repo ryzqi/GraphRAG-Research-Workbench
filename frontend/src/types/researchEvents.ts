@@ -189,6 +189,23 @@ export interface ResearchPresentationLiveSection {
     current_stage_label: string;
   };
   coverage_label: string;
+  current_agent_label?: string | null;
+  current_task_label?: string | null;
+  current_task_kind?: string | null;
+  parallel_tasks?: Array<{
+    task_id: string;
+    title: string;
+    task_kind?: string | null;
+    status?: string | null;
+    agent_label?: string | null;
+    parallel_group?: string | null;
+  }>;
+  agent_runs?: Array<{
+    agent_label: string;
+    status?: string | null;
+    completed_task_count?: number;
+    active_task_count?: number;
+  }>;
   plan_steps?: ResearchPresentationPipelineStep[];
   activity: ResearchPresentationLiveActivity[];
 }

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import uuid
 from datetime import datetime, timezone
 from typing import Protocol
@@ -49,11 +50,22 @@ from app.services.research_presentation_snapshot import (
 )
 from app.services.research_replay import evaluate_research_replay_consistency
 from app.services.research_runtime_context import ResearchRuntimeContextSnapshot
-from app.services.research_runtime_types import ResearchPlanProgressUpdate
-from app.services.research_workspace_files import build_workspace_bootstrap_artifacts
+from app.services.research_runtime_types import (
+    ResearchPlanProgressUpdate,
+    ResearchRuntimeActivityUpdate,
+)
+from app.services.research_workspace_files import (
+    build_runtime_agent_runs_payload,
+    build_runtime_live_board_payload,
+    build_runtime_task_graph_payload,
+    build_workspace_bootstrap_artifacts,
+)
 
 PLAN_PROGRESS_ARTIFACT_KEY = "plan_progress_snapshot"
 PLAN_PROGRESS_EVENT_TYPE = "research.plan_progress.updated"
+RUNTIME_TASK_GRAPH_ARTIFACT_KEY = "runtime_task_graph_json"
+RUNTIME_AGENT_RUNS_ARTIFACT_KEY = "runtime_agent_runs_json"
+RUNTIME_LIVE_BOARD_ARTIFACT_KEY = "runtime_live_board_json"
 
 
 class ResearchRuntimeRunner(Protocol):
@@ -63,6 +75,7 @@ class ResearchRuntimeRunner(Protocol):
         session: ResearchSession,
         plan_snapshot: ResearchPlanSnapshot,
         plan_progress_callback=None,
+        runtime_activity_callback=None,
     ) -> ResearchRuntimeRunResult: ...
 
 
@@ -73,8 +86,9 @@ class UnconfiguredResearchRuntimeRunner:
         session: ResearchSession,
         plan_snapshot: ResearchPlanSnapshot,
         plan_progress_callback=None,
+        runtime_activity_callback=None,
     ) -> ResearchRuntimeRunResult:
-        del session, plan_snapshot, plan_progress_callback
+        del session, plan_snapshot, plan_progress_callback, runtime_activity_callback
         raise RuntimeError("Research runtime runner 未配置")
 
 
@@ -330,9 +344,237 @@ class ResearchService:
         )
         await self._artifact_store.upsert(
             session=session,
+            artifact_key=RUNTIME_TASK_GRAPH_ARTIFACT_KEY,
+            content_json=runtime_context_snapshot.task_graph_json,
+        )
+        await self._artifact_store.upsert(
+            session=session,
+            artifact_key="runtime_claim_bundles_json",
+            content_json=runtime_context_snapshot.claim_bundles_json,
+        )
+        await self._artifact_store.upsert(
+            session=session,
+            artifact_key="runtime_section_briefs_json",
+            content_json=runtime_context_snapshot.section_briefs_json,
+        )
+        await self._artifact_store.upsert(
+            session=session,
+            artifact_key=RUNTIME_AGENT_RUNS_ARTIFACT_KEY,
+            content_json=runtime_context_snapshot.agent_runs_json,
+        )
+        await self._artifact_store.upsert(
+            session=session,
+            artifact_key=RUNTIME_LIVE_BOARD_ARTIFACT_KEY,
+            content_json=runtime_context_snapshot.live_board_json,
+        )
+        await self._artifact_store.upsert(
+            session=session,
             artifact_key="runtime_files_snapshot_json",
             content_json=runtime_context_snapshot.files_snapshot,
         )
+
+    @staticmethod
+    def _runtime_live_board_updated_at() -> str:
+        return datetime.now(timezone.utc).isoformat()
+
+    @staticmethod
+    def _read_json_artifact(
+        session: ResearchSession,
+        artifact_key: str,
+    ) -> dict[str, object] | list[object] | None:
+        artifact = next(
+            (item for item in session.artifacts if item.artifact_key == artifact_key),
+            None,
+        )
+        payload = artifact.content_json if artifact is not None else None
+        if isinstance(payload, (dict, list)):
+            return payload
+        return None
+
+    async def _persist_runtime_execution_artifacts(
+        self,
+        *,
+        session: ResearchSession,
+        plan_snapshot: ResearchPlanSnapshot,
+    ) -> None:
+        task_graph = build_runtime_task_graph_payload(
+            question=session.question,
+            plan_snapshot=plan_snapshot,
+        )
+        live_board = build_runtime_live_board_payload(plan_snapshot=plan_snapshot)
+        live_board["updated_at"] = self._runtime_live_board_updated_at()
+        agent_runs = build_runtime_agent_runs_payload()
+        await self._artifact_store.upsert(
+            session=session,
+            artifact_key=RUNTIME_TASK_GRAPH_ARTIFACT_KEY,
+            content_json=task_graph,
+        )
+        await self._artifact_store.upsert(
+            session=session,
+            artifact_key=RUNTIME_LIVE_BOARD_ARTIFACT_KEY,
+            content_json=live_board,
+        )
+        await self._artifact_store.upsert(
+            session=session,
+            artifact_key=RUNTIME_AGENT_RUNS_ARTIFACT_KEY,
+            content_json=agent_runs,
+        )
+
+    async def _persist_runtime_activity_update(
+        self,
+        *,
+        session: ResearchSession,
+        update: ResearchRuntimeActivityUpdate,
+    ) -> dict[str, object]:
+        existing_payload = self._read_json_artifact(
+            session, RUNTIME_LIVE_BOARD_ARTIFACT_KEY
+        )
+        live_board = dict(existing_payload) if isinstance(existing_payload, dict) else {}
+        existing_parallel_tasks = live_board.get("parallel_tasks")
+        active_tasks: dict[str, dict[str, object]] = {}
+        if isinstance(existing_parallel_tasks, list):
+            for item in existing_parallel_tasks:
+                if not isinstance(item, dict):
+                    continue
+                task_id = str(item.get("task_id") or "").strip()
+                if task_id:
+                    active_tasks[task_id] = dict(item)
+
+        task_entry = {
+            "task_id": update.task_id,
+            "title": update.title,
+            "task_kind": update.task_kind,
+            "status": update.status,
+            "agent_label": update.subagent_name or update.agent_name,
+            "parallel_group": update.parallel_group,
+        }
+        if update.status in {"started", "in_progress"}:
+            active_tasks[update.task_id] = task_entry
+        else:
+            active_tasks.pop(update.task_id, None)
+
+        current_task = (
+            task_entry
+            if update.status in {"started", "in_progress"}
+            else next(iter(active_tasks.values()), None)
+        )
+
+        existing_activity = live_board.get("recent_activity")
+        recent_activity = (
+            [item for item in existing_activity if isinstance(item, dict)]
+            if isinstance(existing_activity, list)
+            else []
+        )
+        recent_activity = [
+            {
+                "task_id": update.task_id,
+                "title": update.title,
+                "task_kind": update.task_kind,
+                "status": update.status,
+                "agent_label": update.subagent_name or update.agent_name,
+                "parallel_group": update.parallel_group,
+                "message": update.message,
+                "timestamp": self._runtime_live_board_updated_at(),
+            },
+            *recent_activity,
+        ][:8]
+
+        existing_agent_runs = self._read_json_artifact(
+            session, RUNTIME_AGENT_RUNS_ARTIFACT_KEY
+        )
+        agent_label = update.subagent_name or update.agent_name
+        agent_runs_by_label: dict[str, dict[str, object]] = {}
+        if isinstance(existing_agent_runs, list):
+            for item in existing_agent_runs:
+                if not isinstance(item, dict):
+                    continue
+                label = str(item.get("agent_label") or "").strip()
+                if label:
+                    agent_runs_by_label[label] = dict(item)
+        current_agent_run = agent_runs_by_label.setdefault(
+            agent_label,
+            {
+                "agent_label": agent_label,
+                "status": "ready",
+                "completed_task_count": 0,
+                "active_task_count": 0,
+            },
+        )
+        if update.status in {"started", "in_progress"}:
+            current_agent_run["status"] = "running"
+        elif update.status == "completed":
+            current_agent_run["status"] = "complete"
+            completed_task_count = current_agent_run.get("completed_task_count")
+            normalized_completed_task_count = (
+                completed_task_count
+                if isinstance(completed_task_count, int)
+                else 0
+            )
+            current_agent_run["completed_task_count"] = (
+                normalized_completed_task_count + 1
+            )
+        else:
+            current_agent_run["status"] = update.status
+
+        active_task_count_by_label: dict[str, int] = {}
+        for item in active_tasks.values():
+            label = str(item.get("agent_label") or "").strip()
+            if not label:
+                continue
+            active_task_count_by_label[label] = (
+                active_task_count_by_label.get(label, 0) + 1
+            )
+        for label, item in agent_runs_by_label.items():
+            item["active_task_count"] = active_task_count_by_label.get(label, 0)
+            active_task_count = item.get("active_task_count")
+            normalized_active_task_count = (
+                active_task_count if isinstance(active_task_count, int) else 0
+            )
+            if (
+                normalized_active_task_count == 0
+                and item.get("status") == "running"
+            ):
+                item["status"] = "idle"
+
+        next_live_board: dict[str, object] = {
+            **live_board,
+            "current_agent_label": (
+                str(current_task.get("agent_label") or "").strip()
+                if isinstance(current_task, dict)
+                else None
+            ),
+            "current_task_id": (
+                str(current_task.get("task_id") or "").strip()
+                if isinstance(current_task, dict)
+                else None
+            ),
+            "current_task_label": (
+                str(current_task.get("title") or "").strip()
+                if isinstance(current_task, dict)
+                else None
+            ),
+            "current_task_kind": (
+                str(current_task.get("task_kind") or "").strip()
+                if isinstance(current_task, dict)
+                else None
+            ),
+            "status_message": update.message or update.title,
+            "parallel_tasks": list(active_tasks.values()),
+            "agent_runs": list(agent_runs_by_label.values()),
+            "recent_activity": recent_activity,
+            "updated_at": self._runtime_live_board_updated_at(),
+        }
+        await self._artifact_store.upsert(
+            session=session,
+            artifact_key=RUNTIME_LIVE_BOARD_ARTIFACT_KEY,
+            content_json=next_live_board,
+        )
+        await self._artifact_store.upsert(
+            session=session,
+            artifact_key=RUNTIME_AGENT_RUNS_ARTIFACT_KEY,
+            content_json=list(agent_runs_by_label.values()),
+        )
+        return next_live_board
 
     async def submit_clarification(
         self,
@@ -492,6 +734,10 @@ class ResearchService:
             current_step_index=1 if plan_snapshot.subtasks else None,
             completed_step_count=0,
         )
+        await self._persist_runtime_execution_artifacts(
+            session=session,
+            plan_snapshot=plan_snapshot,
+        )
         self._ensure_dispatch_outbox(session=session)
         return session
 
@@ -620,6 +866,7 @@ class ResearchService:
             current_step_index=1 if plan_snapshot.subtasks else None,
             completed_step_count=0,
         )
+        await self._commit_checkpoint()
 
         runtime_result = await self._runtime_runner.run_session(
             session=session,
@@ -631,6 +878,9 @@ class ResearchService:
                 )
                 if plan_snapshot.subtasks
                 else None
+            ),
+            runtime_activity_callback=self._build_runtime_activity_callback(
+                session=session
             ),
         )
         source_bundle = runtime_result.source_bundle
@@ -672,6 +922,7 @@ class ResearchService:
             session=session,
             runtime_context_snapshot=runtime_result.runtime_context_snapshot,
         )
+        await self._commit_checkpoint()
 
         committed_status = await self._read_committed_session_status(session=session)
         if committed_status == ResearchSessionStatus.CANCELED:
@@ -700,12 +951,21 @@ class ResearchService:
             },
             trace_id=session.trace_id,
         )
+        await self._commit_checkpoint()
 
         final_result = self._finalizer.finalize(
             question=session.question,
             target_sources=plan_snapshot.target_sources,
             source_bundle=source_bundle,
             runtime_context_snapshot=runtime_result.runtime_context_snapshot,
+        )
+        final_report_json = self._merge_runtime_artifacts_into_report_json(
+            session=session,
+            report_json=final_result.report_json,
+        )
+        final_result = ResearchFinalizerResult(
+            report_md=final_result.report_md,
+            report_json=final_report_json,
         )
         await self._artifact_store.upsert(
             session=session,
@@ -771,6 +1031,7 @@ class ResearchService:
             thresholds=self._gate_thresholds,
         )
         await self._persist_metrics_artifacts(session=session, metrics=metrics)
+        await self._commit_checkpoint()
         return final_result
 
     async def fail_session(
@@ -1205,7 +1466,7 @@ class ResearchService:
             )
             active_step_status = "current"
 
-        return await self._persist_plan_progress_snapshot(
+        snapshot = await self._persist_plan_progress_snapshot(
             session=session,
             plan_snapshot=plan_snapshot,
             phase="runtime",
@@ -1214,6 +1475,8 @@ class ResearchService:
             active_step_status=active_step_status,
             event_message=update.message,
         )
+        await self._commit_checkpoint()
+        return snapshot
 
     def _build_runtime_plan_progress_callback(
         self,
@@ -1229,6 +1492,67 @@ class ResearchService:
             )
 
         return _callback
+
+    def _build_runtime_activity_callback(
+        self,
+        *,
+        session: ResearchSession,
+    ):
+        async def _callback(update: ResearchRuntimeActivityUpdate) -> None:
+            live_board = await self._persist_runtime_activity_update(
+                session=session,
+                update=update,
+            )
+            await self._event_store.append(
+                session=session,
+                event_type="research.runtime.activity",
+                phase="runtime",
+                payload={
+                    "task_id": update.task_id,
+                    "title": update.title,
+                    "task_kind": update.task_kind,
+                    "status": update.status,
+                    "parallel_group": update.parallel_group,
+                    "message": update.message,
+                    "summary": update.message or update.title,
+                    "lc_agent_name": update.agent_name,
+                    "subagent_name": update.subagent_name,
+                    "current_task_label": live_board.get("current_task_label"),
+                    "current_agent_label": live_board.get("current_agent_label"),
+                },
+                trace_id=session.trace_id,
+            )
+            await self._commit_checkpoint()
+
+        return _callback
+
+    async def _commit_checkpoint(self) -> None:
+        commit = getattr(self._db, "commit", None)
+        if callable(commit):
+            commit_result = commit()
+            if inspect.isawaitable(commit_result):
+                await commit_result
+
+    def _merge_runtime_artifacts_into_report_json(
+        self,
+        *,
+        session: ResearchSession,
+        report_json: dict[str, object],
+    ) -> dict[str, object]:
+        merged = dict(report_json)
+        runtime_artifact_map = {
+            "task_graph": RUNTIME_TASK_GRAPH_ARTIFACT_KEY,
+            "agent_runs": RUNTIME_AGENT_RUNS_ARTIFACT_KEY,
+            "live_board": RUNTIME_LIVE_BOARD_ARTIFACT_KEY,
+            "claim_bundles": "runtime_claim_bundles_json",
+            "section_briefs": "runtime_section_briefs_json",
+        }
+        for report_key, artifact_key in runtime_artifact_map.items():
+            payload = self._read_json_artifact(session, artifact_key)
+            if payload is None:
+                continue
+            merged[report_key] = payload
+        return merged
 
     @staticmethod
     def _build_event_envelope(

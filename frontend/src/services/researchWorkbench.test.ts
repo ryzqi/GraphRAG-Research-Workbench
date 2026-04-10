@@ -171,6 +171,95 @@ describe('buildResearchPageViewModel', () => {
     expect(model.live?.progress.currentStageLabel).toBe('语义建模');
   });
 
+  it('maps current agent and parallel tasks from live presentation snapshot', () => {
+    const model = buildResearchPageViewModel({
+      question: '当前 RAG 领域的最新进展',
+      status: 'running',
+      events: [buildEvent(1, 'research.runtime.activity', { summary: 'web 子代理开始抓取来源' })],
+      artifacts: [
+        buildArtifact('presentation_snapshot', {
+          content_json: {
+            surface: 'live',
+            hero: {
+              eyebrow: 'Deep Research',
+              title: '当前 RAG 领域的最新进展',
+              subtitle: '正在整合研究线索、证据与中间发现。',
+            },
+            rail: {
+              steps: [
+                { key: 'clarify', label: '澄清问题', state: 'complete' },
+                { key: 'plan', label: '研究计划', state: 'complete' },
+                { key: 'run', label: '执行研究', state: 'current' },
+                { key: 'report', label: '输出报告', state: 'pending' },
+              ],
+            },
+            live: {
+              progress: {
+                label: '研究执行中',
+                percent: 25,
+                current_stage_label: '验证 claim 1 的网页证据',
+              },
+              coverage_label: '已汇总 3 条引用',
+              current_agent_label: 'web',
+              current_task_label: '验证 claim 1 的网页证据',
+              current_task_kind: 'claim',
+              parallel_tasks: [
+                {
+                  task_id: 'claim-1-web',
+                  title: '验证 claim 1 的网页证据',
+                  task_kind: 'claim',
+                  status: 'started',
+                  agent_label: 'web',
+                  parallel_group: 'claim-1',
+                },
+              ],
+              agent_runs: [
+                {
+                  agent_label: 'web',
+                  status: 'running',
+                  completed_task_count: 0,
+                  active_task_count: 1,
+                },
+              ],
+              plan_steps: [
+                { key: 'plan-step-1', label: '梳理主要研究分支', state: 'current' },
+              ],
+              activity: [
+                {
+                  id: 'a-1',
+                  event_type: 'research.runtime.activity',
+                  title: 'web 子代理开始抓取来源',
+                  body: '当前任务：验证 claim 1 的网页证据',
+                  phase: 'runtime',
+                },
+              ],
+            },
+          },
+        }),
+      ],
+      reportMd: null,
+    });
+
+    expect(model.live?.currentAgentLabel).toBe('web');
+    expect(model.live?.currentTaskLabel).toBe('验证 claim 1 的网页证据');
+    expect(model.live?.parallelTasks).toEqual([
+      {
+        id: 'claim-1-web',
+        label: '验证 claim 1 的网页证据',
+        taskKind: 'claim',
+        status: 'started',
+        agentLabel: 'web',
+        parallelGroup: 'claim-1',
+      },
+    ]);
+    expect(model.live?.agentRuns?.[0]).toEqual({
+      agentLabel: 'web',
+      status: 'running',
+      completedTaskCount: 0,
+      activeTaskCount: 1,
+    });
+  });
+
   it('falls back to legacy timeline construction when presentation_snapshot is missing', () => {
     const model = buildResearchPageViewModel({
       question: '测试研究任务',
