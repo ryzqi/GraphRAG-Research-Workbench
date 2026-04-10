@@ -514,6 +514,10 @@ class ResearchService:
                 code="RESEARCH_CLARIFICATION_NOT_ALLOWED",
                 message="仅 clarifying 状态允许提交澄清",
             )
+        allow_clarify = self._should_allow_follow_up_clarification(
+            session=session,
+            answer=answer,
+        )
         effective_question = self._build_effective_planning_question(
             session=session,
             answer=answer,
@@ -527,7 +531,8 @@ class ResearchService:
             trace_id=session.trace_id,
         )
         plan_result = await self._planner.build_plan(
-            ResearchSessionCreateRequest(question=effective_question)
+            ResearchSessionCreateRequest(question=effective_question),
+            allow_clarify=allow_clarify,
         )
         if plan_result.clarification_request is not None:
             await self._persist_clarification_request(
@@ -600,7 +605,8 @@ class ResearchService:
             answer=normalized_feedback,
         )
         plan_result = await self._planner.build_plan(
-            ResearchSessionCreateRequest(question=effective_question)
+            ResearchSessionCreateRequest(question=effective_question),
+            allow_clarify=False,
         )
         if plan_result.clarification_request is not None:
             await self._persist_clarification_request(
@@ -722,21 +728,78 @@ class ResearchService:
         answer: str,
     ) -> str:
         normalized_question = str(session.question or "").strip()
-        collected_answers: list[str] = []
+        clarification_questions: list[str] = []
+        clarification_answers: list[str] = []
         for event in sorted(session.events, key=lambda item: item.sequence):
-            if event.event_type != "research.clarification.submitted":
+            payload = event.payload if isinstance(event.payload, dict) else {}
+            if event.event_type == "research.clarification.requested":
+                summary = str(payload.get("summary") or "").strip()
+                if summary:
+                    clarification_questions.append(f"- 摘要：{summary}")
+                raw_questions = payload.get("questions")
+                if not isinstance(raw_questions, list):
+                    continue
+                for item in raw_questions:
+                    if not isinstance(item, dict):
+                        continue
+                    question_id = str(item.get("id") or "").strip()
+                    question_text = str(item.get("question") or "").strip()
+                    why_it_matters = str(item.get("why_it_matters") or "").strip()
+                    fragments = [fragment for fragment in (question_id, question_text) if fragment]
+                    if not fragments:
+                        continue
+                    line = "- " + " ".join(fragments)
+                    if why_it_matters:
+                        line += f" | 影响：{why_it_matters}"
+                    clarification_questions.append(line)
                 continue
-            payload = event.payload
-            if not isinstance(payload, dict):
+
+            if event.event_type != "research.clarification.submitted":
                 continue
             raw_answer = payload.get("answer")
             if isinstance(raw_answer, str) and raw_answer.strip():
-                collected_answers.append(raw_answer.strip())
-        if isinstance(answer, str) and answer.strip():
-            collected_answers.append(answer.strip())
-        if not collected_answers:
-            return normalized_question
-        return f"{normalized_question} {' '.join(collected_answers)}".strip()
+                clarification_answers.append(f"- {raw_answer.strip()}")
+
+        normalized_answer = str(answer or "").strip()
+        current_round = len(clarification_answers) + (1 if normalized_answer else 0)
+        sections = [f"原始问题：\n{normalized_question or '未提供'}"]
+        if clarification_questions:
+            sections.append(
+                "已发出的澄清问题：\n" + "\n".join(clarification_questions)
+            )
+        if clarification_answers:
+            sections.append(
+                "已收到的澄清回答：\n" + "\n".join(clarification_answers)
+            )
+        if normalized_answer:
+            sections.append(f"本轮补充：\n- {normalized_answer}")
+        sections.append(
+            "规划策略：\n"
+            "- 首轮澄清应尽量一次性收齐会改变研究路径的关键缺口。\n"
+            "- 若当前已经收到至少 1 轮用户补充，默认直接生成研究计划；只有在研究对象、核心范围或主比较对象仍缺失到无法规划时，才允许最后一次聚合追问。\n"
+            "- 时间范围、受众、输出形态等轻微模糊请采用保守假设，并写入 research_brief 或 budget_guidance。\n"
+            f"- 当前澄清回答轮次：{current_round}。"
+        )
+        return "\n\n".join(section for section in sections if section.strip())
+
+    @staticmethod
+    def _clarification_submission_count(session: ResearchSession) -> int:
+        count = 0
+        for event in session.events:
+            if event.event_type == "research.clarification.submitted":
+                count += 1
+        return count
+
+    @classmethod
+    def _should_allow_follow_up_clarification(
+        cls,
+        *,
+        session: ResearchSession,
+        answer: str,
+    ) -> bool:
+        del answer
+        submission_count = cls._clarification_submission_count(session) + 1
+        return submission_count < 2
 
     def _ensure_dispatch_outbox(self, *, session: ResearchSession) -> None:
         if session.status != ResearchSessionStatus.QUEUED:

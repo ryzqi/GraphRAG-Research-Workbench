@@ -45,6 +45,7 @@ class ResearchScoper(Protocol):
         self,
         *,
         question: str,
+        allow_clarify: bool = True,
     ) -> ResearchClarificationRequest | ResearchPlanSnapshot: ...
 
 
@@ -351,11 +352,14 @@ class LLMResearchScoper:
             schema=_ResearchScoperClarifyOutput,
             stage_prompt=(
                 "你已经判断当前问题需要先澄清。现在只生成澄清请求，不要输出 decision、research_brief、"
-                "complexity、target_sources、subtasks、budget_guidance。只生成澄清请求。"
+                "complexity、target_sources、subtasks、budget_guidance。优先一次性收集所有会改变研究路径的关键缺口，"
+                "允许把多个剩余关键维度聚合为一次提问，只要用户能够一次性作答。"
             ),
             schema_instructions=[
                 "summary 要明确指出已知焦点与真正缺失的关键变量。",
-                "questions 只允许 1 到 2 个问题，且每个问题只问一个关键变量。",
+                "questions 只允许 1 到 2 个问题，优先一次性收集所有会改变研究路径的关键缺口。",
+                "允许把多个剩余关键维度聚合为一次提问，只要问题仍然清晰且用户可以一次性作答。",
+                "不要为时间范围、受众、输出形态等轻微模糊单独追问，应改用保守假设继续规划。",
             ],
             example_json=(
                 "{\n"
@@ -465,7 +469,25 @@ class LLMResearchScoper:
         model: BaseChatModel,
         question: str,
         method: str,
+        allow_clarify: bool,
     ) -> ResearchClarificationRequest | ResearchPlanSnapshot:
+        if not allow_clarify:
+            proceed_payload = await self._invoke_structured_payload(
+                model=model,
+                schema=_ResearchScoperProceedOutput,
+                method=method,
+                messages=self._build_proceed_messages(question=question, method=method),
+                stage="forced proceed",
+            )
+            return self._build_plan_snapshot_from_payload(
+                summary=proceed_payload.summary,
+                research_brief=proceed_payload.research_brief,
+                complexity=proceed_payload.complexity,
+                target_sources=proceed_payload.target_sources,
+                subtasks=proceed_payload.subtasks,
+                budget_guidance=proceed_payload.budget_guidance,
+            )
+
         decision_payload = await self._invoke_structured_payload(
             model=model,
             schema=_ResearchScoperDecisionOutput,
@@ -559,6 +581,7 @@ class LLMResearchScoper:
         self,
         *,
         question: str,
+        allow_clarify: bool = True,
     ) -> ResearchClarificationRequest | ResearchPlanSnapshot:
         model = create_chat_model(
             settings=self._settings, use_previous_response_id=False
@@ -566,7 +589,27 @@ class LLMResearchScoper:
         method = self._structured_output_method()
         if method == "json_mode":
             return await self._scope_via_json_mode(
-                model=model, question=question, method=method
+                model=model,
+                question=question,
+                method=method,
+                allow_clarify=allow_clarify,
+            )
+
+        if not allow_clarify:
+            proceed_payload = await self._invoke_structured_payload(
+                model=model,
+                schema=_ResearchScoperProceedOutput,
+                method=method,
+                messages=self._build_proceed_messages(question=question, method=method),
+                stage="forced proceed",
+            )
+            return self._build_plan_snapshot_from_payload(
+                summary=proceed_payload.summary,
+                research_brief=proceed_payload.research_brief,
+                complexity=proceed_payload.complexity,
+                target_sources=proceed_payload.target_sources,
+                subtasks=proceed_payload.subtasks,
+                budget_guidance=proceed_payload.budget_guidance,
             )
 
         payload = await self._invoke_scoper_payload(model=model, question=question)
@@ -609,10 +652,16 @@ class ResearchPlanner:
         self._scoper = scoper or LLMResearchScoper(settings=self._settings)
 
     async def build_plan(
-        self, request: ResearchSessionCreateRequest
+        self,
+        request: ResearchSessionCreateRequest,
+        *,
+        allow_clarify: bool = True,
     ) -> ResearchPlannerResult:
         question = request.question.strip()
-        scoped = await self._scoper.scope(question=question)
+        scoped = await self._scoper.scope(
+            question=question,
+            allow_clarify=allow_clarify,
+        )
         if isinstance(scoped, ResearchClarificationRequest):
             return ResearchPlannerResult(
                 plan_snapshot=None,
