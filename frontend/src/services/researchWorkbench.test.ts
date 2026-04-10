@@ -42,6 +42,9 @@ describe('buildResearchPageViewModel', () => {
       status: 'final',
       events: [],
       artifacts: [
+        buildArtifact('report_md', {
+          content_text: '# Research Report\n\n## 不应命中的旧正文',
+        }),
         buildArtifact('presentation_snapshot', {
           content_json: {
             surface: 'final',
@@ -93,7 +96,6 @@ describe('buildResearchPageViewModel', () => {
           },
         }),
       ],
-      reportMd: null,
     });
 
     expect(model.surface).toBe('final');
@@ -103,6 +105,8 @@ describe('buildResearchPageViewModel', () => {
     expect(model.report?.metricCards[0]?.label).toBe('引用数');
     expect(model.report?.badgeLabel).toBe('已生成研究报告');
     expect(model.report?.summary).toBe('生成式 AI 正在重塑半导体供应链。');
+    expect(model.report?.markdown).toContain('内容 A');
+    expect(model.report?.markdown).not.toContain('不应命中的旧正文');
     const reportRecord = (model.report ?? null) as Record<string, unknown> | null;
     expect(reportRecord?.chart).toBeUndefined();
     expect(reportRecord?.spotlightCards).toBeUndefined();
@@ -159,7 +163,6 @@ describe('buildResearchPageViewModel', () => {
           },
         }),
       ],
-      reportMd: null,
     });
 
     expect(model.surface).toBe('live');
@@ -237,7 +240,6 @@ describe('buildResearchPageViewModel', () => {
           },
         }),
       ],
-      reportMd: null,
     });
 
     expect(model.live?.currentAgentLabel).toBe('web');
@@ -256,7 +258,7 @@ describe('buildResearchPageViewModel', () => {
     expect(model.live?.activity[0]).not.toHaveProperty('timeLabel');
   });
 
-  it('falls back to legacy timeline construction when presentation_snapshot is missing', () => {
+  it('returns a minimal live shell when presentation_snapshot is missing', () => {
     const model = buildResearchPageViewModel({
       question: '测试研究任务',
       status: 'running',
@@ -272,20 +274,18 @@ describe('buildResearchPageViewModel', () => {
           },
         }),
       ],
-      reportMd: null,
     });
 
     expect(model.surface).toBe('live');
-    expect(model.live?.timelineItems).toHaveLength(2);
-    expect(model.live?.timelineItems[0]?.title).toBe('研究已启动');
-    expect(model.live?.coverageLabel).toBe('已覆盖 2 个来源 / 1 个待补缺口');
-    expect(model.live?.activity[0]).not.toHaveProperty('timeLabel');
+    expect(model.live?.timelineItems).toEqual([]);
+    expect(model.live?.activity).toEqual([]);
+    expect(model.live?.coverageLabel).toBe('研究工件同步中');
   });
 
-  it('derives report metric cards from evidence artifacts when final snapshot is missing', () => {
+  it('does not derive final report surface from raw report artifacts when final snapshot is missing', () => {
     const model = buildResearchPageViewModel({
       question: '测试研究任务',
-      status: 'final',
+      status: 'finalizing',
       events: [],
       artifacts: [
         buildArtifact('report_md', {
@@ -310,21 +310,10 @@ describe('buildResearchPageViewModel', () => {
           },
         }),
       ],
-      reportMd: '# Research Report\n\n## 市场概况\n内容 A',
     });
 
-    expect(model.surface).toBe('final');
-    expect(model.report?.metricCards).toEqual([
-      { label: '引用数', value: '2' },
-      { label: '关键结论', value: '2' },
-      { label: '证据状态', value: '覆盖完成' },
-    ]);
-    const reportRecord = (model.report ?? null) as Record<string, unknown> | null;
-    expect(reportRecord?.chart).toBeUndefined();
-    expect(reportRecord?.spotlightCards).toBeUndefined();
-    expect(reportRecord?.outlookCards).toBeUndefined();
-    expect(reportRecord?.references).toBeUndefined();
-    expect(reportRecord?.highlights).toBeUndefined();
-    expect(reportRecord?.lead).toBeUndefined();
+    expect(model.surface).toBe('live');
+    expect(model.report).toBeUndefined();
+    expect(model.live?.coverageLabel).toBe('研究工件同步中');
   });
 });

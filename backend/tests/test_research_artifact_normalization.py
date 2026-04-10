@@ -45,6 +45,7 @@ def test_build_artifacts_response_normalizes_blank_optional_text_fields() -> Non
 
     response = service.build_artifacts_response(session)
 
+    assert response.status == ResearchSessionStatus.RUNNING
     artifact = next(
         item for item in response.items if item.artifact_key == "runtime_report_draft_md"
     )

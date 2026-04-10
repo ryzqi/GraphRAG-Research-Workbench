@@ -126,6 +126,17 @@
 
 - `GET /api/v1/research/sessions/{session_id}/artifacts`
 
+响应：
+
+- `session_id`
+- `status`
+- `items`
+
+说明：
+
+- `status` 是当前 artifacts 响应里的会话状态真值，客户端用它驱动轮询收口与页面状态，不再从 `report_md` / `report_json` 反推 `final`。
+- `items` 只承载工件内容；最终展示优先消费 `presentation_snapshot`，缺少该快照时只允许降级到最小 live shell，不再重建 legacy final 页面。
+
 ## 事件封套
 
 当前 Research SSE 事件封套最小字段：
@@ -207,6 +218,7 @@
 说明：
 
 - `mission_md` / `plan_md` / `query_map_md` / `coverage_md` / `report_draft_md` 为 workspace bootstrap 工件，用于工作台主阅读区与 scratch 路径对齐。
+- `report_json` 只保留最终报告摘要、结构化 sections、metadata 与 verification ledger，不再聚合 `report_md`、`runtime_context`、`task_graph`、`claim_bundles`、`section_briefs`、`live_board`、`todos` 等 runtime artifacts。
 - `claim_map_json` / `coverage_matrix_json` / `conflicts_json` / `source_ledger_json` 为 finalizer verification ledger，供前端 evidence / claims / conflicts 展示与导出使用。
 - `presentation_snapshot` 为只读派生展示工件，不入库、不参与业务真值判断；由后端在读取 artifacts 响应时基于 `session.status + artifacts + events` 即时构造，供前端渲染澄清/计划/执行/报告四态页面。
 - 对外读取入口仍统一为 `GET /api/v1/research/sessions/{session_id}/artifacts`，客户端按 `artifact_key` 分派。

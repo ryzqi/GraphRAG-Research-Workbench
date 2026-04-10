@@ -153,6 +153,7 @@ def test_runtime_prompts_and_subagents_require_role_specific_handoffs() -> None:
     assert "网页来源子代理" in web_subagent["system_prompt"]
     assert "只消费已验证工件" in section_subagent["system_prompt"]
     assert "handoff" in runtime_skills["/skills/research-runtime/SKILL.md"].lower()
+    assert "before any external search" not in runtime_skills["/skills/research-runtime/SKILL.md"].lower()
     assert "handoff" in runtime_prompt.lower()
 
 
@@ -288,7 +289,11 @@ def test_runtime_snapshot_and_finalizer_surface_richer_runtime_payload() -> None
         runtime_context_snapshot=snapshot,
     )
 
-    assert result.report_json["todos"][0]["content"] == "核对官网与论文口径"
-    assert result.report_json["runtime_context"]["key_takeaways"] == [
-        "需要更细粒度的任务分解与 richer report context。"
-    ]
+    assert "report_md" not in result.report_json
+    assert "runtime_context" not in result.report_json
+    assert "task_graph" not in result.report_json
+    assert "claim_bundles" not in result.report_json
+    assert "section_briefs" not in result.report_json
+    assert "live_board" not in result.report_json
+    assert "todos" not in result.report_json
+    assert result.report_json["summary"] == "报告应先给出结论，再明确证据与限制。"

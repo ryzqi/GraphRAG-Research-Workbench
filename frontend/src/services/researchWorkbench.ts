@@ -13,7 +13,7 @@ import type {
   ResearchSourceTarget,
   ResearchSourceType,
 } from '../types/researchEvents';
-import { buildResearchArtifactsByKey, getResearchReportArtifacts } from '../types/researchEvents';
+import { buildResearchArtifactsByKey } from '../types/researchEvents';
 
 const HEADING_REPLACEMENTS: ReadonlyArray<[RegExp, string]> = [
   [/^# Research Report$/gm, '# 研究报告'],
@@ -154,26 +154,6 @@ function readArtifactText(artifact: ResearchArtifactRead | undefined): string | 
   return typeof artifact?.content_text === 'string' && artifact.content_text.trim()
     ? localizeMarkdown(artifact.content_text)
     : null;
-}
-
-function readReportMarkdown(
-  reportMd: string | null,
-  reportJson: Record<string, unknown> | null
-): string | null {
-  if (reportMd && reportMd.trim()) {
-    return localizeMarkdown(reportMd);
-  }
-  if (!reportJson) {
-    return null;
-  }
-  const lines = ['# 研究报告'];
-  if (typeof reportJson.summary === 'string' && reportJson.summary.trim()) {
-    lines.push(`## 执行摘要\n${reportJson.summary.trim()}`);
-  }
-  if (Array.isArray(reportJson.findings) && reportJson.findings.length > 0) {
-    lines.push(`## 关键发现\n${reportJson.findings.map((item) => `- ${String(item)}`).join('\n')}`);
-  }
-  return lines.join('\n\n');
 }
 
 function toSourceType(value: unknown): ResearchSourceType | null {
@@ -422,17 +402,6 @@ function formatTargetSource(source: ResearchSourceTarget | string): string {
   }
 }
 
-function buildReportOutline(markdown: string): Array<{ id: string; title: string; level: number }> {
-  return markdown
-    .split(/\r?\n/)
-    .filter((line) => line.startsWith('## '))
-    .map((line, index) => ({
-      id: `section-${index + 1}`,
-      title: line.replace(/^##\s+/, '').trim(),
-      level: 2,
-    }));
-}
-
 function buildLiveActivityCards(params: {
   events: ResearchEventEnvelope[];
   fallbackActivity?: Array<{ id: string; event_type: string; title: string; body: string | null; phase: string }>;
@@ -614,19 +583,26 @@ function buildLiveProgress(params: {
   return { label: '研究执行中', percent: planPercent, currentStageLabel: currentStageLabel ?? '执行研究' };
 }
 
-function buildReportMetricCards(evidenceDrawer: ResearchEvidenceDrawerModel): Array<{ label: string; value: string }> {
-  const sourceCount = evidenceDrawer.sources.length;
-  const claimCount = evidenceDrawer.claims.length;
-  const missingCount = evidenceDrawer.coverageMatrix.missing_providers.length;
-
-  return [
-    { label: '引用数', value: String(sourceCount) },
-    { label: '关键结论', value: String(claimCount) },
-    {
-      label: '证据状态',
-      value: missingCount > 0 ? `待补 ${missingCount} 项` : '覆盖完成',
-    },
-  ];
+function buildPendingLiveSection(params: {
+  status: ResearchSessionStatus;
+  planSnapshot?: ResearchPlanSnapshot | null;
+}): ResearchLiveSectionModel {
+  const planSteps = buildLivePlanSteps({
+    status: params.status,
+    planSnapshot: params.planSnapshot,
+  });
+  return {
+    progress: buildLiveProgress({
+      status: params.status,
+      planSteps,
+    }),
+    parallelTasks: [],
+    planSteps,
+    coverageLabel: '研究工件同步中',
+    footerStatus: '系统正在同步最新研究工件',
+    activity: [],
+    timelineItems: [],
+  };
 }
 
 export function buildResearchPageViewModel(params: {
@@ -634,17 +610,14 @@ export function buildResearchPageViewModel(params: {
   status: ResearchSessionStatus;
   events: ResearchEventEnvelope[];
   artifacts: ResearchArtifactRead[];
-  reportMd: string | null;
   clarificationRequest?: ResearchClarificationRequest | null;
   planSnapshot?: ResearchPlanSnapshot | null;
 }): ResearchPageViewModel {
   const artifactByKey = buildResearchArtifactsByKey(params.artifacts);
-  const { reportJson } = getResearchReportArtifacts(params.artifacts);
   const presentation = readPresentationSnapshot(artifactByKey);
   const interimSummary = readArtifactText(artifactByKey.interim_summary);
   const evidenceDrawer = buildEvidenceDrawer(artifactByKey);
   const timelineItems = buildTimelineItems(params.events, interimSummary);
-  const reportMarkdown = readReportMarkdown(params.reportMd, reportJson);
 
   if (presentation) {
     const hero = presentation.hero
@@ -701,7 +674,7 @@ export function buildResearchPageViewModel(params: {
         railSteps,
         evidenceDrawer,
         report: {
-          markdown: reportMarkdown ?? presentation.report?.markdown ?? '',
+          markdown: localizeMarkdown(presentation.report?.markdown ?? ''),
           summary: presentation.report?.summary ?? '',
           badgeLabel: presentation.report?.badge_label ?? '已生成研究报告',
           outline: (presentation.report?.outline ?? []).map((item) => ({ id: item.id, title: item.title, level: item.level })),
@@ -749,22 +722,6 @@ export function buildResearchPageViewModel(params: {
     };
   }
 
-  if (reportMarkdown) {
-    return {
-      surface: 'final',
-      hero: buildHero(params.question, '研究报告已生成，可直接阅读与导出。'),
-      railSteps: buildRailSteps(params.status),
-      evidenceDrawer,
-      report: {
-        markdown: reportMarkdown,
-        summary: reportJson && typeof reportJson.summary === 'string' ? reportJson.summary : '研究报告已生成，可直接阅读与导出。',
-        badgeLabel: '已生成研究报告',
-        outline: buildReportOutline(reportMarkdown),
-        metricCards: buildReportMetricCards(evidenceDrawer),
-      },
-    };
-  }
-
   if (params.status === 'clarifying') {
     return {
       surface: 'clarifying',
@@ -808,26 +765,17 @@ export function buildResearchPageViewModel(params: {
 
   return {
     surface: 'live',
-    hero: buildHero(params.question, '正在整合研究线索、证据与中间发现。'),
+    hero: buildHero(
+      params.question,
+      params.status === 'final' || params.status === 'finalizing'
+        ? '正在同步最终报告工件。'
+        : '正在同步研究工件。'
+    ),
     railSteps: buildRailSteps(params.status),
     evidenceDrawer,
-    live: {
-      progress: buildLiveProgress({
-        status: params.status,
-        planSteps: buildLivePlanSteps({
-          status: params.status,
-          planSnapshot: params.planSnapshot,
-        }),
-      }),
-      parallelTasks: [],
-      planSteps: buildLivePlanSteps({
-        status: params.status,
-        planSnapshot: params.planSnapshot,
-      }),
-      coverageLabel: buildCoverageLabel(evidenceDrawer.coverageMatrix),
-      footerStatus: `系统运行正常，${buildCoverageLabel(evidenceDrawer.coverageMatrix)}`,
-      activity: buildLiveActivityCards({ events: params.events }),
-      timelineItems,
-    },
+    live: buildPendingLiveSection({
+      status: params.status,
+      planSnapshot: params.planSnapshot,
+    }),
   };
 }

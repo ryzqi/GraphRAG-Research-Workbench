@@ -120,6 +120,7 @@ export interface ResearchArtifactRead {
 
 export interface ResearchArtifactsResponse {
   session_id: string;
+  status: ResearchSessionStatus;
   items: ResearchArtifactRead[];
 }
 
@@ -267,8 +268,6 @@ export interface ResearchSessionView {
   artifacts: ResearchArtifactRead[];
   last_event_id: string | null;
   last_sequence: number;
-  report_md: string | null;
-  report_json: Record<string, unknown> | null;
 }
 
 const TERMINAL_RESEARCH_SESSION_STATUSES: ReadonlySet<ResearchSessionStatus> = new Set([
@@ -309,32 +308,6 @@ export function buildResearchArtifactsByKey(
   return Object.fromEntries(items.map((item) => [item.artifact_key, item]));
 }
 
-export function getResearchReportArtifacts(
-  items: readonly ResearchArtifactRead[]
-): {
-  reportMd: string | null;
-  reportJson: Record<string, unknown> | null;
-} {
-  const artifactByKey = buildResearchArtifactsByKey(items);
-  const reportMdArtifact = artifactByKey.report_md;
-  const reportJsonArtifact = artifactByKey.report_json;
-
-  return {
-    reportMd:
-      typeof reportMdArtifact?.content_text === 'string' &&
-      reportMdArtifact.content_text.trim()
-        ? reportMdArtifact.content_text
-        : null,
-    reportJson:
-      reportJsonArtifact &&
-      reportJsonArtifact.content_json &&
-      !Array.isArray(reportJsonArtifact.content_json) &&
-      typeof reportJsonArtifact.content_json === 'object'
-        ? (reportJsonArtifact.content_json as Record<string, unknown>)
-        : null,
-  };
-}
-
 export function getLatestResearchStreamCursor(
   items: readonly ResearchEventEnvelope[]
 ): ResearchStreamCursor {
@@ -358,10 +331,10 @@ export function isTerminalResearchStatus(status: ResearchSessionStatus): boolean
 
 export function deriveResearchStatus(params: {
   acceptedStatus: ResearchSessionStatus;
+  currentStatus?: ResearchSessionStatus | null;
   events: readonly ResearchEventEnvelope[];
-  artifacts?: readonly ResearchArtifactRead[];
 }): ResearchSessionStatus {
-  const { acceptedStatus, events, artifacts = [] } = params;
+  const { acceptedStatus, currentStatus = null, events } = params;
   const ordered = [...events].sort(compareResearchEvents);
 
   for (let index = ordered.length - 1; index >= 0; index -= 1) {
@@ -384,30 +357,25 @@ export function deriveResearchStatus(params: {
     }
   }
 
-  const { reportMd, reportJson } = getResearchReportArtifacts(artifacts);
-  if (reportMd && reportJson) {
-    return 'final';
-  }
-
-  return acceptedStatus;
+  return currentStatus ?? acceptedStatus;
 }
 
 export function buildResearchSessionView(params: {
   accepted: ResearchSessionAccepted;
   events: readonly ResearchEventEnvelope[];
+  artifactsStatus?: ResearchSessionStatus | null;
   artifacts: readonly ResearchArtifactRead[];
 }): ResearchSessionView {
   const orderedEvents = mergeResearchEventEnvelopes([], params.events);
   const cursor = getLatestResearchStreamCursor(orderedEvents);
-  const { reportMd, reportJson } = getResearchReportArtifacts(params.artifacts);
 
   return {
     session_id: params.accepted.session_id,
     question: params.accepted.question,
     status: deriveResearchStatus({
       acceptedStatus: params.accepted.status,
+      currentStatus: params.artifactsStatus ?? null,
       events: orderedEvents,
-      artifacts: params.artifacts,
     }),
     plan_snapshot: params.accepted.plan_snapshot,
     clarification_request: params.accepted.clarification_request,
@@ -415,7 +383,5 @@ export function buildResearchSessionView(params: {
     artifacts: [...params.artifacts],
     last_event_id: cursor.lastEventId,
     last_sequence: cursor.lastSequence,
-    report_md: reportMd,
-    report_json: reportJson,
   };
 }

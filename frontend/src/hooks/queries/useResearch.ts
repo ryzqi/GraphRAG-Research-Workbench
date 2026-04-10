@@ -52,6 +52,7 @@ function buildInitialSessionView(
   return buildResearchSessionView({
     accepted,
     events: [],
+    artifactsStatus: accepted.status,
     artifacts,
   });
 }
@@ -88,9 +89,12 @@ export function useResearchSession(
           return 0;
         }
         const latestItems = (latest as { items?: ResearchArtifactRead[] } | undefined)?.items ?? [];
+        const latestStatus =
+          (latest as { status?: ResearchSessionView['status'] } | undefined)?.status ?? null;
         const nextView = buildResearchSessionView({
           accepted,
           events,
+          artifactsStatus: latestStatus,
           artifacts: latestItems,
         });
         return isTerminalResearchStatus(nextView.status)
@@ -109,6 +113,7 @@ export function useResearchSession(
     return buildResearchSessionView({
       accepted,
       events,
+      artifactsStatus: artifactsQuery.data?.status ?? null,
       artifacts: artifactsQuery.data?.items ?? [],
     });
   }, [accepted, artifactsQuery.data?.items, events, sessionId]);

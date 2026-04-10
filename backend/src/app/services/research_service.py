@@ -949,14 +949,6 @@ class ResearchService:
             source_bundle=source_bundle,
             runtime_context_snapshot=runtime_result.runtime_context_snapshot,
         )
-        final_report_json = self._merge_runtime_artifacts_into_report_json(
-            session=session,
-            report_json=final_result.report_json,
-        )
-        final_result = ResearchFinalizerResult(
-            report_md=final_result.report_md,
-            report_json=final_report_json,
-        )
         await self._artifact_store.upsert(
             session=session,
             artifact_key="report_json",
@@ -987,25 +979,6 @@ class ResearchService:
             artifact_key="source_ledger_json",
             content_json=final_result.report_json["source_ledger"],
         )
-        session.transition_to(ResearchSessionStatus.FINAL)
-        session.finished_at = datetime.now(timezone.utc)
-        await self._event_store.append(
-            session=session,
-            event_type="research.final.completed",
-            phase="finalizer",
-            payload={
-                "artifact_keys": [
-                    "report_json",
-                    "report_md",
-                    "claim_map_json",
-                    "coverage_matrix_json",
-                    "conflicts_json",
-                    "source_ledger_json",
-                ],
-                "lc_agent_name": "finalizer",
-            },
-            trace_id=session.trace_id,
-        )
         metrics = build_research_metrics(
             session=session,
             plan_snapshot=plan_snapshot,
@@ -1021,6 +994,27 @@ class ResearchService:
             thresholds=self._gate_thresholds,
         )
         await self._persist_metrics_artifacts(session=session, metrics=metrics)
+        session.transition_to(ResearchSessionStatus.FINAL)
+        session.finished_at = datetime.now(timezone.utc)
+        await self._event_store.append(
+            session=session,
+            event_type="research.final.completed",
+            phase="finalizer",
+            payload={
+                "artifact_keys": [
+                    "report_json",
+                    "report_md",
+                    "claim_map_json",
+                    "coverage_matrix_json",
+                    "conflicts_json",
+                    "source_ledger_json",
+                    "metrics_snapshot",
+                    "gate_snapshot",
+                ],
+                "lc_agent_name": "finalizer",
+            },
+            trace_id=session.trace_id,
+        )
         await self._commit_checkpoint()
         return final_result
 
@@ -1121,7 +1115,11 @@ class ResearchService:
                 citations=[],
             )
         )
-        return ResearchArtifactsResponse(session_id=session.id, items=items)
+        return ResearchArtifactsResponse(
+            session_id=session.id,
+            status=session.status,
+            items=items,
+        )
 
     async def _append_trace_events(
         self,
@@ -1526,26 +1524,6 @@ class ResearchService:
             commit_result = commit()
             if inspect.isawaitable(commit_result):
                 await commit_result
-
-    def _merge_runtime_artifacts_into_report_json(
-        self,
-        *,
-        session: ResearchSession,
-        report_json: dict[str, object],
-    ) -> dict[str, object]:
-        merged = dict(report_json)
-        runtime_artifact_map = {
-            "task_graph": RUNTIME_TASK_GRAPH_ARTIFACT_KEY,
-            "live_board": RUNTIME_LIVE_BOARD_ARTIFACT_KEY,
-            "claim_bundles": "runtime_claim_bundles_json",
-            "section_briefs": "runtime_section_briefs_json",
-        }
-        for report_key, artifact_key in runtime_artifact_map.items():
-            payload = self._read_json_artifact(session, artifact_key)
-            if payload is None:
-                continue
-            merged[report_key] = payload
-        return merged
 
     @staticmethod
     def _build_event_envelope(

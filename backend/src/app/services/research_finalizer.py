@@ -71,39 +71,8 @@ class ResearchFinalizer:
             "coverage_gaps": list(source_bundle.coverage_gaps),
             "provider_counts": dict(source_bundle.provider_counts),
             "citations": citations_payload,
-            "report_md": report_md,
             "sections": compiled_report.sections if compiled_report is not None else [],
             "metadata": compiled_report.metadata if compiled_report is not None else {},
-            "runtime_context": (
-                dict(runtime_context_snapshot.report_context_json)
-                if runtime_context_snapshot is not None
-                else {}
-            ),
-            "task_graph": (
-                dict(runtime_context_snapshot.task_graph_json)
-                if runtime_context_snapshot is not None
-                else {}
-            ),
-            "claim_bundles": (
-                list(runtime_context_snapshot.claim_bundles_json)
-                if runtime_context_snapshot is not None
-                else []
-            ),
-            "section_briefs": (
-                list(runtime_context_snapshot.section_briefs_json)
-                if runtime_context_snapshot is not None
-                else []
-            ),
-            "live_board": (
-                dict(runtime_context_snapshot.live_board_json)
-                if runtime_context_snapshot is not None
-                else {}
-            ),
-            "todos": (
-                list(runtime_context_snapshot.todos_json)
-                if runtime_context_snapshot is not None
-                else []
-            ),
         }
         verification_payload = {
             "claim_map": verification.claim_map,

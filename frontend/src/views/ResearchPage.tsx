@@ -243,7 +243,6 @@ export function ResearchPage() {
         status: session?.status ?? 'created',
         events: session?.events ?? [],
         artifacts: session?.artifacts ?? [],
-        reportMd: session?.report_md ?? null,
         clarificationRequest: session?.clarification_request ?? null,
         planSnapshot: session?.plan_snapshot ?? null,
       }),

@@ -355,4 +355,5 @@ class ResearchArtifactsResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     session_id: uuid.UUID
+    status: ResearchSessionStatus
     items: list[ResearchArtifactRead] = Field(default_factory=list)
