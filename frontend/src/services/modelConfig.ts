@@ -1,6 +1,6 @@
 import { apiFetch } from './http';
 
-export type ModelProvider = 'openai' | 'ollama' | 'nvidia' | 'anthropic';
+export type ModelProvider = 'openai' | 'ollama' | 'llama.cpp' | 'nvidia' | 'anthropic';
 
 export interface ProviderConfigRead {
   provider: ModelProvider;

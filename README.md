@@ -29,6 +29,7 @@
 
 - 运行时模型主配置（供应商、Base URL、API Key、模型列表、全局生效模型）通过前端「模型配置」页面维护。
 - `.env` 仍用于超时、Embedding、搜索等服务配置，但 `LLM_BASE_URL / LLM_API_KEY / LLM_MODEL` 不再是运行时主配置来源。
+- `llama.cpp` provider 支持填写 `http://127.0.0.1:8080`、`/v1` 或完整 `/v1/chat/completions`；保存时会规范化为 `/v1`，thinking 行为由 `llama-server` 启动参数控制。
 
 ## 环境要求
 

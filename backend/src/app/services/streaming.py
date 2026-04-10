@@ -147,6 +147,9 @@ def _extract_reasoning_contents(token: object) -> list[str]:
     # 2) 提供商特定字段 additional_kwargs.reasoning
     additional_kwargs = getattr(token, "additional_kwargs", None)
     if isinstance(additional_kwargs, dict):
+        reasoning_content = additional_kwargs.get("reasoning_content")
+        if isinstance(reasoning_content, str) and reasoning_content:
+            contents.append(reasoning_content)
         reasoning = additional_kwargs.get("reasoning")
         if isinstance(reasoning, dict):
             reason_text = reasoning.get("reasoning")

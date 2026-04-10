@@ -36,6 +36,7 @@ from app.schemas.model_config import (
 _PROVIDER_ORDER = [
     ModelProviderORM.OPENAI,
     ModelProviderORM.OLLAMA,
+    ModelProviderORM.LLAMA_CPP,
     ModelProviderORM.NVIDIA,
     ModelProviderORM.ANTHROPIC,
 ]
@@ -93,7 +94,13 @@ def _as_model_provider(provider: ModelProvider) -> ModelProviderORM:
 
 
 def _default_base_url(_provider: ModelProviderORM) -> str | None:
+    if _provider == ModelProviderORM.LLAMA_CPP:
+        return "http://127.0.0.1:8080/v1"
     return None
+
+
+def _default_thinking_enabled(provider: ModelProviderORM) -> bool:
+    return provider != ModelProviderORM.LLAMA_CPP
 
 
 def _default_thinking_level(provider: ModelProviderORM) -> str | None:
@@ -123,6 +130,11 @@ def _normalize_provider_base_url(
     normalized = raw.rstrip("/")
     if provider == ModelProviderORM.ANTHROPIC and normalized.endswith("/v1/messages"):
         normalized = normalized[: -len("/v1/messages")]
+    if provider == ModelProviderORM.LLAMA_CPP:
+        if normalized.endswith("/v1/chat/completions"):
+            normalized = normalized[: -len("/v1/chat/completions")]
+        if not normalized.endswith("/v1"):
+            normalized = f"{normalized}/v1"
     normalized = normalized.rstrip("/")
     return normalized or None
 
@@ -168,9 +180,15 @@ class ModelConfigService:
         if "models" in updates:
             row.models = _normalize_model_names(updates["models"])
         if "thinking_enabled" in updates:
-            row.thinking_enabled = bool(updates["thinking_enabled"])
+            if row.provider == ModelProviderORM.LLAMA_CPP:
+                row.thinking_enabled = False
+            else:
+                row.thinking_enabled = bool(updates["thinking_enabled"])
         if "thinking_level" in updates:
-            if row.provider == ModelProviderORM.NVIDIA:
+            if row.provider in {
+                ModelProviderORM.NVIDIA,
+                ModelProviderORM.LLAMA_CPP,
+            }:
                 row.thinking_level = None
             else:
                 row.thinking_level = updates["thinking_level"] or "high"
@@ -318,7 +336,7 @@ class ModelConfigService:
                 base_url=_default_base_url(provider),
                 api_key_encrypted=None,
                 models=_default_models(provider),
-                thinking_enabled=True,
+                thinking_enabled=_default_thinking_enabled(provider),
                 thinking_level=_default_thinking_level(provider),
             )
             self._db.add(row)
@@ -337,6 +355,20 @@ class ModelConfigService:
             normalized_models = _normalize_model_names(current_models)
             if normalized_models != list(current_models):
                 row.models = normalized_models
+                dirty = True
+
+            expected_thinking_enabled = _default_thinking_enabled(row.provider)
+            if row.provider == ModelProviderORM.LLAMA_CPP and (
+                row.thinking_enabled != expected_thinking_enabled
+            ):
+                row.thinking_enabled = expected_thinking_enabled
+                dirty = True
+
+            expected_thinking_level = _default_thinking_level(row.provider)
+            if row.provider == ModelProviderORM.LLAMA_CPP and (
+                row.thinking_level != expected_thinking_level
+            ):
+                row.thinking_level = expected_thinking_level
                 dirty = True
 
         selection = await self._db.get(ModelRuntimeSelection, 1)

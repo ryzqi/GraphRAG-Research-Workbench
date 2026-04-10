@@ -24,6 +24,7 @@ logger = logging.getLogger(__name__)
 _PROVIDER_PRIORITY: tuple[ModelProvider, ...] = (
     ModelProvider.OPENAI,
     ModelProvider.OLLAMA,
+    ModelProvider.LLAMA_CPP,
     ModelProvider.NVIDIA,
     ModelProvider.ANTHROPIC,
 )
@@ -281,7 +282,7 @@ class ModelRuntimeConfigManager:
                 base_url=None,
                 api_key=None,
                 models=[],
-                thinking_enabled=True,
+                thinking_enabled=provider != ModelProvider.LLAMA_CPP,
                 thinking_level="high"
                 if provider
                 in {

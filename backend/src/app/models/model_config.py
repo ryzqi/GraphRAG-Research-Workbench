@@ -16,6 +16,7 @@ from app.db.enums import enum_values
 class ModelProvider(str, Enum):
     OPENAI = "openai"
     OLLAMA = "ollama"
+    LLAMA_CPP = "llama.cpp"
     NVIDIA = "nvidia"
     ANTHROPIC = "anthropic"
 

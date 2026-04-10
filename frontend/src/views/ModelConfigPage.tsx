@@ -49,11 +49,12 @@ import type {
   ProviderConfigUpdate,
 } from '../services/modelConfig';
 
-const PROVIDERS = ['openai', 'ollama', 'nvidia', 'anthropic'] as const;
+const PROVIDERS = ['openai', 'ollama', 'llama.cpp', 'nvidia', 'anthropic'] as const;
 
 const PROVIDER_LABEL: Record<ModelProvider, string> = {
   openai: 'OpenAI',
   ollama: 'Ollama',
+  'llama.cpp': 'llama.cpp',
   nvidia: 'NVIDIA',
   anthropic: 'Anthropic',
 };
@@ -121,8 +122,9 @@ function buildForm(provider: ProviderConfigRead | undefined): ProviderFormState 
     models: normalizeModelNames(provider.models ?? []),
     modelInput: '',
     apiKey: '',
-    thinkingEnabled: provider.thinking_enabled,
-    thinkingLevel: provider.thinking_level ?? defaults.thinkingLevel,
+    thinkingEnabled: provider.provider === 'llama.cpp' ? false : provider.thinking_enabled,
+    thinkingLevel:
+      provider.provider === 'llama.cpp' ? '' : (provider.thinking_level ?? defaults.thinkingLevel),
   };
 }
 
@@ -130,6 +132,7 @@ function providerMap(config: ModelConfigRead | undefined): Record<ModelProvider,
   const base: Record<ModelProvider, ProviderConfigRead | undefined> = {
     openai: undefined,
     ollama: undefined,
+    'llama.cpp': undefined,
     nvidia: undefined,
     anthropic: undefined,
   };
@@ -142,6 +145,37 @@ function providerMap(config: ModelConfigRead | undefined): Record<ModelProvider,
   return base;
 }
 
+function supportsThinkingToggle(provider: ModelProvider): boolean {
+  return provider !== 'llama.cpp';
+}
+
+function supportsThinkingLevel(provider: ModelProvider): boolean {
+  return provider !== 'nvidia' && provider !== 'llama.cpp';
+}
+
+function providerBaseUrlPlaceholder(provider: ModelProvider): string {
+  if (provider === 'ollama') {
+    return 'http://127.0.0.1:11434';
+  }
+  if (provider === 'llama.cpp') {
+    return 'http://127.0.0.1:8080 或 http://127.0.0.1:8080/v1';
+  }
+  if (provider === 'anthropic') {
+    return 'http://example 或 http://example/v1/messages';
+  }
+  return '可选';
+}
+
+function providerBaseUrlHelperText(provider: ModelProvider): string | undefined {
+  if (provider === 'llama.cpp') {
+    return '支持填写服务根地址、/v1 或完整 /v1/chat/completions；保存后会规范化为 /v1。';
+  }
+  if (provider === 'anthropic') {
+    return '支持填写服务根地址或完整 /v1/messages 地址；保存后会规范化为根地址。';
+  }
+  return undefined;
+}
+
 export function ModelConfigPage() {
   const configQuery = useModelConfig();
   const updateProviderMutation = useUpdateProviderConfig();
@@ -150,6 +184,11 @@ export function ModelConfigPage() {
   const [forms, setForms] = useState<Record<ModelProvider, ProviderFormState>>({
     openai: createDefaultModelProviderFormState(),
     ollama: createDefaultModelProviderFormState(),
+    'llama.cpp': {
+      ...createDefaultModelProviderFormState(),
+      thinkingEnabled: false,
+      thinkingLevel: '',
+    },
     nvidia: createDefaultModelProviderFormState(),
     anthropic: createDefaultModelProviderFormState(),
   });
@@ -174,6 +213,7 @@ export function ModelConfigPage() {
     setForms({
       openai: buildForm(providerLookup.openai),
       ollama: buildForm(providerLookup.ollama),
+      'llama.cpp': buildForm(providerLookup['llama.cpp']),
       nvidia: buildForm(providerLookup.nvidia),
       anthropic: buildForm(providerLookup.anthropic),
     });
@@ -233,6 +273,8 @@ export function ModelConfigPage() {
     updateProviderMutation.isPending &&
     pendingProviderAction?.provider === selectedProvider &&
     pendingProviderAction.kind === 'clear-api-key';
+  const selectedProviderSupportsThinkingToggle = supportsThinkingToggle(selectedProvider);
+  const selectedProviderSupportsThinkingLevel = supportsThinkingLevel(selectedProvider);
 
   const updateForm = <K extends keyof ProviderFormState>(
     provider: ModelProvider,
@@ -311,8 +353,11 @@ export function ModelConfigPage() {
       enabled: form.enabled,
       base_url: toOptionalText(form.baseUrl),
       models: normalizeModelNames(form.models),
-      thinking_enabled: form.thinkingEnabled,
-      thinking_level: provider === 'nvidia' ? null : toOptionalText(form.thinkingLevel) ?? 'high',
+      thinking_enabled: provider === 'llama.cpp' ? false : form.thinkingEnabled,
+      thinking_level:
+        provider === 'nvidia' || provider === 'llama.cpp'
+          ? null
+          : toOptionalText(form.thinkingLevel) ?? 'high',
     };
     if (form.apiKey.trim()) {
       payload.api_key = form.apiKey.trim();
@@ -533,20 +578,10 @@ export function ModelConfigPage() {
               <TextField
                 fullWidth
                 label='Base URL'
-                placeholder={
-                  selectedProvider === 'ollama'
-                    ? 'http://127.0.0.1:11434'
-                    : selectedProvider === 'anthropic'
-                      ? 'http://example 或 http://example/v1/messages'
-                      : '可选'
-                }
+                placeholder={providerBaseUrlPlaceholder(selectedProvider)}
                 value={selectedProviderForm.baseUrl}
                 onChange={(e) => updateForm(selectedProvider, 'baseUrl', e.target.value)}
-                helperText={
-                  selectedProvider === 'anthropic'
-                    ? '支持填写服务根地址或完整 /v1/messages 地址；保存后会规范化为根地址。'
-                    : undefined
-                }
+                helperText={providerBaseUrlHelperText(selectedProvider)}
               />
 
               <TextField
@@ -557,7 +592,11 @@ export function ModelConfigPage() {
                 value={selectedProviderForm.apiKey}
                 onChange={(e) => updateForm(selectedProvider, 'apiKey', e.target.value)}
                 helperText={
-                  selectedProviderPersisted?.api_key_set
+                  selectedProvider === 'llama.cpp'
+                    ? selectedProviderPersisted?.api_key_set
+                      ? `已配置：${selectedProviderPersisted.api_key_masked ?? '******'}`
+                      : '本地无鉴权可留空；如通过反向代理增加鉴权，可填写。'
+                    : selectedProviderPersisted?.api_key_set
                     ? `已配置：${selectedProviderPersisted.api_key_masked ?? '******'}`
                     : '未配置'
                 }
@@ -576,33 +615,41 @@ export function ModelConfigPage() {
                 </Button>
               ) : null}
 
-              <FormControlLabel
-                control={
-                  <Switch
-                    checked={selectedProviderForm.thinkingEnabled}
-                    onChange={(e) => updateForm(selectedProvider, 'thinkingEnabled', e.target.checked)}
+              {selectedProviderSupportsThinkingToggle ? (
+                <>
+                  <FormControlLabel
+                    control={
+                      <Switch
+                        checked={selectedProviderForm.thinkingEnabled}
+                        onChange={(e) => updateForm(selectedProvider, 'thinkingEnabled', e.target.checked)}
+                      />
+                    }
+                    label='开启思考'
                   />
-                }
-                label='开启思考'
-              />
 
-              {selectedProvider !== 'nvidia' ? (
-                <FormControl fullWidth>
-                  <InputLabel id={`${selectedProvider}-thinking-level-label`}>思考强度</InputLabel>
-                  <Select
-                    labelId={`${selectedProvider}-thinking-level-label`}
-                    label='思考强度'
-                    value={selectedProviderForm.thinkingLevel || 'high'}
-                    disabled={!selectedProviderForm.thinkingEnabled}
-                    onChange={(e) => updateForm(selectedProvider, 'thinkingLevel', String(e.target.value))}
-                  >
-                    <MenuItem value='high'>high（最高）</MenuItem>
-                    <MenuItem value='medium'>medium</MenuItem>
-                    <MenuItem value='low'>low</MenuItem>
-                  </Select>
-                </FormControl>
+                  {selectedProviderSupportsThinkingLevel ? (
+                    <FormControl fullWidth>
+                      <InputLabel id={`${selectedProvider}-thinking-level-label`}>思考强度</InputLabel>
+                      <Select
+                        labelId={`${selectedProvider}-thinking-level-label`}
+                        label='思考强度'
+                        value={selectedProviderForm.thinkingLevel || 'high'}
+                        disabled={!selectedProviderForm.thinkingEnabled}
+                        onChange={(e) => updateForm(selectedProvider, 'thinkingLevel', String(e.target.value))}
+                      >
+                        <MenuItem value='high'>high（最高）</MenuItem>
+                        <MenuItem value='medium'>medium</MenuItem>
+                        <MenuItem value='low'>low</MenuItem>
+                      </Select>
+                    </FormControl>
+                  ) : (
+                    <Alert severity='info'>NVIDIA 仅支持思考开关，不支持强度分级。</Alert>
+                  )}
+                </>
               ) : (
-                <Alert severity='info'>NVIDIA 仅支持思考开关，不支持强度分级。</Alert>
+                <Alert severity='info'>
+                  llama.cpp 的 thinking 行为由 `llama-server` 启动参数控制，页面不提供单独配置。
+                </Alert>
               )}
 
               <Box>

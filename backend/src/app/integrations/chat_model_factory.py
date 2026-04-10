@@ -182,6 +182,26 @@ def create_chat_model_from_runtime_config(
             }
         return ChatOpenAI(**kwargs)
 
+    if provider_cfg.provider == ModelProvider.LLAMA_CPP:
+        from app.integrations.llamacpp_chat_model import LlamaCppChatOpenAI
+
+        base_url = _require_base_url(
+            provider_label="llama.cpp",
+            base_url=provider_cfg.base_url,
+        )
+        api_key = (provider_cfg.api_key or "").strip() or "not-needed"
+        kwargs = _build_chat_openai_common_kwargs(
+            cfg=cfg,
+            provider=provider_cfg.provider,
+            model_name=model_name,
+            api_key=api_key,
+            base_url=base_url,
+            timeout_seconds=timeout_seconds,
+            max_retries=max_retries,
+        )
+        kwargs["use_responses_api"] = False
+        return LlamaCppChatOpenAI(**kwargs)
+
     if provider_cfg.provider == ModelProvider.ANTHROPIC:
         api_key = _require_api_key(
             provider_label="Anthropic",

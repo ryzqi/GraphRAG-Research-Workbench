@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 class ModelProvider(str, Enum):
     OPENAI = "openai"
     OLLAMA = "ollama"
+    LLAMA_CPP = "llama.cpp"
     NVIDIA = "nvidia"
     ANTHROPIC = "anthropic"
 
