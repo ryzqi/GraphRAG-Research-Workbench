@@ -88,11 +88,11 @@
 - [x] 红绿验证后启动后端并提交
 
 ### M4：General Chat / Ingestion / Worker 重构
-- [ ] 审查并拆分 `services/general_chat_service.py`
-- [ ] 审查并拆分 `services/ingestion_batch_service.py`
-- [ ] 审查并拆分 `services/parsing/material_parser.py`
-- [ ] 复核 `worker/tasks/*` 边界
-- [ ] 红绿验证后启动后端并提交
+- [x] 审查并拆分 `services/general_chat_service.py`
+- [x] 审查并拆分 `services/ingestion_batch_service.py`
+- [x] 审查并拆分 `services/parsing/material_parser.py`
+- [x] 复核 `worker/tasks/*` 边界
+- [x] 红绿验证后启动后端并提交
 
 ### M5：Agents / Integrations / Settings 收尾
 - [ ] 审查并拆分 `agents/tools/web_search.py`

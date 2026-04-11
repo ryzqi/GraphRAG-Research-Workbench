@@ -193,3 +193,38 @@
 - `agents/kb_chat_agentic_graph.py` 1218
 - `agents/kb_chat_trace_display_contract.py` 1154
 - `services/chunking.py` 900
+## M4 详细发现
+
+- `backend/src/app/services/general_chat_service.py` 在 M3 后仍有 `2288` 行，单文件同时承担 dedup、replay、tool runtime、interrupt 恢复、answer/stream/resume/finalize 等职责，明显偏离 `fastapi-service-architecture` 的 service focused 边界。
+- `backend/src/app/services/ingestion_batch_service.py` 在 M3 后仍有 `1290` 行，同时承担 manifest 预处理、URL SSRF 防护、批次/文档状态迁移、outbox 触发与 API 返回拼装，属于 service orchestration dump。
+- `backend/src/app/services/parsing/material_parser.py` 当前 `671` 行，未超过 `800` 行阈值；职责集中在资料解析与 MinerU 适配，未发现需要在 M4 强拆的证据，因此仅记录审查结论，不做拆分。
+- `backend/src/app/worker/tasks/*.py` 当前最大文件为 `ingestion_batches.py` `465` 行；整体仍是任务入口 + 资源装配 + service 调用的薄封装，没有出现新的 >800 行文件。
+- `IngestionBatchService` 原文件中的 `_enqueue_docs` 已确认无任何调用点，并已在 M4 中删除，不再保留 legacy alias。
+- M4 中间态暴露的主要风险不是功能回归，而是“动态绑定 façade”让 pyright 和调用方都看不到真实 public API；这与 AGENTS 的“唯一事实源”和“默认不向后兼容”相冲突，因为主类已经不再是清晰权威边界。
+
+## M4 纯重构结果
+
+- 新增 `backend/src/app/services/general_chat_service_contracts.py`、`general_chat_service_dedup.py`、`general_chat_service_runtime.py`、`general_chat_service_interrupts.py`、`general_chat_service_execution.py`，把普通对话 service 按 dedup/runtime/interrupt/execution 边界拆开。
+- `backend/src/app/services/general_chat_service.py` 改为显式 façade + helper dispatch，恢复 `answer`、`answer_stream`、`get_pending_tool_approval`、`resume_after_tool_approval`、`resume_after_tool_approval_stream` 的单一对外入口，同时保留内部 helper 调度，不再依赖 runtime 动态绑定作为唯一事实源。
+- 新增 `backend/tests/test_general_chat_service_helper_modules.py`，先用缺模块红测锁定中断提取 helper，再转绿，覆盖 pending interrupt flatten 行为。
+- 新增 `backend/src/app/services/ingestion_batch_service_contracts.py`、`ingestion_batch_service_prepare.py`、`ingestion_batch_service_status.py`、`ingestion_batch_service_url_security.py`，把 ingestion service 按 prepare/status/url-security 拆开。
+- `backend/src/app/services/ingestion_batch_service.py` 改为显式 façade + helper dispatch，恢复 `get_doc(for_update)`、`mark_doc_succeeded(context_failed_chunks)`、`mark_doc_failed(...) -> delay | None`、`retry_failed_docs`、`cancel_batch` 等真实 public API 与 schema 返回结构。
+- 新增 `backend/tests/test_ingestion_batch_service_helper_modules.py`，先用 helper 缺失/错误装饰器的红测锁定 `_canonicalize_url` 与 `_is_doc_*` 行为，再转绿。
+- `material_parser.py` 已完成逐段审查：当前未超阈值、解析职责集中、未发现与 M4 目标相称的冗余拆分机会，因此保持不变。
+- `worker/tasks` 已完成复核：`ingestion_batches.py`、`ingestion_outbox_dispatcher.py`、`ingestion_watchdog.py` 仍是围绕 `IngestionBatchService` 的任务边界，没有被塞入新的 HTTP/持久化混杂逻辑。
+
+## M4 验证证据
+
+- 红测：`$env:UV_CACHE_DIR='F:\毕设\code\.uv-cache'; uv run pytest tests/test_general_chat_service_helper_modules.py tests/test_ingestion_batch_service_helper_modules.py -q` 初次失败，错误为 `TypeError: 'classmethod' object is not callable`，对应 `ingestion_batch_service_status.py` 顶层 helper 残留 `@classmethod`。
+- 绿测：`$env:UV_CACHE_DIR='F:\毕设\code\.uv-cache'; uv run pytest tests/test_general_chat_service_helper_modules.py tests/test_ingestion_batch_service_helper_modules.py -q` 通过，结果为 `3 passed`。
+- M4 测试集：`$env:UV_CACHE_DIR='F:\毕设\code\.uv-cache'; uv run pytest tests/test_chat_endpoint_dependencies.py tests/test_general_chat_service_helper_modules.py tests/test_ingestion_batch_service_helper_modules.py -q` 通过，结果为 `6 passed`。
+- 类型检查：`$env:UV_CACHE_DIR='F:\毕设\code\.uv-cache'; uv run pyright -p .` 通过，结果为 `0 errors, 0 warnings, 0 informations`。
+- Lint：`$env:UV_CACHE_DIR='F:\毕设\code\.uv-cache'; uv run ruff check src/app/services/general_chat_service.py src/app/services/general_chat_service_*.py src/app/services/ingestion_batch_service.py src/app/services/ingestion_batch_service_*.py tests/test_chat_endpoint_dependencies.py tests/test_general_chat_service_helper_modules.py tests/test_ingestion_batch_service_helper_modules.py` 通过，结果为 `All checks passed!`。
+- 启动验证：以 `F:\毕设\code\backend\\.venv\\Scripts\\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 18081 --loop app.core.uvicorn_loop:windows_selector_loop_factory` 后台启动后端；stderr 日志显示 `Application startup complete`，`http://127.0.0.1:18081/api/v1/ready` 返回 `200`，stdout 记录 `GET /api/v1/ready HTTP/1.1` `200 OK`。
+
+## M4 后超大文件复核（>800 行）
+
+- `services/general_chat_service.py` 已从 `2288` 行降到 `169` 行。
+- `services/ingestion_batch_service.py` 已从 `1290` 行降到 `444` 行。
+- `services/parsing/material_parser.py` 维持 `671` 行，不属于超大文件。
+- `worker/tasks` 目录内仍无大于 `800` 行的文件。
