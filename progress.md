@@ -30,3 +30,14 @@
 - 当前状态：
   - M4 已验证通过，准备提交 
   - 下一步进入 M5：Agents / Integrations / Settings 收尾
+- 已进入 M5 并完成 helper 红测：`web_search_builders`、`kb_chat_agentic_graph_runtime`、`kb_chat_trace_display_input/output` 在初次测试中均以 `ModuleNotFoundError` 红掉，符合先红后绿要求。
+- 已完成 M5 纯重构：
+  - `web_search` 拆为 `models / utils / client / builders / facade`
+  - `kb_chat_agentic_graph.py` 删除未调用的 trace/display 遗留复制代码，并抽出 runtime helper
+  - `kb_chat_trace_display_contract.py` 拆为 `shared / input / output / facade`
+- 已完成 M5 fresh verification：
+  - `uv run pytest tests/test_chat_endpoint_dependencies.py tests/test_web_search_helper_modules.py tests/test_kb_chat_agentic_graph_helper_modules.py tests/test_kb_chat_trace_display_contract_helpers.py -q` -> `7 passed`
+  - `uv run ruff check ...` -> `All checks passed!`
+  - `uv run pyright -p .` -> `0 errors, 0 warnings, 0 informations`
+  - 后端 `uvicorn` 启动成功，stderr 含 `Application startup complete`，`/api/v1/ready` -> `200`
+- 已完成剩余 >800 行文件复核：`preprocess.py`、`answer_subgraph.py`、`reflection.py`、`chunking.py`、`settings.py` 均已记录保留理由；下一步进入 M6：全量复核与交付。

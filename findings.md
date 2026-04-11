@@ -228,3 +228,47 @@
 - `services/ingestion_batch_service.py` 已从 `1290` 行降到 `444` 行。
 - `services/parsing/material_parser.py` 维持 `671` 行，不属于超大文件。
 - `worker/tasks` 目录内仍无大于 `800` 行的文件。
+
+## M5 详细发现
+
+- `backend/src/app/agents/tools/web_search.py` 原文件既承载参数模型，又承载 Tavily client、provider 组装、tool builder 与 legacy alias `TavilyGateway -> WebSearchClient`，同时被 `registry.py`、`research_tools.py`、`web_search_status_service.py` 直接依赖，违反单一职责且存在旧主事实源。
+- `backend/src/app/agents/kb_chat_agentic_graph.py` 原文件内嵌了一整套未被调用的 trace/display helper；实际生效路径已经是 `kb_chat_trace_nodes.py` 的共享 wrapper，属于明确遗留复制代码，违反 AGENTS 的“唯一事实源”。
+- `backend/src/app/agents/kb_chat_trace_display_contract.py` 原文件同时聚合显示契约常量、input/output value resolver、decision/evidence formatter，职责混杂但公开入口只有 `build_node_input_display_items` / `build_node_output_display_items` 两个函数。
+- `backend/src/app/core/settings.py` 当前仍是配置单一事实源；虽然实测 `803` 行，但主要由 `Settings` 字段声明、validator 与启动校验组成，没有发现可以在“不改功能”前提下安全剥离的独立运行边界。
+
+## M5 纯重构结果
+
+- 新增 `backend/src/app/agents/tools/web_search_models.py`、`web_search_utils.py`、`web_search_client.py`、`web_search_builders.py`，把 web 工具拆成参数契约 / 纯函数 / Tavily client / provider+tool builders；`web_search.py` 收敛为 façade re-export。
+- `web_search` 链路删除了 `TavilyGateway` 这个旧主类，不再保留“兼容旧接口别名”；当前唯一公开 client 为 `WebSearchClient`，同时保持 `research_tools.py` 等现有导入面不变。
+- 新增 `backend/src/app/agents/kb_chat_agentic_graph_runtime.py`，把 `KbChatGraphContext`、`build_kb_chat_run_config`、`build_kb_chat_run_context` 从图装配文件中剥离；`kb_chat_agentic_graph.py` 删除整段未被调用的 trace/display helper，只保留图装配与运行入口。
+- 新增 `backend/src/app/agents/kb_chat_trace_display_shared.py`、`kb_chat_trace_display_input.py`、`kb_chat_trace_display_output.py`，把 trace display contract 按 shared/input/output 自然边界拆开；`kb_chat_trace_display_contract.py` 收敛为 façade，对外函数名保持不变。
+- 新增 `backend/tests/test_web_search_helper_modules.py`、`test_kb_chat_agentic_graph_helper_modules.py`、`test_kb_chat_trace_display_contract_helpers.py`，先以缺模块红测锁定新 helper 边界，再转绿验证 re-export 与代表性显示语义。
+
+## M5 对剩余超大文件的审查结论
+
+- `agents/kb_chat_agentic/preprocess.py` 实测 `2313` 行：虽然体量很大，但当前职责仍聚焦在 preprocess 子图节点（merge_context -> query_plan_finalize）；其内部 helper 与状态字段高度耦合，本轮若继续拆分将扩大到整个 preprocess subgraph 契约，超出“最小纯重构”边界，因此记录为“已审查，暂不拆分”。
+- `agents/kb_chat_agentic/answer_subgraph.py` 实测 `2025` 行：文件集中在 answer 子图编排与节点装配，天然边界已经是子图级别；若再拆，需要同时迁移 review/repair/commit 局部闭环，风险高于当前收益，因此本轮不拆。
+- `agents/kb_chat_agentic/reflection.py` 实测 `1880` 行：职责集中在 retrieval/reflection 路由与答案审查决策，虽然偏大，但没有发现明确 legacy alias 或双轨事实源；保持后续统一治理，不在 M5 强拆。
+- `services/chunking.py` 实测 `1042` 行：文件围绕 chunking strategies 展开，属于单 service 下的多策略实现；目前未发现兼容胶水或无调用遗留代码，本轮只记录“职责集中但偏大”，不在 M5 继续拆分。
+- `core/settings.py` 实测 `803` 行：继续保留为配置单一事实源。`_LEGACY_VITE_LOCAL_CORS_ORIGINS` 仍在 dev CORS 归一化链路中被实际使用，不属于无调用遗留代码。
+
+## M5 验证证据
+
+- 红测：`$env:UV_CACHE_DIR='F:\毕设\code\.uv-cache'; uv run pytest tests/test_web_search_helper_modules.py tests/test_kb_chat_agentic_graph_helper_modules.py tests/test_kb_chat_trace_display_contract_helpers.py -q` 初次失败，错误为 `ModuleNotFoundError: No module named 'app.agents.tools.web_search_builders'`、`No module named 'app.agents.kb_chat_agentic_graph_runtime'`、`No module named 'app.agents.kb_chat_trace_display_input'`。
+- 绿测：同一组测试通过，结果为 `4 passed`。
+- M5 测试集：`$env:UV_CACHE_DIR='F:\毕设\code\.uv-cache'; uv run pytest tests/test_chat_endpoint_dependencies.py tests/test_web_search_helper_modules.py tests/test_kb_chat_agentic_graph_helper_modules.py tests/test_kb_chat_trace_display_contract_helpers.py -q` 通过，结果为 `7 passed`。
+- 类型检查：`$env:UV_CACHE_DIR='F:\毕设\code\.uv-cache'; uv run pyright -p .` 通过，结果为 `0 errors, 0 warnings, 0 informations`。
+- Lint：`$env:UV_CACHE_DIR='F:\毕设\code\.uv-cache'; uv run ruff check src/app/agents/tools/web_search.py src/app/agents/tools/web_search_models.py src/app/agents/tools/web_search_utils.py src/app/agents/tools/web_search_client.py src/app/agents/tools/web_search_builders.py src/app/agents/kb_chat_agentic_graph.py src/app/agents/kb_chat_agentic_graph_runtime.py src/app/agents/kb_chat_trace_display_contract.py src/app/agents/kb_chat_trace_display_shared.py src/app/agents/kb_chat_trace_display_input.py src/app/agents/kb_chat_trace_display_output.py tests/test_web_search_helper_modules.py tests/test_kb_chat_agentic_graph_helper_modules.py tests/test_kb_chat_trace_display_contract_helpers.py` 通过，结果为 `All checks passed!`。
+- 启动验证：以 `F:\毕设\codeackend\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 18082 --loop app.core.uvicorn_loop:windows_selector_loop_factory` 后台启动后端；stderr 日志显示 `Application startup complete`，`http://127.0.0.1:18082/api/v1/ready` 返回 `200`，响应体 `status=ready`，Postgres/Redis/Milvus/MinIO 均 `ok=true`，stdout 记录 `GET /api/v1/ready HTTP/1.1` `200 OK`。
+
+## M5 后超大文件复核（>800 行）
+
+- `agents/tools/web_search.py` 已从超大入口文件收敛为 `41` 行 façade。
+- `agents/kb_chat_agentic_graph.py` 已从超大图文件收敛为 `229` 行。
+- `agents/kb_chat_trace_display_contract.py` 已从超大契约文件收敛为 `14` 行 façade。
+- 当前仍大于 `800` 行的文件已完成审查并记录保留理由：
+  - `agents/kb_chat_agentic/preprocess.py` `2313`
+  - `agents/kb_chat_agentic/answer_subgraph.py` `2025`
+  - `agents/kb_chat_agentic/reflection.py` `1880`
+  - `services/chunking.py` `1042`
+  - `core/settings.py` `803`

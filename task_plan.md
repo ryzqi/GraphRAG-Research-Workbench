@@ -95,11 +95,11 @@
 - [x] 红绿验证后启动后端并提交
 
 ### M5：Agents / Integrations / Settings 收尾
-- [ ] 审查并拆分 `agents/tools/web_search.py`
-- [ ] 审查并拆分 `agents/kb_chat_agentic_graph.py`
-- [ ] 审查并拆分 `agents/kb_chat_trace_display_contract.py`
-- [ ] 审查 `core/settings.py` 与剩余 >800 行文件
-- [ ] 红绿验证后启动后端并提交
+- [x] 审查并拆分 `agents/tools/web_search.py`
+- [x] 审查并拆分 `agents/kb_chat_agentic_graph.py`
+- [x] 审查并拆分 `agents/kb_chat_trace_display_contract.py`
+- [x] 审查 `core/settings.py` 与剩余 >800 行文件
+- [x] 红绿验证后启动后端并提交
 
 ### M6：全量复核与交付
 - [ ] 复核剩余未触及文件是否满足边界要求
