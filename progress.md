@@ -41,3 +41,7 @@
   - `uv run pyright -p .` -> `0 errors, 0 warnings, 0 informations`
   - 后端 `uvicorn` 启动成功，stderr 含 `Application startup complete`，`/api/v1/ready` -> `200`
 - 已完成剩余 >800 行文件复核：`preprocess.py`、`answer_subgraph.py`、`reflection.py`、`chunking.py`、`settings.py` 均已记录保留理由；下一步进入 M6：全量复核与交付。
+
+- 已完成 M6 全量复核：按 `api/services/agents/integrations/worker/schemas/models/core` 八个顶层目录收口检查，未发现遗漏目录。
+- 已确认剩余 compatibility 点均为活跃边界而非死代码：`schemas/knowledge_bases.py` 的旧 JSON 兼容、`query_rewrite_basic_ops.coref_rewrite` 的现行调用面、`services/streaming.py` 的 provider 输出兼容仍被真实路径使用。
+- 已进入最终交付前验收：准备做 M6 启动验证并创建最终审查提交。

@@ -272,3 +272,27 @@
   - `agents/kb_chat_agentic/reflection.py` `1880`
   - `services/chunking.py` `1042`
   - `core/settings.py` `803`
+
+
+## M6 全量复核结论
+
+- `api/`：保持 HTTP transport edge 边界，没有重新出现把 service wiring、状态机或 SQL 逻辑塞回 endpoint 的回退。
+- `services/`：M1-M4 已经把启动装配、research、retrieval、general chat、ingestion 这几条主要 orchestration dump 收敛为 façade + helper module；本轮复核未发现新的重复主事实源。
+- `agents/`：M5 已收敛 `web_search`、`kb_chat_agentic_graph`、`kb_chat_trace_display_contract` 三个重点热点；剩余超大文件 `preprocess.py` / `answer_subgraph.py` / `reflection.py` 虽偏大，但都仍以单个 agentic phase 为中心，没有再混入 HTTP 或持久化边界。
+- `integrations/`：保留的“兼容/OpenAI-compatible”语义主要对应第三方协议适配（如 `llamacpp_chat_model.py`、`rerank_client.py`、`chat_model_factory.py`），属于真实外部系统边界，不是仓内 legacy 胶水。
+- `worker/`：仍然是任务入口与 service 调用薄封装，没有回流为业务主线承载层。
+- `schemas/models/core/`：`schemas/knowledge_bases.py` 的 legacy field 兼容仍是活跃的数据兼容逻辑，`core/settings.py` 仍是配置单一事实源；二者都已审查，但不在本轮“纯架构重构”中强拆或删除。
+
+## 剩余兼容点判定
+
+- `schemas/knowledge_bases.py`：`_compat_legacy_fields` / `_drop_legacy_retrieval` 仍用于旧版 `index_config` JSON 读路径，当前属于活跃迁移兼容，不视为死代码。
+- `services/query_rewrite_basic_ops.py`：`coref_rewrite` 虽标注“向后兼容别名”，但 `query_rewrite_service.py` 仍直接调它，因此当前仍是有效入口，不可在本轮删除。
+- `services/streaming.py`：legacy `<think>` 标签兼容仍位于 provider 输出归一化边界，用于实际上游兼容，不视为冗余代码。
+- `kb_chat_agentic_graph.py` 中 `tool_meta_by_name` 的 signature compatibility 注释仍保留，但实现已明确 `del tool_meta_by_name`，属于稳定构造签名保护，不再构成双轨逻辑。
+
+## 综合判定
+
+- 本轮后端全量审查已覆盖 `backend/src/app` 全部顶层目录，并完成既定 M1-M5 纯重构闭环。
+- 已确认并清理的遗留/冗余重点包括：`general_chat_service` / `ingestion_batch_service` / `web_search` / `kb_chat_agentic_graph` 中的过厚 façade、动态绑定或死复制 helper。
+- 仍保留的 compatibility 仅限“当前仍被真实调用”或“位于外部协议/旧数据读路径边界”的活跃兼容点；未发现新的无调用 legacy 死代码。
+- 仍超过 `800` 行但暂不拆分的文件均已记录保留理由，满足“已评估；仅对可安全拆分者执行拆分”的验收标准。
