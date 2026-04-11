@@ -31,3 +31,15 @@
   - `M0 已验证完成`
   - `M1 已验证通过，待提交`
   - 下一步进入 `M2`：Deep Research 服务链纯重构
+
+### Session 2
+
+- 已完成：
+  - 精读 `research_service.py`、`research_service_session_ops.py`、`deep_research_runtime.py` 与 M2 新拆分模块的职责边界
+  - 新增 `research_runtime_factory.py`、`research_runtime_recovery.py`、`research_runtime_workspace.py`、`research_service_contracts.py`、`research_service_execution.py`、`research_service_runtime.py`、`research_service_session_ops.py`
+  - 将 `deep_research_runtime.py` 收敛到 `627` 行，将 `research_service.py` 收敛到 `788` 行
+  - 恢复 `research_service` 模块级 observability/replay re-export，保持现有 monkeypatch 路径与运行语义不变
+  - 通过 M2 红绿测试、pyright、ruff 与后端启动验证
+- 当前状态：
+  - `M2 已验证通过，准备提交`
+  - 下一步进入 `M3`：KB Chat / Retrieval 服务链纯重构

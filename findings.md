@@ -57,8 +57,6 @@
 - `agents/kb_chat_agentic/preprocess.py` 2313
 - `agents/kb_chat_agentic/answer_subgraph.py` 2025
 - `agents/kb_chat_agentic/reflection.py` 1880
-- `services/deep_research_runtime.py` 1801
-- `services/research_service.py` 1608
 - `services/ingestion_batch_service.py` 1439
 - `agents/tools/web_search.py` 1339
 - `agents/kb_chat_agentic_graph.py` 1304
@@ -126,8 +124,38 @@
 - Lint：`uv run ruff check src/app/main.py src/app/bootstrap src/app/api/v1/endpoints/chats.py src/app/api/v1/endpoints/chat_dependencies.py tests/test_app_factory.py tests/test_chat_endpoint_dependencies.py` 通过，结果为 `All checks passed!`。
 - 启动验证：先启动 infra，再以 `.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --loop app.core.uvicorn_loop:windows_selector_loop_factory` 后台启动，`/api/v1/ready` 返回 `200`，响应体 `status=ready`，Postgres/Redis/Milvus/MinIO 均 `ok=true`。
 
+## M2 详细发现
+
+- `backend/src/app/services/deep_research_runtime.py` 原先同时承担 runtime tool registry/agent factory、workspace/request/memory 文件拼装、structured response 恢复、外部证据补抓与运行结果收口，职责混杂。
+- `backend/src/app/services/research_service.py` 原先同时承担 session lifecycle、plan progress contract、runtime artifact persistence、execute/fail workflow 与 observability glue，服务主文件过厚。
+- 为保持现有功能、测试和 monkeypatch 路径不变，`research_service.py` 继续暴露 `build_research_metrics`、`evaluate_research_replay_consistency`、`evaluate_research_gate`、`classify_research_fault`、`build_failure_metrics`。
+- 为保持 research runtime 现有调用面不变，`deep_research_runtime.py` 继续暴露 `_build_source_specialized_subagents`、`_build_runtime_memory_files`、`_resolve_recovery_structured_output_method` 等旧访问点，但实现已下沉到 helper 模块。
+
+## M2 纯重构结果
+
+- 新增 `backend/src/app/services/research_runtime_factory.py`，承接 deep research runtime 工厂、backend 组装、subagent route 与 `DeepResearchRuntime` 句柄。
+- 新增 `backend/src/app/services/research_runtime_recovery.py`，承接 structured response 恢复、tool evidence citation 恢复与外部证据补抓逻辑。
+- 新增 `backend/src/app/services/research_runtime_workspace.py`，承接 runtime prompt、request files、memory files 与 session bootstrap workspace 组装。
+- 新增 `backend/src/app/services/research_service_contracts.py`，承接 event envelope、artifacts response、plan progress contract 相关纯函数。
+- 新增 `backend/src/app/services/research_service_execution.py`，承接 runtime projection 合并、metrics/runtime artifacts 持久化、trace event 追加与 committed status 读取。
+- 新增 `backend/src/app/services/research_service_runtime.py`，承接 `ResearchRuntimeRunner` 合同与未配置 runtime runner 实现。
+- 新增 `backend/src/app/services/research_service_session_ops.py`，承接 create/update/start/stop/execute/fail workflow。
+- `backend/src/app/services/deep_research_runtime.py` 已从 `1801` 行降到 `627` 行。
+- `backend/src/app/services/research_service.py` 已从 `1608` 行降到 `788` 行。
+
+## M2 验证证据
+
+- 红态类型检查：`uv run pyright -p .` 初次失败，报 `research_service_session_ops.py` 访问 `app.services.research_service.build_research_metrics`、`evaluate_research_replay_consistency`、`evaluate_research_gate`、`classify_research_fault`、`build_failure_metrics` 不存在。
+- 红态回归测试：`uv run pytest tests/test_research_service_finalization_contract.py::test_execute_session_persists_metrics_before_final_event -q` 初次失败，原因是 monkeypatch 找不到 `app.services.research_service.build_research_metrics`。
+- 绿态类型检查：`uv run pyright -p .` 通过，结果为 `0 errors, 0 warnings, 0 informations`。
+- 绿态回归测试：`uv run pytest tests/test_research_service_finalization_contract.py::test_execute_session_persists_metrics_before_final_event -q` 通过，结果为 `1 passed`。
+- M2 测试集：`uv run pytest tests/test_research_service_session_ops_module.py tests/test_research_runtime_helper_modules.py tests/test_research_service_contracts_module.py tests/test_research_runtime_factory.py tests/test_research_service_execution_helpers.py tests/test_research_runtime_context_management.py tests/test_research_service_finalization_contract.py tests/test_research_runtime_report_enrichment.py tests/test_research_artifact_normalization.py -q` 通过，结果为 `22 passed`。
+- M2 Lint：`uv run ruff check src/app/services/deep_research_runtime.py src/app/services/research_runtime_factory.py src/app/services/research_runtime_recovery.py src/app/services/research_runtime_workspace.py src/app/services/research_service.py src/app/services/research_service_contracts.py src/app/services/research_service_execution.py src/app/services/research_service_runtime.py src/app/services/research_service_session_ops.py tests/test_research_service_session_ops_module.py tests/test_research_runtime_helper_modules.py tests/test_research_service_contracts_module.py tests/test_research_runtime_factory.py tests/test_research_service_execution_helpers.py tests/test_research_runtime_context_management.py tests/test_research_service_finalization_contract.py tests/test_research_runtime_report_enrichment.py tests/test_research_artifact_normalization.py` 通过，结果为 `All checks passed!`。
+- M2 启动验证：先用 `& 'C:\Program Files\PowerShell\7\pwsh.exe' -ExecutionPolicy Bypass -File '.\infra\up.ps1'` 启动基础依赖，再以 `.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 18080 --loop app.core.uvicorn_loop:windows_selector_loop_factory` 后台启动后端；stderr 日志显示 `Application startup complete`，`http://127.0.0.1:18080/api/v1/ready` 返回 `200`，响应体 `status=ready`，Postgres/Redis/Milvus/MinIO 均 `ok=true`。
+
 ## 里程碑设计结论
 
-- `M1` 已验证通过，可进入 `M2`。
+- `M1` 已验证通过。
+- `M2` 已验证通过，可进入 `M3`。
 - Research 与 KB Chat 是两条最大的职责堆积链，分别作为 `M2` / `M3`。
 - Ingestion/Worker 与 Agents/Integrations/Settings 分为 `M4` / `M5`，避免单次变更过宽。

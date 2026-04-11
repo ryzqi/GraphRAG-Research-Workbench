@@ -76,10 +76,10 @@
 - [x] 红绿验证后启动后端并提交
 
 ### M2：Deep Research 服务链重构
-- [ ] 审查并拆分 `services/deep_research_runtime.py`
-- [ ] 审查并拆分 `services/research_service.py`
-- [ ] 复核相关 research 支撑文件的职责边界
-- [ ] 红绿验证后启动后端并提交
+- [x] 审查并拆分 `services/deep_research_runtime.py`
+- [x] 审查并拆分 `services/research_service.py`
+- [x] 复核相关 research 支撑文件的职责边界
+- [x] 红绿验证后启动后端并提交
 
 ### M3：KB Chat / Retrieval 服务链重构
 - [ ] 审查并拆分 `services/kb_chat_service.py`
