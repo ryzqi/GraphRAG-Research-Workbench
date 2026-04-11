@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterable, AsyncIterator
-from datetime import datetime, timezone
 import uuid
 from typing import Any
 
@@ -37,20 +36,17 @@ from app.schemas.chats import (
     resolve_kb_chat_config,
     ToolApprovalRequest,
 )
-from app.services.general_chat_service import GeneralChatService
-from app.services.kb_chat_service import KbChatService
+from app.api.v1.endpoints.chat_dependencies import (
+    build_general_chat_service,
+    build_kb_chat_service,
+    stream_heartbeat_payload,
+)
 from app.services.knowledge_base_service import KnowledgeBaseService
 from app.services.web_search_status_service import get_web_search_status
 
 router = APIRouter()
 _STREAM_HEARTBEAT_INTERVAL_SECONDS = 10.0
 
-
-def _stream_heartbeat_payload() -> dict[str, str]:
-    return {
-        "type": "heartbeat",
-        "ts": datetime.now(timezone.utc).isoformat(),
-    }
 
 
 def _has_pending_kb_clarification(run: AgentRun) -> bool:
@@ -114,14 +110,7 @@ async def get_kb_chat_graph_schema(
         if value is not None
     }
     resolved = resolve_kb_chat_config(raw=raw_config or None, settings=get_settings())
-    service = KbChatService(
-        db,
-        request.app.state.llm_client,
-        request.app.state.milvus_client,
-        request.app.state.embedding_client,
-        reranker=request.app.state.rerank_client,
-        redis=request.app.state.redis,
-    )
+    service = build_kb_chat_service(db=db, request=request)
     schema = await service.get_graph_schema(kb_chat_config=resolved)
     return KbGraphSchemaResponse.model_validate(schema)
 
@@ -357,16 +346,9 @@ async def create_chat_message(
             message="知识库问答仅支持流式接口，请使用 /messages/stream",
         )
 
-    llm = request.app.state.llm_client
-
     if session.session_type == ChatSessionType.GENERAL_CHAT:
         # 普通代理
-        service = GeneralChatService(
-            db,
-            llm,
-            redis=request.app.state.redis,
-            http_client=request.app.state.http_client,
-        )
+        service = build_general_chat_service(db=db, request=request)
         result = await service.answer(
             session=session,
             user_content=body.content,
@@ -397,17 +379,9 @@ async def create_chat_message_stream(
     if not session:
         raise not_found("会话不存在", code="CHAT_SESSION_NOT_FOUND")
 
-    llm = request.app.state.llm_client
-
     if session.session_type == ChatSessionType.KB_CHAT:
-        milvus = request.app.state.milvus_client
-        embedding = request.app.state.embedding_client
-        reranker = request.app.state.rerank_client
-        redis = request.app.state.redis
         heartbeat_stats = SseHeartbeatStats()
-        service = KbChatService(
-            db, llm, milvus, embedding, reranker=reranker, redis=redis
-        )
+        service = build_kb_chat_service(db=db, request=request)
         events = await _prime_stream_events(
             service.answer_stream(
                 session=session,
@@ -418,12 +392,7 @@ async def create_chat_message_stream(
         )
     elif session.session_type == ChatSessionType.GENERAL_CHAT:
         heartbeat_stats = None
-        service = GeneralChatService(
-            db,
-            llm,
-            redis=request.app.state.redis,
-            http_client=request.app.state.http_client,
-        )
+        service = build_general_chat_service(db=db, request=request)
         events = service.answer_stream(
             session=session,
             user_content=body.content,
@@ -439,7 +408,7 @@ async def create_chat_message_stream(
         encode_sse(
             events,
             heartbeat_interval=_STREAM_HEARTBEAT_INTERVAL_SECONDS,
-            heartbeat_factory=_stream_heartbeat_payload,
+            heartbeat_factory=stream_heartbeat_payload,
             heartbeat_stats=heartbeat_stats,
         ),
         media_type="text/event-stream",
@@ -463,12 +432,7 @@ async def get_pending_general_chat_run(
     if session.session_type != ChatSessionType.GENERAL_CHAT:
         raise bad_request(code="CHAT_NOT_GENERAL_CHAT", message="仅普通代理支持该接口")
 
-    service = GeneralChatService(
-        db,
-        request.app.state.llm_client,
-        redis=request.app.state.redis,
-        http_client=request.app.state.http_client,
-    )
+    service = build_general_chat_service(db=db, request=request)
     return await service.get_pending_tool_approval(session=session)
 
 
@@ -500,13 +464,7 @@ async def resume_general_chat(
         raise bad_request(code="CHAT_RUN_TYPE_MISMATCH", message="运行记录类型不匹配")
     if run.status != AgentRunStatus.RUNNING:
         raise bad_request(code="CHAT_RUN_NOT_RUNNING", message="运行记录已完成或已失败")
-    llm = request.app.state.llm_client
-    service = GeneralChatService(
-        db,
-        llm,
-        redis=request.app.state.redis,
-        http_client=request.app.state.http_client,
-    )
+    service = build_general_chat_service(db=db, request=request)
     result = await service.resume_after_tool_approval(
         session=session, run=run, approval=body
     )
@@ -543,15 +501,7 @@ async def resume_kb_chat_after_clarification_stream(
             message="当前运行没有待补充澄清信息",
         )
 
-    llm = request.app.state.llm_client
-    service = KbChatService(
-        db,
-        llm,
-        request.app.state.milvus_client,
-        request.app.state.embedding_client,
-        reranker=request.app.state.rerank_client,
-        redis=request.app.state.redis,
-    )
+    service = build_kb_chat_service(db=db, request=request)
     heartbeat_stats = SseHeartbeatStats()
     events = await _prime_stream_events(
         service.answer_stream(
@@ -567,7 +517,7 @@ async def resume_kb_chat_after_clarification_stream(
         encode_sse(
             events,
             heartbeat_interval=_STREAM_HEARTBEAT_INTERVAL_SECONDS,
-            heartbeat_factory=_stream_heartbeat_payload,
+            heartbeat_factory=stream_heartbeat_payload,
             heartbeat_stats=heartbeat_stats,
         ),
         media_type="text/event-stream",
@@ -600,13 +550,7 @@ async def resume_general_chat_stream(
     if run.status != AgentRunStatus.RUNNING:
         raise bad_request(code="CHAT_RUN_NOT_RUNNING", message="运行记录已完成或已失败")
 
-    llm = request.app.state.llm_client
-    service = GeneralChatService(
-        db,
-        llm,
-        redis=request.app.state.redis,
-        http_client=request.app.state.http_client,
-    )
+    service = build_general_chat_service(db=db, request=request)
     events = service.resume_after_tool_approval_stream(
         session=session,
         run=run,
@@ -618,8 +562,9 @@ async def resume_general_chat_stream(
         encode_sse(
             events,
             heartbeat_interval=_STREAM_HEARTBEAT_INTERVAL_SECONDS,
-            heartbeat_factory=_stream_heartbeat_payload,
+            heartbeat_factory=stream_heartbeat_payload,
         ),
         media_type="text/event-stream",
         headers=SSE_HEADERS,
     )
+
