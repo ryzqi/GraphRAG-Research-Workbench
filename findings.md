@@ -159,3 +159,37 @@
 - `M2` 已验证通过，可进入 `M3`。
 - Research 与 KB Chat 是两条最大的职责堆积链，分别作为 `M2` / `M3`。
 - Ingestion/Worker 与 Agents/Integrations/Settings 分为 `M4` / `M5`，避免单次变更过宽。
+
+## M3 详细发现
+
+- `backend/src/app/services/kb_chat_service.py` 原先同时承担 semantic cache、checkpoint restore、SSE protocol、citation 归一化、finalize 落库、observability 与主流式循环，主文件职责混杂且行数超标。
+- `backend/src/app/services/query_rewrite_service.py` 原先同时承担结构化改写、纯文本改写、query item 组装、planning/rewrite 基础操作与兼容出口，违背单一职责。
+- `backend/src/app/services/retrieval_service.py` 原先同时承担查询上下文组装、layer strategy、runtime orchestration 与 retrieve 主路径，且文档直接声明兼容 legacy callers。
+- KB Chat 拆分过程中暴露了大量整段复制遗留的冗余 import；`kb_chat_service_observability.py` 还残留一份未被绑定器使用的 `_apply_gray_release_rollback_policy`，已删除。
+
+## M3 纯重构结果
+
+- 新增 `backend/src/app/services/query_rewrite_contracts.py`、`query_rewrite_structured.py`、`query_rewrite_text.py`、`query_rewrite_items.py`、`query_rewrite_basic_ops.py`、`query_rewrite_planning_ops.py`，`query_rewrite_service.py` 收敛为 façade + 兼容出口。
+- 新增 `backend/src/app/services/retrieval_service_contracts.py`、`retrieval_service_context.py`、`retrieval_service_layer_ops.py`、`retrieval_service_retrieve_ops.py`、`retrieval_service_runtime.py`、`retrieval_service_strategy_ops.py`，`retrieval_service.py` 收敛为轻量 service 入口。
+- 新增 `backend/src/app/services/kb_chat_service_contracts.py`、`kb_chat_service_semantic_cache.py`、`kb_chat_service_schema.py`、`kb_chat_service_observability.py`、`kb_chat_service_execution.py`、`kb_chat_service_message_ops.py`、`kb_chat_service_stream_protocol.py`、`kb_chat_service_citations.py`、`kb_chat_service_finalize.py`、`kb_chat_service_answer_stream_cached.py`、`kb_chat_service_answer_stream_postprocess.py`、`kb_chat_service_method_bindings.py`，`kb_chat_service.py` 收敛为 façade + `answer_stream` 主循环。
+- `kb_chat_service_method_bindings.py` 统一把 helper 顶层函数绑定回 `KbChatService`，保持现有实例方法调用面不变，不引入新 service 层级。
+- `kb_chat_service_observability.py` 中未被绑定器使用的重复 `_apply_gray_release_rollback_policy` 已清理，剩余灰度回滚策略仅保留 `kb_chat_service_execution.py` 的单一事实源实现。
+
+## M3 验证证据
+
+- Lint：`$env:UV_CACHE_DIR='F:\毕设\code\.uv-cache'; uv run ruff check src/app/services/kb_chat_service.py src/app/services/kb_chat_service_*.py src/app/services/query_rewrite_service.py src/app/services/query_rewrite_*.py src/app/services/retrieval_service.py src/app/services/retrieval_service_*.py tests/test_chat_endpoint_dependencies.py tests/test_query_rewrite_helper_modules.py tests/test_retrieval_service_helper_modules.py` 通过，结果为 `All checks passed!`。
+- 测试：`$env:UV_CACHE_DIR='F:\毕设\code\.uv-cache'; uv run pytest tests/test_chat_endpoint_dependencies.py tests/test_query_rewrite_helper_modules.py tests/test_retrieval_service_helper_modules.py -q` 通过，结果为 `6 passed`；仅有 `.pytest_cache` 写权限 warning，不影响测试结论。
+- 类型检查：`$env:UV_CACHE_DIR='F:\毕设\code\.uv-cache'; uv run pyright -p .` 通过，结果为 `0 errors, 0 warnings, 0 informations`。
+- 启动验证：以 `.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 18080 --loop app.core.uvicorn_loop:windows_selector_loop_factory` 后台启动后端；stderr 日志显示 `Application startup complete`，`http://127.0.0.1:18080/api/v1/ready` 返回 `200`，响应体 `status=ready`，Postgres/Redis/Milvus/MinIO 均 `ok=true`。
+
+## M3 后超大文件复核（>800 行）
+
+- `services/general_chat_service.py` 2288
+- `agents/kb_chat_agentic/preprocess.py` 2107
+- `agents/kb_chat_agentic/answer_subgraph.py` 1876
+- `agents/kb_chat_agentic/reflection.py` 1725
+- `services/ingestion_batch_service.py` 1290
+- `agents/tools/web_search.py` 1219
+- `agents/kb_chat_agentic_graph.py` 1218
+- `agents/kb_chat_trace_display_contract.py` 1154
+- `services/chunking.py` 900

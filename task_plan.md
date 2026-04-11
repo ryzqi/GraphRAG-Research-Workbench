@@ -82,10 +82,10 @@
 - [x] 红绿验证后启动后端并提交
 
 ### M3：KB Chat / Retrieval 服务链重构
-- [ ] 审查并拆分 `services/kb_chat_service.py`
-- [ ] 审查并拆分 `services/query_rewrite_service.py`
-- [ ] 审查并拆分 `services/retrieval_service.py`
-- [ ] 红绿验证后启动后端并提交
+- [x] 审查并拆分 `services/kb_chat_service.py`
+- [x] 审查并拆分 `services/query_rewrite_service.py`
+- [x] 审查并拆分 `services/retrieval_service.py`
+- [x] 红绿验证后启动后端并提交
 
 ### M4：General Chat / Ingestion / Worker 重构
 - [ ] 审查并拆分 `services/general_chat_service.py`

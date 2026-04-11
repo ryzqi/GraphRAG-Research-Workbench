@@ -43,3 +43,14 @@
 - 当前状态：
   - `M2 已验证通过，准备提交`
   - 下一步进入 `M3`：KB Chat / Retrieval 服务链纯重构
+### Session 3
+
+- 已完成：
+  - 审查并拆分 `kb_chat_service.py`、`query_rewrite_service.py`、`retrieval_service.py`，将大文件职责下沉到 KB Chat / query rewrite / retrieval helper 模块
+  - 将 `kb_chat_service.py` 收敛到 `712` 行，将 `query_rewrite_service.py` 收敛到 `666` 行，将 `retrieval_service.py` 收敛到 `131` 行
+  - 清理 KB Chat helper 拆分后遗留的大量冗余 import，并删除 `kb_chat_service_observability.py` 中未绑定的重复 `_apply_gray_release_rollback_policy`
+  - 新增 `tests/test_query_rewrite_helper_modules.py`、`tests/test_retrieval_service_helper_modules.py`，并复跑 `tests/test_chat_endpoint_dependencies.py`
+  - 通过 M3 lint、类型检查、回归测试与后端启动验证
+- 当前状态：
+  - `M3 已验证通过，准备提交`
+  - 下一步进入 `M4`：General Chat / Ingestion / Worker 重构
