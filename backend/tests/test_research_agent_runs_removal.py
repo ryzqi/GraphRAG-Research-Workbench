@@ -66,6 +66,9 @@ def test_runtime_context_snapshot_ignores_agent_runs_file() -> None:
     snapshot = build_runtime_context_snapshot(
         result={
             "files": {
+                layout.task_graph_path: {
+                    "content": '{"tasks":[{"task_id":"claim-1","title":"验证 claim","task_kind":"claim","status":"pending"}]}'
+                },
                 legacy_agent_runs_path: {
                     "content": '[{"agent_label":"deep-research","status":"ready"}]'
                 },
@@ -80,7 +83,10 @@ def test_runtime_context_snapshot_ignores_agent_runs_file() -> None:
     assert snapshot is not None
     assert not hasattr(layout, "agent_runs_path")
     assert not hasattr(snapshot, "agent_runs_json")
+    assert snapshot.task_graph_json["tasks"][0]["task_id"] == "claim-1"
     assert legacy_agent_runs_path not in snapshot.files_snapshot
+    assert layout.live_board_path not in snapshot.files_snapshot
+    assert snapshot.live_board_json == {}
 
 
 def test_presentation_snapshot_live_section_omits_agent_runs() -> None:

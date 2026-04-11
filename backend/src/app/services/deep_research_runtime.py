@@ -6,6 +6,7 @@ import asyncio
 import json
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import asdict, dataclass
+from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from time import perf_counter
 from types import SimpleNamespace
@@ -17,14 +18,14 @@ from deepagents.backends.protocol import FileData
 from deepagents.backends.utils import create_file_data
 from langchain_core.messages import HumanMessage, ToolMessage
 from langchain.tools import BaseTool, ToolRuntime, tool as lc_tool
-from langgraph.checkpoint.memory import MemorySaver
-from langgraph.store.memory import InMemoryStore
 from pydantic import BaseModel, Field, ValidationError
 
 from app.agents.tool_calling.registry import (
     ToolMeta,
     build_research_tool_registry,
 )
+from app.core.checkpoint import CheckpointManager
+from app.core.memory_store import StoreManager
 from app.core.settings import Settings
 from app.integrations.chat_model_factory import create_chat_model
 from app.integrations.mcp_adapters import McpToolEntry
@@ -88,6 +89,7 @@ _DEFAULT_WORKSPACE_CONTEXT_DOCS: tuple[tuple[str, Path], ...] = (
 _DEFAULT_RECOVERY_STRUCTURED_METHOD = "function_calling"
 _OLLAMA_RECOVERY_STRUCTURED_METHOD = "json_mode"
 _MISSING_STRUCTURED_RESPONSE_CONTINUE_LIMIT = 2
+DEFAULT_RESEARCH_RUNTIME_MEMORY_PATH = "/memories/deep-research/runtime-memory.md"
 _MISSING_STRUCTURED_RESPONSE_CONTINUE_PROMPT = (
     "继续当前 deep research。不要停留在“研究已启动”或阶段性说明。"
     "请完成仍处于进行中或待完成的 todos/subtasks，继续调用必要工具或子代理，"
@@ -1356,6 +1358,48 @@ def _build_runtime_request_files(
     return request_files
 
 
+def _build_runtime_memory_files(
+    *,
+    session: ResearchSession,
+    plan_snapshot: ResearchPlanSnapshot,
+) -> dict[str, str]:
+    target_sources = ", ".join(item.value for item in plan_snapshot.target_sources) or "web"
+    subtasks = [
+        f"- {item.title}: {item.description}" for item in plan_snapshot.subtasks[:3]
+    ] or ["- 当前未提供 planner subtasks。"]
+    content = "\n".join(
+        [
+            "---",
+            "owner: deep_research_runtime",
+            "scope: project",
+            "confidence: high",
+            f"last_verified_at: {datetime.now(timezone.utc).isoformat()}",
+            "update_policy: keep_only_verified_low_churn_rules",
+            "---",
+            "",
+            "# Deep Research Runtime Memory",
+            "",
+            "## Stable Context Rules",
+            "- `task-graph.json`, `claim-bundles.json`, `section-briefs.json`, and `report-context.json` are the primary runtime handoff surface.",
+            "- `live-board.json` is a projection for runtime observability, not the single source of truth for planning state.",
+            "- Persist only verified, low-churn runtime rules here. Do not store raw search results or transient tool dumps.",
+            "",
+            "## Current Runtime Contract",
+            f"- session_id: `{session.id}`",
+            f"- thread_id: `{session.thread_id}`",
+            f"- trace_id: `{str(getattr(session, 'trace_id', '') or '')}`",
+            f"- target_sources: `{target_sources}`",
+            f"- research_brief: {plan_snapshot.research_brief}",
+            "",
+            "## Active Plan Summary",
+            f"- planner_summary: {plan_snapshot.summary}",
+            *subtasks,
+            "",
+        ]
+    )
+    return {DEFAULT_RESEARCH_RUNTIME_MEMORY_PATH: content}
+
+
 def _artifact_spill_slug_for_workspace_path(workspace_path: str) -> str:
     filename = PurePosixPath(workspace_path).name
     if filename.endswith(".md"):
@@ -1510,6 +1554,12 @@ class DeepResearchRuntimeRunner:
             _build_session_bootstrap_workspace_files(
                 session=session,
                 large_result_policy=self.runtime.config.large_result_policy,
+            )
+        )
+        workspace_files.update(
+            _build_runtime_memory_files(
+                session=session,
+                plan_snapshot=plan_snapshot,
             )
         )
         context_guide = build_runtime_context_guide(
@@ -1703,6 +1753,8 @@ async def build_deep_research_runtime_runner(
     http_client: Any | None = None,
     redis: RedisClient | None = None,
 ) -> DeepResearchRuntimeRunner:
+    await CheckpointManager.initialize()
+    await StoreManager.initialize()
     prompt_loader = get_prompt_loader()
     plan_progress_registry = _PlanProgressCallbackRegistry()
     runtime_activity_registry = _RuntimeActivityCallbackRegistry()
@@ -1723,6 +1775,7 @@ async def build_deep_research_runtime_runner(
             settings=settings
         ),
         system_prompt=prompt_loader.render_with_few_shot("research/runtime_system"),
+        memory_paths=(DEFAULT_RESEARCH_RUNTIME_MEMORY_PATH,),
     )
     runtime = await create_deep_research_runtime(
         settings=settings,
@@ -1733,8 +1786,8 @@ async def build_deep_research_runtime_runner(
         response_format=DeepResearchStructuredResponseDraft,
         http_client=http_client,
         redis=redis,
-        checkpointer=MemorySaver(),
-        store=InMemoryStore(),
+        checkpointer=CheckpointManager.get_checkpointer(),
+        store=StoreManager.get_store(),
         extra_tools=[
             _build_update_plan_progress_tool(plan_progress_registry),
             _build_record_runtime_activity_tool(runtime_activity_registry),

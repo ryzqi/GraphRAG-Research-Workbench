@@ -277,3 +277,40 @@ def test_execute_session_persists_metrics_before_final_event(monkeypatch) -> Non
     assert "live_board" not in report_json_artifact.content_json
     assert "claim_bundles" not in report_json_artifact.content_json
     assert "section_briefs" not in report_json_artifact.content_json
+
+
+def test_service_prefers_runtime_activity_projection_live_board() -> None:
+    session = ResearchSession(
+        id=uuid.uuid4(),
+        thread_id="thread-1",
+        question="如何验证 live board 投影？",
+        status=ResearchSessionStatus.RUNNING,
+    )
+    session.artifacts = [
+        ResearchArtifact(
+            artifact_key="runtime_live_board_json",
+            content_json={
+                "current_task_label": "service-owned",
+                "recent_activity": [{"task_id": "claim-1", "status": "completed"}],
+            },
+        )
+    ]
+    session.events = []
+    session.task_outbox_entries = []
+
+    service = object.__new__(ResearchService)
+
+    merged = service._merge_runtime_projection_snapshot(
+        session=session,
+        runtime_context_snapshot=ResearchRuntimeContextSnapshot(
+            task_graph_json={"tasks": [{"task_id": "claim-1"}]},
+            live_board_json={
+                "current_task_label": "agent-authored",
+                "recent_activity": [{"task_id": "claim-1", "status": "running"}],
+            },
+        ),
+    )
+
+    assert merged is not None
+    assert merged.live_board_json["current_task_label"] == "service-owned"
+    assert merged.live_board_json["recent_activity"][0]["status"] == "completed"

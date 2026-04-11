@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import inspect
 import uuid
+from dataclasses import replace
 from datetime import datetime, timezone
 from typing import Protocol
 
@@ -367,6 +368,24 @@ class ResearchService:
             session=session,
             artifact_key="runtime_files_snapshot_json",
             content_json=runtime_context_snapshot.files_snapshot,
+        )
+
+    def _merge_runtime_projection_snapshot(
+        self,
+        *,
+        session: ResearchSession,
+        runtime_context_snapshot: ResearchRuntimeContextSnapshot | None,
+    ) -> ResearchRuntimeContextSnapshot | None:
+        if runtime_context_snapshot is None:
+            return None
+        live_board_projection = self._read_json_artifact(
+            session, RUNTIME_LIVE_BOARD_ARTIFACT_KEY
+        )
+        if not isinstance(live_board_projection, dict):
+            return runtime_context_snapshot
+        return replace(
+            runtime_context_snapshot,
+            live_board_json=dict(live_board_projection),
         )
 
     @staticmethod
@@ -908,9 +927,13 @@ class ResearchService:
             artifact_key="coverage_gaps",
             content_json=list(source_bundle.coverage_gaps),
         )
-        await self._persist_runtime_context_artifacts(
+        effective_runtime_context_snapshot = self._merge_runtime_projection_snapshot(
             session=session,
             runtime_context_snapshot=runtime_result.runtime_context_snapshot,
+        )
+        await self._persist_runtime_context_artifacts(
+            session=session,
+            runtime_context_snapshot=effective_runtime_context_snapshot,
         )
         await self._commit_checkpoint()
 
@@ -947,7 +970,7 @@ class ResearchService:
             question=session.question,
             target_sources=plan_snapshot.target_sources,
             source_bundle=source_bundle,
-            runtime_context_snapshot=runtime_result.runtime_context_snapshot,
+            runtime_context_snapshot=effective_runtime_context_snapshot,
         )
         await self._artifact_store.upsert(
             session=session,

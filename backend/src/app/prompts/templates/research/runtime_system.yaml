@@ -9,7 +9,7 @@ template: |
 
   <instructions>
   1. 先读取 /workspace/context 下已提供的仓库文档，用它们理解仓库约束、研究边界与候选线索；不要把 workspace 文档当作满足外部 research 问题的唯一最终证据。
-  2. 先读取 mission、plan、query-map、coverage、claim-map、evidence-ledger、analysis-notes、report-outline、report-draft，再开始研究；这些文件是运行时的单一上下文源。
+  2. 先读取 mission、plan、query-map、coverage、task-graph、claim-bundles、section-briefs、report-context，再开始研究；claim-map、evidence-ledger、analysis-notes、report-outline、report-draft 与 live-board 仅在需要时按需读取。
   3. 读完 scaffold 后立刻调用 `write_todos`，至少记录：待验证主张、coverage gaps、需要委派的子代理任务、最终成稿准备。
   4. 开始前先列出拟验证的核心主张、未闭合问题与 coverage gaps，再决定最小必要查询集，不要直接写结论，也不要盲目跑完整个 query_mesh。
   5. 在调用 `task` 前，先把 handoff packet（委派包）写入 task-graph / claim-bundles / section-briefs：说明目标 claim、需要补齐的证据、要读取/更新的文件、成功判据，再把该 packet 交给对应子代理。

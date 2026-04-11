@@ -157,6 +157,56 @@ def test_runtime_prompts_and_subagents_require_role_specific_handoffs() -> None:
     assert "handoff" in runtime_prompt.lower()
 
 
+def test_runtime_prompt_and_skill_treat_live_board_as_projection() -> None:
+    runtime_skills = build_research_runtime_skill_files()
+    runtime_prompt = get_prompt_loader().render(
+        "research/runtime_user",
+        question="如何优化 deep research 报告？",
+        research_brief="围绕报告质量优化当前实现。",
+        target_sources="web, paper",
+        route_hint="web, paper, claim-verifier, section-writer, citation",
+        workspace_paths_block="- /workspace/context/runtime_context_guide.md",
+    )
+
+    runtime_skill = runtime_skills["/skills/research-runtime/SKILL.md"]
+
+    assert "live-board.json` is a projection" in runtime_skill
+    assert "live-board.json`, and `report-context.json` as the runtime handoff surface" not in runtime_skill
+    assert "委派前后都要更新 `live-board.json`" not in runtime_prompt
+
+
+def test_runtime_prompts_limit_first_pass_context_to_primary_files() -> None:
+    runtime_user_prompt = get_prompt_loader().render(
+        "research/runtime_user",
+        question="如何优化 deep research 报告？",
+        research_brief="围绕报告质量优化当前实现。",
+        target_sources="web, paper",
+        route_hint="web, paper, claim-verifier, section-writer, citation",
+        workspace_paths_block="- /workspace/context/runtime_context_guide.md",
+    )
+    runtime_system_prompt = get_prompt_loader().render("research/runtime_system")
+
+    assert (
+        "先读取 mission、plan、query-map、coverage、task-graph、claim-bundles、section-briefs、report-context"
+        in runtime_user_prompt
+    )
+    assert "按需读取" in runtime_user_prompt
+    assert "`claim-map`" in runtime_user_prompt
+    assert "`evidence-ledger`" in runtime_user_prompt
+    assert "`analysis-notes`" in runtime_user_prompt
+    assert "`report-outline`" in runtime_user_prompt
+    assert "`report-draft`" in runtime_user_prompt
+    assert "`live-board`" in runtime_user_prompt
+    assert "先读取 mission、plan、query-map、coverage、task-graph、claim-bundles、section-briefs、report-context" in runtime_system_prompt
+    assert "按需读取" in runtime_system_prompt
+    assert "claim-map" in runtime_system_prompt
+    assert "evidence-ledger" in runtime_system_prompt
+    assert "analysis-notes" in runtime_system_prompt
+    assert "report-outline" in runtime_system_prompt
+    assert "report-draft" in runtime_system_prompt
+    assert "live-board" in runtime_system_prompt
+
+
 def test_runtime_snapshot_and_finalizer_surface_richer_runtime_payload() -> None:
     layout = build_research_workspace_layout("session-1")
     snapshot = build_runtime_context_snapshot(
@@ -269,6 +319,7 @@ def test_runtime_snapshot_and_finalizer_surface_richer_runtime_payload() -> None
 
     assert snapshot is not None
     assert snapshot.todos_json[0]["content"] == "核对官网与论文口径"
+    assert snapshot.live_board_json == {}
 
     compiled = compile_report_from_runtime_context(
         question="如何让 deep research 报告更丰富？",
@@ -279,7 +330,7 @@ def test_runtime_snapshot_and_finalizer_surface_richer_runtime_payload() -> None
     assert compiled is not None
     assert "关键要点" in compiled.report_md
     assert "待办执行" in compiled.report_md
-    assert "已完成官方约束核对" in compiled.report_md
+    assert "已完成官方约束核对" not in compiled.report_md
 
     finalizer = ResearchFinalizer()
     result = finalizer.finalize(

@@ -7,13 +7,13 @@ template: |
   你需要执行当前 deep research runtime，并返回结构化结果。
 
   <research_process>
-  - 先读取 mission、plan、query-map、coverage、claim-map、evidence-ledger、analysis-notes、report-outline、report-draft。
-  - 再读取 `task-graph.json`、`claim-bundles.json`、`section-briefs.json`、`live-board.json`、`report-context.json`，先把主代理的执行计划写入文件，再开始搜索。
+  - 先读取 mission、plan、query-map、coverage、task-graph、claim-bundles、section-briefs、report-context。
+  - `claim-map`、`evidence-ledger`、`analysis-notes`、`report-outline`、`report-draft` 与 `live-board` 只在需要时按需读取，不要在 first pass 把低优先文件全部读入。
   - 进入研究后立刻调用 `write_todos`，待办必须覆盖 claim、coverage gap、子代理委派与最终成稿准备。
   - 主代理先细化 `task-graph.json`：把每个 plan.subtask 拆成 claim / source / section 三类子任务；如果 web 与 paper 取证互不阻塞，应作为同一 `parallel_group` 的并行子任务。
-  - 对需要隔离执行的任务，优先使用 `task` 委派给最合适的子代理；委派前必须写好 handoff packet（委派包）：目标 claim、证据要求、相关文件路径、输出目标、成功判据，并把这份 handoff packet 明确交给对应子代理；委派前后都要更新 `live-board.json`。
+  - 对需要隔离执行的任务，优先使用 `task` 委派给最合适的子代理；委派前必须写好 handoff packet（委派包）：目标 claim、证据要求、相关文件路径、输出目标、成功判据，并把这份 handoff packet 明确交给对应子代理。
   - 严格按 plan.subtasks 的顺序推进；开始某个子任务前调用 `update_plan_progress(step_index=<1-based 子任务序号>, status="current")`，完成后调用 `update_plan_progress(..., status="complete")`；若该子任务失败或被中止，调用同一工具并使用 `failed` 或 `canceled`。
-  - 每当当前 agent、当前任务、并行任务集发生变化时，调用 `record_runtime_activity(task_id=..., title=..., task_kind=..., status=..., agent_name=..., subagent_name=..., parallel_group=..., message=...)`。
+  - `live-board.json` 是 runtime activity 的投影视图，不是计划事实源；每当当前 agent、当前任务、并行任务集发生变化时，调用 `record_runtime_activity(task_id=..., title=..., task_kind=..., status=..., agent_name=..., subagent_name=..., parallel_group=..., message=...)`。
   - 先补齐 claim-map 与 evidence-ledger，再决定是否需要外部查询。
   - 将 route_hint 与 query_mesh 视为候选检索计划；只选择能关闭当前主张、交叉验证任务或 coverage gap 的最小必要查询集。
   - 外部查询必须服务于某个未闭合主张、交叉验证任务或 coverage gap。

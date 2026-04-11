@@ -59,24 +59,18 @@ def _build_priority_context_paths(
     workspace_files: Mapping[str, str],
     layout: ResearchWorkspaceLayout,
 ) -> tuple[str, ...]:
-    context_paths = sorted(
-        path
-        for path in workspace_files
-        if path.startswith("/workspace/context/")
-        and path not in {RUNTIME_CONTEXT_GUIDE_PATH, *_RUNTIME_REQUEST_CONTEXT_PATHS}
-    )
-    session_scaffold_paths = [
-        path
-        for path in build_workspace_bootstrap_artifact_path_map(layout=layout).values()
-        if path in workspace_files
-    ]
     return _dedupe_paths(
         (
             RUNTIME_CONTEXT_GUIDE_PATH,
             *_RUNTIME_REQUEST_CONTEXT_PATHS,
+            layout.mission_path,
+            layout.plan_path,
+            layout.query_map_path,
+            layout.coverage_path,
             layout.report_context_json_path,
-            *context_paths,
-            *session_scaffold_paths,
+            layout.task_graph_path,
+            layout.claim_bundles_path,
+            layout.section_briefs_path,
         )
     )
 
@@ -91,7 +85,24 @@ def build_runtime_context_guide(
         layout=layout,
     )
     skill_paths = sorted(path for path in workspace_files if path.startswith("/skills/"))
+    memory_paths = sorted(
+        path for path in workspace_files if path.startswith("/memories/")
+    )
     scratch_paths = sorted(path for path in workspace_files if path.startswith("/scratch/"))
+    projection_paths = [
+        path for path in (layout.live_board_path,) if path in workspace_files
+    ]
+    on_demand_paths = [
+        path
+        for path in (
+            layout.claim_map_md_path,
+            layout.evidence_ledger_md_path,
+            layout.analysis_notes_path,
+            layout.report_outline_path,
+            layout.report_draft_path,
+        )
+        if path in workspace_files
+    ]
     lines = [
         "# Runtime Context Guide",
         "",
@@ -99,20 +110,46 @@ def build_runtime_context_guide(
         *[f"- {path}" for path in priority_paths],
         "",
         "## Layering Rules",
-        "- `/workspace/context/*` and `/workspace/research/*` are the primary context layer.",
-        f"- `{layout.report_context_json_path}` is also a primary context file because it carries the report contract and current synthesis state.",
+        "- First-pass context should stay limited to the priority read order above.",
+        "- `task-graph.json`, `claim-bundles.json`, `section-briefs.json`, and `report-context.json` are the runtime handoff surface.",
+        f"- `{layout.live_board_path}` is a projection for runtime observability, not the planning source of truth.",
         "- `/skills/*` are procedural instructions. Read them only when the task requires their behavior.",
+        "- `/memories/*` files hold low-churn runtime rules and should stay concise.",
         "- `/scratch/*` files are spillover or raw payloads. Treat them as on-demand details, not first-pass context.",
         "",
         "## Runtime Output Targets",
         f"- Persist `report-context.json` to `{layout.report_context_json_path}`.",
     ]
+    if projection_paths:
+        lines.extend(
+            [
+                "",
+                "## Projection Files",
+                *[f"- {path}" for path in projection_paths],
+            ]
+        )
+    if on_demand_paths:
+        lines.extend(
+            [
+                "",
+                "## On-Demand Analysis Files",
+                *[f"- {path}" for path in on_demand_paths],
+            ]
+        )
     if skill_paths:
         lines.extend(
             [
                 "",
                 "## Procedural Skills",
                 *[f"- {path}" for path in skill_paths],
+            ]
+        )
+    if memory_paths:
+        lines.extend(
+            [
+                "",
+                "## Persistent Memory",
+                *[f"- {path}" for path in memory_paths],
             ]
         )
     if scratch_paths:
@@ -225,7 +262,6 @@ def build_runtime_context_snapshot(
         layout.task_graph_path,
         layout.claim_bundles_path,
         layout.section_briefs_path,
-        layout.live_board_path,
     }
     extracted: dict[str, str] = {}
     for path, payload in files.items():

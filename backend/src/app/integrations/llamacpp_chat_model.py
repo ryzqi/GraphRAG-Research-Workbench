@@ -7,7 +7,6 @@ from typing import Any, cast
 
 import openai
 from langchain_core.messages import AIMessage, AIMessageChunk
-from langchain_core.messages.base import BaseMessageChunk
 from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResult
 from langchain_openai.chat_models.base import (
     ChatOpenAI,
@@ -46,7 +45,7 @@ class LlamaCppChatOpenAI(ChatOpenAI):
     def _convert_chunk_to_generation_chunk(
         self,
         chunk: dict,
-        default_chunk_class: type[BaseMessageChunk],
+        default_chunk_class: type,
         base_generation_info: dict | None,
     ) -> ChatGenerationChunk | None:
         if chunk.get("type") == "content.delta":
