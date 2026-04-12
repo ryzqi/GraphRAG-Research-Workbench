@@ -132,17 +132,6 @@ def _read_artifact_text(
     return normalized or None
 
 
-def _read_artifact_array(
-    artifact_by_key: dict[str, ResearchArtifactRead],
-    artifact_key: str,
-) -> list[dict[str, Any]]:
-    value = artifact_by_key.get(artifact_key)
-    payload = value.content_json if value is not None else None
-    if not isinstance(payload, list):
-        return []
-    return [item for item in payload if isinstance(item, dict)]
-
-
 def _read_int(value: object) -> int | None:
     if isinstance(value, bool):
         return int(value)

@@ -666,13 +666,11 @@ class ResearchPlanner:
             return ResearchPlannerResult(
                 plan_snapshot=None,
                 clarification_request=scoped,
-                auto_approve=False,
                 next_status=ResearchSessionStatus.CLARIFYING,
             )
 
         return ResearchPlannerResult(
             plan_snapshot=scoped,
             clarification_request=None,
-            auto_approve=False,
             next_status=ResearchSessionStatus.PLAN_READY,
         )

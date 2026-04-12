@@ -1,0 +1,77 @@
+# 进度日志
+
+## 2026-04-12
+
+### Session 1
+
+- 已读取本轮必须使用的流程型 skill：
+  - `using-superpowers`
+  - `development-orchestration`
+  - `planning-with-files`
+  - `brainstorming`
+  - `writing-plans`
+  - `subagent-driven-development`
+  - `test-driven-development`
+  - `requesting-code-review`
+  - `finishing-a-development-branch`
+- 已做轻量记忆检索，提取与“冗余审查转清理”“必须 direct verification”相关偏好。
+- 已确认范围唯一事实源应为 `git ls-files backend`，不能包含 `backend/.venv` 等第三方目录。
+- 已统计代码文件规模：378 个后端一方代码文件。
+- 已识别高风险动态注册点与大文件热点。
+- 已切换到工作分支：`backend-full-cleanup-20260412`
+- 已确认清单条目数与范围一致：`378`
+- 已启动 4 个并行子代理做静态审查：
+  - `019d824b-867b-77a2-8273-4bdf207103d4` 入口与基础层
+  - `019d824b-91fc-7033-adbf-9abe8ab4207c` agents/tools/search/prompts
+  - `019d824b-9941-79a1-a0a6-75b259364b69` 非 research services
+  - `019d824b-a223-7610-ac7c-ca3a1eb76cd6` research 运行时与报告链路
+- 已发现 `docs/` 被 `.gitignore` 忽略，后续提交文档需 `git add -f`
+- 已确认首个低风险候选：`backend/src/app/services/kb_chat_live_artifacts.py`
+- 已删除 `backend/src/app/services/kb_chat_live_artifacts.py`，待运行针对性验证并纳入下一个里程碑提交
+- 已删除/清理第二批低风险候选：
+  - `backend/src/app/services/research_service.py` 的零引用私有 helper
+  - `backend/src/app/services/research_presentation_snapshot.py` 的零引用 helper
+  - `backend/src/app/services/research_workspace_files.py` 的零引用常量
+  - `backend/src/app/core/tracing.py`
+  - `backend/src/app/core/security.py`
+  - `backend/src/app/agents/base.py`
+  - `backend/src/app/agents/tool_calling/builder.py`
+  - `backend/src/app/agents/answer_subgraph.py`
+  - `backend/src/app/agents/tool_calling/__init__.py` / `backend/src/app/agents/kb_chat_agentic_graph.py` 的连带导入清理
+  - `backend/src/app/core/settings.py` / `backend/pyproject.toml` / `backend/uv.lock` 的连带配置与依赖清理
+- 已完成直接验证：
+  - `backend/.venv/Scripts/pytest.exe ... -q`：`32 passed, 1 warning`
+  - `backend/.venv/Scripts/pyright.exe -p pyproject.toml`：`0 errors, 0 warnings`
+  - `rg` 对已删模块名、旧 settings 字段、旧桥接导入无残余命中
+- 已完成 residual research 覆盖，并继续清理：
+  - `ResearchPlannerResult.auto_approve`
+  - `DeepResearchRuntime.stream_kwargs()`
+  - `ResearchBackendPolicy.ephemeral_roots`
+  - `ResearchBackendPolicy.persistent_roots`
+  - `ResearchRuntimeConfig.provider_ids`
+  - `ResearchProviderId` / `DEFAULT_RESEARCH_PROVIDER_IDS`
+- 已完成第二轮直接验证：
+  - `backend/.venv/Scripts/pytest.exe tests/test_research_clarification_policy.py tests/test_research_runtime_factory.py tests/test_research_runtime_context_management.py tests/test_research_runtime_report_enrichment.py tests/test_research_service_contracts_module.py tests/test_research_service_finalization_contract.py tests/test_research_service_session_ops_module.py tests/test_research_runtime_helper_modules.py tests/test_research_agent_runs_removal.py tests/test_research_artifact_normalization.py -q`：`29 passed, 1 warning`
+  - `backend/.venv/Scripts/pyright.exe -p pyproject.toml`：`0 errors, 0 warnings`
+- 代码审查结论：
+  - 无 `P0/P1/P2` 阻塞问题
+  - 适合做安全里程碑提交
+- 收尾复核发现清单口径漏记 4 个当前/初始受控文件：
+  - `backend/alembic/script.py.mako`
+  - `backend/celerybeat-schedule`
+  - `backend/src/app/.gitignore`
+  - `backend/uv.lock`
+- 已完成漏记文件分析：
+  - `backend/alembic/script.py.mako`：Alembic 修订模板，保留
+  - `backend/src/app/.gitignore`：应用目录局部忽略规则，保留
+  - `backend/uv.lock`：后端依赖锁文件，保留
+  - `backend/celerybeat-schedule`：Celery Beat 运行时 SQLite 调度产物，已删除并补 ignore
+- 已完成收尾 fresh verification：
+  - 清单复核：`only_in_git=`，说明不存在“git 跟踪但清单漏记”的 backend 文件
+  - `git check-ignore -v --no-index backend/celerybeat-schedule`：命中根 `.gitignore:49`
+  - `Test-Path backend/celerybeat-schedule`：`False`
+  - `backend/.venv/Scripts/pytest.exe tests -q`：`56 passed, 1 warning`
+  - `backend/.venv/Scripts/pyright.exe -p pyproject.toml`：`0 errors, 0 warnings, 0 informations`
+- 下一步：
+  - 提交“清单补齐 + 运行时产物移出版本库”里程碑
+  - 整理最终状态与保留项

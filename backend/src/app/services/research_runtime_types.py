@@ -3,21 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from enum import Enum
 from typing import TYPE_CHECKING, Any, Literal, Mapping
 
 from langchain.tools import BaseTool
 
 if TYPE_CHECKING:
     from app.agents.tool_calling.registry import ToolMeta
-
-
-class ResearchProviderId(str, Enum):
-    TAVILY = "tavily"
-    JINA_READER = "jina_reader"
-    SEARXNG = "searxng"
-    ARXIV = "arxiv"
-
 
 @dataclass(slots=True, frozen=True)
 class ResearchStreamPolicy:
@@ -43,14 +34,6 @@ class ResearchBackendPolicy:
     memories_root: str = "/memories/"
     skills_root: str = "/skills/"
 
-    @property
-    def ephemeral_roots(self) -> tuple[str, str, str]:
-        return (self.workspace_root, self.scratch_root, self.plans_root)
-
-    @property
-    def persistent_roots(self) -> tuple[str, str]:
-        return (self.memories_root, self.skills_root)
-
 
 @dataclass(slots=True, frozen=True)
 class ResearchLargeResultPolicy:
@@ -59,13 +42,6 @@ class ResearchLargeResultPolicy:
     spill_path_prefix: str = "/scratch/research-spill/"
     max_inline_chars: int = 6_000
 
-
-DEFAULT_RESEARCH_PROVIDER_IDS = (
-    ResearchProviderId.TAVILY,
-    ResearchProviderId.JINA_READER,
-    ResearchProviderId.SEARXNG,
-    ResearchProviderId.ARXIV,
-)
 DEFAULT_RESEARCH_STREAM_POLICY = ResearchStreamPolicy()
 DEFAULT_RESEARCH_BACKEND_POLICY = ResearchBackendPolicy()
 DEFAULT_RESEARCH_LARGE_RESULT_POLICY = ResearchLargeResultPolicy()
@@ -126,7 +102,6 @@ class ResearchRuntimeConfig:
     finalizer_structured_method: str = "function_calling"
     name: str = "deep-research"
     include_mcp: bool = False
-    provider_ids: tuple[ResearchProviderId, ...] = DEFAULT_RESEARCH_PROVIDER_IDS
     memory_paths: tuple[str, ...] = ()
     skill_paths: tuple[str, ...] = ("/skills/",)
     interrupt_on: Mapping[str, bool | dict[str, Any]] = field(default_factory=dict)
