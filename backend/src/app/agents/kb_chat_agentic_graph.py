@@ -13,11 +13,11 @@ from langgraph.graph import END, StateGraph
 from langgraph.store.base import BaseStore
 from langgraph.types import RetryPolicy
 
-from app.agents.answer_subgraph import build_answer_subgraph
 from app.agents.kb_chat_agentic.reflection import (
     route_after_answer_review,
     transform_query_for_retry,
 )
+from app.agents.kb_chat_agentic.answer_subgraph import build_answer_subgraph
 from app.agents.kb_chat_agentic.tool_loop import force_exit_node
 from app.agents.kb_chat_agentic_graph_runtime import (
     KbChatGraphContext,

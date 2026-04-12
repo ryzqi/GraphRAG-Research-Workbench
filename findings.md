@@ -53,6 +53,89 @@
 - 对 `prompts/templates`，默认先做“加载路径核查”，不是先删 YAML
 - 对 `tests`，既是行为基线，也是“遗留测试是否仍对应现存行为”的审查对象
 
+## 已确认候选
+
+- `backend/src/app/services/kb_chat_live_artifacts.py`
+  - 状态：已确认可删
+  - 证据：
+    - 仓内 `rg -n "kb_chat_live_artifacts|parse_sse_text|render_case_markdown|ParsedSseEvent|_parse_sse_block" .\backend\src .\backend\tests` 仅命中该文件自身
+    - 代码库检索未发现 Python 导入、测试引用、包导出或运行时反射路径
+  - 处理：
+    - 作为首个低风险清理点直接删除
+
+- `backend/src/app/services/research_service.py`
+  - 状态：已清理零引用私有 helper
+  - 处理：
+    - 删除 `_json_mapping_payload`
+    - 删除 `_runtime_live_board_updated_at`
+    - 删除 `_read_json_artifact`
+
+- `backend/src/app/services/research_presentation_snapshot.py`
+  - 状态：已清理零引用 helper
+  - 处理：
+    - 删除 `_read_artifact_array`
+
+- `backend/src/app/services/research_workspace_files.py`
+  - 状态：已清理零引用常量
+  - 处理：
+    - 删除 `RESEARCH_BOOTSTRAP_ARTIFACT_KEYS`
+
+- `backend/src/app/core/tracing.py` / `backend/src/app/core/security.py`
+  - 状态：已确认并删除
+  - 证据：
+    - 仓内全文检索仅命中模块自身、`settings.py` 与 `pyproject.toml`
+    - 无 FastAPI、Celery、provider、router、test、字符串装配消费者
+  - 处理：
+    - 删除两个孤儿模块
+    - 同步删除 `Settings` 中对应的 `JWT_*` 与 `OTEL_*` 字段
+    - 同步删除 `backend/pyproject.toml` 中 `pyjwt`、`opentelemetry-api`
+    - 通过 `uv lock` 同步 `backend/uv.lock`
+
+- `backend/src/app/agents/base.py` / `backend/src/app/agents/tool_calling/builder.py`
+  - 状态：已确认并删除
+  - 证据：
+    - 仓内静态检索无消费者
+  - 处理：
+    - 删除未消费基类模块
+    - 删除未消费 `ToolCallingGraphBuilder`
+    - 清理 `tool_calling/__init__.py` 的无用导出
+
+- `backend/src/app/agents/answer_subgraph.py`
+  - 状态：已删除单层桥接
+  - 处理：
+    - `kb_chat_agentic_graph.py` 改为直接导入 `kb_chat_agentic.answer_subgraph`
+
+- `backend/src/app/services/research_planner_types.py`
+  - 状态：已清理未消费字段
+  - 处理：
+    - 删除 `ResearchPlannerResult.auto_approve`
+    - 同步删除 planner / test 构造参数
+
+- `backend/src/app/services/research_runtime_factory.py`
+  - 状态：已清理未调用方法
+  - 处理：
+    - 删除 `DeepResearchRuntime.stream_kwargs()`
+
+- `backend/src/app/services/research_runtime_types.py`
+  - 状态：已清理未消费类型槽位
+  - 处理：
+    - 删除 `ResearchProviderId`
+    - 删除 `DEFAULT_RESEARCH_PROVIDER_IDS`
+    - 删除 `ResearchRuntimeConfig.provider_ids`
+    - 删除 `ResearchBackendPolicy.ephemeral_roots`
+    - 删除 `ResearchBackendPolicy.persistent_roots`
+
+## 明确保留项
+
+- `research_service_execution.py` 中 `report_json` 的 verification 镜像 artifacts
+  - 原因：仍涉及 finalizer/session ops 契约面，静态证据不足以证明删除安全
+- `search/web/retrievers/tavily.py` 与 `search/web/retrievers/searxng.py`
+  - 原因：虽然实现很薄，但仍被测试和包导出锁定，当前收益过低
+- `KbChatAgenticGraph.__init__` 的兼容参数
+  - 原因：属于构造签名面，删除收益小，潜在外部调用风险高
+- 若干 research 扩展槽位与弱测试
+  - 原因：当前更适合后续有更强行为证据时再单独清理
+
 ## 来自记忆的协作偏好
 
 - 用户从“审查冗余”进入“开始清理”时，可直接执行，不需要额外规划回合。

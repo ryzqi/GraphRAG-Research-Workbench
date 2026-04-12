@@ -100,13 +100,11 @@ class _PolicyAwarePlanner:
                         )
                     ],
                 ),
-                auto_approve=False,
                 next_status=ResearchSessionStatus.CLARIFYING,
             )
         return ResearchPlannerResult(
             plan_snapshot=_build_plan_snapshot(),
             clarification_request=None,
-            auto_approve=False,
             next_status=ResearchSessionStatus.PLAN_READY,
         )
 

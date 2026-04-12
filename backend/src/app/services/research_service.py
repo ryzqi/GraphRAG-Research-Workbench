@@ -80,12 +80,6 @@ PLAN_PROGRESS_EVENT_TYPE = "research.plan_progress.updated"
 RUNTIME_TASK_GRAPH_ARTIFACT_KEY = "runtime_task_graph_json"
 RUNTIME_LIVE_BOARD_ARTIFACT_KEY = "runtime_live_board_json"
 class ResearchService:
-    @staticmethod
-    def _json_mapping_payload(value: object) -> dict[str, object]:
-        if not isinstance(value, dict):
-            return {}
-        return {str(key): item for key, item in value.items()}
-
     def __init__(
         self,
         *,
@@ -320,17 +314,6 @@ class ResearchService:
             else None,
             runtime_context_snapshot=runtime_context_snapshot,
         )
-
-    @staticmethod
-    def _runtime_live_board_updated_at() -> str:
-        return runtime_live_board_updated_at()
-
-    @staticmethod
-    def _read_json_artifact(
-        session: ResearchSession,
-        artifact_key: str,
-    ) -> dict[str, object] | list[object] | None:
-        return read_json_artifact(session, artifact_key)
 
     async def _persist_runtime_execution_artifacts(
         self,

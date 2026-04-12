@@ -20,7 +20,7 @@
 ## 阶段
 
 ### Phase 1: 基线与清单
-- 状态: in_progress
+- 状态: completed
 - 动作:
   - 创建 `task_plan.md`、`findings.md`、`progress.md`
   - 创建设计文档、实施计划、逐文件清单
@@ -31,7 +31,7 @@
   - 已确定后续里程碑拆分
 
 ### Phase 2: 结构风险审查
-- 状态: pending
+- 状态: completed
 - 动作:
   - 审查路由注册、Celery `include`、启动生命周期、提示词加载、模型/工具注册、字符串导入点
   - 标记“不可轻删”和“候选清理”区域
@@ -41,7 +41,7 @@
   - 无依据的“死代码”推断被排除
 
 ### Phase 3: 入口与基础层清理
-- 状态: pending
+- 状态: completed
 - 范围:
   - `bootstrap`、`core`、`db`、`api`、`integrations`、`worker`
 - 完成判据:
@@ -50,7 +50,7 @@
   - 创建里程碑提交
 
 ### Phase 4: agent/tool/search/prompt 层清理
-- 状态: pending
+- 状态: completed
 - 范围:
   - `agents`、`tools`、`search`、`prompts`
 - 完成判据:
@@ -59,7 +59,7 @@
   - 创建里程碑提交
 
 ### Phase 5: service 层非 research 清理
-- 状态: pending
+- 状态: completed
 - 范围:
   - general chat / ingestion / retrieval / export / parsing / semantic cache 等 service
 - 完成判据:
@@ -68,7 +68,7 @@
   - 创建里程碑提交
 
 ### Phase 6: research 运行时与报告链路清理
-- 状态: pending
+- 状态: completed
 - 范围:
   - `deep_research_runtime.py`、`research_service*.py`、`research_runtime_*.py`、`research_*` 相关实现
 - 完成判据:
@@ -77,7 +77,7 @@
   - 创建里程碑提交
 
 ### Phase 7: 全量回归、复审、收尾
-- 状态: pending
+- 状态: in_progress
 - 动作:
   - 汇总所有提交
   - 运行针对性测试与必要的类型检查
@@ -90,11 +90,8 @@
 ## 里程碑提交策略
 
 1. 规划与清单基线
-2. 入口与基础层清理
-3. agent/tool/search/prompt 层清理
-4. service 层非 research 清理
-5. research 运行时清理
-6. 最终验证与收尾
+2. 全量安全代码清理
+3. 最终验证与收尾
 
 ## 错误与修正记录
 
@@ -102,3 +99,15 @@
 | --- | --- | --- |
 | 初始文件枚举污染 | `Get-ChildItem -Recurse` 把 `backend/.venv` 和缓存目录纳入范围，并触发 `.pytest_cache` 权限报错 | 改用 `git ls-files backend` 作为唯一事实源，彻底排除第三方与生成物 |
 | `docs/` 被忽略 | 设计文档、实施计划、清单位于 `docs/` 下，但仓库 `.gitignore` 忽略整个 `docs/` | 基线和后续里程碑提交时对这些文档使用 `git add -f`，确保审计轨迹可提交 |
+| `uv` 缓存权限 | 在沙箱内执行 `uv run pytest` / `uv lock` 命中 `D:\uv\uv_cache` 权限拒绝 | 测试改走 `backend/.venv/Scripts/*` 本地可执行文件；`uv lock` 在提权后重跑 |
+
+## 当前结论
+
+- 已完成 378 个 backend 一方代码文件的逐文件分析，清单已全部勾选。
+- 已清理所有当前能用“静态引用 + 动态边界 + 直接验证”证明安全的候选项。
+- 对以下候选明确选择“暂不清理”：
+  - `report_json` 的 verification 镜像 artifacts
+  - `search/web/retrievers` 的零逻辑薄包装类
+  - `KbChatAgenticGraph.__init__` 的兼容参数
+  - 若干 research 扩展槽位 / 弱测试 / 导出面字段
+- 原因：这些项要么仍处在当前契约面，要么删除收益小于误删风险，不符合“不得清理有用代码”的边界。

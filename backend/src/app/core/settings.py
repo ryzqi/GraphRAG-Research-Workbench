@@ -160,10 +160,6 @@ class Settings(BaseSettings):
         default_factory=lambda: _DEV_LOCAL_CORS_ORIGINS.copy(),
         alias="APP_CORS_ALLOW_ORIGINS",
     )
-    jwt_secret_key: str = Field("REPLACE_ME", alias="JWT_SECRET_KEY")
-    jwt_algorithm: str = Field("HS256", alias="JWT_ALGORITHM")
-    jwt_expire_minutes: int = Field(60, ge=1, alias="JWT_EXPIRE_MINUTES")
-
     database_url: str = Field(
         _DEFAULT_DATABASE_URL,
         alias="DATABASE_URL",
@@ -574,11 +570,6 @@ class Settings(BaseSettings):
     pdf_fallback_min_text_chars: int = Field(
         20, ge=0, alias="PDF_FALLBACK_MIN_TEXT_CHARS"
     )
-
-    # OpenTelemetry 配置
-    otel_enabled: bool = Field(False, alias="OTEL_ENABLED")
-    otel_endpoint: str | None = Field(None, alias="OTEL_EXPORTER_OTLP_ENDPOINT")
-    otel_service_name: str = Field("multi-kb-agent", alias="OTEL_SERVICE_NAME")
 
     @field_validator(
         "database_url",

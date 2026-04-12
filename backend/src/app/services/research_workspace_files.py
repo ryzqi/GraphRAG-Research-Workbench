@@ -10,19 +10,6 @@ from uuid import UUID
 from app.prompts import get_prompt_loader
 from app.schemas.research import ResearchPlanSnapshot, ResearchPlanSubtask
 
-RESEARCH_BOOTSTRAP_ARTIFACT_KEYS = (
-    "mission_md",
-    "plan_md",
-    "query_map_md",
-    "coverage_md",
-    "report_draft_md",
-    "claim_map_md",
-    "evidence_ledger_md",
-    "analysis_notes_md",
-    "report_outline_md",
-)
-
-
 @dataclass(slots=True, frozen=True)
 class ResearchWorkspaceLayout:
     session_slug: str

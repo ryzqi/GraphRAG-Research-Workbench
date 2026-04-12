@@ -16,7 +16,6 @@ PLAN_SNAPSHOT_ARTIFACT_KEY = "plan_snapshot"
 class ResearchPlannerResult:
     plan_snapshot: ResearchPlanSnapshot | None
     clarification_request: ResearchClarificationRequest | None
-    auto_approve: bool
     next_status: ResearchSessionStatus
     plan_artifact_key: str = PLAN_SNAPSHOT_ARTIFACT_KEY
 

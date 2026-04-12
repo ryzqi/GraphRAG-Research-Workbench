@@ -36,9 +36,6 @@ class DeepResearchRuntime:
     def make_run_config(self, *, thread_id: str) -> dict[str, Any]:
         return build_research_run_config(thread_id=thread_id)
 
-    def stream_kwargs(self) -> dict[str, Any]:
-        return self.config.stream_policy.as_kwargs()
-
 
 def build_research_run_config(*, thread_id: str) -> dict[str, Any]:
     return {"configurable": {"thread_id": thread_id}}
