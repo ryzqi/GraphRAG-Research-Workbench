@@ -4,10 +4,10 @@
 
 - 范围事实源：`git ls-files backend`
 - 当前统计：
-  - `backend/src`: 336 个文件
+  - `backend/src`: 337 个文件
   - `backend/tests`: 24 个文件
-  - `backend/alembic`: 16 个文件
-  - 根文件：`backend/pyproject.toml`、`backend/alembic.ini`
+  - `backend/alembic`: 17 个文件
+  - 根文件：`backend/alembic.ini`、`backend/celerybeat-schedule`、`backend/pyproject.toml`、`backend/uv.lock`
 - 当前分支基线：待切出专用清理分支
 
 ## 高风险动态/注册点
@@ -91,6 +91,16 @@
     - 同步删除 `backend/pyproject.toml` 中 `pyjwt`、`opentelemetry-api`
     - 通过 `uv lock` 同步 `backend/uv.lock`
 
+- `backend/celerybeat-schedule`
+  - 状态：已确认并删除
+  - 证据：
+    - 文件头为 `SQLite format 3`，属于 Celery Beat 本地持久化调度库，不是源码文件
+    - 仓内检索仅命中根 `.gitignore` 对 `backend/celerybeat-schedule-shm` / `backend/celerybeat-schedule-wal` 的忽略规则，无代码、脚本或文档显式依赖主文件
+    - `backend/src/app/worker/celery_app.py` 使用代码内 `beat_schedule` 定义周期任务，不以仓库中的 `celerybeat-schedule` 作为事实源
+  - 处理：
+    - 删除被误跟踪的 Celery Beat 运行时 SQLite 文件
+    - 在根 `.gitignore` 增加 `backend/celerybeat-schedule`
+
 - `backend/src/app/agents/base.py` / `backend/src/app/agents/tool_calling/builder.py`
   - 状态：已确认并删除
   - 证据：
@@ -124,6 +134,14 @@
     - 删除 `ResearchRuntimeConfig.provider_ids`
     - 删除 `ResearchBackendPolicy.ephemeral_roots`
     - 删除 `ResearchBackendPolicy.persistent_roots`
+
+- 清单漏记修正
+  - 状态：已补录
+  - 处理：
+    - 补录 `backend/alembic/script.py.mako`
+    - 补录 `backend/src/app/.gitignore`
+    - 补录 `backend/uv.lock`
+    - 补录 `backend/celerybeat-schedule`
 
 ## 明确保留项
 

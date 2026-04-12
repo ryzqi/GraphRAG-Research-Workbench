@@ -2,19 +2,22 @@
 
 ## 说明
 
-- 唯一事实源：`git ls-files backend`
-- 当前纳入清单的文件总数：378
-- 口径：仅仓库一方后端代码与直接相关配置；排除 `backend/.venv`、缓存、构建产物
+- 唯一事实源：`git ls-files backend`（初始基线）
+- 当前纳入清单的文件总数：382
+- 口径：仅仓库一方后端代码与直接相关配置；排除 `backend/.venv`、缓存、构建产物；清理过程中已删除的条目仍保留在清单中
 - 勾选规则：仅当该文件已完成分析，且已确认“无需修改”或“已安全清理并完成对应验证”时，才可勾选
 
 ## Root
 
 - [x] backend/alembic.ini
+- [x] backend/celerybeat-schedule (已删除；Celery Beat 运行时 SQLite 调度产物)
 - [x] backend/pyproject.toml (已清理未使用依赖)
+- [x] backend/uv.lock (已随依赖清理同步更新)
 
 ## Alembic
 
 - [x] backend/alembic/env.py
+- [x] backend/alembic/script.py.mako
 - [x] backend/alembic/versions/1c2d3e4f5a6b_remove_research_kb_selection_fields.py
 - [x] backend/alembic/versions/2f6a9c8d1b4e_add_clarifying_to_research_session_status.py
 - [x] backend/alembic/versions/38f4aa0f8d91_reintroduce_research_session_tables.py
@@ -34,6 +37,7 @@
 ## src/app
 
 - [x] backend/src/app/__init__.py
+- [x] backend/src/app/.gitignore
 - [x] backend/src/app/main.py
 
 ### agents

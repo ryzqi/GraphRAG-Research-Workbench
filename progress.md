@@ -56,6 +56,22 @@
 - 代码审查结论：
   - 无 `P0/P1/P2` 阻塞问题
   - 适合做安全里程碑提交
+- 收尾复核发现清单口径漏记 4 个当前/初始受控文件：
+  - `backend/alembic/script.py.mako`
+  - `backend/celerybeat-schedule`
+  - `backend/src/app/.gitignore`
+  - `backend/uv.lock`
+- 已完成漏记文件分析：
+  - `backend/alembic/script.py.mako`：Alembic 修订模板，保留
+  - `backend/src/app/.gitignore`：应用目录局部忽略规则，保留
+  - `backend/uv.lock`：后端依赖锁文件，保留
+  - `backend/celerybeat-schedule`：Celery Beat 运行时 SQLite 调度产物，已删除并补 ignore
+- 已完成收尾 fresh verification：
+  - 清单复核：`only_in_git=`，说明不存在“git 跟踪但清单漏记”的 backend 文件
+  - `git check-ignore -v --no-index backend/celerybeat-schedule`：命中根 `.gitignore:49`
+  - `Test-Path backend/celerybeat-schedule`：`False`
+  - `backend/.venv/Scripts/pytest.exe tests -q`：`56 passed, 1 warning`
+  - `backend/.venv/Scripts/pyright.exe -p pyproject.toml`：`0 errors, 0 warnings, 0 informations`
 - 下一步：
-  - 提交“全量安全代码清理”里程碑
+  - 提交“清单补齐 + 运行时产物移出版本库”里程碑
   - 整理最终状态与保留项
