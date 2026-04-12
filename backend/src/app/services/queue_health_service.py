@@ -10,14 +10,11 @@ import logging
 from typing import Any
 
 from celery import Celery
-from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.settings import Settings, get_settings
 from app.integrations.redis_client import RedisClient
-from app.models.ingestion_batch import IngestionBatchDoc, IngestionDocStatus
-from app.models.kb_bootstrap_job import KBBootstrapJob, KBBootstrapJobStatus
-from app.models.research_session import ResearchSession, ResearchSessionStatus
+from app.repositories.queue_health_repository import QueueHealthRepository
 from app.schemas.system import QueueHealthRead, QueueStateRead, QueueStuckSummaryRead
 from app.worker.celery_app import celery_app
 
@@ -74,11 +71,13 @@ class QueueHealthService:
         redis: RedisClient,
         *,
         celery: Celery | None = None,
+        repository: QueueHealthRepository | None = None,
         settings: Settings | None = None,
     ) -> None:
         self._db = db
         self._redis = redis
         self._celery = celery or celery_app
+        self._repository = repository or QueueHealthRepository(db)
         self._settings = settings or get_settings()
 
     async def get_queue_health(self) -> QueueHealthRead:
@@ -148,29 +147,8 @@ class QueueHealthService:
         research_deadline = now - timedelta(
             seconds=max(int(self._settings.research_queued_timeout_seconds), 1)
         )
-
-        bootstrap_stmt = select(func.count(KBBootstrapJob.id)).where(
-            KBBootstrapJob.status.in_(
-                [KBBootstrapJobStatus.QUEUED, KBBootstrapJobStatus.RUNNING]
-            ),
-            KBBootstrapJob.updated_at <= bootstrap_deadline,
-        )
-        doc_stmt = select(func.count(IngestionBatchDoc.id)).where(
-            IngestionBatchDoc.status == IngestionDocStatus.PROCESSING,
-            IngestionBatchDoc.updated_at <= doc_deadline,
-        )
-        research_stmt = select(func.count(ResearchSession.id)).where(
-            ResearchSession.status == ResearchSessionStatus.QUEUED,
-            ResearchSession.updated_at <= research_deadline,
-        )
-
-        bootstrap_count = int(
-            (await self._db.execute(bootstrap_stmt)).scalar_one() or 0
-        )
-        processing_doc_count = int((await self._db.execute(doc_stmt)).scalar_one() or 0)
-        research_count = int((await self._db.execute(research_stmt)).scalar_one() or 0)
-        return QueueStuckSummaryRead(
-            bootstrap_queued_jobs=bootstrap_count,
-            processing_docs_over_sla=processing_doc_count,
-            research_queued_sessions=research_count,
+        return await self._repository.build_stuck_summary(
+            bootstrap_deadline=bootstrap_deadline,
+            doc_deadline=doc_deadline,
+            research_deadline=research_deadline,
         )

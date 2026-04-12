@@ -6,6 +6,9 @@ from fastapi import Depends, Request
 
 from app.api.dependencies.app_resources import AppResourcesDep
 from app.api.deps import AsyncSessionDep
+from app.repositories.extension_repository import ExtensionRepository
+from app.repositories.queue_health_repository import QueueHealthRepository
+from app.repositories.research_session_repository import ResearchSessionRepository
 from app.services.extension_service import ExtensionService
 from app.services.export_service import ExportService
 from app.services.general_chat_service import GeneralChatService
@@ -57,7 +60,10 @@ def get_research_service(
     raw_factory = resources.research_service_factory
     if callable(raw_factory):
         return cast(ResearchService, raw_factory(db=db, request=request))
-    return build_research_service(db=db)
+    return build_research_service(
+        db=db,
+        session_repository=ResearchSessionRepository(db),
+    )
 
 
 def build_queue_health_service(
@@ -68,11 +74,15 @@ def build_queue_health_service(
     return QueueHealthService(
         db,
         redis=resources.redis,
+        repository=QueueHealthRepository(db),
     )
 
 
 def build_extension_service(*, db: AsyncSessionDep) -> ExtensionService:
-    return ExtensionService(db)
+    return ExtensionService(
+        db,
+        repository=ExtensionRepository(db),
+    )
 
 
 def build_export_service() -> ExportService:

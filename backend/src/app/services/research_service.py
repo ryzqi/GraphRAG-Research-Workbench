@@ -5,9 +5,7 @@ from __future__ import annotations
 import inspect
 import uuid
 
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 
 from app.core.errors import bad_request, not_found
 from app.core.settings import Settings, get_settings
@@ -18,6 +16,7 @@ from app.models.research_task_outbox import (
     ResearchTaskOutbox,
     ResearchTaskOutboxStatus,
 )
+from app.repositories.research_session_repository import ResearchSessionRepository
 from app.schemas.research import (
     ResearchArtifactsResponse,
     ResearchClarificationRequest,
@@ -67,7 +66,6 @@ from app.services.research_service_execution import (
     persist_runtime_execution_artifacts,
     read_committed_session_status,
     read_json_artifact,
-    runtime_live_board_updated_at,
 )
 from app.services.research_service_runtime import (
     ResearchRuntimeRunner,
@@ -87,6 +85,7 @@ class ResearchService:
         planner: ResearchPlanner,
         runtime_runner: ResearchRuntimeRunner,
         finalizer: ResearchFinalizer,
+        session_repository: ResearchSessionRepository | None = None,
         event_store: ResearchEventStore | None = None,
         artifact_store: ResearchArtifactStore | None = None,
         settings: Settings | None = None,
@@ -95,22 +94,14 @@ class ResearchService:
         self._planner = planner
         self._runtime_runner = runtime_runner
         self._finalizer = finalizer
+        self._session_repository = session_repository or ResearchSessionRepository(db)
         self._event_store = event_store or ResearchEventStore(db)
         self._artifact_store = artifact_store or ResearchArtifactStore(db)
         self._settings = settings or get_settings()
         self._gate_thresholds = build_research_gate_thresholds(self._settings)
 
     async def get_session(self, session_id: uuid.UUID) -> ResearchSession:
-        stmt = (
-            select(ResearchSession)
-            .where(ResearchSession.id == session_id)
-            .options(
-                selectinload(ResearchSession.artifacts),
-                selectinload(ResearchSession.events),
-                selectinload(ResearchSession.task_outbox_entries),
-            )
-        )
-        session = (await self._db.execute(stmt)).scalar_one_or_none()
+        session = await self._session_repository.get_with_details(session_id)
         if session is None:
             raise not_found("研究会话不存在", code="RESEARCH_SESSION_NOT_FOUND")
         return session
@@ -165,8 +156,8 @@ class ResearchService:
             status=ResearchSessionStatus.CREATED,
             planner_phase="preflight",
         )
-        self._db.add(session)
-        await self._db.flush()
+        self._session_repository.add(session)
+        await self._session_repository.flush()
         ensure_research_trace_id(session)
 
         session.transition_to(ResearchSessionStatus.PLANNING)
@@ -483,7 +474,7 @@ class ResearchService:
                 existing.last_error = None
             return
 
-        self._db.add(
+        self._session_repository.add_task_outbox_entry(
             ResearchTaskOutbox(
                 session_id=session.id,
                 task_name=RESEARCH_SESSION_TASK_NAME,
@@ -761,11 +752,13 @@ def build_research_service(
     *,
     db: AsyncSession,
     runtime_runner: ResearchRuntimeRunner | None = None,
+    session_repository: ResearchSessionRepository | None = None,
 ) -> ResearchService:
     return ResearchService(
         db=db,
         planner=ResearchPlanner(),
         runtime_runner=runtime_runner or UnconfiguredResearchRuntimeRunner(),
         finalizer=ResearchFinalizer(),
+        session_repository=session_repository,
         settings=get_settings(),
     )
