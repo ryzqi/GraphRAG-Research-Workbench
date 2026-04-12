@@ -9,6 +9,43 @@
 - async workers：Celery
 - persistence：PostgreSQL / Redis / Milvus / MinIO
 
+## Backend FastAPI 服务边界
+
+当前 backend 已收敛为以下形状：
+
+```text
+route -> api/dependencies -> service -> repository/store -> database/integrations
+```
+
+### 已固定的边界
+
+- `bootstrap/app_factory.py` 负责应用装配。
+- `bootstrap/lifespan.py` 负责生命周期资源创建与释放。
+- `bootstrap/app_resources.py` 统一管理 `engine`、HTTP clients、LLM client、Milvus、Redis 等运行时资源。
+- `api/dependencies/app_resources.py` 是 API 侧读取应用资源的唯一入口。
+- `api/dependencies/services.py` 是 API 侧 service provider 的唯一入口。
+- `api/v1/endpoints/*` 只保留 HTTP 契约、参数解析、header 读取、streaming 响应映射，不再手工 `new Service(...)`，也不再直接读取 `request.app.state.*`。
+
+### 当前已提炼的 repository
+
+- `repositories/research_session_repository.py`
+  - 负责 `research_sessions` 聚合读取与基础持久化挂接。
+- `repositories/extension_repository.py`
+  - 负责 `tool_extensions` 的查询、分页、读取与删除。
+- `repositories/queue_health_repository.py`
+  - 负责 queue health 相关的数据库统计查询。
+
+### 当前保留在 service 的职责
+
+- service 仍拥有 orchestration、校验后的流程分支、外部集成协调与事务提交决策。
+- `ResearchArtifactStore`、`ResearchEventStore` 继续作为 research 域专用存储抽象。
+
+### 当前明确不做
+
+- 不做全仓 `domain/`、`use_cases/`、`ports/` 的完整迁移。
+- 不为旧装配方式保留兼容层。
+- 不改变任何现有 HTTP 契约、状态码与业务语义。
+
 ## Research 当前主路径
 
 Deep Research 当前采用单路径会话化架构：
