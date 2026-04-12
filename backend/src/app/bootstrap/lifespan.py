@@ -6,6 +6,7 @@ import logging
 
 from fastapi import FastAPI
 
+from app.bootstrap.app_resources import AppResources, require_app_resources, set_app_resources
 from app.core.checkpoint import CheckpointManager
 from app.core.memory_store import StoreManager
 from app.core.settings import Settings, validate_startup_settings
@@ -32,8 +33,8 @@ logger = logging.getLogger(__name__)
 async def _initialize_app_state(app: FastAPI, settings: Settings) -> None:
     validate_startup_settings(settings)
     sessionmaker = get_sessionmaker()
-    app.state.engine = get_engine()
-    await ensure_ingestion_schema_ready(app.state.engine)
+    engine = get_engine()
+    await ensure_ingestion_schema_ready(engine)
     await ModelRuntimeConfigManager.initialize(
         sessionmaker=sessionmaker,
         settings=settings,
@@ -44,43 +45,55 @@ async def _initialize_app_state(app: FastAPI, settings: Settings) -> None:
     )
     await CheckpointManager.initialize()
     await StoreManager.initialize()
-    app.state.http_client = create_http_client(settings)
-    app.state.embedding_http_client = create_http_client(
+    http_client = create_http_client(settings)
+    embedding_http_client = create_http_client(
         settings,
         profile=HttpClientProfile.EMBEDDING_REALTIME,
     )
-    app.state.llm_client = LLMClient(http_client=app.state.http_client)
-    app.state.embedding_client = EmbeddingClient(
-        http_client=app.state.embedding_http_client,
+    llm_client = LLMClient(http_client=http_client)
+    embedding_client = EmbeddingClient(
+        http_client=embedding_http_client,
         settings=settings,
     )
-    app.state.rerank_client = RerankClient(
+    rerank_client = RerankClient(
         settings=settings,
-        http_client=app.state.http_client,
+        http_client=http_client,
     )
-    app.state.milvus_client = create_milvus_client()
-    app.state.redis = create_redis_client(settings)
+    set_app_resources(
+        app,
+        AppResources(
+            engine=engine,
+            http_client=http_client,
+            embedding_http_client=embedding_http_client,
+            llm_client=llm_client,
+            milvus_client=create_milvus_client(),
+            embedding_client=embedding_client,
+            rerank_client=rerank_client,
+            redis=create_redis_client(settings),
+        ),
+    )
 
 
 async def _shutdown_app_state(app: FastAPI) -> None:
+    resources = require_app_resources(app)
     try:
-        await close_http_client(app.state.http_client)
+        await close_http_client(resources.http_client)
     except Exception as exc:  # pragma: no cover - best effort
         logger.warning("HTTP client 关闭失败", extra={"error": str(exc)})
     try:
-        await close_http_client(app.state.embedding_http_client)
+        await close_http_client(resources.embedding_http_client)
     except Exception as exc:  # pragma: no cover - best effort
         logger.warning("Embedding HTTP client 关闭失败", extra={"error": str(exc)})
     try:
-        await app.state.milvus_client.aclose()
+        await resources.milvus_client.aclose()
     except Exception as exc:  # pragma: no cover - best effort
         logger.warning("Milvus client 关闭失败", extra={"error": str(exc)})
     try:
-        await close_redis_client(app.state.redis)
+        await close_redis_client(resources.redis)
     except Exception as exc:  # pragma: no cover - best effort
         logger.warning("Redis client 关闭失败", extra={"error": str(exc)})
     try:
-        await app.state.engine.dispose()
+        await resources.engine.dispose()
     except Exception as exc:  # pragma: no cover - best effort
         logger.warning("AsyncEngine dispose 失败", extra={"error": str(exc)})
     try:

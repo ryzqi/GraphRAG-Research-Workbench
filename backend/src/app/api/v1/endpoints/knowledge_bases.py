@@ -9,6 +9,12 @@ from fastapi import APIRouter, HTTPException, Query, Response, status
 from fastapi.exceptions import RequestValidationError
 from sqlalchemy.exc import IntegrityError
 
+from app.api.dependencies.services import (
+    IndexRebuildServiceDep,
+    IngestionBatchServiceDep,
+    KnowledgeBaseServiceDep,
+    MaterialServiceDep,
+)
 from app.api.deps import AsyncSessionDep
 from app.models.knowledge_base import (
     KnowledgeBaseReadiness as ModelKnowledgeBaseReadiness,
@@ -29,10 +35,6 @@ from app.schemas.knowledge_bases import (
     KnowledgeBaseUpdate,
 )
 from app.schemas.pagination import PageMeta
-from app.services.index_rebuild_service import IndexRebuildService
-from app.services.ingestion_batch_service import IngestionBatchService
-from app.services.knowledge_base_service import KnowledgeBaseService
-from app.services.material_service import MaterialService
 
 router = APIRouter()
 
@@ -51,7 +53,7 @@ def _is_kb_name_conflict_error(exc: IntegrityError) -> bool:
 
 @router.get("", response_model=KnowledgeBaseListResponse)
 async def list_knowledge_bases(
-    db: AsyncSessionDep,
+    service: KnowledgeBaseServiceDep,
     skip: Annotated[int, Query(ge=0, description="跳过记录数")] = 0,
     limit: Annotated[int, Query(ge=1, le=100, description="返回记录数")] = 100,
     status: Annotated[
@@ -62,8 +64,6 @@ async def list_knowledge_bases(
     ] = KnowledgeBaseReadinessFilter.ALL,
 ) -> KnowledgeBaseListResponse:
     """列出知识库（默认 active；可按 readiness 二次过滤）。"""
-
-    service = KnowledgeBaseService(db)
     model_status = (
         None
         if status == KnowledgeBaseStatusFilter.ALL
@@ -94,13 +94,11 @@ async def list_knowledge_bases(
 
 @router.get("/selectable", response_model=KnowledgeBaseListResponse)
 async def list_selectable_knowledge_bases(
-    db: AsyncSessionDep,
+    service: KnowledgeBaseServiceDep,
     skip: Annotated[int, Query(ge=0, description="跳过记录数")] = 0,
     limit: Annotated[int, Query(ge=1, le=100, description="返回记录数")] = 100,
 ) -> KnowledgeBaseListResponse:
     """业务入口口径：仅返回 status=active 且 readiness=ready 的知识库。"""
-
-    service = KnowledgeBaseService(db)
     kbs, total = await service.list_selectable_page(skip=skip, limit=limit)
     return KnowledgeBaseListResponse(
         items=[KnowledgeBaseRead.model_validate(kb) for kb in kbs],
@@ -116,10 +114,9 @@ async def list_selectable_knowledge_bases(
 @router.post("", response_model=KnowledgeBaseRead, status_code=status.HTTP_201_CREATED)
 async def create_knowledge_base(
     db: AsyncSessionDep,
+    service: KnowledgeBaseServiceDep,
     body: KnowledgeBaseCreate,
 ) -> KnowledgeBaseRead:
-    service = KnowledgeBaseService(db)
-
     existing = await service.get_by_name(body.name)
     if existing:
         raise HTTPException(
@@ -158,9 +155,9 @@ async def create_knowledge_base(
 
 @router.get("/{kb_id}", response_model=KnowledgeBaseRead)
 async def get_knowledge_base(
-    db: AsyncSessionDep, kb_id: uuid.UUID
+    kb_id: uuid.UUID,
+    service: KnowledgeBaseServiceDep,
 ) -> KnowledgeBaseRead:
-    service = KnowledgeBaseService(db)
     kb = await service.get_by_id(kb_id)
     if not kb:
         raise HTTPException(
@@ -172,20 +169,18 @@ async def get_knowledge_base(
 
 @router.get("/{kb_id}/ingestion-state", response_model=KnowledgeBaseIngestionStateRead)
 async def get_knowledge_base_ingestion_state(
-    db: AsyncSessionDep,
+    service: IngestionBatchServiceDep,
     kb_id: uuid.UUID,
 ) -> KnowledgeBaseIngestionStateRead:
-    service = IngestionBatchService(db)
     return await service.get_kb_ingestion_state(kb_id=kb_id)
 
 
 @router.patch("/{kb_id}", response_model=KnowledgeBaseRead)
 async def update_knowledge_base(
-    db: AsyncSessionDep,
+    service: KnowledgeBaseServiceDep,
     kb_id: uuid.UUID,
     body: KnowledgeBaseUpdate,
 ) -> KnowledgeBaseRead:
-    service = KnowledgeBaseService(db)
     extra = getattr(body, "model_extra", None) or {}
     if "index_config" in extra:
         raise HTTPException(
@@ -237,11 +232,13 @@ async def update_knowledge_base(
 )
 async def update_index_config(
     db: AsyncSessionDep,
+    kb_service: KnowledgeBaseServiceDep,
+    material_service: MaterialServiceDep,
+    rebuild_service: IndexRebuildServiceDep,
     kb_id: uuid.UUID,
     body: KnowledgeBaseIndexConfigUpdateRequest,
     response: Response,
 ) -> KnowledgeBaseIndexConfigUpdateResponse:
-    kb_service = KnowledgeBaseService(db)
     kb = await kb_service.get_by_id(kb_id)
     if not kb:
         raise HTTPException(
@@ -258,7 +255,6 @@ async def update_index_config(
         )
 
     if body.index_config.chunking.general_strategy == ChunkingStrategy.MARKDOWN_HEADING:
-        material_service = MaterialService(db)
         skip = 0
         limit = 200
         while True:
@@ -281,7 +277,6 @@ async def update_index_config(
                 break
             skip += limit
 
-    rebuild_service = IndexRebuildService(db)
     job = await rebuild_service.create_job(kb=kb, index_config=new_config)
     await db.refresh(kb)
     return KnowledgeBaseIndexConfigUpdateResponse(
@@ -292,7 +287,7 @@ async def update_index_config(
 
 @router.delete("/{kb_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_knowledge_base(
-    db: AsyncSessionDep,
+    service: KnowledgeBaseServiceDep,
     kb_id: uuid.UUID,
     confirm: bool = Query(..., description="二次确认（true 才执行）"),
 ) -> None:
@@ -302,7 +297,6 @@ async def delete_knowledge_base(
             detail={"code": "CONFIRM_REQUIRED", "message": "需要确认删除"},
         )
 
-    service = KnowledgeBaseService(db)
     kb = await service.get_by_id(kb_id)
     if not kb:
         raise HTTPException(
@@ -315,9 +309,9 @@ async def delete_knowledge_base(
 
 @router.post("/{kb_id}/archive", response_model=KnowledgeBaseRead)
 async def archive_knowledge_base(
-    db: AsyncSessionDep, kb_id: uuid.UUID
+    kb_id: uuid.UUID,
+    service: KnowledgeBaseServiceDep,
 ) -> KnowledgeBaseRead:
-    service = KnowledgeBaseService(db)
     kb = await service.get_by_id(kb_id)
     if not kb:
         raise HTTPException(

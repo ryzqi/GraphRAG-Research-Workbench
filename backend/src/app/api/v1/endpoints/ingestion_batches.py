@@ -7,7 +7,7 @@ import uuid
 from fastapi import APIRouter, Query, Request, Response, status
 from fastapi.responses import StreamingResponse
 
-from app.api.deps import AsyncSessionDep
+from app.api.dependencies.services import IngestionBatchServiceDep
 from app.api.sse import SSE_HEADERS, encode_sse
 from app.schemas.ingestion_batches import (
     IngestionBatchCancelResponse,
@@ -16,7 +16,6 @@ from app.schemas.ingestion_batches import (
     IngestionBatchRetryResponse,
     IngestionBatchSubmitResponse,
 )
-from app.services.ingestion_batch_service import IngestionBatchService
 
 router = APIRouter()
 
@@ -27,11 +26,10 @@ router = APIRouter()
     status_code=status.HTTP_202_ACCEPTED,
 )
 async def create_ingestion_batch(
-    db: AsyncSessionDep,
+    service: IngestionBatchServiceDep,
     body: IngestionBatchCreateRequest,
     request: Request,
 ) -> IngestionBatchSubmitResponse:
-    service = IngestionBatchService(db)
     requested_by = request.headers.get("X-User")
     return await service.submit_manifest(
         kb_id=body.kb_id,
@@ -46,11 +44,10 @@ async def create_ingestion_batch(
     responses={status.HTTP_204_NO_CONTENT: {"description": "No ingestion batch found"}},
 )
 async def get_latest_ingestion_batch(
-    db: AsyncSessionDep,
+    service: IngestionBatchServiceDep,
     kb_id: uuid.UUID = Query(..., description="知识库 ID"),
     prefer_active: bool = Query(True, description="优先返回运行中的批次"),
 ) -> IngestionBatchRead | Response:
-    service = IngestionBatchService(db)
     batch = await service.get_latest_batch_for_kb(
         kb_id=kb_id,
         prefer_active=prefer_active,
@@ -62,20 +59,18 @@ async def get_latest_ingestion_batch(
 
 @router.get("/{batch_id}", response_model=IngestionBatchRead)
 async def get_ingestion_batch(
-    db: AsyncSessionDep,
+    service: IngestionBatchServiceDep,
     batch_id: uuid.UUID,
 ) -> IngestionBatchRead:
-    service = IngestionBatchService(db)
     return await service.get_batch(batch_id=batch_id)
 
 
 @router.get("/{batch_id}/stream")
 async def stream_ingestion_batch(
-    db: AsyncSessionDep,
+    service: IngestionBatchServiceDep,
     batch_id: uuid.UUID,
     request: Request,
 ):
-    service = IngestionBatchService(db)
     await service.get_batch(batch_id=batch_id)
 
     async def _events():
@@ -94,17 +89,15 @@ async def stream_ingestion_batch(
 
 @router.post("/{batch_id}/retry", response_model=IngestionBatchRetryResponse)
 async def retry_ingestion_batch(
-    db: AsyncSessionDep,
+    service: IngestionBatchServiceDep,
     batch_id: uuid.UUID,
 ) -> IngestionBatchRetryResponse:
-    service = IngestionBatchService(db)
     return await service.retry_failed_docs(batch_id=batch_id)
 
 
 @router.post("/{batch_id}/cancel", response_model=IngestionBatchCancelResponse)
 async def cancel_ingestion_batch(
-    db: AsyncSessionDep,
+    service: IngestionBatchServiceDep,
     batch_id: uuid.UUID,
 ) -> IngestionBatchCancelResponse:
-    service = IngestionBatchService(db)
     return await service.cancel_batch(batch_id=batch_id)

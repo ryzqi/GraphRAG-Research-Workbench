@@ -6,7 +6,7 @@ import uuid
 
 from fastapi import APIRouter, Query, status
 
-from app.api.deps import AsyncSessionDep
+from app.api.dependencies.services import ExtensionServiceDep
 from app.core.errors import not_found
 from app.models.tool_extension import ExtensionStatus
 from app.schemas.extensions import (
@@ -17,20 +17,18 @@ from app.schemas.extensions import (
     ToolExtensionUpdate,
 )
 from app.schemas.pagination import PageMeta
-from app.services.extension_service import ExtensionService
 
 router = APIRouter()
 
 
 @router.get("", response_model=ToolExtensionListResponse)
 async def list_extensions(
-    db: AsyncSessionDep,
+    service: ExtensionServiceDep,
     skip: int = Query(0, ge=0, description="跳过记录数"),
     limit: int = Query(100, ge=1, le=100, description="返回记录数"),
     status_filter: ExtensionStatus | None = Query(None, description="按状态过滤"),
 ) -> ToolExtensionListResponse:
     """获取扩展列表。"""
-    service = ExtensionService(db)
     items, total = await service.list_extensions_page(
         status=status_filter, skip=skip, limit=limit
     )
@@ -47,21 +45,19 @@ async def list_extensions(
 
 @router.post("", response_model=ToolExtensionRead, status_code=status.HTTP_201_CREATED)
 async def create_extension(
-    db: AsyncSessionDep,
+    service: ExtensionServiceDep,
     body: ToolExtensionCreate,
 ) -> ToolExtensionRead:
     """创建扩展。"""
-    service = ExtensionService(db)
     return await service.create_extension(body)
 
 
 @router.get("/{extension_id}", response_model=ToolExtensionRead)
 async def get_extension(
-    db: AsyncSessionDep,
+    service: ExtensionServiceDep,
     extension_id: uuid.UUID,
 ) -> ToolExtensionRead:
     """获取扩展详情。"""
-    service = ExtensionService(db)
     ext = await service.get_extension(extension_id)
     if not ext:
         raise not_found("扩展不存在", code="EXTENSION_NOT_FOUND")
@@ -70,12 +66,11 @@ async def get_extension(
 
 @router.patch("/{extension_id}", response_model=ToolExtensionRead)
 async def update_extension(
-    db: AsyncSessionDep,
+    service: ExtensionServiceDep,
     extension_id: uuid.UUID,
     body: ToolExtensionUpdate,
 ) -> ToolExtensionRead:
     """更新扩展。"""
-    service = ExtensionService(db)
     ext = await service.update_extension(extension_id, body)
     if not ext:
         raise not_found("扩展不存在", code="EXTENSION_NOT_FOUND")
@@ -84,11 +79,10 @@ async def update_extension(
 
 @router.delete("/{extension_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_extension(
-    db: AsyncSessionDep,
+    service: ExtensionServiceDep,
     extension_id: uuid.UUID,
 ) -> None:
     """删除扩展。"""
-    service = ExtensionService(db)
     deleted = await service.delete_extension(extension_id)
     if not deleted:
         raise not_found("扩展不存在", code="EXTENSION_NOT_FOUND")
@@ -96,13 +90,12 @@ async def delete_extension(
 
 @router.get("/{extension_id}/tools", response_model=ToolDescriptorListResponse)
 async def get_extension_tools(
-    db: AsyncSessionDep,
+    service: ExtensionServiceDep,
     extension_id: uuid.UUID,
     skip: int = Query(0, ge=0, description="跳过记录数"),
     limit: int = Query(100, ge=1, le=100, description="返回记录数"),
 ) -> ToolDescriptorListResponse:
     """获取扩展提供的工具列表。"""
-    service = ExtensionService(db)
     ext = await service.get_extension(extension_id)
     if not ext:
         raise not_found("扩展不存在", code="EXTENSION_NOT_FOUND")

@@ -10,6 +10,11 @@ from fastapi import APIRouter, Query, Request, Response, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy import and_, delete, func, select
 
+from app.api.dependencies.services import (
+    GeneralChatServiceDep,
+    KbChatServiceDep,
+    KnowledgeBaseServiceDep,
+)
 from app.api.sse import SSE_HEADERS, SseHeartbeatStats, encode_sse
 
 from app.api.deps import AsyncSessionDep
@@ -36,12 +41,7 @@ from app.schemas.chats import (
     resolve_kb_chat_config,
     ToolApprovalRequest,
 )
-from app.api.v1.endpoints.chat_dependencies import (
-    build_general_chat_service,
-    build_kb_chat_service,
-    stream_heartbeat_payload,
-)
-from app.services.knowledge_base_service import KnowledgeBaseService
+from app.api.v1.endpoints.chat_dependencies import stream_heartbeat_payload
 from app.services.web_search_status_service import get_web_search_status
 
 router = APIRouter()
@@ -81,8 +81,7 @@ async def _prime_stream_events(
 
 @router.get("/kb-graph-schema", response_model=KbGraphSchemaResponse)
 async def get_kb_chat_graph_schema(
-    db: AsyncSessionDep,
-    request: Request,
+    service: KbChatServiceDep,
     retrieval_top_k: int | None = Query(None, ge=1, le=20),
     retrieval_rerank_top_k: int | None = Query(None, ge=1, le=50),
     retrieval_hybrid_rrf_k: int | None = Query(None, ge=1, le=200),
@@ -110,7 +109,6 @@ async def get_kb_chat_graph_schema(
         if value is not None
     }
     resolved = resolve_kb_chat_config(raw=raw_config or None, settings=get_settings())
-    service = build_kb_chat_service(db=db, request=request)
     schema = await service.get_graph_schema(kb_chat_config=resolved)
     return KbGraphSchemaResponse.model_validate(schema)
 
@@ -118,6 +116,7 @@ async def get_kb_chat_graph_schema(
 @router.post("", response_model=ChatSessionRead, status_code=status.HTTP_201_CREATED)
 async def create_chat_session(
     db: AsyncSessionDep,
+    kb_service: KnowledgeBaseServiceDep,
     body: ChatSessionCreate,
 ) -> ChatSessionRead:
     """创建会话。"""
@@ -130,7 +129,6 @@ async def create_chat_session(
         )
 
     if body.session_type == ChatSessionType.KB_CHAT:
-        kb_service = KnowledgeBaseService(db)
         kb_ids = body.selected_kb_ids or []
         kbs = await kb_service.get_by_ids(kb_ids)
         if len(kbs) != len(kb_ids):
@@ -328,6 +326,7 @@ async def create_chat_message(
     db: AsyncSessionDep,
     request: Request,
     response: Response,
+    general_chat_service: GeneralChatServiceDep,
     session_id: uuid.UUID,
     body: ChatMessageCreate,
 ) -> (
@@ -348,8 +347,7 @@ async def create_chat_message(
 
     if session.session_type == ChatSessionType.GENERAL_CHAT:
         # 普通代理
-        service = build_general_chat_service(db=db, request=request)
-        result = await service.answer(
+        result = await general_chat_service.answer(
             session=session,
             user_content=body.content,
             client_request_id=body.client_request_id,
@@ -371,6 +369,8 @@ async def create_chat_message(
 async def create_chat_message_stream(
     db: AsyncSessionDep,
     request: Request,
+    kb_chat_service: KbChatServiceDep,
+    general_chat_service: GeneralChatServiceDep,
     session_id: uuid.UUID,
     body: ChatMessageCreate,
 ):
@@ -381,9 +381,8 @@ async def create_chat_message_stream(
 
     if session.session_type == ChatSessionType.KB_CHAT:
         heartbeat_stats = SseHeartbeatStats()
-        service = build_kb_chat_service(db=db, request=request)
         events = await _prime_stream_events(
-            service.answer_stream(
+            kb_chat_service.answer_stream(
                 session=session,
                 user_content=body.content,
                 request=request,
@@ -392,8 +391,7 @@ async def create_chat_message_stream(
         )
     elif session.session_type == ChatSessionType.GENERAL_CHAT:
         heartbeat_stats = None
-        service = build_general_chat_service(db=db, request=request)
-        events = service.answer_stream(
+        events = general_chat_service.answer_stream(
             session=session,
             user_content=body.content,
             request=request,
@@ -422,7 +420,7 @@ async def create_chat_message_stream(
 )
 async def get_pending_general_chat_run(
     db: AsyncSessionDep,
-    request: Request,
+    service: GeneralChatServiceDep,
     session_id: uuid.UUID,
 ) -> ChatPendingToolApprovalResponse | None:
     """获取普通代理当前待审批运行（用于刷新恢复）。"""
@@ -432,7 +430,6 @@ async def get_pending_general_chat_run(
     if session.session_type != ChatSessionType.GENERAL_CHAT:
         raise bad_request(code="CHAT_NOT_GENERAL_CHAT", message="仅普通代理支持该接口")
 
-    service = build_general_chat_service(db=db, request=request)
     return await service.get_pending_tool_approval(session=session)
 
 
@@ -442,8 +439,8 @@ async def get_pending_general_chat_run(
 )
 async def resume_general_chat(
     db: AsyncSessionDep,
-    request: Request,
     response: Response,
+    service: GeneralChatServiceDep,
     session_id: uuid.UUID,
     run_id: uuid.UUID,
     body: ToolApprovalRequest,
@@ -464,7 +461,6 @@ async def resume_general_chat(
         raise bad_request(code="CHAT_RUN_TYPE_MISMATCH", message="运行记录类型不匹配")
     if run.status != AgentRunStatus.RUNNING:
         raise bad_request(code="CHAT_RUN_NOT_RUNNING", message="运行记录已完成或已失败")
-    service = build_general_chat_service(db=db, request=request)
     result = await service.resume_after_tool_approval(
         session=session, run=run, approval=body
     )
@@ -477,6 +473,7 @@ async def resume_general_chat(
 async def resume_kb_chat_after_clarification_stream(
     db: AsyncSessionDep,
     request: Request,
+    service: KbChatServiceDep,
     session_id: uuid.UUID,
     run_id: uuid.UUID,
     body: ClarificationResumeRequest,
@@ -501,7 +498,6 @@ async def resume_kb_chat_after_clarification_stream(
             message="当前运行没有待补充澄清信息",
         )
 
-    service = build_kb_chat_service(db=db, request=request)
     heartbeat_stats = SseHeartbeatStats()
     events = await _prime_stream_events(
         service.answer_stream(
@@ -529,6 +525,7 @@ async def resume_kb_chat_after_clarification_stream(
 async def resume_general_chat_stream(
     db: AsyncSessionDep,
     request: Request,
+    service: GeneralChatServiceDep,
     session_id: uuid.UUID,
     run_id: uuid.UUID,
     body: ToolApprovalRequest,
@@ -550,7 +547,6 @@ async def resume_general_chat_stream(
     if run.status != AgentRunStatus.RUNNING:
         raise bad_request(code="CHAT_RUN_NOT_RUNNING", message="运行记录已完成或已失败")
 
-    service = build_general_chat_service(db=db, request=request)
     events = service.resume_after_tool_approval_stream(
         session=session,
         run=run,

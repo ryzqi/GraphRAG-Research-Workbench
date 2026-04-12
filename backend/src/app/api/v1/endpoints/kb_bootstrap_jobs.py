@@ -5,6 +5,10 @@ import uuid
 from fastapi import APIRouter, HTTPException, Request, status
 from sqlalchemy.exc import IntegrityError
 
+from app.api.dependencies.services import (
+    KBBootstrapJobServiceDep,
+    KnowledgeBaseServiceDep,
+)
 from app.api.deps import AsyncSessionDep
 from app.core.errors import not_found
 from app.models.kb_bootstrap_job import KBBootstrapJob
@@ -20,7 +24,6 @@ from app.schemas.kb_bootstrap_jobs import (
     BootstrapUploadSessionResponse,
 )
 from app.services.kb_bootstrap_job_service import KBBootstrapJobService
-from app.services.knowledge_base_service import KnowledgeBaseService
 
 router = APIRouter()
 
@@ -73,9 +76,10 @@ def _to_read(
 async def bootstrap_create_knowledge_base(
     req: BootstrapCreateKnowledgeBaseRequest,
     session: AsyncSessionDep,
+    kb_service: KnowledgeBaseServiceDep,
+    bootstrap_service: KBBootstrapJobServiceDep,
     request: Request,
 ) -> BootstrapCreateKnowledgeBaseResponse:
-    kb_service = KnowledgeBaseService(session)
     existing = await kb_service.get_by_name(req.kb.name)
     if existing:
         raise HTTPException(
@@ -92,7 +96,6 @@ async def bootstrap_create_knowledge_base(
             },
         )
 
-    bootstrap_service = KBBootstrapJobService(session)
     try:
         kb = await kb_service.create(
             name=req.kb.name,
@@ -130,10 +133,9 @@ async def bootstrap_create_knowledge_base(
 )
 async def create_bootstrap_submission(
     req: BootstrapSubmissionCreateRequest,
-    session: AsyncSessionDep,
+    service: KBBootstrapJobServiceDep,
     request: Request,
 ) -> BootstrapSubmissionCreateResponse:
-    service = KBBootstrapJobService(session)
     result = await service.create_submission(
         req=req,
         request_id=request.headers.get("X-Request-Id"),
@@ -155,9 +157,8 @@ async def create_bootstrap_submission(
 )
 async def finalize_bootstrap_submission(
     job_id: uuid.UUID,
-    session: AsyncSessionDep,
+    service: KBBootstrapJobServiceDep,
 ) -> BootstrapSubmissionFinalizeResponse:
-    service = KBBootstrapJobService(session)
     job = await service.finalize_submission(job_id=job_id)
     return BootstrapSubmissionFinalizeResponse(
         job_id=job.id,
@@ -173,9 +174,8 @@ async def finalize_bootstrap_submission(
 )
 async def create_bootstrap_upload_session(
     job_id: uuid.UUID,
-    session: AsyncSessionDep,
+    service: KBBootstrapJobServiceDep,
 ) -> BootstrapUploadSessionResponse:
-    service = KBBootstrapJobService(session)
     result = await service.create_upload_session(job_id=job_id)
     return BootstrapUploadSessionResponse(
         job_id=result.job.id,
@@ -192,9 +192,8 @@ async def create_bootstrap_upload_session(
 )
 async def get_bootstrap_submission(
     job_id: uuid.UUID,
-    session: AsyncSessionDep,
+    service: KBBootstrapJobServiceDep,
 ) -> BootstrapSubmissionRead:
-    service = KBBootstrapJobService(session)
     job = await service.get_submission(job_id=job_id)
     if job is None:
         raise not_found(message="任务不存在", code="KB_BOOTSTRAP_JOB_NOT_FOUND")

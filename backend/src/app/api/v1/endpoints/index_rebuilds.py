@@ -6,19 +6,18 @@ import uuid
 
 from fastapi import APIRouter, HTTPException, status
 
-from app.api.deps import AsyncSessionDep
+from app.api.dependencies.services import IndexRebuildServiceDep
 from app.schemas.index_rebuilds import IndexRebuildJobRead
-from app.services.index_rebuild_service import IndexRebuildService
 
 router = APIRouter()
 
 
 @router.get("/{job_id}", response_model=IndexRebuildJobRead)
 async def get_index_rebuild_job(
-    db: AsyncSessionDep, job_id: uuid.UUID
+    service: IndexRebuildServiceDep,
+    job_id: uuid.UUID,
 ) -> IndexRebuildJobRead:
     """获取索引重建作业状态。"""
-    service = IndexRebuildService(db)
     job = await service.get_by_id(job_id)
     if not job:
         raise HTTPException(

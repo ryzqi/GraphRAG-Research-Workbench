@@ -6,7 +6,11 @@ import uuid
 
 from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile, status
 
-from app.api.deps import AsyncSessionDep
+from app.api.dependencies.services import (
+    IngestionBatchServiceDep,
+    KnowledgeBaseServiceDep,
+    MaterialServiceDep,
+)
 from app.schemas.knowledge_bases import ChunkingStrategy, IndexConfig
 from app.schemas.materials import (
     DocumentChunkListResponse,
@@ -26,8 +30,9 @@ from app.services.material_service import MaterialService
 router = APIRouter()
 
 
-async def _ensure_kb_exists(db: AsyncSessionDep, kb_id: uuid.UUID) -> None:
-    kb_service = KnowledgeBaseService(db)
+async def _ensure_kb_exists(
+    kb_service: KnowledgeBaseService, kb_id: uuid.UUID
+) -> None:
     kb = await kb_service.get_by_id(kb_id)
     if not kb:
         raise HTTPException(
@@ -51,9 +56,8 @@ async def _ensure_material_in_kb(
 
 
 async def _ensure_chunk_browsing_unlocked(
-    db: AsyncSessionDep, *, kb_id: uuid.UUID
+    ingestion_service: IngestionBatchService, *, kb_id: uuid.UUID
 ) -> None:
-    ingestion_service = IngestionBatchService(db)
     active_batch = await ingestion_service.get_active_batch_for_kb(kb_id=kb_id)
     if active_batch is None:
         return
@@ -76,15 +80,14 @@ async def _ensure_chunk_browsing_unlocked(
     response_model=MaterialListResponse,
 )
 async def list_materials(
-    db: AsyncSessionDep,
+    kb_service: KnowledgeBaseServiceDep,
+    service: MaterialServiceDep,
     kb_id: uuid.UUID,
     skip: int = Query(0, ge=0, description="跳过记录数"),
     limit: int = Query(100, ge=1, le=100, description="返回记录数"),
 ) -> MaterialListResponse:
     """列出知识库下的所有资料。"""
-    await _ensure_kb_exists(db, kb_id)
-
-    service = MaterialService(db)
+    await _ensure_kb_exists(kb_service, kb_id)
     materials, total = await service.list_by_kb_page(kb_id, skip=skip, limit=limit)
     return MaterialListResponse(
         items=[SourceMaterialRead.model_validate(m) for m in materials],
@@ -102,15 +105,14 @@ async def list_materials(
     response_model=MaterialWithChunkStatsListResponse,
 )
 async def list_materials_with_chunk_stats(
-    db: AsyncSessionDep,
+    kb_service: KnowledgeBaseServiceDep,
+    service: MaterialServiceDep,
     kb_id: uuid.UUID,
     skip: int = Query(0, ge=0, description="跳过记录数"),
     limit: int = Query(100, ge=1, le=100, description="返回记录数"),
 ) -> MaterialWithChunkStatsListResponse:
     """列出知识库资料并附带分块统计。"""
-    await _ensure_kb_exists(db, kb_id)
-
-    service = MaterialService(db)
+    await _ensure_kb_exists(kb_service, kb_id)
     rows, total = await service.list_by_kb_with_chunk_stats_page(
         kb_id, skip=skip, limit=limit
     )
@@ -139,17 +141,18 @@ async def list_materials_with_chunk_stats(
     response_model=DocumentChunkListResponse,
 )
 async def list_material_chunks(
-    db: AsyncSessionDep,
+    kb_service: KnowledgeBaseServiceDep,
+    service: MaterialServiceDep,
+    ingestion_service: IngestionBatchServiceDep,
     kb_id: uuid.UUID,
     material_id: uuid.UUID,
     skip: int = Query(0, ge=0, description="跳过记录数"),
     limit: int = Query(100, ge=1, le=100, description="返回记录数"),
 ) -> DocumentChunkListResponse:
     """分页列出指定资料分块。"""
-    await _ensure_kb_exists(db, kb_id)
-    service = MaterialService(db)
+    await _ensure_kb_exists(kb_service, kb_id)
     await _ensure_material_in_kb(service, kb_id=kb_id, material_id=material_id)
-    await _ensure_chunk_browsing_unlocked(db, kb_id=kb_id)
+    await _ensure_chunk_browsing_unlocked(ingestion_service, kb_id=kb_id)
 
     chunks, total = await service.list_chunks_by_material_page(
         kb_id=kb_id,
@@ -174,16 +177,17 @@ async def list_material_chunks(
     response_model=DocumentChunkRead,
 )
 async def get_material_chunk(
-    db: AsyncSessionDep,
+    kb_service: KnowledgeBaseServiceDep,
+    service: MaterialServiceDep,
+    ingestion_service: IngestionBatchServiceDep,
     kb_id: uuid.UUID,
     material_id: uuid.UUID,
     chunk_id: uuid.UUID,
 ) -> DocumentChunkRead:
     """获取指定资料下单个分块详情。"""
-    await _ensure_kb_exists(db, kb_id)
-    service = MaterialService(db)
+    await _ensure_kb_exists(kb_service, kb_id)
     await _ensure_material_in_kb(service, kb_id=kb_id, material_id=material_id)
-    await _ensure_chunk_browsing_unlocked(db, kb_id=kb_id)
+    await _ensure_chunk_browsing_unlocked(ingestion_service, kb_id=kb_id)
 
     chunk = await service.get_chunk_by_id(
         kb_id=kb_id,
@@ -205,14 +209,13 @@ async def get_material_chunk(
     status_code=status.HTTP_201_CREATED,
 )
 async def create_material(
-    db: AsyncSessionDep,
+    kb_service: KnowledgeBaseServiceDep,
+    service: MaterialServiceDep,
     kb_id: uuid.UUID,
     body: MaterialCreateText | MaterialCreateUrl,
 ) -> SourceMaterialRead:
     """创建资料（文本/URL）。"""
-    await _ensure_kb_exists(db, kb_id)
-
-    service = MaterialService(db)
+    await _ensure_kb_exists(kb_service, kb_id)
 
     if isinstance(body, MaterialCreateText):
         material = await service.create_text(
@@ -230,13 +233,13 @@ async def create_material(
     status_code=status.HTTP_201_CREATED,
 )
 async def upload_material(
-    db: AsyncSessionDep,
+    kb_service: KnowledgeBaseServiceDep,
+    service: MaterialServiceDep,
     kb_id: uuid.UUID,
     title: str = Form(...),
     file: UploadFile = File(...),
 ) -> SourceMaterialRead:
     """上传文件资料。"""
-    kb_service = KnowledgeBaseService(db)
     kb = await kb_service.get_by_id(kb_id)
     if not kb:
         raise HTTPException(
@@ -256,7 +259,6 @@ async def upload_material(
                 },
             )
 
-    service = MaterialService(db)
     material = await service.upload_file(
         kb_id=kb_id,
         title=title,

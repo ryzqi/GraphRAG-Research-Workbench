@@ -4,12 +4,11 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import AsyncIterator
-from typing import Protocol, cast
 
 from fastapi import APIRouter, Request, status
 from fastapi.responses import StreamingResponse
-from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.dependencies.services import ResearchServiceDep
 from app.api.deps import AsyncSessionDep
 from app.api.sse import SSE_HEADERS, encode_sse
 from app.schemas.research import (
@@ -21,21 +20,9 @@ from app.schemas.research import (
     ResearchStopRequest,
     ResearchStreamResumeParams,
 )
-from app.services.research_service import ResearchService, build_research_service
+from app.services.research_service import ResearchService
 
 router = APIRouter()
-
-
-class _ResearchServiceFactory(Protocol):
-    def __call__(self, *, db: AsyncSession, request: Request) -> ResearchService: ...
-
-
-def _get_research_service(*, request: Request, db: AsyncSession) -> ResearchService:
-    raw_factory = getattr(request.app.state, "research_service_factory", None)
-    if callable(raw_factory):
-        factory = cast(_ResearchServiceFactory, raw_factory)
-        return factory(db=db, request=request)
-    return build_research_service(db=db)
 
 
 async def _emit_research_events(
@@ -57,10 +44,9 @@ async def _emit_research_events(
 )
 async def create_research_session(
     db: AsyncSessionDep,
-    request: Request,
+    service: ResearchServiceDep,
     body: ResearchSessionCreateRequest,
 ) -> ResearchSessionAccepted:
-    service = _get_research_service(request=request, db=db)
     session_id = uuid.uuid4()
     session, plan_result = await service.create_session(
         body,
@@ -84,10 +70,9 @@ async def create_research_session(
 async def submit_research_clarification(
     session_id: uuid.UUID,
     db: AsyncSessionDep,
-    request: Request,
+    service: ResearchServiceDep,
     body: ResearchClarificationSubmitRequest,
 ) -> ResearchSessionAccepted:
-    service = _get_research_service(request=request, db=db)
     session = await service.get_session(session_id)
     session, plan_result = await service.submit_clarification(
         session=session,
@@ -110,10 +95,9 @@ async def submit_research_clarification(
 async def update_research_plan(
     session_id: uuid.UUID,
     db: AsyncSessionDep,
-    request: Request,
+    service: ResearchServiceDep,
     body: ResearchPlanUpdateRequest,
 ) -> ResearchSessionAccepted:
-    service = _get_research_service(request=request, db=db)
     session = await service.get_session(session_id)
     session, plan_result = await service.update_plan(
         session=session, feedback=body.feedback
@@ -135,9 +119,8 @@ async def update_research_plan(
 async def start_research_session(
     session_id: uuid.UUID,
     db: AsyncSessionDep,
-    request: Request,
+    service: ResearchServiceDep,
 ) -> ResearchSessionAccepted:
-    service = _get_research_service(request=request, db=db)
     session = await service.get_session(session_id)
     session = await service.start_session(session=session)
     await db.commit()
@@ -153,11 +136,10 @@ async def start_research_session(
 @router.get("/sessions/{session_id}/stream")
 async def stream_research_session(
     session_id: uuid.UUID,
-    db: AsyncSessionDep,
+    service: ResearchServiceDep,
     request: Request,
     resume_from_event_id: str | None = None,
 ) -> StreamingResponse:
-    service = _get_research_service(request=request, db=db)
     session = await service.get_session(session_id)
     resume_params = ResearchStreamResumeParams(
         resume_from_event_id=resume_from_event_id
@@ -186,10 +168,9 @@ async def stream_research_session(
 async def stop_research_session(
     session_id: uuid.UUID,
     db: AsyncSessionDep,
-    request: Request,
+    service: ResearchServiceDep,
     body: ResearchStopRequest,
 ) -> ResearchSessionAccepted:
-    service = _get_research_service(request=request, db=db)
     session = await service.get_session(session_id)
     session = await service.stop_session(session=session, reason=body.reason)
     await db.commit()
@@ -206,9 +187,7 @@ async def stop_research_session(
 )
 async def list_research_artifacts(
     session_id: uuid.UUID,
-    db: AsyncSessionDep,
-    request: Request,
+    service: ResearchServiceDep,
 ) -> ResearchArtifactsResponse:
-    service = _get_research_service(request=request, db=db)
     session = await service.get_session(session_id)
     return service.build_artifacts_response(session)

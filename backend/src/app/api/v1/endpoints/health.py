@@ -4,11 +4,12 @@ import asyncio
 import inspect
 import time
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from app.api.dependencies.app_resources import AppResourcesDep
 from app.core.errors import build_error_response
 from app.core.logging import get_request_id
 from app.integrations.milvus_client import MilvusClient
@@ -65,11 +66,11 @@ async def _check_minio() -> None:
 
 
 @router.get("/ready")
-async def ready(request: Request) -> JSONResponse:
+async def ready(resources: AppResourcesDep) -> JSONResponse:
     """Readiness：短超时探测关键依赖，可降级返回。"""
-    engine = request.app.state.engine
-    redis = request.app.state.redis
-    milvus = request.app.state.milvus_client
+    engine = resources.engine
+    redis = resources.redis
+    milvus = resources.milvus_client
     tasks = {
         "postgres": asyncio.create_task(
             _timed("postgres", _check_postgres(engine), 1.0)
