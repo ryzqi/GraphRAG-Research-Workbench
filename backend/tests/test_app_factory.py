@@ -11,7 +11,8 @@ def test_create_app_registers_routes_lifespan_and_request_id_middleware() -> Non
     app = create_app(get_settings())
 
     assert isinstance(app, FastAPI)
-    route_paths = {getattr(route, 'path', '') for route in app.routes}
-    assert '/api/v1/health' in route_paths
+    route_paths = {getattr(route, "path", "") for route in app.routes}
+    assert "/api/v1/health" in route_paths
+    assert not any(path.startswith("/api/v2") for path in route_paths)
     assert app.router.lifespan_context is not None
     assert any(middleware.cls is RequestIdMiddleware for middleware in app.user_middleware)

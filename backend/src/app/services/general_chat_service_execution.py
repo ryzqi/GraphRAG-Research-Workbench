@@ -145,15 +145,14 @@ def _is_previous_response_not_found_error(exc: Exception) -> bool:
     return "response with id" in message and "not found" in message
 
 
-@classmethod
+@staticmethod
 def _should_recover_from_response_not_found(
-    cls,
     exc: Exception,
     replay_decision: ReplayDecision,
 ) -> bool:
     return (
         replay_decision.allow_recovery
-        and cls._is_previous_response_not_found_error(exc)
+        and _is_previous_response_not_found_error(exc)
     )
 
 

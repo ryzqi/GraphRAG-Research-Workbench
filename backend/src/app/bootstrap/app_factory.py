@@ -4,7 +4,6 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.v1.api import api_router
-from app.api.v2.api import api_router_v2
 from app.bootstrap.lifespan import create_lifespan
 from app.core.errors import register_exception_handlers
 from app.core.middleware.request_id import RequestIdMiddleware
@@ -28,6 +27,5 @@ def create_app(settings: Settings) -> FastAPI:
     )
 
     app.include_router(api_router, prefix="/api/v1")
-    app.include_router(api_router_v2, prefix="/api/v2")
     register_exception_handlers(app)
     return app
