@@ -101,11 +101,17 @@ class MilvusClient:
             logger.warning("Milvus client close 失败", extra={"error": str(exc)})
 
     async def ready_check(self) -> None:
-        """就绪探测：调用可用的 Milvus API 验证连接。"""
-        describe = getattr(self._client, "describe_collection", None)
-        if describe is None:
-            raise RuntimeError("pymilvus API 不匹配：缺少 describe_collection")
-        await describe(collection_name=self._collection)
+        """就绪探测：验证 Milvus 连通性；默认 collection 缺失不视为服务不可用。"""
+        has_collection = getattr(self._client, "has_collection", None)
+        if has_collection is None:
+            raise RuntimeError("pymilvus API 不匹配：缺少 has_collection")
+
+        exists = await has_collection(collection_name=self._collection)
+        if not exists:
+            return
+
+        self._field_cache = await self._describe_fields(collection_name=self._collection)
+        self._assert_schema_compatible()
 
     async def _describe_fields(
         self,
