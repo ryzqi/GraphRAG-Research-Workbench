@@ -155,9 +155,21 @@ async def _persist_failed_run(self, *, run: AgentRun, error: Exception) -> None:
         run_id = getattr(run, "id", None)
     except Exception:
         run_id = None
-    run.status = AgentRunStatus.FAILED
-    run.finished_at = datetime.now(timezone.utc)
-    run.error_message = str(error)
+    # 先清理上一轮 flush/commit 失败留下的坏事务，再重新加载运行记录。
+    await self._db.rollback()
+    current = await self._db.get(AgentRun, run_id) if run_id is not None else None
+    if current is None:
+        logger.warning(
+            "Skip failed run persistence because agent run row no longer exists",
+            extra={
+                "run_id": str(run_id or ""),
+                "original_exc_type": type(error).__name__,
+            },
+        )
+        return
+    current.status = AgentRunStatus.FAILED
+    current.finished_at = datetime.now(timezone.utc)
+    current.error_message = str(error)
     try:
         await self._db.commit()
     except StaleDataError:
