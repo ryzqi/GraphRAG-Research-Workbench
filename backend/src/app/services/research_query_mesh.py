@@ -5,22 +5,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Iterable, Literal
 
+from app.config.policy_loader import load_research_policy
 from app.prompts import get_prompt_loader
 from app.schemas.research import ResearchPlanSnapshot, ResearchSourceTarget
 
 ResearchComplexityLiteral = Literal["simple", "comparative", "complex"]
-DEFAULT_REQUIRED_WEB_PROVIDERS = ("tavily", "searxng", "jina_reader")
-
-_REQUIRED_WEB_PROVIDER_COUNTS: dict[ResearchComplexityLiteral, int] = {
-    "simple": 2,
-    "comparative": 3,
-    "complex": 3,
-}
-_REQUIRED_UNIQUE_SOURCE_COUNTS: dict[ResearchComplexityLiteral, int] = {
-    "simple": 5,
-    "comparative": 8,
-    "complex": 12,
-}
 
 
 @dataclass(slots=True, frozen=True)
@@ -105,7 +94,8 @@ def evaluate_coverage_gate(
     source_types: set[str],
     target_sources: set[ResearchSourceTarget],
 ) -> CoverageGateResult:
-    required_sources = _REQUIRED_UNIQUE_SOURCE_COUNTS[complexity]
+    coverage_policy = load_research_policy().coverage_gate
+    required_sources = coverage_policy.required_unique_source_counts[complexity]
     reasons: list[str] = []
     target_source_values = {item.value for item in target_sources}
     workspace_only_web_evidence = _is_workspace_only_web_evidence(
@@ -117,13 +107,14 @@ def evaluate_coverage_gate(
         [
             name
             for name, count in provider_counts.items()
-            if count > 0 and name in DEFAULT_REQUIRED_WEB_PROVIDERS
+            if count > 0 and name in coverage_policy.default_required_web_providers
         ]
     )
     if (
         ResearchSourceTarget.WEB.value in target_source_values
         and not workspace_only_web_evidence
-        and available_web_provider_count < _REQUIRED_WEB_PROVIDER_COUNTS[complexity]
+        and available_web_provider_count
+        < coverage_policy.required_web_provider_counts[complexity]
     ):
         reasons.append("missing_web_provider_count")
     if unique_source_count < required_sources:
@@ -144,9 +135,12 @@ def select_required_web_providers(
     complexity: ResearchComplexityLiteral,
     available_providers: Iterable[str],
 ) -> tuple[str, ...]:
+    coverage_policy = load_research_policy().coverage_gate
     normalized_available = _unique_queries(available_providers)
-    required_count = _REQUIRED_WEB_PROVIDER_COUNTS[complexity]
-    required: list[str] = list(DEFAULT_REQUIRED_WEB_PROVIDERS[:required_count])
+    required_count = coverage_policy.required_web_provider_counts[complexity]
+    required: list[str] = list(
+        coverage_policy.default_required_web_providers[:required_count]
+    )
     for provider in normalized_available:
         if provider in required:
             continue

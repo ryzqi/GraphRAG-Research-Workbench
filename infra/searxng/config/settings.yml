@@ -1,15 +1,12 @@
-# SearXNG settings for local project integration.
-# Optimized for local development / integration:
-# - mounted into /etc/searxng
-# - keep default settings, override only project-specific parts
-# - enable JSON search API for programmatic usage
-# - enable the full default engine catalog, then rely on suspension / retries for fallback
+# SearXNG shared settings.
+# Environment-specific public URL, secret, limiter and proxy routing must be injected
+# outside this file. Do not commit host-specific egress proxies here.
 
 use_default_settings: true
 
 general:
   debug: false
-  instance_name: "MKB Local SearXNG"
+  instance_name: "MKB SearXNG"
 
 search:
   safe_search: 0
@@ -28,13 +25,12 @@ search:
 
 server:
   # Overwritten by container env: SEARXNG_SECRET / SEARXNG_BASE_URL / SEARXNG_LIMITER
-  secret_key: "change-me-searxng-secret"
-  base_url: "http://127.0.0.1:18080/"
+  secret_key: "set-via-env-or-secret-file"
+  base_url: "https://searxng.example.invalid/"
   bind_address: "0.0.0.0"
   port: 8080
-  # 本地直连 Podman 端口映射时默认关闭 limiter，避免没有反向代理转发
-  # X-Forwarded-For / X-Real-IP 头时出现 429。若后续接入反向代理或公网暴露，
-  # 可通过环境变量重新开启，并保留 Valkey + limiter.toml 配套能力。
+  # 是否启用 limiter 由部署环境决定：
+  # 本地开发可关闭，接入反向代理或公网暴露时应开启，并保留 Valkey + limiter.toml 配套能力。
   limiter: false
   public_instance: false
   image_proxy: false
@@ -45,19 +41,14 @@ valkey:
   url: valkey://searxng_valkey:6379/0
 
 outgoing:
-  # 方案A：把出网代理迁移到 SearXNG 自己的 outgoing.proxies，
-  # 不再依赖容器级 HTTP_PROXY/HTTPS_PROXY；这样后续才能扩成代理池 + 重试。
-  # 当前只有 1 个代理出口，因此先用较低并发 + 重试兜底，避免单次上游故障导致整批 0 结果。
+  # 若需要环境级代理池，请在未提交的本地覆盖文件或部署平台模板中注入，
+  # 不要把宿主机 IP 或办公网络代理直接写进仓库。
   request_timeout: 12.0
   max_request_timeout: 20.0
   extra_proxy_timeout: 10
   pool_connections: 20
   pool_maxsize: 10
   retries: 2
-  proxies:
-    all://:
-      # 当前先接入 1 个已知可访问的宿主机代理；后续若有更多出口，继续往列表里追加，
-      # 这样多引擎 + 多代理才能同时具备更强的出口级冗余。
-      - http://192.168.3.52:7890
-  # 当前代理链路下多处 TLS/ConnectTimeout，先关闭 HTTP/2，优先稳定。
+  proxies: {}
+  # 若当前出口链路不稳定，可在环境覆盖模板中关闭 HTTP/2 并调低并发。
   enable_http2: false

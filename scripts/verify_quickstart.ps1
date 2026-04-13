@@ -1,5 +1,4 @@
-﻿# 最小验收脚本
-# 用于验证快速启动流程的关键项
+# 本地开发 quickstart 验收脚本
 
 param(
     [switch]$SkipInfra,
@@ -9,6 +8,7 @@ param(
 $ErrorActionPreference = "Stop"
 $script:passed = 0
 $script:failed = 0
+$script:repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 
 function Write-Check {
     param([string]$Name, [bool]$Success, [string]$Message = "")
@@ -32,6 +32,71 @@ function Test-Endpoint {
     }
 }
 
+function Get-DotEnvValue {
+    param(
+        [string[]]$Paths,
+        [string]$Key
+    )
+
+    $prefix = "$Key="
+    foreach ($path in $Paths) {
+        if (-not (Test-Path $path)) {
+            continue
+        }
+        foreach ($line in Get-Content -Path $path -Encoding UTF8) {
+            if ($line.StartsWith($prefix)) {
+                return $line.Substring($prefix.Length).Trim()
+            }
+        }
+    }
+
+    return $null
+}
+
+function Get-EnvOrDotEnvValue {
+    param(
+        [string[]]$Names,
+        [string[]]$DotEnvPaths = @()
+    )
+
+    foreach ($name in $Names) {
+        $value = [Environment]::GetEnvironmentVariable($name)
+        if (-not [string]::IsNullOrWhiteSpace($value)) {
+            return $value.Trim()
+        }
+        $fileValue = Get-DotEnvValue -Paths $DotEnvPaths -Key $name
+        if (-not [string]::IsNullOrWhiteSpace($fileValue)) {
+            return $fileValue
+        }
+    }
+
+    return $null
+}
+
+function Normalize-BaseUrl {
+    param([string]$Raw)
+
+    if ([string]::IsNullOrWhiteSpace($Raw)) {
+        return $null
+    }
+
+    $value = $Raw.Trim().TrimEnd("/")
+    if ($value.EndsWith("/api/v1")) {
+        $value = $value.Substring(0, $value.Length - "/api/v1".Length)
+    }
+    return $value.TrimEnd("/")
+}
+
+function Resolve-ServiceBaseUrl {
+    param(
+        [string[]]$EnvNames,
+        [string[]]$DotEnvPaths = @()
+    )
+
+    $value = Get-EnvOrDotEnvValue -Names $EnvNames -DotEnvPaths $DotEnvPaths
+    return Normalize-BaseUrl -Raw $value
+}
+
 function Test-SearXngJsonSearch {
     param(
         [string]$BaseUrl,
@@ -49,30 +114,10 @@ function Test-SearXngJsonSearch {
     }
 }
 
-function Get-DotEnvValue {
-    param(
-        [string]$Path,
-        [string]$Key
-    )
-
-    if (-not (Test-Path $Path)) {
-        return $null
-    }
-
-    $prefix = "$Key="
-    foreach ($line in Get-Content -Path $Path -Encoding UTF8) {
-        if ($line.StartsWith($prefix)) {
-            return $line.Substring($prefix.Length).Trim()
-        }
-    }
-
-    return $null
-}
-
 function Get-SearXngDefaultEngines {
-    param([string]$EnvPath)
+    param([string[]]$EnvPaths)
 
-    $raw = Get-DotEnvValue -Path $EnvPath -Key "SEARXNG_DEFAULT_ENGINES"
+    $raw = Get-DotEnvValue -Paths $EnvPaths -Key "SEARXNG_DEFAULT_ENGINES"
     if ([string]::IsNullOrWhiteSpace($raw) -or $raw -eq "[]") {
         return @()
     }
@@ -152,7 +197,7 @@ function Get-SearXngImageEngineCatalogCount {
 function Get-SearXngActiveEngineCount {
     param(
         [string]$BaseUrl,
-        [string]$EnvPath,
+        [string[]]$EnvPaths,
         [string]$SettingsPath,
         [string]$ContainerName = "mkb_searxng"
     )
@@ -173,12 +218,12 @@ function Get-SearXngActiveEngineCount {
 
     $imageCatalogCount = Get-SearXngImageEngineCatalogCount -ContainerName $ContainerName
     if ($imageCatalogCount -gt 0) {
-        $defaultEngines = Get-SearXngDefaultEngines -EnvPath $EnvPath
+        $defaultEngines = Get-SearXngDefaultEngines -EnvPaths $EnvPaths
         if ($defaultEngines.Count -gt 0) {
             return [PSCustomObject]@{
                 Count   = $defaultEngines.Count
                 Mode    = "env_allowlist"
-                Message = "运行态 /config 暂不可读；按 .env 推导当前请求默认会显式指定 $($defaultEngines.Count) 个引擎。"
+                Message = "运行态 /config 暂不可读；按环境配置推导当前请求默认会显式指定 $($defaultEngines.Count) 个引擎。"
             }
         }
 
@@ -205,15 +250,23 @@ function Get-SearXngActiveEngineCount {
     }
 }
 
+$rootDotEnv = Join-Path $script:repoRoot ".env"
+$infraDevEnvExample = Join-Path $script:repoRoot "infra\env\dev.env.example"
+$infraDevEnv = Join-Path $script:repoRoot "infra\env\dev.env"
+$scriptDotEnvPaths = @($rootDotEnv, $infraDevEnv, $infraDevEnvExample)
+
 Write-Host "========================================" -ForegroundColor Cyan
-Write-Host "  知识代理系统 - 验收检查" -ForegroundColor Cyan
+Write-Host "  知识代理系统 - 本地开发验收检查" -ForegroundColor Cyan
 Write-Host "========================================" -ForegroundColor Cyan
+Write-Host ""
+Write-Host "scripts/verify_quickstart.ps1 仅覆盖本地开发 quickstart。生产验证请使用 docs/ops/config-and-secrets.md 中的部署与轮换手册。" -ForegroundColor Yellow
 Write-Host ""
 
 # 1. 检查环境文件
 Write-Host "1. 环境配置检查" -ForegroundColor Yellow
 Write-Check ".env 文件存在" (Test-Path ".env")
 Write-Check ".env.example 文件存在" (Test-Path ".env.example")
+Write-Check "infra/env/dev.env.example 文件存在" (Test-Path "infra/env/dev.env.example")
 Write-Host ""
 
 # 2. 检查目录结构
@@ -250,6 +303,7 @@ Write-Host ""
 Write-Host "6. 文档检查" -ForegroundColor Yellow
 Write-Check "architecture.md 存在" (Test-Path "docs/architecture.md")
 Write-Check "Research API 契约文档存在" (Test-Path "docs/api_contract_research.md")
+Write-Check "运维配置文档存在" (Test-Path "docs/ops/config-and-secrets.md")
 Write-Check "README.md 存在" (Test-Path "README.md")
 Write-Host ""
 
@@ -257,28 +311,41 @@ Write-Host ""
 if (-not $SkipInfra) {
     Write-Host "7. 服务连通性检查" -ForegroundColor Yellow
 
-    $searxngPort = if ($env:SEARXNG_PORT) { $env:SEARXNG_PORT } else { "18080" }
-    $searxngBaseUrl = "http://127.0.0.1:$searxngPort"
-    $searxngSettingsPath = "infra/searxng/config/settings.yml"
-    $searxngEngines = Get-SearXngDefaultEngines -EnvPath ".env"
-    $searxngConfig = Test-Endpoint "$searxngBaseUrl/config" "SearXNG Config"
-    Write-Check "SearXNG 配置页" $searxngConfig "请先运行: pwsh -ExecutionPolicy Bypass -File .\scripts\start_all.ps1"
-    $searxngActiveEngines = Get-SearXngActiveEngineCount -BaseUrl $searxngBaseUrl -EnvPath ".env" -SettingsPath $searxngSettingsPath
-    Write-Check "SearXNG 活跃引擎数" ($null -ne $searxngActiveEngines.Count -and $searxngActiveEngines.Count -gt 0) $searxngActiveEngines.Message
-    $searxngSearch = Test-SearXngJsonSearch -BaseUrl $searxngBaseUrl -Engines $searxngEngines
-    Write-Check "SearXNG JSON 搜索 API" $searxngSearch "请检查 infra/searxng/config/settings.yml 中 search.formats 是否包含 json；若 API 可访问但 results 为空且容器日志出现 ConnectTimeout/ConnectError，请检查 Podman 外网连通性或代理配置（例如宿主机代理是否可从容器访问）。"
+    $searxngBaseUrl = Resolve-ServiceBaseUrl -EnvNames @("SEARXNG_BASE_URL") -DotEnvPaths @($infraDevEnv, $infraDevEnvExample, $rootDotEnv)
+    if ($searxngBaseUrl) {
+        $searxngSettingsPath = "infra/searxng/config/settings.yml"
+        $searxngEngines = Get-SearXngDefaultEngines -EnvPaths $scriptDotEnvPaths
+        $searxngConfig = Test-Endpoint "$searxngBaseUrl/config" "SearXNG Config"
+        Write-Check "SearXNG 配置页" $searxngConfig "请先运行: pwsh -ExecutionPolicy Bypass -File .\scripts\start_all.ps1"
+        $searxngActiveEngines = Get-SearXngActiveEngineCount -BaseUrl $searxngBaseUrl -EnvPaths $scriptDotEnvPaths -SettingsPath $searxngSettingsPath
+        Write-Check "SearXNG 活跃引擎数" ($null -ne $searxngActiveEngines.Count -and $searxngActiveEngines.Count -gt 0) $searxngActiveEngines.Message
+        $searxngSearch = Test-SearXngJsonSearch -BaseUrl $searxngBaseUrl -Engines $searxngEngines
+        Write-Check "SearXNG JSON 搜索 API" $searxngSearch "请检查 infra/searxng/config/settings.yml 中 search.formats 是否包含 json；若 API 可访问但 results 为空，请检查当前出网代理或上游网络连通性。"
+    }
+    else {
+        Write-Check "SearXNG 公网/开发地址配置" $false "请在 infra/env/dev.env 或 .env 中补齐 SEARXNG_BASE_URL。"
+    }
 
-    # 后端接口
-    $apiHealth = Test-Endpoint "http://localhost:8000/api/v1/health" "Backend API"
-    Write-Check "后端 API 健康检查" $apiHealth "请先运行: pwsh -ExecutionPolicy Bypass -File .\scripts\start_all.ps1（或仅后端命令: uv run uvicorn app.main:app --host 127.0.0.1 --port 8000 --loop app.core.uvicorn_loop:windows_selector_loop_factory）"
+    $backendBaseUrl = Resolve-ServiceBaseUrl -EnvNames @("NEXT_PUBLIC_API_BASE_URL", "BACKEND_PUBLIC_BASE_URL") -DotEnvPaths @($rootDotEnv)
+    if ($backendBaseUrl) {
+        $apiHealth = Test-Endpoint "$backendBaseUrl/api/v1/health" "Backend API"
+        Write-Check "后端 API 健康检查" $apiHealth "请先运行: pwsh -ExecutionPolicy Bypass -File .\scripts\start_all.ps1"
 
-    # 前端服务
-    $frontendHealth = Test-Endpoint "http://localhost:3000" "Frontend"
-    Write-Check "前端服务" $frontendHealth "请确保前端服务已启动: npm run start"
+        $docsHealth = Test-Endpoint "$backendBaseUrl/docs" "OpenAPI Docs"
+        Write-Check "OpenAPI 文档" $docsHealth
+    }
+    else {
+        Write-Check "后端公开地址配置" $false "请在 .env 中补齐 NEXT_PUBLIC_API_BASE_URL 或 BACKEND_PUBLIC_BASE_URL。"
+    }
 
-    # OpenAPI 文档页
-    $docsHealth = Test-Endpoint "http://localhost:8000/docs" "OpenAPI Docs"
-    Write-Check "OpenAPI 文档" $docsHealth
+    $frontendBaseUrl = Resolve-ServiceBaseUrl -EnvNames @("FRONTEND_PUBLIC_BASE_URL") -DotEnvPaths @($rootDotEnv)
+    if ($frontendBaseUrl) {
+        $frontendHealth = Test-Endpoint $frontendBaseUrl "Frontend"
+        Write-Check "前端服务" $frontendHealth "请确保前端服务已启动: npm run start"
+    }
+    else {
+        Write-Check "前端公开地址配置" $false "请在 .env 中补齐 FRONTEND_PUBLIC_BASE_URL。"
+    }
 
     Write-Host ""
 }

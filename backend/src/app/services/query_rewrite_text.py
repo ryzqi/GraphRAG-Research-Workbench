@@ -4,7 +4,10 @@ import re
 from collections.abc import Iterable, Mapping, Sequence
 
 from app.agents.kb_chat_agentic.schemas import ClarificationSlotDecision
+from app.config.policy_loader import load_search_policy
 from app.utils.text_sanitization import sanitize_visible_text
+
+
 def _normalize_whitespace(text: str) -> str:
     return re.sub(r"\\s+", " ", sanitize_visible_text(text)).strip()
 
@@ -20,175 +23,164 @@ def _normalize_single_line(text: str) -> str:
 def _sanitize_query_text(text: str) -> str:
     return _normalize_single_line(text).strip("`\"' ")
 
-
-_COREF_MARKERS_ZH = [
-    "这个",
-    "那个",
-    "这些",
-    "那些",
-    "它",
-    "他",
-    "她",
-    "他们",
-    "她们",
-    "它们",
-    "上面",
-    "前面",
-    "刚才",
-]
-_COREF_MARKERS_EN = ["this", "that", "these", "those", "it", "they", "them"]
-_COREF_MARKERS = sorted([*_COREF_MARKERS_ZH, *_COREF_MARKERS_EN], key=len, reverse=True)
-_COREF_CONFIDENCE_THRESHOLD = 0.72
-_DEFAULT_CLARIFICATION_QUESTION = (
-    "为了更准确地回答，请补充你指的是哪个对象、范围或时间？"
-)
-_DEFAULT_AMBIGUITY_TRUE_REASON = "问题缺少关键信息，需先澄清后再检索。"
-_DEFAULT_AMBIGUITY_FALSE_REASON = "未命中需澄清信号，可直接继续检索。"
-_DEFAULT_COMPLEXITY_DIRECT_REASON = "未命中复杂问题信号，先按简单问题直接检索。"
-_DEFAULT_COMPLEXITY_MULTI_QUERY_REASON = "目标单一但召回风险较高，按多路查询扩展检索。"
-_DEFAULT_COMPLEXITY_DECOMPOSITION_REASON = "命中比较或多目标信号，按问题拆解处理。"
-_GUARDRAIL_COMPLEXITY_DIRECT_REASON = "命中稳定实体的清单型问题信号，应优先直接检索。"
-_GUARDRAIL_COMPLEXITY_DECOMPOSITION_REASON = (
-    "命中“分别/各自”等并列子问题信号，应拆分检索后再汇总。"
-)
-_REASON_CODES = {
-    "missing_entity",
-    "missing_scope",
-    "missing_time",
-    "missing_metric",
-    "coref_uncertain",
-    "mixed",
-}
-_AMBIGUITY_REASON_LABELS = {
-    "missing_entity": "缺少具体对象",
-    "missing_scope": "缺少范围约束",
-    "missing_time": "缺少时间范围",
-    "missing_metric": "缺少指标口径",
-    "coref_uncertain": "指代对象不明确",
-    "mixed": "关键信息不完整",
-}
-
-_MULTI_QUERY_LABEL_TOKENS = {
-    "同义词",
-    "技术术语",
-    "表达",
-    "用户视角",
-    "实际问题",
-    "专家视角",
-    "专业术语",
-    "窄范围",
-    "具体条件",
-    "广范围",
-    "全局概览",
-    "术语化",
-    "术语化查询",
-    "用户表达",
-    "用户表达查询",
-    "范围扩展",
-    "范围扩展查询",
-}
-_TROUBLESHOOT_KEYWORDS = (
-    "怎么",
-    "如何",
-    "解决",
-    "排查",
-    "报错",
-    "故障",
-    "异常",
-    "error",
-    "failed",
-    "failure",
-    "troubleshoot",
-    "debug",
-)
 _LEADING_COMPARE_PATTERNS = (r"^(?:请)?(?:帮我)?(?:比较|对比|compare)\s*",)
 _TRAILING_COMPARE_PATTERNS = (
     r"(?:的)?(?:区别|差异|不同点|对比|比较|优缺点)\s*$",
     r"(?:differences?|comparison)\s*$",
 )
-_COMPARE_KEYWORDS = (
-    "compare",
-    "difference",
-    "differences",
-    "comparison",
-    "vs",
-    "which",
-    "better",
-    "优缺点",
-    "区别",
-    "对比",
-    "比较",
-)
-_MULTI_TARGET_SEPARATORS = (",", "，", " and ", " 与 ", " 和 ", "及")
-_TERM_ALIAS_KEYWORDS = ("别名", "又称", "也叫", "简称", "alias", "aka")
-_TAXONOMY_QUERY_KEYWORDS = (
-    "主要变体",
-    "常见变体",
-    "变体",
-    "类型",
-    "分类",
-    "类别",
-    "列表",
-    "清单",
-)
-_STABLE_OVERVIEW_ASK_MARKERS = ("是什么", "有哪些", "包括什么", "包括哪些")
-_TAXONOMY_ASK_MARKERS = (
-    "有哪些",
-    "包括哪些",
-    "包括什么",
-    "都有哪些",
-    "有哪些类型",
-    "有哪些分类",
-    "是什么",
-)
-_TAXONOMY_DRIFT_KEYWORDS = (
-    "场景",
-    "应用",
-    "优缺点",
-    "性能",
-    "对比",
-    "比较",
-    "区别",
-    "差异",
-    "挑战",
-    "案例",
-)
-_STABLE_OVERVIEW_KEYWORDS = (
-    "核心组件",
-    "核心模块",
-    "组成部分",
-    "主要变体",
-    "关键步骤",
-    "六步完整流程",
-)
 _QUESTION_PREFIX_RE = re.compile(
     r"^(?:请问|请说明|请比较|请介绍|请概述|请分析|请列出|比较|说明|介绍|概述|分析|列出|关于)\s*"
 )
 _ENTITY_SPLIT_RE = re.compile(r"\s*(?:和|与|及|以及|、|，|,)\s*")
-_MULTI_ENTITY_SIGNAL_KEYWORDS = ("分别", "各自", "各个", "逐一")
-_QUESTION_DIMENSION_KEYWORDS: tuple[tuple[str, tuple[str, ...]], ...] = (
-    ("职责", ("负责什么", "职责", "核心任务", "作用", "做什么")),
-    ("技术架构", ("技术架构", "采用什么技术架构", "采用什么架构", "模型架构", "架构")),
-    ("挑战", ("挑战", "难点", "瓶颈")),
-    ("适用场景", ("适用场景", "适用范围", "场景")),
-    ("流程", ("流程", "步骤", "过程")),
-)
 _GUARDRAIL_TEXT_NORMALIZE_RE = re.compile(r"[\s\-‐‑‒–—―_]+")
 
 
+def _query_planning_policy():
+    return load_search_policy().query_planning
+
+
+def _coref_markers_zh() -> tuple[str, ...]:
+    return tuple(_query_planning_policy().coref_markers_zh)
+
+
+def _coref_markers_en() -> tuple[str, ...]:
+    return tuple(_query_planning_policy().coref_markers_en)
+
+
+def _coref_markers() -> tuple[str, ...]:
+    return tuple(
+        sorted([*_coref_markers_zh(), *_coref_markers_en()], key=len, reverse=True)
+    )
+
+
+def _compare_keywords() -> tuple[str, ...]:
+    return tuple(_query_planning_policy().compare_keywords)
+
+
+def _multi_target_separators() -> tuple[str, ...]:
+    return tuple(_query_planning_policy().multi_target_separators)
+
+
+def _term_alias_keywords() -> tuple[str, ...]:
+    return tuple(_query_planning_policy().term_alias_keywords)
+
+
+def _taxonomy_query_keywords() -> tuple[str, ...]:
+    return tuple(_query_planning_policy().taxonomy_query_keywords)
+
+
+def _stable_overview_ask_markers() -> tuple[str, ...]:
+    return tuple(_query_planning_policy().stable_overview_ask_markers)
+
+
+def _taxonomy_ask_markers() -> tuple[str, ...]:
+    return tuple(_query_planning_policy().taxonomy_ask_markers)
+
+
+def _taxonomy_drift_keywords() -> tuple[str, ...]:
+    return tuple(_query_planning_policy().taxonomy_drift_keywords)
+
+
+def _stable_overview_keywords() -> tuple[str, ...]:
+    return tuple(_query_planning_policy().stable_overview_keywords)
+
+
+def _multi_entity_signal_keywords() -> tuple[str, ...]:
+    return tuple(_query_planning_policy().multi_entity_signal_keywords)
+
+
+def _question_dimension_keywords() -> tuple[tuple[str, tuple[str, ...]], ...]:
+    return tuple(
+        (label, tuple(keywords))
+        for label, keywords in _query_planning_policy().question_dimension_keywords.items()
+    )
+
+
+def _decomposition_max_sub_queries() -> int:
+    return int(_query_planning_policy().decomposition_max_sub_queries)
+
+
+def _multi_query_fixed_variants() -> int:
+    return int(_query_planning_policy().multi_query_fixed_variants)
+
+
+def _hyde_num_hypotheses() -> int:
+    return int(_query_planning_policy().hyde_num_hypotheses)
+
+
+def _hyde_aggregation() -> str:
+    return _normalize_whitespace(_query_planning_policy().hyde_aggregation).lower()
+
+
+def _hyde_regenerate_on_retry() -> bool:
+    return bool(_query_planning_policy().hyde_regenerate_on_retry)
+
+
+def _structured_call_max_attempts() -> int:
+    return int(_query_planning_policy().structured_call_max_attempts)
+
+
+def _structured_call_retryable_reasons() -> frozenset[str]:
+    return frozenset(_query_planning_policy().structured_call_retryable_reasons)
+
+
+def _default_clarification_question() -> str:
+    return _query_planning_policy().default_clarification_question
+
+
+def _default_ambiguity_reason(*, ambiguous: bool) -> str:
+    policy = _query_planning_policy()
+    if ambiguous:
+        return policy.default_ambiguity_true_reason
+    return policy.default_ambiguity_false_reason
+
+
+def _resolve_ambiguity_reason_label(reason_code: str) -> str | None:
+    normalized_code = _normalize_reason_code(reason_code)
+    return _query_planning_policy().ambiguity_reason_labels.get(normalized_code)
+
+
+def _default_complexity_reason(strategy: str) -> str:
+    normalized_strategy = _normalize_whitespace(strategy).lower()
+    policy = _query_planning_policy()
+    if normalized_strategy == "decomposition":
+        return policy.default_complexity_decomposition_reason
+    if normalized_strategy in {"multi_query", "generate_variants"}:
+        return policy.default_complexity_multi_query_reason
+    return policy.default_complexity_direct_reason
+
+
+def _guardrail_complexity_reason(strategy: str) -> str:
+    normalized_strategy = _normalize_whitespace(strategy).lower()
+    policy = _query_planning_policy()
+    if normalized_strategy == "decomposition":
+        return policy.guardrail_complexity_decomposition_reason
+    return policy.guardrail_complexity_direct_reason
+
+
+def _multi_query_label_tokens() -> set[str]:
+    return set(_query_planning_policy().multi_query_label_tokens)
+
+
+def _troubleshoot_keywords() -> tuple[str, ...]:
+    return tuple(_query_planning_policy().troubleshoot_keywords)
+
+
 def _normalize_reason_code(value: object) -> str:
+    valid_reason_codes = set(_query_planning_policy().ambiguity_reason_labels.keys())
+    valid_reason_codes.add("mixed")
     if isinstance(value, str):
         normalized = value.strip().lower()
-        if normalized in _REASON_CODES:
+        if normalized in valid_reason_codes:
             return normalized
     return "mixed"
 
 
 def _looks_compare_or_multi_target(query: str) -> bool:
     lowered = query.lower()
-    if any(keyword in lowered for keyword in _COMPARE_KEYWORDS):
+    if any(keyword in lowered for keyword in _compare_keywords()):
         return True
-    if any(separator in query for separator in _MULTI_TARGET_SEPARATORS):
+    if any(separator in query for separator in _multi_target_separators()):
         return True
     return (
         re.search(
@@ -204,7 +196,7 @@ def _looks_term_alias_query(query: str) -> bool:
     if not normalized:
         return False
     lowered = normalized.lower()
-    if any(keyword in lowered for keyword in _TERM_ALIAS_KEYWORDS):
+    if any(keyword in lowered for keyword in _term_alias_keywords()):
         return True
     has_latin = re.search(r"[A-Za-z]", normalized) is not None
     if not has_latin:
@@ -223,12 +215,12 @@ def _looks_taxonomy_query(query: str) -> bool:
     if not normalized:
         return False
     lowered = normalized.lower()
-    if any(keyword in lowered for keyword in _COMPARE_KEYWORDS):
+    if any(keyword in lowered for keyword in _compare_keywords()):
         return False
     if any(token in normalized for token in ("分别", "各自")):
         return False
-    return any(keyword in normalized for keyword in _TAXONOMY_QUERY_KEYWORDS) and any(
-        marker in normalized for marker in _TAXONOMY_ASK_MARKERS
+    return any(keyword in normalized for keyword in _taxonomy_query_keywords()) and any(
+        marker in normalized for marker in _taxonomy_ask_markers()
     )
 
 
@@ -251,7 +243,7 @@ def _is_taxonomy_intent_drift_variant(candidate: str, *, original_query: str) ->
     if not normalized:
         return True
     lowered = normalized.lower()
-    return any(keyword in lowered for keyword in _TAXONOMY_DRIFT_KEYWORDS)
+    return any(keyword in lowered for keyword in _taxonomy_drift_keywords())
 
 
 def _looks_stable_overview_query(query: str) -> bool:
@@ -260,8 +252,8 @@ def _looks_stable_overview_query(query: str) -> bool:
         return False
     if _looks_compare_or_multi_target(normalized):
         return False
-    return any(keyword in normalized for keyword in _STABLE_OVERVIEW_KEYWORDS) and any(
-        marker in normalized for marker in _STABLE_OVERVIEW_ASK_MARKERS
+    return any(keyword in normalized for keyword in _stable_overview_keywords()) and any(
+        marker in normalized for marker in _stable_overview_ask_markers()
     )
 
 
@@ -276,17 +268,14 @@ def _compact_guardrail_text(text: str) -> str:
 def _extract_multi_target_entities_for_guardrail(question: str) -> list[str]:
     normalized = _QUESTION_PREFIX_RE.sub("", _normalize_whitespace(question))
     if not normalized or not any(
-        keyword in normalized for keyword in _MULTI_ENTITY_SIGNAL_KEYWORDS
+        keyword in normalized for keyword in _multi_entity_signal_keywords()
     ):
         return []
 
     boundary_candidates = [
         normalized.find(keyword)
         for keyword in (
-            "分别",
-            "各自",
-            "各个",
-            "逐一",
+            *_multi_entity_signal_keywords(),
             "负责什么",
             "采用什么",
             "面临哪些",
@@ -328,7 +317,7 @@ def _extract_required_dimension_keywords_for_guardrail(
 ) -> list[tuple[str, tuple[str, ...]]]:
     normalized = _normalize_whitespace(question)
     required: list[tuple[str, tuple[str, ...]]] = []
-    for label, keywords in _QUESTION_DIMENSION_KEYWORDS:
+    for label, keywords in _question_dimension_keywords():
         if any(keyword in normalized for keyword in keywords):
             required.append((label, keywords))
     return required
@@ -345,14 +334,14 @@ def _normalize_guardrail_reason(
         if _contains_cjk(original) and not _contains_cjk(candidate):
             return "taxonomy_cross_language_drift"
         original_anchor_terms = [
-            term for term in _TAXONOMY_QUERY_KEYWORDS if term in original
+            term for term in _taxonomy_query_keywords() if term in original
         ]
         if original_anchor_terms and not any(
             term in candidate for term in original_anchor_terms
         ):
             return "taxonomy_anchor_lost"
-        if any(marker in original for marker in _TAXONOMY_ASK_MARKERS) and not any(
-            marker in candidate for marker in _TAXONOMY_ASK_MARKERS
+        if any(marker in original for marker in _taxonomy_ask_markers()) and not any(
+            marker in candidate for marker in _taxonomy_ask_markers()
         ):
             return "taxonomy_ask_lost"
         if _is_taxonomy_intent_drift_variant(candidate, original_query=original):
@@ -383,14 +372,14 @@ def _normalize_guardrail_reason(
     if _contains_cjk(original) and not _contains_cjk(candidate):
         return "stable_overview_cross_language_drift"
     original_anchor_terms = [
-        term for term in _STABLE_OVERVIEW_KEYWORDS if term in original
+        term for term in _stable_overview_keywords() if term in original
     ]
     if original_anchor_terms and not any(
         term in candidate for term in original_anchor_terms
     ):
         return "stable_overview_anchor_lost"
-    if any(marker in original for marker in _STABLE_OVERVIEW_ASK_MARKERS) and not any(
-        marker in candidate for marker in _STABLE_OVERVIEW_ASK_MARKERS
+    if any(marker in original for marker in _stable_overview_ask_markers()) and not any(
+        marker in candidate for marker in _stable_overview_ask_markers()
     ):
         return "stable_overview_ask_lost"
     return None
@@ -558,11 +547,11 @@ def _render_query_items(items: Sequence[Mapping[str, object]] | None) -> list[st
 
 def _contains_coref_marker(query: str) -> bool:
     lowered = query.lower()
-    if any(marker in lowered for marker in _COREF_MARKERS_ZH):
+    if any(marker in lowered for marker in _coref_markers_zh()):
         return True
     return any(
         re.search(rf"\b{re.escape(marker)}\b", lowered) is not None
-        for marker in _COREF_MARKERS_EN
+        for marker in _coref_markers_en()
     )
 
 
@@ -584,8 +573,9 @@ def _apply_coref_candidate(query: str, candidate: str) -> tuple[str, str]:
     c = _normalize_whitespace(candidate)
     rewritten = q
     replaced = False
-    for marker in _COREF_MARKERS:
-        if marker in _COREF_MARKERS_EN:
+    english_markers = set(_coref_markers_en())
+    for marker in _coref_markers():
+        if marker in english_markers:
             pattern = re.compile(rf"\b{re.escape(marker)}\b", flags=re.IGNORECASE)
         else:
             pattern = re.compile(re.escape(marker), flags=re.IGNORECASE)

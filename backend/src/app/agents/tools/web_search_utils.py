@@ -18,8 +18,6 @@ InvalidAPIKeyError = getattr(_tavily, "InvalidAPIKeyError", ())
 TavilyTimeoutError = getattr(_tavily, "TimeoutError", ())
 UsageLimitExceededError = getattr(_tavily, "UsageLimitExceededError", ())
 
-TAVILY_BASE_URL = "https://api.tavily.com"
-
 
 @dataclass(slots=True)
 class TavilyCallContext:

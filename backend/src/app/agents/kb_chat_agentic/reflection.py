@@ -37,13 +37,16 @@ from app.services.query_rewrite_service import (
     QueryRewriteService,
     coerce_structured_result_payload,
 )
+from app.services.query_rewrite_text import (
+    _extract_multi_target_entities_for_guardrail,
+    _extract_required_dimension_keywords_for_guardrail,
+)
 from app.agents.kb_chat_agentic_state import (
     AnswerRoutingDecisionInput,
     DispatchSubqueriesInput,
     MergeSubqueryContextInput,
     RetrieveContextInput,
     RetrieveSubqueryContextInput,
-    SubqueryRun,
     TransformQueryInput,
     resolve_routing_decision,
 )
@@ -76,18 +79,6 @@ _CITATION_ONLY_FAILURE_REASONS = {
     "invalid_citations",
     "citation_mismatch",
 }
-_QUESTION_PREFIX_RE = re.compile(
-    r"^(?:请问|请说明|请比较|请介绍|请概述|请分析|请列出|比较|说明|介绍|概述|分析|列出|关于)\s*"
-)
-_ENTITY_SPLIT_RE = re.compile(r"\s*(?:和|与|及|以及|、|，|,)\s*")
-_MULTI_ENTITY_SIGNAL_KEYWORDS = ("分别", "各自", "各个", "逐一")
-_QUESTION_DIMENSION_KEYWORDS: tuple[tuple[str, tuple[str, ...]], ...] = (
-    ("职责", ("负责什么", "职责", "核心任务", "作用", "做什么")),
-    ("技术架构", ("技术架构", "采用什么技术架构", "采用什么架构", "模型架构", "架构")),
-    ("挑战", ("挑战", "难点", "瓶颈")),
-    ("适用场景", ("适用场景", "适用范围", "场景")),
-    ("流程", ("流程", "步骤", "过程")),
-)
 _LATIN_TERM_RE = re.compile(r"[（(]([A-Za-z][A-Za-z0-9\-/ ]{1,64})[)）]")
 _RESPONSIBILITY_LABEL_RE = re.compile(
     r"(?:核心任务|职责|作用)\s*[：:]\s*([^（(。\n；;，,]+)"
@@ -833,63 +824,14 @@ def _resolve_query_text(state: StateView) -> str:
 
 
 def _extract_question_entities(question: str) -> list[str]:
-    normalized = _QUESTION_PREFIX_RE.sub("", _as_str(question).strip())
-    if not normalized or not any(
-        keyword in normalized for keyword in _MULTI_ENTITY_SIGNAL_KEYWORDS
-    ):
-        return []
-
-    boundary_candidates = [
-        normalized.find(keyword)
-        for keyword in (
-            "分别",
-            "各自",
-            "各个",
-            "逐一",
-            "负责什么",
-            "采用什么",
-            "面临哪些",
-            "技术架构",
-            "挑战",
-            "难点",
-            "瓶颈",
-            "流程",
-            "步骤",
-            "是什么",
-            "有哪些",
-        )
-        if keyword in normalized
-    ]
-    boundary = min(boundary_candidates) if boundary_candidates else -1
-    head = normalized[:boundary] if boundary > 0 else normalized
-
-    entities: list[str] = []
-    for part in _ENTITY_SPLIT_RE.split(head):
-        entity = _QUESTION_PREFIX_RE.sub("", _as_str(part).strip("：:；;，,。？? "))
-        entity = re.sub(r"^(?:对比|比较)\s*", "", entity).strip()
-        entity = re.sub(
-            r"的?(?:职责|技术架构|架构|挑战|难点|瓶颈|适用场景|适用范围|场景|流程|步骤)$",
-            "",
-            entity,
-        ).strip()
-        entity = entity.rstrip("的").strip()
-        if len(entity) < 2 or entity in {"什么", "哪些", "哪个", "哪种"}:
-            continue
-        if entity not in entities:
-            entities.append(entity)
-    return entities if len(entities) >= 2 else []
+    return _extract_multi_target_entities_for_guardrail(question)
 
 
 def _extract_required_dimensions(question: str) -> list[str]:
-    normalized = _as_str(question).strip()
-    dimensions: list[str] = []
-    for label, keywords in _QUESTION_DIMENSION_KEYWORDS:
-        if (
-            any(keyword in normalized for keyword in keywords)
-            and label not in dimensions
-        ):
-            dimensions.append(label)
-    return dimensions
+    return [
+        label
+        for label, _ in _extract_required_dimension_keywords_for_guardrail(question)
+    ]
 
 
 def _extract_required_term_map(

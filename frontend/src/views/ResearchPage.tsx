@@ -16,6 +16,11 @@ import { LoadingSpinner } from '../components/ui/LoadingSpinner';
 import { createExport, pollExportUntilDone } from '../services/exports';
 import { buildResearchPageViewModel } from '../services/researchWorkbench';
 import {
+  getDownloadAllowedHosts,
+  getExportPollIntervalMs,
+  getExportPollMaxAttempts,
+} from '../constants/runtimeDefaults';
+import {
   useCreateResearchSession,
   useResearchSession,
   useStartResearchSession,
@@ -23,6 +28,7 @@ import {
   useSubmitResearchClarification,
   useUpdateResearchPlan,
 } from '../hooks/queries/useResearch';
+import { useRuntimeConfig } from '../hooks/queries/useRuntimeConfig';
 import { useSystemQueueHealth } from '../hooks/queries/useSystemQueueHealth';
 import { getErrorMessage } from '../lib/errorHandler';
 import { buildQueueHealthHint } from '../services/queueHealthDiagnostics';
@@ -40,6 +46,7 @@ export function ResearchPage() {
   const updatePlanMutation = useUpdateResearchPlan();
   const startSessionMutation = useStartResearchSession();
   const stopSessionMutation = useStopResearchSession();
+  const runtimeConfigQuery = useRuntimeConfig();
 
   const [question, setQuestion] = useState('');
   const [sessionId, setSessionId] = useState<string | null>(null);
@@ -62,6 +69,7 @@ export function ResearchPage() {
     (updatePlanMutation.error ? getErrorMessage(updatePlanMutation.error) : null) ??
     (startSessionMutation.error ? getErrorMessage(startSessionMutation.error) : null) ??
     (stopSessionMutation.error ? getErrorMessage(stopSessionMutation.error) : null) ??
+    (runtimeConfigQuery.error ? getErrorMessage(runtimeConfigQuery.error) : null) ??
     (sessionQuery.error ? getErrorMessage(sessionQuery.error) : null);
 
   const handleCloseError = () => {
@@ -218,10 +226,19 @@ export function ResearchPage() {
 
     try {
       const job = await createExport({ type: 'research', session_id: session.session_id });
-      const completed = await pollExportUntilDone(job.id);
+      const completed = await pollExportUntilDone(
+        job.id,
+        getExportPollIntervalMs(runtimeConfigQuery.data),
+        getExportPollMaxAttempts(runtimeConfigQuery.data)
+      );
 
       if (completed.status === 'succeeded' && completed.download_url) {
-        if (!safeDownloadUrl(completed.download_url)) {
+        if (
+          !safeDownloadUrl(
+            completed.download_url,
+            getDownloadAllowedHosts(runtimeConfigQuery.data)
+          )
+        ) {
           setError('无法触发下载，请稍后重试');
         }
       } else {
@@ -232,7 +249,7 @@ export function ResearchPage() {
     } finally {
       setExporting(false);
     }
-  }, [session]);
+  }, [runtimeConfigQuery.data, session]);
 
   const effectiveQuestion = session?.question ?? question;
 

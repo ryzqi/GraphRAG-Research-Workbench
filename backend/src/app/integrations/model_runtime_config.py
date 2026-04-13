@@ -10,6 +10,7 @@ from datetime import datetime
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.config.provider_registry import get_provider_descriptor, provider_order
 from app.core.secrets import decrypt_secret, resolve_model_config_kms_key
 from app.core.settings import Settings, get_settings
 from app.db.session import get_sessionmaker
@@ -21,13 +22,7 @@ from app.models.model_config import (
 
 logger = logging.getLogger(__name__)
 
-_PROVIDER_PRIORITY: tuple[ModelProvider, ...] = (
-    ModelProvider.OPENAI,
-    ModelProvider.OLLAMA,
-    ModelProvider.LLAMA_CPP,
-    ModelProvider.NVIDIA,
-    ModelProvider.ANTHROPIC,
-)
+_PROVIDER_PRIORITY: tuple[ModelProvider, ...] = provider_order()
 
 
 def _normalize_model_names(values: list[str] | None) -> list[str]:
@@ -210,12 +205,8 @@ class ModelRuntimeConfigManager:
                     api_key = None
 
             thinking_level = row.thinking_level
-            if not thinking_level and row.provider in {
-                ModelProvider.OPENAI,
-                ModelProvider.OLLAMA,
-                ModelProvider.ANTHROPIC,
-            }:
-                thinking_level = "high"
+            if not thinking_level:
+                thinking_level = get_provider_descriptor(row.provider).default_thinking_level
 
             providers[row.provider] = RuntimeProviderConfig(
                 provider=row.provider,
@@ -273,24 +264,15 @@ class ModelRuntimeConfigManager:
     def _build_fallback_snapshot() -> RuntimeModelSnapshot:
         providers: dict[ModelProvider, RuntimeProviderConfig] = {}
         for provider in _PROVIDER_PRIORITY:
-            # 运行时兜底策略刻意采用 fail-closed：若配置行无法加载，
-            # 不要静默把提供方标记为可用。需要保持提供方顺序与 thinking 默认值稳定，
-            # 以便 UI 与诊断结果仍具备确定性的结构。
+            descriptor = get_provider_descriptor(provider)
             providers[provider] = RuntimeProviderConfig(
                 provider=provider,
                 enabled=False,
-                base_url=None,
+                base_url=descriptor.default_base_url,
                 api_key=None,
                 models=[],
-                thinking_enabled=provider != ModelProvider.LLAMA_CPP,
-                thinking_level="high"
-                if provider
-                in {
-                    ModelProvider.OPENAI,
-                    ModelProvider.OLLAMA,
-                    ModelProvider.ANTHROPIC,
-                }
-                else None,
+                thinking_enabled=descriptor.default_thinking_enabled,
+                thinking_level=descriptor.default_thinking_level,
             )
         return RuntimeModelSnapshot(
             providers=providers,

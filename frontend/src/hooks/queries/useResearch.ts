@@ -30,6 +30,7 @@ import {
 const NO_ID = '__none__';
 const STREAM_RETRY_DELAY_MS = 1_000;
 const ACTIVE_ARTIFACT_REFRESH_INTERVAL_MS = 2_000;
+const EMPTY_ARTIFACTS: ResearchArtifactRead[] = [];
 
 const KEYS = {
   all: ['research'] as const,
@@ -106,6 +107,9 @@ export function useResearchSession(
     }
   );
 
+  const artifactItems = artifactsQuery.data?.items ?? EMPTY_ARTIFACTS;
+  const artifactStatus = artifactsQuery.data?.status ?? null;
+
   const sessionView = useMemo(() => {
     if (!accepted || !sessionId || accepted.session_id !== sessionId) {
       return undefined;
@@ -113,10 +117,10 @@ export function useResearchSession(
     return buildResearchSessionView({
       accepted,
       events,
-      artifactsStatus: artifactsQuery.data?.status ?? null,
-      artifacts: artifactsQuery.data?.items ?? [],
+      artifactsStatus: artifactStatus,
+      artifacts: artifactItems,
     });
-  }, [accepted, artifactsQuery.data?.items, events, sessionId]);
+  }, [accepted, artifactItems, artifactStatus, events, sessionId]);
 
   const latestViewRef = useRef<ResearchSessionView | undefined>(sessionView);
   useEffect(() => {
@@ -210,7 +214,7 @@ export function useResearchSession(
     const seededView =
       sessionView ??
       (accepted && sessionId && accepted.session_id === sessionId
-        ? buildInitialSessionView(accepted, artifactsQuery.data?.items ?? [])
+        ? buildInitialSessionView(accepted, artifactItems)
         : undefined);
 
     return {
@@ -230,10 +234,10 @@ export function useResearchSession(
     };
   }, [
     accepted,
-    artifactsQuery.data?.items,
     artifactsQuery.error,
     artifactsQuery.isFetching,
     artifactsQuery.isPending,
+    artifactItems,
     refetch,
     sessionId,
     sessionView,

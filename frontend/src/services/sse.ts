@@ -1,5 +1,10 @@
 import { parseSseStream, type SseEvent } from '../lib/sse';
-import { getApiBaseUrl, HttpError } from './http';
+import {
+  ApiConfigurationError,
+  buildApiRequestContext,
+  buildBackendConnectivityHint,
+  HttpError,
+} from './http';
 
 export async function openSseStream(
   path: string,
@@ -12,11 +17,21 @@ export async function openSseStream(
     headers.set('Content-Type', 'application/json');
   }
 
-  const url = `${getApiBaseUrl()}${path}`;
+  let requestContext: ReturnType<typeof buildApiRequestContext>;
+  try {
+    requestContext = buildApiRequestContext(path);
+  } catch (error) {
+    if (error instanceof ApiConfigurationError) {
+      throw new HttpError(`${error.message} 请求：${path}`, 500, {
+        body: error.message,
+      });
+    }
+    throw error;
+  }
 
   let res: Response;
   try {
-    res = await fetch(url, {
+    res = await fetch(requestContext.url, {
       ...init,
       headers,
       signal,
@@ -25,11 +40,9 @@ export async function openSseStream(
     if (signal?.aborted || (err as { name?: string } | undefined)?.name === 'AbortError') {
       throw new HttpError('请求已取消', 499, { body: err instanceof Error ? err.message : err });
     }
-    const baseUrl = getApiBaseUrl();
-    const message = baseUrl
-      ? `无法连接到后端服务（${baseUrl}）。请确认后端已启动并可访问：${url}，或在 frontend/.env.local 配置 NEXT_PUBLIC_API_BASE_URL。`
-      : `无法连接到后端服务。请确认后端已启动（http://127.0.0.1:8000），并在 frontend/.env.local 配置 NEXT_PUBLIC_API_BASE_URL。请求：${url}`;
-    throw new HttpError(message, 0, { body: err instanceof Error ? err.message : err });
+    throw new HttpError(buildBackendConnectivityHint(requestContext), 0, {
+      body: err instanceof Error ? err.message : err,
+    });
   }
 
   if (!res.ok) {
@@ -54,4 +67,3 @@ export async function openSseStream(
 
   return parseSseStream(res.body);
 }
-

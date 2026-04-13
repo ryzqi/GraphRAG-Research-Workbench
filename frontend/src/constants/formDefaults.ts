@@ -8,17 +8,22 @@
  * 通过集中工厂函数返回新对象，避免各页面复制字面量后再逐渐漂移。
  */
 
+type ModelProviderFormDefaults = {
+  default_thinking_enabled?: boolean | null;
+  default_thinking_level?: string | null;
+};
+
 export const DEFAULT_MODEL_PROVIDER = 'openai' as const;
 
-export function createDefaultModelProviderFormState() {
+export function createDefaultModelProviderFormState(defaults?: ModelProviderFormDefaults) {
   return {
     enabled: true,
     baseUrl: '',
     models: [] as string[],
     modelInput: '',
     apiKey: '',
-    thinkingEnabled: true,
-    thinkingLevel: 'high',
+    thinkingEnabled: defaults?.default_thinking_enabled ?? true,
+    thinkingLevel: defaults?.default_thinking_level ?? 'high',
   };
 }
 

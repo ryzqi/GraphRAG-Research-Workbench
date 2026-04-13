@@ -63,4 +63,4 @@ class QueryItem(QueryRef, total=False):
     use_bm25: bool
     # 可选的批量 HyDE 载荷；`query` 仍作为主展示项 / 预览项。
     hyde_queries: list[str]
-    hyde_aggregation: Literal["mean_embedding"]
+    hyde_aggregation: str

@@ -12,46 +12,86 @@ export class HttpError extends Error {
   }
 }
 
-function normalizeApiBaseUrl(raw: string): string {
-  const trimmed = raw.trim().replace(/\/+$/, '');
-  const normalized = trimmed.replace(/\/api\/v1$/, '');
-
-  try {
-    const url = new URL(normalized);
-    if (url.hostname === 'localhost') {
-      url.hostname = '127.0.0.1';
-      return url.toString().replace(/\/$/, '');
-    }
-  } catch {
-    // 相对路径解析失败时直接保留原值。
+export class ApiConfigurationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ApiConfigurationError';
   }
-
-  return normalized;
 }
 
-const API_BASE_URL = (() => {
-  const raw = process.env.NEXT_PUBLIC_API_BASE_URL;
-  if (!raw) {
-    // 仅用于本地前后端分离启动时的开发兜底地址。
-    return 'http://127.0.0.1:8000';
-  }
-  return normalizeApiBaseUrl(raw);
-})();
+export function normalizeApiBaseUrl(raw: string): string {
+  const trimmed = raw.trim().replace(/\/+$/, '');
+  return trimmed.replace(/\/api\/v1$/, '');
+}
 
-const API_ORIGIN = (() => {
-  try {
-    return new URL(API_BASE_URL).origin;
-  } catch {
-    return null;
+function isBrowserRuntime(): boolean {
+  return typeof window !== 'undefined';
+}
+
+export function resolveApiBaseUrl(
+  raw: string | null | undefined,
+  options?: { allowSameOrigin?: boolean }
+): string {
+  const normalizedRaw = raw?.trim();
+  if (normalizedRaw) {
+    return normalizeApiBaseUrl(normalizedRaw);
   }
-})();
+  if (options?.allowSameOrigin ?? isBrowserRuntime()) {
+    return '';
+  }
+  throw new ApiConfigurationError(
+    'NEXT_PUBLIC_API_BASE_URL 未配置：当前为服务端请求，无法推导后端地址。请显式配置 NEXT_PUBLIC_API_BASE_URL，或改为浏览器同源请求。'
+  );
+}
+
+function resolveConfiguredApiBaseUrl(): string {
+  return resolveApiBaseUrl(process.env.NEXT_PUBLIC_API_BASE_URL, {
+    allowSameOrigin: isBrowserRuntime(),
+  });
+}
+
+function tryResolveConfiguredApiBaseUrl(): string | null {
+  try {
+    return resolveConfiguredApiBaseUrl();
+  } catch (error) {
+    if (error instanceof ApiConfigurationError) {
+      return null;
+    }
+    throw error;
+  }
+}
 
 export function getApiBaseUrl(): string {
-  return API_BASE_URL;
+  return resolveConfiguredApiBaseUrl();
 }
 
 export function getApiOrigin(): string | null {
-  return API_ORIGIN;
+  const apiBaseUrl = tryResolveConfiguredApiBaseUrl();
+  if (!apiBaseUrl) {
+    return null;
+  }
+  try {
+    return new URL(apiBaseUrl).origin;
+  } catch {
+    return null;
+  }
+}
+
+export function buildApiRequestContext(path: string): {
+  baseUrl: string;
+  mode: 'explicit' | 'same-origin';
+  url: string;
+} {
+  const baseUrl = resolveConfiguredApiBaseUrl();
+  return {
+    baseUrl,
+    mode: baseUrl ? 'explicit' : 'same-origin',
+    url: `${baseUrl}${path}`,
+  };
+}
+
+export function buildApiRequestUrl(path: string): string {
+  return buildApiRequestContext(path).url;
 }
 
 function newRequestId(): string {
@@ -90,8 +130,15 @@ export interface ApiFetchOptions extends RequestInit {
   includeRequestIdHeader?: boolean;
 }
 
-function buildBackendConnectivityHint(url: string): string {
-  return `无法连接到后端服务（${API_BASE_URL}）。请确认后端已启动并可访问：${url}，或在 frontend/.env.local 配置 NEXT_PUBLIC_API_BASE_URL。`;
+export function buildBackendConnectivityHint(params: {
+  baseUrl: string;
+  mode: 'explicit' | 'same-origin';
+  url: string;
+}): string {
+  if (params.mode === 'explicit') {
+    return `无法连接到后端服务（${params.baseUrl}）。请确认后端已启动并可访问：${params.url}。`;
+  }
+  return `无法连接到同源后端服务。请确认当前站点的同源后端路径可访问：${params.url}，或在 frontend/.env.local 配置 NEXT_PUBLIC_API_BASE_URL。`;
 }
 
 export async function apiFetch<T>(path: string, init?: ApiFetchOptions): Promise<T> {
@@ -106,11 +153,19 @@ export async function apiFetch<T>(path: string, init?: ApiFetchOptions): Promise
     headers.set('X-Request-Id', requestId);
   }
 
-  const url = `${API_BASE_URL}${path}`;
+  let requestContext: ReturnType<typeof buildApiRequestContext>;
+  try {
+    requestContext = buildApiRequestContext(path);
+  } catch (error) {
+    if (error instanceof ApiConfigurationError) {
+      throw new HttpError(`${error.message} 请求：${path}`, 500, { requestId });
+    }
+    throw error;
+  }
 
   let response: Response;
   try {
-    const result = await fetchWithTimeout(url, {
+    const result = await fetchWithTimeout(requestContext.url, {
       ...init,
       headers,
       requestId,
@@ -119,12 +174,12 @@ export async function apiFetch<T>(path: string, init?: ApiFetchOptions): Promise
   } catch (err) {
     if (err instanceof HttpError) {
       if (err.status === 0 || err.status === 499) {
-        const hint = buildBackendConnectivityHint(url);
+        const hint = buildBackendConnectivityHint(requestContext);
         throw new HttpError(hint, err.status, { requestId, body: err.body });
       }
       throw err;
     }
-    const hint = buildBackendConnectivityHint(url);
+    const hint = buildBackendConnectivityHint(requestContext);
     throw new HttpError(hint, 0, { requestId, body: err instanceof Error ? err.message : err });
   }
 
@@ -139,7 +194,10 @@ export async function apiFetch<T>(path: string, init?: ApiFetchOptions): Promise
 
   if (!response.ok) {
     const message = (body as any)?.error?.message ?? `请求失败（${response.status}）`;
-    throw new HttpError(message, response.status, { requestId: responseRequestId ?? requestId, body });
+    throw new HttpError(message, response.status, {
+      requestId: responseRequestId ?? requestId,
+      body,
+    });
   }
 
   return body as T;

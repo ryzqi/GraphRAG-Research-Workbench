@@ -10,6 +10,10 @@ from typing import Any
 from deepagents.backends.protocol import FileData
 from deepagents.backends.utils import create_file_data
 
+from app.config.runtime_contract import (
+    DEFAULT_RESEARCH_RUNTIME_MEMORY_PATH,
+    RESEARCH_RUNTIME_REQUEST_CONTEXT,
+)
 from app.models.research_session import ResearchSession
 from app.prompts import get_prompt_loader
 from app.schemas.research import ResearchPlanSnapshot
@@ -20,8 +24,6 @@ from app.services.research_workspace_files import (
     build_research_workspace_layout,
     build_workspace_bootstrap_artifact_path_map,
 )
-
-DEFAULT_RESEARCH_RUNTIME_MEMORY_PATH = "/memories/deep-research/runtime-memory.md"
 
 def _to_file_uri(path: str) -> str:
     normalized = "/" + path.lstrip("/")
@@ -46,6 +48,7 @@ def build_runtime_prompt(
         research_brief=plan_snapshot.research_brief,
         target_sources=", ".join(item.value for item in plan_snapshot.target_sources),
         route_hint=route_hint,
+        query_mesh_path=RESEARCH_RUNTIME_REQUEST_CONTEXT.query_mesh_path,
         workspace_paths_block=_format_workspace_paths_block(workspace_paths),
     )
 
@@ -63,13 +66,17 @@ def build_runtime_request_files(
     request_files: dict[str, FileData] = {
         path: create_file_data(content) for path, content in workspace_files.items()
     }
-    request_files["/workspace/context/session_question.txt"] = create_file_data(
+    request_files[
+        RESEARCH_RUNTIME_REQUEST_CONTEXT.session_question_path
+    ] = create_file_data(
         session.question
     )
-    request_files["/workspace/context/plan_snapshot.json"] = create_file_data(
+    request_files[
+        RESEARCH_RUNTIME_REQUEST_CONTEXT.plan_snapshot_path
+    ] = create_file_data(
         json.dumps(plan_snapshot.model_dump(mode="json"), ensure_ascii=False, indent=2)
     )
-    request_files["/workspace/context/query_mesh.json"] = create_file_data(
+    request_files[RESEARCH_RUNTIME_REQUEST_CONTEXT.query_mesh_path] = create_file_data(
         json.dumps(asdict(query_mesh), ensure_ascii=False, indent=2)
     )
     return request_files

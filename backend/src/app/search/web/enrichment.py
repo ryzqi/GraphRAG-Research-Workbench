@@ -6,28 +6,27 @@ from collections.abc import Sequence
 
 from langchain_core.documents import Document
 
+from app.config.policy_loader import load_search_policy
+
 from .contracts import ReadProvider
 from .documents import document_url, extract_domain, merge_document_metadata
 
-_LOW_QUALITY_DOMAIN_SUFFIXES = (
-    "linkedin.com",
-    "x.com",
-    "twitter.com",
-    "medium.com",
-)
-_SNIPPET_MIN_LENGTH = 180
 
-
-def _should_enrich(document: Document) -> bool:
+def _should_enrich(
+    document: Document,
+    *,
+    low_quality_domain_suffixes: Sequence[str],
+    snippet_min_length: int,
+) -> bool:
     snippet = str(document.page_content or "").strip()
-    if len(snippet) < _SNIPPET_MIN_LENGTH:
+    if len(snippet) < snippet_min_length:
         return True
     domain = str(
         document.metadata.get("domain") or extract_domain(document_url(document)) or ""
     )
     return any(
         domain == suffix or domain.endswith(f".{suffix}")
-        for suffix in _LOW_QUALITY_DOMAIN_SUFFIXES
+        for suffix in low_quality_domain_suffixes
     )
 
 
@@ -35,15 +34,25 @@ async def enrich_documents(
     documents: Sequence[Document],
     *,
     read_provider: ReadProvider | None,
-    top_k: int = 2,
+    top_k: int | None = None,
 ) -> tuple[list[Document], dict[str, object] | None]:
-    if read_provider is None or top_k <= 0:
+    enrichment_policy = load_search_policy().enrichment
+    effective_top_k = (
+        int(enrichment_policy.top_k) if top_k is None else max(int(top_k), 0)
+    )
+    if read_provider is None or effective_top_k <= 0:
         return list(documents), None
 
     enriched = list(documents)
     candidate_indexes = [
-        index for index, document in enumerate(enriched) if _should_enrich(document)
-    ][:top_k]
+        index
+        for index, document in enumerate(enriched)
+        if _should_enrich(
+            document,
+            low_quality_domain_suffixes=enrichment_policy.low_quality_domain_suffixes,
+            snippet_min_length=int(enrichment_policy.snippet_min_length),
+        )
+    ][:effective_top_k]
     if not candidate_indexes:
         return enriched, {
             "provider": getattr(read_provider, "provider_name", "jina_reader"),

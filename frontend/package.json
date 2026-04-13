@@ -4,12 +4,13 @@
   "version": "0.1.0",
   "scripts": {
     "build": "next build",
-    "start": "next start --hostname 127.0.0.1 --port 3000",
+    "start": "next start",
     "analyze": "powershell -NoProfile -Command \"$env:ANALYZE='true'; next build --webpack\"",
-    "lint": "npm run lint:eslint && npm run lint:lines && npm run lint:a11y-theme",
+    "lint": "npm run lint:eslint && npm run lint:lines && npm run lint:a11y-theme && npm run check:public-runtime-config",
     "lint:eslint": "eslint . --max-warnings=0",
     "lint:lines": "node ./scripts/check-max-lines.mjs",
     "lint:a11y-theme": "node ./scripts/check-a11y-theme-baseline.mjs",
+    "check:public-runtime-config": "node ./scripts/check-public-runtime-config.mjs",
     "check:bundle-budget": "node ./scripts/check-bundle-budgets.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test:unit": "vitest run src/services"

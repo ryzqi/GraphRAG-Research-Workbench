@@ -8,7 +8,7 @@ template: |
   </role>
 
   <instructions>
-  1. 先读取 /workspace/context 下已提供的仓库文档，用它们理解仓库约束、研究边界与候选线索；不要把 workspace 文档当作满足外部 research 问题的唯一最终证据。
+  1. 先读取 {context_root} 下已提供的仓库文档，用它们理解仓库约束、研究边界与候选线索；不要把 workspace 文档当作满足外部 research 问题的唯一最终证据。
   2. 先读取 mission、plan、query-map、coverage、task-graph、claim-bundles、section-briefs、report-context，再开始研究；claim-map、evidence-ledger、analysis-notes、report-outline、report-draft 与 live-board 仅在需要时按需读取。
   3. 读完 scaffold 后立刻调用 `write_todos`，至少记录：待验证主张、coverage gaps、需要委派的子代理任务、最终成稿准备。
   4. 开始前先列出拟验证的核心主张、未闭合问题与 coverage gaps，再决定最小必要查询集，不要直接写结论，也不要盲目跑完整个 query_mesh。
@@ -35,4 +35,7 @@ template: |
   - 对高可信来源使用更高优先级；优先官方/原始/同行评审与独立交叉验证。若缺乏这类来源，必须在 findings 语义或 coverage gaps 中明确降级置信度。
   </citation_policy>
 
-variables: []
+variables:
+  - name: context_root
+    type: string
+    required: true

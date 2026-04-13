@@ -1,270 +1,27 @@
 from __future__ import annotations
 
-import json
-import sys
 from functools import lru_cache
-from pathlib import Path
+import sys
 from typing import Any
-from urllib.parse import quote, urlsplit, urlunsplit
 
-from pydantic import Field, field_validator, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import Field, field_validator
 
-ROOT_DIR = Path(__file__).resolve().parents[4]
-ENV_FILE = ROOT_DIR / ".env"
+from app.config.deploy_settings import DeploySettings
+from app.config.validators import (
+    DEFAULT_INGESTION_BLOCKED_CIDRS_V4,
+    DEFAULT_INGESTION_BLOCKED_CIDRS_V6,
+    DEFAULT_INGESTION_METADATA_BLOCKLIST,
+    parse_string_list,
+    prefer_ipv4_loopback_url,
+    validate_startup_settings,
+)
 
-_IPV4_LOOPBACK = "127.0.0.1"
-
-# 仅保留 Next.js 开发环境使用的 3000 端口来源。
-_DEV_LOCAL_CORS_ORIGINS = [
-    "http://localhost:3000",
-    "http://127.0.0.1:3000",
-]
-
-_LEGACY_VITE_LOCAL_CORS_ORIGINS = {
-    "http://localhost:5173",
-    "http://127.0.0.1:5173",
-}
-
-_DEFAULT_INGESTION_BLOCKED_CIDRS_V4 = [
-    "0.0.0.0/8",
-    "10.0.0.0/8",
-    "127.0.0.0/8",
-    "169.254.0.0/16",
-    "172.16.0.0/12",
-    "192.168.0.0/16",
-]
-
-_DEFAULT_INGESTION_BLOCKED_CIDRS_V6 = [
-    "::/128",
-    "::1/128",
-    "fc00::/7",
-    "fe80::/10",
-]
-
-_DEFAULT_INGESTION_METADATA_BLOCKLIST = [
-    "169.254.169.254",
-]
-
-_DEFAULT_DATABASE_URL = "postgresql+asyncpg://mkb:mkb_password@localhost:5432/mkb"
-_DEFAULT_REDIS_URL = "redis://localhost:6379/0"
-_DEFAULT_CELERY_BROKER_URL = "redis://localhost:6379/0"
-_DEFAULT_CELERY_RESULT_BACKEND = "redis://localhost:6379/1"
-_DEFAULT_MINIO_ACCESS_KEY = "minioadmin"
-_DEFAULT_MINIO_SECRET_KEY = "minioadmin"
+__all__ = ["Settings", "get_settings", "validate_startup_settings"]
 
 
-def _dedupe_keep_order(values: list[str]) -> list[str]:
-    seen: set[str] = set()
-    deduped: list[str] = []
-    for value in values:
-        normalized = value.strip()
-        if not normalized or normalized in seen:
-            continue
-        seen.add(normalized)
-        deduped.append(normalized)
-    return deduped
-
-
-def _parse_string_list(value: object) -> list[str]:
-    if value is None:
-        return []
-    if isinstance(value, list):
-        return _dedupe_keep_order([str(item) for item in value])
-    if isinstance(value, str):
-        raw = value.strip()
-        if not raw:
-            return []
-        if raw.startswith("[") and raw.endswith("]"):
-            try:
-                parsed = json.loads(raw)
-            except json.JSONDecodeError:
-                parsed = None
-            else:
-                if isinstance(parsed, list):
-                    return _dedupe_keep_order([str(item) for item in parsed])
-        parts = [part.strip().strip('"').strip("'") for part in raw.split(",")]
-        return _dedupe_keep_order(parts)
-    return _dedupe_keep_order([str(value)])
-
-
-def _prefer_ipv4_loopback_url(value: str) -> str:
-    """Windows 下若 URL 使用 localhost，则优先改写为 IPv4 回环地址。
-
-    某些客户端会先尝试 IPv6 (::1)；若服务只监听 IPv4（如常见的 Podman 端口转发），
-    就可能出现连接变慢或超时。改写为 127.0.0.1 可规避此问题。
-    """
-
-    if not value:
-        return value
-    if not sys.platform.startswith("win"):
-        return value
-
-    try:
-        parts = urlsplit(value)
-    except Exception:
-        return value
-
-    if parts.hostname != "localhost":
-        return value
-
-    userinfo = ""
-    if parts.username is not None:
-        userinfo = quote(parts.username, safe="")
-        if parts.password is not None:
-            userinfo += ":" + quote(parts.password, safe="")
-        userinfo += "@"
-
-    port = f":{parts.port}" if parts.port else ""
-    netloc = f"{userinfo}{_IPV4_LOOPBACK}{port}"
-    return urlunsplit((parts.scheme, netloc, parts.path, parts.query, parts.fragment))
-
-
-def _prefer_ipv4_loopback_hostport(value: str) -> str:
-    """Windows 下 host[:port] 使用 localhost 时，优先改写为 IPv4 回环地址。"""
-
-    if not value:
-        return value
-    if not sys.platform.startswith("win"):
-        return value
-
-    raw = value.strip()
-    if not raw:
-        return value
-
-    # MinIO 使用 host[:port] 而不是 URL，这里直接做前缀替换。
-    if raw == "localhost":
-        return _IPV4_LOOPBACK
-    if raw.startswith("localhost:"):
-        return _IPV4_LOOPBACK + raw[len("localhost") :]
-    return value
-
-
-class Settings(BaseSettings):
-    model_config = SettingsConfigDict(
-        env_file=str(ENV_FILE),
-        env_file_encoding="utf-8",
-        extra="ignore",
-        populate_by_name=True,
-    )
-
+class Settings(DeploySettings):
     def __init__(self, **data: Any) -> None:
-        # BaseSettings 运行时会从环境变量与 .env 补齐默认值；显式 __init__
-        # 让静态类型系统接受“无参加载配置”的真实调用方式。
         super().__init__(**data)
-
-    app_name: str = "多知识库知识代理"
-    app_env: str = Field("dev", alias="APP_ENV")
-    app_log_level: str = Field("INFO", alias="APP_LOG_LEVEL")
-    app_cors_allow_origins: list[str] = Field(
-        default_factory=lambda: _DEV_LOCAL_CORS_ORIGINS.copy(),
-        alias="APP_CORS_ALLOW_ORIGINS",
-    )
-    database_url: str = Field(
-        _DEFAULT_DATABASE_URL,
-        alias="DATABASE_URL",
-    )
-    db_pool_size: int = Field(5, alias="DB_POOL_SIZE")
-    db_max_overflow: int = Field(10, alias="DB_MAX_OVERFLOW")
-    db_pool_recycle_seconds: int = Field(1800, alias="DB_POOL_RECYCLE_SECONDS")
-
-    redis_url: str = Field(_DEFAULT_REDIS_URL, alias="REDIS_URL")
-    # 本地/开发环境默认让 Redis socket 超时快速失败。
-    # 远端或高延迟 Redis 部署应显式覆盖这些参数。
-    redis_socket_timeout_seconds: float = Field(
-        1.0, alias="REDIS_SOCKET_TIMEOUT_SECONDS"
-    )
-    redis_socket_connect_timeout_seconds: float = Field(
-        1.0, alias="REDIS_SOCKET_CONNECT_TIMEOUT_SECONDS"
-    )
-    celery_broker_url: str = Field(
-        _DEFAULT_CELERY_BROKER_URL, alias="CELERY_BROKER_URL"
-    )
-    celery_result_backend: str = Field(
-        _DEFAULT_CELERY_RESULT_BACKEND, alias="CELERY_RESULT_BACKEND"
-    )
-    # Celery Redis transport 默认 visibility_timeout 为 3600 秒。
-    # 这里保持 7200 秒，以降低长耗时导入/研究任务被提前重投的概率。
-    celery_broker_visibility_timeout_seconds: int = Field(
-        7_200, ge=1, alias="CELERY_BROKER_VISIBILITY_TIMEOUT_SECONDS"
-    )
-    research_outbox_stale_dispatched_seconds: int | None = Field(
-        None, ge=1, alias="RESEARCH_OUTBOX_STALE_DISPATCHED_SECONDS"
-    )
-    celery_task_soft_time_limit_seconds: int = Field(
-        0, ge=0, alias="CELERY_TASK_SOFT_TIME_LIMIT_SECONDS"
-    )
-    celery_task_time_limit_seconds: int = Field(
-        0, ge=0, alias="CELERY_TASK_TIME_LIMIT_SECONDS"
-    )
-    celery_task_store_errors_even_if_ignored: bool = Field(
-        True, alias="CELERY_TASK_STORE_ERRORS_EVEN_IF_IGNORED"
-    )
-    celery_worker_send_task_events: bool = Field(
-        False, alias="CELERY_WORKER_SEND_TASK_EVENTS"
-    )
-    celery_task_send_sent_event: bool = Field(
-        False, alias="CELERY_TASK_SEND_SENT_EVENT"
-    )
-    celery_worker_prefetch_multiplier: int = Field(
-        1, ge=1, alias="CELERY_WORKER_PREFETCH_MULTIPLIER"
-    )
-
-    http_timeout_connect_seconds: float = Field(
-        5.0, alias="HTTP_TIMEOUT_CONNECT_SECONDS"
-    )
-    http_timeout_read_seconds: float = Field(30.0, alias="HTTP_TIMEOUT_READ_SECONDS")
-    http_timeout_write_seconds: float = Field(30.0, alias="HTTP_TIMEOUT_WRITE_SECONDS")
-    http_timeout_pool_seconds: float = Field(5.0, alias="HTTP_TIMEOUT_POOL_SECONDS")
-    http_max_connections: int = Field(100, alias="HTTP_MAX_CONNECTIONS")
-    http_max_keepalive_connections: int = Field(
-        20, alias="HTTP_MAX_KEEPALIVE_CONNECTIONS"
-    )
-    http_keepalive_expiry_seconds: float = Field(
-        5.0, alias="HTTP_KEEPALIVE_EXPIRY_SECONDS"
-    )
-    embedding_http_realtime_timeout_connect_seconds: float | None = Field(
-        None, ge=0.0, alias="EMBEDDING_HTTP_REALTIME_TIMEOUT_CONNECT_SECONDS"
-    )
-    embedding_http_realtime_timeout_read_seconds: float | None = Field(
-        None, ge=0.0, alias="EMBEDDING_HTTP_REALTIME_TIMEOUT_READ_SECONDS"
-    )
-    embedding_http_realtime_timeout_write_seconds: float | None = Field(
-        None, ge=0.0, alias="EMBEDDING_HTTP_REALTIME_TIMEOUT_WRITE_SECONDS"
-    )
-    embedding_http_realtime_timeout_pool_seconds: float | None = Field(
-        None, ge=0.0, alias="EMBEDDING_HTTP_REALTIME_TIMEOUT_POOL_SECONDS"
-    )
-    embedding_http_realtime_max_connections: int | None = Field(
-        None, ge=1, alias="EMBEDDING_HTTP_REALTIME_MAX_CONNECTIONS"
-    )
-    embedding_http_realtime_max_keepalive_connections: int | None = Field(
-        None, ge=1, alias="EMBEDDING_HTTP_REALTIME_MAX_KEEPALIVE_CONNECTIONS"
-    )
-    embedding_http_realtime_keepalive_expiry_seconds: float | None = Field(
-        None, ge=0.0, alias="EMBEDDING_HTTP_REALTIME_KEEPALIVE_EXPIRY_SECONDS"
-    )
-    embedding_http_batch_timeout_connect_seconds: float | None = Field(
-        None, ge=0.0, alias="EMBEDDING_HTTP_BATCH_TIMEOUT_CONNECT_SECONDS"
-    )
-    embedding_http_batch_timeout_read_seconds: float | None = Field(
-        None, ge=0.0, alias="EMBEDDING_HTTP_BATCH_TIMEOUT_READ_SECONDS"
-    )
-    embedding_http_batch_timeout_write_seconds: float | None = Field(
-        None, ge=0.0, alias="EMBEDDING_HTTP_BATCH_TIMEOUT_WRITE_SECONDS"
-    )
-    embedding_http_batch_timeout_pool_seconds: float | None = Field(
-        None, ge=0.0, alias="EMBEDDING_HTTP_BATCH_TIMEOUT_POOL_SECONDS"
-    )
-    embedding_http_batch_max_connections: int | None = Field(
-        None, ge=1, alias="EMBEDDING_HTTP_BATCH_MAX_CONNECTIONS"
-    )
-    embedding_http_batch_max_keepalive_connections: int | None = Field(
-        None, ge=1, alias="EMBEDDING_HTTP_BATCH_MAX_KEEPALIVE_CONNECTIONS"
-    )
-    embedding_http_batch_keepalive_expiry_seconds: float | None = Field(
-        None, ge=0.0, alias="EMBEDDING_HTTP_BATCH_KEEPALIVE_EXPIRY_SECONDS"
-    )
 
     milvus_host: str = Field("localhost", alias="MILVUS_HOST")
     milvus_port: int = Field(19530, alias="MILVUS_PORT")
@@ -281,15 +38,7 @@ class Settings(BaseSettings):
     interactive_run_stale_timeout_seconds: int = Field(
         300, ge=1, alias="INTERACTIVE_RUN_STALE_TIMEOUT_SECONDS"
     )
-    model_config_kms_key: str | None = Field(None, alias="MODEL_CONFIG_KMS_KEY")
 
-    embedding_base_url: str = Field(
-        "https://api.openai.com/v1", alias="EMBEDDING_BASE_URL"
-    )
-    embedding_api_key: str = Field("REPLACE_ME", alias="EMBEDDING_API_KEY")
-    embedding_model: str = Field("text-embedding-3-small", alias="EMBEDDING_MODEL")
-    embedding_timeout_seconds: float = Field(30.0, alias="EMBEDDING_TIMEOUT_SECONDS")
-    embedding_dim: int | None = Field(None, alias="EMBEDDING_DIM")
     embedding_retry_max_retries: int = Field(
         2, ge=0, alias="EMBEDDING_RETRY_MAX_RETRIES"
     )
@@ -306,25 +55,6 @@ class Settings(BaseSettings):
         30.0, ge=0.0, alias="EMBEDDING_BREAKER_OPEN_SECONDS"
     )
 
-    minio_endpoint: str = Field("localhost:9000", alias="MINIO_ENDPOINT")
-    minio_access_key: str = Field(_DEFAULT_MINIO_ACCESS_KEY, alias="MINIO_ACCESS_KEY")
-    minio_secret_key: str = Field(_DEFAULT_MINIO_SECRET_KEY, alias="MINIO_SECRET_KEY")
-    minio_secure: bool = Field(False, alias="MINIO_SECURE")
-    minio_bucket_uploads: str = Field("mkb-uploads", alias="MINIO_BUCKET_UPLOADS")
-    minio_bucket_exports: str = Field("mkb-exports", alias="MINIO_BUCKET_EXPORTS")
-    bootstrap_upload_presign_expire_seconds: int = Field(
-        900, alias="BOOTSTRAP_UPLOAD_PRESIGN_EXPIRE_SECONDS"
-    )
-    bootstrap_queued_timeout_seconds: int = Field(
-        180, ge=1, alias="BOOTSTRAP_QUEUED_TIMEOUT_SECONDS"
-    )
-    research_queued_timeout_seconds: int = Field(
-        180, ge=1, alias="RESEARCH_QUEUED_TIMEOUT_SECONDS"
-    )
-    exports_presign_expire_seconds: int = Field(
-        3600, alias="EXPORTS_PRESIGN_EXPIRE_SECONDS"
-    )
-
     mcp_enabled: bool = Field(False, alias="MCP_ENABLED")
     mcp_http_timeout_seconds: int = Field(30, alias="MCP_HTTP_TIMEOUT_SECONDS")
     mcp_stdio_timeout_seconds: int = Field(10, alias="MCP_STDIO_TIMEOUT_SECONDS")
@@ -334,7 +64,6 @@ class Settings(BaseSettings):
     memory_store_url: str | None = Field(None, alias="MEMORY_STORE_URL")
     memory_store_path: str = Field("/memories/", alias="MEMORY_STORE_PATH")
 
-    # Web 搜索（Tavily，可选）
     web_search_api_key: str | None = Field(None, alias="WEB_SEARCH_API_KEY")
     web_search_cache_enabled: bool = Field(True, alias="WEB_SEARCH_CACHE_ENABLED")
     web_search_cache_ttl_seconds: int = Field(300, alias="WEB_SEARCH_CACHE_TTL_SECONDS")
@@ -359,17 +88,6 @@ class Settings(BaseSettings):
     web_search_include_usage: bool = Field(False, alias="WEB_SEARCH_INCLUDE_USAGE")
     jina_read_enabled: bool = Field(True, alias="JINA_READ_ENABLED")
     jina_read_base_url: str = Field("https://r.jina.ai", alias="JINA_READ_BASE_URL")
-    searxng_search_enabled: bool = Field(True, alias="SEARXNG_SEARCH_ENABLED")
-    searxng_search_base_url: str = Field(
-        "http://127.0.0.1:18080", alias="SEARXNG_BASE_URL"
-    )
-    searxng_default_categories: list[str] = Field(
-        default_factory=list, alias="SEARXNG_DEFAULT_CATEGORIES"
-    )
-    searxng_default_language: str | None = Field(None, alias="SEARXNG_DEFAULT_LANGUAGE")
-    searxng_default_engines: list[str] = Field(
-        default_factory=list, alias="SEARXNG_DEFAULT_ENGINES"
-    )
     web_extract_default_depth: str = Field("basic", alias="WEB_EXTRACT_DEFAULT_DEPTH")
     web_crawl_default_depth: str = Field("basic", alias="WEB_CRAWL_DEFAULT_DEPTH")
     web_crawl_default_limit: int = Field(10, alias="WEB_CRAWL_DEFAULT_LIMIT")
@@ -390,21 +108,9 @@ class Settings(BaseSettings):
     web_research_poll_interval_seconds: float = Field(
         2.0, alias="WEB_RESEARCH_POLL_INTERVAL_SECONDS"
     )
-    research_gate_min_quality_score: float = Field(
-        0.75, ge=0.0, le=1.0, alias="RESEARCH_GATE_MIN_QUALITY_SCORE"
-    )
-    research_gate_max_p95_ms: int = Field(
-        120_000, ge=1, alias="RESEARCH_GATE_MAX_P95_MS"
-    )
-    research_gate_max_session_cost_usd: float = Field(
-        2.0, ge=0.0, alias="RESEARCH_GATE_MAX_SESSION_COST_USD"
-    )
 
-    # 检索配置
-    # 普通问答路径默认收敛在较小候选集，复杂问题仍可通过 rerank/max_top_k 扩大召回窗口。
     retrieval_default_top_k: int = Field(12, alias="RETRIEVAL_DEFAULT_TOP_K")
     retrieval_max_top_k: int = Field(50, alias="RETRIEVAL_MAX_TOP_K")
-    # 检索/改写结果缓存只保留短窗口，兼顾重复提问命中率与知识库持续导入时的新鲜度。
     retrieval_cache_ttl_seconds: int = Field(300, alias="RETRIEVAL_CACHE_TTL_SECONDS")
     retrieval_cache_enabled: bool = Field(True, alias="RETRIEVAL_CACHE_ENABLED")
     retrieval_min_score: float | None = Field(0.2, alias="RETRIEVAL_MIN_SCORE")
@@ -429,19 +135,16 @@ class Settings(BaseSettings):
     retrieval_rerank_model: str = Field(
         "BAAI/bge-reranker-v2-m3", alias="RETRIEVAL_RERANK_MODEL"
     )
-    # rerank 是可降级步骤；超时后 retrieval_service 会回退到 RRF 顺序，避免慢上游拖垮主请求。
     retrieval_rerank_timeout_seconds: int = Field(
         10, alias="RETRIEVAL_RERANK_TIMEOUT_SECONDS"
     )
 
-    # 上下文预算配置
     context_history_max_messages: int = Field(6, alias="CONTEXT_HISTORY_MAX_MESSAGES")
     context_history_max_tokens: int | None = Field(
         None, alias="CONTEXT_HISTORY_MAX_TOKENS"
     )
     context_tool_max_tokens: int | None = Field(None, alias="CONTEXT_TOOL_MAX_TOKENS")
 
-    # KB Chat（灰度开关 + 预算 + 查询增强 + 可观测）
     kb_chat_graph_recursion_limit: int = Field(
         30, alias="KB_CHAT_GRAPH_RECURSION_LIMIT"
     )
@@ -454,7 +157,6 @@ class Settings(BaseSettings):
         "closed", alias="KB_CHAT_GRADER_FAIL_POLICY"
     )
     kb_chat_json_safe_policy: str = Field("stringify", alias="KB_CHAT_JSON_SAFE_POLICY")
-
     kb_chat_ambiguity_check_enabled: bool = Field(
         True, alias="KB_CHAT_AMBIGUITY_CHECK_ENABLED"
     )
@@ -477,21 +179,18 @@ class Settings(BaseSettings):
     kb_chat_semantic_cache_enabled: bool = Field(
         True, alias="KB_CHAT_SEMANTIC_CACHE_ENABLED"
     )
-    # 语义缓存阈值偏高，优先降低“相似但不等价”问题的误命中，而不是盲目追求命中率。
     kb_chat_semantic_cache_similarity_threshold: float = Field(
         0.88, ge=0.0, le=1.0, alias="KB_CHAT_SEMANTIC_CACHE_SIMILARITY_THRESHOLD"
     )
     kb_chat_semantic_cache_index_name: str = Field(
         "kb_chat_semantic_cache_v4", alias="KB_CHAT_SEMANTIC_CACHE_INDEX_NAME"
     )
-    # 语义缓存保留 24h，避免无限滞留旧答案，同时保持 RedisVL 条目可按 TTL 自动过期。
     kb_chat_semantic_cache_ttl_seconds: int = Field(
         24 * 60 * 60, ge=0, alias="KB_CHAT_SEMANTIC_CACHE_TTL_SECONDS"
     )
     kb_chat_parallel_retrieval_min_queries: int = Field(
         2, ge=1, le=8, alias="KB_CHAT_PARALLEL_RETRIEVAL_MIN_QUERIES"
     )
-    # 并行检索分支上限主要用于约束 fan-out 成本；需要更激进召回时优先走 runtime override，而非放大全局默认值。
     kb_chat_parallel_retrieval_max_branches: int = Field(
         6, ge=1, le=12, alias="KB_CHAT_PARALLEL_RETRIEVAL_MAX_BRANCHES"
     )
@@ -507,10 +206,8 @@ class Settings(BaseSettings):
     kb_chat_gray_release_rollback_cooldown_minutes: int = Field(
         30, ge=1, le=720, alias="KB_CHAT_GRAY_RELEASE_ROLLBACK_COOLDOWN_MINUTES"
     )
-
     kb_chat_trace_enabled: bool = Field(True, alias="KB_CHAT_TRACE_ENABLED")
 
-    # 对话摘要配置
     summary_enabled: bool = Field(False, alias="SUMMARY_ENABLED")
     summary_trigger_min_messages: int = Field(12, alias="SUMMARY_TRIGGER_MIN_MESSAGES")
     summary_trigger_min_tokens: int = Field(800, alias="SUMMARY_TRIGGER_MIN_TOKENS")
@@ -534,8 +231,30 @@ class Settings(BaseSettings):
     ingestion_outbox_stale_dispatched_seconds: int = Field(
         300, ge=1, alias="INGESTION_OUTBOX_STALE_DISPATCHED_SECONDS"
     )
+    frontend_status_polling_interval_ms: int = Field(
+        2_000, ge=100, alias="FRONTEND_STATUS_POLLING_INTERVAL_MS"
+    )
+    frontend_ingestion_stream_fallback_polling_steps_ms: list[int] = Field(
+        default_factory=lambda: [1_000, 2_000, 5_000],
+        alias="FRONTEND_INGESTION_STREAM_FALLBACK_POLLING_STEPS_MS",
+    )
+    frontend_ingestion_stream_retry_multiplier: int = Field(
+        2, ge=1, alias="FRONTEND_INGESTION_STREAM_RETRY_MULTIPLIER"
+    )
+    frontend_export_poll_interval_ms: int = Field(
+        1_000, ge=100, alias="FRONTEND_EXPORT_POLL_INTERVAL_MS"
+    )
+    frontend_export_poll_max_attempts: int = Field(
+        60, ge=1, alias="FRONTEND_EXPORT_POLL_MAX_ATTEMPTS"
+    )
+    frontend_server_prefetch_cache_revalidate_seconds: int = Field(
+        30, ge=0, alias="FRONTEND_SERVER_PREFETCH_CACHE_REVALIDATE_SECONDS"
+    )
+    frontend_download_allowed_hosts: list[str] = Field(
+        default_factory=list,
+        alias="FRONTEND_DOWNLOAD_ALLOWED_HOSTS",
+    )
 
-    # 导入：URL 抓取/正文抽取配置（最小安全基线）
     ingestion_url_max_redirects: int = Field(3, alias="INGESTION_URL_MAX_REDIRECTS")
     ingestion_url_timeout_seconds: float = Field(
         25.0, alias="INGESTION_URL_TIMEOUT_SECONDS"
@@ -547,19 +266,18 @@ class Settings(BaseSettings):
         "multi-kb-agent/ingestion", alias="INGESTION_URL_USER_AGENT"
     )
     ingestion_url_blocked_cidrs_v4: list[str] = Field(
-        default_factory=lambda: _DEFAULT_INGESTION_BLOCKED_CIDRS_V4.copy(),
+        default_factory=lambda: DEFAULT_INGESTION_BLOCKED_CIDRS_V4.copy(),
         alias="INGESTION_URL_BLOCKED_CIDRS_V4",
     )
     ingestion_url_blocked_cidrs_v6: list[str] = Field(
-        default_factory=lambda: _DEFAULT_INGESTION_BLOCKED_CIDRS_V6.copy(),
+        default_factory=lambda: DEFAULT_INGESTION_BLOCKED_CIDRS_V6.copy(),
         alias="INGESTION_URL_BLOCKED_CIDRS_V6",
     )
     ingestion_url_metadata_blocklist: list[str] = Field(
-        default_factory=lambda: _DEFAULT_INGESTION_METADATA_BLOCKLIST.copy(),
+        default_factory=lambda: DEFAULT_INGESTION_METADATA_BLOCKLIST.copy(),
         alias="INGESTION_URL_METADATA_BLOCKLIST",
     )
 
-    # PDF 解析（MinerU + 文本兜底）
     mineru_model_source: str | None = Field(None, alias="MINERU_MODEL_SOURCE")
     mineru_lang: str = Field("ch", alias="MINERU_LANG")
     mineru_parse_method: str = Field("auto", alias="MINERU_PARSE_METHOD")
@@ -571,132 +289,75 @@ class Settings(BaseSettings):
         20, ge=0, alias="PDF_FALLBACK_MIN_TEXT_CHARS"
     )
 
-    @field_validator(
-        "database_url",
-        "memory_store_url",
-        "redis_url",
-        "celery_broker_url",
-        "celery_result_backend",
-        "jina_read_base_url",
-        "searxng_search_base_url",
-        mode="before",
-    )
-    @classmethod
-    def _normalize_localhost_urls(cls, v: object) -> object:
-        if v is None:
-            return v
-        return _prefer_ipv4_loopback_url(str(v))
-
-    @field_validator("minio_endpoint", mode="before")
-    @classmethod
-    def _normalize_minio_endpoint(cls, v: object) -> object:
-        if v is None:
-            return v
-        return _prefer_ipv4_loopback_hostport(str(v))
-
-    @field_validator("milvus_host", mode="before")
-    @classmethod
-    def _normalize_milvus_host(cls, v: object) -> object:
-        if v is None:
-            return v
-        raw = str(v)
-        if sys.platform.startswith("win") and raw.strip() == "localhost":
-            return _IPV4_LOOPBACK
-        return raw
-
     @field_validator("mineru_parse_method", mode="before")
     @classmethod
-    def _normalize_mineru_parse_method(cls, v: object) -> str:
-        raw = str(v or "auto").strip().lower()
+    def _normalize_mineru_parse_method(cls, value: object) -> str:
+        raw = str(value or "auto").strip().lower()
         if raw in {"auto", "txt", "ocr"}:
             return raw
         return "auto"
-
-    @field_validator("app_cors_allow_origins", mode="before")
-    @classmethod
-    def _parse_origins(cls, v: object) -> list[str]:
-        if v is None:
-            return _DEV_LOCAL_CORS_ORIGINS.copy()
-        if isinstance(v, list):
-            return _dedupe_keep_order([str(x) for x in v])
-        if isinstance(v, str):
-            raw = v.strip()
-            if not raw:
-                return []
-            if raw.startswith("[") and raw.endswith("]"):
-                try:
-                    parsed = json.loads(raw)
-                except json.JSONDecodeError:
-                    parsed = None
-                else:
-                    if isinstance(parsed, list):
-                        return _dedupe_keep_order([str(x) for x in parsed])
-            parts = [p.strip().strip('"').strip("'") for p in raw.split(",")]
-            return _dedupe_keep_order(parts)
-        return _dedupe_keep_order([str(v)])
 
     @field_validator(
         "ingestion_url_blocked_cidrs_v4",
         "ingestion_url_blocked_cidrs_v6",
         "ingestion_url_metadata_blocklist",
+        "frontend_download_allowed_hosts",
         mode="before",
     )
     @classmethod
-    def _parse_ingestion_url_lists(cls, v: object) -> list[str]:
-        return _parse_string_list(v)
+    def _parse_ingestion_url_lists(cls, value: object) -> list[str]:
+        return parse_string_list(value)
 
     @field_validator(
-        "searxng_default_categories",
-        "searxng_default_engines",
+        "frontend_ingestion_stream_fallback_polling_steps_ms",
         mode="before",
     )
     @classmethod
-    def _parse_searxng_string_lists(cls, v: object) -> list[str]:
-        return _parse_string_list(v)
+    def _parse_frontend_polling_steps(cls, value: object) -> list[int]:
+        parsed = parse_string_list(value)
+        if not parsed:
+            return [1_000, 2_000, 5_000]
+        return [int(item) for item in parsed]
 
-    @model_validator(mode="after")
-    def _ensure_local_dev_cors_origins(self) -> "Settings":
-        if _is_dev_env(self.app_env):
-            custom_origins = [
-                origin
-                for origin in self.app_cors_allow_origins
-                if origin not in _LEGACY_VITE_LOCAL_CORS_ORIGINS
-            ]
-            self.app_cors_allow_origins = _dedupe_keep_order(
-                [*custom_origins, *_DEV_LOCAL_CORS_ORIGINS]
-            )
-        return self
-
-    @model_validator(mode="after")
-    def _validate_celery_time_limit_settings(self) -> "Settings":
-        if (
-            self.celery_task_soft_time_limit_seconds > 0
-            and self.celery_task_time_limit_seconds > 0
-            and self.celery_task_time_limit_seconds
-            < self.celery_task_soft_time_limit_seconds
-        ):
-            raise ValueError(
-                "CELERY_TASK_TIME_LIMIT_SECONDS must be >= "
-                "CELERY_TASK_SOFT_TIME_LIMIT_SECONDS"
-            )
-        return self
+    @field_validator("frontend_download_allowed_hosts", mode="after")
+    @classmethod
+    def _normalize_frontend_download_allowed_hosts(cls, value: list[str]) -> list[str]:
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for item in value:
+            host = item.strip().lower()
+            if not host or host in seen:
+                continue
+            seen.add(host)
+            normalized.append(host)
+        return normalized
 
     @field_validator("milvus_text_analyzer_filters", mode="before")
     @classmethod
-    def _parse_analyzer_filters(cls, v: object) -> list[str]:
-        if v is None:
-            return []
-        if isinstance(v, list):
-            return [str(x).strip() for x in v if str(x).strip()]
-        if isinstance(v, str):
-            parts = [p.strip() for p in v.split(",")]
-            return [p for p in parts if p]
-        return [str(v).strip()]
+    def _parse_analyzer_filters(cls, value: object) -> list[str]:
+        return parse_string_list(value)
+
+    @field_validator("memory_store_url", "jina_read_base_url", mode="before")
+    @classmethod
+    def _normalize_local_optional_urls(cls, value: object) -> object:
+        if value is None:
+            return value
+        return prefer_ipv4_loopback_url(str(value))
+
+    @field_validator("milvus_host", mode="before")
+    @classmethod
+    def _normalize_milvus_host(cls, value: object) -> object:
+        if value is None:
+            return value
+        raw = str(value).strip()
+        if sys.platform.startswith("win") and raw == "localhost":
+            return "127.0.0.1"
+        return raw
 
     @field_validator("kb_chat_grader_fail_policy", mode="before")
     @classmethod
-    def _normalize_kb_chat_grader_fail_policy(cls, v: object) -> str:
-        raw = "closed" if v is None else str(v)
+    def _normalize_kb_chat_grader_fail_policy(cls, value: object) -> str:
+        raw = "closed" if value is None else str(value)
         normalized = raw.strip().lower()
         if normalized not in {"open", "closed"}:
             raise ValueError("KB_CHAT_GRADER_FAIL_POLICY must be 'open' or 'closed'")
@@ -704,8 +365,8 @@ class Settings(BaseSettings):
 
     @field_validator("kb_chat_json_safe_policy", mode="before")
     @classmethod
-    def _normalize_kb_chat_json_safe_policy(cls, v: object) -> str:
-        raw = "stringify" if v is None else str(v)
+    def _normalize_kb_chat_json_safe_policy(cls, value: object) -> str:
+        raw = "stringify" if value is None else str(value)
         normalized = raw.strip().lower().replace("-", "_")
         if normalized not in {"fail_fast", "stringify"}:
             raise ValueError(
@@ -715,8 +376,8 @@ class Settings(BaseSettings):
 
     @field_validator("llm_output_version", mode="before")
     @classmethod
-    def _normalize_llm_output_version(cls, v: object) -> str:
-        raw = "responses/v1" if v is None else str(v)
+    def _normalize_llm_output_version(cls, value: object) -> str:
+        raw = "responses/v1" if value is None else str(value)
         normalized = raw.strip().lower()
         if normalized not in {"v0", "v1", "responses/v1"}:
             raise ValueError("LLM_OUTPUT_VERSION must be one of: v0, v1, responses/v1")
@@ -724,8 +385,8 @@ class Settings(BaseSettings):
 
     @field_validator("general_chat_replay_mode", mode="before")
     @classmethod
-    def _normalize_general_chat_replay_mode(cls, v: object) -> str:
-        raw = "auto" if v is None else str(v)
+    def _normalize_general_chat_replay_mode(cls, value: object) -> str:
+        raw = "auto" if value is None else str(value)
         normalized = raw.strip().lower()
         if normalized not in {"auto", "response_id", "manual"}:
             raise ValueError(
@@ -737,58 +398,3 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
-
-
-def _is_dev_env(app_env: str) -> bool:
-    return app_env.strip().lower() in {"dev", "development", "local", "test"}
-
-
-def _normalize_url_for_compare(value: str) -> str:
-    return _prefer_ipv4_loopback_url(value.strip())
-
-
-def validate_startup_settings(settings: Settings) -> None:
-    """启动期安全校验：避免危险默认配置进入非开发环境。"""
-    if _is_dev_env(settings.app_env):
-        return
-
-    problems: list[str] = []
-
-    embedding_key = settings.embedding_api_key.strip()
-    if not embedding_key or embedding_key == "REPLACE_ME":
-        problems.append("EMBEDDING_API_KEY 为空或为占位值（REPLACE_ME）")
-
-    model_config_kms_key = (settings.model_config_kms_key or "").strip()
-    if not model_config_kms_key:
-        problems.append("MODEL_CONFIG_KMS_KEY 为空")
-
-    if _normalize_url_for_compare(settings.database_url) == _normalize_url_for_compare(
-        _DEFAULT_DATABASE_URL
-    ):
-        problems.append("DATABASE_URL 使用默认示例凭据（mkb/mkb_password）")
-
-    if _normalize_url_for_compare(settings.redis_url) == _normalize_url_for_compare(
-        _DEFAULT_REDIS_URL
-    ):
-        problems.append("REDIS_URL 使用默认示例配置")
-
-    if _normalize_url_for_compare(
-        settings.celery_broker_url
-    ) == _normalize_url_for_compare(_DEFAULT_CELERY_BROKER_URL):
-        problems.append("CELERY_BROKER_URL 使用默认示例配置")
-
-    if _normalize_url_for_compare(
-        settings.celery_result_backend
-    ) == _normalize_url_for_compare(_DEFAULT_CELERY_RESULT_BACKEND):
-        problems.append("CELERY_RESULT_BACKEND 使用默认示例配置")
-
-    if (settings.minio_access_key or "").strip() == _DEFAULT_MINIO_ACCESS_KEY:
-        problems.append("MINIO_ACCESS_KEY 使用默认值（minioadmin）")
-
-    if (settings.minio_secret_key or "").strip() == _DEFAULT_MINIO_SECRET_KEY:
-        problems.append("MINIO_SECRET_KEY 使用默认值（minioadmin）")
-
-    if problems:
-        raise RuntimeError(
-            f"启动安全校验失败（APP_ENV={settings.app_env}）：{'; '.join(problems)}"
-        )

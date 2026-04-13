@@ -124,7 +124,6 @@ class WebSearchPipeline:
         enriched, enrichment_report = await enrich_documents(
             fused,
             read_provider=self._read_provider,
-            top_k=2,
         )
         reranked = rerank_documents(enriched, query=query, max_results=max_results)
         reports = list(provider_reports.values())

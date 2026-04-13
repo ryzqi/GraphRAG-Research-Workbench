@@ -1,0 +1,25 @@
+version: "2026-04-13"
+coverage_gate:
+  default_required_web_providers:
+    - "tavily"
+    - "searxng"
+    - "jina_reader"
+  required_web_provider_counts:
+    simple: 2
+    comparative: 3
+    complex: 3
+  required_unique_source_counts:
+    simple: 5
+    comparative: 8
+    complex: 12
+status_probe:
+  cache_ttl_seconds: 300.0
+  provider_order:
+    - "tavily"
+    - "searxng"
+    - "jina_reader"
+  search_provider_names:
+    - "tavily"
+    - "searxng"
+  search_probe_query: "web search health check"
+  jina_probe_url: "https://example.com"

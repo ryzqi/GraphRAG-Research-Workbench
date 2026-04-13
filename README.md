@@ -8,12 +8,7 @@
 - `backend/`：FastAPI、Celery、数据接入与研究运行时。
 - `infra/`：Podman 基础设施、SearXNG 配置与本地数据目录。
 - `scripts/`：启动、验收与公共辅助脚本。
-- `docs/`：当前架构与 Research API 契约文档。
-
-## 功能入口
-
-- 根路径 `/`：普通代理。
-- 顶部导航：普通代理 → 知识库问答 → 知识库管理 → 深度研究 → MCP 扩展。
+- `docs/`：架构、API 契约与运维配置文档。
 
 ## Deep Research 当前事实源
 
@@ -22,14 +17,14 @@
 - 统一工件读取：`research_artifacts`
 - 最终报告：`report_md` / `report_json`
 - 可观测工件：`metrics_snapshot` / `gate_snapshot`
-- 前端展示优先消费：`presentation_snapshot`（只读派生展示工件，不替代底层业务真值）
+- 前端展示优先消费：`presentation_snapshot`
 - 详细契约：`docs/api_contract_research.md`
 
 ## 模型配置
 
 - 运行时模型主配置（供应商、Base URL、API Key、模型列表、全局生效模型）通过前端「模型配置」页面维护。
-- `.env` 仍用于超时、Embedding、搜索等服务配置，但 `LLM_BASE_URL / LLM_API_KEY / LLM_MODEL` 不再是运行时主配置来源。
-- `llama.cpp` provider 支持填写 `http://127.0.0.1:8080`、`/v1` 或完整 `/v1/chat/completions`；保存时会规范化为 `/v1`，thinking 行为由 `llama-server` 启动参数控制。
+- `.env` 用于 deploy config、Embedding、Web 搜索与公开地址；不再作为运行时 LLM 主配置表。
+- `llama.cpp` provider 支持填写 `http://<llama-cpp-host>:8080`、`/v1` 或完整 `/v1/chat/completions`；保存时会规范化为 `/v1`。
 
 ## 环境要求
 
@@ -39,10 +34,22 @@
 - `uv`
 - Podman（建议 Podman Desktop；`podman-compose` 仅作为回退方式）
 
-## 快速开始
+## 本地开发
 
-1. 复制 `.env.example` 为 `.env`，按需填写密钥与端口。
-2. 在仓库根目录执行一键启动：
+### 1. 准备配置
+
+1. 复制 `.env.example` 为 `.env`，补齐至少以下值：
+   - `NEXT_PUBLIC_API_BASE_URL`
+   - `BACKEND_PUBLIC_BASE_URL`
+   - `FRONTEND_PUBLIC_BASE_URL`
+   - `CORE__DATABASE_URL`
+   - `STORAGE__MINIO_*`
+   - `CORE__EMBEDDING_*`
+2. 如需覆盖本地基础设施变量，复制 `infra/env/dev.env.example` 为 `infra/env/dev.env` 再修改。
+
+### 2. 一键启动
+
+以下脚本仅面向 Windows 本地开发，不作为生产部署入口：
 
 ```powershell
 pwsh -ExecutionPolicy Bypass -File .\scripts\start_all.ps1
@@ -50,63 +57,51 @@ pwsh -ExecutionPolicy Bypass -File .\scripts\start_all.ps1
 
 常用参数：
 
-- `-SkipInfra`：跳过 Podman 基础依赖
-- `-NoDetachInfra`：基础依赖前台运行
+- `-SkipInfra`
+- `-NoDetachInfra`
 - `-SkipBackend`
 - `-SkipWorker`
 - `-SkipFrontend`
-- `-RunMigrate`：显式执行数据库迁移
+- `-RunMigrate`
 - `-Verbose`
 
 补充说明：
 
 - 默认跳过数据库迁移；首次建库或重置后请显式添加 `-RunMigrate`。
 - `scripts/start_all.ps1` 会在执行 `uv` 前自动清理外部 `VIRTUAL_ENV / CONDA_PREFIX / PYTHONHOME / PYTHONPATH`，并固定使用当前项目 `backend/.venv`。
-- 若本地数据库仍来自旧迁移链，请先清理旧 schema，再执行 `cd backend; uv run alembic upgrade head`。
-- 一键启动后可用以下命令做最小验收：
+- 若本地数据库仍来自旧迁移链，请先清理旧 schema，再执行 `uv run alembic upgrade head`。
+
+### 3. 本地验收
 
 ```powershell
+pwsh -ExecutionPolicy Bypass -File .\scripts\verify_quickstart.ps1 -SkipInfra
 pwsh -ExecutionPolicy Bypass -File .\scripts\verify_quickstart.ps1
 ```
 
-## 手动启动（仅排障）
+## 手动本地启动（仅排障）
 
-### 1) 基础依赖
+### 基础依赖
 
 ```powershell
-.\infra\up.ps1
+pwsh -ExecutionPolicy Bypass -File .\infra\up.ps1
 ```
 
 基础依赖包含：PostgreSQL、Redis、Etcd、MinIO、Milvus、SearXNG、Valkey。
 
-SearXNG 常用入口：
-
-- 配置页：`http://127.0.0.1:18080/config`
-- 配置文件：`infra/searxng/config/settings.yml`
-- 限流配置：`infra/searxng/config/limiter.toml`
-- JSON Search API 示例：
-
-```powershell
-Invoke-RestMethod -Uri 'http://127.0.0.1:18080/search?q=OpenAI&format=json' -Headers @{ 'User-Agent'='Mozilla/5.0' }
-```
-
-若 `/config` 可访问但 `format=json` 无结果，优先检查 Podman 容器外网连通性或 `.env` 中的 `SEARXNG_HTTP_PROXY / SEARXNG_HTTPS_PROXY` 是否使用了容器可访问的代理地址。
-
-### 2) 后端
+### 后端
 
 ```powershell
 Set-Location .\backend
 uv sync
-uv run uvicorn app.main:app --host 127.0.0.1 --port 8000 --loop app.core.uvicorn_loop:windows_selector_loop_factory
+uv run uvicorn app.main:app --host $env:BACKEND_BIND_HOST --port $env:BACKEND_PORT --loop app.core.uvicorn_loop:windows_selector_loop_factory
 ```
 
-- 手动排障时不要先激活其他 Python 虚拟环境；若当前终端已经激活，请先执行 `Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue` 与 `Remove-Item Env:CONDA_PREFIX -ErrorAction SilentlyContinue`。
+说明：
 
-- OpenAPI：`http://localhost:8000/docs`
-- 健康检查：`http://localhost:8000/api/v1/health`
-- Windows 下不要省略 `--loop app.core.uvicorn_loop:windows_selector_loop_factory`；默认事件循环会触发 psycopg 启动失败。
+- `BACKEND_BIND_HOST` 与 `BACKEND_PORT` 由 `.env` 提供；未设置时脚本默认使用 `0.0.0.0` 与 `8000`。
+- OpenAPI 与健康检查请以 `.env` 中的 `BACKEND_PUBLIC_BASE_URL` / `NEXT_PUBLIC_API_BASE_URL` 为准。
 
-### 3) Worker + Beat
+### Worker + Beat
 
 ```powershell
 Set-Location .\backend
@@ -116,22 +111,29 @@ uv run celery -A app.worker.celery_app worker --loglevel=INFO -n worker.core@%h 
 uv run celery -A app.worker.celery_app worker --loglevel=INFO -n worker.noncore@%h --pool=threads --concurrency=2 --prefetch-multiplier=1 -Q research,export
 ```
 
-启动后可检查关键消费者是否在线：
-
-```powershell
-uv run celery -A app.worker.celery_app inspect active_queues -t 5
-```
-
-至少应看到 `default`、`dispatch`、`ingestion` 队列存在消费者。
-
-### 4) 前端
+### 前端
 
 ```powershell
 Set-Location .\frontend
 npm install
 npm run build
-npm run start
+npm run start -- --port $env:FRONTEND_PORT
 ```
+
+## 生产配置与 Secrets
+
+- 生产部署请使用：
+  - `infra/podman-compose.base.yml`
+  - `infra/podman-compose.prod.example.yml`
+  - `infra/env/prod.env.example`
+- 详细运行手册、Secrets 注入方式、迁移顺序与回滚策略见：
+  - `docs/ops/config-and-secrets.md`
+
+关键原则：
+
+- feature flags 不是 secrets manager
+- `NEXT_PUBLIC_*` 只承载浏览器可见配置，不承载 secrets
+- 默认口令、宿主机代理 IP、loopback URL 不进入共享模板
 
 ## 当前配置要点
 
@@ -140,23 +142,21 @@ npm run start
 - PDF 默认先走 MinerU pipeline；失败或输出为空时回退到 `pypdf` 文本提取。
 - URL / DOCX / Markdown / TXT 保持原解析链路。
 - 单文件上传上限为 `50MB`。
-- 相关变量见 `.env.example`：`MINERU_*`、`PDF_FALLBACK_*`。
 
 ### Web 搜索
 
 - 必填：`WEB_SEARCH_API_KEY`
-- 可选搜索源：`SEARXNG_SEARCH_ENABLED`、`SEARXNG_BASE_URL`
+- 可选搜索源：`SEARXNG_SEARCH_ENABLED`、`WEB_SEARCH__SEARXNG_SEARCH_BASE_URL`
 - 可选正文增强：`JINA_READ_ENABLED`、`JINA_READ_BASE_URL`
-- 其余重试与默认深度参数见 `.env.example`
 
 ### KB Chat
 
 - 仅支持内部工具（如 `kb_retrieve`），不加载 MCP 外接工具。
 - 不支持两阶段工具审批，也不依赖 Human-in-the-loop。
-- 预算与观测变量见 `.env.example`：`KB_CHAT_*`
 
 ## 文档入口
 
 - 架构摘要：`docs/architecture.md`
 - Research API 契约：`docs/api_contract_research.md`
-- 快速验收脚本：`scripts/verify_quickstart.ps1`
+- 运维与 Secrets：`docs/ops/config-and-secrets.md`
+- 硬编码审计：`docs/hardcoded_audit_2026-04-13.md`

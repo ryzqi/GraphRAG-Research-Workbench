@@ -16,8 +16,6 @@ from app.agents.kb_chat_agentic.schemas import (
     TransformQueryDecision,
 )
 from app.services.query_rewrite_contracts import (
-    DECOMPOSITION_MAX_SUB_QUERIES,
-    HYDE_NUM_HYPOTHESES,
     AmbiguityResult,
     ComplexityRouteResult,
     MergeContextResolutionResult,
@@ -32,10 +30,12 @@ from app.services.query_rewrite_items import (
     _rule_based_decomposition_candidates,
 )
 from app.services.query_rewrite_text import (
-    _DEFAULT_CLARIFICATION_QUESTION,
-    _DEFAULT_COMPLEXITY_DIRECT_REASON,
     _build_clarification_payload,
+    _decomposition_max_sub_queries,
+    _default_clarification_question,
+    _default_complexity_reason,
     _dedupe_keep_order,
+    _hyde_num_hypotheses,
     _looks_compare_or_multi_target,
     _normalize_guardrail_reason,
     _normalize_reason_code,
@@ -173,7 +173,7 @@ async def ambiguity_check(
     if not q:
         business_reason = "问题内容为空，需先补充具体问题。"
         payload = _build_clarification_payload(
-            question=_DEFAULT_CLARIFICATION_QUESTION,
+            question=_default_clarification_question(),
             reason_code="missing_entity",
             confidence=1.0,
             model_reason=business_reason,
@@ -269,7 +269,7 @@ async def ambiguity_check(
                 payload.clarifying_question or ""
             )
             if not question_text:
-                question_text = _DEFAULT_CLARIFICATION_QUESTION
+                question_text = _default_clarification_question()
             clarification_payload = _build_clarification_payload(
                 question=question_text,
                 reason_code=reason_code,
@@ -297,7 +297,7 @@ async def ambiguity_check(
             )
             reason = model_reason
             clarification_payload = _build_clarification_payload(
-                question=_DEFAULT_CLARIFICATION_QUESTION,
+                question=_default_clarification_question(),
                 reason_code=reason_code,
                 confidence=confidence,
                 model_reason=model_reason,
@@ -440,7 +440,7 @@ async def classify_complexity(
         return ComplexityRouteResult(
             strategy="direct",
             success=False,
-            reasoning=_DEFAULT_COMPLEXITY_DIRECT_REASON,
+            reasoning=_default_complexity_reason("direct"),
             confidence=0.0,
             risk_flags=[],
             decision_version=COMPLEXITY_CLASSIFY_DECISION_VERSION,
@@ -567,7 +567,7 @@ async def decompose(
             if isinstance(spec, dict)
         ]
         sub_queries = _dedupe_keep_order([*spec_queries, *payload.sub_queries])[
-            :DECOMPOSITION_MAX_SUB_QUERIES
+            : _decomposition_max_sub_queries()
         ]
         if len(sub_queries) >= 2:
             latency_ms = int((time.perf_counter() - start) * 1000)
@@ -774,14 +774,14 @@ async def hyde(
         schema=HyDEBatchDecision,
         max_tokens=768,
         question=q,
-        num_hypotheses=HYDE_NUM_HYPOTHESES,
+        num_hypotheses=_hyde_num_hypotheses(),
     )
     if structured_result.success and isinstance(
         structured_result.payload, HyDEBatchDecision
     ):
         docs = _normalize_hyde_documents(
             structured_result.payload.hypothetical_documents,
-            limit=HYDE_NUM_HYPOTHESES,
+            limit=_hyde_num_hypotheses(),
         )
         if docs:
             latency_ms = int((time.perf_counter() - start) * 1000)

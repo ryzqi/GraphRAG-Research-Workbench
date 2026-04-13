@@ -1,0 +1,11 @@
+version: "2026-04-13"
+status_polling_interval_ms: 2000
+ingestion_stream_fallback_polling_steps_ms:
+  - 1000
+  - 2000
+  - 5000
+ingestion_stream_retry_multiplier: 2
+export_poll_interval_ms: 1000
+export_poll_max_attempts: 60
+server_prefetch_cache_revalidate_seconds: 30
+download_allowed_hosts: []

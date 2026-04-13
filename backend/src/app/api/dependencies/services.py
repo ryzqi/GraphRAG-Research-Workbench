@@ -19,6 +19,7 @@ from app.services.kb_chat_service import KbChatService
 from app.services.knowledge_base_service import KnowledgeBaseService
 from app.services.material_service import MaterialService
 from app.services.model_config_service import ModelConfigService
+from app.services.public_runtime_config_service import PublicRuntimeConfigService
 from app.services.queue_health_service import QueueHealthService
 from app.services.research_service import ResearchService, build_research_service
 
@@ -109,6 +110,10 @@ def build_model_config_service(*, db: AsyncSessionDep) -> ModelConfigService:
     return ModelConfigService(db)
 
 
+def build_public_runtime_config_service() -> PublicRuntimeConfigService:
+    return PublicRuntimeConfigService()
+
+
 def build_index_rebuild_service(*, db: AsyncSessionDep) -> IndexRebuildService:
     return IndexRebuildService(db)
 
@@ -139,6 +144,9 @@ MaterialServiceDep: TypeAlias = Annotated[
 ]
 ModelConfigServiceDep: TypeAlias = Annotated[
     ModelConfigService, Depends(build_model_config_service)
+]
+PublicRuntimeConfigServiceDep: TypeAlias = Annotated[
+    PublicRuntimeConfigService, Depends(build_public_runtime_config_service)
 ]
 IndexRebuildServiceDep: TypeAlias = Annotated[
     IndexRebuildService, Depends(build_index_rebuild_service)

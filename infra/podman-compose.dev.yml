@@ -1,0 +1,63 @@
+# Local development overlay. Use with podman-compose.base.yml.
+version: "3.9"
+
+services:
+  postgres:
+    container_name: mkb_postgres
+    restart: unless-stopped
+    ports:
+      - "${POSTGRES_PORT}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  redis:
+    container_name: mkb_redis
+    restart: unless-stopped
+    ports:
+      - "${REDIS_PORT}:6379"
+    volumes:
+      - ./data/redis:/data
+
+  etcd:
+    container_name: mkb_etcd
+    restart: unless-stopped
+    ports:
+      - "${ETCD_PORT}:2379"
+    volumes:
+      - ./data/etcd:/etcd
+
+  minio:
+    container_name: mkb_minio
+    restart: unless-stopped
+    ports:
+      - "${MINIO_PORT}:9000"
+      - "${MINIO_CONSOLE_PORT}:9001"
+    volumes:
+      - ./data/minio:/minio_data
+
+  milvus:
+    container_name: mkb_milvus
+    restart: unless-stopped
+    ports:
+      - "${MILVUS_PORT}:19530"
+      - "${MILVUS_HTTP_PORT}:9091"
+    volumes:
+      - ./data/milvus:/var/lib/milvus
+
+  searxng_valkey:
+    container_name: mkb_searxng_valkey
+    restart: unless-stopped
+    volumes:
+      - ./data/searxng-valkey:/data
+
+  searxng:
+    container_name: mkb_searxng
+    restart: unless-stopped
+    ports:
+      - "${SEARXNG_PORT}:8080"
+    volumes:
+      - ./searxng/config:/etc/searxng
+      - ./data/searxng:/var/cache/searxng
+
+volumes:
+  postgres_data:

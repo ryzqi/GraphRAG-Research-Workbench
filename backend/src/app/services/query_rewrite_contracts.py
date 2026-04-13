@@ -4,15 +4,6 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from pydantic import BaseModel
-DECOMPOSITION_MAX_SUB_QUERIES = 5
-MULTI_QUERY_FIXED_VARIANTS = 3
-HYDE_NUM_HYPOTHESES = 5
-HYDE_AGGREGATION = "mean_embedding"
-HYDE_REGENERATE_ON_RETRY = True
-STRUCTURED_CALL_RETRYABLE_REASONS = frozenset(
-    {"error", "empty_structured_response", "invalid_schema"}
-)
-STRUCTURED_CALL_MAX_ATTEMPTS = 2
 
 
 @dataclass(slots=True)

@@ -42,7 +42,7 @@ template: |
   <research_brief>{research_brief}</research_brief>
   <target_sources>{target_sources}</target_sources>
   <route_hint>{route_hint}</route_hint>
-  <query_mesh_path>/workspace/context/query_mesh.json</query_mesh_path>
+  <query_mesh_path>{query_mesh_path}</query_mesh_path>
   <priority_workspace_paths>
   {workspace_paths_block}
   </priority_workspace_paths>
@@ -59,6 +59,9 @@ variables:
     type: string
     required: true
   - name: route_hint
+    type: string
+    required: true
+  - name: query_mesh_path
     type: string
     required: true
   - name: workspace_paths_block

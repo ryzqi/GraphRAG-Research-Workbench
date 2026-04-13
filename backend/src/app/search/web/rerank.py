@@ -7,22 +7,10 @@ from collections.abc import Sequence
 
 from langchain_core.documents import Document
 
-from .documents import extract_domain, merge_document_metadata
+from app.config.policy_loader import load_search_policy
+from app.config.policy_models import SearchRerankPolicy
 
-_LOW_QUALITY_DOMAIN_SUFFIXES = (
-    "linkedin.com",
-    "x.com",
-    "twitter.com",
-    "medium.com",
-)
-_HIGH_AUTHORITY_DOMAIN_SUFFIXES = (
-    "docs.langchain.com",
-    "openai.com",
-    "help.openai.com",
-    "docs.anthropic.com",
-    "ai.google.dev",
-    "learn.microsoft.com",
-)
+from .documents import extract_domain, merge_document_metadata
 
 
 def _extract_query_terms(query: str) -> set[str]:
@@ -33,33 +21,49 @@ def _extract_query_terms(query: str) -> set[str]:
     }
 
 
-def _score_document(document: Document, *, query_terms: set[str]) -> float:
+def _score_document(
+    document: Document,
+    *,
+    query_terms: set[str],
+    rerank_policy: SearchRerankPolicy,
+) -> float:
     metadata = document.metadata
     fusion_score = float(metadata.get("fusion_score") or 0.0)
-    overlap_bonus = 0.9 * max(int(metadata.get("overlap_count") or 1) - 1, 0)
+    overlap_bonus = float(rerank_policy.overlap_bonus_weight) * max(
+        int(metadata.get("overlap_count") or 1) - 1,
+        0,
+    )
     searchable = f"{metadata.get('title') or ''} {document.page_content or ''}".lower()
-    lexical_bonus = sum(0.08 for term in query_terms if term in searchable)
+    lexical_bonus = sum(
+        float(rerank_policy.lexical_bonus_per_term)
+        for term in query_terms
+        if term in searchable
+    )
     domain = str(
         metadata.get("domain") or extract_domain(str(metadata.get("url") or "")) or ""
     )
     authority_bonus = (
-        0.45
+        float(rerank_policy.authority_bonus)
         if any(
             domain == suffix or domain.endswith(f".{suffix}")
-            for suffix in _HIGH_AUTHORITY_DOMAIN_SUFFIXES
+            for suffix in rerank_policy.high_authority_domain_suffixes
         )
         else 0.0
     )
-    freshness_bonus = 0.12 if metadata.get("published_at") else 0.0
+    freshness_bonus = (
+        float(rerank_policy.freshness_bonus) if metadata.get("published_at") else 0.0
+    )
     social_penalty = (
-        0.35
+        float(rerank_policy.social_penalty)
         if any(
             domain == suffix or domain.endswith(f".{suffix}")
-            for suffix in _LOW_QUALITY_DOMAIN_SUFFIXES
+            for suffix in rerank_policy.low_quality_domain_suffixes
         )
         else 0.0
     )
-    enriched_bonus = 0.15 if metadata.get("enriched") else 0.0
+    enriched_bonus = (
+        float(rerank_policy.enriched_bonus) if metadata.get("enriched") else 0.0
+    )
     return (
         fusion_score
         + overlap_bonus
@@ -75,9 +79,14 @@ def rerank_documents(
     documents: Sequence[Document], *, query: str, max_results: int
 ) -> list[Document]:
     query_terms = _extract_query_terms(query)
+    rerank_policy = load_search_policy().rerank
     ranked = sorted(
         documents,
-        key=lambda document: _score_document(document, query_terms=query_terms),
+        key=lambda document: _score_document(
+            document,
+            query_terms=query_terms,
+            rerank_policy=rerank_policy,
+        ),
         reverse=True,
     )
     output: list[Document] = []
@@ -85,7 +94,11 @@ def rerank_documents(
         output.append(
             merge_document_metadata(
                 document,
-                fusion_score=_score_document(document, query_terms=query_terms),
+                fusion_score=_score_document(
+                    document,
+                    query_terms=query_terms,
+                    rerank_policy=rerank_policy,
+                ),
             )
         )
     return output

@@ -30,7 +30,6 @@ from app.core.settings import Settings
 from app.integrations.http_client import create_http_client
 from app.integrations.redis_client import RedisClient
 from app.agents.tools.web_search_utils import (
-    TAVILY_BASE_URL,
     TavilyCallContext,
     TavilyTimeoutError,
     UsageLimitExceededError,
@@ -104,6 +103,12 @@ class WebSearchClient:
         self._redis = redis
         self._http_client = http_client
         self._client: AsyncTavilyClient | None = None
+
+    def _resolve_tavily_base_url(self) -> str:
+        base_url = self._settings.web_search_provider.tavily_base_url.strip().rstrip("/")
+        if not base_url:
+            raise RuntimeError("未配置 TAVILY_BASE_URL，无法访问 Tavily HTTP API")
+        return base_url
 
     def _get_client(self) -> "AsyncTavilyClient":
         try:
@@ -225,7 +230,7 @@ class WebSearchClient:
     ) -> dict[str, Any]:
         if not self._api_key:
             raise RuntimeError("未配置 WEB_SEARCH_API_KEY，无法使用 Tavily Web 工具")
-        url = f"{TAVILY_BASE_URL}{path}"
+        url = f"{self._resolve_tavily_base_url()}{path}"
         headers = {
             "Authorization": f"Bearer {self._api_key}",
             "Content-Type": "application/json",

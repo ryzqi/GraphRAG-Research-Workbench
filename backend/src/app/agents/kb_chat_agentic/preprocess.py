@@ -29,11 +29,11 @@ from app.core.settings import Settings
 from app.integrations.chat_model_factory import create_chat_model
 from app.services.query_rewrite_service import (
     COMPLEXITY_CLASSIFY_DECISION_VERSION,
-    HYDE_NUM_HYPOTHESES,
     QueryRewriteService,
     _looks_stable_overview_query,
     build_query_items,
 )
+from app.services.query_rewrite_text import _hyde_num_hypotheses
 from app.utils.token_counter import count_tokens_approximately
 from app.agents.kb_chat_agentic_state import (
     AmbiguityCheckInput,
@@ -1987,7 +1987,7 @@ async def hyde(state: HydeInput, settings: Settings) -> dict[str, Any]:
         {
             "driver": "llm",
             "success": success,
-            "requested_count": HYDE_NUM_HYPOTHESES,
+            "requested_count": _hyde_num_hypotheses(),
             "generated_count": len(hyde_docs),
             "retry_regenerated": retry_regenerated,
             "reason": reason,

@@ -18,7 +18,6 @@ from app.models.model_config import ModelProvider
 _DEFAULT_CHAT_PROVIDER_MAX_RETRIES = 2
 _DEFAULT_NVIDIA_MAX_RETRIES = 0
 _NVIDIA_TIMEOUT_CAP_SECONDS = 60.0
-_OLLAMA_DEFAULT_BASE_URL = "http://127.0.0.1:11434"
 _TIMEOUT_UNSET = object()
 
 
@@ -240,9 +239,13 @@ def create_chat_model_from_runtime_config(
                 "langchain-ollama is not installed; please install it first"
             ) from exc
 
+        base_url = _require_base_url(
+            provider_label="Ollama",
+            base_url=provider_cfg.base_url,
+        )
         kwargs: dict[str, Any] = {
             "model": model_name,
-            "base_url": provider_cfg.base_url or _OLLAMA_DEFAULT_BASE_URL,
+            "base_url": base_url,
         }
         profile = build_chat_model_profile(cfg)
         if profile is not None:

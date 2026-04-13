@@ -1,26 +1,104 @@
+import type { PublicRuntimeConfigRead } from '../services/runtimeConfig';
+
+type PublicRuntimeBehaviorConfig = Pick<
+  PublicRuntimeConfigRead,
+  | 'status_polling_interval_ms'
+  | 'ingestion_stream_fallback_polling_steps_ms'
+  | 'ingestion_stream_retry_multiplier'
+  | 'export_poll_interval_ms'
+  | 'export_poll_max_attempts'
+  | 'server_prefetch_cache_revalidate_seconds'
+  | 'download_allowed_hosts'
+>;
+
 /**
  * 前端运行时默认值。
  *
- * 这些值对应当前仓库里真正生效的轮询/重试行为：
- * - bootstrap / ingestion 常态轮询：交互式状态页默认每 2s 刷新一次；
- * - ingestion live：主链路优先走 SSE，断流后按 1s -> 2s -> 5s 回退，并放大 2x 重连等待；
- * - export：用户主动等待一次性导出任务时，按 1s * 60 次提供约 60s 的默认等待窗口。
+ * 这些值仅作为 `runtime-config` 尚未加载完成时的保守回退；
+ * 一旦后端公开配置可用，应始终以后端下发值为准。
  */
-
-/** 交互式状态查询（bootstrap / ingestion）默认轮询间隔。 */
 export const DEFAULT_STATUS_POLLING_INTERVAL_MS = 2_000;
-
-/**
- * Ingestion SSE 断流后的回退轮询步进。
- * 先快后慢，优先快速恢复，再把稳态负载收敛到 5s。
- */
 export const INGESTION_STREAM_FALLBACK_POLLING_STEPS_MS = [1_000, 2_000, 5_000] as const;
-
-/** ingestion SSE 断流后，下次主动重连前的等待倍率。 */
 export const INGESTION_STREAM_RETRY_MULTIPLIER = 2;
-
-/** 导出任务默认轮询间隔。 */
 export const DEFAULT_EXPORT_POLL_INTERVAL_MS = 1_000;
-
-/** 导出任务默认最大轮询次数（约等于 60s 等待窗口）。 */
 export const DEFAULT_EXPORT_POLL_MAX_ATTEMPTS = 60;
+export const DEFAULT_SERVER_PREFETCH_CACHE_REVALIDATE_SECONDS = 30;
+export const DEFAULT_DOWNLOAD_ALLOWED_HOSTS: readonly string[] = [];
+
+function normalizePositiveNumber(value: number | undefined, fallback: number): number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
+function normalizeAllowedHosts(hosts: readonly string[] | undefined): string[] {
+  const source = hosts && hosts.length > 0 ? hosts : DEFAULT_DOWNLOAD_ALLOWED_HOSTS;
+  const normalized = source
+    .map((item) => item.trim().toLowerCase())
+    .filter(Boolean);
+  return Array.from(new Set(normalized));
+}
+
+export function getStatusPollingIntervalMs(
+  config?: PublicRuntimeBehaviorConfig | null
+): number {
+  return normalizePositiveNumber(
+    config?.status_polling_interval_ms,
+    DEFAULT_STATUS_POLLING_INTERVAL_MS
+  );
+}
+
+export function getIngestionStreamFallbackPollingStepsMs(
+  config?: PublicRuntimeBehaviorConfig | null
+): readonly number[] {
+  const source = config?.ingestion_stream_fallback_polling_steps_ms;
+  if (!Array.isArray(source) || source.length === 0) {
+    return INGESTION_STREAM_FALLBACK_POLLING_STEPS_MS;
+  }
+
+  const normalized = source.filter(
+    (item): item is number => typeof item === 'number' && Number.isFinite(item) && item > 0
+  );
+  return normalized.length > 0 ? normalized : INGESTION_STREAM_FALLBACK_POLLING_STEPS_MS;
+}
+
+export function getIngestionStreamRetryMultiplier(
+  config?: PublicRuntimeBehaviorConfig | null
+): number {
+  return normalizePositiveNumber(
+    config?.ingestion_stream_retry_multiplier,
+    INGESTION_STREAM_RETRY_MULTIPLIER
+  );
+}
+
+export function getExportPollIntervalMs(
+  config?: PublicRuntimeBehaviorConfig | null
+): number {
+  return normalizePositiveNumber(
+    config?.export_poll_interval_ms,
+    DEFAULT_EXPORT_POLL_INTERVAL_MS
+  );
+}
+
+export function getExportPollMaxAttempts(
+  config?: PublicRuntimeBehaviorConfig | null
+): number {
+  return normalizePositiveNumber(
+    config?.export_poll_max_attempts,
+    DEFAULT_EXPORT_POLL_MAX_ATTEMPTS
+  );
+}
+
+export function getServerPrefetchCacheRevalidateSeconds(
+  config?: PublicRuntimeBehaviorConfig | null
+): number {
+  return typeof config?.server_prefetch_cache_revalidate_seconds === 'number' &&
+    Number.isFinite(config.server_prefetch_cache_revalidate_seconds) &&
+    config.server_prefetch_cache_revalidate_seconds >= 0
+    ? config.server_prefetch_cache_revalidate_seconds
+    : DEFAULT_SERVER_PREFETCH_CACHE_REVALIDATE_SECONDS;
+}
+
+export function getDownloadAllowedHosts(
+  config?: PublicRuntimeBehaviorConfig | null
+): string[] {
+  return normalizeAllowedHosts(config?.download_allowed_hosts);
+}

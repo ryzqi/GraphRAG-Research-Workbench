@@ -4,9 +4,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useSWRConfig } from 'swr';
 import {
-  DEFAULT_STATUS_POLLING_INTERVAL_MS,
-  INGESTION_STREAM_FALLBACK_POLLING_STEPS_MS,
-  INGESTION_STREAM_RETRY_MULTIPLIER,
+  getIngestionStreamFallbackPollingStepsMs,
+  getIngestionStreamRetryMultiplier,
+  getStatusPollingIntervalMs,
 } from '../../constants/runtimeDefaults';
 import { parseSseJson } from '../../lib/sse';
 import {
@@ -20,6 +20,7 @@ import {
   type IngestionBatch,
 } from '../../services/ingestionBatches';
 import { useApiMutation, useApiQuery } from '../../lib/swr';
+import { useRuntimeConfig } from './useRuntimeConfig';
 
 const NO_ID = '__none__';
 
@@ -88,7 +89,10 @@ export function shouldFallbackAfterStreamExit(state: StreamExitState): boolean {
 }
 
 export function useIngestionBatch(batchId: string | undefined, options?: UseIngestionBatchOptions) {
-  const refreshIntervalMs = options?.refreshIntervalMs ?? DEFAULT_STATUS_POLLING_INTERVAL_MS;
+  const runtimeConfigQuery = useRuntimeConfig();
+  const refreshIntervalMs =
+    options?.refreshIntervalMs ?? getStatusPollingIntervalMs(runtimeConfigQuery.data);
+
   return useApiQuery(
     batchId ? KEYS.batch(batchId) : null,
     batchId ? () => getIngestionBatch(batchId) : null,
@@ -101,9 +105,16 @@ export function useIngestionBatch(batchId: string | undefined, options?: UseInge
 
 export function useIngestionBatchLive(options: UseIngestionBatchLiveOptions): UseIngestionBatchLiveResult {
   const { mutate } = useSWRConfig();
+  const runtimeConfigQuery = useRuntimeConfig();
   const [streamStatus, setStreamStatus] = useState<StreamStatus>('idle');
   const [fallbackStep, setFallbackStep] = useState(0);
   const [streamRevision, setStreamRevision] = useState(0);
+  const fallbackPollingSteps = useMemo(
+    () => getIngestionStreamFallbackPollingStepsMs(runtimeConfigQuery.data),
+    [runtimeConfigQuery.data]
+  );
+  const retryMultiplier = getIngestionStreamRetryMultiplier(runtimeConfigQuery.data);
+  const defaultPollingIntervalMs = getStatusPollingIntervalMs(runtimeConfigQuery.data);
 
   const kbId = options.kbId;
   const preferredBatchId = options.batchId;
@@ -120,9 +131,7 @@ export function useIngestionBatchLive(options: UseIngestionBatchLiveOptions): Us
 
   const fallbackIntervalMs =
     streamStatus === 'fallback_polling'
-      ? INGESTION_STREAM_FALLBACK_POLLING_STEPS_MS[
-          Math.min(fallbackStep, INGESTION_STREAM_FALLBACK_POLLING_STEPS_MS.length - 1)
-        ]
+      ? fallbackPollingSteps[Math.min(fallbackStep, fallbackPollingSteps.length - 1)]
       : 0;
 
   const pollingIntervalMs =
@@ -130,7 +139,7 @@ export function useIngestionBatchLive(options: UseIngestionBatchLiveOptions): Us
       ? 0
       : streamStatus === 'fallback_polling'
         ? fallbackIntervalMs
-        : DEFAULT_STATUS_POLLING_INTERVAL_MS;
+        : defaultPollingIntervalMs;
 
   const batchQuery = useIngestionBatch(resolvedBatchId, {
     refreshIntervalMs: pollingIntervalMs,
@@ -166,7 +175,7 @@ export function useIngestionBatchLive(options: UseIngestionBatchLiveOptions): Us
     const scheduleRetry = (options?: { immediateRefetch?: boolean }) => {
       let nextStep = 0;
       setFallbackStep((prev) => {
-        nextStep = Math.min(prev + 1, INGESTION_STREAM_FALLBACK_POLLING_STEPS_MS.length - 1);
+        nextStep = Math.min(prev + 1, fallbackPollingSteps.length - 1);
         return nextStep;
       });
       setStreamStatus('fallback_polling');
@@ -174,8 +183,7 @@ export function useIngestionBatchLive(options: UseIngestionBatchLiveOptions): Us
         void mutate(KEYS.batch(resolvedBatchId));
       }
 
-      const retryDelayMs =
-        INGESTION_STREAM_FALLBACK_POLLING_STEPS_MS[nextStep] * INGESTION_STREAM_RETRY_MULTIPLIER;
+      const retryDelayMs = fallbackPollingSteps[nextStep] * retryMultiplier;
       retryTimer = setTimeout(() => {
         if (!active) {
           return;
@@ -258,7 +266,14 @@ export function useIngestionBatchLive(options: UseIngestionBatchLiveOptions): Us
         clearTimeout(retryTimer);
       }
     };
-  }, [shouldStream, resolvedBatchId, streamRevision, mutate]);
+  }, [
+    shouldStream,
+    resolvedBatchId,
+    streamRevision,
+    mutate,
+    fallbackPollingSteps,
+    retryMultiplier,
+  ]);
 
   const error = batchQuery.error ?? latestBatchQuery.error;
 

@@ -6,6 +6,11 @@ from collections.abc import Callable, Mapping
 import re
 from typing import Any
 
+from app.services.query_rewrite_text import (
+    _default_ambiguity_reason,
+    _resolve_ambiguity_reason_label,
+)
+
 DisplayItem = dict[str, Any]
 NodeLabelResolver = Callable[[str | None], str | None]
 
@@ -35,14 +40,6 @@ _REVIEW_CHECK_LABELS: dict[str, str] = {
     "answer": "回答有效性审查",
 }
 
-_AMBIGUITY_REASON_CODE_LABELS: dict[str, str] = {
-    "missing_entity": "缺少具体对象",
-    "missing_scope": "缺少范围约束",
-    "missing_time": "缺少时间范围",
-    "missing_metric": "缺少指标口径",
-    "coref_uncertain": "指代对象不明确",
-    "mixed": "关键信息不完整",
-}
 _AMBIGUITY_TECHNICAL_REASONS: set[str] = {
     "error",
     "invalid_schema",
@@ -56,8 +53,6 @@ _AMBIGUITY_TECHNICAL_REASONS: set[str] = {
     "guardrail_empty_query",
     "guardrail_fallback",
 }
-_AMBIGUITY_DEFAULT_REASON_TRUE = "问题缺少关键信息，需先澄清后再检索。"
-_AMBIGUITY_DEFAULT_REASON_FALSE = "未命中需澄清信号，可直接继续检索。"
 _QUERY_PLAN_REASON_DIRECT = "未命中复杂问题信号，按主问题并辅以 HyDE 补强检索。"
 _QUERY_PLAN_REASON_MULTI_QUERY = (
     "目标单一但召回风险较高，先做多路查询扩展，再进入 HyDE 补强。"
@@ -305,7 +300,7 @@ def _resolve_ambiguity_reason(
         clarification_payload, "reason_code"
     )
     if reason_code:
-        mapped = _AMBIGUITY_REASON_CODE_LABELS.get(reason_code.strip().lower())
+        mapped = _resolve_ambiguity_reason_label(reason_code.strip().lower())
         if mapped:
             return mapped
 
@@ -317,9 +312,7 @@ def _resolve_ambiguity_reason(
         return summary_reason
 
     return (
-        _AMBIGUITY_DEFAULT_REASON_TRUE
-        if bool(ambiguous)
-        else _AMBIGUITY_DEFAULT_REASON_FALSE
+        _default_ambiguity_reason(ambiguous=bool(ambiguous))
     ) or default_reason
 
 

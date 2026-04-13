@@ -11,8 +11,9 @@ from app.core.settings import Settings
 
 
 def create_app(settings: Settings) -> FastAPI:
+    core = settings.core
     app = FastAPI(
-        title=settings.app_name,
+        title=core.app_name,
         version="0.1.0",
         lifespan=create_lifespan(settings),
     )
@@ -20,7 +21,7 @@ def create_app(settings: Settings) -> FastAPI:
     app.add_middleware(RequestIdMiddleware)
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=settings.app_cors_allow_origins,
+        allow_origins=core.app_cors_allow_origins,
         allow_credentials=True,
         allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
         allow_headers=["Content-Type", "X-Request-ID", "Last-Event-ID"],

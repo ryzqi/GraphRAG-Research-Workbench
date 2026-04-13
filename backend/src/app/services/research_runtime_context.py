@@ -7,17 +7,12 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
-from app.services.research_workspace_files import (
-    ResearchWorkspaceLayout,
-    build_workspace_bootstrap_artifact_path_map,
+from app.config.runtime_contract import (
+    RESEARCH_RUNTIME_BACKEND_ROOTS,
+    RESEARCH_RUNTIME_LAYOUT_MANIFEST,
+    RESEARCH_RUNTIME_REQUEST_CONTEXT,
 )
-
-RUNTIME_CONTEXT_GUIDE_PATH = "/workspace/context/runtime_context_guide.md"
-_RUNTIME_REQUEST_CONTEXT_PATHS: tuple[str, ...] = (
-    "/workspace/context/session_question.txt",
-    "/workspace/context/plan_snapshot.json",
-    "/workspace/context/query_mesh.json",
-)
+from app.services.research_workspace_files import ResearchWorkspaceLayout
 
 
 @dataclass(slots=True, frozen=True)
@@ -59,18 +54,15 @@ def _build_priority_context_paths(
     workspace_files: Mapping[str, str],
     layout: ResearchWorkspaceLayout,
 ) -> tuple[str, ...]:
+    layout_priority_paths = tuple(
+        getattr(layout, attr_name)
+        for attr_name in RESEARCH_RUNTIME_LAYOUT_MANIFEST.priority_layout_attrs
+    )
     return _dedupe_paths(
         (
-            RUNTIME_CONTEXT_GUIDE_PATH,
-            *_RUNTIME_REQUEST_CONTEXT_PATHS,
-            layout.mission_path,
-            layout.plan_path,
-            layout.query_map_path,
-            layout.coverage_path,
-            layout.report_context_json_path,
-            layout.task_graph_path,
-            layout.claim_bundles_path,
-            layout.section_briefs_path,
+            RESEARCH_RUNTIME_REQUEST_CONTEXT.guide_path,
+            *RESEARCH_RUNTIME_REQUEST_CONTEXT.request_paths,
+            *layout_priority_paths,
         )
     )
 
@@ -84,23 +76,30 @@ def build_runtime_context_guide(
         workspace_files=workspace_files,
         layout=layout,
     )
-    skill_paths = sorted(path for path in workspace_files if path.startswith("/skills/"))
-    memory_paths = sorted(
-        path for path in workspace_files if path.startswith("/memories/")
+    skill_paths = sorted(
+        path
+        for path in workspace_files
+        if path.startswith(RESEARCH_RUNTIME_BACKEND_ROOTS.skills_root)
     )
-    scratch_paths = sorted(path for path in workspace_files if path.startswith("/scratch/"))
+    memory_paths = sorted(
+        path
+        for path in workspace_files
+        if path.startswith(RESEARCH_RUNTIME_BACKEND_ROOTS.memories_root)
+    )
+    scratch_paths = sorted(
+        path
+        for path in workspace_files
+        if path.startswith(RESEARCH_RUNTIME_BACKEND_ROOTS.scratch_root)
+    )
     projection_paths = [
-        path for path in (layout.live_board_path,) if path in workspace_files
+        path
+        for attr_name in RESEARCH_RUNTIME_LAYOUT_MANIFEST.projection_layout_attrs
+        if (path := getattr(layout, attr_name)) in workspace_files
     ]
     on_demand_paths = [
         path
-        for path in (
-            layout.claim_map_md_path,
-            layout.evidence_ledger_md_path,
-            layout.analysis_notes_path,
-            layout.report_outline_path,
-            layout.report_draft_path,
-        )
+        for attr_name in RESEARCH_RUNTIME_LAYOUT_MANIFEST.analysis_layout_attrs
+        if (path := getattr(layout, attr_name)) in workspace_files
         if path in workspace_files
     ]
     lines = [
@@ -161,7 +160,7 @@ def build_runtime_context_guide(
             ]
         )
     return ResearchRuntimeContextGuide(
-        path=RUNTIME_CONTEXT_GUIDE_PATH,
+        path=RESEARCH_RUNTIME_REQUEST_CONTEXT.guide_path,
         content="\n".join(lines) + "\n",
         priority_paths=priority_paths,
     )
@@ -253,15 +252,8 @@ def build_runtime_context_snapshot(
     todos = _parse_todos_payload(result.get("todos"))
 
     whitelist = {
-        layout.claim_map_md_path,
-        layout.evidence_ledger_md_path,
-        layout.analysis_notes_path,
-        layout.report_outline_path,
-        layout.report_draft_path,
-        layout.report_context_json_path,
-        layout.task_graph_path,
-        layout.claim_bundles_path,
-        layout.section_briefs_path,
+        getattr(layout, attr_name)
+        for attr_name in RESEARCH_RUNTIME_LAYOUT_MANIFEST.snapshot_layout_attrs
     }
     extracted: dict[str, str] = {}
     for path, payload in files.items():

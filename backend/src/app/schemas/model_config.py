@@ -3,17 +3,10 @@
 from __future__ import annotations
 
 from datetime import datetime
-from enum import Enum
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-
-class ModelProvider(str, Enum):
-    OPENAI = "openai"
-    OLLAMA = "ollama"
-    LLAMA_CPP = "llama.cpp"
-    NVIDIA = "nvidia"
-    ANTHROPIC = "anthropic"
+from app.models.model_config import ModelProvider
 
 
 class ProviderConfigRead(BaseModel):

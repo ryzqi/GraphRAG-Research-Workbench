@@ -7,7 +7,7 @@ import time
 from app.agents.kb_chat_agentic.schemas import NormalizeDecision, ReferenceResolutionDecision
 from app.services.query_rewrite_contracts import RewriteResult
 from app.services.query_rewrite_text import (
-    _DEFAULT_CLARIFICATION_QUESTION,
+    _default_clarification_question,
     _normalize_guardrail_reason,
     _normalize_whitespace,
     _render_recent_turns,
@@ -144,7 +144,7 @@ async def resolve_reference(
                 "reasoning": reasoning,
                 "needs_clarification": needs_clarification,
                 "clarification_hint": (
-                    _DEFAULT_CLARIFICATION_QUESTION if needs_clarification else ""
+                    _default_clarification_question() if needs_clarification else ""
                 ),
             },
         )

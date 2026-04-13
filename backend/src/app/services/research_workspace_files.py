@@ -7,6 +7,10 @@ from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
 
+from app.config.runtime_contract import (
+    RESEARCH_RUNTIME_BACKEND_ROOTS,
+    RESEARCH_RUNTIME_LAYOUT_MANIFEST,
+)
 from app.prompts import get_prompt_loader
 from app.schemas.research import ResearchPlanSnapshot, ResearchPlanSubtask
 
@@ -94,29 +98,32 @@ def _build_subtasks_block(plan_snapshot: ResearchPlanSnapshot) -> str:
 
 def build_research_workspace_layout(session_id: UUID | str) -> ResearchWorkspaceLayout:
     slug = str(session_id)
-    workspace_root = f"/workspace/research/{slug}"
-    scratch_root = f"/scratch/research/{slug}"
+    workspace_root = RESEARCH_RUNTIME_BACKEND_ROOTS.workspace_session_root(slug)
+    scratch_root = RESEARCH_RUNTIME_BACKEND_ROOTS.scratch_session_root(slug)
+    manifest = RESEARCH_RUNTIME_LAYOUT_MANIFEST
     return ResearchWorkspaceLayout(
         session_slug=slug,
         workspace_root=workspace_root,
         scratch_root=scratch_root,
-        mission_path=f"{workspace_root}/00-mission.md",
-        plan_path=f"{workspace_root}/01-plan.md",
-        query_map_path=f"{workspace_root}/02-query-map.md",
-        coverage_path=f"{workspace_root}/03-coverage.md",
-        report_draft_path=f"{workspace_root}/04-report-draft.md",
-        claim_map_md_path=f"{workspace_root}/05-claim-map.md",
-        evidence_ledger_md_path=f"{workspace_root}/06-evidence-ledger.md",
-        analysis_notes_path=f"{workspace_root}/07-analysis-notes.md",
-        report_outline_path=f"{workspace_root}/08-report-outline.md",
-        task_graph_path=f"{workspace_root}/09-task-graph.json",
-        claim_bundles_path=f"{workspace_root}/10-claim-bundles.json",
-        section_briefs_path=f"{workspace_root}/11-section-briefs.json",
-        live_board_path=f"{workspace_root}/12-live-board.json",
-        source_ledger_path=f"{scratch_root}/verification/source-ledger.json",
-        claim_map_path=f"{scratch_root}/verification/claim-map.json",
-        conflicts_path=f"{scratch_root}/verification/conflicts.json",
-        report_context_json_path=f"{scratch_root}/report/report-context.json",
+        mission_path=f"{workspace_root}/{manifest.mission_relative_path}",
+        plan_path=f"{workspace_root}/{manifest.plan_relative_path}",
+        query_map_path=f"{workspace_root}/{manifest.query_map_relative_path}",
+        coverage_path=f"{workspace_root}/{manifest.coverage_relative_path}",
+        report_draft_path=f"{workspace_root}/{manifest.report_draft_relative_path}",
+        claim_map_md_path=f"{workspace_root}/{manifest.claim_map_md_relative_path}",
+        evidence_ledger_md_path=(
+            f"{workspace_root}/{manifest.evidence_ledger_md_relative_path}"
+        ),
+        analysis_notes_path=f"{workspace_root}/{manifest.analysis_notes_relative_path}",
+        report_outline_path=f"{workspace_root}/{manifest.report_outline_relative_path}",
+        task_graph_path=f"{workspace_root}/{manifest.task_graph_relative_path}",
+        claim_bundles_path=f"{workspace_root}/{manifest.claim_bundles_relative_path}",
+        section_briefs_path=f"{workspace_root}/{manifest.section_briefs_relative_path}",
+        live_board_path=f"{workspace_root}/{manifest.live_board_relative_path}",
+        source_ledger_path=f"{scratch_root}/{manifest.source_ledger_relative_path}",
+        claim_map_path=f"{scratch_root}/{manifest.claim_map_relative_path}",
+        conflicts_path=f"{scratch_root}/{manifest.conflicts_relative_path}",
+        report_context_json_path=f"{scratch_root}/{manifest.report_context_relative_path}",
     )
 
 
@@ -130,19 +137,10 @@ def build_workspace_bootstrap_artifact_path_map(
             raise ValueError("session_id 或 layout 至少提供一个。")
         layout = build_research_workspace_layout(session_id)
     return {
-        "mission_md": layout.mission_path,
-        "plan_md": layout.plan_path,
-        "query_map_md": layout.query_map_path,
-        "coverage_md": layout.coverage_path,
-        "report_draft_md": layout.report_draft_path,
-        "claim_map_md": layout.claim_map_md_path,
-        "evidence_ledger_md": layout.evidence_ledger_md_path,
-        "analysis_notes_md": layout.analysis_notes_path,
-        "report_outline_md": layout.report_outline_path,
-        "task_graph_json": layout.task_graph_path,
-        "claim_bundles_json": layout.claim_bundles_path,
-        "section_briefs_json": layout.section_briefs_path,
-        "live_board_json": layout.live_board_path,
+        artifact_key: getattr(layout, attr_name)
+        for artifact_key, attr_name in (
+            RESEARCH_RUNTIME_LAYOUT_MANIFEST.bootstrap_artifact_key_to_attr
+        )
     }
 
 

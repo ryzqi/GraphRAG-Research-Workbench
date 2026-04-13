@@ -17,6 +17,7 @@ from app.api.v1.endpoints import (
     model_config,
     research,
     system,
+    system_runtime_config,
 )
 
 api_router = APIRouter()
@@ -45,3 +46,8 @@ api_router.include_router(
 api_router.include_router(checkpoints.router, tags=["Checkpoints"])
 api_router.include_router(research.router, prefix="/research", tags=["Research"])
 api_router.include_router(system.router, tags=["System"])
+api_router.include_router(
+    system_runtime_config.router,
+    prefix="/system",
+    tags=["System"],
+)

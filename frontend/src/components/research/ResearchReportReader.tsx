@@ -1,6 +1,6 @@
 import AutoAwesomeRoundedIcon from '@mui/icons-material/AutoAwesomeRounded';
 import type { ReactNode } from 'react';
-import { useEffect, useEffectEvent, useMemo, useState } from 'react';
+import { useCallback, useEffect, useEffectEvent, useMemo, useState } from 'react';
 import { Box, Paper, Stack, Typography } from '@mui/material';
 import { alpha } from '@mui/material/styles';
 
@@ -18,6 +18,7 @@ type ReportOutlineItem = NonNullable<ResearchPageViewModel['report']>['outline']
 type ReportOutlineAnchor = ReportOutlineItem & { anchorId: string };
 
 const ACTIVE_SECTION_TOP = 160;
+const EMPTY_REPORT_OUTLINE: ReportOutlineItem[] = [];
 
 export function buildReportOutlineAnchors(outline: ReportOutlineItem[]): ReportOutlineAnchor[] {
   return outline.map((item) => ({
@@ -53,11 +54,8 @@ export function ResearchReportReader({
   exportButton?: ReactNode;
 }) {
   const report = model.report;
-  if (!report) {
-    return null;
-  }
-
-  const outlineAnchors = useMemo(() => buildReportOutlineAnchors(report.outline), [report.outline]);
+  const reportOutline = report?.outline ?? EMPTY_REPORT_OUTLINE;
+  const outlineAnchors = useMemo(() => buildReportOutlineAnchors(reportOutline), [reportOutline]);
   const [activeSectionId, setActiveSectionId] = useState<string | null>(outlineAnchors[0]?.anchorId ?? null);
 
   useEffect(() => {
@@ -111,9 +109,9 @@ export function ResearchReportReader({
       window.removeEventListener('scroll', scheduleSync);
       window.removeEventListener('resize', scheduleSync);
     };
-  }, [outlineAnchors, syncActiveSection]);
+  }, [outlineAnchors]);
 
-  const handleOutlineClick = useEffectEvent((anchorId: string) => {
+  const handleOutlineClick = useCallback((anchorId: string) => {
     if (typeof document === 'undefined') {
       return;
     }
@@ -123,7 +121,11 @@ export function ResearchReportReader({
     }
     setActiveSectionId(anchorId);
     target.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  });
+  }, []);
+
+  if (!report) {
+    return null;
+  }
 
   return (
     <ResearchShell

@@ -7,6 +7,7 @@ from collections.abc import Iterable
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config.provider_registry import get_provider_descriptor, provider_order
 from app.core.errors import AppError
 from app.core.secrets import (
     decrypt_secret,
@@ -33,13 +34,7 @@ from app.schemas.model_config import (
     ProviderConfigUpdate,
 )
 
-_PROVIDER_ORDER = [
-    ModelProviderORM.OPENAI,
-    ModelProviderORM.OLLAMA,
-    ModelProviderORM.LLAMA_CPP,
-    ModelProviderORM.NVIDIA,
-    ModelProviderORM.ANTHROPIC,
-]
+_PROVIDER_ORDER = list(provider_order())
 
 
 def _normalize_model_names(values: Iterable[str] | None) -> list[str]:
@@ -94,23 +89,15 @@ def _as_model_provider(provider: ModelProvider) -> ModelProviderORM:
 
 
 def _default_base_url(_provider: ModelProviderORM) -> str | None:
-    if _provider == ModelProviderORM.LLAMA_CPP:
-        return "http://127.0.0.1:8080/v1"
-    return None
+    return get_provider_descriptor(_provider).default_base_url
 
 
 def _default_thinking_enabled(provider: ModelProviderORM) -> bool:
-    return provider != ModelProviderORM.LLAMA_CPP
+    return get_provider_descriptor(provider).default_thinking_enabled
 
 
 def _default_thinking_level(provider: ModelProviderORM) -> str | None:
-    if provider in {
-        ModelProviderORM.OPENAI,
-        ModelProviderORM.OLLAMA,
-        ModelProviderORM.ANTHROPIC,
-    }:
-        return "high"
-    return None
+    return get_provider_descriptor(provider).default_thinking_level
 
 
 def _default_models(_provider: ModelProviderORM) -> list[str]:
@@ -426,12 +413,8 @@ class ModelConfigService:
                 api_key = None
 
         thinking_level = row.thinking_level
-        if not thinking_level and row.provider in {
-            ModelProviderORM.OPENAI,
-            ModelProviderORM.OLLAMA,
-            ModelProviderORM.ANTHROPIC,
-        }:
-            thinking_level = "high"
+        if not thinking_level:
+            thinking_level = get_provider_descriptor(row.provider).default_thinking_level
 
         return RuntimeProviderConfig(
             provider=row.provider,

@@ -2,23 +2,36 @@
  * URL 验证工具。
  */
 
-// 允许的下载域名白名单
-const ALLOWED_DOWNLOAD_DOMAINS = new Set([
-  'localhost',
-  '127.0.0.1',
-  // 添加其他允许的域名
-]);
+import { DEFAULT_DOWNLOAD_ALLOWED_HOSTS } from '../constants/runtimeDefaults';
+
+function isRelativeDownloadUrl(url: string): boolean {
+  const candidate = url.trim();
+  return /^(\/(?!\/)|\.{1,2}\/)/.test(candidate);
+}
+
+function normalizeAllowedHosts(allowedHosts: readonly string[]): Set<string> {
+  const source = allowedHosts.length > 0 ? allowedHosts : DEFAULT_DOWNLOAD_ALLOWED_HOSTS;
+  return new Set(
+    source
+      .map((item) => item.trim().toLowerCase())
+      .filter(Boolean)
+  );
+}
 
 /**
  * 验证 URL 是否来自允许的域名。
  */
-export function isAllowedDownloadUrl(url: string): boolean {
+export function isAllowedDownloadUrl(
+  url: string,
+  allowedHosts: readonly string[] = DEFAULT_DOWNLOAD_ALLOWED_HOSTS
+): boolean {
+  if (isRelativeDownloadUrl(url)) {
+    return true;
+  }
+
   try {
     const parsed = new URL(url);
-    // 允许相对路径
-    if (!parsed.hostname) return true;
-    // 检查域名白名单
-    return ALLOWED_DOWNLOAD_DOMAINS.has(parsed.hostname);
+    return normalizeAllowedHosts(allowedHosts).has(parsed.hostname.toLowerCase());
   } catch {
     return false;
   }
@@ -27,8 +40,11 @@ export function isAllowedDownloadUrl(url: string): boolean {
 /**
  * 安全地触发浏览器下载。
  */
-export function safeDownloadUrl(url: string): boolean {
-  if (!isAllowedDownloadUrl(url)) {
+export function safeDownloadUrl(
+  url: string,
+  allowedHosts: readonly string[] = DEFAULT_DOWNLOAD_ALLOWED_HOSTS
+): boolean {
+  if (!isAllowedDownloadUrl(url, allowedHosts)) {
     console.warn('下载链接来自不受信任的域名:', url);
     return false;
   }

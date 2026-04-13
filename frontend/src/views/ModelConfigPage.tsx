@@ -41,6 +41,7 @@ import {
   useUpdateActiveModel,
   useUpdateProviderConfig,
 } from '../hooks/queries/useModelConfig';
+import { useRuntimeConfig } from '../hooks/queries/useRuntimeConfig';
 import { getErrorMessage } from '../lib/errorHandler';
 import type {
   ModelConfigRead,
@@ -48,16 +49,10 @@ import type {
   ProviderConfigRead,
   ProviderConfigUpdate,
 } from '../services/modelConfig';
-
-const PROVIDERS = ['openai', 'ollama', 'llama.cpp', 'nvidia', 'anthropic'] as const;
-
-const PROVIDER_LABEL: Record<ModelProvider, string> = {
-  openai: 'OpenAI',
-  ollama: 'Ollama',
-  'llama.cpp': 'llama.cpp',
-  nvidia: 'NVIDIA',
-  anthropic: 'Anthropic',
-};
+import {
+  indexProviderDescriptors,
+  type ProviderDescriptorRead,
+} from '../services/runtimeConfig';
 
 type ProviderFormState = {
   enabled: boolean;
@@ -110,8 +105,14 @@ function moveModel(models: string[], from: number, to: number): string[] {
   return next;
 }
 
-function buildForm(provider: ProviderConfigRead | undefined): ProviderFormState {
-  const defaults = createDefaultModelProviderFormState();
+function buildForm(
+  provider: ProviderConfigRead | undefined,
+  descriptor: ProviderDescriptorRead | undefined
+): ProviderFormState {
+  const defaults = createDefaultModelProviderFormState({
+    default_thinking_enabled: descriptor?.default_thinking_enabled ?? undefined,
+    default_thinking_level: descriptor?.default_thinking_level ?? undefined,
+  });
   if (!provider) {
     return defaults;
   }
@@ -122,20 +123,18 @@ function buildForm(provider: ProviderConfigRead | undefined): ProviderFormState 
     models: normalizeModelNames(provider.models ?? []),
     modelInput: '',
     apiKey: '',
-    thinkingEnabled: provider.provider === 'llama.cpp' ? false : provider.thinking_enabled,
+    thinkingEnabled: descriptor?.supports_thinking_toggle === false ? false : provider.thinking_enabled,
     thinkingLevel:
-      provider.provider === 'llama.cpp' ? '' : (provider.thinking_level ?? defaults.thinkingLevel),
+      descriptor?.supports_thinking_level === false
+        ? ''
+        : (provider.thinking_level ?? defaults.thinkingLevel),
   };
 }
 
-function providerMap(config: ModelConfigRead | undefined): Record<ModelProvider, ProviderConfigRead | undefined> {
-  const base: Record<ModelProvider, ProviderConfigRead | undefined> = {
-    openai: undefined,
-    ollama: undefined,
-    'llama.cpp': undefined,
-    nvidia: undefined,
-    anthropic: undefined,
-  };
+function providerMap(
+  config: ModelConfigRead | undefined
+): Partial<Record<ModelProvider, ProviderConfigRead>> {
+  const base: Partial<Record<ModelProvider, ProviderConfigRead>> = {};
   if (!config) {
     return base;
   }
@@ -145,53 +144,13 @@ function providerMap(config: ModelConfigRead | undefined): Record<ModelProvider,
   return base;
 }
 
-function supportsThinkingToggle(provider: ModelProvider): boolean {
-  return provider !== 'llama.cpp';
-}
-
-function supportsThinkingLevel(provider: ModelProvider): boolean {
-  return provider !== 'nvidia' && provider !== 'llama.cpp';
-}
-
-function providerBaseUrlPlaceholder(provider: ModelProvider): string {
-  if (provider === 'ollama') {
-    return 'http://127.0.0.1:11434';
-  }
-  if (provider === 'llama.cpp') {
-    return 'http://127.0.0.1:8080 或 http://127.0.0.1:8080/v1';
-  }
-  if (provider === 'anthropic') {
-    return 'http://example 或 http://example/v1/messages';
-  }
-  return '可选';
-}
-
-function providerBaseUrlHelperText(provider: ModelProvider): string | undefined {
-  if (provider === 'llama.cpp') {
-    return '支持填写服务根地址、/v1 或完整 /v1/chat/completions；保存后会规范化为 /v1。';
-  }
-  if (provider === 'anthropic') {
-    return '支持填写服务根地址或完整 /v1/messages 地址；保存后会规范化为根地址。';
-  }
-  return undefined;
-}
-
 export function ModelConfigPage() {
   const configQuery = useModelConfig();
+  const runtimeConfigQuery = useRuntimeConfig();
   const updateProviderMutation = useUpdateProviderConfig();
   const updateActiveMutation = useUpdateActiveModel();
 
-  const [forms, setForms] = useState<Record<ModelProvider, ProviderFormState>>({
-    openai: createDefaultModelProviderFormState(),
-    ollama: createDefaultModelProviderFormState(),
-    'llama.cpp': {
-      ...createDefaultModelProviderFormState(),
-      thinkingEnabled: false,
-      thinkingLevel: '',
-    },
-    nvidia: createDefaultModelProviderFormState(),
-    anthropic: createDefaultModelProviderFormState(),
-  });
+  const [forms, setForms] = useState<Partial<Record<ModelProvider, ProviderFormState>>>({});
   const [selectedProvider, setSelectedProvider] = useState<ModelProvider>(DEFAULT_MODEL_PROVIDER);
   const [activeProviderDraft, setActiveProviderDraft] =
     useState<ModelProvider>(DEFAULT_MODEL_PROVIDER);
@@ -200,8 +159,29 @@ export function ModelConfigPage() {
   const [pendingProviderAction, setPendingProviderAction] = useState<PendingProviderAction>(null);
   const [draggingModel, setDraggingModel] = useState<DraggingModelState>(null);
 
+  const providerDescriptors = useMemo(
+    () => runtimeConfigQuery.data?.providers ?? [],
+    [runtimeConfigQuery.data]
+  );
+  const providerDescriptorById = useMemo(
+    () => indexProviderDescriptors(providerDescriptors),
+    [providerDescriptors]
+  );
+  const providerIds = useMemo(() => {
+    if (providerDescriptors.length > 0) {
+      return providerDescriptors.map((item) => item.provider);
+    }
+    return (configQuery.data?.providers ?? []).map((item) => item.provider);
+  }, [providerDescriptors, configQuery.data]);
   const providerById = useMemo(() => providerMap(configQuery.data), [configQuery.data]);
-  const selectedProviderForm = forms[selectedProvider];
+  const buildDefaultForm = (provider: ModelProvider): ProviderFormState =>
+    createDefaultModelProviderFormState({
+      default_thinking_enabled: providerDescriptorById[provider]?.default_thinking_enabled ?? undefined,
+      default_thinking_level: providerDescriptorById[provider]?.default_thinking_level ?? undefined,
+    });
+  const getProviderForm = (provider: ModelProvider): ProviderFormState =>
+    forms[provider] ?? buildDefaultForm(provider);
+  const selectedProviderForm = getProviderForm(selectedProvider);
   const selectedProviderPersisted = providerById[selectedProvider];
 
   useEffect(() => {
@@ -210,20 +190,24 @@ export function ModelConfigPage() {
       return;
     }
     const providerLookup = providerMap(config);
-    setForms({
-      openai: buildForm(providerLookup.openai),
-      ollama: buildForm(providerLookup.ollama),
-      'llama.cpp': buildForm(providerLookup['llama.cpp']),
-      nvidia: buildForm(providerLookup.nvidia),
-      anthropic: buildForm(providerLookup.anthropic),
-    });
+    const nextForms: Partial<Record<ModelProvider, ProviderFormState>> = {};
+    const orderedProviders =
+      providerIds.length > 0 ? providerIds : config.providers.map((item) => item.provider);
+    for (const provider of orderedProviders) {
+      nextForms[provider] = buildForm(
+        providerLookup[provider],
+        providerDescriptorById[provider]
+      );
+    }
+    setForms(nextForms);
     setSelectedProvider(config.active_provider);
     setActiveProviderDraft(config.active_provider);
     setActiveModelDraft(config.active_model ?? '');
-  }, [configQuery.data]);
+  }, [configQuery.data, providerIds, providerDescriptorById]);
 
   const mergedError =
     pageError ??
+    (runtimeConfigQuery.error ? getErrorMessage(runtimeConfigQuery.error) : null) ??
     (configQuery.error ? getErrorMessage(configQuery.error) : null) ??
     (updateProviderMutation.error ? getErrorMessage(updateProviderMutation.error) : null) ??
     (updateActiveMutation.error ? getErrorMessage(updateActiveMutation.error) : null);
@@ -241,14 +225,18 @@ export function ModelConfigPage() {
       updateActiveMutation.reset();
       return;
     }
+    if (runtimeConfigQuery.error) {
+      void runtimeConfigQuery.refetch();
+      return;
+    }
     if (configQuery.error) {
       void configQuery.refetch();
     }
   };
 
   const enabledProviderIds = useMemo(
-    () => PROVIDERS.filter((provider) => providerById[provider]?.enabled),
-    [providerById]
+    () => providerIds.filter((provider) => providerById[provider]?.enabled),
+    [providerIds, providerById]
   );
 
   const effectiveActiveProviderDraft =
@@ -273,8 +261,16 @@ export function ModelConfigPage() {
     updateProviderMutation.isPending &&
     pendingProviderAction?.provider === selectedProvider &&
     pendingProviderAction.kind === 'clear-api-key';
-  const selectedProviderSupportsThinkingToggle = supportsThinkingToggle(selectedProvider);
-  const selectedProviderSupportsThinkingLevel = supportsThinkingLevel(selectedProvider);
+  const selectedProviderSupportsThinkingToggle =
+    providerDescriptorById[selectedProvider]?.supports_thinking_toggle ?? true;
+  const selectedProviderSupportsThinkingLevel =
+    providerDescriptorById[selectedProvider]?.supports_thinking_level ?? true;
+  const getProviderLabel = (provider: ModelProvider): string =>
+    providerDescriptorById[provider]?.label ?? provider;
+  const getProviderBaseUrlPlaceholder = (provider: ModelProvider): string =>
+    providerDescriptorById[provider]?.base_url_placeholder ?? '';
+  const getProviderBaseUrlHelperText = (provider: ModelProvider): string | undefined =>
+    providerDescriptorById[provider]?.base_url_helper_text ?? undefined;
 
   const updateForm = <K extends keyof ProviderFormState>(
     provider: ModelProvider,
@@ -284,14 +280,14 @@ export function ModelConfigPage() {
     setForms((prev) => ({
       ...prev,
       [provider]: {
-        ...prev[provider],
+        ...(prev[provider] ?? buildDefaultForm(provider)),
         [key]: value,
       },
     }));
   };
 
   const addProviderModel = (provider: ModelProvider) => {
-    const form = forms[provider];
+    const form = getProviderForm(provider);
     const candidate = form.modelInput.trim();
     if (!candidate) {
       return;
@@ -300,7 +296,7 @@ export function ModelConfigPage() {
     setForms((prev) => ({
       ...prev,
       [provider]: {
-        ...prev[provider],
+        ...(prev[provider] ?? buildDefaultForm(provider)),
         models,
         modelInput: '',
       },
@@ -311,8 +307,8 @@ export function ModelConfigPage() {
     setForms((prev) => ({
       ...prev,
       [provider]: {
-        ...prev[provider],
-        models: prev[provider].models.filter((_, idx) => idx !== index),
+        ...(prev[provider] ?? buildDefaultForm(provider)),
+        models: (prev[provider] ?? buildDefaultForm(provider)).models.filter((_, idx) => idx !== index),
       },
     }));
   };
@@ -336,8 +332,12 @@ export function ModelConfigPage() {
     setForms((prev) => ({
       ...prev,
       [provider]: {
-        ...prev[provider],
-        models: moveModel(prev[provider].models, draggingModel.index, targetIndex),
+        ...(prev[provider] ?? buildDefaultForm(provider)),
+        models: moveModel(
+          (prev[provider] ?? buildDefaultForm(provider)).models,
+          draggingModel.index,
+          targetIndex
+        ),
       },
     }));
     setDraggingModel(null);
@@ -348,16 +348,17 @@ export function ModelConfigPage() {
   };
 
   const handleSaveProvider = (provider: ModelProvider) => {
-    const form = forms[provider];
+    const descriptor = providerDescriptorById[provider];
+    const form = getProviderForm(provider);
     const payload: ProviderConfigUpdate = {
       enabled: form.enabled,
       base_url: toOptionalText(form.baseUrl),
       models: normalizeModelNames(form.models),
-      thinking_enabled: provider === 'llama.cpp' ? false : form.thinkingEnabled,
+      thinking_enabled: descriptor?.supports_thinking_toggle === false ? false : form.thinkingEnabled,
       thinking_level:
-        provider === 'nvidia' || provider === 'llama.cpp'
+        descriptor?.supports_thinking_level === false
           ? null
-          : toOptionalText(form.thinkingLevel) ?? 'high',
+          : toOptionalText(form.thinkingLevel) ?? descriptor?.default_thinking_level ?? 'high',
     };
     if (form.apiKey.trim()) {
       payload.api_key = form.apiKey.trim();
@@ -449,7 +450,7 @@ export function ModelConfigPage() {
             供应商
           </Typography>
           <List disablePadding>
-            {PROVIDERS.map((provider) => {
+            {providerIds.map((provider) => {
               const form = forms[provider];
               const isActiveProvider = configQuery.data?.active_provider === provider;
               const isSelected = selectedProvider === provider;
@@ -468,8 +469,10 @@ export function ModelConfigPage() {
                     }}
                   >
                     <ListItemText
-                      primary={PROVIDER_LABEL[provider]}
-                      secondary={`${form.models.length} 个模型 · ${form.enabled ? '已启用' : '已停用'}`}
+                      primary={getProviderLabel(provider)}
+                      secondary={`${(form ?? buildDefaultForm(provider)).models.length} 个模型 · ${
+                        (form ?? buildDefaultForm(provider)).enabled ? '已启用' : '已停用'
+                      }`}
                     />
                     {isActiveProvider && <Chip label='生效中' color='success' size='small' />}
                   </ListItemButton>
@@ -492,11 +495,11 @@ export function ModelConfigPage() {
                     value={effectiveActiveProviderDraft}
                     onChange={(e) => setActiveProviderDraft(e.target.value as ModelProvider)}
                   >
-                    {PROVIDERS.map((provider) => {
+                    {providerIds.map((provider) => {
                       const disabled = !providerById[provider]?.enabled;
                       return (
                         <MenuItem key={provider} value={provider} disabled={disabled}>
-                          {PROVIDER_LABEL[provider]}
+                          {getProviderLabel(provider)}
                         </MenuItem>
                       );
                     })}
@@ -545,7 +548,7 @@ export function ModelConfigPage() {
                   </Typography>
                   <Chip
                     color='primary'
-                    label={`${PROVIDER_LABEL[configQuery.data.active_provider]} / ${configQuery.data.active_model ?? '-'}`}
+                    label={`${getProviderLabel(configQuery.data.active_provider)} / ${configQuery.data.active_model ?? '-'}`}
                   />
                 </Stack>
               )}
@@ -559,7 +562,7 @@ export function ModelConfigPage() {
           <Paper variant='outlined' sx={{ p: 2.5, borderRadius: 3 }}>
             <Stack spacing={2}>
               <Stack direction='row' justifyContent='space-between' alignItems='center'>
-                <Typography variant='h6'>{PROVIDER_LABEL[selectedProvider]}</Typography>
+                <Typography variant='h6'>{getProviderLabel(selectedProvider)}</Typography>
                 {configQuery.data?.active_provider === selectedProvider && (
                   <Chip label='当前全局生效供应商' color='success' size='small' />
                 )}
@@ -578,10 +581,10 @@ export function ModelConfigPage() {
               <TextField
                 fullWidth
                 label='Base URL'
-                placeholder={providerBaseUrlPlaceholder(selectedProvider)}
+                placeholder={getProviderBaseUrlPlaceholder(selectedProvider)}
                 value={selectedProviderForm.baseUrl}
                 onChange={(e) => updateForm(selectedProvider, 'baseUrl', e.target.value)}
-                helperText={providerBaseUrlHelperText(selectedProvider)}
+                helperText={getProviderBaseUrlHelperText(selectedProvider)}
               />
 
               <TextField
@@ -592,7 +595,7 @@ export function ModelConfigPage() {
                 value={selectedProviderForm.apiKey}
                 onChange={(e) => updateForm(selectedProvider, 'apiKey', e.target.value)}
                 helperText={
-                  selectedProvider === 'llama.cpp'
+                  providerDescriptorById[selectedProvider]?.api_key_optional
                     ? selectedProviderPersisted?.api_key_set
                       ? `已配置：${selectedProviderPersisted.api_key_masked ?? '******'}`
                       : '本地无鉴权可留空；如通过反向代理增加鉴权，可填写。'

@@ -3,25 +3,25 @@
 from __future__ import annotations
 
 from collections import Counter, defaultdict
-from typing import Iterable
+from typing import Iterable, Mapping
 
 from langchain_core.documents import Document
 
+from app.config.policy_loader import load_search_policy
+
 from .documents import canonicalize_url, document_url, merge_document_metadata
 
-_RRF_K = 60
-_PROVIDER_WEIGHTS = {
-    "tavily": 1.0,
-    "searxng": 0.85,
-}
 
-
-def _document_priority(document: Document) -> tuple[float, float, int]:
+def _document_priority(
+    document: Document,
+    *,
+    provider_weights: Mapping[str, float],
+) -> tuple[float, float, int]:
     provider = str(document.metadata.get("provider") or "").strip()
     provider_rank = int(document.metadata.get("provider_rank") or 10**6)
     snippet_length = len(str(document.page_content or "").strip())
     return (
-        _PROVIDER_WEIGHTS.get(provider, 1.0),
+        float(provider_weights.get(provider, 1.0)),
         -provider_rank,
         snippet_length,
     )
@@ -30,6 +30,9 @@ def _document_priority(document: Document) -> tuple[float, float, int]:
 def fuse_documents(
     groups: Iterable[list[Document]], *, max_results: int
 ) -> list[Document]:
+    fusion_policy = load_search_policy().fusion
+    provider_weights = fusion_policy.provider_weights
+    rrf_k = int(fusion_policy.rrf_k)
     unique_docs: dict[str, Document] = {}
     fusion_scores: dict[str, float] = defaultdict(float)
     overlap_counts: Counter[str] = Counter()
@@ -41,15 +44,21 @@ def fuse_documents(
             canonical_url = canonicalize_url(document_url(document))
             if not canonical_url:
                 continue
-            weight = _PROVIDER_WEIGHTS.get(provider, 1.0)
-            fusion_scores[canonical_url] += weight / (rank + _RRF_K)
+            weight = float(provider_weights.get(provider, 1.0))
+            fusion_scores[canonical_url] += weight / (rank + rrf_k)
             overlap_counts[canonical_url] += 1
             existing = unique_docs.get(canonical_url)
             if existing is None:
                 unique_docs[canonical_url] = document
                 first_seen_order.append(canonical_url)
                 continue
-            if _document_priority(document) > _document_priority(existing):
+            if _document_priority(
+                document,
+                provider_weights=provider_weights,
+            ) > _document_priority(
+                existing,
+                provider_weights=provider_weights,
+            ):
                 unique_docs[canonical_url] = merge_document_metadata(
                     document,
                     fusion_score=float(fusion_scores[canonical_url]),

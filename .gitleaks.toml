@@ -1,0 +1,24 @@
+title = "multi-kb-agent"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Allow documentation and example placeholders only"
+paths = [
+  '''^\.env\.example$''',
+  '''^infra/env/.*\.example$''',
+  '''^docs/ops/.*\.md$''',
+  '''^README\.md$''',
+]
+regexes = [
+  '''<set-via-secret-manager>''',
+  '''<backend-public-host>''',
+  '''<frontend-public-host>''',
+  '''<db-user>''',
+  '''<db-name>''',
+  '''<ollama-host>''',
+  '''<llama-cpp-host>''',
+  '''example\.invalid''',
+  '''mkb-dev-[A-Za-z0-9_-]+''',
+]

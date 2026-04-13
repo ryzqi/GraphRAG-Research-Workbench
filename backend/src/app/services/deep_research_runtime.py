@@ -6,13 +6,16 @@ import asyncio
 import json
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from pathlib import Path
 from time import perf_counter
 from typing import Any, TypeGuard, cast
 
 from langchain.tools import BaseTool, ToolRuntime, tool as lc_tool
 from pydantic import BaseModel, Field, ValidationError
 
+from app.config.runtime_contract import (
+    RESEARCH_RUNTIME_REQUEST_CONTEXT,
+    RESEARCH_RUNTIME_WORKSPACE_CONTEXT_DOCS,
+)
 from app.core.checkpoint import CheckpointManager
 from app.core.memory_store import StoreManager
 from app.core.settings import Settings
@@ -69,22 +72,6 @@ from app.services.research_source_bundle import ResearchSourceBundleBuilder
 from app.services.research_workspace_files import (
     build_runtime_orchestration_scaffold_files,
     build_research_workspace_layout,
-)
-
-_REPO_ROOT = Path(__file__).resolve().parents[4]
-_DEFAULT_WORKSPACE_CONTEXT_DOCS: tuple[tuple[str, Path], ...] = (
-    (
-        "/workspace/context/api_contract_research.md",
-        _REPO_ROOT / "docs" / "api_contract_research.md",
-    ),
-    (
-        "/workspace/context/research_design.md",
-        _REPO_ROOT / "full-refactor-deep-research" / "design.md",
-    ),
-    (
-        "/workspace/context/research_readme.md",
-        _REPO_ROOT / "README.md",
-    ),
 )
 
 AsyncInvoker = Callable[..., Awaitable[object]]
@@ -323,10 +310,10 @@ def _build_runtime_context(
 
 def _build_workspace_context_files() -> dict[str, str]:
     files: dict[str, str] = {}
-    for virtual_path, disk_path in _DEFAULT_WORKSPACE_CONTEXT_DOCS:
-        if not disk_path.exists():
+    for doc in RESEARCH_RUNTIME_WORKSPACE_CONTEXT_DOCS:
+        if not doc.disk_path.exists():
             continue
-        files[virtual_path] = disk_path.read_text(encoding="utf-8")
+        files[doc.virtual_path] = doc.disk_path.read_text(encoding="utf-8")
     return files
 
 @dataclass(slots=True)
@@ -600,7 +587,10 @@ async def build_deep_research_runtime_runner(
         finalizer_structured_method=_resolve_recovery_structured_output_method(
             settings=settings
         ),
-        system_prompt=prompt_loader.render_with_few_shot("research/runtime_system"),
+        system_prompt=prompt_loader.render_with_few_shot(
+            "research/runtime_system",
+            context_root=RESEARCH_RUNTIME_REQUEST_CONTEXT.context_root,
+        ),
         memory_paths=(DEFAULT_RESEARCH_RUNTIME_MEMORY_PATH,),
     )
     runtime = await create_deep_research_runtime(

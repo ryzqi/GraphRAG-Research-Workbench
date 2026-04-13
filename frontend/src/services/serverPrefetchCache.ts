@@ -1,4 +1,5 @@
 import { cache } from 'react';
+import { getServerPrefetchCacheRevalidateSeconds } from '../constants/runtimeDefaults';
 import { getRecentChats } from './chats';
 import { getBootstrapSubmission } from './bootstrapSubmissions';
 import { getLatestIngestionBatch } from './ingestionBatches';
@@ -7,15 +8,20 @@ import {
   getKnowledgeBaseIngestionState,
   listSelectableKnowledgeBases,
 } from './knowledgeBases';
+import { getPublicRuntimeConfig } from './runtimeConfig';
 
-const SERVER_PREFETCH_CACHE_REVALIDATE_SECONDS = 30;
-
-// 研究/知识库详情类元数据允许短 TTL 复用，动态状态仍保持 no-store；
-// 两类请求都关闭随机 request id header，避免服务端缓存键被每次请求打散。
-const CACHEABLE_SERVER_GET_OPTIONS = {
-  includeRequestIdHeader: false,
-  next: { revalidate: SERVER_PREFETCH_CACHE_REVALIDATE_SECONDS },
-} as const;
+const getCacheableServerGetOptions = cache(async () => {
+  const runtimeConfig = await getPublicRuntimeConfig({
+    includeRequestIdHeader: false,
+    cache: 'no-store',
+  });
+  return {
+    includeRequestIdHeader: false,
+    next: {
+      revalidate: getServerPrefetchCacheRevalidateSeconds(runtimeConfig),
+    },
+  } as const;
+});
 
 const DYNAMIC_SERVER_GET_OPTIONS = {
   includeRequestIdHeader: false,
@@ -27,11 +33,11 @@ export const getServerPrefetchRecentChats = cache(async (limit: number) =>
 );
 
 export const getServerPrefetchSelectableKnowledgeBases = cache(async () =>
-  listSelectableKnowledgeBases(undefined, CACHEABLE_SERVER_GET_OPTIONS)
+  listSelectableKnowledgeBases(undefined, await getCacheableServerGetOptions())
 );
 
 export const getServerPrefetchKnowledgeBase = cache(async (kbId: string) =>
-  getKnowledgeBase(kbId, CACHEABLE_SERVER_GET_OPTIONS)
+  getKnowledgeBase(kbId, await getCacheableServerGetOptions())
 );
 
 export const getServerPrefetchKnowledgeBaseIngestionState = cache(async (kbId: string) =>

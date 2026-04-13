@@ -28,16 +28,12 @@ from app.integrations.chat_model_factory import create_chat_model
 from app.prompts import get_prompt_loader
 from app.services import query_rewrite_basic_ops, query_rewrite_planning_ops
 from app.services.query_rewrite_contracts import (
-    HYDE_AGGREGATION,
-    HYDE_NUM_HYPOTHESES,
     AmbiguityResult,
     ComplexityRouteResult,
     MergeContextResolutionResult,
     QueryListResult,
     RetrievalPlanResult,
     RewriteResult,
-    STRUCTURED_CALL_MAX_ATTEMPTS,
-    STRUCTURED_CALL_RETRYABLE_REASONS,
     StructuredCallResult,
     _AsyncInvoker,
 )
@@ -47,30 +43,26 @@ from app.services.query_rewrite_structured import (
     coerce_structured_result_payload,
 )
 from app.services.query_rewrite_text import (
-    _AMBIGUITY_REASON_LABELS,
-    _DEFAULT_AMBIGUITY_FALSE_REASON,
-    _DEFAULT_AMBIGUITY_TRUE_REASON,
-    _DEFAULT_COMPLEXITY_DECOMPOSITION_REASON,
-    _DEFAULT_COMPLEXITY_DIRECT_REASON,
-    _DEFAULT_COMPLEXITY_MULTI_QUERY_REASON,
-    _GUARDRAIL_COMPLEXITY_DECOMPOSITION_REASON,
-    _GUARDRAIL_COMPLEXITY_DIRECT_REASON,
     _contains_coref_marker,
+    _default_ambiguity_reason,
+    _default_complexity_reason,
+    _guardrail_complexity_reason,
     _looks_compare_or_multi_target,
     _looks_explicit_decomposition_query,
     _looks_stable_overview_query,
     _looks_term_alias_query,
     _normalize_reason_code,
     _normalize_whitespace,
+    _resolve_ambiguity_reason_label,
     _sanitize_risk_flags,
+    _structured_call_max_attempts,
+    _structured_call_retryable_reasons,
 )
 
 logger = logging.getLogger(__name__)
 
 __all__ = [
     "COMPLEXITY_CLASSIFY_DECISION_VERSION",
-    "HYDE_AGGREGATION",
-    "HYDE_NUM_HYPOTHESES",
     "QueryRewriteService",
     "RewriteResult",
     "build_query_items",
@@ -133,10 +125,10 @@ class QueryRewriteService:
             return normalized_reason
         normalized_code = _normalize_reason_code(reason_code)
         if ambiguous:
-            return _AMBIGUITY_REASON_LABELS.get(
-                normalized_code, _DEFAULT_AMBIGUITY_TRUE_REASON
+            return _resolve_ambiguity_reason_label(normalized_code) or (
+                _default_ambiguity_reason(ambiguous=True)
             )
-        return _DEFAULT_AMBIGUITY_FALSE_REASON
+        return _default_ambiguity_reason(ambiguous=False)
 
     @staticmethod
     def _fallback_complexity_route(
@@ -167,7 +159,7 @@ class QueryRewriteService:
             return ComplexityRouteResult(
                 strategy="decomposition",
                 success=False,
-                reasoning=_DEFAULT_COMPLEXITY_DECOMPOSITION_REASON,
+                reasoning=_default_complexity_reason("decomposition"),
                 failure_reason=failure_reason,
                 confidence=0.35,
                 risk_flags=risk_flags,
@@ -183,7 +175,7 @@ class QueryRewriteService:
             return ComplexityRouteResult(
                 strategy="multi_query",
                 success=False,
-                reasoning=_DEFAULT_COMPLEXITY_MULTI_QUERY_REASON,
+                reasoning=_default_complexity_reason("multi_query"),
                 failure_reason=failure_reason,
                 confidence=0.28,
                 risk_flags=_sanitize_risk_flags(risk_flags),
@@ -193,7 +185,7 @@ class QueryRewriteService:
         return ComplexityRouteResult(
             strategy="direct",
             success=False,
-            reasoning=_DEFAULT_COMPLEXITY_DIRECT_REASON,
+            reasoning=_default_complexity_reason("direct"),
             failure_reason=failure_reason,
             confidence=0.0,
             risk_flags=["llm_failed_fallback_direct"] if failure_reason else [],
@@ -229,7 +221,7 @@ class QueryRewriteService:
             return ComplexityRouteResult(
                 strategy="decomposition",
                 success=True,
-                reasoning=_GUARDRAIL_COMPLEXITY_DECOMPOSITION_REASON,
+                reasoning=_guardrail_complexity_reason("decomposition"),
                 failure_reason=None,
                 confidence=confidence,
                 risk_flags=_sanitize_risk_flags(
@@ -252,7 +244,7 @@ class QueryRewriteService:
             return ComplexityRouteResult(
                 strategy="direct",
                 success=True,
-                reasoning=_GUARDRAIL_COMPLEXITY_DIRECT_REASON,
+                reasoning=_guardrail_complexity_reason("direct"),
                 failure_reason=None,
                 confidence=confidence,
                 risk_flags=_sanitize_risk_flags(
@@ -624,7 +616,9 @@ class QueryRewriteService:
 
         start_time = time.perf_counter()
         structured: StructuredCallResult | None = None
-        for attempt in range(1, STRUCTURED_CALL_MAX_ATTEMPTS + 1):
+        max_attempts = _structured_call_max_attempts()
+        retryable_reasons = _structured_call_retryable_reasons()
+        for attempt in range(1, max_attempts + 1):
             try:
                 structured = await self._invoke_model_structured(
                     schema=schema,
@@ -645,8 +639,8 @@ class QueryRewriteService:
             reason = str(structured.reason or "")
             if (
                 structured.success
-                or attempt >= STRUCTURED_CALL_MAX_ATTEMPTS
-                or reason not in STRUCTURED_CALL_RETRYABLE_REASONS
+                or attempt >= max_attempts
+                or reason not in retryable_reasons
             ):
                 break
             print(

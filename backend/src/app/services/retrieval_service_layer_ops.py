@@ -6,7 +6,7 @@ import uuid
 from collections.abc import Sequence
 
 from app.schemas.query_enhancement import QueryHitSource, QueryItem
-from app.services.query_rewrite_service import HYDE_AGGREGATION
+from app.services.query_rewrite_text import _hyde_aggregation
 from app.services.retrieval_service_contracts import (
     DEDUP_EMBEDDING_SIMILARITY_THRESHOLD,
     QUERY_FANOUT_CONCURRENCY,
@@ -434,7 +434,7 @@ class RetrievalLayerOpsMixin(RetrievalServiceProtocol):
                     "hyde_requested_count": hyde_requested_total,
                     "hyde_used_count": hyde_used_total,
                     "hyde_aggregation": (
-                        HYDE_AGGREGATION if hyde_requested_total > 0 else None
+                        _hyde_aggregation() if hyde_requested_total > 0 else None
                     ),
                     "hyde_embedding_fallback": (
                         hyde_aggregation_reason if hyde_requested_total > 0 else None
@@ -707,7 +707,7 @@ class RetrievalLayerOpsMixin(RetrievalServiceProtocol):
                 "optional_embedding_skips": optional_embedding_skips,
                 "hyde_requested_count": hyde_requested_total,
                 "hyde_used_count": hyde_used_total,
-                "hyde_aggregation": HYDE_AGGREGATION
+                "hyde_aggregation": _hyde_aggregation()
                 if hyde_requested_total > 0
                 else None,
                 "hyde_embedding_fallback": (

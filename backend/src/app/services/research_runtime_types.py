@@ -7,6 +7,8 @@ from typing import TYPE_CHECKING, Any, Literal, Mapping
 
 from langchain.tools import BaseTool
 
+from app.config.runtime_contract import RESEARCH_RUNTIME_BACKEND_ROOTS
+
 if TYPE_CHECKING:
     from app.agents.tool_calling.registry import ToolMeta
 
@@ -28,11 +30,11 @@ class ResearchStreamPolicy:
 class ResearchBackendPolicy:
     """Deep Agents 文件后端分层路由。"""
 
-    workspace_root: str = "/workspace/"
-    scratch_root: str = "/scratch/"
-    plans_root: str = "/plans/"
-    memories_root: str = "/memories/"
-    skills_root: str = "/skills/"
+    workspace_root: str = RESEARCH_RUNTIME_BACKEND_ROOTS.workspace_root
+    scratch_root: str = RESEARCH_RUNTIME_BACKEND_ROOTS.scratch_root
+    plans_root: str = RESEARCH_RUNTIME_BACKEND_ROOTS.plans_root
+    memories_root: str = RESEARCH_RUNTIME_BACKEND_ROOTS.memories_root
+    skills_root: str = RESEARCH_RUNTIME_BACKEND_ROOTS.skills_root
 
 
 @dataclass(slots=True, frozen=True)

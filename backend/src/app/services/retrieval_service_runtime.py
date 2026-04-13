@@ -14,11 +14,10 @@ from app.schemas.knowledge_bases import ChunkingStrategy, IndexConfig
 from app.schemas.query_enhancement import QueryHitSource, QueryItem
 from app.services.query_dependent_collections import collection_name_for_window
 from app.services.query_rewrite_service import (
-    HYDE_AGGREGATION,
-    HYDE_NUM_HYPOTHESES,
     QueryRewriteService,
     RewriteResult,
 )
+from app.services.query_rewrite_text import _hyde_aggregation, _hyde_num_hypotheses
 from app.services.retrieval_service_contracts import (
     DEFAULT_RESULT_EXCERPT_MAX_CHARS,
     EXPANDED_RESULT_EXCERPT_MAX_CHARS,
@@ -461,15 +460,16 @@ class RetrievalRuntimeMixin(RetrievalServiceProtocol):
                 normalized = " ".join(value.strip().split())
                 if normalized and normalized not in hyde_queries:
                     hyde_queries.append(normalized)
-                if len(hyde_queries) >= HYDE_NUM_HYPOTHESES:
+                if len(hyde_queries) >= _hyde_num_hypotheses():
                     break
         if not hyde_queries:
             hyde_queries = [query]
 
         aggregation = (
-            str(item.get("hyde_aggregation") or "").strip().lower() or HYDE_AGGREGATION
+            str(item.get("hyde_aggregation") or "").strip().lower()
+            or _hyde_aggregation()
         )
-        if aggregation != HYDE_AGGREGATION:
+        if aggregation != _hyde_aggregation():
             embedding = await self._get_query_embedding(
                 hyde_queries[0],
                 timeout_seconds=timeout_seconds,

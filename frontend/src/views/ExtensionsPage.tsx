@@ -555,7 +555,7 @@ export function ExtensionsPage() {
                 label='mcpServers JSON'
                 value={mcpImportJson}
                 onChange={(e) => setMcpImportJson(e.target.value)}
-                placeholder={`{\n  "mcpServers": {\n    "sequential-thinking": {\n      "command": "npx",\n      "args": ["-y", "@modelcontextprotocol/server-sequential-thinking"]\n    }\n  }\n}`}
+                placeholder={`示例：{\n  "mcpServers": {\n    "sequential-thinking": {\n      "command": "npx",\n      "args": ["-y", "@modelcontextprotocol/server-sequential-thinking"]\n    }\n  }\n}`}
                 multiline
                 minRows={7}
                 fullWidth
@@ -616,7 +616,7 @@ export function ExtensionsPage() {
                 <Typography variant='subtitle2'>HTTP 配置</Typography>
                 <TextField
                   label='MCP URL'
-                  placeholder='http://127.0.0.1:8001/mcp'
+                  placeholder='示例：https://mcp.example.internal/mcp'
                   value={formState.httpUrl}
                   onChange={(e) =>
                     setFormState((prev) => ({ ...prev, httpUrl: e.target.value }))
@@ -678,7 +678,7 @@ export function ExtensionsPage() {
                       httpHeadersJson: e.target.value,
                     }))
                   }
-                  placeholder='{"X-Trace-Source":"mcp-console"}'
+                  placeholder='示例：{"X-Trace-Source":"mcp-console"}'
                   multiline
                   minRows={4}
                   fullWidth
@@ -722,7 +722,7 @@ export function ExtensionsPage() {
                       stdioEnvJson: e.target.value,
                     }))
                   }
-                  placeholder='{"MCP_MODE":"prod"}'
+                  placeholder='示例：{"MCP_MODE":"prod"}'
                   multiline
                   minRows={4}
                   fullWidth

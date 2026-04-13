@@ -26,9 +26,16 @@ if (-not $isWindowsRuntime) {
 }
 
 function Import-DotEnv {
-    param([Parameter(Mandatory = $true)][string]$Path)
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [switch]$Optional,
+        [switch]$SkipExisting
+    )
 
     if (-not (Test-Path -LiteralPath $Path)) {
+        if ($Optional) {
+            return
+        }
         throw ".env 未找到，请先复制 .env.example 到 .env 并填写。"
     }
 
@@ -51,6 +58,12 @@ function Import-DotEnv {
         }
 
         if ($key.Length -gt 0) {
+            if ($SkipExisting) {
+                $existing = [Environment]::GetEnvironmentVariable($key)
+                if (-not [string]::IsNullOrWhiteSpace($existing)) {
+                    return
+                }
+            }
             Set-Item -Path ("Env:" + $key) -Value $value
         }
     }
@@ -100,10 +113,10 @@ function Start-Terminal {
     Start-Process -FilePath $terminalShell -ArgumentList "-NoProfile", "-NoExit", "-Command", $psCommand -WorkingDirectory $WorkingDirectory | Out-Null
 }
 
-function Resolve-ApiBaseUrl {
+function Normalize-BaseUrl {
     param([string]$Raw)
 
-    if (-not $Raw) { return "http://127.0.0.1:8000" }
+    if (-not $Raw) { return $null }
 
     $value = $Raw.Trim().TrimEnd("/")
     if ($value.EndsWith("/api/v1")) {
@@ -122,7 +135,7 @@ function Get-HttpStatusCodeNoProxy {
     try {
         $uri = [Uri]$Url
         $urlHost = $uri.Host.ToString().ToLowerInvariant()
-        $useNoProxy = ($urlHost -eq "localhost") -or ($urlHost -eq "127.0.0.1") -or ($urlHost -eq "::1")
+        $useNoProxy = $uri.IsLoopback
     }
     catch {
         $useNoProxy = $false
@@ -173,8 +186,14 @@ function Wait-BackendReady {
         [int]$PollIntervalMs = 500
     )
 
-    $rawApiBase = if ($env:NEXT_PUBLIC_API_BASE_URL) { $env:NEXT_PUBLIC_API_BASE_URL } else { $env:VITE_API_BASE_URL }
-    $baseUrl = Resolve-ApiBaseUrl -Raw $rawApiBase
+    $baseUrl = Resolve-ConfiguredServiceUrl -EnvNames @(
+        "NEXT_PUBLIC_API_BASE_URL",
+        "BACKEND_PUBLIC_BASE_URL"
+    )
+    if (-not $baseUrl) {
+        Write-Host "未配置 NEXT_PUBLIC_API_BASE_URL 或 BACKEND_PUBLIC_BASE_URL，跳过 /ready 等待。" -ForegroundColor Yellow
+        return $true
+    }
     # /ready 会检查 Postgres 等关键依赖是否可用；比 /health 更能反映“前端可用”状态。
     $healthUrl = "$baseUrl/api/v1/ready"
     $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
@@ -208,6 +227,19 @@ function Get-EnvVarValue {
     return $trimmed
 }
 
+function Resolve-ConfiguredServiceUrl {
+    param([string[]]$EnvNames)
+
+    foreach ($name in $EnvNames) {
+        $value = Get-EnvVarValue -Name $name
+        if ($value) {
+            return Normalize-BaseUrl -Raw $value
+        }
+    }
+
+    return $null
+}
+
 function Resolve-CeleryNodeName {
     param([Parameter(Mandatory = $true)][string]$Template)
 
@@ -216,7 +248,7 @@ function Resolve-CeleryNodeName {
         $hostname = [Environment]::MachineName
     }
     if (-not $hostname) {
-        $hostname = "localhost"
+        $hostname = "local-node"
     }
 
     return $Template.Replace("%h", $hostname.ToLowerInvariant())
@@ -299,7 +331,15 @@ function Get-CeleryBeatCommand {
     return "uv run celery -A app.worker.celery_app beat --loglevel=INFO"
 }
 function Get-BackendApiCommand {
-    $command = "uv run uvicorn app.main:app --host 127.0.0.1 --port 8000 --loop app.core.uvicorn_loop:windows_selector_loop_factory"
+    $bindHost = Get-EnvVarValue -Name "BACKEND_BIND_HOST"
+    if (-not $bindHost) {
+        $bindHost = "0.0.0.0"
+    }
+    $port = Get-EnvVarValue -Name "BACKEND_PORT"
+    if (-not $port) {
+        $port = "8000"
+    }
+    $command = "uv run uvicorn app.main:app --host $bindHost --port $port --loop app.core.uvicorn_loop:windows_selector_loop_factory"
     if ($Verbose) {
         Write-Host "后端 API 参数：--loop app.core.uvicorn_loop:windows_selector_loop_factory（Windows 强制 SelectorEventLoop，兼容 psycopg）" -ForegroundColor DarkGray
     }
@@ -375,13 +415,10 @@ function Wait-CeleryWorkersOnline {
 
 Write-Host "加载环境变量 (.env) ..." -ForegroundColor Cyan
 Import-DotEnv -Path $envFile
+Import-DotEnv -Path (Join-Path $repoRoot "infra\env\dev.env.example") -Optional -SkipExisting
+Import-DotEnv -Path (Join-Path $repoRoot "infra\env\dev.env") -Optional
 
-if (-not $env:NEXT_PUBLIC_API_BASE_URL -and $env:VITE_API_BASE_URL) {
-    $env:NEXT_PUBLIC_API_BASE_URL = Resolve-ApiBaseUrl -Raw $env:VITE_API_BASE_URL
-    if ($Verbose) {
-        Write-Host "检测到旧变量 VITE_API_BASE_URL，已映射到 NEXT_PUBLIC_API_BASE_URL=$($env:NEXT_PUBLIC_API_BASE_URL)" -ForegroundColor DarkGray
-    }
-}
+Write-Host "scripts/start_all.ps1 仅用于 Windows 本地开发编排。生产部署请改用 docs/ops/config-and-secrets.md 中的分层配置方式。" -ForegroundColor Yellow
 
 $env:PYTHONUNBUFFERED = "1"
 $shouldRunMigrate = $RunMigrate -and (-not $SkipMigrate)
@@ -518,25 +555,50 @@ if (-not $SkipFrontend) {
         Pop-Location
     }
 
-    Start-Terminal -Title "frontend" -WorkingDirectory $frontendDir -Command "npm run start"
+    $frontendPort = Get-EnvVarValue -Name "FRONTEND_PORT"
+    if (-not $frontendPort) {
+        $frontendPort = "3000"
+    }
+    Start-Terminal -Title "frontend" -WorkingDirectory $frontendDir -Command "npm run start -- --port $frontendPort"
 }
 
 Write-Host ""
 Write-Host "一键启动流程已完成，以下服务已启动（或启动中）:" -ForegroundColor Cyan
 if (-not $SkipInfra) {
-    $searxngPort = [Environment]::GetEnvironmentVariable("SEARXNG_PORT")
-    if ([string]::IsNullOrWhiteSpace($searxngPort)) {
-        $searxngPort = "18080"
-    }
     Write-Host " - 基础依赖：Podman compose (infra/up.ps1)" -ForegroundColor Cyan
-    Write-Host "   * SearXNG： http://127.0.0.1:$searxngPort" -ForegroundColor Cyan
+    $searxngBaseUrl = Resolve-ConfiguredServiceUrl -EnvNames @("SEARXNG_BASE_URL")
+    if ($searxngBaseUrl) {
+        Write-Host "   * SearXNG： $searxngBaseUrl" -ForegroundColor Cyan
+    }
+    else {
+        Write-Host "   * SearXNG：未配置公开地址，请在 infra/env/dev.env 或 .env 中补齐 SEARXNG_BASE_URL" -ForegroundColor Yellow
+    }
 }
-if (-not $SkipBackend) { Write-Host " - 后端 API：uvicorn 生产参数监听 8000（Windows 启动期强制 SelectorEventLoopPolicy）" -ForegroundColor Cyan }
+if (-not $SkipBackend) {
+    $backendBaseUrl = Resolve-ConfiguredServiceUrl -EnvNames @(
+        "NEXT_PUBLIC_API_BASE_URL",
+        "BACKEND_PUBLIC_BASE_URL"
+    )
+    if ($backendBaseUrl) {
+        Write-Host " - 后端 API：$backendBaseUrl" -ForegroundColor Cyan
+    }
+    else {
+        Write-Host " - 后端 API：未配置公开地址；可通过 NEXT_PUBLIC_API_BASE_URL 或 BACKEND_PUBLIC_BASE_URL 补齐" -ForegroundColor Yellow
+    }
+}
 if (-not $SkipWorker) {
     Write-Host " - Celery Beat：独立进程（周期补偿调度）" -ForegroundColor Cyan
     Write-Host " - Celery Worker(dispatch)：队列 dispatch（默认并发 2）" -ForegroundColor Cyan
     Write-Host " - Celery Worker(core)：队列 ingestion,rebuild,default（默认并发 min(逻辑 CPU 核数, 8)）" -ForegroundColor Cyan
     Write-Host " - Celery Worker(noncore)：队列 research,export（默认并发 2）" -ForegroundColor Cyan
 }
-if (-not $SkipFrontend) { Write-Host " - 前端：Next.js 生产服务监听 3000" -ForegroundColor Cyan }
+if (-not $SkipFrontend) {
+    $frontendBaseUrl = Resolve-ConfiguredServiceUrl -EnvNames @("FRONTEND_PUBLIC_BASE_URL")
+    if ($frontendBaseUrl) {
+        Write-Host " - 前端：$frontendBaseUrl" -ForegroundColor Cyan
+    }
+    else {
+        Write-Host " - 前端：未配置公开地址；可通过 FRONTEND_PUBLIC_BASE_URL 补齐" -ForegroundColor Yellow
+    }
+}
 if ($RunSeed) { Write-Host " - 演示数据：已执行 seed_demo_kb.py" -ForegroundColor Cyan }

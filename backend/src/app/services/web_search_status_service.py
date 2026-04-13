@@ -7,6 +7,7 @@ import logging
 import time
 from typing import Any
 
+from app.config.policy_loader import load_research_policy
 from app.agents.tools.web_search import build_search_providers, has_jina_read_provider
 from app.agents.tools.web_search_providers.jina_provider import JinaReadProvider
 from app.core.settings import Settings
@@ -15,14 +16,25 @@ from app.search.web.health import build_overall_web_search_status
 
 logger = logging.getLogger(__name__)
 
-_CACHE_TTL_SECONDS = 300.0
-_PROVIDER_ORDER = ("tavily", "searxng", "jina_reader")
-_SEARCH_PROVIDER_NAMES = {"tavily", "searxng"}
-_JINA_PROBE_URL = "https://example.com"
-_PROBE_QUERY = "web search health check"
 _status_lock = asyncio.Lock()
 _cached_status: WebSearchStatusRead | None = None
 _cached_expires_at = 0.0
+
+
+def _monotonic() -> float:
+    return time.monotonic()
+
+
+def _status_probe_policy():
+    return load_research_policy().status_probe
+
+
+def _provider_order() -> tuple[str, ...]:
+    return tuple(_status_probe_policy().provider_order)
+
+
+def _search_provider_names() -> set[str]:
+    return set(_status_probe_policy().search_provider_names)
 
 
 def _build_provider_status(
@@ -65,7 +77,8 @@ def _stringify_error(error: object) -> str | None:
 
 
 def _empty_status(*, settings: Settings) -> WebSearchStatusRead:
-    providers = {name: _unconfigured_provider_status(name) for name in _PROVIDER_ORDER}
+    provider_order = _provider_order()
+    providers = {name: _unconfigured_provider_status(name) for name in provider_order}
     if has_jina_read_provider(settings):
         providers["jina_reader"] = _build_provider_status(
             name="jina_reader",
@@ -78,7 +91,7 @@ def _empty_status(*, settings: Settings) -> WebSearchStatusRead:
         configured=False,
         verified=False,
         mode="down",
-        providers=[providers[name] for name in _PROVIDER_ORDER],
+        providers=[providers[name] for name in provider_order],
     )
 
 
@@ -86,29 +99,32 @@ async def get_web_search_status(*, settings: Settings) -> WebSearchStatusRead:
     """返回结构化联网状态。"""
     global _cached_status, _cached_expires_at
 
-    now = time.monotonic()
+    now = _monotonic()
     if _cached_status is not None and now < _cached_expires_at:
         return _cached_status
 
     async with _status_lock:
-        now = time.monotonic()
+        now = _monotonic()
         if _cached_status is not None and now < _cached_expires_at:
             return _cached_status
 
         status = await _probe_web_search_status(settings=settings)
         _cached_status = status
-        _cached_expires_at = time.monotonic() + _CACHE_TTL_SECONDS
+        _cached_expires_at = _monotonic() + float(
+            _status_probe_policy().cache_ttl_seconds
+        )
         return status
 
 
 async def _probe_search_provider(
     provider: Any,
 ) -> WebSearchProviderStatusRead:
+    status_probe_policy = _status_probe_policy()
     provider_name = str(getattr(provider, "provider_name", "")).strip() or "tavily"
     start = time.perf_counter()
     try:
         response = await provider.search(
-            query=_PROBE_QUERY,
+            query=status_probe_policy.search_probe_query,
             max_results=1,
             search_depth="basic",
             include_answer=False,
@@ -143,6 +159,7 @@ async def _probe_jina_read_provider(
     *,
     settings: Settings,
 ) -> WebSearchProviderStatusRead:
+    status_probe_policy = _status_probe_policy()
     if not has_jina_read_provider(settings):
         return _unconfigured_provider_status("jina_reader")
 
@@ -150,7 +167,7 @@ async def _probe_jina_read_provider(
     start = time.perf_counter()
     try:
         payload = await provider.read(
-            url=_JINA_PROBE_URL,
+            url=status_probe_policy.jina_probe_url,
         )
     except Exception as exc:  # pragma: no cover - provider 自身异常由状态兜底
         logger.warning("Jina Reader 健康检查失败", extra={"error": str(exc)})
@@ -178,8 +195,10 @@ async def _probe_jina_read_provider(
 
 
 async def _probe_web_search_status(*, settings: Settings) -> WebSearchStatusRead:
+    provider_order = _provider_order()
+    search_provider_names = _search_provider_names()
     providers_by_name = {
-        name: _unconfigured_provider_status(name) for name in _PROVIDER_ORDER
+        name: _unconfigured_provider_status(name) for name in provider_order
     }
     search_providers = build_search_providers(settings=settings)
     if not search_providers:
@@ -198,14 +217,14 @@ async def _probe_web_search_status(*, settings: Settings) -> WebSearchStatusRead
 
     participating_providers = [
         providers_by_name[name]
-        for name in _PROVIDER_ORDER
+        for name in provider_order
         if providers_by_name[name].configured
-        and (name == "jina_reader" or name in _SEARCH_PROVIDER_NAMES)
+        and (name == "jina_reader" or name in search_provider_names)
     ]
     overall_status = build_overall_web_search_status(participating_providers)
     return WebSearchStatusRead(
         configured=overall_status.configured,
         verified=overall_status.verified,
         mode=overall_status.mode,
-        providers=[providers_by_name[name] for name in _PROVIDER_ORDER],
+        providers=[providers_by_name[name] for name in provider_order],
     )

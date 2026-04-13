@@ -1,7 +1,7 @@
-# Podman compose file for local infrastructure dependencies (Postgres/Redis/Milvus/SearXNG).
-# Target platform: Windows (development and deployment).
-# Run with Podman Desktop on Windows (podman machine / WSL2 backend).
-# Variables are loaded from the repo root `.env` by `infra/up.ps1` (PowerShell) or via your shell environment.
+# Local development compose profile.
+# Canonical layering uses:
+#   podman-compose.base.yml + podman-compose.dev.yml
+# This flattened file is kept as a dev-only convenience entrypoint.
 version: "3.9"
 
 services:
@@ -14,15 +14,14 @@ services:
       HTTPS_PROXY: ""
       http_proxy: ""
       https_proxy: ""
-      NO_PROXY: "localhost,127.0.0.1,postgres,redis,minio,milvus,etcd,*.local,10.*,172.16.*,172.17.*,172.18.*,172.19.*,172.30.*,172.31.*,192.168.*"
-      POSTGRES_USER: ${POSTGRES_USER:-mkb}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-mkb}
-      POSTGRES_DB: ${POSTGRES_DB:-mkb}
-      TZ: ${TZ:-Asia/Shanghai}
+      NO_PROXY: ${COMMON_NO_PROXY}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+      TZ: ${TZ}
     ports:
-      - "${POSTGRES_PORT:-5433}:5432"
+      - "${POSTGRES_PORT}:5432"
     volumes:
-      # 注意：PostgreSQL 在 Windows Podman 上无法使用本地目录挂载，使用命名卷
       - postgres_data:/var/lib/postgresql/data
 
   redis:
@@ -30,16 +29,16 @@ services:
     container_name: mkb_redis
     restart: unless-stopped
     command: ["redis-server", "--appendonly", "yes"]
-    ports:
-      - "${REDIS_PORT:-6379}:6379"
-    volumes:
-      - ./data/redis:/data
     environment:
       HTTP_PROXY: ""
       HTTPS_PROXY: ""
       http_proxy: ""
       https_proxy: ""
-      NO_PROXY: "localhost,127.0.0.1,postgres,redis,minio,milvus,etcd,*.local,10.*,172.16.*,172.17.*,172.18.*,172.19.*,172.30.*,172.31.*,192.168.*"
+      NO_PROXY: ${COMMON_NO_PROXY}
+    ports:
+      - "${REDIS_PORT}:6379"
+    volumes:
+      - ./data/redis:/data
 
   etcd:
     image: quay.io/coreos/etcd:v3.6.7
@@ -50,7 +49,7 @@ services:
       HTTPS_PROXY: ""
       http_proxy: ""
       https_proxy: ""
-      NO_PROXY: "localhost,127.0.0.1,postgres,redis,minio,milvus,etcd,*.local,10.*,172.16.*,172.17.*,172.18.*,172.19.*,172.30.*,172.31.*,192.168.*"
+      NO_PROXY: ${COMMON_NO_PROXY}
       ETCD_AUTO_COMPACTION_MODE: revision
       ETCD_AUTO_COMPACTION_RETENTION: "1000"
       ETCD_QUOTA_BACKEND_BYTES: "4294967296"
@@ -66,7 +65,7 @@ services:
         "/etcd",
       ]
     ports:
-      - "${ETCD_PORT:-2379}:2379"
+      - "${ETCD_PORT}:2379"
     volumes:
       - ./data/etcd:/etcd
 
@@ -79,13 +78,13 @@ services:
       HTTPS_PROXY: ""
       http_proxy: ""
       https_proxy: ""
-      NO_PROXY: "localhost,127.0.0.1,postgres,redis,minio,milvus,etcd,*.local,10.*,172.16.*,172.17.*,172.18.*,172.19.*,172.30.*,172.31.*,192.168.*"
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      NO_PROXY: ${COMMON_NO_PROXY}
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
     command: ["server", "/minio_data", "--console-address", ":9001"]
     ports:
-      - "${MINIO_PORT:-9000}:9000"
-      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+      - "${MINIO_PORT}:9000"
+      - "${MINIO_CONSOLE_PORT}:9001"
     volumes:
       - ./data/minio:/minio_data
 
@@ -99,15 +98,15 @@ services:
       HTTPS_PROXY: ""
       http_proxy: ""
       https_proxy: ""
-      NO_PROXY: "localhost,127.0.0.1,postgres,redis,minio,milvus,etcd,*.local,10.*,172.16.*,172.17.*,172.18.*,172.19.*,172.30.*,172.31.*,192.168.*"
+      NO_PROXY: ${COMMON_NO_PROXY}
       ETCD_ENDPOINTS: etcd:2379
       MINIO_ADDRESS: minio:9000
-      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-minioadmin}
-      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
-      TZ: ${TZ:-Asia/Shanghai}
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER}
+      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
+      TZ: ${TZ}
     ports:
-      - "${MILVUS_PORT:-19530}:19530"
-      - "${MILVUS_HTTP_PORT:-9091}:9091"
+      - "${MILVUS_PORT}:19530"
+      - "${MILVUS_HTTP_PORT}:9091"
     depends_on:
       - etcd
       - minio
@@ -119,40 +118,38 @@ services:
     container_name: mkb_searxng_valkey
     restart: unless-stopped
     command: ["valkey-server", "--save", "60", "1", "--loglevel", "warning"]
-    volumes:
-      - ./data/searxng-valkey:/data
     environment:
       HTTP_PROXY: ""
       HTTPS_PROXY: ""
       http_proxy: ""
       https_proxy: ""
-      NO_PROXY: "localhost,127.0.0.1,postgres,redis,minio,milvus,etcd,searxng,searxng_valkey,*.local,10.*,172.16.*,172.17.*,172.18.*,172.19.*,172.30.*,172.31.*,192.168.*"
+      NO_PROXY: ${SEARXNG_NO_PROXY}
+    volumes:
+      - ./data/searxng-valkey:/data
 
   searxng:
     image: docker.io/searxng/searxng:2026.4.7-08ef7a63d
     container_name: mkb_searxng
     restart: unless-stopped
     environment:
-      # 代理统一在 /etc/searxng/settings.yml 的 outgoing.proxies 中管理；
-      # 这里显式置空，避免容器级环境变量和 SearXNG 自身网络层相互干扰。
       HTTP_PROXY: ""
       HTTPS_PROXY: ""
       http_proxy: ""
       https_proxy: ""
-      NO_PROXY: ${SEARXNG_NO_PROXY:-localhost,127.0.0.1,postgres,redis,minio,milvus,etcd,searxng,searxng_valkey,*.local,10.*,172.16.*,172.17.*,172.18.*,172.19.*,172.30.*,172.31.*,192.168.*}
-      no_proxy: ${SEARXNG_NO_PROXY:-localhost,127.0.0.1,postgres,redis,minio,milvus,etcd,searxng,searxng_valkey,*.local,10.*,172.16.*,172.17.*,172.18.*,172.19.*,172.30.*,172.31.*,192.168.*}
-      SEARXNG_BASE_URL: ${SEARXNG_BASE_URL:-http://127.0.0.1:18080/}
+      NO_PROXY: ${SEARXNG_NO_PROXY}
+      no_proxy: ${SEARXNG_NO_PROXY}
+      SEARXNG_BASE_URL: ${SEARXNG_BASE_URL}
       SEARXNG_BIND_ADDRESS: "0.0.0.0"
-      SEARXNG_SECRET: ${SEARXNG_SECRET:-change-me-searxng-secret}
-      SEARXNG_LIMITER: ${SEARXNG_LIMITER:-false}
-      SEARXNG_PUBLIC_INSTANCE: "false"
-      SEARXNG_IMAGE_PROXY: ${SEARXNG_IMAGE_PROXY:-false}
-      SEARXNG_VALKEY_URL: ${SEARXNG_VALKEY_URL:-valkey://searxng_valkey:6379/0}
+      SEARXNG_SECRET: ${SEARXNG_SECRET}
+      SEARXNG_LIMITER: ${SEARXNG_LIMITER}
+      SEARXNG_PUBLIC_INSTANCE: ${SEARXNG_PUBLIC_INSTANCE}
+      SEARXNG_IMAGE_PROXY: ${SEARXNG_IMAGE_PROXY}
+      SEARXNG_VALKEY_URL: ${SEARXNG_VALKEY_URL}
       FORCE_OWNERSHIP: "true"
-    ports:
-      - "${SEARXNG_PORT:-18080}:8080"
     depends_on:
       - searxng_valkey
+    ports:
+      - "${SEARXNG_PORT}:8080"
     volumes:
       - ./searxng/config:/etc/searxng
       - ./data/searxng:/var/cache/searxng

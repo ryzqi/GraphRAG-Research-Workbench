@@ -2,19 +2,14 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+
+from app.config.policy_loader import load_search_policy
 from app.search.web.contracts import SearchQueryPlan
 
-_FRESHNESS_KEYWORDS = (
-    "最新",
-    "当前",
-    "最近",
-    "today",
-    "latest",
-    "current",
-    "news",
-    "release",
-    "changelog",
-)
+
+def _current_year() -> int:
+    return datetime.now().year
 
 
 def build_search_query_plan(
@@ -29,19 +24,32 @@ def build_search_query_plan(
         rewritten.append(normalized)
 
     lowered = normalized.lower()
+    query_rewrite_policy = load_search_policy().query_rewrite
     if include_domains:
         for domain in include_domains:
             candidate = str(domain or "").strip()
             if candidate:
                 rewritten.append(f"site:{candidate} {normalized}")
-    elif "langchain" in lowered and "site:docs.langchain.com" not in lowered:
-        rewritten.append(f"site:docs.langchain.com {normalized}")
+    else:
+        for keyword, domains in query_rewrite_policy.auto_include_domains.items():
+            normalized_keyword = str(keyword or "").strip().lower()
+            if not normalized_keyword or normalized_keyword not in lowered:
+                continue
+            for domain in domains:
+                candidate = str(domain or "").strip()
+                if not candidate or f"site:{candidate.lower()}" in lowered:
+                    continue
+                rewritten.append(f"site:{candidate} {normalized}")
 
     if (
-        any(keyword in lowered for keyword in _FRESHNESS_KEYWORDS)
-        and "2026" not in normalized
+        query_rewrite_policy.append_current_year_suffix
+        and any(
+            str(keyword or "").strip().lower() in lowered
+            for keyword in query_rewrite_policy.freshness_keywords
+        )
+        and str(_current_year()) not in normalized
     ):
-        rewritten.append(f"{normalized} 2026")
+        rewritten.append(f"{normalized} {_current_year()}")
 
     if exclude_domains:
         domain_tokens = " ".join(

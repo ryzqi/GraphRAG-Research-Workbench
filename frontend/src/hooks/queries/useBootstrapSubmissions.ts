@@ -1,4 +1,5 @@
 import { useApiMutation, useApiQuery } from '../../lib/swr';
+import { getStatusPollingIntervalMs } from '../../constants/runtimeDefaults';
 import {
   createBootstrapKnowledgeBase,
   createBootstrapSubmission,
@@ -11,7 +12,7 @@ import {
   type BootstrapSubmissionFinalizeResponse,
   type BootstrapSubmissionStatus,
 } from '../../services/bootstrapSubmissions';
-import { DEFAULT_STATUS_POLLING_INTERVAL_MS } from '../../constants/runtimeDefaults';
+import { useRuntimeConfig } from './useRuntimeConfig';
 
 const NO_ID = '__none__';
 
@@ -38,6 +39,9 @@ export function shouldPollBootstrapSubmission(
 }
 
 export function useBootstrapSubmission(jobId: string | undefined) {
+  const runtimeConfigQuery = useRuntimeConfig();
+  const refreshIntervalMs = getStatusPollingIntervalMs(runtimeConfigQuery.data);
+
   return useApiQuery(
     jobId ? KEYS.detail(jobId) : null,
     jobId ? () => getBootstrapSubmission(jobId) : null,
@@ -45,7 +49,7 @@ export function useBootstrapSubmission(jobId: string | undefined) {
       skipInitialFetchIfCached: true,
       refreshInterval: (latest) =>
         shouldPollBootstrapSubmission(latest as BootstrapSubmission | undefined)
-          ? DEFAULT_STATUS_POLLING_INTERVAL_MS
+          ? refreshIntervalMs
           : 0,
     }
   );

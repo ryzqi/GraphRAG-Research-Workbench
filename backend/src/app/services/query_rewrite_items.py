@@ -4,24 +4,22 @@ import re
 from collections.abc import Iterable
 
 from app.schemas.query_enhancement import QueryItem
-from app.services.query_rewrite_contracts import (
-    DECOMPOSITION_MAX_SUB_QUERIES,
-    HYDE_AGGREGATION,
-    HYDE_NUM_HYPOTHESES,
-    MULTI_QUERY_FIXED_VARIANTS,
-)
 from app.services.query_rewrite_text import (
     _LEADING_COMPARE_PATTERNS,
-    _MULTI_QUERY_LABEL_TOKENS,
     _TRAILING_COMPARE_PATTERNS,
-    _TROUBLESHOOT_KEYWORDS,
+    _decomposition_max_sub_queries,
     _dedupe_keep_order,
+    _hyde_aggregation,
+    _hyde_num_hypotheses,
     _is_taxonomy_intent_drift_variant,
     _looks_compare_or_multi_target,
     _looks_taxonomy_query,
+    _multi_query_fixed_variants,
+    _multi_query_label_tokens,
     _normalize_whitespace,
     _strip_list_prefix,
     _taxonomy_focus,
+    _troubleshoot_keywords,
 )
 def _rule_based_multi_query_candidates(query: str) -> list[str]:
     q = _normalize_whitespace(query)
@@ -61,7 +59,7 @@ def _rule_based_multi_query_candidates(query: str) -> list[str]:
             f"{focus} 原理 机制 对比",
             f"{focus} 适用场景 优缺点",
         ]
-    if any(keyword in lowered for keyword in _TROUBLESHOOT_KEYWORDS):
+    if any(keyword in lowered for keyword in _troubleshoot_keywords()):
         focus = _default_focus(q)
         return [
             q,
@@ -153,8 +151,9 @@ def _rule_based_decomposition_candidates(query: str) -> list[dict[str, object]]:
             f"{fallback_focus} 子问题 2", purpose="fallback_part_2", tags=["fallback"]
         )
 
+    max_sub_queries = _decomposition_max_sub_queries()
     normalized_specs: list[dict[str, object]] = []
-    for idx, item in enumerate(candidates[:DECOMPOSITION_MAX_SUB_QUERIES], start=1):
+    for idx, item in enumerate(candidates[:max_sub_queries], start=1):
         normalized_specs.append(
             {
                 "query": item["query"],
@@ -181,7 +180,8 @@ def _is_label_stuffed_multi_query(candidate: str, *, original_query: str) -> boo
     tokens = [token.strip() for token in re.split(r"\s+", suffix) if token.strip()]
     if not tokens:
         return False
-    return all(token in _MULTI_QUERY_LABEL_TOKENS for token in tokens)
+    allowed_tokens = _multi_query_label_tokens()
+    return all(token in allowed_tokens for token in tokens)
 
 
 def _normalize_multi_query_variants(
@@ -210,25 +210,27 @@ def _normalize_multi_query_variants(
 def _coerce_fixed_multi_query_variants(
     queries: Iterable[str], *, original_query: str
 ) -> tuple[list[str], bool, str | None]:
+    fixed_variants = _multi_query_fixed_variants()
     base, invalid_reason = _normalize_multi_query_variants(
         queries,
         original_query=original_query,
     )
-    if len(base) >= MULTI_QUERY_FIXED_VARIANTS:
-        return base[:MULTI_QUERY_FIXED_VARIANTS], False, invalid_reason
+    if len(base) >= fixed_variants:
+        return base[:fixed_variants], False, invalid_reason
 
     completed = _dedupe_keep_order(
         [*base, *_rule_based_multi_query_candidates(original_query)]
     )
-    if len(completed) < MULTI_QUERY_FIXED_VARIANTS:
-        for idx in range(len(completed), MULTI_QUERY_FIXED_VARIANTS):
+    if len(completed) < fixed_variants:
+        for idx in range(len(completed), fixed_variants):
             completed.append(f"{_normalize_whitespace(original_query)} 变体{idx + 1}")
-    return completed[:MULTI_QUERY_FIXED_VARIANTS], True, invalid_reason
+    return completed[:fixed_variants], True, invalid_reason
 
 
 def _normalize_hyde_documents(
-    docs: Iterable[str], *, limit: int = HYDE_NUM_HYPOTHESES
+    docs: Iterable[str], *, limit: int | None = None
 ) -> list[str]:
+    effective_limit = limit if limit is not None else _hyde_num_hypotheses()
     normalized: list[str] = []
     seen: set[str] = set()
     for doc in docs:
@@ -237,7 +239,7 @@ def _normalize_hyde_documents(
             continue
         normalized.append(value)
         seen.add(value)
-        if len(normalized) >= limit:
+        if len(normalized) >= effective_limit:
             break
     return normalized
 
@@ -343,7 +345,7 @@ def build_query_items(
             "use_dense": True,
             "use_bm25": False,
             "hyde_queries": hyde_candidates,
-            "hyde_aggregation": HYDE_AGGREGATION,
+            "hyde_aggregation": _hyde_aggregation(),
         }
         if hyde_note:
             hyde_item["note"] = _normalize_whitespace(hyde_note)
