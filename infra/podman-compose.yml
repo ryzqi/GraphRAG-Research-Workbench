@@ -1,14 +1,13 @@
-# Local development compose profile.
-# Canonical layering uses:
-#   podman-compose.base.yml + podman-compose.dev.yml
-# This flattened file is kept as a dev-only convenience entrypoint.
+# Single source of truth for infra services across local development
+# and single-node production deployments.
+# Supply concrete values from infra/env/dev.env or infra/env/prod.env at deploy time.
 version: "3.9"
 
 services:
   postgres:
-    image: docker.io/postgres:18.1-alpine
+    image: docker.io/postgres:18.3-alpine
     container_name: mkb_postgres
-    restart: unless-stopped
+    restart: always
     environment:
       HTTP_PROXY: ""
       HTTPS_PROXY: ""
@@ -23,11 +22,17 @@ services:
       - "${POSTGRES_PORT}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
 
   redis:
-    image: docker.io/redis:8.6.0-alpine
+    image: docker.io/redis:8.6.2-alpine
     container_name: mkb_redis
-    restart: unless-stopped
+    restart: always
     command: ["redis-server", "--appendonly", "yes"]
     environment:
       HTTP_PROXY: ""
@@ -38,12 +43,18 @@ services:
     ports:
       - "${REDIS_PORT}:6379"
     volumes:
-      - ./data/redis:/data
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
 
   etcd:
-    image: quay.io/coreos/etcd:v3.6.7
+    image: quay.io/coreos/etcd:v3.6.10
     container_name: mkb_etcd
-    restart: unless-stopped
+    restart: always
     environment:
       HTTP_PROXY: ""
       HTTPS_PROXY: ""
@@ -67,12 +78,18 @@ services:
     ports:
       - "${ETCD_PORT}:2379"
     volumes:
-      - ./data/etcd:/etcd
+      - etcd_data:/etcd
+    healthcheck:
+      test: ["CMD", "etcdctl", "endpoint", "health", "--endpoints=http://127.0.0.1:2379"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 20s
 
   minio:
     image: docker.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
     container_name: mkb_minio
-    restart: unless-stopped
+    restart: always
     environment:
       HTTP_PROXY: ""
       HTTPS_PROXY: ""
@@ -86,12 +103,12 @@ services:
       - "${MINIO_PORT}:9000"
       - "${MINIO_CONSOLE_PORT}:9001"
     volumes:
-      - ./data/minio:/minio_data
+      - minio_data:/minio_data
 
   milvus:
     image: docker.io/milvusdb/milvus:v2.6.11
     container_name: mkb_milvus
-    restart: unless-stopped
+    restart: always
     command: ["milvus", "run", "standalone"]
     environment:
       HTTP_PROXY: ""
@@ -101,8 +118,8 @@ services:
       NO_PROXY: ${COMMON_NO_PROXY}
       ETCD_ENDPOINTS: etcd:2379
       MINIO_ADDRESS: minio:9000
-      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER}
-      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
+      MINIO_ACCESS_KEY_ID: ${MINIO_ROOT_USER}
+      MINIO_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD}
       TZ: ${TZ}
     ports:
       - "${MILVUS_PORT}:19530"
@@ -111,12 +128,12 @@ services:
       - etcd
       - minio
     volumes:
-      - ./data/milvus:/var/lib/milvus
+      - milvus_data:/var/lib/milvus
 
   searxng_valkey:
-    image: docker.io/valkey/valkey:8-alpine
+    image: docker.io/valkey/valkey:9.0.3-alpine
     container_name: mkb_searxng_valkey
-    restart: unless-stopped
+    restart: always
     command: ["valkey-server", "--save", "60", "1", "--loglevel", "warning"]
     environment:
       HTTP_PROXY: ""
@@ -125,12 +142,18 @@ services:
       https_proxy: ""
       NO_PROXY: ${SEARXNG_NO_PROXY}
     volumes:
-      - ./data/searxng-valkey:/data
+      - searxng_valkey_data:/data
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
 
   searxng:
-    image: docker.io/searxng/searxng:2026.4.7-08ef7a63d
+    image: docker.io/searxng/searxng:2026.4.13-ee66b070a
     container_name: mkb_searxng
-    restart: unless-stopped
+    restart: always
     environment:
       HTTP_PROXY: ""
       HTTPS_PROXY: ""
@@ -151,8 +174,26 @@ services:
     ports:
       - "${SEARXNG_PORT}:8080"
     volumes:
-      - ./searxng/config:/etc/searxng
-      - ./data/searxng:/var/cache/searxng
+      - ./searxng/config:/etc/searxng:ro
+      - searxng_cache:/var/cache/searxng
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/config', timeout=5)",
+        ]
+      interval: 20s
+      timeout: 10s
+      retries: 10
+      start_period: 20s
 
 volumes:
   postgres_data:
+  redis_data:
+  etcd_data:
+  minio_data:
+  milvus_data:
+  searxng_valkey_data:
+  searxng_cache:

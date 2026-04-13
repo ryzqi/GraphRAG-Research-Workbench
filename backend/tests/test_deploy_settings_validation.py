@@ -61,6 +61,39 @@ def test_settings_exposes_typed_deploy_groups_without_breaking_flat_access() -> 
     )
 
 
+def test_settings_preserves_celery_worker_runtime_contract() -> None:
+    settings = Settings(
+        _env_file=None,
+        APP_ENV="test",
+        DATABASE_URL="postgresql+asyncpg://svc:strong-password@db.internal:5432/app",
+        REDIS_URL="redis://cache.internal:6379/0",
+        CELERY_BROKER_URL="redis://cache.internal:6379/0",
+        CELERY_RESULT_BACKEND="redis://cache.internal:6379/1",
+        MINIO_ENDPOINT="minio.internal:9000",
+        MINIO_ACCESS_KEY="storage-access-key",
+        MINIO_SECRET_KEY="storage-secret-key",
+        SEARXNG_BASE_URL="https://searx.internal",
+        EMBEDDING_API_KEY="embed-key",
+        MODEL_CONFIG_KMS_KEY="kms-key",
+    )
+
+    assert settings.celery_broker_visibility_timeout_seconds == 7_200
+    assert settings.celery_task_store_errors_even_if_ignored is True
+    assert settings.celery_worker_send_task_events is False
+    assert settings.celery_task_send_sent_event is False
+    assert settings.celery_worker_prefetch_multiplier == 1
+    assert settings.research_outbox_stale_dispatched_seconds is None
+
+    from app.worker.celery_app import _build_celery_conf
+
+    conf = _build_celery_conf(settings)
+    assert conf["broker_transport_options"]["visibility_timeout"] == 7_200
+    assert conf["task_store_errors_even_if_ignored"] is True
+    assert conf["worker_send_task_events"] is False
+    assert conf["task_send_sent_event"] is False
+    assert conf["worker_prefetch_multiplier"] == 1
+
+
 def test_validate_startup_settings_rejects_prod_loopback_and_placeholder_values() -> None:
     settings = Settings(
         _env_file=None,

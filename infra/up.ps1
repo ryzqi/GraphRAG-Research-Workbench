@@ -54,34 +54,19 @@ function Import-DotEnv {
 $repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $devEnvExamplePath = Join-Path $PSScriptRoot "env\dev.env.example"
 $devEnvPath = Join-Path $PSScriptRoot "env\dev.env"
-$composeFiles = @(
-  (Join-Path $PSScriptRoot "podman-compose.base.yml"),
-  (Join-Path $PSScriptRoot "podman-compose.dev.yml")
-)
+$composeFile = Join-Path $PSScriptRoot "podman-compose.yml"
 
-Write-Host "infra/up.ps1 仅用于本地开发基础设施。生产部署请改用 podman-compose.base.yml + podman-compose.prod.example.yml 并参考 docs/ops/config-and-secrets.md。" -ForegroundColor Yellow
+Write-Host "infra/up.ps1 使用 infra/podman-compose.yml 启动基础设施。生产部署请改用同一 compose 文件并配合 infra/env/prod.env 与 docs/ops/config-and-secrets.md。" -ForegroundColor Yellow
 
 Import-DotEnv -Path $devEnvExamplePath
 Import-DotEnv -Path $devEnvPath -Optional
-
-$requiredDirs = @(
-  (Join-Path $PSScriptRoot "data\searxng"),
-  (Join-Path $PSScriptRoot "data\searxng-valkey")
-)
-
-foreach ($dir in $requiredDirs) {
-  New-Item -ItemType Directory -Path $dir -Force | Out-Null
-}
 
 Push-Location $repoRoot
 try {
   $detachArgs = @()
   if (-not $NoDetach) { $detachArgs += @("-d") }
 
-  $composeArgs = @()
-  foreach ($composeFile in $composeFiles) {
-    $composeArgs += @("-f", $composeFile)
-  }
+  $composeArgs = @("-f", $composeFile)
 
   if (Get-Command podman -ErrorAction SilentlyContinue) {
     & podman compose @composeArgs up @detachArgs

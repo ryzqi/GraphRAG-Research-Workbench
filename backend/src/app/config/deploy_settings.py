@@ -59,8 +59,14 @@ class CoreDeploySettings(BaseModel):
     redis_socket_connect_timeout_seconds: float
     celery_broker_url: str
     celery_result_backend: str
+    celery_broker_visibility_timeout_seconds: int
+    research_outbox_stale_dispatched_seconds: int | None
     celery_task_soft_time_limit_seconds: int
     celery_task_time_limit_seconds: int
+    celery_task_store_errors_even_if_ignored: bool
+    celery_worker_send_task_events: bool
+    celery_task_send_sent_event: bool
+    celery_worker_prefetch_multiplier: int
     embedding_base_url: str
     embedding_api_key: str
     embedding_model: str
@@ -210,6 +216,20 @@ class DeploySettings(BaseSettings):
         legacy_alias="CELERY_RESULT_BACKEND",
         nested_alias="CORE__CELERY_RESULT_BACKEND",
     )
+    # Celery Redis transport 默认 visibility_timeout 为 3600 秒。
+    # 这里保持 7200 秒，以降低长任务被提前重投的概率。
+    celery_broker_visibility_timeout_seconds: int = _deploy_field(
+        7_200,
+        ge=1,
+        legacy_alias="CELERY_BROKER_VISIBILITY_TIMEOUT_SECONDS",
+        nested_alias="CORE__CELERY_BROKER_VISIBILITY_TIMEOUT_SECONDS",
+    )
+    research_outbox_stale_dispatched_seconds: int | None = _deploy_field(
+        None,
+        ge=1,
+        legacy_alias="RESEARCH_OUTBOX_STALE_DISPATCHED_SECONDS",
+        nested_alias="CORE__RESEARCH_OUTBOX_STALE_DISPATCHED_SECONDS",
+    )
     celery_task_soft_time_limit_seconds: int = _deploy_field(
         0,
         ge=0,
@@ -221,6 +241,27 @@ class DeploySettings(BaseSettings):
         ge=0,
         legacy_alias="CELERY_TASK_TIME_LIMIT_SECONDS",
         nested_alias="CORE__CELERY_TASK_TIME_LIMIT_SECONDS",
+    )
+    celery_task_store_errors_even_if_ignored: bool = _deploy_field(
+        True,
+        legacy_alias="CELERY_TASK_STORE_ERRORS_EVEN_IF_IGNORED",
+        nested_alias="CORE__CELERY_TASK_STORE_ERRORS_EVEN_IF_IGNORED",
+    )
+    celery_worker_send_task_events: bool = _deploy_field(
+        False,
+        legacy_alias="CELERY_WORKER_SEND_TASK_EVENTS",
+        nested_alias="CORE__CELERY_WORKER_SEND_TASK_EVENTS",
+    )
+    celery_task_send_sent_event: bool = _deploy_field(
+        False,
+        legacy_alias="CELERY_TASK_SEND_SENT_EVENT",
+        nested_alias="CORE__CELERY_TASK_SEND_SENT_EVENT",
+    )
+    celery_worker_prefetch_multiplier: int = _deploy_field(
+        1,
+        ge=1,
+        legacy_alias="CELERY_WORKER_PREFETCH_MULTIPLIER",
+        nested_alias="CORE__CELERY_WORKER_PREFETCH_MULTIPLIER",
     )
     http_timeout_connect_seconds: float = _deploy_field(
         5.0,
@@ -516,8 +557,14 @@ class DeploySettings(BaseSettings):
             redis_socket_connect_timeout_seconds=self.redis_socket_connect_timeout_seconds,
             celery_broker_url=self.celery_broker_url,
             celery_result_backend=self.celery_result_backend,
+            celery_broker_visibility_timeout_seconds=self.celery_broker_visibility_timeout_seconds,
+            research_outbox_stale_dispatched_seconds=self.research_outbox_stale_dispatched_seconds,
             celery_task_soft_time_limit_seconds=self.celery_task_soft_time_limit_seconds,
             celery_task_time_limit_seconds=self.celery_task_time_limit_seconds,
+            celery_task_store_errors_even_if_ignored=self.celery_task_store_errors_even_if_ignored,
+            celery_worker_send_task_events=self.celery_worker_send_task_events,
+            celery_task_send_sent_event=self.celery_task_send_sent_event,
+            celery_worker_prefetch_multiplier=self.celery_worker_prefetch_multiplier,
             embedding_base_url=self.embedding_base_url,
             embedding_api_key=self.embedding_api_key,
             embedding_model=self.embedding_model,

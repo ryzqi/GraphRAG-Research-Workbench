@@ -85,6 +85,9 @@ async def _fail_stale_processing_docs(
                 doc = await service.get_doc(doc_id=doc_id, for_update=True)
                 if doc is None or doc.status != IngestionDocStatus.PROCESSING:
                     continue
+                # 知识库创建首批导入允许长时间处理，不再由 watchdog 自动判超时结束。
+                if getattr(getattr(doc, "batch", None), "is_bootstrap", False):
+                    continue
 
                 outbox_stmt = (
                     select(IngestionTaskOutbox)

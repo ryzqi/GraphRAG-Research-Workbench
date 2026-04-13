@@ -45,7 +45,9 @@
    - `CORE__DATABASE_URL`
    - `STORAGE__MINIO_*`
    - `CORE__EMBEDDING_*`
+   - 若 backend/frontend/worker 运行在宿主机，请把数据库 / Redis / MinIO / SearXNG 地址改成宿主机可达地址；本地开发通常使用 `localhost` + `infra/env/dev.env(.example)` 中的端口。
 2. 如需覆盖本地基础设施变量，复制 `infra/env/dev.env.example` 为 `infra/env/dev.env` 再修改。
+3. 首次切换到单一 compose 后，旧 `infra/data/*` 绑定目录不会自动迁移到新的命名卷；如需保留历史本地数据，请先备份或手动导入。
 
 ### 2. 一键启动
 
@@ -123,8 +125,7 @@ npm run start -- --port $env:FRONTEND_PORT
 ## 生产配置与 Secrets
 
 - 生产部署请使用：
-  - `infra/podman-compose.base.yml`
-  - `infra/podman-compose.prod.example.yml`
+  - `infra/podman-compose.yml`
   - `infra/env/prod.env.example`
 - 详细运行手册、Secrets 注入方式、迁移顺序与回滚策略见：
   - `docs/ops/config-and-secrets.md`
