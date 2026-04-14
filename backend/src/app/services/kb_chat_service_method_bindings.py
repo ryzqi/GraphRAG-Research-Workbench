@@ -21,7 +21,6 @@ def bind_kb_chat_service_methods(cls: type) -> None:
                 '_get_semantic_cache_service',
                 '_semantic_cache_threshold',
                 '_semantic_cache_ttl_seconds',
-                '_semantic_cache_recent_turns',
                 '_load_semantic_cache_pre_context',
                 '_semantic_cache_citation_ids',
                 '_semantic_cache_evidence_fingerprint',

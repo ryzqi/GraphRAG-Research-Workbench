@@ -9,13 +9,15 @@ from typing import Any
 
 from sqlalchemy import select
 
-from app.integrations.llm_client import ChatMessage as LLMMessage
 from app.models.chat_session import ChatSession
 from app.models.knowledge_base import KnowledgeBase
 from app.schemas.chats import (
     KbChatConfig,
     EvidenceItem,
     resolve_kb_chat_config,
+)
+from app.services.kb_chat_context_seed import (
+    build_context_seed_from_history,
 )
 from app.services.evidence_guardrails import (
     is_stable_citation_id,
@@ -89,43 +91,6 @@ def _semantic_cache_ttl_seconds(self) -> int:
         return semantic_cache_service.ttl_seconds()
     return 24 * 60 * 60
 
-def _semantic_cache_recent_turns(self, 
-    history: list[LLMMessage],
-    *,
-    max_turns: int = _SEMANTIC_CACHE_PRE_CONTEXT_MAX_TURNS,
-    exclude_question: str | None = None,
-    exclude_answer: str | None = None,
-) -> list[dict[str, str]]:
-    normalized_question = sanitize_visible_text(str(exclude_question or ""))
-    normalized_answer = sanitize_visible_text(str(exclude_answer or ""))
-    turns: list[dict[str, str]] = []
-    for msg in history:
-        role = str(getattr(msg, "role", "") or "").strip().lower()
-        if role not in {"user", "assistant"}:
-            continue
-        content = sanitize_visible_text(str(getattr(msg, "content", "") or ""))
-        if not content:
-            continue
-        turns.append({"role": role, "content": content})
-    if normalized_answer and turns:
-        last_turn = turns[-1]
-        if (
-            last_turn["role"] == "assistant"
-            and last_turn["content"] == normalized_answer
-        ):
-            turns.pop()
-    if normalized_question and turns:
-        last_turn = turns[-1]
-        if (
-            last_turn["role"] == "user"
-            and last_turn["content"] == normalized_question
-        ):
-            turns.pop()
-    max_items = max(0, int(max_turns)) * 2
-    if max_items > 0 and len(turns) > max_items:
-        turns = turns[-max_items:]
-    return turns
-
 async def _load_semantic_cache_pre_context(
     self,
     *,
@@ -147,17 +112,15 @@ async def _load_semantic_cache_pre_context(
         _SEMANTIC_CACHE_PRE_CONTEXT_MAX_TURNS * 2,
     )
     history = await self._load_history(session_id, limit=history_limit)
-    recent_turns = self._semantic_cache_recent_turns(
-        history,
-        max_turns=_SEMANTIC_CACHE_PRE_CONTEXT_MAX_TURNS,
-        exclude_question=question if current_answer else None,
-        exclude_answer=current_answer,
+    return dict(
+        build_context_seed_from_history(
+            summary_text=summary_text,
+            history=history,
+            question=question,
+            current_answer=current_answer,
+            max_turns=_SEMANTIC_CACHE_PRE_CONTEXT_MAX_TURNS,
+        )
     )
-    return {
-        "summary_text": summary_text,
-        "recent_turns": recent_turns,
-        "question": sanitize_visible_text(str(question or "")) or "",
-    }
 
 def _semantic_cache_citation_ids(self, 
     *,

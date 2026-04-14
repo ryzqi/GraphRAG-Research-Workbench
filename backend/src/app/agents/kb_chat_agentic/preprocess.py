@@ -28,6 +28,10 @@ from app.agents.kb_chat_memory import (
 from app.core.memory_store import StoreManager
 from app.core.settings import Settings
 from app.integrations.chat_model_factory import create_chat_model
+from app.services.kb_chat_context_seed import (
+    build_context_seed_from_messages,
+    context_seed_turns_to_context_frame_turns,
+)
 from app.services.query_rewrite_service import (
     COMPLEXITY_CLASSIFY_DECISION_VERSION,
     QueryRewriteService,
@@ -853,25 +857,13 @@ def _normalize_for_compare(text: str) -> str:
 
 
 def _recent_turns(messages: list[Any], *, max_turns: int = 3) -> list[dict[str, str]]:
-    turns: list[dict[str, str]] = []
-    for msg in reversed(messages):
-        role = None
-        if isinstance(msg, HumanMessage):
-            role = "user"
-        elif isinstance(msg, AIMessage):
-            role = "assistant"
-        else:
-            continue
-        content = getattr(msg, "content", "")
-        text = content if isinstance(content, str) else str(content)
-        text = text.strip()
-        if not text:
-            continue
-        turns.append({"role": role, "text": text})
-        if len(turns) >= max_turns * 2:
-            break
-    turns.reverse()
-    return turns
+    seed = build_context_seed_from_messages(
+        summary_text="",
+        messages=messages,
+        question="",
+        max_turns=max_turns,
+    )
+    return context_seed_turns_to_context_frame_turns(seed["recent_turns"])
 
 
 def _dedupe_turns_preserve_latest(turns: list[dict[str, str]]) -> list[dict[str, str]]:
@@ -1140,6 +1132,15 @@ async def merge_context(
             memory_snippet = ""
 
     question = user_input.strip()
+    base_seed = build_context_seed_from_messages(
+        summary_text=summary_text,
+        messages=messages,
+        question=question,
+        max_turns=6,
+        exclude_question=question,
+    )
+    summary_text = base_seed["summary_text"]
+    turns = context_seed_turns_to_context_frame_turns(base_seed["recent_turns"])
     selected_turns = _select_turns_for_merge(
         turns,
         question=question,
