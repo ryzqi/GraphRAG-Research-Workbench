@@ -65,7 +65,9 @@ async def _recover_stale_dispatched_rows(
             IngestionTaskOutbox.dispatched_at.is_not(None),
             IngestionTaskOutbox.dispatched_at <= stale_before,
             IngestionTaskOutbox.attempts < IngestionTaskOutbox.max_attempts,
-            IngestionBatchDoc.status == IngestionDocStatus.PROCESSING,
+            IngestionBatchDoc.status.in_(
+                [IngestionDocStatus.QUEUED, IngestionDocStatus.PROCESSING]
+            ),
         )
         .order_by(IngestionTaskOutbox.dispatched_at.asc(), IngestionTaskOutbox.id.asc())
         .limit(limit)
@@ -96,7 +98,9 @@ async def _finalize_exhausted_outbox_rows(*, session, limit: int) -> int:  # noq
         .where(
             IngestionTaskOutbox.attempts >= IngestionTaskOutbox.max_attempts,
             IngestionTaskOutbox.status.in_(FINALIZABLE_EXHAUSTED_STATUSES),
-            IngestionBatchDoc.status == IngestionDocStatus.PROCESSING,
+            IngestionBatchDoc.status.in_(
+                [IngestionDocStatus.QUEUED, IngestionDocStatus.PROCESSING]
+            ),
         )
         .order_by(IngestionTaskOutbox.updated_at.asc(), IngestionTaskOutbox.id.asc())
         .limit(limit)
@@ -110,10 +114,14 @@ async def _finalize_exhausted_outbox_rows(*, session, limit: int) -> int:  # noq
     finalized = 0
     for row in rows:
         doc = await service.get_doc(doc_id=row.doc_id, for_update=True)
-        if doc is None or doc.status != IngestionDocStatus.PROCESSING:
+        if doc is None or doc.status not in {
+            IngestionDocStatus.QUEUED,
+            IngestionDocStatus.PROCESSING,
+        }:
             continue
         await service.mark_doc_failed(
             doc=doc,
+            outbox=row,
             error_code=DISPATCH_EXHAUSTED_ERROR_CODE,
             error_message=DISPATCH_EXHAUSTED_ERROR_MESSAGE,
             retryable=False,
@@ -122,10 +130,6 @@ async def _finalize_exhausted_outbox_rows(*, session, limit: int) -> int:  # noq
             doc=doc,
             reason="dispatch_attempts_exhausted",
         )
-        row.status = IngestionTaskOutboxStatus.FAILED
-        row.last_error = DISPATCH_EXHAUSTED_ERROR_CODE
-        row.next_retry_at = None
-        row.dispatched_at = None
         finalized += 1
     return finalized
 

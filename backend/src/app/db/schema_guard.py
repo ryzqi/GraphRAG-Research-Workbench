@@ -5,10 +5,24 @@ from collections.abc import Mapping, Sequence
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
-EXPECTED_INGESTION_ENUM_VALUES: tuple[str, str] = ("processing", "completed")
-INGESTION_STATUS_ENUM_NAMES: tuple[str, str] = (
-    "ingestion_batch_status",
-    "ingestion_doc_status",
+EXPECTED_INGESTION_ENUM_VALUES: dict[str, tuple[str, ...]] = {
+    "ingestion_batch_status": (
+        "queued",
+        "processing",
+        "completed",
+        "failed",
+        "canceled",
+    ),
+    "ingestion_doc_status": (
+        "queued",
+        "processing",
+        "succeeded",
+        "failed",
+        "canceled",
+    ),
+}
+INGESTION_STATUS_ENUM_NAMES: tuple[str, ...] = tuple(
+    EXPECTED_INGESTION_ENUM_VALUES
 )
 
 
@@ -23,21 +37,21 @@ class IngestionSchemaMismatchError(RuntimeError):
 def validate_ingestion_enum_values(
     enum_values_by_name: Mapping[str, Sequence[str]],
 ) -> None:
-    expected = set(EXPECTED_INGESTION_ENUM_VALUES)
     for enum_name in INGESTION_STATUS_ENUM_NAMES:
         labels = tuple(enum_values_by_name.get(enum_name, ()))
+        expected = EXPECTED_INGESTION_ENUM_VALUES[enum_name]
         if not labels:
             raise IngestionSchemaNotReadyError(
                 "Ingestion schema not ready: "
                 f"{enum_name} is missing or has no labels. "
                 "Please run alembic upgrade head."
             )
-        if set(labels) == expected and len(labels) == len(expected):
+        if set(labels) == set(expected) and len(labels) == len(expected):
             continue
         raise IngestionSchemaMismatchError(
             "Ingestion status enum mismatch: "
             f"{enum_name}={list(labels)!r}, "
-            f"expected={list(EXPECTED_INGESTION_ENUM_VALUES)!r}. "
+            f"expected={list(expected)!r}. "
             "Please run alembic upgrade head."
         )
 

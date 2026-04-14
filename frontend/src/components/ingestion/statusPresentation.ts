@@ -45,10 +45,16 @@ export function sourceTypeLabel(sourceType: ManifestSourceType | 'upload'): stri
 
 export function batchStatusLabel(status: BatchStatus): string {
   switch (status) {
+    case 'queued':
+      return '排队中';
     case 'processing':
       return '处理中';
     case 'completed':
       return '已完成';
+    case 'failed':
+      return '失败';
+    case 'canceled':
+      return '已取消';
     default:
       return status;
   }
@@ -56,10 +62,16 @@ export function batchStatusLabel(status: BatchStatus): string {
 
 export function batchStatusColor(status: BatchStatus): IngestionChipColor {
   switch (status) {
+    case 'queued':
+      return 'default';
     case 'processing':
       return 'warning';
     case 'completed':
       return 'success';
+    case 'failed':
+      return 'error';
+    case 'canceled':
+      return 'default';
     default:
       return 'default';
   }
@@ -100,15 +112,15 @@ export function bootstrapStatusColor(status: BootstrapSubmissionStatus): Ingesti
 }
 
 export function isDocFailed(doc: IngestionDocStateLike): boolean {
-  return doc.status === 'completed' && doc.error_code !== null && doc.error_code !== 'DOC_CANCELED';
+  return doc.status === 'failed';
 }
 
 export function isDocCanceled(doc: IngestionDocStateLike): boolean {
-  return doc.status === 'completed' && doc.error_code === 'DOC_CANCELED';
+  return doc.status === 'canceled';
 }
 
 export function docPresentationStatus(doc: IngestionDocStateLike): DocPresentationStatus {
-  if (doc.status === 'processing') {
+  if (doc.status === 'queued' || doc.status === 'processing') {
     return 'processing';
   }
   if (isDocCanceled(doc)) {

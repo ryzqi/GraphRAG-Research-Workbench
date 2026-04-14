@@ -38,6 +38,7 @@ import {
 import { LoadingSpinner } from '../components/ui/LoadingSpinner';
 import { PageHeader } from '../components/ui/PageHeader';
 import {
+  isBatchActive,
   useIngestionBatchLive,
 } from '../hooks/queries/useIngestionBatches';
 import { useSystemQueueHealth } from '../hooks/queries/useSystemQueueHealth';
@@ -393,7 +394,7 @@ export default function KnowledgeBaseAddDocumentsPage() {
     bootstrapJob.status !== 'failed' &&
     bootstrapJob.status !== 'queued_upload' &&
     !bootstrapJob.batch_id;
-  const batchRunning = displayedBatch?.status === 'processing';
+  const batchRunning = displayedBatch ? isBatchActive(displayedBatch) : false;
   const bootstrapWaitingSeconds = elapsedSeconds(bootstrapJob?.updated_at ?? bootstrapJob?.created_at);
   const batchProcessingSeconds = elapsedSeconds(
     displayedBatch?.started_at ?? displayedBatch?.created_at

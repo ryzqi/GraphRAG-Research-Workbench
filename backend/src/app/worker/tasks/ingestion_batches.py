@@ -13,6 +13,7 @@ from sqlalchemy import select
 from app.core.errors import AppError
 from app.core.settings import get_settings
 from app.integrations.embedding_client import EmbeddingClient
+from app.models.ingestion_batch import IngestionBatchStatus, IngestionDocStatus
 from app.integrations.object_storage import ObjectStorage
 from app.models.kb_config_snapshot import KBConfigSnapshot
 from app.models.knowledge_base import KnowledgeBase
@@ -31,6 +32,17 @@ from app.worker.tasks.embedding_inputs import build_embedding_inputs
 
 
 logger = logging.getLogger(__name__)
+
+TERMINAL_BATCH_STATUSES = {
+    IngestionBatchStatus.COMPLETED,
+    IngestionBatchStatus.FAILED,
+    IngestionBatchStatus.CANCELED,
+}
+TERMINAL_DOC_STATUSES = {
+    IngestionDocStatus.SUCCEEDED,
+    IngestionDocStatus.FAILED,
+    IngestionDocStatus.CANCELED,
+}
 
 
 @dataclass(slots=True)
@@ -184,11 +196,13 @@ async def _finalize_doc_on_app_error(
     doc = await service.get_doc(doc_id=doc_id, for_update=True)
     if doc is None:
         return
-    if doc.status.value == "completed":
+    if doc.status in TERMINAL_DOC_STATUSES:
         return
+    outbox = await service.get_doc_outbox(doc_id=doc_id, for_update=True)
 
     await service.mark_doc_failed(
         doc=doc,
+        outbox=outbox,
         error_code=error.code,
         error_message=error.message,
         retryable=False,
@@ -216,10 +230,11 @@ async def _run_ingestion_batch_doc(doc_id: str) -> None:
             doc = await service.get_doc(doc_id=doc_uuid, for_update=True)
             if doc is None:
                 return
+            outbox = await service.get_doc_outbox(doc_id=doc_uuid, for_update=True)
             batch = doc.batch
-            if batch is not None and batch.status.value == "completed":
+            if batch is not None and batch.status in TERMINAL_BATCH_STATUSES:
                 return
-            if doc.status.value == "completed":
+            if doc.status in TERMINAL_DOC_STATUSES:
                 return
 
             try:
@@ -230,6 +245,7 @@ async def _run_ingestion_batch_doc(doc_id: str) -> None:
                 outcome = await _process_doc(doc=doc, resources=resources)
                 await service.mark_doc_succeeded(
                     doc=doc,
+                    outbox=outbox,
                     chunk_count=outcome.chunk_count,
                     context_failed_chunks=outcome.context_failed_chunks,
                 )
@@ -249,20 +265,17 @@ async def _run_ingestion_batch_doc(doc_id: str) -> None:
                 doc = await service.get_doc(doc_id=doc_uuid, for_update=True)
                 if doc is None:
                     return
+                outbox = await service.get_doc_outbox(doc_id=doc_uuid, for_update=True)
 
-                delay = await service.mark_doc_failed(
+                await service.mark_doc_failed(
                     doc=doc,
+                    outbox=outbox,
                     error_code=failure.code,
                     error_message=failure.message,
                     retryable=failure.retryable,
                 )
                 await service.recalculate_batch_for_doc(doc=doc, reason="doc_failed")
                 await service.commit()
-
-                if delay is not None:
-                    run_ingestion_batch_doc.apply_async(
-                        args=[str(doc.id)], countdown=delay
-                    )
             except AppError as exc:
                 logger.warning(
                     "Ingestion doc processing hit AppError",
@@ -282,18 +295,16 @@ async def _run_ingestion_batch_doc(doc_id: str) -> None:
                 doc = await service.get_doc(doc_id=doc_uuid, for_update=True)
                 if doc is None:
                     return
-                delay = await service.mark_doc_failed(
+                outbox = await service.get_doc_outbox(doc_id=doc_uuid, for_update=True)
+                await service.mark_doc_failed(
                     doc=doc,
+                    outbox=outbox,
                     error_code="DOC_PROCESSING_ERROR",
                     error_message=str(exc),
                     retryable=True,
                 )
                 await service.recalculate_batch_for_doc(doc=doc, reason="doc_failed")
                 await service.commit()
-                if delay is not None:
-                    run_ingestion_batch_doc.apply_async(
-                        args=[str(doc.id)], countdown=delay
-                    )
 
 
 async def _process_doc(*, doc, resources) -> _DocProcessOutcome:

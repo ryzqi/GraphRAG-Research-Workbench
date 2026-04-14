@@ -35,6 +35,10 @@ interface UseCreateKnowledgeBaseOptions {
   invalidateMode?: 'blocking' | 'background';
 }
 
+interface UseKnowledgeBaseIngestionStateOptions {
+  pausePolling?: boolean;
+}
+
 export function useKnowledgeBases(params?: {
   status?: KnowledgeBaseStatusFilter;
   readiness?: KnowledgeBaseReadinessFilter;
@@ -66,14 +70,31 @@ export function useKnowledgeBase(id: string) {
   );
 }
 
-export function useKnowledgeBaseIngestionState(id: string) {
+export function shouldPollKnowledgeBaseIngestionState(
+  state: KnowledgeBaseIngestionState | undefined,
+  pausePolling: boolean
+): boolean {
+  if (pausePolling) {
+    return false;
+  }
+  return Boolean(state?.has_active_batch);
+}
+
+export function useKnowledgeBaseIngestionState(
+  id: string,
+  options?: UseKnowledgeBaseIngestionStateOptions
+) {
+  const pausePolling = options?.pausePolling ?? false;
   return useApiQuery(
     id ? KEYS.ingestionState(id) : null,
     id ? () => getKnowledgeBaseIngestionState(id) : null,
     {
       skipInitialFetchIfCached: true,
       refreshInterval: (latestState) =>
-        (latestState as KnowledgeBaseIngestionState | undefined)?.has_active_batch
+        shouldPollKnowledgeBaseIngestionState(
+          latestState as KnowledgeBaseIngestionState | undefined,
+          pausePolling
+        )
           ? 2_000
           : 0,
     }

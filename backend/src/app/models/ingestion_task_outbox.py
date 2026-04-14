@@ -17,6 +17,7 @@ class IngestionTaskOutboxStatus(str, Enum):
     DISPATCHING = "dispatching"
     DISPATCHED = "dispatched"
     FAILED = "failed"
+    SUCCEEDED = "succeeded"
 
 
 class IngestionTaskOutbox(Base):

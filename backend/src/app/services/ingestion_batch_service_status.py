@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from app.models.ingestion_batch import (
@@ -53,8 +53,17 @@ async def _set_doc_status(
         return
 
     allowed: dict[IngestionDocStatus, set[IngestionDocStatus]] = {
-        IngestionDocStatus.PROCESSING: {IngestionDocStatus.COMPLETED},
-        IngestionDocStatus.COMPLETED: {IngestionDocStatus.PROCESSING},
+        IngestionDocStatus.QUEUED: {
+            IngestionDocStatus.PROCESSING,
+            IngestionDocStatus.CANCELED,
+        },
+        IngestionDocStatus.PROCESSING: {
+            IngestionDocStatus.QUEUED,
+            IngestionDocStatus.SUCCEEDED,
+            IngestionDocStatus.FAILED,
+            IngestionDocStatus.CANCELED,
+        },
+        IngestionDocStatus.FAILED: {IngestionDocStatus.QUEUED},
     }
     if new_status not in allowed.get(old, set()):
         raise ingestion_error(
@@ -89,8 +98,26 @@ async def _set_batch_status(
         return
 
     allowed: dict[IngestionBatchStatus, set[IngestionBatchStatus]] = {
-        IngestionBatchStatus.PROCESSING: {IngestionBatchStatus.COMPLETED},
-        IngestionBatchStatus.COMPLETED: {IngestionBatchStatus.PROCESSING},
+        IngestionBatchStatus.QUEUED: {
+            IngestionBatchStatus.PROCESSING,
+            IngestionBatchStatus.COMPLETED,
+            IngestionBatchStatus.FAILED,
+            IngestionBatchStatus.CANCELED,
+        },
+        IngestionBatchStatus.PROCESSING: {
+            IngestionBatchStatus.QUEUED,
+            IngestionBatchStatus.COMPLETED,
+            IngestionBatchStatus.FAILED,
+            IngestionBatchStatus.CANCELED,
+        },
+        IngestionBatchStatus.FAILED: {
+            IngestionBatchStatus.QUEUED,
+            IngestionBatchStatus.PROCESSING,
+        },
+        IngestionBatchStatus.CANCELED: {
+            IngestionBatchStatus.QUEUED,
+            IngestionBatchStatus.PROCESSING,
+        },
     }
     if new_status not in allowed.get(old, set()):
         raise ingestion_error(
@@ -105,9 +132,14 @@ async def _set_batch_status(
 
     batch.status = new_status
     now = datetime.now(timezone.utc)
+    terminal_statuses = {
+        IngestionBatchStatus.COMPLETED,
+        IngestionBatchStatus.FAILED,
+        IngestionBatchStatus.CANCELED,
+    }
     if new_status == IngestionBatchStatus.PROCESSING and batch.started_at is None:
         batch.started_at = now
-    if new_status == IngestionBatchStatus.COMPLETED:
+    if new_status in terminal_statuses:
         batch.finished_at = now
     else:
         batch.finished_at = None
@@ -128,9 +160,8 @@ async def _recalculate_batch(self, batch: IngestionBatch, *, reason: str) -> Non
     succeeded = sum(1 for doc in docs if self._is_doc_succeeded(doc))
     failed = sum(1 for doc in docs if self._is_doc_failed(doc))
     canceled = sum(1 for doc in docs if self._is_doc_canceled(doc))
-    processing = sum(
-        1 for doc in docs if doc.status == IngestionDocStatus.PROCESSING
-    )
+    queued = sum(1 for doc in docs if doc.status == IngestionDocStatus.QUEUED)
+    processing = sum(1 for doc in docs if doc.status == IngestionDocStatus.PROCESSING)
 
     batch.total_docs = total
     batch.succeeded_docs = succeeded
@@ -140,14 +171,23 @@ async def _recalculate_batch(self, batch: IngestionBatch, *, reason: str) -> Non
         doc.chunk_count for doc in docs if self._is_doc_succeeded(doc)
     )
 
-    target_status = (
-        IngestionBatchStatus.PROCESSING
-        if processing > 0
-        else IngestionBatchStatus.COMPLETED
-    )
+    if processing > 0:
+        target_status = IngestionBatchStatus.PROCESSING
+    elif queued > 0:
+        target_status = IngestionBatchStatus.QUEUED
+    elif failed > 0:
+        target_status = IngestionBatchStatus.FAILED
+    elif canceled > 0:
+        target_status = IngestionBatchStatus.CANCELED
+    else:
+        target_status = IngestionBatchStatus.COMPLETED
 
     await self._set_batch_status(batch, target_status, reason=reason)
-    if target_status == IngestionBatchStatus.COMPLETED:
+    if target_status in {
+        IngestionBatchStatus.COMPLETED,
+        IngestionBatchStatus.FAILED,
+        IngestionBatchStatus.CANCELED,
+    }:
         await self._apply_readiness(batch=batch)
 
     batch.error_summary = {
@@ -159,22 +199,20 @@ async def _recalculate_batch(self, batch: IngestionBatch, *, reason: str) -> Non
 
 
 def _is_doc_canceled(doc: IngestionBatchDoc) -> bool:
+    if doc.status == IngestionDocStatus.CANCELED:
+        return True
     return (
-        doc.status == IngestionDocStatus.COMPLETED
+        doc.status == IngestionDocStatus.FAILED
         and doc.error_code == DOC_CANCELED_ERROR_CODE
     )
 
 
 def _is_doc_failed(doc: IngestionBatchDoc) -> bool:
-    return (
-        doc.status == IngestionDocStatus.COMPLETED
-        and doc.error_code is not None
-        and not _is_doc_canceled(doc)
-    )
+    return doc.status == IngestionDocStatus.FAILED and not _is_doc_canceled(doc)
 
 
 def _is_doc_succeeded(doc: IngestionBatchDoc) -> bool:
-    return doc.status == IngestionDocStatus.COMPLETED and doc.error_code is None
+    return doc.status == IngestionDocStatus.SUCCEEDED
 
 
 async def _apply_readiness(self, *, batch: IngestionBatch) -> None:
@@ -184,8 +222,7 @@ async def _apply_readiness(self, *, batch: IngestionBatch) -> None:
 
     if batch.is_bootstrap:
         if (
-            batch.status == IngestionBatchStatus.COMPLETED
-            and batch.succeeded_docs >= 1
+            batch.succeeded_docs >= 1
             and batch.succeeded_chunks >= 1
         ):
             kb.readiness = KnowledgeBaseReadiness.READY
@@ -193,7 +230,12 @@ async def _apply_readiness(self, *, batch: IngestionBatch) -> None:
             kb.readiness = KnowledgeBaseReadiness.NOT_READY
         kb.readiness_updated_at = datetime.now(timezone.utc)
     if (
-        batch.status == IngestionBatchStatus.COMPLETED
+        batch.status
+        in {
+            IngestionBatchStatus.COMPLETED,
+            IngestionBatchStatus.FAILED,
+            IngestionBatchStatus.CANCELED,
+        }
         and batch.succeeded_chunks >= 1
     ):
         await touch_kb_updated_at(self._db, batch.kb_id)
@@ -217,15 +259,6 @@ async def _append_event(
             reason=reason,
         )
     )
-
-
-async def _get_event_count(self, *, batch_id: uuid.UUID) -> int:
-    stmt = select(func.count(IngestionEvent.id)).where(
-        IngestionEvent.batch_id == batch_id
-    )
-    result = await self._db.execute(stmt)
-    value = result.scalar_one()
-    return int(value or 0)
 
 
 @staticmethod

@@ -30,9 +30,12 @@ export function isBootstrapSubmissionTerminal(status: BootstrapSubmissionStatus)
 }
 
 export function shouldPollBootstrapSubmission(
-  job: Pick<BootstrapSubmission, 'status'> | undefined
+  job: Pick<BootstrapSubmission, 'status' | 'batch_id'> | undefined
 ): boolean {
   if (!job) {
+    return false;
+  }
+  if (job.batch_id && job.status !== 'queued_upload') {
     return false;
   }
   return !isBootstrapSubmissionTerminal(job.status);

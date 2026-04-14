@@ -61,7 +61,8 @@ export interface BootstrapSubmissionCreateRequest {
 }
 
 export interface BootstrapSubmissionCreateResponse {
-  job_id: string;
+  job_id: string | null;
+  batch_id: string | null;
   kb_id: string;
   status: BootstrapSubmissionStatus;
   upload_targets: BootstrapUploadTarget[];
@@ -75,9 +76,10 @@ export interface BootstrapCreateKnowledgeBaseRequest {
 
 export interface BootstrapCreateKnowledgeBaseResponse {
   kb_id: string;
-  job_id: string;
+  job_id: string | null;
+  batch_id: string | null;
   status: BootstrapSubmissionStatus;
-  monitor_url: string;
+  monitor_url: string | null;
 }
 
 export interface BootstrapSubmissionFinalizeResponse {

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useParams } from 'next/navigation';
 import { useKnowledgeBase, useKnowledgeBaseIngestionState } from './queries/useKnowledgeBases';
-import { useIngestionBatchLive } from './queries/useIngestionBatches';
+import { isBatchActive, useIngestionBatchLive } from './queries/useIngestionBatches';
 import { getErrorMessage } from '../lib/errorHandler';
 import { buildBatchSummaryMetrics, streamHintText } from '../components/ingestion';
 
@@ -10,8 +10,10 @@ export function useKnowledgeBaseDetailData() {
   const kbId = Array.isArray(params.kbId) ? params.kbId[0] : params.kbId;
 
   const kbQuery = useKnowledgeBase(kbId ?? '');
-  const ingestionStateQuery = useKnowledgeBaseIngestionState(kbId ?? '');
   const liveBatchQuery = useIngestionBatchLive({ kbId: kbId ?? undefined });
+  const ingestionStateQuery = useKnowledgeBaseIngestionState(kbId ?? '', {
+    pausePolling: Boolean(liveBatchQuery.resolvedBatchId),
+  });
 
   const [showSlowLoading, setShowSlowLoading] = useState(false);
   useEffect(() => {
@@ -27,13 +29,13 @@ export function useKnowledgeBaseDetailData() {
 
   const kb = kbQuery.data ?? null;
   const activeBatch = liveBatchQuery.data ?? null;
-  const batchRunning = activeBatch?.status === 'processing';
+  const batchActive = isBatchActive(activeBatch ?? undefined);
 
   const browseLocked =
     ingestionStateQuery.isPending ||
     Boolean(ingestionStateQuery.error) ||
     Boolean(ingestionStateQuery.data?.has_active_batch) ||
-    Boolean(batchRunning);
+    Boolean(batchActive);
 
   const browseLockMessage = useMemo(() => {
     if (ingestionStateQuery.error) {
@@ -43,7 +45,7 @@ export function useKnowledgeBaseDetailData() {
       return '正在同步文档处理状态，请稍后再浏览分块。';
     }
 
-    if (activeBatch && activeBatch.status === 'processing') {
+    if (activeBatch && isBatchActive(activeBatch)) {
       const activeDocs = activeBatch.docs.filter((doc) => doc.status === 'processing').length;
       if (activeDocs > 0) {
         return `当前批次仍有 ${activeDocs} 个文档处理中，暂不可浏览分块。`;

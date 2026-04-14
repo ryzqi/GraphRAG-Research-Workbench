@@ -14,5 +14,5 @@ export function resolveRecoverableBatchId(batch: IngestionBatch | null): string 
   if (!batch) {
     return null;
   }
-  return batch.status === 'processing' ? batch.id : null;
+  return batch.status === 'queued' || batch.status === 'processing' ? batch.id : null;
 }

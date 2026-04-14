@@ -8,6 +8,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from celery import Celery
+from pydantic import TypeAdapter
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -25,7 +26,12 @@ from app.integrations.object_storage import ObjectRef, ObjectStorage
 from app.models.kb_bootstrap_job import KBBootstrapJob, KBBootstrapJobStatus
 from app.models.knowledge_base import KnowledgeBase
 from app.models.source_material import SourceMaterial, SourceType
-from app.schemas.ingestion_batches import ManifestFileEntry, ManifestSourceType
+from app.schemas.ingestion_batches import (
+    IngestionBatchSubmitResponse,
+    ManifestEntry,
+    ManifestFileEntry,
+    ManifestSourceType,
+)
 from app.schemas.kb_bootstrap_jobs import (
     BootstrapManifestEntry,
     BootstrapManifestTextEntry,
@@ -34,14 +40,14 @@ from app.schemas.kb_bootstrap_jobs import (
     BootstrapSubmissionUploadProgress,
     BootstrapUploadTarget,
 )
+from app.services.ingestion_batch_service import IngestionBatchService
 from app.worker.celery_app import celery_app
-
-BOOTSTRAP_TASK_NAME = "app.worker.tasks.kb_bootstrap_jobs.run_kb_bootstrap_job"
 
 
 @dataclass(slots=True)
 class BootstrapSubmissionCreateResult:
-    job: KBBootstrapJob
+    job: KBBootstrapJob | None
+    batch: IngestionBatchSubmitResponse | None
     upload_targets: list[BootstrapUploadTarget]
     upload_progress: BootstrapSubmissionUploadProgress
 
@@ -75,6 +81,7 @@ class KBBootstrapJobService:
             if existing is not None:
                 return BootstrapSubmissionCreateResult(
                     job=existing,
+                    batch=None,
                     upload_targets=[],
                     upload_progress=self.get_upload_progress(existing),
                 )
@@ -87,24 +94,30 @@ class KBBootstrapJobService:
             kb=kb, entries=req.entries
         )
         has_pending_uploads = len(upload_manifest) > 0
+        if not has_pending_uploads:
+            batch = await self._submit_manifest_directly(
+                kb_id=req.kb_id,
+                payload_entries=payload_entries,
+                requested_by=normalized_requested_by,
+            )
+            return BootstrapSubmissionCreateResult(
+                job=None,
+                batch=batch,
+                upload_targets=[],
+                upload_progress=BootstrapSubmissionUploadProgress(),
+            )
 
         job = KBBootstrapJob(
             kb_id=req.kb_id,
             request_id=normalized_request_id,
             requested_by=normalized_requested_by,
-            status=(
-                KBBootstrapJobStatus.QUEUED_UPLOAD
-                if has_pending_uploads
-                else KBBootstrapJobStatus.QUEUED
-            ),
+            status=KBBootstrapJobStatus.QUEUED_UPLOAD,
             total_entries=len(payload_entries),
             accepted_entries=0,
             failed_entries=0,
             payload_entries=payload_entries,
             upload_manifest=upload_manifest,
-            progress_message=(
-                "等待文件上传完成" if has_pending_uploads else "任务已创建，等待调度"
-            ),
+            progress_message="等待文件上传完成",
         )
         self._db.add(job)
 
@@ -117,6 +130,7 @@ class KBBootstrapJobService:
                 if existing is not None:
                     return BootstrapSubmissionCreateResult(
                         job=existing,
+                        batch=None,
                         upload_targets=[],
                         upload_progress=self.get_upload_progress(existing),
                     )
@@ -124,11 +138,9 @@ class KBBootstrapJobService:
 
         await self._db.refresh(job)
 
-        if not has_pending_uploads:
-            self._celery.send_task(BOOTSTRAP_TASK_NAME, args=[str(job.id)])
-
         return BootstrapSubmissionCreateResult(
             job=job,
+            batch=None,
             upload_targets=[],
             upload_progress=self.get_upload_progress(job),
         )
@@ -233,11 +245,58 @@ class KBBootstrapJobService:
             )
 
         locked_job.upload_manifest = checked_manifest
-        locked_job.status = KBBootstrapJobStatus.QUEUED
-        locked_job.progress_message = "文件上传完成，任务等待调度"
+        locked_job.status = KBBootstrapJobStatus.RUNNING
+        locked_job.progress_message = "正在校验并提交条目"
+        if locked_job.started_at is None:
+            locked_job.started_at = datetime.now(timezone.utc)
+
+        try:
+            response = await self._submit_manifest_directly(
+                kb_id=locked_job.kb_id,
+                payload_entries=locked_job.payload_entries or [],
+                requested_by=locked_job.requested_by,
+            )
+            locked_job.batch_id = response.batch_id
+            locked_job.status = KBBootstrapJobStatus.COMPLETED
+            locked_job.accepted_entries = response.accepted_docs
+            locked_job.failed_entries = response.failed_docs
+            locked_job.entry_errors = [
+                err.model_dump(mode="json") for err in response.entry_errors
+            ]
+            locked_job.error_code = None
+            locked_job.error_message = None
+            locked_job.progress_message = "批次已创建，文档处理中"
+        except AppError as exc:
+            await self._db.rollback()
+            locked_job = await self._db.get(KBBootstrapJob, job_id)
+            if locked_job is None:
+                raise
+            details = exc.details or {}
+            entry_errors = details.get("entry_errors")
+            locked_job.status = KBBootstrapJobStatus.FAILED
+            locked_job.error_code = exc.code
+            locked_job.error_message = exc.message
+            locked_job.entry_errors = entry_errors if isinstance(entry_errors, list) else None
+            locked_job.failed_entries = (
+                len(entry_errors)
+                if isinstance(entry_errors, list)
+                else len(locked_job.payload_entries or [])
+            )
+            locked_job.progress_message = "任务失败"
+        except Exception as exc:  # pragma: no cover - defensive guard
+            await self._db.rollback()
+            locked_job = await self._db.get(KBBootstrapJob, job_id)
+            if locked_job is None:
+                raise
+            locked_job.status = KBBootstrapJobStatus.FAILED
+            locked_job.error_code = "KB_BOOTSTRAP_JOB_FAILED"
+            locked_job.error_message = str(exc)
+            locked_job.failed_entries = len(locked_job.payload_entries or [])
+            locked_job.progress_message = "任务失败"
+
+        locked_job.finished_at = datetime.now(timezone.utc)
         await self._db.commit()
         await self._db.refresh(locked_job)
-        self._celery.send_task(BOOTSTRAP_TASK_NAME, args=[str(locked_job.id)])
         return locked_job
 
     async def get_submission(self, *, job_id: uuid.UUID) -> KBBootstrapJob | None:
@@ -319,6 +378,29 @@ class KBBootstrapJobService:
         )
         result = await self._db.execute(stmt)
         return result.scalar_one_or_none()
+
+    async def _submit_manifest_directly(
+        self,
+        *,
+        kb_id: uuid.UUID,
+        payload_entries: list[dict[str, Any]],
+        requested_by: str | None,
+    ) -> IngestionBatchSubmitResponse:
+        try:
+            entries = TypeAdapter(list[ManifestEntry]).validate_python(payload_entries)
+        except Exception as exc:
+            raise AppError(
+                code="KB_BOOTSTRAP_PAYLOAD_INVALID",
+                message=str(exc),
+                status_code=500,
+            ) from exc
+
+        service = IngestionBatchService(self._db)
+        return await service.submit_manifest(
+            kb_id=kb_id,
+            entries=entries,
+            requested_by=requested_by,
+        )
 
     async def _normalize_payload_entries(
         self,

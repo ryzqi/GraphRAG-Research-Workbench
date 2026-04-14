@@ -17,13 +17,19 @@ class ManifestSourceType(str, Enum):
 
 
 class BatchStatus(str, Enum):
+    QUEUED = "queued"
     PROCESSING = "processing"
     COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELED = "canceled"
 
 
 class DocStatus(str, Enum):
+    QUEUED = "queued"
     PROCESSING = "processing"
-    COMPLETED = "completed"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+    CANCELED = "canceled"
 
 
 class ManifestTextEntry(BaseModel):

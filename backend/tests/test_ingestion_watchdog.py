@@ -61,13 +61,20 @@ class _FakeService:
         self,
         *,
         doc,
+        outbox=None,
         error_code: str,
         error_message: str,
         retryable: bool,
     ) -> None:
+        if outbox is not None:
+            outbox.status = IngestionTaskOutboxStatus.FAILED
+            outbox.last_error = error_code
+            outbox.next_retry_at = None
+            outbox.dispatched_at = None
         self.failed_calls.append(
             {
                 "doc": doc,
+                "outbox": outbox,
                 "error_code": error_code,
                 "error_message": error_message,
                 "retryable": retryable,
@@ -167,6 +174,7 @@ async def test_watchdog_still_fails_non_bootstrap_docs(
     assert service.failed_calls == [
         {
             "doc": doc,
+            "outbox": outbox,
             "error_code": ingestion_watchdog.DOC_QUEUE_TIMEOUT_ERROR_CODE,
             "error_message": ingestion_watchdog.DOC_QUEUE_TIMEOUT_MESSAGE,
             "retryable": False,

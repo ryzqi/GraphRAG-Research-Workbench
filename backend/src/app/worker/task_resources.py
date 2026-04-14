@@ -4,6 +4,7 @@ import asyncio
 import logging
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from time import monotonic
 from typing import AsyncIterator, Awaitable, Callable
 
 import httpx
@@ -27,6 +28,8 @@ from app.integrations.redis_client import (
 from app.services.parsing.url_parser import UrlCrawler, close_url_crawler, create_url_crawler
 
 logger = logging.getLogger(__name__)
+MODEL_RUNTIME_REFRESH_TTL_SECONDS = 30.0
+_SHARED_TASK_RESOURCES_LOCK = asyncio.Lock()
 
 
 @dataclass(slots=True)
@@ -71,18 +74,141 @@ class TaskResources:
         return self.url_crawler
 
 
-@asynccontextmanager
-async def managed_task_resources(
+@dataclass(slots=True)
+class _SharedTaskResources:
+    settings: Settings
+    engine: AsyncEngine | None = None
+    sessionmaker: async_sessionmaker[AsyncSession] | None = None
+    http_client: httpx.AsyncClient | None = None
+    embedding_http_client: httpx.AsyncClient | None = None
+    embedding_client: EmbeddingClient | None = None
+    redis: RedisClient | None = None
+    milvus: MilvusClient | None = None
+    model_runtime_refreshed_at: float | None = None
+
+
+_shared_task_resources: _SharedTaskResources | None = None
+
+
+async def _close_shared_task_resources(
+    resources: _SharedTaskResources | None,
+) -> None:
+    if resources is None:
+        return
+    await close_http_client(resources.http_client)
+    await close_http_client(resources.embedding_http_client)
+    await close_redis_client(resources.redis)
+    if resources.milvus is not None:
+        try:
+            await resources.milvus.aclose()
+        except Exception:  # pragma: no cover - best effort
+            pass
+    if resources.engine is not None:
+        try:
+            await resources.engine.dispose()
+        except Exception:  # pragma: no cover - best effort
+            pass
+
+
+async def reset_shared_task_resources() -> None:
+    global _shared_task_resources
+    async with _SHARED_TASK_RESOURCES_LOCK:
+        resources = _shared_task_resources
+        _shared_task_resources = None
+    await _close_shared_task_resources(resources)
+
+
+async def _ensure_model_runtime_config(
     *,
-    settings: Settings | None = None,
-    with_engine: bool = True,
-    with_http: bool = False,
-    with_redis: bool = False,
-    with_milvus: bool = False,
-    use_null_pool: bool = False,
+    shared: _SharedTaskResources,
+    settings: Settings,
+    force_refresh: bool,
+) -> None:
+    sessionmaker = shared.sessionmaker
+    if sessionmaker is None:
+        return
+    now = monotonic()
+    should_refresh = force_refresh or shared.model_runtime_refreshed_at is None
+    if not should_refresh and shared.model_runtime_refreshed_at is not None:
+        should_refresh = (
+            now - shared.model_runtime_refreshed_at
+            >= MODEL_RUNTIME_REFRESH_TTL_SECONDS
+        )
+    if not should_refresh:
+        return
+    async with sessionmaker() as model_config_session:
+        await ModelRuntimeConfigManager.refresh(
+            db=model_config_session,
+            settings=settings,
+        )
+    shared.model_runtime_refreshed_at = now
+
+
+async def _get_shared_task_resources(
+    *,
+    settings: Settings,
+    with_engine: bool,
+    with_http: bool,
+    with_redis: bool,
+    with_milvus: bool,
+) -> _SharedTaskResources:
+    global _shared_task_resources
+    async with _SHARED_TASK_RESOURCES_LOCK:
+        if (
+            _shared_task_resources is not None
+            and _shared_task_resources.settings != settings
+        ):
+            stale = _shared_task_resources
+            _shared_task_resources = None
+            await _close_shared_task_resources(stale)
+
+        shared = _shared_task_resources
+        if shared is None:
+            shared = _SharedTaskResources(settings=settings)
+            _shared_task_resources = shared
+
+        force_refresh = False
+        if with_engine and shared.engine is None:
+            shared.engine = create_engine(settings, use_null_pool=False)
+            shared.sessionmaker = create_sessionmaker(engine=shared.engine)
+            await ModelRuntimeConfigManager.initialize(
+                sessionmaker=shared.sessionmaker,
+                settings=settings,
+            )
+            force_refresh = True
+        if with_http and shared.http_client is None:
+            shared.http_client = create_http_client(settings)
+            shared.embedding_http_client = create_http_client(
+                settings,
+                profile=HttpClientProfile.EMBEDDING_BATCH,
+            )
+            shared.embedding_client = EmbeddingClient(
+                http_client=shared.embedding_http_client,
+                settings=settings,
+            )
+        if with_redis and shared.redis is None:
+            shared.redis = create_redis_client(settings)
+        if with_milvus and shared.milvus is None:
+            shared.milvus = create_milvus_client()
+        if with_engine:
+            await _ensure_model_runtime_config(
+                shared=shared,
+                settings=settings,
+                force_refresh=force_refresh,
+            )
+        return shared
+
+
+@asynccontextmanager
+async def _managed_ephemeral_task_resources(
+    *,
+    settings: Settings,
+    with_engine: bool,
+    with_http: bool,
+    with_redis: bool,
+    with_milvus: bool,
+    use_null_pool: bool,
 ) -> AsyncIterator[TaskResources]:
-    """统一管理 Celery 任务资源：创建 + finally 释放（尽力而为）。"""
-    cfg = settings or get_settings()
     engine = None
     sessionmaker = None
     http_client = None
@@ -92,36 +218,34 @@ async def managed_task_resources(
     milvus = None
 
     if with_engine:
-        engine = create_engine(cfg, use_null_pool=use_null_pool)
+        engine = create_engine(settings, use_null_pool=use_null_pool)
         sessionmaker = create_sessionmaker(engine=engine)
         await ModelRuntimeConfigManager.initialize(
             sessionmaker=sessionmaker,
-            settings=cfg,
+            settings=settings,
         )
-        # Worker 进程生命周期较长；每次任务都刷新一次，
-        # 让管理页的运行时模型配置变更无需重启即可生效。
         async with sessionmaker() as model_config_session:
             await ModelRuntimeConfigManager.refresh(
                 db=model_config_session,
-                settings=cfg,
+                settings=settings,
             )
     if with_http:
-        http_client = create_http_client(cfg)
+        http_client = create_http_client(settings)
         embedding_http_client = create_http_client(
-            cfg,
+            settings,
             profile=HttpClientProfile.EMBEDDING_BATCH,
         )
         embedding_client = EmbeddingClient(
             http_client=embedding_http_client,
-            settings=cfg,
+            settings=settings,
         )
     if with_redis:
-        redis = create_redis_client(cfg)
+        redis = create_redis_client(settings)
     if with_milvus:
         milvus = create_milvus_client()
 
     resources = TaskResources(
-        settings=cfg,
+        settings=settings,
         engine=engine,
         sessionmaker=sessionmaker,
         http_client=http_client,
@@ -148,3 +272,51 @@ async def managed_task_resources(
                 await engine.dispose()
             except Exception:  # pragma: no cover - best effort
                 pass
+
+
+@asynccontextmanager
+async def managed_task_resources(
+    *,
+    settings: Settings | None = None,
+    with_engine: bool = True,
+    with_http: bool = False,
+    with_redis: bool = False,
+    with_milvus: bool = False,
+    use_null_pool: bool = False,
+) -> AsyncIterator[TaskResources]:
+    """统一管理 Celery 任务资源：创建 + finally 释放（尽力而为）。"""
+    cfg = settings or get_settings()
+    if use_null_pool:
+        async with _managed_ephemeral_task_resources(
+            settings=cfg,
+            with_engine=with_engine,
+            with_http=with_http,
+            with_redis=with_redis,
+            with_milvus=with_milvus,
+            use_null_pool=True,
+        ) as resources:
+            yield resources
+        return
+
+    shared = await _get_shared_task_resources(
+        settings=cfg,
+        with_engine=with_engine,
+        with_http=with_http,
+        with_redis=with_redis,
+        with_milvus=with_milvus,
+    )
+    resources = TaskResources(
+        settings=cfg,
+        engine=shared.engine if with_engine else None,
+        sessionmaker=shared.sessionmaker if with_engine else None,
+        http_client=shared.http_client if with_http else None,
+        embedding_http_client=shared.embedding_http_client if with_http else None,
+        embedding_client=shared.embedding_client if with_http else None,
+        redis=shared.redis if with_redis else None,
+        milvus=shared.milvus if with_milvus else None,
+        _url_crawler_factory=create_url_crawler,
+    )
+    try:
+        yield resources
+    finally:
+        await close_url_crawler(resources.url_crawler)

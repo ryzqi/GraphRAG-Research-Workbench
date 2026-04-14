@@ -10,6 +10,7 @@ from app.api.dependencies.services import (
     KnowledgeBaseServiceDep,
 )
 from app.api.deps import AsyncSessionDep
+from app.core.errors import AppError
 from app.core.errors import not_found
 from app.models.kb_bootstrap_job import KBBootstrapJob
 from app.schemas.ingestion_batches import EntryErrorRead
@@ -117,12 +118,30 @@ async def bootstrap_create_knowledge_base(
                 detail={"code": "KB_NAME_EXISTS", "message": "知识库名称已存在"},
             ) from exc
         raise
+    except AppError:
+        await session.rollback()
+        raise
 
+    job = result.job
+    batch = result.batch
     return BootstrapCreateKnowledgeBaseResponse(
-        kb_id=result.job.kb_id,
-        job_id=result.job.id,
-        status=BootstrapSubmissionStatus(result.job.status.value),
-        monitor_url=f"/api/v1/knowledge-bases/bootstrap-submissions/{result.job.id}",
+        kb_id=kb.id,
+        job_id=job.id if job is not None else None,
+        batch_id=batch.batch_id if batch is not None else None,
+        status=(
+            BootstrapSubmissionStatus(job.status.value)
+            if job is not None
+            else BootstrapSubmissionStatus.COMPLETED
+        ),
+        monitor_url=(
+            f"/api/v1/knowledge-bases/bootstrap-submissions/{job.id}"
+            if job is not None
+            else (
+                f"/api/v1/ingestion-batches/{batch.batch_id}"
+                if batch is not None
+                else None
+            )
+        ),
     )
 
 
@@ -141,10 +160,17 @@ async def create_bootstrap_submission(
         request_id=request.headers.get("X-Request-Id"),
         requested_by=request.headers.get("X-User"),
     )
+    job = result.job
+    batch = result.batch
     return BootstrapSubmissionCreateResponse(
-        job_id=result.job.id,
-        kb_id=result.job.kb_id,
-        status=BootstrapSubmissionStatus(result.job.status.value),
+        job_id=job.id if job is not None else None,
+        batch_id=batch.batch_id if batch is not None else None,
+        kb_id=job.kb_id if job is not None else req.kb_id,
+        status=(
+            BootstrapSubmissionStatus(job.status.value)
+            if job is not None
+            else BootstrapSubmissionStatus.COMPLETED
+        ),
         upload_targets=result.upload_targets,
         upload_progress=result.upload_progress,
     )

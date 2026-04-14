@@ -7,8 +7,8 @@ import { apiFetch, type ApiFetchOptions } from './http';
 import { openSseStream } from './sse';
 
 export type ManifestSourceType = 'text' | 'url' | 'file';
-export type BatchStatus = 'processing' | 'completed';
-export type DocStatus = 'processing' | 'completed';
+export type BatchStatus = 'queued' | 'processing' | 'completed' | 'failed' | 'canceled';
+export type DocStatus = 'queued' | 'processing' | 'succeeded' | 'failed' | 'canceled';
 
 export interface ManifestTextEntry {
   source_type: 'text';

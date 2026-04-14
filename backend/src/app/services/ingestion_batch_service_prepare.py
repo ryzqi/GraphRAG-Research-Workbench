@@ -3,7 +3,6 @@ from __future__ import annotations
 import hashlib
 import logging
 import uuid
-from datetime import datetime, timezone
 
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
@@ -72,8 +71,7 @@ async def _create_batch_with_retry(
         config_snapshot_id=snapshot.id,
         config_version=kb.current_config_version,
         is_bootstrap=not has_bootstrap,
-        status=IngestionBatchStatus.PROCESSING,
-        started_at=datetime.now(timezone.utc),
+        status=IngestionBatchStatus.QUEUED,
         requested_by=requested_by,
         total_docs=len(prepared_entries),
     )
@@ -94,7 +92,7 @@ async def _create_batch_with_retry(
             source_ref=str(material_id),
             title=prepared.title,
             fingerprint=prepared.fingerprint,
-            status=IngestionDocStatus.PROCESSING,
+            status=IngestionDocStatus.QUEUED,
             retry_count=0,
             retryable=True,
             context_failed_chunks=None,

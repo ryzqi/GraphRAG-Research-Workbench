@@ -81,7 +81,8 @@ class BootstrapSubmissionUploadProgress(BaseModel):
 
 
 class BootstrapSubmissionCreateResponse(BaseModel):
-    job_id: uuid.UUID
+    job_id: uuid.UUID | None = None
+    batch_id: uuid.UUID | None = None
     kb_id: uuid.UUID
     status: BootstrapSubmissionStatus
     upload_targets: list[BootstrapUploadTarget] = Field(default_factory=list)
@@ -101,9 +102,10 @@ class BootstrapSubmissionFinalizeResponse(BaseModel):
 
 class BootstrapCreateKnowledgeBaseResponse(BaseModel):
     kb_id: uuid.UUID
-    job_id: uuid.UUID
+    job_id: uuid.UUID | None = None
+    batch_id: uuid.UUID | None = None
     status: BootstrapSubmissionStatus
-    monitor_url: str
+    monitor_url: str | None = None
 
 
 class BootstrapUploadSessionResponse(BaseModel):

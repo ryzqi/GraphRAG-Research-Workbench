@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from functools import partial
 from time import monotonic
 from typing import Any, AsyncIterator
@@ -20,6 +20,10 @@ from app.models.ingestion_batch import (
     IngestionBatchDoc,
     IngestionBatchStatus,
     IngestionDocStatus,
+)
+from app.models.ingestion_task_outbox import (
+    IngestionTaskOutbox,
+    IngestionTaskOutboxStatus,
 )
 from app.models.knowledge_base import KnowledgeBase
 from app.schemas.ingestion_batches import (
@@ -75,7 +79,6 @@ _INSTANCE_HELPERS: dict[str, Any] = {
     '_recalculate_batch': ingestion_status._recalculate_batch,
     '_apply_readiness': ingestion_status._apply_readiness,
     '_append_event': ingestion_status._append_event,
-    '_get_event_count': ingestion_status._get_event_count,
 }
 
 
@@ -196,7 +199,11 @@ class IngestionBatchService:
         poll_interval: float = 1.0,
         heartbeat_interval: float = 10.0,
     ) -> AsyncIterator[tuple[str, dict[str, Any]]]:
-        terminal_statuses = {IngestionBatchStatus.COMPLETED}
+        terminal_statuses = {
+            IngestionBatchStatus.COMPLETED,
+            IngestionBatchStatus.FAILED,
+            IngestionBatchStatus.CANCELED,
+        }
 
         batch = await self._get_batch_or_raise(
             batch_id=batch_id,
@@ -212,7 +219,6 @@ class IngestionBatchService:
             return
 
         last_snapshot_key = self._batch_snapshot_key(batch)
-        last_event_count = await self._get_event_count(batch_id=batch_id)
         last_emit_at = monotonic()
 
         try:
@@ -227,10 +233,7 @@ class IngestionBatchService:
                     mode='json'
                 )
                 snapshot_key = self._batch_snapshot_key(batch)
-                event_count = await self._get_event_count(batch_id=batch_id)
-                changed = (
-                    snapshot_key != last_snapshot_key or event_count != last_event_count
-                )
+                changed = snapshot_key != last_snapshot_key
 
                 if changed:
                     if batch.status in terminal_statuses:
@@ -238,7 +241,6 @@ class IngestionBatchService:
                         return
                     yield 'update', payload
                     last_snapshot_key = snapshot_key
-                    last_event_count = event_count
                     last_emit_at = monotonic()
                     continue
 
@@ -291,7 +293,12 @@ class IngestionBatchService:
             select(IngestionBatch)
             .where(
                 IngestionBatch.kb_id == kb_id,
-                IngestionBatch.status == IngestionBatchStatus.PROCESSING,
+                IngestionBatch.status.in_(
+                    [
+                        IngestionBatchStatus.QUEUED,
+                        IngestionBatchStatus.PROCESSING,
+                    ]
+                ),
             )
             .order_by(IngestionBatch.created_at.desc(), IngestionBatch.id.desc())
             .limit(1)
@@ -320,7 +327,7 @@ class IngestionBatchService:
 
             await self._set_doc_status(
                 doc,
-                IngestionDocStatus.PROCESSING,
+                IngestionDocStatus.QUEUED,
                 reason='manual_retry',
             )
             doc.retryable = True
@@ -354,7 +361,10 @@ class IngestionBatchService:
 
     async def cancel_batch(self, *, batch_id: uuid.UUID) -> IngestionBatchCancelResponse:
         batch = await self._get_batch_or_raise(batch_id=batch_id, for_update=True)
-        if batch.status != IngestionBatchStatus.PROCESSING:
+        if batch.status not in {
+            IngestionBatchStatus.QUEUED,
+            IngestionBatchStatus.PROCESSING,
+        }:
             raise ingestion_error(
                 'BATCH_STATUS_CONFLICT',
                 details={'status': batch.status.value},
@@ -362,14 +372,17 @@ class IngestionBatchService:
 
         canceled_docs = 0
         for doc in list(batch.docs):
-            if doc.status != IngestionDocStatus.PROCESSING:
+            if doc.status not in {
+                IngestionDocStatus.QUEUED,
+                IngestionDocStatus.PROCESSING,
+            }:
                 continue
             doc.retryable = False
             doc.error_code = DOC_CANCELED_ERROR_CODE
             doc.error_message = '批次已取消'
             await self._set_doc_status(
                 doc,
-                IngestionDocStatus.COMPLETED,
+                IngestionDocStatus.CANCELED,
                 reason='batch_cancel',
             )
             canceled_docs += 1
@@ -397,6 +410,29 @@ class IngestionBatchService:
         result = await self._db.execute(stmt)
         return result.scalar_one_or_none()
 
+    async def get_doc_outbox(
+        self,
+        *,
+        doc_id: uuid.UUID,
+        for_update: bool = False,
+    ) -> IngestionTaskOutbox | None:
+        stmt = (
+            select(IngestionTaskOutbox)
+            .where(
+                IngestionTaskOutbox.doc_id == doc_id,
+                IngestionTaskOutbox.task_name == INGESTION_DOC_TASK_NAME,
+            )
+            .order_by(
+                IngestionTaskOutbox.created_at.desc(),
+                IngestionTaskOutbox.id.desc(),
+            )
+            .limit(1)
+        )
+        if for_update:
+            stmt = stmt.with_for_update()
+        result = await self._db.execute(stmt)
+        return result.scalar_one_or_none()
+
     async def mark_doc_running(self, *, doc: IngestionBatchDoc) -> None:
         if doc.retry_count >= MAX_DOC_ATTEMPTS:
             raise ingestion_error(
@@ -404,9 +440,10 @@ class IngestionBatchService:
                 details={'doc_id': str(doc.id), 'retry_count': doc.retry_count},
             )
 
-        if doc.status == IngestionDocStatus.PROCESSING:
-            pass
-        elif self._is_doc_failed(doc):
+        if doc.status in {
+            IngestionDocStatus.QUEUED,
+            IngestionDocStatus.PROCESSING,
+        }:
             pass
         else:
             raise ingestion_error(
@@ -422,6 +459,7 @@ class IngestionBatchService:
         self,
         *,
         doc: IngestionBatchDoc,
+        outbox: IngestionTaskOutbox | None = None,
         chunk_count: int,
         context_failed_chunks: list[dict] | None = None,
     ) -> None:
@@ -432,21 +470,29 @@ class IngestionBatchService:
         doc.error_message = None
         await self._set_doc_status(
             doc,
-            IngestionDocStatus.COMPLETED,
+            IngestionDocStatus.SUCCEEDED,
             reason='doc_succeeded',
         )
+        if outbox is not None:
+            outbox.status = IngestionTaskOutboxStatus.SUCCEEDED
+            outbox.next_retry_at = None
+            outbox.dispatched_at = None
+            outbox.last_error = None
 
     async def mark_doc_failed(
         self,
         *,
         doc: IngestionBatchDoc,
+        outbox: IngestionTaskOutbox | None = None,
         error_code: str,
         error_message: str,
         retryable: bool,
+        now: datetime | None = None,
     ) -> int | None:
         auto_retry_delay: int | None = None
         auto_retryable = retryable and doc.retry_count <= len(AUTO_RETRY_DELAYS)
         within_attempt_limit = doc.retry_count < MAX_DOC_ATTEMPTS
+        current_time = now or datetime.now(timezone.utc)
 
         doc.context_failed_chunks = None
         if auto_retryable and within_attempt_limit:
@@ -456,19 +502,30 @@ class IngestionBatchService:
             doc.error_message = error_message
             await self._set_doc_status(
                 doc,
-                IngestionDocStatus.PROCESSING,
+                IngestionDocStatus.QUEUED,
                 reason='auto_retry',
             )
-            auto_retry_delay = delay
+            if outbox is not None:
+                outbox.status = IngestionTaskOutboxStatus.FAILED
+                outbox.next_retry_at = current_time + timedelta(seconds=delay)
+                outbox.dispatched_at = None
+                outbox.last_error = error_code
+            else:
+                auto_retry_delay = delay
         else:
             doc.retryable = retryable and within_attempt_limit
             doc.error_code = error_code
             doc.error_message = error_message
             await self._set_doc_status(
                 doc,
-                IngestionDocStatus.COMPLETED,
+                IngestionDocStatus.FAILED,
                 reason='doc_failed',
             )
+            if outbox is not None:
+                outbox.status = IngestionTaskOutboxStatus.FAILED
+                outbox.next_retry_at = None
+                outbox.dispatched_at = None
+                outbox.last_error = error_code
 
         return auto_retry_delay
 

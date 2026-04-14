@@ -18,13 +18,19 @@ if TYPE_CHECKING:
 
 
 class IngestionBatchStatus(str, Enum):
+    QUEUED = "queued"
     PROCESSING = "processing"
     COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELED = "canceled"
 
 
 class IngestionDocStatus(str, Enum):
+    QUEUED = "queued"
     PROCESSING = "processing"
-    COMPLETED = "completed"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+    CANCELED = "canceled"
 
 
 class IngestionSourceType(str, Enum):
@@ -57,7 +63,7 @@ class IngestionBatch(Base):
     status: Mapped[IngestionBatchStatus] = mapped_column(
         enum_values(IngestionBatchStatus, name="ingestion_batch_status"),
         nullable=False,
-        default=IngestionBatchStatus.PROCESSING,
+        default=IngestionBatchStatus.QUEUED,
     )
     total_docs: Mapped[int] = mapped_column(
         sa.Integer, nullable=False, default=0, server_default=sa.text("0")
@@ -141,7 +147,7 @@ class IngestionBatchDoc(Base):
     status: Mapped[IngestionDocStatus] = mapped_column(
         enum_values(IngestionDocStatus, name="ingestion_doc_status"),
         nullable=False,
-        default=IngestionDocStatus.PROCESSING,
+        default=IngestionDocStatus.QUEUED,
     )
     error_code: Mapped[str | None] = mapped_column(sa.String(64), nullable=True)
     error_message: Mapped[str | None] = mapped_column(sa.Text, nullable=True)

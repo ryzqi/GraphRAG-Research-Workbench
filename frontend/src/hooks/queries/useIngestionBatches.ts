@@ -62,18 +62,18 @@ const KEYS = {
   latest: (kbId: string) => [...KEYS.all, 'latest', kbId || NO_ID] as const,
 };
 
-function isBatchRunning(batch: IngestionBatch | undefined): boolean {
+export function isBatchActive(batch: IngestionBatch | undefined): boolean {
   if (!batch) {
     return false;
   }
-  return batch.status === 'processing';
+  return batch.status === 'queued' || batch.status === 'processing';
 }
 
-function isBatchTerminal(batch: IngestionBatch | undefined): boolean {
+export function isBatchTerminal(batch: IngestionBatch | undefined): boolean {
   if (!batch) {
     return false;
   }
-  return batch.status === 'completed';
+  return batch.status === 'completed' || batch.status === 'failed' || batch.status === 'canceled';
 }
 
 function matchesArrayKeyPrefix(cachedKey: unknown, prefixKey: readonly unknown[]): boolean {
@@ -98,7 +98,7 @@ export function useIngestionBatch(batchId: string | undefined, options?: UseInge
     batchId ? () => getIngestionBatch(batchId) : null,
     {
       refreshInterval: (latestBatch) =>
-        isBatchRunning(latestBatch as IngestionBatch | undefined) ? refreshIntervalMs : 0,
+        isBatchActive(latestBatch as IngestionBatch | undefined) ? refreshIntervalMs : 0,
     }
   );
 }
@@ -120,8 +120,8 @@ export function useIngestionBatchLive(options: UseIngestionBatchLiveOptions): Us
   const preferredBatchId = options.batchId;
 
   const latestBatchQuery = useApiQuery(
-    kbId ? KEYS.latest(kbId) : null,
-    kbId ? () => getLatestIngestionBatch(kbId) : null,
+    kbId && !preferredBatchId ? KEYS.latest(kbId) : null,
+    kbId && !preferredBatchId ? () => getLatestIngestionBatch(kbId) : null,
     {
       skipInitialFetchIfCached: true,
     }

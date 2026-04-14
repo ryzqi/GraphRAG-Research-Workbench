@@ -144,12 +144,20 @@ export default function KnowledgeBaseCreateWizardPage() {
       setCreatedKbId(response.kb_id);
 
       if (pendingUploadFiles.length > 0) {
+        if (!response.job_id) {
+          throw new Error('缺少 bootstrap job_id，无法进入文件上传流程');
+        }
         setBootstrapPendingUploadSession(response.job_id, {
           files: pendingUploadFiles,
         });
+        router.push(`/knowledge-bases/${response.kb_id}/documents/new?job=${response.job_id}`);
+        return;
       }
 
-      router.push(`/knowledge-bases/${response.kb_id}/documents/new?job=${response.job_id}`);
+      if (!response.batch_id) {
+        throw new Error('缺少 ingestion batch_id，无法进入文档处理页');
+      }
+      router.push(`/knowledge-bases/${response.kb_id}/documents/new?batch=${response.batch_id}`);
     } catch (error) {
       setLocalError(getErrorMessage(error));
     } finally {

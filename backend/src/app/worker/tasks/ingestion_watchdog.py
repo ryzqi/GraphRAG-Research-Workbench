@@ -9,10 +9,7 @@ from sqlalchemy import select
 
 from app.core.settings import get_settings
 from app.models.ingestion_batch import IngestionBatchDoc, IngestionDocStatus
-from app.models.ingestion_task_outbox import (
-    IngestionTaskOutbox,
-    IngestionTaskOutboxStatus,
-)
+from app.models.ingestion_task_outbox import IngestionTaskOutbox
 from app.services.ingestion_batch_service import (
     INGESTION_DOC_TASK_NAME,
     IngestionBatchService,
@@ -115,6 +112,7 @@ async def _fail_stale_processing_docs(
 
                 await service.mark_doc_failed(
                     doc=doc,
+                    outbox=outbox,
                     error_code=error_code,
                     error_message=error_message,
                     retryable=False,
@@ -123,12 +121,6 @@ async def _fail_stale_processing_docs(
                     doc=doc,
                     reason="doc_timeout_watchdog",
                 )
-
-                if outbox is not None:
-                    outbox.status = IngestionTaskOutboxStatus.FAILED
-                    outbox.last_error = error_code
-                    outbox.next_retry_at = None
-                    outbox.dispatched_at = None
                 processed += 1
             await session.commit()
 
