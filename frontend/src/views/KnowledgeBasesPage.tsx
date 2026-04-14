@@ -86,7 +86,8 @@ export default function KnowledgeBasesPage() {
       return;
     }
     try {
-      await updateMutation.mutateAsync({ id: selectedKb.id, data });
+      const updated = await updateMutation.mutateAsync({ id: selectedKb.id, data });
+      setSelectedKb(updated);
       closeModal();
     } catch (err) {
       setActionError(getErrorMessage(err));
@@ -304,7 +305,17 @@ export default function KnowledgeBasesPage() {
                     {(kb.name || 'K').trim().slice(0, 1).toUpperCase()}
                   </Box>
                   <Box sx={{ minWidth: 0 }}>
-                    <Typography variant='h6' fontWeight={600} noWrap>
+                    <Typography
+                      variant='h6'
+                      fontWeight={600}
+                      sx={{
+                        display: '-webkit-box',
+                        overflow: 'hidden',
+                        WebkitBoxOrient: 'vertical',
+                        WebkitLineClamp: 2,
+                        wordBreak: 'break-word',
+                      }}
+                    >
                       {kb.name}
                     </Typography>
                     {kb.description && (

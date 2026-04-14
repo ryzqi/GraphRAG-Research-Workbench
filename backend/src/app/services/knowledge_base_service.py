@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Collection
 import uuid
 from datetime import datetime, timezone
 
@@ -155,16 +156,31 @@ class KnowledgeBaseService:
         name: str | None = None,
         description: str | None = None,
         tags: list[str] | None = None,
+        fields_to_update: Collection[str] | None = None,
     ) -> KnowledgeBase | None:
         kb = await self.get_by_id(kb_id)
         if not kb:
             return None
 
-        if name is not None:
+        submitted_fields = (
+            set(fields_to_update)
+            if fields_to_update is not None
+            else {
+                field_name
+                for field_name, value in (
+                    ("name", name),
+                    ("description", description),
+                    ("tags", tags),
+                )
+                if value is not None
+            }
+        )
+
+        if "name" in submitted_fields:
             kb.name = name
-        if description is not None:
+        if "description" in submitted_fields:
             kb.description = description
-        if tags is not None:
+        if "tags" in submitted_fields:
             kb.tags = tags
 
         await self._db.commit()

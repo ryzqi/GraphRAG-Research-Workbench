@@ -208,7 +208,8 @@ async def update_knowledge_base(
             detail={"code": "KB_NOT_FOUND", "message": "知识库不存在"},
         )
 
-    if body.name and body.name != kb.name:
+    submitted_fields = set(body.model_fields_set)
+    if "name" in submitted_fields and body.name != kb.name:
         existing = await service.get_by_name(body.name)
         if existing:
             raise HTTPException(
@@ -221,6 +222,7 @@ async def update_knowledge_base(
         name=body.name,
         description=body.description,
         tags=body.tags,
+        fields_to_update=submitted_fields,
     )
     return KnowledgeBaseRead.model_validate(kb)
 

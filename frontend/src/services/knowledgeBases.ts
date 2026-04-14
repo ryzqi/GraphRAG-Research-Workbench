@@ -111,8 +111,8 @@ export interface KnowledgeBaseCreate {
 
 export interface KnowledgeBaseUpdate {
   name?: string;
-  description?: string;
-  tags?: string[];
+  description?: string | null;
+  tags?: string[] | null;
 }
 
 export interface KnowledgeBaseIndexConfigUpdateResponse {
@@ -162,6 +162,48 @@ export function createDefaultIndexConfig(): IndexConfig {
       concurrency: 2,
     },
   };
+}
+
+export function parseKnowledgeBaseTagsInput(tagsInput: string): string[] {
+  return tagsInput
+    .split(',')
+    .map((tag) => tag.trim())
+    .filter(Boolean);
+}
+
+export function buildKnowledgeBaseUpdatePayload(input: {
+  name: string;
+  description: string;
+  tagsInput: string;
+}): KnowledgeBaseUpdate {
+  const tags = parseKnowledgeBaseTagsInput(input.tagsInput);
+  const normalizedDescription = input.description.trim();
+
+  return {
+    name: input.name.trim(),
+    description: normalizedDescription || null,
+    tags: tags.length > 0 ? tags : null,
+  };
+}
+
+export function mergeKnowledgeBaseIntoCollection(
+  current: KnowledgeBase[] | undefined,
+  updated: KnowledgeBase
+): KnowledgeBase[] | undefined {
+  if (!current) {
+    return current;
+  }
+
+  let matched = false;
+  const next = current.map((item) => {
+    if (item.id !== updated.id) {
+      return item;
+    }
+    matched = true;
+    return updated;
+  });
+
+  return matched ? next : current;
 }
 
 /**

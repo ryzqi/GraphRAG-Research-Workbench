@@ -292,6 +292,33 @@ class KnowledgeBaseUpdate(BaseModel):
     description: str | None = Field(None, max_length=500)
     tags: list[str] | None = None
 
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_optional_fields(cls, data: object) -> object:
+        if not isinstance(data, dict):
+            return data
+
+        payload = dict(data)
+
+        if "name" in payload and isinstance(payload["name"], str):
+            payload["name"] = payload["name"].strip()
+
+        if "description" in payload and isinstance(payload["description"], str):
+            normalized_description = payload["description"].strip()
+            payload["description"] = normalized_description or None
+
+        if "tags" in payload and isinstance(payload["tags"], list):
+            normalized_tags: list[str] = []
+            for tag in payload["tags"]:
+                if not isinstance(tag, str):
+                    return payload
+                normalized_tag = tag.strip()
+                if normalized_tag:
+                    normalized_tags.append(normalized_tag)
+            payload["tags"] = normalized_tags or None
+
+        return payload
+
 
 class KnowledgeBaseRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)

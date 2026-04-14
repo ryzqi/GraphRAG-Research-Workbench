@@ -1,6 +1,7 @@
 /**
  * Knowledge base hooks based on SWR
  */
+import { useSWRConfig } from 'swr';
 import {
   listKnowledgeBases,
   listSelectableKnowledgeBases,
@@ -11,6 +12,8 @@ import {
   deleteKnowledgeBase,
   archiveKnowledgeBase,
   updateKnowledgeBaseIndexConfig,
+  mergeKnowledgeBaseIntoCollection,
+  type KnowledgeBase,
   type KnowledgeBaseCreate,
   type KnowledgeBaseUpdate,
   type IndexConfig,
@@ -116,12 +119,28 @@ export function useCreateKnowledgeBase(options?: UseCreateKnowledgeBaseOptions) 
 }
 
 export function useUpdateKnowledgeBase() {
+  const { mutate } = useSWRConfig();
   return useApiMutation(
     ({ id, data }: { id: string; data: KnowledgeBaseUpdate }) =>
       updateKnowledgeBase(id, data),
     {
-      onSuccess: async (_, { id }, { invalidate }) => {
-        await invalidate([KEYS.all, KEYS.detail(id), KEYS.selectable()]);
+      onSuccess: async (updated, { id }, { invalidate, setCachedData }) => {
+        await setCachedData(KEYS.detail(id), updated);
+        await mutate<KnowledgeBase[] | undefined>(
+          KEYS.selectable(),
+          (current) => mergeKnowledgeBaseIntoCollection(current, updated),
+          { revalidate: false, populateCache: true }
+        );
+        await mutate<KnowledgeBase[] | undefined>(
+          (cachedKey) =>
+            Array.isArray(cachedKey) &&
+            cachedKey.length >= 2 &&
+            Object.is(cachedKey[0], KEYS.all[0]) &&
+            Object.is(cachedKey[1], 'list'),
+          (current) => mergeKnowledgeBaseIntoCollection(current, updated),
+          { revalidate: false, populateCache: true }
+        );
+        void invalidate([KEYS.all]);
       },
     }
   );

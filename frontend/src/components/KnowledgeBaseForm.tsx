@@ -7,7 +7,9 @@ import { Button } from './ui/Button';
 import { ErrorAlert } from './ui/ErrorAlert';
 import { getErrorMessage } from '../lib/errorHandler';
 import {
+  buildKnowledgeBaseUpdatePayload,
   createDefaultIndexConfig,
+  parseKnowledgeBaseTagsInput,
   type KnowledgeBase,
   type KnowledgeBaseCreate,
   type KnowledgeBaseUpdate,
@@ -46,10 +48,7 @@ export function KnowledgeBaseForm(props: KnowledgeBaseFormProps) {
       return;
     }
 
-    const tags = tagsInput
-      .split(',')
-      .map((t) => t.trim())
-      .filter(Boolean);
+    const tags = parseKnowledgeBaseTagsInput(tagsInput);
 
     try {
       if (props.mode === 'create') {
@@ -61,11 +60,11 @@ export function KnowledgeBaseForm(props: KnowledgeBaseFormProps) {
         };
         await props.onSubmit(payload);
       } else {
-        const payload: KnowledgeBaseUpdate = {
-          name: name.trim(),
-          description: description.trim() || undefined,
-          tags: tags.length > 0 ? tags : undefined,
-        };
+        const payload: KnowledgeBaseUpdate = buildKnowledgeBaseUpdatePayload({
+          name,
+          description,
+          tagsInput,
+        });
         await props.onSubmit(payload);
       }
     } catch (err) {
