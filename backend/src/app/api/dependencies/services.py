@@ -1,11 +1,16 @@
 from __future__ import annotations
 
-from typing import Annotated, TypeAlias, cast
+from collections.abc import AsyncIterator, Callable
+from contextlib import asynccontextmanager
+from typing import Annotated, TypeAlias, TypeVar, cast
 
 from fastapi import Depends, Request
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.bootstrap.app_resources import AppResources
 from app.api.dependencies.app_resources import AppResourcesDep
 from app.api.deps import AsyncSessionDep
+from app.db.session import create_sessionmaker
 from app.repositories.extension_repository import ExtensionRepository
 from app.repositories.queue_health_repository import QueueHealthRepository
 from app.repositories.research_session_repository import ResearchSessionRepository
@@ -22,6 +27,8 @@ from app.services.model_config_service import ModelConfigService
 from app.services.public_runtime_config_service import PublicRuntimeConfigService
 from app.services.queue_health_service import QueueHealthService
 from app.services.research_service import ResearchService, build_research_service
+
+_ServiceT = TypeVar("_ServiceT")
 
 
 def build_general_chat_service(
@@ -116,6 +123,53 @@ def build_public_runtime_config_service() -> PublicRuntimeConfigService:
 
 def build_index_rebuild_service(*, db: AsyncSessionDep) -> IndexRebuildService:
     return IndexRebuildService(db)
+
+
+@asynccontextmanager
+async def _open_service_scope(
+    *,
+    resources: AppResources,
+    factory: Callable[[AsyncSession], _ServiceT],
+) -> AsyncIterator[tuple[AsyncSession, _ServiceT]]:
+    sessionmaker = create_sessionmaker(engine=resources.engine)
+    async with sessionmaker() as db:
+        yield db, factory(db)
+
+
+@asynccontextmanager
+async def open_general_chat_service_scope(
+    *,
+    resources: AppResources,
+) -> AsyncIterator[tuple[AsyncSession, GeneralChatService]]:
+    async with _open_service_scope(
+        resources=resources,
+        factory=lambda db: build_general_chat_service(db=db, resources=resources),
+    ) as scope:
+        yield scope
+
+
+@asynccontextmanager
+async def open_kb_chat_service_scope(
+    *,
+    resources: AppResources,
+) -> AsyncIterator[tuple[AsyncSession, KbChatService]]:
+    async with _open_service_scope(
+        resources=resources,
+        factory=lambda db: build_kb_chat_service(db=db, resources=resources),
+    ) as scope:
+        yield scope
+
+
+@asynccontextmanager
+async def open_ingestion_batch_service_scope(
+    *,
+    resources: AppResources,
+) -> AsyncIterator[tuple[AsyncSession, IngestionBatchService]]:
+    async with _open_service_scope(
+        resources=resources,
+        factory=lambda db: build_ingestion_batch_service(db=db),
+    ) as scope:
+        yield scope
 
 
 GeneralChatServiceDep: TypeAlias = Annotated[

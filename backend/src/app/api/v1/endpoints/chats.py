@@ -10,14 +10,18 @@ from fastapi import APIRouter, Query, Request, Response, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy import and_, delete, func, select
 
+from app.api.dependencies.app_resources import AppResourcesDep
 from app.api.dependencies.services import (
     GeneralChatServiceDep,
     KbChatServiceDep,
     KnowledgeBaseServiceDep,
+    open_general_chat_service_scope,
+    open_kb_chat_service_scope,
 )
 from app.api.sse import SSE_HEADERS, SseHeartbeatStats, encode_sse
 
 from app.api.deps import AsyncSessionDep
+from app.bootstrap.app_resources import AppResources
 from app.core.checkpoint import CheckpointManager
 from app.core.errors import AppError, bad_request, not_found
 from app.core.settings import get_settings
@@ -48,6 +52,17 @@ router = APIRouter()
 _STREAM_HEARTBEAT_INTERVAL_SECONDS = 10.0
 
 
+def _build_stream_error(
+    code: str,
+    message: str,
+    *,
+    details: dict[str, Any] | None = None,
+) -> tuple[str, dict[str, Any]]:
+    payload: dict[str, Any] = {"code": code, "message": message}
+    if details is not None:
+        payload["details"] = details
+    return "error", payload
+
 
 def _has_pending_kb_clarification(run: AgentRun) -> bool:
     metrics = run.metrics if isinstance(run.metrics, dict) else {}
@@ -77,6 +92,163 @@ async def _prime_stream_events(
     except StopAsyncIteration:
         return _empty_stream_events()
     return _replay_stream_events(first_item, iterator)
+
+
+async def _stream_general_chat_message_events(
+    *,
+    resources: AppResources,
+    session: ChatSession,
+    user_content: str,
+    request: Request,
+    client_request_id: str | None,
+) -> AsyncIterator[tuple[str, Any]]:
+    async with open_general_chat_service_scope(resources=resources) as (_db, service):
+        async for item in service.answer_stream(
+            session=session,
+            user_content=user_content,
+            request=request,
+            client_request_id=client_request_id,
+        ):
+            yield item
+
+
+async def _stream_kb_chat_message_events(
+    *,
+    resources: AppResources,
+    session: ChatSession,
+    user_content: str,
+    request: Request,
+    heartbeat_stats: SseHeartbeatStats,
+) -> AsyncIterator[tuple[str, Any]]:
+    async with open_kb_chat_service_scope(resources=resources) as (_db, service):
+        events = await _prime_stream_events(
+            service.answer_stream(
+                session=session,
+                user_content=user_content,
+                request=request,
+                sse_heartbeat_stats=heartbeat_stats,
+            )
+        )
+        async for item in events:
+            yield item
+
+
+async def _stream_kb_chat_resume_events(
+    *,
+    resources: AppResources,
+    session_id: uuid.UUID,
+    run_id: uuid.UUID,
+    user_content: str,
+    request: Request,
+    heartbeat_stats: SseHeartbeatStats,
+) -> AsyncIterator[tuple[str, Any]]:
+    async with open_kb_chat_service_scope(resources=resources) as (stream_db, service):
+        session = await stream_db.get(ChatSession, session_id)
+        if session is None:
+            yield _build_stream_error(
+                "CHAT_SESSION_NOT_FOUND",
+                "会话不存在",
+            )
+            return
+        if session.session_type != ChatSessionType.KB_CHAT:
+            yield _build_stream_error(
+                "CHAT_NOT_KB_CHAT",
+                "仅知识库会话支持该恢复接口",
+            )
+            return
+
+        run = await stream_db.get(AgentRun, run_id)
+        if run is None or run.session_id != session.id:
+            yield _build_stream_error(
+                "CHAT_RUN_NOT_FOUND",
+                "运行记录不存在",
+            )
+            return
+        if run.run_type != AgentRunType.KB_ANSWER:
+            yield _build_stream_error(
+                "CHAT_RUN_TYPE_MISMATCH",
+                "运行记录类型不匹配",
+            )
+            return
+        if run.status != AgentRunStatus.RUNNING:
+            yield _build_stream_error(
+                "CHAT_RUN_NOT_RUNNING",
+                "运行记录已完成或已失败",
+            )
+            return
+        if not _has_pending_kb_clarification(run):
+            yield _build_stream_error(
+                "CHAT_NO_PENDING_CLARIFICATION",
+                "当前运行没有待补充澄清信息",
+            )
+            return
+
+        events = await _prime_stream_events(
+            service.answer_stream(
+                session=session,
+                user_content=user_content,
+                request=request,
+                run=run,
+                sse_heartbeat_stats=heartbeat_stats,
+            )
+        )
+        async for item in events:
+            yield item
+
+
+async def _stream_general_chat_resume_events(
+    *,
+    resources: AppResources,
+    session_id: uuid.UUID,
+    run_id: uuid.UUID,
+    approval: ToolApprovalRequest,
+    request: Request,
+) -> AsyncIterator[tuple[str, Any]]:
+    async with open_general_chat_service_scope(resources=resources) as (
+        stream_db,
+        service,
+    ):
+        session = await stream_db.get(ChatSession, session_id)
+        if session is None:
+            yield _build_stream_error(
+                "CHAT_SESSION_NOT_FOUND",
+                "会话不存在",
+            )
+            return
+        if session.session_type != ChatSessionType.GENERAL_CHAT:
+            yield _build_stream_error(
+                "CHAT_NOT_GENERAL_CHAT",
+                "仅普通代理支持恢复执行",
+            )
+            return
+
+        run = await stream_db.get(AgentRun, run_id)
+        if run is None or run.session_id != session.id:
+            yield _build_stream_error(
+                "CHAT_RUN_NOT_FOUND",
+                "运行记录不存在",
+            )
+            return
+        if run.run_type != AgentRunType.GENERAL_ANSWER:
+            yield _build_stream_error(
+                "CHAT_RUN_TYPE_MISMATCH",
+                "运行记录类型不匹配",
+            )
+            return
+        if run.status != AgentRunStatus.RUNNING:
+            yield _build_stream_error(
+                "CHAT_RUN_NOT_RUNNING",
+                "运行记录已完成或已失败",
+            )
+            return
+
+        async for item in service.resume_after_tool_approval_stream(
+            session=session,
+            run=run,
+            approval=approval,
+            request=request,
+        ):
+            yield item
 
 
 @router.get("/kb-graph-schema", response_model=KbGraphSchemaResponse)
@@ -369,8 +541,7 @@ async def create_chat_message(
 async def create_chat_message_stream(
     db: AsyncSessionDep,
     request: Request,
-    kb_chat_service: KbChatServiceDep,
-    general_chat_service: GeneralChatServiceDep,
+    resources: AppResourcesDep,
     session_id: uuid.UUID,
     body: ChatMessageCreate,
 ):
@@ -381,17 +552,17 @@ async def create_chat_message_stream(
 
     if session.session_type == ChatSessionType.KB_CHAT:
         heartbeat_stats = SseHeartbeatStats()
-        events = await _prime_stream_events(
-            kb_chat_service.answer_stream(
-                session=session,
-                user_content=body.content,
-                request=request,
-                sse_heartbeat_stats=heartbeat_stats,
-            )
+        events = _stream_kb_chat_message_events(
+            resources=resources,
+            session=session,
+            user_content=body.content,
+            request=request,
+            heartbeat_stats=heartbeat_stats,
         )
     elif session.session_type == ChatSessionType.GENERAL_CHAT:
         heartbeat_stats = None
-        events = general_chat_service.answer_stream(
+        events = _stream_general_chat_message_events(
+            resources=resources,
             session=session,
             user_content=body.content,
             request=request,
@@ -473,7 +644,7 @@ async def resume_general_chat(
 async def resume_kb_chat_after_clarification_stream(
     db: AsyncSessionDep,
     request: Request,
-    service: KbChatServiceDep,
+    resources: AppResourcesDep,
     session_id: uuid.UUID,
     run_id: uuid.UUID,
     body: ClarificationResumeRequest,
@@ -499,14 +670,13 @@ async def resume_kb_chat_after_clarification_stream(
         )
 
     heartbeat_stats = SseHeartbeatStats()
-    events = await _prime_stream_events(
-        service.answer_stream(
-            session=session,
-            user_content=body.content,
-            request=request,
-            run=run,
-            sse_heartbeat_stats=heartbeat_stats,
-        )
+    events = _stream_kb_chat_resume_events(
+        resources=resources,
+        session_id=session_id,
+        run_id=run_id,
+        user_content=body.content,
+        request=request,
+        heartbeat_stats=heartbeat_stats,
     )
 
     return StreamingResponse(
@@ -525,7 +695,7 @@ async def resume_kb_chat_after_clarification_stream(
 async def resume_general_chat_stream(
     db: AsyncSessionDep,
     request: Request,
-    service: GeneralChatServiceDep,
+    resources: AppResourcesDep,
     session_id: uuid.UUID,
     run_id: uuid.UUID,
     body: ToolApprovalRequest,
@@ -547,9 +717,10 @@ async def resume_general_chat_stream(
     if run.status != AgentRunStatus.RUNNING:
         raise bad_request(code="CHAT_RUN_NOT_RUNNING", message="运行记录已完成或已失败")
 
-    events = service.resume_after_tool_approval_stream(
-        session=session,
-        run=run,
+    events = _stream_general_chat_resume_events(
+        resources=resources,
+        session_id=session_id,
+        run_id=run_id,
         approval=body,
         request=request,
     )

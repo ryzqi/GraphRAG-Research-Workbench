@@ -7,8 +7,13 @@ import uuid
 from fastapi import APIRouter, Query, Request, Response, status
 from fastapi.responses import StreamingResponse
 
-from app.api.dependencies.services import IngestionBatchServiceDep
+from app.api.dependencies.app_resources import AppResourcesDep
+from app.api.dependencies.services import (
+    IngestionBatchServiceDep,
+    open_ingestion_batch_service_scope,
+)
 from app.api.sse import SSE_HEADERS, encode_sse
+from app.bootstrap.app_resources import AppResources
 from app.schemas.ingestion_batches import (
     IngestionBatchCancelResponse,
     IngestionBatchCreateRequest,
@@ -18,6 +23,23 @@ from app.schemas.ingestion_batches import (
 )
 
 router = APIRouter()
+
+
+async def _stream_ingestion_batch_events(
+    *,
+    resources: AppResources,
+    batch_id: uuid.UUID,
+    request: Request,
+):
+    async with open_ingestion_batch_service_scope(resources=resources) as (
+        _db,
+        service,
+    ):
+        yield "meta", {"batch_id": str(batch_id), "type": "ingestion_batch"}
+        async for event, payload in service.stream_batch_updates(batch_id=batch_id):
+            if await request.is_disconnected():
+                return
+            yield event, payload
 
 
 @router.post(
@@ -68,20 +90,20 @@ async def get_ingestion_batch(
 @router.get("/{batch_id}/stream")
 async def stream_ingestion_batch(
     service: IngestionBatchServiceDep,
+    resources: AppResourcesDep,
     batch_id: uuid.UUID,
     request: Request,
 ):
     await service.get_batch(batch_id=batch_id)
 
-    async def _events():
-        yield "meta", {"batch_id": str(batch_id), "type": "ingestion_batch"}
-        async for event, payload in service.stream_batch_updates(batch_id=batch_id):
-            if await request.is_disconnected():
-                return
-            yield event, payload
-
     return StreamingResponse(
-        encode_sse(_events()),
+        encode_sse(
+            _stream_ingestion_batch_events(
+                resources=resources,
+                batch_id=batch_id,
+                request=request,
+            )
+        ),
         media_type="text/event-stream",
         headers=SSE_HEADERS,
     )

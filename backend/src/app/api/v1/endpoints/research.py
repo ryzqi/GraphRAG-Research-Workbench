@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 
 from fastapi import APIRouter, Request, status
 from fastapi.responses import StreamingResponse
@@ -14,26 +14,22 @@ from app.api.sse import SSE_HEADERS, encode_sse
 from app.schemas.research import (
     ResearchArtifactsResponse,
     ResearchClarificationSubmitRequest,
+    ResearchEventEnvelope,
     ResearchPlanUpdateRequest,
     ResearchSessionAccepted,
     ResearchSessionCreateRequest,
     ResearchStopRequest,
     ResearchStreamResumeParams,
 )
-from app.services.research_service import ResearchService
 
 router = APIRouter()
 
 
 async def _emit_research_events(
     *,
-    service: ResearchService,
-    session,
-    after_event_id: str | None,
+    envelopes: Sequence[ResearchEventEnvelope],
 ) -> AsyncIterator[tuple[str, object]]:
-    for envelope in service.list_event_envelopes(
-        session, after_event_id=after_event_id
-    ):
+    for envelope in envelopes:
         yield "research.event", envelope.model_dump(mode="json")
 
 
@@ -147,11 +143,13 @@ async def stream_research_session(
     after_event_id = resume_params.effective_after_event_id(
         last_event_id=request.headers.get("Last-Event-ID")
     )
+    envelopes = service.list_event_envelopes(
+        session,
+        after_event_id=after_event_id,
+    )
     stream = encode_sse(
         _emit_research_events(
-            service=service,
-            session=session,
-            after_event_id=after_event_id,
+            envelopes=envelopes,
         )
     )
     return StreamingResponse(
