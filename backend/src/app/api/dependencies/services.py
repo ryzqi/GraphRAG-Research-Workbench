@@ -56,6 +56,7 @@ def build_kb_chat_service(
         resources.embedding_client,
         reranker=resources.rerank_client,
         redis=resources.redis,
+        semantic_cache_service=resources.semantic_cache_service,
     )
 
 

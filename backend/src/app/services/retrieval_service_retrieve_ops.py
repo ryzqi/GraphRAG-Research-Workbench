@@ -102,6 +102,21 @@ class RetrievalRetrieveMixin(RetrievalServiceProtocol):
         except asyncio.TimeoutError:
             return _timeout_return()
         kb_fingerprint = self._build_kb_fingerprint(kb_configs)
+        try:
+            timeout_value = self._effective_timeout(
+                deadline=deadline, per_call_timeout=None
+            )
+            kb_content_version = await self._run_with_timeout(
+                self._build_kb_content_version(kb_ids), timeout_value
+            )
+        except asyncio.TimeoutError:
+            return _timeout_return()
+        except Exception as exc:  # pragma: no cover
+            logger.warning(
+                "Retrieval content version build failed; fallback to unknown version.",
+                extra={"error": str(exc)},
+            )
+            kb_content_version = "kb_unknown"
 
         remaining = self._remaining_seconds(deadline)
         if remaining is not None and remaining <= 0:
@@ -126,7 +141,13 @@ class RetrievalRetrieveMixin(RetrievalServiceProtocol):
             runtime_overrides=runtime_overrides,
             kb_fingerprint=kb_fingerprint,
         )
-        cache_key = self._cache_key(effective_query, kb_ids, top_k, strategy)
+        cache_key = self._cache_key(
+            effective_query,
+            kb_ids,
+            top_k,
+            strategy,
+            kb_content_version,
+        )
         if self._redis and self._settings.retrieval_cache_enabled:
             timeout_value = self._effective_timeout(
                 deadline=deadline, per_call_timeout=None

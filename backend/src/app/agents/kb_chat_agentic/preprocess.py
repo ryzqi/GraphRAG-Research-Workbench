@@ -25,6 +25,7 @@ from app.agents.kb_chat_memory import (
     render_kb_chat_memory_snippet,
     resolve_kb_chat_store_user_id,
 )
+from app.core.memory_store import StoreManager
 from app.core.settings import Settings
 from app.integrations.chat_model_factory import create_chat_model
 from app.services.query_rewrite_service import (
@@ -139,6 +140,23 @@ def _complexity_cache_key(
     raw = json.dumps(payload, ensure_ascii=False, sort_keys=True)
     digest = hashlib.sha1(raw.encode("utf-8")).hexdigest()
     return f"{_COMPLEXITY_CACHE_KEY_PREFIX}:{digest}"
+
+
+def _complexity_cache_store_status(
+    runtime: Runtime[Any] | None,
+) -> str | None:
+    if runtime is None or runtime.store is None:
+        return None
+    try:
+        status = StoreManager.status()
+    except Exception:
+        return None
+    if not bool(status.get("degraded")):
+        return None
+    effective_backend = str(status.get("effective_backend") or "").strip().lower()
+    if effective_backend != "memory":
+        return None
+    return "degraded_inmemory_store"
 
 
 def _wrap_cache_with_ttl(
@@ -1610,6 +1628,7 @@ async def _classify_query_strategy(
     has_multi_target = bool(normalized_meta.get("has_multi_target"))
     is_comparison = bool(normalized_meta.get("is_comparison"))
     cache_enabled = bool(getattr(settings, "kb_chat_complexity_cache_enabled", True))
+    degraded_cache_status = _complexity_cache_store_status(runtime)
     cache_key = _complexity_cache_key(
         query=query,
         recall_risk=recall_risk,
@@ -1622,6 +1641,8 @@ async def _classify_query_strategy(
         if runtime is None or runtime.store is None:
             cache_status = "no_store"
         else:
+            if degraded_cache_status is not None:
+                cache_status = degraded_cache_status
             try:
                 cached = await _read_complexity_cache(
                     state=state,
@@ -1664,8 +1685,9 @@ async def _classify_query_strategy(
                     if isinstance(flag, str) and flag.strip()
                 ][:8]
                 cache_hit = True
-                cache_status = "hit"
-            elif cache_status not in {"read_error"}:
+                if degraded_cache_status is None:
+                    cache_status = "hit"
+            elif cache_status not in {"read_error", "degraded_inmemory_store"}:
                 cache_status = "miss"
 
     if not cache_hit:

@@ -12,6 +12,7 @@ from app.integrations.llm_client import LLMClient
 from app.integrations.milvus_client import MilvusClient
 from app.integrations.redis_client import RedisClient
 from app.integrations.rerank_client import RerankClient
+from app.services.semantic_cache.service import KbChatSemanticCacheService
 
 ResearchServiceFactory = Callable[..., object]
 
@@ -26,6 +27,7 @@ class AppResources:
     embedding_client: EmbeddingClient
     rerank_client: RerankClient
     redis: RedisClient
+    semantic_cache_service: KbChatSemanticCacheService
     research_service_factory: ResearchServiceFactory | None = None
 
 

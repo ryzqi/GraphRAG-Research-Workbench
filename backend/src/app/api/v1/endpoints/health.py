@@ -10,8 +10,10 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from app.api.dependencies.app_resources import AppResourcesDep
+from app.core.checkpoint import CheckpointManager
 from app.core.errors import build_error_response
 from app.core.logging import get_request_id
+from app.core.memory_store import StoreManager
 from app.integrations.milvus_client import MilvusClient
 from app.integrations.object_storage import ObjectStorage
 from app.integrations.redis_client import RedisClient
@@ -65,6 +67,16 @@ async def _check_minio() -> None:
     await asyncio.to_thread(_check)
 
 
+def _status_dependency(payload: dict[str, object]) -> dict[str, object]:
+    status = str(payload.get("status") or "unknown")
+    ok = status in {"ready", "disabled"}
+    result = dict(payload)
+    result["ok"] = ok
+    result["latency_ms"] = 0
+    result["error"] = None if ok else payload.get("reason")
+    return result
+
+
 @router.get("/ready")
 async def ready(resources: AppResourcesDep) -> JSONResponse:
     """Readiness：短超时探测关键依赖，可降级返回。"""
@@ -81,6 +93,19 @@ async def ready(resources: AppResourcesDep) -> JSONResponse:
     }
 
     results = {name: await task for name, task in tasks.items()}
+    results["checkpointer"] = _status_dependency(CheckpointManager.status())
+    results["memory_store"] = _status_dependency(StoreManager.status())
+    semantic_cache_service = getattr(resources, "semantic_cache_service", None)
+    if semantic_cache_service is not None and hasattr(semantic_cache_service, "status"):
+        semantic_cache_status = semantic_cache_service.status()
+    else:
+        semantic_cache_status = {
+            "status": "unknown",
+            "enabled": None,
+            "backend": "redisvl",
+            "reason": "semantic_cache_service_unavailable",
+        }
+    results["semantic_cache"] = _status_dependency(semantic_cache_status)
     postgres_ok = bool(results.get("postgres", {}).get("ok"))
 
     if not postgres_ok:

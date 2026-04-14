@@ -23,6 +23,7 @@ from app.integrations.model_runtime_config import ModelRuntimeConfigManager
 from app.integrations.milvus_client import create_milvus_client
 from app.integrations.redis_client import close_redis_client, create_redis_client
 from app.integrations.rerank_client import RerankClient
+from app.services.semantic_cache.service import KbChatSemanticCacheService
 from app.services.agent_run_recovery import (
     recover_stale_interactive_agent_runs_on_startup,
 )
@@ -55,6 +56,10 @@ async def _initialize_app_state(app: FastAPI, settings: Settings) -> None:
         http_client=embedding_http_client,
         settings=settings,
     )
+    semantic_cache_service = KbChatSemanticCacheService(
+        embedding=embedding_client,
+        settings=settings,
+    )
     rerank_client = RerankClient(
         settings=settings,
         http_client=http_client,
@@ -70,6 +75,7 @@ async def _initialize_app_state(app: FastAPI, settings: Settings) -> None:
             embedding_client=embedding_client,
             rerank_client=rerank_client,
             redis=create_redis_client(settings),
+            semantic_cache_service=semantic_cache_service,
         ),
     )
 

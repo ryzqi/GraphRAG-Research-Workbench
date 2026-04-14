@@ -20,6 +20,7 @@ class CheckpointManager:
     _checkpointer: AsyncPostgresSaver | None = None
     _checkpointer_ctx: AbstractAsyncContextManager[AsyncPostgresSaver] | None = None
     _initialized: bool = False
+    _last_error: str | None = None
 
     @staticmethod
     def _string_key_dict(value: object) -> dict[str, Any]:
@@ -41,6 +42,7 @@ class CheckpointManager:
         cls._checkpointer_ctx = checkpointer_ctx
         cls._checkpointer = await checkpointer_ctx.__aenter__()
         await cls._checkpointer.setup()
+        cls._last_error = None
         cls._initialized = True
 
     @classmethod
@@ -51,6 +53,7 @@ class CheckpointManager:
         cls._checkpointer_ctx = None
         cls._checkpointer = None
         cls._initialized = False
+        cls._last_error = None
 
     @classmethod
     def get_checkpointer(cls) -> AsyncPostgresSaver:
@@ -58,6 +61,16 @@ class CheckpointManager:
         if not cls._initialized or cls._checkpointer is None:
             raise RuntimeError("CheckpointManager 未初始化")
         return cls._checkpointer
+
+    @classmethod
+    def status(cls) -> dict[str, object]:
+        ready = cls._initialized and cls._checkpointer is not None
+        return {
+            "status": "ready" if ready else "error",
+            "initialized": cls._initialized,
+            "backend": "postgres",
+            "reason": cls._last_error,
+        }
 
     @classmethod
     def make_config(cls, thread_id: str) -> RunnableConfig:

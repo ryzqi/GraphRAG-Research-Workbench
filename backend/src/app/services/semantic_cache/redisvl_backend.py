@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timezone
+import time
+from datetime import datetime, timedelta, timezone
 from typing import Any, Protocol
 
 from redisvl.extensions.cache.llm import SemanticCache
@@ -38,6 +39,8 @@ class SemanticCacheBackend(Protocol):
 
     async def store(self, request: SemanticCacheStoreRequest) -> None: ...
 
+    def status(self) -> dict[str, Any]: ...
+
 
 class _ProvidedVectorizer(BaseVectorizer):
     def __init__(self, dims: int, dtype: str = "float32") -> None:
@@ -68,6 +71,8 @@ class RedisVLSemanticCacheBackend:
         self._caches: dict[int, SemanticCache] = {}
         self._lock = asyncio.Lock()
         self._unavailable_reason: str | None = None
+        self._last_failure_at: datetime | None = None
+        self._last_failure_monotonic: float | None = None
 
     async def lookup(
         self, request: SemanticCacheLookupRequest
@@ -189,25 +194,82 @@ class RedisVLSemanticCacheBackend:
         except Exception as exc:
             logger.warning("RedisVL semantic cache 写入失败: %s", exc)
 
+    def status(self) -> dict[str, Any]:
+        cooldown_seconds = self._recovery_cooldown_seconds()
+        next_retry_at = None
+        retry_allowed = True
+        if self._last_failure_at is not None:
+            next_retry_dt = self._last_failure_at + timedelta(seconds=cooldown_seconds)
+            next_retry_at = next_retry_dt.isoformat()
+            retry_allowed = self._retry_allowed()
+        status = "degraded" if self._unavailable_reason is not None else "ready"
+        return {
+            "status": status,
+            "backend": "redisvl",
+            "enabled": True,
+            "available": self._unavailable_reason is None,
+            "reason": self._unavailable_reason,
+            "index_name": getattr(
+                self._settings,
+                "kb_chat_semantic_cache_index_name",
+                "kb_chat_semantic_cache_v4",
+            ),
+            "initialized": bool(self._caches),
+            "cache_dimensions": sorted(self._caches.keys()),
+            "last_failure_at": (
+                self._last_failure_at.isoformat()
+                if self._last_failure_at is not None
+                else None
+            ),
+            "next_retry_at": next_retry_at,
+            "retry_allowed": retry_allowed,
+        }
+
     async def _ensure_cache(self, dims: int) -> SemanticCache | None:
         if dims in self._caches:
             return self._caches[dims]
-        if self._unavailable_reason is not None:
+        if not self._retry_allowed():
             return None
 
         async with self._lock:
             if dims in self._caches:
                 return self._caches[dims]
-            if self._unavailable_reason is not None:
+            if not self._retry_allowed():
                 return None
             try:
                 cache = await asyncio.to_thread(self._build_cache, dims)
             except Exception as exc:
                 self._unavailable_reason = str(exc)
+                self._last_failure_at = datetime.now(timezone.utc)
+                self._last_failure_monotonic = time.monotonic()
                 logger.warning("RedisVL semantic cache 初始化失败: %s", exc)
                 return None
+            self._unavailable_reason = None
+            self._last_failure_at = None
+            self._last_failure_monotonic = None
             self._caches[dims] = cache
             return cache
+
+    def _recovery_cooldown_seconds(self) -> float:
+        raw = getattr(
+            self._settings,
+            "kb_chat_semantic_cache_recovery_cooldown_seconds",
+            30,
+        )
+        try:
+            return max(0.0, float(raw))
+        except (TypeError, ValueError):
+            return 30.0
+
+    def _retry_allowed(self) -> bool:
+        if self._unavailable_reason is None:
+            return True
+        cooldown_seconds = self._recovery_cooldown_seconds()
+        if cooldown_seconds <= 0:
+            return True
+        if self._last_failure_monotonic is None:
+            return True
+        return (time.monotonic() - self._last_failure_monotonic) >= cooldown_seconds
 
     def _build_cache(self, dims: int) -> SemanticCache:
         return SemanticCache(

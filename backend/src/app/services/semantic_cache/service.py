@@ -61,6 +61,18 @@ class KbChatSemanticCacheService:
             ),
         )
 
+    def status(self) -> dict[str, Any]:
+        if not self.enabled():
+            return {
+                "status": "disabled",
+                "backend": "redisvl",
+                "enabled": False,
+                "reason": None,
+            }
+        backend_status = self._backend.status()
+        backend_status.setdefault("enabled", True)
+        return backend_status
+
     async def lookup(
         self,
         *,

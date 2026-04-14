@@ -53,6 +53,7 @@ def test_settings_exposes_typed_deploy_groups_without_breaking_flat_access() -> 
         SEARXNG_BASE_URL="https://searx.internal",
         EMBEDDING_API_KEY="embed-key",
         MODEL_CONFIG_KMS_KEY="kms-key",
+        RETRIEVAL_RERANK_MAX_DOCUMENTS_PER_REQUEST=None,
     )
 
     assert settings.app_env is AppEnv.TEST
@@ -96,6 +97,26 @@ def test_settings_preserves_celery_worker_runtime_contract() -> None:
     assert conf["worker_send_task_events"] is False
     assert conf["task_send_sent_event"] is False
     assert conf["worker_prefetch_multiplier"] == 1
+
+
+def test_settings_exposes_semantic_cache_recovery_cooldown() -> None:
+    settings = Settings(
+        _env_file=None,
+        APP_ENV="test",
+        DATABASE_URL="postgresql+asyncpg://svc:strong-password@db.internal:5432/app",
+        REDIS_URL="redis://cache.internal:6379/0",
+        CELERY_BROKER_URL="redis://cache.internal:6379/0",
+        CELERY_RESULT_BACKEND="redis://cache.internal:6379/1",
+        MINIO_ENDPOINT="minio.internal:9000",
+        MINIO_ACCESS_KEY="storage-access-key",
+        MINIO_SECRET_KEY="storage-secret-key",
+        SEARXNG_BASE_URL="https://searx.internal",
+        EMBEDDING_API_KEY="embed-key",
+        MODEL_CONFIG_KMS_KEY="kms-key",
+        KB_CHAT_SEMANTIC_CACHE_RECOVERY_COOLDOWN_SECONDS=15,
+    )
+
+    assert settings.kb_chat_semantic_cache_recovery_cooldown_seconds == 15
 
 
 def test_validate_startup_settings_rejects_prod_loopback_and_placeholder_values() -> None:

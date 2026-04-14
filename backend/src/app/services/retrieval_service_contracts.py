@@ -138,6 +138,7 @@ class RetrievalServiceProtocol(Protocol):
         kb_ids: list[uuid.UUID],
         top_k: int,
         strategy: dict[str, object],
+        kb_content_version: str,
     ) -> str: ...
 
     def _strategy_fingerprint(
@@ -164,6 +165,8 @@ class RetrievalServiceProtocol(Protocol):
     async def _load_kb_index_configs(self, kb_ids: list[uuid.UUID]) -> Any: ...
 
     def _build_kb_fingerprint(self, configs: Any) -> dict[str, dict[str, object]]: ...
+
+    async def _build_kb_content_version(self, kb_ids: list[uuid.UUID]) -> str: ...
 
     def _split_kb_ids_by_strategy(
         self,

@@ -55,6 +55,7 @@ class KbChatService:
         embedding: EmbeddingClient,
         reranker: RerankClient | None = None,
         redis: RedisClient | None = None,
+        semantic_cache_service: KbChatSemanticCacheService | None = None,
     ) -> None:
         self._db = db
         self._llm = llm
@@ -66,7 +67,7 @@ class KbChatService:
         self._context_builder = ContextBuilder(self._settings)
         self._summary_service = ConversationSummaryService(db, settings=self._settings)
         self._prompts = get_prompt_loader()
-        self._semantic_cache_service = KbChatSemanticCacheService(
+        self._semantic_cache_service = semantic_cache_service or KbChatSemanticCacheService(
             embedding=embedding,
             settings=self._settings,
         )

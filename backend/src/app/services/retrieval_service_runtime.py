@@ -33,12 +33,19 @@ logger = logging.getLogger(__name__)
 
 class RetrievalRuntimeMixin(RetrievalServiceProtocol):
     def _cache_key(
-        self, query: str, kb_ids: list[uuid.UUID], top_k: int, strategy: dict
+        self,
+        query: str,
+        kb_ids: list[uuid.UUID],
+        top_k: int,
+        strategy: dict,
+        kb_content_version: str,
     ) -> str:
         """构建检索缓存键。"""
         kb_str = ",".join(sorted(str(k) for k in kb_ids))
         fingerprint = json.dumps(strategy, sort_keys=True, ensure_ascii=False)
-        raw = f"retrieval:{query}:{kb_str}:{top_k}:{fingerprint}"
+        raw = (
+            f"retrieval:{query}:{kb_str}:{top_k}:{kb_content_version}:{fingerprint}"
+        )
         return f"retrieval:{hashlib.md5(raw.encode()).hexdigest()}"
 
     def _embedding_cache_key(self, query: str) -> str:

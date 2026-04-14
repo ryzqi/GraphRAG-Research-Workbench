@@ -193,6 +193,9 @@ class Settings(DeploySettings):
     kb_chat_semantic_cache_ttl_seconds: int = Field(
         24 * 60 * 60, ge=0, alias="KB_CHAT_SEMANTIC_CACHE_TTL_SECONDS"
     )
+    kb_chat_semantic_cache_recovery_cooldown_seconds: int = Field(
+        30, ge=0, alias="KB_CHAT_SEMANTIC_CACHE_RECOVERY_COOLDOWN_SECONDS"
+    )
     kb_chat_parallel_retrieval_min_queries: int = Field(
         2, ge=1, le=8, alias="KB_CHAT_PARALLEL_RETRIEVAL_MIN_QUERIES"
     )

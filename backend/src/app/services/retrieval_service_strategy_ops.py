@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import logging
 import time
 import uuid
+from datetime import datetime
 
 from sqlalchemy import select
 
@@ -21,6 +24,34 @@ logger = logging.getLogger(__name__)
 
 
 class RetrievalStrategyMixin(RetrievalServiceProtocol):
+    async def _build_kb_content_version(self, kb_ids: list[uuid.UUID]) -> str:
+        if not kb_ids or self._db is None:
+            return "kb_none"
+
+        stmt = (
+            select(KnowledgeBase.id, KnowledgeBase.updated_at)
+            .where(KnowledgeBase.id.in_(kb_ids))
+            .order_by(KnowledgeBase.id.asc())
+        )
+        rows = await self._db_execute(stmt)
+        updated_at_by_id = {str(kb_id): updated_at for kb_id, updated_at in rows.all()}
+        payload: list[dict[str, str]] = []
+        for kb_id in sorted(kb_ids, key=str):
+            updated_at = updated_at_by_id.get(str(kb_id))
+            updated_at_text = ""
+            if isinstance(updated_at, datetime):
+                updated_at_text = updated_at.isoformat()
+            elif updated_at is not None:
+                updated_at_text = str(updated_at)
+            payload.append(
+                {
+                    "id": str(kb_id),
+                    "updated_at": updated_at_text,
+                }
+            )
+        raw = json.dumps(payload, ensure_ascii=False, sort_keys=True)
+        return hashlib.sha1(raw.encode("utf-8")).hexdigest()
+
     async def _maybe_rerank(
         self,
         query: str,
