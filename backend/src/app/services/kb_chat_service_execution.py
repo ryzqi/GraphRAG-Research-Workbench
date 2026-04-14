@@ -429,8 +429,8 @@ async def _prepare_kb_chat_execution(
         state=state,
         run_context=run_context,
         resume_checkpoint_id=(
-            str(run.id)
-            if resume_requested and getattr(run, "id", None) is not None
+            checkpoint_id
+            if resume_requested and isinstance(checkpoint_id, str) and checkpoint_id
             else None
         ),
     )

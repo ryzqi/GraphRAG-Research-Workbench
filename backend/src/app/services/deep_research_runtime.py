@@ -56,8 +56,6 @@ from app.services.research_runtime_skills import build_research_runtime_skill_fi
 from app.services.research_runtime_types import (
     ResearchRuntimeActivityStatus,
     ResearchRuntimeActivityUpdate,
-    ResearchPlanProgressStatus,
-    ResearchPlanProgressUpdate,
     ResearchRuntimeConfig,
     ResearchRuntimeContext,
 )
@@ -115,41 +113,6 @@ def _is_runtime_result_mapping(value: object) -> TypeGuard[dict[str, Any]]:
     return isinstance(value, dict)
 
 
-class _PlanProgressCallbackRegistry:
-    def __init__(self) -> None:
-        self._callbacks: dict[
-            str, Callable[[ResearchPlanProgressUpdate], Awaitable[None]]
-        ] = {}
-
-    def register(
-        self,
-        session_id: str,
-        callback: Callable[[ResearchPlanProgressUpdate], Awaitable[None]],
-    ) -> None:
-        self._callbacks[session_id] = callback
-
-    def unregister(self, session_id: str) -> None:
-        self._callbacks.pop(session_id, None)
-
-    def sole_session_id(self) -> str | None:
-        if len(self._callbacks) != 1:
-            return None
-        return next(iter(self._callbacks))
-
-    async def dispatch(
-        self,
-        *,
-        session_id: str,
-        update: ResearchPlanProgressUpdate,
-    ) -> None:
-        callback = self._callbacks.get(session_id)
-        if callback is None:
-            raise RuntimeError(
-                f"Deep Research runtime 未找到 session={session_id} 的计划进度回调"
-            )
-        await callback(update)
-
-
 class _RuntimeActivityCallbackRegistry:
     def __init__(self) -> None:
         self._callbacks: dict[
@@ -185,12 +148,6 @@ class _RuntimeActivityCallbackRegistry:
         await callback(update)
 
 
-class _UpdatePlanProgressInput(BaseModel):
-    step_index: int = Field(ge=1)
-    status: ResearchPlanProgressStatus
-    message: str | None = None
-
-
 class _RecordRuntimeActivityInput(BaseModel):
     task_id: str = Field(min_length=1)
     title: str = Field(min_length=1)
@@ -217,33 +174,6 @@ def _runtime_context_session_id(
     if isinstance(fallback_session_id, str) and fallback_session_id.strip():
         return fallback_session_id.strip()
     raise RuntimeError("Deep Research runtime context 缺少 session_id")
-
-
-def _build_update_plan_progress_tool(
-    registry: _PlanProgressCallbackRegistry,
-) -> BaseTool:
-    @lc_tool("update_plan_progress", args_schema=_UpdatePlanProgressInput)
-    async def _update_plan_progress(  # type: ignore[misc]
-        step_index: int,
-        status: ResearchPlanProgressStatus,
-        message: str | None = None,
-        runtime: ToolRuntime | None = None,
-    ) -> str:
-        """更新当前 deep research 计划步骤状态，step_index 必须对应原计划中的 1-based 子任务序号。"""
-
-        session_id = _runtime_context_session_id(
-            runtime,
-            fallback_session_id=registry.sole_session_id(),
-        )
-        update = ResearchPlanProgressUpdate(
-            step_index=step_index,
-            status=status,
-            message=_normalize_plan_progress_message(message),
-        )
-        await registry.dispatch(session_id=session_id, update=update)
-        return f"计划步骤 {step_index} 已更新为 {status}。"
-
-    return _update_plan_progress
 
 
 def _build_record_runtime_activity_tool(
@@ -320,7 +250,6 @@ def _build_workspace_context_files() -> dict[str, str]:
 class DeepResearchRuntimeRunner:
     runtime: DeepResearchRuntime
     workspace_files: dict[str, str]
-    plan_progress_registry: _PlanProgressCallbackRegistry | None = None
     runtime_activity_registry: _RuntimeActivityCallbackRegistry | None = None
 
     async def _recover_structured_payload(
@@ -346,8 +275,6 @@ class DeepResearchRuntimeRunner:
         *,
         session: ResearchSession,
         plan_snapshot: ResearchPlanSnapshot,
-        plan_progress_callback: Callable[[ResearchPlanProgressUpdate], Awaitable[None]]
-        | None = None,
         runtime_activity_callback: Callable[
             [ResearchRuntimeActivityUpdate], Awaitable[None]
         ]
@@ -401,13 +328,6 @@ class DeepResearchRuntimeRunner:
             layout=layout,
         )
         started_at = perf_counter()
-        if plan_progress_callback is not None:
-            if self.plan_progress_registry is None:
-                raise RuntimeError("Deep Research runtime 未配置计划进度回调注册器")
-            self.plan_progress_registry.register(
-                str(session.id),
-                plan_progress_callback,
-            )
         if runtime_activity_callback is not None:
             if self.runtime_activity_registry is None:
                 raise RuntimeError("Deep Research runtime 未配置活动回调注册器")
@@ -452,8 +372,6 @@ class DeepResearchRuntimeRunner:
                     plan_snapshot=plan_snapshot,
                 )
         finally:
-            if plan_progress_callback is not None and self.plan_progress_registry is not None:
-                self.plan_progress_registry.unregister(str(session.id))
             if (
                 runtime_activity_callback is not None
                 and self.runtime_activity_registry is not None
@@ -569,7 +487,6 @@ async def build_deep_research_runtime_runner(
     await CheckpointManager.initialize()
     await StoreManager.initialize()
     prompt_loader = get_prompt_loader()
-    plan_progress_registry = _PlanProgressCallbackRegistry()
     runtime_activity_registry = _RuntimeActivityCallbackRegistry()
     runtime_config = ResearchRuntimeConfig(
         primary_model=create_chat_model(
@@ -605,13 +522,11 @@ async def build_deep_research_runtime_runner(
         checkpointer=CheckpointManager.get_checkpointer(),
         store=StoreManager.get_store(),
         extra_tools=[
-            _build_update_plan_progress_tool(plan_progress_registry),
             _build_record_runtime_activity_tool(runtime_activity_registry),
         ],
     )
     return DeepResearchRuntimeRunner(
         runtime=runtime,
         workspace_files=_build_workspace_context_files(),
-        plan_progress_registry=plan_progress_registry,
         runtime_activity_registry=runtime_activity_registry,
     )

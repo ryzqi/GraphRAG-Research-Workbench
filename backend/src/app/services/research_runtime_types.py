@@ -47,7 +47,6 @@ class ResearchLargeResultPolicy:
 DEFAULT_RESEARCH_STREAM_POLICY = ResearchStreamPolicy()
 DEFAULT_RESEARCH_BACKEND_POLICY = ResearchBackendPolicy()
 DEFAULT_RESEARCH_LARGE_RESULT_POLICY = ResearchLargeResultPolicy()
-ResearchPlanProgressStatus = Literal["current", "complete", "failed", "canceled"]
 ResearchRuntimeActivityStatus = Literal[
     "started",
     "in_progress",
@@ -68,15 +67,6 @@ class ResearchRuntimeContext:
     subagent_route: tuple[str, ...]
     workspace_root: str
     scratch_root: str
-
-
-@dataclass(slots=True, frozen=True)
-class ResearchPlanProgressUpdate:
-    """Deep Research runtime 上报的计划步骤更新。"""
-
-    step_index: int
-    status: ResearchPlanProgressStatus
-    message: str | None = None
 
 
 @dataclass(slots=True, frozen=True)

@@ -7,6 +7,7 @@ import uuid
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.checkpoint import CheckpointManager
 from app.core.errors import bad_request, not_found
 from app.core.settings import Settings, get_settings
 from app.models.research_artifact import ResearchArtifact
@@ -43,17 +44,16 @@ from app.services.research_replay import (
 )
 from app.services.research_runtime_context import ResearchRuntimeContextSnapshot
 from app.services.research_runtime_types import (
-    ResearchPlanProgressUpdate,
     ResearchRuntimeActivityUpdate,
 )
 from app.services.research_service_contracts import (
     build_artifacts_response as build_research_artifacts_response,
     build_event_envelopes,
     build_plan_progress_snapshot,
+    build_plan_progress_snapshot_from_runtime_todos,
     build_plan_progress_summary,
     extract_plan_progress_position,
     lc_agent_name_for_phase,
-    normalize_plan_progress_index,
     normalize_plan_progress_message,
     plan_progress_snapshot_equals,
 )
@@ -591,14 +591,31 @@ class ResearchService:
         event_message: str | None = None,
         emit_event: bool = True,
     ) -> dict[str, object]:
-        normalized_message = normalize_plan_progress_message(event_message)
-        existing_payload = self._read_plan_progress_payload(session)
         snapshot = build_plan_progress_snapshot(
             plan_snapshot,
             current_step_index=current_step_index,
             completed_step_count=completed_step_count,
             active_step_status=active_step_status,
         )
+        return await self._persist_plan_progress_snapshot_payload(
+            session=session,
+            phase=phase,
+            snapshot=snapshot,
+            event_message=event_message,
+            emit_event=emit_event,
+        )
+
+    async def _persist_plan_progress_snapshot_payload(
+        self,
+        *,
+        session: ResearchSession,
+        phase: str,
+        snapshot: dict[str, object],
+        event_message: str | None = None,
+        emit_event: bool = True,
+    ) -> dict[str, object]:
+        normalized_message = normalize_plan_progress_message(event_message)
+        existing_payload = self._read_plan_progress_payload(session)
         if (
             plan_progress_snapshot_equals(existing_payload, snapshot)
             and normalized_message is None
@@ -647,76 +664,55 @@ class ResearchService:
             active_step_status=terminal_state,
         )
 
-    async def _advance_runtime_plan_progress(
+    async def _sync_runtime_plan_progress_from_checkpoint(
         self,
         *,
         session: ResearchSession,
         plan_snapshot: ResearchPlanSnapshot,
-        update: ResearchPlanProgressUpdate,
-    ) -> dict[str, object]:
-        total_steps = len(plan_snapshot.subtasks)
-        step_index = normalize_plan_progress_index(
-            update.step_index,
-            total_steps=total_steps,
+    ) -> dict[str, object] | None:
+        checkpoint_tuple = await CheckpointManager.get_state(session.thread_id)
+        if checkpoint_tuple is None:
+            return None
+        checkpoint_payload = checkpoint_tuple.checkpoint
+        if not isinstance(checkpoint_payload, dict):
+            return None
+        channel_values = checkpoint_payload.get("channel_values")
+        if not isinstance(channel_values, dict):
+            return None
+        raw_todos = channel_values.get("todos")
+        if not isinstance(raw_todos, list):
+            return None
+        if not any(
+            isinstance(item, dict)
+            and isinstance(item.get("content"), str)
+            and "[plan-step-" in item.get("content", "")
+            for item in raw_todos
+        ):
+            return None
+        snapshot = build_plan_progress_snapshot_from_runtime_todos(
+            plan_snapshot,
+            todos=[item for item in raw_todos if isinstance(item, dict)],
         )
-        if step_index is None:
-            raise RuntimeError(
-                f"计划步骤索引超出范围: {update.step_index}/{total_steps}"
-            )
-
-        existing_payload = self._read_plan_progress_payload(session)
-        _, completed_step_count = extract_plan_progress_position(
-            existing_payload,
-            total_steps=total_steps,
-        )
-
-        current_step_index: int | None = step_index
-        active_step_status = update.status
-        if update.status == "complete":
-            completed_step_count = max(completed_step_count, step_index)
-            current_step_index = (
-                completed_step_count + 1
-                if completed_step_count < total_steps
-                else None
-            )
-            active_step_status = "current"
-
-        snapshot = await self._persist_plan_progress_snapshot(
+        return await self._persist_plan_progress_snapshot_payload(
             session=session,
-            plan_snapshot=plan_snapshot,
             phase="runtime",
-            current_step_index=current_step_index,
-            completed_step_count=completed_step_count,
-            active_step_status=active_step_status,
-            event_message=update.message,
+            snapshot=snapshot,
         )
-        await self._commit_checkpoint()
-        return snapshot
-
-    def _build_runtime_plan_progress_callback(
-        self,
-        *,
-        session: ResearchSession,
-        plan_snapshot: ResearchPlanSnapshot,
-    ):
-        async def _callback(update: ResearchPlanProgressUpdate) -> None:
-            await self._advance_runtime_plan_progress(
-                session=session,
-                plan_snapshot=plan_snapshot,
-                update=update,
-            )
-
-        return _callback
 
     def _build_runtime_activity_callback(
         self,
         *,
         session: ResearchSession,
+        plan_snapshot: ResearchPlanSnapshot,
     ):
         async def _callback(update: ResearchRuntimeActivityUpdate) -> None:
             live_board = await self._persist_runtime_activity_update(
                 session=session,
                 update=update,
+            )
+            await self._sync_runtime_plan_progress_from_checkpoint(
+                session=session,
+                plan_snapshot=plan_snapshot,
             )
             await self._event_store.append(
                 session=session,

@@ -270,17 +270,14 @@ async def execute_session(
     runtime_result = await service._runtime_runner.run_session(
         session=session,
         plan_snapshot=plan_snapshot,
-        plan_progress_callback=(
-            service._build_runtime_plan_progress_callback(
-                session=session,
-                plan_snapshot=plan_snapshot,
-            )
-            if plan_snapshot.subtasks
-            else None
-        ),
         runtime_activity_callback=service._build_runtime_activity_callback(
-            session=session
+            session=session,
+            plan_snapshot=plan_snapshot,
         ),
+    )
+    await service._sync_runtime_plan_progress_from_checkpoint(
+        session=session,
+        plan_snapshot=plan_snapshot,
     )
     source_bundle = runtime_result.source_bundle
     await service._append_trace_events(

@@ -13,7 +13,6 @@ class ResearchRuntimeRunner(Protocol):
         *,
         session: ResearchSession,
         plan_snapshot: ResearchPlanSnapshot,
-        plan_progress_callback=None,
         runtime_activity_callback=None,
     ) -> ResearchRuntimeRunResult: ...
 
@@ -24,8 +23,7 @@ class UnconfiguredResearchRuntimeRunner:
         *,
         session: ResearchSession,
         plan_snapshot: ResearchPlanSnapshot,
-        plan_progress_callback=None,
         runtime_activity_callback=None,
     ) -> ResearchRuntimeRunResult:
-        del session, plan_snapshot, plan_progress_callback, runtime_activity_callback
+        del session, plan_snapshot, runtime_activity_callback
         raise RuntimeError("Research runtime runner 未配置")

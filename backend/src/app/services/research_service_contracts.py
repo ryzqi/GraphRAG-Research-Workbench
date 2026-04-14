@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 
 from app.models.research_artifact import ResearchArtifact
@@ -16,6 +17,8 @@ from app.services.research_artifact_store import normalize_optional_artifact_tex
 from app.services.research_presentation_snapshot import (
     build_research_presentation_snapshot,
 )
+
+_RUNTIME_PLAN_STEP_TODO_PATTERN = re.compile(r"^\[plan-step-(\d+)\]\s*")
 
 def build_event_envelopes(
     session: ResearchSession,
@@ -166,6 +169,69 @@ def build_plan_progress_snapshot(
         "completed_step_count": bounded_completed,
         "updated_at": plan_progress_updated_at(),
     }
+
+
+def build_plan_progress_snapshot_from_runtime_todos(
+    plan_snapshot: ResearchPlanSnapshot,
+    *,
+    todos: list[dict[str, object]],
+) -> dict[str, object]:
+    total_steps = len(plan_snapshot.subtasks)
+    if total_steps <= 0:
+        return build_plan_progress_snapshot(
+            plan_snapshot,
+            current_step_index=None,
+            completed_step_count=0,
+        )
+
+    step_status_by_index: dict[int, str] = {}
+    for item in todos:
+        if not isinstance(item, dict):
+            continue
+        content = str(item.get("content") or "").strip()
+        if not content:
+            continue
+        matched = _RUNTIME_PLAN_STEP_TODO_PATTERN.match(content)
+        if matched is None:
+            continue
+        try:
+            index = int(matched.group(1))
+        except ValueError:
+            continue
+        normalized_index = normalize_plan_progress_index(
+            index,
+            total_steps=total_steps,
+        )
+        if normalized_index is None:
+            continue
+        status = str(item.get("status") or "").strip().lower()
+        if status not in {"pending", "in_progress", "completed"}:
+            status = "pending"
+        step_status_by_index[normalized_index] = status
+
+    completed_step_count = 0
+    for index in range(1, total_steps + 1):
+        if step_status_by_index.get(index) == "completed":
+            completed_step_count += 1
+            continue
+        break
+
+    current_step_index: int | None = next(
+        (
+            index
+            for index in range(completed_step_count + 1, total_steps + 1)
+            if step_status_by_index.get(index) == "in_progress"
+        ),
+        None,
+    )
+    if current_step_index is None and completed_step_count < total_steps:
+        current_step_index = completed_step_count + 1
+
+    return build_plan_progress_snapshot(
+        plan_snapshot,
+        current_step_index=current_step_index,
+        completed_step_count=completed_step_count,
+    )
 
 def lc_agent_name_for_phase(phase: str) -> str:
     if phase == "planner":
