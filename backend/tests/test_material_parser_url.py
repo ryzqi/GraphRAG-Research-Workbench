@@ -262,3 +262,36 @@ async def test_parse_material_uses_unified_url_parser_and_keeps_source_type_meta
     assert doc.metadata is not None
     assert doc.metadata["url_extract_path"] == "crawl4ai"
     assert doc.metadata["source_type"] == "url"
+
+
+async def test_create_url_crawler_enables_pruning_content_filter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import crawl4ai
+
+    class _FakeAsyncWebCrawler:
+        def __init__(self, *, config: Any) -> None:
+            self.config = config
+            self.entered = False
+            self.closed = False
+
+        async def __aenter__(self) -> "_FakeAsyncWebCrawler":
+            self.entered = True
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb) -> None:
+            self.closed = True
+
+    monkeypatch.setattr(crawl4ai, "AsyncWebCrawler", _FakeAsyncWebCrawler)
+
+    crawler = await url_parser.create_url_crawler(settings=_settings())
+
+    assert isinstance(crawler, url_parser._Crawl4AiCrawler)
+    assert crawler.crawler.entered is True
+    assert isinstance(
+        crawler.run_config.markdown_generator.content_filter,
+        crawl4ai.PruningContentFilter,
+    )
+
+    await crawler.aclose()
+    assert crawler.crawler.closed is True

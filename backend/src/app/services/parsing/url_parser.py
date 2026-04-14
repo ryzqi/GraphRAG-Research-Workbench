@@ -434,6 +434,8 @@ async def create_url_crawler(*, settings: Settings) -> UrlCrawler:
             BrowserConfig,
             CacheMode,
             CrawlerRunConfig,
+            DefaultMarkdownGenerator,
+            PruningContentFilter,
         )
     except Exception as exc:  # pragma: no cover
         raise ParseError(
@@ -454,6 +456,9 @@ async def create_url_crawler(*, settings: Settings) -> UrlCrawler:
         cache_mode=CacheMode.BYPASS,
         wait_until="networkidle",
         page_timeout=timeout_ms,
+        markdown_generator=DefaultMarkdownGenerator(
+            content_filter=PruningContentFilter()
+        ),
     )
     crawler = AsyncWebCrawler(config=browser_config)
     await crawler.__aenter__()
