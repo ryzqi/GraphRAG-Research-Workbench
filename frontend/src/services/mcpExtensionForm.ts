@@ -8,8 +8,6 @@ import type {
 export interface ExtensionFormState {
   name: string;
   transport: 'stdio' | 'http';
-  emitMetrics: boolean;
-  logLevelOverride: '' | 'DEBUG' | 'INFO' | 'WARNING' | 'ERROR';
 
   httpUrl: string;
   httpTimeoutSeconds: string;
@@ -60,9 +58,6 @@ export function buildFormFromExtension(ext: ToolExtension): ExtensionFormState {
     ...defaults,
     name: ext.name,
     transport: ext.transport,
-    emitMetrics: ext.observability_config?.emit_metrics ?? defaults.emitMetrics,
-    logLevelOverride: ext.observability_config?.log_level_override ?? defaults.logLevelOverride,
-
     httpUrl: ext.http_config?.url ?? defaults.httpUrl,
     httpTimeoutSeconds:
       ext.http_config?.timeout_seconds !== null &&
@@ -89,10 +84,6 @@ export function buildExtensionPayloadFromForm(form: ExtensionFormState): ToolExt
   const payload: ToolExtensionCreate = {
     name: form.name.trim(),
     transport: form.transport,
-    observability_config: {
-      emit_metrics: form.emitMetrics,
-      ...(form.logLevelOverride ? { log_level_override: form.logLevelOverride } : {}),
-    },
   };
 
   if (!payload.name) {

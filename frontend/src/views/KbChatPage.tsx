@@ -70,6 +70,7 @@ import {
   shouldRevealAnswerOnNodeEvent,
   validateKbChatConfig,
 } from '../hooks/kbChatPageBoundary';
+import { appLogger } from '../services/logger';
 import { resolveAssistantContentByRunStatus } from './kb-chat/streamingRuntime';
 
 const MessageList = dynamic(
@@ -853,7 +854,7 @@ const applyUiEvent = useCallback(
             });
           }
           setLoading(false);
-          console.info('kb-chat-stream-metrics', streamMetrics.finalize());
+          appLogger.info('kb-chat-stream-metrics', streamMetrics.finalize());
           return;
         }
 
@@ -912,14 +913,14 @@ const applyUiEvent = useCallback(
         setError(getErrorMessage(e));
         setLoading(false);
         streamMetrics.onFailure();
-        console.info('kb-chat-stream-metrics', streamMetrics.finalize());
+        appLogger.info('kb-chat-stream-metrics', streamMetrics.finalize());
         return;
       }
       setError(getErrorMessage(e));
       streamMetrics.onFailure();
     } finally {
       deltaBatcher.flush();
-      console.info('kb-chat-stream-metrics', streamMetrics.finalize());
+      appLogger.info('kb-chat-stream-metrics', streamMetrics.finalize());
       setLoading(false);
     }
   }, [
@@ -1078,7 +1079,7 @@ const applyUiEvent = useCallback(
             if (isPendingClarificationResponse(data)) {
               markClarificationPending(messageId, data);
               setLoading(false);
-              console.info('kb-chat-stream-metrics', streamMetrics.finalize());
+              appLogger.info('kb-chat-stream-metrics', streamMetrics.finalize());
               return;
             }
           }
@@ -1122,7 +1123,7 @@ const applyUiEvent = useCallback(
               });
             }
             setLoading(false);
-            console.info('kb-chat-stream-metrics', streamMetrics.finalize());
+            appLogger.info('kb-chat-stream-metrics', streamMetrics.finalize());
             return;
           }
 
@@ -1181,14 +1182,14 @@ const applyUiEvent = useCallback(
           setError(getErrorMessage(e));
           setLoading(false);
           streamMetrics.onFailure();
-          console.info('kb-chat-stream-metrics', streamMetrics.finalize());
+          appLogger.info('kb-chat-stream-metrics', streamMetrics.finalize());
           return;
         }
         setError(getErrorMessage(e));
         streamMetrics.onFailure();
       } finally {
         deltaBatcher.flush();
-        console.info('kb-chat-stream-metrics', streamMetrics.finalize());
+        appLogger.info('kb-chat-stream-metrics', streamMetrics.finalize());
         setLoading(false);
       }
     },

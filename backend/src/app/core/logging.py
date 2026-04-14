@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import contextvars
+import json
 import logging
 import re
+import sys
 from typing import Any
 
 _request_id_ctx: contextvars.ContextVar[str | None] = contextvars.ContextVar(
@@ -11,6 +13,17 @@ _request_id_ctx: contextvars.ContextVar[str | None] = contextvars.ContextVar(
 _run_id_ctx: contextvars.ContextVar[str | None] = contextvars.ContextVar(
     "run_id", default=None
 )
+_DEFAULT_FORMAT = (
+    "%(asctime)s %(levelname)s %(name)s %(message)s "
+    "request_id=%(request_id)s run_id=%(run_id)s"
+)
+_NOISY_INFO_LOGGERS = ("httpx", "httpcore", "uvicorn.access")
+_RECORD_RESERVED_KEYS = frozenset(logging.makeLogRecord({}).__dict__) | {
+    "message",
+    "asctime",
+    "request_id",
+    "run_id",
+}
 
 # 敏感字段模式
 _SENSITIVE_PATTERNS: list[tuple[re.Pattern[str], str]] = [
@@ -51,30 +64,106 @@ def get_run_id() -> str | None:
 
 class ContextFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
-        record.request_id = get_request_id() or "-"
-        record.run_id = get_run_id() or "-"
-        # 对日志消息进行脱敏
+        record.request_id = getattr(record, "request_id", None) or get_request_id() or "-"
+        record.run_id = getattr(record, "run_id", None) or get_run_id() or "-"
         if isinstance(record.msg, str):
             record.msg = redact(record.msg)
+        record.args = _redact_log_args(record.args)
+        for key, value in list(record.__dict__.items()):
+            if key in _RECORD_RESERVED_KEYS or key.startswith("_"):
+                continue
+            record.__dict__[key] = _redact_value(value)
         return True
 
 
+class UnifiedFormatter(logging.Formatter):
+    def format(self, record: logging.LogRecord) -> str:
+        message = redact(super().format(record))
+        extras = _format_extra_fields(record)
+        if extras:
+            message = f"{message} {extras}"
+        return message
+
+
+def _normalize_level(level: str | int | None) -> int:
+    if isinstance(level, int):
+        return level
+    text = str(level or "INFO").strip().upper()
+    resolved = logging.getLevelName(text)
+    if isinstance(resolved, int):
+        return resolved
+    return logging.INFO
+
+
+def _redact_log_args(args: Any) -> Any:
+    if isinstance(args, dict):
+        return {key: _redact_value(value) for key, value in args.items()}
+    if isinstance(args, tuple):
+        return tuple(_redact_value(item) for item in args)
+    if isinstance(args, list):
+        return [_redact_value(item) for item in args]
+    return _redact_value(args)
+
+
+def _redact_value(value: Any) -> Any:
+    if isinstance(value, dict):
+        return redact_dict(value)
+    if isinstance(value, list):
+        return [_redact_value(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_redact_value(item) for item in value)
+    if isinstance(value, set):
+        return {_redact_value(item) for item in value}
+    return redact(value)
+
+
+def _format_log_value(value: Any) -> str:
+    if isinstance(value, str):
+        return value
+    if isinstance(value, (bool, int, float)) or value is None:
+        return str(value)
+    try:
+        return json.dumps(value, ensure_ascii=False, default=str)
+    except TypeError:
+        return str(value)
+
+
+def _format_extra_fields(record: logging.LogRecord) -> str:
+    extra_parts: list[str] = []
+    for key in sorted(record.__dict__):
+        if key in _RECORD_RESERVED_KEYS or key.startswith("_"):
+            continue
+        extra_parts.append(f"{key}={_format_log_value(record.__dict__[key])}")
+    return " ".join(extra_parts)
+
+
+def _configure_named_logger(name: str, *, level: int, propagate: bool = True) -> None:
+    logger = logging.getLogger(name)
+    logger.handlers.clear()
+    logger.filters.clear()
+    logger.propagate = propagate
+    logger.setLevel(level)
+
+
 def configure_logging(level: str = "INFO") -> None:
-    logging.basicConfig(
-        level=level.upper(),
-        format=(
-            "%(asctime)s %(levelname)s %(name)s %(message)s "
-            "request_id=%(request_id)s run_id=%(run_id)s"
-        ),
-    )
+    resolved_level = _normalize_level(level)
+    handler = logging.StreamHandler(sys.stderr)
+    handler.setLevel(logging.NOTSET)
+    handler.setFormatter(UnifiedFormatter(_DEFAULT_FORMAT))
+    handler.addFilter(ContextFilter())
 
     root = logging.getLogger()
-    for handler in root.handlers:
-        handler.addFilter(ContextFilter())
+    root.handlers.clear()
+    root.filters.clear()
+    root.setLevel(resolved_level)
+    root.addHandler(handler)
 
-
-def get_logger(name: str) -> logging.Logger:
-    return logging.getLogger(name)
+    _configure_named_logger("uvicorn", level=logging.NOTSET)
+    _configure_named_logger("uvicorn.error", level=logging.NOTSET)
+    _configure_named_logger("celery", level=logging.NOTSET)
+    _configure_named_logger("celery.task", level=logging.NOTSET)
+    for name in _NOISY_INFO_LOGGERS:
+        _configure_named_logger(name, level=logging.WARNING)
 
 
 def redact(value: Any) -> Any:

@@ -42,7 +42,6 @@ class ToolExtension(Base):
     )
     http_config: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     stdio_config: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
-    observability_config: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()
     )

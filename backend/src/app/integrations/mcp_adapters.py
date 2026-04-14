@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import re
 import time
 from contextlib import AsyncExitStack, asynccontextmanager
@@ -23,7 +24,6 @@ from langchain_mcp_adapters.sessions import (
 from langchain_mcp_adapters.tools import load_mcp_tools as load_langchain_mcp_tools
 from mcp.types import CallToolResult, TextContent
 
-from app.core.logging import get_logger
 from app.core.logging import redact_dict
 from app.core.settings import Settings
 from app.models.tool_extension import ExtensionTransport, ToolExtension
@@ -31,7 +31,7 @@ from app.models.tool_extension import ExtensionTransport, ToolExtension
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
-logger = get_logger(__name__)
+logger = logging.getLogger(__name__)
 
 # 危险字符检测模式
 _DANGEROUS_CHARS = re.compile(r"[;&|`$<>]")

@@ -4,8 +4,10 @@ from datetime import timedelta
 from typing import Any
 
 from celery import Celery
+from celery.signals import setup_logging
 from kombu import Queue
 
+from app.core.logging import configure_logging
 from app.core.settings import Settings, get_settings
 
 settings = get_settings()
@@ -55,6 +57,7 @@ def _build_celery_conf(cfg: Settings) -> dict[str, Any]:
         "worker_send_task_events": cfg.celery_worker_send_task_events,
         "task_send_sent_event": cfg.celery_task_send_sent_event,
         "worker_prefetch_multiplier": cfg.celery_worker_prefetch_multiplier,
+        "worker_hijack_root_logger": False,
         "task_default_queue": "default",
         "task_queues": (
             Queue("default"),
@@ -125,6 +128,15 @@ def _build_celery_conf(cfg: Settings) -> dict[str, Any]:
     if hard_limit is not None:
         conf["task_time_limit"] = hard_limit
     return conf
+
+
+def configure_celery_logging(level: str | None = None) -> None:
+    configure_logging(level or settings.core.app_log_level)
+
+
+@setup_logging.connect
+def _configure_celery_logging(*args, **kwargs) -> None:
+    configure_celery_logging(settings.core.app_log_level)
 
 
 celery_app.conf.update(_build_celery_conf(settings))

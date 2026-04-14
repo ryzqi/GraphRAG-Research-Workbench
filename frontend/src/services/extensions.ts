@@ -32,11 +32,6 @@ export interface ExtensionStdioConfig {
   timeout_seconds?: number | null;
 }
 
-export interface ExtensionObservabilityConfig {
-  emit_metrics: boolean;
-  log_level_override?: 'DEBUG' | 'INFO' | 'WARNING' | 'ERROR' | null;
-}
-
 export interface ToolExtension {
   id: string;
   name: string;
@@ -44,7 +39,6 @@ export interface ToolExtension {
   status: ExtensionStatus;
   http_config: ExtensionHttpConfig | null;
   stdio_config: ExtensionStdioConfig | null;
-  observability_config: ExtensionObservabilityConfig | null;
   created_at: string;
   updated_at: string;
 }
@@ -55,7 +49,6 @@ export interface ToolExtensionCreate {
   status?: ExtensionStatus;
   http_config?: ExtensionHttpConfig | null;
   stdio_config?: ExtensionStdioConfig | null;
-  observability_config?: ExtensionObservabilityConfig | null;
 }
 
 export interface ToolExtensionUpdate {
@@ -64,7 +57,6 @@ export interface ToolExtensionUpdate {
   status?: ExtensionStatus;
   http_config?: ExtensionHttpConfig | null;
   stdio_config?: ExtensionStdioConfig | null;
-  observability_config?: ExtensionObservabilityConfig | null;
 }
 
 export interface ToolDescriptor {

@@ -107,11 +107,13 @@ uv run uvicorn app.main:app --host $env:BACKEND_BIND_HOST --port $env:BACKEND_PO
 
 ```powershell
 Set-Location .\backend
-uv run celery -A app.worker.celery_app beat --loglevel=INFO
-uv run celery -A app.worker.celery_app worker --loglevel=INFO -n worker.dispatch@%h --pool=threads --concurrency=2 --prefetch-multiplier=1 -Q dispatch
-uv run celery -A app.worker.celery_app worker --loglevel=INFO -n worker.core@%h --pool=threads --concurrency=8 --prefetch-multiplier=1 -Q ingestion,rebuild,default
-uv run celery -A app.worker.celery_app worker --loglevel=INFO -n worker.noncore@%h --pool=threads --concurrency=2 --prefetch-multiplier=1 -Q research,export
+uv run celery -A app.worker.celery_app beat
+uv run celery -A app.worker.celery_app worker -n worker.dispatch@%h --pool=threads --concurrency=2 --prefetch-multiplier=1 -Q dispatch
+uv run celery -A app.worker.celery_app worker -n worker.core@%h --pool=threads --concurrency=8 --prefetch-multiplier=1 -Q ingestion,rebuild,default
+uv run celery -A app.worker.celery_app worker -n worker.noncore@%h --pool=threads --concurrency=2 --prefetch-multiplier=1 -Q research,export
 ```
+
+- worker / beat 与 API 共用 `CORE__APP_LOG_LEVEL`（兼容 legacy `APP_LOG_LEVEL`）；不再在启动命令里额外指定 `--loglevel`。
 
 ### 前端
 

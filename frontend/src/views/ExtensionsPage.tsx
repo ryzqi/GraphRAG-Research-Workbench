@@ -11,14 +11,12 @@ import {
   Divider,
   Drawer,
   FormControl,
-  FormControlLabel,
   Grid,
   InputLabel,
   MenuItem,
   Paper,
   Select,
   Stack,
-  Switch,
   Tab,
   Tabs,
   TextField,
@@ -753,44 +751,6 @@ export function ExtensionsPage() {
                 />
               </Stack>
             )}
-
-            <Divider />
-
-            <Typography variant='subtitle2'>可观测性</Typography>
-            <FormControlLabel
-              control={
-                <Switch
-                  checked={formState.emitMetrics}
-                  onChange={(e) =>
-                    setFormState((prev) => ({
-                      ...prev,
-                      emitMetrics: e.target.checked,
-                    }))
-                  }
-                />
-              }
-              label='启用基础指标采集'
-            />
-            <FormControl fullWidth>
-              <InputLabel id='log-level-label'>日志级别覆盖</InputLabel>
-              <Select
-                labelId='log-level-label'
-                label='日志级别覆盖'
-                value={formState.logLevelOverride}
-                onChange={(e) =>
-                  setFormState((prev) => ({
-                    ...prev,
-                    logLevelOverride: e.target.value as ExtensionFormState['logLevelOverride'],
-                  }))
-                }
-              >
-                <MenuItem value=''>默认</MenuItem>
-                <MenuItem value='DEBUG'>DEBUG</MenuItem>
-                <MenuItem value='INFO'>INFO</MenuItem>
-                <MenuItem value='WARNING'>WARNING</MenuItem>
-                <MenuItem value='ERROR'>ERROR</MenuItem>
-              </Select>
-            </FormControl>
 
             <Stack direction='row' spacing={1} justifyContent='flex-end' sx={{ pt: 1 }}>
               <Button

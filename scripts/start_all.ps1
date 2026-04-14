@@ -325,10 +325,10 @@ function Get-CeleryWorkerCommand {
         Write-Host "Celery Worker 参数：--pool=$pool --concurrency=$concurrency --prefetch-multiplier=$resolvedPrefetch $startupFlags -Q $Queues" -ForegroundColor DarkGray
     }
 
-    return "uv run celery -A app.worker.celery_app worker --loglevel=INFO$nodeArgs --pool=$pool --concurrency=$concurrency$prefetchArgs $startupFlags -Q $Queues"
+    return "uv run celery -A app.worker.celery_app worker$nodeArgs --pool=$pool --concurrency=$concurrency$prefetchArgs $startupFlags -Q $Queues"
 }
 function Get-CeleryBeatCommand {
-    return "uv run celery -A app.worker.celery_app beat --loglevel=INFO"
+    return "uv run celery -A app.worker.celery_app beat"
 }
 function Get-BackendApiCommand {
     $bindHost = Get-EnvVarValue -Name "BACKEND_BIND_HOST"

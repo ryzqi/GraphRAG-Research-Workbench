@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import uuid
 
-from pydantic import BaseModel
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -90,11 +89,6 @@ class ExtensionService:
             status=ExtensionStatus(data.status.value),
             http_config=http_config.model_dump(mode="json") if http_config else None,
             stdio_config=stdio_config.model_dump(mode="json") if stdio_config else None,
-            observability_config=(
-                data.observability_config.model_dump(mode="json")
-                if data.observability_config
-                else None
-            ),
         )
         self._repository.add(ext)
 
@@ -156,11 +150,6 @@ class ExtensionService:
         ext.stdio_config = (
             stdio_config.model_dump(mode="json") if stdio_config else None
         )
-        if "observability_config" in update_data:
-            obs = update_data.get("observability_config")
-            ext.observability_config = (
-                obs.model_dump(mode="json") if isinstance(obs, BaseModel) else obs
-            )
 
         try:
             await self._db.commit()

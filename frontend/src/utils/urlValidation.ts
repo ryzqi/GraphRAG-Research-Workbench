@@ -3,6 +3,7 @@
  */
 
 import { DEFAULT_DOWNLOAD_ALLOWED_HOSTS } from '../constants/runtimeDefaults';
+import { appLogger } from '../services/logger';
 
 function isRelativeDownloadUrl(url: string): boolean {
   const candidate = url.trim();
@@ -45,12 +46,12 @@ export function safeDownloadUrl(
   allowedHosts: readonly string[] = DEFAULT_DOWNLOAD_ALLOWED_HOSTS
 ): boolean {
   if (!isAllowedDownloadUrl(url, allowedHosts)) {
-    console.warn('下载链接来自不受信任的域名:', url);
+    appLogger.warn('下载链接来自不受信任的域名:', url);
     return false;
   }
 
   if (typeof document === 'undefined' || !document.body) {
-    console.warn('当前环境不支持触发下载:', url);
+    appLogger.warn('当前环境不支持触发下载:', url);
     return false;
   }
 

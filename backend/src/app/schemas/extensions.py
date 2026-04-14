@@ -95,30 +95,14 @@ class ExtensionStdioConfig(BaseModel):
         return self
 
 
-class ExtensionObservabilityConfig(BaseModel):
+class ToolExtensionCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    emit_metrics: bool = True
-    log_level_override: str | None = Field(None, max_length=16)
-
-    @model_validator(mode="after")
-    def _normalize_log_level(self) -> "ExtensionObservabilityConfig":
-        if self.log_level_override is None:
-            return self
-        level = self.log_level_override.strip().upper()
-        if level not in {"DEBUG", "INFO", "WARNING", "ERROR"}:
-            raise ValueError("observability_config.log_level_override is invalid")
-        self.log_level_override = level
-        return self
-
-
-class ToolExtensionCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=128)
     transport: ExtensionTransport
     status: ExtensionStatus = ExtensionStatus.ENABLED
     http_config: ExtensionHttpConfig | None = None
     stdio_config: ExtensionStdioConfig | None = None
-    observability_config: ExtensionObservabilityConfig | None = None
 
     @model_validator(mode="after")
     def _validate_transport_config(self) -> "ToolExtensionCreate":
@@ -134,12 +118,13 @@ class ToolExtensionCreate(BaseModel):
 
 
 class ToolExtensionUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     name: str | None = Field(None, min_length=1, max_length=128)
     transport: ExtensionTransport | None = None
     status: ExtensionStatus | None = None
     http_config: ExtensionHttpConfig | None = None
     stdio_config: ExtensionStdioConfig | None = None
-    observability_config: ExtensionObservabilityConfig | None = None
 
 
 class ToolExtensionRead(BaseModel):
@@ -151,7 +136,6 @@ class ToolExtensionRead(BaseModel):
     status: ExtensionStatus
     http_config: ExtensionHttpConfig | None = None
     stdio_config: ExtensionStdioConfig | None = None
-    observability_config: ExtensionObservabilityConfig | None = None
     created_at: datetime
     updated_at: datetime
 
