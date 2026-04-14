@@ -138,6 +138,11 @@ class Settings(DeploySettings):
     retrieval_rerank_timeout_seconds: int = Field(
         10, alias="RETRIEVAL_RERANK_TIMEOUT_SECONDS"
     )
+    retrieval_rerank_max_documents_per_request: int | None = Field(
+        None,
+        ge=1,
+        alias="RETRIEVAL_RERANK_MAX_DOCUMENTS_PER_REQUEST",
+    )
 
     context_history_max_messages: int = Field(6, alias="CONTEXT_HISTORY_MAX_MESSAGES")
     context_history_max_tokens: int | None = Field(

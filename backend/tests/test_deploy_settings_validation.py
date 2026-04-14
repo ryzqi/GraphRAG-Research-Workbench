@@ -24,6 +24,7 @@ def test_deploy_settings_supports_legacy_and_nested_env_names(
     monkeypatch.setenv("MINIO_SECRET_KEY", "storage-secret-key")
     monkeypatch.setenv("WEB_SEARCH__SEARXNG_SEARCH_BASE_URL", "https://searx.internal")
     monkeypatch.setenv("RESEARCH_GATE__MIN_QUALITY_SCORE", "0.9")
+    monkeypatch.setenv("CORE__EMBEDDING_MAX_BATCH_SIZE", "25")
 
     settings = DeploySettings(_env_file=None)
 
@@ -34,6 +35,8 @@ def test_deploy_settings_supports_legacy_and_nested_env_names(
     assert settings.storage.minio_endpoint == "minio.internal:9000"
     assert settings.web_search_provider.searxng_search_base_url == "https://searx.internal"
     assert settings.research_gate.min_quality_score == pytest.approx(0.9)
+    assert settings.embedding_max_batch_size == 25
+    assert settings.core.embedding_max_batch_size == 25
 
 
 def test_settings_exposes_typed_deploy_groups_without_breaking_flat_access() -> None:
@@ -59,6 +62,7 @@ def test_settings_exposes_typed_deploy_groups_without_breaking_flat_access() -> 
     assert settings.web_search_provider.searxng_search_base_url == (
         settings.searxng_search_base_url
     )
+    assert settings.retrieval_rerank_max_documents_per_request is None
 
 
 def test_settings_preserves_celery_worker_runtime_contract() -> None:

@@ -72,6 +72,7 @@ class CoreDeploySettings(BaseModel):
     embedding_model: str
     embedding_timeout_seconds: float
     embedding_dim: int | None
+    embedding_max_batch_size: int | None
     model_config_kms_key: str | None
 
 
@@ -371,6 +372,12 @@ class DeploySettings(BaseSettings):
         legacy_alias="EMBEDDING_DIM",
         nested_alias="CORE__EMBEDDING_DIM",
     )
+    embedding_max_batch_size: int | None = _deploy_field(
+        None,
+        ge=1,
+        legacy_alias="EMBEDDING_MAX_BATCH_SIZE",
+        nested_alias="CORE__EMBEDDING_MAX_BATCH_SIZE",
+    )
     model_config_kms_key: str | None = _deploy_field(
         None,
         legacy_alias="MODEL_CONFIG_KMS_KEY",
@@ -570,6 +577,7 @@ class DeploySettings(BaseSettings):
             embedding_model=self.embedding_model,
             embedding_timeout_seconds=self.embedding_timeout_seconds,
             embedding_dim=self.embedding_dim,
+            embedding_max_batch_size=self.embedding_max_batch_size,
             model_config_kms_key=self.model_config_kms_key,
         )
 

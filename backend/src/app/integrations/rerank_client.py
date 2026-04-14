@@ -40,6 +40,10 @@ class RerankClient:
         if not documents:
             return []
 
+        max_documents = self._settings.retrieval_rerank_max_documents_per_request
+        if max_documents is not None and len(documents) > max_documents:
+            documents = documents[:max_documents]
+
         top_n = min(top_n or len(documents), len(documents))
         payload = {
             "model": self._model,

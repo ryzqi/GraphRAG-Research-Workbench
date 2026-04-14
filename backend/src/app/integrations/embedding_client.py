@@ -139,6 +139,47 @@ class EmbeddingClient:
         self._expected_dim = settings.embedding_dim
         self._breaker_states: dict[str, _CircuitBreakerState] = {}
 
+    async def _embed_with_client(
+        self,
+        *,
+        client: httpx.AsyncClient,
+        texts: list[str],
+        url: str,
+        headers: dict[str, str],
+        policy: EmbeddingCallPolicy,
+    ) -> list[list[float]]:
+        max_batch_size = self._settings.embedding_max_batch_size
+        if max_batch_size is None or len(texts) <= max_batch_size:
+            payload: dict[str, object] = {"model": self._model, "input": texts}
+            if self._expected_dim is not None:
+                payload["dimensions"] = self._expected_dim
+            return await self._call_with_policy(
+                client=client,
+                url=url,
+                payload=payload,
+                headers=headers,
+                texts=texts,
+                policy=policy,
+            )
+
+        embeddings: list[list[float]] = []
+        for start in range(0, len(texts), max_batch_size):
+            batch = texts[start : start + max_batch_size]
+            payload = {"model": self._model, "input": batch}
+            if self._expected_dim is not None:
+                payload["dimensions"] = self._expected_dim
+            embeddings.extend(
+                await self._call_with_policy(
+                    client=client,
+                    url=url,
+                    payload=payload,
+                    headers=headers,
+                    texts=batch,
+                    policy=policy,
+                )
+            )
+        return embeddings
+
     def _validate_embedding_dimensions(self, embeddings: list[list[float]]) -> None:
         expected_dim = self._expected_dim
         if expected_dim is None:
@@ -368,27 +409,22 @@ class EmbeddingClient:
                 message="Embedding 输入不能为空或仅包含不可见字符",
             )
         url = f"{self._base_url}/embeddings"
-        payload: dict[str, object] = {"model": self._model, "input": normalized_texts}
-        if self._expected_dim is not None:
-            payload["dimensions"] = self._expected_dim
         headers = {"Authorization": f"Bearer {self._api_key}"}
 
         if self._http_client is not None:
-            return await self._call_with_policy(
+            return await self._embed_with_client(
                 client=self._http_client,
-                url=url,
-                payload=payload,
-                headers=headers,
                 texts=normalized_texts,
+                url=url,
+                headers=headers,
                 policy=call_policy,
             )
 
         async with httpx.AsyncClient(timeout=call_policy.timeout_seconds) as client:
-            return await self._call_with_policy(
+            return await self._embed_with_client(
                 client=client,
-                url=url,
-                payload=payload,
-                headers=headers,
                 texts=normalized_texts,
+                url=url,
+                headers=headers,
                 policy=call_policy,
             )
