@@ -15,12 +15,15 @@ from app.core.validators import validate_file_upload
 from app.integrations.object_storage import ObjectRef, ObjectStorage
 from app.models.document_chunk import DocumentChunk
 from app.models.source_material import SourceMaterial, SourceType
+from app.services.url_ingestion_guard import build_url_ingestion_guard
 
 
 class MaterialService:
     def __init__(self, db: AsyncSession) -> None:
         self._db = db
         self._storage = ObjectStorage()
+        self._settings = get_settings()
+        self._url_guard = build_url_ingestion_guard(self._settings)
 
     async def list_by_kb(
         self, kb_id: uuid.UUID, skip: int = 0, limit: int = 100
@@ -173,12 +176,13 @@ class MaterialService:
         self, kb_id: uuid.UUID, title: str, url: str
     ) -> SourceMaterial:
         """创建 URL 资料。"""
-        content_hash = hashlib.sha256(url.encode()).hexdigest()[:32]
+        validated_url = await self._url_guard.validate_source_url(url)
+        content_hash = hashlib.sha256(validated_url.encode()).hexdigest()[:32]
         material = SourceMaterial(
             kb_id=kb_id,
             source_type=SourceType.URL,
             title=title,
-            uri=url,
+            uri=validated_url,
             content_hash=content_hash,
         )
         self._db.add(material)
@@ -195,7 +199,7 @@ class MaterialService:
         content_type: str | None = None,
     ) -> SourceMaterial:
         """上传文件资料到 MinIO。"""
-        settings = get_settings()
+        settings = self._settings
         file_content = await asyncio.to_thread(file.read)
 
         # 验证文件大小和类型

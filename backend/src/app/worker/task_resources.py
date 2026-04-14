@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import asyncio
+import logging
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from typing import AsyncIterator
+from typing import AsyncIterator, Awaitable, Callable
 
 import httpx
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
@@ -22,6 +24,9 @@ from app.integrations.redis_client import (
     close_redis_client,
     create_redis_client,
 )
+from app.services.parsing.url_parser import UrlCrawler, close_url_crawler, create_url_crawler
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -34,6 +39,36 @@ class TaskResources:
     embedding_client: EmbeddingClient | None = None
     redis: RedisClient | None = None
     milvus: MilvusClient | None = None
+    url_crawler: UrlCrawler | None = None
+    _url_crawler_factory: Callable[..., Awaitable[UrlCrawler]] | None = None
+    _url_crawler_lock: asyncio.Lock | None = None
+    _url_crawler_unavailable: bool = False
+
+    async def get_url_crawler(self) -> UrlCrawler | None:
+        if self.url_crawler is not None:
+            return self.url_crawler
+        if self._url_crawler_unavailable or self._url_crawler_factory is None:
+            return None
+        if self._url_crawler_lock is None:
+            self._url_crawler_lock = asyncio.Lock()
+
+        async with self._url_crawler_lock:
+            if self.url_crawler is not None:
+                return self.url_crawler
+            if self._url_crawler_unavailable:
+                return None
+            try:
+                self.url_crawler = await self._url_crawler_factory(
+                    settings=self.settings
+                )
+            except Exception as exc:
+                self._url_crawler_unavailable = True
+                logger.warning(
+                    "Failed to initialize shared URL crawler resource",
+                    extra={"error": str(exc)},
+                )
+                return None
+        return self.url_crawler
 
 
 @asynccontextmanager
@@ -94,10 +129,12 @@ async def managed_task_resources(
         embedding_client=embedding_client,
         redis=redis,
         milvus=milvus,
+        _url_crawler_factory=create_url_crawler,
     )
     try:
         yield resources
     finally:
+        await close_url_crawler(resources.url_crawler)
         await close_http_client(http_client)
         await close_http_client(embedding_http_client)
         await close_redis_client(redis)

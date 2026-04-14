@@ -7,6 +7,7 @@ import logging
 import uuid
 
 from dataclasses import dataclass
+from typing import Any, cast
 from sqlalchemy import select
 
 from app.core.errors import AppError
@@ -342,6 +343,11 @@ async def _process_doc(*, doc, resources) -> _DocProcessOutcome:
         index_config = IndexConfig.model_validate(
             snapshot_config or kb.index_config or {}
         )
+        url_crawler_getter = getattr(resources, "get_url_crawler", None)
+        if callable(url_crawler_getter):
+            url_crawler = await cast(Any, url_crawler_getter)()
+        else:
+            url_crawler = getattr(resources, "url_crawler", None)
 
         try:
             parsed = await parse_material(
@@ -349,6 +355,8 @@ async def _process_doc(*, doc, resources) -> _DocProcessOutcome:
                 settings=get_settings(),
                 http_client=resources.http_client,
                 storage=ObjectStorage(),
+                url_crawler=url_crawler,
+                allow_crawl4ai_cold_start=False,
             )
         except ParseError as exc:
             raise _ProcessingFailure(

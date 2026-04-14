@@ -4,9 +4,7 @@ import hashlib
 import logging
 import uuid
 from datetime import datetime, timezone
-from urllib.parse import urlparse
 
-import httpx
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 
@@ -39,7 +37,6 @@ from app.services.ingestion_batch_service_contracts import (
     MAX_FILE_SIZE_BYTES,
     MAX_TEXT_LENGTH,
     MAX_URL_ENTRIES,
-    _DEFAULT_URL_TIMEOUT_SECONDS,
     _PreparedEntry,
 )
 from app.services.ingestion_contract import INGESTION_ERROR_SPECS, ingestion_error
@@ -271,25 +268,8 @@ async def _prepare_url_entry(
     entry: ManifestUrlEntry,
     entry_id: str,
 ) -> _PreparedEntry:
-    canonical_url = self._canonicalize_url(entry.url)
-    parsed = urlparse(canonical_url)
-    if parsed.scheme not in {"http", "https"}:
-        raise ingestion_error("URL_SCHEME_NOT_ALLOWED", details={"url": entry.url})
-
-    timeout_seconds = max(
-        float(
-            getattr(
-                self._settings,
-                "ingestion_url_timeout_seconds",
-                _DEFAULT_URL_TIMEOUT_SECONDS,
-            )
-        ),
-        1.0,
-    )
-    async with httpx.AsyncClient(timeout=timeout_seconds) as client:
-        final_url = await self._validate_url_security(
-            url=canonical_url, client=client
-        )
+    del kb
+    final_url = await self._url_guard.validate_source_url(entry.url)
 
     fingerprint = hashlib.sha256(final_url.encode("utf-8")).hexdigest()
     return _PreparedEntry(

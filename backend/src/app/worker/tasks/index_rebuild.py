@@ -6,6 +6,7 @@ import asyncio
 import logging
 import uuid
 from datetime import datetime, timezone
+from typing import Any, cast
 
 from sqlalchemy import delete, select
 
@@ -264,6 +265,7 @@ async def _run_index_rebuild_job(job_id: str) -> None:
                 materials_result = await session.execute(stmt)
                 materials = list(materials_result.scalars().all())
                 stats["total_materials"] = len(materials)
+                url_crawler_getter = getattr(resources, "get_url_crawler", None)
 
                 for material in materials:
                     await session.refresh(job)
@@ -271,12 +273,19 @@ async def _run_index_rebuild_job(job_id: str) -> None:
                         return
                     await session.commit()
 
+                    if callable(url_crawler_getter):
+                        url_crawler = await cast(Any, url_crawler_getter)()
+                    else:
+                        url_crawler = getattr(resources, "url_crawler", None)
+
                     try:
                         parsed = await parse_material(
                             material,
                             settings=settings,
                             http_client=http_client,
                             storage=storage,
+                            url_crawler=url_crawler,
+                            allow_crawl4ai_cold_start=False,
                         )
                     except ParseError as exc:
                         stats["errors"].append(

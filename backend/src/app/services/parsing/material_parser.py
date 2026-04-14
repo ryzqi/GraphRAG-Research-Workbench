@@ -6,7 +6,6 @@ import tempfile
 from io import BytesIO
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
 
 import httpx
 
@@ -15,6 +14,7 @@ from app.integrations.object_storage import ObjectRef, ObjectStorage
 from app.models.source_material import SourceMaterial, SourceType
 from app.services.parsing.errors import ParseError
 from app.services.parsing.types import ParsedChunk, ParsedDocument
+from app.services.parsing.url_parser import UrlCrawler, parse_url_document
 
 _UPLOAD_EXT_TO_KIND: dict[str, str] = {
     ".pdf": "pdf",
@@ -229,6 +229,8 @@ async def parse_material(
     settings: Settings | None = None,
     http_client: httpx.AsyncClient | None = None,
     storage: ObjectStorage | None = None,
+    url_crawler: UrlCrawler | None = None,
+    allow_crawl4ai_cold_start: bool = True,
 ) -> ParsedDocument:
     """将 SourceMaterial 解析为 ParsedDocument（失败抛 ParseError）。"""
     cfg = settings or get_settings()
@@ -253,7 +255,13 @@ async def parse_material(
             raise ParseError(
                 error_code="MISSING_HTTP_CLIENT", message="URL 解析缺少 http_client"
             )
-        doc = await _parse_url(material.uri, http_client=http_client, settings=cfg)
+        doc = await parse_url_document(
+            material.uri,
+            http_client=http_client,
+            settings=cfg,
+            url_crawler=url_crawler,
+            allow_crawl4ai_cold_start=allow_crawl4ai_cold_start,
+        )
         doc.mime_type = doc.mime_type or material.mime_type
         doc.metadata = {
             **(doc.metadata or {}),
@@ -423,123 +431,6 @@ async def _parse_docx(content_bytes: bytes) -> ParsedDocument:
     text = await asyncio.to_thread(_parse_sync)
     return ParsedDocument(
         text=text, mime_type="text/markdown", locator=None, metadata=None, chunks=None
-    )
-
-
-async def _parse_url(
-    url: str, *, http_client: httpx.AsyncClient, settings: Settings
-) -> ParsedDocument:
-    parsed = urlparse(url)
-    if parsed.scheme not in {"http", "https"}:
-        raise ParseError(
-            error_code="INVALID_URL_SCHEME",
-            message=f"不支持的 URL scheme: {parsed.scheme!r}",
-        )
-
-    # 这些配置项建议按需开放配置；默认值由 Settings 提供，缺失时再走兜底。
-    max_redirects = getattr(settings, "ingestion_url_max_redirects", 3)
-    max_bytes = getattr(settings, "ingestion_url_max_bytes", 20 * 1024 * 1024)
-    user_agent = getattr(
-        settings, "ingestion_url_user_agent", "multi-kb-agent/ingestion"
-    )
-
-    headers = {"User-Agent": user_agent}
-
-    try:
-        async with http_client.stream(
-            "GET",
-            url,
-            follow_redirects=True,
-            headers=headers,
-        ) as resp:
-            if len(resp.history) > max_redirects:
-                raise ParseError(
-                    error_code="URL_TOO_MANY_REDIRECTS",
-                    message=f"URL 重定向次数过多（>{max_redirects}）",
-                    details={"max_redirects": max_redirects, "url": url},
-                )
-
-            if resp.status_code >= 400:
-                raise ParseError(
-                    error_code="URL_FETCH_FAILED",
-                    message=f"URL 抓取失败：HTTP {resp.status_code}",
-                    details={"status_code": resp.status_code, "url": url},
-                )
-
-            buf = bytearray()
-            async for chunk in resp.aiter_bytes():
-                buf.extend(chunk)
-                if len(buf) > max_bytes:
-                    raise ParseError(
-                        error_code="URL_RESPONSE_TOO_LARGE",
-                        message=f"URL 响应体超过限制（>{max_bytes} bytes）",
-                        details={"max_bytes": max_bytes, "url": url},
-                    )
-
-            content_bytes = bytes(buf)
-    except ParseError:
-        raise
-    except httpx.TooManyRedirects as exc:
-        raise ParseError(
-            error_code="URL_TOO_MANY_REDIRECTS",
-            message=f"URL 重定向次数过多（>{max_redirects}）",
-            details={"max_redirects": max_redirects, "url": url},
-        ) from exc
-    except Exception as exc:
-        raise ParseError(
-            error_code="URL_FETCH_EXCEPTION",
-            message=f"URL 抓取异常：{exc}",
-            details={"url": url},
-        ) from exc
-
-    # 编码：尽量利用 httpx 推断；否则回退到 utf-8 或 gb18030。
-    try:
-        html_text = content_bytes.decode("utf-8")
-    except UnicodeDecodeError:
-        html_text = content_bytes.decode("gb18030", errors="replace")
-
-    try:
-        from readability import Document  # type: ignore[import-not-found]
-    except Exception as exc:  # pragma: no cover
-        raise ParseError(
-            error_code="READABILITY_NOT_INSTALLED",
-            message="未安装 readability-lxml，无法进行 URL 正文抽取",
-            details={"error": str(exc)},
-        ) from exc
-
-    readability_doc = Document(html_text)
-    title = (readability_doc.title() or "").strip()
-    main_html = readability_doc.summary()
-
-    # Readability 输出通常为 HTML，这里转为纯文本；纯文本本身也可作为合法 Markdown。
-    try:
-        from lxml import html as lxml_html  # type: ignore[import-not-found]
-
-        root = lxml_html.fromstring(main_html)
-        text = (root.text_content() or "").strip()
-    except Exception as exc:
-        raise ParseError(
-            error_code="URL_EXTRACT_FAILED",
-            message=f"URL 正文抽取失败：{exc}",
-            details={"url": url},
-        ) from exc
-
-    # 规范化空行，避免大量空白影响分块与 embedding。
-    lines = [ln.strip() for ln in text.splitlines()]
-    lines = [ln for ln in lines if ln]
-    body_text = "\n".join(lines).strip()
-
-    if title:
-        md = f"# {title}\n\n{body_text}".strip()
-    else:
-        md = body_text
-
-    return ParsedDocument(
-        text=md,
-        mime_type="text/markdown",
-        locator={"url": url},
-        metadata={"title": title} if title else None,
-        chunks=None,
     )
 
 

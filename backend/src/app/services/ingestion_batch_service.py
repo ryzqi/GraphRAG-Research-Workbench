@@ -34,7 +34,6 @@ from app.schemas.ingestion_batches import (
 )
 from app.services import ingestion_batch_service_prepare as ingestion_prepare
 from app.services import ingestion_batch_service_status as ingestion_status
-from app.services import ingestion_batch_service_url_security as ingestion_url
 from app.services.ingestion_batch_service_contracts import (
     AUTO_RETRY_DELAYS,
     DOC_CANCELED_ERROR_CODE,
@@ -43,6 +42,7 @@ from app.services.ingestion_batch_service_contracts import (
     MAX_MANIFEST_ENTRIES,
 )
 from app.services.ingestion_contract import ingestion_error
+from app.services.url_ingestion_guard import build_url_ingestion_guard
 
 logger = logging.getLogger(__name__)
 
@@ -53,8 +53,6 @@ _STATIC_HELPERS: dict[str, Any] = {
     '_is_doc_failed': ingestion_status._is_doc_failed,
     '_is_doc_succeeded': ingestion_status._is_doc_succeeded,
     '_batch_snapshot_key': ingestion_status._batch_snapshot_key,
-    '_canonicalize_url': ingestion_url._canonicalize_url,
-    '_resolve_host_ips': ingestion_url._resolve_host_ips,
     '_entry_error_from_app_error': ingestion_prepare._entry_error_from_app_error,
     '_material_extension': ingestion_prepare._material_extension,
     '_is_bootstrap_conflict': ingestion_prepare._is_bootstrap_conflict,
@@ -78,11 +76,6 @@ _INSTANCE_HELPERS: dict[str, Any] = {
     '_apply_readiness': ingestion_status._apply_readiness,
     '_append_event': ingestion_status._append_event,
     '_get_event_count': ingestion_status._get_event_count,
-    '_build_blocked_cidr_rules': ingestion_url._build_blocked_cidr_rules,
-    '_build_metadata_blocked_ips': ingestion_url._build_metadata_blocked_ips,
-    '_blocked_reason_for_ip': ingestion_url._blocked_reason_for_ip,
-    '_validate_url_security': ingestion_url._validate_url_security,
-    '_assert_host_safe': ingestion_url._assert_host_safe,
 }
 
 
@@ -90,8 +83,7 @@ class IngestionBatchService:
     def __init__(self, db: AsyncSession) -> None:
         self._db = db
         self._settings = get_settings()
-        self._blocked_cidr_rules = self._build_blocked_cidr_rules()
-        self._metadata_blocked_ips = self._build_metadata_blocked_ips()
+        self._url_guard = build_url_ingestion_guard(self._settings)
 
     def __getattr__(self, name: str) -> Any:
         helper = _STATIC_HELPERS.get(name)
