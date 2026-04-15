@@ -82,6 +82,18 @@ export interface KbChatConfig {
   retrieval_multiscale_max_chunks_per_document: number;
 }
 
+export const DEFAULT_KB_CHAT_CONFIG: KbChatConfig = {
+  retrieval_top_k: 12,
+  retrieval_rerank_top_k: 40,
+  retrieval_hybrid_rrf_k: 60,
+  retrieval_parent_max_parents: 8,
+  retrieval_parent_max_children_per_parent: 3,
+  retrieval_multiscale_per_window_top_k: 40,
+  retrieval_multiscale_rrf_k: 60,
+  retrieval_multiscale_max_documents: 12,
+  retrieval_multiscale_max_chunks_per_document: 2,
+};
+
 export interface ChatSessionCreate {
   session_type: ChatSessionType;
   selected_kb_ids?: string[];

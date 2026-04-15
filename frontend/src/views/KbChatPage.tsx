@@ -36,6 +36,7 @@ import {
   type KbChatConfig,
   type ChatMessageResponse,
   type ChatSession,
+  DEFAULT_KB_CHAT_CONFIG,
   createChatSession,
   isUnexpectedStreamEnd,
   resolveTerminalRunStatus,
@@ -96,18 +97,6 @@ const KB_CHAT_SESSION_TIME_FORMATTER = new Intl.DateTimeFormat('zh-CN', {
 });
 
 type TerminalRunStatus = 'succeeded' | 'failed' | 'canceled' | 'waiting_user';
-
-const DEFAULT_KB_CHAT_CONFIG: KbChatConfig = {
-  retrieval_top_k: 12,
-  retrieval_rerank_top_k: 50,
-  retrieval_hybrid_rrf_k: 60,
-  retrieval_parent_max_parents: 8,
-  retrieval_parent_max_children_per_parent: 3,
-  retrieval_multiscale_per_window_top_k: 40,
-  retrieval_multiscale_rrf_k: 60,
-  retrieval_multiscale_max_documents: 12,
-  retrieval_multiscale_max_chunks_per_document: 2,
-};
 
 function createInitialRunState(runId: string, totalNodes = 1): ChatRunStateEvent {
   return {

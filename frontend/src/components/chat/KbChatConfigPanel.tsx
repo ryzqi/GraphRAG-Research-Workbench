@@ -115,8 +115,8 @@ export function KbChatConfigPanel({
                   type='number'
                   value={value.retrieval_rerank_top_k}
                   onChange={(event) => handleIntField('retrieval_rerank_top_k', event.target.value)}
-                  inputProps={{ min: value.retrieval_top_k, max: 50 }}
-                  helperText={`控制进入重排序的候选量；调大可提升命中率但更耗时（范围 ${value.retrieval_top_k}~50）。`}
+                  inputProps={{ min: value.retrieval_top_k, max: 40 }}
+                  helperText={`控制进入重排序的候选量；调大可提升命中率但更耗时（范围 ${value.retrieval_top_k}~40）。`}
                   disabled={disabled}
                   fullWidth
                 />

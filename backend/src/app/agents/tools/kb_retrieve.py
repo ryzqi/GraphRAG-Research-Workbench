@@ -54,7 +54,7 @@ class KbRetrieveArgs(BaseModel):
 
     query: str = Field(..., description="检索问题")
     kb_ids: list[str] | None = Field(default=None, description="知识库 ID 列表")
-    top_k: int | None = Field(default=None, ge=1, le=50, description="返回条数")
+    top_k: int | None = Field(default=None, ge=1, le=40, description="返回条数")
     query_items: list[dict[str, Any]] | None = Field(
         default=None,
         description="可选：统一检索层 QueryItem 列表（用于多路/分解/HyDE fanout 融合）。提供时将优先使用该列表进行融合检索。",

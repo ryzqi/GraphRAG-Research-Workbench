@@ -52,7 +52,7 @@ class KbChatConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     retrieval_top_k: int = Field(12, ge=1, le=20)
-    retrieval_rerank_top_k: int = Field(50, ge=1, le=50)
+    retrieval_rerank_top_k: int = Field(40, ge=1, le=40)
     retrieval_hybrid_rrf_k: int = Field(60, ge=1, le=200)
     retrieval_parent_max_parents: int = Field(8, ge=1, le=20)
     retrieval_parent_max_children_per_parent: int = Field(3, ge=1, le=10)

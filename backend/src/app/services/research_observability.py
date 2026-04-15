@@ -85,7 +85,7 @@ class ResearchRuntimeRunResult:
 @dataclass(slots=True, frozen=True)
 class ResearchGateThresholds:
     min_quality_score: float = 0.75
-    max_p95_ms: int = 120_000
+    max_p95_ms: int = 180_000
     max_session_cost_usd: float = 2.0
 
 

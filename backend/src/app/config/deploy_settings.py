@@ -473,7 +473,7 @@ class DeploySettings(BaseSettings):
         nested_alias="RESEARCH_GATE__MIN_QUALITY_SCORE",
     )
     research_gate_max_p95_ms: int = _deploy_field(
-        120_000,
+        180_000,
         ge=1,
         legacy_alias="RESEARCH_GATE_MAX_P95_MS",
         nested_alias="RESEARCH_GATE__MAX_P95_MS",

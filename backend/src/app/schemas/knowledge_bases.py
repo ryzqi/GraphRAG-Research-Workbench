@@ -103,7 +103,7 @@ class SemanticConfig(BaseModel):
     breakpoint_percentile: int | None = Field(25, ge=1, le=99)
     similarity_threshold: float | None = Field(0.7, ge=0.0, le=1.0)
     overlap_chars: int = Field(96, ge=0, le=2000)
-    embedding_batch_size: int = Field(64, ge=8, le=1024)
+    embedding_batch_size: int = Field(32, ge=8, le=1024)
 
     @model_validator(mode="after")
     def _validate_range(self) -> "SemanticConfig":
@@ -194,7 +194,22 @@ class ChunkingConfig(BaseModel):
     )
     general_strategy: ChunkingStrategy = ChunkingStrategy.QUERY_DEPENDENT_MULTISCALE
     query_dependent_multiscale: QueryDependentMultiscaleChunkingConfig = Field(
-        default_factory=QueryDependentMultiscaleChunkingConfig
+        default_factory=lambda: QueryDependentMultiscaleChunkingConfig(
+            windows=[
+                QueryDependentMultiscaleWindowConfig(
+                    chunk_size_tokens=128,
+                    chunk_overlap_tokens=32,
+                ),
+                QueryDependentMultiscaleWindowConfig(
+                    chunk_size_tokens=256,
+                    chunk_overlap_tokens=64,
+                ),
+                QueryDependentMultiscaleWindowConfig(
+                    chunk_size_tokens=512,
+                    chunk_overlap_tokens=128,
+                ),
+            ]
+        )
     )
     semantic: SemanticConfig = Field(
         default_factory=lambda: SemanticConfig(
@@ -204,7 +219,7 @@ class ChunkingConfig(BaseModel):
             breakpoint_percentile=25,
             similarity_threshold=0.7,
             overlap_chars=96,
-            embedding_batch_size=64,
+            embedding_batch_size=32,
         )
     )
     parent_child: ParentChildConfig = Field(default_factory=ParentChildConfig)

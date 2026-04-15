@@ -143,7 +143,7 @@ export function createDefaultIndexConfig(): IndexConfig {
         breakpoint_percentile: 25,
         similarity_threshold: 0.7,
         overlap_chars: 96,
-        embedding_batch_size: 64,
+        embedding_batch_size: 32,
       },
       parent_child: {
         parent: {

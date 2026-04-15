@@ -110,7 +110,7 @@ class Settings(DeploySettings):
     )
 
     retrieval_default_top_k: int = Field(12, alias="RETRIEVAL_DEFAULT_TOP_K")
-    retrieval_max_top_k: int = Field(50, alias="RETRIEVAL_MAX_TOP_K")
+    retrieval_max_top_k: int = Field(40, ge=1, le=40, alias="RETRIEVAL_MAX_TOP_K")
     retrieval_cache_ttl_seconds: int = Field(300, alias="RETRIEVAL_CACHE_TTL_SECONDS")
     retrieval_cache_enabled: bool = Field(True, alias="RETRIEVAL_CACHE_ENABLED")
     retrieval_min_score: float | None = Field(0.2, alias="RETRIEVAL_MIN_SCORE")
@@ -250,7 +250,7 @@ class Settings(DeploySettings):
         2, ge=1, alias="FRONTEND_INGESTION_STREAM_RETRY_MULTIPLIER"
     )
     frontend_export_poll_interval_ms: int = Field(
-        1_000, ge=100, alias="FRONTEND_EXPORT_POLL_INTERVAL_MS"
+        2_000, ge=100, alias="FRONTEND_EXPORT_POLL_INTERVAL_MS"
     )
     frontend_export_poll_max_attempts: int = Field(
         60, ge=1, alias="FRONTEND_EXPORT_POLL_MAX_ATTEMPTS"
@@ -262,6 +262,20 @@ class Settings(DeploySettings):
         default_factory=list,
         alias="FRONTEND_DOWNLOAD_ALLOWED_HOSTS",
     )
+
+    @property
+    def retrieval_rerank_configured(self) -> bool:
+        base_url = str(self.retrieval_rerank_base_url or "").strip().rstrip("/")
+        api_key = str(self.retrieval_rerank_api_key or "").strip()
+        model = str(self.retrieval_rerank_model or "").strip()
+        if not base_url or not model or not api_key:
+            return False
+        if api_key.upper() == "REPLACE_ME":
+            return False
+        return not (
+            base_url == "https://api.openai.com"
+            and model == "BAAI/bge-reranker-v2-m3"
+        )
 
     ingestion_url_max_redirects: int = Field(3, alias="INGESTION_URL_MAX_REDIRECTS")
     ingestion_url_timeout_seconds: float = Field(

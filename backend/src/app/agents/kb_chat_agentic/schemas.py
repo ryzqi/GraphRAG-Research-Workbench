@@ -212,7 +212,7 @@ class RetrievalPlanDecision(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    per_query_top_k: int = Field(..., ge=1, le=50)
+    per_query_top_k: int = Field(..., ge=1, le=40)
     global_candidates_limit: int = Field(..., ge=1, le=300)
     rerank_input_limit: int = Field(..., ge=1, le=300)
     reasoning: str = Field(default="", max_length=240)

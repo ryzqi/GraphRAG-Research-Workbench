@@ -97,7 +97,7 @@ class RetrievalRuntimeMixin(RetrievalServiceProtocol):
         return RetrievalFeatureFlags(
             query_rewrite_enabled=True,
             hybrid_enabled=True,
-            rerank_enabled=True,
+            rerank_enabled=self._settings.retrieval_rerank_configured,
         )
 
     def _resolve_runtime_overrides(

@@ -255,7 +255,7 @@ async def _stream_general_chat_resume_events(
 async def get_kb_chat_graph_schema(
     service: KbChatServiceDep,
     retrieval_top_k: int | None = Query(None, ge=1, le=20),
-    retrieval_rerank_top_k: int | None = Query(None, ge=1, le=50),
+    retrieval_rerank_top_k: int | None = Query(None, ge=1, le=40),
     retrieval_hybrid_rrf_k: int | None = Query(None, ge=1, le=200),
     retrieval_parent_max_parents: int | None = Query(None, ge=1, le=20),
     retrieval_parent_max_children_per_parent: int | None = Query(None, ge=1, le=10),
