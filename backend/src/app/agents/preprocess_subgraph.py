@@ -25,10 +25,8 @@ from app.agents.kb_chat_agentic_state import (
     PreprocessRoutingInput,
     resolve_routing_decision,
 )
-from app.agents.kb_chat_trace_nodes import (
-    extend_kb_chat_node_metadata,
-    wrap_kb_chat_node_with_io,
-)
+from app.agents.kb_chat_trace_metadata import extend_kb_chat_node_metadata
+from app.agents.kb_chat_trace_nodes import wrap_kb_chat_node_with_io
 from app.core.settings import Settings
 
 

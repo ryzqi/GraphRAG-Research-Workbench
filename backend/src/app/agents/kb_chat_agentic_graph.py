@@ -32,8 +32,8 @@ from app.agents.kb_chat_agentic_state import (
     build_graph_input_state,
     resolve_routing_decision,
 )
+from app.agents.kb_chat_trace_metadata import extend_kb_chat_node_metadata
 from app.agents.kb_chat_trace_nodes import (
-    extend_kb_chat_node_metadata,
     wrap_kb_chat_node_with_io as shared_wrap_node_with_io,
 )
 from app.agents.preprocess_subgraph import build_preprocess_subgraph
