@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from contextlib import asynccontextmanager
 
 import pytest
@@ -42,6 +43,95 @@ class _FakeEngine:
 
     async def dispose(self) -> None:
         self.dispose_calls += 1
+
+
+def test_managed_task_resources_does_not_reuse_heavy_clients_across_asyncio_run_invocations(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    asyncio.run(task_resources.reset_shared_task_resources())
+    created_engines: list[_FakeEngine] = []
+    created_sessionmakers: list[_FakeSessionmaker] = []
+    created_http_clients: list[object] = []
+    created_milvus: list[_FakeMilvus] = []
+
+    async def fake_initialize(*, sessionmaker, settings) -> None:
+        del sessionmaker, settings
+
+    refresh_calls = 0
+
+    async def fake_refresh(*, db, settings) -> None:
+        nonlocal refresh_calls
+        del db, settings
+        refresh_calls += 1
+
+    def fake_create_engine(settings: Settings, *, use_null_pool: bool = False) -> _FakeEngine:
+        del settings, use_null_pool
+        engine = _FakeEngine()
+        created_engines.append(engine)
+        return engine
+
+    def fake_create_sessionmaker(*, engine) -> _FakeSessionmaker:
+        sessionmaker = _FakeSessionmaker()
+        assert engine in created_engines
+        created_sessionmakers.append(sessionmaker)
+        return sessionmaker
+
+    def fake_create_http_client(settings: Settings, profile=None) -> object:
+        del settings, profile
+        client = object()
+        created_http_clients.append(client)
+        return client
+
+    def fake_create_milvus_client() -> _FakeMilvus:
+        client = _FakeMilvus()
+        created_milvus.append(client)
+        return client
+
+    monkeypatch.setattr(task_resources, "create_engine", fake_create_engine)
+    monkeypatch.setattr(task_resources, "create_sessionmaker", fake_create_sessionmaker)
+    monkeypatch.setattr(task_resources, "create_http_client", fake_create_http_client)
+    monkeypatch.setattr(task_resources, "create_milvus_client", fake_create_milvus_client)
+    monkeypatch.setattr(task_resources, "EmbeddingClient", _FakeEmbeddingClient)
+    monkeypatch.setattr(
+        task_resources.ModelRuntimeConfigManager,
+        "initialize",
+        fake_initialize,
+    )
+    monkeypatch.setattr(
+        task_resources.ModelRuntimeConfigManager,
+        "refresh",
+        fake_refresh,
+    )
+
+    async def acquire_once() -> tuple[object | None, object | None, object | None, object | None]:
+        async with task_resources.managed_task_resources(
+            settings=_settings(),
+            with_engine=True,
+            with_http=True,
+            with_milvus=True,
+        ) as resources:
+            return (
+                resources.engine,
+                resources.sessionmaker,
+                resources.http_client,
+                resources.milvus,
+            )
+
+    first = asyncio.run(acquire_once())
+    second = asyncio.run(acquire_once())
+
+    assert first[0] is not None
+    assert second[0] is not None
+    assert first[0] is not second[0]
+    assert first[1] is not second[1]
+    assert first[2] is not second[2]
+    assert first[3] is not second[3]
+    assert len(created_engines) == 2
+    assert len(created_sessionmakers) == 2
+    assert len(created_http_clients) == 4
+    assert len(created_milvus) == 2
+    assert refresh_calls == 2
+    asyncio.run(task_resources.reset_shared_task_resources())
 
 
 @pytest.mark.asyncio

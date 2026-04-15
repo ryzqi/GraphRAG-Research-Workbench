@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from contextlib import asynccontextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from time import monotonic
 from typing import AsyncIterator, Awaitable, Callable
@@ -29,7 +30,6 @@ from app.services.parsing.url_parser import UrlCrawler, close_url_crawler, creat
 
 logger = logging.getLogger(__name__)
 MODEL_RUNTIME_REFRESH_TTL_SECONDS = 30.0
-_SHARED_TASK_RESOURCES_LOCK = asyncio.Lock()
 
 
 @dataclass(slots=True)
@@ -75,26 +75,25 @@ class TaskResources:
 
 
 @dataclass(slots=True)
-class _SharedTaskResources:
-    settings: Settings
-    engine: AsyncEngine | None = None
-    sessionmaker: async_sessionmaker[AsyncSession] | None = None
-    http_client: httpx.AsyncClient | None = None
-    embedding_http_client: httpx.AsyncClient | None = None
-    embedding_client: EmbeddingClient | None = None
-    redis: RedisClient | None = None
-    milvus: MilvusClient | None = None
+class _TaskResourceScope:
+    resources: TaskResources
+    init_lock: asyncio.Lock
+    nesting: int = 0
     model_runtime_refreshed_at: float | None = None
 
 
-_shared_task_resources: _SharedTaskResources | None = None
+_TASK_RESOURCE_SCOPE: ContextVar[_TaskResourceScope | None] = ContextVar(
+    "worker_task_resource_scope",
+    default=None,
+)
 
 
-async def _close_shared_task_resources(
-    resources: _SharedTaskResources | None,
+async def _close_task_resources(
+    resources: TaskResources | None,
 ) -> None:
     if resources is None:
         return
+    await close_url_crawler(resources.url_crawler)
     await close_http_client(resources.http_client)
     await close_http_client(resources.embedding_http_client)
     await close_redis_client(resources.redis)
@@ -111,27 +110,28 @@ async def _close_shared_task_resources(
 
 
 async def reset_shared_task_resources() -> None:
-    global _shared_task_resources
-    async with _SHARED_TASK_RESOURCES_LOCK:
-        resources = _shared_task_resources
-        _shared_task_resources = None
-    await _close_shared_task_resources(resources)
+    scope = _TASK_RESOURCE_SCOPE.get()
+    if scope is None:
+        return
+    _TASK_RESOURCE_SCOPE.set(None)
+    scope.nesting = 0
+    await _close_task_resources(scope.resources)
 
 
 async def _ensure_model_runtime_config(
     *,
-    shared: _SharedTaskResources,
+    scope: _TaskResourceScope,
     settings: Settings,
     force_refresh: bool,
 ) -> None:
-    sessionmaker = shared.sessionmaker
+    sessionmaker = scope.resources.sessionmaker
     if sessionmaker is None:
         return
     now = monotonic()
-    should_refresh = force_refresh or shared.model_runtime_refreshed_at is None
-    if not should_refresh and shared.model_runtime_refreshed_at is not None:
+    should_refresh = force_refresh or scope.model_runtime_refreshed_at is None
+    if not should_refresh and scope.model_runtime_refreshed_at is not None:
         should_refresh = (
-            now - shared.model_runtime_refreshed_at
+            now - scope.model_runtime_refreshed_at
             >= MODEL_RUNTIME_REFRESH_TTL_SECONDS
         )
     if not should_refresh:
@@ -141,62 +141,55 @@ async def _ensure_model_runtime_config(
             db=model_config_session,
             settings=settings,
         )
-    shared.model_runtime_refreshed_at = now
+    scope.model_runtime_refreshed_at = now
 
 
-async def _get_shared_task_resources(
+async def _ensure_task_resource_scope(
     *,
+    scope: _TaskResourceScope,
     settings: Settings,
     with_engine: bool,
     with_http: bool,
     with_redis: bool,
     with_milvus: bool,
-) -> _SharedTaskResources:
-    global _shared_task_resources
-    async with _SHARED_TASK_RESOURCES_LOCK:
-        if (
-            _shared_task_resources is not None
-            and _shared_task_resources.settings != settings
-        ):
-            stale = _shared_task_resources
-            _shared_task_resources = None
-            await _close_shared_task_resources(stale)
+) -> TaskResources:
+    resources = scope.resources
+    if resources.settings != settings:
+        raise RuntimeError(
+            "managed_task_resources does not support mixing Settings within the same asyncio task scope"
+        )
 
-        shared = _shared_task_resources
-        if shared is None:
-            shared = _SharedTaskResources(settings=settings)
-            _shared_task_resources = shared
-
+    async with scope.init_lock:
         force_refresh = False
-        if with_engine and shared.engine is None:
-            shared.engine = create_engine(settings, use_null_pool=False)
-            shared.sessionmaker = create_sessionmaker(engine=shared.engine)
+        if with_engine and resources.engine is None:
+            resources.engine = create_engine(settings, use_null_pool=False)
+            resources.sessionmaker = create_sessionmaker(engine=resources.engine)
             await ModelRuntimeConfigManager.initialize(
-                sessionmaker=shared.sessionmaker,
+                sessionmaker=resources.sessionmaker,
                 settings=settings,
             )
             force_refresh = True
-        if with_http and shared.http_client is None:
-            shared.http_client = create_http_client(settings)
-            shared.embedding_http_client = create_http_client(
+        if with_http and resources.http_client is None:
+            resources.http_client = create_http_client(settings)
+            resources.embedding_http_client = create_http_client(
                 settings,
                 profile=HttpClientProfile.EMBEDDING_BATCH,
             )
-            shared.embedding_client = EmbeddingClient(
-                http_client=shared.embedding_http_client,
+            resources.embedding_client = EmbeddingClient(
+                http_client=resources.embedding_http_client,
                 settings=settings,
             )
-        if with_redis and shared.redis is None:
-            shared.redis = create_redis_client(settings)
-        if with_milvus and shared.milvus is None:
-            shared.milvus = create_milvus_client()
+        if with_redis and resources.redis is None:
+            resources.redis = create_redis_client(settings)
+        if with_milvus and resources.milvus is None:
+            resources.milvus = create_milvus_client()
         if with_engine:
             await _ensure_model_runtime_config(
-                shared=shared,
+                scope=scope,
                 settings=settings,
                 force_refresh=force_refresh,
             )
-        return shared
+    return resources
 
 
 @asynccontextmanager
@@ -258,20 +251,7 @@ async def _managed_ephemeral_task_resources(
     try:
         yield resources
     finally:
-        await close_url_crawler(resources.url_crawler)
-        await close_http_client(http_client)
-        await close_http_client(embedding_http_client)
-        await close_redis_client(redis)
-        if milvus is not None:
-            try:
-                await milvus.aclose()
-            except Exception:  # pragma: no cover - best effort
-                pass
-        if engine is not None:
-            try:
-                await engine.dispose()
-            except Exception:  # pragma: no cover - best effort
-                pass
+        await _close_task_resources(resources)
 
 
 @asynccontextmanager
@@ -284,7 +264,7 @@ async def managed_task_resources(
     with_milvus: bool = False,
     use_null_pool: bool = False,
 ) -> AsyncIterator[TaskResources]:
-    """统一管理 Celery 任务资源：创建 + finally 释放（尽力而为）。"""
+    """统一管理 Celery 任务资源：按单次 asyncio 调用栈复用，退出最外层时释放。"""
     cfg = settings or get_settings()
     if use_null_pool:
         async with _managed_ephemeral_task_resources(
@@ -298,25 +278,33 @@ async def managed_task_resources(
             yield resources
         return
 
-    shared = await _get_shared_task_resources(
-        settings=cfg,
-        with_engine=with_engine,
-        with_http=with_http,
-        with_redis=with_redis,
-        with_milvus=with_milvus,
-    )
-    resources = TaskResources(
-        settings=cfg,
-        engine=shared.engine if with_engine else None,
-        sessionmaker=shared.sessionmaker if with_engine else None,
-        http_client=shared.http_client if with_http else None,
-        embedding_http_client=shared.embedding_http_client if with_http else None,
-        embedding_client=shared.embedding_client if with_http else None,
-        redis=shared.redis if with_redis else None,
-        milvus=shared.milvus if with_milvus else None,
-        _url_crawler_factory=create_url_crawler,
-    )
+    scope = _TASK_RESOURCE_SCOPE.get()
+    token = None
+    if scope is None:
+        scope = _TaskResourceScope(
+            resources=TaskResources(
+                settings=cfg,
+                _url_crawler_factory=create_url_crawler,
+            ),
+            init_lock=asyncio.Lock(),
+        )
+        token = _TASK_RESOURCE_SCOPE.set(scope)
+    scope.nesting += 1
     try:
+        resources = await _ensure_task_resource_scope(
+            scope=scope,
+            settings=cfg,
+            with_engine=with_engine,
+            with_http=with_http,
+            with_redis=with_redis,
+            with_milvus=with_milvus,
+        )
         yield resources
     finally:
-        await close_url_crawler(resources.url_crawler)
+        scope.nesting -= 1
+        if scope.nesting == 0:
+            if token is not None:
+                _TASK_RESOURCE_SCOPE.reset(token)
+            else:
+                _TASK_RESOURCE_SCOPE.set(None)
+            await _close_task_resources(scope.resources)
