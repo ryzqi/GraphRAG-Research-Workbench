@@ -1,24 +1,19 @@
-"""LangGraph 检查点管理器。
-
-提供 AsyncPostgresSaver 的统一管理，支持检查点持久化和恢复。
-"""
+"""LangGraph 检查点管理器。"""
 
 from __future__ import annotations
 
-from contextlib import AbstractAsyncContextManager
 from typing import Any
 
 from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
-from app.core.settings import get_settings
+from app.integrations.langgraph_postgres_pool import LangGraphPostgresPool
 
 
 class CheckpointManager:
     """检查点管理器（单例）。"""
 
     _checkpointer: AsyncPostgresSaver | None = None
-    _checkpointer_ctx: AbstractAsyncContextManager[AsyncPostgresSaver] | None = None
     _initialized: bool = False
     _last_error: str | None = None
 
@@ -34,13 +29,10 @@ class CheckpointManager:
         if cls._initialized:
             return
 
-        settings = get_settings()
-        # 将 asyncpg URL 转换为 psycopg 格式。
-        db_url = settings.database_url.replace("postgresql+asyncpg://", "postgresql://")
+        if not LangGraphPostgresPool._initialized:
+            raise RuntimeError("CheckpointManager 需要 LangGraph Postgres pool 先初始化")
 
-        checkpointer_ctx = AsyncPostgresSaver.from_conn_string(db_url)
-        cls._checkpointer_ctx = checkpointer_ctx
-        cls._checkpointer = await checkpointer_ctx.__aenter__()
+        cls._checkpointer = AsyncPostgresSaver(conn=LangGraphPostgresPool.get_pool())
         await cls._checkpointer.setup()
         cls._last_error = None
         cls._initialized = True
@@ -48,9 +40,6 @@ class CheckpointManager:
     @classmethod
     async def shutdown(cls) -> None:
         """关闭检查点管理器（应用关闭时调用）。"""
-        if cls._checkpointer_ctx is not None:
-            await cls._checkpointer_ctx.__aexit__(None, None, None)
-        cls._checkpointer_ctx = None
         cls._checkpointer = None
         cls._initialized = False
         cls._last_error = None
