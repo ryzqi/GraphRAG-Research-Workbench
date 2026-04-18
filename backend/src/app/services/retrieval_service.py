@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import time
 
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.settings import get_settings
 from app.integrations.embedding_client import EmbeddingClient
@@ -47,14 +47,17 @@ class RetrievalService(
 ):
     def __init__(
         self,
-        db: AsyncSession,
+        *,
         milvus: MilvusClient,
         embedding: EmbeddingClient,
+        sessionmaker: async_sessionmaker[AsyncSession] | None = None,
+        db: AsyncSession | None = None,
         redis: RedisClient | None = None,
         query_rewriter: QueryRewriteService | None = None,
         reranker: RerankClient | None = None,
     ) -> None:
         self._db = db
+        self._sessionmaker = sessionmaker
         self._milvus = milvus
         self._embedding = embedding
         self._redis = redis
@@ -63,7 +66,6 @@ class RetrievalService(
         self._settings = get_settings()
         self._last_stats: RetrievalStats | None = None
         self._last_layer_draft: RetrievalLayerDraft | None = None
-        self._db_lock = asyncio.Lock()
 
     @property
     def last_stats(self) -> RetrievalStats | None:
@@ -123,10 +125,10 @@ class RetrievalService(
         return await asyncio.wait_for(coro, timeout=timeout_seconds)
 
     async def _db_execute(self, stmt):
-        if self._db is None:
+        if self._sessionmaker is None:
             raise RuntimeError("db_not_configured")
-        async with self._db_lock:
-            return await self._db.execute(stmt)
+        async with self._sessionmaker() as session:
+            return await session.execute(stmt)
 
     @staticmethod
     def _empty_layer_draft(reason: str | None = None) -> RetrievalLayerDraft:

@@ -96,6 +96,7 @@ class RetrievalLayerDraft:
 
 class RetrievalServiceProtocol(Protocol):
     _db: Any
+    _sessionmaker: Any
     _milvus: Any
     _embedding: Any
     _redis: Any

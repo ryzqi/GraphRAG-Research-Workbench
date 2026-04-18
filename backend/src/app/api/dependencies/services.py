@@ -49,11 +49,13 @@ def build_kb_chat_service(
     db: AsyncSessionDep,
     resources: AppResourcesDep,
 ) -> KbChatService:
+    sessionmaker = create_sessionmaker(engine=resources.engine)
     return KbChatService(
-        db,
-        resources.llm_client,
-        resources.milvus_client,
-        resources.embedding_client,
+        db=db,
+        sessionmaker=sessionmaker,
+        llm=resources.llm_client,
+        milvus=resources.milvus_client,
+        embedding=resources.embedding_client,
         reranker=resources.rerank_client,
         redis=resources.redis,
         semantic_cache_service=resources.semantic_cache_service,

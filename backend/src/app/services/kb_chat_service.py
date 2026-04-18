@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from typing import Any, cast
 
 from langchain_core.runnables import RunnableConfig
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.agents.kb_chat_agentic_state import build_graph_input_state
 from app.agents.kb_chat_graph import build_kb_chat_graph
@@ -50,6 +50,7 @@ class KbChatService:
     def __init__(
         self,
         db: AsyncSession,
+        sessionmaker: async_sessionmaker[AsyncSession],
         llm: LLMClient,
         milvus: MilvusClient,
         embedding: EmbeddingClient,
@@ -62,7 +63,12 @@ class KbChatService:
         self._embedding = embedding
         self._settings = get_settings()
         self._retrieval = RetrievalService(
-            db, milvus, embedding, redis, reranker=reranker
+            db=db,
+            sessionmaker=sessionmaker,
+            milvus=milvus,
+            embedding=embedding,
+            redis=redis,
+            reranker=reranker,
         )
         self._context_builder = ContextBuilder(self._settings)
         self._summary_service = ConversationSummaryService(db, settings=self._settings)
