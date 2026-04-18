@@ -361,9 +361,22 @@ def build_runtime_section_briefs_payload(
                 "section_id": f"section-{index}",
                 "task_id": f"section-{index}",
                 "title": subtask.title,
+                "description": subtask.description,
                 "status": "pending",
+                "owner": "section-writer",
                 "target_sources": _target_source_values(subtask),
                 "angle": subtask.description,
+                "writing_goal": (
+                    f"围绕“{subtask.title}”先形成章节大纲与简短写作说明，"
+                    "再基于已验证证据扩写正文。"
+                ),
+                "required_inputs": [
+                    "question",
+                    "research_brief",
+                    "clarification_context",
+                    "claim_bundles",
+                    "evidence_ledger",
+                ],
                 "summary": "",
                 "brief_markdown": "",
                 "must_cover": [
@@ -426,13 +439,17 @@ def build_runtime_report_context_payload(
     return {
         "question": question,
         "executive_summary": "",
+        "outline_ready": False,
+        "outline_status": "pending",
+        "active_section_id": None,
         "confidence_level": "insufficient",
         "has_conflicts": False,
         "key_takeaways": [],
         "recommended_actions": [],
         "open_questions": [],
         "methodology_notes": [
-            "先完成 claim 收口，再按 source 并行补证，最后交给 section-writer / citation 子代理统一收口。"
+            "先根据研究主题、用户补充与当前计划生成动态全文大纲，再进入 claim 收口与补证。",
+            "先完成 claim 收口，再按 source 并行补证，最后交给 section-writer / citation 子代理统一收口。",
         ],
         "verification_notes": [],
         "coverage_focus": [

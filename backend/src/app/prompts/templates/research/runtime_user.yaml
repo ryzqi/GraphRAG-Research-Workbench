@@ -8,6 +8,9 @@ template: |
 
   <research_process>
   - 先读取 mission、plan、query-map、coverage、task-graph、claim-bundles、section-briefs、report-context。
+  - 先创建动态全文大纲：根据研究主题、已收到的用户补充、research_brief 与 plan subtasks，先写好 `report-outline` 和每个 section 的简短写作说明，再开始逐段扩写。
+  - `report-outline` 与 `report-draft` 的章节标题统一使用 `## [section-id] 章节标题` 格式，`section-id` 必须与 `section-briefs.json` 中对应条目一致。
+  - 在调用 `web_search`、`arxiv_search`、`arxiv_fetch` 或 `task` 之前，先创建完整动态全文大纲，并把 `section-briefs.json` 与 `report-context.json` 的 outline 状态更新为非空。
   - `claim-map`、`evidence-ledger`、`analysis-notes`、`report-outline`、`report-draft` 与 `live-board` 只在需要时按需读取，不要在 first pass 把低优先文件全部读入。
   - 进入研究后立刻调用 `write_todos`；前 `plan.subtasks` 条 todo 必须按 `[plan-step-<index>] <title>` 形式一一对应 planner subtasks，并在推进过程中把这些 plan-step todos 的状态维护为 `pending` / `in_progress` / `completed`。
   - 除 plan-step todos 外，再补充 claim、coverage gap、子代理委派与最终成稿准备相关的附加 todo。

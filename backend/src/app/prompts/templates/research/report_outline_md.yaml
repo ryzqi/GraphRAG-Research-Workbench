@@ -5,12 +5,14 @@ description: "Deep Research workspace report outline markdown"
 template: |
   # Report Outline
 
-  ## 报告提纲
-  - 研究问题与执行路径
-  - 核心结论
-  - 分主题分析
-  - 证据、反证与验证
-  - 风险、缺口与建议
-  - 参考来源
+  ## 章节规划说明
+  - 先根据研究主题、用户补充与研究计划生成动态全文大纲。
+  - 每个章节标题使用 `## [section-id] 章节标题` 格式，`section-id` 与 `section-briefs.json` 保持一致。
+  - 每个章节下至少写清：本节目的、计划内容与证据要求。
+
+  ## [section-id] <待补章节标题>
+  - 本节目的：待补充
+  - 计划内容：待补充
+  - 证据要求：待补充
 
 variables: []

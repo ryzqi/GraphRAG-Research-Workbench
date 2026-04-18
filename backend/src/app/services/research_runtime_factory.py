@@ -21,6 +21,10 @@ from app.services.research_runtime_types import (
     ResearchRuntimeContext,
     ResearchToolRegistryBundle,
 )
+from app.services.research_runtime_gate import (
+    DEFAULT_OUTLINE_GATED_TOOL_NAMES,
+    build_outline_gate_middleware,
+)
 
 
 @dataclass(slots=True)
@@ -212,11 +216,21 @@ async def create_deep_research_runtime(
     tools = registry_bundle.tools
     tool_meta_by_name = registry_bundle.tool_meta_by_name
     resolved_skill_paths = list(config.skill_paths)
+    outline_gate_tool_names = {
+        *DEFAULT_OUTLINE_GATED_TOOL_NAMES,
+        *registry_bundle.tool_groups.get("web", ()),
+        *registry_bundle.tool_groups.get("paper", ()),
+    }
 
     agent_kwargs: dict[str, Any] = {
         "name": config.name,
         "model": config.primary_model,
         "tools": tools,
+        "middleware": [
+            build_outline_gate_middleware(
+                gated_tool_names=tuple(sorted(outline_gate_tool_names))
+            )
+        ],
         "system_prompt": config.system_prompt,
         "subagents": _build_source_specialized_subagents(
             config=config,

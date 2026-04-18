@@ -641,7 +641,10 @@ def _build_report_section(
         "badge_label": "已生成研究报告",
         "markdown": report_markdown or "",
         "summary": str(summary or "").strip(),
-        "outline": _build_report_outline(report_markdown),
+        "outline": _build_report_outline(
+            report_payload=report_payload,
+            report_markdown=report_markdown,
+        ),
         "metric_cards": _build_report_metric_cards(
             metrics_payload=metrics_payload,
             gate_payload=gate_payload,
@@ -650,7 +653,30 @@ def _build_report_section(
     }
 
 
-def _build_report_outline(report_markdown: str | None) -> list[dict[str, Any]]:
+def _build_report_outline(
+    *, report_payload: dict[str, Any], report_markdown: str | None
+) -> list[dict[str, Any]]:
+    sections_payload = report_payload.get("sections")
+    if isinstance(sections_payload, list):
+        outline_from_sections: list[dict[str, Any]] = []
+        for index, item in enumerate(sections_payload, start=1):
+            if not isinstance(item, dict):
+                continue
+            title = str(item.get("title") or "").strip()
+            if not title:
+                continue
+            section_id = str(item.get("id") or "").strip() or f"section-{index}"
+            level = _read_int(item.get("level")) or 2
+            outline_from_sections.append(
+                {
+                    "id": section_id,
+                    "title": title,
+                    "level": level,
+                }
+            )
+        if outline_from_sections:
+            return outline_from_sections
+
     if not report_markdown:
         return []
     outline = []

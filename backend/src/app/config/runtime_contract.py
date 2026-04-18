@@ -28,6 +28,7 @@ class ResearchRuntimeRequestContext:
     session_question_filename: str = "session_question.txt"
     plan_snapshot_filename: str = "plan_snapshot.json"
     query_mesh_filename: str = "query_mesh.json"
+    clarification_context_filename: str = "clarification_context.md"
 
     @property
     def guide_path(self) -> str:
@@ -46,11 +47,16 @@ class ResearchRuntimeRequestContext:
         return f"{self.context_root}/{self.query_mesh_filename}"
 
     @property
+    def clarification_context_path(self) -> str:
+        return f"{self.context_root}/{self.clarification_context_filename}"
+
+    @property
     def request_paths(self) -> tuple[str, ...]:
         return (
             self.session_question_path,
             self.plan_snapshot_path,
             self.query_mesh_path,
+            self.clarification_context_path,
         )
 
 
@@ -94,6 +100,7 @@ class ResearchRuntimeLayoutManifest:
         "query_map_path",
         "coverage_path",
         "report_context_json_path",
+        "report_outline_path",
         "task_graph_path",
         "claim_bundles_path",
         "section_briefs_path",

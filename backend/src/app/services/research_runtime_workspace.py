@@ -79,6 +79,9 @@ def build_runtime_request_files(
     request_files[RESEARCH_RUNTIME_REQUEST_CONTEXT.query_mesh_path] = create_file_data(
         json.dumps(asdict(query_mesh), ensure_ascii=False, indent=2)
     )
+    request_files[RESEARCH_RUNTIME_REQUEST_CONTEXT.clarification_context_path] = (
+        create_file_data(_build_clarification_context_content(session))
+    )
     return request_files
 
 
@@ -137,6 +140,49 @@ def _require_preloaded_session_artifacts(session: ResearchSession) -> Sequence[A
             "Deep Research runtime requires session.artifacts to be preloaded."
         )
     return session.artifacts or ()
+
+
+def _build_clarification_context_content(session: ResearchSession) -> str:
+    artifacts = session.artifacts or () if "artifacts" in session.__dict__ else ()
+    request_blocks: list[str] = []
+    answer_blocks: list[str] = []
+    for artifact in artifacts:
+        artifact_key = getattr(artifact, "artifact_key", None)
+        if artifact_key == "clarification_request":
+            content_json = getattr(artifact, "content_json", None)
+            content_text = getattr(artifact, "content_text", None)
+            if isinstance(content_json, dict):
+                summary = str(content_json.get("summary") or "").strip()
+                if summary:
+                    request_blocks.append(f"- 摘要：{summary}")
+                questions = content_json.get("questions")
+                if isinstance(questions, list):
+                    for item in questions:
+                        if not isinstance(item, dict):
+                            continue
+                        question_text = str(item.get("question") or "").strip()
+                        why_it_matters = str(item.get("why_it_matters") or "").strip()
+                        if not question_text:
+                            continue
+                        line = f"- {question_text}"
+                        if why_it_matters:
+                            line += f" | 影响：{why_it_matters}"
+                        request_blocks.append(line)
+            elif isinstance(content_text, str) and content_text.strip():
+                request_blocks.append(content_text.strip())
+            continue
+
+        if artifact_key == "clarification_answer":
+            content_text = getattr(artifact, "content_text", None)
+            if isinstance(content_text, str) and content_text.strip():
+                answer_blocks.append(f"- {content_text.strip()}")
+
+    sections = [
+        f"原始问题：\n{str(session.question or '').strip() or '未提供'}",
+        "已发出的澄清问题：\n" + ("\n".join(request_blocks) if request_blocks else "- 暂无"),
+        "已收到的澄清回答：\n" + ("\n".join(answer_blocks) if answer_blocks else "- 暂无"),
+    ]
+    return "\n\n".join(section for section in sections if section.strip())
 
 
 def _build_bootstrap_workspace_file_entries(

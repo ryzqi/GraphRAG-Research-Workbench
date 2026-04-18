@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Literal, Mapping, Sequence
@@ -11,18 +12,23 @@ from app.services.research_runtime_context import ResearchRuntimeContextSnapshot
 from app.services.research_source_bundle import ResearchSourceBundle
 
 ConfidenceLevel = Literal["sufficient", "partial", "insufficient"]
+_SECTION_ID_HEADING_PATTERN = re.compile(
+    r"^\[(?P<section_id>[^\[\]]+)\]\s*(?P<title>.*)$"
+)
 
 
 @dataclass(slots=True, frozen=True)
 class ResearchCompiledSection:
     title: str
     content: str
+    id: str = ""
+    level: int = 2
 
 
 @dataclass(slots=True, frozen=True)
 class ResearchCompiledReport:
     report_md: str
-    sections: list[dict[str, str]]
+    sections: list[dict[str, Any]]
     metadata: dict[str, Any]
 
 
@@ -54,7 +60,12 @@ def compile_report_from_sections(
     return ResearchCompiledReport(
         report_md=resolved_report_md,
         sections=[
-            {"title": section.title, "content": section.content}
+            {
+                "id": section.id,
+                "title": section.title,
+                "content": section.content,
+                "level": section.level,
+            }
             for section in normalized_sections
         ],
         metadata={
@@ -104,6 +115,18 @@ def compile_report_from_runtime_context(
         source_bundle=source_bundle,
     )
     has_conflicts = bool(report_context.get("has_conflicts"))
+    dynamic_sections = _build_dynamic_outline_sections(
+        source_bundle=source_bundle,
+        runtime_context_snapshot=runtime_context_snapshot,
+    )
+    if dynamic_sections:
+        return compile_report_from_sections(
+            sections=dynamic_sections,
+            evidence_count=len(source_bundle.citations),
+            has_conflicts=has_conflicts,
+            confidence_level=confidence_level,
+            prompts=prompts,
+        )
 
     sections = [
         ResearchCompiledSection(
@@ -194,12 +217,22 @@ def _normalize_sections(
         ResearchCompiledSection(
             title=(section.title or "").strip() or "未命名章节",
             content=(section.content or "").strip() or "无内容",
+            id=(section.id or "").strip(),
+            level=max(int(section.level), 1),
         )
         for section in sections
     ]
-    if normalized:
-        return normalized
-    return [ResearchCompiledSection(title="摘要", content="无内容")]
+    if not normalized:
+        normalized = [ResearchCompiledSection(title="摘要", content="无内容")]
+    return [
+        ResearchCompiledSection(
+            title=section.title,
+            content=section.content,
+            id=section.id or f"section-{index}",
+            level=section.level,
+        )
+        for index, section in enumerate(normalized, start=1)
+    ]
 
 
 def _build_sections_markdown(
@@ -437,6 +470,207 @@ def _format_section_status(value: Any) -> str:
         details = [token for token in [status, owner] if token]
         lines.append(f"- {title}" + (f" ({' / '.join(details)})" if details else ""))
     return "\n".join(lines) if len(lines) > 1 else ""
+
+
+def _build_dynamic_outline_sections(
+    *,
+    source_bundle: ResearchSourceBundle,
+    runtime_context_snapshot: ResearchRuntimeContextSnapshot,
+) -> list[ResearchCompiledSection]:
+    outline_sections = _parse_markdown_h2_sections(runtime_context_snapshot.report_outline_md)
+    draft_sections = _parse_markdown_h2_sections(runtime_context_snapshot.report_draft_md)
+    outline_sections_by_id = _index_sections_by_id(outline_sections)
+    draft_sections_by_id = _index_sections_by_id(draft_sections)
+    outline_sections_by_title = (
+        {}
+        if outline_sections_by_id
+        else _index_sections_by_title(outline_sections)
+    )
+    draft_sections_by_title = (
+        {}
+        if draft_sections_by_id
+        else _index_sections_by_title(draft_sections)
+    )
+    brief_items = [
+        item
+        for item in runtime_context_snapshot.section_briefs_json
+        if isinstance(item, Mapping)
+        and (
+            str(item.get("section_id") or "").strip()
+            or str(item.get("title") or "").strip()
+        )
+    ]
+
+    if not brief_items:
+        return []
+    sections: list[ResearchCompiledSection] = []
+
+    for index, brief in enumerate(brief_items, start=1):
+        section_id = str(brief.get("section_id") or "").strip() or f"section-{index}"
+        title = str(brief.get("title") or "").strip() or f"未命名章节 {index}"
+        draft_content = draft_sections_by_id.get(section_id, "")
+        outline_content = outline_sections_by_id.get(section_id, "")
+        if not draft_content and not draft_sections_by_id:
+            draft_content = draft_sections_by_title.get(title, "")
+        if not outline_content and not outline_sections_by_id:
+            outline_content = outline_sections_by_title.get(title, "")
+        sections.append(
+            ResearchCompiledSection(
+                id=section_id,
+                title=title,
+                content=_build_dynamic_section_content(
+                    draft_content=draft_content,
+                    outline_content=outline_content,
+                    brief=brief,
+                ),
+            )
+        )
+
+    if (
+        source_bundle.citations
+        and not any(_looks_like_reference_section(section.title) for section in sections)
+    ):
+        sections.append(
+            ResearchCompiledSection(
+                id=f"section-{len(sections) + 1}",
+                title="参考来源",
+                content=_format_citation_list(source_bundle),
+            )
+        )
+    return sections
+
+
+def _parse_markdown_h2_sections(value: str) -> list[dict[str, str]]:
+    if not value.strip():
+        return []
+    sections: list[dict[str, str]] = []
+    current_title = ""
+    current_section_id = ""
+    current_lines: list[str] = []
+    for raw_line in value.splitlines():
+        line = raw_line.rstrip()
+        stripped = line.strip()
+        if stripped.startswith("## "):
+            if current_title:
+                sections.append(
+                    {
+                        "section_id": current_section_id,
+                        "title": current_title,
+                        "content": "\n".join(current_lines).strip(),
+                    }
+                )
+            current_section_id, current_title = _split_section_heading(stripped[3:].strip())
+            current_lines = []
+            continue
+        if current_title:
+            current_lines.append(line)
+    if current_title:
+        sections.append(
+            {
+                "section_id": current_section_id,
+                "title": current_title,
+                "content": "\n".join(current_lines).strip(),
+            }
+        )
+    return sections
+
+
+def _index_sections_by_id(
+    sections: Sequence[Mapping[str, str]],
+) -> dict[str, str]:
+    indexed: dict[str, str] = {}
+    for item in sections:
+        section_id = str(item.get("section_id") or "").strip()
+        content = str(item.get("content") or "")
+        if not section_id or section_id in indexed:
+            continue
+        indexed[section_id] = content
+    return indexed
+
+
+def _index_sections_by_title(
+    sections: Sequence[Mapping[str, str]],
+) -> dict[str, str]:
+    duplicate_titles = _duplicate_titles(
+        [str(item.get("title") or "").strip() for item in sections]
+    )
+    indexed: dict[str, str] = {}
+    for item in sections:
+        normalized_title = str(item.get("title") or "").strip()
+        content = str(item.get("content") or "")
+        if (
+            not normalized_title
+            or normalized_title in indexed
+            or normalized_title in duplicate_titles
+        ):
+            continue
+        indexed[normalized_title] = content
+    return indexed
+
+
+def _duplicate_titles(titles: Sequence[str]) -> set[str]:
+    seen: set[str] = set()
+    duplicates: set[str] = set()
+    for raw_title in titles:
+        title = raw_title.strip()
+        if not title:
+            continue
+        if title in seen:
+            duplicates.add(title)
+            continue
+        seen.add(title)
+    return duplicates
+
+
+def _split_section_heading(raw_heading: str) -> tuple[str, str]:
+    heading = raw_heading.strip()
+    if not heading:
+        return "", ""
+    match = _SECTION_ID_HEADING_PATTERN.match(heading)
+    if match is None:
+        return "", heading
+    return (
+        str(match.group("section_id") or "").strip(),
+        str(match.group("title") or "").strip(),
+    )
+
+
+def _build_dynamic_section_content(
+    *,
+    draft_content: str,
+    outline_content: str,
+    brief: Mapping[str, Any] | None,
+) -> str:
+    if brief is None:
+        brief = {}
+    description = str(brief.get("description") or "").strip()
+    summary = str(brief.get("summary") or "").strip()
+    writing_goal = str(brief.get("writing_goal") or "").strip()
+    brief_markdown = _trim_leading_heading(str(brief.get("brief_markdown") or ""))
+    must_cover = _normalize_string_list(brief.get("must_cover"))
+    open_questions = _normalize_string_list(brief.get("open_questions"))
+    citation_indices = brief.get("citation_indices")
+    citation_block = (
+        "引用索引：" + ", ".join(str(value) for value in citation_indices)
+        if isinstance(citation_indices, list) and citation_indices
+        else ""
+    )
+    return _join_blocks(
+        draft_content,
+        outline_content if not draft_content else "",
+        summary if not draft_content else "",
+        f"本节目标：{description}" if description and not draft_content else "",
+        f"写作说明：{writing_goal}" if writing_goal and not draft_content else "",
+        brief_markdown,
+        _format_bullets("必须覆盖", must_cover),
+        _format_bullets("待补问题", open_questions),
+        citation_block,
+    )
+
+
+def _looks_like_reference_section(title: str) -> bool:
+    normalized = title.strip()
+    return any(token in normalized for token in ("参考", "引用", "来源"))
 
 
 def _trim_leading_heading(value: str) -> str:
