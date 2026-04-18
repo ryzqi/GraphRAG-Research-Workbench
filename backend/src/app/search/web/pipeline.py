@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections import defaultdict
 from time import perf_counter
 from typing import Any
 
 from langchain_core.documents import Document
+
+from app.core.settings import get_settings
 
 from .contracts import ReadProvider, SearchRetriever
 from .documents import document_to_result
@@ -77,13 +80,18 @@ class WebSearchPipeline:
             }
         )
         collected_groups: list[list[Document]] = []
+        max_concurrency = max(
+            1,
+            int(get_settings().web_search_pipeline_max_concurrency),
+        )
+        semaphore = asyncio.Semaphore(max_concurrency)
 
-        for rewritten_query in query_plan.rewritten_queries:
-            for retriever in self._retrievers:
-                provider_start = perf_counter()
-                provider_reports[retriever.provider_name]["provider"] = (
-                    retriever.provider_name
-                )
+        async def _run_retriever(
+            rewritten_query: str,
+            retriever: SearchRetriever,
+        ) -> tuple[str, list[Document] | None, int, str | None]:
+            provider_start = perf_counter()
+            async with semaphore:
                 try:
                     documents = await retriever.aretrieve(
                         rewritten_query,
@@ -102,20 +110,37 @@ class WebSearchPipeline:
                         auto_parameters=auto_parameters,
                     )
                 except Exception as exc:
-                    if provider_reports[retriever.provider_name]["error"] is None:
-                        provider_reports[retriever.provider_name]["error"] = str(exc)
-                    provider_reports[retriever.provider_name]["elapsed_ms"] += int(
-                        (perf_counter() - provider_start) * 1000
+                    return (
+                        retriever.provider_name,
+                        None,
+                        int((perf_counter() - provider_start) * 1000),
+                        str(exc),
                     )
-                    continue
-                provider_reports[retriever.provider_name]["ok"] = True
-                provider_reports[retriever.provider_name]["error"] = None
-                provider_reports[retriever.provider_name]["result_count"] += len(
-                    documents
-                )
-                provider_reports[retriever.provider_name]["elapsed_ms"] += int(
-                    (perf_counter() - provider_start) * 1000
-                )
+            return (
+                retriever.provider_name,
+                documents,
+                int((perf_counter() - provider_start) * 1000),
+                None,
+            )
+
+        fanout_results = await asyncio.gather(
+            *[
+                _run_retriever(rewritten_query, retriever)
+                for rewritten_query in query_plan.rewritten_queries
+                for retriever in self._retrievers
+            ]
+        )
+        for provider_name, documents, elapsed_ms, error in fanout_results:
+            provider_reports[provider_name]["provider"] = provider_name
+            provider_reports[provider_name]["elapsed_ms"] += elapsed_ms
+            if error is not None:
+                if provider_reports[provider_name]["error"] is None:
+                    provider_reports[provider_name]["error"] = error
+                continue
+            provider_reports[provider_name]["ok"] = True
+            provider_reports[provider_name]["error"] = None
+            provider_reports[provider_name]["result_count"] += len(documents or [])
+            if documents:
                 collected_groups.append(documents)
 
         fused = fuse_documents(
