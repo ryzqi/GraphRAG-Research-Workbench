@@ -54,6 +54,10 @@ class CoreDeploySettings(BaseModel):
     db_pool_size: int
     db_max_overflow: int
     db_pool_recycle_seconds: int
+    langgraph_postgres_pool_min_size: int
+    langgraph_postgres_pool_max_size: int
+    langgraph_postgres_pool_timeout_seconds: float
+    web_search_pipeline_max_concurrency: int
     redis_url: str
     redis_socket_timeout_seconds: float
     redis_socket_connect_timeout_seconds: float
@@ -191,6 +195,34 @@ class DeploySettings(BaseSettings):
         1800,
         legacy_alias="DB_POOL_RECYCLE_SECONDS",
         nested_alias="CORE__DB_POOL_RECYCLE_SECONDS",
+    )
+    langgraph_postgres_pool_min_size: int = _deploy_field(
+        2,
+        ge=1,
+        le=32,
+        legacy_alias="LANGGRAPH_POSTGRES_POOL_MIN_SIZE",
+        nested_alias="CORE__LANGGRAPH_POSTGRES_POOL_MIN_SIZE",
+    )
+    langgraph_postgres_pool_max_size: int = _deploy_field(
+        10,
+        ge=1,
+        le=64,
+        legacy_alias="LANGGRAPH_POSTGRES_POOL_MAX_SIZE",
+        nested_alias="CORE__LANGGRAPH_POSTGRES_POOL_MAX_SIZE",
+    )
+    langgraph_postgres_pool_timeout_seconds: float = _deploy_field(
+        30.0,
+        ge=0.1,
+        le=300.0,
+        legacy_alias="LANGGRAPH_POSTGRES_POOL_TIMEOUT_SECONDS",
+        nested_alias="CORE__LANGGRAPH_POSTGRES_POOL_TIMEOUT_SECONDS",
+    )
+    web_search_pipeline_max_concurrency: int = _deploy_field(
+        4,
+        ge=1,
+        le=32,
+        legacy_alias="WEB_SEARCH_PIPELINE_MAX_CONCURRENCY",
+        nested_alias="CORE__WEB_SEARCH_PIPELINE_MAX_CONCURRENCY",
     )
     redis_url: str = _deploy_field(
         DEV_DEFAULT_REDIS_URL,
@@ -559,6 +591,10 @@ class DeploySettings(BaseSettings):
             db_pool_size=self.db_pool_size,
             db_max_overflow=self.db_max_overflow,
             db_pool_recycle_seconds=self.db_pool_recycle_seconds,
+            langgraph_postgres_pool_min_size=self.langgraph_postgres_pool_min_size,
+            langgraph_postgres_pool_max_size=self.langgraph_postgres_pool_max_size,
+            langgraph_postgres_pool_timeout_seconds=self.langgraph_postgres_pool_timeout_seconds,
+            web_search_pipeline_max_concurrency=self.web_search_pipeline_max_concurrency,
             redis_url=self.redis_url,
             redis_socket_timeout_seconds=self.redis_socket_timeout_seconds,
             redis_socket_connect_timeout_seconds=self.redis_socket_connect_timeout_seconds,

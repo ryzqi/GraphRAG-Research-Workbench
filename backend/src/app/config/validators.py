@@ -173,6 +173,22 @@ def _is_blank_or_placeholder(value: object) -> bool:
 
 
 def validate_startup_settings(settings: Any) -> None:
+    langgraph_pool_min_size = getattr(
+        settings, "langgraph_postgres_pool_min_size", None
+    )
+    langgraph_pool_max_size = getattr(
+        settings, "langgraph_postgres_pool_max_size", None
+    )
+    if (
+        isinstance(langgraph_pool_min_size, int)
+        and isinstance(langgraph_pool_max_size, int)
+        and langgraph_pool_min_size > langgraph_pool_max_size
+    ):
+        raise ValueError(
+            "langgraph_postgres_pool_min_size must be <= "
+            "langgraph_postgres_pool_max_size"
+        )
+
     if is_development_like_env(getattr(settings, "app_env", None)):
         return
 
