@@ -80,6 +80,7 @@ class ResearchRuntimeRunResult:
     latency_ms: int | None = None
     total_cost_usd: float | None = None
     quality_score: float | None = None
+    source_quality_summary: dict[str, Any] | None = None
 
 
 @dataclass(slots=True, frozen=True)
@@ -191,6 +192,11 @@ def build_research_metrics(
             "channels": _build_channel_metrics(
                 target_sources=plan_snapshot.target_sources,
                 citations=source_bundle.citations,
+            ),
+            "source_quality": (
+                dict(runtime_result.source_quality_summary)
+                if isinstance(runtime_result.source_quality_summary, dict)
+                else None
             ),
         },
         "coverage": {

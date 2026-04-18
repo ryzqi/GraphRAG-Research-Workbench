@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import Literal, Protocol, TypeVar
 
 from langchain_core.language_models import BaseChatModel
@@ -38,6 +39,7 @@ from app.services.research_planner_types import ResearchPlannerResult
 _DEFAULT_SCOPER_STRUCTURED_METHOD = "function_calling"
 _OLLAMA_SCOPER_STRUCTURED_METHOD = "json_mode"
 SchemaT = TypeVar("SchemaT", bound=BaseModel)
+logger = logging.getLogger(__name__)
 
 
 class ResearchScoper(Protocol):
@@ -171,12 +173,7 @@ class _ResearchScoperProceedOutput(BaseModel):
 
 
 class _ResearchScoperOutput(BaseModel):
-    """Research preflight scoper structured output.
-
-    这是 LLM/provider 边界上的传输 DTO，不是内部领域模型。
-    这里允许忽略顶层附加元数据，随后再映射为严格的
-    ResearchClarificationRequest / ResearchPlanSnapshot。
-    """
+    """Provider 边界上的完整 scoper 输出。"""
 
     model_config = ConfigDict(
         extra="ignore",
@@ -191,11 +188,11 @@ class _ResearchScoperOutput(BaseModel):
     summary: str = Field(
         ...,
         min_length=1,
-        description="User-facing summary of the decision. For proceed it summarizes the research plan; for clarify it explains why more information is needed.",
+        description="User-facing summary of the decision.",
     )
     questions: list[_ResearchScoperQuestionOutput] = Field(
         default_factory=list,
-        description="Clarifying questions to ask when decision is clarify. Leave empty when decision is proceed.",
+        description="Clarifying questions to ask when decision is clarify.",
     )
     research_brief: str | None = Field(
         default=None,
@@ -207,7 +204,7 @@ class _ResearchScoperOutput(BaseModel):
     )
     target_sources: list[str] = Field(
         default_factory=list,
-        description="Planned source targets when decision is proceed. Only use web or paper.",
+        description="Planned source targets when decision is proceed.",
     )
     subtasks: list[_ResearchScoperSubtaskOutput] = Field(
         default_factory=list,
@@ -314,9 +311,16 @@ class LLMResearchScoper:
                 ),
             )
         else:
-            user_prompt = self._prompts.render_with_few_shot(
+            base_prompt = self._prompts.render_with_few_shot(
                 "research/scoper_user",
                 question=question_text,
+            )
+            instruction_block = "\n".join(f"- {item}" for item in schema_instructions)
+            user_prompt = (
+                f"{base_prompt}\n\n"
+                "当前阶段约束：\n"
+                f"{stage_prompt}\n"
+                f"{instruction_block}"
             )
         return [
             SystemMessage(
@@ -438,13 +442,58 @@ class LLMResearchScoper:
                 f"Research scoper {stage} structured output 解析失败: {method}:invalid_schema"
             ) from exc
 
+    @staticmethod
+    def _is_retryable_function_calling_schema_error(
+        *, exc: RuntimeError, method: str
+    ) -> bool:
+        return (
+            method == _DEFAULT_SCOPER_STRUCTURED_METHOD
+            and "invalid_schema" in str(exc)
+        )
+
+    async def _invoke_proceed_payload(
+        self,
+        *,
+        model: BaseChatModel,
+        question: str,
+        method: str,
+        stage: str,
+    ) -> _ResearchScoperProceedOutput:
+        messages = self._build_proceed_messages(question=question, method=method)
+        try:
+            return await self._invoke_structured_payload(
+                model=model,
+                schema=_ResearchScoperProceedOutput,
+                method=method,
+                messages=messages,
+                stage=stage,
+            )
+        except RuntimeError as exc:
+            if not self._is_retryable_function_calling_schema_error(
+                exc=exc,
+                method=method,
+            ):
+                raise
+            logger.warning(
+                "Research scoper %s structured output invalid_schema; retrying once",
+                stage,
+                exc_info=True,
+            )
+            return await self._invoke_structured_payload(
+                model=model,
+                schema=_ResearchScoperProceedOutput,
+                method=method,
+                messages=messages,
+                stage=stage,
+            )
+
     async def _invoke_scoper_payload(
         self,
         *,
         model: BaseChatModel,
         question: str,
+        method: str,
     ) -> _ResearchScoperOutput:
-        method = self._structured_output_method()
         messages = self._build_scoper_messages(
             question=question,
             method=method,
@@ -463,7 +512,7 @@ class LLMResearchScoper:
             stage="structured output",
         )
 
-    async def _scope_via_json_mode(
+    async def _scope_via_staged_contract(
         self,
         *,
         model: BaseChatModel,
@@ -472,11 +521,10 @@ class LLMResearchScoper:
         allow_clarify: bool,
     ) -> ResearchClarificationRequest | ResearchPlanSnapshot:
         if not allow_clarify:
-            proceed_payload = await self._invoke_structured_payload(
+            proceed_payload = await self._invoke_proceed_payload(
                 model=model,
-                schema=_ResearchScoperProceedOutput,
+                question=question,
                 method=method,
-                messages=self._build_proceed_messages(question=question, method=method),
                 stage="forced proceed",
             )
             return self._build_plan_snapshot_from_payload(
@@ -515,11 +563,10 @@ class LLMResearchScoper:
                 ],
             )
 
-        proceed_payload = await self._invoke_structured_payload(
+        proceed_payload = await self._invoke_proceed_payload(
             model=model,
-            schema=_ResearchScoperProceedOutput,
+            question=question,
             method=method,
-            messages=self._build_proceed_messages(question=question, method=method),
             stage="proceed",
         )
         return self._build_plan_snapshot_from_payload(
@@ -588,7 +635,7 @@ class LLMResearchScoper:
         )
         method = self._structured_output_method()
         if method == "json_mode":
-            return await self._scope_via_json_mode(
+            return await self._scope_via_staged_contract(
                 model=model,
                 question=question,
                 method=method,
@@ -596,24 +643,18 @@ class LLMResearchScoper:
             )
 
         if not allow_clarify:
-            proceed_payload = await self._invoke_structured_payload(
+            return await self._scope_via_staged_contract(
                 model=model,
-                schema=_ResearchScoperProceedOutput,
+                question=question,
                 method=method,
-                messages=self._build_proceed_messages(question=question, method=method),
-                stage="forced proceed",
-            )
-            return self._build_plan_snapshot_from_payload(
-                summary=proceed_payload.summary,
-                research_brief=proceed_payload.research_brief,
-                complexity=proceed_payload.complexity,
-                target_sources=proceed_payload.target_sources,
-                subtasks=proceed_payload.subtasks,
-                budget_guidance=proceed_payload.budget_guidance,
+                allow_clarify=False,
             )
 
-        payload = await self._invoke_scoper_payload(model=model, question=question)
-
+        payload = await self._invoke_scoper_payload(
+            model=model,
+            question=question,
+            method=method,
+        )
         if payload.decision == "clarify":
             return ResearchClarificationRequest(
                 summary=payload.summary,

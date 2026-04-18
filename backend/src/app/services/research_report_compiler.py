@@ -394,14 +394,12 @@ def _format_claim_bundle_details(claim_bundles: Sequence[Mapping[str, Any]]) -> 
 def _format_todos_summary(todos: Sequence[Mapping[str, Any]]) -> str:
     if not todos:
         return ""
-    lines = ["待办执行："]
+    lines = ["执行记录："]
     for item in todos:
         content = str(item.get("content") or "").strip()
-        status = str(item.get("status") or "").strip()
         if not content:
             continue
-        prefix = f"[{status}] " if status else ""
-        lines.append(f"- {prefix}{content}")
+        lines.append(f"- {content}")
     return "\n".join(lines) if len(lines) > 1 else ""
 
 
@@ -414,13 +412,12 @@ def _format_runtime_activity_summary(live_board: Mapping[str, Any]) -> str:
         if not isinstance(item, Mapping):
             continue
         title = str(item.get("title") or "").strip()
-        status = str(item.get("status") or "").strip()
         agent_label = str(item.get("agent_label") or "").strip()
         message = str(item.get("message") or "").strip()
         summary = message or title
         if not summary:
             continue
-        details = [token for token in [agent_label, status] if token]
+        details = [token for token in [agent_label] if token]
         lines.append(f"- {summary}" + (f" ({' / '.join(details)})" if details else ""))
     return "\n".join(lines) if len(lines) > 1 else ""
 

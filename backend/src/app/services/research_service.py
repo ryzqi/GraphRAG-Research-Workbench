@@ -430,7 +430,7 @@ class ResearchService:
         sections.append(
             "规划策略：\n"
             "- 首轮澄清应尽量一次性收齐会改变研究路径的关键缺口。\n"
-            "- 若当前已经收到至少 1 轮用户补充，默认直接生成研究计划；只有在研究对象、核心范围或主比较对象仍缺失到无法规划时，才允许最后一次聚合追问。\n"
+            "- 若当前已经收到用户补充，直接生成研究计划；不要再次追问。\n"
             "- 时间范围、受众、输出形态等轻微模糊请采用保守假设，并写入 research_brief 或 budget_guidance。\n"
             f"- 当前澄清回答轮次：{current_round}。"
         )
@@ -451,9 +451,8 @@ class ResearchService:
         session: ResearchSession,
         answer: str,
     ) -> bool:
-        del answer
-        submission_count = cls._clarification_submission_count(session) + 1
-        return submission_count < 2
+        del cls, session, answer
+        return False
 
     def _ensure_dispatch_outbox(self, *, session: ResearchSession) -> None:
         if session.status != ResearchSessionStatus.QUEUED:

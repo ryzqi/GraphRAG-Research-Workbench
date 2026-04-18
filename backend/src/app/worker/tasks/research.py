@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import uuid
 
+from app.core.uvicorn_loop import windows_selector_loop_factory
 from app.core.settings import get_settings
 from app.models.research_session import ResearchSessionStatus
 from app.services.deep_research_runtime import build_deep_research_runtime_runner
@@ -15,7 +16,10 @@ from app.worker.task_resources import managed_task_resources
 
 @celery_app.task(name="app.worker.tasks.research.run_research_session")
 def run_research_session(session_id: str) -> None:
-    asyncio.run(_run_research_session(session_id))
+    asyncio.run(
+        _run_research_session(session_id),
+        loop_factory=windows_selector_loop_factory,
+    )
 
 
 async def _run_research_session(session_id: str) -> None:

@@ -42,6 +42,13 @@ Thumbs.db
 specs/
 openspec/
 docs/
+!docs/
+docs/*
+!docs/architecture.md
+!docs/api_contract_research.md
+!docs/ops/
+docs/ops/*
+!docs/ops/config-and-secrets.md
 AGENTS.md
 CLAUDE.md
 .plans

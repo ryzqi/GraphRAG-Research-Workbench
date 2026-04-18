@@ -23,7 +23,12 @@ from app.integrations.chat_model_factory import create_chat_model
 from app.integrations.redis_client import RedisClient
 from app.models.research_session import ResearchSession
 from app.prompts import get_prompt_loader
-from app.schemas.research import ResearchPlanSnapshot, ResearchSourceTarget, ResearchSourceType
+from app.schemas.research import (
+    ResearchCanonicalCitation,
+    ResearchPlanSnapshot,
+    ResearchSourceTarget,
+    ResearchSourceType,
+)
 from app.services.research_observability import ResearchRuntimeRunResult
 from app.services.research_query_mesh import select_required_web_providers
 from app.services.research_runtime_context import (
@@ -66,7 +71,12 @@ from app.services.research_runtime_workspace import (
     build_runtime_request_files as _build_runtime_request_files,
     build_session_bootstrap_workspace_files as _build_session_bootstrap_workspace_files,
 )
-from app.services.research_source_bundle import ResearchSourceBundleBuilder
+from app.services.research_source_bundle import (
+    ResearchSourceBundleBuilder,
+    ResearchSourceQualityContext,
+    ResearchSourceQualityJudge,
+    ResearchSourceQualityJudgeResult,
+)
 from app.services.research_workspace_files import (
     build_runtime_orchestration_scaffold_files,
     build_research_workspace_layout,
@@ -251,6 +261,25 @@ class DeepResearchRuntimeRunner:
     runtime: DeepResearchRuntime
     workspace_files: dict[str, str]
     runtime_activity_registry: _RuntimeActivityCallbackRegistry | None = None
+
+    async def _filter_citations_by_source_quality(
+        self,
+        *,
+        citations: list[ResearchCanonicalCitation],
+        session: ResearchSession,
+        plan_snapshot: ResearchPlanSnapshot,
+    ) -> ResearchSourceQualityJudgeResult:
+        judge = ResearchSourceQualityJudge(
+            model=self.runtime.config.finalizer_model,
+            structured_method=self.runtime.config.finalizer_structured_method,
+        )
+        return await judge.filter_citations(
+            citations=citations,
+            context=ResearchSourceQualityContext(
+                question=session.question,
+                plan_snapshot=plan_snapshot,
+            ),
+        )
 
     async def _recover_structured_payload(
         self,
@@ -454,10 +483,15 @@ class DeepResearchRuntimeRunner:
             and citation.source_provider == "workspace"
             for citation in structured.citations
         )
+        source_quality_result = await self._filter_citations_by_source_quality(
+            citations=list(structured.citations),
+            session=session,
+            plan_snapshot=plan_snapshot,
+        )
 
         source_bundle = ResearchSourceBundleBuilder().build(
             target_sources=plan_snapshot.target_sources,
-            citations=structured.citations,
+            citations=source_quality_result.citations,
             findings=structured.findings,
             required_web_providers=(
                 required_web_providers
@@ -475,6 +509,17 @@ class DeepResearchRuntimeRunner:
             source_bundle=source_bundle,
             runtime_context_snapshot=runtime_context_snapshot,
             latency_ms=latency_ms,
+            source_quality_summary={
+                "total_candidates": source_quality_result.total_candidates,
+                "kept": source_quality_result.kept_count,
+                "dropped": source_quality_result.dropped_count,
+                "borderline": source_quality_result.borderline_count,
+                "error_fallback_used": source_quality_result.error_fallback_used,
+                "decisions": [
+                    item.model_dump(mode="json")
+                    for item in source_quality_result.decisions
+                ],
+            },
         )
 
 

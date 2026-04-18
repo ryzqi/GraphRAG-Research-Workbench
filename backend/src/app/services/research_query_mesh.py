@@ -48,6 +48,7 @@ def build_research_query_mesh(
         [
             prompts.render(
                 "research/query_mesh_depth_subtask_evidence",
+                canonical_query=canonical_query,
                 subtask_title=item.title,
             )
             for item in plan_snapshot.subtasks
@@ -72,6 +73,7 @@ def build_research_query_mesh(
             *(
                 prompts.render(
                     "research/query_mesh_subtask_verification",
+                    canonical_query=canonical_query,
                     subtask_title=item.title,
                 )
                 for item in plan_snapshot.subtasks

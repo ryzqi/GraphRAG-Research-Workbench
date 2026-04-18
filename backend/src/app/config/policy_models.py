@@ -129,12 +129,25 @@ class ResearchStatusProbePolicy(BaseModel):
         return self
 
 
+class ResearchSourceQualityPolicy(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    hard_blocked_domain_suffixes: tuple[str, ...] = ()
+    judge_enabled: bool = True
+    judge_batch_size: int = Field(ge=1)
+    fallback_mode: Literal["keep_on_judge_error", "drop_on_judge_error"] = (
+        "keep_on_judge_error"
+    )
+    keep_borderline_results: bool = True
+
+
 class ResearchPolicy(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     version: str
     coverage_gate: ResearchCoverageGatePolicy
     status_probe: ResearchStatusProbePolicy
+    source_quality: ResearchSourceQualityPolicy
 
 
 class FrontendRuntimePolicy(BaseModel):

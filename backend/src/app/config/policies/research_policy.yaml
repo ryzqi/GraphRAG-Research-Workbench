@@ -23,3 +23,14 @@ status_probe:
     - "searxng"
   search_probe_query: "web search health check"
   jina_probe_url: "https://example.com"
+source_quality:
+  hard_blocked_domain_suffixes:
+    - "facebook.com"
+    - "instagram.com"
+    - "tiktok.com"
+    - "twitter.com"
+    - "x.com"
+  judge_enabled: true
+  judge_batch_size: 6
+  fallback_mode: "keep_on_judge_error"
+  keep_borderline_results: true

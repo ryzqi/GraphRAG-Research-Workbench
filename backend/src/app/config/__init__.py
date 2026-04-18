@@ -15,6 +15,7 @@ from app.config.policy_loader import (
 from app.config.policy_models import (
     FrontendRuntimePolicy,
     ResearchPolicy,
+    ResearchSourceQualityPolicy,
     ResearchStatusProbePolicy,
     SearchEnrichmentPolicy,
     SearchFusionPolicy,
@@ -48,6 +49,7 @@ __all__ = [
     "ResearchPolicy",
     "ResearchGateSettings",
     "ResearchStatusProbePolicy",
+    "ResearchSourceQualityPolicy",
     "SearchEnrichmentPolicy",
     "SearchFusionPolicy",
     "SearchPolicy",

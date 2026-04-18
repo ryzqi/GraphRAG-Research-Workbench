@@ -1,0 +1,59 @@
+version: "1.0"
+name: research_source_quality_judge
+description: "Deep Research citation 来源质量裁决提示词"
+
+template: |
+  你是 Deep Research 的 citation 来源质量裁决器。
+
+  你的任务是根据研究问题、研究计划和 citation 元数据，判断每条 citation 是否应该保留到最终 source bundle。
+
+  裁决原则：
+  1. `keep`：与问题或子任务直接相关，且足以作为最终回答的有效证据或直接背景支撑。
+  2. `borderline`：可能有价值，但仅凭当前元数据无法确认是否应直接引用；不确定时优先使用 `borderline`，不要激进丢弃。
+  3. `drop`：明显离题、仅是噪音/导航/营销页，或无法为当前问题提供支撑。
+  4. 不要因为站点品牌熟悉就默认高质量，也不要因为标题里没有完全词面重合就判定离题。
+  5. 必须覆盖每个 `citation_index` 一次且仅一次。
+
+  输出要求：
+  - `relevance_to_question` 取值只能是 `high` / `medium` / `low` / `none`
+  - `support_utility` 取值只能是 `direct` / `contextual` / `weak` / `none`
+  - `source_trust_signal` 取值只能是 `high` / `medium` / `low` / `unknown`
+  - `reason` 用简短中文短语说明主要原因
+
+  用户问题：
+  {question}
+
+  research_brief：
+  {research_brief}
+
+  summary：
+  {summary}
+
+  target_sources：
+  {target_sources}
+
+  subtasks_json：
+  {subtasks_json}
+
+  citations_json：
+  {citations_json}
+
+variables:
+  - name: question
+    type: string
+    required: true
+  - name: research_brief
+    type: string
+    required: true
+  - name: summary
+    type: string
+    required: true
+  - name: target_sources
+    type: string
+    required: true
+  - name: subtasks_json
+    type: string
+    required: true
+  - name: citations_json
+    type: string
+    required: true

@@ -1,3 +1,4 @@
+from app.config.deploy_settings import ENV_FILE
 from app.config.policy_loader import load_frontend_runtime_policy
 from app.core.settings import Settings
 from app.schemas.chats import default_kb_chat_config
@@ -6,6 +7,19 @@ from app.services.research_observability import (
     ResearchGateThresholds,
     build_research_gate_thresholds,
 )
+
+
+def _read_env_assignment(key: str) -> str | None:
+    if not ENV_FILE.exists():
+        return None
+
+    for raw_line in ENV_FILE.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith(f"{key}="):
+            return line.split("=", 1)[1].strip()
+    return None
 
 
 def test_kb_chat_default_config_uses_updated_retrieval_budget() -> None:
@@ -38,6 +52,15 @@ def test_frontend_runtime_and_index_defaults_match_updated_values() -> None:
 def test_research_gate_defaults_to_three_minute_p95_budget() -> None:
     assert ResearchGateThresholds().max_p95_ms == 180_000
     assert build_research_gate_thresholds().max_p95_ms == 180_000
+
+
+def test_repo_env_retrieval_budget_stays_within_settings_contract() -> None:
+    raw_value = _read_env_assignment("RETRIEVAL_MAX_TOP_K")
+    if raw_value is None:
+        return
+
+    max_allowed = Settings.model_fields["retrieval_max_top_k"].default
+    assert int(raw_value) <= max_allowed
 
 
 def test_rerank_placeholder_defaults_are_treated_as_unconfigured() -> None:
