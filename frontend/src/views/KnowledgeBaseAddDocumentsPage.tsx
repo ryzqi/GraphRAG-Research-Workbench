@@ -12,8 +12,6 @@ import {
   Typography
 } from '@mui/material';
 import {
-  IngestionDocumentResultPanel,
-  IngestionStatusOverviewCard,
   batchStatusColor,
   batchStatusLabel,
   bootstrapStatusColor,
@@ -28,7 +26,9 @@ import {
   streamHintSeverity,
   streamHintText,
   type IngestionChipColor
-} from '../components/ingestion';
+} from '../components/ingestion/statusPresentation';
+import { IngestionDocumentResultPanel } from '../components/ingestion/IngestionDocumentResultPanel';
+import { IngestionStatusOverviewCard } from '../components/ingestion/IngestionStatusOverviewCard';
 import { Button } from '../components/ui/Button';
 import {
   IngestionManifestEditor,

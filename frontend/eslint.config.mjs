@@ -15,6 +15,24 @@ const config = [
       'no-restricted-imports': [
         'error',
         {
+          paths: [
+            {
+              name: '@/components/ingestion',
+              message: '请直接从 components/ingestion 的具体文件导入，避免 barrel import 拉宽 bundle 边界。',
+            },
+            {
+              name: '../components/ingestion',
+              message: '请直接从 components/ingestion 的具体文件导入，避免 barrel import 拉宽 bundle 边界。',
+            },
+            {
+              name: '../../components/ingestion',
+              message: '请直接从 components/ingestion 的具体文件导入，避免 barrel import 拉宽 bundle 边界。',
+            },
+            {
+              name: '../../../components/ingestion',
+              message: '请直接从 components/ingestion 的具体文件导入，避免 barrel import 拉宽 bundle 边界。',
+            },
+          ],
           patterns: [
             {
               group: ['@/views/*', '../views/*', '../../views/*', '../../../views/*'],
@@ -31,6 +49,24 @@ const config = [
       'no-restricted-imports': [
         'error',
         {
+          paths: [
+            {
+              name: '@/components/ingestion',
+              message: '请直接从 components/ingestion 的具体文件导入，避免 barrel import 拉宽 bundle 边界。',
+            },
+            {
+              name: '../components/ingestion',
+              message: '请直接从 components/ingestion 的具体文件导入，避免 barrel import 拉宽 bundle 边界。',
+            },
+            {
+              name: '../../components/ingestion',
+              message: '请直接从 components/ingestion 的具体文件导入，避免 barrel import 拉宽 bundle 边界。',
+            },
+            {
+              name: '../../../components/ingestion',
+              message: '请直接从 components/ingestion 的具体文件导入，避免 barrel import 拉宽 bundle 边界。',
+            },
+          ],
           patterns: [
             {
               group: ['@/views/*', '../views/*', '../../views/*', '../../../views/*'],
@@ -128,6 +164,10 @@ const config = [
         'error',
         {
           paths: [
+            {
+              name: '../components/ingestion',
+              message: '请直接从 components/ingestion 的具体文件导入，避免 barrel import 拉宽 bundle 边界。',
+            },
             {
               name: '../services/bootstrapSubmissions',
               message: '页面层请通过 hooks/knowledgeBaseAddDocumentsBoundary 访问该能力。',

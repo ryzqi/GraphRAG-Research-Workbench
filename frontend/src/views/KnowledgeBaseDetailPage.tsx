@@ -25,7 +25,7 @@ import {
   batchStatusColor,
   batchStatusLabel,
   formatIngestionSummaryText,
-} from '../components/ingestion';
+} from '../components/ingestion/statusPresentation';
 import { KbDetailChunkList } from '../components/knowledge-base-detail/KbDetailChunkList';
 import { KbDetailChunkPreview } from '../components/knowledge-base-detail/KbDetailChunkPreview';
 import { KbDetailDocumentRail } from '../components/knowledge-base-detail/KbDetailDocumentRail';
@@ -474,14 +474,8 @@ export default function KnowledgeBaseDetailPage() {
     enabled: Boolean(kbId),
   });
 
-  const materials = useMemo(
-    () => materialsQuery.data ?? [],
-    [materialsQuery.data]
-  );
-  const inventorySummary = useMemo(
-    () => summarizeKnowledgeBaseInventory(materials),
-    [materials]
-  );
+  const materials = materialsQuery.data ?? [];
+  const inventorySummary = summarizeKnowledgeBaseInventory(materials);
   const readiness = kb
     ? readinessPresentation(kb.readiness)
     : { label: '未就绪', color: 'warning' as const };

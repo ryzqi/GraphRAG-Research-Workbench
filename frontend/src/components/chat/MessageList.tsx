@@ -306,13 +306,9 @@ export function MessageList({
   const [viewportHeight, setViewportHeight] = useState(0);
   const [rowHeights, setRowHeights] = useState<Record<string, number>>({});
 
-  const hasStreaming = useMemo(() => messages.some((msg) => msg.isStreaming), [messages]);
-  const hasStreamingContent = useMemo(
-    () =>
-      messages.some(
-        (msg) => msg.isStreaming && ((msg.content?.length ?? 0) > 0 || (msg.think?.length ?? 0) > 0)
-      ),
-    [messages]
+  const hasStreaming = messages.some((msg) => msg.isStreaming);
+  const hasStreamingContent = messages.some(
+    (msg) => msg.isStreaming && ((msg.content?.length ?? 0) > 0 || (msg.think?.length ?? 0) > 0)
   );
   const showThinking = loading && !hasStreamingContent;
   const lastMessage = messages[messages.length - 1];

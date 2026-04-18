@@ -3,7 +3,10 @@ import { useParams } from 'next/navigation';
 import { useKnowledgeBase, useKnowledgeBaseIngestionState } from './queries/useKnowledgeBases';
 import { isBatchActive, useIngestionBatchLive } from './queries/useIngestionBatches';
 import { getErrorMessage } from '../lib/errorHandler';
-import { buildBatchSummaryMetrics, streamHintText } from '../components/ingestion';
+import {
+  buildBatchSummaryMetrics,
+  streamHintText,
+} from '../components/ingestion/statusPresentation';
 
 export function useKnowledgeBaseDetailData() {
   const params = useParams<{ kbId: string }>();

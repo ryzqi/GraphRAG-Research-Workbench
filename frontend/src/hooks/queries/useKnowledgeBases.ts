@@ -34,6 +34,51 @@ const KEYS = {
   ingestionState: (id: string) => [...KEYS.all, 'ingestionState', id] as const,
 };
 
+interface KnowledgeBaseMutationSuccessDeps {
+  invalidate: (keys: Array<readonly unknown[]>) => Promise<void>;
+  setCachedData: <TData>(
+    key: readonly unknown[],
+    data: TData
+  ) => Promise<TData | undefined>;
+}
+
+interface KnowledgeBaseUpdateSuccessDeps extends KnowledgeBaseMutationSuccessDeps {
+  updateSelectableCollection: (updated: KnowledgeBase) => Promise<KnowledgeBase[] | undefined>;
+  updateListCollections: (updated: KnowledgeBase) => Promise<unknown>;
+}
+
+export async function applyKnowledgeBaseUpdateSuccess(
+  updated: KnowledgeBase,
+  id: string,
+  deps: KnowledgeBaseUpdateSuccessDeps
+) {
+  await Promise.all([
+    deps.setCachedData(KEYS.detail(id), updated),
+    deps.updateSelectableCollection(updated),
+    deps.updateListCollections(updated),
+  ]);
+  void deps.invalidate([KEYS.all]);
+}
+
+export async function applyKnowledgeBaseIndexConfigSuccess(
+  res: KnowledgeBaseIndexConfigUpdateResponse,
+  id: string,
+  deps: KnowledgeBaseMutationSuccessDeps
+) {
+  const tasks: Promise<unknown>[] = [
+    deps.invalidate([KEYS.all, KEYS.selectable()]),
+    deps.setCachedData(KEYS.detail(id), res.knowledge_base),
+  ];
+
+  if (res.rebuild_job) {
+    tasks.push(
+      deps.setCachedData(indexRebuildKeys.job(res.rebuild_job.id), res.rebuild_job)
+    );
+  }
+
+  await Promise.all(tasks);
+}
+
 interface UseCreateKnowledgeBaseOptions {
   invalidateMode?: 'blocking' | 'background';
 }
@@ -125,22 +170,26 @@ export function useUpdateKnowledgeBase() {
       updateKnowledgeBase(id, data),
     {
       onSuccess: async (updated, { id }, { invalidate, setCachedData }) => {
-        await setCachedData(KEYS.detail(id), updated);
-        await mutate<KnowledgeBase[] | undefined>(
-          KEYS.selectable(),
-          (current) => mergeKnowledgeBaseIntoCollection(current, updated),
-          { revalidate: false, populateCache: true }
-        );
-        await mutate<KnowledgeBase[] | undefined>(
-          (cachedKey) =>
-            Array.isArray(cachedKey) &&
-            cachedKey.length >= 2 &&
-            Object.is(cachedKey[0], KEYS.all[0]) &&
-            Object.is(cachedKey[1], 'list'),
-          (current) => mergeKnowledgeBaseIntoCollection(current, updated),
-          { revalidate: false, populateCache: true }
-        );
-        void invalidate([KEYS.all]);
+        await applyKnowledgeBaseUpdateSuccess(updated, id, {
+          invalidate,
+          setCachedData,
+          updateSelectableCollection: async (nextKnowledgeBase) =>
+            mutate<KnowledgeBase[] | undefined>(
+              KEYS.selectable(),
+              (current) => mergeKnowledgeBaseIntoCollection(current, nextKnowledgeBase),
+              { revalidate: false, populateCache: true }
+            ),
+          updateListCollections: async (nextKnowledgeBase) =>
+            mutate<KnowledgeBase[] | undefined>(
+              (cachedKey) =>
+                Array.isArray(cachedKey) &&
+                cachedKey.length >= 2 &&
+                Object.is(cachedKey[0], KEYS.all[0]) &&
+                Object.is(cachedKey[1], 'list'),
+              (current) => mergeKnowledgeBaseIntoCollection(current, nextKnowledgeBase),
+              { revalidate: false, populateCache: true }
+            ),
+        });
       },
     }
   );
@@ -156,11 +205,10 @@ export function useUpdateKnowledgeBaseIndexConfig() {
         { id },
         { invalidate, setCachedData }
       ) => {
-        await invalidate([KEYS.all, KEYS.selectable()]);
-        await setCachedData(KEYS.detail(id), res.knowledge_base);
-        if (res.rebuild_job) {
-          await setCachedData(indexRebuildKeys.job(res.rebuild_job.id), res.rebuild_job);
-        }
+        await applyKnowledgeBaseIndexConfigSuccess(res, id, {
+          invalidate,
+          setCachedData,
+        });
       },
     }
   );
