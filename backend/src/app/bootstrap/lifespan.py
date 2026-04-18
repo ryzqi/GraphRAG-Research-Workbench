@@ -18,6 +18,7 @@ from app.integrations.http_client import (
     close_http_client,
     create_http_client,
 )
+from app.integrations.langgraph_postgres_pool import LangGraphPostgresPool
 from app.integrations.llm_client import LLMClient
 from app.integrations.model_runtime_config import ModelRuntimeConfigManager
 from app.integrations.milvus_client import create_milvus_client
@@ -44,6 +45,7 @@ async def _initialize_app_state(app: FastAPI, settings: Settings) -> None:
         sessionmaker=sessionmaker,
         settings=settings,
     )
+    await LangGraphPostgresPool.initialize(settings)
     await CheckpointManager.initialize()
     await StoreManager.initialize()
     http_client = create_http_client(settings)
@@ -113,6 +115,7 @@ async def _shutdown_app_state(app: FastAPI) -> None:
         logger.warning("模型运行时配置关闭失败", extra={"error": str(exc)})
     await StoreManager.shutdown()
     await CheckpointManager.shutdown()
+    await LangGraphPostgresPool.shutdown()
 
 
 def create_lifespan(settings: Settings):

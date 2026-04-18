@@ -14,6 +14,7 @@ from app.core.checkpoint import CheckpointManager
 from app.core.errors import build_error_response
 from app.core.logging import get_request_id
 from app.core.memory_store import StoreManager
+from app.integrations.langgraph_postgres_pool import LangGraphPostgresPool
 from app.integrations.milvus_client import MilvusClient
 from app.integrations.object_storage import ObjectStorage
 from app.integrations.redis_client import RedisClient
@@ -93,6 +94,7 @@ async def ready(resources: AppResourcesDep) -> JSONResponse:
     }
 
     results = {name: await task for name, task in tasks.items()}
+    results["langgraph_pool"] = _status_dependency(LangGraphPostgresPool.status())
     results["checkpointer"] = _status_dependency(CheckpointManager.status())
     results["memory_store"] = _status_dependency(StoreManager.status())
     semantic_cache_service = getattr(resources, "semantic_cache_service", None)

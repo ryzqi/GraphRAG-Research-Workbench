@@ -20,6 +20,7 @@ from app.core.checkpoint import CheckpointManager
 from app.core.memory_store import StoreManager
 from app.core.settings import Settings
 from app.integrations.chat_model_factory import create_chat_model
+from app.integrations.langgraph_postgres_pool import LangGraphPostgresPool
 from app.integrations.redis_client import RedisClient
 from app.models.research_session import ResearchSession
 from app.prompts import get_prompt_loader
@@ -529,6 +530,7 @@ async def build_deep_research_runtime_runner(
     http_client: Any | None = None,
     redis: RedisClient | None = None,
 ) -> DeepResearchRuntimeRunner:
+    await LangGraphPostgresPool.initialize(settings)
     await CheckpointManager.initialize()
     await StoreManager.initialize()
     prompt_loader = get_prompt_loader()
