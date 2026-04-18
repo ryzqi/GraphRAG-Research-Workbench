@@ -4,48 +4,89 @@ import logging
 from time import perf_counter
 import uuid
 
-from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.requests import Request
-from starlette.responses import Response
+from starlette.datastructures import Headers
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from app.core.logging import set_request_id
 
 logger = logging.getLogger(__name__)
 
 
-class RequestIdMiddleware(BaseHTTPMiddleware):
-    async def dispatch(self, request: Request, call_next):
-        request_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())
+class RequestIdMiddleware:
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        request_id = Headers(scope=scope).get("X-Request-ID") or str(uuid.uuid4())
         set_request_id(request_id)
         started_at = perf_counter()
+        response_started = False
 
         try:
-            response: Response = await call_next(request)
+            async def send_with_request_id(message: Message) -> None:
+                nonlocal response_started
+
+                if message["type"] == "http.response.start":
+                    response_started = True
+                    raw_headers = list(message.get("headers", []))
+                    raw_headers = [
+                        (name, value)
+                        for name, value in raw_headers
+                        if name.lower() != b"x-request-id"
+                    ]
+                    raw_headers.append(
+                        (b"x-request-id", request_id.encode("latin-1"))
+                    )
+                    message = {**message, "headers": raw_headers}
+                    logger.info(
+                        "HTTP request completed",
+                        extra=self._build_log_extra(
+                            scope,
+                            started_at,
+                            status_code=message["status"],
+                        ),
+                    )
+
+                await send(message)
+
+            await self.app(scope, receive, send_with_request_id)
         except Exception:
+            if response_started:
+                raise
             logger.exception(
                 "HTTP request failed",
-                extra={
-                    "method": request.method,
-                    "path": request.url.path,
-                    "query": request.url.query or None,
-                    "client_ip": request.client.host if request.client else None,
-                    "duration_ms": int((perf_counter() - started_at) * 1000),
-                },
+                extra=self._build_log_extra(scope, started_at),
             )
             raise
-        else:
-            response.headers["X-Request-ID"] = request_id
-            logger.info(
-                "HTTP request completed",
-                extra={
-                    "method": request.method,
-                    "path": request.url.path,
-                    "query": request.url.query or None,
-                    "status_code": response.status_code,
-                    "client_ip": request.client.host if request.client else None,
-                    "duration_ms": int((perf_counter() - started_at) * 1000),
-                },
-            )
-            return response
         finally:
             set_request_id(None)
+
+    @staticmethod
+    def _build_log_extra(
+        scope: Scope,
+        started_at: float,
+        *,
+        status_code: int | None = None,
+    ) -> dict[str, object]:
+        query_string = scope.get("query_string", b"")
+        query = (
+            query_string.decode("latin-1")
+            if isinstance(query_string, bytes) and query_string
+            else None
+        )
+        client = scope.get("client")
+        client_ip = client[0] if isinstance(client, tuple) and client else None
+        extra: dict[str, object] = {
+            "method": scope.get("method"),
+            "path": scope.get("path"),
+            "query": query,
+            "client_ip": client_ip,
+            "duration_ms": int((perf_counter() - started_at) * 1000),
+        }
+        if status_code is not None:
+            extra["status_code"] = status_code
+        return extra

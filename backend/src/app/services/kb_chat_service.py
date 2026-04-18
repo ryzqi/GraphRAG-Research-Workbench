@@ -378,15 +378,15 @@ class KbChatService:
                     await self._persist_guardrail_run(
                         exec_ctx=exec_ctx,
                         run=run,
-                        status=AgentRunStatus.FAILED,
+                        status=AgentRunStatus.CANCELED,
                         reason="errterm_client_disconnect",
                         stream_state=stream_state,
                     )
                     self._release_retrieval_buffer(exec_ctx)
                     yield _emit_state(
-                        run_status=AgentRunStatus.FAILED.value,
+                        run_status=AgentRunStatus.CANCELED.value,
                         message="client disconnected before stream completed",
-                        current_step_status_override=AgentRunStatus.FAILED.value,
+                        current_step_status_override=AgentRunStatus.CANCELED.value,
                     )
                     yield (
                         "error",
@@ -416,15 +416,15 @@ class KbChatService:
                         await self._persist_guardrail_run(
                             exec_ctx=exec_ctx,
                             run=run,
-                            status=AgentRunStatus.FAILED,
+                            status=AgentRunStatus.CANCELED,
                             reason="errterm_client_disconnect",
                             stream_state=stream_state,
                         )
                         self._release_retrieval_buffer(exec_ctx)
                         yield _emit_state(
-                            run_status=AgentRunStatus.FAILED.value,
+                            run_status=AgentRunStatus.CANCELED.value,
                             message="client disconnected before stream completed",
-                            current_step_status_override=AgentRunStatus.FAILED.value,
+                            current_step_status_override=AgentRunStatus.CANCELED.value,
                         )
                         yield (
                             "error",

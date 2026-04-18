@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+from contextlib import asynccontextmanager
 from functools import lru_cache
 from typing import AsyncIterator
 
@@ -56,7 +58,18 @@ def create_sessionmaker(
     return async_sessionmaker(base_engine, expire_on_commit=False)
 
 
+@asynccontextmanager
+async def open_session_scope(
+    sessionmaker: async_sessionmaker[AsyncSession],
+) -> AsyncIterator[AsyncSession]:
+    session = sessionmaker()
+    try:
+        yield session
+    finally:
+        await asyncio.shield(session.close())
+
+
 async def get_db_session() -> AsyncIterator[AsyncSession]:
     sessionmaker = get_sessionmaker()
-    async with sessionmaker() as session:
+    async with open_session_scope(sessionmaker) as session:
         yield session

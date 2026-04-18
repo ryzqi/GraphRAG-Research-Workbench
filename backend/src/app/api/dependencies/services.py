@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.bootstrap.app_resources import AppResources
 from app.api.dependencies.app_resources import AppResourcesDep
 from app.api.deps import AsyncSessionDep
-from app.db.session import create_sessionmaker
+from app.db.session import create_sessionmaker, open_session_scope
 from app.repositories.extension_repository import ExtensionRepository
 from app.repositories.queue_health_repository import QueueHealthRepository
 from app.repositories.research_session_repository import ResearchSessionRepository
@@ -133,7 +133,7 @@ async def _open_service_scope(
     factory: Callable[[AsyncSession], _ServiceT],
 ) -> AsyncIterator[tuple[AsyncSession, _ServiceT]]:
     sessionmaker = create_sessionmaker(engine=resources.engine)
-    async with sessionmaker() as db:
+    async with open_session_scope(sessionmaker) as db:
         yield db, factory(db)
 
 
