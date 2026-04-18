@@ -7,28 +7,21 @@
 from __future__ import annotations
 
 import logging
-from contextlib import AbstractAsyncContextManager
 
 from langgraph.store.base import BaseStore
 from langgraph.store.memory import InMemoryStore
 from langgraph.store.postgres import AsyncPostgresStore
 
-from app.core.settings import Settings, get_settings
+from app.core.settings import get_settings
+from app.integrations.langgraph_postgres_pool import LangGraphPostgresPool
 
 logger = logging.getLogger(__name__)
-
-
-def _resolve_store_url(settings: Settings) -> str:
-    url = settings.memory_store_url or settings.database_url
-    # AsyncPostgresStore 需要 psycopg 风格的连接串。
-    return url.replace("postgresql+asyncpg://", "postgresql://")
 
 
 class StoreManager:
     """LangGraph BaseStore 管理器（单例）。"""
 
     _store: BaseStore | None = None
-    _store_ctx: AbstractAsyncContextManager[BaseStore] | None = None
     _initialized: bool = False
     _enabled: bool = False
     _configured_backend: str = "postgres"
@@ -60,11 +53,9 @@ class StoreManager:
             raise ValueError(f"不支持的记忆后端类型: {settings.memory_store_backend}")
 
         try:
-            store_ctx = AsyncPostgresStore.from_conn_string(
-                _resolve_store_url(settings)
-            )
-            cls._store_ctx = store_ctx
-            cls._store = await store_ctx.__aenter__()
+            if not LangGraphPostgresPool._initialized:
+                raise RuntimeError("LangGraphPostgresPool 未初始化")
+            cls._store = AsyncPostgresStore(conn=LangGraphPostgresPool.get_pool())
             await cls._store.setup()
             cls._effective_backend = "postgres"
             cls._initialized = True
@@ -72,7 +63,6 @@ class StoreManager:
             # 记忆能力属于非关键可选组件；初始化失败时降级为内存 store。
             logger.exception("初始化 LangGraph Store 失败，已降级为 InMemoryStore。")
             cls._store = InMemoryStore()
-            cls._store_ctx = None
             cls._effective_backend = "memory"
             cls._degraded_reason = "persistent_store_unavailable"
             cls._initialized = True
@@ -80,10 +70,7 @@ class StoreManager:
     @classmethod
     async def shutdown(cls) -> None:
         """关闭存储管理器（应用关闭时调用）。"""
-        if cls._store_ctx is not None:
-            await cls._store_ctx.__aexit__(None, None, None)
         cls._store = None
-        cls._store_ctx = None
         cls._initialized = False
         cls._enabled = False
         cls._configured_backend = "postgres"
