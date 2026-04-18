@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 
 from sqlalchemy import select
@@ -96,6 +96,7 @@ class RuntimeModelSnapshot:
     active_provider: ModelProvider
     active_model: str | None
     updated_at: datetime | None
+    version: int = 0
 
     def active_provider_config(self) -> RuntimeProviderConfig:
         cfg = self.providers.get(self.active_provider)
@@ -115,6 +116,7 @@ class ModelRuntimeConfigManager:
     _lock: asyncio.Lock | None = None
     _lock_loop: asyncio.AbstractEventLoop | None = None
     _sessionmaker: async_sessionmaker[AsyncSession] | None = None
+    _version: int = 0
 
     @classmethod
     def _get_lock(cls) -> asyncio.Lock:
@@ -151,19 +153,26 @@ class ModelRuntimeConfigManager:
         async with lock:
             try:
                 if db is not None:
-                    cls._snapshot = await cls._load_snapshot(db=db, settings=cfg)
+                    snapshot = await cls._load_snapshot(db=db, settings=cfg)
+                    cls._version += 1
+                    cls._snapshot = replace(snapshot, version=cls._version)
                     return
 
                 sessionmaker = cls._sessionmaker or get_sessionmaker()
                 async with sessionmaker() as session:
-                    cls._snapshot = await cls._load_snapshot(db=session, settings=cfg)
+                    snapshot = await cls._load_snapshot(db=session, settings=cfg)
+                    cls._version += 1
+                    cls._snapshot = replace(snapshot, version=cls._version)
             except Exception as exc:
                 logger.warning(
                     "加载模型运行时配置失败，使用空配置: %s",
                     exc,
                     exc_info=True,
                 )
-                cls._snapshot = cls._build_fallback_snapshot()
+                cls._snapshot = replace(
+                    cls._build_fallback_snapshot(),
+                    version=cls._version,
+                )
 
     @classmethod
     def get_snapshot(cls, *, settings: Settings | None = None) -> RuntimeModelSnapshot:
@@ -180,6 +189,7 @@ class ModelRuntimeConfigManager:
             cls._sessionmaker = None
             cls._lock = None
             cls._lock_loop = None
+            cls._version = 0
 
     @classmethod
     async def _load_snapshot(
