@@ -26,6 +26,14 @@ class MessageRole(str, Enum):
 
 class ChatMessage(Base):
     __tablename__ = "chat_messages"
+    __table_args__ = (
+        sa.Index(
+            "ix_chat_messages_session_created_role_desc",
+            "session_id",
+            sa.text("created_at DESC"),
+            "role",
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         sa.Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4
