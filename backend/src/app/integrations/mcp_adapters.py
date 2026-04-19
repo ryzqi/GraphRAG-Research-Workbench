@@ -63,6 +63,21 @@ class McpServerDiagnostics:
     latency_ms: int | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class _McpToolLoadResult:
+    server_name: str
+    entries: list[McpToolEntry]
+    diagnostics: McpServerDiagnostics
+
+
+@dataclass(slots=True)
+class _OpenedMcpRuntime:
+    server_name: str
+    entries: list[McpToolEntry]
+    diagnostics: McpServerDiagnostics
+    session_context: object | None = None
+
+
 def _format_audit_payload(
     payload: object, max_chars: int = _MAX_AUDIT_SNIPPET_CHARS
 ) -> str:
@@ -415,6 +430,201 @@ def build_mcp_connections(
     return connections
 
 
+def _invalid_extension_diagnostics() -> McpServerDiagnostics:
+    return McpServerDiagnostics(
+        status="failed",
+        last_error="扩展配置无效",
+        latency_ms=None,
+    )
+
+
+def _build_tool_interceptors(
+    *,
+    settings: Settings,
+    allow_external: bool,
+    extensions_by_id: dict[str, ToolExtension],
+) -> list[ToolCallInterceptor]:
+    return [
+        McpToolCallAuditInterceptor(
+            settings=settings,
+            allow_external=allow_external,
+            extensions_by_id=extensions_by_id,
+        )
+    ]
+
+
+async def _load_single_mcp_tools(
+    *,
+    client: MultiServerMCPClient,
+    extension: ToolExtension,
+    connections: dict[str, McpConnection],
+) -> _McpToolLoadResult:
+    server_name = str(extension.id)
+    if server_name not in connections:
+        return _McpToolLoadResult(
+            server_name=server_name,
+            entries=[],
+            diagnostics=_invalid_extension_diagnostics(),
+        )
+
+    start = time.perf_counter()
+    try:
+        tools = await client.get_tools(server_name=server_name)
+    except Exception as exc:  # pragma: no cover - 依赖外部 MCP
+        latency_ms = int((time.perf_counter() - start) * 1000)
+        diagnostics = McpServerDiagnostics(
+            status="failed",
+            last_error=str(exc),
+            latency_ms=latency_ms,
+        )
+        logger.warning(
+            "加载 MCP 工具失败",
+            extra={
+                "extension_id": server_name,
+                "error": str(exc),
+                "latency_ms": latency_ms,
+            },
+        )
+        return _McpToolLoadResult(
+            server_name=server_name,
+            entries=[],
+            diagnostics=diagnostics,
+        )
+
+    latency_ms = int((time.perf_counter() - start) * 1000)
+    if not tools:
+        return _McpToolLoadResult(
+            server_name=server_name,
+            entries=[],
+            diagnostics=McpServerDiagnostics(
+                status="degraded",
+                last_error="未发现可用工具",
+                latency_ms=latency_ms,
+            ),
+        )
+
+    return _McpToolLoadResult(
+        server_name=server_name,
+        entries=[
+            McpToolEntry(extension=extension, tool=tool, raw_tool_name=tool.name)
+            for tool in tools
+        ],
+        diagnostics=McpServerDiagnostics(
+            status="ok",
+            last_error=None,
+            latency_ms=latency_ms,
+        ),
+    )
+
+
+async def _open_single_mcp_runtime(
+    *,
+    settings: Settings,
+    extension: ToolExtension,
+    connections: dict[str, McpConnection],
+    allow_external: bool,
+    extensions_by_id: dict[str, ToolExtension],
+) -> _OpenedMcpRuntime:
+    server_name = str(extension.id)
+    if server_name not in connections:
+        return _OpenedMcpRuntime(
+            server_name=server_name,
+            entries=[],
+            diagnostics=_invalid_extension_diagnostics(),
+        )
+
+    client = MultiServerMCPClient(
+        {server_name: connections[server_name]},
+        tool_name_prefix=False,
+        tool_interceptors=_build_tool_interceptors(
+            settings=settings,
+            allow_external=allow_external,
+            extensions_by_id=extensions_by_id,
+        ),
+    )
+    session_context = client.session(server_name)
+    start = time.perf_counter()
+    try:
+        session = await session_context.__aenter__()
+    except Exception as exc:  # noqa: BLE001
+        latency_ms = int((time.perf_counter() - start) * 1000)
+        diagnostics = McpServerDiagnostics(
+            status="failed",
+            last_error=str(exc),
+            latency_ms=latency_ms,
+        )
+        logger.warning(
+            "加载 MCP 工具失败",
+            extra={
+                "extension_id": server_name,
+                "error": str(exc),
+                "latency_ms": latency_ms,
+            },
+        )
+        return _OpenedMcpRuntime(
+            server_name=server_name,
+            entries=[],
+            diagnostics=diagnostics,
+        )
+
+    try:
+        tools = await load_langchain_mcp_tools(
+            session,
+            callbacks=client.callbacks,
+            tool_interceptors=client.tool_interceptors,
+            server_name=server_name,
+            tool_name_prefix=client.tool_name_prefix,
+        )
+    except Exception as exc:  # noqa: BLE001
+        await session_context.__aexit__(type(exc), exc, exc.__traceback__)
+        latency_ms = int((time.perf_counter() - start) * 1000)
+        diagnostics = McpServerDiagnostics(
+            status="failed",
+            last_error=str(exc),
+            latency_ms=latency_ms,
+        )
+        logger.warning(
+            "加载 MCP 工具失败",
+            extra={
+                "extension_id": server_name,
+                "error": str(exc),
+                "latency_ms": latency_ms,
+            },
+        )
+        return _OpenedMcpRuntime(
+            server_name=server_name,
+            entries=[],
+            diagnostics=diagnostics,
+        )
+
+    latency_ms = int((time.perf_counter() - start) * 1000)
+    if not tools:
+        await session_context.__aexit__(None, None, None)
+        return _OpenedMcpRuntime(
+            server_name=server_name,
+            entries=[],
+            diagnostics=McpServerDiagnostics(
+                status="degraded",
+                last_error="未发现可用工具",
+                latency_ms=latency_ms,
+            ),
+        )
+
+    return _OpenedMcpRuntime(
+        server_name=server_name,
+        entries=[
+            McpToolEntry(extension=extension, tool=tool, raw_tool_name=tool.name)
+            for tool in tools
+        ],
+        diagnostics=McpServerDiagnostics(
+            status="ok",
+            last_error=None,
+            latency_ms=latency_ms,
+        ),
+        session_context=session_context,
+    )
+
+
 async def load_mcp_tools_with_diagnostics(
     *,
     settings: Settings,
@@ -440,61 +650,42 @@ async def load_mcp_tools_with_diagnostics(
     client = MultiServerMCPClient(
         connections,
         tool_name_prefix=False,
-        tool_interceptors=[
-            McpToolCallAuditInterceptor(
-                settings=settings,
-                allow_external=allow_external,
-                extensions_by_id=extensions_by_id,
-            )
-        ],
+        tool_interceptors=_build_tool_interceptors(
+            settings=settings,
+            allow_external=allow_external,
+            extensions_by_id=extensions_by_id,
+        ),
     )
     entries: list[McpToolEntry] = []
     diagnostics: dict[str, McpServerDiagnostics] = {}
-    for ext in extensions_list:
-        server_name = str(ext.id)
-        if server_name not in connections:
-            diagnostics[server_name] = McpServerDiagnostics(
-                status="failed",
-                last_error="扩展配置无效",
-                latency_ms=None,
-            )
-            continue
-        start = time.perf_counter()
-        try:
-            tools = await client.get_tools(server_name=server_name)
-        except Exception as exc:  # pragma: no cover - 依赖外部 MCP
-            latency_ms = int((time.perf_counter() - start) * 1000)
-            diagnostics[server_name] = McpServerDiagnostics(
-                status="failed",
-                last_error=str(exc),
-                latency_ms=latency_ms,
-            )
-            logger.warning(
-                "加载 MCP 工具失败",
-                extra={
-                    "extension_id": server_name,
-                    "error": str(exc),
-                    "latency_ms": latency_ms,
-                },
-            )
-            continue
-        latency_ms = int((time.perf_counter() - start) * 1000)
-        if not tools:
-            diagnostics[server_name] = McpServerDiagnostics(
-                status="degraded",
-                last_error="未发现可用工具",
-                latency_ms=latency_ms,
-            )
-            continue
-        diagnostics[server_name] = McpServerDiagnostics(
-            status="ok",
-            last_error=None,
-            latency_ms=latency_ms,
+    results: list[_McpToolLoadResult] = []
+    parallel_load_enabled = bool(
+        getattr(settings, "mcp_parallel_load_enabled", True)
+    )
+    if parallel_load_enabled:
+        results = await asyncio.gather(
+            *[
+                _load_single_mcp_tools(
+                    client=client,
+                    extension=ext,
+                    connections=connections,
+                )
+                for ext in extensions_list
+            ]
         )
-        for tool in tools:
-            entries.append(
-                McpToolEntry(extension=ext, tool=tool, raw_tool_name=tool.name)
+    else:
+        for ext in extensions_list:
+            results.append(
+                await _load_single_mcp_tools(
+                    client=client,
+                    extension=ext,
+                    connections=connections,
+                )
             )
+
+    for result in results:
+        diagnostics[result.server_name] = result.diagnostics
+        entries.extend(result.entries)
     return entries, diagnostics
 
 
@@ -542,74 +733,40 @@ async def open_mcp_tool_runtime(
     diagnostics: dict[str, McpServerDiagnostics] = {}
 
     async with AsyncExitStack() as stack:
-        for ext in extensions_list:
-            server_name = str(ext.id)
-            if server_name not in connections:
-                diagnostics[server_name] = McpServerDiagnostics(
-                    status="failed",
-                    last_error="扩展配置无效",
-                    latency_ms=None,
-                )
-                continue
-
-            connection = connections[server_name]
-            client = MultiServerMCPClient(
-                {server_name: connection},
-                tool_name_prefix=False,
-                tool_interceptors=[
-                    McpToolCallAuditInterceptor(
+        runtimes: list[_OpenedMcpRuntime] = []
+        parallel_load_enabled = bool(
+            getattr(settings, "mcp_parallel_load_enabled", True)
+        )
+        if parallel_load_enabled:
+            runtimes = await asyncio.gather(
+                *[
+                    _open_single_mcp_runtime(
                         settings=settings,
+                        extension=ext,
+                        connections=connections,
                         allow_external=allow_external,
                         extensions_by_id=extensions_by_id,
                     )
-                ],
+                    for ext in extensions_list
+                ]
             )
+        else:
+            for ext in extensions_list:
+                runtimes.append(
+                    await _open_single_mcp_runtime(
+                        settings=settings,
+                        extension=ext,
+                        connections=connections,
+                        allow_external=allow_external,
+                        extensions_by_id=extensions_by_id,
+                    )
+                )
 
-            start = time.perf_counter()
-            try:
-                session = await stack.enter_async_context(client.session(server_name))
-                tools = await load_langchain_mcp_tools(
-                    session,
-                    callbacks=client.callbacks,
-                    tool_interceptors=client.tool_interceptors,
-                    server_name=server_name,
-                    tool_name_prefix=client.tool_name_prefix,
-                )
-            except Exception as exc:  # noqa: BLE001
-                latency_ms = int((time.perf_counter() - start) * 1000)
-                diagnostics[server_name] = McpServerDiagnostics(
-                    status="failed",
-                    last_error=str(exc),
-                    latency_ms=latency_ms,
-                )
-                logger.warning(
-                    "加载 MCP 工具失败",
-                    extra={
-                        "extension_id": server_name,
-                        "error": str(exc),
-                        "latency_ms": latency_ms,
-                    },
-                )
-                continue
-
-            latency_ms = int((time.perf_counter() - start) * 1000)
-            if not tools:
-                diagnostics[server_name] = McpServerDiagnostics(
-                    status="degraded",
-                    last_error="未发现可用工具",
-                    latency_ms=latency_ms,
-                )
-                continue
-
-            diagnostics[server_name] = McpServerDiagnostics(
-                status="ok",
-                last_error=None,
-                latency_ms=latency_ms,
-            )
-            for tool in tools:
-                entries.append(
-                    McpToolEntry(extension=ext, tool=tool, raw_tool_name=tool.name)
-                )
+        for runtime in runtimes:
+            diagnostics[runtime.server_name] = runtime.diagnostics
+            entries.extend(runtime.entries)
+            if runtime.session_context is not None:
+                stack.push_async_exit(runtime.session_context)
 
         yield entries, diagnostics
 

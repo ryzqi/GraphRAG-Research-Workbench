@@ -58,6 +58,9 @@ class Settings(DeploySettings):
     mcp_enabled: bool = Field(False, alias="MCP_ENABLED")
     mcp_http_timeout_seconds: int = Field(30, alias="MCP_HTTP_TIMEOUT_SECONDS")
     mcp_stdio_timeout_seconds: int = Field(10, alias="MCP_STDIO_TIMEOUT_SECONDS")
+    mcp_parallel_load_enabled: bool = Field(
+        True, alias="MCP_PARALLEL_LOAD_ENABLED"
+    )
 
     memory_enabled: bool = Field(False, alias="MEMORY_ENABLED")
     memory_store_backend: str = Field("postgres", alias="MEMORY_STORE_BACKEND")
