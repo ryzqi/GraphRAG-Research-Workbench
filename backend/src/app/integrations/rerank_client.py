@@ -41,17 +41,7 @@ class RerankClient:
             return []
 
         max_documents = self._settings.retrieval_rerank_max_documents_per_request
-        if max_documents is not None and len(documents) > max_documents:
-            documents = documents[:max_documents]
-
         top_n = min(top_n or len(documents), len(documents))
-        payload = {
-            "model": self._model,
-            "query": query,
-            "documents": documents,
-            "top_n": top_n,
-            "return_documents": False,
-        }
         headers = {"Authorization": f"Bearer {self._api_key}"} if self._api_key else {}
         timeout = timeout_seconds or self._settings.retrieval_rerank_timeout_seconds
         url = f"{self._base_url}/rerank"
@@ -61,7 +51,27 @@ class RerankClient:
                 "或 TaskResources.http_client 传入"
             )
 
-        async def _call(client: httpx.AsyncClient) -> dict:
+        if max_documents is None or len(documents) <= max_documents:
+            batches = [documents]
+        else:
+            batches = [
+                documents[i : i + max_documents]
+                for i in range(0, len(documents), max_documents)
+            ]
+
+        async def _call_batch(
+            client: httpx.AsyncClient,
+            *,
+            batch_documents: list[str],
+            batch_top_n: int,
+        ) -> list[RerankResult]:
+            payload = {
+                "model": self._model,
+                "query": query,
+                "documents": batch_documents,
+                "top_n": batch_top_n,
+                "return_documents": False,
+            }
             last_exc: Exception | None = None
             for attempt in range(2):
                 try:
@@ -69,7 +79,17 @@ class RerankClient:
                         url, json=payload, headers=headers, timeout=timeout
                     )
                     resp.raise_for_status()
-                    return resp.json()
+                    data = resp.json()
+                    results: list[RerankResult] = []
+                    for item in data.get("results", []):
+                        index = item.get("index")
+                        score = item.get("relevance_score")
+                        if index is None or score is None:
+                            continue
+                        results.append(
+                            RerankResult(index=int(index), score=float(score))
+                        )
+                    return results
                 except Exception as exc:  # pragma: no cover
                     last_exc = exc
                     if attempt < 1:
@@ -78,14 +98,27 @@ class RerankClient:
                         await asyncio.sleep(delay)
             raise RuntimeError("Rerank 调用失败") from last_exc
 
-        data = await _call(self._http_client)
+        batch_results = await asyncio.gather(
+            *(
+                _call_batch(
+                    self._http_client,
+                    batch_documents=batch,
+                    batch_top_n=min(top_n, len(batch)),
+                )
+                for batch in batches
+            )
+        )
 
-        results: list[RerankResult] = []
-        for item in data.get("results", []):
-            index = item.get("index")
-            score = item.get("relevance_score")
-            if index is None or score is None:
-                continue
-            results.append(RerankResult(index=int(index), score=float(score)))
+        merged_results: list[RerankResult] = []
+        batch_offset = 0
+        for batch_documents, results in zip(batches, batch_results, strict=False):
+            for item in results:
+                merged_results.append(
+                    RerankResult(index=item.index + batch_offset, score=item.score)
+                )
+            batch_offset += len(batch_documents)
 
-        return results
+        merged_results.sort(key=lambda item: item.score, reverse=True)
+        if top_n < len(merged_results):
+            return merged_results[:top_n]
+        return merged_results
