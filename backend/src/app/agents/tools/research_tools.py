@@ -11,6 +11,9 @@ import httpx
 from langchain.tools import BaseTool, tool as lc_tool
 from pydantic import BaseModel, Field
 
+from app.agents.tools.excerpt_utils import (
+    build_excerpt_candidates_from_text as _build_excerpt_candidates_from_text,
+)
 from app.agents.tools.web_search import (
     WebCrawlArgs,
     WebExtractArgs,
@@ -111,30 +114,6 @@ _ARXIV_SORT_ORDER = {
     "descending": arxiv.SortOrder.Descending,
     "ascending": arxiv.SortOrder.Ascending,
 }
-
-
-def _build_excerpt_candidates_from_text(text: str) -> list[dict[str, str]]:
-    text = " ".join(text.split())
-    if not text:
-        return []
-    chunks: list[str] = []
-    remaining = text
-    while remaining and len(chunks) < 3:
-        head = remaining[:380].strip()
-        if len(head) < 40:
-            break
-        chunks.append(head)
-        remaining = remaining[len(head) :].strip()
-    if not chunks and len(text) >= 40:
-        chunks.append(text[:400])
-    return [
-        {
-            "text": chunk,
-            "locator": f"abstract#chunk-{index + 1}",
-            "lang": "en",
-        }
-        for index, chunk in enumerate(chunks)
-    ]
 
 
 def _augment_result_excerpts(output: dict[str, Any]) -> dict[str, Any]:

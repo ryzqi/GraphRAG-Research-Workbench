@@ -8,6 +8,9 @@ from typing import Any, cast
 import httpx
 from langchain.tools import BaseTool, tool as lc_tool
 
+from app.agents.tools.excerpt_utils import (
+    build_excerpt_candidates_from_text as _build_excerpt_candidates_from_text,
+)
 from app.agents.tools.web_search_client import (
     TavilySearchProviderAdapter,
     WebSearchClient,
@@ -255,13 +258,17 @@ def build_jina_read_tool(
                     "url": None,
                     "title": "",
                     "content": "",
+                    "excerpt_candidates": [],
                     "error": error,
                 },
                 ensure_ascii=False,
             )
-        output = await provider.read(
+        output = await _invoke_jina_read(
+            provider,
             url=args.url,
         )
+        if isinstance(output, dict):
+            _augment_jina_read_output(output)
         return json.dumps(output, ensure_ascii=False)
 
     return lc_tool(
@@ -269,6 +276,22 @@ def build_jina_read_tool(
         description="读取指定 URL 的页面正文，适合在综合搜索摘要不足时补充获取正文内容。",
         args_schema=JinaReadArgs,
     )(_read)
+
+
+async def _invoke_jina_read(
+    provider: JinaReadProvider | Any,
+    *,
+    url: str,
+) -> Any:
+    return await provider.read(url=url)
+
+
+def _augment_jina_read_output(output: dict[str, Any]) -> dict[str, Any]:
+    output["excerpt_candidates"] = _build_excerpt_candidates_from_text(
+        str(output.get("content") or ""),
+        locator_prefix="content",
+    )
+    return output
 
 
 def build_web_extract_tool(
