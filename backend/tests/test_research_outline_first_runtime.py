@@ -11,7 +11,6 @@ from app.schemas.research import (
     ResearchArtifactRead,
     ResearchCitationExcerpt,
     ResearchComplexity,
-    ResearchEventEnvelope,
     ResearchPlanSnapshot,
     ResearchPlanSubtask,
     ResearchSourceTarget,
@@ -239,13 +238,14 @@ def test_compile_report_from_runtime_context_uses_dynamic_outline_sections() -> 
     assert "## 应用与风险边界" in compiled.report_md
 
 
-def test_runtime_skill_file_requires_outline_gate() -> None:
+def test_runtime_skill_file_requires_breadth_first_pipeline() -> None:
     skill_text = build_research_runtime_skill_files()[
         "/skills/research-runtime/SKILL.md"
     ]
 
-    assert "先创建动态全文大纲" in skill_text
-    assert "先写好 `report-outline`" in skill_text
+    assert "breadth-pass" in skill_text
+    assert "critic-pass" in skill_text
+    assert "先创建动态全文大纲" not in skill_text
 
 
 def test_outline_gate_blocks_search_until_outline_is_ready() -> None:

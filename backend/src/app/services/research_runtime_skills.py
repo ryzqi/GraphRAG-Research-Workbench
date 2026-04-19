@@ -9,36 +9,31 @@ def build_research_runtime_skill_files() -> dict[str, str]:
     return {
         "/skills/research-runtime/SKILL.md": """---
 name: research-runtime
-description: Use this skill for deep research runtime tasks that require claim-first planning, write_todos, coverage tracking, and file-based context management.
+description: Use this skill for deep research runtime tasks that follow the breadth -> depth -> critic pipeline with LLM alignment gating.
 ---
 
 # research-runtime
 
-1. Maintain `task-graph.json`, `claim-bundles.json`, `section-briefs.json`, and `report-context.json` as the runtime handoff surface so the main agent can offload context to files instead of carrying everything inline.
-2. Call `write_todos` immediately after reading the scaffold. The first `plan.subtasks` todo items must use the format `[plan-step-<index>] <title>` and stay aligned one-to-one with the planner subtasks. Additional todos should cover claims, coverage gaps, subagent delegation, and report completion.
-3. 先创建动态全文大纲：根据研究主题、用户补充、research brief 与 plan subtasks，先写好 `report-outline` 和每个 section 的简短写作说明，再进入补证与扩写。
-4. `report-outline` 与 `report-draft` 的章节标题统一使用 `## [section-id] 章节标题` 格式，`section-id` 必须与 `section-briefs.json` 中的条目一致。
-5. Refine `task-graph.json` first, then delegate bounded work via `task` to the best subagent. If web and paper evidence can be collected independently, dispatch them as parallel siblings under the same `parallel_group`.
-6. Before any `web_search`, `arxiv_*`, or `task` call, confirm the outline gate is satisfied: `report-outline` is complete, `section-briefs.json` is complete, and `report-context.json` records the active outline state.
-7. Before every `task` call, prepare a handoff packet in `task-graph.json`, `claim-bundles.json`, or `section-briefs.json`: objective, claim, evidence requirements, files to read, files to update, and success criteria. The subagent request should reference that handoff packet explicitly.
-8. Keep `report-context.json` updated with `executive_summary`, `key_takeaways`, `recommended_actions`, `verification_notes`, `open_questions`, `section_status`, outline status, and confidence/conflict fields.
-9. Keep the `[plan-step-<index>]` todo statuses updated as you progress through planner subtasks. `plan_progress_snapshot` is derived from these todos; do not invent a second plan-progress channel.
-10. `live-board.json` is a projection for runtime observability, not the single source of truth for planning state. Whenever the active task, active agent, or parallel workset changes, call `record_runtime_activity(...)` so the frontend can update that projection.
-11. Update claim-map, evidence-ledger, analysis-notes, report-outline, report-draft, section briefs, claim bundles, and report context continuously during the run.
-12. Return concise structured findings and citations instead of raw tool dumps.
+1. Pipeline 强制顺序：breadth-pass -> breadth gate -> outline/section-briefs -> depth-pass -> draft-pass -> critic-pass -> finalize-pass。
+2. 事实源（JSON）：claim-map.json / evidence-ledger.json / claim-bundles.json / section-briefs.json / report-context.json / task-graph.json。md 文件仅作为投影。
+3. 每个子代理委派前，在 task-graph.json、claim-bundles.json 或 section-briefs.json 写 handoff packet（claim_id / objective / 必读 / 必写 / 成功判据）。
+4. critic-pass 必须调用 evidence-critic + coverage-critic 各一次；读取 /scratch/research/<session>/evidence-critique.json 与 coverage-critique.json 决定是否回流。最多回流 2 次。
+5. breadth gate、critic-pass 与 finalize-pass 分别对应代码中的硬 gate（breadth gate / critic_revise_max_passes / structured_response 校验）。
+6. [plan-step-<index>] todos 与 plan.subtasks 一一对应；plan_progress_snapshot 由它们推导。
+7. 每次 active task / agent / parallel group 变化时调用 record_runtime_activity(...)。
+8. 工件写入遵循 shared_contract：findings >= 2、citations >= 2 且每条附 excerpts（40-400 字）。
 """,
         "/skills/research-reporting/SKILL.md": """---
 name: research-reporting
-description: Use this skill when consolidating citations, report outline, and runtime context for the final deep research report.
+description: Use this skill when consolidating citations, outline, and context into the final deep research report.
 ---
 
 # research-reporting
 
-1. Validate claim-to-citation mapping before drafting conclusions.
-2. Build section-level briefs before long-form drafting. Each brief should summarize the section, evidence, unresolved gaps, and citation indices.
-3. Keep report-outline and report-draft aligned with verified findings only.
-4. Persist report-context.json with executive summary, key takeaways, recommended actions, verification notes, conflicts, open questions, confidence level, section status, and citation coverage.
-5. Every section handoff should point to the exact claim bundle and evidence ledger entries it relies on.
-6. Keep the output audit-friendly and explicit about unresolved gaps.
+1. finalize 前 citation-steward 必须审计：provider id 规范、excerpts 存在、workspace url scheme、orphan 处理。
+2. report-outline 与 report-draft 标题统一 `## [section-id] 章节标题`，与 section-briefs 对齐。
+3. 仅消费 status == supported / contested 的 claim；insufficient 的 claim 只能作为"开放问题"段落。
+4. report-context.json 维护：executive_summary / key_takeaways / recommended_actions / verification_notes / open_questions / section_status / confidence_level / has_conflicts / outline_ready / outline_status。
+5. 最终 structured_response 的 findings / citations 必须与 report-draft 中引用编号一致；不得互相脱节。
 """,
     }
