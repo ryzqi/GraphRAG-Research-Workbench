@@ -153,6 +153,44 @@ async def test_build_tool_registry_cached_invalidates_static_section_when_resour
 
 
 @pytest.mark.asyncio
+async def test_build_tool_registry_cached_invalidates_static_section_when_settings_payload_changes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = _make_settings()
+    counts = {"web_search": 0}
+
+    monkeypatch.setattr(
+        registry_module,
+        "has_web_search_provider",
+        lambda cfg: bool(cfg.web_search_api_key),
+    )
+    monkeypatch.setattr(registry_module, "has_web_extract_provider", lambda _s: False)
+    monkeypatch.setattr(registry_module, "has_jina_read_provider", lambda _s: False)
+
+    def _build_web_search_tool(*_args, **_kwargs):
+        counts["web_search"] += 1
+        return _make_async_tool("web_search", "web")
+
+    monkeypatch.setattr(registry_module, "build_web_search_tool", _build_web_search_tool)
+
+    tools_before, _ = await registry_module.build_tool_registry_cached(
+        settings=settings,
+        include_web_search=True,
+        include_mcp=False,
+    )
+    settings.web_search_api_key = None
+    tools_after, _ = await registry_module.build_tool_registry_cached(
+        settings=settings,
+        include_web_search=True,
+        include_mcp=False,
+    )
+
+    assert [tool.name for tool in tools_before] == ["web_search"]
+    assert tools_after == []
+    assert counts["web_search"] == 1
+
+
+@pytest.mark.asyncio
 async def test_build_tool_registry_cached_does_not_reuse_dynamic_extra_tools(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

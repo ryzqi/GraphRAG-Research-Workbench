@@ -7,6 +7,8 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 from dataclasses import dataclass
 from typing import Sequence
 
@@ -58,7 +60,7 @@ class ToolMeta:
 
 @dataclass(frozen=True, slots=True)
 class _StaticToolRegistryCacheKey:
-    settings_id: int
+    settings_fingerprint: str
     redis_id: int
     http_client_id: int
     include_web_search: bool
@@ -75,6 +77,23 @@ _STATIC_TOOL_REGISTRY_CACHE: dict[
 
 def _object_identity(value: object | None) -> int:
     return 0 if value is None else id(value)
+
+
+def _settings_cache_payload(settings: Settings) -> object:
+    model_dump = getattr(settings, "model_dump", None)
+    if callable(model_dump):
+        return model_dump(mode="json")
+    return {
+        key: value
+        for key, value in vars(settings).items()
+        if not key.startswith("_") and not callable(value)
+    }
+
+
+def _settings_fingerprint(settings: Settings) -> str:
+    payload = _settings_cache_payload(settings)
+    serialized = json.dumps(payload, sort_keys=True, ensure_ascii=False, default=str)
+    return hashlib.sha256(serialized.encode("utf-8")).hexdigest()[:16]
 
 
 def _clone_registry_section(
@@ -248,7 +267,7 @@ def _get_cached_static_tool_registry(
     http_client: httpx.AsyncClient | None,
 ) -> tuple[list[BaseTool], dict[str, ToolMeta]]:
     key = _StaticToolRegistryCacheKey(
-        settings_id=_object_identity(settings),
+        settings_fingerprint=_settings_fingerprint(settings),
         redis_id=_object_identity(redis),
         http_client_id=_object_identity(http_client),
         include_web_search=include_web_search,
