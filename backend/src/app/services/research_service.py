@@ -540,6 +540,12 @@ class ResearchService:
                 session=stage_session,
                 runtime_context_snapshot=runtime_context_snapshot,
             )
+            if runtime_result.files_budget_snapshot is not None:
+                await stage_service._artifact_store.upsert(
+                    session=stage_session,
+                    artifact_key="runtime_files_budget_snapshot",
+                    content_json=runtime_result.files_budget_snapshot,
+                )
 
         await self._run_stage_operation(session=session, operation=_write)
 

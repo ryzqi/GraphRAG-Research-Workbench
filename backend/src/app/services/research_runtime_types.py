@@ -44,9 +44,20 @@ class ResearchLargeResultPolicy:
     spill_path_prefix: str = "/scratch/research-spill/"
     max_inline_chars: int = 6_000
 
+
+@dataclass(slots=True, frozen=True)
+class ResearchWorkspaceBudget:
+    """Runtime request files 注入预算。"""
+
+    total_tokens_budget: int = 60_000
+    priority_reserve: int = 30_000
+    char_per_token_ratio: float = 4.0
+
+
 DEFAULT_RESEARCH_STREAM_POLICY = ResearchStreamPolicy()
 DEFAULT_RESEARCH_BACKEND_POLICY = ResearchBackendPolicy()
 DEFAULT_RESEARCH_LARGE_RESULT_POLICY = ResearchLargeResultPolicy()
+DEFAULT_RESEARCH_WORKSPACE_BUDGET = ResearchWorkspaceBudget()
 ResearchRuntimeActivityStatus = Literal[
     "started",
     "in_progress",

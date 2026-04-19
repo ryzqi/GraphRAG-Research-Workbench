@@ -20,6 +20,10 @@ from app.schemas.research import ResearchPlanSnapshot
 from app.services.research_query_mesh import build_research_query_mesh
 from app.services.research_runtime_factory import resolve_source_subagent_route
 from app.services.research_runtime_spill import spill_json_payload
+from app.services.research_runtime_types import (
+    DEFAULT_RESEARCH_WORKSPACE_BUDGET,
+    ResearchWorkspaceBudget,
+)
 from app.services.research_workspace_files import (
     build_research_workspace_layout,
     build_workspace_bootstrap_artifact_path_map,
@@ -58,31 +62,73 @@ def build_runtime_request_files(
     workspace_files: dict[str, str],
     session: ResearchSession,
     plan_snapshot: ResearchPlanSnapshot,
-) -> dict[str, FileData]:
+    priority_paths: Sequence[str] = (),
+    budget: ResearchWorkspaceBudget = DEFAULT_RESEARCH_WORKSPACE_BUDGET,
+) -> tuple[dict[str, FileData], dict[str, Any]]:
     query_mesh = build_research_query_mesh(
         question=session.question,
         plan_snapshot=plan_snapshot,
     )
-    request_files: dict[str, FileData] = {
-        path: create_file_data(content) for path, content in workspace_files.items()
+    merged = dict(workspace_files)
+    merged[RESEARCH_RUNTIME_REQUEST_CONTEXT.session_question_path] = session.question
+    merged[RESEARCH_RUNTIME_REQUEST_CONTEXT.plan_snapshot_path] = json.dumps(
+        plan_snapshot.model_dump(mode="json"), ensure_ascii=False, indent=2
+    )
+    merged[RESEARCH_RUNTIME_REQUEST_CONTEXT.query_mesh_path] = json.dumps(
+        asdict(query_mesh), ensure_ascii=False, indent=2
+    )
+    merged[RESEARCH_RUNTIME_REQUEST_CONTEXT.clarification_context_path] = (
+        _build_clarification_context_content(session)
+    )
+    return build_runtime_request_files_with_budget(
+        files=merged,
+        priority_paths=priority_paths or RESEARCH_RUNTIME_REQUEST_CONTEXT.request_paths,
+        budget=budget,
+    )
+
+
+def _approx_tokens(text: str, ratio: float) -> int:
+    return max(int(len(text) / ratio) + 1, 1)
+
+
+def build_runtime_request_files_with_budget(
+    *,
+    files: dict[str, str],
+    priority_paths: Sequence[str],
+    budget: ResearchWorkspaceBudget = DEFAULT_RESEARCH_WORKSPACE_BUDGET,
+) -> tuple[dict[str, FileData], dict[str, Any]]:
+    priority_set = set(priority_paths)
+    priority_tokens_used = 0
+    remaining_tokens = budget.total_tokens_budget
+    request_files: dict[str, FileData] = {}
+    spilled_paths: list[str] = []
+
+    for path in priority_paths:
+        if path not in files:
+            continue
+        text = files[path]
+        token_cost = _approx_tokens(text, budget.char_per_token_ratio)
+        priority_tokens_used += token_cost
+        remaining_tokens -= token_cost
+        request_files[path] = create_file_data(text)
+
+    for path in sorted(set(files) - priority_set):
+        text = files[path]
+        token_cost = _approx_tokens(text, budget.char_per_token_ratio)
+        if token_cost <= remaining_tokens:
+            remaining_tokens -= token_cost
+            request_files[path] = create_file_data(text)
+            continue
+        spilled_paths.append(path)
+
+    snapshot = {
+        "total_tokens_budget": budget.total_tokens_budget,
+        "priority_reserve": budget.priority_reserve,
+        "priority_tokens_used": priority_tokens_used,
+        "tokens_remaining": max(remaining_tokens, 0),
+        "spilled_paths": spilled_paths,
     }
-    request_files[
-        RESEARCH_RUNTIME_REQUEST_CONTEXT.session_question_path
-    ] = create_file_data(
-        session.question
-    )
-    request_files[
-        RESEARCH_RUNTIME_REQUEST_CONTEXT.plan_snapshot_path
-    ] = create_file_data(
-        json.dumps(plan_snapshot.model_dump(mode="json"), ensure_ascii=False, indent=2)
-    )
-    request_files[RESEARCH_RUNTIME_REQUEST_CONTEXT.query_mesh_path] = create_file_data(
-        json.dumps(asdict(query_mesh), ensure_ascii=False, indent=2)
-    )
-    request_files[RESEARCH_RUNTIME_REQUEST_CONTEXT.clarification_context_path] = (
-        create_file_data(_build_clarification_context_content(session))
-    )
-    return request_files
+    return request_files, snapshot
 
 
 def build_runtime_memory_files(

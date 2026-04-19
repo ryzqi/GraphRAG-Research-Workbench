@@ -81,6 +81,7 @@ class ResearchRuntimeRunResult:
     total_cost_usd: float | None = None
     quality_score: float | None = None
     source_quality_summary: dict[str, Any] | None = None
+    files_budget_snapshot: dict[str, Any] | None = None
 
 
 @dataclass(slots=True, frozen=True)

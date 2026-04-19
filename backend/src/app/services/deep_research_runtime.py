@@ -334,10 +334,11 @@ class DeepResearchRuntimeRunner:
             layout=layout,
         )
         workspace_files[context_guide.path] = context_guide.content
-        request_files = _build_runtime_request_files(
+        request_files, files_budget_snapshot = _build_runtime_request_files(
             workspace_files=workspace_files,
             session=session,
             plan_snapshot=plan_snapshot,
+            priority_paths=context_guide.priority_paths,
         )
         prompt = _build_runtime_prompt(
             session=session,
@@ -462,6 +463,7 @@ class DeepResearchRuntimeRunner:
             source_bundle=source_bundle,
             runtime_context_snapshot=runtime_context_snapshot,
             latency_ms=latency_ms,
+            files_budget_snapshot=files_budget_snapshot,
             source_quality_summary={
                 "total_candidates": source_quality_result.total_candidates,
                 "kept": source_quality_result.kept_count,

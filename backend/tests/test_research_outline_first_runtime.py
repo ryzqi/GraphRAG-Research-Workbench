@@ -344,7 +344,7 @@ def test_breadth_gate_only_targets_task_delegation_tool() -> None:
 def test_build_runtime_request_files_always_includes_clarification_context() -> None:
     session = _session()
 
-    request_files = build_runtime_request_files(
+    request_files, files_budget_snapshot = build_runtime_request_files(
         workspace_files={},
         session=session,
         plan_snapshot=_plan_snapshot(),
@@ -354,6 +354,7 @@ def test_build_runtime_request_files_always_includes_clarification_context() -> 
     assert clarification_path in request_files
     assert "原始问题" in request_files[clarification_path]["content"]
     assert "暂无" in request_files[clarification_path]["content"]
+    assert files_budget_snapshot["spilled_paths"] == []
 
 
 def test_build_runtime_request_files_includes_clarification_context() -> None:
@@ -376,7 +377,7 @@ def test_build_runtime_request_files_includes_clarification_context() -> None:
         large_result_policy=DEFAULT_RESEARCH_LARGE_RESULT_POLICY,
     )
 
-    request_files = build_runtime_request_files(
+    request_files, files_budget_snapshot = build_runtime_request_files(
         workspace_files=workspace_files,
         session=session,
         plan_snapshot=_plan_snapshot(),
@@ -385,6 +386,7 @@ def test_build_runtime_request_files_includes_clarification_context() -> None:
     clarification_path = RESEARCH_RUNTIME_REQUEST_CONTEXT.clarification_context_path
     assert clarification_path in request_files
     assert "企业落地建议与风险边界" in request_files[clarification_path]["content"]
+    assert isinstance(files_budget_snapshot["tokens_remaining"], int)
 
 
 def test_compile_report_from_runtime_context_does_not_use_index_fallback_for_section_identity() -> None:
