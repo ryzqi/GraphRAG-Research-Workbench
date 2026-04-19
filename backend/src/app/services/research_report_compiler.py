@@ -90,16 +90,12 @@ def compile_report_from_runtime_context(
     report_context = dict(runtime_context_snapshot.report_context_json)
     has_material = any(
         (
-            runtime_context_snapshot.claim_map_md.strip(),
-            runtime_context_snapshot.evidence_ledger_md.strip(),
-            runtime_context_snapshot.analysis_notes_md.strip(),
+            runtime_context_snapshot.claim_map_json.get("claims"),
+            runtime_context_snapshot.evidence_ledger_json.get("evidences"),
+            runtime_context_snapshot.section_briefs_json,
             runtime_context_snapshot.report_outline_md.strip(),
             runtime_context_snapshot.report_draft_md.strip(),
             bool(report_context),
-            bool(runtime_context_snapshot.task_graph_json),
-            bool(runtime_context_snapshot.claim_bundles_json),
-            bool(runtime_context_snapshot.section_briefs_json),
-            bool(runtime_context_snapshot.live_board_json),
             bool(runtime_context_snapshot.todos_json),
         )
     )
@@ -151,10 +147,7 @@ def compile_report_from_runtime_context(
                     _normalize_string_list(report_context.get("key_takeaways")),
                 ),
                 _format_bullets("已验证发现", source_bundle.findings),
-                _format_claim_bundle_summary(
-                    runtime_context_snapshot.claim_bundles_json
-                ),
-                _trim_leading_heading(runtime_context_snapshot.claim_map_md),
+                _render_claims_from_json(runtime_context_snapshot.claim_map_json),
             ),
         ),
         ResearchCompiledSection(
@@ -170,10 +163,9 @@ def compile_report_from_runtime_context(
         ResearchCompiledSection(
             title="证据、反证与验证",
             content=_join_blocks(
-                _format_claim_bundle_details(
-                    runtime_context_snapshot.claim_bundles_json
+                _render_evidence_from_json(
+                    runtime_context_snapshot.evidence_ledger_json
                 ),
-                _trim_leading_heading(runtime_context_snapshot.evidence_ledger_md),
                 _format_bullets(
                     "验证说明",
                     _normalize_string_list(report_context.get("verification_notes")),
@@ -328,6 +320,45 @@ def _format_citation_list(source_bundle: ResearchSourceBundle) -> str:
     return "\n".join(parts)
 
 
+def _render_claims_from_json(claim_map: dict[str, Any]) -> str:
+    claims = claim_map.get("claims") or []
+    lines = ["## 核心主张"]
+    for claim in claims:
+        if not isinstance(claim, Mapping):
+            continue
+        claim_id = str(claim.get("claim_id") or "").strip()
+        claim_text = str(claim.get("claim") or "").strip()
+        status = str(claim.get("status") or "").strip()
+        if not claim_id or not claim_text:
+            continue
+        status_text = f" _(状态：{status})_" if status else ""
+        lines.append(f"- [{claim_id}] {claim_text}{status_text}")
+    return "\n".join(lines) if len(lines) > 1 else ""
+
+
+def _render_evidence_from_json(ledger: dict[str, Any]) -> str:
+    evidences = ledger.get("evidences") or []
+    lines = ["## 证据账本"]
+    for evidence in evidences:
+        if not isinstance(evidence, Mapping):
+            continue
+        evidence_id = str(evidence.get("evidence_id") or "").strip()
+        if not evidence_id:
+            continue
+        relation = str(evidence.get("relation") or "supports").strip() or "supports"
+        confidence = str(evidence.get("confidence") or "medium").strip() or "medium"
+        claim_ids = [
+            str(value).strip()
+            for value in (evidence.get("claim_ids") or [])
+            if str(value).strip()
+        ]
+        claim_ids_text = ",".join(claim_ids)
+        lines.append(
+            f"- [{evidence_id}] {relation} · 置信度 {confidence} · 关联 {claim_ids_text}"
+        )
+    return "\n".join(lines) if len(lines) > 1 else ""
+
+
 def _format_task_graph_summary(task_graph: Mapping[str, Any]) -> str:
     tasks = task_graph.get("tasks")
     if not isinstance(tasks, list) or not tasks:
@@ -374,50 +405,6 @@ def _format_section_briefs(section_briefs: Sequence[Mapping[str, Any]]) -> str:
                 _format_bullets("证据目标", evidence_targets),
                 _format_bullets("反向检查", counterpoints),
                 _format_bullets("待补问题", open_questions),
-                citation_block,
-            )
-        )
-    return "\n\n".join(block for block in blocks if block)
-
-
-def _format_claim_bundle_summary(claim_bundles: Sequence[Mapping[str, Any]]) -> str:
-    if not claim_bundles:
-        return ""
-    lines = ["关键 claim 收口："]
-    for item in claim_bundles:
-        claim = str(item.get("claim") or "").strip()
-        status = str(item.get("status") or "").strip()
-        if not claim:
-            continue
-        lines.append(f"- {claim}" + (f" ({status})" if status else ""))
-    return "\n".join(lines) if len(lines) > 1 else ""
-
-
-def _format_claim_bundle_details(claim_bundles: Sequence[Mapping[str, Any]]) -> str:
-    if not claim_bundles:
-        return ""
-    blocks: list[str] = []
-    for item in claim_bundles:
-        claim = str(item.get("claim") or "").strip()
-        status = str(item.get("status") or "").strip()
-        evidence = _normalize_string_list(item.get("evidence"))
-        counter_evidence = _normalize_string_list(item.get("counter_evidence"))
-        limitations = _normalize_string_list(item.get("limitations"))
-        open_questions = _normalize_string_list(item.get("open_questions"))
-        citation_indices = item.get("citation_indices")
-        citation_block = (
-            "引用索引：" + ", ".join(str(value) for value in citation_indices)
-            if isinstance(citation_indices, list) and citation_indices
-            else ""
-        )
-        blocks.append(
-            _join_blocks(
-                f"### {claim}" if claim else "",
-                f"状态：{status}" if status else "",
-                _format_bullets("支撑证据", evidence),
-                _format_bullets("反向证据", counter_evidence),
-                _format_bullets("限制与反证", limitations),
-                _format_bullets("开放问题", open_questions),
                 citation_block,
             )
         )
