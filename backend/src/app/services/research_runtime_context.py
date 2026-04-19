@@ -29,6 +29,8 @@ class ResearchRuntimeContextSnapshot:
     claim_bundles_json: list[dict[str, Any]] = field(default_factory=list)
     section_briefs_json: list[dict[str, Any]] = field(default_factory=list)
     live_board_json: dict[str, Any] = field(default_factory=dict)
+    evidence_critique_json: dict[str, Any] = field(default_factory=dict)
+    coverage_critique_json: dict[str, Any] = field(default_factory=dict)
     todos_json: list[dict[str, Any]] = field(default_factory=list)
     files_snapshot: dict[str, str] = field(default_factory=dict)
 
@@ -112,7 +114,7 @@ def build_runtime_context_guide(
         "",
         "## Layering Rules",
         "- First-pass context should stay limited to the priority read order above.",
-        "- `task-graph.json`, `claim-bundles.json`, `section-briefs.json`, and `report-context.json` are the runtime handoff surface.",
+        "- `claim-map.json`, `evidence-ledger.json`, `task-graph.json`, and `report-context.json` are the runtime handoff surface.",
         f"- `{layout.live_board_path}` is a projection for runtime observability, not the planning source of truth.",
         "- `/skills/*` are procedural instructions. Read them only when the task requires their behavior.",
         "- `/memories/*` files hold low-churn runtime rules and should stay concise.",
@@ -293,6 +295,12 @@ def build_runtime_context_snapshot(
         ),
         live_board_json=_parse_json_object_payload(
             extracted.get(layout.live_board_path, "")
+        ),
+        evidence_critique_json=_parse_json_object_payload(
+            extracted.get(layout.evidence_critique_json_path, "")
+        ),
+        coverage_critique_json=_parse_json_object_payload(
+            extracted.get(layout.coverage_critique_json_path, "")
         ),
         todos_json=todos,
         files_snapshot=extracted,

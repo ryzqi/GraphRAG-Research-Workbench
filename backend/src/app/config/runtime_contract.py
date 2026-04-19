@@ -107,6 +107,8 @@ class ResearchRuntimeLayoutManifest:
         "report_context_json_path",
         "task_graph_path",
         "live_board_path",
+        "evidence_critique_json_path",
+        "coverage_critique_json_path",
     )
     analysis_layout_attrs: tuple[str, ...] = (
         "claim_map_json_path",
