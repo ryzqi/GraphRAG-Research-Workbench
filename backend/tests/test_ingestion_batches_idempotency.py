@@ -161,6 +161,43 @@ async def test_replace_material_chunks_is_idempotent() -> None:
 
 
 @pytest.mark.asyncio
+async def test_replace_material_chunks_prefers_metadata_token_count(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db = _FakeDbSession()
+    service = ChunkPersistenceService(db)
+    kb_id = uuid.uuid4()
+    material_id = uuid.uuid4()
+    chunk_id = uuid.uuid4()
+    chunk_items = [
+        ChunkItem(
+            content="chunk-with-token-count",
+            locator={"page_start": 1, "page_end": 1},
+            metadata={"token_start": 0, "token_end": 5, "token_count": 7},
+        )
+    ]
+
+    def _unexpected_count_tokens(*_args, **_kwargs):  # noqa: ANN003, ANN202
+        raise AssertionError("metadata 已含 token_count 时不应再调用 count_tokens")
+
+    monkeypatch.setattr(
+        "app.services.chunk_persistence_service.count_tokens",
+        _unexpected_count_tokens,
+    )
+
+    inserted_ids = await service.replace_material_chunks(
+        kb_id=kb_id,
+        material_id=material_id,
+        chunk_items=chunk_items,
+        chunk_ids=[chunk_id],
+    )
+
+    assert inserted_ids == [chunk_id]
+    assert db.operations[1][0] == "rows"
+    assert db.operations[1][1][0]["token_count"] == 7
+
+
+@pytest.mark.asyncio
 async def test_ingestion_doc_retry_after_outer_failure_produces_no_duplicates(
     monkeypatch,
 ) -> None:

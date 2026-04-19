@@ -168,7 +168,12 @@ class ChunkingEngine:
                     ChunkItem(
                         content=str(chunk["text"]),
                         locator=_merge_locators(document.locator, locator),
-                        metadata=_merge_metadata(document.metadata, metadata),
+                        metadata=_merge_chunk_metadata(
+                            document.metadata,
+                            metadata,
+                            content=str(chunk["text"]),
+                            tokenizer_model=tokenizer_model,
+                        ),
                     )
                 )
 
@@ -219,9 +224,11 @@ class ChunkingEngine:
                             _merge_locators(document.locator, block.locator),
                             locator,
                         ),
-                        metadata=_merge_metadata(
+                        metadata=_merge_chunk_metadata(
                             _merge_metadata(document.metadata, block.metadata),
                             metadata,
+                            content=block.text,
+                            token_count=token_count,
                         ),
                     )
                 )
@@ -447,7 +454,11 @@ class ChunkingEngine:
                     ChunkItem(
                         content=content,
                         locator=_merge_locators(document.locator, None),
-                        metadata=_merge_metadata(document.metadata, base_meta),
+                        metadata=_merge_chunk_metadata(
+                            document.metadata,
+                            base_meta,
+                            content=content,
+                        ),
                         chunk_role="default",
                     )
                 )
@@ -486,7 +497,11 @@ class ChunkingEngine:
                     ChunkItem(
                         content=child_text,
                         locator=parent.locator,
-                        metadata=child_meta,
+                        metadata=_merge_chunk_metadata(
+                            None,
+                            child_meta,
+                            content=child_text,
+                        ),
                         chunk_role="child",
                         parent_ref=parent_idx,
                         child_seq=child_idx,
@@ -525,7 +540,11 @@ def _wrap_semantic_chunks(
             ChunkItem(
                 content=chunk,
                 locator=_merge_locators(document.locator, {"index": idx}),
-                metadata=_merge_metadata(document.metadata, meta),
+                metadata=_merge_chunk_metadata(
+                    document.metadata,
+                    meta,
+                    content=chunk,
+                ),
             )
         )
 
@@ -556,6 +575,23 @@ def _merge_metadata(
     if isinstance(chunk_meta, dict):
         merged.update(chunk_meta)
     return merged or None
+
+
+def _merge_chunk_metadata(
+    doc_meta: dict[str, Any] | None,
+    chunk_meta: dict[str, Any] | None,
+    *,
+    content: str,
+    tokenizer_model: str | None = None,
+    token_count: int | None = None,
+) -> dict[str, Any]:
+    metadata = _merge_metadata(doc_meta, chunk_meta) or {}
+    metadata["token_count"] = (
+        max(count_tokens(content, model=tokenizer_model), 1)
+        if token_count is None
+        else int(token_count)
+    )
+    return metadata
 
 
 def _is_markdown(document: ParsedDocument) -> bool:
@@ -590,7 +626,11 @@ def _wrap_chunks(
             ChunkItem(
                 content=chunk,
                 locator=_merge_locators(document.locator, {"index": idx}),
-                metadata=_merge_metadata(document.metadata, meta),
+                metadata=_merge_chunk_metadata(
+                    document.metadata,
+                    meta,
+                    content=chunk,
+                ),
                 chunk_role=chunk_role,
             )
         )

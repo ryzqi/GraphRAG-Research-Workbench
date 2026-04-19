@@ -97,10 +97,10 @@ class ContextBuilder:
 
         included: list[RetrievalResult] = []
         used_tokens = 0
-        total_tokens = sum(self._chunk_tokens(r) for r in results)
+        chunk_tokens_list = [self._chunk_tokens(result) for result in results]
+        total_tokens = sum(chunk_tokens_list)
 
-        for r in results:
-            chunk_tokens = self._chunk_tokens(r)
+        for r, chunk_tokens in zip(results, chunk_tokens_list, strict=False):
             included.append(r)
             used_tokens += chunk_tokens
 
@@ -275,13 +275,19 @@ class ContextBuilder:
                 },
             )
 
-        total_tokens = sum(count_tokens_approximately(m.content) for m in history)
+        history_token_counts = [
+            count_tokens_approximately(message.content) for message in history
+        ]
+        total_tokens = sum(history_token_counts)
 
         kept: list[LLMMessage] = []
         used_tokens = 0
 
-        for msg in reversed(history):
-            msg_tokens = count_tokens_approximately(msg.content)
+        for msg, msg_tokens in zip(
+            reversed(history),
+            reversed(history_token_counts),
+            strict=False,
+        ):
             if max_tokens is not None and used_tokens + msg_tokens > max_tokens:
                 break
             kept.append(msg)

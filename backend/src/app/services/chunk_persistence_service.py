@@ -188,6 +188,9 @@ class ChunkPersistenceService:
         rows: list[dict] = []
         for idx, chunk_item in enumerate(chunk_items):
             raw_text = str(chunk_item.content or "")
+            token_count = self._resolve_int_from_metadata(chunk_item, "token_count")
+            if token_count is None:
+                token_count = count_tokens(raw_text)
             rows.append(
                 {
                     "id": resolved_chunk_ids[idx],
@@ -231,7 +234,7 @@ class ChunkPersistenceService:
                     "content_hash": hashlib.sha256(
                         raw_text.encode("utf-8")
                     ).hexdigest(),
-                    "token_count": count_tokens(raw_text),
+                    "token_count": token_count,
                 }
             )
 
