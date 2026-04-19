@@ -221,11 +221,17 @@ class ContextBuilder:
         }
 
         budgets = {
+            "llm_input_tokens": self._normalize_budget(
+                self._settings.llm_max_input_tokens
+            ),
             "history_messages": self._normalize_budget(
                 self._settings.context_history_max_messages
             ),
             "history_tokens": self._normalize_budget(
                 self._settings.context_history_max_tokens
+            ),
+            "retrieval_tokens": self._normalize_budget(
+                self._settings.context_retrieval_max_tokens
             ),
             "summary_tokens": self._normalize_budget(self._settings.summary_max_tokens),
             "tool_tokens": self._normalize_budget(

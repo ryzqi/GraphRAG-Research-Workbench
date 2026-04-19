@@ -32,7 +32,7 @@ class Settings(DeploySettings):
     )
 
     llm_timeout_seconds: float = Field(30.0, alias="LLM_TIMEOUT_SECONDS")
-    llm_max_input_tokens: int | None = Field(None, alias="LLM_MAX_INPUT_TOKENS")
+    llm_max_input_tokens: int | None = Field(80_000, alias="LLM_MAX_INPUT_TOKENS")
     llm_output_version: str = Field("responses/v1", alias="LLM_OUTPUT_VERSION")
     general_chat_replay_mode: str = Field("auto", alias="GENERAL_CHAT_REPLAY_MODE")
     interactive_run_stale_timeout_seconds: int = Field(
@@ -149,9 +149,14 @@ class Settings(DeploySettings):
 
     context_history_max_messages: int = Field(6, alias="CONTEXT_HISTORY_MAX_MESSAGES")
     context_history_max_tokens: int | None = Field(
-        None, alias="CONTEXT_HISTORY_MAX_TOKENS"
+        4_000, alias="CONTEXT_HISTORY_MAX_TOKENS"
     )
-    context_tool_max_tokens: int | None = Field(None, alias="CONTEXT_TOOL_MAX_TOKENS")
+    context_tool_max_tokens: int | None = Field(
+        2_000, alias="CONTEXT_TOOL_MAX_TOKENS"
+    )
+    context_retrieval_max_tokens: int | None = Field(
+        16_000, alias="CONTEXT_RETRIEVAL_MAX_TOKENS"
+    )
 
     kb_chat_graph_recursion_limit: int = Field(
         30, alias="KB_CHAT_GRAPH_RECURSION_LIMIT"
