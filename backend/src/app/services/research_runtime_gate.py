@@ -140,8 +140,8 @@ def _load_breadth_gate_inputs(
 
     layout = build_research_workspace_layout(session_id)
     backend = StateBackend()
-    claim_map = _read_claim_map(backend, layout.claim_map_path)
-    ledger = _read_evidence_ledger(backend, layout.source_ledger_path)
+    claim_map = _read_claim_map(backend, layout.claim_map_json_path)
+    ledger = _read_evidence_ledger(backend, layout.evidence_ledger_json_path)
     return claim_map, ledger, complexity
 
 

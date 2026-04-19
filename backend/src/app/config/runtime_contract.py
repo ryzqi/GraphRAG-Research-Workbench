@@ -64,31 +64,24 @@ class ResearchRuntimeRequestContext:
 class ResearchRuntimeLayoutManifest:
     mission_relative_path: str = "00-mission.md"
     plan_relative_path: str = "01-plan.md"
-    query_map_relative_path: str = "02-query-map.md"
-    coverage_relative_path: str = "03-coverage.md"
-    report_draft_relative_path: str = "04-report-draft.md"
-    claim_map_md_relative_path: str = "05-claim-map.md"
-    evidence_ledger_md_relative_path: str = "06-evidence-ledger.md"
-    analysis_notes_relative_path: str = "07-analysis-notes.md"
-    report_outline_relative_path: str = "08-report-outline.md"
-    task_graph_relative_path: str = "09-task-graph.json"
-    claim_bundles_relative_path: str = "10-claim-bundles.json"
-    section_briefs_relative_path: str = "11-section-briefs.json"
-    live_board_relative_path: str = "12-live-board.json"
-    source_ledger_relative_path: str = "verification/source-ledger.json"
-    claim_map_relative_path: str = "verification/claim-map.json"
-    conflicts_relative_path: str = "verification/conflicts.json"
+    report_draft_relative_path: str = "02-report-draft.md"
+    report_outline_relative_path: str = "03-report-outline.md"
+    claim_map_json_relative_path: str = "04-claim-map.json"
+    evidence_ledger_json_relative_path: str = "05-evidence-ledger.json"
+    task_graph_relative_path: str = "06-task-graph.json"
+    claim_bundles_relative_path: str = "07-claim-bundles.json"
+    section_briefs_relative_path: str = "08-section-briefs.json"
+    live_board_relative_path: str = "09-live-board.json"
     report_context_relative_path: str = "report/report-context.json"
+    evidence_critique_relative_path: str = "critique/evidence-critique.json"
+    coverage_critique_relative_path: str = "critique/coverage-critique.json"
     bootstrap_artifact_key_to_attr: tuple[tuple[str, str], ...] = (
         ("mission_md", "mission_path"),
         ("plan_md", "plan_path"),
-        ("query_map_md", "query_map_path"),
-        ("coverage_md", "coverage_path"),
         ("report_draft_md", "report_draft_path"),
-        ("claim_map_md", "claim_map_md_path"),
-        ("evidence_ledger_md", "evidence_ledger_md_path"),
-        ("analysis_notes_md", "analysis_notes_path"),
         ("report_outline_md", "report_outline_path"),
+        ("claim_map_json", "claim_map_json_path"),
+        ("evidence_ledger_json", "evidence_ledger_json_path"),
         ("task_graph_json", "task_graph_path"),
         ("claim_bundles_json", "claim_bundles_path"),
         ("section_briefs_json", "section_briefs_path"),
@@ -97,29 +90,27 @@ class ResearchRuntimeLayoutManifest:
     priority_layout_attrs: tuple[str, ...] = (
         "mission_path",
         "plan_path",
-        "query_map_path",
-        "coverage_path",
-        "report_context_json_path",
-        "report_outline_path",
-        "task_graph_path",
+        "claim_map_json_path",
+        "evidence_ledger_json_path",
         "claim_bundles_path",
         "section_briefs_path",
+        "report_context_json_path",
+        "task_graph_path",
     )
     snapshot_layout_attrs: tuple[str, ...] = (
-        "claim_map_md_path",
-        "evidence_ledger_md_path",
-        "analysis_notes_path",
+        "claim_map_json_path",
+        "evidence_ledger_json_path",
+        "claim_bundles_path",
+        "section_briefs_path",
         "report_outline_path",
         "report_draft_path",
         "report_context_json_path",
         "task_graph_path",
-        "claim_bundles_path",
-        "section_briefs_path",
+        "live_board_path",
     )
     analysis_layout_attrs: tuple[str, ...] = (
-        "claim_map_md_path",
-        "evidence_ledger_md_path",
-        "analysis_notes_path",
+        "claim_map_json_path",
+        "evidence_ledger_json_path",
         "report_outline_path",
         "report_draft_path",
     )

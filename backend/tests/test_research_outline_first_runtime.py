@@ -180,7 +180,7 @@ def test_runtime_prompt_requires_breadth_before_outline_and_depth() -> None:
     assert "先创建动态全文大纲" not in prompt
 
 
-def test_runtime_context_guide_prioritizes_outline_file() -> None:
+def test_runtime_context_guide_prioritizes_claim_and_evidence_json() -> None:
     layout = build_research_workspace_layout(uuid.uuid4())
     workspace_files = build_runtime_orchestration_scaffold_files(
         question="当前 AI 领域的最新趋势是什么？",
@@ -193,7 +193,9 @@ def test_runtime_context_guide_prioritizes_outline_file() -> None:
         layout=layout,
     )
 
-    assert layout.report_outline_path in guide.priority_paths
+    assert layout.claim_map_json_path in guide.priority_paths
+    assert layout.evidence_ledger_json_path in guide.priority_paths
+    assert layout.report_outline_path not in guide.priority_paths
 
 
 def test_compile_report_from_runtime_context_uses_dynamic_outline_sections() -> None:

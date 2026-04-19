@@ -20,6 +20,8 @@ class ResearchRuntimeContextSnapshot:
     claim_map_md: str = ""
     evidence_ledger_md: str = ""
     analysis_notes_md: str = ""
+    claim_map_json: dict[str, Any] = field(default_factory=dict)
+    evidence_ledger_json: dict[str, Any] = field(default_factory=dict)
     report_outline_md: str = ""
     report_draft_md: str = ""
     report_context_json: dict[str, Any] = field(default_factory=dict)
@@ -271,9 +273,12 @@ def build_runtime_context_snapshot(
 
     report_context_payload = extracted.get(layout.report_context_json_path, "")
     return ResearchRuntimeContextSnapshot(
-        claim_map_md=extracted.get(layout.claim_map_md_path, ""),
-        evidence_ledger_md=extracted.get(layout.evidence_ledger_md_path, ""),
-        analysis_notes_md=extracted.get(layout.analysis_notes_path, ""),
+        claim_map_json=_parse_json_object_payload(
+            extracted.get(layout.claim_map_json_path, "")
+        ),
+        evidence_ledger_json=_parse_json_object_payload(
+            extracted.get(layout.evidence_ledger_json_path, "")
+        ),
         report_outline_md=extracted.get(layout.report_outline_path, ""),
         report_draft_md=extracted.get(layout.report_draft_path, ""),
         report_context_json=_parse_report_context_payload(report_context_payload),

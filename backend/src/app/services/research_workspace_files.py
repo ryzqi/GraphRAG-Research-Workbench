@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID
 
@@ -21,21 +22,17 @@ class ResearchWorkspaceLayout:
     scratch_root: str
     mission_path: str
     plan_path: str
-    query_map_path: str
-    coverage_path: str
     report_draft_path: str
-    claim_map_md_path: str
-    evidence_ledger_md_path: str
-    analysis_notes_path: str
     report_outline_path: str
+    claim_map_json_path: str
+    evidence_ledger_json_path: str
     task_graph_path: str
     claim_bundles_path: str
     section_briefs_path: str
     live_board_path: str
-    source_ledger_path: str
-    claim_map_path: str
-    conflicts_path: str
     report_context_json_path: str
+    evidence_critique_json_path: str
+    coverage_critique_json_path: str
 
 
 @dataclass(slots=True, frozen=True)
@@ -107,23 +104,23 @@ def build_research_workspace_layout(session_id: UUID | str) -> ResearchWorkspace
         scratch_root=scratch_root,
         mission_path=f"{workspace_root}/{manifest.mission_relative_path}",
         plan_path=f"{workspace_root}/{manifest.plan_relative_path}",
-        query_map_path=f"{workspace_root}/{manifest.query_map_relative_path}",
-        coverage_path=f"{workspace_root}/{manifest.coverage_relative_path}",
         report_draft_path=f"{workspace_root}/{manifest.report_draft_relative_path}",
-        claim_map_md_path=f"{workspace_root}/{manifest.claim_map_md_relative_path}",
-        evidence_ledger_md_path=(
-            f"{workspace_root}/{manifest.evidence_ledger_md_relative_path}"
-        ),
-        analysis_notes_path=f"{workspace_root}/{manifest.analysis_notes_relative_path}",
         report_outline_path=f"{workspace_root}/{manifest.report_outline_relative_path}",
+        claim_map_json_path=f"{workspace_root}/{manifest.claim_map_json_relative_path}",
+        evidence_ledger_json_path=(
+            f"{workspace_root}/{manifest.evidence_ledger_json_relative_path}"
+        ),
         task_graph_path=f"{workspace_root}/{manifest.task_graph_relative_path}",
         claim_bundles_path=f"{workspace_root}/{manifest.claim_bundles_relative_path}",
         section_briefs_path=f"{workspace_root}/{manifest.section_briefs_relative_path}",
         live_board_path=f"{workspace_root}/{manifest.live_board_relative_path}",
-        source_ledger_path=f"{scratch_root}/{manifest.source_ledger_relative_path}",
-        claim_map_path=f"{scratch_root}/{manifest.claim_map_relative_path}",
-        conflicts_path=f"{scratch_root}/{manifest.conflicts_relative_path}",
         report_context_json_path=f"{scratch_root}/{manifest.report_context_relative_path}",
+        evidence_critique_json_path=(
+            f"{scratch_root}/{manifest.evidence_critique_relative_path}"
+        ),
+        coverage_critique_json_path=(
+            f"{scratch_root}/{manifest.coverage_critique_relative_path}"
+        ),
     )
 
 
@@ -153,6 +150,7 @@ def build_workspace_bootstrap_artifacts(
     layout = build_research_workspace_layout(session_id)
     prompts = get_prompt_loader()
     subtasks_block = _build_subtasks_block(plan_snapshot)
+    now_iso = datetime.now(timezone.utc).isoformat()
     return {
         "mission_md": ResearchArtifactSeed(
             artifact_key="mission_md",
@@ -174,33 +172,29 @@ def build_workspace_bootstrap_artifacts(
                 subtasks_block=subtasks_block,
             ),
         ),
-        "query_map_md": ResearchArtifactSeed(
-            artifact_key="query_map_md",
-            content_text=prompts.render("research/query_map_md"),
-        ),
-        "coverage_md": ResearchArtifactSeed(
-            artifact_key="coverage_md",
-            content_text=prompts.render("research/coverage_md"),
-        ),
         "report_draft_md": ResearchArtifactSeed(
             artifact_key="report_draft_md",
             content_text=prompts.render("research/report_draft_md"),
         ),
-        "claim_map_md": ResearchArtifactSeed(
-            artifact_key="claim_map_md",
-            content_text=prompts.render("research/claim_map_md"),
-        ),
-        "evidence_ledger_md": ResearchArtifactSeed(
-            artifact_key="evidence_ledger_md",
-            content_text=prompts.render("research/evidence_ledger_md"),
-        ),
-        "analysis_notes_md": ResearchArtifactSeed(
-            artifact_key="analysis_notes_md",
-            content_text=prompts.render("research/analysis_notes_md"),
-        ),
         "report_outline_md": ResearchArtifactSeed(
             artifact_key="report_outline_md",
             content_text=prompts.render("research/report_outline_md"),
+        ),
+        "claim_map_json": ResearchArtifactSeed(
+            artifact_key="claim_map_json",
+            content_text=json.dumps(
+                {"claims": [], "generated_at": now_iso},
+                ensure_ascii=False,
+                indent=2,
+            ),
+        ),
+        "evidence_ledger_json": ResearchArtifactSeed(
+            artifact_key="evidence_ledger_json",
+            content_text=json.dumps(
+                {"evidences": [], "generated_at": now_iso},
+                ensure_ascii=False,
+                indent=2,
+            ),
         ),
     }
 
@@ -244,7 +238,7 @@ def build_runtime_task_graph_payload(
                 "section_id": section_id,
                 "claim_id": claim_id,
                 "deliverables": [
-                    "claim_map_md",
+                    "claim_map_json",
                     "claim_bundles_json",
                 ],
                 "acceptance_criteria": [
@@ -273,9 +267,9 @@ def build_runtime_task_graph_payload(
                     "section_id": section_id,
                     "claim_id": claim_id,
                     "deliverables": [
-                        "evidence_ledger_md",
+                        "claim_map_json",
+                        "evidence_ledger_json",
                         "claim_bundles_json",
-                        "analysis_notes_md",
                     ],
                     "acceptance_criteria": [
                         _describe_expected_evidence(subtask),
@@ -326,7 +320,7 @@ def build_runtime_task_graph_payload(
             "deliverables": [
                 "report_draft_md",
                 "report_context_json",
-                "evidence_ledger_md",
+                "evidence_ledger_json",
             ],
             "acceptance_criteria": [
                 "执行摘要、关键要点、建议、开放问题与置信度全部写入 report-context.json。",
@@ -400,31 +394,27 @@ def build_runtime_claim_bundles_payload(
     *,
     plan_snapshot: ResearchPlanSnapshot,
 ) -> list[dict[str, Any]]:
-    subtasks = list(plan_snapshot.subtasks)
-    if not subtasks:
-        subtasks = [
-            ResearchPlanSubtask(
-                title="初始化 claim",
-                description="从研究问题中提炼首轮 claim 和待证伪问题。",
-                target_sources=plan_snapshot.target_sources,
-            )
-        ]
+    subtasks = list(plan_snapshot.subtasks) or [
+        ResearchPlanSubtask(
+            title="初始化 claim",
+            description="从研究问题中提炼首轮 claim。",
+            target_sources=plan_snapshot.target_sources,
+        )
+    ]
     bundles: list[dict[str, Any]] = []
     for index, subtask in enumerate(subtasks, start=1):
         bundles.append(
             {
-                "claim_id": f"claim-{index}",
-                "task_id": f"claim-{index}",
+                "claim_id": f"claim-{index:02d}",
                 "section_id": f"section-{index}",
                 "claim": subtask.title,
                 "status": "pending",
-                "claim_basis": subtask.description,
-                "target_sources": _target_source_values(subtask),
-                "evidence": [],
-                "counter_evidence": [],
+                "confidence": "medium",
+                "independence_providers": [],
+                "supporting_evidence_ids": [],
+                "counter_evidence_ids": [],
                 "limitations": [],
                 "open_questions": [],
-                "citation_indices": [],
             }
         )
     return bundles
@@ -448,8 +438,8 @@ def build_runtime_report_context_payload(
         "recommended_actions": [],
         "open_questions": [],
         "methodology_notes": [
-            "先根据研究主题、用户补充与当前计划生成动态全文大纲，再进入 claim 收口与补证。",
-            "先完成 claim 收口，再按 source 并行补证，最后交给 section-writer / citation 子代理统一收口。",
+            "先完成 breadth-pass，确保 pending claims 至少有初始证据，再锁定 outline 与 section briefs。",
+            "再按 source 并行补证，最后交给 section-writer / citation 子代理统一收口。",
         ],
         "verification_notes": [],
         "coverage_focus": [

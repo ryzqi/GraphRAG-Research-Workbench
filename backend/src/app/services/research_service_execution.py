@@ -35,6 +35,16 @@ async def persist_runtime_context_artifacts(
 
     await artifact_store.upsert(
         session=session,
+        artifact_key='runtime_claim_map_json',
+        content_json=runtime_context_snapshot.claim_map_json,
+    )
+    await artifact_store.upsert(
+        session=session,
+        artifact_key='runtime_evidence_ledger_json',
+        content_json=runtime_context_snapshot.evidence_ledger_json,
+    )
+    await artifact_store.upsert(
+        session=session,
         artifact_key='runtime_claim_map_md',
         content_text=runtime_context_snapshot.claim_map_md,
     )
