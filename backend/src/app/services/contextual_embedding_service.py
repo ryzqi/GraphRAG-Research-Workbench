@@ -7,11 +7,14 @@ import logging
 import time
 from dataclasses import dataclass
 
+from langchain_core.language_models.chat_models import BaseChatModel
+
 from app.core.settings import Settings, get_settings
 from app.integrations.chat_model_cache import (
     create_chat_model_cached as create_chat_model,
 )
 from app.integrations.chat_model_factory import get_active_model_identity
+from app.integrations.model_runtime_config import ModelRuntimeConfigManager
 from app.prompts import get_prompt_loader
 
 logger = logging.getLogger(__name__)
@@ -40,6 +43,8 @@ class ContextualEmbeddingService:
     def __init__(self, settings: Settings | None = None) -> None:
         self._settings = settings if settings is not None else get_settings()
         self._prompts = get_prompt_loader()
+        self._chat_model: BaseChatModel | None = None
+        self._chat_model_runtime_version: int | None = None
 
     @staticmethod
     def _error_reason(exc: Exception) -> str:
@@ -142,12 +147,28 @@ class ContextualEmbeddingService:
         end = min(len(full_text), idx + len(chunk) + half)
         return full_text[start:end]
 
+    def _runtime_version(self) -> int:
+        snapshot = ModelRuntimeConfigManager.get_snapshot(settings=self._settings)
+        return int(getattr(snapshot, "version", 0))
+
+    def _get_chat_model(self) -> BaseChatModel:
+        runtime_version = self._runtime_version()
+        if (
+            self._chat_model is not None
+            and self._chat_model_runtime_version == runtime_version
+        ):
+            return self._chat_model
+        model = create_chat_model(settings=self._settings)
+        self._chat_model = model
+        self._chat_model_runtime_version = runtime_version
+        return model
+
     async def _call_llm(self, prompt: str) -> _LLMCallOutput:
         from langchain.messages import HumanMessage
 
         from app.services.streaming import extract_answer_text
 
-        model = create_chat_model(settings=self._settings)
+        model = self._get_chat_model()
 
         def _run() -> object:
             return model.invoke([HumanMessage(content=prompt)])
