@@ -81,10 +81,13 @@ class _OpenedMcpRuntime:
 def _format_audit_payload(
     payload: object, max_chars: int = _MAX_AUDIT_SNIPPET_CHARS
 ) -> str:
-    try:
-        text = json.dumps(payload, ensure_ascii=False, default=str)
-    except TypeError:
-        text = str(payload)
+    if isinstance(payload, str):
+        text = payload
+    else:
+        try:
+            text = json.dumps(payload, ensure_ascii=False, default=str)
+        except TypeError:
+            text = str(payload)
     if len(text) <= max_chars:
         return text
     return f"{text[:max_chars].rstrip()}…"

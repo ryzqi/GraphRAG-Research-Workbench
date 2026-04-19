@@ -7,7 +7,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 from dataclasses import dataclass
 from typing import Sequence
 
@@ -39,8 +38,8 @@ from app.services.research_runtime_types import ResearchToolRegistryBundle
 
 from .utils import (
     DEFAULT_TOOL_OUTPUT_MAX_CHARS,
+    encode_and_truncate,
     make_mcp_tool_name,
-    truncate_tool_output,
 )
 from .web_tool_payloads import compact_builtin_external_output
 
@@ -55,17 +54,6 @@ class ToolMeta:
     extension_name: str | None
     is_builtin: bool
     is_external: bool
-
-
-def _stringify_output(output: object) -> str:
-    if output is None:
-        return ""
-    if isinstance(output, str):
-        return output
-    try:
-        return json.dumps(output, ensure_ascii=False)
-    except TypeError:
-        return str(output)
 
 
 def _sanitize_mcp_content(content: object) -> object:
@@ -207,11 +195,8 @@ async def build_tool_registry(
                 except asyncio.CancelledError:
                     raise
                 except Exception as exc:
-                    err, _ = truncate_tool_output(str(exc), tool_output_max_chars)
-                    payload = {"ok": False, "error": err}
-                    text, _ = truncate_tool_output(
-                        _stringify_output(payload), tool_output_max_chars
-                    )
+                    payload = {"ok": False, "error": str(exc)}
+                    text, _ = encode_and_truncate(payload, tool_output_max_chars)
                     return text
 
                 content: object = output
@@ -226,9 +211,7 @@ async def build_tool_registry(
                 if artifact is not None:
                     payload["artifact"] = artifact
 
-                text, _ = truncate_tool_output(
-                    _stringify_output(payload), tool_output_max_chars
-                )
+                text, _ = encode_and_truncate(payload, tool_output_max_chars)
                 return text
 
             tool = lc_tool(

@@ -75,6 +75,21 @@ def truncate_tool_output(
     return f"{truncated}{marker}", True
 
 
+def encode_and_truncate(
+    payload: Any, max_chars: int = DEFAULT_TOOL_OUTPUT_MAX_CHARS
+) -> tuple[str, bool]:
+    if payload is None:
+        text = ""
+    elif isinstance(payload, str):
+        text = payload
+    else:
+        try:
+            text = json.dumps(payload, ensure_ascii=False, default=str)
+        except TypeError:
+            text = str(payload)
+    return truncate_tool_output(text, max_chars)
+
+
 def _stringify(obj: Any) -> str:
     if obj is None:
         return ""
