@@ -111,6 +111,30 @@ _ARXIV_SORT_ORDER = {
 }
 
 
+def _build_excerpt_candidates_from_summary(summary: str) -> list[dict[str, str]]:
+    text = " ".join(summary.split())
+    if not text:
+        return []
+    chunks: list[str] = []
+    remaining = text
+    while remaining and len(chunks) < 3:
+        head = remaining[:380].strip()
+        if len(head) < 40:
+            break
+        chunks.append(head)
+        remaining = remaining[len(head) :].strip()
+    if not chunks and len(text) >= 40:
+        chunks.append(text[:400])
+    return [
+        {
+            "text": chunk,
+            "locator": f"abstract#chunk-{index + 1}",
+            "lang": "en",
+        }
+        for index, chunk in enumerate(chunks)
+    ]
+
+
 def _serialize_arxiv_result(result: Any) -> dict[str, Any]:
     authors = [str(getattr(author, "name", "")).strip() for author in result.authors]
     short_id = str(result.get_short_id())
@@ -130,6 +154,9 @@ def _serialize_arxiv_result(result: Any) -> dict[str, Any]:
         "pdf_url": str(result.pdf_url or ""),
         "primary_category": str(result.primary_category or ""),
         "categories": list(result.categories or []),
+        "excerpt_candidates": _build_excerpt_candidates_from_summary(
+            str(result.summary or "")
+        ),
     }
 
 
