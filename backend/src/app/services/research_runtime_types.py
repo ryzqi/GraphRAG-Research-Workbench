@@ -67,6 +67,7 @@ class ResearchRuntimeContext:
     subagent_route: tuple[str, ...]
     workspace_root: str
     scratch_root: str
+    plan_complexity: str = "simple"
 
 
 @dataclass(slots=True, frozen=True)

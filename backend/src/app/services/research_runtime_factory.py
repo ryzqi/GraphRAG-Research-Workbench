@@ -23,14 +23,9 @@ from app.services.research_runtime_types import (
     ResearchToolRegistryBundle,
 )
 from app.services.research_runtime_gate import (
-    DEFAULT_OUTLINE_GATED_TOOL_NAMES,
-    build_outline_gate_middleware,
+    DEFAULT_BREADTH_GATED_TOOL_NAMES,
+    build_breadth_gate_middleware,
 )
-
-try:
-    from app.services.research_runtime_gate import DEFAULT_BREADTH_GATED_TOOL_NAMES
-except ImportError:
-    DEFAULT_BREADTH_GATED_TOOL_NAMES = DEFAULT_OUTLINE_GATED_TOOL_NAMES
 
 
 @dataclass(slots=True)
@@ -210,19 +205,15 @@ async def create_deep_research_runtime(
     tools = registry_bundle.tools
     tool_meta_by_name = registry_bundle.tool_meta_by_name
     resolved_skill_paths = list(config.skill_paths)
-    outline_gate_tool_names = {
-        *DEFAULT_BREADTH_GATED_TOOL_NAMES,
-        *registry_bundle.tool_groups.get("web", ()),
-        *registry_bundle.tool_groups.get("paper", ()),
-    }
+    breadth_gate_tool_names = tuple(sorted(DEFAULT_BREADTH_GATED_TOOL_NAMES))
 
     agent_kwargs: dict[str, Any] = {
         "name": config.name,
         "model": config.primary_model,
         "tools": tools,
         "middleware": [
-            build_outline_gate_middleware(
-                gated_tool_names=tuple(sorted(outline_gate_tool_names))
+            build_breadth_gate_middleware(
+                gated_tool_names=breadth_gate_tool_names
             )
         ],
         "system_prompt": config.system_prompt,

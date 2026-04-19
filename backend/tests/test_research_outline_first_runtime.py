@@ -16,6 +16,12 @@ from app.schemas.research import (
     ResearchSourceTarget,
     ResearchSourceType,
 )
+from app.schemas.research_workspace import (
+    ResearchClaimEntry,
+    ResearchClaimMap,
+    ResearchEvidenceEntry,
+    ResearchEvidenceLedger,
+)
 from app.services.research_presentation_snapshot import (
     build_research_presentation_snapshot,
 )
@@ -25,8 +31,8 @@ from app.services.research_runtime_context import (
     build_runtime_context_guide,
 )
 from app.services.research_runtime_gate import (
-    evaluate_outline_gate_status,
-    tool_requires_outline_gate,
+    evaluate_breadth_gate_status,
+    tool_requires_breadth_gate,
 )
 from app.services.research_runtime_skills import build_research_runtime_skill_files
 from app.services.research_runtime_types import DEFAULT_RESEARCH_LARGE_RESULT_POLICY
@@ -110,6 +116,30 @@ def _source_bundle() -> ResearchSourceBundle:
     )
 
 
+def _claim(claim_id: str) -> ResearchClaimEntry:
+    return ResearchClaimEntry.model_validate(
+        {
+            "claim_id": claim_id,
+            "section_id": "section-1",
+            "claim": "a" * 10,
+            "status": "pending",
+            "confidence": "medium",
+        }
+    )
+
+
+def _evidence(claim_id: str, suffix: str = "1") -> ResearchEvidenceEntry:
+    return ResearchEvidenceEntry.model_validate(
+        {
+            "evidence_id": f"e-{claim_id}-{suffix}",
+            "claim_ids": [claim_id],
+            "citation_index": 0,
+            "relation": "supports",
+            "confidence": "high",
+        }
+    )
+
+
 def test_section_briefs_expose_outline_first_contract_fields() -> None:
     briefs = build_runtime_section_briefs_payload(plan_snapshot=_plan_snapshot())
 
@@ -127,7 +157,7 @@ def test_section_briefs_expose_outline_first_contract_fields() -> None:
     assert first["owner"] == "section-writer"
 
 
-def test_report_context_tracks_outline_gate_state() -> None:
+def test_report_context_tracks_outline_state() -> None:
     payload = build_runtime_report_context_payload(
         question="当前 AI 领域的最新趋势是什么？",
         plan_snapshot=_plan_snapshot(),
@@ -138,15 +168,16 @@ def test_report_context_tracks_outline_gate_state() -> None:
     assert payload["active_section_id"] is None
 
 
-def test_runtime_prompt_requires_outline_before_search_and_delegation() -> None:
+def test_runtime_prompt_requires_breadth_before_outline_and_depth() -> None:
     prompt = build_runtime_prompt(
         session=_session(),
         plan_snapshot=_plan_snapshot(),
         workspace_paths=("/workspace/research/outline.md",),
     )
 
-    assert "先创建动态全文大纲" in prompt
-    assert "在调用 `web_search`、`arxiv_search`、`arxiv_fetch` 或 `task` 之前" in prompt
+    assert "breadth-pass" in prompt
+    assert "breadth gate 通过后，再写 outline" in prompt
+    assert "先创建动态全文大纲" not in prompt
 
 
 def test_runtime_context_guide_prioritizes_outline_file() -> None:
@@ -248,138 +279,64 @@ def test_runtime_skill_file_requires_breadth_first_pipeline() -> None:
     assert "先创建动态全文大纲" not in skill_text
 
 
-def test_outline_gate_blocks_search_until_outline_is_ready() -> None:
-    allowed, reason = evaluate_outline_gate_status(
-        report_outline_md=(
-            "# Report Outline\n\n"
-            "## <待补章节标题>\n"
-            "- 本节目的：待补充\n"
-            "- 计划内容：待补充\n"
+def test_breadth_gate_blocks_until_pending_claims_have_evidence() -> None:
+    allowed, reason = evaluate_breadth_gate_status(
+        claim_map=ResearchClaimMap(
+            claims=[_claim("c1"), _claim("c2")],
+            generated_at=datetime.now(timezone.utc),
         ),
-        report_context_json={
-            "outline_ready": False,
-            "outline_status": "pending",
-        },
-        section_briefs_json=[
-            {
-                "section_id": "section-1",
-                "title": "技术演进主线",
-                "summary": "",
-                "brief_markdown": "",
-            }
-        ],
+        evidence_ledger=ResearchEvidenceLedger(
+            evidences=[_evidence("c1")],
+            generated_at=datetime.now(timezone.utc),
+        ),
+        plan_complexity="simple",
     )
 
     assert allowed is False
     assert reason is not None
-    assert "report-outline" in reason
+    assert "breadth gate" in reason
+    assert "c2" in reason
 
 
-def test_outline_gate_blocks_when_only_part_of_the_outline_is_ready() -> None:
-    allowed, reason = evaluate_outline_gate_status(
-        report_outline_md=(
-            "# Report Outline\n\n"
-            "## 技术演进主线\n"
-            "- 本节目的：说明关键技术路线\n"
+def test_breadth_gate_requires_two_evidences_for_complex_plan() -> None:
+    allowed, reason = evaluate_breadth_gate_status(
+        claim_map=ResearchClaimMap(
+            claims=[_claim("c1")],
+            generated_at=datetime.now(timezone.utc),
         ),
-        report_context_json={
-            "outline_ready": True,
-            "outline_status": "ready",
-        },
-        section_briefs_json=[
-            {
-                "section_id": "section-1",
-                "title": "技术演进主线",
-                "summary": "先写技术主线，再补证据。",
-                "brief_markdown": "## 技术演进主线\n- 说明驱动因素",
-            },
-            {
-                "section_id": "section-2",
-                "title": "应用与风险边界",
-                "summary": "",
-                "brief_markdown": "",
-            },
-        ],
+        evidence_ledger=ResearchEvidenceLedger(
+            evidences=[_evidence("c1")],
+            generated_at=datetime.now(timezone.utc),
+        ),
+        plan_complexity="complex",
     )
 
     assert allowed is False
     assert reason is not None
-    assert "section briefs" in reason
+    assert "低于 2" in reason
 
 
-def test_outline_gate_allows_search_after_full_outline_and_section_briefs_exist() -> None:
-    allowed, reason = evaluate_outline_gate_status(
-        report_outline_md=(
-            "# Report Outline\n\n"
-            "## 技术演进主线\n"
-            "- 本节目的：说明关键技术路线\n"
-            "\n"
-            "## 应用与风险边界\n"
-            "- 本节目的：说明应用场景与风险边界\n"
+def test_breadth_gate_allows_after_required_evidence_exists() -> None:
+    allowed, reason = evaluate_breadth_gate_status(
+        claim_map=ResearchClaimMap(
+            claims=[_claim("c1")],
+            generated_at=datetime.now(timezone.utc),
         ),
-        report_context_json={
-            "outline_ready": True,
-            "outline_status": "ready",
-        },
-        section_briefs_json=[
-            {
-                "section_id": "section-1",
-                "title": "技术演进主线",
-                "summary": "先写技术主线，再补证据。",
-                "brief_markdown": "## 技术演进主线\n- 说明驱动因素",
-            },
-            {
-                "section_id": "section-2",
-                "title": "应用与风险边界",
-                "summary": "先写应用与风险边界，再补证据。",
-                "brief_markdown": "## 应用与风险边界\n- 说明场景与限制",
-            }
-        ],
+        evidence_ledger=ResearchEvidenceLedger(
+            evidences=[_evidence("c1", "1"), _evidence("c1", "2")],
+            generated_at=datetime.now(timezone.utc),
+        ),
+        plan_complexity="complex",
     )
 
     assert allowed is True
     assert reason is None
-    assert tool_requires_outline_gate("task") is True
-    assert tool_requires_outline_gate("web_search") is True
-    assert tool_requires_outline_gate("record_runtime_activity") is False
 
 
-def test_outline_gate_blocks_when_placeholder_sections_remain() -> None:
-    allowed, reason = evaluate_outline_gate_status(
-        report_outline_md=(
-            "# Report Outline\n\n"
-            "## 技术演进主线\n"
-            "- 本节目的：说明关键技术路线\n"
-            "\n"
-            "## 应用与风险边界\n"
-            "- 本节目的：说明应用场景与风险边界\n"
-            "\n"
-            "## <待补章节标题>\n"
-            "- 本节目的：待补充\n"
-        ),
-        report_context_json={
-            "outline_ready": True,
-            "outline_status": "ready",
-        },
-        section_briefs_json=[
-            {
-                "section_id": "section-1",
-                "title": "技术演进主线",
-                "summary": "先写技术主线，再补证据。",
-                "brief_markdown": "## 技术演进主线\n- 说明驱动因素",
-            },
-            {
-                "section_id": "section-2",
-                "title": "应用与风险边界",
-                "summary": "先写应用与风险边界，再补证据。",
-                "brief_markdown": "## 应用与风险边界\n- 说明场景与限制",
-            },
-        ],
-    )
-
-    assert allowed is False
-    assert reason is not None
-    assert "完整" in reason
+def test_breadth_gate_only_targets_task_delegation_tool() -> None:
+    assert tool_requires_breadth_gate("task") is True
+    assert tool_requires_breadth_gate("web_search") is False
+    assert tool_requires_breadth_gate("record_runtime_activity") is False
 
 
 def test_build_runtime_request_files_always_includes_clarification_context() -> None:

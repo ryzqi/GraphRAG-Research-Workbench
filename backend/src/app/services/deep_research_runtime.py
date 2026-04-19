@@ -242,6 +242,7 @@ def _build_runtime_context(
         subagent_route=resolve_source_subagent_route(plan_snapshot.target_sources),
         workspace_root=str(layout.workspace_root),
         scratch_root=str(layout.scratch_root),
+        plan_complexity=plan_snapshot.complexity.value,
     )
 
 @lru_cache(maxsize=1)
