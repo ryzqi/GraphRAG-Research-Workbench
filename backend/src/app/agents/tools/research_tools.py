@@ -51,6 +51,7 @@ def build_tavily_extract_tool(
                 results=[],
             )
         output = await client.extract(args)
+        _augment_result_excerpts(output)
         return json.dumps(output, ensure_ascii=False)
 
     return lc_tool(
@@ -78,6 +79,7 @@ def build_tavily_crawl_tool(
                 results=[],
             )
         output = await client.crawl(args)
+        _augment_result_excerpts(output)
         return json.dumps(output, ensure_ascii=False)
 
     return lc_tool(
@@ -111,8 +113,8 @@ _ARXIV_SORT_ORDER = {
 }
 
 
-def _build_excerpt_candidates_from_summary(summary: str) -> list[dict[str, str]]:
-    text = " ".join(summary.split())
+def _build_excerpt_candidates_from_text(text: str) -> list[dict[str, str]]:
+    text = " ".join(text.split())
     if not text:
         return []
     chunks: list[str] = []
@@ -135,6 +137,22 @@ def _build_excerpt_candidates_from_summary(summary: str) -> list[dict[str, str]]
     ]
 
 
+def _augment_result_excerpts(output: dict[str, Any]) -> dict[str, Any]:
+    results = output.get("results")
+    if not isinstance(results, list):
+        return output
+    for item in results:
+        if not isinstance(item, dict):
+            continue
+        base_text = (
+            str(item.get("raw_content") or "")
+            or str(item.get("content") or "")
+            or str(item.get("snippet") or "")
+        )
+        item["excerpt_candidates"] = _build_excerpt_candidates_from_text(base_text)
+    return output
+
+
 def _serialize_arxiv_result(result: Any) -> dict[str, Any]:
     authors = [str(getattr(author, "name", "")).strip() for author in result.authors]
     short_id = str(result.get_short_id())
@@ -154,9 +172,7 @@ def _serialize_arxiv_result(result: Any) -> dict[str, Any]:
         "pdf_url": str(result.pdf_url or ""),
         "primary_category": str(result.primary_category or ""),
         "categories": list(result.categories or []),
-        "excerpt_candidates": _build_excerpt_candidates_from_summary(
-            str(result.summary or "")
-        ),
+        "excerpt_candidates": _build_excerpt_candidates_from_text(str(result.summary or "")),
     }
 
 
