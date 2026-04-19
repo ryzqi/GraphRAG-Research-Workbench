@@ -6,6 +6,7 @@ import asyncio
 import json
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from functools import lru_cache
 from time import perf_counter
 from typing import Any, TypeGuard, cast
 
@@ -251,6 +252,7 @@ def _build_runtime_context(
         scratch_root=str(layout.scratch_root),
     )
 
+@lru_cache(maxsize=1)
 def _build_workspace_context_files() -> dict[str, str]:
     files: dict[str, str] = {}
     for doc in RESEARCH_RUNTIME_WORKSPACE_CONTEXT_DOCS:
