@@ -1,45 +1,32 @@
-version: "1.0"
+version: "2.0"
 name: research_runtime_user
-description: "Deep Research runtime user prompt"
+description: "Deep Research 主代理 user prompt"
 
 template: |
-  <instructions>
-  你需要执行当前 deep research runtime，并返回结构化结果。
+  你需要按照主 system prompt 的 pipeline 执行当前 deep research，并返回结构化结果。
 
   <research_process>
-  - 先读取 mission、plan、query-map、coverage、task-graph、claim-bundles、section-briefs、report-context。
-  - 先创建动态全文大纲：根据研究主题、已收到的用户补充、research_brief 与 plan subtasks，先写好 `report-outline` 和每个 section 的简短写作说明，再开始逐段扩写。
-  - `report-outline` 与 `report-draft` 的章节标题统一使用 `## [section-id] 章节标题` 格式，`section-id` 必须与 `section-briefs.json` 中对应条目一致。
-  - 在调用 `web_search`、`arxiv_search`、`arxiv_fetch` 或 `task` 之前，先创建完整动态全文大纲，并把 `section-briefs.json` 与 `report-context.json` 的 outline 状态更新为非空。
-  - `claim-map`、`evidence-ledger`、`analysis-notes`、`report-outline`、`report-draft` 与 `live-board` 只在需要时按需读取，不要在 first pass 把低优先文件全部读入。
-  - 进入研究后立刻调用 `write_todos`；前 `plan.subtasks` 条 todo 必须按 `[plan-step-<index>] <title>` 形式一一对应 planner subtasks，并在推进过程中把这些 plan-step todos 的状态维护为 `pending` / `in_progress` / `completed`。
-  - 除 plan-step todos 外，再补充 claim、coverage gap、子代理委派与最终成稿准备相关的附加 todo。
-  - 主代理先细化 `task-graph.json`：把每个 plan.subtask 拆成 claim / source / section 三类子任务；如果 web 与 paper 取证互不阻塞，应作为同一 `parallel_group` 的并行子任务。
-  - 对需要隔离执行的任务，优先使用 `task` 委派给最合适的子代理；委派前必须写好 handoff packet（委派包）：目标 claim、证据要求、相关文件路径、输出目标、成功判据，并把这份 handoff packet 明确交给对应子代理。
-  - 严格按 plan.subtasks 的顺序推进；不要再维护独立的计划进度工具，`plan_progress_snapshot` 由 `[plan-step-<index>]` todos 的状态推导。
-  - `live-board.json` 是 runtime activity 的投影视图，不是计划事实源；每当当前 agent、当前任务、并行任务集发生变化时，调用 `record_runtime_activity(task_id=..., title=..., task_kind=..., status=..., agent_name=..., subagent_name=..., parallel_group=..., message=...)`。
-  - 先补齐 claim-map 与 evidence-ledger，再决定是否需要外部查询。
-  - 将 route_hint 与 query_mesh 视为候选检索计划；只选择能关闭当前主张、交叉验证任务或 coverage gap 的最小必要查询集。
-  - 外部查询必须服务于某个未闭合主张、交叉验证任务或 coverage gap。
-  - 研究过程中持续更新 analysis-notes、report-outline、report-draft、claim-bundles.json、section-briefs.json、report-context.json。
-  - `report-context.json` 至少维护：`executive_summary`、`key_takeaways`、`recommended_actions`、`verification_notes`、`open_questions`、`section_status`、`confidence_level`、`has_conflicts`。
-  - workspace 文档只能作为 bootstrap 背景，不能作为满足 web/paper target_sources 的唯一最终证据。
-  - 引用优先级：官方/原始/同行评审 > 聚合转载 > 二手解读。
-  - 若只有弱证据或单一来源支持，不要把该判断写成确定性 finding。
-  - 最后才返回结构化结果；不要把原始搜索结果直接塞回主输出。
+  - 先读取 mission、plan、query-mesh、claim-bundles、section-briefs、claim-map.json、evidence-ledger.json、report-context.json。
+  - breadth-pass：对每个 plan.subtask 委派 claim-verifier；目标是每条 pending claim 至少拿到 1 条 evidence。
+  - breadth gate 通过后，再写 outline 与 section-briefs，让大纲反映真实证据而非凭空推理。
+  - depth-pass：按 claim 委派 web-researcher / paper-researcher 把支撑提升到 ≥ 2 独立 provider。
+  - draft-pass：section-writer 按 claim-bundle 扩写章节。
+  - critic-pass：并行调 evidence-critic + coverage-critic；合并输出并决定是否回流。
+  - finalize-pass：citation-steward 审计后，输出 structured_response。
+  - 所有工具调用前，调用 `record_runtime_activity(...)` 维持 live-board.json。
+  - `plan_progress_snapshot` 由 `[plan-step-<index>]` todos 推导，不要额外维护。
+  - workspace 文档只能作为 bootstrap 背景，不能作为 web/paper 类 target 的唯一最终证据。
   </research_process>
 
   <output_contract>
-  - findings 至少 2 条，必须是可验证的具体结论，且尽量保持一条 finding 只表达一个核心判断。
-  - citations 至少 2 条，必须与 findings 对应；结构化输出中也必须保留 citations。
-  - 内部组织顺序遵循：结论 -> 证据 -> 冲突/限制 -> 缺口。
-  - 若证据冲突，请在 findings 中保留 contested / limitation 语义，不要强行合并。
-  - 如果 target_sources 包含 web，必须至少调用一次 `web_search`。
-  - 如果 target_sources 包含 paper，必须至少调用一次 `arxiv_search` 或 `arxiv_fetch`。
-  - 对 `web_search` 命中的关键网页，优先再调用 `jina_read` 获取正文；需要定向抽取/爬取时再调用 Tavily 抽取或爬取工具。
-  - 最终 citations 的 source_provider 必须使用 provider id，不要写成 LangChain官方文档 这类站点名。
+  - findings ≥ 2，每条表达一个原子事实或趋势；不合并多事实。
+  - citations ≥ 2，每条带 ≥ 1 条 excerpts（40–400 字原文）。
+  - 结构内部顺序：结论 → 证据 → 冲突/限制 → 缺口。
+  - 冲突证据不强行合并；写入 claim.limitations 或 finding 的 contested/limitation 语义。
+  - target_sources 含 web → 至少调用一次 `web_search`；含 paper → 至少调用一次 `arxiv_search` 或 `arxiv_fetch`。
+  - 对关键网页优先 `jina_read`；需要正文抽取时用 `tavily_extract`。
+  - source_provider 使用 provider id，不要写成站点名。
   </output_contract>
-  </instructions>
 
   <task_context>
   <question>{question}</question>
