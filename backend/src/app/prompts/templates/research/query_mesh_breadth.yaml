@@ -1,0 +1,10 @@
+version: "2.0"
+name: research_query_mesh_breadth
+description: "研究宽度探索查询模板"
+template: |
+  {canonical_query} 背景 定义 主流做法 对比
+
+variables:
+  - name: canonical_query
+    type: string
+    required: true

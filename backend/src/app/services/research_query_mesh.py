@@ -17,7 +17,6 @@ class ResearchQueryMesh:
     canonical_query: str
     breadth_queries: tuple[str, ...]
     depth_queries: tuple[str, ...]
-    verification_queries: tuple[str, ...]
 
 
 @dataclass(slots=True, frozen=True)
@@ -34,20 +33,20 @@ def build_research_query_mesh(
         raise ValueError("question 不能为空")
 
     prompts = get_prompt_loader()
-    breadth_queries = _unique_queries(
+    breadth_queries = _unique(
         [
             canonical_query,
             prompts.render(
-                "research/query_mesh_breadth_compare",
+                "research/query_mesh_breadth",
                 canonical_query=canonical_query,
             ),
             plan_snapshot.research_brief,
         ]
     )
-    depth_queries = _unique_queries(
+    depth_queries = _unique(
         [
             prompts.render(
-                "research/query_mesh_depth_subtask_evidence",
+                "research/query_mesh_depth",
                 canonical_query=canonical_query,
                 subtask_title=item.title,
             )
@@ -55,36 +54,16 @@ def build_research_query_mesh(
         ]
         or [
             prompts.render(
-                "research/query_mesh_depth_fallback",
+                "research/query_mesh_depth",
                 canonical_query=canonical_query,
+                subtask_title="主线",
             )
-        ]
-    )
-    verification_queries = _unique_queries(
-        [
-            prompts.render(
-                "research/query_mesh_verification_crosscheck",
-                canonical_query=canonical_query,
-            ),
-            prompts.render(
-                "research/query_mesh_verification_risks",
-                canonical_query=canonical_query,
-            ),
-            *(
-                prompts.render(
-                    "research/query_mesh_subtask_verification",
-                    canonical_query=canonical_query,
-                    subtask_title=item.title,
-                )
-                for item in plan_snapshot.subtasks
-            ),
         ]
     )
     return ResearchQueryMesh(
         canonical_query=canonical_query,
         breadth_queries=breadth_queries,
         depth_queries=depth_queries,
-        verification_queries=verification_queries,
     )
 
 
@@ -100,7 +79,7 @@ def evaluate_coverage_gate(
     required_sources = coverage_policy.required_unique_source_counts[complexity]
     reasons: list[str] = []
     target_source_values = {item.value for item in target_sources}
-    workspace_only_web_evidence = _is_workspace_only_web_evidence(
+    workspace_only_web_evidence = _workspace_only_web(
         provider_counts=provider_counts,
         source_types=source_types,
         target_sources=target_sources,
@@ -138,7 +117,7 @@ def select_required_web_providers(
     available_providers: Iterable[str],
 ) -> tuple[str, ...]:
     coverage_policy = load_research_policy().coverage_gate
-    normalized_available = _unique_queries(available_providers)
+    normalized_available = _unique(available_providers)
     required_count = coverage_policy.required_web_provider_counts[complexity]
     required: list[str] = list(
         coverage_policy.default_required_web_providers[:required_count]
@@ -150,19 +129,18 @@ def select_required_web_providers(
     return tuple(required)
 
 
-def _unique_queries(values: Iterable[str]) -> tuple[str, ...]:
+def _unique(values: Iterable[str]) -> tuple[str, ...]:
     deduped: list[str] = []
     seen: set[str] = set()
     for item in values:
         normalized = str(item or "").strip()
-        if not normalized or normalized in seen:
-            continue
-        seen.add(normalized)
-        deduped.append(normalized)
+        if normalized and normalized not in seen:
+            seen.add(normalized)
+            deduped.append(normalized)
     return tuple(deduped)
 
 
-def _is_workspace_only_web_evidence(
+def _workspace_only_web(
     *,
     provider_counts: dict[str, int],
     source_types: set[str],

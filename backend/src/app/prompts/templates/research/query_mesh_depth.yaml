@@ -1,0 +1,13 @@
+version: "2.0"
+name: research_query_mesh_depth
+description: "研究深度验证查询模板"
+template: |
+  {canonical_query} {subtask_title} 具体数据 官方来源 可核查事实
+
+variables:
+  - name: canonical_query
+    type: string
+    required: true
+  - name: subtask_title
+    type: string
+    required: true
