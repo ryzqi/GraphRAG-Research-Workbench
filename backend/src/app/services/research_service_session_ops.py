@@ -290,7 +290,7 @@ async def execute_session(
     )
     await service._commit_checkpoint()
 
-    final_result = service._finalizer.finalize(
+    final_result = await service._finalizer.finalize_async(
         question=session.question,
         target_sources=plan_snapshot.target_sources,
         source_bundle=source_bundle,

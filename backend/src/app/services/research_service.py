@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.core.checkpoint import CheckpointManager
 from app.core.errors import bad_request, not_found
 from app.core.settings import Settings, get_settings
+from app.integrations.chat_model_cache import create_chat_model_cached
 from app.models.research_artifact import ResearchArtifact
 from app.models.research_session import ResearchSession, ResearchSessionStatus
 from app.models.research_task_outbox import (
@@ -32,6 +33,7 @@ from app.services import research_service_session_ops
 from app.services.research_artifact_store import ResearchArtifactStore
 from app.services.research_event_store import ResearchEventStore
 from app.services.research_finalizer import ResearchFinalizer, ResearchFinalizerResult
+from app.services.research_alignment_judge import ResearchAlignmentJudge
 from app.services.research_observability import (
     ResearchRuntimeRunResult,
     build_failure_metrics as build_failure_metrics,  # noqa: F401
@@ -1151,12 +1153,20 @@ def build_research_service(
     runtime_runner: ResearchRuntimeRunner | None = None,
     session_repository: ResearchSessionRepository | None = None,
 ) -> ResearchService:
+    settings = get_settings()
+    judge = ResearchAlignmentJudge(
+        model=create_chat_model_cached(
+            settings=settings,
+            use_previous_response_id=False,
+        ),
+        structured_method="function_calling",
+    )
     return ResearchService(
         db=db,
         sessionmaker=sessionmaker,
         planner=ResearchPlanner(),
         runtime_runner=runtime_runner or UnconfiguredResearchRuntimeRunner(),
-        finalizer=ResearchFinalizer(),
+        finalizer=ResearchFinalizer(judge=judge),
         session_repository=session_repository,
-        settings=get_settings(),
+        settings=settings,
     )

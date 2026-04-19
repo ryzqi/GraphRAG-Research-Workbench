@@ -3,16 +3,21 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any, Sequence
 
 from pydantic import BaseModel
 
 from app.prompts import get_prompt_loader
 from app.schemas.research import ResearchSourceTarget
+from app.schemas.research_workspace import ResearchClaimMap, ResearchEvidenceLedger
 from app.services.research_report_compiler import compile_report_from_runtime_context
 from app.services.research_runtime_context import ResearchRuntimeContextSnapshot
 from app.services.research_source_bundle import ResearchSourceBundle
-from app.services.research_verification import build_verification_artifacts
+from app.services.research_verification import (
+    AlignmentJudgeProtocol,
+    build_verification_artifacts_async,
+)
 
 
 @dataclass(slots=True, frozen=True)
@@ -24,10 +29,11 @@ class ResearchFinalizerResult:
 class ResearchFinalizer:
     """把 source bundle 收口为最终双产物。"""
 
-    def __init__(self) -> None:
+    def __init__(self, *, judge: AlignmentJudgeProtocol | None = None) -> None:
         self._prompts = get_prompt_loader()
+        self._judge = judge
 
-    def finalize(
+    async def finalize_async(
         self,
         *,
         question: str,
@@ -36,14 +42,22 @@ class ResearchFinalizer:
         runtime_context_snapshot: ResearchRuntimeContextSnapshot | None = None,
         response_format: type[BaseModel] | None = None,
     ) -> ResearchFinalizerResult:
+        if self._judge is None:
+            raise RuntimeError("ResearchFinalizer 未配置 alignment judge")
         citations_payload = [
             citation.model_dump(mode="json") for citation in source_bundle.citations
         ]
-        verification = build_verification_artifacts(
-            findings=list(source_bundle.findings),
+        verification = await build_verification_artifacts_async(
+            claims=self._build_claim_map(
+                runtime_context_snapshot=runtime_context_snapshot
+            ).claims,
+            evidences=self._build_evidence_ledger(
+                runtime_context_snapshot=runtime_context_snapshot
+            ).evidences,
             citations=list(source_bundle.citations),
             coverage_gaps=list(source_bundle.coverage_gaps),
             provider_counts=dict(source_bundle.provider_counts),
+            judge=self._judge,
         )
         compiled_report = compile_report_from_runtime_context(
             question=question,
@@ -111,6 +125,42 @@ class ResearchFinalizer:
             if summary:
                 return summary
         return source_bundle.interim_summary
+
+    @staticmethod
+    def _build_claim_map(
+        *,
+        runtime_context_snapshot: ResearchRuntimeContextSnapshot | None,
+    ) -> ResearchClaimMap:
+        payload = (
+            runtime_context_snapshot.claim_map_json
+            if runtime_context_snapshot is not None
+            else {}
+        )
+        return ResearchClaimMap.model_validate(
+            payload
+            or {
+                "claims": [],
+                "generated_at": datetime.now(timezone.utc).isoformat(),
+            }
+        )
+
+    @staticmethod
+    def _build_evidence_ledger(
+        *,
+        runtime_context_snapshot: ResearchRuntimeContextSnapshot | None,
+    ) -> ResearchEvidenceLedger:
+        payload = (
+            runtime_context_snapshot.evidence_ledger_json
+            if runtime_context_snapshot is not None
+            else {}
+        )
+        return ResearchEvidenceLedger.model_validate(
+            payload
+            or {
+                "evidences": [],
+                "generated_at": datetime.now(timezone.utc).isoformat(),
+            }
+        )
 
     def _build_report_md(
         self,
