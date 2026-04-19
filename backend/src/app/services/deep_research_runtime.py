@@ -51,12 +51,8 @@ from app.services.research_runtime_recovery import (
     _MISSING_STRUCTURED_RESPONSE_CONTINUE_LIMIT,
     _build_missing_structured_response_continue_request,
     _build_runtime_result_snapshot,
-    _merge_recovered_citations_into_payload,
-    _needs_external_evidence_prefetch,
     _normalize_structured_response_payload,
-    _prefetch_required_external_tool_messages,
     _recover_structured_response_payload,
-    _recover_tool_evidence_citation_payloads,
     _result_has_pending_todos,
     _synthesize_structured_response_from_result,
     resolve_recovery_structured_output_method as _resolve_recovery_structured_output_method,
@@ -421,11 +417,6 @@ class DeepResearchRuntimeRunner:
                 "Deep Research runtime 未返回 structured_response; result_snapshot="
                 + json.dumps(result_snapshot, ensure_ascii=False, sort_keys=True)
             )
-        recovered_citations = _recover_tool_evidence_citation_payloads(result)
-        structured_payload = _merge_recovered_citations_into_payload(
-            payload=structured_payload,
-            recovered_citations=recovered_citations,
-        )
         try:
             structured = DeepResearchStructuredResponse.model_validate(
                 _normalize_structured_response_payload(structured_payload)
@@ -442,46 +433,6 @@ class DeepResearchRuntimeRunner:
             if ResearchSourceTarget.WEB in set(plan_snapshot.target_sources)
             else ()
         )
-        if _needs_external_evidence_prefetch(
-            citations=structured.citations,
-            plan_snapshot=plan_snapshot,
-            required_web_providers=required_web_providers,
-        ):
-            prefetched_messages = await _prefetch_required_external_tool_messages(
-                question=session.question,
-                plan_snapshot=plan_snapshot,
-                tools=self.runtime.tools,
-            )
-            if prefetched_messages:
-                existing_messages = result.get("messages")
-                augmented_result = dict(result)
-                augmented_result["messages"] = [
-                    *(existing_messages if isinstance(existing_messages, list) else []),
-                    *prefetched_messages,
-                ]
-                synthesized_payload = await _synthesize_structured_response_from_result(
-                    result=augmented_result,
-                    session=session,
-                    plan_snapshot=plan_snapshot,
-                    model=self.runtime.config.finalizer_model,
-                    structured_method=self.runtime.config.finalizer_structured_method,
-                )
-                if synthesized_payload is not None:
-                    recovered_citations = _recover_tool_evidence_citation_payloads(
-                        augmented_result
-                    )
-                    structured_payload = _merge_recovered_citations_into_payload(
-                        payload=synthesized_payload,
-                        recovered_citations=recovered_citations,
-                    )
-                    try:
-                        structured = DeepResearchStructuredResponse.model_validate(
-                            _normalize_structured_response_payload(structured_payload)
-                        )
-                    except ValidationError as exc:
-                        raise RuntimeError(
-                            "Deep Research runtime structured_response 不符合契约"
-                        ) from exc
 
         workspace_only_web_citations = bool(structured.citations) and all(
             citation.source_type == ResearchSourceType.WEB
