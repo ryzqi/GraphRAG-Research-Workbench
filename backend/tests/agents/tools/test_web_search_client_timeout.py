@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import httpx
+import pytest
 
 from app.agents.tools.web_search_client import WebSearchClient
 from app.agents.tools.web_search_models import (
@@ -50,39 +51,14 @@ async def test_call_tavily_http_uses_injected_client_timeout() -> None:
     assert captured["timeout"] is client.timeout
 
 
-async def test_call_tavily_http_uses_created_client_timeout(monkeypatch) -> None:
-    captured: dict[str, object] = {}
-
-    class _CreatedClient:
-        def __init__(self) -> None:
-            self.timeout = httpx.Timeout(18.0)
-            self.closed = False
-
-        async def request(self, method: str, url: str, **kwargs: object) -> _DummyResponse:
-            captured["method"] = method
-            captured["url"] = url
-            captured["timeout"] = kwargs.get("timeout")
-            return _DummyResponse()
-
-        async def aclose(self) -> None:
-            self.closed = True
-
-    created = _CreatedClient()
-    monkeypatch.setattr(
-        "app.agents.tools.web_search_client.create_http_client",
-        lambda _settings: created,
-    )
-
+async def test_call_tavily_http_requires_injected_client(monkeypatch) -> None:
     subject = WebSearchClient(settings=_make_settings())
-    await subject._call_tavily_http(
-        method="GET",
-        path="/research/r-123",
-    )
 
-    assert captured["method"] == "GET"
-    assert captured["url"] == "https://api.tavily.com/research/r-123"
-    assert captured["timeout"] is created.timeout
-    assert created.closed is True
+    with pytest.raises(RuntimeError, match="http_client"):
+        await subject._call_tavily_http(
+            method="GET",
+            path="/research/r-123",
+        )
 
 
 async def test_sdk_calls_use_explicit_timeout(monkeypatch) -> None:

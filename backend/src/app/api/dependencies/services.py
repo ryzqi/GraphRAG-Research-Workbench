@@ -100,20 +100,32 @@ def build_export_service() -> ExportService:
     return ExportService()
 
 
-def build_ingestion_batch_service(*, db: AsyncSessionDep) -> IngestionBatchService:
-    return IngestionBatchService(db)
+def build_ingestion_batch_service(
+    *,
+    db: AsyncSessionDep,
+    resources: AppResourcesDep,
+) -> IngestionBatchService:
+    return IngestionBatchService(db, http_client=resources.http_client)
 
 
-def build_kb_bootstrap_job_service(*, db: AsyncSessionDep) -> KBBootstrapJobService:
-    return KBBootstrapJobService(db)
+def build_kb_bootstrap_job_service(
+    *,
+    db: AsyncSessionDep,
+    resources: AppResourcesDep,
+) -> KBBootstrapJobService:
+    return KBBootstrapJobService(db, http_client=resources.http_client)
 
 
 def build_knowledge_base_service(*, db: AsyncSessionDep) -> KnowledgeBaseService:
     return KnowledgeBaseService(db)
 
 
-def build_material_service(*, db: AsyncSessionDep) -> MaterialService:
-    return MaterialService(db)
+def build_material_service(
+    *,
+    db: AsyncSessionDep,
+    resources: AppResourcesDep,
+) -> MaterialService:
+    return MaterialService(db, http_client=resources.http_client)
 
 
 def build_model_config_service(*, db: AsyncSessionDep) -> ModelConfigService:
@@ -170,7 +182,7 @@ async def open_ingestion_batch_service_scope(
 ) -> AsyncIterator[tuple[AsyncSession, IngestionBatchService]]:
     async with _open_service_scope(
         resources=resources,
-        factory=lambda db: build_ingestion_batch_service(db=db),
+        factory=lambda db: build_ingestion_batch_service(db=db, resources=resources),
     ) as scope:
         yield scope
 

@@ -10,6 +10,7 @@ from functools import partial
 from time import monotonic
 from typing import Any, AsyncIterator
 
+import httpx
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -83,10 +84,18 @@ _INSTANCE_HELPERS: dict[str, Any] = {
 
 
 class IngestionBatchService:
-    def __init__(self, db: AsyncSession) -> None:
+    def __init__(
+        self,
+        db: AsyncSession,
+        *,
+        http_client: httpx.AsyncClient | None = None,
+    ) -> None:
         self._db = db
         self._settings = get_settings()
-        self._url_guard = build_url_ingestion_guard(self._settings)
+        self._url_guard = build_url_ingestion_guard(
+            self._settings,
+            http_client=http_client,
+        )
 
     def __getattr__(self, name: str) -> Any:
         helper = _STATIC_HELPERS.get(name)

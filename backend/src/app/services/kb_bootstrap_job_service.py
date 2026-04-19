@@ -8,6 +8,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from celery import Celery
+import httpx
 from pydantic import TypeAdapter
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -60,9 +61,16 @@ class BootstrapUploadSessionResult:
 
 
 class KBBootstrapJobService:
-    def __init__(self, db: AsyncSession, *, celery: Celery | None = None) -> None:
+    def __init__(
+        self,
+        db: AsyncSession,
+        *,
+        celery: Celery | None = None,
+        http_client: httpx.AsyncClient | None = None,
+    ) -> None:
         self._db = db
         self._celery = celery or celery_app
+        self._http_client = http_client
         self._settings = get_settings()
         self._storage: ObjectStorage | None = None
 
@@ -395,7 +403,10 @@ class KBBootstrapJobService:
                 status_code=500,
             ) from exc
 
-        service = IngestionBatchService(self._db)
+        service = IngestionBatchService(
+            self._db,
+            http_client=self._http_client,
+        )
         return await service.submit_manifest(
             kb_id=kb_id,
             entries=entries,

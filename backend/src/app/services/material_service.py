@@ -7,6 +7,7 @@ import hashlib
 import uuid
 from typing import BinaryIO
 
+import httpx
 from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -19,11 +20,19 @@ from app.services.url_ingestion_guard import build_url_ingestion_guard
 
 
 class MaterialService:
-    def __init__(self, db: AsyncSession) -> None:
+    def __init__(
+        self,
+        db: AsyncSession,
+        *,
+        http_client: httpx.AsyncClient | None = None,
+    ) -> None:
         self._db = db
         self._storage = ObjectStorage()
         self._settings = get_settings()
-        self._url_guard = build_url_ingestion_guard(self._settings)
+        self._url_guard = build_url_ingestion_guard(
+            self._settings,
+            http_client=http_client,
+        )
 
     async def list_by_kb(
         self, kb_id: uuid.UUID, skip: int = 0, limit: int = 100

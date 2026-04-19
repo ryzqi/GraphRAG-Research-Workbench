@@ -14,7 +14,6 @@ from app.core.settings import Settings, get_settings
 from app.services.ingestion_batch_service_contracts import (
     _BlockedCidrRule,
     _DEFAULT_URL_REDIRECTS,
-    _DEFAULT_URL_TIMEOUT_SECONDS,
     _FALLBACK_BLOCKED_CIDRS_V4,
     _FALLBACK_BLOCKED_CIDRS_V6,
     _FALLBACK_METADATA_BLOCKED_IPS,
@@ -29,6 +28,7 @@ class UrlIngestionGuard:
     settings: Settings
     blocked_cidr_rules: tuple[_BlockedCidrRule, ...]
     metadata_blocked_ips: frozenset[ipaddress.IPv4Address | ipaddress.IPv6Address]
+    http_client: httpx.AsyncClient | None = None
 
     def canonicalize_url(self, url: str) -> str:
         parsed = urlparse(url.strip())
@@ -45,22 +45,13 @@ class UrlIngestionGuard:
     ) -> str:
         canonical_url = self.canonicalize_url(url)
         self._ensure_http_scheme(canonical_url, original_url=url)
-
-        if client is not None:
-            return await self._validate_url_security(canonical_url, client=client)
-
-        timeout_seconds = max(
-            float(
-                getattr(
-                    self.settings,
-                    "ingestion_url_timeout_seconds",
-                    _DEFAULT_URL_TIMEOUT_SECONDS,
-                )
-            ),
-            1.0,
-        )
-        async with httpx.AsyncClient(timeout=timeout_seconds) as owned_client:
-            return await self._validate_url_security(canonical_url, client=owned_client)
+        resolved_client = client or self.http_client
+        if resolved_client is None:
+            raise RuntimeError(
+                "UrlIngestionGuard 必须注入共享 http_client；请通过 "
+                "AppResources.http_client 或 TaskResources.http_client 传入"
+            )
+        return await self._validate_url_security(canonical_url, client=resolved_client)
 
     async def validate_navigation_url(self, url: str) -> str:
         canonical_url = self.canonicalize_url(url)
@@ -191,12 +182,14 @@ class UrlIngestionGuard:
 
 def build_url_ingestion_guard(
     settings: Settings | None = None,
+    http_client: httpx.AsyncClient | None = None,
 ) -> UrlIngestionGuard:
     cfg = settings or get_settings()
     return UrlIngestionGuard(
         settings=cfg,
         blocked_cidr_rules=_build_blocked_cidr_rules(cfg),
         metadata_blocked_ips=_build_metadata_blocked_ips(cfg),
+        http_client=http_client,
     )
 
 

@@ -55,6 +55,11 @@ class RerankClient:
         headers = {"Authorization": f"Bearer {self._api_key}"} if self._api_key else {}
         timeout = timeout_seconds or self._settings.retrieval_rerank_timeout_seconds
         url = f"{self._base_url}/rerank"
+        if self._http_client is None:
+            raise RuntimeError(
+                "RerankClient 必须注入共享 http_client；请通过 AppResources.http_client "
+                "或 TaskResources.http_client 传入"
+            )
 
         async def _call(client: httpx.AsyncClient) -> dict:
             last_exc: Exception | None = None
@@ -73,11 +78,7 @@ class RerankClient:
                         await asyncio.sleep(delay)
             raise RuntimeError("Rerank 调用失败") from last_exc
 
-        if self._http_client is not None:
-            data = await _call(self._http_client)
-        else:
-            async with httpx.AsyncClient(timeout=timeout) as client:
-                data = await _call(client)
+        data = await _call(self._http_client)
 
         results: list[RerankResult] = []
         for item in data.get("results", []):

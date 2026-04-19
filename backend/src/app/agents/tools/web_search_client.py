@@ -27,7 +27,6 @@ from app.agents.tools.web_search_providers import (
     extract_domain,
 )
 from app.core.settings import Settings
-from app.integrations.http_client import create_http_client
 from app.integrations.redis_client import RedisClient
 from app.agents.tools.web_search_utils import (
     TavilyCallContext,
@@ -245,20 +244,10 @@ class WebSearchClient:
             "Content-Type": "application/json",
         }
         if self._http_client is None:
-            client = create_http_client(self._settings)
-            timeout = self._http_request_timeout(client)
-            try:
-                response = await client.request(
-                    method,
-                    url,
-                    json=json_payload,
-                    headers=headers,
-                    timeout=timeout,
-                )
-                response.raise_for_status()
-                return response.json()
-            finally:
-                await client.aclose()
+            raise RuntimeError(
+                "WebSearchClient 必须注入共享 http_client；请通过 "
+                "AppResources.http_client 或 TaskResources.http_client 传入"
+            )
         timeout = self._http_request_timeout(self._http_client)
         response = await self._http_client.request(
             method,

@@ -7,6 +7,7 @@ import logging
 import time
 from typing import Any
 
+import httpx
 from app.config.policy_loader import load_research_policy
 from app.agents.tools.web_search import build_search_providers, has_jina_read_provider
 from app.agents.tools.web_search_providers.jina_provider import JinaReadProvider
@@ -95,7 +96,11 @@ def _empty_status(*, settings: Settings) -> WebSearchStatusRead:
     )
 
 
-async def get_web_search_status(*, settings: Settings) -> WebSearchStatusRead:
+async def get_web_search_status(
+    *,
+    settings: Settings,
+    http_client: httpx.AsyncClient | None = None,
+) -> WebSearchStatusRead:
     """返回结构化联网状态。"""
     global _cached_status, _cached_expires_at
 
@@ -108,7 +113,10 @@ async def get_web_search_status(*, settings: Settings) -> WebSearchStatusRead:
         if _cached_status is not None and now < _cached_expires_at:
             return _cached_status
 
-        status = await _probe_web_search_status(settings=settings)
+        status = await _probe_web_search_status(
+            settings=settings,
+            http_client=http_client,
+        )
         _cached_status = status
         _cached_expires_at = _monotonic() + float(
             _status_probe_policy().cache_ttl_seconds
@@ -158,12 +166,13 @@ async def _probe_search_provider(
 async def _probe_jina_read_provider(
     *,
     settings: Settings,
+    http_client: httpx.AsyncClient | None = None,
 ) -> WebSearchProviderStatusRead:
     status_probe_policy = _status_probe_policy()
     if not has_jina_read_provider(settings):
         return _unconfigured_provider_status("jina_reader")
 
-    provider = JinaReadProvider(settings=settings)
+    provider = JinaReadProvider(settings=settings, http_client=http_client)
     start = time.perf_counter()
     try:
         payload = await provider.read(
@@ -194,13 +203,20 @@ async def _probe_jina_read_provider(
     )
 
 
-async def _probe_web_search_status(*, settings: Settings) -> WebSearchStatusRead:
+async def _probe_web_search_status(
+    *,
+    settings: Settings,
+    http_client: httpx.AsyncClient | None = None,
+) -> WebSearchStatusRead:
     provider_order = _provider_order()
     search_provider_names = _search_provider_names()
     providers_by_name = {
         name: _unconfigured_provider_status(name) for name in provider_order
     }
-    search_providers = build_search_providers(settings=settings)
+    search_providers = build_search_providers(
+        settings=settings,
+        http_client=http_client,
+    )
     if not search_providers:
         return _empty_status(settings=settings)
 
@@ -212,6 +228,7 @@ async def _probe_web_search_status(*, settings: Settings) -> WebSearchStatusRead
 
     jina_status = await _probe_jina_read_provider(
         settings=settings,
+        http_client=http_client,
     )
     providers_by_name[jina_status.name] = jina_status
 

@@ -340,11 +340,15 @@ async def create_chat_session(
 @router.get("/recent", response_model=ChatRecentListResponse)
 async def list_recent_chats(
     db: AsyncSessionDep,
+    resources: AppResourcesDep,
     limit: int = Query(20, ge=1, le=100),
 ) -> ChatRecentListResponse:
     """获取最近对话列表。"""
     settings = get_settings()
-    web_search = await get_web_search_status(settings=settings)
+    web_search = await get_web_search_status(
+        settings=settings,
+        http_client=resources.http_client,
+    )
 
     latest_message_subq = (
         select(
