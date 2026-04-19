@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 from enum import Enum
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import (
     BaseModel,
@@ -205,6 +205,24 @@ class ResearchSessionAccepted(BaseModel):
         return self
 
 
+class ResearchCitationExcerpt(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    text: str = Field(..., min_length=40, max_length=400)
+    locator: str | None = Field(default=None, max_length=256)
+    lang: Literal["zh", "en", "mixed"] = "en"
+
+    @field_validator("text", mode="before")
+    @classmethod
+    def _validate_text(cls, value: Any) -> str:
+        return _normalize_required_text(value, field_name="text")
+
+    @field_validator("locator", mode="before")
+    @classmethod
+    def _validate_locator(cls, value: Any) -> str | None:
+        return _normalize_optional_text(value, field_name="locator")
+
+
 class ResearchCanonicalCitation(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -220,6 +238,9 @@ class ResearchCanonicalCitation(BaseModel):
     published_at: datetime | None = None
     pdf_url: str | None = None
     accessed_at: datetime | None = None
+    retrieved_at: datetime
+    excerpts: list[ResearchCitationExcerpt] = Field(..., min_length=1, max_length=5)
+    provider_snippet_hash: str | None = Field(default=None, max_length=128)
 
     @field_validator(
         "source_provider",
@@ -230,11 +251,19 @@ class ResearchCanonicalCitation(BaseModel):
         "origin_url",
         "arxiv_id",
         "pdf_url",
+        "provider_snippet_hash",
         mode="before",
     )
     @classmethod
     def _validate_text_fields(cls, value: Any, info) -> Any:  # type: ignore[no-untyped-def]
-        if info.field_name in {"title", "url", "origin_url", "arxiv_id", "pdf_url"}:
+        if info.field_name in {
+            "title",
+            "url",
+            "origin_url",
+            "arxiv_id",
+            "pdf_url",
+            "provider_snippet_hash",
+        }:
             return _normalize_optional_text(value, field_name=info.field_name)
         return _normalize_required_text(value, field_name=info.field_name)
 

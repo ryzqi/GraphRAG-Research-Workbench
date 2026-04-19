@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from types import SimpleNamespace
 import uuid
 
@@ -8,6 +9,7 @@ from app.models.research_session import ResearchSession, ResearchSessionStatus
 from app.schemas.research import (
     ResearchCanonicalCitation,
     ResearchArtifactRead,
+    ResearchCitationExcerpt,
     ResearchComplexity,
     ResearchEventEnvelope,
     ResearchPlanSnapshot,
@@ -89,6 +91,17 @@ def _source_bundle() -> ResearchSourceBundle:
                 title="AI trend report",
                 origin_url="https://example.com/ai-trend-report",
                 authors=["Example Research"],
+                retrieved_at=datetime.now(timezone.utc),
+                excerpts=[
+                    ResearchCitationExcerpt(
+                        text=(
+                            "The report says enterprise AI adoption is moving from"
+                            " pilots into operational workflows across business teams."
+                        ),
+                        locator="summary",
+                        lang="en",
+                    )
+                ],
             )
         ],
         findings=["企业 AI 正从试验转向流程级落地。"],

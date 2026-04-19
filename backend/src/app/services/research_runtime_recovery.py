@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import Sequence
+from datetime import datetime
 from types import SimpleNamespace
 from typing import Any, Awaitable, cast
 
@@ -16,6 +17,7 @@ from app.models.model_config import ModelProvider
 from app.models.research_session import ResearchSession
 from app.schemas.research import (
     ResearchCanonicalCitation,
+    ResearchCitationExcerpt,
     ResearchPlanSnapshot,
     ResearchSourceTarget,
     ResearchSourceType,
@@ -50,6 +52,8 @@ class DeepResearchCitationDraft(BaseModel):
     published_at: str | None = None
     pdf_url: str | None = None
     accessed_at: str | None = None
+    retrieved_at: datetime | None = None
+    excerpts: list[ResearchCitationExcerpt] = Field(default_factory=list)
 
 
 class DeepResearchStructuredResponseDraft(BaseModel):
