@@ -13,10 +13,7 @@ from typing import Any, TypeGuard, cast
 from langchain.tools import BaseTool, ToolRuntime, tool as lc_tool
 from pydantic import BaseModel, Field, ValidationError
 
-from app.config.runtime_contract import (
-    RESEARCH_RUNTIME_REQUEST_CONTEXT,
-    RESEARCH_RUNTIME_WORKSPACE_CONTEXT_DOCS,
-)
+from app.config.runtime_contract import RESEARCH_RUNTIME_WORKSPACE_CONTEXT_DOCS
 from app.core.checkpoint import CheckpointManager
 from app.core.memory_store import StoreManager
 from app.core.settings import Settings
@@ -489,6 +486,7 @@ async def build_deep_research_runtime_runner(
     await CheckpointManager.initialize()
     await StoreManager.initialize()
     prompt_loader = get_prompt_loader()
+    shared_contract_block = prompt_loader.render("research/shared_contract")
     runtime_activity_registry = _RuntimeActivityCallbackRegistry()
     runtime_config = ResearchRuntimeConfig(
         primary_model=create_chat_model(
@@ -506,9 +504,9 @@ async def build_deep_research_runtime_runner(
         finalizer_structured_method=_resolve_recovery_structured_output_method(
             settings=settings
         ),
-        system_prompt=prompt_loader.render_with_few_shot(
+        system_prompt=prompt_loader.render(
             "research/runtime_system",
-            context_root=RESEARCH_RUNTIME_REQUEST_CONTEXT.context_root,
+            shared_contract_block=shared_contract_block,
         ),
         memory_paths=(DEFAULT_RESEARCH_RUNTIME_MEMORY_PATH,),
     )
