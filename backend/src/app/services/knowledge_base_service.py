@@ -29,8 +29,9 @@ async def touch_kb_updated_at(db: AsyncSession, kb_id: uuid.UUID) -> None:
 
 
 class KnowledgeBaseService:
-    def __init__(self, db: AsyncSession) -> None:
+    def __init__(self, db: AsyncSession, *, object_storage: ObjectStorage) -> None:
         self._db = db
+        self._storage = object_storage
 
     async def list_page(
         self,
@@ -194,9 +195,8 @@ class KnowledgeBaseService:
         finally:
             await milvus_client.aclose()
 
-        storage = ObjectStorage()
         settings = get_settings()
-        await storage.remove_by_prefix(
+        await self._storage.remove_by_prefix(
             bucket=settings.minio_bucket_uploads,
             prefix=f"{kb_id}/",
         )

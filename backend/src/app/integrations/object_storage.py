@@ -6,13 +6,14 @@ from functools import partial
 from typing import Any, Callable
 
 import asyncio
+
 try:
     from minio import Minio
 except Exception:  # pragma: no cover - optional dependency in lightweight test env
     Minio = None  # type: ignore[assignment]
 
 
-from app.core.settings import get_settings
+from app.core.settings import Settings, get_settings
 
 
 _BUCKET_CACHE: set[str] = set()
@@ -40,17 +41,16 @@ class ObjectRef:
 
 
 class ObjectStorage:
-    def __init__(self) -> None:
-        settings = get_settings()
-        self._settings = settings
+    def __init__(self, settings: Settings | None = None) -> None:
+        self._settings = settings or get_settings()
         if Minio is None:
             raise RuntimeError("minio dependency is required to use ObjectStorage")
 
         self._client = Minio(
-            settings.minio_endpoint,
-            access_key=settings.minio_access_key,
-            secret_key=settings.minio_secret_key,
-            secure=settings.minio_secure,
+            self._settings.minio_endpoint,
+            access_key=self._settings.minio_access_key,
+            secret_key=self._settings.minio_secret_key,
+            secure=self._settings.minio_secure,
         )
 
     async def _run_client_call(
@@ -80,6 +80,12 @@ class ObjectStorage:
             for bucket in pending:
                 await self._run_client_call(_ensure, bucket)
                 _BUCKET_CACHE.add(bucket)
+
+    async def close(self) -> None:
+        http = getattr(self._client, "_http", None)
+        clear = getattr(http, "clear", None)
+        if callable(clear):
+            await self._run_client_call(clear)
 
     async def presign_get(
         self,
@@ -229,3 +235,7 @@ class ObjectStorage:
             if _is_not_found_error(exc):
                 return 0
             raise
+
+
+def create_object_storage(settings: Settings | None = None) -> ObjectStorage:
+    return ObjectStorage(settings=settings)

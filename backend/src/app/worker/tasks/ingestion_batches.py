@@ -14,7 +14,6 @@ from app.core.errors import AppError
 from app.core.settings import get_settings
 from app.integrations.embedding_client import EmbeddingClient
 from app.models.ingestion_batch import IngestionBatchStatus, IngestionDocStatus
-from app.integrations.object_storage import ObjectStorage
 from app.models.kb_config_snapshot import KBConfigSnapshot
 from app.models.knowledge_base import KnowledgeBase
 from app.models.source_material import SourceMaterial
@@ -220,13 +219,19 @@ async def _run_ingestion_batch_doc(doc_id: str) -> None:
         with_engine=True,
         with_http=True,
         with_milvus=True,
+        with_object_storage=True,
     ) as resources:
         sessionmaker = resources.sessionmaker
         if sessionmaker is None:  # pragma: no cover
             return
 
         async with sessionmaker() as session:
-            service = IngestionBatchService(session)
+            if resources.object_storage is None:  # pragma: no cover - defensive
+                return
+            service = IngestionBatchService(
+                session,
+                object_storage=resources.object_storage,
+            )
             doc = await service.get_doc(doc_id=doc_uuid, for_update=True)
             if doc is None:
                 return
@@ -365,7 +370,7 @@ async def _process_doc(*, doc, resources) -> _DocProcessOutcome:
                 material,
                 settings=get_settings(),
                 http_client=resources.http_client,
-                storage=ObjectStorage(),
+                storage=resources.object_storage,
                 url_crawler=url_crawler,
                 allow_crawl4ai_cold_start=False,
             )

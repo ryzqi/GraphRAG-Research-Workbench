@@ -279,7 +279,9 @@ async def parse_material(
 
         kind = _infer_upload_kind(mime_type=material.mime_type, extension=extension)
 
-        st = storage or ObjectStorage()
+        if storage is None:
+            raise RuntimeError("UPLOAD parse requires shared object storage")
+        st = storage
         await st.ensure_buckets()
         content_bytes = await st.get_bytes(
             ObjectRef(bucket=bucket, object_name=object_name)

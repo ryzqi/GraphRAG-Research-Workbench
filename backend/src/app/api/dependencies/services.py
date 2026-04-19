@@ -105,7 +105,11 @@ def build_ingestion_batch_service(
     db: AsyncSessionDep,
     resources: AppResourcesDep,
 ) -> IngestionBatchService:
-    return IngestionBatchService(db, http_client=resources.http_client)
+    return IngestionBatchService(
+        db,
+        http_client=resources.http_client,
+        object_storage=resources.object_storage,
+    )
 
 
 def build_kb_bootstrap_job_service(
@@ -113,11 +117,18 @@ def build_kb_bootstrap_job_service(
     db: AsyncSessionDep,
     resources: AppResourcesDep,
 ) -> KBBootstrapJobService:
-    return KBBootstrapJobService(db, http_client=resources.http_client)
+    return KBBootstrapJobService(
+        db,
+        http_client=resources.http_client,
+        object_storage=resources.object_storage,
+    )
 
-
-def build_knowledge_base_service(*, db: AsyncSessionDep) -> KnowledgeBaseService:
-    return KnowledgeBaseService(db)
+def build_knowledge_base_service(
+    *,
+    db: AsyncSessionDep,
+    resources: AppResourcesDep,
+) -> KnowledgeBaseService:
+    return KnowledgeBaseService(db, object_storage=resources.object_storage)
 
 
 def build_material_service(
@@ -125,7 +136,11 @@ def build_material_service(
     db: AsyncSessionDep,
     resources: AppResourcesDep,
 ) -> MaterialService:
-    return MaterialService(db, http_client=resources.http_client)
+    return MaterialService(
+        db,
+        http_client=resources.http_client,
+        object_storage=resources.object_storage,
+    )
 
 
 def build_model_config_service(*, db: AsyncSessionDep) -> ModelConfigService:

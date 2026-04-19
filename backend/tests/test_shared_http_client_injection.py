@@ -67,54 +67,78 @@ def test_build_ingestion_batch_service_uses_app_http_client(monkeypatch) -> None
     captured: dict[str, object] = {}
 
     class _FakeService:
-        def __init__(self, db: object, *, http_client: object | None = None) -> None:
+        def __init__(
+            self,
+            db: object,
+            *,
+            http_client: object | None = None,
+            object_storage: object | None = None,
+        ) -> None:
             captured["db"] = db
             captured["http_client"] = http_client
+            captured["object_storage"] = object_storage
 
     monkeypatch.setattr(service_deps, "IngestionBatchService", _FakeService)
 
     db = object()
-    resources = SimpleNamespace(http_client=object())
+    resources = SimpleNamespace(http_client=object(), object_storage=object())
     service_deps.build_ingestion_batch_service(db=db, resources=resources)
 
     assert captured["db"] is db
     assert captured["http_client"] is resources.http_client
+    assert captured["object_storage"] is resources.object_storage
 
 
 def test_build_material_service_uses_app_http_client(monkeypatch) -> None:
     captured: dict[str, object] = {}
 
     class _FakeService:
-        def __init__(self, db: object, *, http_client: object | None = None) -> None:
+        def __init__(
+            self,
+            db: object,
+            *,
+            http_client: object | None = None,
+            object_storage: object | None = None,
+        ) -> None:
             captured["db"] = db
             captured["http_client"] = http_client
+            captured["object_storage"] = object_storage
 
     monkeypatch.setattr(service_deps, "MaterialService", _FakeService)
 
     db = object()
-    resources = SimpleNamespace(http_client=object())
+    resources = SimpleNamespace(http_client=object(), object_storage=object())
     service_deps.build_material_service(db=db, resources=resources)
 
     assert captured["db"] is db
     assert captured["http_client"] is resources.http_client
+    assert captured["object_storage"] is resources.object_storage
 
 
 def test_build_kb_bootstrap_job_service_uses_app_http_client(monkeypatch) -> None:
     captured: dict[str, object] = {}
 
     class _FakeService:
-        def __init__(self, db: object, *, http_client: object | None = None) -> None:
+        def __init__(
+            self,
+            db: object,
+            *,
+            http_client: object | None = None,
+            object_storage: object | None = None,
+        ) -> None:
             captured["db"] = db
             captured["http_client"] = http_client
+            captured["object_storage"] = object_storage
 
     monkeypatch.setattr(service_deps, "KBBootstrapJobService", _FakeService)
 
     db = object()
-    resources = SimpleNamespace(http_client=object())
+    resources = SimpleNamespace(http_client=object(), object_storage=object())
     service_deps.build_kb_bootstrap_job_service(db=db, resources=resources)
 
     assert captured["db"] is db
     assert captured["http_client"] is resources.http_client
+    assert captured["object_storage"] is resources.object_storage
 
 
 async def test_open_ingestion_batch_service_scope_uses_app_http_client(
@@ -123,9 +147,16 @@ async def test_open_ingestion_batch_service_scope_uses_app_http_client(
     captured: dict[str, object] = {}
 
     class _FakeService:
-        def __init__(self, db: object, *, http_client: object | None = None) -> None:
+        def __init__(
+            self,
+            db: object,
+            *,
+            http_client: object | None = None,
+            object_storage: object | None = None,
+        ) -> None:
             captured["db"] = db
             captured["http_client"] = http_client
+            captured["object_storage"] = object_storage
 
     @asynccontextmanager
     async def _fake_open_service_scope(*, resources, factory):
@@ -135,11 +166,12 @@ async def test_open_ingestion_batch_service_scope_uses_app_http_client(
     monkeypatch.setattr(service_deps, "IngestionBatchService", _FakeService)
     monkeypatch.setattr(service_deps, "_open_service_scope", _fake_open_service_scope)
 
-    resources = SimpleNamespace(http_client=object(), engine=object())
+    resources = SimpleNamespace(http_client=object(), object_storage=object(), engine=object())
     async with service_deps.open_ingestion_batch_service_scope(resources=resources):
         pass
 
     assert captured["http_client"] is resources.http_client
+    assert captured["object_storage"] is resources.object_storage
 
 
 async def test_get_web_search_status_passes_shared_http_client(monkeypatch) -> None:

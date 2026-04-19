@@ -91,7 +91,12 @@ async def _recover_stale_dispatched_rows(
     return len(rows)
 
 
-async def _finalize_exhausted_outbox_rows(*, session, limit: int) -> int:  # noqa: ANN001
+async def _finalize_exhausted_outbox_rows(
+    *,
+    session,  # noqa: ANN001
+    limit: int,
+    object_storage,
+) -> int:
     stmt = (
         select(IngestionTaskOutbox)
         .join(IngestionBatchDoc, IngestionBatchDoc.id == IngestionTaskOutbox.doc_id)
@@ -110,7 +115,7 @@ async def _finalize_exhausted_outbox_rows(*, session, limit: int) -> int:  # noq
     if not rows:
         return 0
 
-    service = IngestionBatchService(session)
+    service = IngestionBatchService(session, object_storage=object_storage)
     finalized = 0
     for row in rows:
         doc = await service.get_doc(doc_id=row.doc_id, for_update=True)
@@ -181,7 +186,11 @@ async def _dispatch_ingestion_outbox(
         1,
     )
 
-    async with managed_task_resources(settings=settings, with_engine=True) as resources:
+    async with managed_task_resources(
+        settings=settings,
+        with_engine=True,
+        with_object_storage=True,
+    ) as resources:
         sessionmaker = resources.sessionmaker
         if sessionmaker is None:  # pragma: no cover - defensive guard
             return 0
@@ -194,9 +203,12 @@ async def _dispatch_ingestion_outbox(
                     limit=safe_limit,
                     stale_dispatched_seconds=stale_seconds,
                 )
+                if resources.object_storage is None:  # pragma: no cover - defensive guard
+                    return 0
                 finalized_rows = await _finalize_exhausted_outbox_rows(
                     session=session,
                     limit=safe_limit,
+                    object_storage=resources.object_storage,
                 )
                 rows = await _claim_due_outbox_rows(session=session, limit=safe_limit)
                 if not rows:

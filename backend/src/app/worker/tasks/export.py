@@ -6,7 +6,7 @@ import uuid
 
 from app.core.errors import AppError
 from app.core.settings import get_settings
-from app.integrations.object_storage import ObjectRef, ObjectStorage
+from app.integrations.object_storage import ObjectRef
 from app.models.export_job import ExportJob, ExportStatus
 from app.services.exporters.chat_exporter import ChatExporter
 from app.services.exporters.research_exporter import ResearchExporter
@@ -48,7 +48,11 @@ async def _run_export(*, export_id: str, export_type: str, target_id: str) -> No
     export_uuid = uuid.UUID(export_id)
     target_uuid = uuid.UUID(target_id)
 
-    async with managed_task_resources(settings=settings, with_engine=True) as resources:
+    async with managed_task_resources(
+        settings=settings,
+        with_engine=True,
+        with_object_storage=True,
+    ) as resources:
         sessionmaker = resources.sessionmaker
         if sessionmaker is None:  # pragma: no cover - defensive
             return
@@ -64,7 +68,9 @@ async def _run_export(*, export_id: str, export_type: str, target_id: str) -> No
             await session.commit()
 
             try:
-                storage = ObjectStorage()
+                storage = resources.object_storage
+                if storage is None:  # pragma: no cover - defensive
+                    raise RuntimeError("共享 object_storage 未初始化")
                 await storage.ensure_buckets()
 
                 # 根据类型选择导出器

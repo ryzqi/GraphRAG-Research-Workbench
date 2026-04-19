@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from app.integrations.embedding_client import EmbeddingClient
 from app.integrations.llm_client import LLMClient
 from app.integrations.milvus_client import MilvusClient
+from app.integrations.object_storage import ObjectStorage
 from app.integrations.redis_client import RedisClient
 from app.integrations.rerank_client import RerankClient
 from app.services.semantic_cache.service import KbChatSemanticCacheService
@@ -24,6 +25,7 @@ class AppResources:
     embedding_http_client: httpx.AsyncClient
     llm_client: LLMClient
     milvus_client: MilvusClient
+    object_storage: ObjectStorage
     embedding_client: EmbeddingClient
     rerank_client: RerankClient
     redis: RedisClient

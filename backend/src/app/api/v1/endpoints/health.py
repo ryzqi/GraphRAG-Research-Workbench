@@ -17,7 +17,6 @@ from app.core.memory_store import StoreManager
 from app.integrations.chat_model_cache import ChatModelCache
 from app.integrations.langgraph_postgres_pool import LangGraphPostgresPool
 from app.integrations.milvus_client import MilvusClient
-from app.integrations.object_storage import ObjectStorage
 from app.integrations.redis_client import RedisClient
 
 router = APIRouter()
@@ -60,9 +59,7 @@ async def _check_milvus(milvus: MilvusClient) -> None:
     await milvus.ready_check()
 
 
-async def _check_minio() -> None:
-    storage = ObjectStorage()
-
+async def _check_minio(storage) -> None:
     def _check() -> None:
         storage._client.bucket_exists(storage._settings.minio_bucket_uploads)
 
@@ -91,7 +88,9 @@ async def ready(resources: AppResourcesDep) -> JSONResponse:
         ),
         "redis": asyncio.create_task(_timed("redis", _check_redis(redis), 0.8)),
         "milvus": asyncio.create_task(_timed("milvus", _check_milvus(milvus), 0.8)),
-        "minio": asyncio.create_task(_timed("minio", _check_minio(), 0.8)),
+        "minio": asyncio.create_task(
+            _timed("minio", _check_minio(resources.object_storage), 0.8)
+        ),
     }
 
     results = {name: await task for name, task in tasks.items()}

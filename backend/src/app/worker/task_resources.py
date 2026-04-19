@@ -21,6 +21,7 @@ from app.integrations.http_client import (
 )
 from app.integrations.model_runtime_config import ModelRuntimeConfigManager
 from app.integrations.milvus_client import MilvusClient, create_milvus_client
+from app.integrations.object_storage import ObjectStorage, create_object_storage
 from app.integrations.redis_client import (
     RedisClient,
     close_redis_client,
@@ -42,6 +43,7 @@ class TaskResources:
     embedding_client: EmbeddingClient | None = None
     redis: RedisClient | None = None
     milvus: MilvusClient | None = None
+    object_storage: ObjectStorage | None = None
     url_crawler: UrlCrawler | None = None
     _url_crawler_factory: Callable[..., Awaitable[UrlCrawler]] | None = None
     _url_crawler_lock: asyncio.Lock | None = None
@@ -97,6 +99,11 @@ async def _close_task_resources(
     await close_http_client(resources.http_client)
     await close_http_client(resources.embedding_http_client)
     await close_redis_client(resources.redis)
+    if resources.object_storage is not None:
+        try:
+            await resources.object_storage.close()
+        except Exception:  # pragma: no cover - best effort
+            pass
     if resources.milvus is not None:
         try:
             await resources.milvus.aclose()
@@ -152,6 +159,7 @@ async def _ensure_task_resource_scope(
     with_http: bool,
     with_redis: bool,
     with_milvus: bool,
+    with_object_storage: bool,
 ) -> TaskResources:
     resources = scope.resources
     if resources.settings != settings:
@@ -183,6 +191,9 @@ async def _ensure_task_resource_scope(
             resources.redis = create_redis_client(settings)
         if with_milvus and resources.milvus is None:
             resources.milvus = create_milvus_client()
+        if with_object_storage and resources.object_storage is None:
+            resources.object_storage = create_object_storage(settings)
+            await resources.object_storage.ensure_buckets()
         if with_engine:
             await _ensure_model_runtime_config(
                 scope=scope,
@@ -200,54 +211,47 @@ async def _managed_ephemeral_task_resources(
     with_http: bool,
     with_redis: bool,
     with_milvus: bool,
+    with_object_storage: bool,
     use_null_pool: bool,
 ) -> AsyncIterator[TaskResources]:
-    engine = None
-    sessionmaker = None
-    http_client = None
-    embedding_http_client = None
-    embedding_client = None
-    redis = None
-    milvus = None
-
-    if with_engine:
-        engine = create_engine(settings, use_null_pool=use_null_pool)
-        sessionmaker = create_sessionmaker(engine=engine)
-        await ModelRuntimeConfigManager.initialize(
-            sessionmaker=sessionmaker,
-            settings=settings,
-        )
-        async with sessionmaker() as model_config_session:
-            await ModelRuntimeConfigManager.refresh(
-                db=model_config_session,
-                settings=settings,
-            )
-    if with_http:
-        http_client = create_http_client(settings)
-        embedding_http_client = create_http_client(
-            settings,
-            profile=HttpClientProfile.EMBEDDING_BATCH,
-        )
-        embedding_client = EmbeddingClient(
-            http_client=embedding_http_client,
-            settings=settings,
-        )
-    if with_redis:
-        redis = create_redis_client(settings)
-    if with_milvus:
-        milvus = create_milvus_client()
-
     resources = TaskResources(
         settings=settings,
-        engine=engine,
-        sessionmaker=sessionmaker,
-        http_client=http_client,
-        embedding_http_client=embedding_http_client,
-        embedding_client=embedding_client,
-        redis=redis,
-        milvus=milvus,
         _url_crawler_factory=create_url_crawler,
     )
+    try:
+        if with_engine:
+            resources.engine = create_engine(settings, use_null_pool=use_null_pool)
+            resources.sessionmaker = create_sessionmaker(engine=resources.engine)
+            await ModelRuntimeConfigManager.initialize(
+                sessionmaker=resources.sessionmaker,
+                settings=settings,
+            )
+            async with resources.sessionmaker() as model_config_session:
+                await ModelRuntimeConfigManager.refresh(
+                    db=model_config_session,
+                    settings=settings,
+                )
+        if with_http:
+            resources.http_client = create_http_client(settings)
+            resources.embedding_http_client = create_http_client(
+                settings,
+                profile=HttpClientProfile.EMBEDDING_BATCH,
+            )
+            resources.embedding_client = EmbeddingClient(
+                http_client=resources.embedding_http_client,
+                settings=settings,
+            )
+        if with_redis:
+            resources.redis = create_redis_client(settings)
+        if with_milvus:
+            resources.milvus = create_milvus_client()
+        if with_object_storage:
+            resources.object_storage = create_object_storage(settings)
+            await resources.object_storage.ensure_buckets()
+    except Exception:
+        await _close_task_resources(resources)
+        raise
+
     try:
         yield resources
     finally:
@@ -262,6 +266,7 @@ async def managed_task_resources(
     with_http: bool = False,
     with_redis: bool = False,
     with_milvus: bool = False,
+    with_object_storage: bool = False,
     use_null_pool: bool = False,
 ) -> AsyncIterator[TaskResources]:
     """统一管理 Celery 任务资源：按单次 asyncio 调用栈复用，退出最外层时释放。"""
@@ -273,6 +278,7 @@ async def managed_task_resources(
             with_http=with_http,
             with_redis=with_redis,
             with_milvus=with_milvus,
+            with_object_storage=with_object_storage,
             use_null_pool=True,
         ) as resources:
             yield resources
@@ -298,6 +304,7 @@ async def managed_task_resources(
             with_http=with_http,
             with_redis=with_redis,
             with_milvus=with_milvus,
+            with_object_storage=with_object_storage,
         )
         yield resources
     finally:

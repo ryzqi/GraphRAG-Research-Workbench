@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.settings import get_settings
+from app.integrations.object_storage import ObjectStorage
 from app.models.ingestion_batch import (
     IngestionBatch,
     IngestionBatchDoc,
@@ -89,9 +90,11 @@ class IngestionBatchService:
         db: AsyncSession,
         *,
         http_client: httpx.AsyncClient | None = None,
+        object_storage: ObjectStorage,
     ) -> None:
         self._db = db
         self._settings = get_settings()
+        self._storage = object_storage
         self._url_guard = build_url_ingestion_guard(
             self._settings,
             http_client=http_client,

@@ -67,12 +67,13 @@ class KBBootstrapJobService:
         *,
         celery: Celery | None = None,
         http_client: httpx.AsyncClient | None = None,
+        object_storage: ObjectStorage,
     ) -> None:
         self._db = db
         self._celery = celery or celery_app
         self._http_client = http_client
         self._settings = get_settings()
-        self._storage: ObjectStorage | None = None
+        self._storage = object_storage
 
     async def create_submission(
         self,
@@ -406,6 +407,7 @@ class KBBootstrapJobService:
         service = IngestionBatchService(
             self._db,
             http_client=self._http_client,
+            object_storage=self._storage,
         )
         return await service.submit_manifest(
             kb_id=kb_id,
@@ -539,8 +541,6 @@ class KBBootstrapJobService:
         return list(targets)
 
     def _get_storage(self) -> ObjectStorage:
-        if self._storage is None:
-            self._storage = ObjectStorage()
         return self._storage
 
     @staticmethod

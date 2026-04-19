@@ -9,7 +9,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app.core.errors import AppError
 
-from app.integrations.object_storage import ObjectRef, ObjectStorage
+from app.integrations.object_storage import ObjectRef
 from app.models.ingestion_batch import (
     IngestionBatch,
     IngestionBatchDoc,
@@ -506,7 +506,9 @@ async def _material_file_size(self, material: SourceMaterial) -> int | None:
     if not bucket or not object_name:
         return None
 
-    storage = ObjectStorage()
+    storage = self._storage
+    if storage is None:
+        raise RuntimeError("共享 object_storage 未初始化")
     try:
         return await storage.get_size(
             ObjectRef(bucket=bucket, object_name=object_name)

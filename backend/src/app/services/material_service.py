@@ -25,9 +25,10 @@ class MaterialService:
         db: AsyncSession,
         *,
         http_client: httpx.AsyncClient | None = None,
+        object_storage: ObjectStorage,
     ) -> None:
         self._db = db
-        self._storage = ObjectStorage()
+        self._storage = object_storage
         self._settings = get_settings()
         self._url_guard = build_url_ingestion_guard(
             self._settings,

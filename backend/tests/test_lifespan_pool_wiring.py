@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 
 from fastapi import FastAPI
+import pytest
 
 from app.bootstrap.app_resources import AppResources, set_app_resources
 from app.bootstrap import lifespan as lifespan_module
@@ -46,8 +47,14 @@ async def test_initialize_and_shutdown_app_state_wires_pool_in_order(
     async def _close_http_client(_client: object) -> None:
         calls.append("close_http")
 
+    async def _ensure_buckets() -> None:
+        calls.append("ensure_buckets")
+
     async def _close_redis_client(_redis: object) -> None:
         calls.append("close_redis")
+
+    async def _close_object_storage() -> None:
+        calls.append("close_object_storage")
 
     async def _model_runtime_shutdown() -> None:
         calls.append("model_runtime_shutdown")
@@ -79,9 +86,14 @@ async def test_initialize_and_shutdown_app_state_wires_pool_in_order(
     redis = object()
     milvus_client = SimpleNamespace(aclose=_milvus_aclose)
 
-    get_engine = lambda: engine
+    def get_engine():
+        return engine
+
     get_engine.cache_clear = _cache_clear_engine
-    get_sessionmaker = lambda: _get_sessionmaker()
+
+    def get_sessionmaker():
+        return _get_sessionmaker()
+
     get_sessionmaker.cache_clear = _cache_clear_sessionmaker
 
     monkeypatch.setattr(lifespan_module, "validate_startup_settings", lambda _settings: None)
@@ -146,6 +158,14 @@ async def test_initialize_and_shutdown_app_state_wires_pool_in_order(
         "shutdown",
         _pool_shutdown,
     )
+    monkeypatch.setattr(
+        lifespan_module,
+        "create_object_storage",
+        lambda _settings: SimpleNamespace(
+            ensure_buckets=_ensure_buckets,
+            close=_close_object_storage,
+        ),
+    )
 
     await lifespan_module._initialize_app_state(app, settings)
     assert calls.index("pool_init") < calls.index("checkpoint_init") < calls.index("store_init")
@@ -158,6 +178,7 @@ async def test_initialize_and_shutdown_app_state_wires_pool_in_order(
             embedding_http_client=embedding_http_client,
             llm_client=object(),
             milvus_client=milvus_client,
+            object_storage=object(),
             embedding_client=object(),
             rerank_client=object(),
             redis=redis,
@@ -223,3 +244,141 @@ async def test_build_deep_research_runtime_runner_initializes_pool_before_checkp
     )
 
     assert calls == ["pool_init", "checkpoint_init", "store_init"]
+
+
+async def test_initialize_app_state_cleans_partial_resources_on_failure(
+    monkeypatch,
+) -> None:
+    calls: list[str] = []
+    app = FastAPI()
+    settings = _make_settings()
+
+    async def _noop_async(*_args: object, **_kwargs: object) -> None:
+        return None
+
+    engine = SimpleNamespace(dispose=_noop_async)
+    http_client = object()
+    embedding_http_client = object()
+    milvus_client = SimpleNamespace(
+        aclose=lambda: calls.append("close_milvus_async")
+    )
+    object_storage = SimpleNamespace(
+        ensure_buckets=lambda: calls.append("ensure_buckets_async"),
+        close=lambda: calls.append("close_object_storage_async"),
+    )
+
+    async def _close_http_client(client: object) -> None:
+        if client is http_client:
+            calls.append("close_http")
+        elif client is embedding_http_client:
+            calls.append("close_embedding_http")
+
+    async def _milvus_aclose() -> None:
+        calls.append("close_milvus")
+
+    async def _object_storage_close() -> None:
+        calls.append("close_object_storage")
+
+    async def _object_storage_ensure() -> None:
+        calls.append("ensure_buckets")
+
+    async def _model_runtime_shutdown() -> None:
+        calls.append("model_runtime_shutdown")
+
+    async def _store_shutdown() -> None:
+        calls.append("store_shutdown")
+
+    async def _checkpoint_shutdown() -> None:
+        calls.append("checkpoint_shutdown")
+
+    async def _pool_shutdown() -> None:
+        calls.append("pool_shutdown")
+
+    milvus_client = SimpleNamespace(aclose=_milvus_aclose)
+    object_storage = SimpleNamespace(
+        ensure_buckets=_object_storage_ensure,
+        close=_object_storage_close,
+    )
+
+    def get_engine():
+        return engine
+
+    get_engine.cache_clear = lambda: None
+
+    def get_sessionmaker():
+        return object()
+
+    get_sessionmaker.cache_clear = lambda: None
+
+    http_clients = iter([http_client, embedding_http_client])
+
+    monkeypatch.setattr(lifespan_module, "validate_startup_settings", lambda _settings: None)
+    monkeypatch.setattr(lifespan_module, "get_engine", get_engine)
+    monkeypatch.setattr(lifespan_module, "get_sessionmaker", get_sessionmaker)
+    monkeypatch.setattr(lifespan_module, "ensure_ingestion_schema_ready", _noop_async)
+    monkeypatch.setattr(lifespan_module.ModelRuntimeConfigManager, "initialize", _noop_async)
+    monkeypatch.setattr(
+        lifespan_module,
+        "recover_stale_interactive_agent_runs_on_startup",
+        _noop_async,
+    )
+    monkeypatch.setattr(lifespan_module.LangGraphPostgresPool, "initialize", _noop_async)
+    monkeypatch.setattr(lifespan_module.CheckpointManager, "initialize", _noop_async)
+    monkeypatch.setattr(lifespan_module.StoreManager, "initialize", _noop_async)
+    monkeypatch.setattr(
+        lifespan_module.ModelRuntimeConfigManager,
+        "shutdown",
+        _model_runtime_shutdown,
+    )
+    monkeypatch.setattr(lifespan_module.StoreManager, "shutdown", _store_shutdown)
+    monkeypatch.setattr(
+        lifespan_module.CheckpointManager,
+        "shutdown",
+        _checkpoint_shutdown,
+    )
+    monkeypatch.setattr(
+        lifespan_module.LangGraphPostgresPool,
+        "shutdown",
+        _pool_shutdown,
+    )
+    monkeypatch.setattr(
+        lifespan_module,
+        "create_http_client",
+        lambda *_args, **_kwargs: next(http_clients),
+    )
+    monkeypatch.setattr(lifespan_module, "LLMClient", lambda **_kwargs: object())
+    monkeypatch.setattr(lifespan_module, "EmbeddingClient", lambda **_kwargs: object())
+    monkeypatch.setattr(
+        lifespan_module,
+        "KbChatSemanticCacheService",
+        lambda **_kwargs: object(),
+    )
+    monkeypatch.setattr(lifespan_module, "RerankClient", lambda **_kwargs: object())
+    monkeypatch.setattr(lifespan_module, "create_milvus_client", lambda: milvus_client)
+    monkeypatch.setattr(
+        lifespan_module,
+        "create_object_storage",
+        lambda _settings: object_storage,
+    )
+    monkeypatch.setattr(
+        lifespan_module,
+        "create_redis_client",
+        lambda _settings: (_ for _ in ()).throw(RuntimeError("redis boom")),
+    )
+    monkeypatch.setattr(lifespan_module, "close_http_client", _close_http_client)
+    monkeypatch.setattr(lifespan_module, "close_redis_client", _noop_async)
+
+    with pytest.raises(RuntimeError, match="redis boom"):
+        await lifespan_module._initialize_app_state(app, settings)
+
+    assert calls == [
+        "ensure_buckets",
+        "close_milvus",
+        "close_object_storage",
+        "close_embedding_http",
+        "close_http",
+        "store_shutdown",
+        "checkpoint_shutdown",
+        "pool_shutdown",
+        "model_runtime_shutdown",
+    ]

@@ -12,7 +12,6 @@ from sqlalchemy import delete, select
 
 from app.core.settings import get_settings
 from app.integrations.embedding_client import EmbeddingClient
-from app.integrations.object_storage import ObjectStorage
 from app.models.document_chunk import DocumentChunk
 from app.models.index_rebuild_job import IndexRebuildJob, IndexRebuildStatus
 from app.models.kb_config_snapshot import KBConfigSnapshot
@@ -176,6 +175,7 @@ async def _run_index_rebuild_job(job_id: str) -> None:
         with_engine=True,
         with_http=True,
         with_milvus=True,
+        with_object_storage=True,
     ) as resources:
         sessionmaker = resources.sessionmaker
         if sessionmaker is None:  # pragma: no cover - defensive
@@ -220,7 +220,9 @@ async def _run_index_rebuild_job(job_id: str) -> None:
                 embedding_dim = settings.embedding_dim
                 base_collection = settings.milvus_collection
 
-                storage = ObjectStorage()
+                storage = resources.object_storage
+                if storage is None:  # pragma: no cover - defensive
+                    raise RuntimeError("共享 object_storage 未初始化")
                 await storage.ensure_buckets()
 
                 kb = await session.get(KnowledgeBase, job.kb_id)

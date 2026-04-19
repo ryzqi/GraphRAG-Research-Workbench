@@ -51,7 +51,11 @@ async def _fail_stale_processing_docs(
     safe_limit = max(int(limit or DEFAULT_DOC_WATCHDOG_BATCH_SIZE), 1)
     timeout_seconds = max(int(settings.ingestion_doc_queue_timeout_seconds), 1)
 
-    async with managed_task_resources(settings=settings, with_engine=True) as resources:
+    async with managed_task_resources(
+        settings=settings,
+        with_engine=True,
+        with_object_storage=True,
+    ) as resources:
         sessionmaker = resources.sessionmaker
         if sessionmaker is None:  # pragma: no cover - defensive guard
             return 0
@@ -77,7 +81,12 @@ async def _fail_stale_processing_docs(
                 await session.rollback()
                 return 0
 
-            service = IngestionBatchService(session)
+            if resources.object_storage is None:  # pragma: no cover - defensive guard
+                return 0
+            service = IngestionBatchService(
+                session,
+                object_storage=resources.object_storage,
+            )
             for doc_id in doc_ids:
                 doc = await service.get_doc(doc_id=doc_id, for_update=True)
                 if doc is None or doc.status != IngestionDocStatus.PROCESSING:
