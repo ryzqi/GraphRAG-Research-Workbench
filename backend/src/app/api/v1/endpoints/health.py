@@ -14,6 +14,7 @@ from app.core.checkpoint import CheckpointManager
 from app.core.errors import build_error_response
 from app.core.logging import get_request_id
 from app.core.memory_store import StoreManager
+from app.integrations.chat_model_cache import ChatModelCache
 from app.integrations.langgraph_postgres_pool import LangGraphPostgresPool
 from app.integrations.milvus_client import MilvusClient
 from app.integrations.object_storage import ObjectStorage
@@ -97,6 +98,12 @@ async def ready(resources: AppResourcesDep) -> JSONResponse:
     results["langgraph_pool"] = _status_dependency(LangGraphPostgresPool.status())
     results["checkpointer"] = _status_dependency(CheckpointManager.status())
     results["memory_store"] = _status_dependency(StoreManager.status())
+    results["chat_model_cache"] = {
+        **ChatModelCache.stats(),
+        "ok": True,
+        "latency_ms": 0,
+        "error": None,
+    }
     semantic_cache_service = getattr(resources, "semantic_cache_service", None)
     if semantic_cache_service is not None and hasattr(semantic_cache_service, "status"):
         semantic_cache_status = semantic_cache_service.status()

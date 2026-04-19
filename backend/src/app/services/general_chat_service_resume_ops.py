@@ -10,7 +10,9 @@ from app.agents.general_chat_agent import build_general_chat_agent, build_hitl_i
 from app.core.checkpoint import CheckpointManager
 from app.core.errors import AppError
 from app.core.logging import set_run_id
-from app.integrations.chat_model_factory import create_chat_model
+from app.integrations.chat_model_cache import (
+    create_chat_model_cached as create_chat_model,
+)
 from app.models.agent_run import AgentRun
 from app.models.chat_session import ChatSession
 from app.schemas.chats import (

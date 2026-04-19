@@ -8,10 +8,10 @@ import time
 from dataclasses import dataclass
 
 from app.core.settings import Settings, get_settings
-from app.integrations.chat_model_factory import (
-    create_chat_model,
-    get_active_model_identity,
+from app.integrations.chat_model_cache import (
+    create_chat_model_cached as create_chat_model,
 )
+from app.integrations.chat_model_factory import get_active_model_identity
 from app.prompts import get_prompt_loader
 
 logger = logging.getLogger(__name__)

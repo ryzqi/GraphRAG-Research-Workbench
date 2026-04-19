@@ -17,8 +17,8 @@ from app.core.checkpoint import CheckpointManager
 from app.core.errors import AppError
 from app.core.logging import set_run_id
 from app.core.memory_store import StoreManager
-from app.integrations.chat_model_factory import (
-    create_chat_model,
+from app.integrations.chat_model_cache import (
+    create_chat_model_cached as create_chat_model,
 )
 from app.integrations.llm_client import ChatMessage as LLMMessage
 from app.models.agent_run import AgentRun, AgentRunStatus, AgentRunType

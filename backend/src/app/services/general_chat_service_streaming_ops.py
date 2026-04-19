@@ -14,7 +14,9 @@ from app.core.checkpoint import CheckpointManager
 from app.core.errors import AppError
 from app.core.logging import set_run_id
 from app.core.model_config_errors import ModelConfigIncompleteError
-from app.integrations.chat_model_factory import create_chat_model
+from app.integrations.chat_model_cache import (
+    create_chat_model_cached as create_chat_model,
+)
 from app.models.agent_run import AgentRun, AgentRunStatus, AgentRunType
 from app.models.chat_message import ChatMessage, MessageRole
 from app.models.chat_request_dedup import ChatRequestDedup

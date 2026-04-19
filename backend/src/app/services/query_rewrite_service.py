@@ -24,7 +24,9 @@ from pydantic import BaseModel, ValidationError
 
 from app.agents.kb_chat_agentic.schemas import COMPLEXITY_CLASSIFY_DECISION_VERSION
 from app.core.settings import Settings, get_settings
-from app.integrations.chat_model_factory import create_chat_model
+from app.integrations.chat_model_cache import (
+    create_chat_model_cached as create_chat_model,
+)
 from app.prompts import get_prompt_loader
 from app.services import query_rewrite_basic_ops, query_rewrite_planning_ops
 from app.services.query_rewrite_contracts import (

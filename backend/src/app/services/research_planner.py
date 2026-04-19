@@ -18,7 +18,9 @@ from pydantic import (
 )
 
 from app.core.settings import Settings, get_settings
-from app.integrations.chat_model_factory import create_chat_model
+from app.integrations.chat_model_cache import (
+    create_chat_model_cached as create_chat_model,
+)
 from app.integrations.model_runtime_config import ModelRuntimeConfigManager
 from app.models.model_config import ModelProvider
 from app.prompts import get_prompt_loader

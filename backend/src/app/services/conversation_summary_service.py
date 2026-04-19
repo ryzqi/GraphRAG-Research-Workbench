@@ -18,7 +18,9 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.settings import Settings, get_settings
-from app.integrations.chat_model_factory import create_chat_model
+from app.integrations.chat_model_cache import (
+    create_chat_model_cached as create_chat_model,
+)
 from app.integrations.llm_client import ChatMessage as LLMMessage
 from app.models.chat_message import ChatMessage, MessageRole
 from app.utils.token_counter import count_tokens_approximately

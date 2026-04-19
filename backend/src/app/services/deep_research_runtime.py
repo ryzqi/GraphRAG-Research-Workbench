@@ -19,7 +19,9 @@ from app.config.runtime_contract import (
 from app.core.checkpoint import CheckpointManager
 from app.core.memory_store import StoreManager
 from app.core.settings import Settings
-from app.integrations.chat_model_factory import create_chat_model
+from app.integrations.chat_model_cache import (
+    create_chat_model_cached as create_chat_model,
+)
 from app.integrations.langgraph_postgres_pool import LangGraphPostgresPool
 from app.integrations.redis_client import RedisClient
 from app.models.research_session import ResearchSession

@@ -10,7 +10,9 @@ from typing import Any, cast
 from langchain.messages import AIMessage, HumanMessage, SystemMessage
 
 from app.core.settings import Settings
-from app.integrations.chat_model_factory import create_chat_model
+from app.integrations.chat_model_cache import (
+    create_chat_model_cached as create_chat_model,
+)
 from app.services.kb_chat_context_seed import (
     build_context_seed_from_messages,
     context_seed_turns_to_context_frame_turns,

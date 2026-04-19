@@ -10,7 +10,9 @@ from langchain.messages import HumanMessage, SystemMessage
 from langchain_core.language_models.chat_models import BaseChatModel
 
 from app.core.settings import Settings
-from app.integrations.chat_model_factory import create_chat_model
+from app.integrations.chat_model_cache import (
+    create_chat_model_cached as create_chat_model,
+)
 from app.services.kb_answer_paragraphs import (
     normalize_answer_text_variants,
     recalculate_paragraph_citation_ids,

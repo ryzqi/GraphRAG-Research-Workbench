@@ -10,10 +10,10 @@ from typing import Any, cast
 from app.agents.kb_chat_agentic_graph import KbChatAgenticGraph
 from app.agents.tool_calling.registry import build_tool_registry
 from app.agents.tools.kb_retrieve import build_kb_retrieve_tool
-from app.integrations.chat_model_factory import (
-    create_chat_model,
-    get_active_model_identity,
+from app.integrations.chat_model_cache import (
+    create_chat_model_cached as create_chat_model,
 )
+from app.integrations.chat_model_factory import get_active_model_identity
 from app.schemas.chats import (
     KbChatConfig,
     resolve_kb_chat_config,
