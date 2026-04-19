@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import inspect
 import uuid
 
@@ -77,6 +78,9 @@ PLAN_PROGRESS_ARTIFACT_KEY = "plan_progress_snapshot"
 PLAN_PROGRESS_EVENT_TYPE = "research.plan_progress.updated"
 RUNTIME_TASK_GRAPH_ARTIFACT_KEY = "runtime_task_graph_json"
 RUNTIME_LIVE_BOARD_ARTIFACT_KEY = "runtime_live_board_json"
+logger = logging.getLogger(__name__)
+
+
 class ResearchService:
     def __init__(
         self,
@@ -481,6 +485,19 @@ class ResearchService:
                 payload={},
             )
         )
+
+    def trigger_outbox_dispatch(self) -> None:
+        try:
+            from app.worker.tasks.research_outbox_dispatcher import (
+                dispatch_research_outbox,
+            )
+
+            dispatch_research_outbox.delay()
+        except Exception as exc:  # pragma: no cover - defensive guard
+            logger.warning(
+                "Failed to trigger research outbox dispatcher",
+                extra={"error": str(exc)},
+            )
 
     async def execute_session(
         self,

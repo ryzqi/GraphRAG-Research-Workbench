@@ -100,27 +100,27 @@ def _build_celery_conf(cfg: Settings) -> dict[str, Any]:
         "beat_schedule": {
             "bootstrap-watchdog": {
                 "task": "app.worker.tasks.bootstrap_watchdog.fail_stale_bootstrap_jobs",
-                "schedule": timedelta(seconds=15),
+                "schedule": timedelta(seconds=30),
                 "kwargs": {"limit": DEFAULT_DISPATCH_BATCH_SIZE},
             },
             "ingestion-outbox-dispatcher": {
                 "task": "app.worker.tasks.ingestion_outbox_dispatcher.dispatch_ingestion_outbox",
-                "schedule": timedelta(seconds=15),
+                "schedule": timedelta(seconds=20),
                 "kwargs": {"limit": DEFAULT_DISPATCH_BATCH_SIZE},
             },
             "ingestion-doc-watchdog": {
                 "task": "app.worker.tasks.ingestion_watchdog.fail_stale_processing_docs",
-                "schedule": timedelta(seconds=30),
+                "schedule": timedelta(seconds=60),
                 "kwargs": {"limit": DEFAULT_DISPATCH_BATCH_SIZE},
             },
             "index-rebuild-outbox-dispatcher": {
                 "task": "app.worker.tasks.index_rebuild_outbox_dispatcher.dispatch_index_rebuild_outbox",
-                "schedule": timedelta(seconds=15),
+                "schedule": timedelta(seconds=30),
                 "kwargs": {"limit": DEFAULT_DISPATCH_BATCH_SIZE},
             },
             "research-outbox-dispatcher": {
                 "task": "app.worker.tasks.research_outbox_dispatcher.dispatch_research_outbox",
-                "schedule": timedelta(seconds=15),
+                "schedule": timedelta(seconds=30),
                 "kwargs": {"limit": DEFAULT_DISPATCH_BATCH_SIZE},
             },
         },

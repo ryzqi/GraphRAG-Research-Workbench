@@ -120,6 +120,7 @@ async def start_research_session(
     session = await service.get_session(session_id)
     session = await service.start_session(session=session)
     await db.commit()
+    service.trigger_outbox_dispatch()
     return ResearchSessionAccepted(
         session_id=session.id,
         question=session.question,
