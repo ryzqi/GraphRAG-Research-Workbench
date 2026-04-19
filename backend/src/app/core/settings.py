@@ -239,6 +239,9 @@ class Settings(DeploySettings):
     ingestion_embedding_fanout_concurrency: int = Field(
         4, ge=1, alias="INGESTION_EMBEDDING_FANOUT_CONCURRENCY"
     )
+    index_rebuild_material_concurrency: int = Field(
+        2, ge=1, alias="INDEX_REBUILD_MATERIAL_CONCURRENCY"
+    )
     ingestion_doc_queue_timeout_seconds: int = Field(
         600, ge=1, alias="INGESTION_DOC_QUEUE_TIMEOUT_SECONDS"
     )

@@ -5,8 +5,10 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
+from collections.abc import Awaitable, Callable, Sequence
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, cast
+from typing import Any, TypeVar, cast
 
 from sqlalchemy import delete, select
 
@@ -31,6 +33,23 @@ from app.worker.tasks.embedding_fanout import embed_inputs_with_concurrency
 from app.worker.tasks.embedding_inputs import build_embedding_inputs
 
 logger = logging.getLogger(__name__)
+_TMaterialResult = TypeVar("_TMaterialResult")
+
+
+@dataclass(slots=True)
+class _MaterialRebuildResult:
+    succeeded: bool = False
+    canceled: bool = False
+    chunk_count: int = 0
+    context_fallback_chunks: int = 0
+    semantic_fallback_chunks: int = 0
+    semantic_fallback_material: bool = False
+    error: dict[str, Any] | None = None
+    warnings: list[dict[str, str]] = field(default_factory=list)
+
+
+class _IndexRebuildMaterialCanceled(Exception):
+    """Material 级处理在作业取消后尽快停止，避免继续落库。"""
 
 
 def _should_skip_index_rebuild_status(status: IndexRebuildStatus) -> bool:
@@ -168,6 +187,330 @@ async def _upsert_rebuild_records(
     return [base_collection]
 
 
+async def _process_materials_with_sessions(
+    *,
+    materials: Sequence[SourceMaterial],
+    sessionmaker: Any,
+    concurrency: int,
+    processor: Callable[[SourceMaterial, Any], Awaitable[_TMaterialResult]],
+    cancel_event: asyncio.Event | None = None,
+) -> list[_TMaterialResult]:
+    if not materials:
+        return []
+
+    semaphore = asyncio.Semaphore(max(int(concurrency), 1))
+
+    async def _worker(material: SourceMaterial) -> _TMaterialResult | None:
+        async with semaphore:
+            if cancel_event is not None and cancel_event.is_set():
+                return None
+            async with sessionmaker() as material_session:
+                return await processor(material, material_session)
+
+    results = await asyncio.gather(*[_worker(material) for material in materials])
+    return [result for result in results if result is not None]
+
+
+async def _watch_index_rebuild_cancellation(
+    *,
+    sessionmaker: Any,
+    job_id: uuid.UUID,
+    cancel_event: asyncio.Event,
+    stop_event: asyncio.Event,
+    poll_interval_seconds: float = 0.5,
+) -> None:
+    while not stop_event.is_set():
+        async with sessionmaker() as monitor_session:
+            job = await monitor_session.get(IndexRebuildJob, job_id)
+            if job is None or job.status == IndexRebuildStatus.CANCELED:
+                cancel_event.set()
+                return
+
+        try:
+            await asyncio.wait_for(
+                stop_event.wait(), timeout=max(poll_interval_seconds, 0.1)
+            )
+        except asyncio.TimeoutError:
+            continue
+
+
+def _raise_if_material_rebuild_canceled(
+    cancel_event: asyncio.Event | None,
+) -> None:
+    if cancel_event is not None and cancel_event.is_set():
+        raise _IndexRebuildMaterialCanceled
+
+
+async def _cleanup_material_milvus_records(
+    *,
+    material_id: str,
+    milvus_client: Any,
+    milvus_chunk_ids: Sequence[str],
+    upserted_collections: Sequence[str],
+    warnings: list[dict[str, str]],
+) -> None:
+    if not milvus_chunk_ids or not upserted_collections:
+        return
+    try:
+        for collection_name in upserted_collections:
+            await milvus_client.delete_by_chunk_ids(
+                list(milvus_chunk_ids),
+                collection_name=collection_name,
+            )
+    except Exception as cleanup_exc:  # pragma: no cover
+        warnings.append(
+            {
+                "material_id": material_id,
+                "stage": "milvus_rollback_cleanup",
+                "error": str(cleanup_exc),
+            }
+        )
+
+
+async def _process_index_rebuild_material(
+    *,
+    material: SourceMaterial,
+    material_session: Any,
+    settings,
+    job_id: str,
+    index_config: IndexConfig,
+    http_client: Any,
+    storage: Any,
+    url_crawler_source: Any,
+    embedding_client: EmbeddingClient,
+    chunker: ChunkingEngine,
+    context_service: ContextualEmbeddingService,
+    milvus_client: Any,
+    base_collection: str,
+    initial_embedding_dim: int | None,
+    cancel_event: asyncio.Event | None = None,
+) -> _MaterialRebuildResult:
+    chunk_store = ChunkPersistenceService(material_session)
+    if callable(url_crawler_source):
+        url_crawler = await cast(Any, url_crawler_source)()
+    else:
+        url_crawler = url_crawler_source
+
+    try:
+        _raise_if_material_rebuild_canceled(cancel_event)
+        parsed = await parse_material(
+            material,
+            settings=settings,
+            http_client=http_client,
+            storage=storage,
+            url_crawler=url_crawler,
+            allow_crawl4ai_cold_start=False,
+        )
+    except ParseError as exc:
+        return _MaterialRebuildResult(
+            error={
+                "material_id": str(material.id),
+                "stage": "parse",
+                "error_code": exc.error_code,
+                "message": exc.message,
+                "details": exc.details,
+            }
+        )
+    except Exception as exc:
+        return _MaterialRebuildResult(
+            error={
+                "material_id": str(material.id),
+                "stage": "parse",
+                "error_code": "PARSE_FAILED",
+                "message": str(exc),
+            }
+        )
+
+    semantic_fallback_chunks = 0
+    context_fallback_chunks = 0
+    warnings: list[dict[str, str]] = []
+    milvus_chunk_ids: list[str] = []
+    upserted_collections: list[str] = []
+    milvus_upserted = False
+
+    try:
+        _raise_if_material_rebuild_canceled(cancel_event)
+        chunk_items = await chunker.split(parsed, index_config)
+        _raise_if_material_rebuild_canceled(cancel_event)
+        if not chunk_items:
+            await chunk_store.replace_material_chunks(
+                kb_id=material.kb_id,
+                material_id=material.id,
+                chunk_items=[],
+            )
+            _raise_if_material_rebuild_canceled(cancel_event)
+            await material_session.commit()
+            return _MaterialRebuildResult()
+
+        semantic_fallback_chunks = sum(
+            1
+            for item in chunk_items
+            if isinstance(item.metadata, dict)
+            and item.metadata.get("semantic_fallback") is True
+        )
+
+        context_results = await generate_contexts_for_chunks(
+            full_text=parsed.text or "",
+            chunk_texts=[item.content for item in chunk_items],
+            context_service=context_service,
+            enabled=index_config.contextual.enabled,
+            max_tokens=index_config.contextual.max_tokens,
+            concurrency=max(index_config.contextual.concurrency, 1),
+            max_attempts=3,
+        )
+        contexts = [item.context for item in context_results]
+        context_fallback_chunks = sum(
+            1 for item in context_results if item.status == "fallback"
+        )
+        _raise_if_material_rebuild_canceled(cancel_event)
+
+        embedding_inputs = build_embedding_inputs(
+            chunk_items=chunk_items,
+            contexts=contexts,
+            contextual_enabled=index_config.contextual.enabled,
+        )
+
+        batch_size = max(settings.ingestion_embedding_batch_size, 1)
+        max_batch_size = settings.embedding_max_batch_size
+        if max_batch_size is not None:
+            batch_size = min(batch_size, max(int(max_batch_size), 1))
+        embeddings = await embed_inputs_with_concurrency(
+            embedding_client=embedding_client,
+            embedding_inputs=embedding_inputs,
+            batch_size=batch_size,
+            fanout_concurrency=settings.ingestion_embedding_fanout_concurrency,
+        )
+        _raise_on_index_rebuild_embedding_count_mismatch(
+            expected_count=len(embedding_inputs),
+            actual_count=len(embeddings),
+            job_id=job_id,
+            material_id=str(material.id),
+        )
+        _raise_if_material_rebuild_canceled(cancel_event)
+
+        embedding_dim = initial_embedding_dim
+        if embedding_dim is None and embeddings:
+            embedding_dim = len(embeddings[0])
+
+        chunk_ids = [uuid.uuid4() for _ in chunk_items]
+        chunk_ids = await chunk_store.replace_material_chunks(
+            kb_id=material.kb_id,
+            material_id=material.id,
+            chunk_items=chunk_items,
+            chunk_ids=chunk_ids,
+            embedding_texts=embedding_inputs,
+            context_texts=contexts,
+            context_statuses=[item.status for item in context_results],
+            context_errors=[item.error for item in context_results],
+            context_attempts=[item.attempts for item in context_results],
+        )
+        _raise_if_material_rebuild_canceled(cancel_event)
+
+        parent_id_by_ref: dict[int, str] = {}
+        parent_idx = 0
+        for idx, chunk_item in enumerate(chunk_items):
+            if chunk_item.chunk_role == "parent":
+                parent_id_by_ref[parent_idx] = str(chunk_ids[idx])
+                parent_idx += 1
+
+        milvus_records: list[dict] = []
+        for idx, (chunk_item, emb) in enumerate(
+            zip(chunk_items, embeddings, strict=True)
+        ):
+            parent_chunk_id = ""
+            if (
+                chunk_item.chunk_role == "child"
+                and chunk_item.parent_ref is not None
+            ):
+                parent_chunk_id = parent_id_by_ref.get(
+                    chunk_item.parent_ref, ""
+                )
+            chunk_meta = (
+                chunk_item.metadata if isinstance(chunk_item.metadata, dict) else {}
+            )
+            milvus_records.append(
+                {
+                    "chunk_id": str(chunk_ids[idx]),
+                    "kb_id": str(material.kb_id),
+                    "material_id": str(material.id),
+                    "chunk_role": chunk_item.chunk_role,
+                    "parent_chunk_id": parent_chunk_id,
+                    "child_seq": chunk_item.child_seq or 0,
+                    "content": chunk_item.content,
+                    "context": contexts[idx] if contexts else "",
+                    "locator": chunk_item.locator or {},
+                    "window_id": chunk_meta.get("window_id"),
+                    "window_size_tokens": chunk_meta.get("window_size_tokens"),
+                    "window_overlap_tokens": chunk_meta.get(
+                        "window_overlap_tokens"
+                    ),
+                    "token_start": chunk_meta.get("token_start"),
+                    "token_end": chunk_meta.get("token_end"),
+                    "metadata": chunk_meta,
+                    "dense_vector": emb,
+                }
+            )
+
+        milvus_chunk_ids = [str(cid) for cid in chunk_ids]
+        upserted_collections = await _upsert_rebuild_records(
+            milvus_client=milvus_client,
+            index_config=index_config,
+            base_collection=base_collection,
+            records=milvus_records,
+            embedding_dim=embedding_dim,
+        )
+        milvus_upserted = bool(upserted_collections)
+        _raise_if_material_rebuild_canceled(cancel_event)
+        await material_session.commit()
+
+    except _IndexRebuildMaterialCanceled:
+        if milvus_upserted:
+            await _cleanup_material_milvus_records(
+                material_id=str(material.id),
+                milvus_client=milvus_client,
+                milvus_chunk_ids=milvus_chunk_ids,
+                upserted_collections=upserted_collections,
+                warnings=warnings,
+            )
+        await material_session.rollback()
+        return _MaterialRebuildResult(
+            canceled=True,
+            context_fallback_chunks=context_fallback_chunks,
+            semantic_fallback_chunks=semantic_fallback_chunks,
+            semantic_fallback_material=semantic_fallback_chunks > 0,
+            warnings=warnings,
+        )
+    except Exception as exc:
+        if milvus_upserted:
+            await _cleanup_material_milvus_records(
+                material_id=str(material.id),
+                milvus_client=milvus_client,
+                milvus_chunk_ids=milvus_chunk_ids,
+                upserted_collections=upserted_collections,
+                warnings=warnings,
+            )
+        await material_session.rollback()
+        return _MaterialRebuildResult(
+            context_fallback_chunks=context_fallback_chunks,
+            semantic_fallback_chunks=semantic_fallback_chunks,
+            semantic_fallback_material=semantic_fallback_chunks > 0,
+            error={
+                "material_id": str(material.id),
+                "stage": "ingest",
+                "error": str(exc),
+            },
+            warnings=warnings,
+        )
+
+    return _MaterialRebuildResult(
+        succeeded=True,
+        chunk_count=len(milvus_chunk_ids),
+        context_fallback_chunks=context_fallback_chunks,
+        semantic_fallback_chunks=semantic_fallback_chunks,
+        semantic_fallback_material=semantic_fallback_chunks > 0,
+    )
+
+
 async def _run_index_rebuild_job(job_id: str) -> None:
     settings = get_settings()
     job_uuid = uuid.UUID(job_id)
@@ -217,8 +560,7 @@ async def _run_index_rebuild_job(job_id: str) -> None:
                 )
                 chunker = ChunkingEngine(settings=settings, embedding=embedding_client)
                 context_service = ContextualEmbeddingService(settings=settings)
-                chunk_store = ChunkPersistenceService(session)
-                embedding_dim = settings.embedding_dim
+                initial_embedding_dim = settings.embedding_dim
                 base_collection = settings.milvus_collection
 
                 storage = resources.object_storage
@@ -257,7 +599,7 @@ async def _run_index_rebuild_job(job_id: str) -> None:
                     index_config=index_config,
                     base_collection=base_collection,
                     kb_id=str(job.kb_id),
-                    embedding_dim=embedding_dim,
+                    embedding_dim=initial_embedding_dim,
                 )
                 await session.execute(
                     delete(DocumentChunk).where(DocumentChunk.kb_id == job.kb_id)
@@ -268,218 +610,64 @@ async def _run_index_rebuild_job(job_id: str) -> None:
                 materials_result = await session.execute(stmt)
                 materials = list(materials_result.scalars().all())
                 stats["total_materials"] = len(materials)
-                url_crawler_getter = getattr(resources, "get_url_crawler", None)
-
-                for material in materials:
-                    await session.refresh(job)
-                    if job.status == IndexRebuildStatus.CANCELED:
-                        return
-                    await session.commit()
-
-                    if callable(url_crawler_getter):
-                        url_crawler = await cast(Any, url_crawler_getter)()
-                    else:
-                        url_crawler = getattr(resources, "url_crawler", None)
-
-                    try:
-                        parsed = await parse_material(
-                            material,
+                url_crawler_source = getattr(
+                    resources,
+                    "get_url_crawler",
+                    getattr(resources, "url_crawler", None),
+                )
+                cancel_event = asyncio.Event()
+                cancel_watch_stop = asyncio.Event()
+                cancel_watch_task = asyncio.create_task(
+                    _watch_index_rebuild_cancellation(
+                        sessionmaker=sessionmaker,
+                        job_id=job_uuid,
+                        cancel_event=cancel_event,
+                        stop_event=cancel_watch_stop,
+                    )
+                )
+                try:
+                    material_results = await _process_materials_with_sessions(
+                        materials=materials,
+                        sessionmaker=sessionmaker,
+                        concurrency=settings.index_rebuild_material_concurrency,
+                        processor=lambda material, material_session: _process_index_rebuild_material(
+                            material=material,
+                            material_session=material_session,
                             settings=settings,
+                            job_id=str(job.id),
+                            index_config=index_config,
                             http_client=http_client,
                             storage=storage,
-                            url_crawler=url_crawler,
-                            allow_crawl4ai_cold_start=False,
-                        )
-                    except ParseError as exc:
-                        stats["errors"].append(
-                            {
-                                "material_id": str(material.id),
-                                "stage": "parse",
-                                "error_code": exc.error_code,
-                                "message": exc.message,
-                                "details": exc.details,
-                            }
-                        )
-                        continue
-                    except Exception as exc:
-                        stats["errors"].append(
-                            {
-                                "material_id": str(material.id),
-                                "stage": "parse",
-                                "error_code": "PARSE_FAILED",
-                                "message": str(exc),
-                            }
-                        )
-                        continue
-
-                    chunk_items = await chunker.split(parsed, index_config)
-                    if not chunk_items:
-                        await chunk_store.replace_material_chunks(
-                            kb_id=material.kb_id,
-                            material_id=material.id,
-                            chunk_items=[],
-                        )
-                        await session.commit()
-                        continue
-
-                    semantic_fallback_chunks = sum(
-                        1
-                        for item in chunk_items
-                        if isinstance(item.metadata, dict)
-                        and item.metadata.get("semantic_fallback") is True
-                    )
-                    if semantic_fallback_chunks > 0:
-                        stats["semantic_fallback_chunks"] += semantic_fallback_chunks
-                        stats["semantic_fallback_materials"] += 1
-
-                    context_results = await generate_contexts_for_chunks(
-                        full_text=parsed.text or "",
-                        chunk_texts=[item.content for item in chunk_items],
-                        context_service=context_service,
-                        enabled=index_config.contextual.enabled,
-                        max_tokens=index_config.contextual.max_tokens,
-                        concurrency=max(index_config.contextual.concurrency, 1),
-                        max_attempts=3,
-                    )
-                    contexts = [item.context for item in context_results]
-                    fallback_count = sum(
-                        1 for item in context_results if item.status == "fallback"
-                    )
-                    stats["context_fallback_chunks"] += fallback_count
-
-                    embedding_inputs = build_embedding_inputs(
-                        chunk_items=chunk_items,
-                        contexts=contexts,
-                        contextual_enabled=index_config.contextual.enabled,
-                    )
-
-                    batch_size = max(settings.ingestion_embedding_batch_size, 1)
-                    max_batch_size = settings.embedding_max_batch_size
-                    if max_batch_size is not None:
-                        batch_size = min(batch_size, max(int(max_batch_size), 1))
-                    embeddings = await embed_inputs_with_concurrency(
-                        embedding_client=embedding_client,
-                        embedding_inputs=embedding_inputs,
-                        batch_size=batch_size,
-                        fanout_concurrency=settings.ingestion_embedding_fanout_concurrency,
-                    )
-                    _raise_on_index_rebuild_embedding_count_mismatch(
-                        expected_count=len(embedding_inputs),
-                        actual_count=len(embeddings),
-                        job_id=str(job.id),
-                        material_id=str(material.id),
-                    )
-
-                    if embedding_dim is None and embeddings:
-                        embedding_dim = len(embeddings[0])
-
-                    milvus_chunk_ids: list[str] = []
-                    upserted_collections: list[str] = []
-                    milvus_upserted = False
-                    try:
-                        chunk_ids = [uuid.uuid4() for _ in chunk_items]
-                        chunk_ids = await chunk_store.replace_material_chunks(
-                            kb_id=material.kb_id,
-                            material_id=material.id,
-                            chunk_items=chunk_items,
-                            chunk_ids=chunk_ids,
-                            embedding_texts=embedding_inputs,
-                            context_texts=contexts,
-                            context_statuses=[item.status for item in context_results],
-                            context_errors=[item.error for item in context_results],
-                            context_attempts=[
-                                item.attempts for item in context_results
-                            ],
-                        )
-
-                        parent_id_by_ref: dict[int, str] = {}
-                        parent_idx = 0
-                        for idx, chunk_item in enumerate(chunk_items):
-                            if chunk_item.chunk_role == "parent":
-                                parent_id_by_ref[parent_idx] = str(chunk_ids[idx])
-                                parent_idx += 1
-
-                        milvus_records: list[dict] = []
-                        for idx, (chunk_item, emb) in enumerate(
-                            zip(chunk_items, embeddings, strict=True)
-                        ):
-                            parent_chunk_id = ""
-                            if (
-                                chunk_item.chunk_role == "child"
-                                and chunk_item.parent_ref is not None
-                            ):
-                                parent_chunk_id = parent_id_by_ref.get(
-                                    chunk_item.parent_ref, ""
-                                )
-                            chunk_meta = (
-                                chunk_item.metadata
-                                if isinstance(chunk_item.metadata, dict)
-                                else {}
-                            )
-                            milvus_records.append(
-                                {
-                                    "chunk_id": str(chunk_ids[idx]),
-                                    "kb_id": str(material.kb_id),
-                                    "material_id": str(material.id),
-                                    "chunk_role": chunk_item.chunk_role,
-                                    "parent_chunk_id": parent_chunk_id,
-                                    "child_seq": chunk_item.child_seq or 0,
-                                    "content": chunk_item.content,
-                                    "context": contexts[idx] if contexts else "",
-                                    "locator": chunk_item.locator or {},
-                                    "window_id": chunk_meta.get("window_id"),
-                                    "window_size_tokens": chunk_meta.get(
-                                        "window_size_tokens"
-                                    ),
-                                    "window_overlap_tokens": chunk_meta.get(
-                                        "window_overlap_tokens"
-                                    ),
-                                    "token_start": chunk_meta.get("token_start"),
-                                    "token_end": chunk_meta.get("token_end"),
-                                    "metadata": chunk_meta,
-                                    "dense_vector": emb,
-                                }
-                            )
-
-                        milvus_chunk_ids = [str(cid) for cid in chunk_ids]
-                        upserted_collections = await _upsert_rebuild_records(
+                            url_crawler_source=url_crawler_source,
+                            embedding_client=embedding_client,
+                            chunker=chunker,
+                            context_service=context_service,
                             milvus_client=milvus_client,
-                            index_config=index_config,
                             base_collection=base_collection,
-                            records=milvus_records,
-                            embedding_dim=embedding_dim,
-                        )
-                        milvus_upserted = bool(upserted_collections)
+                            initial_embedding_dim=initial_embedding_dim,
+                            cancel_event=cancel_event,
+                        ),
+                        cancel_event=cancel_event,
+                    )
+                finally:
+                    cancel_watch_stop.set()
+                    await cancel_watch_task
 
-                        stats["succeeded_materials"] += 1
-                        stats["total_chunks"] += len(milvus_chunk_ids)
-                        await session.commit()
+                if cancel_event.is_set():
+                    return
 
-                    except Exception as exc:
-                        if milvus_upserted and milvus_chunk_ids:
-                            try:
-                                for collection_name in upserted_collections:
-                                    await milvus_client.delete_by_chunk_ids(
-                                        milvus_chunk_ids,
-                                        collection_name=collection_name,
-                                    )
-                            except Exception as cleanup_exc:  # pragma: no cover
-                                stats["warnings"].append(
-                                    {
-                                        "material_id": str(material.id),
-                                        "stage": "milvus_rollback_cleanup",
-                                        "error": str(cleanup_exc),
-                                    }
-                                )
-                        await session.rollback()
-                        stats["errors"].append(
-                            {
-                                "material_id": str(material.id),
-                                "stage": "ingest",
-                                "error": str(exc),
-                            }
-                        )
+                for result in material_results:
+                    stats["context_fallback_chunks"] += result.context_fallback_chunks
+                    stats["semantic_fallback_chunks"] += result.semantic_fallback_chunks
+                    if result.semantic_fallback_material:
+                        stats["semantic_fallback_materials"] += 1
+                    stats["warnings"].extend(result.warnings)
+                    if result.error is not None:
+                        stats["errors"].append(result.error)
                         continue
+                    if result.succeeded:
+                        stats["succeeded_materials"] += 1
+                        stats["total_chunks"] += result.chunk_count
 
                 job.status = (
                     IndexRebuildStatus.FAILED
