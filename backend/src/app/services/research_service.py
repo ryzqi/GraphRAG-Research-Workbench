@@ -728,7 +728,7 @@ class ResearchService:
         normalized_question = str(session.question or "").strip()
         clarification_questions: list[str] = []
         clarification_answers: list[str] = []
-        for event in sorted(session.events, key=lambda item: item.sequence):
+        for event in session.events:
             payload = event.payload if isinstance(event.payload, dict) else {}
             if event.event_type == "research.clarification.requested":
                 summary = str(payload.get("summary") or "").strip()

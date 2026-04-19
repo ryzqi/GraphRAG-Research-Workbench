@@ -179,6 +179,7 @@ class ResearchSession(Base):
     events: Mapped[list["ResearchEvent"]] = relationship(
         "ResearchEvent",
         back_populates="session",
+        order_by="ResearchEvent.sequence",
         cascade="all, delete-orphan",
         passive_deletes=True,
     )

@@ -25,7 +25,7 @@ def build_event_envelopes(
     *,
     after_event_id: str | None = None,
 ) -> list[ResearchEventEnvelope]:
-    events = sorted(session.events, key=lambda item: item.sequence)
+    events = session.events
     after_sequence = 0
     if after_event_id is not None:
         matched = next(
