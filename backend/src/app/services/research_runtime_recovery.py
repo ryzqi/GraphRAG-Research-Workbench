@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import Sequence
-from datetime import datetime
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from typing import Any, Awaitable, cast
 
@@ -41,9 +41,9 @@ class DeepResearchStructuredResponse(BaseModel):
 
 class DeepResearchCitationDraft(BaseModel):
     source_type: ResearchSourceType
-    source_provider: str
-    retrieval_method: str
-    source_id: str
+    source_provider: str = Field(min_length=1)
+    retrieval_method: str = Field(min_length=1)
+    source_id: str = Field(min_length=1)
     title: str | None = None
     url: str | None = None
     origin_url: str | None = None
@@ -52,8 +52,8 @@ class DeepResearchCitationDraft(BaseModel):
     published_at: str | None = None
     pdf_url: str | None = None
     accessed_at: str | None = None
-    retrieved_at: datetime | None = None
-    excerpts: list[ResearchCitationExcerpt] = Field(default_factory=list)
+    retrieved_at: datetime
+    excerpts: list[ResearchCitationExcerpt] = Field(min_length=1, max_length=5)
 
 
 class DeepResearchStructuredResponseDraft(BaseModel):
@@ -111,6 +111,8 @@ def _normalize_structured_response_payload(payload: Any) -> Any:
                 and arxiv_id.strip()
             ):
                 citation["pdf_url"] = f"https://arxiv.org/pdf/{arxiv_id.strip()}.pdf"
+        if not citation.get("retrieved_at"):
+            citation["retrieved_at"] = datetime.now(timezone.utc).isoformat()
         normalized_citations.append(citation)
 
     normalized["citations"] = normalized_citations
