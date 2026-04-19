@@ -29,6 +29,13 @@ class ResearchEvent(Base):
             "sequence",
             name="uq_research_events_session_sequence",
         ),
+        sa.Index(
+            "uq_research_events_session_idempotency_key",
+            "session_id",
+            "idempotency_key",
+            unique=True,
+            postgresql_where=sa.text("idempotency_key IS NOT NULL"),
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
