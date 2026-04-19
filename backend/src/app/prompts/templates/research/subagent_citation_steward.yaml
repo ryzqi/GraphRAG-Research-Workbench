@@ -22,7 +22,7 @@ template: |
   </checks>
 
   <output>
-  - 返回 JSON：`{"ok": true/false, "issues": [...], "suggestions": [...]}`。
+  - 返回 JSON：`{{"ok": true/false, "issues": [...], "suggestions": [...]}}`。
   - 主代理会根据 ok 决定是否 finalize 或回流。
   </output>
 

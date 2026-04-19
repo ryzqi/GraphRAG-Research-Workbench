@@ -23,20 +23,20 @@ template: |
   <output>
   写入 /scratch/research/<session>/evidence-critique.json，结构：
   ```json
-  {
+  {{
     "claims": [
-      {
+      {{
         "claim_id": "claim-01",
         "verdict": "supported|contested|insufficient",
         "supporting_evidence_ids": ["..."],
         "conflicting_evidence_ids": ["..."],
         "missing_aspects": ["..."],
         "recommendation": "补搜 X | 调整措辞 Y"
-      }
+      }}
     ],
-    "finding_level_issues": [{ "finding_index": 0, "issue": "..." }],
-    "verdict_rollup": { "supported": N, "contested": N, "insufficient": N }
-  }
+    "finding_level_issues": [{{ "finding_index": 0, "issue": "..." }}],
+    "verdict_rollup": {{ "supported": N, "contested": N, "insufficient": N }}
+  }}
   ```
   - 返回给主代理 ≤ 150 字摘要 + 高优先级建议。
   </output>

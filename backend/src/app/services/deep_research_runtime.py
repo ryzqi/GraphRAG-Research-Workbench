@@ -38,7 +38,6 @@ from app.services.research_runtime_context import (
 )
 from app.services.research_runtime_factory import (
     DeepResearchRuntime,
-    _build_source_specialized_subagents,  # noqa: F401
     create_deep_research_runtime,
     resolve_source_subagent_route,
 )

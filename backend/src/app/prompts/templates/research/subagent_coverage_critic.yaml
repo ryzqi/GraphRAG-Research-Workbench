@@ -23,16 +23,16 @@ template: |
   <output>
   写入 /scratch/research/<session>/coverage-critique.json，结构：
   ```json
-  {
-    "provider_independence": {
-      "claim-01": { "independent_providers": ["tavily", "arxiv"], "pass": true }
-    },
+  {{
+    "provider_independence": {{
+      "claim-01": {{ "independent_providers": ["tavily", "arxiv"], "pass": true }}
+    }},
     "counter_search_status": [
-      { "claim_id": "claim-01", "counter_searched": true, "found": false, "query": "..." }
+      {{ "claim_id": "claim-01", "counter_searched": true, "found": false, "query": "..." }}
     ],
     "orphan_citations": [2, 5],
     "gaps": ["claim-03 缺少 2024 年后数据"]
-  }
+  }}
   ```
   - 返回给主代理 ≤ 150 字摘要 + 是否建议回流补证。
   </output>

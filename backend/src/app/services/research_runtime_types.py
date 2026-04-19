@@ -102,9 +102,8 @@ class ResearchRuntimeConfig:
     large_result_policy: ResearchLargeResultPolicy = (
         DEFAULT_RESEARCH_LARGE_RESULT_POLICY
     )
-    subagent_name: str = "general-purpose"
-    subagent_description: str = "通用深度研究子代理，负责隔离多步资料搜集与综合。"
     command_execution_backend: str | None = None
+    critic_revise_max_passes: int = 2
 
     def __post_init__(self) -> None:
         if self.finalizer_model is None:
