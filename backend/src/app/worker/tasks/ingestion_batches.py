@@ -27,6 +27,7 @@ from app.services.parsing import ParseError, parse_material
 from app.services.query_dependent_collections import collection_name_for_window
 from app.worker.celery_app import celery_app
 from app.worker.task_resources import managed_task_resources
+from app.worker.tasks.embedding_fanout import embed_inputs_with_concurrency
 from app.worker.tasks.contextual_retry import generate_contexts_for_chunks
 from app.worker.tasks.embedding_inputs import build_embedding_inputs
 
@@ -451,11 +452,17 @@ async def _process_doc(*, doc, resources) -> _DocProcessOutcome:
             contextual_enabled=index_config.contextual.enabled,
         )
 
-        embeddings: list[list[float]] = []
-        batch_size = max(get_settings().ingestion_embedding_batch_size, 1)
-        for start in range(0, len(embedding_inputs), batch_size):
-            payload = embedding_inputs[start : start + batch_size]
-            embeddings.extend(await embedding_client.embed(texts=payload))
+        settings = get_settings()
+        batch_size = max(settings.ingestion_embedding_batch_size, 1)
+        max_batch_size = settings.embedding_max_batch_size
+        if max_batch_size is not None:
+            batch_size = min(batch_size, max(int(max_batch_size), 1))
+        embeddings = await embed_inputs_with_concurrency(
+            embedding_client=embedding_client,
+            embedding_inputs=embedding_inputs,
+            batch_size=batch_size,
+            fanout_concurrency=settings.ingestion_embedding_fanout_concurrency,
+        )
         _raise_on_embedding_count_mismatch(
             expected_count=len(embedding_inputs),
             actual_count=len(embeddings),

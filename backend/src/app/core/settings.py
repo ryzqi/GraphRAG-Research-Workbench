@@ -233,6 +233,9 @@ class Settings(DeploySettings):
     ingestion_embedding_batch_size: int = Field(
         32, alias="INGESTION_EMBEDDING_BATCH_SIZE"
     )
+    ingestion_embedding_fanout_concurrency: int = Field(
+        4, ge=1, alias="INGESTION_EMBEDDING_FANOUT_CONCURRENCY"
+    )
     ingestion_doc_queue_timeout_seconds: int = Field(
         600, ge=1, alias="INGESTION_DOC_QUEUE_TIMEOUT_SECONDS"
     )
