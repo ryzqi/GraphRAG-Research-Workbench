@@ -125,6 +125,15 @@ class WebSearchClient:
             self._client = AsyncTavilyClient(self._api_key)
         return self._client
 
+    def _http_request_timeout(self, client: httpx.AsyncClient) -> httpx.Timeout:
+        return client.timeout
+
+    def _sdk_timeout_seconds(self, *, default_seconds: float | None) -> float:
+        read_timeout = float(self._settings.http_timeout_read_seconds)
+        if default_seconds is None:
+            return read_timeout
+        return max(float(default_seconds), read_timeout)
+
     def _cache_key(self, prefix: str, payload: dict[str, Any]) -> str:
         fingerprint = json.dumps(payload, sort_keys=True, ensure_ascii=False)
         raw = f"{prefix}:{fingerprint}"
@@ -237,24 +246,26 @@ class WebSearchClient:
         }
         if self._http_client is None:
             client = create_http_client(self._settings)
+            timeout = self._http_request_timeout(client)
             try:
                 response = await client.request(
                     method,
                     url,
                     json=json_payload,
                     headers=headers,
-                    timeout=None,
+                    timeout=timeout,
                 )
                 response.raise_for_status()
                 return response.json()
             finally:
                 await client.aclose()
+        timeout = self._http_request_timeout(self._http_client)
         response = await self._http_client.request(
             method,
             url,
             json=json_payload,
             headers=headers,
-            timeout=None,
+            timeout=timeout,
         )
         response.raise_for_status()
         return response.json()
@@ -415,7 +426,11 @@ class WebSearchClient:
         start = time.perf_counter()
         try:
             response = await self._run_with_policy(
-                lambda: self._call_tavily("extract", **payload, timeout=None),
+                lambda: self._call_tavily(
+                    "extract",
+                    **payload,
+                    timeout=self._sdk_timeout_seconds(default_seconds=30.0),
+                ),
             )
             results = normalize_results(response.get("results", []))
             if not results and response.get("content"):
@@ -495,7 +510,11 @@ class WebSearchClient:
         start = time.perf_counter()
         try:
             response = await self._run_with_policy(
-                lambda: self._call_tavily("crawl", **payload, timeout=None),
+                lambda: self._call_tavily(
+                    "crawl",
+                    **payload,
+                    timeout=self._sdk_timeout_seconds(default_seconds=150.0),
+                ),
             )
             results = normalize_results(response.get("results", []))
             output = build_output(
@@ -590,7 +609,11 @@ class WebSearchClient:
         try:
             try:
                 create_response = await self._run_with_policy(
-                    lambda: self._call_tavily("research", **payload, timeout=None),
+                    lambda: self._call_tavily(
+                        "research",
+                        **payload,
+                        timeout=self._sdk_timeout_seconds(default_seconds=None),
+                    ),
                 )
             except RuntimeError:
                 create_response = await self._run_with_policy(
