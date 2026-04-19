@@ -191,22 +191,11 @@ def build_web_search_tool(
                 "auto_parameters": auto_parameters,
             }
         )
-        if not retrievers:
-            error = {
-                "code": "WEB_SEARCH_PROVIDER_NOT_CONFIGURED",
-                "message": "未配置可用的 Web 搜索 provider",
-                "retryable": False,
-            }
-            return json.dumps(
-                _build_web_search_error_output(
-                    query=args.query,
-                    parameters=parameters,
-                    error=error,
-                ),
-                ensure_ascii=False,
-            )
-        output = await pipeline.search(
+        output = await _invoke_web_search(
+            pipeline,
+            retrievers=retrievers,
             query=args.query,
+            parameters=parameters,
             max_results=max_results,
             search_type=args.search_type,
             search_depth=search_depth,
@@ -221,10 +210,7 @@ def build_web_search_tool(
             include_usage=include_usage,
             auto_parameters=auto_parameters,
         )
-        output["parameters"] = parameters
-        output["total_found"] = len(output.get("results", []))
-        output.setdefault("usage", None)
-        output.setdefault("request_id", None)
+        _augment_web_search_snippet_locator(output)
         return json.dumps(output, ensure_ascii=False)
 
     return lc_tool(
@@ -234,6 +220,77 @@ def build_web_search_tool(
         ),
         args_schema=WebSearchArgs,
     )(_search)
+
+
+async def _invoke_web_search(
+    pipeline: WebSearchPipeline,
+    *,
+    retrievers: list[SearchRetriever],
+    query: str,
+    parameters: dict[str, Any],
+    max_results: int,
+    search_type: str | None = None,
+    search_depth: str | None = None,
+    time_range: str | None = None,
+    include_domains: list[str] | None = None,
+    exclude_domains: list[str] | None = None,
+    include_raw_content: bool | str | None = None,
+    include_answer: bool | str | None = None,
+    include_images: bool | None = None,
+    include_image_descriptions: bool | None = None,
+    include_favicon: bool | None = None,
+    include_usage: bool | None = None,
+    auto_parameters: bool | None = None,
+) -> dict[str, Any]:
+    if not retrievers:
+        error = {
+            "code": "WEB_SEARCH_PROVIDER_NOT_CONFIGURED",
+            "message": "未配置可用的 Web 搜索 provider",
+            "retryable": False,
+        }
+        return _build_web_search_error_output(
+            query=query,
+            parameters=parameters,
+            error=error,
+        )
+    output = await pipeline.search(
+        query=query,
+        max_results=max_results,
+        search_type=search_type,
+        search_depth=search_depth,
+        time_range=time_range,
+        include_domains=include_domains,
+        exclude_domains=exclude_domains,
+        include_raw_content=include_raw_content,
+        include_answer=include_answer,
+        include_images=include_images,
+        include_image_descriptions=include_image_descriptions,
+        include_favicon=include_favicon,
+        include_usage=include_usage,
+        auto_parameters=auto_parameters,
+    )
+    output["parameters"] = parameters
+    output["total_found"] = len(output.get("results", []))
+    output.setdefault("usage", None)
+    output.setdefault("request_id", None)
+    return output
+
+
+def _augment_web_search_snippet_locator(payload: dict[str, Any]) -> dict[str, Any]:
+    results = payload.get("results")
+    if not isinstance(results, list):
+        return payload
+    for item in results:
+        if not isinstance(item, dict):
+            continue
+        hint = (
+            str(item.get("section") or "").strip()
+            or str(item.get("anchor") or "").strip()
+            or str(item.get("title") or "").strip()
+            or "snippet"
+        )
+        item["snippet_locator"] = str(item.get("snippet_locator") or hint[:80] or "snippet")
+    return payload
 
 
 def build_jina_read_tool(

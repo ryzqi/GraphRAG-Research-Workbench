@@ -88,12 +88,23 @@ def merge_document_metadata(base: Document, **updates: Any) -> Document:
     return Document(page_content=base.page_content, metadata=metadata)
 
 
+def _resolve_snippet_locator(metadata: dict[str, Any]) -> str:
+    hint = (
+        str(metadata.get("section") or "").strip()
+        or str(metadata.get("anchor") or "").strip()
+        or str(metadata.get("title") or "").strip()
+        or "snippet"
+    )
+    return hint[:80] or "snippet"
+
+
 def document_to_result(document: Document) -> dict[str, Any]:
     metadata = dict(document.metadata)
     return {
         "title": str(metadata.get("title") or "").strip(),
         "url": str(metadata.get("url") or "").strip(),
         "snippet": str(document.page_content or "").strip(),
+        "snippet_locator": _resolve_snippet_locator(metadata),
         "source": str(metadata.get("provider") or "").strip(),
         "domain": str(metadata.get("domain") or "").strip()
         or extract_domain(str(metadata.get("url") or "")),
