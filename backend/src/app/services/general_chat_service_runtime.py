@@ -11,7 +11,7 @@ from langchain.messages import AIMessage, AnyMessage, HumanMessage, SystemMessag
 from sqlalchemy import select
 
 from app.agents.general_chat_agent import SUMMARY_KEEP, SUMMARY_TRIGGER
-from app.agents.tool_calling.registry import build_tool_registry
+from app.agents.tool_calling.registry import build_tool_registry_cached
 from app.agents.tools.system_time import build_system_time_tool
 from app.agents.tools.web_search import has_web_extract_provider, has_web_search_provider
 from app.core.errors import AppError
@@ -44,7 +44,7 @@ async def _load_tool_registry_for_session(
         )
         result = await self._db.execute(stmt)
         extensions = list(result.scalars().all())
-    return await build_tool_registry(
+    return await build_tool_registry_cached(
         settings=self._settings,
         extensions=extensions,
         extra_tools=[build_system_time_tool()],
@@ -71,7 +71,7 @@ async def _load_runtime_tool_registry_for_session(self, *, session: ChatSession)
         extensions = list(result.scalars().all())
 
     if not include_mcp:
-        yield await build_tool_registry(
+        yield await build_tool_registry_cached(
             settings=self._settings,
             extensions=[],
             extra_tools=[build_system_time_tool()],
@@ -89,7 +89,7 @@ async def _load_runtime_tool_registry_for_session(self, *, session: ChatSession)
         extensions=extensions,
         allow_external=True,
     ) as (mcp_entries, _diagnostics):
-        yield await build_tool_registry(
+        yield await build_tool_registry_cached(
             settings=self._settings,
             extensions=extensions,
             mcp_entries=mcp_entries,

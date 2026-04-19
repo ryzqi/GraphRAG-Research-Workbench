@@ -56,6 +56,290 @@ class ToolMeta:
     is_external: bool
 
 
+@dataclass(frozen=True, slots=True)
+class _StaticToolRegistryCacheKey:
+    settings_id: int
+    redis_id: int
+    http_client_id: int
+    include_web_search: bool
+    include_web_extract: bool
+    include_web_crawl: bool
+    tool_output_max_chars: int
+
+
+_STATIC_TOOL_REGISTRY_CACHE: dict[
+    _StaticToolRegistryCacheKey,
+    tuple[tuple[BaseTool, ...], dict[str, ToolMeta]],
+] = {}
+
+
+def _object_identity(value: object | None) -> int:
+    return 0 if value is None else id(value)
+
+
+def _clone_registry_section(
+    cached: tuple[tuple[BaseTool, ...], dict[str, ToolMeta]],
+) -> tuple[list[BaseTool], dict[str, ToolMeta]]:
+    tools, meta_by_name = cached
+    return list(tools), dict(meta_by_name)
+
+
+def _add_tool(
+    *,
+    tools: list[BaseTool],
+    meta_by_name: dict[str, ToolMeta],
+    tool: BaseTool,
+    meta: ToolMeta,
+) -> None:
+    if tool.name in meta_by_name:
+        raise ValueError(f"工具名冲突: {tool.name}")
+    tools.append(tool)
+    meta_by_name[tool.name] = meta
+
+
+def _append_registry_section(
+    *,
+    tools: list[BaseTool],
+    meta_by_name: dict[str, ToolMeta],
+    section: tuple[list[BaseTool], dict[str, ToolMeta]],
+) -> None:
+    section_tools, section_meta_by_name = section
+    for tool in section_tools:
+        _add_tool(
+            tools=tools,
+            meta_by_name=meta_by_name,
+            tool=tool,
+            meta=section_meta_by_name[tool.name],
+        )
+
+
+def _wrap_external_tool(
+    *,
+    base_tool: BaseTool,
+    tool_output_max_chars: int,
+) -> BaseTool:
+    async def _call_external(**kwargs: object) -> str:
+        output = await base_tool.ainvoke(kwargs)
+        return compact_builtin_external_output(
+            base_tool.name,
+            output,
+            tool_output_max_chars,
+        )
+
+    return lc_tool(
+        base_tool.name,
+        description=base_tool.description,
+        args_schema=getattr(base_tool, "args_schema", None),
+    )(_call_external)
+
+
+def _build_static_tool_registry(
+    *,
+    settings: Settings,
+    include_web_search: bool,
+    include_web_extract: bool,
+    include_web_crawl: bool,
+    tool_output_max_chars: int,
+    redis: RedisClient | None,
+    http_client: httpx.AsyncClient | None,
+) -> tuple[list[BaseTool], dict[str, ToolMeta]]:
+    tools: list[BaseTool] = []
+    meta_by_name: dict[str, ToolMeta] = {}
+
+    if include_web_search and has_web_search_provider(settings):
+        tool = _wrap_external_tool(
+            base_tool=build_web_search_tool(
+                settings,
+                redis=redis,
+                http_client=http_client,
+            ),
+            tool_output_max_chars=tool_output_max_chars,
+        )
+        _add_tool(
+            tools=tools,
+            meta_by_name=meta_by_name,
+            tool=tool,
+            meta=ToolMeta(
+                tool_name=tool.name,
+                raw_tool_name=tool.name,
+                extension_id="builtin",
+                extension_name="内置工具",
+                is_builtin=True,
+                is_external=True,
+            ),
+        )
+    if include_web_extract and has_web_extract_provider(settings):
+        tool = _wrap_external_tool(
+            base_tool=build_web_extract_tool(
+                settings,
+                redis=redis,
+                http_client=http_client,
+            ),
+            tool_output_max_chars=tool_output_max_chars,
+        )
+        _add_tool(
+            tools=tools,
+            meta_by_name=meta_by_name,
+            tool=tool,
+            meta=ToolMeta(
+                tool_name=tool.name,
+                raw_tool_name=tool.name,
+                extension_id="builtin",
+                extension_name="内置工具",
+                is_builtin=True,
+                is_external=True,
+            ),
+        )
+    if has_jina_read_provider(settings):
+        tool = _wrap_external_tool(
+            base_tool=build_jina_read_tool(
+                settings,
+                http_client=http_client,
+            ),
+            tool_output_max_chars=tool_output_max_chars,
+        )
+        _add_tool(
+            tools=tools,
+            meta_by_name=meta_by_name,
+            tool=tool,
+            meta=ToolMeta(
+                tool_name=tool.name,
+                raw_tool_name=tool.name,
+                extension_id="builtin",
+                extension_name="内置工具",
+                is_builtin=True,
+                is_external=True,
+            ),
+        )
+    if settings.web_search_api_key and include_web_crawl:
+        tool = _wrap_external_tool(
+            base_tool=build_web_crawl_tool(
+                settings,
+                redis=redis,
+                http_client=http_client,
+            ),
+            tool_output_max_chars=tool_output_max_chars,
+        )
+        _add_tool(
+            tools=tools,
+            meta_by_name=meta_by_name,
+            tool=tool,
+            meta=ToolMeta(
+                tool_name=tool.name,
+                raw_tool_name=tool.name,
+                extension_id="builtin",
+                extension_name="内置工具",
+                is_builtin=True,
+                is_external=True,
+            ),
+        )
+
+    return tools, meta_by_name
+
+
+def _get_cached_static_tool_registry(
+    *,
+    settings: Settings,
+    include_web_search: bool,
+    include_web_extract: bool,
+    include_web_crawl: bool,
+    tool_output_max_chars: int,
+    redis: RedisClient | None,
+    http_client: httpx.AsyncClient | None,
+) -> tuple[list[BaseTool], dict[str, ToolMeta]]:
+    key = _StaticToolRegistryCacheKey(
+        settings_id=_object_identity(settings),
+        redis_id=_object_identity(redis),
+        http_client_id=_object_identity(http_client),
+        include_web_search=include_web_search,
+        include_web_extract=include_web_extract,
+        include_web_crawl=include_web_crawl,
+        tool_output_max_chars=tool_output_max_chars,
+    )
+    cached = _STATIC_TOOL_REGISTRY_CACHE.get(key)
+    if cached is not None:
+        return _clone_registry_section(cached)
+
+    section = _build_static_tool_registry(
+        settings=settings,
+        include_web_search=include_web_search,
+        include_web_extract=include_web_extract,
+        include_web_crawl=include_web_crawl,
+        tool_output_max_chars=tool_output_max_chars,
+        redis=redis,
+        http_client=http_client,
+    )
+    cached = (tuple(section[0]), dict(section[1]))
+    _STATIC_TOOL_REGISTRY_CACHE[key] = cached
+    return _clone_registry_section(cached)
+
+
+def _build_mcp_tool_registry_section(
+    *,
+    entries: Sequence[McpToolEntry],
+    tool_output_max_chars: int,
+) -> tuple[list[BaseTool], dict[str, ToolMeta]]:
+    tools: list[BaseTool] = []
+    meta_by_name: dict[str, ToolMeta] = {}
+
+    for entry in entries:
+        ext = entry.extension
+        raw_tool_name = entry.raw_tool_name
+        base_tool = entry.tool
+        tool_name = make_mcp_tool_name(str(ext.id), raw_tool_name)
+        description = getattr(base_tool, "description", None) or "MCP 工具"
+        args_schema = getattr(base_tool, "args_schema", None)
+
+        async def _call_mcp_tool(
+            _tool: BaseTool = base_tool,
+            **kwargs: object,
+        ) -> str:
+            try:
+                output = await _tool.ainvoke(kwargs)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                payload = {"ok": False, "error": str(exc)}
+                text, _ = encode_and_truncate(payload, tool_output_max_chars)
+                return text
+
+            content: object = output
+            artifact: object | None = None
+            if isinstance(output, tuple) and len(output) == 2:
+                content, artifact = output
+
+            payload: dict[str, object] = {
+                "ok": True,
+                "content": _sanitize_mcp_content(content),
+            }
+            if artifact is not None:
+                payload["artifact"] = artifact
+
+            text, _ = encode_and_truncate(payload, tool_output_max_chars)
+            return text
+
+        tool = lc_tool(
+            tool_name,
+            description=description,
+            args_schema=args_schema,
+        )(_call_mcp_tool)
+        _add_tool(
+            tools=tools,
+            meta_by_name=meta_by_name,
+            tool=tool,
+            meta=ToolMeta(
+                tool_name=tool_name,
+                raw_tool_name=raw_tool_name,
+                extension_id=str(ext.id),
+                extension_name=ext.name,
+                is_builtin=False,
+                is_external=True,
+            ),
+        )
+
+    return tools, meta_by_name
+
+
 def _sanitize_mcp_content(content: object) -> object:
     """将 MCP 工具输出清洗为适合 ToolMessage 的安全可序列化内容。
 
@@ -103,17 +387,13 @@ async def build_tool_registry(
     tools: list[BaseTool] = []
     meta_by_name: dict[str, ToolMeta] = {}
 
-    def _add_tool(tool: BaseTool, meta: ToolMeta) -> None:
-        if tool.name in meta_by_name:
-            raise ValueError(f"工具名冲突: {tool.name}")
-        tools.append(tool)
-        meta_by_name[tool.name] = meta
-
     # 先注册内部/业务工具（不需要命名空间）
     for tool in extra_tools or []:
         _add_tool(
-            tool,
-            ToolMeta(
+            tools=tools,
+            meta_by_name=meta_by_name,
+            tool=tool,
+            meta=ToolMeta(
                 tool_name=tool.name,
                 raw_tool_name=tool.name,
                 extension_id="builtin",
@@ -123,53 +403,19 @@ async def build_tool_registry(
             ),
         )
 
-    def _wrap_external_tool(base_tool: BaseTool) -> None:
-        async def _call_external(**kwargs: object) -> str:
-            output = await base_tool.ainvoke(kwargs)
-            return compact_builtin_external_output(
-                base_tool.name,
-                output,
-                tool_output_max_chars,
-            )
-
-        tool = lc_tool(
-            base_tool.name,
-            description=base_tool.description,
-            args_schema=getattr(base_tool, "args_schema", None),
-        )(_call_external)
-        _add_tool(
-            tool,
-            ToolMeta(
-                tool_name=tool.name,
-                raw_tool_name=tool.name,
-                extension_id="builtin",
-                extension_name="内置工具",
-                is_builtin=True,
-                is_external=True,
-            ),
-        )
-
-    # 内置联网工具
-    if include_web_search and has_web_search_provider(settings):
-        _wrap_external_tool(
-            build_web_search_tool(settings, redis=redis, http_client=http_client)
-        )
-    if include_web_extract and has_web_extract_provider(settings):
-        _wrap_external_tool(
-            build_web_extract_tool(settings, redis=redis, http_client=http_client)
-        )
-    if has_jina_read_provider(settings):
-        _wrap_external_tool(
-            build_jina_read_tool(
-                settings,
-                http_client=http_client,
-            )
-        )
-    if settings.web_search_api_key:
-        if include_web_crawl:
-            _wrap_external_tool(
-                build_web_crawl_tool(settings, redis=redis, http_client=http_client)
-            )
+    _append_registry_section(
+        tools=tools,
+        meta_by_name=meta_by_name,
+        section=_build_static_tool_registry(
+            settings=settings,
+            include_web_search=include_web_search,
+            include_web_extract=include_web_extract,
+            include_web_crawl=include_web_crawl,
+            tool_output_max_chars=tool_output_max_chars,
+            redis=redis,
+            http_client=http_client,
+        ),
+    )
 
     # MCP 扩展工具（外部工具，需要命名空间）
     if include_mcp and settings.mcp_enabled and extensions:
@@ -178,58 +424,86 @@ async def build_tool_registry(
             if mcp_entries is not None
             else await load_mcp_tools(settings=settings, extensions=extensions)
         )
-        for entry in resolved_mcp_entries:
-            ext = entry.extension
-            raw_tool_name = entry.raw_tool_name
-            base_tool = entry.tool
-            tool_name = make_mcp_tool_name(str(ext.id), raw_tool_name)
-            description = getattr(base_tool, "description", None) or "MCP 工具"
-            args_schema = getattr(base_tool, "args_schema", None)
+        _append_registry_section(
+            tools=tools,
+            meta_by_name=meta_by_name,
+            section=_build_mcp_tool_registry_section(
+                entries=resolved_mcp_entries,
+                tool_output_max_chars=tool_output_max_chars,
+            ),
+        )
 
-            async def _call_mcp_tool(
-                _tool: BaseTool = base_tool,
-                **kwargs: object,
-            ) -> str:
-                try:
-                    output = await _tool.ainvoke(kwargs)
-                except asyncio.CancelledError:
-                    raise
-                except Exception as exc:
-                    payload = {"ok": False, "error": str(exc)}
-                    text, _ = encode_and_truncate(payload, tool_output_max_chars)
-                    return text
+    return tools, meta_by_name
 
-                content: object = output
-                artifact: object | None = None
-                if isinstance(output, tuple) and len(output) == 2:
-                    content, artifact = output
 
-                payload: dict[str, object] = {
-                    "ok": True,
-                    "content": _sanitize_mcp_content(content),
-                }
-                if artifact is not None:
-                    payload["artifact"] = artifact
+async def build_tool_registry_cached(
+    *,
+    settings: Settings,
+    extensions: Sequence[ToolExtension] | None = None,
+    mcp_entries: Sequence[McpToolEntry] | None = None,
+    extra_tools: Sequence[BaseTool] | None = None,
+    include_web_search: bool = True,
+    include_web_extract: bool = False,
+    include_web_crawl: bool = False,
+    include_mcp: bool = True,
+    tool_output_max_chars: int = DEFAULT_TOOL_OUTPUT_MAX_CHARS,
+    redis: RedisClient | None = None,
+    http_client: httpx.AsyncClient | None = None,
+) -> tuple[list[BaseTool], dict[str, ToolMeta]]:
+    """构建工具列表，并缓存可安全复用的静态 registry 段。"""
 
-                text, _ = encode_and_truncate(payload, tool_output_max_chars)
-                return text
+    tools: list[BaseTool] = []
+    meta_by_name: dict[str, ToolMeta] = {}
 
-            tool = lc_tool(
-                tool_name,
-                description=description,
-                args_schema=args_schema,
-            )(_call_mcp_tool)
-            _add_tool(
-                tool,
-                ToolMeta(
-                    tool_name=tool_name,
-                    raw_tool_name=raw_tool_name,
-                    extension_id=str(ext.id),
-                    extension_name=ext.name,
-                    is_builtin=False,
-                    is_external=True,
-                ),
+    for tool in extra_tools or []:
+        _add_tool(
+            tools=tools,
+            meta_by_name=meta_by_name,
+            tool=tool,
+            meta=ToolMeta(
+                tool_name=tool.name,
+                raw_tool_name=tool.name,
+                extension_id="builtin",
+                extension_name="内置工具",
+                is_builtin=True,
+                is_external=False,
+            ),
+        )
+
+    _append_registry_section(
+        tools=tools,
+        meta_by_name=meta_by_name,
+        section=_get_cached_static_tool_registry(
+            settings=settings,
+            include_web_search=include_web_search,
+            include_web_extract=include_web_extract,
+            include_web_crawl=include_web_crawl,
+            tool_output_max_chars=tool_output_max_chars,
+            redis=redis,
+            http_client=http_client,
+        ),
+    )
+
+    if include_mcp and settings.mcp_enabled and extensions:
+        mcp_section = (
+            _build_mcp_tool_registry_section(
+                entries=list(mcp_entries),
+                tool_output_max_chars=tool_output_max_chars,
             )
+            if mcp_entries is not None
+            else _build_mcp_tool_registry_section(
+                entries=await load_mcp_tools(
+                    settings=settings,
+                    extensions=extensions,
+                ),
+                tool_output_max_chars=tool_output_max_chars,
+            )
+        )
+        _append_registry_section(
+            tools=tools,
+            meta_by_name=meta_by_name,
+            section=mcp_section,
+        )
 
     return tools, meta_by_name
 

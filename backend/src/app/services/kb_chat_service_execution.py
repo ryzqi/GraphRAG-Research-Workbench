@@ -11,7 +11,7 @@ from sqlalchemy import select
 from app.agents.kb_chat_memory import (
     resolve_kb_chat_store_user_id,
 )
-from app.agents.tool_calling.registry import build_tool_registry
+from app.agents.tool_calling.registry import build_tool_registry_cached
 from app.agents.tools.kb_retrieve import build_kb_retrieve_tool
 from app.core.checkpoint import CheckpointManager
 from app.core.errors import AppError
@@ -330,7 +330,7 @@ async def _prepare_kb_chat_execution(
     )
 
     include_mcp = False  # KB Chat invariant: no MCP/tool-approval flow.
-    tools, tool_meta_by_name = await build_tool_registry(
+    tools, tool_meta_by_name = await build_tool_registry_cached(
         settings=self._settings,
         extensions=None,
         extra_tools=[kb_tool],
