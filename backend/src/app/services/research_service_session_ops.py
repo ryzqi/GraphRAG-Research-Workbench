@@ -12,8 +12,72 @@ from app.schemas.research import (
 from app.services.research_finalizer import ResearchFinalizerResult
 from app.services.research_planner_types import ResearchPlannerResult
 from app.services.research_observability import (
+    build_quality_snapshot,
     ensure_research_trace_id,
 )
+
+
+def _quality_findings_from_snapshot(
+    runtime_context_snapshot: object,
+) -> list[dict[str, object]]:
+    if not hasattr(runtime_context_snapshot, "claim_map_json") or not hasattr(
+        runtime_context_snapshot, "coverage_critique_json"
+    ):
+        return []
+    claim_map_json = getattr(runtime_context_snapshot, "claim_map_json")
+    coverage_critique_json = getattr(runtime_context_snapshot, "coverage_critique_json")
+    claims = claim_map_json.get("claims") if isinstance(claim_map_json, dict) else None
+    counter_status = (
+        coverage_critique_json.get("counter_search_status")
+        if isinstance(coverage_critique_json, dict)
+        else None
+    )
+    counter_search_by_claim: dict[str, bool] = {}
+    if isinstance(counter_status, list):
+        for item in counter_status:
+            if not isinstance(item, dict):
+                continue
+            claim_id = str(item.get("claim_id") or "").strip()
+            if not claim_id:
+                continue
+            counter_search_by_claim[claim_id] = item.get("counter_searched") is True
+    if not isinstance(claims, list):
+        return []
+    findings: list[dict[str, object]] = []
+    for item in claims:
+        if not isinstance(item, dict):
+            continue
+        claim_id = str(item.get("claim_id") or "").strip()
+        independent_providers = item.get("independence_providers")
+        findings.append(
+            {
+                "independent_providers": (
+                    list(independent_providers)
+                    if isinstance(independent_providers, list)
+                    else []
+                ),
+                "counter_searched": counter_search_by_claim.get(claim_id, False),
+            }
+        )
+    return findings
+
+
+def _quality_orphan_citation_indices(runtime_context_snapshot: object) -> list[int]:
+    if not hasattr(runtime_context_snapshot, "coverage_critique_json"):
+        return []
+    coverage_critique_json = getattr(runtime_context_snapshot, "coverage_critique_json")
+    orphan_citations = (
+        coverage_critique_json.get("orphan_citations")
+        if isinstance(coverage_critique_json, dict)
+        else None
+    )
+    if not isinstance(orphan_citations, list):
+        return []
+    return [
+        item
+        for item in orphan_citations
+        if isinstance(item, int) and not isinstance(item, bool)
+    ]
 
 async def submit_clarification(
     service: Any,
@@ -306,6 +370,22 @@ async def execute_session(
         events=service.list_event_envelopes(session),
     )
     metrics["replay"] = replay
+    metrics["quality_snapshot"] = build_quality_snapshot(
+        claim_map=(
+            list(final_result.report_json.get("claim_map"))
+            if isinstance(final_result.report_json.get("claim_map"), list)
+            else []
+        ),
+        citations=(
+            list(final_result.report_json.get("citations"))
+            if isinstance(final_result.report_json.get("citations"), list)
+            else []
+        ),
+        findings=_quality_findings_from_snapshot(effective_runtime_context_snapshot),
+        orphan_citation_indices=_quality_orphan_citation_indices(
+            effective_runtime_context_snapshot
+        ),
+    )
     metrics["gate"] = research_service_module.evaluate_research_gate(
         metrics=metrics,
         thresholds=service._gate_thresholds,

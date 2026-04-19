@@ -170,6 +170,13 @@ async def persist_metrics_artifacts(
         artifact_key='gate_snapshot',
         content_json=_json_mapping_payload(metrics.get('gate')),
     )
+    quality_payload = metrics.get('quality_snapshot')
+    if isinstance(quality_payload, dict):
+        await artifact_store.upsert(
+            session=session,
+            artifact_key='quality_snapshot',
+            content_json=_json_mapping_payload(quality_payload),
+        )
 
 
 def runtime_live_board_updated_at() -> str:

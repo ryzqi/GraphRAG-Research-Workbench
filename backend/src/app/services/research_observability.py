@@ -230,6 +230,47 @@ def build_research_metrics(
     return metrics
 
 
+def build_quality_snapshot(
+    *,
+    claim_map: list[dict[str, object]],
+    citations: list[dict[str, object]],
+    findings: list[dict[str, object]],
+    orphan_citation_indices: list[int],
+) -> dict[str, object]:
+    total_claims = len(claim_map) or 1
+    supported_count = sum(1 for item in claim_map if item.get("verdict") == "supported")
+    excerpt_present = sum(
+        1
+        for item in citations
+        if isinstance(item.get("excerpts"), list) and bool(item.get("excerpts"))
+    )
+    findings_total = len(findings) or 1
+    independent_ok = sum(
+        1
+        for item in findings
+        if len(_normalize_independent_providers(item.get("independent_providers"))) >= 2
+    )
+    counter_exposed = sum(1 for item in findings if item.get("counter_searched") is True)
+    citations_total = len(citations) or 1
+    return {
+        "claim_alignment_rate": supported_count / total_claims,
+        "citation_excerpt_presence": excerpt_present / citations_total,
+        "independence_source_ratio": independent_ok / findings_total,
+        "counter_evidence_exposure": counter_exposed / findings_total,
+        "citation_orphan_rate": len(orphan_citation_indices) / citations_total,
+    }
+
+
+def _normalize_independent_providers(value: object) -> set[str]:
+    if not isinstance(value, list):
+        return set()
+    return {
+        str(item).strip().lower()
+        for item in value
+        if str(item).strip() and str(item).strip().lower() != "workspace"
+    }
+
+
 def classify_research_fault(
     exc: Exception,
     *,
