@@ -30,27 +30,35 @@ async def _run_research_session(session_id: str) -> None:
         if sessionmaker is None:  # pragma: no cover
             return
 
-        async with sessionmaker() as db:
-            runtime_runner = await get_cached_runner(settings=settings)
-            service = build_research_service(db=db, runtime_runner=runtime_runner)
+        runtime_runner = await get_cached_runner(settings=settings)
+        async with sessionmaker() as bootstrap_db:
+            service = build_research_service(
+                db=bootstrap_db,
+                sessionmaker=sessionmaker,
+                runtime_runner=runtime_runner,
+            )
             session = await service.get_session(session_uuid)
             if session.status != ResearchSessionStatus.QUEUED:
                 return
+            plan_snapshot = service.read_plan_snapshot(session)
 
-            try:
-                await service.execute_session(
-                    session=session,
-                    plan_snapshot=service.read_plan_snapshot(session),
+        try:
+            await service.execute_session(
+                session=session,
+                plan_snapshot=plan_snapshot,
+            )
+        except Exception as exc:
+            async with sessionmaker() as fail_db:
+                fail_service = build_research_service(
+                    db=fail_db,
+                    sessionmaker=sessionmaker,
+                    runtime_runner=runtime_runner,
                 )
-                await db.commit()
-            except Exception as exc:
-                await db.rollback()
-                session = await service.get_session(session_uuid)
+                session = await fail_service.get_session(session_uuid)
                 if session.status.is_terminal():
                     return
-                await service.fail_session(
+                await fail_service.fail_session(
                     session=session,
                     exc=exc,
                     phase=session.runtime_phase or "runtime",
                 )
-                await db.commit()

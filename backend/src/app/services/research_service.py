@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 import logging
 import inspect
 import uuid
+from typing import TypeVar
 
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.checkpoint import CheckpointManager
 from app.core.errors import bad_request, not_found
@@ -31,7 +33,9 @@ from app.services.research_artifact_store import ResearchArtifactStore
 from app.services.research_event_store import ResearchEventStore
 from app.services.research_finalizer import ResearchFinalizer, ResearchFinalizerResult
 from app.services.research_observability import (
+    ResearchRuntimeRunResult,
     build_failure_metrics as build_failure_metrics,  # noqa: F401
+    build_trace_links,
     build_research_gate_thresholds,
     build_research_metrics as build_research_metrics,  # noqa: F401
     classify_research_fault as classify_research_fault,  # noqa: F401
@@ -61,6 +65,7 @@ from app.services.research_service_contracts import (
 from app.services.research_service_execution import (
     append_trace_events,
     merge_runtime_projection_snapshot,
+    persist_final_report_artifacts,
     persist_metrics_artifacts,
     persist_runtime_activity_update,
     persist_runtime_context_artifacts,
@@ -79,6 +84,7 @@ PLAN_PROGRESS_EVENT_TYPE = "research.plan_progress.updated"
 RUNTIME_TASK_GRAPH_ARTIFACT_KEY = "runtime_task_graph_json"
 RUNTIME_LIVE_BOARD_ARTIFACT_KEY = "runtime_live_board_json"
 logger = logging.getLogger(__name__)
+_StageResultT = TypeVar("_StageResultT")
 
 
 class ResearchService:
@@ -86,6 +92,7 @@ class ResearchService:
         self,
         *,
         db: AsyncSession,
+        sessionmaker: async_sessionmaker[AsyncSession] | None = None,
         planner: ResearchPlanner,
         runtime_runner: ResearchRuntimeRunner,
         finalizer: ResearchFinalizer,
@@ -95,6 +102,7 @@ class ResearchService:
         settings: Settings | None = None,
     ) -> None:
         self._db = db
+        self._sessionmaker = sessionmaker
         self._planner = planner
         self._runtime_runner = runtime_runner
         self._finalizer = finalizer
@@ -103,6 +111,90 @@ class ResearchService:
         self._artifact_store = artifact_store or ResearchArtifactStore(db)
         self._settings = settings or get_settings()
         self._gate_thresholds = build_research_gate_thresholds(self._settings)
+
+    def _build_db_bound_service(self, db: AsyncSession) -> "ResearchService":
+        return ResearchService(
+            db=db,
+            planner=self._planner,
+            runtime_runner=self._runtime_runner,
+            finalizer=self._finalizer,
+            session_repository=ResearchSessionRepository(db),
+            event_store=ResearchEventStore(db),
+            artifact_store=ResearchArtifactStore(db),
+            settings=self._settings,
+        )
+
+    @staticmethod
+    def _copy_session_state_fields(
+        *,
+        source: ResearchSession,
+        target: ResearchSession,
+        fields: tuple[str, ...],
+    ) -> None:
+        for field in fields:
+            value = getattr(source, field)
+            if isinstance(value, dict):
+                value = dict(value)
+            elif isinstance(value, list):
+                value = list(value)
+            setattr(target, field, value)
+
+    @classmethod
+    def _sync_session_snapshot(
+        cls,
+        *,
+        source: ResearchSession,
+        target: ResearchSession,
+    ) -> None:
+        cls._copy_session_state_fields(
+            source=source,
+            target=target,
+            fields=(
+                "status",
+                "planner_phase",
+                "runtime_phase",
+                "finalizer_phase",
+                "trace_id",
+                "last_event_sequence",
+                "metrics",
+                "error_message",
+                "created_at",
+                "started_at",
+                "finished_at",
+                "updated_at",
+            ),
+        )
+        if "events" in source.__dict__:
+            target.events = list(source.events)
+        if "artifacts" in source.__dict__:
+            target.artifacts = list(source.artifacts)
+        if "task_outbox_entries" in source.__dict__:
+            target.task_outbox_entries = list(source.task_outbox_entries)
+
+    async def _run_stage_operation(
+        self,
+        *,
+        session: ResearchSession,
+        state_fields: tuple[str, ...] = (),
+        operation: Callable[
+            ["ResearchService", ResearchSession], Awaitable[_StageResultT]
+        ],
+    ) -> _StageResultT:
+        if self._sessionmaker is None or session.id is None:
+            return await operation(self, session)
+
+        async with self._sessionmaker() as stage_db:
+            stage_service = self._build_db_bound_service(stage_db)
+            stage_session = await stage_service.get_session(session.id)
+            self._copy_session_state_fields(
+                source=session,
+                target=stage_session,
+                fields=state_fields,
+            )
+            result = await operation(stage_service, stage_session)
+            await stage_db.commit()
+            self._sync_session_snapshot(source=stage_session, target=session)
+            return result
 
     async def get_session(self, session_id: uuid.UUID) -> ResearchSession:
         session = await self._session_repository.get_with_details(session_id)
@@ -285,13 +377,19 @@ class ResearchService:
         session: ResearchSession,
         runtime_context_snapshot: ResearchRuntimeContextSnapshot | None,
     ) -> None:
-        await persist_runtime_context_artifacts(
-            artifact_store=self._artifact_store,
-            session=session,
-            runtime_context_snapshot=runtime_context_snapshot,
-            task_graph_artifact_key=RUNTIME_TASK_GRAPH_ARTIFACT_KEY,
-            live_board_artifact_key=RUNTIME_LIVE_BOARD_ARTIFACT_KEY,
-        )
+        async def _write(
+            stage_service: "ResearchService",
+            stage_session: ResearchSession,
+        ) -> None:
+            await persist_runtime_context_artifacts(
+                artifact_store=stage_service._artifact_store,
+                session=stage_session,
+                runtime_context_snapshot=runtime_context_snapshot,
+                task_graph_artifact_key=RUNTIME_TASK_GRAPH_ARTIFACT_KEY,
+                live_board_artifact_key=RUNTIME_LIVE_BOARD_ARTIFACT_KEY,
+            )
+
+        await self._run_stage_operation(session=session, operation=_write)
 
     def _merge_runtime_projection_snapshot(
         self,
@@ -316,13 +414,19 @@ class ResearchService:
         session: ResearchSession,
         plan_snapshot: ResearchPlanSnapshot,
     ) -> None:
-        await persist_runtime_execution_artifacts(
-            artifact_store=self._artifact_store,
-            session=session,
-            plan_snapshot=plan_snapshot,
-            task_graph_artifact_key=RUNTIME_TASK_GRAPH_ARTIFACT_KEY,
-            live_board_artifact_key=RUNTIME_LIVE_BOARD_ARTIFACT_KEY,
-        )
+        async def _write(
+            stage_service: "ResearchService",
+            stage_session: ResearchSession,
+        ) -> None:
+            await persist_runtime_execution_artifacts(
+                artifact_store=stage_service._artifact_store,
+                session=stage_session,
+                plan_snapshot=plan_snapshot,
+                task_graph_artifact_key=RUNTIME_TASK_GRAPH_ARTIFACT_KEY,
+                live_board_artifact_key=RUNTIME_LIVE_BOARD_ARTIFACT_KEY,
+            )
+
+        await self._run_stage_operation(session=session, operation=_write)
 
     async def _persist_runtime_activity_update(
         self,
@@ -330,11 +434,247 @@ class ResearchService:
         session: ResearchSession,
         update: ResearchRuntimeActivityUpdate,
     ) -> dict[str, object]:
-        return await persist_runtime_activity_update(
-            artifact_store=self._artifact_store,
+        async def _write(
+            stage_service: "ResearchService",
+            stage_session: ResearchSession,
+        ) -> dict[str, object]:
+            return await persist_runtime_activity_update(
+                artifact_store=stage_service._artifact_store,
+                session=stage_session,
+                update=update,
+                live_board_artifact_key=RUNTIME_LIVE_BOARD_ARTIFACT_KEY,
+            )
+
+        return await self._run_stage_operation(session=session, operation=_write)
+
+    async def _persist_runtime_start(
+        self,
+        *,
+        session: ResearchSession,
+        plan_snapshot: ResearchPlanSnapshot,
+    ) -> None:
+        async def _write(
+            stage_service: "ResearchService",
+            stage_session: ResearchSession,
+        ) -> None:
+            await stage_service._event_store.append(
+                session=stage_session,
+                event_type="research.run.started",
+                phase="runtime",
+                payload={
+                    "target_sources": [
+                        item.value for item in plan_snapshot.target_sources
+                    ],
+                    "lc_agent_name": "deep-research",
+                },
+                trace_id=stage_session.trace_id,
+            )
+            await stage_service._persist_plan_progress_snapshot(
+                session=stage_session,
+                plan_snapshot=plan_snapshot,
+                phase="runtime",
+                current_step_index=1 if plan_snapshot.subtasks else None,
+                completed_step_count=0,
+            )
+
+        await self._run_stage_operation(
             session=session,
-            update=update,
-            live_board_artifact_key=RUNTIME_LIVE_BOARD_ARTIFACT_KEY,
+            state_fields=("trace_id", "status", "runtime_phase", "started_at"),
+            operation=_write,
+        )
+
+    async def _persist_runtime_results(
+        self,
+        *,
+        session: ResearchSession,
+        plan_snapshot: ResearchPlanSnapshot,
+        runtime_result: ResearchRuntimeRunResult,
+        runtime_context_snapshot: ResearchRuntimeContextSnapshot | None,
+    ) -> None:
+        source_bundle = runtime_result.source_bundle
+        trace_links = build_trace_links(session=session, runtime_result=runtime_result)
+
+        async def _write(
+            stage_service: "ResearchService",
+            stage_session: ResearchSession,
+        ) -> None:
+            await stage_service._sync_runtime_plan_progress_from_checkpoint(
+                session=stage_session,
+                plan_snapshot=plan_snapshot,
+            )
+            await stage_service._append_trace_events(
+                session=stage_session,
+                trace_links=trace_links,
+            )
+            await stage_service._artifact_store.upsert(
+                session=stage_session,
+                artifact_key="source_bundle",
+                content_json={
+                    "target_sources": [
+                        item.value for item in source_bundle.target_sources
+                    ],
+                    "findings": list(source_bundle.findings),
+                    "citations": [
+                        citation.model_dump(mode="json")
+                        for citation in source_bundle.citations
+                    ],
+                    "provider_counts": source_bundle.provider_counts,
+                },
+            )
+            await stage_service._artifact_store.upsert(
+                session=stage_session,
+                artifact_key="interim_findings",
+                content_json=list(source_bundle.findings),
+            )
+            await stage_service._artifact_store.upsert(
+                session=stage_session,
+                artifact_key="interim_summary",
+                content_text=source_bundle.interim_summary,
+            )
+            await stage_service._artifact_store.upsert(
+                session=stage_session,
+                artifact_key="coverage_gaps",
+                content_json=list(source_bundle.coverage_gaps),
+            )
+            await stage_service._persist_runtime_context_artifacts(
+                session=stage_session,
+                runtime_context_snapshot=runtime_context_snapshot,
+            )
+
+        await self._run_stage_operation(session=session, operation=_write)
+
+    async def _persist_finalizer_start(
+        self,
+        *,
+        session: ResearchSession,
+        plan_snapshot: ResearchPlanSnapshot,
+        coverage_gaps: list[str],
+    ) -> None:
+        async def _write(
+            stage_service: "ResearchService",
+            stage_session: ResearchSession,
+        ) -> None:
+            await stage_service._persist_plan_progress_snapshot(
+                session=stage_session,
+                plan_snapshot=plan_snapshot,
+                phase="finalizer",
+                current_step_index=None,
+                completed_step_count=len(plan_snapshot.subtasks),
+            )
+            await stage_service._event_store.append(
+                session=stage_session,
+                event_type="research.finalizer.started",
+                phase="finalizer",
+                payload={
+                    "coverage_gaps": list(coverage_gaps),
+                    "lc_agent_name": "finalizer",
+                },
+                trace_id=stage_session.trace_id,
+            )
+
+        await self._run_stage_operation(
+            session=session,
+            state_fields=("status", "finalizer_phase"),
+            operation=_write,
+        )
+
+    async def _persist_finalized_session(
+        self,
+        *,
+        session: ResearchSession,
+        final_result: ResearchFinalizerResult,
+        metrics: dict[str, object],
+    ) -> None:
+        async def _write(
+            stage_service: "ResearchService",
+            stage_session: ResearchSession,
+        ) -> None:
+            await persist_final_report_artifacts(
+                artifact_store=stage_service._artifact_store,
+                session=stage_session,
+                final_result=final_result,
+            )
+            await stage_service._persist_metrics_artifacts(
+                session=stage_session,
+                metrics=metrics,
+            )
+            await stage_service._event_store.append(
+                session=stage_session,
+                event_type="research.final.completed",
+                phase="finalizer",
+                payload={
+                    "artifact_keys": [
+                        "report_json",
+                        "report_md",
+                        "claim_map_json",
+                        "coverage_matrix_json",
+                        "conflicts_json",
+                        "source_ledger_json",
+                        "metrics_snapshot",
+                        "gate_snapshot",
+                    ],
+                    "lc_agent_name": "finalizer",
+                },
+                trace_id=stage_session.trace_id,
+            )
+
+        await self._run_stage_operation(
+            session=session,
+            state_fields=("status", "finished_at"),
+            operation=_write,
+        )
+
+    async def _persist_failed_session(
+        self,
+        *,
+        session: ResearchSession,
+        exc: Exception,
+        phase: str,
+        source_provider: str | None,
+        fault: dict[str, object],
+        metrics: dict[str, object],
+        plan_snapshot: ResearchPlanSnapshot | None,
+    ) -> None:
+        async def _write(
+            stage_service: "ResearchService",
+            stage_session: ResearchSession,
+        ) -> None:
+            if plan_snapshot is not None and not stage_session.status.is_terminal():
+                await stage_service._persist_terminal_plan_progress_snapshot(
+                    session=stage_session,
+                    plan_snapshot=plan_snapshot,
+                    phase=phase,
+                    terminal_state="failed",
+                )
+            if not stage_session.status.is_terminal():
+                stage_session.transition_to(ResearchSessionStatus.FAILED)
+            await stage_service._event_store.append(
+                session=stage_session,
+                event_type="research.run.failed",
+                phase=phase,
+                payload={
+                    "error": str(exc),
+                    "fault": fault,
+                    "lc_agent_name": "deep-research",
+                    "source_provider": source_provider,
+                },
+                trace_id=stage_session.trace_id,
+            )
+            await stage_service._persist_metrics_artifacts(
+                session=stage_session,
+                metrics=metrics,
+            )
+
+        await self._run_stage_operation(
+            session=session,
+            state_fields=(
+                "trace_id",
+                "runtime_phase",
+                "finalizer_phase",
+                "error_message",
+                "finished_at",
+            ),
+            operation=_write,
         )
 
     async def submit_clarification(
@@ -552,11 +892,17 @@ class ResearchService:
         session: ResearchSession,
         trace_links: list[dict[str, object]],
     ) -> None:
-        await append_trace_events(
-            event_store=self._event_store,
-            session=session,
-            trace_links=trace_links,
-        )
+        async def _write(
+            stage_service: "ResearchService",
+            stage_session: ResearchSession,
+        ) -> None:
+            await append_trace_events(
+                event_store=stage_service._event_store,
+                session=stage_session,
+                trace_links=trace_links,
+            )
+
+        await self._run_stage_operation(session=session, operation=_write)
 
     async def _persist_metrics_artifacts(
         self,
@@ -564,17 +910,29 @@ class ResearchService:
         session: ResearchSession,
         metrics: dict[str, object],
     ) -> None:
-        await persist_metrics_artifacts(
-            artifact_store=self._artifact_store,
-            session=session,
-            metrics=metrics,
-        )
+        async def _write(
+            stage_service: "ResearchService",
+            stage_session: ResearchSession,
+        ) -> None:
+            await persist_metrics_artifacts(
+                artifact_store=stage_service._artifact_store,
+                session=stage_session,
+                metrics=metrics,
+            )
+
+        await self._run_stage_operation(session=session, operation=_write)
 
     async def _read_committed_session_status(
         self,
         *,
         session: ResearchSession,
     ) -> ResearchSessionStatus | None:
+        if self._sessionmaker is not None and session.id is not None:
+            async with self._sessionmaker() as stage_db:
+                return await read_committed_session_status(
+                    db=stage_db,
+                    session=session,
+                )
         return await read_committed_session_status(
             db=self._db,
             session=session,
@@ -630,33 +988,39 @@ class ResearchService:
         event_message: str | None = None,
         emit_event: bool = True,
     ) -> dict[str, object]:
-        normalized_message = normalize_plan_progress_message(event_message)
-        existing_payload = self._read_plan_progress_payload(session)
-        if (
-            plan_progress_snapshot_equals(existing_payload, snapshot)
-            and normalized_message is None
-        ):
-            return existing_payload if existing_payload is not None else snapshot
-        await self._artifact_store.upsert(
-            session=session,
-            artifact_key=PLAN_PROGRESS_ARTIFACT_KEY,
-            content_json=snapshot,
-        )
-        summary = normalized_message or build_plan_progress_summary(snapshot)
-        if emit_event:
-            await self._event_store.append(
-                session=session,
-                event_type=PLAN_PROGRESS_EVENT_TYPE,
-                phase=phase,
-                payload={
-                    **snapshot,
-                    "summary": summary,
-                    "message": normalized_message,
-                    "lc_agent_name": lc_agent_name_for_phase(phase),
-                },
-                trace_id=session.trace_id,
+        async def _write(
+            stage_service: "ResearchService",
+            stage_session: ResearchSession,
+        ) -> dict[str, object]:
+            normalized_message = normalize_plan_progress_message(event_message)
+            existing_payload = stage_service._read_plan_progress_payload(stage_session)
+            if (
+                plan_progress_snapshot_equals(existing_payload, snapshot)
+                and normalized_message is None
+            ):
+                return existing_payload if existing_payload is not None else snapshot
+            await stage_service._artifact_store.upsert(
+                session=stage_session,
+                artifact_key=PLAN_PROGRESS_ARTIFACT_KEY,
+                content_json=snapshot,
             )
-        return snapshot
+            summary = normalized_message or build_plan_progress_summary(snapshot)
+            if emit_event:
+                await stage_service._event_store.append(
+                    session=stage_session,
+                    event_type=PLAN_PROGRESS_EVENT_TYPE,
+                    phase=phase,
+                    payload={
+                        **snapshot,
+                        "summary": summary,
+                        "message": normalized_message,
+                        "lc_agent_name": lc_agent_name_for_phase(phase),
+                    },
+                    trace_id=stage_session.trace_id,
+                )
+            return snapshot
+
+        return await self._run_stage_operation(session=session, operation=_write)
 
     async def _persist_terminal_plan_progress_snapshot(
         self,
@@ -722,52 +1086,64 @@ class ResearchService:
         plan_snapshot: ResearchPlanSnapshot,
     ):
         async def _callback(update: ResearchRuntimeActivityUpdate) -> None:
-            live_board = await self._persist_runtime_activity_update(
-                session=session,
-                update=update,
-            )
-            await self._sync_runtime_plan_progress_from_checkpoint(
-                session=session,
-                plan_snapshot=plan_snapshot,
-            )
-            await self._event_store.append(
-                session=session,
-                event_type="research.runtime.activity",
-                phase="runtime",
-                payload={
-                    "task_id": update.task_id,
-                    "title": update.title,
-                    "task_kind": update.task_kind,
-                    "status": update.status,
-                    "parallel_group": update.parallel_group,
-                    "message": update.message,
-                    "summary": update.message or update.title,
-                    "lc_agent_name": update.agent_name,
-                    "subagent_name": update.subagent_name,
-                    "current_task_label": live_board.get("current_task_label"),
-                    "current_agent_label": live_board.get("current_agent_label"),
-                },
-                trace_id=session.trace_id,
-            )
+            async def _write(
+                stage_service: "ResearchService",
+                stage_session: ResearchSession,
+            ) -> dict[str, object]:
+                live_board = await stage_service._persist_runtime_activity_update(
+                    session=stage_session,
+                    update=update,
+                )
+                await stage_service._sync_runtime_plan_progress_from_checkpoint(
+                    session=stage_session,
+                    plan_snapshot=plan_snapshot,
+                )
+                await stage_service._event_store.append(
+                    session=stage_session,
+                    event_type="research.runtime.activity",
+                    phase="runtime",
+                    payload={
+                        "task_id": update.task_id,
+                        "title": update.title,
+                        "task_kind": update.task_kind,
+                        "status": update.status,
+                        "parallel_group": update.parallel_group,
+                        "message": update.message,
+                        "summary": update.message or update.title,
+                        "lc_agent_name": update.agent_name,
+                        "subagent_name": update.subagent_name,
+                        "current_task_label": live_board.get("current_task_label"),
+                        "current_agent_label": live_board.get("current_agent_label"),
+                    },
+                    trace_id=stage_session.trace_id,
+                )
+                return live_board
+
+            await self._run_stage_operation(session=session, operation=_write)
             await self._commit_checkpoint()
 
         return _callback
 
     async def _commit_checkpoint(self) -> None:
+        if self._sessionmaker is not None:
+            return
         commit = getattr(self._db, "commit", None)
         if callable(commit):
             commit_result = commit()
             if inspect.isawaitable(commit_result):
                 await commit_result
 
+
 def build_research_service(
     *,
     db: AsyncSession,
+    sessionmaker: async_sessionmaker[AsyncSession] | None = None,
     runtime_runner: ResearchRuntimeRunner | None = None,
     session_repository: ResearchSessionRepository | None = None,
 ) -> ResearchService:
     return ResearchService(
         db=db,
+        sessionmaker=sessionmaker,
         planner=ResearchPlanner(),
         runtime_runner=runtime_runner or UnconfiguredResearchRuntimeRunner(),
         finalizer=ResearchFinalizer(),

@@ -12,10 +12,8 @@ from app.schemas.research import (
 from app.services.research_finalizer import ResearchFinalizerResult
 from app.services.research_planner_types import ResearchPlannerResult
 from app.services.research_observability import (
-    build_trace_links,
     ensure_research_trace_id,
 )
-from app.services.research_service_execution import persist_final_report_artifacts
 
 async def submit_clarification(
     service: Any,
@@ -248,22 +246,9 @@ async def execute_session(
     session.transition_to(ResearchSessionStatus.RUNNING)
     session.runtime_phase = "runtime"
     session.started_at = datetime.now(timezone.utc)
-    await service._event_store.append(
-        session=session,
-        event_type="research.run.started",
-        phase="runtime",
-        payload={
-            "target_sources": [item.value for item in plan_snapshot.target_sources],
-            "lc_agent_name": "deep-research",
-        },
-        trace_id=session.trace_id,
-    )
-    await service._persist_plan_progress_snapshot(
+    await service._persist_runtime_start(
         session=session,
         plan_snapshot=plan_snapshot,
-        phase="runtime",
-        current_step_index=1 if plan_snapshot.subtasks else None,
-        completed_step_count=0,
     )
     await service._commit_checkpoint()
 
@@ -275,51 +260,15 @@ async def execute_session(
             plan_snapshot=plan_snapshot,
         ),
     )
-    await service._sync_runtime_plan_progress_from_checkpoint(
-        session=session,
-        plan_snapshot=plan_snapshot,
-    )
     source_bundle = runtime_result.source_bundle
-    await service._append_trace_events(
-        session=session,
-        trace_links=build_trace_links(
-            session=session, runtime_result=runtime_result
-        ),
-    )
-    await service._artifact_store.upsert(
-        session=session,
-        artifact_key="source_bundle",
-        content_json={
-            "target_sources": [item.value for item in source_bundle.target_sources],
-            "findings": list(source_bundle.findings),
-            "citations": [
-                citation.model_dump(mode="json")
-                for citation in source_bundle.citations
-            ],
-            "provider_counts": source_bundle.provider_counts,
-        },
-    )
-    await service._artifact_store.upsert(
-        session=session,
-        artifact_key="interim_findings",
-        content_json=list(source_bundle.findings),
-    )
-    await service._artifact_store.upsert(
-        session=session,
-        artifact_key="interim_summary",
-        content_text=source_bundle.interim_summary,
-    )
-    await service._artifact_store.upsert(
-        session=session,
-        artifact_key="coverage_gaps",
-        content_json=list(source_bundle.coverage_gaps),
-    )
     effective_runtime_context_snapshot = service._merge_runtime_projection_snapshot(
         session=session,
         runtime_context_snapshot=runtime_result.runtime_context_snapshot,
     )
-    await service._persist_runtime_context_artifacts(
+    await service._persist_runtime_results(
         session=session,
+        plan_snapshot=plan_snapshot,
+        runtime_result=runtime_result,
         runtime_context_snapshot=effective_runtime_context_snapshot,
     )
     await service._commit_checkpoint()
@@ -334,22 +283,10 @@ async def execute_session(
 
     session.transition_to(ResearchSessionStatus.FINALIZING)
     session.finalizer_phase = "finalizer"
-    await service._persist_plan_progress_snapshot(
+    await service._persist_finalizer_start(
         session=session,
         plan_snapshot=plan_snapshot,
-        phase="finalizer",
-        current_step_index=None,
-        completed_step_count=len(plan_snapshot.subtasks),
-    )
-    await service._event_store.append(
-        session=session,
-        event_type="research.finalizer.started",
-        phase="finalizer",
-        payload={
-            "coverage_gaps": list(source_bundle.coverage_gaps),
-            "lc_agent_name": "finalizer",
-        },
-        trace_id=session.trace_id,
+        coverage_gaps=list(source_bundle.coverage_gaps),
     )
     await service._commit_checkpoint()
 
@@ -358,11 +295,6 @@ async def execute_session(
         target_sources=plan_snapshot.target_sources,
         source_bundle=source_bundle,
         runtime_context_snapshot=effective_runtime_context_snapshot,
-    )
-    await persist_final_report_artifacts(
-        artifact_store=service._artifact_store,
-        session=session,
-        final_result=final_result,
     )
     metrics = research_service_module.build_research_metrics(
         session=session,
@@ -378,27 +310,12 @@ async def execute_session(
         metrics=metrics,
         thresholds=service._gate_thresholds,
     )
-    await service._persist_metrics_artifacts(session=session, metrics=metrics)
     session.transition_to(ResearchSessionStatus.FINAL)
     session.finished_at = datetime.now(timezone.utc)
-    await service._event_store.append(
+    await service._persist_finalized_session(
         session=session,
-        event_type="research.final.completed",
-        phase="finalizer",
-        payload={
-            "artifact_keys": [
-                "report_json",
-                "report_md",
-                "claim_map_json",
-                "coverage_matrix_json",
-                "conflicts_json",
-                "source_ledger_json",
-                "metrics_snapshot",
-                "gate_snapshot",
-            ],
-            "lc_agent_name": "finalizer",
-        },
-        trace_id=session.trace_id,
+        final_result=final_result,
+        metrics=metrics,
     )
     await service._commit_checkpoint()
     return final_result
@@ -414,31 +331,13 @@ async def fail_session(
     from app.services import research_service as research_service_module
 
     ensure_research_trace_id(session)
+    plan_snapshot = None
     if not session.status.is_terminal():
         plan_snapshot = service._try_read_plan_snapshot(session)
-        if plan_snapshot is not None:
-            await service._persist_terminal_plan_progress_snapshot(
-                session=session,
-                plan_snapshot=plan_snapshot,
-                phase=phase,
-                terminal_state="failed",
-            )
         session.transition_to(ResearchSessionStatus.FAILED)
     session.error_message = str(exc)
     session.finished_at = datetime.now(timezone.utc)
     fault = research_service_module.classify_research_fault(exc, source_provider=source_provider)
-    await service._event_store.append(
-        session=session,
-        event_type="research.run.failed",
-        phase=phase,
-        payload={
-            "error": str(exc),
-            "fault": fault,
-            "lc_agent_name": "deep-research",
-            "source_provider": source_provider,
-        },
-        trace_id=session.trace_id,
-    )
     metrics = research_service_module.build_failure_metrics(
         session=session,
         fault=fault,
@@ -447,5 +346,13 @@ async def fail_session(
         if isinstance(session.metrics, dict)
         else None,
     )
-    await service._persist_metrics_artifacts(session=session, metrics=metrics)
+    await service._persist_failed_session(
+        session=session,
+        exc=exc,
+        phase=phase,
+        source_provider=source_provider,
+        fault=fault,
+        metrics=metrics,
+        plan_snapshot=plan_snapshot,
+    )
     return session
