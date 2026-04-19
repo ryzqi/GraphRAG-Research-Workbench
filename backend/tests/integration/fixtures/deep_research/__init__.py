@@ -1,1 +1,0 @@
-"""Deep Research integration fixtures."""
