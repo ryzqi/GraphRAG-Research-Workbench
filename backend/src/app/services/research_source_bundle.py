@@ -203,12 +203,20 @@ class ResearchSourceQualityJudge:
             expected_indices = {index for index, _citation in batch}
             if set(decision_by_index) != expected_indices:
                 error_fallback_used = True
+                fallback_decision = (
+                    "keep"
+                    if self._policy.fallback_mode == "keep_on_judge_error"
+                    else "drop"
+                )
                 for index, citation in batch:
-                    kept.append(citation)
+                    if fallback_decision == "keep":
+                        kept.append(citation)
+                    else:
+                        dropped_count += 1
                     decisions.append(
                         self._build_decision(
                             citation_index=index,
-                            decision="keep",
+                            decision=fallback_decision,
                             relevance_to_question="medium",
                             support_utility="contextual",
                             source_trust_signal="unknown",

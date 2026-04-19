@@ -32,5 +32,5 @@ source_quality:
     - "x.com"
   judge_enabled: true
   judge_batch_size: 6
-  fallback_mode: "keep_on_judge_error"
-  keep_borderline_results: true
+  fallback_mode: "drop_on_judge_error"
+  keep_borderline_results: false
