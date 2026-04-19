@@ -26,6 +26,7 @@ from app.services.contextual_embedding_service import ContextualEmbeddingService
 from app.services.knowledge_base_service import touch_kb_updated_at
 from app.services.parsing import ParseError, parse_material
 from app.services.query_dependent_collections import collection_name_for_window
+from app.worker.async_runtime import run_in_worker_async_runtime
 from app.worker.celery_app import celery_app
 from app.worker.task_resources import managed_task_resources
 from app.worker.tasks.contextual_retry import generate_contexts_for_chunks
@@ -60,7 +61,7 @@ def _should_skip_index_rebuild_status(status: IndexRebuildStatus) -> bool:
 @celery_app.task(name="app.worker.tasks.index_rebuild.run_index_rebuild_job")
 def run_index_rebuild_job(job_id: str) -> None:
     """索引重建的 Celery 入口。"""
-    asyncio.run(_run_index_rebuild_job(job_id))
+    run_in_worker_async_runtime(_run_index_rebuild_job(job_id))
 
 
 def _raise_on_index_rebuild_embedding_count_mismatch(

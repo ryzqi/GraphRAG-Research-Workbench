@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import json
 import uuid
 
@@ -10,6 +9,7 @@ from app.integrations.object_storage import ObjectRef
 from app.models.export_job import ExportJob, ExportStatus
 from app.services.exporters.chat_exporter import ChatExporter
 from app.services.exporters.research_exporter import ResearchExporter
+from app.worker.async_runtime import run_in_worker_async_runtime
 from app.worker.celery_app import celery_app
 from app.worker.task_resources import managed_task_resources
 
@@ -38,7 +38,7 @@ def _build_download_response_headers(
 
 @celery_app.task(name="app.worker.tasks.export.run_export")
 def run_export(export_id: str, export_type: str, target_id: str) -> None:
-    asyncio.run(
+    run_in_worker_async_runtime(
         _run_export(export_id=export_id, export_type=export_type, target_id=target_id)
     )
 

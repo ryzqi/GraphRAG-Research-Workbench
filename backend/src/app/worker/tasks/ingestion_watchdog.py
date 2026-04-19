@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
@@ -15,6 +14,7 @@ from app.services.ingestion_batch_service import (
     INGESTION_DOC_TASK_NAME,
     IngestionBatchService,
 )
+from app.worker.async_runtime import run_in_worker_async_runtime
 from app.worker.celery_app import celery_app
 from app.worker.task_resources import managed_task_resources
 
@@ -41,7 +41,7 @@ def _resolve_doc_timeout_error_message(*, error_code: str) -> str:
 
 @celery_app.task(name="app.worker.tasks.ingestion_watchdog.fail_stale_processing_docs")
 def fail_stale_processing_docs(limit: int = DEFAULT_DOC_WATCHDOG_BATCH_SIZE) -> None:
-    asyncio.run(_fail_stale_processing_docs(limit=limit))
+    run_in_worker_async_runtime(_fail_stale_processing_docs(limit=limit))
 
 
 async def _fail_stale_processing_docs(

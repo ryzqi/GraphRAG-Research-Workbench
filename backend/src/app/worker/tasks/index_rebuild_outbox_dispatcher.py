@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
 
@@ -14,6 +13,7 @@ from app.models.index_rebuild_task_outbox import (
     IndexRebuildTaskOutbox,
     IndexRebuildTaskOutboxStatus,
 )
+from app.worker.async_runtime import run_in_worker_async_runtime
 from app.worker.celery_app import celery_app
 from app.worker.task_resources import managed_task_resources
 
@@ -121,7 +121,7 @@ async def _claim_due_outbox_rows(
     name="app.worker.tasks.index_rebuild_outbox_dispatcher.dispatch_index_rebuild_outbox"
 )
 def dispatch_index_rebuild_outbox(limit: int = DEFAULT_DISPATCH_BATCH_SIZE) -> None:
-    asyncio.run(_dispatch_index_rebuild_outbox(limit=limit))
+    run_in_worker_async_runtime(_dispatch_index_rebuild_outbox(limit=limit))
 
 
 async def _dispatch_index_rebuild_outbox(

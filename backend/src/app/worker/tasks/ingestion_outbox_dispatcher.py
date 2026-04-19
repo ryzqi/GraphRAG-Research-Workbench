@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
 
@@ -16,6 +15,7 @@ from app.models.ingestion_task_outbox import (
 )
 from app.services.ingestion_batch_change_bus import open_ingestion_batch_change_bus
 from app.services.ingestion_batch_service import IngestionBatchService
+from app.worker.async_runtime import run_in_worker_async_runtime
 from app.worker.celery_app import celery_app
 from app.worker.task_resources import managed_task_resources
 
@@ -167,7 +167,7 @@ async def _claim_due_outbox_rows(*, session, limit: int) -> list[IngestionTaskOu
     name="app.worker.tasks.ingestion_outbox_dispatcher.dispatch_ingestion_outbox"
 )
 def dispatch_ingestion_outbox(limit: int = DEFAULT_DISPATCH_BATCH_SIZE) -> None:
-    asyncio.run(_dispatch_ingestion_outbox(limit=limit))
+    run_in_worker_async_runtime(_dispatch_ingestion_outbox(limit=limit))
 
 
 async def _dispatch_ingestion_outbox(

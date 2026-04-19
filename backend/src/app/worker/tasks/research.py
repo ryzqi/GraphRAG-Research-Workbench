@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-import asyncio
 import uuid
 
-from app.core.uvicorn_loop import windows_selector_loop_factory
 from app.core.settings import get_settings
 from app.models.research_session import ResearchSessionStatus
 from app.services.research_service import build_research_service
+from app.worker.async_runtime import run_in_worker_async_runtime
 from app.worker.celery_app import celery_app
 from app.worker.deep_research_runtime_cache import get_cached_runner
 from app.worker.task_resources import managed_task_resources
@@ -16,10 +15,7 @@ from app.worker.task_resources import managed_task_resources
 
 @celery_app.task(name="app.worker.tasks.research.run_research_session")
 def run_research_session(session_id: str) -> None:
-    asyncio.run(
-        _run_research_session(session_id),
-        loop_factory=windows_selector_loop_factory,
-    )
+    run_in_worker_async_runtime(_run_research_session(session_id))
 
 
 async def _run_research_session(session_id: str) -> None:

@@ -28,6 +28,11 @@ from app.integrations.redis_client import (
     create_redis_client,
 )
 from app.services.parsing.url_parser import UrlCrawler, close_url_crawler, create_url_crawler
+from app.worker.async_runtime import is_running_in_worker_async_runtime
+from app.worker.process_resources import (
+    get_process_scoped_resources,
+    shutdown_process_resources,
+)
 
 logger = logging.getLogger(__name__)
 MODEL_RUNTIME_REFRESH_TTL_SECONDS = 30.0
@@ -45,6 +50,12 @@ class TaskResources:
     milvus: MilvusClient | None = None
     object_storage: ObjectStorage | None = None
     url_crawler: UrlCrawler | None = None
+    owns_engine: bool = True
+    owns_http_client: bool = True
+    owns_embedding_http_client: bool = True
+    owns_redis: bool = True
+    owns_milvus: bool = True
+    owns_object_storage: bool = True
     _url_crawler_factory: Callable[..., Awaitable[UrlCrawler]] | None = None
     _url_crawler_lock: asyncio.Lock | None = None
     _url_crawler_unavailable: bool = False
@@ -96,20 +107,23 @@ async def _close_task_resources(
     if resources is None:
         return
     await close_url_crawler(resources.url_crawler)
-    await close_http_client(resources.http_client)
-    await close_http_client(resources.embedding_http_client)
-    await close_redis_client(resources.redis)
-    if resources.object_storage is not None:
+    if resources.owns_http_client:
+        await close_http_client(resources.http_client)
+    if resources.owns_embedding_http_client:
+        await close_http_client(resources.embedding_http_client)
+    if resources.owns_redis:
+        await close_redis_client(resources.redis)
+    if resources.owns_object_storage and resources.object_storage is not None:
         try:
             await resources.object_storage.close()
         except Exception:  # pragma: no cover - best effort
             pass
-    if resources.milvus is not None:
+    if resources.owns_milvus and resources.milvus is not None:
         try:
             await resources.milvus.aclose()
         except Exception:  # pragma: no cover - best effort
             pass
-    if resources.engine is not None:
+    if resources.owns_engine and resources.engine is not None:
         try:
             await resources.engine.dispose()
         except Exception:  # pragma: no cover - best effort
@@ -118,11 +132,12 @@ async def _close_task_resources(
 
 async def reset_shared_task_resources() -> None:
     scope = _TASK_RESOURCE_SCOPE.get()
-    if scope is None:
-        return
-    _TASK_RESOURCE_SCOPE.set(None)
-    scope.nesting = 0
-    await _close_task_resources(scope.resources)
+    if scope is not None:
+        _TASK_RESOURCE_SCOPE.set(None)
+        scope.nesting = 0
+        await _close_task_resources(scope.resources)
+    if is_running_in_worker_async_runtime():
+        await shutdown_process_resources()
 
 
 async def _ensure_model_runtime_config(
@@ -203,6 +218,62 @@ async def _ensure_task_resource_scope(
     return resources
 
 
+async def _ensure_process_scoped_task_resource_scope(
+    *,
+    scope: _TaskResourceScope,
+    settings: Settings,
+    with_engine: bool,
+    with_http: bool,
+    with_redis: bool,
+    with_milvus: bool,
+    with_object_storage: bool,
+) -> TaskResources:
+    resources = scope.resources
+    if resources.settings != settings:
+        raise RuntimeError(
+            "managed_task_resources does not support mixing Settings within the same asyncio task scope"
+        )
+
+    process_resources = await get_process_scoped_resources(
+        settings=settings,
+        with_engine=with_engine,
+        with_http=with_http,
+        with_redis=with_redis,
+        with_milvus=with_milvus,
+        with_object_storage=with_object_storage,
+        create_engine_factory=create_engine,
+        create_sessionmaker_factory=create_sessionmaker,
+        create_http_client_factory=create_http_client,
+        create_redis_client_factory=create_redis_client,
+        create_milvus_client_factory=create_milvus_client,
+        create_object_storage_factory=create_object_storage,
+        model_runtime_initialize=ModelRuntimeConfigManager.initialize,
+        model_runtime_refresh=ModelRuntimeConfigManager.refresh,
+        model_runtime_refresh_ttl_seconds=MODEL_RUNTIME_REFRESH_TTL_SECONDS,
+    )
+
+    if with_engine:
+        resources.engine = process_resources.engine
+        resources.sessionmaker = process_resources.sessionmaker
+        resources.owns_engine = False
+    if with_http:
+        resources.http_client = process_resources.http_client
+        resources.embedding_http_client = process_resources.embedding_http_client
+        resources.embedding_client = process_resources.embedding_client
+        resources.owns_http_client = False
+        resources.owns_embedding_http_client = False
+    if with_redis:
+        resources.redis = process_resources.redis
+        resources.owns_redis = False
+    if with_milvus:
+        resources.milvus = process_resources.milvus
+        resources.owns_milvus = False
+    if with_object_storage:
+        resources.object_storage = process_resources.object_storage
+        resources.owns_object_storage = False
+    return resources
+
+
 @asynccontextmanager
 async def _managed_ephemeral_task_resources(
     *,
@@ -269,7 +340,7 @@ async def managed_task_resources(
     with_object_storage: bool = False,
     use_null_pool: bool = False,
 ) -> AsyncIterator[TaskResources]:
-    """统一管理 Celery 任务资源：按单次 asyncio 调用栈复用，退出最外层时释放。"""
+    """统一管理 Celery 任务资源。worker runtime loop 内默认借用进程级资源。"""
     cfg = settings or get_settings()
     if use_null_pool:
         async with _managed_ephemeral_task_resources(
@@ -297,15 +368,26 @@ async def managed_task_resources(
         token = _TASK_RESOURCE_SCOPE.set(scope)
     scope.nesting += 1
     try:
-        resources = await _ensure_task_resource_scope(
-            scope=scope,
-            settings=cfg,
-            with_engine=with_engine,
-            with_http=with_http,
-            with_redis=with_redis,
-            with_milvus=with_milvus,
-            with_object_storage=with_object_storage,
-        )
+        if is_running_in_worker_async_runtime():
+            resources = await _ensure_process_scoped_task_resource_scope(
+                scope=scope,
+                settings=cfg,
+                with_engine=with_engine,
+                with_http=with_http,
+                with_redis=with_redis,
+                with_milvus=with_milvus,
+                with_object_storage=with_object_storage,
+            )
+        else:
+            resources = await _ensure_task_resource_scope(
+                scope=scope,
+                settings=cfg,
+                with_engine=with_engine,
+                with_http=with_http,
+                with_redis=with_redis,
+                with_milvus=with_milvus,
+                with_object_storage=with_object_storage,
+            )
         yield resources
     finally:
         scope.nesting -= 1

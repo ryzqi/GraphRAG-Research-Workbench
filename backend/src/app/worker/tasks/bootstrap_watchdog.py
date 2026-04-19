@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-import asyncio
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
 
 from app.core.settings import get_settings
 from app.models.kb_bootstrap_job import KBBootstrapJob, KBBootstrapJobStatus
+from app.worker.async_runtime import run_in_worker_async_runtime
 from app.worker.celery_app import celery_app
 from app.worker.task_resources import managed_task_resources
 
@@ -30,7 +30,7 @@ def _is_bootstrap_job_overdue(
 def fail_stale_bootstrap_jobs(
     limit: int = DEFAULT_BOOTSTRAP_WATCHDOG_BATCH_SIZE,
 ) -> None:
-    asyncio.run(_fail_stale_bootstrap_jobs(limit=limit))
+    run_in_worker_async_runtime(_fail_stale_bootstrap_jobs(limit=limit))
 
 
 async def _fail_stale_bootstrap_jobs(

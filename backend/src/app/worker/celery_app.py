@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import logging
 from datetime import timedelta
 from typing import Any
@@ -10,8 +9,16 @@ from celery.signals import setup_logging, worker_process_init, worker_process_sh
 from kombu import Queue
 
 from app.core.logging import configure_logging
-from app.core.uvicorn_loop import windows_selector_loop_factory
 from app.core.settings import Settings, get_settings
+from app.worker.async_runtime import (
+    initialize_worker_async_runtime,
+    run_in_worker_async_runtime,
+    shutdown_worker_async_runtime,
+)
+from app.worker.process_resources import (
+    initialize_process_resources,
+    shutdown_process_resources,
+)
 
 settings = get_settings()
 logger = logging.getLogger(__name__)
@@ -151,13 +158,13 @@ def _prewarm_deep_research_runtime(**_kwargs) -> None:
     async def _warm() -> None:
         cfg = get_settings()
         from app.worker.deep_research_runtime_cache import get_cached_runner
-        from app.worker.task_resources import managed_task_resources
 
-        async with managed_task_resources(settings=cfg, with_engine=True) as _resources:
-            await get_cached_runner(settings=cfg)
+        await initialize_process_resources(settings=cfg, with_engine=True)
+        await get_cached_runner(settings=cfg)
 
     try:
-        asyncio.run(_warm(), loop_factory=windows_selector_loop_factory)
+        initialize_worker_async_runtime()
+        run_in_worker_async_runtime(_warm())
     except Exception as exc:  # pragma: no cover - worker hook best effort
         logger.warning(
             "Deep research runtime prewarm failed",
@@ -172,12 +179,15 @@ def _shutdown_deep_research_runtime_cache(**_kwargs) -> None:
         from app.worker.deep_research_runtime_cache import DeepResearchRuntimeCache
 
         await DeepResearchRuntimeCache.shutdown()
+        await shutdown_process_resources()
 
     try:
-        asyncio.run(_shutdown(), loop_factory=windows_selector_loop_factory)
+        run_in_worker_async_runtime(_shutdown())
     except Exception as exc:  # pragma: no cover - worker hook best effort
         logger.warning(
             "Deep research runtime cache shutdown failed",
             extra={"error": str(exc)},
             exc_info=True,
         )
+    finally:
+        shutdown_worker_async_runtime()

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
 
@@ -14,6 +13,7 @@ from app.models.research_task_outbox import (
     ResearchTaskOutbox,
     ResearchTaskOutboxStatus,
 )
+from app.worker.async_runtime import run_in_worker_async_runtime
 from app.worker.celery_app import celery_app
 from app.worker.task_resources import managed_task_resources
 
@@ -128,7 +128,7 @@ async def _claim_due_outbox_rows(*, session, limit: int) -> list[ResearchTaskOut
     name="app.worker.tasks.research_outbox_dispatcher.dispatch_research_outbox"
 )
 def dispatch_research_outbox(limit: int = DEFAULT_DISPATCH_BATCH_SIZE) -> None:
-    asyncio.run(_dispatch_research_outbox(limit=limit))
+    run_in_worker_async_runtime(_dispatch_research_outbox(limit=limit))
 
 
 async def _dispatch_research_outbox(*, limit: int = DEFAULT_DISPATCH_BATCH_SIZE) -> int:

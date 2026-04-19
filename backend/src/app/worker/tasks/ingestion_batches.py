@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import uuid
 
@@ -25,6 +24,7 @@ from app.services.ingestion_batch_change_bus import open_ingestion_batch_change_
 from app.services.ingestion_batch_service import IngestionBatchService
 from app.services.parsing import ParseError, parse_material
 from app.services.query_dependent_collections import collection_name_for_window
+from app.worker.async_runtime import run_in_worker_async_runtime
 from app.worker.celery_app import celery_app
 from app.worker.task_resources import managed_task_resources
 from app.worker.tasks.embedding_fanout import embed_inputs_with_concurrency
@@ -184,7 +184,7 @@ _RETRYABLE_PARSE_CODES = {
 
 @celery_app.task(name="app.worker.tasks.ingestion_batches.run_ingestion_batch_doc")
 def run_ingestion_batch_doc(doc_id: str) -> None:
-    asyncio.run(_run_ingestion_batch_doc(doc_id))
+    run_in_worker_async_runtime(_run_ingestion_batch_doc(doc_id))
 
 
 async def _finalize_doc_on_app_error(
