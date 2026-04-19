@@ -1,6 +1,6 @@
-version: "1.0"
+version: "2.0"
 name: research_scoper_user
-description: "Deep Research preflight scoper user prompt"
+description: "Deep Research preflight scoper user prompt（多轮 clarification）"
 
 template: |
   请判断以下 deep research 用户问题是否需要先追问，再输出结构化结果。
@@ -18,12 +18,12 @@ template: |
 
   输出要求：
   - 只有关键缺口会显著改变研究路径时，才进入 clarify。
-  - clarify 时，优先一次性收集所有会改变研究路径的关键缺口；summary 要说明已知焦点与缺失变量；questions 只允许 1 到 2 个问题。
-  - clarify 时，允许把多个剩余关键维度聚合为一次提问，只要用户能够一次性作答；不要为时间范围、受众、输出形态等轻微模糊单独追问。
-  - proceed 时，research_brief 要写成可直接交给 runtime 执行的研究说明，而不是复述原问题。
-  - proceed 时，若只有轻微模糊，直接写入默认保守假设与 budget_guidance，不要为此追问。
-  - 若上下文已包含至少一轮用户补充，默认直接生成研究计划；只有在研究对象、核心范围或主比较对象仍缺失到无法规划时，才允许最后一次聚合追问。
-  - subtasks 应覆盖事实收集、交叉验证、风险/缺口识别中的核心环节。
+  - clarify 时，summary 要说明已知焦点与缺失变量；questions 1–2 个。
+  - 允许把多个剩余关键维度聚合为一次提问，只要用户能一次性作答。
+  - 时间范围、受众、输出形态等轻微模糊请直接采用默认保守假设，写入 research_brief 或 budget_guidance。
+  - 若累积的澄清回答仍无法定位 **研究对象** 或 **主比较维度**，可发起第二轮 1–2 个问题。
+  - 当达到 scoper_max_clarify_rounds（默认 2）仍不够时，必须 proceed 并在 research_brief 中显式保留"尚未闭合维度"的保守假设。
+  - proceed 时 research_brief 必须可直接交给 runtime 执行；subtasks 覆盖事实收集、交叉验证、风险缺口。
 
 variables:
   - name: question

@@ -725,6 +725,7 @@ class ResearchService:
         session: ResearchSession,
         answer: str,
     ) -> str:
+        max_rounds = get_settings().research_scoper_max_clarify_rounds
         normalized_question = str(session.question or "").strip()
         clarification_questions: list[str] = []
         clarification_answers: list[str] = []
@@ -774,9 +775,10 @@ class ResearchService:
         sections.append(
             "规划策略：\n"
             "- 首轮澄清应尽量一次性收齐会改变研究路径的关键缺口。\n"
-            "- 若当前已经收到用户补充，直接生成研究计划；不要再次追问。\n"
+            "- 仅当研究对象或主比较维度仍未闭合时，才允许继续追问。\n"
             "- 时间范围、受众、输出形态等轻微模糊请采用保守假设，并写入 research_brief 或 budget_guidance。\n"
-            f"- 当前澄清回答轮次：{current_round}。"
+            f"- 当前澄清回答轮次：{current_round} / {max_rounds}。\n"
+            f"- 达到 {max_rounds} 轮后必须直接生成研究计划，并在 research_brief 中保留尚未闭合维度的保守假设。"
         )
         return "\n\n".join(section for section in sections if section.strip())
 
@@ -795,8 +797,10 @@ class ResearchService:
         session: ResearchSession,
         answer: str,
     ) -> bool:
-        del cls, session, answer
-        return False
+        del cls, answer
+        max_rounds = get_settings().research_scoper_max_clarify_rounds
+        submitted = ResearchService._clarification_submission_count(session)
+        return submitted < max_rounds
 
     def _ensure_dispatch_outbox(self, *, session: ResearchSession) -> None:
         if session.status != ResearchSessionStatus.QUEUED:

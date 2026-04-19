@@ -178,6 +178,9 @@ class Settings(DeploySettings):
     kb_chat_max_clarification_rounds: int = Field(
         1, alias="KB_CHAT_MAX_CLARIFICATION_ROUNDS"
     )
+    research_scoper_max_clarify_rounds: int = Field(
+        2, ge=1, le=4, alias="RESEARCH_SCOPER_MAX_CLARIFY_ROUNDS"
+    )
     kb_chat_complexity_cache_enabled: bool = Field(
         True, alias="KB_CHAT_COMPLEXITY_CACHE_ENABLED"
     )
