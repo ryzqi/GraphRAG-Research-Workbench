@@ -7,7 +7,6 @@ import logging
 import uuid
 from datetime import datetime, timedelta, timezone
 from functools import partial
-from time import monotonic
 from typing import Any, AsyncIterator
 
 import httpx
@@ -38,6 +37,10 @@ from app.schemas.ingestion_batches import (
     KnowledgeBaseIngestionStateRead,
     ManifestEntry,
 )
+from app.services.ingestion_batch_change_bus import (
+    INGESTION_BATCH_CHANGED_EVENT,
+    IngestionBatchChangeBus,
+)
 from app.services import ingestion_batch_service_prepare as ingestion_prepare
 from app.services import ingestion_batch_service_status as ingestion_status
 from app.services.ingestion_batch_service_contracts import (
@@ -48,6 +51,7 @@ from app.services.ingestion_batch_service_contracts import (
     MAX_MANIFEST_ENTRIES,
 )
 from app.services.ingestion_contract import ingestion_error
+from app.services.streaming import stream_snapshots
 from app.services.url_ingestion_guard import build_url_ingestion_guard
 
 logger = logging.getLogger(__name__)
@@ -91,10 +95,13 @@ class IngestionBatchService:
         *,
         http_client: httpx.AsyncClient | None = None,
         object_storage: ObjectStorage,
+        change_bus: IngestionBatchChangeBus | None = None,
     ) -> None:
         self._db = db
         self._settings = get_settings()
         self._storage = object_storage
+        self._change_bus = change_bus
+        self._pending_batch_changes: set[uuid.UUID] = set()
         self._url_guard = build_url_ingestion_guard(
             self._settings,
             http_client=http_client,
@@ -217,54 +224,51 @@ class IngestionBatchService:
             IngestionBatchStatus.CANCELED,
         }
 
-        batch = await self._get_batch_or_raise(
-            batch_id=batch_id,
-            populate_existing=True,
-        )
-        snapshot_payload = IngestionBatchRead.model_validate(batch).model_dump(
-            mode='json'
-        )
-        yield 'snapshot', snapshot_payload
+        async def _fetch_batch() -> IngestionBatch:
+            return await self._get_batch_or_raise(
+                batch_id=batch_id,
+                populate_existing=True,
+            )
 
-        if batch.status in terminal_statuses:
-            yield 'final', snapshot_payload
-            return
+        def _serialize_batch(batch: IngestionBatch) -> dict[str, Any]:
+            return IngestionBatchRead.model_validate(batch).model_dump(mode='json')
 
-        last_snapshot_key = self._batch_snapshot_key(batch)
-        last_emit_at = monotonic()
+        def _heartbeat_payload() -> dict[str, Any]:
+            return {
+                'batch_id': str(batch_id),
+                'ts': datetime.now(timezone.utc).isoformat(),
+            }
+
+        stream_kwargs = {
+            'fetcher': _fetch_batch,
+            'serializer': _serialize_batch,
+            'is_terminal': lambda batch: batch.status in terminal_statuses,
+            'poll_interval': poll_interval,
+            'heartbeat_interval': heartbeat_interval,
+            'heartbeat_factory': _heartbeat_payload,
+            'initial_event': 'snapshot',
+        }
 
         try:
-            while True:
-                await asyncio.sleep(poll_interval)
+            if self._change_bus is None:
+                async for event, payload in stream_snapshots(**stream_kwargs):
+                    yield event, payload
+                return
 
-                batch = await self._get_batch_or_raise(
-                    batch_id=batch_id,
-                    populate_existing=True,
+            try:
+                async with self._change_bus.listen(batch_id=batch_id) as listener:
+                    async for event, payload in stream_snapshots(
+                        change_listener=listener,
+                        **stream_kwargs,
+                    ):
+                        yield event, payload
+            except Exception as exc:
+                logger.warning(
+                    'Failed to subscribe ingestion batch change listener; falling back to polling',
+                    extra={'batch_id': str(batch_id), 'error': str(exc)},
                 )
-                payload = IngestionBatchRead.model_validate(batch).model_dump(
-                    mode='json'
-                )
-                snapshot_key = self._batch_snapshot_key(batch)
-                changed = snapshot_key != last_snapshot_key
-
-                if changed:
-                    if batch.status in terminal_statuses:
-                        yield 'final', payload
-                        return
-                    yield 'update', payload
-                    last_snapshot_key = snapshot_key
-                    last_emit_at = monotonic()
-                    continue
-
-                if monotonic() - last_emit_at >= heartbeat_interval:
-                    yield (
-                        'heartbeat',
-                        {
-                            'batch_id': str(batch_id),
-                            'ts': datetime.now(timezone.utc).isoformat(),
-                        },
-                    )
-                    last_emit_at = monotonic()
+                async for event, payload in stream_snapshots(**stream_kwargs):
+                    yield event, payload
         except asyncio.CancelledError:
             return
 
@@ -355,7 +359,7 @@ class IngestionBatchService:
             batch_id=batch.id,
         )
         await self._recalculate_batch(batch, reason='manual_retry')
-        await self._db.commit()
+        await self.commit()
         try:
             self._trigger_outbox_dispatch()
         except Exception as exc:  # pragma: no cover - defensive guard
@@ -400,7 +404,7 @@ class IngestionBatchService:
             canceled_docs += 1
 
         await self._recalculate_batch(batch, reason='batch_cancel')
-        await self._db.commit()
+        await self.commit()
 
         return IngestionBatchCancelResponse(
             batch_id=batch.id,
@@ -550,7 +554,20 @@ class IngestionBatchService:
         await self._recalculate_batch(batch, reason=reason)
 
     async def commit(self) -> None:
+        changed_batch_ids = tuple(self._pending_batch_changes)
         await self._db.commit()
+        self._pending_batch_changes.clear()
+        if self._change_bus is None:
+            return
+        for changed_batch_id in changed_batch_ids:
+            await self._change_bus.publish(
+                batch_id=changed_batch_id,
+                event=INGESTION_BATCH_CHANGED_EVENT,
+            )
 
     async def rollback(self) -> None:
         await self._db.rollback()
+        self._pending_batch_changes.clear()
+
+    def _mark_batch_changed(self, batch_id: uuid.UUID) -> None:
+        self._pending_batch_changes.add(batch_id)

@@ -21,6 +21,7 @@ from app.schemas.knowledge_bases import ChunkingStrategy, IndexConfig
 from app.services.chunk_persistence_service import ChunkPersistenceService
 from app.services.chunking import ChunkingEngine
 from app.services.contextual_embedding_service import ContextualEmbeddingService
+from app.services.ingestion_batch_change_bus import open_ingestion_batch_change_bus
 from app.services.ingestion_batch_service import IngestionBatchService
 from app.services.parsing import ParseError, parse_material
 from app.services.query_dependent_collections import collection_name_for_window
@@ -225,91 +226,93 @@ async def _run_ingestion_batch_doc(doc_id: str) -> None:
         if sessionmaker is None:  # pragma: no cover
             return
 
-        async with sessionmaker() as session:
-            if resources.object_storage is None:  # pragma: no cover - defensive
-                return
-            service = IngestionBatchService(
-                session,
-                object_storage=resources.object_storage,
-            )
-            doc = await service.get_doc(doc_id=doc_uuid, for_update=True)
-            if doc is None:
-                return
-            outbox = await service.get_doc_outbox(doc_id=doc_uuid, for_update=True)
-            batch = doc.batch
-            if batch is not None and batch.status in TERMINAL_BATCH_STATUSES:
-                return
-            if doc.status in TERMINAL_DOC_STATUSES:
-                return
-
-            try:
-                await service.mark_doc_running(doc=doc)
-                await service.recalculate_batch_for_doc(doc=doc, reason="doc_start")
-                await service.commit()
-
-                outcome = await _process_doc(doc=doc, resources=resources)
-                await service.mark_doc_succeeded(
-                    doc=doc,
-                    outbox=outbox,
-                    chunk_count=outcome.chunk_count,
-                    context_failed_chunks=outcome.context_failed_chunks,
+        async with open_ingestion_batch_change_bus(settings=settings) as change_bus:
+            async with sessionmaker() as session:
+                if resources.object_storage is None:  # pragma: no cover - defensive
+                    return
+                service = IngestionBatchService(
+                    session,
+                    object_storage=resources.object_storage,
+                    change_bus=change_bus,
                 )
-                if outcome.semantic_fallback_chunks > 0:
+                doc = await service.get_doc(doc_id=doc_uuid, for_update=True)
+                if doc is None:
+                    return
+                outbox = await service.get_doc_outbox(doc_id=doc_uuid, for_update=True)
+                batch = doc.batch
+                if batch is not None and batch.status in TERMINAL_BATCH_STATUSES:
+                    return
+                if doc.status in TERMINAL_DOC_STATUSES:
+                    return
+
+                try:
+                    await service.mark_doc_running(doc=doc)
+                    await service.recalculate_batch_for_doc(doc=doc, reason="doc_start")
+                    await service.commit()
+
+                    outcome = await _process_doc(doc=doc, resources=resources)
+                    await service.mark_doc_succeeded(
+                        doc=doc,
+                        outbox=outbox,
+                        chunk_count=outcome.chunk_count,
+                        context_failed_chunks=outcome.context_failed_chunks,
+                    )
+                    if outcome.semantic_fallback_chunks > 0:
+                        logger.warning(
+                            "Semantic chunking fallback detected during ingestion",
+                            extra={
+                                "doc_id": str(doc.id),
+                                "kb_id": str(doc.kb_id),
+                                "semantic_fallback_chunks": outcome.semantic_fallback_chunks,
+                            },
+                        )
+                    await service.recalculate_batch_for_doc(doc=doc, reason="doc_succeeded")
+                    await service.commit()
+                except _ProcessingFailure as failure:
+                    await service.rollback()
+                    doc = await service.get_doc(doc_id=doc_uuid, for_update=True)
+                    if doc is None:
+                        return
+                    outbox = await service.get_doc_outbox(doc_id=doc_uuid, for_update=True)
+
+                    await service.mark_doc_failed(
+                        doc=doc,
+                        outbox=outbox,
+                        error_code=failure.code,
+                        error_message=failure.message,
+                        retryable=failure.retryable,
+                    )
+                    await service.recalculate_batch_for_doc(doc=doc, reason="doc_failed")
+                    await service.commit()
+                except AppError as exc:
                     logger.warning(
-                        "Semantic chunking fallback detected during ingestion",
+                        "Ingestion doc processing hit AppError",
                         extra={
-                            "doc_id": str(doc.id),
-                            "kb_id": str(doc.kb_id),
-                            "semantic_fallback_chunks": outcome.semantic_fallback_chunks,
+                            "doc_id": str(doc_uuid),
+                            "error_code": exc.code,
+                            "error_message": exc.message,
                         },
                     )
-                await service.recalculate_batch_for_doc(doc=doc, reason="doc_succeeded")
-                await service.commit()
-            except _ProcessingFailure as failure:
-                await service.rollback()
-                doc = await service.get_doc(doc_id=doc_uuid, for_update=True)
-                if doc is None:
-                    return
-                outbox = await service.get_doc_outbox(doc_id=doc_uuid, for_update=True)
-
-                await service.mark_doc_failed(
-                    doc=doc,
-                    outbox=outbox,
-                    error_code=failure.code,
-                    error_message=failure.message,
-                    retryable=failure.retryable,
-                )
-                await service.recalculate_batch_for_doc(doc=doc, reason="doc_failed")
-                await service.commit()
-            except AppError as exc:
-                logger.warning(
-                    "Ingestion doc processing hit AppError",
-                    extra={
-                        "doc_id": str(doc_uuid),
-                        "error_code": exc.code,
-                        "error_message": exc.message,
-                    },
-                )
-                await _finalize_doc_on_app_error(
-                    service=service,
-                    doc_id=doc_uuid,
-                    error=exc,
-                )
-            except Exception as exc:  # pragma: no cover - defensive fallback
-                await service.rollback()
-                doc = await service.get_doc(doc_id=doc_uuid, for_update=True)
-                if doc is None:
-                    return
-                outbox = await service.get_doc_outbox(doc_id=doc_uuid, for_update=True)
-                await service.mark_doc_failed(
-                    doc=doc,
-                    outbox=outbox,
-                    error_code="DOC_PROCESSING_ERROR",
-                    error_message=str(exc),
-                    retryable=True,
-                )
-                await service.recalculate_batch_for_doc(doc=doc, reason="doc_failed")
-                await service.commit()
+                    await _finalize_doc_on_app_error(
+                        service=service,
+                        doc_id=doc_uuid,
+                        error=exc,
+                    )
+                except Exception as exc:  # pragma: no cover - defensive fallback
+                    await service.rollback()
+                    doc = await service.get_doc(doc_id=doc_uuid, for_update=True)
+                    if doc is None:
+                        return
+                    outbox = await service.get_doc_outbox(doc_id=doc_uuid, for_update=True)
+                    await service.mark_doc_failed(
+                        doc=doc,
+                        outbox=outbox,
+                        error_code="DOC_PROCESSING_ERROR",
+                        error_message=str(exc),
+                        retryable=True,
+                    )
+                    await service.recalculate_batch_for_doc(doc=doc, reason="doc_failed")
+                    await service.commit()
 
 
 async def _process_doc(*, doc, resources) -> _DocProcessOutcome:

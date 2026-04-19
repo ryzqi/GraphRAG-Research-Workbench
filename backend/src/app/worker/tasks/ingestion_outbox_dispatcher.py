@@ -14,6 +14,7 @@ from app.models.ingestion_task_outbox import (
     IngestionTaskOutbox,
     IngestionTaskOutboxStatus,
 )
+from app.services.ingestion_batch_change_bus import open_ingestion_batch_change_bus
 from app.services.ingestion_batch_service import IngestionBatchService
 from app.worker.celery_app import celery_app
 from app.worker.task_resources import managed_task_resources
@@ -93,10 +94,10 @@ async def _recover_stale_dispatched_rows(
 
 async def _finalize_exhausted_outbox_rows(
     *,
-    session,  # noqa: ANN001
+    service: IngestionBatchService,
     limit: int,
-    object_storage,
 ) -> int:
+    session = service._db
     stmt = (
         select(IngestionTaskOutbox)
         .join(IngestionBatchDoc, IngestionBatchDoc.id == IngestionTaskOutbox.doc_id)
@@ -115,7 +116,6 @@ async def _finalize_exhausted_outbox_rows(
     if not rows:
         return 0
 
-    service = IngestionBatchService(session, object_storage=object_storage)
     finalized = 0
     for row in rows:
         doc = await service.get_doc(doc_id=row.doc_id, for_update=True)
@@ -196,60 +196,65 @@ async def _dispatch_ingestion_outbox(
             return 0
 
         dispatched_rows = 0
-        async with sessionmaker() as session:
-            while True:
-                await _recover_stale_dispatched_rows(
-                    session=session,
-                    limit=safe_limit,
-                    stale_dispatched_seconds=stale_seconds,
-                )
+        async with open_ingestion_batch_change_bus(settings=settings) as change_bus:
+            async with sessionmaker() as session:
                 if resources.object_storage is None:  # pragma: no cover - defensive guard
                     return 0
-                finalized_rows = await _finalize_exhausted_outbox_rows(
-                    session=session,
-                    limit=safe_limit,
+                service = IngestionBatchService(
+                    session,
                     object_storage=resources.object_storage,
+                    change_bus=change_bus,
                 )
-                rows = await _claim_due_outbox_rows(session=session, limit=safe_limit)
-                if not rows:
-                    if finalized_rows > 0:
-                        await session.commit()
-                    else:
-                        await session.rollback()
-                    break
+                while True:
+                    await _recover_stale_dispatched_rows(
+                        session=session,
+                        limit=safe_limit,
+                        stale_dispatched_seconds=stale_seconds,
+                    )
+                    finalized_rows = await _finalize_exhausted_outbox_rows(
+                        service=service,
+                        limit=safe_limit,
+                    )
+                    rows = await _claim_due_outbox_rows(session=session, limit=safe_limit)
+                    if not rows:
+                        if finalized_rows > 0:
+                            await service.commit()
+                        else:
+                            await service.rollback()
+                        break
 
-                from app.worker.tasks.ingestion_batches import run_ingestion_batch_doc
+                    from app.worker.tasks.ingestion_batches import run_ingestion_batch_doc
 
-                for row in rows:
-                    now = datetime.now(timezone.utc)
-                    row.attempts += 1
-                    try:
-                        run_ingestion_batch_doc.delay(str(row.doc_id))
-                    except (
-                        Exception
-                    ) as exc:  # pragma: no cover - depends on broker state
-                        row.status = IngestionTaskOutboxStatus.FAILED
-                        row.dispatched_at = None
-                        row.last_error = _format_error(exc)
-                        row.next_retry_at = now + timedelta(
-                            seconds=_compute_retry_delay_seconds(attempts=row.attempts)
-                        )
-                        logger.warning(
-                            "Dispatch ingestion outbox row failed",
-                            extra={
-                                "outbox_id": str(row.id),
-                                "batch_id": str(row.batch_id),
-                                "doc_id": str(row.doc_id),
-                                "attempts": row.attempts,
-                                "error": row.last_error,
-                            },
-                        )
-                    else:
-                        row.status = IngestionTaskOutboxStatus.DISPATCHED
-                        row.dispatched_at = now
-                        row.last_error = None
-                        row.next_retry_at = None
-                        dispatched_rows += 1
-                await session.commit()
+                    for row in rows:
+                        now = datetime.now(timezone.utc)
+                        row.attempts += 1
+                        try:
+                            run_ingestion_batch_doc.delay(str(row.doc_id))
+                        except (
+                            Exception
+                        ) as exc:  # pragma: no cover - depends on broker state
+                            row.status = IngestionTaskOutboxStatus.FAILED
+                            row.dispatched_at = None
+                            row.last_error = _format_error(exc)
+                            row.next_retry_at = now + timedelta(
+                                seconds=_compute_retry_delay_seconds(attempts=row.attempts)
+                            )
+                            logger.warning(
+                                "Dispatch ingestion outbox row failed",
+                                extra={
+                                    "outbox_id": str(row.id),
+                                    "batch_id": str(row.batch_id),
+                                    "doc_id": str(row.doc_id),
+                                    "attempts": row.attempts,
+                                    "error": row.last_error,
+                                },
+                            )
+                        else:
+                            row.status = IngestionTaskOutboxStatus.DISPATCHED
+                            row.dispatched_at = now
+                            row.last_error = None
+                            row.next_retry_at = None
+                            dispatched_rows += 1
+                    await service.commit()
 
         return dispatched_rows

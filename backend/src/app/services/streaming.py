@@ -2,11 +2,16 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from enum import Enum
+from time import monotonic
 from typing import Any, AsyncIterator, Awaitable, Callable, cast
 
 from app.services.message_normalizer import extract_text_content
+
+logger = logging.getLogger(__name__)
 
 
 _NON_ANSWER_STREAM_NODES = {
@@ -439,10 +444,16 @@ async def stream_snapshots(
     is_terminal: Callable[[Any], bool],
     *,
     poll_interval: float = 1.0,
+    heartbeat_interval: float = 10.0,
+    heartbeat_factory: Callable[[], dict[str, Any]] | None = None,
+    change_listener: Any | None = None,
+    initial_event: str = "update",
     request: object | None = None,
 ) -> AsyncIterator[tuple[str, Any]]:
-    """轮询数据并输出 update/final 事件。"""
+    """按事件驱动优先、轮询兜底的方式输出 snapshot/update/final 事件。"""
     last_payload: dict[str, Any] | None = None
+    last_emit_at = monotonic()
+    active_listener = change_listener
     while True:
         item = await fetcher()
         if item is None:
@@ -450,8 +461,9 @@ async def stream_snapshots(
             return
         payload = serializer(item)
         if payload != last_payload:
-            yield "update", payload
+            yield initial_event if last_payload is None else "update", payload
             last_payload = payload
+            last_emit_at = monotonic()
         if is_terminal(item):
             yield "final", payload
             return
@@ -461,4 +473,26 @@ async def stream_snapshots(
                 disconnect_checker = cast(Callable[[], Awaitable[bool]], is_disconnected)
                 if await disconnect_checker():
                     return
-        await asyncio.sleep(poll_interval)
+
+        if active_listener is not None:
+            try:
+                await active_listener.wait(timeout=poll_interval)
+            except Exception as exc:
+                logger.warning(
+                    "Snapshot change listener wait failed; falling back to polling",
+                    extra={"error": str(exc)},
+                )
+                active_listener = None
+                continue
+        else:
+            await asyncio.sleep(poll_interval)
+
+        if monotonic() - last_emit_at < heartbeat_interval:
+            continue
+        heartbeat_payload = (
+            heartbeat_factory()
+            if heartbeat_factory is not None
+            else {"ts": datetime.now(timezone.utc).isoformat()}
+        )
+        yield "heartbeat", heartbeat_payload
+        last_emit_at = monotonic()

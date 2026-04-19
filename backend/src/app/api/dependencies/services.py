@@ -18,6 +18,7 @@ from app.services.extension_service import ExtensionService
 from app.services.export_service import ExportService
 from app.services.general_chat_service import GeneralChatService
 from app.services.index_rebuild_service import IndexRebuildService
+from app.services.ingestion_batch_change_bus import IngestionBatchChangeBus
 from app.services.ingestion_batch_service import IngestionBatchService
 from app.services.kb_bootstrap_job_service import KBBootstrapJobService
 from app.services.kb_chat_service import KbChatService
@@ -105,10 +106,12 @@ def build_ingestion_batch_service(
     db: AsyncSessionDep,
     resources: AppResourcesDep,
 ) -> IngestionBatchService:
+    change_bus = IngestionBatchChangeBus(resources.redis)
     return IngestionBatchService(
         db,
         http_client=resources.http_client,
         object_storage=resources.object_storage,
+        change_bus=change_bus,
     )
 
 

@@ -10,6 +10,7 @@ from sqlalchemy import select
 from app.core.settings import get_settings
 from app.models.ingestion_batch import IngestionBatchDoc, IngestionDocStatus
 from app.models.ingestion_task_outbox import IngestionTaskOutbox
+from app.services.ingestion_batch_change_bus import open_ingestion_batch_change_bus
 from app.services.ingestion_batch_service import (
     INGESTION_DOC_TASK_NAME,
     IngestionBatchService,
@@ -61,76 +62,78 @@ async def _fail_stale_processing_docs(
             return 0
 
         processed = 0
-        async with sessionmaker() as session:
-            now = datetime.now(timezone.utc)
-            stale_before = now - timedelta(seconds=timeout_seconds)
-            stmt = (
-                select(IngestionBatchDoc.id)
-                .where(
-                    IngestionBatchDoc.status == IngestionDocStatus.PROCESSING,
-                    IngestionBatchDoc.updated_at <= stale_before,
-                )
-                .order_by(
-                    IngestionBatchDoc.updated_at.asc(), IngestionBatchDoc.id.asc()
-                )
-                .limit(safe_limit)
-                .with_for_update(skip_locked=True)
-            )
-            doc_ids = [row[0] for row in (await session.execute(stmt)).all()]
-            if not doc_ids:
-                await session.rollback()
-                return 0
-
-            if resources.object_storage is None:  # pragma: no cover - defensive guard
-                return 0
-            service = IngestionBatchService(
-                session,
-                object_storage=resources.object_storage,
-            )
-            for doc_id in doc_ids:
-                doc = await service.get_doc(doc_id=doc_id, for_update=True)
-                if doc is None or doc.status != IngestionDocStatus.PROCESSING:
-                    continue
-                # 知识库创建首批导入允许长时间处理，不再由 watchdog 自动判超时结束。
-                if getattr(getattr(doc, "batch", None), "is_bootstrap", False):
-                    continue
-
-                outbox_stmt = (
-                    select(IngestionTaskOutbox)
+        async with open_ingestion_batch_change_bus(settings=settings) as change_bus:
+            async with sessionmaker() as session:
+                now = datetime.now(timezone.utc)
+                stale_before = now - timedelta(seconds=timeout_seconds)
+                stmt = (
+                    select(IngestionBatchDoc.id)
                     .where(
-                        IngestionTaskOutbox.doc_id == doc.id,
-                        IngestionTaskOutbox.task_name == INGESTION_DOC_TASK_NAME,
+                        IngestionBatchDoc.status == IngestionDocStatus.PROCESSING,
+                        IngestionBatchDoc.updated_at <= stale_before,
                     )
                     .order_by(
-                        IngestionTaskOutbox.created_at.desc(),
-                        IngestionTaskOutbox.id.desc(),
+                        IngestionBatchDoc.updated_at.asc(), IngestionBatchDoc.id.asc()
                     )
-                    .limit(1)
-                    .with_for_update()
+                    .limit(safe_limit)
+                    .with_for_update(skip_locked=True)
                 )
-                outbox = (await session.execute(outbox_stmt)).scalar_one_or_none()
-                attempts = int(getattr(outbox, "attempts", 0) or 0)
-                max_attempts = int(getattr(outbox, "max_attempts", 0) or 0)
-                error_code = _resolve_doc_timeout_error_code(
-                    attempts=attempts,
-                    max_attempts=max_attempts,
-                )
-                error_message = _resolve_doc_timeout_error_message(
-                    error_code=error_code
-                )
+                doc_ids = [row[0] for row in (await session.execute(stmt)).all()]
+                if not doc_ids:
+                    await session.rollback()
+                    return 0
 
-                await service.mark_doc_failed(
-                    doc=doc,
-                    outbox=outbox,
-                    error_code=error_code,
-                    error_message=error_message,
-                    retryable=False,
+                if resources.object_storage is None:  # pragma: no cover - defensive guard
+                    return 0
+                service = IngestionBatchService(
+                    session,
+                    object_storage=resources.object_storage,
+                    change_bus=change_bus,
                 )
-                await service.recalculate_batch_for_doc(
-                    doc=doc,
-                    reason="doc_timeout_watchdog",
-                )
-                processed += 1
-            await session.commit()
+                for doc_id in doc_ids:
+                    doc = await service.get_doc(doc_id=doc_id, for_update=True)
+                    if doc is None or doc.status != IngestionDocStatus.PROCESSING:
+                        continue
+                    # 知识库创建首批导入允许长时间处理，不再由 watchdog 自动判超时结束。
+                    if getattr(getattr(doc, "batch", None), "is_bootstrap", False):
+                        continue
+
+                    outbox_stmt = (
+                        select(IngestionTaskOutbox)
+                        .where(
+                            IngestionTaskOutbox.doc_id == doc.id,
+                            IngestionTaskOutbox.task_name == INGESTION_DOC_TASK_NAME,
+                        )
+                        .order_by(
+                            IngestionTaskOutbox.created_at.desc(),
+                            IngestionTaskOutbox.id.desc(),
+                        )
+                        .limit(1)
+                        .with_for_update()
+                    )
+                    outbox = (await session.execute(outbox_stmt)).scalar_one_or_none()
+                    attempts = int(getattr(outbox, "attempts", 0) or 0)
+                    max_attempts = int(getattr(outbox, "max_attempts", 0) or 0)
+                    error_code = _resolve_doc_timeout_error_code(
+                        attempts=attempts,
+                        max_attempts=max_attempts,
+                    )
+                    error_message = _resolve_doc_timeout_error_message(
+                        error_code=error_code
+                    )
+
+                    await service.mark_doc_failed(
+                        doc=doc,
+                        outbox=outbox,
+                        error_code=error_code,
+                        error_message=error_message,
+                        retryable=False,
+                    )
+                    await service.recalculate_batch_for_doc(
+                        doc=doc,
+                        reason="doc_timeout_watchdog",
+                    )
+                    processed += 1
+                await service.commit()
 
         return processed

@@ -73,20 +73,27 @@ def test_build_ingestion_batch_service_uses_app_http_client(monkeypatch) -> None
             *,
             http_client: object | None = None,
             object_storage: object | None = None,
+            change_bus: object | None = None,
         ) -> None:
             captured["db"] = db
             captured["http_client"] = http_client
             captured["object_storage"] = object_storage
+            captured["change_bus"] = change_bus
 
     monkeypatch.setattr(service_deps, "IngestionBatchService", _FakeService)
 
     db = object()
-    resources = SimpleNamespace(http_client=object(), object_storage=object())
+    resources = SimpleNamespace(
+        http_client=object(),
+        object_storage=object(),
+        redis=object(),
+    )
     service_deps.build_ingestion_batch_service(db=db, resources=resources)
 
     assert captured["db"] is db
     assert captured["http_client"] is resources.http_client
     assert captured["object_storage"] is resources.object_storage
+    assert getattr(captured["change_bus"], "redis") is resources.redis
 
 
 def test_build_material_service_uses_app_http_client(monkeypatch) -> None:
@@ -125,10 +132,12 @@ def test_build_kb_bootstrap_job_service_uses_app_http_client(monkeypatch) -> Non
             *,
             http_client: object | None = None,
             object_storage: object | None = None,
+            change_bus: object | None = None,
         ) -> None:
             captured["db"] = db
             captured["http_client"] = http_client
             captured["object_storage"] = object_storage
+            captured["change_bus"] = change_bus
 
     monkeypatch.setattr(service_deps, "KBBootstrapJobService", _FakeService)
 
@@ -153,10 +162,12 @@ async def test_open_ingestion_batch_service_scope_uses_app_http_client(
             *,
             http_client: object | None = None,
             object_storage: object | None = None,
+            change_bus: object | None = None,
         ) -> None:
             captured["db"] = db
             captured["http_client"] = http_client
             captured["object_storage"] = object_storage
+            captured["change_bus"] = change_bus
 
     @asynccontextmanager
     async def _fake_open_service_scope(*, resources, factory):
@@ -166,12 +177,18 @@ async def test_open_ingestion_batch_service_scope_uses_app_http_client(
     monkeypatch.setattr(service_deps, "IngestionBatchService", _FakeService)
     monkeypatch.setattr(service_deps, "_open_service_scope", _fake_open_service_scope)
 
-    resources = SimpleNamespace(http_client=object(), object_storage=object(), engine=object())
+    resources = SimpleNamespace(
+        http_client=object(),
+        object_storage=object(),
+        redis=object(),
+        engine=object(),
+    )
     async with service_deps.open_ingestion_batch_service_scope(resources=resources):
         pass
 
     assert captured["http_client"] is resources.http_client
     assert captured["object_storage"] is resources.object_storage
+    assert getattr(captured["change_bus"], "redis") is resources.redis
 
 
 async def test_get_web_search_status_passes_shared_http_client(monkeypatch) -> None:

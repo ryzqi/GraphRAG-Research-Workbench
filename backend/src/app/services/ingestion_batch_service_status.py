@@ -84,6 +84,7 @@ async def _set_doc_status(
         to_status=new_status.value,
         reason=reason,
     )
+    self._mark_batch_changed(doc.batch_id)
 
 
 async def _set_batch_status(
@@ -151,6 +152,7 @@ async def _set_batch_status(
         to_status=new_status.value,
         reason=reason,
     )
+    self._mark_batch_changed(batch.id)
 
 
 async def _recalculate_batch(self, batch: IngestionBatch, *, reason: str) -> None:
@@ -196,6 +198,7 @@ async def _recalculate_batch(self, batch: IngestionBatch, *, reason: str) -> Non
         "canceled_docs": canceled,
         "reason": reason,
     }
+    self._mark_batch_changed(batch.id)
 
 
 def _is_doc_canceled(doc: IngestionBatchDoc) -> bool:
