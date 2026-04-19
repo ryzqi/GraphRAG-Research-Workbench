@@ -317,6 +317,15 @@ async def _run_ingestion_batch_doc(doc_id: str) -> None:
 
 
 async def _process_doc(*, doc, resources) -> _DocProcessOutcome:
+    """处理单个导入文档。
+
+    该函数内部使用独立 session 持久化 chunk 与 Milvus 数据，与外层文档状态 session
+    解耦。幂等约定如下：
+
+    - PostgreSQL 侧通过 `replace_material_chunks()` 先删后写同一 `(kb_id, material_id)`；
+    - Milvus 侧通过 `_write_records_to_milvus()` 先 `delete_by_material()` 再 upsert；
+    - 若外层在 `mark_doc_succeeded()` 前后失败，后续重跑同一 doc 会覆盖旧结果，不会累积重复 chunks。
+    """
     if not doc.source_ref:
         raise _ProcessingFailure(
             code="DOC_SOURCE_REF_MISSING",
