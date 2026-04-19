@@ -8,9 +8,9 @@ import uuid
 from app.core.uvicorn_loop import windows_selector_loop_factory
 from app.core.settings import get_settings
 from app.models.research_session import ResearchSessionStatus
-from app.services.deep_research_runtime import build_deep_research_runtime_runner
 from app.services.research_service import build_research_service
 from app.worker.celery_app import celery_app
+from app.worker.deep_research_runtime_cache import get_cached_runner
 from app.worker.task_resources import managed_task_resources
 
 
@@ -28,8 +28,6 @@ async def _run_research_session(session_id: str) -> None:
     async with managed_task_resources(
         settings=settings,
         with_engine=True,
-        with_http=True,
-        with_redis=True,
         with_milvus=False,
     ) as resources:
         sessionmaker = resources.sessionmaker
@@ -37,11 +35,7 @@ async def _run_research_session(session_id: str) -> None:
             return
 
         async with sessionmaker() as db:
-            runtime_runner = await build_deep_research_runtime_runner(
-                settings=settings,
-                http_client=resources.http_client,
-                redis=resources.redis,
-            )
+            runtime_runner = await get_cached_runner(settings=settings)
             service = build_research_service(db=db, runtime_runner=runtime_runner)
             session = await service.get_session(session_uuid)
             if session.status != ResearchSessionStatus.QUEUED:
