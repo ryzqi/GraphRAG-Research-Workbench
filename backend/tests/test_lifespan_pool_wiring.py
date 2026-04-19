@@ -219,7 +219,10 @@ async def test_build_deep_research_runtime_runner_initializes_pool_before_checkp
     monkeypatch.setattr(
         dr_module,
         "get_prompt_loader",
-        lambda: SimpleNamespace(render_with_few_shot=lambda *_args, **_kwargs: "system"),
+        lambda: SimpleNamespace(
+            render=lambda *_args, **_kwargs: "system",
+            render_with_few_shot=lambda *_args, **_kwargs: "system",
+        ),
     )
     monkeypatch.setattr(dr_module, "create_chat_model", lambda **_kwargs: object())
     monkeypatch.setattr(
