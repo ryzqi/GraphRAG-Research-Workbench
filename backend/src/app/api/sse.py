@@ -12,6 +12,7 @@ SSE_HEADERS = {
     "X-Accel-Buffering": "no",
     "Connection": "keep-alive",
 }
+SSE_QUEUE_MAXSIZE_DEFAULT = 256
 
 
 @dataclass
@@ -68,15 +69,25 @@ async def encode_sse(
     heartbeat_interval: float | None = None,
     heartbeat_factory: Callable[[], Any] | None = None,
     heartbeat_stats: SseHeartbeatStats | None = None,
+    queue_maxsize: int = SSE_QUEUE_MAXSIZE_DEFAULT,
 ) -> AsyncIterator[str]:
     """将事件序列转换为 SSE 字符串流。"""
+    if queue_maxsize <= 0:
+        raise ValueError("queue_maxsize must be positive")
+
     heartbeat_enabled = heartbeat_interval is not None and heartbeat_interval > 0
-    queue: asyncio.Queue[tuple[str, Any] | None] = asyncio.Queue()
+    queue: asyncio.Queue[tuple[str, Any] | None] = asyncio.Queue(
+        maxsize=queue_maxsize
+    )
+    producer_error: BaseException | None = None
 
     async def _drain_events() -> None:
+        nonlocal producer_error
         try:
             async for event, data in events:
                 await queue.put((event, data))
+        except BaseException as exc:
+            producer_error = exc
         finally:
             await queue.put(None)
 
@@ -99,6 +110,16 @@ async def encode_sse(
                 continue
 
             if item is None:
+                if producer_error is not None and not isinstance(
+                    producer_error, asyncio.CancelledError
+                ):
+                    yield format_sse(
+                        "error",
+                        {
+                            "code": "STREAM_PRODUCER_ERROR",
+                            "message": str(producer_error),
+                        },
+                    )
                 break
             event, data = item
             yield format_sse(event, data)
