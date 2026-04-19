@@ -12,16 +12,16 @@ async def _maybe_build_cached_stream_events(
     *,
     session: ChatSession,
     user_content: str,
-) -> list[tuple[str, Any]] | None:
+) -> tuple[list[tuple[str, Any]] | None, list[float] | None]:
     await self._ensure_no_running_kb_chat_run(session_id=session.id)
     cache_config = self._resolve_session_kb_chat_config(session)
-    cache_hit = await self._semantic_cache_lookup(
+    cache_hit, question_vector = await self._semantic_cache_lookup(
         session=session,
         kb_chat_config=cache_config,
         question=user_content,
     )
     if cache_hit is None:
-        return None
+        return None, question_vector
 
     cached_response = await self._persist_semantic_cache_hit(
         session=session,
@@ -145,4 +145,4 @@ async def _maybe_build_cached_stream_events(
                 ),
             ),
         ),
-    ]
+    ], None

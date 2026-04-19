@@ -80,17 +80,31 @@ class KbChatSemanticCacheService:
         scope: SemanticCacheScope,
         pre_context: dict[str, Any],
     ) -> SemanticCacheHit | None:
+        hit, _ = await self.lookup_with_vector(
+            question=question,
+            scope=scope,
+            pre_context=pre_context,
+        )
+        return hit
+
+    async def lookup_with_vector(
+        self,
+        *,
+        question: str,
+        scope: SemanticCacheScope,
+        pre_context: dict[str, Any],
+    ) -> tuple[SemanticCacheHit | None, list[float] | None]:
         if not self.enabled():
-            return None
+            return None, None
         normalized_question = sanitize_visible_text(str(question or ""))
         if not normalized_question:
-            return None
+            return None, None
         vector = await self._embed_question(
             question=normalized_question,
             stage="semantic_cache_lookup",
         )
         if vector is None:
-            return None
+            return None, None
         request = SemanticCacheLookupRequest(
             question=normalized_question,
             question_vector=vector,
@@ -101,7 +115,7 @@ class KbChatSemanticCacheService:
             similarity_threshold=self.similarity_threshold(),
             ttl_seconds=self.ttl_seconds(),
         )
-        return await self._backend.lookup(request)
+        return await self._backend.lookup(request), vector
 
     async def store(
         self,
@@ -116,6 +130,7 @@ class KbChatSemanticCacheService:
         stage_summaries: dict[str, Any],
         metrics: dict[str, Any],
         source_run_id: str | None,
+        question_vector: list[float] | None = None,
     ) -> None:
         if not self.enabled():
             return
@@ -123,9 +138,13 @@ class KbChatSemanticCacheService:
         normalized_answer = str(answer or "").strip()
         if not normalized_question or not normalized_answer:
             return
-        vector = await self._embed_question(
-            question=normalized_question,
-            stage="semantic_cache_write",
+        vector = (
+            self._as_float_vector(question_vector)
+            if question_vector is not None
+            else await self._embed_question(
+                question=normalized_question,
+                stage="semantic_cache_write",
+            )
         )
         if vector is None:
             return

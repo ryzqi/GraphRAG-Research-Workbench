@@ -105,6 +105,7 @@ class _KbChatExecution:
     state: KbChatInternalState
     run_context: KbChatGraphContext | None
     resume_checkpoint_id: str | None
+    semantic_cache_question_vector: list[float] | None = None
 
 
 @dataclass

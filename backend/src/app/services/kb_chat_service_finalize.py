@@ -43,6 +43,7 @@ async def _finalize_run(
     run: AgentRun,
     kb_chat_config: KbChatConfig,
     started_at: datetime,
+    question_vector: list[float] | None = None,
     answer: str,
     final_evidence_items: list[dict[str, Any]] | None = None,
     final_citation_catalog: dict[str, dict[str, Any]] | None = None,
@@ -461,6 +462,7 @@ async def _finalize_run(
                 evidence=evidence_items,
                 stage_summaries=cached_stage_summaries,
                 metrics=cached_metrics,
+                question_vector=question_vector,
             )
         except Exception as exc:  # pragma: no cover
             logger.warning("语义缓存写入失败: %s", exc)

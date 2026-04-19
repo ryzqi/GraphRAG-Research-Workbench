@@ -226,15 +226,15 @@ async def _semantic_cache_lookup(
     session: ChatSession,
     kb_chat_config: KbChatConfig,
     question: str,
-) -> SemanticCacheHit | None:
+) -> tuple[SemanticCacheHit | None, list[float] | None]:
     if not self._semantic_cache_enabled():
-        return None
+        return None, None
     normalized_question = sanitize_visible_text(str(question or ""))
     if not normalized_question:
-        return None
+        return None, None
     semantic_cache_service = self._get_semantic_cache_service()
     if semantic_cache_service is None:
-        return None
+        return None, None
     try:
         kb_version = await self._semantic_kb_version(session)
     except Exception:
@@ -245,13 +245,13 @@ async def _semantic_cache_lookup(
             question=normalized_question,
         )
     except Exception:
-        return None
+        return None, None
     scope = self._build_semantic_cache_scope(
         session=session,
         kb_chat_config=kb_chat_config,
         kb_version=kb_version,
     )
-    return await semantic_cache_service.lookup(
+    return await semantic_cache_service.lookup_with_vector(
         question=normalized_question,
         scope=scope,
         pre_context=pre_context,
@@ -267,6 +267,7 @@ async def _write_semantic_cache_entry(
     evidence: list[EvidenceItem],
     stage_summaries: dict[str, Any],
     metrics: dict[str, Any],
+    question_vector: list[float] | None = None,
 ) -> None:
     if not self._semantic_cache_enabled():
         return
@@ -317,6 +318,7 @@ async def _write_semantic_cache_entry(
         source_run_id=self._semantic_cache_source_run_id(
             metrics if isinstance(metrics, dict) else {}
         ),
+        question_vector=question_vector,
     )
 
 def _release_retrieval_buffer(self, exec_ctx: _KbChatExecution) -> None:

@@ -116,11 +116,14 @@ class KbChatService:
         sse_heartbeat_stats: SseHeartbeatStats | None = None,
     ) -> AsyncIterator[tuple[str, Any]]:
         """处理用户问题并返回流式 SSE（状态与节点事件基于 LangGraph 原生流）。"""
+        semantic_cache_question_vector: list[float] | None = None
         if run is None:
-            cached_events = await kb_cached._maybe_build_cached_stream_events(
-                self,
-                session=session,
-                user_content=user_content,
+            cached_events, semantic_cache_question_vector = (
+                await kb_cached._maybe_build_cached_stream_events(
+                    self,
+                    session=session,
+                    user_content=user_content,
+                )
             )
             if cached_events is not None:
                 for event_name, payload in cached_events:
@@ -139,6 +142,7 @@ class KbChatService:
             user_content=user_content,
             run=run,
         )
+        exec_ctx.semantic_cache_question_vector = semantic_cache_question_vector
         run = exec_ctx.run
         graph_task: asyncio.Task | None = None
         disconnect_task: asyncio.Task | None = None

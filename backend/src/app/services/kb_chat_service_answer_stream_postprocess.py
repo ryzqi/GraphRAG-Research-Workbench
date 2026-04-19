@@ -199,6 +199,7 @@ async def _postprocess_live_stream(
         run=run,
         kb_chat_config=exec_ctx.kb_chat_config,
         started_at=exec_ctx.started_at,
+        question_vector=exec_ctx.semantic_cache_question_vector,
         answer=answer,
         final_evidence_items=stream_state.evidence_items,
         final_citation_catalog=stream_state.citation_catalog,
