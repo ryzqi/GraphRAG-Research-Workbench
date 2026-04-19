@@ -66,23 +66,21 @@ class ContextFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
         record.request_id = getattr(record, "request_id", None) or get_request_id() or "-"
         record.run_id = getattr(record, "run_id", None) or get_run_id() or "-"
-        if isinstance(record.msg, str):
-            record.msg = redact(record.msg)
-        record.args = _redact_log_args(record.args)
-        for key, value in list(record.__dict__.items()):
-            if key in _RECORD_RESERVED_KEYS or key.startswith("_"):
-                continue
-            record.__dict__[key] = _redact_value(value)
         return True
 
 
 class UnifiedFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
-        message = redact(super().format(record))
+        original_args = record.args
+        try:
+            record.args = _redact_format_args(record.args)
+            message = super().format(record)
+        finally:
+            record.args = original_args
         extras = _format_extra_fields(record)
         if extras:
             message = f"{message} {extras}"
-        return message
+        return redact(message)
 
 
 def _normalize_level(level: str | int | None) -> int:
@@ -93,28 +91,6 @@ def _normalize_level(level: str | int | None) -> int:
     if isinstance(resolved, int):
         return resolved
     return logging.INFO
-
-
-def _redact_log_args(args: Any) -> Any:
-    if isinstance(args, dict):
-        return {key: _redact_value(value) for key, value in args.items()}
-    if isinstance(args, tuple):
-        return tuple(_redact_value(item) for item in args)
-    if isinstance(args, list):
-        return [_redact_value(item) for item in args]
-    return _redact_value(args)
-
-
-def _redact_value(value: Any) -> Any:
-    if isinstance(value, dict):
-        return redact_dict(value)
-    if isinstance(value, list):
-        return [_redact_value(item) for item in value]
-    if isinstance(value, tuple):
-        return tuple(_redact_value(item) for item in value)
-    if isinstance(value, set):
-        return {_redact_value(item) for item in value}
-    return redact(value)
 
 
 def _format_log_value(value: Any) -> str:
@@ -128,12 +104,35 @@ def _format_log_value(value: Any) -> str:
         return str(value)
 
 
+def _redact_format_args(args: Any) -> Any:
+    if isinstance(args, dict):
+        return redact_dict(args)
+    if isinstance(args, tuple):
+        return tuple(_redact_structured_value(item) for item in args)
+    if isinstance(args, list):
+        return [_redact_structured_value(item) for item in args]
+    return _redact_structured_value(args)
+
+
+def _redact_structured_value(value: Any) -> Any:
+    if isinstance(value, dict):
+        return redact_dict(value)
+    if isinstance(value, list):
+        return [_redact_structured_value(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_redact_structured_value(item) for item in value)
+    if isinstance(value, set):
+        return {_redact_structured_value(item) for item in value}
+    return value
+
+
 def _format_extra_fields(record: logging.LogRecord) -> str:
     extra_parts: list[str] = []
     for key in sorted(record.__dict__):
         if key in _RECORD_RESERVED_KEYS or key.startswith("_"):
             continue
-        extra_parts.append(f"{key}={_format_log_value(record.__dict__[key])}")
+        value = _redact_structured_value(record.__dict__[key])
+        extra_parts.append(f"{key}={_format_log_value(value)}")
     return " ".join(extra_parts)
 
 
@@ -195,6 +194,12 @@ def redact_dict(
             result[k] = "***REDACTED***"
         elif isinstance(v, dict):
             result[k] = redact_dict(v, sensitive_keys)
+        elif isinstance(v, list):
+            result[k] = [_redact_structured_value(item) for item in v]
+        elif isinstance(v, tuple):
+            result[k] = tuple(_redact_structured_value(item) for item in v)
+        elif isinstance(v, set):
+            result[k] = {_redact_structured_value(item) for item in v}
         elif isinstance(v, str):
             result[k] = redact(v)
         else:
