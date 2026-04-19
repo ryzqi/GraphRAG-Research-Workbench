@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from datetime import timedelta
 from functools import partial
@@ -155,6 +156,29 @@ class ObjectStorage:
             )
 
         await self._run_client_call(_put)
+
+    async def iter_bytes(
+        self,
+        ref: ObjectRef,
+        *,
+        chunk_size: int = 1024 * 1024,
+    ) -> AsyncIterator[bytes]:
+        """按块流式读取对象内容。"""
+
+        response = await self._run_client_call(
+            self._client.get_object,
+            ref.bucket,
+            ref.object_name,
+        )
+        try:
+            while True:
+                chunk = await asyncio.to_thread(response.read, chunk_size)
+                if not chunk:
+                    break
+                yield bytes(chunk)
+        finally:
+            await asyncio.to_thread(response.close)
+            await asyncio.to_thread(response.release_conn)
 
     async def get_bytes(self, ref: ObjectRef) -> bytes:
         """从对象存储获取二进制数据。"""

@@ -26,10 +26,16 @@ class ExportCreateRequest(BaseModel):
 
     @model_validator(mode="after")
     def validate_target(self) -> "ExportCreateRequest":
-        if self.type == ExportType.CHAT and self.run_id is None:
-            raise ValueError("chat 导出必须提供 run_id")
-        if self.type == ExportType.RESEARCH and self.session_id is None:
-            raise ValueError("research 导出必须提供 session_id")
+        if self.type == ExportType.CHAT:
+            if self.run_id is None:
+                raise ValueError("chat 导出必须提供 run_id")
+            if self.session_id is not None:
+                raise ValueError("chat 导出不能提供 session_id")
+        if self.type == ExportType.RESEARCH:
+            if self.session_id is None:
+                raise ValueError("research 导出必须提供 session_id")
+            if self.run_id is not None:
+                raise ValueError("research 导出不能提供 run_id")
         return self
 
 

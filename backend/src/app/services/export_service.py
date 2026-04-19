@@ -31,8 +31,8 @@ class ExportService:
 
         job = ExportJob(
             status=ExportStatus.QUEUED,
-            run_id=req.run_id,
-            session_id=req.session_id,
+            run_id=req.run_id if req.type == ExportType.CHAT else None,
+            session_id=req.session_id if req.type == ExportType.RESEARCH else None,
         )
         session.add(job)
         await session.commit()

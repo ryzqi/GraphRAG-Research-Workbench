@@ -5,12 +5,16 @@ from __future__ import annotations
 import uuid
 
 from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile, status
+from fastapi.responses import StreamingResponse
 
+from app.api.dependencies.app_resources import AppResourcesDep
 from app.api.dependencies.services import (
     IngestionBatchServiceDep,
     KnowledgeBaseServiceDep,
     MaterialServiceDep,
 )
+from app.integrations.object_storage import ObjectRef
+from app.models.source_material import SourceType
 from app.schemas.knowledge_bases import ChunkingStrategy, IndexConfig
 from app.schemas.materials import (
     DocumentChunkListResponse,
@@ -28,6 +32,36 @@ from app.services.knowledge_base_service import KnowledgeBaseService
 from app.services.material_service import MaterialService
 
 router = APIRouter()
+
+
+def _extract_minio_object_ref(uri: str) -> ObjectRef:
+    if not uri.startswith("minio://"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"code": "INVALID_URI", "message": "UPLOAD 资料 uri 不是 minio://"},
+        )
+
+    uri_parts = uri[8:].split("/", 1)
+    if len(uri_parts) != 2:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"code": "INVALID_URI", "message": "UPLOAD 资料 uri 格式非法"},
+        )
+
+    bucket, object_name = uri_parts
+    if not bucket or not object_name:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "code": "INVALID_URI",
+                "message": "UPLOAD 资料 uri 缺少 bucket/object_name",
+            },
+        )
+    return ObjectRef(bucket=bucket, object_name=object_name)
+
+
+def _material_filename_from_object_name(object_name: str) -> str:
+    return object_name.split("/")[-1] if object_name else "download"
 
 
 async def _ensure_kb_exists(
@@ -133,6 +167,52 @@ async def list_materials_with_chunk_stats(
             total=total,
             has_more=(skip + len(items)) < total,
         ),
+    )
+
+
+@router.get("/knowledge-bases/{kb_id}/materials/{material_id}/download")
+async def download_material(
+    kb_service: KnowledgeBaseServiceDep,
+    service: MaterialServiceDep,
+    resources: AppResourcesDep,
+    kb_id: uuid.UUID,
+    material_id: uuid.UUID,
+) -> StreamingResponse:
+    """流式下载上传型资料原始文件。"""
+    await _ensure_kb_exists(kb_service, kb_id)
+    material = await service.get_by_id(material_id)
+    if material is None or material.kb_id != kb_id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": "MATERIAL_NOT_FOUND", "message": "资料不存在"},
+        )
+    if material.source_type != SourceType.UPLOAD:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "code": "MATERIAL_DOWNLOAD_UNSUPPORTED_SOURCE",
+                "message": "仅上传型资料支持下载原始文件",
+            },
+        )
+    if not material.uri:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"code": "INVALID_URI", "message": "UPLOAD 资料缺少 uri"},
+        )
+
+    ref = _extract_minio_object_ref(material.uri)
+    filename = _material_filename_from_object_name(ref.object_name)
+    storage = resources.object_storage
+    await storage.ensure_buckets()
+    if not await storage.exists(ref):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": "MATERIAL_FILE_NOT_FOUND", "message": "资料原文件不存在"},
+        )
+    return StreamingResponse(
+        storage.iter_bytes(ref),
+        media_type=material.mime_type or "application/octet-stream",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
 
