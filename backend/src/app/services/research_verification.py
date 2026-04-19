@@ -1,42 +1,27 @@
-"""Research verification artifacts helpers。"""
+"""Deep Research verification artifacts（基于 LLM alignment judge）。"""
 
 from __future__ import annotations
 
-import re
+from collections.abc import Sequence
 from dataclasses import dataclass
+from typing import Protocol
 
 from app.schemas.research import ResearchCanonicalCitation
+from app.schemas.research_workspace import (
+    ResearchClaimEntry,
+    ResearchEvidenceEntry,
+)
+from app.services.research_alignment_judge import ClaimAlignmentVerdict
 
 
-_TOKEN_PATTERN = re.compile(r"[a-z0-9]+|[\u4e00-\u9fff]{2,}", re.IGNORECASE)
-_NAMED_TOKEN_PATTERN = re.compile(r"[A-Z][A-Za-z0-9]+(?:[A-Z][A-Za-z0-9]+)*")
-_GENERIC_TOKENS = {
-    "claim",
-    "coverage",
-    "deep",
-    "execution",
-    "first",
-    "ledger",
-    "plan",
-    "planner",
-    "planning",
-    "provider",
-    "report",
-    "research",
-    "runtime",
-    "search",
-    "source",
-    "structured",
-    "web",
-    "workspace",
-    "workflow",
-    "支持",
-    "提供",
-    "执行",
-    "缺少",
-    "覆盖",
-    "证据",
-}
+class AlignmentJudgeProtocol(Protocol):
+    async def judge_all(
+        self,
+        *,
+        claims: Sequence[ResearchClaimEntry],
+        evidences: Sequence[ResearchEvidenceEntry],
+        citations: Sequence[ResearchCanonicalCitation],
+    ) -> list[ClaimAlignmentVerdict]: ...
 
 
 @dataclass(slots=True, frozen=True)
@@ -47,156 +32,99 @@ class VerificationArtifacts:
     source_ledger: list[dict[str, object]]
 
 
-def build_verification_artifacts(
-    *,
-    findings: list[str],
-    citations: list[ResearchCanonicalCitation],
-    coverage_gaps: list[str],
-    provider_counts: dict[str, int],
-) -> VerificationArtifacts:
-    citation_tokens = [_citation_tokens(citation) for citation in citations]
-    claim_map: list[dict[str, object]] = []
-    conflicts: list[dict[str, object]] = []
-    claimed_gap_indices: set[int] = set()
-    for finding in findings:
-        claim_tokens = _tokenize(finding)
-        citation_indices = [
-            index
-            for index, tokens in enumerate(citation_tokens)
-            if claim_tokens and claim_tokens.intersection(tokens)
-        ]
-        related_gap_indices = [
-            index
-            for index, gap in enumerate(coverage_gaps)
-            if claim_tokens and claim_tokens.intersection(_tokenize(gap))
-        ]
-        matched_claim_tokens = set()
-        for index in citation_indices:
-            matched_claim_tokens.update(
-                claim_tokens.intersection(citation_tokens[index])
-            )
-        uncovered_named_tokens = sorted(
-            _named_tokens(finding).difference(matched_claim_tokens)
-        )
-        verdict = _determine_verdict(
-            citation_indices=citation_indices,
-            related_gap_indices=related_gap_indices,
-            uncovered_named_tokens=uncovered_named_tokens,
-        )
-        claim_map.append(
-            {
-                "claim": finding,
-                "verdict": verdict,
-                "citation_indices": citation_indices,
-            }
-        )
-        if verdict == "supported":
-            continue
-        claimed_gap_indices.update(related_gap_indices)
-        conflicts.append(
-            {
-                "claim": finding,
-                "verdict": verdict,
-                "reason": _conflict_reason(
-                    citation_indices=citation_indices,
-                    related_gap_indices=related_gap_indices,
-                    uncovered_named_tokens=uncovered_named_tokens,
-                ),
-                "citation_indices": citation_indices,
-                "coverage_gaps": [
-                    coverage_gaps[index] for index in related_gap_indices
-                ],
-            }
-        )
-    unresolved_coverage_gaps = [
-        gap
-        for index, gap in enumerate(coverage_gaps)
-        if index not in claimed_gap_indices
-    ]
-    if unresolved_coverage_gaps:
-        conflicts.append(
-            {
-                "claim": None,
-                "verdict": "contested",
-                "reason": "coverage_gap",
-                "citation_indices": [],
-                "coverage_gaps": unresolved_coverage_gaps,
-            }
-        )
-    coverage_matrix = {
-        "provider_counts": dict(provider_counts),
-        "missing_providers": list(coverage_gaps),
-    }
-    source_ledger = [
+def _conflict_reason(verdict: ClaimAlignmentVerdict) -> str:
+    if verdict.conflicting_evidence_ids:
+        return "conflicting_evidence"
+    if verdict.missing_aspects:
+        return "insufficient_evidence"
+    return "contested"
+
+
+def _build_source_ledger(
+    citations: Sequence[ResearchCanonicalCitation],
+) -> list[dict[str, object]]:
+    return [
         {
             "provider": citation.source_provider,
             "origin_url": citation.origin_url,
             "title": citation.title,
             "source_type": citation.source_type.value,
+            "excerpt_count": len(citation.excerpts),
         }
         for citation in citations
     ]
+
+
+async def build_verification_artifacts_async(
+    *,
+    claims: Sequence[ResearchClaimEntry],
+    evidences: Sequence[ResearchEvidenceEntry],
+    citations: Sequence[ResearchCanonicalCitation],
+    coverage_gaps: Sequence[str],
+    provider_counts: dict[str, int],
+    judge: AlignmentJudgeProtocol,
+) -> VerificationArtifacts:
+    verdicts = await judge.judge_all(
+        claims=claims,
+        evidences=evidences,
+        citations=citations,
+    )
+    verdict_by_claim = {verdict.claim_id: verdict for verdict in verdicts}
+    claim_map: list[dict[str, object]] = []
+    conflicts: list[dict[str, object]] = []
+    missing_aspects_total = 0
+    supported_count = 0
+    for claim in claims:
+        verdict = verdict_by_claim.get(claim.claim_id)
+        if verdict is None:
+            verdict = ClaimAlignmentVerdict(
+                claim_id=claim.claim_id,
+                verdict="insufficient",
+                supporting_evidence_ids=[],
+                conflicting_evidence_ids=[],
+                missing_aspects=["judge_missing"],
+                reason="judge 未返回该 claim 的裁决",
+            )
+        missing_aspects_total += len(verdict.missing_aspects)
+        claim_map.append(
+            {
+                "claim_id": claim.claim_id,
+                "claim": claim.claim,
+                "verdict": verdict.verdict,
+                "supporting_evidence_ids": verdict.supporting_evidence_ids,
+                "conflicting_evidence_ids": verdict.conflicting_evidence_ids,
+                "missing_aspects": verdict.missing_aspects,
+                "reason": verdict.reason,
+            }
+        )
+        if verdict.verdict == "supported":
+            supported_count += 1
+            continue
+        conflicts.append(
+            {
+                "claim_id": claim.claim_id,
+                "claim": claim.claim,
+                "verdict": verdict.verdict,
+                "reason": _conflict_reason(verdict),
+                "missing_aspects": verdict.missing_aspects,
+            }
+        )
+    alignment_pass_rate = supported_count / len(claims) if claims else 0.0
+    coverage_matrix = {
+        "provider_counts": dict(provider_counts),
+        "missing_providers": list(coverage_gaps),
+        "alignment_pass_rate": alignment_pass_rate,
+        "missing_aspects_total": missing_aspects_total,
+    }
     return VerificationArtifacts(
         claim_map=claim_map,
         coverage_matrix=coverage_matrix,
         conflicts=conflicts,
-        source_ledger=source_ledger,
+        source_ledger=_build_source_ledger(citations),
     )
 
 
-def _tokenize(value: str) -> set[str]:
-    return {
-        token
-        for token in _TOKEN_PATTERN.findall(str(value).lower())
-        if token and token not in _GENERIC_TOKENS
-    }
-
-
-def _citation_tokens(citation: ResearchCanonicalCitation) -> set[str]:
-    return _tokenize(
-        " ".join(
-            part
-            for part in (
-                citation.source_provider,
-                citation.source_id,
-                citation.title or "",
-                citation.origin_url or "",
-                citation.url or "",
-            )
-            if part
-        )
+def build_verification_artifacts(**_: object) -> VerificationArtifacts:
+    raise RuntimeError(
+        "build_verification_artifacts 已废弃；请改用 build_verification_artifacts_async 并提供 alignment judge"
     )
-
-
-def _named_tokens(value: str) -> set[str]:
-    return {token.lower() for token in _NAMED_TOKEN_PATTERN.findall(str(value))}
-
-
-def _determine_verdict(
-    *,
-    citation_indices: list[int],
-    related_gap_indices: list[int],
-    uncovered_named_tokens: list[str],
-) -> str:
-    if (
-        len(citation_indices) >= 2
-        and not related_gap_indices
-        and not uncovered_named_tokens
-    ):
-        return "supported"
-    if citation_indices:
-        return "contested"
-    return "insufficient"
-
-
-def _conflict_reason(
-    *,
-    citation_indices: list[int],
-    related_gap_indices: list[int],
-    uncovered_named_tokens: list[str],
-) -> str:
-    if related_gap_indices:
-        return "coverage_gap"
-    if citation_indices and uncovered_named_tokens:
-        return "partial_support"
-    return "insufficient_evidence"
