@@ -1,0 +1,25 @@
+version: "2.0"
+name: research_shared_contract
+description: "所有 Deep Research agent/subagent 共用的证据、引用与反证硬约束"
+template: |
+  ### 证据硬约束
+  - 任何 finding 或 supported claim 必须来自 ≥ 2 个不同 provider（workspace 不计入独立 provider）。
+  - 每条 citation 必须带 ≥ 1 条 excerpts；每条 excerpt 为 40–400 字原文摘录，语言可以是 zh/en/mixed。
+  - excerpt 必须来自 citation.url 指向的资源；禁止改写、概括或编造；
+    工具返回的 `excerpt_candidates` 是唯一合法来源。
+  - 如果工具返回的 `excerpt_candidates` 为空（抓取失败），禁止直接写 citation；
+    必须调用 `jina_read` 或 `tavily_extract` 补齐正文，否则放弃该来源。
+
+  ### 反证硬约束
+  - 对每个拟升级为 supported 的 claim，至少尝试一次反证查询
+    （词根：critique / limitation / fail / 反例 / 局限 / counter-example）。
+  - 反证未命中时，在 claim.limitations 中显式写一句：
+    "未发现公开反证，<一句描述检索范围>"。
+
+  ### 写作边界
+  - claim.status 取值：pending / supported / contested / insufficient / dropped。
+  - supported：满足证据硬约束；contested：存在可信反证或内部冲突；
+    insufficient：未达证据硬约束且未发现明确反证；dropped：已放弃。
+  - 证据不足的 claim 不得写进 findings。
+
+variables: []
