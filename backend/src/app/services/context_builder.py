@@ -99,8 +99,26 @@ class ContextBuilder:
         used_tokens = 0
         chunk_tokens_list = [self._chunk_tokens(result) for result in results]
         total_tokens = sum(chunk_tokens_list)
+        max_tokens = self._normalize_budget(
+            self._settings.context_retrieval_max_tokens
+        )
+        truncated_text_by_index: dict[int, str] = {}
+        text_truncated = False
 
-        for r, chunk_tokens in zip(results, chunk_tokens_list, strict=False):
+        for index, (r, chunk_tokens) in enumerate(
+            zip(results, chunk_tokens_list, strict=False)
+        ):
+            if max_tokens is not None and used_tokens + chunk_tokens > max_tokens:
+                if not included:
+                    truncated_text, truncated_tokens, truncated = self._truncate_text(
+                        self._result_text(r),
+                        max_tokens,
+                    )
+                    included.append(r)
+                    truncated_text_by_index[index] = truncated_text
+                    used_tokens = truncated_tokens
+                    text_truncated = truncated
+                break
             included.append(r)
             used_tokens += chunk_tokens
 
@@ -109,7 +127,7 @@ class ContextBuilder:
         else:
             context_parts: list[str] = []
             for i, r in enumerate(included, 1):
-                text = self._result_text(r)
+                text = truncated_text_by_index.get(i - 1, self._result_text(r))
                 label = self._result_citation_label(r, index=i)
                 context_parts.append(f"[{label}] {text}")
             context = "\n\n".join(context_parts)
@@ -120,7 +138,7 @@ class ContextBuilder:
             "items": len(included),
         }
         truncation = {
-            "truncated": False,
+            "truncated": len(included) < len(results) or text_truncated,
             "dropped_items": max(len(results) - len(included), 0),
             "dropped_tokens": max(total_tokens - used_tokens, 0),
         }
@@ -258,7 +276,7 @@ class ContextBuilder:
         max_chars = max_tokens * 4
         if len(text) <= max_chars:
             return text, count_tokens_approximately(text), False
-        truncated_text = text[:max_chars].rstrip()
+        truncated_text = text[: max(max_chars - 1, 0)].rstrip()
         if truncated_text != text:
             truncated_text = f"{truncated_text}…"
         return truncated_text, count_tokens_approximately(truncated_text), True
