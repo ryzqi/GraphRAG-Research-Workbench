@@ -8,6 +8,7 @@ from collections.abc import Iterable
 from typing import Any, cast
 
 from langchain.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_core.messages.utils import trim_messages
 
 from app.core.settings import Settings
 from app.integrations.chat_model_cache import (
@@ -75,6 +76,72 @@ def _recent_turns(messages: list[Any], *, max_turns: int = 3) -> list[dict[str, 
         max_turns=max_turns,
     )
     return context_seed_turns_to_context_frame_turns(seed["recent_turns"])
+
+
+def _latest_human_message(messages: list[Any]) -> HumanMessage | None:
+    for message in reversed(messages):
+        if isinstance(message, HumanMessage):
+            return message
+    return None
+
+
+def trim_kb_preprocess_messages(
+    messages: list[Any],
+    *,
+    settings: Settings,
+) -> tuple[list[Any], dict[str, int | bool | None]]:
+    budget = getattr(settings, "context_history_max_tokens", None)
+    if not isinstance(budget, int) or budget <= 0:
+        return list(messages), {
+            "history_trimmed": False,
+            "history_input_tokens": None,
+            "history_output_tokens": None,
+            "history_budget_tokens": None,
+            "history_dropped_messages": 0,
+        }
+
+    summary_messages = [msg for msg in messages if isinstance(msg, SystemMessage)]
+    dialogue_messages = [
+        msg for msg in messages if isinstance(msg, (HumanMessage, AIMessage))
+    ]
+    input_tokens = sum(
+        count_tokens_approximately(getattr(message, "content", "") or "")
+        for message in dialogue_messages
+    )
+    if not dialogue_messages or input_tokens <= budget:
+        return list(messages), {
+            "history_trimmed": False,
+            "history_input_tokens": input_tokens,
+            "history_output_tokens": input_tokens,
+            "history_budget_tokens": budget,
+            "history_dropped_messages": 0,
+        }
+
+    trimmed_dialogue = trim_messages(
+        dialogue_messages,
+        max_tokens=budget,
+        token_counter="approximate",
+        strategy="last",
+        start_on="human",
+        end_on=("human", "ai"),
+    )
+    if not trimmed_dialogue:
+        latest_human = _latest_human_message(dialogue_messages)
+        if latest_human is not None:
+            trimmed_dialogue = [latest_human]
+    trimmed_messages = [*summary_messages, *trimmed_dialogue]
+    output_tokens = sum(
+        count_tokens_approximately(getattr(message, "content", "") or "")
+        for message in trimmed_dialogue
+    )
+    dropped_messages = max(len(dialogue_messages) - len(trimmed_dialogue), 0)
+    return trimmed_messages, {
+        "history_trimmed": dropped_messages > 0 or output_tokens < input_tokens,
+        "history_input_tokens": input_tokens,
+        "history_output_tokens": output_tokens,
+        "history_budget_tokens": budget,
+        "history_dropped_messages": dropped_messages,
+    }
 
 
 def _dedupe_turns_preserve_latest(turns: list[dict[str, str]]) -> list[dict[str, str]]:

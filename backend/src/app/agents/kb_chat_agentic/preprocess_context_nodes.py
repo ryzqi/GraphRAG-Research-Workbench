@@ -36,6 +36,7 @@ from .preprocess_context_helpers import (
     _render_display_context,
     _select_turns_for_merge,
     _strip_summary_prefix,
+    trim_kb_preprocess_messages,
 )
 from .preprocess_query_bundle import _extract_user_input, _merge_stage_summary, _runtime_context
 
@@ -58,6 +59,11 @@ async def merge_context(
     messages = state.get("messages")
     if not isinstance(messages, list):
         messages = []
+    trimmed_messages, trim_stats = trim_kb_preprocess_messages(
+        messages,
+        settings=settings,
+    )
+    messages = trimmed_messages
 
     user_input = _extract_user_input(state)
     persisted_summary = _latest_summary_message(messages)
@@ -196,6 +202,7 @@ async def merge_context(
             "turns_seen": len(turns),
             "turns_selected": len(selected_turns),
             "compression_ratio": compression_ratio,
+            **trim_stats,
             "llm_resolve_used": llm_resolve_used,
             "llm_resolve_reason": llm_resolve_reason,
             "fallback_used": fallback_used,
