@@ -14,6 +14,7 @@ from app.core.checkpoint import CheckpointManager
 from app.core.errors import AppError
 from app.core.logging import set_run_id
 from app.core.model_config_errors import ModelConfigIncompleteError
+from app.core.pii import sanitize_with_settings
 from app.integrations.chat_model_cache import (
     create_chat_model_cached as create_chat_model,
 )
@@ -31,6 +32,20 @@ from app.services.message_normalizer import checkpoint_messages_require_reset
 from app.services.streaming import StreamState, apply_updates_chunk, extract_stream_delta
 
 logger = logging.getLogger(__name__)
+
+
+def _sanitize_stream_delta_dicts(
+    *,
+    deltas: list[Any],
+    settings: Any,
+) -> list[dict[str, Any]]:
+    sanitized: list[dict[str, Any]] = []
+    for delta in deltas:
+        payload = delta.to_dict() if hasattr(delta, "to_dict") else delta
+        sanitized_value = sanitize_with_settings(payload, settings=settings)
+        if isinstance(sanitized_value, dict):
+            sanitized.append(sanitized_value)
+    return sanitized
 
 
 async def answer_stream(
@@ -231,6 +246,9 @@ async def answer_stream(
                 anthropic_prompt_caching_enabled=self._settings.anthropic_prompt_caching_enabled,
                 anthropic_prompt_cache_ttl=self._settings.anthropic_prompt_cache_ttl,
                 anthropic_prompt_cache_min_messages=self._settings.anthropic_prompt_cache_min_messages,
+                pii_middleware_enabled=self._settings.pii_middleware_enabled,
+                pii_redaction_strategy=self._settings.pii_redaction_strategy,
+                pii_apply_to_tool_results=self._settings.pii_apply_to_tool_results,
                 hitl_interrupt_on=hitl_interrupt_on,
             )
             stream_state = StreamState(
@@ -279,7 +297,10 @@ async def answer_stream(
                                 {
                                     "run_id": str(run.id),
                                     "node": node_name,
-                                    "deltas": [delta.to_dict() for delta in deltas],
+                                    "deltas": _sanitize_stream_delta_dicts(
+                                        deltas=deltas,
+                                        settings=self._settings,
+                                    ),
                                     "ts": datetime.now(timezone.utc).isoformat(),
                                 },
                             )
@@ -512,6 +533,9 @@ async def resume_after_tool_approval_stream(
             anthropic_prompt_caching_enabled=self._settings.anthropic_prompt_caching_enabled,
             anthropic_prompt_cache_ttl=self._settings.anthropic_prompt_cache_ttl,
             anthropic_prompt_cache_min_messages=self._settings.anthropic_prompt_cache_min_messages,
+            pii_middleware_enabled=self._settings.pii_middleware_enabled,
+            pii_redaction_strategy=self._settings.pii_redaction_strategy,
+            pii_apply_to_tool_results=self._settings.pii_apply_to_tool_results,
             hitl_interrupt_on=hitl_interrupt_on,
         )
         config = cast(RunnableConfig, CheckpointManager.make_config(thread_id))
@@ -577,7 +601,10 @@ async def resume_after_tool_approval_stream(
                         {
                             "run_id": str(run.id),
                             "node": node_name,
-                            "deltas": [delta.to_dict() for delta in deltas],
+                            "deltas": _sanitize_stream_delta_dicts(
+                                deltas=deltas,
+                                settings=self._settings,
+                            ),
                             "ts": datetime.now(timezone.utc).isoformat(),
                         },
                     )

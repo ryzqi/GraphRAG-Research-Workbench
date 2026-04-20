@@ -39,10 +39,10 @@ _SENSITIVE_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"Bearer\s+[\w\-\.]+", re.I), "Bearer ***REDACTED***"),
     # 邮箱地址
     (re.compile(r"[\w\.-]+@[\w\.-]+\.\w+"), "***EMAIL***"),
-    # 手机号（中国大陆）
-    (re.compile(r"1[3-9]\d{9}"), "***PHONE***"),
     # 身份证号
-    (re.compile(r"\d{17}[\dXx]"), "***ID_CARD***"),
+    (re.compile(r"\b\d{17}[\dXx]\b"), "***ID_CARD***"),
+    # 手机号（中国大陆）
+    (re.compile(r"(?<!\d)(?:\+?86[-\s]?)?1[3-9]\d{9}(?!\d)"), "***PHONE***"),
 ]
 
 

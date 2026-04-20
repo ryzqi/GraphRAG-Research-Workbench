@@ -223,6 +223,12 @@ class Settings(DeploySettings):
     anthropic_prompt_cache_min_messages: int = Field(
         0, ge=0, alias="ANTHROPIC_PROMPT_CACHE_MIN_MESSAGES"
     )
+    pii_middleware_enabled: bool = Field(True, alias="PII_MIDDLEWARE_ENABLED")
+    pii_redaction_strategy: str = Field("redact", alias="PII_REDACTION_STRATEGY")
+    pii_apply_to_tool_results: bool = Field(
+        False, alias="PII_APPLY_TO_TOOL_RESULTS"
+    )
+    export_redaction_enabled: bool = Field(True, alias="EXPORT_REDACTION_ENABLED")
     kb_chat_grader_fail_policy: str = Field(
         "closed", alias="KB_CHAT_GRADER_FAIL_POLICY"
     )
@@ -504,6 +510,17 @@ class Settings(DeploySettings):
         normalized = raw.strip().lower()
         if normalized not in {"5m", "1h"}:
             raise ValueError("ANTHROPIC_PROMPT_CACHE_TTL must be '5m' or '1h'")
+        return normalized
+
+    @field_validator("pii_redaction_strategy", mode="before")
+    @classmethod
+    def _normalize_pii_redaction_strategy(cls, value: object) -> str:
+        raw = "redact" if value is None else str(value)
+        normalized = raw.strip().lower()
+        if normalized not in {"redact", "mask", "hash", "block"}:
+            raise ValueError(
+                "PII_REDACTION_STRATEGY must be one of: redact, mask, hash, block"
+            )
         return normalized
 
 

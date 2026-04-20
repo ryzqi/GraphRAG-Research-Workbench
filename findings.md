@@ -568,3 +568,88 @@
 - 本地 `langmem` 签名确认：`create_memory_store_manager(model, *, schemas=None, instructions=..., enable_inserts=True, enable_deletes=False, query_limit=5, namespace=(...), store=None, phases=None)` 返回 `MemoryStoreManager`。该 manager 支持 `asearch(...)`、`aput(...)`、`ainvoke({"messages": ...}, config=...)` 和 `get_namespace(config)`。
 - 本地 `ReflectionExecutor(manager, store=...)` 支持 `submit(payload, config=..., after_seconds=..., thread_id=...)`，后台 worker 会用 manager 同步 `invoke()` 写入 store；若不给 `store` 则需要 LangGraph runtime store。
 - 结论：当前 KB Chat 是 LangGraph 状态图而非 ReAct agent，直接把 `create_manage_memory_tool/search_memory_tool` 挂入工具列表不会被图节点自动调用；本点应以 LangMem manager/executor/search 迁移持久化形态，并保留现有 preprocess/finalize 边界。
+
+## 第十七个点 P2-5 代码取证与外部调研
+
+### 当前代码取证
+
+- `backend/src/app/agents/general_chat_agent.py`
+  - General Chat 通过 `create_agent(..., middleware=middleware)` 统一装配 middleware。
+  - 当前 middleware 栈已包含 `SummarizationMiddleware`、`ContextEditingMiddleware`、`LLMToolSelectorMiddleware`、`AnthropicPromptCachingMiddleware` 与可选 `HumanInTheLoopMiddleware`。
+  - 因此 `PIIMiddleware` 的最自然落点就是这里；只要构造器加参数并透传到五处调用点，就能覆盖 normal/recovery/stream/resume-stream/resume。
+- `backend/src/app/services/research_runtime_factory.py`
+  - Deep Research 顶层 runtime 通过 `create_deep_agent(..., middleware=middleware)` 构造。
+  - 当前 middleware 顺序是 breadth gate -> tool selector -> anthropic prompt caching -> model safety。
+  - 这里同样适合追加 `PIIMiddleware`，且不需要改 subagent 架构或 runtime backend。
+- `backend/src/app/agents/kb_chat_graph.py` / `kb_chat_agentic_graph.py`
+  - KB Chat 仍是自建 `StateGraph`，多个节点直接持有 `chat_model` 调用。
+  - 该路径不支持直接复用 `create_agent` / `create_deep_agent` 的 agent middleware。
+  - 因此本点不能声称“系统已统一接入 `PIIMiddleware` 覆盖所有链路”。
+- `backend/src/app/services/exporters/chat_exporter.py`
+  - 导出内容直接拼接：
+    - `ChatMessage.content`
+    - `run.stage_summaries`
+    - `Evidence.locator`
+    - `Evidence.excerpt`
+  - 这里完全不经过 agent middleware；如果要覆盖“对话导出”场景，必须在 exporter 内或其上游做显式脱敏。
+- `backend/src/app/services/exporters/research_exporter.py`
+  - 导出器直接从 `research_artifacts.report_md` 读取 Markdown，然后转成 PDF。
+  - 这条链路同样不经过 agent middleware；若只接 middleware，不会影响研究报告导出。
+- `backend/src/app/worker/tasks/export.py`
+  - 导出任务直接实例化 `ChatExporter()` 或 `ResearchExporter()`，没有传入 agent、middleware 或独立安全策略对象。
+  - 因此本点若要覆盖导出场景，最小改法是让 exporter 自带脱敏后处理或接收 settings 驱动的后处理。
+- `backend/src/app/core/logging.py`
+  - 已有通用日志脱敏：
+    - 字符串 `redact(value)`
+    - 结构化 `redact_dict(data)`
+  - 默认模式可处理：
+    - 常见 key/token/password/secret
+    - Bearer token
+    - 邮箱
+    - 中国大陆手机号
+    - 身份证号
+  - 这说明仓库已经有一套面向“日志/纯文本”的脱敏基础设施，可用于 exporter 后处理的最小复用。
+- `backend/src/app/agents/kb_chat_trace_nodes.py`
+  - trace snapshot 有单独的 key-based redaction 与截断逻辑，说明仓库对“调试/观测输出需要脱敏”已有明确先例。
+
+### 本地已安装包取证
+
+- 在 `backend` 目录用本地 introspection 核对 `langchain.agents.middleware.PIIMiddleware`，当前签名为：
+  - `PIIMiddleware(pii_type, *, strategy='redact', detector=None, apply_to_input=True, apply_to_output=False, apply_to_tool_results=False)`
+- 当前实现语义：
+  - `before_model()` 只会在 `apply_to_input=True` 或 `apply_to_tool_results=True` 时处理最近 user message / 最近一轮 tool results。
+  - `after_model()` 只会在 `apply_to_output=True` 时处理最后一个 `AIMessage`。
+  - 内置 detector 只覆盖：
+    - `email`
+    - `credit_card`
+    - `ip`
+    - `mac_address`
+    - `url`
+  - 自定义 PII 类型可通过 regex 或 callable detector 扩展，例如手机号。
+- 结论：
+  - 若本点目标是“对外输出脱敏”，不能使用默认参数，必须显式设置 `apply_to_input=False, apply_to_output=True`，并按需要决定是否处理 tool results。
+  - 若要覆盖手机号等仓库现有日志已处理的类型，需要自定义 detector。
+
+### 外部官方资料调研结论
+
+- LangChain 官方 guardrails / middleware 文档提供 `PIIMiddleware` 作为内置 guardrail，推荐通过 `create_agent(..., middleware=[...])` 接入，而不是业务侧手写消息遍历。
+- 官方能力边界与本地源码一致：
+  - 这是 agent middleware，能处理 agent state 内的用户输入、模型输出和可选 tool result。
+  - 它不负责仓库外层的导出器、PDF 生成器、数据库持久内容或任意自建链路。
+- 因此，对当前仓库最稳妥的最小实践是：
+  1. 顶层 agent 路径使用官方 `PIIMiddleware`；
+  2. 导出发布路径复用本地 `redact()` / `redact_dict()` 做后处理；
+  3. 不把 KB Chat 或导出器误包装成 middleware 已覆盖。
+
+### 本点最小实现边界
+
+- 本点做：
+  - `Settings` 新增最小 PII 开关与策略配置。
+  - 新增统一的 PII middleware builder，供 General Chat / Deep Research 复用。
+  - General Chat / Deep Research 顶层 agent 接入 `PIIMiddleware`，默认面向输出脱敏。
+  - Chat / Research 导出器新增显式脱敏后处理，覆盖导出文件内容。
+- 本点不做：
+  - KB Chat 自建图直接模型调用的统一 PII 防护。
+  - 数据库存量消息/工件回写清洗。
+  - 复杂 DLP 分类、审计事件、租户级策略矩阵。
+  - 把 `PIIMiddleware` 用作导出器唯一方案。

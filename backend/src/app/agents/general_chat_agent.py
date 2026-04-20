@@ -18,6 +18,7 @@ from langchain.agents.middleware.summarization import ContextSize
 from langchain_core.language_models.chat_models import BaseChatModel
 
 from app.core.checkpoint import CheckpointManager
+from app.core.pii import build_pii_middleware
 from app.core.settings import Settings
 from app.agents.prompt_caching import build_anthropic_prompt_caching_middleware
 from app.agents.tool_selection import build_tool_selector_middleware
@@ -115,6 +116,9 @@ def build_general_chat_agent(
     anthropic_prompt_caching_enabled: bool = True,
     anthropic_prompt_cache_ttl: str = "5m",
     anthropic_prompt_cache_min_messages: int = 0,
+    pii_middleware_enabled: bool = True,
+    pii_redaction_strategy: str = "redact",
+    pii_apply_to_tool_results: bool = False,
     hitl_interrupt_on: Mapping[str, bool | InterruptOnConfig] | None = None,
 ):
     clear_tool_trigger = (
@@ -173,6 +177,12 @@ def build_general_chat_agent(
     middleware.extend(
         build_anthropic_prompt_caching_middleware(settings=prompt_cache_settings)
     )
+    pii_settings = Settings(
+        PII_MIDDLEWARE_ENABLED=pii_middleware_enabled,
+        PII_REDACTION_STRATEGY=pii_redaction_strategy,
+        PII_APPLY_TO_TOOL_RESULTS=pii_apply_to_tool_results,
+    )
+    middleware.extend(build_pii_middleware(settings=pii_settings))
     if hitl_interrupt_on:
         middleware.append(
             HumanInTheLoopMiddleware(

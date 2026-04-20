@@ -344,3 +344,60 @@
 - 下一步：
   - 只暂存 `P2-4` 相关源码、测试与 graphify 产物，创建单独提交。
   - 提交后进入下一未完成点 `P2-5`，并在开始前重新做代码取证与官方资料调研。
+
+### P2-5
+
+- 当前状态：`已验证通过`
+- 已完成：
+  - 重新读取 `上下文优化方案.md` 中 `P2-5` 段落，确认方案文字把目标收敛在“文档导出、研究报告发布等场景”的 PII 防护。
+  - 读取 `general_chat_agent.py`、`research_runtime_factory.py`、`chat_exporter.py`、`research_exporter.py`、`worker/tasks/export.py`、`core/logging.py`、`kb_chat_trace_nodes.py`，确认当前真实链路边界：
+    - General Chat 通过 `create_agent(..., middleware=...)` 构造，适合接官方 `PIIMiddleware`。
+    - Deep Research 通过 `create_deep_agent(..., middleware=...)` 构造，适合接官方 `PIIMiddleware`。
+    - KB Chat 是自建 `StateGraph` + 直接模型调用，不能声称已由 agent middleware 自动覆盖。
+    - Chat / Research 导出器由 worker 直接调用 exporter 生成内容，不经过 agent middleware。
+  - 对本地已安装 LangChain 做 introspection，确认 `PIIMiddleware` 当前签名为：
+    - `PIIMiddleware(pii_type, strategy='redact', detector=None, apply_to_input=True, apply_to_output=False, apply_to_tool_results=False)`
+  - 已确认关键语义：
+    - 默认只处理输入；
+    - 若目标是“对外输出脱敏”，必须显式开启 `apply_to_output=True`，必要时再评估 `apply_to_tool_results=True`；
+    - 可用内置 detector 只覆盖 `email/credit_card/ip/mac_address/url`，手机号等需自定义 detector。
+- 当前结论：
+  - `P2-5` 不能只追加一个默认 `PIIMiddleware` 就宣称完成，因为那样既不会处理输出，也不会覆盖导出链路。
+  - 本点的最小真实闭环应为：
+    - General Chat / Deep Research 顶层 agent：追加可配置 `PIIMiddleware`；
+    - Chat / Research 导出器：单独做显式脱敏后处理；
+    - KB Chat：本点明确不覆盖，不做假声明。
+- 下一步：
+  - 新增 RED 测试：
+    - `backend/tests/test_pii_middleware.py`
+    - `backend/tests/test_export_redaction.py`
+    - `backend/tests/test_streaming_pii_redaction.py`
+  - 实现最小闭环：
+    - `Settings` 新增 `PII_MIDDLEWARE_ENABLED`、`PII_REDACTION_STRATEGY`、`PII_APPLY_TO_TOOL_RESULTS`、`EXPORT_REDACTION_ENABLED`
+    - 新增 `app/core/pii.py`，统一 agent middleware builder 与本地输出 sanitizer
+    - General Chat / Deep Research 顶层 agent 接入 `PIIMiddleware`
+    - Chat / Research exporter 改为字段级脱敏，避免破坏 `stage_summaries` JSON 结构
+    - General Chat SSE `messages` 事件在发出前对 delta payload 做显式脱敏，避免流式路径先泄露原文
+  - 复核期间修正 3 个 correctness 问题：
+    - 手机号正则误吞身份证子串
+    - `ChatExporter` 全文二次正则脱敏会破坏 JSON 代码块结构
+    - SSE 流式输出未经过本地点定义的输出脱敏
+  - 定向验证：
+    - `uv run pytest tests/test_pii_middleware.py tests/test_export_redaction.py tests/test_streaming_pii_redaction.py -q`
+    - 最终结果：`8 passed`
+  - 回归验证：
+    - `uv run pytest tests/test_pii_middleware.py tests/test_export_redaction.py tests/test_streaming_pii_redaction.py tests/test_anthropic_prompt_caching_middleware.py tests/test_tool_selector_middleware.py tests/test_general_chat_context_editing.py tests/test_research_runtime_large_result_policy.py -q`
+    - 最终结果：`23 passed`
+  - lint：
+    - `uv run ruff check src/app/core/settings.py src/app/core/pii.py src/app/core/logging.py src/app/agents/general_chat_agent.py src/app/services/research_runtime_factory.py src/app/services/general_chat_service_execution.py src/app/services/general_chat_service_streaming_ops.py src/app/services/general_chat_service_resume_ops.py src/app/services/exporters/chat_exporter.py src/app/services/exporters/research_exporter.py tests/test_pii_middleware.py tests/test_export_redaction.py tests/test_streaming_pii_redaction.py`
+    - 结果：`All checks passed!`
+  - graphify：
+    - 按仓库规则重建 `backend/graphify-out`
+    - 最终结果：`Rebuilt: 3871 nodes, 14744 edges, 95 communities`
+  - 代码审查结果已采纳并修复：流式 SSE 先泄露原文、导出 JSON 结构破坏风险。
+- 当前结论：
+  - `P2-5` 已形成真实闭环：顶层 agent 输出、流式 SSE 输出和导出文件三类对外内容都已纳入本地点声明的 PII 防护范围。
+  - KB Chat 自建图的直接模型调用仍未统一接入 `PIIMiddleware`；本点未对此做虚假声明。
+- 下一步：
+  - 创建 `P2-5` 单独提交。
+  - 当前 `上下文优化方案.md` 中剩余点已全部处理完毕。

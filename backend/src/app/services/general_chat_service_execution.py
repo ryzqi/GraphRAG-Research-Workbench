@@ -327,6 +327,9 @@ async def answer(
                 anthropic_prompt_caching_enabled=self._settings.anthropic_prompt_caching_enabled,
                 anthropic_prompt_cache_ttl=self._settings.anthropic_prompt_cache_ttl,
                 anthropic_prompt_cache_min_messages=self._settings.anthropic_prompt_cache_min_messages,
+                pii_middleware_enabled=self._settings.pii_middleware_enabled,
+                pii_redaction_strategy=self._settings.pii_redaction_strategy,
+                pii_apply_to_tool_results=self._settings.pii_apply_to_tool_results,
                 hitl_interrupt_on=hitl_interrupt_on,
             )
             result = await agent.ainvoke(
@@ -376,6 +379,9 @@ async def answer(
                 anthropic_prompt_caching_enabled=self._settings.anthropic_prompt_caching_enabled,
                 anthropic_prompt_cache_ttl=self._settings.anthropic_prompt_cache_ttl,
                 anthropic_prompt_cache_min_messages=self._settings.anthropic_prompt_cache_min_messages,
+                pii_middleware_enabled=self._settings.pii_middleware_enabled,
+                pii_redaction_strategy=self._settings.pii_redaction_strategy,
+                pii_apply_to_tool_results=self._settings.pii_apply_to_tool_results,
                 hitl_interrupt_on=hitl_interrupt_on,
             )
             result = await recovery_agent.ainvoke(

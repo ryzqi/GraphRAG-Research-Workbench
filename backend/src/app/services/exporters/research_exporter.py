@@ -16,6 +16,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import AppError
+from app.core.pii import sanitize_export_text
+from app.core.settings import Settings, get_settings
 from app.models.research_artifact import ResearchArtifact
 
 _PDF_FONT_NAME = "STSong-Light"
@@ -29,6 +31,9 @@ def _ensure_pdf_font() -> None:
 
 class ResearchExporter:
     """直接从 research_artifacts 读取最终研究工件。"""
+
+    def __init__(self, *, settings: Settings | None = None) -> None:
+        self._settings = settings or get_settings()
 
     async def export(self, session: AsyncSession, session_id: uuid.UUID) -> bytes:
         stmt = select(ResearchArtifact).where(ResearchArtifact.session_id == session_id)
@@ -58,7 +63,14 @@ class ResearchExporter:
             )
 
         assert report_md is not None
-        return self._build_pdf(str(report_md.content_text))
+        prepared_report = self._prepare_report_markdown(str(report_md.content_text))
+        return self._build_pdf(prepared_report)
+
+    def _prepare_report_markdown(self, report_md: str) -> str:
+        return sanitize_export_text(
+            report_md,
+            enabled=self._settings.export_redaction_enabled,
+        )
 
     def _build_pdf(self, report_md: str) -> bytes:
         _ensure_pdf_font()

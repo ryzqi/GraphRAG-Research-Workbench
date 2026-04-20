@@ -5,10 +5,13 @@ from __future__ import annotations
 import json
 import uuid
 from datetime import datetime, timezone
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.pii import sanitize_export_text, sanitize_pii_value
+from app.core.settings import Settings, get_settings
 from app.models.agent_run import AgentRun
 from app.models.chat_message import ChatMessage
 from app.models.chat_session import ChatSession
@@ -17,6 +20,9 @@ from app.models.evidence import Evidence
 
 class ChatExporter:
     """对话导出器：导出问答+证据+阶段摘要。"""
+
+    def __init__(self, *, settings: Settings | None = None) -> None:
+        self._settings = settings or get_settings()
 
     async def export(self, session: AsyncSession, run_id: uuid.UUID) -> str:
         """导出对话为 Markdown 格式。"""
@@ -44,11 +50,30 @@ class ChatExporter:
         result = await session.execute(stmt)
         evidence_list = list(result.scalars().all())
 
+        return self._render_markdown(
+            run=run,
+            run_id=run_id,
+            chat_session=chat_session,
+            messages=messages,
+            evidence_list=evidence_list,
+            exported_at=datetime.now(timezone.utc),
+        )
+
+    def _render_markdown(
+        self,
+        *,
+        run: Any,
+        run_id: uuid.UUID,
+        chat_session: ChatSession | None,
+        messages: list[Any],
+        evidence_list: list[Any],
+        exported_at: datetime,
+    ) -> str:
         # 构建导出内容
         lines: list[str] = []
         lines.append("# 对话导出")
         lines.append("")
-        lines.append(f"**导出时间**: {datetime.now(timezone.utc).isoformat()}")
+        lines.append(f"**导出时间**: {exported_at.isoformat()}")
         lines.append(f"**运行 ID**: {run_id}")
         lines.append(f"**类型**: {run.run_type.value}")
         lines.append(f"**模式**: {run.mode.value}")
@@ -79,7 +104,12 @@ class ChatExporter:
                 }.get(msg.role.value, msg.role.value)
                 lines.append(f"### {role_label} ({msg.created_at.isoformat()})")
                 lines.append("")
-                lines.append(msg.content)
+                lines.append(
+                    sanitize_export_text(
+                        str(msg.content),
+                        enabled=self._settings.export_redaction_enabled,
+                    )
+                )
                 lines.append("")
 
         # 阶段摘要
@@ -87,7 +117,16 @@ class ChatExporter:
             lines.append("## 阶段摘要")
             lines.append("")
             lines.append("```json")
-            lines.append(json.dumps(run.stage_summaries, ensure_ascii=False, indent=2))
+            lines.append(
+                json.dumps(
+                    sanitize_pii_value(
+                        run.stage_summaries,
+                        enabled=self._settings.export_redaction_enabled,
+                    ),
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            )
             lines.append("```")
             lines.append("")
 
@@ -124,10 +163,18 @@ class ChatExporter:
                 if ev.material_id:
                     lines.append(f"- **资料 ID**: {ev.material_id}")
                 if ev.locator:
-                    lines.append(
-                        f"- **定位**: {json.dumps(ev.locator, ensure_ascii=False)}"
+                    redacted_locator = sanitize_pii_value(
+                        ev.locator,
+                        enabled=self._settings.export_redaction_enabled,
                     )
-                lines.append(f"- **摘录**: {ev.excerpt[:300]}...")
+                    lines.append(
+                        f"- **定位**: {json.dumps(redacted_locator, ensure_ascii=False)}"
+                    )
+                excerpt = sanitize_export_text(
+                    str(ev.excerpt),
+                    enabled=self._settings.export_redaction_enabled,
+                )
+                lines.append(f"- **摘录**: {excerpt[:300]}...")
                 lines.append("")
 
         return "\n".join(lines)

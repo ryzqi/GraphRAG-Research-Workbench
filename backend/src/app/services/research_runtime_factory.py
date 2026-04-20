@@ -5,13 +5,14 @@ from dataclasses import dataclass
 from typing import Any
 
 from deepagents import create_deep_agent
-from deepagents.backends import CompositeBackend, StateBackend, StoreBackend
+from deepagents.backends import CompositeBackend, StateBackend
 from langchain.tools import BaseTool
 
 from app.agents.tool_calling.registry import ToolMeta, build_research_tool_registry
 from app.agents.model_safety import build_agent_model_safety_middleware
 from app.agents.prompt_caching import build_anthropic_prompt_caching_middleware
 from app.agents.tool_selection import build_tool_selector_middleware
+from app.core.pii import build_pii_middleware
 from app.core.settings import Settings
 from app.integrations.mcp_adapters import McpToolEntry
 from app.integrations.redis_client import RedisClient
@@ -229,6 +230,7 @@ async def create_deep_research_runtime(
         )
     )
     middleware.extend(build_anthropic_prompt_caching_middleware(settings=settings))
+    middleware.extend(build_pii_middleware(settings=settings))
     middleware.extend(
         build_agent_model_safety_middleware(
             settings=settings,

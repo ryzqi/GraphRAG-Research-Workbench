@@ -9,9 +9,13 @@
 
 - `P2-1 用 langmem 替换 KB Chat 自建记忆` 已完成并单独提交。
 - `P2-3` 的 Anthropic provider 优化按用户最新要求跳过，不进入实现。
-- 当前处理下一个未完成点：`P2-4 上下文指标化评估`。
-- 本点先做最小实现：把可由当前代码真实计算的上下文指标补入 `ContextBuilder.build_metrics` 与相关 `stage_summaries`，不在本点扩展远端平台、Grafana、论文或 Claude provider 专属指标。
-- 不在本点混入 `P2-5`，也不提交现有脏工作树中的用户改动。
+- `P2-4 上下文指标化评估` 已完成并单独提交。
+- 当前处理下一个未完成点：`P2-5 PII & 安全`。
+- 本点先做最小实现：
+  - General Chat 与 Deep Research 顶层 agent 接入可配置 `PIIMiddleware`；
+  - Chat / Research 导出链路补显式脱敏后处理；
+  - 不把 KB Chat 自建图或其他未经过 agent middleware 的链路误报为已覆盖。
+- 不在本点混入 `P2-3` 跳过项或其他后续任务，也不提交现有脏工作树中的用户改动。
 
 ## 约束
 
@@ -38,16 +42,15 @@
 | Phase 4 | complete | 运行验证、代码审查、重建 backend graphify |
 | Phase 5 | complete | 创建 `P2-1` 单独 git 提交并记录下一步 |
 | Phase 6 | complete | 调研并重定义 `P2-3` 的实现边界，确认 Anthropic provider 优化跳过 |
-| Phase 7 | in_progress | 取证并实施 `P2-4` 的最小上下文指标化评估 |
+| Phase 7 | complete | 取证并实施 `P2-4` 的最小上下文指标化评估 |
+| Phase 8 | complete | 取证并实施 `P2-5` 的最小 PII 防护闭环 |
 
 ## 当前任务
 
-- Active item: `P2-4 上下文指标化评估`
+- Active item: `全部任务已完成`
 - Done condition:
-  - `ContextBuilder.build_metrics()` 能产出当前代码可真实计算的上下文指标，至少覆盖 `context_utilization`、`truncation_rate` 和可由 budgets/usage 推导的预算利用率。
-  - KB Chat 的 `merge_context` / `memory` 路径补充 `memory_recall_precision` 所需的最小本地指标基础，至少能记录 memory 命中条数、渲染条数、去重后保留条数。
-  - General Chat / KB Chat 现有 `run.metrics` 与 `run.stage_summaries` 不被破坏，并新增测试覆盖。
-  - 完成单独验证和单独提交，不混入 `P2-5` 或跳过项 `P2-3`。
+  - `P2-5` 相关代码、测试、graphify 与控制面已单点收口。
+  - 当前方案中的剩余实现点已全部完成或按用户要求明确跳过。
 
 ## 已知风险
 
@@ -67,4 +70,6 @@
 - `P1-6` 已通过单独提交 `1465196` 落地；下一步必须从该提交后的工作树继续，避免把新点混入已完成提交。
 - 当前 Deep Agents 已内置 `FilesystemMiddleware`；若误按方案再叠一层 `FilesystemFileSearchMiddleware`，会重复暴露工具面且不能解决 `StateBackend` 对未预置文件不可见的问题。
 - `StateBackend` 明确要求预置文件必须通过 `invoke({"files": ...})` 进入状态；若直接把非 priority 文件从 `request["files"]` 删除，而没有补 seed/fallback backend，runtime 将无法按需读取这些文件。
-- `P2-4` 方案原文包含 LangSmith tracing dataset、Grafana/日志面板、prompt_cache_hit_rate、tool_selection_drop_rate 等大范围指标；当前仓库并无现成 LangSmith 接入与 selector drop 埋点，若不收紧边界，容易把一个点膨胀成跨系统工程。
+- `P2-5` 方案原文只给出 `PIIMiddleware` 片段，但当前仓库导出器不经过 agent middleware；若只接 agent middleware，会把“导出/发布场景”误写成已覆盖。
+- `PIIMiddleware` 默认 `apply_to_input=True`、`apply_to_output=False`、`apply_to_tool_results=False`；若不显式配置，会偏离“对外输出脱敏”的目标。
+- Chat 导出包含会话消息、阶段摘要与证据详情；Research 导出直接把 `report_md` 写成 PDF。若导出脱敏做得过重，可能破坏结构；若做得过轻，又会留下真实敏感信息。

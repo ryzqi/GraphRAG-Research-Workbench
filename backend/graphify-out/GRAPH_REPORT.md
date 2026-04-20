@@ -1,12 +1,12 @@
 # Graph Report - F:\毕设\code\backend  (2026-04-20)
 
 ## Corpus Check
-- 361 files · ~583,539 words
+- 365 files · ~588,071 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 3835 nodes · 14614 edges · 95 communities detected
-- Extraction: 38% EXTRACTED · 62% INFERRED · 0% AMBIGUOUS · INFERRED: 9111 edges (avg confidence: 0.66)
+- 3871 nodes · 14744 edges · 95 communities detected
+- Extraction: 38% EXTRACTED · 62% INFERRED · 0% AMBIGUOUS · INFERRED: 9202 edges (avg confidence: 0.66)
 - Token cost: 0 input · 0 output
 
 ## Community Hubs (Navigation)
@@ -107,114 +107,114 @@
 - [[_COMMUNITY_Community 94|Community 94]]
 
 ## God Nodes (most connected - your core abstractions)
-1. `get()` - 563 edges
-2. `Settings` - 376 edges
+1. `get()` - 564 edges
+2. `Settings` - 391 edges
 3. `QueryRewriteService` - 130 edges
-4. `AppError` - 96 edges
-5. `ResearchSourceTarget` - 79 edges
+4. `AppError` - 99 edges
+5. `ResearchSourceTarget` - 80 edges
 6. `QueryItem` - 75 edges
-7. `get_settings()` - 72 edges
-8. `ResearchService` - 67 edges
-9. `ToolMeta` - 65 edges
-10. `AgentRun` - 65 edges
+7. `get_settings()` - 74 edges
+8. `AgentRun` - 67 edges
+9. `ResearchService` - 67 edges
+10. `ToolMeta` - 66 edges
 
 ## Surprising Connections (you probably didn't know these)
+- `将任意 / 内部状态投影为公开图输入 schema。` --uses--> `QueryItem`  [INFERRED]
+  agents\kb_chat_agentic_state.py → F:\毕设\code\backend\src\app\schemas\query_enhancement.py
 - `KB Chat 记忆辅助函数（基于 LangGraph Store）。  本模块维护的记忆载荷具备以下特性： - 结构化：使用 JSON 字典 - 有界：固定大` --uses--> `Settings`  [INFERRED]
   agents\kb_chat_memory.py → F:\毕设\code\backend\src\app\core\settings.py
 - `使用 LangMem 从成功问答中抽取长期记忆。` --uses--> `Settings`  [INFERRED]
   F:\毕设\code\backend\src\app\agents\kb_chat_memory.py → F:\毕设\code\backend\src\app\core\settings.py
 - `Agent 模型调用限流与降级 middleware 装配。` --uses--> `Settings`  [INFERRED]
   F:\毕设\code\backend\src\app\agents\model_safety.py → F:\毕设\code\backend\src\app\core\settings.py
-- `Anthropic prompt caching middleware 装配。` --uses--> `Settings`  [INFERRED]
-  F:\毕设\code\backend\src\app\agents\prompt_caching.py → F:\毕设\code\backend\src\app\core\settings.py
-- `构建 Anthropic Prompt Caching middleware。` --uses--> `Settings`  [INFERRED]
-  F:\毕设\code\backend\src\app\agents\prompt_caching.py → F:\毕设\code\backend\src\app\core\settings.py
+- `_coerce_context_compress_decision()` --calls--> `_compress_context()`  [INFERRED]
+  F:\毕设\code\backend\src\app\agents\retrieval_context_compress.py → F:\毕设\code\backend\src\app\agents\retrieval_subgraph.py
 
 ## Communities
 
 ### Community 0 - "Community 0"
 Cohesion: 0.01
-Nodes (407): budget_exceeded(), 返回 KB Chat 轮次 / 重试预算是否超限及原因。, ChatOpenAI, PendingClarification, append_compact_citations_to_answer(), _build_compact_entries(), _build_evidence_item(), _compact_locator() (+399 more)
+Nodes (365): budget_exceeded(), 返回 KB Chat 轮次 / 重试预算是否超限及原因。, ChatOpenAI, PendingClarification, get(), make_send_task(), _apply_cors_headers(), 为异常响应补齐 CORS 头，避免前端把 4xx/5xx 误判为 CORS 失败。 (+357 more)
 
 ### Community 1 - "Community 1"
-Cohesion: 0.01
-Nodes (279): 合并后的最新结构基线。  Revision ID: 6f4b0d9e2c31 Revises: Create Date: 2026-02-18 15:02:27, upgrade(), downgrade(), 新增导入任务 outbox  Revision ID: 9b9a6f4f20d1 Revises: 6f4b0d9e2c31 Create Date: 2026, upgrade(), _backup_research_history(), downgrade(), 移除 research backend 实现相关持久化结构  Revision ID: a6b8c9d0e1f2 Revises: f3a2c1d4e5b6 C (+271 more)
+Cohesion: 0.02
+Nodes (265): SearchProviderBackend, ChatModelCache, 统一 ChatModel 工厂（按全局模型配置选择 provider）。, create_chat_message(), resume_general_chat(), build_deep_research_runtime_runner(), _build_record_runtime_activity_tool(), _build_workspace_context_files() (+257 more)
 
 ### Community 2 - "Community 2"
 Cohesion: 0.02
-Nodes (268): 统一 ChatModel 工厂（按全局模型配置选择 provider）。, _build_record_runtime_activity_tool(), _build_workspace_context_files(), _coerce_async_invoker(), _coerce_sync_invoker(), DeepResearchRuntimeRunner, _invoke_with_async_fallback(), _is_runtime_result_mapping() (+260 more)
+Nodes (188): Base, Base, ChunkPersistenceService, DocumentChunk 持久化辅助函数。, 在单个事务范围内替换某素材的全部 chunks。, 将分块结果持久化到 PostgreSQL 的 document_chunks 表。, _resolve_chunking_strategy(), _resolve_context_attempts() (+180 more)
 
 ### Community 3 - "Community 3"
-Cohesion: 0.02
-Nodes (181): recover_stale_interactive_agent_runs(), recover_stale_interactive_agent_runs_on_startup(), get_app_resources(), require_app_resources(), set_app_resources(), is_running_in_worker_async_runtime(), initialize(), generate_contexts_for_chunks() (+173 more)
+Cohesion: 0.03
+Nodes (231): KB Chat answer subgraph 生成、修复与提交节点。, KB Chat 答案生成子图。  该子图封装“草稿生成 → 审查 → 可选修复 → 提交”流程， 并通过写入 `reflection.action/reason, 为父级 KB Chat 图构建已编译的答案子图。, 为父级 KB Chat 图构建已编译的答案子图。, 为父级 KB Chat 图构建已编译的答案子图。, KB Chat answer subgraph 审查辅助。, KB Chat answer subgraph 审查节点。, KbChatAnswerSubgraphContext (+223 more)
 
 ### Community 4 - "Community 4"
-Cohesion: 0.02
-Nodes (215): BackendProtocol, WebSearchProviderStatusRead, WebSearchStatusRead, _build_runtime_context(), _load_runtime_tool_registry_for_session(), _load_tool_registry_for_session(), build_overall_web_search_status(), provider-aware 健康状态聚合。 (+207 more)
+Cohesion: 0.01
+Nodes (186): downgrade(), _drop_backup_tables(), reintroduce research session tables  Revision ID: 38f4aa0f8d91 Revises: a6b8c9d0, _report_json_uuid_sql(), _restore_research_artifacts_from_backup(), _restore_research_events_from_backup(), _restore_research_reports_from_backup(), _restore_research_sessions_from_backup() (+178 more)
 
 ### Community 5 - "Community 5"
 Cohesion: 0.02
-Nodes (178): fail_stale_bootstrap_jobs(), create_chat_model(), create_chat_message(), create_chat_message_stream(), create_chat_session(), delete_chat_session(), _empty_stream_events(), get_chat_messages() (+170 more)
+Nodes (150): get_app_resources(), require_app_resources(), set_app_resources(), is_running_in_worker_async_runtime(), initialize(), _close_shared_clients(), DeepResearchRuntimeCache, _ensure_shared_clients() (+142 more)
 
 ### Community 6 - "Community 6"
-Cohesion: 0.04
-Nodes (212): KB Chat answer subgraph 生成、修复与提交节点。, KB Chat 答案生成子图。  该子图封装“草稿生成 → 审查 → 可选修复 → 提交”流程， 并通过写入 `reflection.action/reason, 为父级 KB Chat 图构建已编译的答案子图。, 为父级 KB Chat 图构建已编译的答案子图。, KB Chat answer subgraph 审查辅助。, KB Chat answer subgraph 审查节点。, KbChatAnswerSubgraphContext, KB Chat answer subgraph 共享辅助。 (+204 more)
+Cohesion: 0.02
+Nodes (196): BackendProtocol, WebSearchProviderStatusRead, WebSearchStatusRead, _build_runtime_context(), ExtensionRepository, _load_runtime_tool_registry_for_session(), _load_tool_registry_for_session(), build_overall_web_search_status() (+188 more)
 
 ### Community 7 - "Community 7"
 Cohesion: 0.02
-Nodes (166): AppEnv, from_value(), build_provider_error(), format_provider_error(), NormalizedSearchResult, provider_response_to_documents(), ProviderSearchReport, ProviderSearchResponse (+158 more)
+Nodes (174): BaseModel, ClarificationSlot, KbGraphEdge, KbGraphNode, _normalize_client_request_id(), ToolDecision, validate_constraints(), CheckpointHistoryItem (+166 more)
 
 ### Community 8 - "Community 8"
-Cohesion: 0.03
-Nodes (168): build_answer_subgraph(), _answer_commit(), _answer_repair(), _draft_generate(), 为父级 KB Chat 图构建已编译的答案子图。, _classify_structured_error(), _coalesce_paragraph_summary(), _count_unsupported_auxiliary_claims() (+160 more)
+Cohesion: 0.02
+Nodes (162): _resolve_answer_review_details(), _review_paragraph_citations(), _build_review_details(), _ordered_unique_paragraph_ids(), _resolve_unsupported_scope(), EvidenceItem, append_compact_citations_to_answer(), _build_compact_entries() (+154 more)
 
 ### Community 9 - "Community 9"
-Cohesion: 0.05
-Nodes (161): AgentRun, AgentRunStatus, AgentRunType, 用于恢复过期交互式 AgentRun 记录的辅助函数。, AppResources, Base, ChatExporter, ChatMessage (+153 more)
+Cohesion: 0.02
+Nodes (145): recover_stale_interactive_agent_runs(), recover_stale_interactive_agent_runs_on_startup(), fail_stale_bootstrap_jobs(), 用于处理过期 bootstrap 作业的 watchdog 任务。, _CacheKey, create_chat_model_cached(), get_or_build(), _hash_key() (+137 more)
 
 ### Community 10 - "Community 10"
-Cohesion: 0.06
-Nodes (117): coref_rewrite(), normalize_rewrite(), 仅使用结构化 LLM 输出规范化查询；失败时回退到原始查询。, 使用 LLM 解析对话指代；失败时回退到原始查询。, resolve_reference(), rewrite(), AmbiguityResult, ComplexityRouteResult (+109 more)
+Cohesion: 0.03
+Nodes (149): build_answer_subgraph(), _answer_commit(), _answer_repair(), _draft_generate(), _classify_structured_error(), _coalesce_paragraph_summary(), _count_unsupported_auxiliary_claims(), _detect_multi_entity_answer_gap() (+141 more)
 
 ### Community 11 - "Community 11"
-Cohesion: 0.04
-Nodes (76): initialize_worker_async_runtime(), _require_worker_async_runtime(), run_in_worker_async_runtime(), _runtime_thread_main(), shutdown_worker_async_runtime(), _WorkerAsyncRuntimeState, _build_celery_conf(), configure_celery_logging() (+68 more)
+Cohesion: 0.06
+Nodes (141): AgentRun, AgentRunStatus, AgentRunType, 用于恢复过期交互式 AgentRun 记录的辅助函数。, AppResources, ChatMessage, MessageRole, decide_replay_mode() (+133 more)
 
 ### Community 12 - "Community 12"
-Cohesion: 0.04
-Nodes (66): _CacheKey, create_chat_model_cached(), get_or_build(), _hash_key(), _previous_response_id_marker(), _resolve_max_retries_for_key(), _resolve_timeout_for_key(), _build_chat_openai_common_kwargs() (+58 more)
+Cohesion: 0.03
+Nodes (94): initialize_worker_async_runtime(), _require_worker_async_runtime(), run_in_worker_async_runtime(), _runtime_thread_main(), shutdown_worker_async_runtime(), _WorkerAsyncRuntimeState, _build_celery_conf(), configure_celery_logging() (+86 more)
 
 ### Community 13 - "Community 13"
-Cohesion: 0.05
-Nodes (67): FakeMessagesListChatModel, build_kb_chat_run_config(), build_kb_chat_run_context(), _coerce_int_setting(), KB Chat agentic graph 运行时辅助。, 为 KB Chat 构建 LangGraph 调用配置。      `recursion_limit` must stay at top-level con, 为 context_schema 驱动的节点运行时数据构建上下文。, build_context_seed() (+59 more)
+Cohesion: 0.06
+Nodes (119): coref_rewrite(), normalize_rewrite(), 仅使用结构化 LLM 输出规范化查询；失败时回退到原始查询。, 使用 LLM 解析对话指代；失败时回退到原始查询。, resolve_reference(), rewrite(), AmbiguityResult, ComplexityRouteResult (+111 more)
 
 ### Community 14 - "Community 14"
-Cohesion: 0.06
-Nodes (35): BaseVectorizer, _validate_content(), _build_semantic_cache_scope(), _get_semantic_cache_service(), _load_semantic_cache_pre_context(), _semantic_cache_citation_ids(), _semantic_cache_enabled(), _semantic_cache_evidence_fingerprint() (+27 more)
+Cohesion: 0.04
+Nodes (66): create_app(), clear(), create_chat_message_stream(), _empty_stream_events(), get_chat_messages(), get_chat_session(), get_pending_general_chat_run(), _has_pending_kb_clarification() (+58 more)
 
 ### Community 15 - "Community 15"
-Cohesion: 0.1
-Nodes (39): 用于处理过期 bootstrap 作业的 watchdog 任务。, EntryErrorRead, ManifestFileEntry, ManifestSourceType, KBBootstrapJob, KBBootstrapJobStatus, BootstrapSubmissionCreateResult, BootstrapUploadSessionResult (+31 more)
+Cohesion: 0.07
+Nodes (35): BaseVectorizer, _validate_content(), _build_semantic_cache_scope(), _get_semantic_cache_service(), _load_semantic_cache_pre_context(), _semantic_cache_citation_ids(), _semantic_cache_enabled(), _semantic_cache_evidence_fingerprint() (+27 more)
 
 ### Community 16 - "Community 16"
-Cohesion: 0.06
-Nodes (39): create_app(), clear(), stats(), _apply_cors_headers(), build_error_response(), _classify_dbapi_error(), ErrorCode, _is_ingestion_enum_schema_mismatch() (+31 more)
+Cohesion: 0.07
+Nodes (43): ActiveModelUpdate, get_model_config(), ModelConfigRead, ModelProviderConfig, ModelRuntimeSelection, _normalize_base_url(), _normalize_model(), _normalize_optional_text() (+35 more)
 
 ### Community 17 - "Community 17"
 Cohesion: 0.12
-Nodes (21): 网页搜索 provider / tool 构建器。, _LocalRateLimiter, 网页搜索 Tavily client 与 provider 适配。, TavilySearchProviderAdapter, WebSearchClient, JinaReadArgs, WebCrawlArgs, WebExtractArgs (+13 more)
+Nodes (23): _build_web_search_error_output(), _invoke_web_search(), 网页搜索 provider / tool 构建器。, _LocalRateLimiter, 网页搜索 Tavily client 与 provider 适配。, TavilySearchProviderAdapter, WebSearchClient, JinaReadArgs (+15 more)
 
 ### Community 18 - "Community 18"
-Cohesion: 0.06
-Nodes (34): build_research_query_mesh(), _build_priority_context_paths(), build_runtime_context_guide(), build_runtime_context_snapshot(), _coerce_file_text(), _dedupe_paths(), _parse_json_array_payload(), _parse_json_object_payload() (+26 more)
+Cohesion: 0.07
+Nodes (35): Deep Research runtime 大结果溢写辅助。, spill_json_payload(), SpillResult, _approx_tokens(), _artifact_spill_slug_for_workspace_path(), _build_bootstrap_workspace_file_entries(), build_runtime_memory_files(), build_runtime_prompt() (+27 more)
 
 ### Community 19 - "Community 19"
-Cohesion: 0.09
-Nodes (26): resolve_summary_trim_tokens(), build_general_chat_agent(), build_anthropic_prompt_caching_middleware(), Anthropic prompt caching middleware 装配。, 构建 Anthropic Prompt Caching middleware。, SimpleNamespace, _NamedTool, test_deep_research_installs_anthropic_prompt_caching_middleware() (+18 more)
+Cohesion: 0.11
+Nodes (17): ChatExporter, _apply_text_strategy(), build_pii_middleware(), 对纯文本执行与 agent middleware 对齐的 PII 策略。, 递归脱敏结构化导出内容中的文本与敏感字段。, 按 settings 驱动的统一 PII 输出脱敏。, 按 settings 构建面向输出的 PII middleware。, sanitize_export_text() (+9 more)
 
 ### Community 20 - "Community 20"
-Cohesion: 0.38
-Nodes (10): downgrade(), _drop_backup_tables(), reintroduce research session tables  Revision ID: 38f4aa0f8d91 Revises: a6b8c9d0, _report_json_uuid_sql(), _restore_research_artifacts_from_backup(), _restore_research_events_from_backup(), _restore_research_reports_from_backup(), _restore_research_sessions_from_backup() (+2 more)
+Cohesion: 0.19
+Nodes (7): QueueHealthRepository, _collect_consumer_counts(), QueueHealthService, build_queue_health_service(), QueueHealthRead, QueueStateRead, QueueStuckSummaryRead
 
 ### Community 21 - "Community 21"
 Cohesion: 0.36
@@ -513,7 +513,7 @@ Cohesion: 1.0
 Nodes (1): 稀疏检索：仅 BM25，无需 embedding。
 
 ## Knowledge Gaps
-- **152 isolated node(s):** `add research event idempotency index  Revision ID: 19a4c2e7d8f1 Revises: f4c6d8e`, `remove research kb selection fields  Revision ID: 1c2d3e4f5a6b Revises: 38f4aa0f`, `add clarifying to research session status  Revision ID: 2f6a9c8d1b4e Revises: 1c`, `reintroduce research session tables  Revision ID: 38f4aa0f8d91 Revises: a6b8c9d0`, `add chat messages recent index  Revision ID: 4b8e1d2c3f4a Revises: 19a4c2e7d8f1` (+147 more)
+- **153 isolated node(s):** `add research event idempotency index  Revision ID: 19a4c2e7d8f1 Revises: f4c6d8e`, `remove research kb selection fields  Revision ID: 1c2d3e4f5a6b Revises: 38f4aa0f`, `add clarifying to research session status  Revision ID: 2f6a9c8d1b4e Revises: 1c`, `reintroduce research session tables  Revision ID: 38f4aa0f8d91 Revises: a6b8c9d0`, `add chat messages recent index  Revision ID: 4b8e1d2c3f4a Revises: 19a4c2e7d8f1` (+148 more)
   These have ≤1 connection - possible missing edges or undocumented components.
 - **Thin community `Community 34`** (2 nodes): `kb_chat_trace_display_contract.py`, `KB Chat trace 节点展示契约辅助函数。`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
@@ -641,17 +641,17 @@ Nodes (1): 稀疏检索：仅 BM25，无需 embedding。
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
-- **Why does `Settings` connect `Community 6` to `Community 0`, `Community 1`, `Community 2`, `Community 3`, `Community 4`, `Community 5`, `Community 7`, `Community 8`, `Community 9`, `Community 10`, `Community 11`, `Community 12`, `Community 13`, `Community 14`, `Community 17`, `Community 19`?**
-  _High betweenness centrality (0.165) - this node is a cross-community bridge._
-- **Why does `get()` connect `Community 0` to `Community 1`, `Community 2`, `Community 3`, `Community 4`, `Community 5`, `Community 6`, `Community 7`, `Community 8`, `Community 9`, `Community 10`, `Community 11`, `Community 12`, `Community 13`, `Community 14`, `Community 15`, `Community 16`, `Community 17`, `Community 18`, `Community 19`?**
-  _High betweenness centrality (0.134) - this node is a cross-community bridge._
-- **Why does `get_settings()` connect `Community 3` to `Community 1`, `Community 2`, `Community 5`, `Community 6`, `Community 7`, `Community 8`, `Community 9`, `Community 11`, `Community 12`, `Community 13`, `Community 14`, `Community 16`, `Community 22`?**
-  _High betweenness centrality (0.036) - this node is a cross-community bridge._
-- **Are the 556 inferred relationships involving `get()` (e.g. with `build_pending_tool_calls()` and `_route_after_preprocess_subgraph()`) actually correct?**
-  _`get()` has 556 INFERRED edges - model-reasoned connections that need verification._
-- **Are the 420 inferred relationships involving `str` (e.g. with `_route_after_preprocess_subgraph()` and `build_kb_chat_run_context()`) actually correct?**
-  _`str` has 420 INFERRED edges - model-reasoned connections that need verification._
-- **Are the 372 inferred relationships involving `Settings` (e.g. with `构建 HITL interrupt_on 配置：仅拦截 MCP 扩展工具。` and `KbChatFact`) actually correct?**
-  _`Settings` has 372 INFERRED edges - model-reasoned connections that need verification._
+- **Why does `get()` connect `Community 0` to `Community 1`, `Community 2`, `Community 3`, `Community 4`, `Community 5`, `Community 6`, `Community 7`, `Community 8`, `Community 9`, `Community 10`, `Community 11`, `Community 12`, `Community 13`, `Community 14`, `Community 15`, `Community 16`, `Community 17`, `Community 18`, `Community 19`, `Community 20`?**
+  _High betweenness centrality (0.153) - this node is a cross-community bridge._
+- **Why does `Settings` connect `Community 3` to `Community 0`, `Community 1`, `Community 2`, `Community 4`, `Community 5`, `Community 6`, `Community 7`, `Community 8`, `Community 9`, `Community 10`, `Community 11`, `Community 12`, `Community 13`, `Community 15`, `Community 16`, `Community 17`, `Community 19`, `Community 20`?**
+  _High betweenness centrality (0.143) - this node is a cross-community bridge._
+- **Why does `get_settings()` connect `Community 5` to `Community 0`, `Community 1`, `Community 2`, `Community 3`, `Community 4`, `Community 6`, `Community 8`, `Community 9`, `Community 10`, `Community 11`, `Community 12`, `Community 15`, `Community 16`, `Community 19`, `Community 20`, `Community 22`?**
+  _High betweenness centrality (0.028) - this node is a cross-community bridge._
+- **Are the 557 inferred relationships involving `get()` (e.g. with `build_pending_tool_calls()` and `_route_after_preprocess_subgraph()`) actually correct?**
+  _`get()` has 557 INFERRED edges - model-reasoned connections that need verification._
+- **Are the 424 inferred relationships involving `str` (e.g. with `_route_after_preprocess_subgraph()` and `build_kb_chat_run_context()`) actually correct?**
+  _`str` has 424 INFERRED edges - model-reasoned connections that need verification._
+- **Are the 387 inferred relationships involving `Settings` (e.g. with `构建 HITL interrupt_on 配置：仅拦截 MCP 扩展工具。` and `KbChatFact`) actually correct?**
+  _`Settings` has 387 INFERRED edges - model-reasoned connections that need verification._
 - **Are the 109 inferred relationships involving `QueryRewriteService` (e.g. with `KbChatGraphContext` and `KB Chat 流程图第 4 阶段的检索子图。`) actually correct?**
   _`QueryRewriteService` has 109 INFERRED edges - model-reasoned connections that need verification._
