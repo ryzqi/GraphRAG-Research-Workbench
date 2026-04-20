@@ -10,6 +10,7 @@ from langchain.tools import BaseTool
 
 from app.agents.tool_calling.registry import ToolMeta, build_research_tool_registry
 from app.agents.model_safety import build_agent_model_safety_middleware
+from app.agents.prompt_caching import build_anthropic_prompt_caching_middleware
 from app.agents.tool_selection import build_tool_selector_middleware
 from app.core.settings import Settings
 from app.integrations.mcp_adapters import McpToolEntry
@@ -227,6 +228,7 @@ async def create_deep_research_runtime(
             always_include=["record_runtime_activity"],
         )
     )
+    middleware.extend(build_anthropic_prompt_caching_middleware(settings=settings))
     middleware.extend(
         build_agent_model_safety_middleware(
             settings=settings,

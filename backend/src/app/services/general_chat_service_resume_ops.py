@@ -92,6 +92,9 @@ async def resume_after_tool_approval(
             tool_selector_use_previous_response_id=replay_decision.use_previous_response_id,
             tool_selector_model=None,
             tool_selector_always_include=self._settings.tool_selector_always_include,
+            anthropic_prompt_caching_enabled=self._settings.anthropic_prompt_caching_enabled,
+            anthropic_prompt_cache_ttl=self._settings.anthropic_prompt_cache_ttl,
+            anthropic_prompt_cache_min_messages=self._settings.anthropic_prompt_cache_min_messages,
             hitl_interrupt_on=hitl_interrupt_on,
         )
         config = cast(RunnableConfig, CheckpointManager.make_config(thread_id))

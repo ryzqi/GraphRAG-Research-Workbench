@@ -19,6 +19,7 @@ from langchain_core.language_models.chat_models import BaseChatModel
 
 from app.core.checkpoint import CheckpointManager
 from app.core.settings import Settings
+from app.agents.prompt_caching import build_anthropic_prompt_caching_middleware
 from app.agents.tool_selection import build_tool_selector_middleware
 from app.agents.tool_calling.utils import parse_mcp_tool_name
 
@@ -111,6 +112,9 @@ def build_general_chat_agent(
     tool_selector_use_previous_response_id: bool | None = None,
     tool_selector_model: BaseChatModel | None = None,
     tool_selector_always_include: list[str] | None = None,
+    anthropic_prompt_caching_enabled: bool = True,
+    anthropic_prompt_cache_ttl: str = "5m",
+    anthropic_prompt_cache_min_messages: int = 0,
     hitl_interrupt_on: Mapping[str, bool | InterruptOnConfig] | None = None,
 ):
     clear_tool_trigger = (
@@ -160,6 +164,14 @@ def build_general_chat_agent(
         ]
         if tool_selector_enabled and len(tools) > tool_selector_trigger_tool_count
         else []
+    )
+    prompt_cache_settings = Settings(
+        ANTHROPIC_PROMPT_CACHING_ENABLED=anthropic_prompt_caching_enabled,
+        ANTHROPIC_PROMPT_CACHE_TTL=anthropic_prompt_cache_ttl,
+        ANTHROPIC_PROMPT_CACHE_MIN_MESSAGES=anthropic_prompt_cache_min_messages,
+    )
+    middleware.extend(
+        build_anthropic_prompt_caching_middleware(settings=prompt_cache_settings)
     )
     if hitl_interrupt_on:
         middleware.append(

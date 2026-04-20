@@ -206,6 +206,15 @@ class Settings(DeploySettings):
     deep_research_priority_inline_chars: int = Field(
         12_000, ge=1, alias="DEEP_RESEARCH_PRIORITY_INLINE_CHARS"
     )
+    anthropic_prompt_caching_enabled: bool = Field(
+        True, alias="ANTHROPIC_PROMPT_CACHING_ENABLED"
+    )
+    anthropic_prompt_cache_ttl: str = Field(
+        "5m", alias="ANTHROPIC_PROMPT_CACHE_TTL"
+    )
+    anthropic_prompt_cache_min_messages: int = Field(
+        0, ge=0, alias="ANTHROPIC_PROMPT_CACHE_MIN_MESSAGES"
+    )
     kb_chat_grader_fail_policy: str = Field(
         "closed", alias="KB_CHAT_GRADER_FAIL_POLICY"
     )
@@ -478,6 +487,15 @@ class Settings(DeploySettings):
             raise ValueError(
                 "GENERAL_CHAT_REPLAY_MODE must be one of: auto, response_id, manual"
             )
+        return normalized
+
+    @field_validator("anthropic_prompt_cache_ttl", mode="before")
+    @classmethod
+    def _normalize_anthropic_prompt_cache_ttl(cls, value: object) -> str:
+        raw = "5m" if value is None else str(value)
+        normalized = raw.strip().lower()
+        if normalized not in {"5m", "1h"}:
+            raise ValueError("ANTHROPIC_PROMPT_CACHE_TTL must be '5m' or '1h'")
         return normalized
 
 

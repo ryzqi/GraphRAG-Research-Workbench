@@ -324,6 +324,9 @@ async def answer(
                 tool_selector_use_previous_response_id=replay_decision.use_previous_response_id,
                 tool_selector_model=None,
                 tool_selector_always_include=self._settings.tool_selector_always_include,
+                anthropic_prompt_caching_enabled=self._settings.anthropic_prompt_caching_enabled,
+                anthropic_prompt_cache_ttl=self._settings.anthropic_prompt_cache_ttl,
+                anthropic_prompt_cache_min_messages=self._settings.anthropic_prompt_cache_min_messages,
                 hitl_interrupt_on=hitl_interrupt_on,
             )
             result = await agent.ainvoke(
@@ -370,6 +373,9 @@ async def answer(
                 tool_selector_use_previous_response_id=recovery_decision.use_previous_response_id,
                 tool_selector_model=None,
                 tool_selector_always_include=self._settings.tool_selector_always_include,
+                anthropic_prompt_caching_enabled=self._settings.anthropic_prompt_caching_enabled,
+                anthropic_prompt_cache_ttl=self._settings.anthropic_prompt_cache_ttl,
+                anthropic_prompt_cache_min_messages=self._settings.anthropic_prompt_cache_min_messages,
                 hitl_interrupt_on=hitl_interrupt_on,
             )
             result = await recovery_agent.ainvoke(
