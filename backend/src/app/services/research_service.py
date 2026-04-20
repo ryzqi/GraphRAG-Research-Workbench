@@ -805,10 +805,12 @@ class ResearchService:
         session: ResearchSession,
         answer: str,
     ) -> bool:
-        del cls, answer
+        del cls
         max_rounds = get_settings().research_scoper_max_clarify_rounds
         submitted = ResearchService._clarification_submission_count(session)
-        return submitted < max_rounds
+        has_current_answer = bool(str(answer or "").strip())
+        current_round = submitted + (1 if has_current_answer else 0)
+        return current_round < max_rounds
 
     def _ensure_dispatch_outbox(self, *, session: ResearchSession) -> None:
         if session.status != ResearchSessionStatus.QUEUED:

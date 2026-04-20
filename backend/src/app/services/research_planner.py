@@ -17,6 +17,7 @@ from pydantic import (
     model_validator,
 )
 
+from app.core.errors import AppError
 from app.core.settings import Settings, get_settings
 from app.integrations.chat_model_cache import (
     create_chat_model_cached as create_chat_model,
@@ -51,6 +52,66 @@ class ResearchScoper(Protocol):
         question: str,
         allow_clarify: bool = True,
     ) -> ResearchClarificationRequest | ResearchPlanSnapshot: ...
+
+
+def _map_research_planner_exception(exc: Exception) -> AppError | None:
+    mod = exc.__class__.__module__ or ""
+    exc_type = type(exc).__name__
+    if mod.startswith("openai"):
+        if exc_type == "APITimeoutError":
+            return AppError(
+                code="RESEARCH_LLM_UPSTREAM_TIMEOUT",
+                message="研究计划生成超时，请稍后重试；若频繁出现，请检查模型超时配置或上游服务负载",
+                status_code=504,
+                details={"exc_type": exc_type},
+            )
+        if exc_type == "APIConnectionError":
+            return AppError(
+                code="RESEARCH_LLM_CONNECTION_ERROR",
+                message="大模型服务连接失败，请检查 Base URL、网络连通性或上游服务状态",
+                status_code=503,
+                details={"exc_type": exc_type},
+            )
+        status_code = getattr(exc, "status_code", None)
+        if status_code is None:
+            response = getattr(exc, "response", None)
+            status_code = getattr(response, "status_code", None)
+        if isinstance(status_code, int):
+            if status_code in {401, 403}:
+                return AppError(
+                    code="RESEARCH_LLM_AUTH_ERROR",
+                    message="研究计划生成鉴权失败，请前往“模型配置”页面检查 API Key / Base URL 配置",
+                    status_code=500,
+                    details={"upstream_status_code": status_code},
+                )
+            if status_code == 429:
+                return AppError(
+                    code="RESEARCH_LLM_RATE_LIMITED",
+                    message="研究计划生成被上游限流，请稍后重试",
+                    status_code=503,
+                    details={"upstream_status_code": status_code},
+                )
+            if status_code >= 500:
+                return AppError(
+                    code="RESEARCH_LLM_UPSTREAM_ERROR",
+                    message="上游大模型服务暂时不可用，请稍后重试",
+                    status_code=503,
+                    details={"upstream_status_code": status_code},
+                )
+    if isinstance(exc, RuntimeError):
+        message = str(exc)
+        if (
+            "Research scoper" in message
+            and "structured output" in message
+            and "invalid_schema" in message
+        ):
+            return AppError(
+                code="RESEARCH_SCOPER_INVALID_SCHEMA",
+                message="研究计划结构化输出解析失败，请稍后重试",
+                status_code=502,
+                details={"reason": "invalid_schema"},
+            )
+    return None
 
 
 class _ResearchScoperQuestionOutput(BaseModel):
@@ -701,10 +762,18 @@ class ResearchPlanner:
         allow_clarify: bool = True,
     ) -> ResearchPlannerResult:
         question = request.question.strip()
-        scoped = await self._scoper.scope(
-            question=question,
-            allow_clarify=allow_clarify,
-        )
+        try:
+            scoped = await self._scoper.scope(
+                question=question,
+                allow_clarify=allow_clarify,
+            )
+        except AppError:
+            raise
+        except Exception as exc:
+            mapped = _map_research_planner_exception(exc)
+            if mapped is not None:
+                raise mapped from exc
+            raise
         if isinstance(scoped, ResearchClarificationRequest):
             return ResearchPlannerResult(
                 plan_snapshot=None,

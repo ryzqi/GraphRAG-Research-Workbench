@@ -151,9 +151,12 @@ services:
       start_period: 10s
 
   searxng:
-    image: docker.io/searxng/searxng:2026.4.13-ee66b070a
+    image: docker.io/searxng/searxng:2026.4.17-e8299a4c3
     container_name: mkb_searxng
     restart: always
+    dns:
+      - 1.1.1.1
+      - 8.8.8.8
     environment:
       HTTP_PROXY: ""
       HTTPS_PROXY: ""

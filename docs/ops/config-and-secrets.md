@@ -30,6 +30,8 @@
 
 1. 复制根目录 `.env.example` 为 `.env`，补齐后端与前端公开地址、外部服务密钥。
 2. 如需覆盖本地基础设施默认值，复制 `infra/env/dev.env.example` 为 `infra/env/dev.env` 再修改。
+   - `WEB_SEARCH__SEARXNG_DEFAULT_ENGINES` 应与 `infra/searxng/config/settings.yml` 中的 `use_default_settings.engines.keep_only` 保持一致；当前已验证值为 `["artic","arxiv","github","mdn","openairepublications","stackoverflow"]`
+   - `SEARXNG_BASE_URL` 在本地 quickstart 验收时以根目录 `.env` 为最高优先级，未覆盖时才回退到 `infra/env/dev.env(.example)`
 3. 运行本地基础设施：
 
 ```powershell
@@ -50,6 +52,8 @@ pwsh -ExecutionPolicy Bypass -File .\scripts\start_all.ps1
 pwsh -ExecutionPolicy Bypass -File .\scripts\verify_quickstart.ps1 -SkipInfra
 pwsh -ExecutionPolicy Bypass -File .\scripts\verify_quickstart.ps1
 ```
+
+当前网络环境下，SearXNG 默认引擎已收敛到经本地验收验证可返回结果的白名单；若变更 `keep_only` 或 `.env` 中的默认引擎列表，应重新执行上述 quickstart 验收，确认 `SearXNG JSON 搜索 API` 仍为通过。
 
 ## 生产部署
 

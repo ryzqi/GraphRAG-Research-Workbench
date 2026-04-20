@@ -59,3 +59,5 @@ backend/celerybeat-schedule-wal
 backend/logs/
 .codex
 graphify-out/
+backend/graphify-out
+frontend/graphify-out

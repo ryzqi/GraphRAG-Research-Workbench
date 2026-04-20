@@ -70,14 +70,6 @@ class _McpToolLoadResult:
     diagnostics: McpServerDiagnostics
 
 
-@dataclass(slots=True)
-class _OpenedMcpRuntime:
-    server_name: str
-    entries: list[McpToolEntry]
-    diagnostics: McpServerDiagnostics
-    session_context: object | None = None
-
-
 def _format_audit_payload(
     payload: object, max_chars: int = _MAX_AUDIT_SNIPPET_CHARS
 ) -> str:
@@ -527,14 +519,11 @@ async def _open_single_mcp_runtime(
     connections: dict[str, McpConnection],
     allow_external: bool,
     extensions_by_id: dict[str, ToolExtension],
-) -> _OpenedMcpRuntime:
+    stack: AsyncExitStack,
+) -> tuple[list[McpToolEntry], McpServerDiagnostics]:
     server_name = str(extension.id)
     if server_name not in connections:
-        return _OpenedMcpRuntime(
-            server_name=server_name,
-            entries=[],
-            diagnostics=_invalid_extension_diagnostics(),
-        )
+        return [], _invalid_extension_diagnostics()
 
     client = MultiServerMCPClient(
         {server_name: connections[server_name]},
@@ -548,7 +537,7 @@ async def _open_single_mcp_runtime(
     session_context = client.session(server_name)
     start = time.perf_counter()
     try:
-        session = await session_context.__aenter__()
+        session = await stack.enter_async_context(session_context)
     except Exception as exc:  # noqa: BLE001
         latency_ms = int((time.perf_counter() - start) * 1000)
         diagnostics = McpServerDiagnostics(
@@ -564,11 +553,7 @@ async def _open_single_mcp_runtime(
                 "latency_ms": latency_ms,
             },
         )
-        return _OpenedMcpRuntime(
-            server_name=server_name,
-            entries=[],
-            diagnostics=diagnostics,
-        )
+        return [], diagnostics
 
     try:
         tools = await load_langchain_mcp_tools(
@@ -579,7 +564,6 @@ async def _open_single_mcp_runtime(
             tool_name_prefix=client.tool_name_prefix,
         )
     except Exception as exc:  # noqa: BLE001
-        await session_context.__aexit__(type(exc), exc, exc.__traceback__)
         latency_ms = int((time.perf_counter() - start) * 1000)
         diagnostics = McpServerDiagnostics(
             status="failed",
@@ -594,38 +578,44 @@ async def _open_single_mcp_runtime(
                 "latency_ms": latency_ms,
             },
         )
-        return _OpenedMcpRuntime(
-            server_name=server_name,
-            entries=[],
-            diagnostics=diagnostics,
-        )
+        return [], diagnostics
 
     latency_ms = int((time.perf_counter() - start) * 1000)
     if not tools:
-        await session_context.__aexit__(None, None, None)
-        return _OpenedMcpRuntime(
-            server_name=server_name,
-            entries=[],
-            diagnostics=McpServerDiagnostics(
-                status="degraded",
-                last_error="未发现可用工具",
-                latency_ms=latency_ms,
-            ),
+        return [], McpServerDiagnostics(
+            status="degraded",
+            last_error="未发现可用工具",
+            latency_ms=latency_ms,
         )
 
-    return _OpenedMcpRuntime(
-        server_name=server_name,
-        entries=[
-            McpToolEntry(extension=extension, tool=tool, raw_tool_name=tool.name)
-            for tool in tools
-        ],
-        diagnostics=McpServerDiagnostics(
-            status="ok",
-            last_error=None,
-            latency_ms=latency_ms,
-        ),
-        session_context=session_context,
+    return [
+        McpToolEntry(extension=extension, tool=tool, raw_tool_name=tool.name)
+        for tool in tools
+    ], McpServerDiagnostics(
+        status="ok",
+        last_error=None,
+        latency_ms=latency_ms,
     )
+
+
+async def _load_single_mcp_runtime(
+    *,
+    settings: Settings,
+    extension: ToolExtension,
+    connections: dict[str, McpConnection],
+    allow_external: bool,
+    extensions_by_id: dict[str, ToolExtension],
+    stack: AsyncExitStack,
+) -> tuple[str, list[McpToolEntry], McpServerDiagnostics]:
+    entries, diagnostics = await _open_single_mcp_runtime(
+        settings=settings,
+        extension=extension,
+        connections=connections,
+        allow_external=allow_external,
+        extensions_by_id=extensions_by_id,
+        stack=stack,
+    )
+    return str(extension.id), entries, diagnostics
 
 
 async def load_mcp_tools_with_diagnostics(
@@ -736,40 +726,19 @@ async def open_mcp_tool_runtime(
     diagnostics: dict[str, McpServerDiagnostics] = {}
 
     async with AsyncExitStack() as stack:
-        runtimes: list[_OpenedMcpRuntime] = []
-        parallel_load_enabled = bool(
-            getattr(settings, "mcp_parallel_load_enabled", True)
-        )
-        if parallel_load_enabled:
-            runtimes = await asyncio.gather(
-                *[
-                    _open_single_mcp_runtime(
-                        settings=settings,
-                        extension=ext,
-                        connections=connections,
-                        allow_external=allow_external,
-                        extensions_by_id=extensions_by_id,
-                    )
-                    for ext in extensions_list
-                ]
-            )
-        else:
-            for ext in extensions_list:
-                runtimes.append(
-                    await _open_single_mcp_runtime(
-                        settings=settings,
-                        extension=ext,
-                        connections=connections,
-                        allow_external=allow_external,
-                        extensions_by_id=extensions_by_id,
-                    )
+        for ext in extensions_list:
+            server_name, runtime_entries, runtime_diagnostics = (
+                await _load_single_mcp_runtime(
+                    settings=settings,
+                    extension=ext,
+                    connections=connections,
+                    allow_external=allow_external,
+                    extensions_by_id=extensions_by_id,
+                    stack=stack,
                 )
-
-        for runtime in runtimes:
-            diagnostics[runtime.server_name] = runtime.diagnostics
-            entries.extend(runtime.entries)
-            if runtime.session_context is not None:
-                stack.push_async_exit(runtime.session_context)
+            )
+            diagnostics[server_name] = runtime_diagnostics
+            entries.extend(runtime_entries)
 
         yield entries, diagnostics
 

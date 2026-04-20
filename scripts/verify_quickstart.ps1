@@ -117,7 +117,10 @@ function Test-SearXngJsonSearch {
 function Get-SearXngDefaultEngines {
     param([string[]]$EnvPaths)
 
-    $raw = Get-DotEnvValue -Paths $EnvPaths -Key "SEARXNG_DEFAULT_ENGINES"
+    $raw = Get-EnvOrDotEnvValue -Names @(
+        "SEARXNG_DEFAULT_ENGINES",
+        "WEB_SEARCH__SEARXNG_DEFAULT_ENGINES"
+    ) -DotEnvPaths $EnvPaths
     if ([string]::IsNullOrWhiteSpace($raw) -or $raw -eq "[]") {
         return @()
     }
@@ -311,7 +314,7 @@ Write-Host ""
 if (-not $SkipInfra) {
     Write-Host "7. 服务连通性检查" -ForegroundColor Yellow
 
-    $searxngBaseUrl = Resolve-ServiceBaseUrl -EnvNames @("SEARXNG_BASE_URL") -DotEnvPaths @($infraDevEnv, $infraDevEnvExample, $rootDotEnv)
+    $searxngBaseUrl = Resolve-ServiceBaseUrl -EnvNames @("SEARXNG_BASE_URL") -DotEnvPaths @($rootDotEnv, $infraDevEnv, $infraDevEnvExample)
     if ($searxngBaseUrl) {
         $searxngSettingsPath = "infra/searxng/config/settings.yml"
         $searxngEngines = Get-SearXngDefaultEngines -EnvPaths $scriptDotEnvPaths

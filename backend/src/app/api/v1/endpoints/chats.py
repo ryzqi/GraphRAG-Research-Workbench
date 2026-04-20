@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterable, AsyncIterator
+from collections.abc import AsyncIterator
 import uuid
 from typing import Any
 
@@ -56,31 +56,6 @@ _STREAM_HEARTBEAT_INTERVAL_SECONDS = 10.0
 def _has_pending_kb_clarification(run: AgentRun) -> bool:
     metrics = run.metrics if isinstance(run.metrics, dict) else {}
     return metrics.get("clarification_pending") is True
-
-
-async def _replay_stream_events(
-    first_item: tuple[str, Any],
-    iterator: AsyncIterator[tuple[str, Any]],
-) -> AsyncIterator[tuple[str, Any]]:
-    yield first_item
-    async for item in iterator:
-        yield item
-
-
-async def _empty_stream_events() -> AsyncIterator[tuple[str, Any]]:
-    if False:
-        yield ("", None)
-
-
-async def _prime_stream_events(
-    events: AsyncIterable[tuple[str, Any]],
-) -> AsyncIterator[tuple[str, Any]]:
-    iterator = aiter(events)
-    try:
-        first_item = await anext(iterator)
-    except StopAsyncIteration:
-        return _empty_stream_events()
-    return _replay_stream_events(first_item, iterator)
 
 
 async def _stream_general_chat_message_events(
@@ -568,8 +543,6 @@ async def create_chat_message_stream(
         raise bad_request(
             code="CHAT_UNSUPPORTED_SESSION_TYPE", message="不支持的会话类型"
         )
-    events = await _prime_stream_events(events)
-
     return StreamingResponse(
         encode_sse(
             events,
@@ -647,15 +620,13 @@ async def resume_kb_chat_after_clarification_stream(
 ):
     """提交澄清信息并恢复 KB Chat 执行（流式）。"""
     heartbeat_stats = SseHeartbeatStats()
-    events = await _prime_stream_events(
-        _stream_kb_chat_resume_events(
-            resources=resources,
-            session_id=session_id,
-            run_id=run_id,
-            user_content=body.content,
-            request=request,
-            heartbeat_stats=heartbeat_stats,
-        )
+    events = _stream_kb_chat_resume_events(
+        resources=resources,
+        session_id=session_id,
+        run_id=run_id,
+        user_content=body.content,
+        request=request,
+        heartbeat_stats=heartbeat_stats,
     )
 
     return StreamingResponse(
@@ -679,14 +650,12 @@ async def resume_general_chat_stream(
     body: ToolApprovalRequest,
 ):
     """两阶段交互：提交工具审批结果并恢复执行（流式）。"""
-    events = await _prime_stream_events(
-        _stream_general_chat_resume_events(
-            resources=resources,
-            session_id=session_id,
-            run_id=run_id,
-            approval=body,
-            request=request,
-        )
+    events = _stream_general_chat_resume_events(
+        resources=resources,
+        session_id=session_id,
+        run_id=run_id,
+        approval=body,
+        request=request,
     )
 
     return StreamingResponse(

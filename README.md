@@ -45,6 +45,7 @@
    - `CORE__DATABASE_URL`
    - `STORAGE__MINIO_*`
    - `CORE__EMBEDDING_*`
+   - `WEB_SEARCH__SEARXNG_DEFAULT_ENGINES` 默认已收敛到当前环境下验证可用的 `artic / arxiv / github / mdn / openairepublications / stackoverflow`；若调整该列表，请同步更新 `infra/searxng/config/settings.yml`
    - 若 backend/frontend/worker 运行在宿主机，请把数据库 / Redis / MinIO / SearXNG 地址改成宿主机可达地址；本地开发通常使用 `localhost` + `infra/env/dev.env(.example)` 中的端口。
 2. 如需覆盖本地基础设施变量，复制 `infra/env/dev.env.example` 为 `infra/env/dev.env` 再修改。
 3. 首次切换到单一 compose 后，旧 `infra/data/*` 绑定目录不会自动迁移到新的命名卷；如需保留历史本地数据，请先备份或手动导入。
@@ -72,6 +73,7 @@ pwsh -ExecutionPolicy Bypass -File .\scripts\start_all.ps1
 - 默认跳过数据库迁移；首次建库或重置后请显式添加 `-RunMigrate`。
 - `scripts/start_all.ps1` 会在执行 `uv` 前自动清理外部 `VIRTUAL_ENV / CONDA_PREFIX / PYTHONHOME / PYTHONPATH`，并固定使用当前项目 `backend/.venv`。
 - 若本地数据库仍来自旧迁移链，请先清理旧 schema，再执行 `uv run alembic upgrade head`。
+- `scripts/verify_quickstart.ps1` 会优先读取根目录 `.env` 中的 `SEARXNG_BASE_URL` 与 `WEB_SEARCH__SEARXNG_DEFAULT_ENGINES`；若你在本地覆盖了这两个值，验收会按覆盖后的配置执行。
 
 ### 3. 本地验收
 

@@ -2,7 +2,15 @@
 # Environment-specific public URL, secret, limiter and proxy routing must be injected
 # outside this file. Do not commit host-specific egress proxies here.
 
-use_default_settings: true
+use_default_settings:
+  engines:
+    keep_only:
+      - arxiv
+      - artic
+      - github
+      - mdn
+      - stackoverflow
+      - openairepublications
 
 general:
   debug: false
@@ -13,8 +21,8 @@ search:
   autocomplete: ""
   favicon_resolver: ""
   default_lang: "auto"
-  # 启用镜像默认引擎全集后，不再靠 keep_only 白名单收敛；
-  # 由短暂停用窗口把 403 / 429 / CAPTCHA 引擎临时摘出，让其余引擎继续返回结果。
+  # 当前出口链路下仅保留已验证可返回结果的引擎，
+  # 避免默认全量引擎被 403 / timeout / CAPTCHA 拖成空结果。
   suspended_times:
     SearxEngineAccessDenied: 120
     SearxEngineTooManyRequests: 120
