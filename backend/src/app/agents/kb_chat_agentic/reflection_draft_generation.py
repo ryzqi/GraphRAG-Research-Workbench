@@ -16,6 +16,10 @@ from app.services.kb_answer_paragraphs import render_answer_paragraphs
 from app.services.streaming import extract_answer_text
 
 from .budget import now_iso
+from .output_token_budget import (
+    resolve_kb_chat_draft_max_tokens_from_state,
+    resolve_kb_chat_plain_fallback_max_tokens,
+)
 from .reflection_draft_utils import (
     _attempt_local_plain_text_draft_repair,
     _build_answer_coverage_hint,
@@ -105,7 +109,11 @@ async def generate_draft(
         draft,
         structured_reason,
     ) = await _invoke_draft_structured(
-        chat_model=chat_model,
+        chat_model=chat_model.bind(
+            max_tokens=resolve_kb_chat_draft_max_tokens_from_state(
+                state, settings=settings
+            )
+        ),
         messages=draft_messages,
     )
 
@@ -118,7 +126,11 @@ async def generate_draft(
                 retry_draft,
                 retry_reason,
             ) = await _invoke_draft_structured(
-                chat_model=retry_chat_model,
+                chat_model=retry_chat_model.bind(
+                    max_tokens=resolve_kb_chat_draft_max_tokens_from_state(
+                        state, settings=settings
+                    )
+                ),
                 messages=draft_messages,
             )
             if retry_draft:
@@ -148,7 +160,9 @@ async def generate_draft(
                 f"问题：{question}"
             )
             try:
-                plain_model = chat_model.bind(max_tokens=1024)
+                plain_model = chat_model.bind(
+                    max_tokens=resolve_kb_chat_plain_fallback_max_tokens(settings)
+                )
                 plain_msg = await plain_model.ainvoke(
                     [
                         SystemMessage(content=system_prompt),
@@ -195,6 +209,7 @@ async def generate_draft(
                 coverage_block=coverage_block,
                 draft=draft,
                 coverage_gap=coverage_gap,
+                settings=settings,
             )
             if repaired is not None:
                 paragraph_payloads, render_meta, draft = repaired

@@ -48,6 +48,7 @@ from .answer_subgraph_shared import (
     _resolve_query_text,
 )
 from .budget import now_iso
+from .output_token_budget import resolve_kb_chat_repair_max_tokens
 
 logger = logging.getLogger('app.agents.kb_chat_agentic.answer_subgraph')
 
@@ -161,7 +162,7 @@ async def _answer_repair(
             "当前段落级元数据：\n"
             f"{_format_paragraph_review_payload(source_paragraphs)}"
         )
-        model = chat_model.bind(max_tokens=1024)
+        model = chat_model.bind(max_tokens=resolve_kb_chat_repair_max_tokens(settings))
         try:
             msg = await model.ainvoke(
                 [

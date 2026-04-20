@@ -34,6 +34,7 @@ from .reflection_shared import (
     _as_str,
 )
 from .schemas import AnswerParagraph, AnswerRenderMeta, DraftAnswerDecision
+from .output_token_budget import resolve_kb_chat_repair_max_tokens
 
 def _extract_question_entities(question: str) -> list[str]:
     return _extract_multi_target_entities_for_guardrail(question)
@@ -270,6 +271,7 @@ async def _attempt_local_plain_text_draft_repair(
     coverage_block: str,
     draft: str,
     coverage_gap: dict[str, object],
+    settings: Settings,
 ) -> tuple[list[dict[str, Any]], dict[str, Any], str] | None:
     gap_block = _format_draft_coverage_gap(coverage_gap)
     repair_user = (
@@ -287,7 +289,9 @@ async def _attempt_local_plain_text_draft_repair(
         f"原回答：\n{draft}"
     )
     try:
-        repair_model = chat_model.bind(max_tokens=1024)
+        repair_model = chat_model.bind(
+            max_tokens=resolve_kb_chat_repair_max_tokens(settings)
+        )
         repair_msg = await repair_model.ainvoke(
             [SystemMessage(content=system_prompt), HumanMessage(content=repair_user)]
         )

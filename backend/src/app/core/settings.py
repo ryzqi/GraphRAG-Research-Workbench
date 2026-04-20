@@ -166,6 +166,15 @@ class Settings(DeploySettings):
     kb_chat_max_generation_retries: int = Field(
         1, alias="KB_CHAT_MAX_GENERATION_RETRIES"
     )
+    kb_chat_draft_max_tokens: int = Field(
+        2_048, ge=1, alias="KB_CHAT_DRAFT_MAX_TOKENS"
+    )
+    kb_chat_repair_max_tokens: int = Field(
+        1_500, ge=1, alias="KB_CHAT_REPAIR_MAX_TOKENS"
+    )
+    kb_chat_plain_fallback_max_tokens: int = Field(
+        1_500, ge=1, alias="KB_CHAT_PLAIN_FALLBACK_MAX_TOKENS"
+    )
     kb_chat_grader_fail_policy: str = Field(
         "closed", alias="KB_CHAT_GRADER_FAIL_POLICY"
     )
