@@ -10,6 +10,7 @@ from langchain.tools import BaseTool
 
 from app.agents.tool_calling.registry import ToolMeta, build_research_tool_registry
 from app.agents.model_safety import build_agent_model_safety_middleware
+from app.agents.tool_selection import build_tool_selector_middleware
 from app.core.settings import Settings
 from app.integrations.mcp_adapters import McpToolEntry
 from app.integrations.redis_client import RedisClient
@@ -211,6 +212,14 @@ async def create_deep_research_runtime(
     middleware = [
         build_breadth_gate_middleware(gated_tool_names=breadth_gate_tool_names)
     ]
+    middleware.extend(
+        build_tool_selector_middleware(
+            settings=settings,
+            tools=tools,
+            use_previous_response_id=False,
+            always_include=["record_runtime_activity"],
+        )
+    )
     middleware.extend(
         build_agent_model_safety_middleware(
             settings=settings,

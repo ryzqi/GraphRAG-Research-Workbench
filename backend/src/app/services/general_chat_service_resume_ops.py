@@ -85,6 +85,13 @@ async def resume_after_tool_approval(
             summary_keep_messages=self._settings.summary_keep_messages,
             summary_trim_tokens=self._settings.summary_trim_tokens,
             tool_context_trigger_tokens=self._settings.context_tool_max_tokens,
+            tool_selector_enabled=self._settings.tool_selector_enabled,
+            tool_selector_trigger_tool_count=self._settings.tool_selector_trigger_tool_count,
+            tool_selector_max_tools=self._settings.tool_selector_max_tools,
+            tool_selector_model_id=self._settings.tool_selector_model_id,
+            tool_selector_use_previous_response_id=replay_decision.use_previous_response_id,
+            tool_selector_model=None,
+            tool_selector_always_include=self._settings.tool_selector_always_include,
             hitl_interrupt_on=hitl_interrupt_on,
         )
         config = cast(RunnableConfig, CheckpointManager.make_config(thread_id))

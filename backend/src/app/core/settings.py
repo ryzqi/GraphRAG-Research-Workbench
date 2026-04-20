@@ -181,6 +181,16 @@ class Settings(DeploySettings):
     kb_chat_fallback_model_id: str | None = Field(
         None, alias="KB_CHAT_FALLBACK_MODEL_ID"
     )
+    tool_selector_enabled: bool = Field(True, alias="TOOL_SELECTOR_ENABLED")
+    tool_selector_trigger_tool_count: int = Field(
+        10, ge=1, alias="TOOL_SELECTOR_TRIGGER_TOOL_COUNT"
+    )
+    tool_selector_max_tools: int = Field(5, ge=1, alias="TOOL_SELECTOR_MAX_TOOLS")
+    tool_selector_model_id: str | None = Field(None, alias="TOOL_SELECTOR_MODEL_ID")
+    tool_selector_always_include: list[str] = Field(
+        default_factory=list,
+        alias="TOOL_SELECTOR_ALWAYS_INCLUDE",
+    )
     deep_research_thread_model_call_limit: int | None = Field(
         240, ge=1, alias="DEEP_RESEARCH_THREAD_MODEL_CALL_LIMIT"
     )
@@ -400,6 +410,11 @@ class Settings(DeploySettings):
     @field_validator("milvus_text_analyzer_filters", mode="before")
     @classmethod
     def _parse_analyzer_filters(cls, value: object) -> list[str]:
+        return parse_string_list(value)
+
+    @field_validator("tool_selector_always_include", mode="before")
+    @classmethod
+    def _parse_tool_selector_always_include(cls, value: object) -> list[str]:
         return parse_string_list(value)
 
     @field_validator("memory_store_url", "jina_read_base_url", mode="before")

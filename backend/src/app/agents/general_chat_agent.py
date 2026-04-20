@@ -10,6 +10,7 @@ from langchain.agents.middleware import (
     ClearToolUsesEdit,
     ContextEditingMiddleware,
     HumanInTheLoopMiddleware,
+    LLMToolSelectorMiddleware,
     SummarizationMiddleware,
 )
 from langchain.agents.middleware.human_in_the_loop import InterruptOnConfig
@@ -17,6 +18,8 @@ from langchain.agents.middleware.summarization import ContextSize
 from langchain_core.language_models.chat_models import BaseChatModel
 
 from app.core.checkpoint import CheckpointManager
+from app.core.settings import Settings
+from app.agents.tool_selection import build_tool_selector_middleware
 from app.agents.tool_calling.utils import parse_mcp_tool_name
 
 SUMMARY_TRIGGER_FRACTION = 0.7
@@ -101,6 +104,13 @@ def build_general_chat_agent(
     summary_keep_messages: int,
     summary_trim_tokens: int | None,
     tool_context_trigger_tokens: int | None,
+    tool_selector_enabled: bool = True,
+    tool_selector_trigger_tool_count: int = 10,
+    tool_selector_max_tools: int = 5,
+    tool_selector_model_id: str | None = None,
+    tool_selector_use_previous_response_id: bool | None = None,
+    tool_selector_model: BaseChatModel | None = None,
+    tool_selector_always_include: list[str] | None = None,
     hitl_interrupt_on: Mapping[str, bool | InterruptOnConfig] | None = None,
 ):
     clear_tool_trigger = (
@@ -126,6 +136,31 @@ def build_general_chat_agent(
             ],
         ),
     ]
+    selector_settings = Settings(
+        TOOL_SELECTOR_ENABLED=tool_selector_enabled,
+        TOOL_SELECTOR_TRIGGER_TOOL_COUNT=tool_selector_trigger_tool_count,
+        TOOL_SELECTOR_MAX_TOOLS=tool_selector_max_tools,
+        TOOL_SELECTOR_MODEL_ID=tool_selector_model_id,
+        TOOL_SELECTOR_ALWAYS_INCLUDE=tool_selector_always_include or [],
+    )
+    middleware.extend(
+        build_tool_selector_middleware(
+            settings=selector_settings,
+            tools=tools,
+            use_previous_response_id=tool_selector_use_previous_response_id,
+            always_include=tool_selector_always_include or [],
+        )
+        if tool_selector_model is None
+        else [
+            LLMToolSelectorMiddleware(
+                model=tool_selector_model,
+                max_tools=tool_selector_max_tools,
+                always_include=tool_selector_always_include or [],
+            )
+        ]
+        if tool_selector_enabled and len(tools) > tool_selector_trigger_tool_count
+        else []
+    )
     if hitl_interrupt_on:
         middleware.append(
             HumanInTheLoopMiddleware(
