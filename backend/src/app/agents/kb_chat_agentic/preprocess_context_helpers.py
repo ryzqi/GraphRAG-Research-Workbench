@@ -17,6 +17,7 @@ from app.services.kb_chat_context_seed import (
     build_context_seed_from_messages,
     context_seed_turns_to_context_frame_turns,
 )
+from app.services.conversation_summary_service import resolve_summary_trim_tokens
 from app.utils.token_counter import count_tokens_approximately
 
 from .preprocess_query_bundle import _as_dict
@@ -195,7 +196,7 @@ async def _generate_summary_from_turns(
             token_counter=token_counter_fn,
             model=summary_model,
             max_tokens=settings.summary_max_tokens,
-            max_tokens_before_summary=0,
+            max_tokens_before_summary=resolve_summary_trim_tokens(settings),
             max_summary_tokens=settings.summary_max_tokens,
         )
 

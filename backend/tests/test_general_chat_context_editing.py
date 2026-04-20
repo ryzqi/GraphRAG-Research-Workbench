@@ -25,6 +25,8 @@ def test_general_chat_agent_installs_tool_context_editing_middleware(monkeypatch
         tools=[],
         system_prompt="system",
         summary_trigger=("messages", 12),
+        summary_keep_messages=20,
+        summary_trim_tokens=4_000,
         tool_context_trigger_tokens=2_000,
     )
 
@@ -65,6 +67,8 @@ def test_general_chat_context_editing_uses_langchain_default_when_budget_disable
         tools=[],
         system_prompt="system",
         summary_trigger=("messages", 12),
+        summary_keep_messages=20,
+        summary_trim_tokens=4_000,
         tool_context_trigger_tokens=None,
     )
 

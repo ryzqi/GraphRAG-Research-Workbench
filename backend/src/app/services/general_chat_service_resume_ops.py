@@ -82,6 +82,8 @@ async def resume_after_tool_approval(
             tools=tools,
             system_prompt=system_prompt,
             summary_trigger=self._build_summary_trigger(),
+            summary_keep_messages=self._settings.summary_keep_messages,
+            summary_trim_tokens=self._settings.summary_trim_tokens,
             tool_context_trigger_tokens=self._settings.context_tool_max_tokens,
             hitl_interrupt_on=hitl_interrupt_on,
         )

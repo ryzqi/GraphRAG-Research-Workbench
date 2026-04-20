@@ -227,10 +227,12 @@ class Settings(DeploySettings):
     )
     kb_chat_trace_enabled: bool = Field(True, alias="KB_CHAT_TRACE_ENABLED")
 
-    summary_enabled: bool = Field(False, alias="SUMMARY_ENABLED")
+    summary_enabled: bool = Field(True, alias="SUMMARY_ENABLED")
     summary_trigger_min_messages: int = Field(12, alias="SUMMARY_TRIGGER_MIN_MESSAGES")
-    summary_trigger_min_tokens: int = Field(800, alias="SUMMARY_TRIGGER_MIN_TOKENS")
-    summary_max_tokens: int = Field(256, alias="SUMMARY_MAX_TOKENS")
+    summary_trigger_min_tokens: int = Field(2_000, alias="SUMMARY_TRIGGER_MIN_TOKENS")
+    summary_keep_messages: int = Field(20, alias="SUMMARY_KEEP_MESSAGES")
+    summary_max_tokens: int = Field(400, alias="SUMMARY_MAX_TOKENS")
+    summary_trim_tokens: int = Field(4_000, alias="SUMMARY_TRIM_TOKENS")
 
     ingestion_contextual_enabled: bool = Field(
         True, alias="INGESTION_CONTEXTUAL_ENABLED"

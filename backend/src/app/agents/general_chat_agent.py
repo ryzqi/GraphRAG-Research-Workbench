@@ -24,7 +24,7 @@ SUMMARY_TRIGGER: tuple[Literal["fraction"], float] = (
     "fraction",
     SUMMARY_TRIGGER_FRACTION,
 )
-SUMMARY_KEEP: tuple[Literal["messages"], int] = ("messages", 20)
+DEFAULT_SUMMARY_KEEP_MESSAGES = 20
 
 
 def build_pending_tool_calls(
@@ -98,6 +98,8 @@ def build_general_chat_agent(
     tools: list[Any],
     system_prompt: str,
     summary_trigger: ContextSize | list[ContextSize],
+    summary_keep_messages: int,
+    summary_trim_tokens: int | None,
     tool_context_trigger_tokens: int | None,
     hitl_interrupt_on: Mapping[str, bool | InterruptOnConfig] | None = None,
 ):
@@ -110,7 +112,8 @@ def build_general_chat_agent(
         SummarizationMiddleware(
             model=chat_model,
             trigger=summary_trigger,
-            keep=SUMMARY_KEEP,
+            keep=("messages", summary_keep_messages),
+            trim_tokens_to_summarize=summary_trim_tokens,
         ),
         ContextEditingMiddleware(
             edits=[

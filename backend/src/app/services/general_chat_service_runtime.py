@@ -10,7 +10,7 @@ from langchain.agents.middleware.summarization import ContextSize
 from langchain.messages import AIMessage, AnyMessage, HumanMessage, SystemMessage
 from sqlalchemy import select
 
-from app.agents.general_chat_agent import SUMMARY_KEEP, SUMMARY_TRIGGER
+from app.agents.general_chat_agent import DEFAULT_SUMMARY_KEEP_MESSAGES, SUMMARY_TRIGGER
 from app.agents.tool_calling.registry import build_tool_registry_cached
 from app.agents.tools.system_time import build_system_time_tool
 from app.agents.tools.web_search import has_web_extract_provider, has_web_search_provider
@@ -180,7 +180,17 @@ def _build_summary_trigger(self) -> ContextSize | list[ContextSize]:
     if min_tokens > 0:
         triggers.append(("tokens", min_tokens))
     if not triggers:
-        return ("messages", SUMMARY_KEEP[1])
+        return (
+            "messages",
+            int(
+                getattr(
+                    self._settings,
+                    "summary_keep_messages",
+                    DEFAULT_SUMMARY_KEEP_MESSAGES,
+                )
+                or DEFAULT_SUMMARY_KEEP_MESSAGES
+            ),
+        )
     return triggers[0] if len(triggers) == 1 else triggers
 
 

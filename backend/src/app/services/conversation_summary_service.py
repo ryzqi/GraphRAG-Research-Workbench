@@ -139,6 +139,9 @@ class ConversationSummaryService:
         meets_tokens = min_tokens > 0 and token_count >= min_tokens
         return meets_messages or meets_tokens
 
+    def _summary_trim_tokens(self) -> int | None:
+        return resolve_summary_trim_tokens(self._settings)
+
     async def _summarize(
         self, messages: list[LLMMessage], previous_summary: str | None
     ) -> str | None:
@@ -213,7 +216,7 @@ class ConversationSummaryService:
                 token_counter=token_counter_fn,
                 model=summary_model,
                 max_tokens=self._settings.summary_max_tokens,
-                max_tokens_before_summary=0,
+                max_tokens_before_summary=self._summary_trim_tokens(),
                 max_summary_tokens=self._settings.summary_max_tokens,
             )
 
@@ -243,3 +246,10 @@ class ConversationSummaryService:
         if isinstance(content, str):
             return content
         return None
+
+
+def resolve_summary_trim_tokens(settings: object) -> int | None:
+    value = getattr(settings, "summary_trim_tokens", None)
+    if value is None or value <= 0:
+        return None
+    return int(value)
