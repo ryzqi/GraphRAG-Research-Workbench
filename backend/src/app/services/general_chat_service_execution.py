@@ -314,6 +314,7 @@ async def answer(
                 tools=tools,
                 system_prompt=system_prompt,
                 summary_trigger=self._build_summary_trigger(),
+                tool_context_trigger_tokens=self._settings.context_tool_max_tokens,
                 hitl_interrupt_on=hitl_interrupt_on,
             )
             result = await agent.ainvoke(
@@ -350,6 +351,7 @@ async def answer(
                 tools=tools,
                 system_prompt=system_prompt,
                 summary_trigger=self._build_summary_trigger(),
+                tool_context_trigger_tokens=self._settings.context_tool_max_tokens,
                 hitl_interrupt_on=hitl_interrupt_on,
             )
             result = await recovery_agent.ainvoke(

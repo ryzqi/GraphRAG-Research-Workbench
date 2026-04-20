@@ -218,6 +218,7 @@ async def answer_stream(
                 tools=tools,
                 system_prompt=system_prompt,
                 summary_trigger=self._build_summary_trigger(),
+                tool_context_trigger_tokens=self._settings.context_tool_max_tokens,
                 hitl_interrupt_on=hitl_interrupt_on,
             )
             stream_state = StreamState(
@@ -486,6 +487,7 @@ async def resume_after_tool_approval_stream(
             tools=tools,
             system_prompt=system_prompt,
             summary_trigger=self._build_summary_trigger(),
+            tool_context_trigger_tokens=self._settings.context_tool_max_tokens,
             hitl_interrupt_on=hitl_interrupt_on,
         )
         config = cast(RunnableConfig, CheckpointManager.make_config(thread_id))

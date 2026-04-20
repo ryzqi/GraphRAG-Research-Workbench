@@ -7,6 +7,8 @@ from typing import Any, Literal
 
 from langchain.agents import create_agent
 from langchain.agents.middleware import (
+    ClearToolUsesEdit,
+    ContextEditingMiddleware,
     HumanInTheLoopMiddleware,
     SummarizationMiddleware,
 )
@@ -96,14 +98,30 @@ def build_general_chat_agent(
     tools: list[Any],
     system_prompt: str,
     summary_trigger: ContextSize | list[ContextSize],
+    tool_context_trigger_tokens: int | None,
     hitl_interrupt_on: Mapping[str, bool | InterruptOnConfig] | None = None,
 ):
+    clear_tool_trigger = (
+        tool_context_trigger_tokens
+        if tool_context_trigger_tokens is not None and tool_context_trigger_tokens > 0
+        else 100_000
+    )
     middleware: list[Any] = [
         SummarizationMiddleware(
             model=chat_model,
             trigger=summary_trigger,
             keep=SUMMARY_KEEP,
-        )
+        ),
+        ContextEditingMiddleware(
+            edits=[
+                ClearToolUsesEdit(
+                    trigger=clear_tool_trigger,
+                    keep=3,
+                    clear_tool_inputs=False,
+                    placeholder="[cleared by context editing]",
+                ),
+            ],
+        ),
     ]
     if hitl_interrupt_on:
         middleware.append(
