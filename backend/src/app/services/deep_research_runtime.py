@@ -59,6 +59,7 @@ from app.services.research_runtime_types import (
     ResearchRuntimeActivityUpdate,
     ResearchRuntimeConfig,
     ResearchRuntimeContext,
+    ResearchLargeResultPolicy,
 )
 from app.services.research_runtime_workspace import (
     DEFAULT_RESEARCH_RUNTIME_MEMORY_PATH,
@@ -517,6 +518,7 @@ async def build_deep_research_runtime_runner(
             shared_contract_block=shared_contract_block,
         ),
         memory_paths=(DEFAULT_RESEARCH_RUNTIME_MEMORY_PATH,),
+        large_result_policy=ResearchLargeResultPolicy.from_settings(settings),
     )
     runtime = await create_deep_research_runtime(
         settings=settings,

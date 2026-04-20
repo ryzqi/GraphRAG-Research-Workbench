@@ -42,7 +42,25 @@ class ResearchLargeResultPolicy:
     """大结果溢写策略。"""
 
     spill_path_prefix: str = "/scratch/research-spill/"
-    max_inline_chars: int = 6_000
+    max_inline_chars: int = 2_000
+    priority_inline_chars: int = 12_000
+
+    def __post_init__(self) -> None:
+        if self.max_inline_chars < 1:
+            raise ValueError("max_inline_chars must be >= 1")
+        if self.priority_inline_chars < self.max_inline_chars:
+            raise ValueError("priority_inline_chars must be >= max_inline_chars")
+
+    @classmethod
+    def from_settings(cls, settings: Any) -> "ResearchLargeResultPolicy":
+        return cls(
+            max_inline_chars=int(
+                getattr(settings, "deep_research_large_result_max_inline_chars")
+            ),
+            priority_inline_chars=int(
+                getattr(settings, "deep_research_priority_inline_chars")
+            ),
+        )
 
 
 @dataclass(slots=True, frozen=True)

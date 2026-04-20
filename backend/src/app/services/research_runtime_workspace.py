@@ -12,6 +12,7 @@ from deepagents.backends.utils import create_file_data
 
 from app.config.runtime_contract import (
     DEFAULT_RESEARCH_RUNTIME_MEMORY_PATH,
+    RESEARCH_RUNTIME_LAYOUT_MANIFEST,
     RESEARCH_RUNTIME_REQUEST_CONTEXT,
 )
 from app.models.research_session import ResearchSession
@@ -247,6 +248,13 @@ def _build_bootstrap_workspace_file_entries(
     large_result_policy: Any,
 ) -> list[tuple[str, str]]:
     workspace_entries: list[tuple[str, str]] = []
+    priority_artifact_keys = {
+        artifact_key
+        for artifact_key, attr_name in (
+            RESEARCH_RUNTIME_LAYOUT_MANIFEST.bootstrap_artifact_key_to_attr
+        )
+        if attr_name in RESEARCH_RUNTIME_LAYOUT_MANIFEST.priority_layout_attrs
+    }
     for artifact in artifacts:
         artifact_key = getattr(artifact, "artifact_key", None)
         if not isinstance(artifact_key, str):
@@ -257,7 +265,12 @@ def _build_bootstrap_workspace_file_entries(
         content_text = getattr(artifact, "content_text", None)
         if not isinstance(content_text, str):
             continue
-        if len(content_text) <= large_result_policy.max_inline_chars:
+        inline_limit = (
+            large_result_policy.priority_inline_chars
+            if artifact_key in priority_artifact_keys
+            else large_result_policy.max_inline_chars
+        )
+        if len(content_text) <= inline_limit:
             workspace_entries.append((workspace_path, content_text))
             continue
 

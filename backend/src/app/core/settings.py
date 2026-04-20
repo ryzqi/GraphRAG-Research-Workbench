@@ -200,6 +200,12 @@ class Settings(DeploySettings):
     deep_research_fallback_model_id: str | None = Field(
         None, alias="DEEP_RESEARCH_FALLBACK_MODEL_ID"
     )
+    deep_research_large_result_max_inline_chars: int = Field(
+        2_000, ge=1, alias="DEEP_RESEARCH_LARGE_RESULT_MAX_INLINE_CHARS"
+    )
+    deep_research_priority_inline_chars: int = Field(
+        12_000, ge=1, alias="DEEP_RESEARCH_PRIORITY_INLINE_CHARS"
+    )
     kb_chat_grader_fail_policy: str = Field(
         "closed", alias="KB_CHAT_GRADER_FAIL_POLICY"
     )
