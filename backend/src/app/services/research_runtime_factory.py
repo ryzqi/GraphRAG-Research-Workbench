@@ -9,6 +9,7 @@ from deepagents.backends import CompositeBackend, StateBackend, StoreBackend
 from langchain.tools import BaseTool
 
 from app.agents.tool_calling.registry import ToolMeta, build_research_tool_registry
+from app.agents.model_safety import build_agent_model_safety_middleware
 from app.core.settings import Settings
 from app.integrations.mcp_adapters import McpToolEntry
 from app.integrations.redis_client import RedisClient
@@ -207,15 +208,24 @@ async def create_deep_research_runtime(
     resolved_skill_paths = list(config.skill_paths)
     breadth_gate_tool_names = tuple(sorted(DEFAULT_BREADTH_GATED_TOOL_NAMES))
 
+    middleware = [
+        build_breadth_gate_middleware(gated_tool_names=breadth_gate_tool_names)
+    ]
+    middleware.extend(
+        build_agent_model_safety_middleware(
+            settings=settings,
+            thread_limit_setting="deep_research_thread_model_call_limit",
+            run_limit_setting="deep_research_run_model_call_limit",
+            fallback_model_id_setting="deep_research_fallback_model_id",
+            use_previous_response_id=False,
+        )
+    )
+
     agent_kwargs: dict[str, Any] = {
         "name": config.name,
         "model": config.primary_model,
         "tools": tools,
-        "middleware": [
-            build_breadth_gate_middleware(
-                gated_tool_names=breadth_gate_tool_names
-            )
-        ],
+        "middleware": middleware,
         "system_prompt": config.system_prompt,
         "subagents": _assemble_research_subagents(
             config=config,

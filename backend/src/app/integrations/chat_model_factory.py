@@ -294,6 +294,43 @@ def create_chat_model_from_runtime_config(
     raise RuntimeError(f"Unsupported model provider: {provider_cfg.provider.value}")
 
 
+def create_fallback_chat_model(
+    *,
+    fallback_model_id: str,
+    settings: Settings | None = None,
+    use_previous_response_id: bool | None = None,
+) -> BaseChatModel:
+    cfg = settings or get_settings()
+    snapshot = ModelRuntimeConfigManager.get_snapshot(settings=cfg)
+    normalized_model_id = fallback_model_id.strip()
+    if not normalized_model_id:
+        raise ModelConfigIncompleteError("fallback_model_id 不能为空")
+    if ":" not in normalized_model_id:
+        raise ValueError("fallback_model_id must use provider:model format")
+    provider_text, model_name = normalized_model_id.split(":", 1)
+    provider_text = provider_text.strip()
+    model_name = model_name.strip()
+    if not provider_text or not model_name:
+        raise ValueError("fallback_model_id must use provider:model format")
+    try:
+        requested_provider = ModelProvider(provider_text)
+    except ValueError as exc:
+        raise ValueError(f"Unsupported fallback model provider: {provider_text}") from exc
+
+    provider_cfg = snapshot.providers.get(requested_provider)
+    if provider_cfg is not None and provider_cfg.enabled and model_name in provider_cfg.models:
+        return create_chat_model_from_runtime_config(
+            provider_cfg=provider_cfg,
+            model_name=model_name,
+            settings=cfg,
+            use_previous_response_id=use_previous_response_id,
+        )
+
+    raise ModelConfigIncompleteError(
+        f"fallback_model_id 未匹配任何已启用供应商模型: {normalized_model_id}"
+    )
+
+
 def create_chat_model(
     *,
     settings: Settings | None = None,

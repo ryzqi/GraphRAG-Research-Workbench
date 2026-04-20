@@ -175,6 +175,21 @@ class Settings(DeploySettings):
     kb_chat_plain_fallback_max_tokens: int = Field(
         1_500, ge=1, alias="KB_CHAT_PLAIN_FALLBACK_MAX_TOKENS"
     )
+    kb_chat_run_model_call_limit: int | None = Field(
+        24, ge=1, alias="KB_CHAT_RUN_MODEL_CALL_LIMIT"
+    )
+    kb_chat_fallback_model_id: str | None = Field(
+        None, alias="KB_CHAT_FALLBACK_MODEL_ID"
+    )
+    deep_research_thread_model_call_limit: int | None = Field(
+        240, ge=1, alias="DEEP_RESEARCH_THREAD_MODEL_CALL_LIMIT"
+    )
+    deep_research_run_model_call_limit: int | None = Field(
+        120, ge=1, alias="DEEP_RESEARCH_RUN_MODEL_CALL_LIMIT"
+    )
+    deep_research_fallback_model_id: str | None = Field(
+        None, alias="DEEP_RESEARCH_FALLBACK_MODEL_ID"
+    )
     kb_chat_grader_fail_policy: str = Field(
         "closed", alias="KB_CHAT_GRADER_FAIL_POLICY"
     )
