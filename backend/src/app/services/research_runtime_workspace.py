@@ -64,6 +64,7 @@ def build_runtime_request_files(
     plan_snapshot: ResearchPlanSnapshot,
     priority_paths: Sequence[str] = (),
     budget: ResearchWorkspaceBudget = DEFAULT_RESEARCH_WORKSPACE_BUDGET,
+    include_non_priority_files: bool = True,
 ) -> tuple[dict[str, FileData], dict[str, Any]]:
     query_mesh = build_research_query_mesh(
         question=session.question,
@@ -84,6 +85,7 @@ def build_runtime_request_files(
         files=merged,
         priority_paths=priority_paths or RESEARCH_RUNTIME_REQUEST_CONTEXT.request_paths,
         budget=budget,
+        include_non_priority_files=include_non_priority_files,
     )
 
 
@@ -96,6 +98,7 @@ def build_runtime_request_files_with_budget(
     files: dict[str, str],
     priority_paths: Sequence[str],
     budget: ResearchWorkspaceBudget = DEFAULT_RESEARCH_WORKSPACE_BUDGET,
+    include_non_priority_files: bool = True,
 ) -> tuple[dict[str, FileData], dict[str, Any]]:
     priority_set = set(priority_paths)
     priority_tokens_used = 0
@@ -112,14 +115,18 @@ def build_runtime_request_files_with_budget(
         remaining_tokens -= token_cost
         request_files[path] = create_file_data(text)
 
-    for path in sorted(set(files) - priority_set):
-        text = files[path]
-        token_cost = _approx_tokens(text, budget.char_per_token_ratio)
-        if token_cost <= remaining_tokens:
-            remaining_tokens -= token_cost
-            request_files[path] = create_file_data(text)
-            continue
-        spilled_paths.append(path)
+    non_priority_paths = sorted(set(files) - priority_set)
+    if include_non_priority_files:
+        for path in non_priority_paths:
+            text = files[path]
+            token_cost = _approx_tokens(text, budget.char_per_token_ratio)
+            if token_cost <= remaining_tokens:
+                remaining_tokens -= token_cost
+                request_files[path] = create_file_data(text)
+                continue
+            spilled_paths.append(path)
+    else:
+        spilled_paths.extend(non_priority_paths)
 
     snapshot = {
         "total_tokens_budget": budget.total_tokens_budget,
@@ -127,6 +134,7 @@ def build_runtime_request_files_with_budget(
         "priority_tokens_used": priority_tokens_used,
         "tokens_remaining": max(remaining_tokens, 0),
         "spilled_paths": spilled_paths,
+        "on_demand_only": not include_non_priority_files,
     }
     return request_files, snapshot
 

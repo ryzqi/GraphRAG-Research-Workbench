@@ -339,6 +339,7 @@ class DeepResearchRuntimeRunner:
             session=session,
             plan_snapshot=plan_snapshot,
             priority_paths=context_guide.priority_paths,
+            include_non_priority_files=False,
         )
         prompt = _build_runtime_prompt(
             session=session,
@@ -356,6 +357,10 @@ class DeepResearchRuntimeRunner:
             layout=layout,
         )
         started_at = perf_counter()
+        self.runtime.workspace_seed_registry.set(
+            session_id=str(session.id),
+            seed_files=workspace_files,
+        )
         if runtime_activity_callback is not None:
             if self.runtime_activity_registry is None:
                 raise RuntimeError("Deep Research runtime 未配置活动回调注册器")
@@ -400,6 +405,7 @@ class DeepResearchRuntimeRunner:
                     plan_snapshot=plan_snapshot,
                 )
         finally:
+            self.runtime.workspace_seed_registry.clear(session_id=str(session.id))
             if (
                 runtime_activity_callback is not None
                 and self.runtime_activity_registry is not None

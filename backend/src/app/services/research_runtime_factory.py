@@ -28,6 +28,10 @@ from app.services.research_runtime_gate import (
     DEFAULT_BREADTH_GATED_TOOL_NAMES,
     build_breadth_gate_middleware,
 )
+from app.services.research_runtime_workspace_backend import (
+    WorkspaceSeedRegistry,
+    build_workspace_seed_backend,
+)
 
 
 @dataclass(slots=True)
@@ -39,6 +43,7 @@ class DeepResearchRuntime:
     tools: list[BaseTool]
     tool_meta_by_name: dict[str, ToolMeta]
     tool_groups: dict[str, tuple[str, ...]]
+    workspace_seed_registry: WorkspaceSeedRegistry
 
     def make_run_config(self, *, thread_id: str) -> dict[str, Any]:
         return build_research_run_config(thread_id=thread_id)
@@ -50,17 +55,18 @@ def build_research_run_config(*, thread_id: str) -> dict[str, Any]:
 
 def build_research_backend(
     policy: ResearchBackendPolicy = DEFAULT_RESEARCH_BACKEND_POLICY,
+    *,
+    workspace_seed_registry: WorkspaceSeedRegistry | None = None,
 ) -> CompositeBackend:
     """构建 CompositeBackend，明确分离临时上下文与持久记忆/技能。"""
 
-    state_backend = StateBackend()
-    store_backend = StoreBackend()
+    state_backend = build_workspace_seed_backend(
+        runtime_backend=StateBackend(),
+        registry=workspace_seed_registry,
+    )
     return CompositeBackend(
         default=state_backend,
-        routes={
-            policy.memories_root: store_backend,
-            policy.skills_root: store_backend,
-        },
+        routes={},
     )
 
 
@@ -193,6 +199,7 @@ async def create_deep_research_runtime(
     http_client: Any | None = None,
     checkpointer: Any | None = None,
     store: Any | None = None,
+    workspace_seed_registry: WorkspaceSeedRegistry | None = None,
 ) -> DeepResearchRuntime:
     """构建 Deep Agents research runtime。"""
 
@@ -230,6 +237,7 @@ async def create_deep_research_runtime(
         )
     )
 
+    seed_registry = workspace_seed_registry or WorkspaceSeedRegistry()
     agent_kwargs: dict[str, Any] = {
         "name": config.name,
         "model": config.primary_model,
@@ -246,7 +254,10 @@ async def create_deep_research_runtime(
         "memory": list(config.memory_paths),
         "checkpointer": checkpointer,
         "store": store,
-        "backend": build_research_backend(config.backend_policy),
+        "backend": build_research_backend(
+            config.backend_policy,
+            workspace_seed_registry=seed_registry,
+        ),
         "context_schema": ResearchRuntimeContext,
         "interrupt_on": dict(config.interrupt_on) if config.interrupt_on else None,
     }
@@ -260,4 +271,5 @@ async def create_deep_research_runtime(
         tools=tools,
         tool_meta_by_name=tool_meta_by_name,
         tool_groups=registry_bundle.tool_groups,
+        workspace_seed_registry=seed_registry,
     )
