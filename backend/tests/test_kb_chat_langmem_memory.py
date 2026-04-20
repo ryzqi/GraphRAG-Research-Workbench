@@ -254,3 +254,60 @@ async def test_merge_context_reads_langmem_fact_memory_snippet() -> None:
     assert result["stage_summaries"]["merge_context"]["memory_included"] is True
     assert "长期记忆" in result["merged_context"]
     assert "部署窗口 偏好 凌晨两点" in result["merged_context"]
+
+
+@pytest.mark.asyncio
+async def test_merge_context_records_memory_recall_precision_metrics() -> None:
+    store = InMemoryStore()
+    ns = kb_chat_user_namespace(
+        user_id="user-1",
+        thread_id="thread-1",
+        kb_ids=[],
+    )
+    await store.aput(
+        ns,
+        "fact-1",
+        {
+            "kind": "KbChatFact",
+            "content": {
+                "subject": "部署窗口",
+                "predicate": "偏好",
+                "object": "凌晨两点",
+                "kb_scope": "kb_all",
+            },
+        },
+    )
+    await store.aput(
+        ns,
+        "fact-2",
+        {
+            "kind": "KbChatFact",
+            "content": {
+                "subject": "部署窗口",
+                "predicate": "偏好",
+                "object": "凌晨两点",
+                "kb_scope": "kb_all",
+            },
+        },
+    )
+
+    result = await merge_context(
+        {
+            "user_input": "部署窗口是什么时候？",
+            "messages": [HumanMessage(content="部署窗口是什么时候？")],
+            "metrics": {},
+            "stage_summaries": {},
+        },
+        SimpleNamespace(
+            context={"thread_id": "thread-1", "user_id": "user-1", "kb_ids": []},
+            store=store,
+        ),
+        Settings(MEMORY_ENABLED=True, SUMMARY_ENABLED=False),
+    )
+
+    summary = result["stage_summaries"]["merge_context"]
+    assert summary["memory_candidates"] == 2
+    assert summary["memory_retained"] == 2
+    assert summary["memory_retained_distinct"] == 1
+    assert summary["memory_rendered"] == 1
+    assert summary["memory_recall_precision"] == 1.0

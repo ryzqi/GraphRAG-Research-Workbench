@@ -221,6 +221,8 @@ class ContextBuilder:
         tool_truncation: dict[str, int | bool] | None = None,
     ) -> dict[str, dict]:
         usage: dict[str, dict[str, int]] = {
+            "summary": {"tokens": 0, "chars": 0},
+            "history": {"tokens": 0, "chars": 0, "messages": 0},
             **history_usage,
             "retrieval": retrieval_usage or {"tokens": 0, "chars": 0, "items": 0},
             "tools": tool_usage or {"tokens": 0, "chars": 0, "items": 0},
@@ -231,6 +233,12 @@ class ContextBuilder:
         usage["total"] = {"tokens": total_tokens, "chars": total_chars}
 
         truncation: dict[str, dict[str, int | bool]] = {
+            "summary": {"truncated": False, "dropped_tokens": 0},
+            "history": {
+                "truncated": False,
+                "dropped_messages": 0,
+                "dropped_tokens": 0,
+            },
             **history_truncation,
             "retrieval": retrieval_truncation
             or {"truncated": False, "dropped_items": 0, "dropped_tokens": 0},
@@ -257,10 +265,70 @@ class ContextBuilder:
             ),
         }
 
+        derived = {
+            "context_utilization": {
+                "llm_input_tokens": self._safe_ratio(
+                    total_tokens,
+                    budgets["llm_input_tokens"],
+                ),
+                "history_tokens": self._safe_ratio(
+                    usage["history"].get("tokens", 0),
+                    budgets["history_tokens"],
+                ),
+                "retrieval_tokens": self._safe_ratio(
+                    usage["retrieval"].get("tokens", 0),
+                    budgets["retrieval_tokens"],
+                ),
+                "tool_tokens": self._safe_ratio(
+                    usage["tools"].get("tokens", 0),
+                    budgets["tool_tokens"],
+                ),
+                "summary_tokens": self._safe_ratio(
+                    usage["summary"].get("tokens", 0),
+                    budgets["summary_tokens"],
+                ),
+            },
+            "truncation_rate": {
+                "history": self._safe_ratio(
+                    int(truncation["history"].get("dropped_tokens", 0) or 0),
+                    (
+                        usage["history"].get("tokens", 0)
+                        + int(truncation["history"].get("dropped_tokens", 0) or 0)
+                    ),
+                ),
+                "retrieval": self._safe_ratio(
+                    int(truncation["retrieval"].get("dropped_tokens", 0) or 0),
+                    (
+                        usage["retrieval"].get("tokens", 0)
+                        + int(truncation["retrieval"].get("dropped_tokens", 0) or 0)
+                    ),
+                ),
+                "tools": self._safe_ratio(
+                    int(truncation["tools"].get("dropped_tokens", 0) or 0),
+                    (
+                        usage["tools"].get("tokens", 0)
+                        + int(truncation["tools"].get("dropped_tokens", 0) or 0)
+                    ),
+                ),
+                "summary": self._safe_ratio(
+                    int(truncation["summary"].get("dropped_tokens", 0) or 0),
+                    (
+                        usage["summary"].get("tokens", 0)
+                        + int(truncation["summary"].get("dropped_tokens", 0) or 0)
+                    ),
+                ),
+            },
+            "overall_truncated": any(
+                bool(part.get("truncated"))
+                for part in truncation.values()
+            ),
+        }
+
         return {
             "budgets": budgets,
             "usage": usage,
             "truncation": truncation,
+            "derived": derived,
         }
 
     @staticmethod
@@ -268,6 +336,22 @@ class ContextBuilder:
         if value is None:
             return None
         return value if value > 0 else None
+
+    @staticmethod
+    def _safe_ratio(
+        numerator: int | float | None,
+        denominator: int | float | None,
+    ) -> float | None:
+        if numerator is None or denominator is None:
+            return None
+        try:
+            normalized_denominator = float(denominator)
+            normalized_numerator = float(numerator)
+        except (TypeError, ValueError):
+            return None
+        if normalized_denominator <= 0:
+            return None
+        return round(normalized_numerator / normalized_denominator, 4)
 
     @staticmethod
     def _truncate_text(text: str, max_tokens: int | None) -> tuple[str, int, bool]:

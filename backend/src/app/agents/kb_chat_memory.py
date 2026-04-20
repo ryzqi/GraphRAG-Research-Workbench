@@ -312,11 +312,30 @@ def _truncate(text: str, max_chars: int) -> str:
     return f"{t[: max_chars - 1].rstrip()}…"
 
 
-def render_kb_chat_memory_snippet(memory: dict[str, Any]) -> str:
-    entries = memory.get("entries")
+def kb_chat_memory_distinct_entries(memory: dict[str, Any] | None) -> list[dict[str, Any]]:
+    entries = memory.get("entries") if isinstance(memory, dict) else None
     if not isinstance(entries, list) or not entries:
-        return ""
-    last = [e for e in entries if isinstance(e, dict)][-3:]
+        return []
+    deduped: list[dict[str, Any]] = []
+    seen_fact_keys: set[tuple[str, str, str]] = set()
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        subject = str(entry.get("subject") or "").strip()
+        predicate = str(entry.get("predicate") or "").strip()
+        obj = str(entry.get("object") or "").strip()
+        if subject and predicate and obj:
+            fact_key = (subject, predicate, obj)
+            if fact_key in seen_fact_keys:
+                continue
+            seen_fact_keys.add(fact_key)
+        deduped.append(entry)
+    return deduped
+
+
+def render_kb_chat_memory_snippet(memory: dict[str, Any]) -> str:
+    deduped = kb_chat_memory_distinct_entries(memory)
+    last = deduped[-3:]
     if not last:
         return ""
 

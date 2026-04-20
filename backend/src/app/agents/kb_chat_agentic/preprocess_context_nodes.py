@@ -9,6 +9,7 @@ from langgraph.runtime import Runtime
 
 from app.agents.kb_chat_memory import (
     aget_kb_chat_memory,
+    kb_chat_memory_distinct_entries,
     render_kb_chat_memory_snippet,
     resolve_kb_chat_store_user_id,
 )
@@ -79,6 +80,11 @@ async def merge_context(
     question = user_input.strip()
     memory_data: dict[str, Any] | None = None
     memory_snippet = ""
+    memory_candidates = 0
+    memory_retained = 0
+    memory_retained_distinct = 0
+    memory_rendered = 0
+    memory_recall_precision: float | None = None
     if settings.memory_enabled and runtime.store is not None:
         context = _runtime_context(runtime)
         raw_memory_keys = state.get("memory_keys")
@@ -104,6 +110,9 @@ async def merge_context(
             )
             if isinstance(mem, dict):
                 memory_data = mem
+                raw_entries = mem.get("entries")
+                if isinstance(raw_entries, list):
+                    memory_candidates = len([entry for entry in raw_entries if isinstance(entry, dict)])
                 memory_snippet = render_kb_chat_memory_snippet(mem)
         except Exception:  # pragma: no cover
             memory_data = None
@@ -164,6 +173,25 @@ async def merge_context(
         if filtered_memory is not None
         else (memory_snippet if keep_memory else "")
     )
+    if isinstance(filtered_memory, dict):
+        filtered_entries = filtered_memory.get("entries")
+        if isinstance(filtered_entries, list):
+            memory_retained = len(
+                [entry for entry in filtered_entries if isinstance(entry, dict)]
+            )
+        memory_retained_distinct = len(kb_chat_memory_distinct_entries(filtered_memory))
+    elif memory_data is not None:
+        memory_retained = memory_candidates
+        memory_retained_distinct = len(kb_chat_memory_distinct_entries(memory_data))
+    memory_rendered = max(
+        sum(1 for line in memory_for_render.splitlines() if line.startswith("- ")),
+        0,
+    )
+    if memory_retained_distinct > 0:
+        memory_recall_precision = round(
+            min(memory_rendered, memory_retained_distinct) / memory_retained_distinct,
+            4,
+        )
     merged_context = _render_display_context(
         summary=f"对话摘要：\n{summary_text}" if summary_text else "",
         turns=selected_turns,
@@ -197,6 +225,11 @@ async def merge_context(
         {
             "latency_ms": int((time.perf_counter() - start) * 1000),
             "memory_included": bool(memory_for_render),
+            "memory_candidates": memory_candidates,
+            "memory_retained": memory_retained,
+            "memory_retained_distinct": memory_retained_distinct,
+            "memory_rendered": memory_rendered,
+            "memory_recall_precision": memory_recall_precision,
             "input_source": "user_input",
             "input_chars": len(question),
             "output_chars": len(merged),
