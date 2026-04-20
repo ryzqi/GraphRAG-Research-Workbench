@@ -56,6 +56,9 @@ async def plan_retrieval_budget(
         fallback_rerank_input_limit=max(
             1, int(fallback_budget.get("rerank_input_limit") or 1)
         ),
+        fallback_final_evidence_token_budget=max(
+            1, int(fallback_budget.get("final_evidence_token_budget") or 1)
+        ),
         max_top_k=max(1, int(max_top_k)),
     )
 
@@ -69,6 +72,9 @@ async def plan_retrieval_budget(
         "rerank_input_limit": max(
             1, int(fallback_budget.get("rerank_input_limit") or 1)
         ),
+        "final_evidence_token_budget": max(
+            1, int(fallback_budget.get("final_evidence_token_budget") or 1)
+        ),
     }
 
     if structured_result.success and isinstance(
@@ -76,6 +82,9 @@ async def plan_retrieval_budget(
     ):
         payload = structured_result.payload
         safe_max_top_k = max(1, int(max_top_k))
+        safe_final_evidence_token_budget = max(
+            1, int(fallback_budget.get("final_evidence_token_budget") or 1)
+        )
         per_query_top_k = max(1, min(int(payload.per_query_top_k), safe_max_top_k))
         max_global_candidates = max(safe_max_top_k * 6, per_query_top_k)
         rerank_input_limit = max(
@@ -89,10 +98,15 @@ async def plan_retrieval_budget(
             rerank_input_limit,
             min(int(payload.global_candidates_limit), max_global_candidates),
         )
+        final_evidence_token_budget = max(
+            1,
+            min(int(payload.final_evidence_token_budget), safe_final_evidence_token_budget),
+        )
         budget = {
             "per_query_top_k": per_query_top_k,
             "global_candidates_limit": global_candidates_limit,
             "rerank_input_limit": rerank_input_limit,
+            "final_evidence_token_budget": final_evidence_token_budget,
         }
         planning_reasoning = _normalize_whitespace(payload.reasoning or "")
         fallback_reason = ""

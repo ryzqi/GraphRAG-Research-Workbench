@@ -1,4 +1,4 @@
-version: "1.0"
+version: "1.1"
 name: kb_chat_retrieval_plan
 description: "知识库检索预算规划提示词"
 
@@ -7,11 +7,11 @@ template: |
   你的任务：基于问题复杂度、查询数量、重试背景和兜底预算（fallback），为当前检索阶段给出稳妥的预算配置。
 
   规则：
-  1. 只允许输出三个预算字段：per_query_top_k、global_candidates_limit、rerank_input_limit。
+  1. 只允许输出四个预算字段：per_query_top_k、global_candidates_limit、rerank_input_limit、final_evidence_token_budget。
   2. per_query_top_k 必须在 1 到 {max_top_k} 之间。
   3. global_candidates_limit 必须大于等于 rerank_input_limit，rerank_input_limit 必须大于等于 per_query_top_k。
-  4. 若信息不足或没有更强信号，优先返回兜底预算（fallback），避免激进放大。
-  5. simple 问题通常维持较小预算；当问题为 moderate / complex、query_count 较多、retry_count > 0、failure_reason 不为 none 时，可适度提高预算。
+  4. final_evidence_token_budget 必须为正整数，且默认不应超过兜底值；若信息不足或没有更强信号，优先返回兜底预算（fallback），避免激进放大。
+  5. simple 问题通常维持较小预算；当问题为 moderate / complex、query_count 较多、retry_count > 0、failure_reason 不为 none 时，可适度提高项数预算，但 evidence token budget 仍需保持克制。
   6. 不得输出 0、负数、小数、额外字段或解释性段落。
   7. reasoning 只写一句简短原因，说明为什么选择该预算。
 
@@ -21,6 +21,7 @@ template: |
     - per_query_top_k
     - global_candidates_limit
     - rerank_input_limit
+    - final_evidence_token_budget
     - reasoning
 
   输入：
@@ -35,6 +36,7 @@ template: |
   - 兜底 per_query_top_k：{fallback_per_query_top_k}
   - 兜底 global_candidates_limit：{fallback_global_candidates_limit}
   - 兜底 rerank_input_limit：{fallback_rerank_input_limit}
+  - 兜底 final_evidence_token_budget：{fallback_final_evidence_token_budget}
   - 允许的 per_query_top_k 上限：{max_top_k}
 
 variables:
@@ -68,6 +70,9 @@ variables:
   - name: fallback_rerank_input_limit
     type: integer
     required: true
+  - name: fallback_final_evidence_token_budget
+    type: integer
+    required: true
   - name: max_top_k
     type: integer
     required: true
@@ -85,8 +90,9 @@ few_shot_examples:
       兜底 per_query_top_k：5
       兜底 global_candidates_limit：20
       兜底 rerank_input_limit：10
+      兜底 final_evidence_token_budget：14400
       允许的 per_query_top_k 上限：10
-    output: '{"per_query_top_k": 5, "global_candidates_limit": 20, "rerank_input_limit": 10, "reasoning": "单目标简单问题且无失败信号，保持兜底预算即可。"}'
+    output: '{"per_query_top_k": 5, "global_candidates_limit": 20, "rerank_input_limit": 10, "final_evidence_token_budget": 14400, "reasoning": "单目标简单问题且无失败信号，保持兜底预算即可。"}'
   - input: |
       用户问题：比较 A 方案和 B 方案在 2024 年的成本与效果差异
       规范化查询：比较 A 方案和 B 方案在 2024 年的成本与效果差异
@@ -101,5 +107,6 @@ few_shot_examples:
       兜底 per_query_top_k：10
       兜底 global_candidates_limit：50
       兜底 rerank_input_limit：20
+      兜底 final_evidence_token_budget：14400
       允许的 per_query_top_k 上限：15
-    output: '{"per_query_top_k": 12, "global_candidates_limit": 60, "rerank_input_limit": 28, "reasoning": "复杂多查询且已有重试信号，需要适度提高召回与重排预算。"}'
+    output: '{"per_query_top_k": 12, "global_candidates_limit": 60, "rerank_input_limit": 28, "final_evidence_token_budget": 12800, "reasoning": "复杂多查询且已有重试信号，需要适度提高召回与重排预算。"}'

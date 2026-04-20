@@ -82,6 +82,18 @@ def _budget_by_complexity(complexity: str) -> tuple[int, int, int]:
     return 5, 20, 10
 
 
+def _default_final_evidence_token_budget(settings: Settings) -> int:
+    retrieval_budget = getattr(settings, "context_retrieval_max_tokens", None)
+    if not isinstance(retrieval_budget, int) or retrieval_budget <= 0:
+        field_default = Settings.model_fields["context_retrieval_max_tokens"].default
+        retrieval_budget = (
+            int(field_default)
+            if isinstance(field_default, int) and field_default > 0
+            else 16_000
+        )
+    return max(1, int(retrieval_budget * 0.9))
+
+
 def _fallback_retrieval_budget(
     state: RetrievalBudgetPlanInput,
     settings: Settings,
@@ -135,6 +147,9 @@ def _fallback_retrieval_budget(
             "per_query_top_k": per_query_top_k,
             "global_candidates_limit": global_candidates_limit,
             "rerank_input_limit": rerank_input_limit,
+            "final_evidence_token_budget": _default_final_evidence_token_budget(
+                settings
+            ),
         },
         {
             "complexity": complexity,
