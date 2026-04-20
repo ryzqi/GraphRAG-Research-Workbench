@@ -41,6 +41,7 @@ from app.agents.retrieval_context_compress import (
 from app.core.settings import Settings
 from app.prompts import get_prompt_loader
 from app.services.kb_evidence import (
+    build_citation_catalog,
     build_evidence_context,
     canonicalize_evidence_items,
 )
@@ -268,6 +269,29 @@ def _resolve_query_text(state: Mapping[str, Any]) -> str:
     return ""
 
 
+def _budget_prune_by_rank(
+    items: list[dict[str, Any]],
+    *,
+    max_tokens: int,
+) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]], str]:
+    if max_tokens <= 0:
+        return [], {}, "（未找到相关内容）"
+
+    kept: list[dict[str, Any]] = []
+    for item in items:
+        candidate_items = [*kept, item]
+        candidate_context = build_evidence_context(candidate_items)
+        if count_tokens_approximately(candidate_context) > max_tokens:
+            break
+        kept = candidate_items
+
+    canonical_items, canonical_catalog = canonicalize_evidence_items(
+        kept,
+        citation_catalog=build_citation_catalog(items),
+    )
+    return canonical_items, canonical_catalog, build_evidence_context(canonical_items)
+
+
 async def _compress_context(
     state: CompressContextInput,
     runtime: Runtime[KbChatGraphContext],
@@ -293,8 +317,10 @@ async def _compress_context(
     compressed_context = final_context
     compressed_evidence_items = list(current_evidence_items)
     compressed_citation_catalog = dict(current_citation_catalog)
+    retrieval_budget = getattr(settings, "context_retrieval_max_tokens", None)
     fallback_reason: str | None = None
     fallback_used = False
+    trimming_mode = "keep_all"
     candidate_citation_ids: list[str] = []
     invalid_citation_ids: list[str] = []
     decision: ContextCompressDecision | None = None
@@ -354,6 +380,7 @@ async def _compress_context(
                 isinstance(decision, ContextCompressDecision)
                 and decision.decision == "no_evidence"
             ):
+                trimming_mode = "llm_no_evidence"
                 compressed_context = "（未找到相关内容）"
                 compressed_evidence_items = []
                 compressed_citation_catalog = {}
@@ -361,6 +388,7 @@ async def _compress_context(
                 isinstance(decision, ContextCompressDecision)
                 and decision.decision == "keep_all"
             ):
+                trimming_mode = "keep_all"
                 compressed_context = final_context
                 compressed_evidence_items = list(current_evidence_items)
                 compressed_citation_catalog = dict(current_citation_catalog)
@@ -465,6 +493,7 @@ async def _compress_context(
                                 else:
                                     fallback_reason = "non_compacting_output"
                             else:
+                                trimming_mode = "llm_subset"
                                 compressed_evidence_items = rebuilt_items
                                 compressed_citation_catalog = rebuilt_catalog
                                 compressed_context = candidate_context
@@ -481,6 +510,30 @@ async def _compress_context(
         compressed_evidence_items = list(current_evidence_items)
         compressed_citation_catalog = dict(current_citation_catalog)
 
+    retrieval_budget = (
+        int(retrieval_budget)
+        if isinstance(retrieval_budget, int) and retrieval_budget > 0
+        else None
+    )
+    if (
+        retrieval_budget is not None
+        and count_tokens_approximately(compressed_context) > retrieval_budget
+    ):
+        previous_trimming_mode = trimming_mode
+        (
+            compressed_evidence_items,
+            compressed_citation_catalog,
+            compressed_context,
+        ) = _budget_prune_by_rank(
+            compressed_evidence_items,
+            max_tokens=retrieval_budget,
+        )
+        fallback_reason = "budget_cap_enforced"
+        fallback_used = True
+        trimming_mode = (
+            "both" if previous_trimming_mode == "llm_subset" else "rank_prune"
+        )
+
     output_tokens = count_tokens_approximately(compressed_context)
     evidence_count = (
         len(compressed_evidence_items)
@@ -491,6 +544,7 @@ async def _compress_context(
         "decision_source": "llm",
         "fallback_reason": fallback_reason,
         "fallback_used": fallback_used,
+        "trimming_mode": trimming_mode,
         "input_tokens": input_tokens,
         "output_tokens": output_tokens,
         "truncated": output_tokens < input_tokens,
