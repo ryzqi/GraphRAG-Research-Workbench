@@ -87,6 +87,25 @@ RUNTIME_TASK_GRAPH_ARTIFACT_KEY = "runtime_task_graph_json"
 RUNTIME_LIVE_BOARD_ARTIFACT_KEY = "runtime_live_board_json"
 logger = logging.getLogger(__name__)
 _StageResultT = TypeVar("_StageResultT")
+_SESSION_SNAPSHOT_STATE_FIELDS = (
+    "status",
+    "planner_phase",
+    "runtime_phase",
+    "finalizer_phase",
+    "trace_id",
+    "last_event_sequence",
+    "metrics",
+    "error_message",
+    "created_at",
+    "started_at",
+    "finished_at",
+    "updated_at",
+)
+_SESSION_SNAPSHOT_RELATIONSHIP_FIELDS = (
+    "events",
+    "artifacts",
+    "task_outbox_entries",
+)
 
 
 class ResearchService:
@@ -141,37 +160,17 @@ class ResearchService:
                 value = list(value)
             setattr(target, field, value)
 
-    @classmethod
-    def _sync_session_snapshot(
-        cls,
+    async def _refresh_session_snapshot(
+        self,
         *,
-        source: ResearchSession,
-        target: ResearchSession,
+        session: ResearchSession,
+        relationship_fields: tuple[str, ...] = (),
     ) -> None:
-        cls._copy_session_state_fields(
-            source=source,
-            target=target,
-            fields=(
-                "status",
-                "planner_phase",
-                "runtime_phase",
-                "finalizer_phase",
-                "trace_id",
-                "last_event_sequence",
-                "metrics",
-                "error_message",
-                "created_at",
-                "started_at",
-                "finished_at",
-                "updated_at",
-            ),
+        attribute_names = list(_SESSION_SNAPSHOT_STATE_FIELDS)
+        attribute_names.extend(
+            field for field in relationship_fields if field not in attribute_names
         )
-        if "events" in source.__dict__:
-            target.events = list(source.events)
-        if "artifacts" in source.__dict__:
-            target.artifacts = list(source.artifacts)
-        if "task_outbox_entries" in source.__dict__:
-            target.task_outbox_entries = list(source.task_outbox_entries)
+        await self._db.refresh(session, attribute_names=attribute_names)
 
     async def _run_stage_operation(
         self,
@@ -194,8 +193,16 @@ class ResearchService:
                 fields=state_fields,
             )
             result = await operation(stage_service, stage_session)
+            relationship_fields = tuple(
+                field
+                for field in _SESSION_SNAPSHOT_RELATIONSHIP_FIELDS
+                if field in stage_session.__dict__ or field in session.__dict__
+            )
             await stage_db.commit()
-            self._sync_session_snapshot(source=stage_session, target=session)
+            await self._refresh_session_snapshot(
+                session=session,
+                relationship_fields=relationship_fields,
+            )
             return result
 
     async def get_session(self, session_id: uuid.UUID) -> ResearchSession:

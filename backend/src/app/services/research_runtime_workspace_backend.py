@@ -61,7 +61,7 @@ def _runtime_session_id() -> str | None:
     return None
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, eq=False)
 class WorkspaceSeedBackend(BackendProtocol):
     """为 Deep Research 暴露静态 workspace 文件，并让 runtime 写入覆盖静态底座。"""
 
