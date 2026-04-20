@@ -66,6 +66,14 @@ class Settings(DeploySettings):
     memory_store_backend: str = Field("postgres", alias="MEMORY_STORE_BACKEND")
     memory_store_url: str | None = Field(None, alias="MEMORY_STORE_URL")
     memory_store_path: str = Field("/memories/", alias="MEMORY_STORE_PATH")
+    kb_chat_memory_model_id: str | None = Field(None, alias="KB_CHAT_MEMORY_MODEL_ID")
+    kb_chat_memory_search_limit: int = Field(
+        5, ge=1, alias="KB_CHAT_MEMORY_SEARCH_LIMIT"
+    )
+    kb_chat_memory_max_steps: int = Field(1, ge=1, alias="KB_CHAT_MEMORY_MAX_STEPS")
+    kb_chat_memory_reflection_delay_seconds: int = Field(
+        300, ge=0, alias="KB_CHAT_MEMORY_REFLECTION_DELAY_SECONDS"
+    )
 
     web_search_api_key: str | None = Field(None, alias="WEB_SEARCH_API_KEY")
     web_search_cache_enabled: bool = Field(True, alias="WEB_SEARCH_CACHE_ENABLED")

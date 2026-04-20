@@ -328,6 +328,7 @@ async def _finalize_run(
                 question=str(run.question or "").strip(),
                 answer=extract_answer_text(answer),
                 run_id=str(run.id),
+                settings=self._settings,
             )
         except Exception as exc:  # pragma: no cover
             logger.warning("写入 KB Chat 记忆失败: %s", exc)

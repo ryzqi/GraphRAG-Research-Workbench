@@ -7,6 +7,7 @@ import logging
 from fastapi import FastAPI
 
 from app.bootstrap.app_resources import AppResources, require_app_resources, set_app_resources
+from app.agents.kb_chat_memory import shutdown_kb_chat_memory_reflection_executor
 from app.core.checkpoint import CheckpointManager
 from app.core.memory_store import StoreManager
 from app.core.settings import Settings, validate_startup_settings
@@ -186,6 +187,7 @@ async def _initialize_app_state(app: FastAPI, settings: Settings) -> None:
 
 async def _shutdown_app_state(app: FastAPI) -> None:
     resources = require_app_resources(app)
+    shutdown_kb_chat_memory_reflection_executor(wait=False, cancel_futures=True)
     try:
         await close_http_client(resources.http_client)
     except Exception as exc:  # pragma: no cover - best effort

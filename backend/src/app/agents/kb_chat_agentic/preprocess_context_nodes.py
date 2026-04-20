@@ -76,6 +76,7 @@ async def merge_context(
             summary_text = generated
             summary_source = "generated"
 
+    question = user_input.strip()
     memory_data: dict[str, Any] | None = None
     memory_snippet = ""
     if settings.memory_enabled and runtime.store is not None:
@@ -98,6 +99,8 @@ async def merge_context(
                 user_id=user_id,
                 thread_id=thread_id,
                 kb_ids=kb_ids,
+                query=question,
+                limit=settings.kb_chat_memory_search_limit,
             )
             if isinstance(mem, dict):
                 memory_data = mem
@@ -106,7 +109,6 @@ async def merge_context(
             memory_data = None
             memory_snippet = ""
 
-    question = user_input.strip()
     base_seed = build_context_seed_from_messages(
         summary_text=summary_text,
         messages=messages,
