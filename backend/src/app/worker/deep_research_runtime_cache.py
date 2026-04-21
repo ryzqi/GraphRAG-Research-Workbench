@@ -10,7 +10,11 @@ from typing import Any
 import httpx
 
 from app.core.settings import Settings
-from app.integrations.http_client import close_http_client, create_http_client
+from app.integrations.http_client import (
+    build_http_timeout,
+    close_http_client,
+    create_http_client,
+)
 from app.integrations.model_runtime_config import ModelRuntimeConfigManager
 from app.integrations.redis_client import (
     RedisClient,
@@ -32,8 +36,13 @@ def _settings_fingerprint(settings: Settings) -> str:
 class _LoopLocalHttpClientProxy:
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
+        self._timeout = build_http_timeout(settings)
         self._client: httpx.AsyncClient | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
+
+    @property
+    def timeout(self) -> httpx.Timeout:
+        return self._timeout
 
     async def _get_client(self) -> httpx.AsyncClient:
         loop = asyncio.get_running_loop()

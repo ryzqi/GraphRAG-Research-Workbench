@@ -11,9 +11,9 @@ from deepagents.backends.protocol import FileData
 from langchain_core.messages import HumanMessage
 from pydantic import BaseModel, Field
 
+from app.config.provider_registry import resolve_langchain_structured_output_method
 from app.core.settings import Settings
 from app.integrations.model_runtime_config import ModelRuntimeConfigManager
-from app.models.model_config import ModelProvider
 from app.models.research_session import ResearchSession
 from app.schemas.research import (
     ResearchCanonicalCitation,
@@ -24,7 +24,6 @@ from app.schemas.research import (
 from app.services.query_rewrite_service import coerce_structured_result_payload
 
 _DEFAULT_RECOVERY_STRUCTURED_METHOD = "function_calling"
-_OLLAMA_RECOVERY_STRUCTURED_METHOD = "json_mode"
 _MISSING_STRUCTURED_RESPONSE_CONTINUE_LIMIT = 1
 _MISSING_STRUCTURED_RESPONSE_CONTINUE_PROMPT = (
     "继续当前 deep research。不要停留在“研究已启动”或阶段性说明。"
@@ -164,9 +163,10 @@ def resolve_recovery_structured_output_method(
         provider = snapshot.active_provider_config().provider
     except RuntimeError:
         return _DEFAULT_RECOVERY_STRUCTURED_METHOD
-    if provider == ModelProvider.OLLAMA:
-        return _OLLAMA_RECOVERY_STRUCTURED_METHOD
-    return _DEFAULT_RECOVERY_STRUCTURED_METHOD
+    return resolve_langchain_structured_output_method(
+        provider,
+        default=_DEFAULT_RECOVERY_STRUCTURED_METHOD,
+    )
 
 
 def _message_field(message: Any, field_name: str) -> Any:
@@ -229,7 +229,7 @@ def _build_structured_recovery_prompt(
         "- transcript 中已经出现的有效 citations 能保留多少就保留多少，不要为了压缩结果丢弃 provider 覆盖。",
         "- 若证据不足，请在 finding 文案中保留 limitation / uncertainty 语义，不要编造。",
     ]
-    if method == _OLLAMA_RECOVERY_STRUCTURED_METHOD:
+    if method == "json_mode":
         example_json = json.dumps(
             {
                 "findings": [

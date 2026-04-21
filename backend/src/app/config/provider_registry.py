@@ -45,7 +45,7 @@ _PROVIDER_DESCRIPTORS: tuple[ProviderDescriptor, ...] = (
         default_thinking_enabled=True,
         default_thinking_level="high",
         api_key_optional=True,
-        structured_output_method=None,
+        structured_output_method="json_mode",
     ),
     ProviderDescriptor(
         provider=ModelProvider.LLAMA_CPP,
@@ -58,7 +58,7 @@ _PROVIDER_DESCRIPTORS: tuple[ProviderDescriptor, ...] = (
         default_thinking_enabled=False,
         default_thinking_level=None,
         api_key_optional=True,
-        structured_output_method=None,
+        structured_output_method="json_mode",
     ),
     ProviderDescriptor(
         provider=ModelProvider.NVIDIA,
@@ -101,3 +101,12 @@ def provider_order() -> tuple[ModelProvider, ...]:
 
 def get_provider_descriptor(provider: ModelProvider) -> ProviderDescriptor:
     return _PROVIDER_BY_ID[provider]
+
+
+def resolve_langchain_structured_output_method(
+    provider: ModelProvider, *, default: str = "function_calling"
+) -> str:
+    descriptor = get_provider_descriptor(provider)
+    if descriptor.structured_output_method == "json_mode":
+        return "json_mode"
+    return default

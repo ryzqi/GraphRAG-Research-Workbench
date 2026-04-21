@@ -27,6 +27,7 @@ from app.agents.tools.web_search_providers import (
     extract_domain,
 )
 from app.core.settings import Settings
+from app.integrations.http_client import build_http_timeout
 from app.integrations.redis_client import RedisClient
 from app.agents.tools.web_search_utils import (
     TavilyCallContext,
@@ -124,8 +125,11 @@ class WebSearchClient:
             self._client = AsyncTavilyClient(self._api_key)
         return self._client
 
-    def _http_request_timeout(self, client: httpx.AsyncClient) -> httpx.Timeout:
-        return client.timeout
+    def _http_request_timeout(self, client: Any) -> httpx.Timeout:
+        timeout = getattr(client, "timeout", None)
+        if isinstance(timeout, httpx.Timeout):
+            return timeout
+        return build_http_timeout(self._settings)
 
     def _sdk_timeout_seconds(self, *, default_seconds: float | None) -> float:
         read_timeout = float(self._settings.http_timeout_read_seconds)

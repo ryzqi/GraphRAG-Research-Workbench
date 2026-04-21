@@ -10,10 +10,12 @@ from typing import TypeVar
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.config.provider_registry import resolve_langchain_structured_output_method
 from app.core.checkpoint import CheckpointManager
 from app.core.errors import bad_request, not_found
 from app.core.settings import Settings, get_settings
 from app.integrations.chat_model_cache import create_chat_model_cached
+from app.integrations.model_runtime_config import ModelRuntimeConfigManager
 from app.models.research_artifact import ResearchArtifact
 from app.models.research_session import ResearchSession, ResearchSessionStatus
 from app.models.research_task_outbox import (
@@ -166,7 +168,7 @@ class ResearchService:
         session: ResearchSession,
         relationship_fields: tuple[str, ...] = (),
     ) -> None:
-        attribute_names = list(_SESSION_SNAPSHOT_STATE_FIELDS)
+        attribute_names: list[str] = list(_SESSION_SNAPSHOT_STATE_FIELDS)
         attribute_names.extend(
             field for field in relationship_fields if field not in attribute_names
         )
@@ -1163,12 +1165,19 @@ def build_research_service(
     session_repository: ResearchSessionRepository | None = None,
 ) -> ResearchService:
     settings = get_settings()
+    try:
+        snapshot = ModelRuntimeConfigManager.get_snapshot(settings=settings)
+        alignment_structured_method = resolve_langchain_structured_output_method(
+            snapshot.active_provider_config().provider
+        )
+    except RuntimeError:
+        alignment_structured_method = "function_calling"
     judge = ResearchAlignmentJudge(
         model=create_chat_model_cached(
             settings=settings,
             use_previous_response_id=False,
         ),
-        structured_method="function_calling",
+        structured_method=alignment_structured_method,
     )
     return ResearchService(
         db=db,

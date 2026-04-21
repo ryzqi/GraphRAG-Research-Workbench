@@ -17,13 +17,13 @@ from pydantic import (
     model_validator,
 )
 
+from app.config.provider_registry import resolve_langchain_structured_output_method
 from app.core.errors import AppError
 from app.core.settings import Settings, get_settings
 from app.integrations.chat_model_cache import (
     create_chat_model_cached as create_chat_model,
 )
 from app.integrations.model_runtime_config import ModelRuntimeConfigManager
-from app.models.model_config import ModelProvider
 from app.prompts import get_prompt_loader
 from app.models.research_session import ResearchSessionStatus
 from app.schemas.research import (
@@ -40,7 +40,6 @@ from app.services.research_planner_types import ResearchPlannerResult
 
 
 _DEFAULT_SCOPER_STRUCTURED_METHOD = "function_calling"
-_OLLAMA_SCOPER_STRUCTURED_METHOD = "json_mode"
 SchemaT = TypeVar("SchemaT", bound=BaseModel)
 logger = logging.getLogger(__name__)
 
@@ -469,9 +468,10 @@ class LLMResearchScoper:
             provider = snapshot.active_provider_config().provider
         except RuntimeError:
             return _DEFAULT_SCOPER_STRUCTURED_METHOD
-        if provider == ModelProvider.OLLAMA:
-            return _OLLAMA_SCOPER_STRUCTURED_METHOD
-        return _DEFAULT_SCOPER_STRUCTURED_METHOD
+        return resolve_langchain_structured_output_method(
+            provider,
+            default=_DEFAULT_SCOPER_STRUCTURED_METHOD,
+        )
 
     async def _invoke_structured_payload(
         self,

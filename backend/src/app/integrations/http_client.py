@@ -42,7 +42,7 @@ def _profile_setting(
     return override
 
 
-def _build_timeout(
+def build_http_timeout(
     settings: Settings,
     *,
     profile: HttpClientProfile = HttpClientProfile.DEFAULT,
@@ -113,8 +113,7 @@ def create_http_client(
     cfg = settings or get_settings()
     normalized_profile = _normalize_profile(profile)
     return httpx.AsyncClient(
-        trust_env=False,
-        timeout=_build_timeout(cfg, profile=normalized_profile),
+        timeout=build_http_timeout(cfg, profile=normalized_profile),
         limits=_build_limits(cfg, profile=normalized_profile),
     )
 
