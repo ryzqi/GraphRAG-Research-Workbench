@@ -91,15 +91,15 @@ def build_breadth_gate_middleware(
     ) or DEFAULT_BREADTH_GATED_TOOL_NAMES
 
     @wrap_tool_call
-    def enforce_breadth_gate(request, handler):
+    async def enforce_breadth_gate(request, handler):
         tool_name = str(request.tool_call.get("name") or "").strip()
         if not tool_requires_breadth_gate(tool_name, resolved_tool_names):
-            return handler(request)
+            return await handler(request)
 
         args = request.tool_call.get("args") or {}
         target = str(args.get("subagent_name") or args.get("name") or "").strip()
         if target not in _GATED_SUBAGENTS:
-            return handler(request)
+            return await handler(request)
 
         claim_map, ledger, complexity = _load_breadth_gate_inputs(
             request.runtime.context
@@ -110,7 +110,7 @@ def build_breadth_gate_middleware(
             plan_complexity=complexity,
         )
         if allowed:
-            return handler(request)
+            return await handler(request)
         return ToolMessage(
             content=json.dumps(
                 {

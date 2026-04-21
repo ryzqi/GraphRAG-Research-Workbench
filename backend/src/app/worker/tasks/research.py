@@ -43,10 +43,19 @@ async def _run_research_session(session_id: str) -> None:
             plan_snapshot = service.read_plan_snapshot(session)
 
         try:
-            await service.execute_session(
-                session=session,
-                plan_snapshot=plan_snapshot,
-            )
+            async with sessionmaker() as run_db:
+                run_service = build_research_service(
+                    db=run_db,
+                    sessionmaker=sessionmaker,
+                    runtime_runner=runtime_runner,
+                )
+                run_session = await run_service.get_session(session_uuid)
+                if run_session.status != ResearchSessionStatus.QUEUED:
+                    return
+                await run_service.execute_session(
+                    session=run_session,
+                    plan_snapshot=plan_snapshot,
+                )
         except Exception as exc:
             async with sessionmaker() as fail_db:
                 fail_service = build_research_service(
