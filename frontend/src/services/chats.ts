@@ -403,8 +403,9 @@ export function resolveTerminalRunStatus(
 export function isUnexpectedStreamEnd(params: {
   sawFinalEvent: boolean;
   sawErrorEvent: boolean;
+  sawInterruptEvent?: boolean;
 }): boolean {
-  return !params.sawFinalEvent && !params.sawErrorEvent;
+  return !params.sawFinalEvent && !params.sawErrorEvent && !params.sawInterruptEvent;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {

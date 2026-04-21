@@ -24,6 +24,7 @@ import {
   getChatMessages,
   getPendingGeneralRun,
   getChatSession,
+  isUnexpectedStreamEnd,
   resumeToolApproval,
   sendMessage,
   streamChatMessage,
@@ -351,6 +352,8 @@ export function useGeneralChatController() {
       };
 
       let sawFinalEvent = false;
+      let sawErrorEvent = false;
+      let sawInterruptEvent = false;
       let streamAbortController: AbortController | null = null;
       try {
         streamAbortController = new AbortController();
@@ -402,6 +405,7 @@ export function useGeneralChatController() {
           }
           if (event.event === 'pending_tool_approval' || event.event === 'interrupt') {
             markStreamEvent();
+            sawInterruptEvent = true;
             const data = parseSseJson<ChatMessageResponse>(event.data);
             if (!isPendingToolApproval(data)) {
               throw new Error('工具审批事件格式无效');
@@ -448,13 +452,14 @@ export function useGeneralChatController() {
             continue;
           }
           if (event.event === 'error') {
+            sawErrorEvent = true;
             deltaBatcher.flush();
             const err = parseSseJson<{ message?: string }>(event.data);
             throw new Error(err?.message ?? '发送消息失败');
           }
         }
         deltaBatcher.flush();
-        if (!sawFinalEvent) {
+        if (isUnexpectedStreamEnd({ sawFinalEvent, sawErrorEvent, sawInterruptEvent })) {
           msgState = completeMessageState(msgState);
           updateMessage(assistantId, (msg) => ({
             ...msg,
@@ -535,6 +540,8 @@ export function useGeneralChatController() {
 
       let hadStreamEvent = false;
       let sawFinalEvent = false;
+      let sawErrorEvent = false;
+      let sawInterruptEvent = false;
       let streamAbortController: AbortController | null = null;
       try {
         updateMessage(pendingMessageId, (msg) => ({
@@ -567,6 +574,7 @@ export function useGeneralChatController() {
           }
           if (event.event === 'pending_tool_approval' || event.event === 'interrupt') {
             hadStreamEvent = true;
+            sawInterruptEvent = true;
             const data = parseSseJson<ChatMessageResponse>(event.data);
             if (!isPendingToolApproval(data)) {
               throw new Error('工具审批事件格式无效');
@@ -614,6 +622,7 @@ export function useGeneralChatController() {
             continue;
           }
           if (event.event === 'error') {
+            sawErrorEvent = true;
             deltaBatcher.flush();
             const err = parseSseJson<{ message?: string }>(event.data);
             throw new Error(err?.message ?? '恢复执行失败');
@@ -621,7 +630,10 @@ export function useGeneralChatController() {
         }
 
         deltaBatcher.flush();
-        if (!sawFinalEvent) {
+        if (isUnexpectedStreamEnd({ sawFinalEvent, sawErrorEvent, sawInterruptEvent })) {
+          throw new Error('Stream ended unexpectedly without a terminal event');
+        }
+        if (!sawFinalEvent && !sawInterruptEvent) {
           msgState = completeMessageState(msgState);
           updateMessage(pendingMessageId, (msg) => ({
             ...msg,
