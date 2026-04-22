@@ -2,7 +2,7 @@
  * 对话 API 封装
  */
 
-import { apiFetch, type ApiFetchOptions } from './http';
+import { apiFetch, apiV1Path, type ApiFetchOptions } from './http';
 import { openSseStream } from './sse';
 import type { SseEvent } from '../lib/sse';
 
@@ -82,17 +82,26 @@ export interface KbChatConfig {
   retrieval_multiscale_max_chunks_per_document: number;
 }
 
-export const DEFAULT_KB_CHAT_CONFIG: KbChatConfig = {
-  retrieval_top_k: 12,
-  retrieval_rerank_top_k: 40,
-  retrieval_hybrid_rrf_k: 60,
-  retrieval_parent_max_parents: 8,
-  retrieval_parent_max_children_per_parent: 3,
-  retrieval_multiscale_per_window_top_k: 40,
-  retrieval_multiscale_rrf_k: 60,
-  retrieval_multiscale_max_documents: 12,
-  retrieval_multiscale_max_chunks_per_document: 2,
-};
+export interface KbChatIntConstraint {
+  min: number;
+  max: number;
+}
+
+export interface KbChatConfigConstraints {
+  retrieval_top_k: KbChatIntConstraint;
+  retrieval_rerank_top_k: KbChatIntConstraint;
+  retrieval_hybrid_rrf_k: KbChatIntConstraint;
+  retrieval_parent_max_parents: KbChatIntConstraint;
+  retrieval_parent_max_children_per_parent: KbChatIntConstraint;
+  retrieval_multiscale_per_window_top_k: KbChatIntConstraint;
+  retrieval_multiscale_rrf_k: KbChatIntConstraint;
+  retrieval_multiscale_max_documents: KbChatIntConstraint;
+  retrieval_multiscale_max_chunks_per_document: KbChatIntConstraint;
+}
+
+export function cloneKbChatConfig(config: KbChatConfig): KbChatConfig {
+  return { ...config };
+}
 
 export interface ChatSessionCreate {
   session_type: ChatSessionType;
@@ -469,7 +478,7 @@ export function toKbGraphSchemaQuery(config: Partial<KbChatConfig>): string {
  * 创建会话
  */
 export async function createChatSession(data: ChatSessionCreate): Promise<ChatSession> {
-  return apiFetch<ChatSession>('/api/v1/chats', {
+  return apiFetch<ChatSession>(apiV1Path('/chats'), {
     method: 'POST',
     body: JSON.stringify(data),
   });
@@ -479,14 +488,14 @@ export async function createChatSession(data: ChatSessionCreate): Promise<ChatSe
  * 获取会话详情
  */
 export async function getChatSession(sessionId: string, signal?: AbortSignal): Promise<ChatSession> {
-  return apiFetch<ChatSession>(`/api/v1/chats/${sessionId}`, { signal });
+  return apiFetch<ChatSession>(apiV1Path(`/chats/${sessionId}`), { signal });
 }
 
 /**
  * 删除会话
  */
 export async function deleteChatSession(sessionId: string): Promise<void> {
-  return apiFetch<void>(`/api/v1/chats/${sessionId}`, {
+  return apiFetch<void>(apiV1Path(`/chats/${sessionId}`), {
     method: 'DELETE',
   });
 }
@@ -498,7 +507,7 @@ export async function getRecentChats(
   limit = 20,
   options?: ApiFetchOptions
 ): Promise<RecentChatListResponse> {
-  return apiFetch<RecentChatListResponse>(`/api/v1/chats/recent?limit=${limit}`, {
+  return apiFetch<RecentChatListResponse>(apiV1Path(`/chats/recent?limit=${limit}`), {
     cache: 'no-store',
     ...options,
   });
@@ -511,15 +520,13 @@ export async function getChatMessages(
   sessionId: string,
   signal?: AbortSignal
 ): Promise<ChatMessage[]> {
-  return apiFetch<ChatMessage[]>(`/api/v1/chats/${sessionId}/messages`, { signal });
+  return apiFetch<ChatMessage[]>(apiV1Path(`/chats/${sessionId}/messages`), { signal });
 }
 
 export async function getKbChatGraphSchema(
   config: Partial<KbChatConfig> = {}
 ): Promise<KbGraphSchema> {
-  return apiFetch<KbGraphSchema>(
-    `/api/v1/chats/kb-graph-schema${toKbGraphSchemaQuery(config)}`
-  );
+  return apiFetch<KbGraphSchema>(apiV1Path(`/chats/kb-graph-schema${toKbGraphSchemaQuery(config)}`));
 }
 
 /**
@@ -530,7 +537,7 @@ export async function sendMessage(
   content: string,
   clientRequestId?: string
 ): Promise<ChatMessageResponse> {
-  return apiFetch<ChatMessageResponse>(`/api/v1/chats/${sessionId}/messages`, {
+  return apiFetch<ChatMessageResponse>(apiV1Path(`/chats/${sessionId}/messages`), {
     method: 'POST',
     body: JSON.stringify({
       content,
@@ -547,7 +554,7 @@ export async function resumeToolApproval(
   runId: string,
   approval: ToolApprovalRequest
 ): Promise<ChatMessageResponse> {
-  return apiFetch<ChatMessageResponse>(`/api/v1/chats/${sessionId}/runs/${runId}/resume`, {
+  return apiFetch<ChatMessageResponse>(apiV1Path(`/chats/${sessionId}/runs/${runId}/resume`), {
     method: 'POST',
     body: JSON.stringify(approval),
   });
@@ -563,7 +570,7 @@ export async function streamChatMessage(
   signal?: AbortSignal
 ): Promise<AsyncIterable<SseEvent>> {
   return openSseStream(
-    `/api/v1/chats/${sessionId}/messages/stream`,
+    apiV1Path(`/chats/${sessionId}/messages/stream`),
     {
       method: 'POST',
       body: JSON.stringify({
@@ -580,7 +587,7 @@ export async function getPendingGeneralRun(
   signal?: AbortSignal
 ): Promise<ChatPendingToolApprovalResponse | null> {
   return apiFetch<ChatPendingToolApprovalResponse | null>(
-    `/api/v1/chats/${sessionId}/runs/pending-general`,
+    apiV1Path(`/chats/${sessionId}/runs/pending-general`),
     { signal }
   );
 }
@@ -595,7 +602,7 @@ export async function streamResumeToolApproval(
   signal?: AbortSignal
 ): Promise<AsyncIterable<SseEvent>> {
   return openSseStream(
-    `/api/v1/chats/${sessionId}/runs/${runId}/resume/stream`,
+    apiV1Path(`/chats/${sessionId}/runs/${runId}/resume/stream`),
     {
       method: 'POST',
       body: JSON.stringify(approval),
@@ -614,7 +621,7 @@ export async function streamResumeClarification(
   signal?: AbortSignal
 ): Promise<AsyncIterable<SseEvent>> {
   return openSseStream(
-    `/api/v1/chats/${sessionId}/runs/${runId}/clarification/stream`,
+    apiV1Path(`/chats/${sessionId}/runs/${runId}/clarification/stream`),
     {
       method: 'POST',
       body: JSON.stringify({ content }),

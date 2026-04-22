@@ -2,9 +2,11 @@
 
 import { GeneralChatView } from '../components/chat/GeneralChatView';
 import { useGeneralChatController } from '../hooks/useGeneralChatController';
+import { useRuntimeConfig } from '../hooks/queries/useRuntimeConfig';
 
 export function GeneralChatPage() {
   const controller = useGeneralChatController();
+  const runtimeConfigQuery = useRuntimeConfig();
 
   return (
     <GeneralChatView
@@ -17,6 +19,7 @@ export function GeneralChatPage() {
       webSearch={controller.webSearch}
       hasPendingApproval={controller.hasPendingApproval}
       isInputDisabled={controller.isInputDisabled}
+      runtimeConfig={runtimeConfigQuery.data}
       setAllowExternal={controller.setAllowExternal}
       setInput={controller.setInput}
       setError={controller.setError}

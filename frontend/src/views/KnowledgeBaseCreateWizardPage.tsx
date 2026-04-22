@@ -4,7 +4,7 @@
  * 知识库创建向导（固定 3 步）
  */
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   Alert,
@@ -30,6 +30,7 @@ import { IndexConfigForm } from '../components/IndexConfigForm';
 import {
   useCreateBootstrapKnowledgeBase,
 } from '../hooks/queries/useBootstrapSubmissions';
+import { useRuntimeConfig } from '../hooks/queries/useRuntimeConfig';
 import { getErrorMessage } from '../lib/errorHandler';
 import { validateIndexConfig } from '../lib/indexConfig';
 import { buildBootstrapSubmissionManifestEntries } from '../lib/manifestBuilders';
@@ -37,7 +38,7 @@ import {
   setBootstrapPendingUploadSession,
 } from '../services/bootstrapUploadSession';
 import {
-  createDefaultIndexConfig,
+  cloneIndexConfig,
   type IndexConfig,
   type KnowledgeBaseCreate,
 } from '../services/knowledgeBases';
@@ -53,11 +54,15 @@ function countByType(
 
 export default function KnowledgeBaseCreateWizardPage() {
   const router = useRouter();
+  const runtimeConfigQuery = useRuntimeConfig();
+  const indexConfigConstraints =
+    runtimeConfigQuery.data?.knowledge_base_index_config_constraints ?? null;
+  const formConstraints = runtimeConfigQuery.data?.knowledge_base_form_constraints ?? null;
   const [activeStep, setActiveStep] = useState(0);
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [tagsInput, setTagsInput] = useState('');
-  const [indexConfig, setIndexConfig] = useState<IndexConfig>(createDefaultIndexConfig());
+  const [indexConfig, setIndexConfig] = useState<IndexConfig | null>(null);
   const [entries, setEntries] = useState<ManifestDraftEntry[]>([]);
   const [createdKbId, setCreatedKbId] = useState<string | null>(null);
   const [localError, setLocalError] = useState<string | null>(null);
@@ -65,13 +70,38 @@ export default function KnowledgeBaseCreateWizardPage() {
 
   const createBootstrapKbMutation = useCreateBootstrapKnowledgeBase({ invalidateMode: 'background' });
 
-  const markdownOnly = indexConfig.chunking.general_strategy === 'markdown_heading';
+  useEffect(() => {
+    if (indexConfig !== null) {
+      return;
+    }
+    const defaultIndexConfig = runtimeConfigQuery.data?.knowledge_base_default_index_config;
+    if (defaultIndexConfig) {
+      setIndexConfig(cloneIndexConfig(defaultIndexConfig));
+    }
+  }, [indexConfig, runtimeConfigQuery.data]);
+
+  const markdownOnly = indexConfig?.chunking.general_strategy === 'markdown_heading';
   const validation = useMemo(
-    () => validateManifestDraftEntries(entries, { markdownOnly }),
-    [entries, markdownOnly]
+    () =>
+      validateManifestDraftEntries(entries, {
+        markdownOnly: Boolean(markdownOnly),
+        runtimeConfig: runtimeConfigQuery.data,
+      }),
+    [entries, markdownOnly, runtimeConfigQuery.data]
   );
-  const configErrors = useMemo(() => validateIndexConfig(indexConfig), [indexConfig]);
-  const canProceedStep1 = name.trim().length > 0 && configErrors.length === 0;
+  const configErrors = useMemo(
+    () =>
+      indexConfig && indexConfigConstraints
+        ? validateIndexConfig(indexConfig, indexConfigConstraints)
+        : [],
+    [indexConfig, indexConfigConstraints]
+  );
+  const canProceedStep1 =
+    name.trim().length > 0 &&
+    indexConfig !== null &&
+    indexConfigConstraints !== null &&
+    formConstraints !== null &&
+    configErrors.length === 0;
   const canProceedStep2 =
     validation.globalErrors.length === 0 && validation.normalizedValidEntries.length > 0;
   const submitPending = createBootstrapKbMutation.isPending || preparingSubmit;
@@ -127,7 +157,7 @@ export default function KnowledgeBaseCreateWizardPage() {
         name: name.trim(),
         description: description.trim() || undefined,
         tags: tags.length > 0 ? tags : undefined,
-        index_config: indexConfig,
+        index_config: indexConfig!,
       };
       const { manifestEntries, pendingUploadFiles } = buildBootstrapSubmissionManifestEntries(
         validation.normalizedValidEntries
@@ -170,6 +200,10 @@ export default function KnowledgeBaseCreateWizardPage() {
     setLocalError(null);
   };
 
+  if (indexConfig === null || indexConfigConstraints === null || formConstraints === null) {
+    return <Alert severity='info'>正在加载运行时默认配置…</Alert>;
+  }
+
   return (
     <Box>
       <PageHeader
@@ -207,7 +241,7 @@ export default function KnowledgeBaseCreateWizardPage() {
               required
               value={name}
               onChange={(e) => setName(e.target.value)}
-              inputProps={{ maxLength: 64 }}
+              inputProps={{ maxLength: formConstraints.name.max_length }}
               disabled={Boolean(createdKbId)}
               fullWidth
             />
@@ -215,7 +249,7 @@ export default function KnowledgeBaseCreateWizardPage() {
               label='描述'
               value={description}
               onChange={(e) => setDescription(e.target.value)}
-              inputProps={{ maxLength: 500 }}
+              inputProps={{ maxLength: formConstraints.description.max_length }}
               multiline
               minRows={3}
               disabled={Boolean(createdKbId)}
@@ -232,6 +266,8 @@ export default function KnowledgeBaseCreateWizardPage() {
 
             <IndexConfigForm
               value={indexConfig}
+              constraints={indexConfigConstraints}
+              defaults={runtimeConfigQuery.data?.knowledge_base_default_index_config ?? indexConfig}
               onChange={(nextConfig) => {
                 setIndexConfig(nextConfig);
               }}
@@ -272,7 +308,8 @@ export default function KnowledgeBaseCreateWizardPage() {
               entries={entries}
               onChange={handleEntriesChange}
               validation={validation}
-              markdownOnly={markdownOnly}
+              runtimeConfig={runtimeConfigQuery.data}
+              markdownOnly={Boolean(markdownOnly)}
               disabled={submitPending}
             />
 

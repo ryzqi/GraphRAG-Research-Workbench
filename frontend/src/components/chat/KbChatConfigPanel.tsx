@@ -12,11 +12,12 @@ import PrecisionManufacturingIcon from '@mui/icons-material/PrecisionManufacturi
 import { alpha } from '@mui/material/styles';
 import type { Theme } from '@mui/material/styles';
 
-import type { KbChatConfig } from '../../services/chats';
+import type { KbChatConfig, KbChatConfigConstraints } from '../../services/chats';
 import { validateKbChatConfig } from '../../services/kbChatConfig';
 
 interface KbChatConfigPanelProps {
   value: KbChatConfig;
+  constraints: KbChatConfigConstraints;
   onChange: (next: KbChatConfig) => void;
   disabled?: boolean;
   parentChildLimitsEnabled?: boolean;
@@ -43,6 +44,7 @@ function toInt(value: string): number | null {
 
 export function KbChatConfigPanel({
   value,
+  constraints,
   onChange,
   disabled = false,
   parentChildLimitsEnabled = true,
@@ -55,7 +57,7 @@ export function KbChatConfigPanel({
     onChange({ ...value, [key]: parsed });
   };
 
-  const errors = validateKbChatConfig(value);
+  const errors = validateKbChatConfig(value, constraints);
   const parentChildLimitStateText = parentChildLimitsEnabled ? '父子分块生效' : '仅父子分块生效';
   const parentChildLimitDisabled = disabled || !parentChildLimitsEnabled;
   const parentMaxParentsHelperText = `${parentChildLimitStateText}；控制可保留父块数，调大可提升覆盖但会增加噪声。`;
@@ -105,7 +107,10 @@ export function KbChatConfigPanel({
                   type='number'
                   value={value.retrieval_top_k}
                   onChange={(event) => handleIntField('retrieval_top_k', event.target.value)}
-                  inputProps={{ min: 1, max: 20 }}
+                  inputProps={{
+                    min: constraints.retrieval_top_k.min,
+                    max: constraints.retrieval_top_k.max,
+                  }}
                   helperText='控制初次召回数量；调大可提高覆盖率，但会增加噪声与耗时。'
                   disabled={disabled}
                   fullWidth
@@ -115,8 +120,11 @@ export function KbChatConfigPanel({
                   type='number'
                   value={value.retrieval_rerank_top_k}
                   onChange={(event) => handleIntField('retrieval_rerank_top_k', event.target.value)}
-                  inputProps={{ min: value.retrieval_top_k, max: 40 }}
-                  helperText={`控制进入重排序的候选量；调大可提升命中率但更耗时（范围 ${value.retrieval_top_k}~40）。`}
+                  inputProps={{
+                    min: value.retrieval_top_k,
+                    max: constraints.retrieval_rerank_top_k.max,
+                  }}
+                  helperText={`控制进入重排序的候选量；调大可提升命中率但更耗时（范围 ${value.retrieval_top_k}~${constraints.retrieval_rerank_top_k.max}）。`}
                   disabled={disabled}
                   fullWidth
                 />
@@ -125,7 +133,10 @@ export function KbChatConfigPanel({
                   type='number'
                   value={value.retrieval_hybrid_rrf_k}
                   onChange={(event) => handleIntField('retrieval_hybrid_rrf_k', event.target.value)}
-                  inputProps={{ min: 1, max: 200 }}
+                  inputProps={{
+                    min: constraints.retrieval_hybrid_rrf_k.min,
+                    max: constraints.retrieval_hybrid_rrf_k.max,
+                  }}
                   helperText='控制 Milvus 原生 hybrid_search 的 RRF 平滑度；调大更平滑，调小更偏向前排结果。'
                   disabled={disabled}
                   fullWidth
@@ -147,7 +158,10 @@ export function KbChatConfigPanel({
                       type='number'
                       value={value.retrieval_parent_max_parents}
                       onChange={(event) => handleIntField('retrieval_parent_max_parents', event.target.value)}
-                      inputProps={{ min: 1, max: 20 }}
+                      inputProps={{
+                        min: constraints.retrieval_parent_max_parents.min,
+                        max: constraints.retrieval_parent_max_parents.max,
+                      }}
                       helperText={parentMaxParentsHelperText}
                       disabled={parentChildLimitDisabled}
                       fullWidth
@@ -161,7 +175,10 @@ export function KbChatConfigPanel({
                       onChange={(event) =>
                         handleIntField('retrieval_parent_max_children_per_parent', event.target.value)
                       }
-                      inputProps={{ min: 1, max: 10 }}
+                      inputProps={{
+                        min: constraints.retrieval_parent_max_children_per_parent.min,
+                        max: constraints.retrieval_parent_max_children_per_parent.max,
+                      }}
                       helperText={parentMaxChildrenHelperText}
                       disabled={parentChildLimitDisabled}
                       fullWidth
@@ -175,7 +192,10 @@ export function KbChatConfigPanel({
                       onChange={(event) =>
                         handleIntField('retrieval_multiscale_per_window_top_k', event.target.value)
                       }
-                      inputProps={{ min: 1, max: 200 }}
+                      inputProps={{
+                        min: constraints.retrieval_multiscale_per_window_top_k.min,
+                        max: constraints.retrieval_multiscale_per_window_top_k.max,
+                      }}
                       helperText='控制每个尺度窗口的候选量；调大可提高覆盖，但会增加计算开销。'
                       disabled={disabled}
                       fullWidth
@@ -187,7 +207,10 @@ export function KbChatConfigPanel({
                       type='number'
                       value={value.retrieval_multiscale_rrf_k}
                       onChange={(event) => handleIntField('retrieval_multiscale_rrf_k', event.target.value)}
-                      inputProps={{ min: 1, max: 200 }}
+                      inputProps={{
+                        min: constraints.retrieval_multiscale_rrf_k.min,
+                        max: constraints.retrieval_multiscale_rrf_k.max,
+                      }}
                       helperText='控制多尺度融合平滑度；调大更均衡，调小更偏向高排结果。'
                       disabled={disabled}
                       fullWidth
@@ -201,7 +224,10 @@ export function KbChatConfigPanel({
                       onChange={(event) =>
                         handleIntField('retrieval_multiscale_max_documents', event.target.value)
                       }
-                      inputProps={{ min: 1, max: 100 }}
+                      inputProps={{
+                        min: constraints.retrieval_multiscale_max_documents.min,
+                        max: constraints.retrieval_multiscale_max_documents.max,
+                      }}
                       helperText='限制进入多尺度阶段的文档数；调大更全面，但噪声和耗时会增加。'
                       disabled={disabled}
                       fullWidth
@@ -215,7 +241,10 @@ export function KbChatConfigPanel({
                       onChange={(event) =>
                         handleIntField('retrieval_multiscale_max_chunks_per_document', event.target.value)
                       }
-                      inputProps={{ min: 1, max: 20 }}
+                      inputProps={{
+                        min: constraints.retrieval_multiscale_max_chunks_per_document.min,
+                        max: constraints.retrieval_multiscale_max_chunks_per_document.max,
+                      }}
                       helperText='限制单文档保留的 Chunk 数；调大可补充细节，但会挤占其他文档配额。'
                       disabled={disabled}
                       fullWidth

@@ -57,30 +57,6 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("id"),
     )
 
-    op.execute(
-        sa.text(
-            """
-            INSERT INTO model_provider_configs
-                (provider, enabled, base_url, api_key_encrypted, model, thinking_enabled, thinking_level)
-            VALUES
-                ('openai', true, 'https://api.openai.com/v1', NULL, 'gpt-4o-mini', true, 'high'),
-                ('ollama', true, 'http://127.0.0.1:11434', NULL, NULL, true, 'high'),
-                ('nvidia', true, NULL, NULL, NULL, true, NULL)
-            ON CONFLICT (provider) DO NOTHING
-            """
-        )
-    )
-
-    op.execute(
-        sa.text(
-            """
-            INSERT INTO model_runtime_selection (id, active_provider, active_model)
-            VALUES (1, 'openai', 'gpt-4o-mini')
-            ON CONFLICT (id) DO NOTHING
-            """
-        )
-    )
-
 
 def downgrade() -> None:
     op.drop_table("model_runtime_selection")

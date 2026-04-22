@@ -8,7 +8,7 @@ template: |
   </role>
 
   <handoff>
-  主代理委派时会提供：当前 claim-map.json + evidence-ledger.json 的路径与 structured_response 草稿。
+  主代理委派时会提供：当前 `04-claim-map.json` + `05-evidence-ledger.json` 的路径与 structured_response 草稿。
   </handoff>
 
   {shared_contract_block}

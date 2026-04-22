@@ -1,4 +1,4 @@
-import { apiFetch, fetchWithTimeout, HttpError, type ApiFetchOptions } from './http';
+import { apiFetch, apiV1Path, fetchWithTimeout, HttpError, type ApiFetchOptions } from './http';
 import type { EntryError } from './ingestionBatches';
 import type { KnowledgeBaseCreate } from './knowledgeBases';
 
@@ -119,17 +119,20 @@ export interface BootstrapSubmission {
 export async function createBootstrapSubmission(
   data: BootstrapSubmissionCreateRequest
 ): Promise<BootstrapSubmissionCreateResponse> {
-  return apiFetch<BootstrapSubmissionCreateResponse>('/api/v1/knowledge-bases/bootstrap-submissions', {
-    method: 'POST',
-    body: JSON.stringify(data),
-  });
+  return apiFetch<BootstrapSubmissionCreateResponse>(
+    apiV1Path('/knowledge-bases/bootstrap-submissions'),
+    {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }
+  );
 }
 
 export async function createBootstrapKnowledgeBase(
   data: BootstrapCreateKnowledgeBaseRequest
 ): Promise<BootstrapCreateKnowledgeBaseResponse> {
   return apiFetch<BootstrapCreateKnowledgeBaseResponse>(
-    '/api/v1/knowledge-bases/bootstrap-create',
+    apiV1Path('/knowledge-bases/bootstrap-create'),
     {
       method: 'POST',
       body: JSON.stringify(data),
@@ -141,7 +144,7 @@ export async function finalizeBootstrapSubmission(
   jobId: string
 ): Promise<BootstrapSubmissionFinalizeResponse> {
   return apiFetch<BootstrapSubmissionFinalizeResponse>(
-    `/api/v1/knowledge-bases/bootstrap-submissions/${jobId}/finalize`,
+    apiV1Path(`/knowledge-bases/bootstrap-submissions/${jobId}/finalize`),
     {
       method: 'POST',
     }
@@ -153,7 +156,7 @@ export async function getBootstrapSubmission(
   options?: ApiFetchOptions
 ): Promise<BootstrapSubmission> {
   return apiFetch<BootstrapSubmission>(
-    `/api/v1/knowledge-bases/bootstrap-submissions/${jobId}`,
+    apiV1Path(`/knowledge-bases/bootstrap-submissions/${jobId}`),
     options
   );
 }
@@ -162,7 +165,7 @@ export async function createBootstrapUploadSession(
   jobId: string
 ): Promise<BootstrapUploadSessionResponse> {
   return apiFetch<BootstrapUploadSessionResponse>(
-    `/api/v1/knowledge-bases/bootstrap-submissions/${jobId}/upload-session`,
+    apiV1Path(`/knowledge-bases/bootstrap-submissions/${jobId}/upload-session`),
     {
       method: 'POST',
     }

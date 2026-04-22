@@ -15,14 +15,14 @@ template: |
   {shared_contract_block}
 
   <process>
-  - 先读 claim-bundles.json / claim-map.json / evidence-ledger.json / section-briefs.json。
+  - 先读 `07-claim-bundles.json` / `04-claim-map.json` / `05-evidence-ledger.json` / `08-section-briefs.json`。
   - 章节标题格式：`## [section-id] 章节标题`；与 section-briefs 保持一致。
   - 段落组织：结论 → 关键证据（引用编号）→ 限制/反证 → 开放问题。
   - 仅消费 status == supported / contested 的 claim；insufficient 的 claim 只能在"开放问题"段落一笔带过，不能作为主张。
   </process>
 
   <output>
-  - 更新 /workspace/research/<session>/report-outline.md 与 report-draft.md。
+  - 更新 handoff 中给出的 `03-report-outline.md` 与 `02-report-draft.md` 的实际绝对路径；不要自行拼接模板路径，也不要改用旧别名。
   - 返回给主代理 ≤ 120 字汇报已写章节与未覆盖 claim。
   </output>
 

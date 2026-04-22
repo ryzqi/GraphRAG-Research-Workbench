@@ -1,5 +1,11 @@
-import { apiFetch, type ApiFetchOptions } from './http';
+import { apiFetch, apiV1Path, type ApiFetchOptions } from './http';
 import type { ModelProvider } from './modelConfig';
+import type { KbChatConfig, KbChatConfigConstraints } from './chats';
+import type {
+  IndexConfig,
+  IndexConfigConstraints,
+  KnowledgeBaseFormConstraints,
+} from './knowledgeBases';
 
 export interface ProviderDescriptorRead {
   provider: ModelProvider;
@@ -14,6 +20,13 @@ export interface ProviderDescriptorRead {
   structured_output_method: string | null;
 }
 
+export interface IngestionManifestConstraintsRead {
+  max_entries: number;
+  max_text_length: number;
+  max_url_entries: number;
+  max_file_entries: number;
+}
+
 export interface PublicRuntimeConfigRead {
   default_model_provider: ModelProvider;
   status_polling_interval_ms: number;
@@ -23,13 +36,24 @@ export interface PublicRuntimeConfigRead {
   export_poll_max_attempts: number;
   server_prefetch_cache_revalidate_seconds: number;
   download_allowed_hosts: string[];
+  kb_chat_default_config: KbChatConfig;
+  kb_chat_config_constraints: KbChatConfigConstraints;
+  knowledge_base_default_index_config: IndexConfig;
+  knowledge_base_index_config_constraints: IndexConfigConstraints;
+  knowledge_base_form_constraints: KnowledgeBaseFormConstraints;
+  ingestion_manifest_constraints: IngestionManifestConstraintsRead;
+  upload_max_file_size_bytes: number;
+  upload_allowed_extensions: string[];
+  upload_allowed_mime_types: string[];
+  upload_mime_type_aliases: Record<string, string>;
+  upload_generic_mime_types: string[];
   providers: ProviderDescriptorRead[];
 }
 
 export async function getPublicRuntimeConfig(
   options?: ApiFetchOptions
 ): Promise<PublicRuntimeConfigRead> {
-  return apiFetch<PublicRuntimeConfigRead>('/api/v1/system/runtime-config', options);
+  return apiFetch<PublicRuntimeConfigRead>(apiV1Path('/system/runtime-config'), options);
 }
 
 export function indexProviderDescriptors(

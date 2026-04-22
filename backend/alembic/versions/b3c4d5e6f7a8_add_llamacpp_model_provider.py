@@ -7,7 +7,6 @@ Create Date: 2026-04-10 20:45:00
 
 from __future__ import annotations
 
-import sqlalchemy as sa
 from alembic import op
 
 # revision identifiers, used by Alembic.
@@ -23,18 +22,6 @@ def upgrade() -> None:
             "ALTER TYPE model_provider "
             "ADD VALUE IF NOT EXISTS 'llama.cpp'"
         )
-
-    op.execute(
-        sa.text(
-            """
-            INSERT INTO model_provider_configs
-                (provider, enabled, base_url, api_key_encrypted, models, thinking_enabled, thinking_level)
-            VALUES
-                ('llama.cpp', true, 'http://127.0.0.1:8080/v1', NULL, '{}'::character varying[], false, NULL)
-            ON CONFLICT (provider) DO NOTHING
-            """
-        )
-    )
 
 
 def downgrade() -> None:

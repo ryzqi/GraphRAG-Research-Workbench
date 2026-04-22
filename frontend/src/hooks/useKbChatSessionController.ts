@@ -1,8 +1,13 @@
 import { useEffect, useMemo, useRef } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
 import type { ChatMessage } from '../components/chat/MessageList';
-import type { ChatSession, KbChatConfig } from '../services/chats';
-import { getChatMessages, getChatSession } from '../services/chats';
+import {
+  cloneKbChatConfig,
+  getChatMessages,
+  getChatSession,
+  type ChatSession,
+  type KbChatConfig,
+} from '../services/chats';
 import { HttpError } from '../services/http';
 import {
   buildChatSessionRequestKey,
@@ -19,8 +24,8 @@ interface UseKbChatSessionControllerParams {
   setSession: Dispatch<SetStateAction<ChatSession | null>>;
   setMessages: Dispatch<SetStateAction<ChatMessage[]>>;
   setSelectedKbIds: Dispatch<SetStateAction<string[]>>;
-  setKbChatConfig: Dispatch<SetStateAction<KbChatConfig>>;
-  defaultConfig: KbChatConfig;
+  setKbChatConfig: Dispatch<SetStateAction<KbChatConfig | null>>;
+  defaultConfig: KbChatConfig | null;
 }
 
 export function useKbChatSessionController(params: UseKbChatSessionControllerParams) {
@@ -54,6 +59,9 @@ export function useKbChatSessionController(params: UseKbChatSessionControllerPar
     }
     const request = requestControl.start(sessionRequestKey);
     const loadSession = async () => {
+      if (!defaultConfig) {
+        return;
+      }
       setLoadingSession(true);
       setError(null);
       try {
@@ -64,7 +72,11 @@ export function useKbChatSessionController(params: UseKbChatSessionControllerPar
         if (!requestControl.isLatest(request.id, sessionRequestKey)) return;
         setSession(loadedSession);
         setSelectedKbIds(loadedSession.selected_kb_ids ?? []);
-        setKbChatConfig(loadedSession.kb_chat_config ?? defaultConfig);
+        setKbChatConfig(
+          loadedSession.kb_chat_config
+            ? cloneKbChatConfig(loadedSession.kb_chat_config)
+            : cloneKbChatConfig(defaultConfig)
+        );
         setMessages(
           history.map((msg) => ({
             id: msg.id,
@@ -79,7 +91,7 @@ export function useKbChatSessionController(params: UseKbChatSessionControllerPar
           setSession(null);
           setMessages([]);
           setSelectedKbIds([]);
-          setKbChatConfig(defaultConfig);
+          setKbChatConfig(cloneKbChatConfig(defaultConfig));
           clearSessionIdFromUrl();
           return;
         }
@@ -113,6 +125,6 @@ export function useKbChatSessionController(params: UseKbChatSessionControllerPar
     setSession(null);
     setMessages([]);
     setError(null);
-    setKbChatConfig(defaultConfig);
+    setKbChatConfig(defaultConfig ? cloneKbChatConfig(defaultConfig) : null);
   }, [defaultConfig, sessionId, setError, setKbChatConfig, setMessages, setSession]);
 }

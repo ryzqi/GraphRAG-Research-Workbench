@@ -19,9 +19,25 @@ export class ApiConfigurationError extends Error {
   }
 }
 
+const API_V1_PREFIX = '/api/v1';
+
+export function apiV1Path(path: string): string {
+  const normalized = path.trim();
+  if (!normalized) {
+    return API_V1_PREFIX;
+  }
+  if (normalized.startsWith(API_V1_PREFIX)) {
+    return normalized;
+  }
+  if (normalized.startsWith('/')) {
+    return `${API_V1_PREFIX}${normalized}`;
+  }
+  return `${API_V1_PREFIX}/${normalized}`;
+}
+
 export function normalizeApiBaseUrl(raw: string): string {
   const trimmed = raw.trim().replace(/\/+$/, '');
-  return trimmed.replace(/\/api\/v1$/, '');
+  return trimmed.replace(new RegExp(`${API_V1_PREFIX}$`), '');
 }
 
 function isBrowserRuntime(): boolean {

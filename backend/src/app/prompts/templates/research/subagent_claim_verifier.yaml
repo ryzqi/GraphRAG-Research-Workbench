@@ -15,14 +15,14 @@ template: |
   {shared_contract_block}
 
   <process>
-  1. 先读 claim-map.json 与 evidence-ledger.json，理解当前证据分布。
+  1. 先读 `04-claim-map.json` 与 `05-evidence-ledger.json`，理解当前证据分布。
   2. 为当前 claim 生成 breadth + depth + counter 三组最小必要查询（参考 query-mesh.json）。
   3. 委派 web-researcher 或 paper-researcher 补证（通过 task 工具）。
   4. 回收证据后，决定 claim.status：
      - supported：≥ 2 独立非 workspace provider + 至少一次 counter 尝试
      - contested：发现可信反证或内部冲突
      - insufficient：未达上述任一
-  5. 更新 claim-map.json（status + independence_providers + supporting/counter_evidence_ids + limitations）。
+  5. 更新 `04-claim-map.json`（status + independence_providers + supporting/counter_evidence_ids + limitations）。
   </process>
 
   <output>

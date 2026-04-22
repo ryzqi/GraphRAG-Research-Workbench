@@ -18,7 +18,11 @@ import {
 import SendIcon from '@mui/icons-material/Send';
 import AttachFileIcon from '@mui/icons-material/AttachFile';
 import UploadFileIcon from '@mui/icons-material/UploadFile';
-import { ACCEPTED_FILE_TYPES, SUPPORTED_FILE_TYPES_LABEL } from '../../utils/fileValidation';
+import type { PublicRuntimeConfigRead } from '../../services/runtimeConfig';
+import {
+  getAcceptedFileTypes,
+  getSupportedFileTypesLabel,
+} from '../../utils/fileValidation';
 
 // 视觉上更接近单行输入框的高度（用于“垂直居中”的观感）
 const MIN_TEXTAREA_HEIGHT = 36;
@@ -29,6 +33,7 @@ interface InputComposerProps {
   onChange: (value: string) => void;
   onSend: () => void;
   onFileUpload?: (file: File) => Promise<void>;
+  runtimeConfig?: PublicRuntimeConfigRead | null;
   disabled?: boolean;
   placeholder?: string;
   loading?: boolean;
@@ -41,6 +46,7 @@ export function InputComposer({
   onChange,
   onSend,
   onFileUpload,
+  runtimeConfig,
   disabled = false,
   placeholder = '输入消息...',
   loading = false,
@@ -121,6 +127,7 @@ export function InputComposer({
   };
 
   const isDisabled = disabled || loading || uploading;
+  const attachmentUnavailable = showAttachment && onFileUpload && !runtimeConfig;
   const canSend = !isDisabled && value.trim().length > 0;
 
   return (
@@ -169,7 +176,7 @@ export function InputComposer({
             <Tooltip title="添加附件">
               <IconButton
                 onClick={handleAttachClick}
-                disabled={isDisabled}
+                disabled={isDisabled || attachmentUnavailable}
                 aria-label='添加附件'
                 sx={{ color: 'text.secondary' }}
               >
@@ -183,13 +190,13 @@ export function InputComposer({
               anchorOrigin={{ vertical: 'top', horizontal: 'left' }}
               transformOrigin={{ vertical: 'bottom', horizontal: 'left' }}
             >
-              <MenuItem onClick={triggerFileInput}>
+              <MenuItem onClick={triggerFileInput} disabled={attachmentUnavailable}>
                 <ListItemIcon>
                   <UploadFileIcon fontSize="small" />
                 </ListItemIcon>
                 <ListItemText
                   primary="上传文件"
-                  secondary={`支持 ${SUPPORTED_FILE_TYPES_LABEL}`}
+                  secondary={`支持 ${getSupportedFileTypesLabel(runtimeConfig)}`}
                   secondaryTypographyProps={{ variant: 'caption' }}
                 />
               </MenuItem>
@@ -197,7 +204,7 @@ export function InputComposer({
             <input
               ref={fileInputRef}
               type="file"
-              accept={ACCEPTED_FILE_TYPES}
+              accept={getAcceptedFileTypes(runtimeConfig)}
               onChange={handleFileSelect}
               style={{ display: 'none' }}
             />

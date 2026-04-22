@@ -2,7 +2,7 @@
  * 候选沉淀 API 封装
  */
 
-import { apiFetch } from './http';
+import { apiFetch, apiV1Path } from './http';
 import type { ListResponse } from './types';
 
 export type ProposalStatus = 'pending' | 'approved' | 'rejected' | 'applied';
@@ -38,7 +38,7 @@ export type ProposalListResponse = ListResponse<Proposal>;
  * 创建候选沉淀
  */
 export async function createProposal(data: ProposalCreate): Promise<Proposal> {
-  return apiFetch<Proposal>('/api/v1/knowledge-updates', {
+  return apiFetch<Proposal>(apiV1Path('/knowledge-updates'), {
     method: 'POST',
     body: JSON.stringify(data),
   });
@@ -59,14 +59,14 @@ export async function listProposals(params?: {
   if (params?.skip !== undefined) searchParams.set('skip', String(params.skip));
   if (params?.limit !== undefined) searchParams.set('limit', String(params.limit));
   const query = searchParams.toString();
-  return apiFetch<ProposalListResponse>(`/api/v1/knowledge-updates${query ? `?${query}` : ''}`);
+  return apiFetch<ProposalListResponse>(apiV1Path(`/knowledge-updates${query ? `?${query}` : ''}`));
 }
 
 /**
  * 获取候选沉淀详情
  */
 export async function getProposal(proposalId: string): Promise<Proposal> {
-  return apiFetch<Proposal>(`/api/v1/knowledge-updates/${proposalId}`);
+  return apiFetch<Proposal>(apiV1Path(`/knowledge-updates/${proposalId}`));
 }
 
 /**
@@ -76,7 +76,7 @@ export async function updateProposal(
   proposalId: string,
   data: ProposalUpdate
 ): Promise<Proposal> {
-  return apiFetch<Proposal>(`/api/v1/knowledge-updates/${proposalId}`, {
+  return apiFetch<Proposal>(apiV1Path(`/knowledge-updates/${proposalId}`), {
     method: 'PATCH',
     body: JSON.stringify(data),
   });

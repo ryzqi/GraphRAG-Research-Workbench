@@ -6,6 +6,7 @@ import uuid
 from datetime import datetime
 from enum import Enum
 
+from annotated_types import Ge, Le, MaxLen, MinLen
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.schemas.index_rebuilds import IndexRebuildJobRead
@@ -267,6 +268,186 @@ class IndexConfig(BaseModel):
         # 检索调优项已迁移到 kb_chat 会话配置。
         payload.pop("retrieval", None)
         return payload
+
+
+class IndexConfigNumberConstraint(BaseModel):
+    min: int | float
+    max: int | float
+
+
+class MarkdownHeadingConfigConstraints(BaseModel):
+    max_heading_level: IndexConfigNumberConstraint
+    chunk_size: IndexConfigNumberConstraint
+    chunk_overlap: IndexConfigNumberConstraint
+
+
+class QueryDependentMultiscaleWindowConfigConstraints(BaseModel):
+    chunk_size_tokens: IndexConfigNumberConstraint
+    chunk_overlap_tokens: IndexConfigNumberConstraint
+
+
+class QueryDependentMultiscaleConfigConstraints(BaseModel):
+    window_count_max: int
+    window: QueryDependentMultiscaleWindowConfigConstraints
+
+
+class SemanticConfigConstraints(BaseModel):
+    min_tokens: IndexConfigNumberConstraint
+    max_tokens: IndexConfigNumberConstraint
+    breakpoint_percentile: IndexConfigNumberConstraint
+    similarity_threshold: IndexConfigNumberConstraint
+    overlap_chars: IndexConfigNumberConstraint
+    embedding_batch_size: IndexConfigNumberConstraint
+
+
+class ParentChunkConfigConstraints(BaseModel):
+    chunk_size: IndexConfigNumberConstraint
+    chunk_overlap: IndexConfigNumberConstraint
+
+
+class ChildChunkConfigConstraints(BaseModel):
+    chunk_size: IndexConfigNumberConstraint
+    chunk_overlap: IndexConfigNumberConstraint
+
+
+class ParentChildConfigConstraints(BaseModel):
+    parent: ParentChunkConfigConstraints
+    child: ChildChunkConfigConstraints
+
+
+class ContextualConfigConstraints(BaseModel):
+    max_tokens: IndexConfigNumberConstraint
+    concurrency: IndexConfigNumberConstraint
+
+
+class IndexConfigConstraints(BaseModel):
+    markdown_heading: MarkdownHeadingConfigConstraints
+    query_dependent_multiscale: QueryDependentMultiscaleConfigConstraints
+    semantic: SemanticConfigConstraints
+    parent_child: ParentChildConfigConstraints
+    contextual: ContextualConfigConstraints
+
+
+class KnowledgeBaseTextLengthConstraint(BaseModel):
+    min_length: int | None = None
+    max_length: int
+
+
+class KnowledgeBaseFormConstraints(BaseModel):
+    name: KnowledgeBaseTextLengthConstraint
+    description: KnowledgeBaseTextLengthConstraint
+
+
+def _index_config_number_constraint(
+    model_type: type[BaseModel], field_name: str
+) -> IndexConfigNumberConstraint:
+    field = model_type.model_fields[field_name]
+    minimum: int | float | None = None
+    maximum: int | float | None = None
+
+    for metadata in field.metadata:
+        if isinstance(metadata, Ge):
+            minimum = metadata.ge
+        elif isinstance(metadata, Le):
+            maximum = metadata.le
+
+    if minimum is None or maximum is None:
+        raise RuntimeError(f"{model_type.__name__}.{field_name} 缺少 ge/le 约束")
+
+    return IndexConfigNumberConstraint(min=minimum, max=maximum)
+
+
+def _field_max_length(model_type: type[BaseModel], field_name: str) -> int:
+    field = model_type.model_fields[field_name]
+    for metadata in field.metadata:
+        if isinstance(metadata, MaxLen):
+            return int(metadata.max_length)
+    raise RuntimeError(f"{model_type.__name__}.{field_name} 缺少 max_length 约束")
+
+
+def _text_length_constraint(
+    model_type: type[BaseModel], field_name: str
+) -> KnowledgeBaseTextLengthConstraint:
+    field = model_type.model_fields[field_name]
+    minimum: int | None = None
+    maximum: int | None = None
+
+    for metadata in field.metadata:
+        if isinstance(metadata, MinLen):
+            minimum = int(metadata.min_length)
+        elif isinstance(metadata, MaxLen):
+            maximum = int(metadata.max_length)
+
+    if maximum is None:
+        raise RuntimeError(f"{model_type.__name__}.{field_name} 缺少 max_length 约束")
+
+    return KnowledgeBaseTextLengthConstraint(min_length=minimum, max_length=maximum)
+
+
+def index_config_constraints() -> IndexConfigConstraints:
+    return IndexConfigConstraints(
+        markdown_heading=MarkdownHeadingConfigConstraints(
+            max_heading_level=_index_config_number_constraint(
+                MarkdownHeadingConfig, "max_heading_level"
+            ),
+            chunk_size=_index_config_number_constraint(MarkdownHeadingConfig, "chunk_size"),
+            chunk_overlap=_index_config_number_constraint(
+                MarkdownHeadingConfig, "chunk_overlap"
+            ),
+        ),
+        query_dependent_multiscale=QueryDependentMultiscaleConfigConstraints(
+            window_count_max=_field_max_length(
+                QueryDependentMultiscaleChunkingConfig, "windows"
+            ),
+            window=QueryDependentMultiscaleWindowConfigConstraints(
+                chunk_size_tokens=_index_config_number_constraint(
+                    QueryDependentMultiscaleWindowConfig, "chunk_size_tokens"
+                ),
+                chunk_overlap_tokens=_index_config_number_constraint(
+                    QueryDependentMultiscaleWindowConfig, "chunk_overlap_tokens"
+                ),
+            ),
+        ),
+        semantic=SemanticConfigConstraints(
+            min_tokens=_index_config_number_constraint(SemanticConfig, "min_tokens"),
+            max_tokens=_index_config_number_constraint(SemanticConfig, "max_tokens"),
+            breakpoint_percentile=_index_config_number_constraint(
+                SemanticConfig, "breakpoint_percentile"
+            ),
+            similarity_threshold=_index_config_number_constraint(
+                SemanticConfig, "similarity_threshold"
+            ),
+            overlap_chars=_index_config_number_constraint(SemanticConfig, "overlap_chars"),
+            embedding_batch_size=_index_config_number_constraint(
+                SemanticConfig, "embedding_batch_size"
+            ),
+        ),
+        parent_child=ParentChildConfigConstraints(
+            parent=ParentChunkConfigConstraints(
+                chunk_size=_index_config_number_constraint(ParentChunkConfig, "chunk_size"),
+                chunk_overlap=_index_config_number_constraint(
+                    ParentChunkConfig, "chunk_overlap"
+                ),
+            ),
+            child=ChildChunkConfigConstraints(
+                chunk_size=_index_config_number_constraint(ChildChunkConfig, "chunk_size"),
+                chunk_overlap=_index_config_number_constraint(
+                    ChildChunkConfig, "chunk_overlap"
+                ),
+            ),
+        ),
+        contextual=ContextualConfigConstraints(
+            max_tokens=_index_config_number_constraint(ContextualConfig, "max_tokens"),
+            concurrency=_index_config_number_constraint(ContextualConfig, "concurrency"),
+        ),
+    )
+
+
+def knowledge_base_form_constraints() -> KnowledgeBaseFormConstraints:
+    return KnowledgeBaseFormConstraints(
+        name=_text_length_constraint(KnowledgeBaseCreate, "name"),
+        description=_text_length_constraint(KnowledgeBaseCreate, "description"),
+    )
 
 
 class KnowledgeBaseStatus(str, Enum):

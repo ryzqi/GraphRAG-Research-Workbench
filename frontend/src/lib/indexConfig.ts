@@ -1,4 +1,4 @@
-import type { IndexConfig } from '../services/knowledgeBases';
+import type { IndexConfig, IndexConfigConstraints } from '../services/knowledgeBases';
 
 interface RangeCheck {
   value: number;
@@ -17,7 +17,10 @@ function checkRange({ value, min, max, label }: RangeCheck, errors: string[]) {
   }
 }
 
-export function validateIndexConfig(config: IndexConfig): string[] {
+export function validateIndexConfig(
+  config: IndexConfig,
+  constraints: IndexConfigConstraints
+): string[] {
   const errors: string[] = [];
   const { chunking, contextual } = config;
 
@@ -28,14 +31,22 @@ export function validateIndexConfig(config: IndexConfig): string[] {
         errors.push('多尺度滑动窗口分块至少需要 1 个窗口');
         break;
       }
+      if (
+        chunking.query_dependent_multiscale.windows.length >
+        constraints.query_dependent_multiscale.window_count_max
+      ) {
+        errors.push(
+          `多尺度滑动窗口分块窗口数量最多 ${constraints.query_dependent_multiscale.window_count_max} 个`
+        );
+      }
 
       for (const [idx, window] of chunking.query_dependent_multiscale.windows.entries()) {
         const labelPrefix = `多尺度滑动窗口分块窗口 ${idx + 1}`;
         checkRange(
           {
             value: window.chunk_size_tokens,
-            min: 16,
-            max: 8000,
+            min: constraints.query_dependent_multiscale.window.chunk_size_tokens.min,
+            max: constraints.query_dependent_multiscale.window.chunk_size_tokens.max,
             label: `${labelPrefix} chunk_size_tokens`,
           },
           errors
@@ -43,8 +54,8 @@ export function validateIndexConfig(config: IndexConfig): string[] {
         checkRange(
           {
             value: window.chunk_overlap_tokens,
-            min: 0,
-            max: 4000,
+            min: constraints.query_dependent_multiscale.window.chunk_overlap_tokens.min,
+            max: constraints.query_dependent_multiscale.window.chunk_overlap_tokens.max,
             label: `${labelPrefix} chunk_overlap_tokens`,
           },
           errors
@@ -59,8 +70,8 @@ export function validateIndexConfig(config: IndexConfig): string[] {
       checkRange(
         {
           value: chunking.semantic.min_tokens,
-          min: 16,
-          max: 1024,
+          min: constraints.semantic.min_tokens.min,
+          max: constraints.semantic.min_tokens.max,
           label: '语义分块 min_tokens',
         },
         errors
@@ -68,8 +79,8 @@ export function validateIndexConfig(config: IndexConfig): string[] {
       checkRange(
         {
           value: chunking.semantic.max_tokens,
-          min: 16,
-          max: 2048,
+          min: constraints.semantic.max_tokens.min,
+          max: constraints.semantic.max_tokens.max,
           label: '语义分块 max_tokens',
         },
         errors
@@ -80,8 +91,8 @@ export function validateIndexConfig(config: IndexConfig): string[] {
       checkRange(
         {
           value: chunking.semantic.overlap_chars,
-          min: 0,
-          max: 2000,
+          min: constraints.semantic.overlap_chars.min,
+          max: constraints.semantic.overlap_chars.max,
           label: '语义分块 overlap_chars',
         },
         errors
@@ -89,8 +100,8 @@ export function validateIndexConfig(config: IndexConfig): string[] {
       checkRange(
         {
           value: chunking.semantic.embedding_batch_size,
-          min: 8,
-          max: 1024,
+          min: constraints.semantic.embedding_batch_size.min,
+          max: constraints.semantic.embedding_batch_size.max,
           label: '语义分块 embedding_batch_size',
         },
         errors
@@ -104,8 +115,8 @@ export function validateIndexConfig(config: IndexConfig): string[] {
           checkRange(
             {
               value: chunking.semantic.breakpoint_percentile,
-              min: 1,
-              max: 99,
+              min: constraints.semantic.breakpoint_percentile.min,
+              max: constraints.semantic.breakpoint_percentile.max,
               label: '语义分块 breakpoint_percentile',
             },
             errors
@@ -120,8 +131,8 @@ export function validateIndexConfig(config: IndexConfig): string[] {
           checkRange(
             {
               value: chunking.semantic.similarity_threshold,
-              min: 0,
-              max: 1,
+              min: constraints.semantic.similarity_threshold.min,
+              max: constraints.semantic.similarity_threshold.max,
               label: '语义分块相似度阈值',
             },
             errors
@@ -134,8 +145,8 @@ export function validateIndexConfig(config: IndexConfig): string[] {
       checkRange(
         {
           value: chunking.parent_child.parent.chunk_size,
-          min: 512,
-          max: 20000,
+          min: constraints.parent_child.parent.chunk_size.min,
+          max: constraints.parent_child.parent.chunk_size.max,
           label: '父块 chunk_size',
         },
         errors
@@ -143,8 +154,8 @@ export function validateIndexConfig(config: IndexConfig): string[] {
       checkRange(
         {
           value: chunking.parent_child.parent.chunk_overlap,
-          min: 0,
-          max: 5000,
+          min: constraints.parent_child.parent.chunk_overlap.min,
+          max: constraints.parent_child.parent.chunk_overlap.max,
           label: '父块 chunk_overlap',
         },
         errors
@@ -155,8 +166,8 @@ export function validateIndexConfig(config: IndexConfig): string[] {
       checkRange(
         {
           value: chunking.parent_child.child.chunk_size,
-          min: 128,
-          max: 5000,
+          min: constraints.parent_child.child.chunk_size.min,
+          max: constraints.parent_child.child.chunk_size.max,
           label: '子块 chunk_size',
         },
         errors
@@ -164,8 +175,8 @@ export function validateIndexConfig(config: IndexConfig): string[] {
       checkRange(
         {
           value: chunking.parent_child.child.chunk_overlap,
-          min: 0,
-          max: 2000,
+          min: constraints.parent_child.child.chunk_overlap.min,
+          max: constraints.parent_child.child.chunk_overlap.max,
           label: '子块 chunk_overlap',
         },
         errors
@@ -181,8 +192,8 @@ export function validateIndexConfig(config: IndexConfig): string[] {
       checkRange(
         {
           value: chunking.markdown_heading.max_heading_level,
-          min: 1,
-          max: 6,
+          min: constraints.markdown_heading.max_heading_level.min,
+          max: constraints.markdown_heading.max_heading_level.max,
           label: '标题层级',
         },
         errors
@@ -190,8 +201,8 @@ export function validateIndexConfig(config: IndexConfig): string[] {
       checkRange(
         {
           value: chunking.markdown_heading.chunk_size,
-          min: 200,
-          max: 20000,
+          min: constraints.markdown_heading.chunk_size.min,
+          max: constraints.markdown_heading.chunk_size.max,
           label: '章节内 chunk_size',
         },
         errors
@@ -199,8 +210,8 @@ export function validateIndexConfig(config: IndexConfig): string[] {
       checkRange(
         {
           value: chunking.markdown_heading.chunk_overlap,
-          min: 0,
-          max: 5000,
+          min: constraints.markdown_heading.chunk_overlap.min,
+          max: constraints.markdown_heading.chunk_overlap.max,
           label: '章节内 chunk_overlap',
         },
         errors
@@ -214,18 +225,27 @@ export function validateIndexConfig(config: IndexConfig): string[] {
   // 仅校验已启用的增强策略。
   if (contextual.enabled) {
     checkRange(
-      { value: contextual.max_tokens, min: 0, max: 512, label: 'Contextual max_tokens' },
+      {
+        value: contextual.max_tokens,
+        min: constraints.contextual.max_tokens.min,
+        max: constraints.contextual.max_tokens.max,
+        label: 'Contextual max_tokens',
+      },
       errors
     );
     if (contextual.max_tokens < 1) {
       errors.push('Contextual 启用时 max_tokens 需大于 0');
     }
     checkRange(
-      { value: contextual.concurrency, min: 1, max: 10, label: 'Contextual concurrency' },
+      {
+        value: contextual.concurrency,
+        min: constraints.contextual.concurrency.min,
+        max: constraints.contextual.concurrency.max,
+        label: 'Contextual concurrency',
+      },
       errors
     );
   }
 
   return errors;
 }
-

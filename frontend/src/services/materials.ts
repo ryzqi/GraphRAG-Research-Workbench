@@ -2,7 +2,7 @@
  * 资料 API 封装
  */
 
-import { apiFetch, getApiBaseUrl } from './http';
+import { apiFetch, apiV1Path, getApiBaseUrl } from './http';
 import type { ListResponse } from './types';
 
 export type SourceType = 'upload' | 'url' | 'text';
@@ -36,7 +36,7 @@ export interface MaterialCreateUrl {
  * 获取知识库下的所有资料
  */
 export async function listMaterials(kbId: string): Promise<MaterialListResponse> {
-  return apiFetch<MaterialListResponse>(`/api/v1/knowledge-bases/${kbId}/materials`);
+  return apiFetch<MaterialListResponse>(apiV1Path(`/knowledge-bases/${kbId}/materials`));
 }
 
 /**
@@ -46,7 +46,7 @@ export async function createTextMaterial(
   kbId: string,
   data: MaterialCreateText
 ): Promise<SourceMaterial> {
-  return apiFetch<SourceMaterial>(`/api/v1/knowledge-bases/${kbId}/materials`, {
+  return apiFetch<SourceMaterial>(apiV1Path(`/knowledge-bases/${kbId}/materials`), {
     method: 'POST',
     body: JSON.stringify(data),
   });
@@ -59,7 +59,7 @@ export async function createUrlMaterial(
   kbId: string,
   data: MaterialCreateUrl
 ): Promise<SourceMaterial> {
-  return apiFetch<SourceMaterial>(`/api/v1/knowledge-bases/${kbId}/materials`, {
+  return apiFetch<SourceMaterial>(apiV1Path(`/knowledge-bases/${kbId}/materials`), {
     method: 'POST',
     body: JSON.stringify(data),
   });
@@ -81,7 +81,7 @@ export async function uploadMaterial(
   const headers = new Headers();
   headers.set('X-Request-Id', requestId);
 
-  const res = await fetch(`${getApiBaseUrl()}/api/v1/knowledge-bases/${kbId}/materials/upload`, {
+  const res = await fetch(`${getApiBaseUrl()}${apiV1Path(`/knowledge-bases/${kbId}/materials/upload`)}`, {
     method: 'POST',
     headers,
     body: formData,

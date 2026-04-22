@@ -3,7 +3,7 @@
  */
 
 import type { SseEvent } from '../lib/sse';
-import { apiFetch, type ApiFetchOptions } from './http';
+import { apiFetch, apiV1Path, type ApiFetchOptions } from './http';
 import { openSseStream } from './sse';
 
 export type ManifestSourceType = 'text' | 'url' | 'file';
@@ -114,7 +114,7 @@ export interface IngestionBatchCancelResponse {
 export async function createIngestionBatch(
   data: IngestionBatchCreateRequest
 ): Promise<IngestionBatchSubmitResponse> {
-  return apiFetch<IngestionBatchSubmitResponse>('/api/v1/ingestion-batches', {
+  return apiFetch<IngestionBatchSubmitResponse>(apiV1Path('/ingestion-batches'), {
     method: 'POST',
     body: JSON.stringify(data),
   });
@@ -126,31 +126,34 @@ export async function getLatestIngestionBatch(
 ): Promise<IngestionBatch | null> {
   const query = new URLSearchParams({ kb_id: kbId, prefer_active: 'true' }).toString();
   const payload = await apiFetch<IngestionBatch | null>(
-    `/api/v1/ingestion-batches/latest?${query}`,
+    apiV1Path(`/ingestion-batches/latest?${query}`),
     options
   );
   return payload ?? null;
 }
 
 export async function getIngestionBatch(batchId: string): Promise<IngestionBatch> {
-  return apiFetch<IngestionBatch>('/api/v1/ingestion-batches/' + batchId);
+  return apiFetch<IngestionBatch>(apiV1Path(`/ingestion-batches/${batchId}`));
 }
 
 export async function streamIngestionBatch(
   batchId: string,
   signal?: AbortSignal
 ): Promise<AsyncIterable<SseEvent>> {
-  return openSseStream(`/api/v1/ingestion-batches/${batchId}/stream`, { method: 'GET' }, signal);
+  return openSseStream(apiV1Path(`/ingestion-batches/${batchId}/stream`), { method: 'GET' }, signal);
 }
 
 export async function retryIngestionBatch(batchId: string): Promise<IngestionBatchRetryResponse> {
-  return apiFetch<IngestionBatchRetryResponse>('/api/v1/ingestion-batches/' + batchId + '/retry', {
+  return apiFetch<IngestionBatchRetryResponse>(apiV1Path(`/ingestion-batches/${batchId}/retry`), {
     method: 'POST',
   });
 }
 
 export async function cancelIngestionBatch(batchId: string): Promise<IngestionBatchCancelResponse> {
-  return apiFetch<IngestionBatchCancelResponse>('/api/v1/ingestion-batches/' + batchId + '/cancel', {
-    method: 'POST',
-  });
+  return apiFetch<IngestionBatchCancelResponse>(
+    apiV1Path(`/ingestion-batches/${batchId}/cancel`),
+    {
+      method: 'POST',
+    }
+  );
 }

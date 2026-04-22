@@ -17,7 +17,6 @@ from app.integrations.model_runtime_config import ModelRuntimeConfigManager
 from app.models.research_session import ResearchSession
 from app.schemas.research import (
     ResearchCanonicalCitation,
-    ResearchCitationExcerpt,
     ResearchPlanSnapshot,
     ResearchSourceType,
 )
@@ -36,6 +35,12 @@ class DeepResearchStructuredResponse(BaseModel):
     citations: list[ResearchCanonicalCitation] = Field(min_length=2)
 
 
+class DeepResearchCitationExcerptDraft(BaseModel):
+    text: str = Field(min_length=1)
+    locator: str | None = None
+    lang: str = "en"
+
+
 class DeepResearchCitationDraft(BaseModel):
     source_type: ResearchSourceType
     source_provider: str = Field(min_length=1)
@@ -49,8 +54,11 @@ class DeepResearchCitationDraft(BaseModel):
     published_at: str | None = None
     pdf_url: str | None = None
     accessed_at: str | None = None
-    retrieved_at: datetime
-    excerpts: list[ResearchCitationExcerpt] = Field(min_length=1, max_length=5)
+    retrieved_at: datetime | None = None
+    excerpts: list[DeepResearchCitationExcerptDraft] = Field(
+        min_length=1,
+        max_length=5,
+    )
 
 
 class DeepResearchStructuredResponseDraft(BaseModel):
@@ -110,6 +118,30 @@ def _normalize_structured_response_payload(payload: Any) -> Any:
                 citation["pdf_url"] = f"https://arxiv.org/pdf/{arxiv_id.strip()}.pdf"
         if not citation.get("retrieved_at"):
             citation["retrieved_at"] = datetime.now(timezone.utc).isoformat()
+        raw_excerpts = citation.get("excerpts")
+        if isinstance(raw_excerpts, list):
+            normalized_excerpts: list[Any] = []
+            for raw_excerpt in raw_excerpts[:5]:
+                if isinstance(raw_excerpt, BaseModel):
+                    excerpt_payload: Any = raw_excerpt.model_dump(mode="json")
+                else:
+                    excerpt_payload = raw_excerpt
+                if not isinstance(excerpt_payload, dict):
+                    normalized_excerpts.append(excerpt_payload)
+                    continue
+                excerpt = dict(excerpt_payload)
+                text = excerpt.get("text")
+                if isinstance(text, str):
+                    excerpt["text"] = text.strip()[:400].rstrip()
+                locator = excerpt.get("locator")
+                if isinstance(locator, str):
+                    stripped_locator = locator.strip()
+                    excerpt["locator"] = stripped_locator or None
+                lang = excerpt.get("lang")
+                if lang not in {"zh", "en", "mixed"}:
+                    excerpt["lang"] = "en"
+                normalized_excerpts.append(excerpt)
+            citation["excerpts"] = normalized_excerpts
         normalized_citations.append(citation)
 
     normalized["citations"] = normalized_citations

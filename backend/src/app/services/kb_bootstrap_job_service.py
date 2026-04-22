@@ -16,12 +16,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import AppError
 from app.core.settings import get_settings
-from app.core.validators import (
-    ALLOWED_EXTENSIONS,
-    ALLOWED_MIME_TYPES,
-    GENERIC_MIME_TYPES,
-    MAX_FILE_SIZE,
-    MIME_TYPE_ALIASES,
+from app.services.upload_policy import (
+    ALLOWED_UPLOAD_EXTENSIONS,
+    ALLOWED_UPLOAD_MIME_TYPES,
+    GENERIC_UPLOAD_MIME_TYPES,
+    MAX_UPLOAD_FILE_SIZE_BYTES,
+    normalize_upload_content_type,
 )
 from app.integrations.object_storage import ObjectRef, ObjectStorage
 from app.models.kb_bootstrap_job import KBBootstrapJob, KBBootstrapJobStatus
@@ -473,7 +473,7 @@ class KBBootstrapJobService:
                     "entry_id": entry_id,
                     "title": title or file_name,
                     "filename": file_name,
-                    "content_type": self._normalize_content_type(entry.content_type),
+                    "content_type": normalize_upload_content_type(entry.content_type),
                     "size_bytes": int(entry.size_bytes),
                     "sha256": (entry.sha256 or "").strip().lower() or None,
                     "material_id": str(material_id),
@@ -592,14 +592,14 @@ class KBBootstrapJobService:
         file_size: int,
         content_type: str | None,
     ) -> None:
-        if file_size > MAX_FILE_SIZE:
+        if file_size > MAX_UPLOAD_FILE_SIZE_BYTES:
             raise AppError(
                 code="FILE_TOO_LARGE",
-                message=f"文件大小超过限制 ({MAX_FILE_SIZE // 1024 // 1024}MB)",
+                message=f"文件大小超过限制 ({MAX_UPLOAD_FILE_SIZE_BYTES // 1024 // 1024}MB)",
                 status_code=413,
             )
 
-        if extension not in ALLOWED_EXTENSIONS:
+        if extension not in ALLOWED_UPLOAD_EXTENSIONS:
             raise AppError(
                 code="INVALID_FILE_TYPE",
                 message=f"不支持的文件类型: {extension}",
@@ -613,26 +613,17 @@ class KBBootstrapJobService:
                 status_code=400,
             )
 
-        normalized_content_type = self._normalize_content_type(content_type)
+        normalized_content_type = normalize_upload_content_type(content_type)
         if (
             normalized_content_type
-            and normalized_content_type not in GENERIC_MIME_TYPES
-            and normalized_content_type not in ALLOWED_MIME_TYPES
+            and normalized_content_type not in GENERIC_UPLOAD_MIME_TYPES
+            and normalized_content_type not in ALLOWED_UPLOAD_MIME_TYPES
         ):
             raise AppError(
                 code="INVALID_MIME_TYPE",
                 message=f"不支持的 MIME 类型: {content_type}",
                 status_code=415,
             )
-
-    @staticmethod
-    def _normalize_content_type(content_type: str | None) -> str | None:
-        if not content_type:
-            return None
-        normalized = content_type.split(";", 1)[0].strip().lower()
-        if not normalized:
-            return None
-        return MIME_TYPE_ALIASES.get(normalized, normalized)
 
     @staticmethod
     def _is_markdown_only(kb: KnowledgeBase) -> bool:

@@ -69,6 +69,14 @@ def _source_owner(source: str) -> str:
     return "claim-verifier"
 
 
+def _claim_id(index: int) -> str:
+    return f"claim-{index:02d}"
+
+
+def _section_id(index: int) -> str:
+    return f"section-{index}"
+
+
 def _build_subtasks_block(plan_snapshot: ResearchPlanSnapshot) -> str:
     if not plan_snapshot.subtasks:
         return (
@@ -151,6 +159,7 @@ def build_workspace_bootstrap_artifacts(
     prompts = get_prompt_loader()
     subtasks_block = _build_subtasks_block(plan_snapshot)
     now_iso = datetime.now(timezone.utc).isoformat()
+    claim_bundles = build_runtime_claim_bundles_payload(plan_snapshot=plan_snapshot)
     return {
         "mission_md": ResearchArtifactSeed(
             artifact_key="mission_md",
@@ -183,7 +192,7 @@ def build_workspace_bootstrap_artifacts(
         "claim_map_json": ResearchArtifactSeed(
             artifact_key="claim_map_json",
             content_text=json.dumps(
-                {"claims": [], "generated_at": now_iso},
+                {"claims": claim_bundles, "generated_at": now_iso},
                 ensure_ascii=False,
                 indent=2,
             ),
@@ -216,9 +225,9 @@ def build_runtime_task_graph_payload(
         ]
     section_task_ids: list[str] = []
     for index, subtask in enumerate(subtasks, start=1):
-        section_id = f"section-{index}"
-        claim_id = f"claim-{index}"
-        claim_task_id = f"claim-{index}"
+        section_id = _section_id(index)
+        claim_id = _claim_id(index)
+        claim_task_id = claim_id
         source_parallel_group = f"evidence-{index}"
         subtask_sources = _target_source_values(subtask)
         previous_section_task_id = section_task_ids[-1] if section_task_ids else None
@@ -352,8 +361,8 @@ def build_runtime_section_briefs_payload(
     for index, subtask in enumerate(subtasks, start=1):
         briefs.append(
             {
-                "section_id": f"section-{index}",
-                "task_id": f"section-{index}",
+                "section_id": _section_id(index),
+                "task_id": _section_id(index),
                 "title": subtask.title,
                 "description": subtask.description,
                 "status": "pending",
@@ -405,8 +414,8 @@ def build_runtime_claim_bundles_payload(
     for index, subtask in enumerate(subtasks, start=1):
         bundles.append(
             {
-                "claim_id": f"claim-{index:02d}",
-                "section_id": f"section-{index}",
+                "claim_id": _claim_id(index),
+                "section_id": _section_id(index),
                 "claim": subtask.title,
                 "status": "pending",
                 "confidence": "medium",
@@ -448,7 +457,7 @@ def build_runtime_report_context_payload(
         or ["优先补齐高可信来源、交叉验证与反证。"],
         "section_status": [
             {
-                "section_id": f"section-{index}",
+                "section_id": _section_id(index),
                 "title": subtask.title,
                 "status": "pending",
                 "owner": "section-writer",

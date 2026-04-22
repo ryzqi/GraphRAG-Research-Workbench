@@ -7,13 +7,8 @@ from app.config.deploy_settings import (
     StorageSettings,
     WebSearchProviderSettings,
 )
-from app.config.policy_loader import (
-    load_frontend_runtime_policy,
-    load_research_policy,
-    load_search_policy,
-)
+from app.config.policy_loader import load_research_policy, load_search_policy
 from app.config.policy_models import (
-    FrontendRuntimePolicy,
     ResearchPolicy,
     ResearchSourceQualityPolicy,
     ResearchStatusProbePolicy,
@@ -41,7 +36,6 @@ __all__ = [
     "AppEnv",
     "CoreDeploySettings",
     "DeploySettings",
-    "FrontendRuntimePolicy",
     "HttpClientSettings",
     "OpenFeaturePolicyProvider",
     "PolicyProvider",
@@ -60,7 +54,6 @@ __all__ = [
     "StaticFilePolicyProvider",
     "WebSearchProviderSettings",
     "get_provider_descriptor",
-    "load_frontend_runtime_policy",
     "load_research_policy",
     "load_search_policy",
     "ordered_provider_descriptors",

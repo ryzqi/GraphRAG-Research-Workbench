@@ -5,7 +5,7 @@ from typing import TypeVar
 
 from pydantic import BaseModel
 
-from app.config.policy_models import FrontendRuntimePolicy, ResearchPolicy, SearchPolicy
+from app.config.policy_models import ResearchPolicy, SearchPolicy
 from app.config.policy_provider import PolicyProvider, StaticFilePolicyProvider
 
 PolicyModelT = TypeVar("PolicyModelT", bound=BaseModel)
@@ -44,15 +44,6 @@ def _load_default_research_policy() -> ResearchPolicy:
     )
 
 
-@lru_cache
-def _load_default_frontend_runtime_policy() -> FrontendRuntimePolicy:
-    return _load_policy(
-        policy_name="frontend_runtime_policy",
-        model_type=FrontendRuntimePolicy,
-        provider=_default_policy_provider(),
-    )
-
-
 def load_search_policy(*, provider: PolicyProvider | None = None) -> SearchPolicy:
     if provider is None:
         return _load_default_search_policy()
@@ -69,18 +60,5 @@ def load_research_policy(*, provider: PolicyProvider | None = None) -> ResearchP
     return _load_policy(
         policy_name="research_policy",
         model_type=ResearchPolicy,
-        provider=provider,
-    )
-
-
-def load_frontend_runtime_policy(
-    *,
-    provider: PolicyProvider | None = None,
-) -> FrontendRuntimePolicy:
-    if provider is None:
-        return _load_default_frontend_runtime_policy()
-    return _load_policy(
-        policy_name="frontend_runtime_policy",
-        model_type=FrontendRuntimePolicy,
         provider=provider,
     )

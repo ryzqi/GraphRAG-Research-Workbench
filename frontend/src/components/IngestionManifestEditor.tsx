@@ -16,13 +16,13 @@ import {
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import AddIcon from '@mui/icons-material/Add';
 import type { ManifestSourceType } from '../services/ingestionBatches';
-import { ACCEPTED_FILE_TYPES, validateFile } from '../utils/fileValidation';
+import type { PublicRuntimeConfigRead } from '../services/runtimeConfig';
+import {
+  getAcceptedFileTypes,
+  getSupportedFileTypesLabel,
+  validateFile,
+} from '../utils/fileValidation';
 import { Button } from './ui/Button';
-
-const MAX_MANIFEST_ENTRIES = 100;
-const MAX_TEXT_LENGTH = 200_000;
-const MAX_URL_ENTRIES = 50;
-const MAX_FILE_ENTRIES = 50;
 
 type DraftSourceType = ManifestSourceType;
 
@@ -88,6 +88,7 @@ interface IngestionManifestEditorProps {
   serverEntryErrors?: Record<string, string[]>;
   disabled?: boolean;
   markdownOnly?: boolean;
+  runtimeConfig?: PublicRuntimeConfigRead | null;
 }
 
 function newEntryId(prefix: DraftSourceType): string {
@@ -160,18 +161,20 @@ export function createEmptyManifestEntry(sourceType: DraftSourceType): ManifestD
 
 export function validateManifestDraftEntries(
   entries: ManifestDraftEntry[],
-  opts?: { markdownOnly?: boolean }
+  opts?: { markdownOnly?: boolean; runtimeConfig?: PublicRuntimeConfigRead | null }
 ): ManifestDraftValidation {
   const markdownOnly = opts?.markdownOnly ?? false;
+  const runtimeConfig = opts?.runtimeConfig;
+  const manifestConstraints = runtimeConfig?.ingestion_manifest_constraints ?? null;
   const globalErrors: string[] = [];
   const entryErrors: Record<string, string[]> = {};
   const normalizedValidEntries: NormalizedManifestDraftEntry[] = [];
   let urlCount = 0;
   let fileCount = 0;
 
-  if (entries.length > MAX_MANIFEST_ENTRIES) {
+  if (manifestConstraints && entries.length > manifestConstraints.max_entries) {
     globalErrors.push(
-      '单批次最多 ' + MAX_MANIFEST_ENTRIES + ' 个条目（当前 ' + entries.length + '）'
+      '单批次最多 ' + manifestConstraints.max_entries + ' 个条目（当前 ' + entries.length + '）'
     );
   }
 
@@ -184,8 +187,8 @@ export function validateManifestDraftEntries(
       if (!text) {
         currentErrors.push('文本内容不能为空');
       }
-      if (text.length > MAX_TEXT_LENGTH) {
-        currentErrors.push('文本长度不能超过 ' + MAX_TEXT_LENGTH + ' 字符');
+      if (manifestConstraints && text.length > manifestConstraints.max_text_length) {
+        currentErrors.push('文本长度不能超过 ' + manifestConstraints.max_text_length + ' 字符');
       }
       if (currentErrors.length === 0) {
         normalizedValidEntries.push({
@@ -220,7 +223,7 @@ export function validateManifestDraftEntries(
       if (!entry.file) {
         currentErrors.push('请选择文件');
       } else {
-        const result = validateFile(entry.file);
+        const result = validateFile(entry.file, runtimeConfig);
         if (!result.valid) {
           currentErrors.push(result.error ?? '文件校验失败');
         }
@@ -244,15 +247,23 @@ export function validateManifestDraftEntries(
     }
   }
 
-  if (urlCount > MAX_URL_ENTRIES) {
+  if (manifestConstraints && urlCount > manifestConstraints.max_url_entries) {
     globalErrors.push(
-      '单批次 URL 条目不能超过 ' + MAX_URL_ENTRIES + ' 个（当前 ' + urlCount + '）'
+      '单批次 URL 条目不能超过 ' +
+        manifestConstraints.max_url_entries +
+        ' 个（当前 ' +
+        urlCount +
+        '）'
     );
   }
 
-  if (fileCount > MAX_FILE_ENTRIES) {
+  if (manifestConstraints && fileCount > manifestConstraints.max_file_entries) {
     globalErrors.push(
-      '单批次文件条目不能超过 ' + MAX_FILE_ENTRIES + ' 个（当前 ' + fileCount + '）'
+      '单批次文件条目不能超过 ' +
+        manifestConstraints.max_file_entries +
+        ' 个（当前 ' +
+        fileCount +
+        '）'
     );
   }
 
@@ -270,6 +281,7 @@ export function IngestionManifestEditor({
   serverEntryErrors,
   disabled = false,
   markdownOnly = false,
+  runtimeConfig,
 }: IngestionManifestEditorProps) {
   const mergedEntryErrors = useMemo(() => {
     const merged: Record<string, string[]> = {};
@@ -406,16 +418,20 @@ export function IngestionManifestEditor({
                   <Box>
                     <input
                       type="file"
-                      accept={markdownOnly ? '.md' : ACCEPTED_FILE_TYPES}
+                      accept={markdownOnly ? '.md' : getAcceptedFileTypes(runtimeConfig)}
                       onChange={(e) => {
                         const file = e.target.files?.[0] ?? null;
                         updateEntry({ ...entry, file });
                       }}
-                      disabled={disabled}
+                      disabled={disabled || !runtimeConfig}
                     />
                   </Box>
                   <Typography variant="caption" color="text.secondary">
-                    {markdownOnly ? '当前配置仅支持 .md 文件' : '支持 pdf、md、txt、docx'}
+                    {!runtimeConfig
+                      ? '正在加载上传策略…'
+                      : markdownOnly
+                      ? '当前配置仅支持 .md 文件'
+                      : `支持 ${getSupportedFileTypesLabel(runtimeConfig)}`}
                   </Typography>
                   {entry.file && (
                     <Typography variant="body2" color="text.secondary">

@@ -1,4 +1,4 @@
-import { apiFetch } from './http';
+import { apiFetch, apiV1Path } from './http';
 
 export type ModelProvider = 'openai' | 'ollama' | 'llama.cpp' | 'nvidia' | 'anthropic';
 
@@ -36,21 +36,21 @@ export interface ActiveModelUpdate {
 }
 
 export async function getModelConfig(): Promise<ModelConfigRead> {
-  return apiFetch<ModelConfigRead>('/api/v1/model-config');
+  return apiFetch<ModelConfigRead>(apiV1Path('/model-config'));
 }
 
 export async function updateProviderConfig(
   provider: ModelProvider,
   payload: ProviderConfigUpdate
 ): Promise<ModelConfigRead> {
-  return apiFetch<ModelConfigRead>(`/api/v1/model-config/providers/${provider}`, {
+  return apiFetch<ModelConfigRead>(apiV1Path(`/model-config/providers/${provider}`), {
     method: 'PUT',
     body: JSON.stringify(payload),
   });
 }
 
 export async function updateActiveModel(payload: ActiveModelUpdate): Promise<ModelConfigRead> {
-  return apiFetch<ModelConfigRead>('/api/v1/model-config/active', {
+  return apiFetch<ModelConfigRead>(apiV1Path('/model-config/active'), {
     method: 'PUT',
     body: JSON.stringify(payload),
   });

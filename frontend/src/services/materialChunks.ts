@@ -2,7 +2,7 @@
  * Material chunk browsing APIs
  */
 
-import { apiFetch } from './http';
+import { apiFetch, apiV1Path } from './http';
 import type { SourceMaterial } from './materials';
 import type { ListResponse } from './types';
 
@@ -65,7 +65,7 @@ export async function listMaterialsWithChunkStats(
   kbId: string,
   params?: PaginationParams
 ): Promise<MaterialWithChunkStatsListResponse> {
-  const path = withPagination(`/api/v1/knowledge-bases/${kbId}/materials/with-chunk-stats`, params);
+  const path = withPagination(apiV1Path(`/knowledge-bases/${kbId}/materials/with-chunk-stats`), params);
   return apiFetch<MaterialWithChunkStatsListResponse>(path);
 }
 
@@ -75,7 +75,7 @@ export async function listMaterialChunks(
   params?: PaginationParams
 ): Promise<DocumentChunkListResponse> {
   const path = withPagination(
-    `/api/v1/knowledge-bases/${kbId}/materials/${materialId}/chunks`,
+    apiV1Path(`/knowledge-bases/${kbId}/materials/${materialId}/chunks`),
     params
   );
   return apiFetch<DocumentChunkListResponse>(path);
@@ -87,6 +87,6 @@ export async function getMaterialChunk(
   chunkId: string
 ): Promise<DocumentChunk> {
   return apiFetch<DocumentChunk>(
-    `/api/v1/knowledge-bases/${kbId}/materials/${materialId}/chunks/${chunkId}`
+    apiV1Path(`/knowledge-bases/${kbId}/materials/${materialId}/chunks/${chunkId}`)
   );
 }

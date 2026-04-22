@@ -7,6 +7,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Literal
 
+from annotated_types import Ge, Le
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.core.settings import Settings, get_settings
@@ -68,6 +69,62 @@ class KbChatConfig(BaseModel):
         return self
 
 
+class KbChatIntConstraint(BaseModel):
+    min: int
+    max: int
+
+
+class KbChatConfigConstraints(BaseModel):
+    retrieval_top_k: KbChatIntConstraint
+    retrieval_rerank_top_k: KbChatIntConstraint
+    retrieval_hybrid_rrf_k: KbChatIntConstraint
+    retrieval_parent_max_parents: KbChatIntConstraint
+    retrieval_parent_max_children_per_parent: KbChatIntConstraint
+    retrieval_multiscale_per_window_top_k: KbChatIntConstraint
+    retrieval_multiscale_rrf_k: KbChatIntConstraint
+    retrieval_multiscale_max_documents: KbChatIntConstraint
+    retrieval_multiscale_max_chunks_per_document: KbChatIntConstraint
+
+
+_KB_CHAT_CONSTRAINT_FIELD_NAMES = (
+    "retrieval_top_k",
+    "retrieval_rerank_top_k",
+    "retrieval_hybrid_rrf_k",
+    "retrieval_parent_max_parents",
+    "retrieval_parent_max_children_per_parent",
+    "retrieval_multiscale_per_window_top_k",
+    "retrieval_multiscale_rrf_k",
+    "retrieval_multiscale_max_documents",
+    "retrieval_multiscale_max_chunks_per_document",
+)
+
+
+def _kb_chat_int_constraint(field_name: str) -> KbChatIntConstraint:
+    field = KbChatConfig.model_fields[field_name]
+    minimum: int | None = None
+    maximum: int | None = None
+
+    for metadata in field.metadata:
+        if isinstance(metadata, Ge):
+            minimum = int(metadata.ge)
+        elif isinstance(metadata, Le):
+            maximum = int(metadata.le)
+
+    if minimum is None or maximum is None:
+        raise RuntimeError(f"KbChatConfig.{field_name} 缺少 ge/le 约束")
+
+    return KbChatIntConstraint(min=minimum, max=maximum)
+
+
+def kb_chat_config_constraints() -> KbChatConfigConstraints:
+    return KbChatConfigConstraints.model_validate(
+        {
+            field_name: _kb_chat_int_constraint(field_name)
+            for field_name in _KB_CHAT_CONSTRAINT_FIELD_NAMES
+        }
+    )
+
+
 class KbGraphNode(BaseModel):
     id: str
     label: str
@@ -91,19 +148,17 @@ class KbGraphSchemaResponse(BaseModel):
 
 def default_kb_chat_config(*, settings: Settings | None = None) -> KbChatConfig:
     cfg = settings if settings is not None else get_settings()
-    return KbChatConfig(
-        retrieval_top_k=int(cfg.retrieval_default_top_k),
-        retrieval_rerank_top_k=max(
-            int(cfg.retrieval_default_top_k),
-            int(cfg.retrieval_max_top_k),
-        ),
-        retrieval_hybrid_rrf_k=int(cfg.retrieval_hybrid_rrf_k),
-        retrieval_parent_max_parents=8,
-        retrieval_parent_max_children_per_parent=3,
-        retrieval_multiscale_per_window_top_k=40,
-        retrieval_multiscale_rrf_k=60,
-        retrieval_multiscale_max_documents=12,
-        retrieval_multiscale_max_chunks_per_document=2,
+    defaults = KbChatConfig()
+    return KbChatConfig.model_validate(
+        {
+            **defaults.model_dump(mode="json"),
+            "retrieval_top_k": int(cfg.retrieval_default_top_k),
+            "retrieval_rerank_top_k": max(
+                int(cfg.retrieval_default_top_k),
+                int(cfg.retrieval_max_top_k),
+            ),
+            "retrieval_hybrid_rrf_k": int(cfg.retrieval_hybrid_rrf_k),
+        }
     )
 
 

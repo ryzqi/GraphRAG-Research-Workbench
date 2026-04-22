@@ -2,7 +2,7 @@
  * 研究 API 封装
  */
 
-import { apiFetch } from './http';
+import { apiFetch, apiV1Path } from './http';
 import { openSseStream } from './sse';
 import type { SseEvent } from '../lib/sse';
 import type {
@@ -44,7 +44,7 @@ export function buildResearchStreamPath(
   sessionId: string,
   resumeFromEventId?: string | null
 ): string {
-  const path = `/api/v1/research/sessions/${sessionId}/stream`;
+  const path = apiV1Path(`/research/sessions/${sessionId}/stream`);
   if (!resumeFromEventId) {
     return path;
   }
@@ -66,7 +66,7 @@ export async function createResearchSession(
     plan_first: true,
   };
 
-  return apiFetch<ResearchSessionAccepted>('/api/v1/research/sessions', {
+  return apiFetch<ResearchSessionAccepted>(apiV1Path('/research/sessions'), {
     method: 'POST',
     body: JSON.stringify(payload),
   });
@@ -80,7 +80,7 @@ export async function submitResearchClarification(
   data: ResearchClarificationSubmitRequest
 ): Promise<ResearchSessionAccepted> {
   return apiFetch<ResearchSessionAccepted>(
-    `/api/v1/research/sessions/${sessionId}/clarification`,
+    apiV1Path(`/research/sessions/${sessionId}/clarification`),
     {
       method: 'POST',
       body: JSON.stringify(data),
@@ -92,14 +92,14 @@ export async function updateResearchPlan(
   sessionId: string,
   data: ResearchPlanUpdateRequest
 ): Promise<ResearchSessionAccepted> {
-  return apiFetch<ResearchSessionAccepted>(`/api/v1/research/sessions/${sessionId}/plan`, {
+  return apiFetch<ResearchSessionAccepted>(apiV1Path(`/research/sessions/${sessionId}/plan`), {
     method: 'POST',
     body: JSON.stringify(data),
   });
 }
 
 export async function startResearchSession(sessionId: string): Promise<ResearchSessionAccepted> {
-  return apiFetch<ResearchSessionAccepted>(`/api/v1/research/sessions/${sessionId}/start`, {
+  return apiFetch<ResearchSessionAccepted>(apiV1Path(`/research/sessions/${sessionId}/start`), {
     method: 'POST',
   });
 }
@@ -111,7 +111,7 @@ export async function getResearchArtifacts(
   sessionId: string
 ): Promise<ResearchArtifactsResponse> {
   return apiFetch<ResearchArtifactsResponse>(
-    `/api/v1/research/sessions/${sessionId}/artifacts`
+    apiV1Path(`/research/sessions/${sessionId}/artifacts`)
   );
 }
 
@@ -122,7 +122,7 @@ export async function stopResearchSession(
   sessionId: string,
   data: ResearchStopRequest = {}
 ): Promise<ResearchSessionAccepted> {
-  return apiFetch<ResearchSessionAccepted>(`/api/v1/research/sessions/${sessionId}/stop`, {
+  return apiFetch<ResearchSessionAccepted>(apiV1Path(`/research/sessions/${sessionId}/stop`), {
     method: 'POST',
     body: JSON.stringify(data),
   });

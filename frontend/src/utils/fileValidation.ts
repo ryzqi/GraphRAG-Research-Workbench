@@ -1,37 +1,13 @@
-/**
- * 文件上传验证工具。
- */
+import type { PublicRuntimeConfigRead } from '../services/runtimeConfig';
 
-// 文件大小上限（50MB）
-export const MAX_FILE_SIZE = 50 * 1024 * 1024;
-
-// 允许的文件扩展名
-export const ALLOWED_EXTENSIONS = new Set(['.pdf', '.txt', '.md', '.docx']);
-
-// 与 <input accept> 保持一致的字符串表示（中心化，避免多处维护）。
-export const ACCEPTED_FILE_TYPES = Array.from(ALLOWED_EXTENSIONS).join(',');
-
-// UI 展示用标签（如 PDF、TXT、MD、DOCX）。
-export const SUPPORTED_FILE_TYPES_LABEL = Array.from(ALLOWED_EXTENSIONS)
-  .map((ext) => ext.replace('.', '').toUpperCase())
-  .join(', ');
-
-// 允许的 MIME 类型（规范化后）
-export const ALLOWED_MIME_TYPES = new Set([
-  'application/pdf',
-  'text/plain',
-  'text/markdown',
-  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-]);
-
-// MIME 类型别名归一化
-const MIME_TYPE_ALIASES = new Map([
-  ['text/x-markdown', 'text/markdown'],
-  ['application/x-pdf', 'application/pdf'],
-]);
-
-// 浏览器无法识别文件类型时的通用 MIME，后端会结合扩展名再次校验
-const GENERIC_MIME_TYPES = new Set(['application/octet-stream', 'binary/octet-stream']);
+type UploadPolicyConfig = Pick<
+  PublicRuntimeConfigRead,
+  | 'upload_max_file_size_bytes'
+  | 'upload_allowed_extensions'
+  | 'upload_allowed_mime_types'
+  | 'upload_mime_type_aliases'
+  | 'upload_generic_mime_types'
+>;
 
 export interface FileValidationResult {
   valid: boolean;
@@ -42,36 +18,84 @@ function normalizeMimeType(rawMimeType: string): string {
   return rawMimeType.split(';', 1)[0]?.trim().toLowerCase() ?? '';
 }
 
-/**
- * 验证上传文件的大小和类型。
- */
-export function validateFile(file: File): FileValidationResult {
-  // 检查文件大小
-  if (file.size > MAX_FILE_SIZE) {
+function fileExtOf(fileName: string): string {
+  return fileName.includes('.') ? '.' + fileName.split('.').pop()?.toLowerCase() : '';
+}
+
+function normalizeStringList(values: readonly string[] | undefined): string[] {
+  if (!values) {
+    return [];
+  }
+  return Array.from(
+    new Set(
+      values
+        .map((value) => value.trim().toLowerCase())
+        .filter(Boolean)
+    )
+  );
+}
+
+export function getAcceptedFileTypes(config?: UploadPolicyConfig | null): string {
+  return normalizeStringList(config?.upload_allowed_extensions).join(',');
+}
+
+export function getSupportedFileTypesLabel(config?: UploadPolicyConfig | null): string {
+  const extensions = normalizeStringList(config?.upload_allowed_extensions);
+  if (extensions.length === 0) {
+    return '运行时配置加载中';
+  }
+  return extensions
+    .map((ext) => ext.replace('.', '').toUpperCase())
+    .join(', ');
+}
+
+export function validateFile(
+  file: File,
+  config?: UploadPolicyConfig | null
+): FileValidationResult {
+  if (!config) {
     return {
       valid: false,
-      error: `文件大小超过限制 (${MAX_FILE_SIZE / 1024 / 1024}MB)`,
+      error: '上传策略尚未加载完成，请稍后重试',
     };
   }
 
-  // 检查文件扩展名
-  const ext = file.name.includes('.') ? '.' + file.name.split('.').pop()?.toLowerCase() : '';
-  if (!ALLOWED_EXTENSIONS.has(ext)) {
+  const maxFileSize = config?.upload_max_file_size_bytes;
+  if (typeof maxFileSize === 'number' && Number.isFinite(maxFileSize) && maxFileSize > 0) {
+    if (file.size > maxFileSize) {
+      return {
+        valid: false,
+        error: `文件大小超过限制 (${maxFileSize / 1024 / 1024}MB)`,
+      };
+    }
+  }
+
+  const allowedExtensions = new Set(normalizeStringList(config?.upload_allowed_extensions));
+  const ext = fileExtOf(file.name);
+  if (allowedExtensions.size > 0 && !allowedExtensions.has(ext)) {
     return {
       valid: false,
       error: `不支持的文件类型: ${ext || '无扩展名'}`,
     };
   }
 
-  // 校验 MIME 类型
   if (file.type) {
     const normalizedMimeType = normalizeMimeType(file.type);
-    const canonicalMimeType = MIME_TYPE_ALIASES.get(normalizedMimeType) ?? normalizedMimeType;
+    const mimeAliases = Object.fromEntries(
+      Object.entries(config?.upload_mime_type_aliases ?? {}).map(([key, value]) => [
+        key.trim().toLowerCase(),
+        value.trim().toLowerCase(),
+      ])
+    );
+    const canonicalMimeType = mimeAliases[normalizedMimeType] ?? normalizedMimeType;
+    const allowedMimeTypes = new Set(normalizeStringList(config?.upload_allowed_mime_types));
+    const genericMimeTypes = new Set(normalizeStringList(config?.upload_generic_mime_types));
 
     if (
       canonicalMimeType &&
-      !GENERIC_MIME_TYPES.has(canonicalMimeType) &&
-      !ALLOWED_MIME_TYPES.has(canonicalMimeType)
+      allowedMimeTypes.size > 0 &&
+      !genericMimeTypes.has(canonicalMimeType) &&
+      !allowedMimeTypes.has(canonicalMimeType)
     ) {
       return {
         valid: false,

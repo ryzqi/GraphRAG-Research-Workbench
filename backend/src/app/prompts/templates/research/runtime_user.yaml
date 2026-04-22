@@ -6,7 +6,7 @@ template: |
   你需要按照主 system prompt 的 pipeline 执行当前 deep research，并返回结构化结果。
 
   <research_process>
-  - 先读取 mission、plan、query-mesh、claim-bundles、section-briefs、claim-map.json、evidence-ledger.json、report-context.json。
+  - 先读取 priority_workspace_paths 中给出的实际绝对路径，对应 mission、plan、query-mesh、07-claim-bundles.json、08-section-briefs.json、04-claim-map.json、05-evidence-ledger.json、report-context.json；禁止自行拼接模板路径或改用旧别名。
   - breadth-pass：对每个 plan.subtask 委派 claim-verifier；目标是每条 pending claim 至少拿到 1 条 evidence。
   - breadth gate 通过后，再写 outline 与 section-briefs，让大纲反映真实证据而非凭空推理。
   - depth-pass：按 claim 委派 web-researcher / paper-researcher 把支撑提升到 ≥ 2 独立 provider。

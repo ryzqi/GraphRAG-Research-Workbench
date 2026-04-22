@@ -6,7 +6,7 @@ import {
   DEFAULT_EXPORT_POLL_INTERVAL_MS,
   DEFAULT_EXPORT_POLL_MAX_ATTEMPTS,
 } from '../constants/runtimeDefaults';
-import { apiFetch } from './http';
+import { apiFetch, apiV1Path, buildApiRequestUrl } from './http';
 
 export type ExportType = 'chat' | 'research';
 export type ExportStatus = 'queued' | 'running' | 'succeeded' | 'failed';
@@ -32,7 +32,7 @@ export interface ExportJob {
  * 创建导出任务
  */
 export async function createExport(data: ExportCreateRequest): Promise<ExportJob> {
-  return apiFetch<ExportJob>('/api/v1/exports', {
+  return apiFetch<ExportJob>(apiV1Path('/exports'), {
     method: 'POST',
     body: JSON.stringify(data),
   });
@@ -42,7 +42,7 @@ export async function createExport(data: ExportCreateRequest): Promise<ExportJob
  * 获取导出任务状态
  */
 export async function getExport(exportId: string): Promise<ExportJob> {
-  return apiFetch<ExportJob>(`/api/v1/exports/${exportId}`);
+  return apiFetch<ExportJob>(apiV1Path(`/exports/${exportId}`));
 }
 
 /**
@@ -61,4 +61,24 @@ export async function pollExportUntilDone(
     await new Promise((resolve) => setTimeout(resolve, intervalMs));
   }
   throw new Error('导出任务超时');
+}
+
+/**
+ * 解析导出下载地址。
+ *
+ * 后端返回相对路径时，必须绑定到真实后端 API base，
+ * 否则前后端分域部署下会误落到前端站点并返回 404。
+ */
+export function resolveExportDownloadUrl(downloadUrl: string): string {
+  const normalized = downloadUrl.trim();
+  if (!normalized) {
+    return normalized;
+  }
+  if (/^https?:\/\//i.test(normalized)) {
+    return normalized;
+  }
+  if (normalized.startsWith('/')) {
+    return buildApiRequestUrl(normalized);
+  }
+  return normalized;
 }

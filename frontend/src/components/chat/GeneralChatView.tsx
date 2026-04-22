@@ -12,6 +12,7 @@ import type {
   WebSearchStatus,
 } from '../../services/chats';
 import type { ChatMessage } from './MessageList';
+import type { PublicRuntimeConfigRead } from '../../services/runtimeConfig';
 
 const MessageList = dynamic(
   () => import('./MessageList').then((mod) => mod.MessageList),
@@ -51,6 +52,7 @@ interface GeneralChatViewProps {
   webSearch: WebSearchStatus;
   hasPendingApproval: boolean;
   isInputDisabled: boolean;
+  runtimeConfig: PublicRuntimeConfigRead | null | undefined;
   setAllowExternal: (value: boolean) => void;
   setInput: (value: string) => void;
   setError: (value: string | null) => void;
@@ -73,6 +75,7 @@ export function GeneralChatView({
   webSearch,
   hasPendingApproval,
   isInputDisabled,
+  runtimeConfig,
   setAllowExternal,
   setInput,
   setError,
@@ -182,6 +185,7 @@ export function GeneralChatView({
               value={input}
               onChange={setInput}
               onSend={onSend}
+              runtimeConfig={runtimeConfig}
               disabled={isInputDisabled}
               loading={loading}
               placeholder={hasPendingApproval ? '等待工具审批完成...' : '输入消息...'}

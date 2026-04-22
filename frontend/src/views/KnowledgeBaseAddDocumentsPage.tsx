@@ -41,6 +41,7 @@ import {
   isBatchActive,
   useIngestionBatchLive,
 } from '../hooks/queries/useIngestionBatches';
+import { useRuntimeConfig } from '../hooks/queries/useRuntimeConfig';
 import { useSystemQueueHealth } from '../hooks/queries/useSystemQueueHealth';
 import {
   buildQueueHealthHint,
@@ -143,6 +144,7 @@ function elapsedSeconds(timestamp: string | null | undefined): number | null {
 
 export default function KnowledgeBaseAddDocumentsPage() {
   const router = useRouter();
+  const runtimeConfigQuery = useRuntimeConfig();
   const {
     kbId,
     initialBatchId,
@@ -434,14 +436,16 @@ export default function KnowledgeBaseAddDocumentsPage() {
   const validation = useMemo(
     () =>
       validateManifestDraftEntries(entries, {
-        markdownOnly: Boolean(markdownOnly)
+        markdownOnly: Boolean(markdownOnly),
+        runtimeConfig: runtimeConfigQuery.data,
       }),
-    [entries, markdownOnly]
+    [entries, markdownOnly, runtimeConfigQuery.data]
   );
 
   const bootstrapUploadActive =
     bootstrapJob?.status === 'queued_upload' &&
     (bootstrapUploadState.stage === 'uploading' || bootstrapUploadState.stage === 'finalizing');
+  const runtimeConfigReady = Boolean(runtimeConfigQuery.data);
   const bootstrapQueuedUploadMessage = useMemo(() => {
     if (!bootstrapJob || bootstrapJob.status !== 'queued_upload') {
       return null;
@@ -564,6 +568,7 @@ export default function KnowledgeBaseAddDocumentsPage() {
 
   const mergedError =
     localError ??
+    (runtimeConfigQuery.error ? getErrorMessage(runtimeConfigQuery.error) : null) ??
     (createBatchMutation.error ? getErrorMessage(createBatchMutation.error) : null) ??
     (finalizeBootstrapMutation.error ? getErrorMessage(finalizeBootstrapMutation.error) : null) ??
     (retryBatchMutation.error ? getErrorMessage(retryBatchMutation.error) : null) ??
@@ -637,6 +642,10 @@ export default function KnowledgeBaseAddDocumentsPage() {
 
   const submitBatch = async () => {
     if (!kbId) {
+      return;
+    }
+    if (!runtimeConfigReady) {
+      setLocalError('运行时导入约束尚未加载完成，请稍后重试。');
       return;
     }
 
@@ -851,6 +860,7 @@ export default function KnowledgeBaseAddDocumentsPage() {
               onChange={setEntries}
               validation={validation}
               serverEntryErrors={serverEntryErrors}
+              runtimeConfig={runtimeConfigQuery.data}
               markdownOnly={Boolean(markdownOnly)}
               disabled={submitPending || batchRunning}
             />
@@ -859,7 +869,7 @@ export default function KnowledgeBaseAddDocumentsPage() {
                 variant='contained'
                 onClick={submitBatch}
                 loading={submitPending}
-                disabled={batchRunning}
+                disabled={batchRunning || !runtimeConfigReady}
               >
                 提交批次
               </Button>

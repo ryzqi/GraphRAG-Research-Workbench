@@ -30,10 +30,7 @@ import { alpha } from '@mui/material/styles';
 import { useEffect, useMemo, useState, type DragEvent, type KeyboardEvent } from 'react';
 
 import { Button } from '../components/ui/Button';
-import {
-  DEFAULT_MODEL_PROVIDER,
-  createDefaultModelProviderFormState,
-} from '../constants/formDefaults';
+import { createDefaultModelProviderFormState } from '../constants/formDefaults';
 import { ErrorAlert } from '../components/ui/ErrorAlert';
 import { PageHeader } from '../components/ui/PageHeader';
 import {
@@ -149,11 +146,12 @@ export function ModelConfigPage() {
   const runtimeConfigQuery = useRuntimeConfig();
   const updateProviderMutation = useUpdateProviderConfig();
   const updateActiveMutation = useUpdateActiveModel();
+  const defaultProvider = runtimeConfigQuery.data?.default_model_provider;
 
   const [forms, setForms] = useState<Partial<Record<ModelProvider, ProviderFormState>>>({});
-  const [selectedProvider, setSelectedProvider] = useState<ModelProvider>(DEFAULT_MODEL_PROVIDER);
+  const [selectedProvider, setSelectedProvider] = useState<ModelProvider | null>(defaultProvider ?? null);
   const [activeProviderDraft, setActiveProviderDraft] =
-    useState<ModelProvider>(DEFAULT_MODEL_PROVIDER);
+    useState<ModelProvider | null>(defaultProvider ?? null);
   const [activeModelDraft, setActiveModelDraft] = useState('');
   const [pageError, setPageError] = useState<string | null>(null);
   const [pendingProviderAction, setPendingProviderAction] = useState<PendingProviderAction>(null);
@@ -179,10 +177,13 @@ export function ModelConfigPage() {
       default_thinking_enabled: providerDescriptorById[provider]?.default_thinking_enabled ?? undefined,
       default_thinking_level: providerDescriptorById[provider]?.default_thinking_level ?? undefined,
     });
+  const resolvedSelectedProvider = selectedProvider ?? defaultProvider ?? providerIds[0] ?? null;
   const getProviderForm = (provider: ModelProvider): ProviderFormState =>
     forms[provider] ?? buildDefaultForm(provider);
-  const selectedProviderForm = getProviderForm(selectedProvider);
-  const selectedProviderPersisted = providerById[selectedProvider];
+  const selectedProviderForm = resolvedSelectedProvider
+    ? getProviderForm(resolvedSelectedProvider)
+    : null;
+  const selectedProviderPersisted = resolvedSelectedProvider ? providerById[resolvedSelectedProvider] : undefined;
 
   useEffect(() => {
     const config = configQuery.data;
@@ -204,6 +205,15 @@ export function ModelConfigPage() {
     setActiveProviderDraft(config.active_provider);
     setActiveModelDraft(config.active_model ?? '');
   }, [configQuery.data, providerIds, providerDescriptorById]);
+
+  useEffect(() => {
+    if (defaultProvider && selectedProvider === null) {
+      setSelectedProvider(defaultProvider);
+    }
+    if (defaultProvider && activeProviderDraft === null) {
+      setActiveProviderDraft(defaultProvider);
+    }
+  }, [activeProviderDraft, defaultProvider, selectedProvider]);
 
   const mergedError =
     pageError ??
@@ -240,14 +250,18 @@ export function ModelConfigPage() {
   );
 
   const effectiveActiveProviderDraft =
-    enabledProviderIds.length === 0 || enabledProviderIds.includes(activeProviderDraft)
+    !activeProviderDraft ||
+    enabledProviderIds.length === 0 ||
+    enabledProviderIds.includes(activeProviderDraft)
       ? activeProviderDraft
       : enabledProviderIds[0];
 
-  const activeProviderModels = useMemo(
-    () => providerById[effectiveActiveProviderDraft]?.models ?? [],
-    [effectiveActiveProviderDraft, providerById]
-  );
+  const activeProviderModels = useMemo(() => {
+    if (!effectiveActiveProviderDraft) {
+      return [];
+    }
+    return providerById[effectiveActiveProviderDraft]?.models ?? [];
+  }, [effectiveActiveProviderDraft, providerById]);
 
   const effectiveActiveModelDraft =
     activeProviderModels.length === 0 || activeProviderModels.includes(activeModelDraft)
@@ -255,16 +269,18 @@ export function ModelConfigPage() {
       : activeProviderModels[0];
   const isSavingSelectedProvider =
     updateProviderMutation.isPending &&
-    pendingProviderAction?.provider === selectedProvider &&
+    pendingProviderAction?.provider === resolvedSelectedProvider &&
     pendingProviderAction.kind === 'save';
   const isClearingApiKeyForSelectedProvider =
     updateProviderMutation.isPending &&
-    pendingProviderAction?.provider === selectedProvider &&
+    pendingProviderAction?.provider === resolvedSelectedProvider &&
     pendingProviderAction.kind === 'clear-api-key';
-  const selectedProviderSupportsThinkingToggle =
-    providerDescriptorById[selectedProvider]?.supports_thinking_toggle ?? true;
-  const selectedProviderSupportsThinkingLevel =
-    providerDescriptorById[selectedProvider]?.supports_thinking_level ?? true;
+  const selectedProviderSupportsThinkingToggle = resolvedSelectedProvider
+    ? (providerDescriptorById[resolvedSelectedProvider]?.supports_thinking_toggle ?? true)
+    : true;
+  const selectedProviderSupportsThinkingLevel = resolvedSelectedProvider
+    ? (providerDescriptorById[resolvedSelectedProvider]?.supports_thinking_level ?? true)
+    : true;
   const getProviderLabel = (provider: ModelProvider): string =>
     providerDescriptorById[provider]?.label ?? provider;
   const getProviderBaseUrlPlaceholder = (provider: ModelProvider): string =>
@@ -408,6 +424,10 @@ export function ModelConfigPage() {
   };
 
   const handleApplyActiveModel = () => {
+    if (!effectiveActiveProviderDraft) {
+      setPageError('运行时默认供应商尚未加载完成');
+      return;
+    }
     const model = toOptionalText(effectiveActiveModelDraft);
     if (!model) {
       setPageError('请选择全局生效模型');
@@ -453,7 +473,7 @@ export function ModelConfigPage() {
             {providerIds.map((provider) => {
               const form = forms[provider];
               const isActiveProvider = configQuery.data?.active_provider === provider;
-              const isSelected = selectedProvider === provider;
+              const isSelected = resolvedSelectedProvider === provider;
               return (
                 <ListItem key={provider} disablePadding sx={{ mb: 0.5 }}>
                   <ListItemButton
@@ -483,6 +503,9 @@ export function ModelConfigPage() {
         </Paper>
 
         <Stack spacing={2} sx={{ flex: 1 }}>
+          {!resolvedSelectedProvider && (
+            <Alert severity='info'>正在加载运行时默认模型供应商…</Alert>
+          )}
           <Paper variant='outlined' sx={{ p: 2.5, borderRadius: 3 }}>
             <Stack spacing={2}>
               <Typography variant='h6'>全局生效模型</Typography>
@@ -492,7 +515,7 @@ export function ModelConfigPage() {
                   <Select
                     labelId='active-provider-label'
                     label='供应商'
-                    value={effectiveActiveProviderDraft}
+                    value={effectiveActiveProviderDraft ?? ''}
                     onChange={(e) => setActiveProviderDraft(e.target.value as ModelProvider)}
                   >
                     {providerIds.map((provider) => {
@@ -562,8 +585,10 @@ export function ModelConfigPage() {
           <Paper variant='outlined' sx={{ p: 2.5, borderRadius: 3 }}>
             <Stack spacing={2}>
               <Stack direction='row' justifyContent='space-between' alignItems='center'>
-                <Typography variant='h6'>{getProviderLabel(selectedProvider)}</Typography>
-                {configQuery.data?.active_provider === selectedProvider && (
+                <Typography variant='h6'>
+                  {resolvedSelectedProvider ? getProviderLabel(resolvedSelectedProvider) : '供应商'}
+                </Typography>
+                {resolvedSelectedProvider && configQuery.data?.active_provider === resolvedSelectedProvider && (
                   <Chip label='当前全局生效供应商' color='success' size='small' />
                 )}
               </Stack>
@@ -571,20 +596,27 @@ export function ModelConfigPage() {
               <FormControlLabel
                 control={
                   <Switch
-                    checked={selectedProviderForm.enabled}
-                    onChange={(e) => updateForm(selectedProvider, 'enabled', e.target.checked)}
+                    checked={selectedProviderForm?.enabled ?? false}
+                    onChange={(e) =>
+                      resolvedSelectedProvider &&
+                      updateForm(resolvedSelectedProvider, 'enabled', e.target.checked)
+                    }
                   />
                 }
                 label='启用供应商'
+                disabled={!resolvedSelectedProvider}
               />
 
               <TextField
                 fullWidth
                 label='Base URL'
-                placeholder={getProviderBaseUrlPlaceholder(selectedProvider)}
-                value={selectedProviderForm.baseUrl}
-                onChange={(e) => updateForm(selectedProvider, 'baseUrl', e.target.value)}
-                helperText={getProviderBaseUrlHelperText(selectedProvider)}
+                placeholder={resolvedSelectedProvider ? getProviderBaseUrlPlaceholder(resolvedSelectedProvider) : ''}
+                value={selectedProviderForm?.baseUrl ?? ''}
+                onChange={(e) =>
+                  resolvedSelectedProvider && updateForm(resolvedSelectedProvider, 'baseUrl', e.target.value)
+                }
+                helperText={resolvedSelectedProvider ? getProviderBaseUrlHelperText(resolvedSelectedProvider) : undefined}
+                disabled={!resolvedSelectedProvider}
               />
 
               <TextField
@@ -592,10 +624,12 @@ export function ModelConfigPage() {
                 label='API Key'
                 type='password'
                 placeholder={selectedProviderPersisted?.api_key_masked ?? '留空表示不修改'}
-                value={selectedProviderForm.apiKey}
-                onChange={(e) => updateForm(selectedProvider, 'apiKey', e.target.value)}
+                value={selectedProviderForm?.apiKey ?? ''}
+                onChange={(e) =>
+                  resolvedSelectedProvider && updateForm(resolvedSelectedProvider, 'apiKey', e.target.value)
+                }
                 helperText={
-                  providerDescriptorById[selectedProvider]?.api_key_optional
+                  resolvedSelectedProvider && providerDescriptorById[resolvedSelectedProvider]?.api_key_optional
                     ? selectedProviderPersisted?.api_key_set
                       ? `已配置：${selectedProviderPersisted.api_key_masked ?? '******'}`
                       : '本地无鉴权可留空；如通过反向代理增加鉴权，可填写。'
@@ -603,6 +637,7 @@ export function ModelConfigPage() {
                     ? `已配置：${selectedProviderPersisted.api_key_masked ?? '******'}`
                     : '未配置'
                 }
+                disabled={!resolvedSelectedProvider}
               />
               {selectedProviderPersisted?.api_key_set ? (
                 <Button
@@ -611,7 +646,7 @@ export function ModelConfigPage() {
                   startIcon={<DeleteOutlineIcon />}
                   loading={isClearingApiKeyForSelectedProvider}
                   disabled={updateProviderMutation.isPending && !isClearingApiKeyForSelectedProvider}
-                  onClick={() => handleClearProviderApiKey(selectedProvider)}
+                  onClick={() => resolvedSelectedProvider && handleClearProviderApiKey(resolvedSelectedProvider)}
                   sx={{ alignSelf: 'flex-start' }}
                 >
                   清空已保存 API Key
@@ -623,22 +658,31 @@ export function ModelConfigPage() {
                   <FormControlLabel
                     control={
                       <Switch
-                        checked={selectedProviderForm.thinkingEnabled}
-                        onChange={(e) => updateForm(selectedProvider, 'thinkingEnabled', e.target.checked)}
+                        checked={selectedProviderForm?.thinkingEnabled ?? false}
+                        onChange={(e) =>
+                          resolvedSelectedProvider &&
+                          updateForm(resolvedSelectedProvider, 'thinkingEnabled', e.target.checked)
+                        }
                       />
                     }
                     label='开启思考'
+                    disabled={!resolvedSelectedProvider}
                   />
 
                   {selectedProviderSupportsThinkingLevel ? (
                     <FormControl fullWidth>
-                      <InputLabel id={`${selectedProvider}-thinking-level-label`}>思考强度</InputLabel>
+                      <InputLabel id={`${resolvedSelectedProvider ?? 'provider'}-thinking-level-label`}>
+                        思考强度
+                      </InputLabel>
                       <Select
-                        labelId={`${selectedProvider}-thinking-level-label`}
+                        labelId={`${resolvedSelectedProvider ?? 'provider'}-thinking-level-label`}
                         label='思考强度'
-                        value={selectedProviderForm.thinkingLevel || 'high'}
-                        disabled={!selectedProviderForm.thinkingEnabled}
-                        onChange={(e) => updateForm(selectedProvider, 'thinkingLevel', String(e.target.value))}
+                        value={selectedProviderForm?.thinkingLevel || 'high'}
+                        disabled={!resolvedSelectedProvider || !selectedProviderForm?.thinkingEnabled}
+                        onChange={(e) =>
+                          resolvedSelectedProvider &&
+                          updateForm(resolvedSelectedProvider, 'thinkingLevel', String(e.target.value))
+                        }
                       >
                         <MenuItem value='high'>high（最高）</MenuItem>
                         <MenuItem value='medium'>medium</MenuItem>
@@ -664,14 +708,21 @@ export function ModelConfigPage() {
                     fullWidth
                     label='新增模型'
                     placeholder='输入模型名后回车或点击添加'
-                    value={selectedProviderForm.modelInput}
-                    onChange={(e) => updateForm(selectedProvider, 'modelInput', e.target.value)}
-                    onKeyDown={(event) => onModelInputKeyDown(selectedProvider, event)}
+                    value={selectedProviderForm?.modelInput ?? ''}
+                    onChange={(e) =>
+                      resolvedSelectedProvider &&
+                      updateForm(resolvedSelectedProvider, 'modelInput', e.target.value)
+                    }
+                    onKeyDown={(event) =>
+                      resolvedSelectedProvider && onModelInputKeyDown(resolvedSelectedProvider, event)
+                    }
+                    disabled={!resolvedSelectedProvider}
                   />
                   <Button
                     variant='outlined'
                     startIcon={<AddIcon />}
-                    onClick={() => addProviderModel(selectedProvider)}
+                    onClick={() => resolvedSelectedProvider && addProviderModel(resolvedSelectedProvider)}
+                    disabled={!resolvedSelectedProvider}
                     sx={{ minWidth: 120 }}
                   >
                     添加
@@ -679,25 +730,25 @@ export function ModelConfigPage() {
                 </Stack>
 
                 <Stack spacing={1} sx={{ mt: 1.5 }}>
-                  {selectedProviderForm.models.length === 0 ? (
+                  {!selectedProviderForm || selectedProviderForm.models.length === 0 ? (
                     <Alert severity='warning'>当前供应商尚未配置模型。</Alert>
                   ) : (
                     selectedProviderForm.models.map((model, index) => (
                       <Paper
-                        key={`${selectedProvider}-${model}-${index}`}
+                        key={`${resolvedSelectedProvider}-${model}-${index}`}
                         variant='outlined'
                         draggable
-                        onDragStart={() => onModelDragStart(selectedProvider, index)}
+                        onDragStart={() => resolvedSelectedProvider && onModelDragStart(resolvedSelectedProvider, index)}
                         onDragEnd={() => setDraggingModel(null)}
                         onDragOver={onDragOverModel}
-                        onDrop={() => onModelDrop(selectedProvider, index)}
+                        onDrop={() => resolvedSelectedProvider && onModelDrop(resolvedSelectedProvider, index)}
                         sx={{
                           px: 1.5,
                           py: 1,
                           borderRadius: 2,
                           cursor: 'grab',
                           borderColor:
-                            draggingModel?.provider === selectedProvider &&
+                            draggingModel?.provider === resolvedSelectedProvider &&
                             draggingModel?.index === index
                               ? 'primary.main'
                               : 'divider',
@@ -712,7 +763,9 @@ export function ModelConfigPage() {
                           <Tooltip title='删除模型'>
                             <IconButton
                               size='small'
-                              onClick={() => removeProviderModel(selectedProvider, index)}
+                              onClick={() =>
+                                resolvedSelectedProvider && removeProviderModel(resolvedSelectedProvider, index)
+                              }
                               aria-label='删除模型'
                             >
                               <DeleteOutlineIcon fontSize='small' />
@@ -730,8 +783,8 @@ export function ModelConfigPage() {
                   variant='contained'
                   startIcon={<SaveIcon />}
                   loading={isSavingSelectedProvider}
-                  disabled={updateProviderMutation.isPending && !isSavingSelectedProvider}
-                  onClick={() => handleSaveProvider(selectedProvider)}
+                  disabled={!resolvedSelectedProvider || (updateProviderMutation.isPending && !isSavingSelectedProvider)}
+                  onClick={() => resolvedSelectedProvider && handleSaveProvider(resolvedSelectedProvider)}
                 >
                   保存配置
                 </Button>

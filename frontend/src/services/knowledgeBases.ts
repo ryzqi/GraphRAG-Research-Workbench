@@ -2,7 +2,7 @@
  * 知识库 API 封装
  */
 
-import { apiFetch, type ApiFetchOptions } from './http';
+import { apiFetch, apiV1Path, type ApiFetchOptions } from './http';
 import type { BatchStatus } from './ingestionBatches';
 import type { IndexRebuildJob } from './indexRebuilds';
 import type { ListResponse } from './types';
@@ -74,6 +74,74 @@ export interface IndexConfig {
   contextual: ContextualConfig;
 }
 
+export interface IndexConfigNumberConstraint {
+  min: number;
+  max: number;
+}
+
+export interface MarkdownHeadingConfigConstraints {
+  max_heading_level: IndexConfigNumberConstraint;
+  chunk_size: IndexConfigNumberConstraint;
+  chunk_overlap: IndexConfigNumberConstraint;
+}
+
+export interface QueryDependentMultiscaleWindowConfigConstraints {
+  chunk_size_tokens: IndexConfigNumberConstraint;
+  chunk_overlap_tokens: IndexConfigNumberConstraint;
+}
+
+export interface QueryDependentMultiscaleConfigConstraints {
+  window_count_max: number;
+  window: QueryDependentMultiscaleWindowConfigConstraints;
+}
+
+export interface SemanticConfigConstraints {
+  min_tokens: IndexConfigNumberConstraint;
+  max_tokens: IndexConfigNumberConstraint;
+  breakpoint_percentile: IndexConfigNumberConstraint;
+  similarity_threshold: IndexConfigNumberConstraint;
+  overlap_chars: IndexConfigNumberConstraint;
+  embedding_batch_size: IndexConfigNumberConstraint;
+}
+
+export interface ParentChunkConfigConstraints {
+  chunk_size: IndexConfigNumberConstraint;
+  chunk_overlap: IndexConfigNumberConstraint;
+}
+
+export interface ChildChunkConfigConstraints {
+  chunk_size: IndexConfigNumberConstraint;
+  chunk_overlap: IndexConfigNumberConstraint;
+}
+
+export interface ParentChildConfigConstraints {
+  parent: ParentChunkConfigConstraints;
+  child: ChildChunkConfigConstraints;
+}
+
+export interface ContextualConfigConstraints {
+  max_tokens: IndexConfigNumberConstraint;
+  concurrency: IndexConfigNumberConstraint;
+}
+
+export interface IndexConfigConstraints {
+  markdown_heading: MarkdownHeadingConfigConstraints;
+  query_dependent_multiscale: QueryDependentMultiscaleConfigConstraints;
+  semantic: SemanticConfigConstraints;
+  parent_child: ParentChildConfigConstraints;
+  contextual: ContextualConfigConstraints;
+}
+
+export interface KnowledgeBaseTextLengthConstraint {
+  min_length: number | null;
+  max_length: number;
+}
+
+export interface KnowledgeBaseFormConstraints {
+  name: KnowledgeBaseTextLengthConstraint;
+  description: KnowledgeBaseTextLengthConstraint;
+}
+
 export type KnowledgeBaseReadiness = 'not_ready' | 'ready';
 
 export interface KnowledgeBase {
@@ -120,47 +188,21 @@ export interface KnowledgeBaseIndexConfigUpdateResponse {
   rebuild_job: IndexRebuildJob | null;
 }
 
-export function createDefaultIndexConfig(): IndexConfig {
+export function cloneIndexConfig(config: IndexConfig): IndexConfig {
   return {
     chunking: {
-      markdown_heading: {
-        max_heading_level: 3,
-        chunk_size: 800,
-        chunk_overlap: 160,
-      },
-      general_strategy: 'query_dependent_multiscale',
+      markdown_heading: { ...config.chunking.markdown_heading },
+      general_strategy: config.chunking.general_strategy,
       query_dependent_multiscale: {
-        windows: [
-          { chunk_size_tokens: 128, chunk_overlap_tokens: 32 },
-          { chunk_size_tokens: 256, chunk_overlap_tokens: 64 },
-          { chunk_size_tokens: 512, chunk_overlap_tokens: 128 },
-        ],
+        windows: config.chunking.query_dependent_multiscale.windows.map((window) => ({ ...window })),
       },
-      semantic: {
-        min_tokens: 80,
-        max_tokens: 320,
-        threshold_mode: 'percentile',
-        breakpoint_percentile: 25,
-        similarity_threshold: 0.7,
-        overlap_chars: 96,
-        embedding_batch_size: 32,
-      },
+      semantic: { ...config.chunking.semantic },
       parent_child: {
-        parent: {
-          chunk_size: 1200,
-          chunk_overlap: 120,
-        },
-        child: {
-          chunk_size: 240,
-          chunk_overlap: 40,
-        },
+        parent: { ...config.chunking.parent_child.parent },
+        child: { ...config.chunking.parent_child.child },
       },
     },
-    contextual: {
-      enabled: true,
-      max_tokens: 192,
-      concurrency: 2,
-    },
+    contextual: { ...config.contextual },
   };
 }
 
@@ -229,9 +271,7 @@ export async function listKnowledgeBases(params?: {
     searchParams.set('limit', String(params.limit));
   }
   const query = searchParams.toString();
-  return apiFetch<KnowledgeBaseListResponse>(
-    '/api/v1/knowledge-bases' + (query ? '?' + query : '')
-  );
+  return apiFetch<KnowledgeBaseListResponse>(apiV1Path(`/knowledge-bases${query ? `?${query}` : ''}`));
 }
 
 /**
@@ -250,7 +290,7 @@ export async function listSelectableKnowledgeBases(params?: {
   }
   const query = searchParams.toString();
   return apiFetch<KnowledgeBaseListResponse>(
-    '/api/v1/knowledge-bases/selectable' + (query ? '?' + query : ''),
+    apiV1Path(`/knowledge-bases/selectable${query ? `?${query}` : ''}`),
     options
   );
 }
@@ -262,7 +302,7 @@ export async function getKnowledgeBase(
   kbId: string,
   options?: ApiFetchOptions
 ): Promise<KnowledgeBase> {
-  return apiFetch<KnowledgeBase>('/api/v1/knowledge-bases/' + kbId, options);
+  return apiFetch<KnowledgeBase>(apiV1Path(`/knowledge-bases/${kbId}`), options);
 }
 
 /**
@@ -273,7 +313,7 @@ export async function getKnowledgeBaseIngestionState(
   options?: ApiFetchOptions
 ): Promise<KnowledgeBaseIngestionState> {
   return apiFetch<KnowledgeBaseIngestionState>(
-    '/api/v1/knowledge-bases/' + kbId + '/ingestion-state',
+    apiV1Path(`/knowledge-bases/${kbId}/ingestion-state`),
     options
   );
 }
@@ -284,7 +324,7 @@ export async function getKnowledgeBaseIngestionState(
 export async function createKnowledgeBase(
   data: KnowledgeBaseCreate
 ): Promise<KnowledgeBase> {
-  return apiFetch<KnowledgeBase>('/api/v1/knowledge-bases', {
+  return apiFetch<KnowledgeBase>(apiV1Path('/knowledge-bases'), {
     method: 'POST',
     body: JSON.stringify(data),
   });
@@ -297,7 +337,7 @@ export async function updateKnowledgeBase(
   kbId: string,
   data: KnowledgeBaseUpdate
 ): Promise<KnowledgeBase> {
-  return apiFetch<KnowledgeBase>('/api/v1/knowledge-bases/' + kbId, {
+  return apiFetch<KnowledgeBase>(apiV1Path(`/knowledge-bases/${kbId}`), {
     method: 'PATCH',
     body: JSON.stringify(data),
   });
@@ -311,7 +351,7 @@ export async function updateKnowledgeBaseIndexConfig(
   index_config: IndexConfig
 ): Promise<KnowledgeBaseIndexConfigUpdateResponse> {
   return apiFetch<KnowledgeBaseIndexConfigUpdateResponse>(
-    '/api/v1/knowledge-bases/' + kbId + '/index-config',
+    apiV1Path(`/knowledge-bases/${kbId}/index-config`),
     {
       method: 'PUT',
       body: JSON.stringify({ index_config }),
@@ -323,7 +363,7 @@ export async function updateKnowledgeBaseIndexConfig(
  * 删除知识库
  */
 export async function deleteKnowledgeBase(kbId: string): Promise<void> {
-  await apiFetch<void>('/api/v1/knowledge-bases/' + kbId + '?confirm=true', {
+  await apiFetch<void>(apiV1Path(`/knowledge-bases/${kbId}?confirm=true`), {
     method: 'DELETE',
   });
 }
@@ -332,7 +372,7 @@ export async function deleteKnowledgeBase(kbId: string): Promise<void> {
  * 归档知识库
  */
 export async function archiveKnowledgeBase(kbId: string): Promise<KnowledgeBase> {
-  return apiFetch<KnowledgeBase>('/api/v1/knowledge-bases/' + kbId + '/archive', {
+  return apiFetch<KnowledgeBase>(apiV1Path(`/knowledge-bases/${kbId}/archive`), {
     method: 'POST',
   });
 }

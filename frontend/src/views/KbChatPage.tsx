@@ -10,6 +10,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import dynamic from 'next/dynamic';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import {
+  Alert,
   Box,
   Chip,
   Drawer,
@@ -36,7 +37,7 @@ import {
   type KbChatConfig,
   type ChatMessageResponse,
   type ChatSession,
-  DEFAULT_KB_CHAT_CONFIG,
+  cloneKbChatConfig,
   createChatSession,
   isUnexpectedStreamEnd,
   resolveTerminalRunStatus,
@@ -52,6 +53,7 @@ import {
 } from '../services/kbChatTraceStore';
 import { useSelectableKnowledgeBases } from '../hooks/queries/useKnowledgeBases';
 import { useKbChatGraphSchema } from '../hooks/queries/useKbChatGraphSchema';
+import { useRuntimeConfig } from '../hooks/queries/useRuntimeConfig';
 import { useRecentHistory } from '../hooks/useRecentHistory';
 import { WelcomeScreen } from '../components/chat/WelcomeScreen';
 import { KbChatInputPanel } from '../components/chat/KbChatInputPanel';
@@ -234,10 +236,15 @@ export function KbChatPage() {
     replaceSearchParams(nextParams);
   }, [replaceSearchParams]);
   const knowledgeBasesQuery = useSelectableKnowledgeBases();
+  const runtimeConfigQuery = useRuntimeConfig();
   const knowledgeBases = knowledgeBasesQuery.data;
+  const defaultKbChatConfig = runtimeConfigQuery.data?.kb_chat_default_config ?? null;
+  const kbChatConfigConstraints = runtimeConfigQuery.data?.kb_chat_config_constraints ?? null;
 
   const [selectedKbIds, setSelectedKbIds] = useState<string[]>([]);
-  const [kbChatConfig, setKbChatConfig] = useState<KbChatConfig>(DEFAULT_KB_CHAT_CONFIG);
+  const [kbChatConfig, setKbChatConfig] = useState<KbChatConfig | null>(
+    defaultKbChatConfig ? cloneKbChatConfig(defaultKbChatConfig) : null
+  );
   const [session, setSession] = useState<ChatSession | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
@@ -269,8 +276,14 @@ export function KbChatPage() {
     setMessages,
     setSelectedKbIds,
     setKbChatConfig,
-    defaultConfig: DEFAULT_KB_CHAT_CONFIG,
+    defaultConfig: defaultKbChatConfig,
   });
+
+  useEffect(() => {
+    if (defaultKbChatConfig && kbChatConfig === null) {
+      setKbChatConfig(cloneKbChatConfig(defaultKbChatConfig));
+    }
+  }, [defaultKbChatConfig, kbChatConfig]);
 
   useEffect(() => {
     const previousSessionId = previousSessionIdRef.current;
@@ -291,6 +304,7 @@ export function KbChatPage() {
 
   const mergedError =
     error ??
+    (runtimeConfigQuery.error ? getErrorMessage(runtimeConfigQuery.error) : null) ??
     (knowledgeBasesQuery.error ? getErrorMessage(knowledgeBasesQuery.error) : null) ??
     (graphSchemaQuery.error ? getErrorMessage(graphSchemaQuery.error) : null);
 
@@ -303,7 +317,13 @@ export function KbChatPage() {
     return selectedKbIds.map((id) => map.get(id) ?? id);
   }, [knowledgeBases, selectedKbIds]);
 
-  const initialConfigErrors = useMemo(() => validateKbChatConfig(kbChatConfig), [kbChatConfig]);
+  const initialConfigErrors = useMemo(
+    () =>
+      kbChatConfig && kbChatConfigConstraints
+        ? validateKbChatConfig(kbChatConfig, kbChatConfigConstraints)
+        : [],
+    [kbChatConfig, kbChatConfigConstraints]
+  );
   const parentChildLimitsEnabled = useMemo(
     () => hasSelectedParentChildKnowledgeBase(selectedKbIds, knowledgeBases),
     [knowledgeBases, selectedKbIds]
@@ -617,6 +637,14 @@ const applyUiEvent = useCallback(
       setError(null);
       return;
     }
+    if (runtimeConfigQuery.error) {
+      void runtimeConfigQuery.refetch();
+      return;
+    }
+    if (graphSchemaQuery.error) {
+      void graphSchemaQuery.refetch();
+      return;
+    }
     knowledgeBasesQuery.refetch();
   };
 
@@ -627,6 +655,10 @@ const applyUiEvent = useCallback(
   }, []);
 
   const startSession = useCallback(async () => {
+    if (!kbChatConfig || !kbChatConfigConstraints) {
+      setError('运行时默认 KB 对话配置尚未加载完成');
+      return;
+    }
     if (selectedKbIds.length === 0) {
       setError('请至少选择一个知识库');
       return;
@@ -644,14 +676,18 @@ const applyUiEvent = useCallback(
         kb_chat_config: kbChatConfig,
       });
       setSession(newSession);
-      setKbChatConfig(newSession.kb_chat_config ?? kbChatConfig);
+      setKbChatConfig(
+        newSession.kb_chat_config
+          ? cloneKbChatConfig(newSession.kb_chat_config)
+          : cloneKbChatConfig(kbChatConfig)
+      );
       setMessages([]);
     } catch (e) {
       setError(getErrorMessage(e));
     } finally {
       setLoading(false);
     }
-  }, [selectedKbIds, kbChatConfig]);
+  }, [selectedKbIds, kbChatConfig, kbChatConfigConstraints]);
 
   const handleSend = useCallback(async () => {
     if (!session || !input.trim() || loading || loadingSession || hasPendingClarification) return;
@@ -1204,6 +1240,9 @@ const applyUiEvent = useCallback(
   );
 
   if (!session) {
+    if (!kbChatConfig || !kbChatConfigConstraints) {
+      return <Alert severity='info'>正在加载运行时默认 KB 对话配置…</Alert>;
+    }
     return (
       <Box
         sx={{
@@ -1311,6 +1350,7 @@ const applyUiEvent = useCallback(
 
             <KbChatConfigPanel
               value={kbChatConfig}
+              constraints={kbChatConfigConstraints}
               onChange={setKbChatConfig}
               disabled={loading || loadingSession || knowledgeBasesQuery.isLoading}
               parentChildLimitsEnabled={parentChildLimitsEnabled}

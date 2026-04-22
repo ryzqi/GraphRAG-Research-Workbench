@@ -19,16 +19,19 @@ import {
 } from '@mui/material';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import {
-  createDefaultIndexConfig,
+  cloneIndexConfig,
   type ChunkingStrategy,
   type IndexConfig,
+  type IndexConfigConstraints,
   type SemanticThresholdMode,
 } from '../services/knowledgeBases';
 
 interface IndexConfigFormProps {
   value: IndexConfig;
+  constraints: IndexConfigConstraints;
   onChange: (next: IndexConfig) => void;
   disabled?: boolean;
+  defaults?: IndexConfig;
   /**
    * UI state for main chunking strategy selection.
    *
@@ -52,11 +55,11 @@ function nullableNumberValue(value: string): number | null {
   return Number.isNaN(parsed) ? null : parsed;
 }
 
-function clampWindowCount(value: number): number {
+function clampWindowCount(value: number, maxWindowCount: number): number {
   if (!Number.isFinite(value)) {
     return 1;
   }
-  return Math.max(1, Math.min(5, Math.trunc(value)));
+  return Math.max(1, Math.min(maxWindowCount, Math.trunc(value)));
 }
 
 const SEMANTIC_THRESHOLD_MODE_OPTIONS: SemanticThresholdMode[] = [
@@ -73,12 +76,14 @@ const SEMANTIC_THRESHOLD_MODE_LABELS: Record<SemanticThresholdMode, string> = {
 
 export function IndexConfigForm({
   value,
+  constraints,
   onChange,
   disabled = false,
+  defaults: runtimeDefaults,
   mainStrategy,
   onMainStrategyChange,
 }: IndexConfigFormProps) {
-  const defaults = createDefaultIndexConfig();
+  const defaults = cloneIndexConfig(runtimeDefaults ?? value);
   const selectedStrategy = mainStrategy ?? value.chunking.general_strategy;
 
   const updateChunking = (next: Partial<IndexConfig['chunking']>) => {
@@ -143,7 +148,10 @@ export function IndexConfigForm({
   };
 
   const handleWindowCountChange = (nextCountRaw: string) => {
-    const nextCount = clampWindowCount(numberValue(nextCountRaw));
+    const nextCount = clampWindowCount(
+      numberValue(nextCountRaw),
+      constraints.query_dependent_multiscale.window_count_max
+    );
     const current = [...multiscaleWindows];
     if (nextCount <= current.length) {
       setMultiscaleWindows(current.slice(0, nextCount));
@@ -177,12 +185,16 @@ export function IndexConfigForm({
   const semanticPercentileError =
     semanticNeedsPercentile &&
     (value.chunking.semantic.breakpoint_percentile == null ||
-      value.chunking.semantic.breakpoint_percentile < 1 ||
-      value.chunking.semantic.breakpoint_percentile > 99);
+      value.chunking.semantic.breakpoint_percentile <
+        constraints.semantic.breakpoint_percentile.min ||
+      value.chunking.semantic.breakpoint_percentile >
+        constraints.semantic.breakpoint_percentile.max);
   const semanticSimilarityValue = value.chunking.semantic.similarity_threshold;
   const semanticSimilarityError =
     semanticNeedsSimilarity &&
-    (semanticSimilarityValue == null || semanticSimilarityValue < 0 || semanticSimilarityValue > 1);
+    (semanticSimilarityValue == null ||
+      semanticSimilarityValue < constraints.semantic.similarity_threshold.min ||
+      semanticSimilarityValue > constraints.semantic.similarity_threshold.max);
   const markdownOverlapError =
     value.chunking.markdown_heading.chunk_overlap >= value.chunking.markdown_heading.chunk_size;
   const parentOverlapError =
@@ -246,8 +258,8 @@ export function IndexConfigForm({
                   type="number"
                   value={multiscaleWindows.length}
                   onChange={(e) => handleWindowCountChange(e.target.value)}
-                  inputProps={{ min: 1, max: 5 }}
-                  helperText="先选择窗口数量（1~5），再设置每个窗口参数"
+                  inputProps={{ min: 1, max: constraints.query_dependent_multiscale.window_count_max }}
+                  helperText={`先选择窗口数量（1~${constraints.query_dependent_multiscale.window_count_max}），再设置每个窗口参数`}
                   disabled={disabled}
                   sx={{ mb: 2, maxWidth: 280 }}
                 />
@@ -268,7 +280,10 @@ export function IndexConfigForm({
                             onChange={(e) =>
                               updateWindowField(idx, 'chunk_size_tokens', e.target.value)
                             }
-                            inputProps={{ min: 16, max: 8000 }}
+                            inputProps={{
+                              min: constraints.query_dependent_multiscale.window.chunk_size_tokens.min,
+                              max: constraints.query_dependent_multiscale.window.chunk_size_tokens.max,
+                            }}
                             helperText="token 数，窗口大小"
                             disabled={disabled}
                             fullWidth
@@ -286,7 +301,10 @@ export function IndexConfigForm({
                                 ? 'chunk_overlap_tokens 必须小于 chunk_size_tokens'
                                 : 'token 数，窗口重叠'
                             }
-                            inputProps={{ min: 0, max: 4000 }}
+                            inputProps={{
+                              min: constraints.query_dependent_multiscale.window.chunk_overlap_tokens.min,
+                              max: constraints.query_dependent_multiscale.window.chunk_overlap_tokens.max,
+                            }}
                             disabled={disabled}
                             fullWidth
                           />
@@ -316,7 +334,10 @@ export function IndexConfigForm({
                         },
                       })
                     }
-                    inputProps={{ min: 16, max: 1024 }}
+                    inputProps={{
+                      min: constraints.semantic.min_tokens.min,
+                      max: constraints.semantic.min_tokens.max,
+                    }}
                     disabled={disabled}
                     helperText="token 数，语义块下限"
                     fullWidth
@@ -335,7 +356,10 @@ export function IndexConfigForm({
                     }
                     error={semanticRangeError}
                     helperText={semanticRangeError ? 'max_tokens 必须 ≥ min_tokens' : 'token 数，语义块上限'}
-                    inputProps={{ min: 16, max: 2048 }}
+                    inputProps={{
+                      min: constraints.semantic.max_tokens.min,
+                      max: constraints.semantic.max_tokens.max,
+                    }}
                     disabled={disabled}
                     fullWidth
                   />
@@ -375,7 +399,10 @@ export function IndexConfigForm({
                         },
                       })
                     }
-                    inputProps={{ min: 0, max: 2000 }}
+                    inputProps={{
+                      min: constraints.semantic.overlap_chars.min,
+                      max: constraints.semantic.overlap_chars.max,
+                    }}
                     disabled={disabled}
                     helperText="字符数，用于语义切分的重叠"
                     fullWidth
@@ -392,7 +419,10 @@ export function IndexConfigForm({
                         },
                       })
                     }
-                    inputProps={{ min: 8, max: 1024 }}
+                    inputProps={{
+                      min: constraints.semantic.embedding_batch_size.min,
+                      max: constraints.semantic.embedding_batch_size.max,
+                    }}
                     disabled={disabled}
                     helperText="句向量请求分批大小"
                     fullWidth
@@ -417,10 +447,13 @@ export function IndexConfigForm({
                         error={semanticPercentileError}
                         helperText={
                           semanticPercentileError
-                            ? 'breakpoint_percentile 必须在 1~99'
+                            ? `breakpoint_percentile 必须在 ${constraints.semantic.breakpoint_percentile.min}~${constraints.semantic.breakpoint_percentile.max}`
                             : '相邻句相似度百分位断点'
                         }
-                        inputProps={{ min: 1, max: 99 }}
+                        inputProps={{
+                          min: constraints.semantic.breakpoint_percentile.min,
+                          max: constraints.semantic.breakpoint_percentile.max,
+                        }}
                         disabled={disabled}
                         fullWidth
                       />
@@ -442,10 +475,14 @@ export function IndexConfigForm({
                         error={semanticSimilarityError}
                         helperText={
                           semanticSimilarityError
-                            ? 'similarity_threshold 必须在 0~1'
+                            ? `similarity_threshold 必须在 ${constraints.semantic.similarity_threshold.min}~${constraints.semantic.similarity_threshold.max}`
                             : '固定相似度阈值'
                         }
-                        inputProps={{ min: 0, max: 1, step: 0.01 }}
+                        inputProps={{
+                          min: constraints.semantic.similarity_threshold.min,
+                          max: constraints.semantic.similarity_threshold.max,
+                          step: 0.01,
+                        }}
                         disabled={disabled}
                         fullWidth
                       />
@@ -478,7 +515,10 @@ export function IndexConfigForm({
                           },
                         })
                       }
-                      inputProps={{ min: 512, max: 20000 }}
+                      inputProps={{
+                        min: constraints.parent_child.parent.chunk_size.min,
+                        max: constraints.parent_child.parent.chunk_size.max,
+                      }}
                       disabled={disabled}
                       helperText="字符数，父块长度"
                       fullWidth
@@ -504,7 +544,10 @@ export function IndexConfigForm({
                           ? 'overlap 必须小于 parent.chunk_size'
                           : '字符数，父块重叠'
                       }
-                      inputProps={{ min: 0, max: 5000 }}
+                      inputProps={{
+                        min: constraints.parent_child.parent.chunk_overlap.min,
+                        max: constraints.parent_child.parent.chunk_overlap.max,
+                      }}
                       disabled={disabled}
                       fullWidth
                     />
@@ -533,7 +576,10 @@ export function IndexConfigForm({
                           ? 'child.chunk_size 必须小于 parent.chunk_size'
                           : '字符数，子块长度'
                       }
-                      inputProps={{ min: 128, max: 5000 }}
+                      inputProps={{
+                        min: constraints.parent_child.child.chunk_size.min,
+                        max: constraints.parent_child.child.chunk_size.max,
+                      }}
                       disabled={disabled}
                       fullWidth
                     />
@@ -558,7 +604,10 @@ export function IndexConfigForm({
                           ? 'overlap 必须小于 child.chunk_size'
                           : '字符数，子块重叠'
                       }
-                      inputProps={{ min: 0, max: 2000 }}
+                      inputProps={{
+                        min: constraints.parent_child.child.chunk_overlap.min,
+                        max: constraints.parent_child.child.chunk_overlap.max,
+                      }}
                       disabled={disabled}
                       fullWidth
                     />
@@ -586,7 +635,10 @@ export function IndexConfigForm({
                           },
                         })
                       }
-                      inputProps={{ min: 1, max: 6 }}
+                      inputProps={{
+                        min: constraints.markdown_heading.max_heading_level.min,
+                        max: constraints.markdown_heading.max_heading_level.max,
+                      }}
                       disabled={disabled}
                       helperText="标题层级上限"
                       fullWidth
@@ -603,7 +655,10 @@ export function IndexConfigForm({
                           },
                         })
                       }
-                      inputProps={{ min: 200, max: 20000 }}
+                      inputProps={{
+                        min: constraints.markdown_heading.chunk_size.min,
+                        max: constraints.markdown_heading.chunk_size.max,
+                      }}
                       disabled={disabled}
                       helperText="字符数，章节内二次切分大小"
                       fullWidth
@@ -626,7 +681,10 @@ export function IndexConfigForm({
                           ? 'overlap 必须小于 chunk_size'
                           : '字符数，章节内二次切分重叠'
                       }
-                      inputProps={{ min: 0, max: 5000 }}
+                      inputProps={{
+                        min: constraints.markdown_heading.chunk_overlap.min,
+                        max: constraints.markdown_heading.chunk_overlap.max,
+                      }}
                       disabled={disabled}
                       fullWidth
                     />
@@ -668,7 +726,10 @@ export function IndexConfigForm({
                   }
                   error={contextualTokensError}
                   helperText={contextualTokensError ? '启用时必须 ≥ 1' : 'token 数，生成上下文长度'}
-                  inputProps={{ min: 0, max: 512 }}
+                  inputProps={{
+                    min: constraints.contextual.max_tokens.min,
+                    max: constraints.contextual.max_tokens.max,
+                  }}
                   disabled={disabled}
                   fullWidth
                 />
@@ -681,7 +742,10 @@ export function IndexConfigForm({
                       concurrency: numberValue(e.target.value),
                     })
                   }
-                  inputProps={{ min: 1, max: 10 }}
+                  inputProps={{
+                    min: constraints.contextual.concurrency.min,
+                    max: constraints.contextual.concurrency.max,
+                  }}
                   disabled={disabled}
                   helperText="并发数，影响吞吐与成本"
                   fullWidth
@@ -698,4 +762,3 @@ export function IndexConfigForm({
     </Stack>
   );
 }
-

@@ -148,16 +148,3 @@ class ResearchPolicy(BaseModel):
     coverage_gate: ResearchCoverageGatePolicy
     status_probe: ResearchStatusProbePolicy
     source_quality: ResearchSourceQualityPolicy
-
-
-class FrontendRuntimePolicy(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    version: str
-    status_polling_interval_ms: int = Field(ge=1)
-    ingestion_stream_fallback_polling_steps_ms: list[int] = Field(default_factory=list)
-    ingestion_stream_retry_multiplier: int = Field(ge=1)
-    export_poll_interval_ms: int = Field(ge=1)
-    export_poll_max_attempts: int = Field(ge=1)
-    server_prefetch_cache_revalidate_seconds: int = Field(ge=0)
-    download_allowed_hosts: list[str] = Field(default_factory=list)

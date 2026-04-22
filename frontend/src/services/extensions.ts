@@ -2,7 +2,7 @@
  * 扩展管理 API 封装
  */
 
-import { apiFetch } from './http';
+import { apiFetch, apiV1Path } from './http';
 import type { ListResponse } from './types';
 
 export type ExtensionTransport = 'stdio' | 'http';
@@ -86,21 +86,21 @@ export async function listExtensions(params?: {
   if (params?.skip !== undefined) searchParams.set('skip', String(params.skip));
   if (params?.limit !== undefined) searchParams.set('limit', String(params.limit));
   const query = searchParams.toString();
-  return apiFetch<ToolExtensionListResponse>(`/api/v1/extensions${query ? `?${query}` : ''}`);
+  return apiFetch<ToolExtensionListResponse>(apiV1Path(`/extensions${query ? `?${query}` : ''}`));
 }
 
 /**
  * 获取扩展详情
  */
 export async function getExtension(extensionId: string): Promise<ToolExtension> {
-  return apiFetch<ToolExtension>(`/api/v1/extensions/${extensionId}`);
+  return apiFetch<ToolExtension>(apiV1Path(`/extensions/${extensionId}`));
 }
 
 /**
  * 创建扩展
  */
 export async function createExtension(data: ToolExtensionCreate): Promise<ToolExtension> {
-  return apiFetch<ToolExtension>('/api/v1/extensions', {
+  return apiFetch<ToolExtension>(apiV1Path('/extensions'), {
     method: 'POST',
     body: JSON.stringify(data),
   });
@@ -113,7 +113,7 @@ export async function updateExtension(
   extensionId: string,
   data: ToolExtensionUpdate
 ): Promise<ToolExtension> {
-  return apiFetch<ToolExtension>(`/api/v1/extensions/${extensionId}`, {
+  return apiFetch<ToolExtension>(apiV1Path(`/extensions/${extensionId}`), {
     method: 'PATCH',
     body: JSON.stringify(data),
   });
@@ -123,7 +123,7 @@ export async function updateExtension(
  * 删除扩展
  */
 export async function deleteExtension(extensionId: string): Promise<void> {
-  await apiFetch<void>(`/api/v1/extensions/${extensionId}`, {
+  await apiFetch<void>(apiV1Path(`/extensions/${extensionId}`), {
     method: 'DELETE',
   });
 }
@@ -140,6 +140,6 @@ export async function getExtensionTools(
   if (params?.limit !== undefined) searchParams.set('limit', String(params.limit));
   const query = searchParams.toString();
   return apiFetch<ToolDescriptorListResponse>(
-    `/api/v1/extensions/${extensionId}/tools${query ? `?${query}` : ''}`
+    apiV1Path(`/extensions/${extensionId}/tools${query ? `?${query}` : ''}`)
   );
 }

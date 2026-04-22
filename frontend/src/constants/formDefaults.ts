@@ -13,8 +13,6 @@ type ModelProviderFormDefaults = {
   default_thinking_level?: string | null;
 };
 
-export const DEFAULT_MODEL_PROVIDER = 'openai' as const;
-
 export function createDefaultModelProviderFormState(defaults?: ModelProviderFormDefaults) {
   return {
     enabled: true,

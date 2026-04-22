@@ -15,6 +15,15 @@ ConfidenceLevel = Literal["sufficient", "partial", "insufficient"]
 _SECTION_ID_HEADING_PATTERN = re.compile(
     r"^\[(?P<section_id>[^\[\]]+)\]\s*(?P<title>.*)$"
 )
+_OUTLINE_LIST_LINE_PATTERN = re.compile(r"^(?:[-*•]\s+|\d+(?:\.\d+)*[.)]?\s+)")
+_PLACEHOLDER_TOKENS = (
+    "待补",
+    "待生成",
+    "待完善",
+    "todo",
+    "tbd",
+    "<待补章节标题>",
+)
 
 
 @dataclass(slots=True, frozen=True)
@@ -155,9 +164,9 @@ def compile_report_from_runtime_context(
             content=_join_blocks(
                 _format_section_briefs(runtime_context_snapshot.section_briefs_json),
                 _format_section_status(report_context.get("section_status")),
-                _trim_leading_heading(runtime_context_snapshot.report_outline_md),
-                _trim_leading_heading(runtime_context_snapshot.report_draft_md),
-                _trim_leading_heading(runtime_context_snapshot.analysis_notes_md),
+                _publishable_runtime_block(runtime_context_snapshot.report_outline_md),
+                _publishable_runtime_block(runtime_context_snapshot.report_draft_md),
+                _publishable_runtime_block(runtime_context_snapshot.analysis_notes_md),
             ),
         ),
         ResearchCompiledSection(
@@ -386,6 +395,11 @@ def _format_section_briefs(section_briefs: Sequence[Mapping[str, Any]]) -> str:
         title = str(item.get("title") or "").strip()
         summary = str(item.get("summary") or "").strip()
         brief_markdown = _trim_leading_heading(str(item.get("brief_markdown") or ""))
+        if not (
+            _is_publishable_section_summary(summary)
+            or _is_publishable_section_body(brief_markdown)
+        ):
+            continue
         must_cover = _normalize_string_list(item.get("must_cover"))
         evidence_targets = _normalize_string_list(item.get("evidence_targets"))
         counterpoints = _normalize_string_list(item.get("counterpoints"))
@@ -491,6 +505,7 @@ def _build_dynamic_outline_sections(
     if not brief_items:
         return []
     sections: list[ResearchCompiledSection] = []
+    all_sections_publishable = True
 
     for index, brief in enumerate(brief_items, start=1):
         section_id = str(brief.get("section_id") or "").strip() or f"section-{index}"
@@ -501,6 +516,12 @@ def _build_dynamic_outline_sections(
             draft_content = draft_sections_by_title.get(title, "")
         if not outline_content and not outline_sections_by_id:
             outline_content = outline_sections_by_title.get(title, "")
+        if not _has_publishable_dynamic_material(
+            draft_content=draft_content,
+            outline_content=outline_content,
+            brief=brief,
+        ):
+            all_sections_publishable = False
         sections.append(
             ResearchCompiledSection(
                 id=section_id,
@@ -512,6 +533,9 @@ def _build_dynamic_outline_sections(
                 ),
             )
         )
+
+    if not sections or not all_sections_publishable:
+        return []
 
     if (
         source_bundle.citations
@@ -644,12 +668,28 @@ def _build_dynamic_section_content(
     )
     return _join_blocks(
         draft_content,
-        outline_content if not draft_content else "",
+        (
+            outline_content
+            if not draft_content and _is_publishable_section_body(outline_content)
+            else ""
+        ),
         summary if not draft_content else "",
-        f"本节目标：{description}" if description and not draft_content else "",
-        f"写作说明：{writing_goal}" if writing_goal and not draft_content else "",
         brief_markdown,
-        _format_bullets("必须覆盖", must_cover),
+        (
+            f"本节目标：{description}"
+            if description and not draft_content and not summary and not brief_markdown
+            else ""
+        ),
+        (
+            f"写作说明：{writing_goal}"
+            if writing_goal and not draft_content and not summary and not brief_markdown
+            else ""
+        ),
+        (
+            _format_bullets("必须覆盖", must_cover)
+            if not draft_content and not summary and not brief_markdown
+            else ""
+        ),
         _format_bullets("待补问题", open_questions),
         citation_block,
     )
@@ -671,3 +711,89 @@ def _trim_leading_heading(value: str) -> str:
 
 def _join_blocks(*blocks: str) -> str:
     return "\n\n".join(block.strip() for block in blocks if block.strip())
+
+
+def _publishable_runtime_block(value: str) -> str:
+    normalized = _trim_leading_heading(value)
+    if not _is_publishable_section_body(normalized):
+        return ""
+    return normalized
+
+
+def _has_publishable_dynamic_material(
+    *,
+    draft_content: str,
+    outline_content: str,
+    brief: Mapping[str, Any],
+) -> bool:
+    return any(
+        (
+            _is_publishable_section_body(draft_content),
+            _is_publishable_section_body(outline_content),
+            _is_publishable_section_body(str(brief.get("brief_markdown") or "")),
+            _is_publishable_section_summary(str(brief.get("summary") or "")),
+        )
+    )
+
+
+def _is_publishable_section_summary(value: str) -> bool:
+    plain_text = _normalize_plain_text(value)
+    if not plain_text or _contains_placeholder_token(plain_text):
+        return False
+    return len(plain_text) >= 18 or _contains_sentence_punctuation(plain_text)
+
+
+def _is_publishable_section_body(value: str) -> bool:
+    normalized = value.strip()
+    if not normalized:
+        return False
+    plain_text = _normalize_plain_text(normalized)
+    if not plain_text or _contains_placeholder_token(plain_text):
+        return False
+    content_lines = [line.strip() for line in normalized.splitlines() if line.strip()]
+    if not content_lines:
+        return False
+    if all(_is_outline_like_line(line) for line in content_lines):
+        return False
+    if _contains_sentence_punctuation(plain_text):
+        return True
+    return len(plain_text) >= 32
+
+
+def _normalize_plain_text(value: str) -> str:
+    plain_text = re.sub(r"^#+\s*", "", value, flags=re.MULTILINE)
+    plain_text = re.sub(r"^\[[^\[\]]+\]\s*", "", plain_text, flags=re.MULTILINE)
+    plain_text = re.sub(r"[*_`>#-]", " ", plain_text)
+    plain_text = re.sub(r"\s+", " ", plain_text)
+    return plain_text.strip()
+
+
+def _contains_placeholder_token(value: str) -> bool:
+    lowered = value.lower()
+    return any(token in value for token in _PLACEHOLDER_TOKENS[:3]) or any(
+        token in lowered for token in _PLACEHOLDER_TOKENS[3:]
+    )
+
+
+def _contains_sentence_punctuation(value: str) -> bool:
+    return any(token in value for token in ("。", "；", "！", "？", ".", ";", "!", "?"))
+
+
+def _is_outline_like_line(value: str) -> bool:
+    stripped = value.strip()
+    if not stripped:
+        return True
+    if stripped.startswith("#"):
+        return True
+    content = stripped
+    match = _OUTLINE_LIST_LINE_PATTERN.match(stripped)
+    if match is not None:
+        content = stripped[match.end() :].strip()
+    if not content:
+        return True
+    plain_text = _normalize_plain_text(content)
+    if not plain_text:
+        return True
+    if _contains_sentence_punctuation(plain_text):
+        return False
+    return len(plain_text) < 32

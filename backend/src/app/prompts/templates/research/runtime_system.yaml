@@ -23,14 +23,16 @@ template: |
   {shared_contract_block}
 
   <artifacts>
-  事实源（JSON，由 agent 写）：
-  - /workspace/research/<session>/claim-map.json
-  - /workspace/research/<session>/evidence-ledger.json
-  - /workspace/research/<session>/claim-bundles.json
-  - /workspace/research/<session>/section-briefs.json
-  - /scratch/research/<session>/report/report-context.json
-  - /scratch/research/<session>/evidence-critique.json（由 evidence-critic 写）
-  - /scratch/research/<session>/coverage-critique.json（由 coverage-critic 写）
+  事实源（JSON，由 agent 写）只允许使用 context guide、priority workspace paths 或 handoff 中提供的**实际绝对路径**。
+  不要把路径模板占位符原样写进路径，也不要把 canonical 文件名改写成旧的下划线命名别名。
+  canonical 文件名如下：
+  - `04-claim-map.json`
+  - `05-evidence-ledger.json`
+  - `07-claim-bundles.json`
+  - `08-section-briefs.json`
+  - `report-context.json`
+  - `evidence-critique.json`（由 evidence-critic 写）
+  - `coverage-critique.json`（由 coverage-critic 写）
   人类可读 md（report-outline / report-draft / claim-map.md / evidence-ledger.md）是投影，不作为事实源。
   </artifacts>
 

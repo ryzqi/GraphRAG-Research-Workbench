@@ -3,6 +3,7 @@
  */
 
 import { DEFAULT_DOWNLOAD_ALLOWED_HOSTS } from '../constants/runtimeDefaults';
+import { getApiOrigin } from '../services/http';
 import { appLogger } from '../services/logger';
 
 function isRelativeDownloadUrl(url: string): boolean {
@@ -12,11 +13,18 @@ function isRelativeDownloadUrl(url: string): boolean {
 
 function normalizeAllowedHosts(allowedHosts: readonly string[]): Set<string> {
   const source = allowedHosts.length > 0 ? allowedHosts : DEFAULT_DOWNLOAD_ALLOWED_HOSTS;
-  return new Set(
-    source
-      .map((item) => item.trim().toLowerCase())
-      .filter(Boolean)
-  );
+  const normalizedHosts = source
+    .map((item) => item.trim().toLowerCase())
+    .filter(Boolean);
+  const apiOrigin = getApiOrigin();
+  if (apiOrigin) {
+    try {
+      normalizedHosts.push(new URL(apiOrigin).hostname.toLowerCase());
+    } catch {
+      appLogger.warn('后端 API origin 非法，已跳过下载域名注入:', apiOrigin);
+    }
+  }
+  return new Set(normalizedHosts);
 }
 
 /**

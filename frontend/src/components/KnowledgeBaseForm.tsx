@@ -5,10 +5,11 @@ import { useState } from 'react';
 import { Box, Stack, TextField } from '@mui/material';
 import { Button } from './ui/Button';
 import { ErrorAlert } from './ui/ErrorAlert';
+import { useRuntimeConfig } from '../hooks/queries/useRuntimeConfig';
 import { getErrorMessage } from '../lib/errorHandler';
 import {
   buildKnowledgeBaseUpdatePayload,
-  createDefaultIndexConfig,
+  cloneIndexConfig,
   parseKnowledgeBaseTagsInput,
   type KnowledgeBase,
   type KnowledgeBaseCreate,
@@ -33,6 +34,8 @@ type KnowledgeBaseFormProps =
 export function KnowledgeBaseForm(props: KnowledgeBaseFormProps) {
   const { mode, onCancel, loading = false } = props;
   const initialData = mode === 'edit' ? props.initialData : undefined;
+  const runtimeConfigQuery = useRuntimeConfig();
+  const formConstraints = runtimeConfigQuery.data?.knowledge_base_form_constraints ?? null;
 
   const [name, setName] = useState(initialData?.name ?? '');
   const [description, setDescription] = useState(initialData?.description ?? '');
@@ -52,11 +55,16 @@ export function KnowledgeBaseForm(props: KnowledgeBaseFormProps) {
 
     try {
       if (props.mode === 'create') {
+        const defaultIndexConfig = runtimeConfigQuery.data?.knowledge_base_default_index_config;
+        if (!defaultIndexConfig || !formConstraints) {
+          setError('运行时知识库表单配置尚未加载完成，请稍后重试。');
+          return;
+        }
         const payload: KnowledgeBaseCreate = {
           name: name.trim(),
           description: description.trim() || undefined,
           tags: tags.length > 0 ? tags : undefined,
-          index_config: createDefaultIndexConfig(),
+          index_config: cloneIndexConfig(defaultIndexConfig),
         };
         await props.onSubmit(payload);
       } else {
@@ -75,6 +83,9 @@ export function KnowledgeBaseForm(props: KnowledgeBaseFormProps) {
   return (
     <Box component="form" onSubmit={handleSubmit}>
       <ErrorAlert error={error} sx={{ mb: 2 }} />
+      {mode === 'create' && runtimeConfigQuery.isPending && (
+        <ErrorAlert error='正在加载运行时知识库配置…' sx={{ mb: 2 }} />
+      )}
 
       <Stack spacing={2.5}>
         <TextField
@@ -83,7 +94,9 @@ export function KnowledgeBaseForm(props: KnowledgeBaseFormProps) {
           value={name}
           onChange={(e) => setName(e.target.value)}
           placeholder="输入知识库名称"
-          inputProps={{ maxLength: 64 }}
+          inputProps={{
+            maxLength: formConstraints?.name.max_length,
+          }}
           disabled={loading}
           fullWidth
         />
@@ -93,7 +106,9 @@ export function KnowledgeBaseForm(props: KnowledgeBaseFormProps) {
           value={description}
           onChange={(e) => setDescription(e.target.value)}
           placeholder="输入知识库描述（可选）"
-          inputProps={{ maxLength: 500 }}
+          inputProps={{
+            maxLength: formConstraints?.description.max_length,
+          }}
           multiline
           rows={3}
           disabled={loading}

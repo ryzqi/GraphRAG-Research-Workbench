@@ -297,7 +297,7 @@ class DeploySettings(BaseSettings):
         nested_alias="CORE__CELERY_WORKER_PREFETCH_MULTIPLIER",
     )
     http_timeout_connect_seconds: float = _deploy_field(
-        5.0,
+        10.0,
         legacy_alias="HTTP_TIMEOUT_CONNECT_SECONDS",
         nested_alias="HTTP_CLIENT__TIMEOUT_CONNECT_SECONDS",
     )

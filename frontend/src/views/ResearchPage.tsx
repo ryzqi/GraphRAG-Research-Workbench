@@ -13,7 +13,11 @@ import { ResearchReportReader } from '../components/research/ResearchReportReade
 import { Button } from '../components/ui/Button';
 import { ErrorAlert } from '../components/ui/ErrorAlert';
 import { LoadingSpinner } from '../components/ui/LoadingSpinner';
-import { createExport, pollExportUntilDone } from '../services/exports';
+import {
+  createExport,
+  pollExportUntilDone,
+  resolveExportDownloadUrl,
+} from '../services/exports';
 import { buildResearchPageViewModel } from '../services/researchWorkbench';
 import {
   getDownloadAllowedHosts,
@@ -233,9 +237,10 @@ export function ResearchPage() {
       );
 
       if (completed.status === 'succeeded' && completed.download_url) {
+        const resolvedDownloadUrl = resolveExportDownloadUrl(completed.download_url);
         if (
           !safeDownloadUrl(
-            completed.download_url,
+            resolvedDownloadUrl,
             getDownloadAllowedHosts(runtimeConfigQuery.data)
           )
         ) {
