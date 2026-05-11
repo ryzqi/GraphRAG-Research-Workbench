@@ -46,6 +46,8 @@ docs/
 docs/*
 !docs/architecture.md
 !docs/api_contract_research.md
+!docs/image/
+!docs/image/*
 !docs/ops/
 docs/ops/*
 !docs/ops/config-and-secrets.md
